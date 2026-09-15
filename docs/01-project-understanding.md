@@ -63,6 +63,18 @@ Hostinger VPS KVM 2 (2 vCPU / 8 GB / 100 GB NVMe / 8 TB). Portable to Azure next
 | Q15 | Environments | Staging + production on the same VPS | Recommendation |
 | Q16 | Product data | Client/staff enter products via admin. We seed departments, categories and sample products for testing. | Recommendation |
 
+## 3b. Build defaults accepted 2026-09-16
+
+The user accepted the recommended defaults for the open client items. We build with these; items marked *before go-live* still need the client's or accountant's real input, but they don't block development.
+
+| Topic | Default we build with | Before go-live |
+|---|---|---|
+| Design review (style tile) | All 9 recommendations accepted. See [04](04-design-system.md) "Style tile review decisions". | Client supplies logo; may comment at staging preview |
+| PayPal currency | Charge **USD** at an admin-set LKR→USD rate plus 3% buffer; show USD before redirect; refund captured USD; client bears FX ([08](08-database-design.md) D1) | Inform client |
+| VAT | Treat as **not VAT-registered**: no VAT line on invoices, `TaxAmount = 0`. Gapless invoice numbers kept, so VAT can be switched on later ([08](08-database-design.md) D2) | Client's accountant confirms |
+| Delivery | Placeholder zone rates (Colombo / Western / Island-wide), couriers and pickup locations seeded; all admin-editable ([08](08-database-design.md) D8) | Client supplies real fees, couriers, pickup locations |
+| Slow PayPal payments (PENDING) | Hold the order and stock up to **5 days**; cut back if denied ([08](08-database-design.md) D13) | Inform client |
+
 ## 4. Assumptions to confirm when convenient
 
 - **A1:** The homepage blocks "Trending Categories" and "Best Sellers" stay removed, as the signed proposal says (chargeable to re-add). The "Best Selling" sort option stays.

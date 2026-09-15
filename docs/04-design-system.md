@@ -81,6 +81,21 @@ Every page must have: no horizontal scroll, touch targets ≥ 44 px, no clipped 
 
 Reference implementation: [`design/style-tile/`](../design/style-tile/index.html).
 
+### Style tile review decisions (accepted 2026-09-16, TU2SL defaults)
+These answer the style tile's "For your review" list. They are **build defaults**: we build with them now, and the client can still request changes during the staging preview.
+
+| # | Question | Decision |
+|---|---|---|
+| 1 | Logo | Text wordmark "Spencer Denim" until the client sends the logo (SVG preferred). The logo is an admin setting (GLB-02), so swapping it needs no code change. **Client to supply.** |
+| 2 | Typeface | **Inter throughout.** No separate headline typeface. |
+| 3 | Round elements | **Keep** round colour swatches and radio buttons; everything else square. |
+| 4 | Labels | **Uppercase**, letter-spaced small labels for buttons and navigation. |
+| 5 | Phone product cards | **Small icon buttons on the photo** (Quick View, Add to Bag), as shown. Tapping the card opens the product page. |
+| 6 | WhatsApp button | **WhatsApp green**, for instant recognition. It is the only brand colour exception, and needs a contrast-checked white icon. |
+| 7 | Hero text | **Over the photo with a soft dark fade**, as shown. |
+| 8 | Sample content | Placeholders: free delivery above Rs. 10,000, zone fees and announcement messages are all admin-editable. **Real values from the client before go-live** (D8). |
+| 9 | Hero on very wide screens | **Keep the 880 px height cap** (16:9 up to ~1580 px, cropped not stretched). |
+
 ## 5. Admin panel
 
 Same neutral tokens, denser layout, a readable data font size (14 px), and charts in a restrained palette. Function over flourish.

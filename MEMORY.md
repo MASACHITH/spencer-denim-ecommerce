@@ -40,6 +40,19 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 
 ## Session log
 
+### 2026-09-16 (2) — Client-item defaults accepted; plan for tomorrow
+**Decisions (user accepted recommended defaults)**
+- Style tile: all 9 recommendations (Inter only, round swatches/radios, uppercase labels, icon buttons on phone cards, WhatsApp green, hero text over photo with fade, 880 px hero cap, placeholder delivery values). Client still supplies the logo. Recorded in docs/04.
+- PayPal charges USD (+3% buffer). VAT default: not registered (accountant confirms before go-live). Delivery: placeholder zone rates, couriers and pickup locations (real values before go-live). PENDING PayPal hold: 5 days. Recorded in docs/01 §3b and docs/08 §11.
+
+**PC readiness checked:** Windows 10 Pro 22H2, virtualization ON, 16 GB RAM, C: 60 GB / D: 105 GB free, OpenSSH client present, **WSL not installed**. User installs `wsl --install --no-distribution` → reboot → Docker Desktop (WSL 2 backend, disk image on D:).
+
+**Tomorrow (2026-09-17)**
+1. Verify Docker (`docker run --rm hello-world`) → W0-09 scaffold (.NET 10 layers, Angular 21 storefront SSR + admin + shared, docker-compose, Caddy, GitHub Actions) + spikes B6 (EF complex types, collation). Developer → tester loop.
+2. User brings Hostinger KVM 2 details (IP, Ubuntu 24.04 plain OS, hPanel access) + domain/registrar DNS access. **No passwords in chat**: generate an SSH key locally, and the user adds the public key in hPanel.
+3. W0-11 VPS hardening (SSH keys only, UFW 22/80/443, fail2ban, unattended-upgrades, Docker) + DNS A records (@, www, staging) + Caddy HTTPS.
+4. Client progress: "Hosting, domain & security setup" → In progress.
+
 ### 2026-09-16 (1) — GitHub repo set up (personal account)
 **Done**
 - Private repo https://github.com/MASACHITH/spencer-denim-ecommerce created by the user; pushed planning docs, style tile, DB design, `.gitattributes`, and `reference/` archive (old demo, client documents, prototype prompt). All commits authored and pushed as MASACHITH.

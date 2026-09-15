@@ -1889,19 +1889,19 @@ OFFSET @skip ROWS FETCH NEXT 24 ROWS ONLY;
 
 | # | Topic | Default in this design | Status |
 |---|---|---|---|
-| D1 | PayPal currency | Charged in **USD** at the admin-set `LkrPerUsd` plus a **3% buffer** (setting). The USD amount is shown before redirect; the captured USD is refunded; **the client bears FX differences**. PayPal is hidden at checkout if the rate is older than `RateMaxAgeDays` | **Pending client confirmation** |
-| D2 | VAT and invoices | `TaxAmount` kept (0, VAT-inclusive); gapless invoice numbers; credit notes are future scope | **Pending client's accountant** |
+| D1 | PayPal currency | Charged in **USD** at the admin-set `LkrPerUsd` plus a **3% buffer** (setting). The USD amount is shown before redirect; the captured USD is refunded; **the client bears FX differences**. PayPal is hidden at checkout if the rate is older than `RateMaxAgeDays` | **Accepted 2026-09-16** (inform client) |
+| D2 | VAT and invoices | `TaxAmount` kept (0, VAT-inclusive); gapless invoice numbers; credit notes are future scope | **Default accepted 2026-09-16: not VAT-registered** (no VAT line). Accountant confirms before go-live |
 | D3 | Bank transfer | Expiry 48 h (admin setting). Optional payment-slip upload (`Payments.ProofAssetId`, private media) | Decided |
 | D4 | Verified buyer | Requires **Delivered**. Auto-Delivered N days after Shipped (`Orders.AutoDeliverAfterDays`, default 7) | Decided |
 | D5 | Guest order linking | Only after email confirmation, only orders with no CustomerUserId, audited | Decided |
 | D6 | Refunds | Full-refund UI in v1; partial-refund schema kept | Decided |
 | D7 | Staff vs customer identity | One store, unique email, scoping rules §3.1 (DB10) | Decided |
-| D8 | Delivery zones and rates, pickup locations, couriers | District→zone assignment and zone rates seeded as placeholders (§9); **client input blocks go-live** | **Pending client** |
+| D8 | Delivery zones and rates, pickup locations, couriers | District→zone assignment and zone rates seeded as placeholders (§9); **client input blocks go-live** | **Placeholders accepted for build 2026-09-16.** Real values before go-live |
 | D9 | Retention | Financial records and payment events 7 years; audit logs 3 years; invoice bill-to kept on anonymisation (`Privacy.RetainInvoiceBillTo`) | **Pending client's accountant** |
 | D10 | Price precedence | Markdown → campaign (lowest wins, no stacking) → promo (unless `ExcludeSaleItems`) → delivery | Decided |
 | D11 | Collation | `Latin1_General_100_CI_AS_SC`. Sinhala/Tamil behaviour **verify in week-0 spike** | Decided (week 0) |
 | D12 | RPO / RTO | RPO 15 min for DB corruption, ≤ 1 h for host or disk loss; RTO 4 h; restore rehearsal before go-live | Decided |
-| D13 | PayPal PENDING captures | Hold stock and extend the order up to `PendingCaptureMaxDays` (default 5); if the capture completes after expiry, refund via the exception path (N16) | **Client choice** |
+| D13 | PayPal PENDING captures | Hold stock and extend the order up to `PendingCaptureMaxDays` (default 5); if the capture completes after expiry, refund via the exception path (N16) | **Accepted 2026-09-16** (5 days; inform client) |
 | D14 | Admin account safety | Time-boxed lockout for everyone, mandatory 2FA for GrantsAll, two Super Admin accounts, audited break-glass CLI (N14) | Decided |
 | D15 | Sensitive settings | `Email.Smtp.*` and `Security.*` require GrantsAll-only `Settings.Security`; alerts go through old and new SMTP plus a dashboard banner (N2) | Decided |
 
