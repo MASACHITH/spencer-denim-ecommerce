@@ -12,6 +12,7 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 - **Theme:** Banana Republic–inspired, full replacement → [docs/04](docs/04-design-system.md)
 - **Stack (approved):** .NET 10 API + Angular 21 (SSR storefront + admin app) + SQL Server Express, Docker, Caddy, GitHub Actions. Hostinger KVM 2, Azure-portable.
 - **Payments:** Bank transfer in week 3. **PayPal last** (week 4). A second gateway comes later (TBD) through `IPaymentProvider`.
+- **Repo:** https://github.com/MASACHITH/spencer-denim-ecommerce (user's **personal** account MASACHITH, branch `main`). Local git identity is set per repo (MASACHITH / sachithishara1@gmail.com). The machine's active `gh` account is the work account `destinity-sachithm`. **Never push this project with it.** For every push: `gh auth switch --user MASACHITH` → push → `gh auth switch --user destinity-sachithm`.
 - **Blockers:** Docker Desktop not installed on dev machine (W0-05).
 - **Next:** W0-06 client progress page → W0-07 style tile → W0-08/09 repo + scaffold → W0-10 schema.
 - **Open assumptions:** A1 (Trending Categories / Best Sellers homepage blocks stay removed per signed proposal), A2 (video MP4 ≤ 50 MB, no server conversion).

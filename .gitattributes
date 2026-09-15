@@ -1,0 +1,22 @@
+# Normalise line endings: LF in the repo and working copy (containers run on Linux)
+* text=auto eol=lf
+
+# Windows-only scripts keep CRLF
+*.cmd  text eol=crlf
+*.bat  text eol=crlf
+*.ps1  text eol=crlf
+*.sln  text eol=crlf
+
+# Binary files
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.webp binary
+*.ico  binary
+*.mp4  binary
+*.pdf  binary
+*.woff binary
+*.woff2 binary
+*.pfx  binary
+*.bak  binary
