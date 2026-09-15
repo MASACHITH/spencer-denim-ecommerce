@@ -1,0 +1,49 @@
+# ---- Secrets & environment (never commit) ----
+.env
+.env.*
+!.env.example
+*.pfx
+*.pem
+*.key
+appsettings.*.local.json
+secrets.json
+
+# ---- .NET ----
+bin/
+obj/
+*.user
+*.suo
+.vs/
+TestResults/
+*.trx
+coverage/
+coverage*.xml
+*.coverage
+
+# ---- Node / Angular ----
+node_modules/
+dist/
+.angular/
+npm-debug.log*
+yarn-error.log*
+
+# ---- Playwright / test output ----
+playwright-report/
+test-results/
+blob-report/
+.playwright-mcp/
+
+# ---- Runtime data (Docker volumes, uploads, backups, logs) ----
+data/
+uploads/
+backups/
+*.bak
+*.trn
+logs/
+*.log
+
+# ---- OS / editor ----
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
