@@ -1,0 +1,1065 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Colombo Wardrobe — Sri Lanka's premier denim & fashion destination. Rugged Heads, Atitude Gen, boys denims, ladies frocks, family fashion all under one roof.">
+  <title>Colombo Wardrobe — Denim &amp; Fashion</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700;800;900&family=Oswald:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    :root{
+      --BG:#eef3f9;          /* light chambray sky */
+      --SURF:#ffffff;
+      --GR:#e2ecf5;          /* light wash denim */
+      --GR2:#cfdded;         /* mid chambray */
+      --NAV:#192d47;         /* dark navy denim */
+      --NAV2:#0f1d30;        /* deeper navy */
+      --ACC:#2e6fad;         /* denim blue */
+      --ACC2:#5fa8d3;        /* chambray */
+      --ACC3:#a8cfe8;        /* light wash */
+      --GOLD:#c8a24a;        /* brass/rivets */
+      --RED:#c0392b;         /* sale */
+      --TEXT:#101c2e;
+      --M:#5a6e84;
+      --BD:#c8dae8;
+      --S:#f5f8fc;
+    }
+    html{font-size:16px;scroll-behavior:smooth}
+    body{font-family:'Nunito',sans-serif;background:var(--BG);color:var(--TEXT);line-height:1.6;overflow-x:hidden}
+    a{text-decoration:none;color:inherit}
+    img{display:block;max-width:100%}
+    button{border:none;background:none;cursor:pointer;font-family:inherit}
+    @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:.01ms!important;transition:.01ms!important}}
+
+    /* ── STRIP ── */
+    .strip{background:var(--NAV);overflow:hidden;padding:7px 0}
+    .strip-track{display:inline-flex;white-space:nowrap;animation:msck 30s linear infinite}
+    .strip-track span{padding:0 28px;font-size:11.5px;font-weight:600;color:rgba(255,255,255,.8);letter-spacing:.05em}
+    .strip-track b{color:var(--ACC3)}
+    @keyframes msck{to{transform:translateX(-50%)}}
+
+    /* ── HEADER ── */
+    .hdr{position:sticky;top:0;z-index:300;background:var(--SURF);border-bottom:2px solid var(--BD);box-shadow:0 2px 12px rgba(15,29,48,.08)}
+    .hdr-row{max-width:1440px;margin:0 auto;padding:0 28px;height:68px;display:flex;align-items:center;gap:20px}
+    .logo{font-family:'Oswald',sans-serif;font-size:1.7rem;font-weight:700;color:var(--NAV);letter-spacing:.06em;flex-shrink:0;text-transform:uppercase}
+    .logo em{color:var(--ACC);font-style:normal}
+    .logo-sub{font-family:'Nunito',sans-serif;font-size:.55rem;font-weight:700;letter-spacing:.15em;color:var(--M);text-transform:uppercase;margin-top:-3px;display:block}
+    .hdr-search{flex:1;max-width:500px;position:relative;margin:0 auto}
+    .hdr-search input{width:100%;padding:10px 46px 10px 16px;border:1.5px solid var(--BD);border-radius:4px;font-size:.86rem;font-family:'Nunito',sans-serif;outline:none;background:var(--GR);color:var(--TEXT);transition:all .18s}
+    .hdr-search input:focus{border-color:var(--ACC);background:#fff;box-shadow:0 0 0 3px rgba(46,111,173,.1)}
+    .hdr-search input::placeholder{color:#9bb5cc}
+    .hdr-search button{position:absolute;right:0;top:0;bottom:0;width:44px;display:flex;align-items:center;justify-content:center;background:var(--ACC);border-radius:0 4px 4px 0;color:#fff;transition:background .18s}
+    .hdr-search button:hover{background:var(--NAV)}
+    .hdr-search button svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2}
+    .hdr-icons{display:flex;align-items:center;gap:2px;margin-left:auto;flex-shrink:0}
+    .hdr-icon{position:relative;padding:8px 10px;color:var(--M);display:flex;flex-direction:column;align-items:center;gap:3px;border-radius:6px;transition:all .15s}
+    .hdr-icon:hover{background:var(--GR);color:var(--ACC)}
+    .hdr-icon svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.8}
+    .hdr-icon span{font-size:.6rem;font-weight:700;letter-spacing:.01em}
+    .hdr-badge{position:absolute;top:4px;right:5px;background:var(--RED);color:#fff;border-radius:50%;width:16px;height:16px;font-size:.58rem;font-weight:800;display:flex;align-items:center;justify-content:center}
+    .ham{display:none;padding:8px;color:var(--TEXT)}
+    .ham svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:2}
+
+    /* ── CATEGORY NAV ── */
+    .catnav{border-bottom:1px solid var(--BD);background:var(--SURF)}
+    .catnav-inner{max-width:1440px;margin:0 auto;padding:0 28px;display:flex;align-items:center;overflow-x:auto;scrollbar-width:none}
+    .catnav-inner::-webkit-scrollbar{display:none}
+    .cat-a{padding:13px 16px;font-size:.8rem;font-weight:700;color:var(--M);white-space:nowrap;border-bottom:3px solid transparent;transition:all .15s;letter-spacing:.02em;text-transform:uppercase}
+    .cat-a:hover,.cat-a.on{color:var(--ACC);border-bottom-color:var(--ACC)}
+    .cat-a.sale{color:var(--RED);font-weight:800}
+    .cat-a.sale:hover{border-bottom-color:var(--RED)}
+
+    /* ── HERO ── */
+    .hero{position:relative;overflow:hidden;background:var(--NAV);min-height:520px;display:flex}
+    .hero-img{position:absolute;inset:0;z-index:0}
+    .hero-img img{width:100%;height:100%;object-fit:cover;opacity:.55}
+    .hero-overlay{position:absolute;inset:0;z-index:1;background:linear-gradient(105deg,rgba(15,29,48,.92) 0%,rgba(15,29,48,.55) 55%,rgba(15,29,48,.2) 100%)}
+    .hero-content{position:relative;z-index:2;max-width:1440px;margin:0 auto;padding:72px 48px;display:flex;flex-direction:column;justify-content:center;max-width:680px}
+    .hero-eyebrow{display:inline-flex;align-items:center;gap:10px;font-size:.68rem;font-weight:800;letter-spacing:.22em;text-transform:uppercase;color:var(--ACC3);margin-bottom:18px}
+    .hero-eyebrow::before{content:'';display:block;width:32px;height:2px;background:var(--ACC2)}
+    .hero-h{font-family:'Oswald',sans-serif;font-size:clamp(2.4rem,5vw,4.2rem);font-weight:700;color:#fff;line-height:1.05;text-transform:uppercase;letter-spacing:.03em;margin-bottom:16px}
+    .hero-h em{color:var(--ACC2);font-style:normal}
+    .hero-p{font-size:.92rem;color:rgba(255,255,255,.72);margin-bottom:32px;line-height:1.75;max-width:420px;font-weight:500}
+    .hero-btns{display:flex;gap:12px;flex-wrap:wrap}
+    .btn-denim{background:var(--ACC);color:#fff;padding:14px 32px;font-family:'Oswald',sans-serif;font-size:.95rem;font-weight:600;letter-spacing:.1em;text-transform:uppercase;display:inline-block;transition:all .2s}
+    .btn-denim:hover{background:var(--ACC2)}
+    .btn-wire{border:2px solid rgba(255,255,255,.6);color:#fff;padding:13px 30px;font-family:'Oswald',sans-serif;font-size:.95rem;font-weight:600;letter-spacing:.1em;text-transform:uppercase;display:inline-block;transition:all .2s}
+    .btn-wire:hover{background:rgba(255,255,255,.12);border-color:#fff}
+    .hero-tags{position:absolute;bottom:28px;right:36px;z-index:2;display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+    .hero-tag{background:rgba(255,255,255,.12);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.25);color:#fff;font-size:.66rem;font-weight:800;padding:6px 14px;letter-spacing:.1em;text-transform:uppercase;transition:all .18s}
+    .hero-tag:hover{background:var(--ACC);border-color:var(--ACC)}
+
+    /* ── SECTION ── */
+    .sec{padding:56px 0}
+    .con{max-width:1440px;margin:0 auto;padding:0 28px}
+    .sec-hd{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:28px}
+    .sec-tag{font-family:'Oswald',sans-serif;font-size:.72rem;font-weight:500;letter-spacing:.2em;text-transform:uppercase;color:var(--ACC2);margin-bottom:6px}
+    .sec-title{font-family:'Oswald',sans-serif;font-size:1.8rem;font-weight:700;color:var(--TEXT);letter-spacing:.04em;text-transform:uppercase;line-height:1}
+    .view-all{font-size:.78rem;font-weight:800;color:var(--ACC);text-decoration:underline;text-underline-offset:3px;transition:color .15s;white-space:nowrap;letter-spacing:.04em;text-transform:uppercase}
+    .view-all:hover{color:var(--NAV)}
+
+    /* ── DEPT GRID ── */
+    .dept-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+    .dept-card{position:relative;overflow:hidden;display:block;aspect-ratio:3/4}
+    .dept-card img{width:100%;height:100%;object-fit:cover;transition:transform .45s}
+    .dept-card:hover img{transform:scale(1.07)}
+    .dept-overlay{position:absolute;inset:0;background:linear-gradient(to top,rgba(15,29,48,.75) 0%,rgba(15,29,48,.05) 55%)}
+    .dept-lbl{position:absolute;bottom:0;left:0;right:0;padding:20px 16px}
+    .dept-name{font-family:'Oswald',sans-serif;font-size:1.25rem;font-weight:700;color:#fff;letter-spacing:.08em;text-transform:uppercase}
+    .dept-count{font-size:.68rem;color:rgba(255,255,255,.65);margin-bottom:10px;font-weight:600}
+    .dept-cta{display:inline-flex;align-items:center;gap:6px;font-size:.68rem;font-weight:800;color:#fff;letter-spacing:.1em;text-transform:uppercase;border-bottom:1.5px solid var(--ACC2);padding-bottom:2px;transition:all .2s}
+    .dept-card:hover .dept-cta{color:var(--ACC3);border-color:var(--ACC3)}
+    .dept-cta svg{width:10px;height:10px;stroke:currentColor;fill:none;stroke-width:3;transition:transform .2s}
+    .dept-card:hover .dept-cta svg{transform:translateX(3px)}
+
+    /* ── PRODUCT GRID (with swatches + ratings) ── */
+    .pgrid{display:grid;grid-template-columns:repeat(5,1fr);gap:16px}
+    .pcard{cursor:pointer;position:relative;background:var(--SURF);border:1px solid var(--BD);transition:box-shadow .2s,transform .2s}
+    .pcard:hover{box-shadow:0 8px 28px rgba(15,29,48,.14);transform:translateY(-2px)}
+    .pimg-wrap{position:relative;aspect-ratio:3/4;overflow:hidden;background:var(--GR)}
+    .pimg-wrap img{width:100%;height:100%;object-fit:cover;transition:transform .45s}
+    .pcard:hover .pimg-wrap img{transform:scale(1.05)}
+    .pbadge{position:absolute;top:0;left:0;font-family:'Oswald',sans-serif;font-size:.62rem;font-weight:600;padding:5px 11px;letter-spacing:.1em;text-transform:uppercase;z-index:2}
+    .pbadge.sale{background:var(--RED);color:#fff}
+    .pbadge.new{background:var(--NAV);color:#fff}
+    .pbadge.best{background:var(--GOLD);color:#fff}
+    .pbadge.denim{background:var(--ACC);color:#fff}
+    .pwish{position:absolute;top:8px;right:8px;background:#fff;border-radius:50%;width:32px;height:32px;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.12);opacity:0;transition:opacity .2s;z-index:2}
+    .pcard:hover .pwish{opacity:1}
+    .pwish svg{width:14px;height:14px;stroke:var(--ACC);fill:none;stroke-width:2}
+    .pwish.wished svg{fill:var(--ACC)}
+    .padd{position:absolute;bottom:0;left:0;right:0;background:var(--NAV);color:#fff;font-family:'Oswald',sans-serif;font-size:.75rem;font-weight:600;padding:11px;text-align:center;transform:translateY(100%);transition:transform .22s;cursor:pointer;z-index:2;border:none;width:100%;letter-spacing:.1em;text-transform:uppercase}
+    .pcard:hover .padd{transform:translateY(0)}
+    .pbody{padding:12px}
+    .pswatches{display:flex;gap:5px;margin-bottom:8px;flex-wrap:wrap;align-items:center}
+    .pswatch{width:14px;height:14px;border-radius:50%;border:1.5px solid transparent;transition:transform .15s;cursor:pointer;flex-shrink:0}
+    .pswatch:hover{transform:scale(1.25)}
+    .pswatch.sel{border-color:var(--NAV)}
+    .pswatch-more{font-size:.6rem;color:var(--M);font-weight:700;line-height:14px}
+    .pstars{display:flex;align-items:center;gap:4px;margin-bottom:5px}
+    .star-f{color:#e2a824;font-size:10px}
+    .star-e{color:#cbd8e3;font-size:10px}
+    .prating-cnt{font-size:.62rem;color:var(--M);font-weight:600}
+    .pdept{font-size:.6rem;color:var(--ACC);text-transform:uppercase;letter-spacing:.1em;margin-bottom:2px;font-weight:800}
+    .pname{font-size:.84rem;font-weight:700;color:var(--TEXT);margin-bottom:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .pprice{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+    .pr-now{font-size:.92rem;font-weight:800;color:var(--TEXT)}
+    .pr-was{font-size:.74rem;color:var(--M);text-decoration:line-through}
+    .pr-pct{font-size:.64rem;font-weight:800;color:var(--RED);background:rgba(192,57,43,.08);padding:2px 6px}
+
+    /* ── BRAND SECTION — BOYS "BLUECREW" ── */
+    .brand-boys{background:var(--NAV);position:relative;overflow:hidden;padding:0}
+    .brand-boys-inner{max-width:1440px;margin:0 auto;display:grid;grid-template-columns:320px 1fr;min-height:460px}
+    .brand-boys-info{padding:52px 44px;display:flex;flex-direction:column;justify-content:center;position:relative;z-index:2}
+    .brand-logo-boys{font-family:'Oswald',sans-serif;font-size:2.4rem;font-weight:700;color:#fff;text-transform:uppercase;letter-spacing:.08em;line-height:1;margin-bottom:6px}
+    .brand-logo-boys span{color:var(--ACC2)}
+    .brand-tagline{font-size:.72rem;font-weight:800;letter-spacing:.2em;text-transform:uppercase;color:var(--ACC3);margin-bottom:22px}
+    .brand-desc{font-size:.88rem;color:rgba(255,255,255,.7);line-height:1.75;margin-bottom:28px;max-width:260px}
+    .brand-cats{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:28px}
+    .brand-cat{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);color:#fff;font-size:.66rem;font-weight:700;padding:6px 14px;letter-spacing:.08em;text-transform:uppercase;transition:all .18s}
+    .brand-cat:hover{background:var(--ACC);border-color:var(--ACC)}
+    .btn-brand{background:var(--ACC2);color:var(--NAV2);padding:13px 28px;font-family:'Oswald',sans-serif;font-size:.88rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;display:inline-block;transition:all .18s}
+    .btn-brand:hover{background:#fff;color:var(--NAV)}
+    .brand-boys-scroll{padding:44px 36px 44px 0;display:flex;align-items:center;overflow:hidden}
+    .brand-scroll-inner{display:flex;gap:14px;overflow-x:auto;scrollbar-width:none;padding-bottom:4px}
+    .brand-scroll-inner::-webkit-scrollbar{display:none}
+    .brand-pcard{width:200px;flex-shrink:0;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);transition:all .2s;cursor:pointer}
+    .brand-pcard:hover{background:rgba(255,255,255,.12);border-color:rgba(255,255,255,.25);transform:translateY(-3px)}
+    .bpimg{position:relative;aspect-ratio:3/4;overflow:hidden}
+    .bpimg img{width:100%;height:100%;object-fit:cover;transition:transform .4s}
+    .brand-pcard:hover .bpimg img{transform:scale(1.05)}
+    .bpbody{padding:10px 12px 14px}
+    .bpname{font-size:.78rem;font-weight:700;color:#fff;margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .bpprice{font-size:.82rem;font-weight:800;color:var(--ACC3)}
+    .bpwas{font-size:.68rem;color:rgba(255,255,255,.4);text-decoration:line-through;margin-left:4px}
+
+    /* ── BRAND SECTION — LADIES "INDIGO & CO." ── */
+    .brand-ladies{background:var(--GR);position:relative;overflow:hidden;padding:0;border-top:3px solid var(--BD);border-bottom:3px solid var(--BD)}
+    .brand-ladies-inner{max-width:1440px;margin:0 auto;display:grid;grid-template-columns:1fr 320px;min-height:460px}
+    .brand-ladies-scroll{padding:44px 0 44px 36px;display:flex;align-items:center;overflow:hidden}
+    .brand-ladies-info{padding:52px 44px;display:flex;flex-direction:column;justify-content:center}
+    .brand-logo-ladies{font-family:'Oswald',sans-serif;font-size:2.2rem;font-weight:700;color:var(--NAV);text-transform:uppercase;letter-spacing:.06em;line-height:1;margin-bottom:6px}
+    .brand-logo-ladies em{color:var(--ACC);font-style:normal}
+    .brand-tagline-l{font-size:.7rem;font-weight:800;letter-spacing:.2em;text-transform:uppercase;color:var(--ACC2);margin-bottom:22px}
+    .brand-desc-l{font-size:.88rem;color:var(--M);line-height:1.75;margin-bottom:28px;max-width:260px}
+    .brand-cats-l{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:28px}
+    .brand-cat-l{background:var(--SURF);border:1px solid var(--BD);color:var(--ACC);font-size:.66rem;font-weight:800;padding:6px 14px;letter-spacing:.08em;text-transform:uppercase;transition:all .18s}
+    .brand-cat-l:hover{background:var(--ACC);color:#fff;border-color:var(--ACC)}
+    .btn-brand-l{background:var(--NAV);color:#fff;padding:13px 28px;font-family:'Oswald',sans-serif;font-size:.88rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;display:inline-block;transition:all .18s}
+    .btn-brand-l:hover{background:var(--ACC);color:#fff}
+    .ladies-pcard{width:210px;flex-shrink:0;background:var(--SURF);border:1px solid var(--BD);transition:all .2s;cursor:pointer}
+    .ladies-pcard:hover{box-shadow:0 8px 24px rgba(15,29,48,.12);transform:translateY(-3px)}
+    .lpimg{position:relative;aspect-ratio:3/4;overflow:hidden}
+    .lpimg img{width:100%;height:100%;object-fit:cover;transition:transform .4s}
+    .ladies-pcard:hover .lpimg img{transform:scale(1.05)}
+    .lpbody{padding:10px 12px 14px}
+    .lpname{font-size:.78rem;font-weight:700;color:var(--TEXT);margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .lpprice{display:flex;align-items:center;gap:5px}
+    .lppr{font-size:.82rem;font-weight:800;color:var(--NAV)}
+    .lpwas{font-size:.68rem;color:var(--M);text-decoration:line-through}
+
+    /* ── DENIM BANNER ── */
+    .denim-banner{position:relative;overflow:hidden;min-height:280px;display:flex;align-items:center;background:var(--NAV2)}
+    .denim-banner-img{position:absolute;inset:0;z-index:0}
+    .denim-banner-img img{width:100%;height:100%;object-fit:cover;opacity:.38}
+    .denim-banner-ov{position:absolute;inset:0;background:linear-gradient(90deg,rgba(10,18,30,.95) 0%,rgba(10,18,30,.6) 50%,rgba(10,18,30,.1) 100%);z-index:1}
+    .denim-banner-content{position:relative;z-index:2;max-width:1440px;margin:0 auto;padding:52px 48px;width:100%}
+    .db-tag{font-size:.65rem;font-weight:800;letter-spacing:.22em;text-transform:uppercase;color:var(--ACC3);margin-bottom:12px}
+    .db-h{font-family:'Oswald',sans-serif;font-size:clamp(1.8rem,3.5vw,3rem);font-weight:700;color:#fff;text-transform:uppercase;letter-spacing:.04em;margin-bottom:12px;line-height:1.05}
+    .db-p{font-size:.88rem;color:rgba(255,255,255,.68);margin-bottom:24px;max-width:420px}
+    .btn-sale{background:var(--RED);color:#fff;padding:13px 30px;font-family:'Oswald',sans-serif;font-size:.9rem;font-weight:600;letter-spacing:.12em;text-transform:uppercase;display:inline-block;transition:all .2s}
+    .btn-sale:hover{background:#a93226}
+
+    /* ── PERKS ── */
+    .perks{background:var(--SURF);border-top:2px solid var(--BD);border-bottom:2px solid var(--BD)}
+    .perks-row{display:grid;grid-template-columns:repeat(4,1fr);max-width:1440px;margin:0 auto;padding:0 28px}
+    .perk{display:flex;align-items:center;gap:16px;padding:26px 20px;border-right:1px solid var(--BD)}
+    .perk:last-child{border-right:none}
+    .perk-ico{width:46px;height:46px;background:var(--GR);display:flex;align-items:center;justify-content:center;flex-shrink:0;border:1.5px solid var(--BD)}
+    .perk-ico svg{width:20px;height:20px;stroke:var(--ACC);fill:none;stroke-width:1.8}
+    .perk-t{font-size:.82rem;font-weight:800;color:var(--TEXT);margin-bottom:2px;letter-spacing:.01em}
+    .perk-s{font-size:.68rem;color:var(--M);font-weight:500}
+
+    /* ── NEWSLETTER ── */
+    .nl{background:var(--NAV2);padding:64px 0}
+    .nl-inner{max-width:600px;margin:0 auto;padding:0 28px;text-align:center}
+    .nl-eyebrow{font-family:'Oswald',sans-serif;font-size:.72rem;font-weight:500;letter-spacing:.22em;text-transform:uppercase;color:var(--ACC2);margin-bottom:12px}
+    .nl-h{font-family:'Oswald',sans-serif;font-size:2.2rem;font-weight:700;color:#fff;letter-spacing:.06em;text-transform:uppercase;margin-bottom:8px;line-height:1.1}
+    .nl-h em{color:var(--ACC2);font-style:normal}
+    .nl-p{font-size:.86rem;color:rgba(255,255,255,.62);margin-bottom:26px;font-weight:500}
+    .nl-form{display:flex;gap:0}
+    .nl-inp{flex:1;padding:13px 18px;border:2px solid rgba(255,255,255,.2);border-right:none;background:rgba(255,255,255,.08);color:#fff;font-size:.86rem;font-family:'Nunito',sans-serif;outline:none;transition:border-color .18s}
+    .nl-inp::placeholder{color:rgba(255,255,255,.4)}
+    .nl-inp:focus{border-color:var(--ACC2);background:rgba(255,255,255,.12)}
+    .nl-btn{background:var(--ACC2);color:var(--NAV2);padding:13px 26px;font-family:'Oswald',sans-serif;font-weight:700;font-size:.88rem;letter-spacing:.1em;text-transform:uppercase;border:none;cursor:pointer;flex-shrink:0;transition:all .18s}
+    .nl-btn:hover{background:#fff}
+    .nl-fine{font-size:.68rem;color:rgba(255,255,255,.35);margin-top:12px;font-weight:500}
+
+    /* ── FOOTER ── */
+    .footer{background:var(--NAV);border-top:2px solid rgba(255,255,255,.08)}
+    .footer-main{max-width:1440px;margin:0 auto;padding:52px 28px 36px;display:grid;grid-template-columns:2.2fr 1fr 1fr 1fr;gap:44px}
+    .f-logo{font-family:'Oswald',sans-serif;font-size:1.5rem;font-weight:700;color:#fff;margin-bottom:12px;letter-spacing:.08em;text-transform:uppercase}
+    .f-logo em{color:var(--ACC2);font-style:normal}
+    .f-desc{font-size:.78rem;color:rgba(255,255,255,.55);line-height:1.85;margin-bottom:20px;max-width:240px;font-weight:500}
+    .f-soc{display:flex;gap:8px}
+    .f-soc a{width:34px;height:34px;border:1.5px solid rgba(255,255,255,.2);display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.6);transition:all .15s}
+    .f-soc a:hover{border-color:var(--ACC2);color:var(--ACC2)}
+    .f-soc a svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2}
+    .f-col h5{font-family:'Oswald',sans-serif;font-size:.72rem;font-weight:600;text-transform:uppercase;letter-spacing:.14em;color:var(--ACC2);margin-bottom:16px}
+    .f-col a{display:block;font-size:.78rem;color:rgba(255,255,255,.55);margin-bottom:9px;transition:color .15s;font-weight:500}
+    .f-col a:hover{color:#fff}
+    .footer-btm{border-top:1px solid rgba(255,255,255,.1);max-width:1440px;margin:0 auto;padding:16px 28px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px}
+    .footer-btm p{font-size:.72rem;color:rgba(255,255,255,.4);font-weight:500}
+    .pay-row{display:flex;gap:6px}
+    .pay-chip{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);padding:4px 10px;font-size:.65rem;font-weight:700;color:rgba(255,255,255,.6)}
+
+    /* ── TEMPLATE SWITCHER ── */
+    .tsw{position:fixed;bottom:24px;right:20px;z-index:9999}
+    .tsw-btn{background:var(--ACC);color:#fff;padding:9px 16px;border-radius:4px;font-size:.73rem;font-weight:800;display:flex;align-items:center;gap:6px;box-shadow:0 4px 16px rgba(46,111,173,.35);cursor:pointer;border:none;font-family:'Nunito',sans-serif;letter-spacing:.04em;text-transform:uppercase}
+    .tsw-btn svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:2.5;flex-shrink:0}
+    .tsw-menu{position:absolute;bottom:calc(100% + 10px);right:0;background:#fff;border-radius:6px;box-shadow:0 8px 32px rgba(0,0,0,.16);border:1px solid var(--BD);overflow:hidden;min-width:215px;display:none}
+    .tsw-menu.open{display:block}
+    .tsw-head{padding:10px 16px 6px;font-size:.6rem;font-weight:800;text-transform:uppercase;letter-spacing:.12em;color:#aaa}
+    .tsw-item{display:flex;align-items:center;gap:10px;padding:10px 16px;font-size:.8rem;font-weight:600;border-top:1px solid #f0f0f0;transition:background .1s;color:var(--TEXT)}
+    .tsw-item:hover{background:var(--GR)}
+    .tsw-item.cur{font-weight:800;color:var(--ACC)}
+    .tsw-item.cur::after{content:'\2713';margin-left:auto;color:var(--ACC)}
+    .t-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+
+    /* ── BRAND CAROUSEL ── */
+    .bc-sec{background:var(--SURF);padding:36px 0;border-bottom:3px solid var(--BD)}
+    .bc-hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:22px}
+    .bc-title{font-family:'Oswald',sans-serif;font-size:1.1rem;font-weight:700;color:var(--TEXT);letter-spacing:.1em;text-transform:uppercase}
+    .bc-sub{font-size:.72rem;color:var(--M);font-weight:600}
+    .bc-wrap{position:relative}
+    .bc-scroll{display:flex;gap:14px;overflow-x:auto;scrollbar-width:none;-ms-overflow-style:none;padding:4px 0 10px}
+    .bc-scroll::-webkit-scrollbar{display:none}
+    .bc-card{flex-shrink:0;width:148px;cursor:pointer;text-align:center;text-decoration:none;display:block}
+    .bc-box{width:148px;height:148px;border-radius:10px;border:2px solid var(--BD);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;transition:box-shadow .2s,border-color .2s,transform .18s;overflow:hidden;padding:14px}
+    .bc-card:hover .bc-box{box-shadow:0 8px 24px rgba(46,111,173,.22);border-color:var(--ACC);transform:translateY(-3px)}
+    .bc-icon{width:48px;height:48px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:'Oswald',sans-serif;font-size:1.05rem;font-weight:700;color:#fff;flex-shrink:0;letter-spacing:.02em}
+    .bc-name{font-family:'Oswald',sans-serif;font-size:.78rem;font-weight:700;line-height:1.2;letter-spacing:.02em}
+    .bc-handle{font-size:.62rem;margin-top:1px;line-height:1.3}
+    .bc-lbl{margin-top:7px;font-size:.68rem;color:var(--M);font-weight:700;text-transform:uppercase;letter-spacing:.06em}
+    .bc-arr{position:absolute;top:50%;transform:translateY(-75%);background:var(--SURF);border:1.5px solid var(--BD);width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.1);z-index:5;transition:all .15s}
+    .bc-arr:hover{box-shadow:0 4px 14px rgba(46,111,173,.25);border-color:var(--ACC)}
+    .bc-arr.bl{left:-14px}
+    .bc-arr.br{right:-14px}
+    .bc-arr svg{width:13px;height:13px;stroke:var(--NAV);fill:none;stroke-width:2.5}
+    .bc-ig{position:absolute;top:7px;right:7px;width:20px;height:20px;border-radius:5px;background:linear-gradient(45deg,#f09433,#e6683c,#dc2743,#cc2366,#bc1888);display:flex;align-items:center;justify-content:center}
+    .bc-ig svg{width:11px;height:11px;stroke:#fff;fill:none;stroke-width:2;flex-shrink:0}
+    .bc-real-tag{font-size:.56rem;font-weight:800;letter-spacing:.1em;text-transform:uppercase;padding:2px 7px;border-radius:3px;background:var(--GOLD);color:var(--NAV2);margin-bottom:4px;display:inline-block}
+
+    /* ── WHATSAPP ── */
+    .wa{position:fixed;bottom:24px;left:20px;z-index:9998;background:#25d366;color:#fff;width:46px;height:46px;border-radius:50%;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 14px rgba(37,211,102,.4);transition:transform .2s}
+    .wa:hover{transform:scale(1.1)}
+
+    /* ── RESPONSIVE ── */
+    @media(max-width:1200px){.pgrid{grid-template-columns:repeat(4,1fr)}}
+    @media(max-width:1100px){
+      .footer-main{grid-template-columns:1fr 1fr;gap:28px}
+      .brand-boys-inner,.brand-ladies-inner{grid-template-columns:280px 1fr}
+    }
+    @media(max-width:900px){
+      .catnav,.hdr-search{display:none}
+      .ham{display:flex}
+      .hero-content{padding:48px 28px}
+      .hero-tags{right:20px;bottom:20px}
+      .pgrid{grid-template-columns:repeat(3,1fr)}
+      .dept-grid{grid-template-columns:repeat(2,1fr)}
+      .brand-boys-inner{grid-template-columns:1fr;grid-template-rows:auto auto}
+      .brand-ladies-inner{grid-template-columns:1fr;grid-template-rows:auto auto}
+      .brand-boys-info,.brand-ladies-info{padding:32px 24px}
+      .brand-boys-scroll,.brand-ladies-scroll{padding:0 24px 28px}
+      .brand-boys-scroll .brand-scroll-inner,.brand-ladies-scroll .brand-scroll-inner{padding-bottom:8px}
+      .perks-row{grid-template-columns:repeat(2,1fr)}
+      .perk:nth-child(2){border-right:none}
+      .perk:nth-child(3){border-top:1px solid var(--BD)}
+      .perk:nth-child(4){border-right:none;border-top:1px solid var(--BD)}
+    }
+    @media(max-width:640px){
+      .hdr-row{padding:0 16px;height:58px;gap:10px}
+      .logo{font-size:1.45rem}
+      .hero-content{padding:36px 20px}
+      .hero-h{font-size:2rem}
+      .hero-p{display:none}
+      .hero-tags{display:none}
+      .pgrid{grid-template-columns:repeat(2,1fr);gap:10px}
+      .dept-grid{grid-template-columns:repeat(2,1fr);gap:8px}
+      .perks-row{grid-template-columns:1fr;padding:0 16px}
+      .perk{border-right:none;border-top:1px solid var(--BD)}
+      .perk:first-child{border-top:none}
+      .footer-main{grid-template-columns:1fr;gap:24px}
+      .nl-form{flex-direction:column}
+      .nl-inp{border-right:2px solid rgba(255,255,255,.2)}
+      .sec{padding:40px 0}
+      .con{padding:0 16px}
+      .denim-banner-content{padding:40px 20px}
+      .bc-arr{display:none}
+    }
+    @media(max-width:480px){
+      .hero-h{font-size:1.75rem}
+      .pgrid{gap:8px}
+      .brand-pcard{width:175px}
+      .ladies-pcard{width:185px}
+      .tsw-btn{font-size:.67rem;padding:8px 12px}
+      .bc-card{width:128px}
+      .bc-box{width:128px;height:128px}
+    }
+    @media(max-width:375px){
+      .hdr-row{padding:0 12px;height:54px}
+      .logo{font-size:1.3rem}
+      .hero-h{font-size:1.55rem}
+      .tsw-btn{font-size:.61rem;padding:7px 10px}
+      .brand-pcard{width:155px}
+      .ladies-pcard{width:165px}
+    }
+    @media(max-width:320px){
+      .logo{font-size:1.1rem}
+      .hero-h{font-size:1.3rem}
+      .tsw-btn{font-size:.56rem;padding:6px 9px;gap:4px}
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── ANNOUNCEMENT STRIP ── -->
+<div class="strip" role="marquee" aria-label="Promotions">
+  <div class="strip-track">
+    <span>Free delivery above <b>Rs. 10,000</b></span>
+    <span>&nbsp;&middot;&nbsp;</span>
+    <span>New denim drops every week — <b>Shop now</b></span>
+    <span>&nbsp;&middot;&nbsp;</span>
+    <span>Code <b>TUASL10</b> — 10% off your first order</span>
+    <span>&nbsp;&middot;&nbsp;</span>
+    <span>Rugged Heads · Atitude Gen · BlueCrew · Indigo &amp; Co. — <b>All Under One Roof</b></span>
+    <span>&nbsp;&middot;&nbsp;</span>
+    <span>Free delivery above <b>Rs. 10,000</b></span>
+    <span>&nbsp;&middot;&nbsp;</span>
+    <span>New denim drops every week — <b>Shop now</b></span>
+    <span>&nbsp;&middot;&nbsp;</span>
+    <span>Code <b>TUASL10</b> — 10% off your first order</span>
+    <span>&nbsp;&middot;&nbsp;</span>
+    <span>Rugged Heads · Atitude Gen · BlueCrew · Indigo &amp; Co. — <b>All Under One Roof</b></span>
+    <span>&nbsp;&middot;&nbsp;</span>
+  </div>
+</div>
+
+<!-- ── HEADER ── -->
+<header class="hdr">
+  <div class="hdr-row">
+    <button class="ham" id="mob-open" aria-label="Open menu">
+      <svg viewBox="0 0 24 24"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+    </button>
+    <a href="index-v7.html" style="display:flex;flex-direction:column;align-items:flex-start;gap:0">
+      <span class="logo" style="font-size:1.45rem;letter-spacing:.04em"><em>C</em>OLOMBO<span style="color:var(--ACC2);font-weight:400"> W.</span></span>
+      <span class="logo-sub">Wardrobe &amp; Denim Co.</span>
+    </a>
+    <div class="hdr-search">
+      <input type="search" id="h-search" placeholder="Search Rugged Heads, Atitude Gen, denim, frocks…" autocomplete="off">
+      <button type="button" onclick="if(document.getElementById('h-search').value)location='search.html?q='+encodeURIComponent(document.getElementById('h-search').value)" aria-label="Search">
+        <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      </button>
+    </div>
+    <div class="hdr-icons">
+      <a href="wishlist.html" class="hdr-icon" aria-label="Wishlist">
+        <svg viewBox="0 0 24 24"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+        <span>Wishlist</span>
+      </a>
+      <a href="cart.html" class="hdr-icon" aria-label="Cart">
+        <svg viewBox="0 0 24 24"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>
+        <span>Cart</span>
+        <span class="hdr-badge" id="cart-cnt">0</span>
+      </a>
+    </div>
+  </div>
+</header>
+
+<!-- ── CATEGORY NAV ── -->
+<nav class="catnav" aria-label="Shop categories">
+  <div class="catnav-inner">
+    <a href="women.html" class="cat-a">Women</a>
+    <a href="men.html" class="cat-a">Men</a>
+    <a href="kids.html" class="cat-a">Kids</a>
+    <a href="baby.html" class="cat-a">Baby</a>
+    <a href="new-arrivals.html" class="cat-a on">New Arrivals</a>
+    <a href="category.html?category=jeans" class="cat-a">Jeans &amp; Denim</a>
+    <a href="category.html?category=dresses" class="cat-a">Frocks &amp; Dresses</a>
+    <a href="category.html?category=tops" class="cat-a">T-Shirts &amp; Tops</a>
+    <a href="category.html?category=jackets" class="cat-a">Jackets</a>
+    <a href="category.html?category=traditional" class="cat-a">Traditional</a>
+    <a href="sale.html" class="cat-a sale">Sale</a>
+  </div>
+</nav>
+
+<!-- ── MOBILE NAV ── -->
+<div id="mob-nav" style="position:fixed;inset:0;z-index:800;pointer-events:none">
+  <div id="mob-bd" style="position:absolute;inset:0;background:rgba(0,0,0,.5);opacity:0;transition:opacity .28s"></div>
+  <div id="mob-panel" style="position:absolute;left:0;top:0;bottom:0;width:min(300px,86vw);background:#fff;transform:translateX(-105%);transition:transform .3s cubic-bezier(.4,0,.2,1);display:flex;flex-direction:column">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;background:var(--NAV)">
+      <span style="font-family:'Oswald',sans-serif;font-size:1.1rem;font-weight:700;color:#fff;letter-spacing:.06em;text-transform:uppercase"><span style="color:var(--ACC2)">C</span>OLOMBO W.</span>
+      <button id="mob-close" style="color:#fff;background:none;border:none;cursor:pointer;display:flex" aria-label="Close">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div style="padding:10px 16px;border-bottom:1px solid var(--BD)">
+      <input id="mob-search" type="search" placeholder="Search denim, frocks, brands…" style="width:100%;padding:9px 14px;border:1.5px solid var(--BD);font-size:.85rem;font-family:'Nunito',sans-serif;outline:none;background:var(--GR);border-radius:4px">
+    </div>
+    <nav style="overflow-y:auto;flex:1">
+      <a href="women.html" style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;font-size:.88rem;font-weight:700;border-bottom:1px solid var(--GR)">Women <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m9 18 6-6-6-6"/></svg></a>
+      <a href="men.html" style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;font-size:.88rem;font-weight:700;border-bottom:1px solid var(--GR)">Men <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m9 18 6-6-6-6"/></svg></a>
+      <a href="kids.html" style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;font-size:.88rem;font-weight:700;border-bottom:1px solid var(--GR)">Kids <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m9 18 6-6-6-6"/></svg></a>
+      <a href="baby.html" style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;font-size:.88rem;font-weight:700;border-bottom:1px solid var(--GR)">Baby <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m9 18 6-6-6-6"/></svg></a>
+      <a href="category.html?category=jeans" style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;font-size:.88rem;font-weight:700;border-bottom:1px solid var(--GR);color:var(--ACC)">Jeans &amp; Denim <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--ACC)" stroke-width="2.5"><path d="m9 18 6-6-6-6"/></svg></a>
+      <a href="sale.html" style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;font-size:.88rem;font-weight:800;color:var(--RED);border-bottom:1px solid var(--GR)">Sale <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--RED)" stroke-width="2.5"><path d="m9 18 6-6-6-6"/></svg></a>
+      <a href="cart.html" style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;font-size:.88rem;font-weight:700;border-bottom:1px solid var(--GR)">Cart <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m9 18 6-6-6-6"/></svg></a>
+    </nav>
+  </div>
+</div>
+
+<!-- ── HERO ── -->
+<section class="hero" aria-label="Hero banner">
+  <div class="hero-img">
+    <img src="https://images.pexels.com/photos/1040881/pexels-photo-1040881.jpeg?auto=compress&cs=tinysrgb&w=1440&h=620&fit=crop"
+      alt="Colombo Wardrobe — denim fashion editorial" width="1440" height="620" loading="eager"
+      onerror="this.src='assets/images/placeholders/product-placeholder.svg'">
+  </div>
+  <div class="hero-overlay"></div>
+  <div class="hero-content">
+    <div class="hero-eyebrow">New Season Drop</div>
+    <h1 class="hero-h">Born in <em>Denim.</em><br>Made for Life.</h1>
+    <p class="hero-p">From boys' street-ready denims to ladies' elegant frocks — discover our full denim & fashion collection for the whole family.</p>
+    <div class="hero-btns">
+      <a href="category.html?category=jeans" class="btn-denim">Shop Denim</a>
+      <a href="sale.html" class="btn-wire">View Sale</a>
+    </div>
+  </div>
+  <div class="hero-tags">
+    <a href="category.html?category=jeans" class="hero-tag">Jeans</a>
+    <a href="category.html?category=dresses" class="hero-tag">Frocks</a>
+    <a href="kids.html" class="hero-tag">Kids</a>
+    <a href="sale.html" class="hero-tag">Sale</a>
+  </div>
+</section>
+
+<!-- ── BRAND CAROUSEL ── -->
+<section class="bc-sec" aria-label="Our brands and labels">
+  <div class="con">
+    <div class="bc-hd">
+      <div>
+        <div class="bc-title">Our Brands &amp; Labels</div>
+        <div class="bc-sub">Denim families, women's labels, kids &amp; baby — all under one roof</div>
+      </div>
+    </div>
+    <div class="bc-wrap">
+      <button class="bc-arr bl" id="bc-prev" aria-label="Previous brands">
+        <svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg>
+      </button>
+      <div class="bc-scroll" id="bc-sc">
+
+        <!-- ★ REAL BRAND: Rugged Heads -->
+        <a href="https://www.instagram.com/rugged.heads" target="_blank" rel="noopener" class="bc-card">
+          <div class="bc-box" style="background:linear-gradient(135deg,#1a1a1a 0%,#2d2d2d 100%);position:relative">
+            <div class="bc-ig"><svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20" rx="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"/></svg></div>
+            <div class="bc-real-tag">Official</div>
+            <div class="bc-icon" style="background:rgba(255,255,255,.12);font-size:.88rem">RH</div>
+            <div class="bc-name" style="color:#fff">Rugged Heads</div>
+            <div class="bc-handle" style="color:rgba(255,255,255,.55)">@rugged.heads</div>
+          </div>
+          <div class="bc-lbl">Streetwear</div>
+        </a>
+
+        <!-- ★ REAL BRAND: Atitude Gen -->
+        <a href="https://www.instagram.com/atitudegen" target="_blank" rel="noopener" class="bc-card">
+          <div class="bc-box" style="background:linear-gradient(135deg,#0f0f0f 0%,#1c1c2e 100%);position:relative">
+            <div class="bc-ig"><svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20" rx="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"/></svg></div>
+            <div class="bc-real-tag">Official</div>
+            <div class="bc-icon" style="background:rgba(255,255,255,.12);font-size:.88rem">AG</div>
+            <div class="bc-name" style="color:#fff">Atitude Gen</div>
+            <div class="bc-handle" style="color:rgba(255,255,255,.55)">@atitudegen</div>
+          </div>
+          <div class="bc-lbl">Urban Fashion</div>
+        </a>
+
+        <a href="category.html?category=jeans" class="bc-card">
+          <div class="bc-box" style="background:linear-gradient(135deg,#101c2e 0%,#192d47 100%)">
+            <div class="bc-icon" style="background:rgba(200,162,74,.28)">RE</div>
+            <div class="bc-name" style="color:#c8a24a">RawEdge</div>
+            <div class="bc-handle" style="color:rgba(255,255,255,.52)">Premium Denim</div>
+          </div>
+          <div class="bc-lbl">Jeans</div>
+        </a>
+
+        <a href="men.html" class="bc-card">
+          <div class="bc-box" style="background:linear-gradient(135deg,#eef3f9 0%,#cfdded 100%)">
+            <div class="bc-icon" style="background:var(--ACC)">SS</div>
+            <div class="bc-name" style="color:var(--NAV)">SL Street Co.</div>
+            <div class="bc-handle" style="color:var(--M)">Urban Menswear</div>
+          </div>
+          <div class="bc-lbl">Men</div>
+        </a>
+
+        <a href="category.html?category=jeans&department=women" class="bc-card">
+          <div class="bc-box" style="background:linear-gradient(135deg,#3a4e8c 0%,#2e6fad 100%)">
+            <div class="bc-icon" style="background:rgba(255,255,255,.16)">DL</div>
+            <div class="bc-name" style="color:#fff">DenimLab</div>
+            <div class="bc-handle" style="color:rgba(255,255,255,.62)">Designer Denim</div>
+          </div>
+          <div class="bc-lbl">Women</div>
+        </a>
+
+        <a href="kids.html" class="bc-card">
+          <div class="bc-box" style="background:linear-gradient(135deg,#e2ecf5 0%,#a8cfe8 100%)">
+            <div class="bc-icon" style="background:var(--NAV)">KC</div>
+            <div class="bc-name" style="color:var(--NAV)">Kids Crew</div>
+            <div class="bc-handle" style="color:var(--M)">Boys &amp; Girls</div>
+          </div>
+          <div class="bc-lbl">Kids</div>
+        </a>
+
+        <a href="baby.html" class="bc-card">
+          <div class="bc-box" style="background:linear-gradient(135deg,#fce4ec 0%,#f8bbd0 100%)">
+            <div class="bc-icon" style="background:#c2185b">PE</div>
+            <div class="bc-name" style="color:#880e4f">Pink Elephant</div>
+            <div class="bc-handle" style="color:#c2185b">Baby &amp; Toddler</div>
+          </div>
+          <div class="bc-lbl">Baby</div>
+        </a>
+
+        <a href="category.html?category=activewear" class="bc-card">
+          <div class="bc-box" style="background:linear-gradient(135deg,#1a2e1a 0%,#27ae60 100%)">
+            <div class="bc-icon" style="background:rgba(255,255,255,.16)">UE</div>
+            <div class="bc-name" style="color:#fff">Urban Edge</div>
+            <div class="bc-handle" style="color:rgba(255,255,255,.62)">Active &amp; Sport</div>
+          </div>
+          <div class="bc-lbl">Active</div>
+        </a>
+
+      </div>
+      <button class="bc-arr br" id="bc-next" aria-label="Next brands">
+        <svg viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>
+      </button>
+    </div>
+  </div>
+</section>
+
+<!-- ── DEPARTMENTS ── -->
+<section class="sec" style="background:var(--SURF)">
+  <div class="con">
+    <div class="sec-hd">
+      <div>
+        <div class="sec-tag">Collections</div>
+        <h2 class="sec-title">Shop by Department</h2>
+      </div>
+    </div>
+    <div class="dept-grid">
+      <a href="women.html" class="dept-card">
+        <img src="https://images.pexels.com/photos/774909/pexels-photo-774909.jpeg?auto=compress&cs=tinysrgb&w=500&h=660&fit=crop"
+          alt="Women's fashion" width="500" height="660" loading="lazy"
+          onerror="this.src='assets/images/placeholders/product-placeholder.svg'">
+        <div class="dept-overlay"></div>
+        <div class="dept-lbl">
+          <div class="dept-name">Women</div>
+          <div class="dept-count">2,400+ styles</div>
+          <div class="dept-cta">Shop Now <svg viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg></div>
+        </div>
+      </a>
+      <a href="men.html" class="dept-card">
+        <img src="https://images.pexels.com/photos/2897482/pexels-photo-2897482.jpeg?auto=compress&cs=tinysrgb&w=500&h=660&fit=crop"
+          alt="Men's fashion" width="500" height="660" loading="lazy"
+          onerror="this.src='assets/images/placeholders/product-placeholder.svg'">
+        <div class="dept-overlay"></div>
+        <div class="dept-lbl">
+          <div class="dept-name">Men</div>
+          <div class="dept-count">1,800+ styles</div>
+          <div class="dept-cta">Shop Now <svg viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg></div>
+        </div>
+      </a>
+      <a href="kids.html" class="dept-card">
+        <img src="https://images.pexels.com/photos/1148998/pexels-photo-1148998.jpeg?auto=compress&cs=tinysrgb&w=500&h=660&fit=crop"
+          alt="Kids' fashion" width="500" height="660" loading="lazy"
+          onerror="this.src='assets/images/placeholders/product-placeholder.svg'">
+        <div class="dept-overlay"></div>
+        <div class="dept-lbl">
+          <div class="dept-name">Kids</div>
+          <div class="dept-count">1,200+ styles</div>
+          <div class="dept-cta">Shop Now <svg viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg></div>
+        </div>
+      </a>
+      <a href="baby.html" class="dept-card">
+        <img src="https://images.pexels.com/photos/3662849/pexels-photo-3662849.jpeg?auto=compress&cs=tinysrgb&w=500&h=660&fit=crop"
+          alt="Baby clothing" width="500" height="660" loading="lazy"
+          onerror="this.src='assets/images/placeholders/product-placeholder.svg'">
+        <div class="dept-overlay"></div>
+        <div class="dept-lbl">
+          <div class="dept-name">Baby</div>
+          <div class="dept-count">800+ styles</div>
+          <div class="dept-cta">Shop Now <svg viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg></div>
+        </div>
+      </a>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════
+     BRAND SECTION 1 — "BLUECREW BOYS"
+     Boys Denims · Graphic Tees · Casuals
+════════════════════════════════════════ -->
+<section class="brand-boys" aria-label="BlueCrew Boys brand section">
+  <!-- denim texture overlay -->
+  <div style="position:absolute;inset:0;background:repeating-linear-gradient(45deg,rgba(255,255,255,.015) 0,rgba(255,255,255,.015) 1px,transparent 1px,transparent 8px);pointer-events:none;z-index:1"></div>
+  <div class="brand-boys-inner" style="position:relative;z-index:2">
+    <div class="brand-boys-info">
+      <div class="brand-logo-boys">Blue<span>Crew</span></div>
+      <div class="brand-tagline">Boys Denim Essentials</div>
+      <p class="brand-desc">Rugged denim jeans, cool graphic tees and casual fits — everything your boy needs to look and feel his best every day.</p>
+      <div class="brand-cats">
+        <a href="category.html?category=jeans&department=kids" class="brand-cat">Denim Jeans</a>
+        <a href="category.html?category=tops&department=kids" class="brand-cat">Graphic Tees</a>
+        <a href="category.html?category=shorts&department=kids" class="brand-cat">Shorts</a>
+        <a href="category.html?category=jackets&department=kids" class="brand-cat">Denim Jackets</a>
+      </div>
+      <a href="kids.html" class="btn-brand">Shop Boys</a>
+    </div>
+    <div class="brand-boys-scroll">
+      <div class="brand-scroll-inner" id="boys-grid"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ── NEW ARRIVALS ── -->
+<section class="sec">
+  <div class="con">
+    <div class="sec-hd">
+      <div>
+        <div class="sec-tag">Just Dropped</div>
+        <h2 class="sec-title">New Arrivals</h2>
+      </div>
+      <a href="new-arrivals.html" class="view-all">See All →</a>
+    </div>
+    <div class="pgrid" id="g-new"></div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════
+     BRAND SECTION 2 — "INDIGO & CO."
+     Ladies Frocks · Dresses · Denim Style
+════════════════════════════════════════ -->
+<section class="brand-ladies" aria-label="Indigo and Co. ladies brand section">
+  <div class="brand-ladies-inner">
+    <div class="brand-ladies-scroll">
+      <div class="brand-scroll-inner" id="ladies-grid"></div>
+    </div>
+    <div class="brand-ladies-info">
+      <div class="brand-logo-ladies">Indigo <em>&amp; Co.</em></div>
+      <div class="brand-tagline-l">Ladies' Frocks &amp; Denim Collection</div>
+      <p class="brand-desc-l">Flowing frocks, elegant denim dresses and feminine casuals — curated for the modern Sri Lankan woman who loves style and comfort.</p>
+      <div class="brand-cats-l">
+        <a href="category.html?category=dresses" class="brand-cat-l">Frocks</a>
+        <a href="category.html?category=dresses&type=denim" class="brand-cat-l">Denim Dresses</a>
+        <a href="category.html?category=tops" class="brand-cat-l">Casual Tops</a>
+        <a href="category.html?category=traditional" class="brand-cat-l">Traditional</a>
+      </div>
+      <a href="women.html" class="btn-brand-l">Shop Ladies</a>
+    </div>
+  </div>
+</section>
+
+<!-- ── BEST SELLERS ── -->
+<section class="sec" style="background:var(--SURF)">
+  <div class="con">
+    <div class="sec-hd">
+      <div>
+        <div class="sec-tag">Most Loved</div>
+        <h2 class="sec-title">Best Sellers</h2>
+      </div>
+      <a href="category.html" class="view-all">See All →</a>
+    </div>
+    <div class="pgrid" id="g-best"></div>
+  </div>
+</section>
+
+<!-- ── DENIM SALE BANNER ── -->
+<section class="denim-banner" aria-label="Denim sale">
+  <div class="denim-banner-img">
+    <img src="https://images.pexels.com/photos/1598507/pexels-photo-1598507.jpeg?auto=compress&cs=tinysrgb&w=1440&h=320&fit=crop"
+      alt="Denim sale banner" width="1440" height="320" loading="lazy"
+      onerror="this.src='assets/images/placeholders/product-placeholder.svg'">
+  </div>
+  <div class="denim-banner-ov"></div>
+  <div class="denim-banner-content">
+    <div class="db-tag">Limited Time</div>
+    <h2 class="db-h">Denim Sale — Up to 50% Off</h2>
+    <p class="db-p">Shop our biggest denim sale of the season. Boys' jeans, ladies' frocks, men's denims and kids' casuals — all on sale now.</p>
+    <a href="sale.html" class="btn-sale">Shop the Sale</a>
+  </div>
+</section>
+
+<!-- ── PERKS ── -->
+<div class="perks">
+  <div class="perks-row">
+    <div class="perk">
+      <div class="perk-ico">
+        <svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+      </div>
+      <div>
+        <div class="perk-t">Free Delivery</div>
+        <div class="perk-s">Orders above Rs. 10,000</div>
+      </div>
+    </div>
+    <div class="perk">
+      <div class="perk-ico">
+        <svg viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+      </div>
+      <div>
+        <div class="perk-t">All 25 Districts</div>
+        <div class="perk-s">Islandwide delivery</div>
+      </div>
+    </div>
+    <div class="perk">
+      <div class="perk-ico">
+        <svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+      </div>
+      <div>
+        <div class="perk-t">14-Day Returns</div>
+        <div class="perk-s">Hassle-free policy</div>
+      </div>
+    </div>
+    <div class="perk">
+      <div class="perk-ico">
+        <svg viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.15 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.12 1h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.09 8.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 21 16z"/></svg>
+      </div>
+      <div>
+        <div class="perk-t">WhatsApp Support</div>
+        <div class="perk-s">Mon–Sat 9am–6pm</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── NEWSLETTER ── -->
+<section class="nl">
+  <div class="nl-inner">
+    <div class="nl-eyebrow">Join the Colombo Wardrobe</div>
+    <h2 class="nl-h">Never Miss a <em>Drop</em></h2>
+    <p class="nl-p">New drops from Rugged Heads, Atitude Gen &amp; our own labels — exclusive deals and style lookbooks straight to your inbox.</p>
+    <form class="nl-form" onsubmit="return false">
+      <input class="nl-inp" type="email" placeholder="Your email address" aria-label="Email address">
+      <button class="nl-btn" type="submit">Subscribe</button>
+    </form>
+    <p class="nl-fine">No spam, ever. Unsubscribe anytime.</p>
+  </div>
+</section>
+
+<!-- ── FOOTER ── -->
+<footer class="footer">
+  <div class="footer-main">
+    <div>
+      <div class="f-logo" style="font-size:1.3rem"><em>C</em>OLOMBO W.</div>
+      <p class="f-logo-sub" style="font-size:.6rem;letter-spacing:.14em;color:var(--ACC2);text-transform:uppercase;margin-bottom:12px;font-family:'Nunito',sans-serif;font-weight:700">Wardrobe &amp; Denim Co.</p>
+      <p class="f-desc">Sri Lanka's premier denim &amp; fashion destination. Rugged Heads, Atitude Gen and exclusive house labels — all curated under one roof in Colombo.</p>
+      <div class="f-soc">
+        <a href="#" aria-label="Instagram"><svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20" rx="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"/></svg></a>
+        <a href="#" aria-label="Facebook"><svg viewBox="0 0 24 24"><path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z"/></svg></a>
+        <a href="#" aria-label="TikTok"><svg viewBox="0 0 24 24"><path d="M9 12a4 4 0 1 0 4 4V4a5 5 0 0 0 5 5"/></svg></a>
+      </div>
+    </div>
+    <div class="f-col">
+      <h5>Shop</h5>
+      <a href="women.html">Women</a>
+      <a href="men.html">Men</a>
+      <a href="kids.html">Kids</a>
+      <a href="baby.html">Baby</a>
+      <a href="new-arrivals.html">New Arrivals</a>
+      <a href="sale.html">Sale</a>
+    </div>
+    <div class="f-col">
+      <h5>Denim</h5>
+      <a href="category.html?category=jeans">Jeans &amp; Denim</a>
+      <a href="category.html?category=dresses">Frocks &amp; Dresses</a>
+      <a href="category.html?category=jackets">Jackets</a>
+      <a href="category.html?category=tops">T-Shirts</a>
+    </div>
+    <div class="f-col">
+      <h5>Help</h5>
+      <a href="contact.html">Contact Us</a>
+      <a href="#">Delivery Info</a>
+      <a href="#">Returns</a>
+      <a href="#">Size Guide</a>
+      <a href="about.html">About Us</a>
+    </div>
+  </div>
+  <div class="footer-btm">
+    <p>&copy; 2026 Colombo Wardrobe. All rights reserved.</p>
+    <div class="pay-row">
+      <span class="pay-chip">Visa</span>
+      <span class="pay-chip">Mastercard</span>
+      <span class="pay-chip">Cash on Delivery</span>
+    </div>
+  </div>
+</footer>
+
+<!-- ── WHATSAPP ── -->
+<a href="https://wa.me/94771234567" class="wa" target="_blank" rel="noopener" aria-label="WhatsApp">
+  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+</a>
+
+<!-- ── TEMPLATE SWITCHER ── -->
+<div class="tsw">
+  <div class="tsw-menu" id="tsw-menu">
+    <div class="tsw-head">Choose Template</div>
+    <a href="index.html" class="tsw-item"><span class="t-dot" style="background:#8b1e3f"></span>Classic Boutique</a>
+    <a href="index-urban.html" class="tsw-item"><span class="t-dot" style="background:#111;outline:1.5px solid #e63946;outline-offset:1px"></span>Urban Dark</a>
+    <a href="index-v3.html" class="tsw-item"><span class="t-dot" style="background:#8b1e3f;border:2px solid #fff;outline:2px solid #8b1e3f"></span>Fashion Hub</a>
+    <a href="index-v4.html" class="tsw-item"><span class="t-dot" style="background:#c9a84c"></span>Luxe Gold</a>
+    <a href="index-v5.html" class="tsw-item"><span class="t-dot" style="background:#e63c26"></span>Fresh Minimal</a>
+    <a href="index-v6.html" class="tsw-item"><span class="t-dot" style="background:#c4a882"></span>Natural Linen</a>
+    <a href="index-v7.html" class="tsw-item cur"><span class="t-dot" style="background:#2e6fad"></span>Denim &amp; Co.</a>
+  </div>
+  <button class="tsw-btn" id="tsw-btn">
+    <svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+    Templates
+    <svg viewBox="0 0 24 24" id="tsw-arrow"><path d="m18 15-6-6-6 6"/></svg>
+  </button>
+</div>
+
+<!-- ── SCRIPTS ── -->
+<script src="js/config.js"></script>
+<script src="js/products.js"></script>
+<script src="js/cart.js"></script>
+<script src="js/wishlist.js"></script>
+<script>
+localStorage.setItem('tuasl_tmpl','denim');
+
+/* ── Mobile nav ── */
+var nav=document.getElementById('mob-nav'),bd=document.getElementById('mob-bd'),panel=document.getElementById('mob-panel');
+function openNav(){nav.style.pointerEvents='all';bd.style.opacity='1';panel.style.transform='translateX(0)'}
+function closeNav(){nav.style.pointerEvents='none';bd.style.opacity='0';panel.style.transform='translateX(-105%)'}
+document.getElementById('mob-open').addEventListener('click',openNav);
+document.getElementById('mob-close').addEventListener('click',closeNav);
+bd.addEventListener('click',closeNav);
+
+/* ── Search ── */
+document.getElementById('h-search').addEventListener('keydown',function(e){if(e.key==='Enter'&&this.value)location='search.html?q='+encodeURIComponent(this.value)});
+document.getElementById('mob-search').addEventListener('keydown',function(e){if(e.key==='Enter'&&this.value)location='search.html?q='+encodeURIComponent(this.value)});
+
+/* ── Cart badge ── */
+function updCart(){var c=JSON.parse(localStorage.getItem('tuasl_cart')||'[]');var cnt=c.reduce(function(a,b){return a+(b.qty||1)},0);var el=document.getElementById('cart-cnt');if(el){el.textContent=cnt;el.style.display=cnt>0?'flex':'none'}}
+updCart();window.addEventListener('storage',updCart);
+
+function rs(n){return 'Rs. '+Number(n).toLocaleString('en-LK')}
+
+/* ── Color swatch map ── */
+var CMAP={
+  'Black':'#1a1a1a','White':'#f5f5f5','Navy':'#192d47','Red':'#c0392b',
+  'Blue':'#2e6fad','Green':'#27ae60','Pink':'#e91e8c','Yellow':'#d4a017',
+  'Grey':'#8a9bb0','Brown':'#7c5533','Beige':'#d7c4a5','Cream':'#f5f0e8',
+  'Camel':'#c19a6b','Tan':'#d2b48c','Khaki':'#b5a98a','Orange':'#e67e22',
+  'Purple':'#8e44ad','Teal':'#1abc9c','Maroon':'#7b241c','Olive':'#6b8e23',
+  'Coral':'#e07060','Mint':'#98d8c8','Lavender':'#c8a2c8','Gold':'#c9a84c',
+  'Charcoal':'#3a4a5c','Indigo':'#3a4e8c','Chambray':'#5fa8d3','Denim':'#4472a8',
+  'Rust':'#b5451b','Sand':'#d4bf99','Sky':'#87ceeb','Cobalt':'#2468b8'
+};
+
+/* ── Rich editorial photos — no light/pale tones, deep & fashion-forward ── */
+var V7_IMGS = [
+  /* Women — warm linen charm & rich editorial */
+  'https://images.pexels.com/photos/774909/pexels-photo-774909.jpeg?auto=compress&cs=tinysrgb&w=400&h=533&fit=crop',
+  'https://images.pexels.com/photos/2219257/pexels-photo-2219257.jpeg?auto=compress&cs=tinysrgb&w=400&h=533&fit=crop',
+  'https://images.pexels.com/photos/2760783/pexels-photo-2760783.jpeg?auto=compress&cs=tinysrgb&w=400&h=533&fit=crop',
+  'https://images.pexels.com/photos/1721558/pexels-photo-1721558.jpeg?auto=compress&cs=tinysrgb&w=400&h=533&fit=crop',
+  'https://images.pexels.com/photos/2220320/pexels-photo-2220320.jpeg?auto=compress&cs=tinysrgb&w=400&h=533&fit=crop',
+  /* Men — urban & street editorial */
+  'https://images.pexels.com/photos/2897482/pexels-photo-2897482.jpeg?auto=compress&cs=tinysrgb&w=400&h=533&fit=crop',
+  'https://images.pexels.com/photos/1043474/pexels-photo-1043474.jpeg?auto=compress&cs=tinysrgb&w=400&h=533&fit=crop',
+  'https://images.pexels.com/photos/2955378/pexels-photo-2955378.jpeg?auto=compress&cs=tinysrgb&w=400&h=533&fit=crop',
+  'https://images.pexels.com/photos/1192609/pexels-photo-1192609.jpeg?auto=compress&cs=tinysrgb&w=400&h=533&fit=crop',
+  /* Denim editorial — deep tones */
+  'https://images.pexels.com/photos/3622608/pexels-photo-3622608.jpeg?auto=compress&cs=tinysrgb&w=400&h=533&fit=crop',
+  'https://images.pexels.com/photos/2529148/pexels-photo-2529148.jpeg?auto=compress&cs=tinysrgb&w=400&h=533&fit=crop',
+  'https://images.pexels.com/photos/1598507/pexels-photo-1598507.jpeg?auto=compress&cs=tinysrgb&w=400&h=533&fit=crop',
+  /* Urban street (Rugged Heads / Atitude Gen) */
+  'https://images.pexels.com/photos/1040881/pexels-photo-1040881.jpeg?auto=compress&cs=tinysrgb&w=400&h=533&fit=crop',
+  'https://images.pexels.com/photos/1148998/pexels-photo-1148998.jpeg?auto=compress&cs=tinysrgb&w=400&h=533&fit=crop',
+  /* Kids & baby — warm tones */
+  'https://images.pexels.com/photos/3662849/pexels-photo-3662849.jpeg?auto=compress&cs=tinysrgb&w=400&h=533&fit=crop',
+  'https://images.pexels.com/photos/35537/child-children-girl-happy.jpg?auto=compress&cs=tinysrgb&w=400&h=533&fit=crop',
+];
+
+/* ── Star renderer ── */
+function mkStars(rating){
+  var full=Math.floor(rating),empty=5-Math.ceil(rating),half=5-full-empty,s='';
+  for(var i=0;i<full;i++) s+='<span class="star-f">&#9733;</span>';
+  if(half) s+='<span class="star-f" style="opacity:.5">&#9733;</span>';
+  for(var j=0;j<empty;j++) s+='<span class="star-e">&#9733;</span>';
+  return s;
+}
+
+/* ── Main product card ── */
+function mkCard(p){
+  var iw=wishlistManager&&wishlistManager.isInWishlist(p.id);
+  var badge='';
+  if(p.discount>0||p.badge==='Sale') badge='<span class="pbadge sale">SALE</span>';
+  else if(p.badge==='Best Seller') badge='<span class="pbadge best">BESTSELLER</span>';
+  else if(p.badge==='New') badge='<span class="pbadge new">NEW</span>';
+
+  var seed=p.id*7+13;
+  var rating=Math.round((3.5+(seed%15)/10)*10)/10;
+  var cnt=20+(seed%361);
+
+  var cols=p.colours||[];
+  var swatchHtml='';
+  cols.slice(0,4).forEach(function(c,i){swatchHtml+='<span class="pswatch'+(i===0?' sel':'')+'" style="background:'+(CMAP[c]||'#ccc')+'" title="'+c+'"></span>';});
+  if(cols.length>4) swatchHtml+='<span class="pswatch-more">+'+( cols.length-4)+'</span>';
+
+  var pr=p.discount>0
+    ?'<span class="pr-now">'+rs(p.price)+'</span><span class="pr-was">'+rs(p.originalPrice)+'</span><span class="pr-pct">-'+p.discount+'%</span>'
+    :'<span class="pr-now">'+rs(p.price)+'</span>';
+
+  var imgSrc = V7_IMGS[p.id % V7_IMGS.length];
+  return '<article class="pcard" data-id="'+p.id+'">'
+    +'<div class="pimg-wrap"><a href="product.html?id='+p.id+'"><img src="'+imgSrc+'" alt="'+p.name+'" width="400" height="533" loading="lazy" onerror="this.src=\'assets/images/placeholders/product-placeholder.svg\'"></a>'
+    +badge
+    +'<button class="pwish'+(iw?' wished':'')+'" data-id="'+p.id+'" aria-label="Wishlist"><svg viewBox="0 0 24 24"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg></button>'
+    +'<button class="padd" data-id="'+p.id+'">Add to Cart</button>'
+    +'</div>'
+    +'<div class="pbody">'
+    +(swatchHtml?'<div class="pswatches">'+swatchHtml+'</div>':'')
+    +'<div class="pstars"><div style="display:flex;gap:1px">'+mkStars(rating)+'</div><span class="prating-cnt">('+cnt+')</span></div>'
+    +'<div class="pdept">'+p.department+'</div>'
+    +'<div class="pname">'+p.name+'</div>'
+    +'<div class="pprice">'+pr+'</div>'
+    +'</div></article>';
+}
+
+/* ── Brand card for boys section ── */
+function mkBoysCard(p){
+  var pr=p.discount>0
+    ?'<span class="bpprice">'+rs(p.price)+'</span><span class="bpwas">'+rs(p.originalPrice)+'</span>'
+    :'<span class="bpprice">'+rs(p.price)+'</span>';
+  var bImg = V7_IMGS[(p.id * 3 + 1) % V7_IMGS.length];
+  return '<div class="brand-pcard" data-id="'+p.id+'" onclick="location=\'product.html?id='+p.id+'\'">'
+    +'<div class="bpimg"><img src="'+bImg+'" alt="'+p.name+'" width="200" height="266" loading="lazy" onerror="this.src=\'assets/images/placeholders/product-placeholder.svg\'"></div>'
+    +'<div class="bpbody"><div class="bpname">'+p.name+'</div><div style="display:flex;align-items:center;gap:4px">'+pr+'</div></div>'
+    +'</div>';
+}
+
+/* ── Brand card for ladies section ── */
+function mkLadiesCard(p){
+  var pr=p.discount>0
+    ?'<span class="lppr">'+rs(p.price)+'</span><span class="lpwas">'+rs(p.originalPrice)+'</span>'
+    :'<span class="lppr">'+rs(p.price)+'</span>';
+  var lImg = V7_IMGS[(p.id * 5 + 7) % V7_IMGS.length];
+  return '<div class="ladies-pcard" data-id="'+p.id+'" onclick="location=\'product.html?id='+p.id+'\'">'
+    +'<div class="lpimg"><img src="'+lImg+'" alt="'+p.name+'" width="210" height="280" loading="lazy" onerror="this.src=\'assets/images/placeholders/product-placeholder.svg\'"></div>'
+    +'<div class="lpbody"><div class="lpname">'+p.name+'</div><div class="lpprice">'+pr+'</div></div>'
+    +'</div>';
+}
+
+window.addEventListener('DOMContentLoaded',function(){
+  if(typeof products==='undefined') return;
+  var all=products;
+
+  /* New arrivals grid */
+  var gNew=document.getElementById('g-new');
+  if(gNew) gNew.innerHTML=all.filter(function(p){return p.badge==='New'}).slice(0,10).map(mkCard).join('');
+
+  /* Best sellers grid */
+  var gBest=document.getElementById('g-best');
+  if(gBest) gBest.innerHTML=all.filter(function(p){return p.badge==='Best Seller'}).slice(0,10).map(mkCard).join('');
+
+  /* Boys brand (kids department) */
+  var gBoys=document.getElementById('boys-grid');
+  if(gBoys){
+    var boys=all.filter(function(p){return p.department==='kids'||p.department==='boys'}).slice(0,8);
+    if(!boys.length) boys=all.slice(30,38);
+    gBoys.innerHTML=boys.map(mkBoysCard).join('');
+  }
+
+  /* Ladies brand (women department) */
+  var gLadies=document.getElementById('ladies-grid');
+  if(gLadies){
+    var ladies=all.filter(function(p){return p.department==='women'}).slice(0,8);
+    if(!ladies.length) ladies=all.slice(0,8);
+    gLadies.innerHTML=ladies.map(mkLadiesCard).join('');
+  }
+
+  /* Wishlist & cart events */
+  document.querySelectorAll('.pwish').forEach(function(btn){
+    btn.addEventListener('click',function(e){
+      e.stopPropagation();
+      var id=parseInt(this.dataset.id);
+      if(wishlistManager.isInWishlist(id)){wishlistManager.removeItem(id);this.classList.remove('wished')}
+      else{wishlistManager.addItem(id);this.classList.add('wished')}
+    });
+  });
+  document.querySelectorAll('.padd').forEach(function(btn){
+    btn.addEventListener('click',function(e){
+      e.stopPropagation();
+      var id=parseInt(this.dataset.id),p=all.find(function(x){return x.id===id});
+      if(p)cartManager.addItem(p);updCart();
+    });
+  });
+});
+
+/* ── Brand carousel arrows ── */
+var bsc=document.getElementById('bc-sc');
+if(bsc){
+  document.getElementById('bc-prev').addEventListener('click',function(){bsc.scrollBy({left:-500,behavior:'smooth'})});
+  document.getElementById('bc-next').addEventListener('click',function(){bsc.scrollBy({left:500,behavior:'smooth'})});
+}
+
+/* ── Template Switcher ── */
+document.getElementById('tsw-btn').addEventListener('click',function(){
+  var m=document.getElementById('tsw-menu'),a=document.getElementById('tsw-arrow');
+  var o=m.classList.toggle('open');
+  a.style.transform=o?'rotate(180deg)':'';
+});
+document.addEventListener('click',function(e){
+  if(!e.target.closest('.tsw')){document.getElementById('tsw-menu').classList.remove('open');document.getElementById('tsw-arrow').style.transform=''}
+});
+</script>
+</body>
+</html>

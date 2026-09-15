@@ -1,0 +1,65 @@
+/* ── The Edit Theme — inner page override ── */
+:root {
+  --primary:       #111111;
+  --primary-dark:  #000000;
+  --accent:        #c4a882;
+  --background:    #ffffff;
+  --surface:       #ffffff;
+  --text:          #111111;
+  --muted:         #888888;
+  --border:        #e0dbd4;
+  --sale:          #c62828;
+}
+body { background: #fff; color: #111; }
+.announcement-bar { background: #111 !important; }
+.site-header { background: rgba(255,255,255,.97) !important; border-bottom: 1px solid #e0dbd4 !important; }
+.header-logo { color: #111 !important; font-family: 'Cormorant Garamond', 'Playfair Display', serif !important; font-weight: 700 !important; letter-spacing: .06em; }
+.header-logo span { color: #888; letter-spacing: .1em; }
+.header-search input { background: #f7f5f2; border-color: #e0dbd4; color: #111; }
+.header-search input::placeholder { color: #bbb; }
+.header-search input:focus { border-color: #111; box-shadow: 0 0 0 3px rgba(0,0,0,.06); }
+.header-action-btn { color: #666; }
+.header-action-btn:hover { color: #111; }
+.site-nav { background: #fff; border-top: 1px solid #e0dbd4; }
+.nav-link { color: #555 !important; font-weight: 400; letter-spacing: .03em; }
+.nav-link:hover, .nav-link:focus { color: #111 !important; }
+.nav-link.sale { color: #c62828 !important; font-weight: 600; }
+.nav-link.new  { color: #111 !important; font-weight: 600; }
+.page-hero { background: #111; }
+.page-hero h1 { color: #fff; font-family: 'Cormorant Garamond', 'Playfair Display', serif; font-weight: 600; letter-spacing: .04em; }
+#page-desc { color: rgba(255,255,255,.6); }
+.breadcrumb a { color: rgba(255,255,255,.55); }
+.breadcrumb a:hover { color: rgba(255,255,255,.9); }
+#breadcrumb-current { color: rgba(255,255,255,.85); }
+.product-card { background: #fff !important; border-color: #e8e3dc !important; }
+.product-card:hover { box-shadow: 0 6px 24px rgba(0,0,0,.09) !important; }
+.product-card__name a { color: #111; }
+.product-card__name a:hover { color: #000; text-decoration: underline; }
+.product-card__category { color: #888; font-weight: 500; letter-spacing: .05em; font-size: .68rem; }
+.product-card__price-now { color: #111; font-weight: 600; }
+.product-card__price-was { color: #aaa; }
+.product-card__discount { color: #c62828; background: rgba(198,40,40,.07); }
+.product-card__badge.sale  { background: #c62828; }
+.product-card__badge.new   { background: #111; color: #fff; }
+.product-card__info { background: #fff; }
+.product-card__actions { background: #fff; border-top: 1px solid #f0ece6; }
+.btn-primary, .btn.btn-primary { background: #111 !important; border-color: #111 !important; color: #fff !important; font-weight: 500 !important; letter-spacing: .08em; }
+.btn-primary:hover, .btn.btn-primary:hover { background: #333 !important; border-color: #333 !important; }
+.btn-outline-dark { border-color: #ccc !important; color: #555 !important; }
+.btn-outline-dark:hover { background: #111 !important; border-color: #111 !important; color: #fff !important; }
+.filter-sidebar { background: #f7f5f2; border-color: #e0dbd4; }
+.filter-sidebar .filter-section-title,
+.filter-sidebar .filter-title { color: #111; font-family: 'Cormorant Garamond', serif; font-weight: 600; letter-spacing: .04em; font-size: 1rem; }
+.filter-sidebar label { color: #555; }
+.filter-sidebar input[type=checkbox]:checked { accent-color: #111; }
+.filter-sidebar .filter-tag.active { background: #111; border-color: #111; color: #fff; }
+.category-toolbar { background: #fff; border-bottom: 1px solid #e8e3dc; }
+.category-toolbar .sort-select { background: #fff; border-color: #e0dbd4; color: #555; }
+.category-toolbar .sort-select:focus { border-color: #111; }
+.mobile-filter-btn { border-color: #ccc; color: #555; }
+.mobile-filter-btn:hover { background: #111; border-color: #111; color: #fff; }
+#load-more-btn { border-color: #ccc; color: #555; background: transparent; }
+#load-more-btn:hover { background: #111; border-color: #111; color: #fff; }
+.active-filters .filter-chip { background: #111; color: #fff; }
+.section-title { color: #111 !important; font-family: 'Cormorant Garamond', serif !important; font-weight: 600 !important; font-size: 1.6rem !important; }
+.category-count { color: #999; }

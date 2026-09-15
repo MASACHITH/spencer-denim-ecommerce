@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TU@SL Street Raw — Built for the Streets 2026</title>
+  <meta name="description" content="Raw denim. Bold cuts. Made for those who wear their story. Sri Lanka's street fashion destination.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+/* ── Reset ── */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Inter',sans-serif;background:#0a0a0a;color:#fff;overflow-x:hidden}
+a{text-decoration:none;color:inherit}
+img{display:block;max-width:100%}
+button{cursor:pointer;font-family:inherit;border:none;background:none}
+:root{--red:#E8002D;--blk:#0a0a0a;--drk:#111;--card:#141414;--mut:rgba(255,255,255,.5);--bdr:rgba(255,255,255,.1)}
+
+/* ── Announcement ── */
+.ann{background:var(--red);color:#fff;text-align:center;padding:.42rem 1rem;font-family:'Oswald',sans-serif;font-size:.75rem;letter-spacing:.14em;text-transform:uppercase}
+.ann a{color:#fff;text-decoration:underline}
+
+/* ── Header ── */
+.hdr{position:sticky;top:0;z-index:200;background:rgba(10,10,10,.95);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-bottom:1px solid var(--bdr)}
+.hdr-inner{max-width:1440px;margin:0 auto;padding:0 2rem;height:66px;display:flex;align-items:center;gap:1.75rem}
+.logo{font-family:'Oswald',sans-serif;font-size:1.45rem;font-weight:700;letter-spacing:.05em;white-space:nowrap;line-height:1}
+.logo-em{color:var(--red)}
+.logo-sub{font-size:.58rem;letter-spacing:.22em;color:rgba(255,255,255,.38);display:block;margin-top:2px;text-transform:uppercase}
+.nav{display:flex;gap:.1rem;flex:1;justify-content:center}
+.nav a{padding:.5rem .85rem;font-size:.82rem;font-weight:500;color:rgba(255,255,255,.68);letter-spacing:.03em;transition:color .18s;white-space:nowrap}
+.nav a:hover{color:#fff}
+.nav a.sale{color:var(--red)!important;font-weight:700}
+.nav a.new{font-weight:700}
+.hdr-icons{display:flex;gap:.25rem;align-items:center}
+.ico{position:relative;padding:8px;color:rgba(255,255,255,.68);display:flex;align-items:center;justify-content:center;border-radius:6px;transition:color .18s}
+.ico:hover{color:#fff}
+.ico svg{width:20px;height:20px}
+.cart-dot{position:absolute;top:3px;right:3px;background:var(--red);color:#fff;width:16px;height:16px;border-radius:50%;font-size:.58rem;font-weight:800;display:flex;align-items:center;justify-content:center}
+.mob-menu-btn{display:none}
+#mob-nav{display:none;background:#111;border-top:1px solid var(--bdr);padding:.75rem 1.5rem 1.25rem}
+#mob-nav.open{display:block}
+#mob-nav a{display:block;padding:.6rem 0;font-size:.92rem;color:rgba(255,255,255,.8);border-bottom:1px solid rgba(255,255,255,.07)}
+#mob-nav a:last-child{color:var(--red);font-weight:700;border-bottom:none}
+
+/* ── Hero ── */
+.hero{position:relative;height:100svh;min-height:620px;overflow:hidden}
+.hero video,.hero-fallback{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.hero-ov{position:absolute;inset:0;background:linear-gradient(155deg,rgba(10,10,10,.5) 0%,rgba(10,10,10,.15) 45%,rgba(10,10,10,.85) 100%)}
+.hero-body{position:relative;z-index:10;height:100%;display:flex;flex-direction:column;justify-content:flex-end;padding:4rem clamp(1.5rem,5vw,5rem) 5rem;max-width:820px}
+.hero-tag{font-family:'Oswald',sans-serif;font-size:.7rem;letter-spacing:.32em;color:var(--red);text-transform:uppercase;margin-bottom:.75rem}
+.hero-h1{font-family:'Oswald',sans-serif;font-size:clamp(3.5rem,9.5vw,8rem);font-weight:700;line-height:.9;text-transform:uppercase;color:#fff;margin-bottom:1.25rem}
+.hero-h1 em{color:var(--red);font-style:normal}
+.hero-desc{font-size:.95rem;color:rgba(255,255,255,.68);max-width:400px;margin-bottom:2.25rem;line-height:1.7}
+.hero-btns{display:flex;gap:.875rem;flex-wrap:wrap}
+.btn{display:inline-flex;align-items:center;gap:.5rem;padding:.875rem 2.5rem;font-family:'Oswald',sans-serif;font-size:.85rem;font-weight:600;letter-spacing:.14em;text-transform:uppercase;cursor:pointer;transition:all .2s}
+.btn-red{background:var(--red);color:#fff;border:2px solid var(--red)}
+.btn-red:hover{background:#c0001f;border-color:#c0001f}
+.btn-ghost{background:transparent;color:#fff;border:2px solid rgba(255,255,255,.5)}
+.btn-ghost:hover{background:rgba(255,255,255,.08);border-color:#fff}
+.btn-blk{background:#111;color:#fff;border:2px solid #111}
+.btn-blk:hover{background:#222;border-color:#222}
+.hero-scroll-hint{position:absolute;bottom:2rem;right:2.5rem;z-index:10;writing-mode:vertical-rl;font-size:.62rem;letter-spacing:.22em;color:rgba(255,255,255,.35);display:flex;align-items:center;gap:.5rem}
+.hero-scroll-hint::before{content:'';width:1px;height:44px;background:rgba(255,255,255,.2)}
+
+/* ── Section utils ── */
+.sec{padding:5rem clamp(1.25rem,4vw,3.5rem);max-width:1440px;margin:0 auto}
+.sec-bg{background:var(--drk)}
+.sec-hd{margin-bottom:2rem}
+.sec-hd-row{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:2rem;gap:1rem;flex-wrap:wrap}
+.sec-label{font-family:'Oswald',sans-serif;font-size:.66rem;letter-spacing:.28em;color:var(--red);text-transform:uppercase;margin-bottom:.35rem}
+.sec-title{font-family:'Oswald',sans-serif;font-size:clamp(1.9rem,4vw,2.9rem);font-weight:700;text-transform:uppercase;line-height:.95}
+
+/* ── Dept tiles ── */
+.tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:.75rem}
+.tile{position:relative;overflow:hidden;aspect-ratio:2/3;cursor:pointer;display:block}
+.tile img{width:100%;height:100%;object-fit:cover;transition:transform .6s ease}
+.tile:hover img{transform:scale(1.04)}
+.tile-ov{position:absolute;inset:0;background:linear-gradient(to top,rgba(0,0,0,.78) 0%,rgba(0,0,0,.1) 55%)}
+.tile-body{position:absolute;bottom:0;left:0;right:0;padding:1.75rem 1.5rem}
+.tile-eyebrow{font-family:'Oswald',sans-serif;font-size:.6rem;letter-spacing:.22em;color:rgba(255,255,255,.55);text-transform:uppercase;margin-bottom:.3rem}
+.tile-name{font-family:'Oswald',sans-serif;font-size:1.9rem;font-weight:700;text-transform:uppercase;color:#fff;margin-bottom:.5rem;line-height:1}
+.tile-cta{display:inline-flex;align-items:center;gap:.4rem;font-family:'Oswald',sans-serif;font-size:.68rem;letter-spacing:.16em;text-transform:uppercase;color:rgba(255,255,255,.75);border-bottom:1px solid rgba(255,255,255,.35);padding-bottom:2px;transition:all .2s}
+.tile:hover .tile-cta{color:var(--red);border-color:var(--red)}
+.tile-cta svg{transition:transform .2s}
+.tile:hover .tile-cta svg{transform:translateX(4px)}
+
+/* ── Horizontal scroll row ── */
+.hscroll-wrap{overflow-x:auto;scroll-behavior:smooth;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.hscroll-wrap::-webkit-scrollbar{display:none}
+.hscroll-row{display:flex;gap:1rem;width:max-content;padding-right:clamp(1.25rem,4vw,3.5rem)}
+.drop-card{width:270px;flex-shrink:0;cursor:pointer}
+.drop-thumb{position:relative;overflow:hidden;aspect-ratio:3/4;background:var(--card)}
+.drop-thumb img{width:100%;height:100%;object-fit:cover;transition:transform .5s ease}
+.drop-card:hover .drop-thumb img{transform:scale(1.04)}
+.drop-badge{position:absolute;top:.7rem;left:.7rem;font-family:'Oswald',sans-serif;font-size:.6rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;padding:3px 10px}
+.drop-badge.new-badge{background:#fff;color:#000}
+.drop-badge.sale-badge{background:var(--red);color:#fff}
+.drop-quick{position:absolute;bottom:0;left:0;right:0;background:rgba(10,10,10,.93);color:#fff;font-family:'Oswald',sans-serif;font-size:.7rem;letter-spacing:.12em;text-transform:uppercase;padding:.65rem;text-align:center;transform:translateY(100%);transition:transform .24s ease;border:none;width:100%}
+.drop-card:hover .drop-quick{transform:translateY(0)}
+.drop-info{padding:.875rem .15rem .25rem}
+.drop-name{font-size:.88rem;font-weight:600;color:#fff;margin-bottom:.2rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.drop-dept{font-size:.7rem;color:var(--mut);margin-bottom:.45rem}
+.drop-prices{display:flex;gap:.45rem;align-items:baseline}
+.drop-now{font-size:.92rem;font-weight:700;color:#fff}
+.drop-was{font-size:.76rem;color:var(--mut);text-decoration:line-through}
+.drop-pct{font-size:.68rem;font-weight:700;color:var(--red)}
+
+/* ── Campaign split ── */
+.campaign{display:grid;grid-template-columns:1fr 1fr}
+.camp-img{position:relative;overflow:hidden;min-height:580px}
+.camp-img img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.camp-body{background:var(--drk);display:flex;flex-direction:column;justify-content:center;padding:4rem clamp(2rem,5vw,5rem)}
+.camp-label{font-family:'Oswald',sans-serif;font-size:.66rem;letter-spacing:.3em;color:var(--red);text-transform:uppercase;margin-bottom:1rem}
+.camp-h2{font-family:'Oswald',sans-serif;font-size:clamp(2.4rem,4.5vw,3.8rem);font-weight:700;text-transform:uppercase;line-height:.92;color:#fff;margin-bottom:1.5rem}
+.camp-h2 span{color:var(--red);display:block}
+.camp-p{font-size:.9rem;color:rgba(255,255,255,.58);line-height:1.75;margin-bottom:2.25rem;max-width:380px}
+.camp-btns{display:flex;gap:.75rem;flex-wrap:wrap}
+
+/* ── Product grid ── */
+.pgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:.75rem}
+.pcard{background:var(--card);position:relative;overflow:hidden;cursor:pointer;transition:transform .2s}
+.pcard:hover{transform:translateY(-2px)}
+.pcard-thumb{position:relative;overflow:hidden;aspect-ratio:3/4}
+.pcard-thumb img{width:100%;height:100%;object-fit:cover;transition:transform .5s ease}
+.pcard:hover .pcard-thumb img{transform:scale(1.05)}
+.pcard-badge{position:absolute;top:.65rem;left:.65rem;font-family:'Oswald',sans-serif;font-size:.58rem;font-weight:700;letter-spacing:.09em;text-transform:uppercase;padding:3px 9px}
+.pcard-badge.new{background:#fff;color:#000}
+.pcard-badge.sale{background:var(--red);color:#fff}
+.pcard-quick{position:absolute;bottom:0;left:0;right:0;background:rgba(10,10,10,.93);color:#fff;font-family:'Oswald',sans-serif;font-size:.68rem;letter-spacing:.12em;text-transform:uppercase;padding:.6rem;text-align:center;transform:translateY(100%);transition:transform .24s;border:none;width:100%}
+.pcard:hover .pcard-quick{transform:translateY(0)}
+.pcard-info{padding:.875rem .75rem .75rem}
+.pcard-dept{font-size:.6rem;color:var(--red);font-weight:700;letter-spacing:.1em;text-transform:uppercase;margin-bottom:.2rem}
+.pcard-name{font-size:.84rem;font-weight:600;color:#fff;margin-bottom:.45rem;line-height:1.3}
+.pcard-prices{display:flex;gap:.4rem;align-items:baseline}
+.pcard-now{font-size:.9rem;font-weight:700;color:#fff}
+.pcard-was{font-size:.74rem;color:var(--mut);text-decoration:line-through}
+
+/* ── Sale strip ── */
+.sale-strip{position:relative;height:480px;overflow:hidden}
+.sale-strip img{width:100%;height:100%;object-fit:cover}
+.sale-ov{position:absolute;inset:0;background:rgba(0,0,0,.58);display:flex;align-items:center;justify-content:center;text-align:center;padding:1.5rem}
+.sale-tag{font-family:'Oswald',sans-serif;font-size:.7rem;letter-spacing:.32em;color:var(--red);text-transform:uppercase;margin-bottom:.75rem}
+.sale-h{font-family:'Oswald',sans-serif;font-size:clamp(3rem,9vw,7rem);font-weight:700;text-transform:uppercase;color:#fff;line-height:.88;margin-bottom:1rem}
+.sale-h span{color:var(--red)}
+.sale-sub{font-size:.95rem;color:rgba(255,255,255,.6);margin-bottom:2rem}
+
+/* ── Brand numbers ── */
+.numbers{background:var(--red);padding:3.5rem clamp(1.5rem,5vw,4rem)}
+.numbers-inner{max-width:1100px;margin:0 auto;display:flex;justify-content:space-around;gap:2rem;flex-wrap:wrap}
+.num-item{text-align:center}
+.num-val{font-family:'Oswald',sans-serif;font-size:clamp(2.4rem,5vw,3.8rem);font-weight:700;color:#fff;line-height:1}
+.num-lbl{font-size:.7rem;color:rgba(255,255,255,.72);letter-spacing:.14em;text-transform:uppercase;margin-top:.3rem}
+
+/* ── Newsletter ── */
+.nl{background:var(--drk);padding:5rem clamp(1.5rem,5vw,4rem);text-align:center}
+.nl-label{font-family:'Oswald',sans-serif;font-size:.66rem;letter-spacing:.28em;color:var(--red);text-transform:uppercase;margin-bottom:.5rem}
+.nl-title{font-family:'Oswald',sans-serif;font-size:clamp(1.8rem,4vw,2.8rem);font-weight:700;text-transform:uppercase;color:#fff;margin-bottom:.6rem}
+.nl-sub{font-size:.88rem;color:var(--mut);margin-bottom:2rem}
+.nl-form{display:flex;max-width:480px;margin:0 auto}
+.nl-input{flex:1;padding:.875rem 1.25rem;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.14);color:#fff;font-family:'Inter',sans-serif;font-size:.875rem;outline:none;transition:border-color .2s}
+.nl-input::placeholder{color:rgba(255,255,255,.32)}
+.nl-input:focus{border-color:var(--red)}
+.nl-btn{background:var(--red);color:#fff;border:none;padding:.875rem 1.75rem;font-family:'Oswald',sans-serif;font-size:.78rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;cursor:pointer;transition:background .2s}
+.nl-btn:hover{background:#c0001f}
+
+/* ── Footer ── */
+.footer{background:#040404;border-top:1px solid var(--bdr)}
+.footer-main{max-width:1440px;margin:0 auto;padding:4rem 2rem 2rem;display:grid;grid-template-columns:2fr 1fr 1fr 1.2fr;gap:3rem}
+.footer-brand{font-family:'Oswald',sans-serif;font-size:1.4rem;font-weight:700;color:#fff;margin-bottom:.5rem}
+.footer-brand span{color:var(--red)}
+.footer-tagline{font-size:.8rem;color:rgba(255,255,255,.45);line-height:1.65;max-width:250px;margin-bottom:1.25rem}
+.soc{display:flex;gap:.6rem}
+.soc-btn{width:36px;height:36px;border:1px solid var(--bdr);display:flex;align-items:center;justify-content:center;color:var(--mut);transition:all .18s}
+.soc-btn:hover{border-color:var(--red);color:var(--red)}
+.footer-h{font-family:'Oswald',sans-serif;font-size:.65rem;font-weight:700;letter-spacing:.22em;text-transform:uppercase;color:rgba(255,255,255,.32);margin-bottom:1.25rem}
+.flinks{list-style:none;display:flex;flex-direction:column;gap:.5rem}
+.flinks a{font-size:.82rem;color:rgba(255,255,255,.55);transition:color .18s}
+.flinks a:hover{color:#fff}
+.footer-bar{border-top:1px solid var(--bdr);padding:1.25rem 2rem;max-width:1440px;margin:0 auto;display:flex;justify-content:space-between;font-size:.72rem;color:rgba(255,255,255,.28);flex-wrap:wrap;gap:.5rem}
+
+/* ── Responsive ── */
+@media(max-width:1024px){.pgrid{grid-template-columns:repeat(3,1fr)}.footer-main{grid-template-columns:1fr 1fr;gap:2rem}}
+@media(max-width:768px){
+  .nav{display:none}.mob-menu-btn{display:flex}
+  .tiles{grid-template-columns:1fr 1fr}
+  .tiles .tile:nth-child(3){display:none}
+  .pgrid{grid-template-columns:repeat(2,1fr)}
+  .campaign{grid-template-columns:1fr}
+  .camp-img{min-height:300px}
+  .footer-main{grid-template-columns:1fr;gap:1.75rem}
+  .numbers-inner{gap:1.5rem}
+  .hdr-inner{padding:0 1rem;gap:1rem}
+}
+@media(max-width:480px){
+  .hero-btns,.camp-btns{flex-direction:column}
+  .btn{justify-content:center}
+  .nl-form{flex-direction:column}
+  .pgrid{gap:.5rem}
+}
+@media(prefers-reduced-motion:reduce){
+  .tile img,.drop-thumb img,.pcard-thumb img{transition:none}
+  .drop-quick,.pcard-quick{transform:translateY(0);opacity:.9}
+}
+  </style>
+</head>
+<body>
+
+<!-- ANNOUNCEMENT -->
+<div class="ann">
+  Free delivery over Rs.&nbsp;10,000 &nbsp;·&nbsp; Use <strong>STREET10</strong> for 10% off &nbsp;·&nbsp; <a href="sale.html">SALE NOW ON →</a>
+</div>
+
+<!-- HEADER -->
+<header class="hdr">
+  <div class="hdr-inner">
+    <a href="index-v8.html" class="logo" aria-label="TU@SL Street Raw Home">
+      TU<span class="logo-em">@</span>SL
+      <span class="logo-sub">Street Raw</span>
+    </a>
+
+    <nav class="nav" aria-label="Main">
+      <a href="women.html">Women</a>
+      <a href="men.html">Men</a>
+      <a href="kids.html">Kids</a>
+      <a href="baby.html">Baby</a>
+      <a href="new-arrivals.html" class="new">New Drops</a>
+      <a href="category.html?category=denim">Denim</a>
+      <a href="sale.html" class="sale">Sale</a>
+    </nav>
+
+    <div class="hdr-icons">
+      <a href="search.html" class="ico" aria-label="Search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      </a>
+      <a href="wishlist.html" class="ico" aria-label="Wishlist">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+      </a>
+      <a href="cart.html" class="ico" aria-label="Cart" style="position:relative">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>
+        <span class="cart-dot" id="v8-cart-ct">0</span>
+      </a>
+      <button class="ico mob-menu-btn" onclick="document.getElementById('mob-nav').classList.toggle('open')" aria-label="Menu">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      </button>
+    </div>
+  </div>
+  <div id="mob-nav">
+    <a href="women.html">Women</a>
+    <a href="men.html">Men</a>
+    <a href="kids.html">Kids</a>
+    <a href="baby.html">Baby</a>
+    <a href="new-arrivals.html">New Drops</a>
+    <a href="category.html?category=denim">Denim</a>
+    <a href="sale.html">Sale</a>
+  </div>
+</header>
+
+<!-- HERO -->
+<section class="hero" aria-label="Hero">
+  <video autoplay muted loop playsinline
+    poster="https://images.pexels.com/photos/1040881/pexels-photo-1040881.jpeg?auto=compress&cs=tinysrgb&w=1920&h=1080&fit=crop"
+    style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover">
+    <source src="https://videos.pexels.com/video-files/3571264/3571264-hd_1920_1080_25fps.mp4" type="video/mp4">
+    <source src="https://videos.pexels.com/video-files/5785040/5785040-hd_1920_1080_30fps.mp4" type="video/mp4">
+  </video>
+  <div class="hero-ov"></div>
+  <div class="hero-body">
+    <p class="hero-tag">New Collection — 2026</p>
+    <h1 class="hero-h1">BUILT<br>FOR THE<br><em>STREETS</em></h1>
+    <p class="hero-desc">Raw denim. Bold cuts. Made for those who wear their story on their sleeve.</p>
+    <div class="hero-btns">
+      <a href="women.html" class="btn btn-red">Shop Women</a>
+      <a href="men.html"   class="btn btn-ghost">Shop Men</a>
+    </div>
+  </div>
+  <div class="hero-scroll-hint" aria-hidden="true">Scroll</div>
+</section>
+
+<!-- SHOP BY DEPARTMENT -->
+<div style="background:#0a0a0a;padding:4rem clamp(1.25rem,4vw,3.5rem)">
+  <div style="max-width:1440px;margin:0 auto">
+    <div class="sec-hd">
+      <div class="sec-label">Shop by Department</div>
+      <div class="sec-title">YOUR STYLE,<br>YOUR RULES</div>
+    </div>
+    <div class="tiles" id="v8-tiles"></div>
+  </div>
+</div>
+
+<!-- NEW DROPS -->
+<div style="background:#0d0d0d;padding:4.5rem 0 4.5rem clamp(1.25rem,4vw,3.5rem)">
+  <div style="max-width:1440px;margin:0 auto">
+    <div class="sec-hd-row" style="padding-right:clamp(1.25rem,4vw,3.5rem)">
+      <div>
+        <div class="sec-label">Just dropped</div>
+        <div class="sec-title">NEW DROPS</div>
+      </div>
+      <a href="new-arrivals.html" class="btn btn-ghost" style="padding:.6rem 1.5rem;font-size:.72rem">View All</a>
+    </div>
+    <div class="hscroll-wrap">
+      <div class="hscroll-row" id="v8-drops"></div>
+    </div>
+  </div>
+</div>
+
+<!-- CAMPAIGN: DENIM EDIT -->
+<div class="campaign">
+  <div class="camp-img">
+    <img src="https://images.pexels.com/photos/3622608/pexels-photo-3622608.jpeg?auto=compress&cs=tinysrgb&w=900&h=1100&fit=crop"
+         alt="Denim editorial" loading="lazy" width="900" height="1100">
+  </div>
+  <div class="camp-body">
+    <div class="camp-label">The Denim Edit</div>
+    <h2 class="camp-h2">THE JEANS<br>THAT DEFINE<br><span>A GENERATION</span></h2>
+    <p class="camp-p">From raw selvedge to washed classics — crafted to outlast trends. Built in Sri Lanka. Worn everywhere.</p>
+    <div class="camp-btns">
+      <a href="category.html?category=jeans" class="btn btn-red">Shop Denim</a>
+      <a href="about.html" class="btn btn-ghost">Our Story</a>
+    </div>
+  </div>
+</div>
+
+<!-- FEATURED COLLECTION -->
+<div style="background:#0a0a0a;padding:5rem clamp(1.25rem,4vw,3.5rem)">
+  <div style="max-width:1440px;margin:0 auto">
+    <div class="sec-hd-row">
+      <div>
+        <div class="sec-label">Hand-picked</div>
+        <div class="sec-title">THE COLLECTION</div>
+      </div>
+      <a href="new-arrivals.html" class="btn btn-ghost" style="padding:.6rem 1.5rem;font-size:.72rem">View All</a>
+    </div>
+    <div class="pgrid" id="v8-featured"></div>
+  </div>
+</div>
+
+<!-- CAMPAIGN: MEN'S EDIT (reversed) -->
+<div class="campaign" style="direction:rtl">
+  <div class="camp-img" style="direction:ltr">
+    <img src="https://images.pexels.com/photos/2897482/pexels-photo-2897482.jpeg?auto=compress&cs=tinysrgb&w=900&h=1100&fit=crop"
+         alt="Men's editorial" loading="lazy" width="900" height="1100">
+  </div>
+  <div class="camp-body" style="direction:ltr">
+    <div class="camp-label">Men's Edit</div>
+    <h2 class="camp-h2">SHARP.<br>CLEAN.<br><span>UNSTOPPABLE.</span></h2>
+    <p class="camp-p">Polo shirts, slim-cut trousers, and bold outerwear. The modern Sri Lankan man — redefined for 2026.</p>
+    <a href="men.html" class="btn btn-red">Shop Men</a>
+  </div>
+</div>
+
+<!-- SALE STRIP -->
+<div class="sale-strip">
+  <img src="https://images.pexels.com/photos/1598507/pexels-photo-1598507.jpeg?auto=compress&cs=tinysrgb&w=1920&h=480&fit=crop"
+       alt="Sale" loading="lazy" width="1920" height="480">
+  <div class="sale-ov">
+    <div>
+      <div class="sale-tag">Limited Time Offer</div>
+      <div class="sale-h">UP TO <span>60%</span><br>OFF</div>
+      <div class="sale-sub">Selected styles · While stocks last</div>
+      <a href="sale.html" class="btn btn-red">Shop the Sale</a>
+    </div>
+  </div>
+</div>
+
+<!-- BRAND NUMBERS -->
+<div class="numbers">
+  <div class="numbers-inner">
+    <div class="num-item"><div class="num-val">12+</div><div class="num-lbl">Years of Style</div></div>
+    <div class="num-item"><div class="num-val">80+</div><div class="num-lbl">Unique Styles</div></div>
+    <div class="num-item"><div class="num-val">5</div><div class="num-lbl">Departments</div></div>
+    <div class="num-item"><div class="num-val">938+</div><div class="num-lbl">Happy Customers</div></div>
+    <div class="num-item"><div class="num-val">Rs.450</div><div class="num-lbl">Flat Delivery Island-wide</div></div>
+  </div>
+</div>
+
+<!-- WOMEN'S FEATURE -->
+<div class="campaign">
+  <div class="camp-body" style="background:#0a0a0a">
+    <div class="camp-label">Women's Collection</div>
+    <h2 class="camp-h2">WEAR YOUR<br>STORY.<br><span>OWN IT.</span></h2>
+    <p class="camp-p">From power blazers to flowy midi dresses — every piece is designed for the woman who moves fast and looks good doing it.</p>
+    <div class="camp-btns">
+      <a href="women.html" class="btn btn-red">Shop Women</a>
+      <a href="new-arrivals.html" class="btn btn-ghost">New In</a>
+    </div>
+  </div>
+  <div class="camp-img">
+    <img src="https://images.pexels.com/photos/2219257/pexels-photo-2219257.jpeg?auto=compress&cs=tinysrgb&w=900&h=1000&fit=crop"
+         alt="Women's editorial" loading="lazy" width="900" height="1000">
+  </div>
+</div>
+
+<!-- NEWSLETTER -->
+<div class="nl">
+  <div class="nl-label">Never miss a drop</div>
+  <div class="nl-title">JOIN THE STREET LIST</div>
+  <div class="nl-sub">Early access to new drops, exclusive deals and raw style inspiration.</div>
+  <form class="nl-form" onsubmit="this.innerHTML='<span style=color:rgba(255,255,255,.6);font-size:.9rem>You\'re on the list. 🔥</span>';event.preventDefault()">
+    <input type="email" class="nl-input" placeholder="your@email.com" required aria-label="Email address">
+    <button type="submit" class="nl-btn">Join</button>
+  </form>
+</div>
+
+<!-- FOOTER -->
+<footer class="footer">
+  <div class="footer-main">
+    <div>
+      <div class="footer-brand">TU<span>@</span>SL</div>
+      <div class="footer-tagline">Sri Lanka's street fashion destination. Raw style, no compromises. Free delivery island-wide on orders over Rs.&nbsp;10,000.</div>
+      <div class="soc">
+        <a href="#" class="soc-btn" aria-label="Instagram"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><rect x="2" y="2" width="20" height="20" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r=".5" fill="currentColor"/></svg></a>
+        <a href="#" class="soc-btn" aria-label="Facebook"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z"/></svg></a>
+        <a href="#" class="soc-btn" aria-label="WhatsApp"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></a>
+      </div>
+    </div>
+    <div>
+      <div class="footer-h">Shop</div>
+      <ul class="flinks">
+        <li><a href="women.html">Women</a></li>
+        <li><a href="men.html">Men</a></li>
+        <li><a href="kids.html">Kids</a></li>
+        <li><a href="baby.html">Baby</a></li>
+        <li><a href="new-arrivals.html">New Drops</a></li>
+        <li><a href="sale.html" style="color:var(--red)">Sale</a></li>
+      </ul>
+    </div>
+    <div>
+      <div class="footer-h">Help</div>
+      <ul class="flinks">
+        <li><a href="about.html">About Us</a></li>
+        <li><a href="contact.html">Contact</a></li>
+        <li><a href="#">Delivery Info</a></li>
+        <li><a href="#">Returns</a></li>
+        <li><a href="#">Size Guide</a></li>
+        <li><a href="#">Track Order</a></li>
+      </ul>
+    </div>
+    <div>
+      <div class="footer-h">Contact</div>
+      <ul class="flinks" style="gap:.75rem">
+        <li style="color:rgba(255,255,255,.4);font-size:.8rem">WhatsApp<br><a href="tel:+94771234567" style="color:#fff;font-size:.88rem">+94 77 123 4567</a></li>
+        <li style="color:rgba(255,255,255,.4);font-size:.8rem">Email<br><a href="mailto:hello@tuasl.lk" style="color:#fff;font-size:.88rem">hello@tuasl.lk</a></li>
+        <li style="color:rgba(255,255,255,.4);font-size:.8rem">Hours<br><span style="color:rgba(255,255,255,.55);font-size:.82rem">Mon–Sat 9am–9pm</span></li>
+      </ul>
+    </div>
+  </div>
+  <div class="footer-bar">
+    <span>&copy; 2026 TU@SL Fashion Sri Lanka. All rights reserved.</span>
+    <span style="display:flex;gap:1.5rem"><a href="#" style="color:rgba(255,255,255,.28)">Privacy</a><a href="#" style="color:rgba(255,255,255,.28)">Terms</a></span>
+  </div>
+</footer>
+
+<script src="js/config.js"></script>
+<script src="js/products.js"></script>
+<script src="js/app.js"></script>
+<script>
+/* ── Set template ── */
+localStorage.setItem('tuasl_tmpl','street');
+
+/* ── Product photos (dark editorial) ── */
+var V8_IMGS=[
+  'https://images.pexels.com/photos/1040881/pexels-photo-1040881.jpeg?auto=compress&cs=tinysrgb&w=400&h=533&fit=crop',
+  'https://images.pexels.com/photos/2955378/pexels-photo-2955378.jpeg?auto=compress&cs=tinysrgb&w=400&h=533&fit=crop',
+  'https://images.pexels.com/photos/1043474/pexels-photo-1043474.jpeg?auto=compress&cs=tinysrgb&w=400&h=533&fit=crop',
+  'https://images.pexels.com/photos/2897482/pexels-photo-2897482.jpeg?auto=compress&cs=tinysrgb&w=400&h=533&fit=crop',
+  'https://images.pexels.com/photos/3622608/pexels-photo-3622608.jpeg?auto=compress&cs=tinysrgb&w=400&h=533&fit=crop',
+  'https://images.pexels.com/photos/1598507/pexels-photo-1598507.jpeg?auto=compress&cs=tinysrgb&w=400&h=533&fit=crop',
+  'https://images.pexels.com/photos/2219257/pexels-photo-2219257.jpeg?auto=compress&cs=tinysrgb&w=400&h=533&fit=crop',
+  'https://images.pexels.com/photos/1721558/pexels-photo-1721558.jpeg?auto=compress&cs=tinysrgb&w=400&h=533&fit=crop',
+  'https://images.pexels.com/photos/2220320/pexels-photo-2220320.jpeg?auto=compress&cs=tinysrgb&w=400&h=533&fit=crop',
+  'https://images.pexels.com/photos/2529148/pexels-photo-2529148.jpeg?auto=compress&cs=tinysrgb&w=400&h=533&fit=crop',
+  'https://images.pexels.com/photos/1192609/pexels-photo-1192609.jpeg?auto=compress&cs=tinysrgb&w=400&h=533&fit=crop',
+  'https://images.pexels.com/photos/2760783/pexels-photo-2760783.jpeg?auto=compress&cs=tinysrgb&w=400&h=533&fit=crop',
+  'https://images.pexels.com/photos/1148998/pexels-photo-1148998.jpeg?auto=compress&cs=tinysrgb&w=400&h=533&fit=crop',
+  'https://images.pexels.com/photos/3662849/pexels-photo-3662849.jpeg?auto=compress&cs=tinysrgb&w=400&h=533&fit=crop',
+  'https://images.pexels.com/photos/774909/pexels-photo-774909.jpeg?auto=compress&cs=tinysrgb&w=400&h=533&fit=crop',
+  'https://images.pexels.com/photos/2397521/pexels-photo-2397521.jpeg?auto=compress&cs=tinysrgb&w=400&h=533&fit=crop',
+];
+
+/* ── Dept tiles ── */
+[
+  {name:'Women',href:'women.html',   img:'2219257',eye:'New Arrivals'},
+  {name:'Men',  href:'men.html',     img:'2897482',eye:'Best Sellers'},
+  {name:'Kids', href:'kids.html',    img:'1148998',eye:'Just Dropped'},
+].forEach(function(t){
+  document.getElementById('v8-tiles').insertAdjacentHTML('beforeend',
+    '<a href="'+t.href+'" class="tile">'+
+    '<img src="https://images.pexels.com/photos/'+t.img+'/pexels-photo-'+t.img+'.jpeg?auto=compress&cs=tinysrgb&w=600&h=900&fit=crop" alt="'+t.name+'" loading="lazy" width="600" height="900" onerror="this.src=\'assets/images/placeholders/product-placeholder.svg\'">'+
+    '<div class="tile-ov"></div>'+
+    '<div class="tile-body">'+
+    '<div class="tile-eyebrow">'+t.eye+'</div>'+
+    '<div class="tile-name">'+t.name+'</div>'+
+    '<div class="tile-cta">Shop Now <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="13" height="13"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg></div>'+
+    '</div></a>'
+  );
+});
+
+/* ── New Drops ── */
+var drops=typeof PRODUCTS!=='undefined'?PRODUCTS.slice(0,10):[];
+drops.forEach(function(p){
+  var img=V8_IMGS[p.id%V8_IMGS.length];
+  var hov=V8_IMGS[(p.id*3+1)%V8_IMGS.length];
+  var disc=p.originalPrice?Math.round((1-p.price/p.originalPrice)*100):0;
+  document.getElementById('v8-drops').insertAdjacentHTML('beforeend',
+    '<div class="drop-card">'+
+    '<div class="drop-thumb">'+
+    '<img src="'+img+'" alt="'+p.name+'" loading="lazy" width="270" height="360"'+
+    ' onmouseover="this.src=\''+hov+'\'" onmouseout="this.src=\''+img+'\'"'+
+    ' onerror="this.src=\'assets/images/placeholders/product-placeholder.svg\'">'+
+    (p.badge==='New'?'<span class="drop-badge new-badge">New</span>':'')+
+    (disc>0?'<span class="drop-badge sale-badge">-'+disc+'%</span>':'')+
+    '<button class="drop-quick" onclick="event.stopPropagation();typeof addToCartFromCard===\'function\'&&addToCartFromCard(event,'+p.id+')">+ Quick Add</button>'+
+    '</div>'+
+    '<div class="drop-info">'+
+    '<div class="drop-name"><a href="product.html?id='+p.id+'" style="color:#fff;text-decoration:none">'+p.name+'</a></div>'+
+    '<div class="drop-dept">'+p.department+'</div>'+
+    '<div class="drop-prices">'+
+    '<span class="drop-now">Rs.&nbsp;'+p.price.toLocaleString('en-LK')+'</span>'+
+    (p.originalPrice?'<span class="drop-was">Rs.&nbsp;'+p.originalPrice.toLocaleString('en-LK')+'</span>':'')+
+    (disc>0?'<span class="drop-pct">-'+disc+'%</span>':'')+
+    '</div></div></div>'
+  );
+});
+
+/* ── Featured (8 products) ── */
+var featured=typeof PRODUCTS!=='undefined'?PRODUCTS.slice(12,20):[];
+featured.forEach(function(p){
+  var img=V8_IMGS[p.id%V8_IMGS.length];
+  var hov=V8_IMGS[(p.id*5+2)%V8_IMGS.length];
+  var bdg=p.badge==='New'?'new':p.badge==='Sale'?'sale':'';
+  document.getElementById('v8-featured').insertAdjacentHTML('beforeend',
+    '<div class="pcard" onclick="location.href=\'product.html?id='+p.id+'\'">'+
+    '<div class="pcard-thumb">'+
+    '<img src="'+img+'" alt="'+p.name+'" loading="lazy" width="400" height="533"'+
+    ' onmouseover="this.src=\''+hov+'\'" onmouseout="this.src=\''+img+'\'"'+
+    ' onerror="this.src=\'assets/images/placeholders/product-placeholder.svg\'">'+
+    (bdg?'<span class="pcard-badge '+bdg+'">'+p.badge+'</span>':'')+
+    '<button class="pcard-quick" onclick="event.stopPropagation();typeof addToCartFromCard===\'function\'&&addToCartFromCard(event,'+p.id+')">+ Quick Add</button>'+
+    '</div>'+
+    '<div class="pcard-info">'+
+    '<div class="pcard-dept">'+p.department+'</div>'+
+    '<div class="pcard-name">'+p.name+'</div>'+
+    '<div class="pcard-prices">'+
+    '<span class="pcard-now">Rs.&nbsp;'+p.price.toLocaleString('en-LK')+'</span>'+
+    (p.originalPrice?'<span class="pcard-was">Rs.&nbsp;'+p.originalPrice.toLocaleString('en-LK')+'</span>':'')+
+    '</div></div></div>'
+  );
+});
+
+/* ── Cart count ── */
+try{
+  var c=JSON.parse(localStorage.getItem('tuasl_cart')||'[]');
+  var ct=c.reduce(function(s,i){return s+(i.qty||1);},0);
+  var el=document.getElementById('v8-cart-ct');
+  if(el){el.textContent=ct;el.style.display=ct>0?'flex':'none';}
+}catch(e){}
+</script>
+</body>
+</html>

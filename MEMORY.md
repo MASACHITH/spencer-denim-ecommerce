@@ -12,7 +12,8 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 - **Theme:** Banana Republic–inspired, full replacement → [docs/04](docs/04-design-system.md)
 - **Stack (approved):** .NET 10 API + Angular 21 (SSR storefront + admin app) + SQL Server Express, Docker, Caddy, GitHub Actions. Hostinger KVM 2, Azure-portable.
 - **Payments:** Bank transfer in week 3. **PayPal last** (week 4). A second gateway comes later (TBD) through `IPaymentProvider`.
-- **Repo:** https://github.com/MASACHITH/spencer-denim-ecommerce (user's **personal** account MASACHITH, branch `main`). Local git identity is set per repo (MASACHITH / sachithishara1@gmail.com). The machine's active `gh` account is the work account `destinity-sachithm`. **Never push this project with it.** For every push: `gh auth switch --user MASACHITH` → push → `gh auth switch --user destinity-sachithm`.
+- **Repo:** https://github.com/MASACHITH/spencer-denim-ecommerce (user's **personal** account MASACHITH, branch `main`). Local git identity is set per repo (MASACHITH / sachithishara1@gmail.com). `destinity-sachithm` is the user's **office** account. **Never push this project with it, and never switch the active `gh` account to it without asking the user.** Before every push, confirm `gh auth status` shows MASACHITH as active. If it doesn't, ask the user before switching.
+- **Reference archive:** `reference/` holds read-only copies (taken 2026-09-16) of the old demo (`tuasl-fashion-demo/`), the client documents (signed proposal + theme reference) and the original prototype prompt. See `reference/README.md`. The originals remain outside the repo.
 - **Blockers:** Docker Desktop not installed on dev machine (W0-05).
 - **Next:** W0-06 client progress page → W0-07 style tile → W0-08/09 repo + scaffold → W0-10 schema.
 - **Open assumptions:** A1 (Trending Categories / Best Sellers homepage blocks stay removed per signed proposal), A2 (video MP4 ≤ 50 MB, no server conversion).

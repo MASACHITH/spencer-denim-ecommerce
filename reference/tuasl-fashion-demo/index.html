@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="TU@SL Fashion — Fashion for Everyone. Shop women's, men's, kids' and baby clothing, footwear and accessories islandwide in Sri Lanka.">
+  <title>TU@SL Fashion — Fashion for Everyone</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,600;0,700;1,600&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/responsive.css">
+  <link rel="stylesheet" href="css/animations.css">
+</head>
+<body>
+  <div id="header-placeholder"></div>
+
+  <main id="main-content">
+
+    <!-- ===== HERO ===== -->
+    <section class="hero" aria-label="Hero banner" id="hero-section">
+      <!--
+        Hero video — royalty-free fashion lifestyle footage from Pexels.
+        Multiple source URLs tried in order; poster image shows if video
+        cannot load (e.g. offline or CORS). Reduced-motion users always
+        see the static poster.
+        Source: Pexels (see MEDIA_SOURCES.md)
+      -->
+      <video
+        id="hero-video"
+        autoplay
+        muted
+        loop
+        playsinline
+        preload="none"
+        poster="https://images.pexels.com/photos/1536619/pexels-photo-1536619.jpeg?auto=compress&cs=tinysrgb&w=1440&h=800&fit=crop"
+        style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:none"
+        aria-hidden="true">
+        <!-- Fashion lifestyle video — Pexels Video ID 3763263 -->
+        <source src="https://videos.pexels.com/video-files/3763263/3763263-hd_1920_1080_30fps.mp4" type="video/mp4">
+        <!-- Fallback — Pexels Video ID 5487808 -->
+        <source src="https://videos.pexels.com/video-files/5487808/5487808-hd_1920_1080_25fps.mp4" type="video/mp4">
+        <!-- Fallback — Pexels Video ID 4270203 -->
+        <source src="https://videos.pexels.com/video-files/4270203/4270203-hd_1920_1080_30fps.mp4" type="video/mp4">
+      </video>
+
+      <!-- Static fallback image shown while video loads or if it cannot play -->
+      <img
+        id="hero-fallback-img"
+        src="https://images.pexels.com/photos/1536619/pexels-photo-1536619.jpeg?auto=compress&cs=tinysrgb&w=1440&h=800&fit=crop"
+        alt=""
+        aria-hidden="true"
+        width="1440" height="800"
+        style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover"
+        onerror="this.src='assets/images/placeholders/product-placeholder.svg'">
+
+      <div class="hero-overlay"></div>
+      <div class="hero-content">
+        <p class="hero-eyebrow">New Season 2026</p>
+        <h1 class="hero-title">Style for<br>Every Story</h1>
+        <p class="hero-sub">Explore fresh fashion for women, men and kids — quality you can count on, prices you'll love.</p>
+        <div class="hero-actions">
+          <a href="new-arrivals.html" class="btn btn-primary btn-lg">Shop New Arrivals</a>
+          <a href="sale.html" class="btn btn-outline btn-lg">View Sale</a>
+        </div>
+      </div>
+      <div class="hero-indicators">
+        <span class="hero-dot active"></span>
+        <span class="hero-dot"></span>
+        <span class="hero-dot"></span>
+      </div>
+    </section>
+
+    <!-- ===== SHOP BY DEPARTMENT ===== -->
+    <section class="section">
+      <div class="container">
+        <div class="section-header">
+          <div>
+            <h2 class="section-title">Shop by Department</h2>
+            <p class="section-subtitle">Fashion for the whole family</p>
+          </div>
+        </div>
+        <div class="dept-grid">
+          <a href="women.html" class="dept-card reveal">
+            <img src="https://images.pexels.com/photos/2220316/pexels-photo-2220316.jpeg?auto=compress&cs=tinysrgb&w=600&h=800&fit=crop"
+              alt="Women's fashion" width="600" height="800" loading="lazy"
+              onerror="this.src='assets/images/placeholders/product-placeholder.svg'">
+            <div class="dept-card-overlay">
+              <p class="dept-card-label">Women</p>
+              <p class="dept-card-link">Shop Now →</p>
+            </div>
+          </a>
+          <a href="men.html" class="dept-card reveal">
+            <img src="https://images.pexels.com/photos/1043474/pexels-photo-1043474.jpeg?auto=compress&cs=tinysrgb&w=600&h=800&fit=crop"
+              alt="Men's fashion" width="600" height="800" loading="lazy"
+              onerror="this.src='assets/images/placeholders/product-placeholder.svg'">
+            <div class="dept-card-overlay">
+              <p class="dept-card-label">Men</p>
+              <p class="dept-card-link">Shop Now →</p>
+            </div>
+          </a>
+          <a href="kids.html" class="dept-card reveal">
+            <img src="https://images.pexels.com/photos/35537/child-children-girl-happy.jpg?auto=compress&cs=tinysrgb&w=600&h=800&fit=crop"
+              alt="Kids' fashion" width="600" height="800" loading="lazy"
+              onerror="this.src='assets/images/placeholders/product-placeholder.svg'">
+            <div class="dept-card-overlay">
+              <p class="dept-card-label">Kids &amp; Baby</p>
+              <p class="dept-card-link">Shop Now →</p>
+            </div>
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== NEW ARRIVALS ===== -->
+    <section class="section" style="background:var(--surface)">
+      <div class="container">
+        <div class="section-header">
+          <div>
+            <h2 class="section-title">New Arrivals</h2>
+            <p class="section-subtitle">Fresh styles just landed</p>
+          </div>
+          <a href="new-arrivals.html" class="section-link">View All →</a>
+        </div>
+        <div class="products-grid stagger-children" id="new-arrivals-grid"></div>
+      </div>
+    </section>
+
+    <!-- ===== CAMPAIGN SPLIT ===== -->
+    <section class="section">
+      <div class="container">
+        <div class="campaign-grid">
+          <a href="women.html" class="campaign-card tall reveal">
+            <img src="https://images.pexels.com/photos/1536619/pexels-photo-1536619.jpeg?auto=compress&cs=tinysrgb&w=600&h=800&fit=crop"
+              alt="Women's workwear collection" width="600" height="800" loading="lazy"
+              onerror="this.src='assets/images/placeholders/product-placeholder.svg'">
+            <div class="campaign-overlay">
+              <p class="campaign-label">Women's Collection</p>
+              <h3 class="campaign-title">Workwear Refresh</h3>
+              <span class="campaign-btn">Shop Women</span>
+            </div>
+          </a>
+          <div style="display:flex;flex-direction:column;gap:1rem">
+            <a href="men.html" class="campaign-card square reveal">
+              <img src="https://images.pexels.com/photos/2379004/pexels-photo-2379004.jpeg?auto=compress&cs=tinysrgb&w=600&h=400&fit=crop"
+                alt="Men's weekend collection" width="600" height="400" loading="lazy"
+                onerror="this.src='assets/images/placeholders/product-placeholder.svg'">
+              <div class="campaign-overlay">
+                <p class="campaign-label">Men's Collection</p>
+                <h3 class="campaign-title">Weekend Essentials</h3>
+                <span class="campaign-btn">Shop Men</span>
+              </div>
+            </a>
+            <a href="kids.html" class="campaign-card square reveal">
+              <img src="https://images.pexels.com/photos/1620760/pexels-photo-1620760.jpeg?auto=compress&cs=tinysrgb&w=600&h=400&fit=crop"
+                alt="Kids' favourites" width="600" height="400" loading="lazy"
+                onerror="this.src='assets/images/placeholders/product-placeholder.svg'">
+              <div class="campaign-overlay">
+                <p class="campaign-label">Kids &amp; Baby</p>
+                <h3 class="campaign-title">Kids' Favourites</h3>
+                <span class="campaign-btn">Shop Kids</span>
+              </div>
+            </a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== TRENDING CATEGORIES ===== -->
+    <section class="section" style="background:var(--surface)">
+      <div class="container">
+        <div class="section-header">
+          <h2 class="section-title">Trending Categories</h2>
+        </div>
+        <div class="trending-grid stagger-children">
+          <a href="category.html?department=women&category=dresses" class="trending-card">
+            <div class="trending-card__img-wrap">
+              <img src="https://images.pexels.com/photos/2220316/pexels-photo-2220316.jpeg?auto=compress&cs=tinysrgb&w=200&h=200&fit=crop"
+                alt="Dresses" width="200" height="200" loading="lazy"
+                onerror="this.src='assets/images/placeholders/product-placeholder.svg'">
+            </div>
+            <p class="trending-card__label">Dresses</p>
+          </a>
+          <a href="category.html?department=men&category=casual-shirts" class="trending-card">
+            <div class="trending-card__img-wrap">
+              <img src="https://images.pexels.com/photos/1043474/pexels-photo-1043474.jpeg?auto=compress&cs=tinysrgb&w=200&h=200&fit=crop"
+                alt="Casual Shirts" width="200" height="200" loading="lazy"
+                onerror="this.src='assets/images/placeholders/product-placeholder.svg'">
+            </div>
+            <p class="trending-card__label">Casual Shirts</p>
+          </a>
+          <a href="category.html?department=women&category=activewear" class="trending-card">
+            <div class="trending-card__img-wrap">
+              <img src="https://images.pexels.com/photos/2905238/pexels-photo-2905238.jpeg?auto=compress&cs=tinysrgb&w=200&h=200&fit=crop"
+                alt="Activewear" width="200" height="200" loading="lazy"
+                onerror="this.src='assets/images/placeholders/product-placeholder.svg'">
+            </div>
+            <p class="trending-card__label">Activewear</p>
+          </a>
+          <a href="category.html?department=girls&category=dresses" class="trending-card">
+            <div class="trending-card__img-wrap">
+              <img src="https://images.pexels.com/photos/35537/child-children-girl-happy.jpg?auto=compress&cs=tinysrgb&w=200&h=200&fit=crop"
+                alt="Girls Dresses" width="200" height="200" loading="lazy"
+                onerror="this.src='assets/images/placeholders/product-placeholder.svg'">
+            </div>
+            <p class="trending-card__label">Girls Dresses</p>
+          </a>
+          <a href="category.html?department=baby&category=essentials" class="trending-card">
+            <div class="trending-card__img-wrap">
+              <img src="https://images.pexels.com/photos/1620760/pexels-photo-1620760.jpeg?auto=compress&cs=tinysrgb&w=200&h=200&fit=crop"
+                alt="Baby Essentials" width="200" height="200" loading="lazy"
+                onerror="this.src='assets/images/placeholders/product-placeholder.svg'">
+            </div>
+            <p class="trending-card__label">Baby Essentials</p>
+          </a>
+          <a href="sale.html" class="trending-card">
+            <div class="trending-card__img-wrap" style="background:linear-gradient(135deg,var(--sale),#ff6b6b)">
+              <div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:2rem;font-weight:800">SALE</div>
+            </div>
+            <p class="trending-card__label" style="color:var(--sale)">Sale</p>
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== FULL-WIDTH CAMPAIGN ===== -->
+    <section class="section-sm">
+      <div class="container">
+        <div class="full-campaign reveal">
+          <img src="https://images.pexels.com/photos/1126993/pexels-photo-1126993.jpeg?auto=compress&cs=tinysrgb&w=1440&h=500&fit=crop"
+            alt="TU@SL Summer Collection 2026 — Style for Every Story" width="1440" height="400" loading="lazy"
+            onerror="this.src='assets/images/placeholders/product-placeholder.svg'">
+          <div class="full-campaign-overlay">
+            <p style="font-size:0.75rem;text-transform:uppercase;letter-spacing:0.2em;opacity:0.85;margin-bottom:0.5rem">Everyday Essentials</p>
+            <h2 style="font-family:var(--font-heading);font-size:clamp(1.75rem,4vw,3rem);font-weight:700;margin-bottom:0.75rem">Quality You Can Rely On</h2>
+            <p style="font-size:0.9375rem;opacity:0.85;margin-bottom:1.5rem;max-width:480px">From everyday basics to occasion wear — TU@SL Fashion has your family covered.</p>
+            <a href="category.html" class="btn btn-primary">Shop All</a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== BEST SELLERS ===== -->
+    <section class="section">
+      <div class="container">
+        <div class="section-header">
+          <div>
+            <h2 class="section-title">Best Sellers</h2>
+            <p class="section-subtitle">Most loved by our customers</p>
+          </div>
+          <a href="category.html" class="section-link">Shop All →</a>
+        </div>
+        <div class="products-grid stagger-children" id="bestsellers-grid"></div>
+      </div>
+    </section>
+
+    <!-- ===== ACTIVEWEAR CAMPAIGN ===== -->
+    <section class="section" style="background:var(--text)">
+      <div class="container">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:2rem;align-items:center">
+          <div class="reveal-left" style="color:#fff">
+            <p style="font-size:0.75rem;text-transform:uppercase;letter-spacing:0.2em;color:var(--accent);margin-bottom:0.75rem">Active Collection</p>
+            <h2 class="section-title" style="color:#fff;margin-bottom:1rem">Move in Style</h2>
+            <p style="font-size:0.9375rem;opacity:0.8;margin-bottom:1.75rem;line-height:1.7">Performance activewear designed for Sri Lanka's active lifestyle. Moisture-wicking, flexible and built to last.</p>
+            <div style="display:flex;gap:1rem;flex-wrap:wrap">
+              <a href="category.html?department=women&category=activewear" class="btn btn-primary">Women's Active</a>
+              <a href="category.html?department=men&category=activewear" class="btn btn-outline">Men's Active</a>
+            </div>
+          </div>
+          <a href="category.html?category=activewear" class="reveal" style="border-radius:var(--radius);overflow:hidden;display:block">
+            <img src="https://images.pexels.com/photos/2905238/pexels-photo-2905238.jpeg?auto=compress&cs=tinysrgb&w=700&h=500&fit=crop"
+              alt="TU@SL Activewear Collection" width="700" height="500" loading="lazy"
+              style="width:100%;aspect-ratio:7/5;object-fit:cover"
+              onerror="this.src='assets/images/placeholders/product-placeholder.svg'">
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== SALE SECTION ===== -->
+    <section class="section" style="background:var(--surface)">
+      <div class="container">
+        <div class="section-header">
+          <div>
+            <h2 class="section-title" style="color:var(--sale)">Summer Sale</h2>
+            <p class="section-subtitle">Up to 35% off — limited time</p>
+          </div>
+          <a href="sale.html" class="section-link" style="color:var(--sale)">View All Sale →</a>
+        </div>
+        <div class="products-grid stagger-children" id="sale-grid"></div>
+      </div>
+    </section>
+
+    <!-- ===== SOCIAL GALLERY ===== -->
+    <section class="section">
+      <div class="container">
+        <div class="section-header text-center" style="justify-content:center;flex-direction:column;align-items:center">
+          <h2 class="section-title">Style Inspiration</h2>
+          <p class="section-subtitle">Real fashion, real people — follow us <strong>@tuaslfashion</strong></p>
+        </div>
+        <div class="social-grid">
+          <div class="social-item">
+            <img src="https://images.pexels.com/photos/2220316/pexels-photo-2220316.jpeg?auto=compress&cs=tinysrgb&w=300&h=300&fit=crop" alt="Woman in stylish casual outfit" width="300" height="300" loading="lazy" onerror="this.src='assets/images/placeholders/product-placeholder.svg'">
+            <div class="social-item-overlay"><svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20" rx="5"/><circle cx="12" cy="12" r="5"/><circle cx="17.5" cy="6.5" r="1" fill="currentColor"/></svg></div>
+          </div>
+          <div class="social-item">
+            <img src="https://images.pexels.com/photos/1043474/pexels-photo-1043474.jpeg?auto=compress&cs=tinysrgb&w=300&h=300&fit=crop" alt="Man in smart casual look" width="300" height="300" loading="lazy" onerror="this.src='assets/images/placeholders/product-placeholder.svg'">
+            <div class="social-item-overlay"><svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20" rx="5"/><circle cx="12" cy="12" r="5"/><circle cx="17.5" cy="6.5" r="1" fill="currentColor"/></svg></div>
+          </div>
+          <div class="social-item">
+            <img src="https://images.pexels.com/photos/35537/pexels-photo-35537.jpeg?auto=compress&cs=tinysrgb&w=300&h=300&fit=crop" alt="Kids in colourful clothes" width="300" height="300" loading="lazy" onerror="this.src='assets/images/placeholders/product-placeholder.svg'">
+            <div class="social-item-overlay"><svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20" rx="5"/><circle cx="12" cy="12" r="5"/><circle cx="17.5" cy="6.5" r="1" fill="currentColor"/></svg></div>
+          </div>
+          <div class="social-item">
+            <img src="https://images.pexels.com/photos/2905238/pexels-photo-2905238.jpeg?auto=compress&cs=tinysrgb&w=300&h=300&fit=crop" alt="Woman in activewear" width="300" height="300" loading="lazy" onerror="this.src='assets/images/placeholders/product-placeholder.svg'">
+            <div class="social-item-overlay"><svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20" rx="5"/><circle cx="12" cy="12" r="5"/><circle cx="17.5" cy="6.5" r="1" fill="currentColor"/></svg></div>
+          </div>
+          <div class="social-item">
+            <img src="https://images.pexels.com/photos/1043474/pexels-photo-1043474.jpeg?auto=compress&cs=tinysrgb&w=300&h=300&fit=crop" alt="Man in casual shirt" width="300" height="300" loading="lazy" onerror="this.src='assets/images/placeholders/product-placeholder.svg'">
+            <div class="social-item-overlay"><svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20" rx="5"/><circle cx="12" cy="12" r="5"/><circle cx="17.5" cy="6.5" r="1" fill="currentColor"/></svg></div>
+          </div>
+          <div class="social-item">
+            <img src="https://images.pexels.com/photos/1126993/pexels-photo-1126993.jpeg?auto=compress&cs=tinysrgb&w=300&h=300&fit=crop" alt="Traditional fashion look" width="300" height="300" loading="lazy" onerror="this.src='assets/images/placeholders/product-placeholder.svg'">
+            <div class="social-item-overlay"><svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20" rx="5"/><circle cx="12" cy="12" r="5"/><circle cx="17.5" cy="6.5" r="1" fill="currentColor"/></svg></div>
+          </div>
+          <div class="social-item">
+            <img src="https://images.pexels.com/photos/1536619/pexels-photo-1536619.jpeg?auto=compress&cs=tinysrgb&w=300&h=300&fit=crop" alt="Woman in summer dress" width="300" height="300" loading="lazy" onerror="this.src='assets/images/placeholders/product-placeholder.svg'">
+            <div class="social-item-overlay"><svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20" rx="5"/><circle cx="12" cy="12" r="5"/><circle cx="17.5" cy="6.5" r="1" fill="currentColor"/></svg></div>
+          </div>
+          <div class="social-item">
+            <img src="https://images.pexels.com/photos/1620760/pexels-photo-1620760.jpeg?auto=compress&cs=tinysrgb&w=300&h=300&fit=crop" alt="Children in playful outfits" width="300" height="300" loading="lazy" onerror="this.src='assets/images/placeholders/product-placeholder.svg'">
+            <div class="social-item-overlay"><svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20" rx="5"/><circle cx="12" cy="12" r="5"/><circle cx="17.5" cy="6.5" r="1" fill="currentColor"/></svg></div>
+          </div>
+          <div class="social-item">
+            <img src="https://images.pexels.com/photos/842811/pexels-photo-842811.jpeg?auto=compress&cs=tinysrgb&w=300&h=300&fit=crop" alt="Casual fashion" width="300" height="300" loading="lazy" onerror="this.src='assets/images/placeholders/product-placeholder.svg'">
+            <div class="social-item-overlay"><svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20" rx="5"/><circle cx="12" cy="12" r="5"/><circle cx="17.5" cy="6.5" r="1" fill="currentColor"/></svg></div>
+          </div>
+          <div class="social-item">
+            <img src="https://images.pexels.com/photos/2379004/pexels-photo-2379004.jpeg?auto=compress&cs=tinysrgb&w=300&h=300&fit=crop" alt="Smart casual men's style" width="300" height="300" loading="lazy" onerror="this.src='assets/images/placeholders/product-placeholder.svg'">
+            <div class="social-item-overlay"><svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20" rx="5"/><circle cx="12" cy="12" r="5"/><circle cx="17.5" cy="6.5" r="1" fill="currentColor"/></svg></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== CUSTOMER BENEFITS ===== -->
+    <section class="section" style="background:var(--surface)">
+      <div class="container">
+        <div class="benefits-grid stagger-children">
+          <div class="benefit-card">
+            <div class="benefit-card__icon">
+              <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M9 17H5a2 2 0 0 0-2 2"/><path d="M11 17h8a2 2 0 0 1 2 2"/><rect x="2" y="3" width="20" height="14" rx="2"/></svg>
+            </div>
+            <h3 class="benefit-card__title">Islandwide Delivery</h3>
+            <p class="benefit-card__text">We deliver to every district in Sri Lanka. Standard delivery Rs. 450, free above Rs. 10,000.</p>
+          </div>
+          <div class="benefit-card">
+            <div class="benefit-card__icon">
+              <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+            </div>
+            <h3 class="benefit-card__title">Easy Returns</h3>
+            <p class="benefit-card__text">Not happy with your order? Return unworn items within 14 days for a refund or exchange.</p>
+          </div>
+          <div class="benefit-card">
+            <div class="benefit-card__icon">
+              <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><circle cx="12" cy="8" r="6"/><path d="M15.477 12.89L17 22l-5-3-5 3 1.523-9.11"/></svg>
+            </div>
+            <h3 class="benefit-card__title">Quality Guarantee</h3>
+            <p class="benefit-card__text">Every product is selected for quality and value. Fashion your family will love.</p>
+          </div>
+          <div class="benefit-card">
+            <div class="benefit-card__icon">
+              <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12 19.79 19.79 0 0 1 1.61 3.41 2 2 0 0 1 3.6 1.22h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L7.91 8.8a16 16 0 0 0 7.29 7.29l.95-.95a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+            </div>
+            <h3 class="benefit-card__title">Friendly Support</h3>
+            <p class="benefit-card__text">Our team is available Mon–Sat to help with sizing, orders and any questions you have.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== NEWSLETTER ===== -->
+    <section class="newsletter">
+      <div class="container">
+        <h2 class="newsletter-title">Stay in the Loop</h2>
+        <p class="newsletter-sub">Subscribe for new arrivals, exclusive offers and style tips.</p>
+        <form class="newsletter-form" onsubmit="handleNewsletterSignup(event)">
+          <input type="email" class="newsletter-input" placeholder="Enter your email address" required aria-label="Email address">
+          <button type="submit" class="newsletter-btn">Subscribe</button>
+        </form>
+      </div>
+    </section>
+
+  </main>
+
+  <div id="footer-placeholder"></div>
+
+  <script src="js/config.js"></script>
+  <script src="js/products.js"></script>
+  <script src="js/wishlist.js"></script>
+  <script src="js/cart.js"></script>
+  <script src="js/app.js"></script>
+  <script>
+    function handleNewsletterSignup(e) {
+      e.preventDefault();
+      showToast('Thank you for subscribing!', 'success');
+      e.target.reset();
+    }
+
+    /* ---- Hero video loader ---- */
+    (function initHeroVideo() {
+      // Respect prefers-reduced-motion — keep static image for those users
+      const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      // On small screens (< 640px) skip video to save bandwidth
+      const isMobile = window.innerWidth < 640;
+
+      const video = document.getElementById('hero-video');
+      const fallback = document.getElementById('hero-fallback-img');
+      if (!video) return;
+
+      if (prefersReduced || isMobile) {
+        // Keep the static image; don't load video at all
+        return;
+      }
+
+      // Show video element and try to play
+      video.style.display = 'block';
+
+      // When video metadata loads successfully, hide the static image
+      video.addEventListener('loadeddata', () => {
+        if (fallback) fallback.style.opacity = '0';
+        // Fade out after a short delay
+        setTimeout(() => { if (fallback) fallback.style.display = 'none'; }, 600);
+      }, { once: true });
+
+      // If video errors on all sources, keep fallback image
+      video.addEventListener('error', () => {
+        video.style.display = 'none';
+        if (fallback) { fallback.style.display = 'block'; fallback.style.opacity = '1'; }
+      });
+
+      // Pause video when hero scrolls out of view (saves resources)
+      const heroSection = document.getElementById('hero-section');
+      if (heroSection && 'IntersectionObserver' in window) {
+        const obs = new IntersectionObserver(entries => {
+          entries.forEach(e => {
+            if (e.isIntersecting) { video.play().catch(() => {}); }
+            else { video.pause(); }
+          });
+        }, { threshold: 0.1 });
+        obs.observe(heroSection);
+      }
+
+      // Kick off load
+      video.load();
+    })();
+
+    document.addEventListener('DOMContentLoaded', () => {
+      // New Arrivals
+      const newGrid = document.getElementById('new-arrivals-grid');
+      if (newGrid) newGrid.innerHTML = getNewArrivals().slice(0,8).map(renderProductCard).join('');
+
+      // Best Sellers
+      const bsGrid = document.getElementById('bestsellers-grid');
+      if (bsGrid) bsGrid.innerHTML = getBestSellers().slice(0,8).map(renderProductCard).join('');
+
+      // Sale
+      const saleGrid = document.getElementById('sale-grid');
+      if (saleGrid) saleGrid.innerHTML = getSaleProducts().slice(0,4).map(renderProductCard).join('');
+    });
+  </script>
+
+  <!-- Template Switcher -->
+  <style>
+    .tmpl-switcher{position:fixed;bottom:90px;right:20px;z-index:9999;font-family:'Inter',sans-serif}
+    .tmpl-btn{background:#8b1e3f;color:#fff;padding:9px 16px;border-radius:50px;font-size:.75rem;font-weight:700;display:flex;align-items:center;gap:6px;box-shadow:0 4px 16px rgba(139,30,63,.4);cursor:pointer;border:none;font-family:inherit}
+    .tmpl-menu{position:absolute;bottom:calc(100% + 10px);right:0;background:#fff;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,.18);overflow:hidden;min-width:210px;display:none}
+    .tmpl-menu.open{display:block}
+    .tmpl-menu-head{padding:12px 16px 8px;font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#666}
+    .tmpl-option{display:flex;align-items:center;gap:10px;padding:10px 16px;font-size:.82rem;font-weight:500;border-top:1px solid #f5f5f5;text-decoration:none;color:#1a1a1a;transition:background .1s}
+    .tmpl-option:hover{background:#fef0f3}
+    .tmpl-option.active{font-weight:700;color:#8b1e3f}
+    .tmpl-option.active::after{content:'✓';margin-left:auto;color:#8b1e3f}
+    .tmpl-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+  </style>
+  <div class="tmpl-switcher">
+    <div class="tmpl-menu" id="tmpl-menu">
+      <div class="tmpl-menu-head">Choose Template</div>
+      <a href="index.html" class="tmpl-option active">
+        <span class="tmpl-dot" style="background:#8b1e3f"></span>
+        Classic Boutique
+      </a>
+      <a href="index-urban.html" class="tmpl-option">
+        <span class="tmpl-dot" style="background:#080808;border:1px solid #e63946"></span>
+        Urban Dark
+      </a>
+      <a href="index-v3.html" class="tmpl-option">
+        <span class="tmpl-dot" style="background:#8b1e3f;border:2px solid #fff;outline:2px solid #8b1e3f"></span>
+        Fashion Hub
+      </a>
+    <a href="index-v4.html" class="tmpl-option">
+      <span class="tmpl-dot" style="background:#c9a84c"></span>
+      Luxe Gold
+    </a>
+    <a href="index-v5.html" class="tmpl-option">
+      <span class="tmpl-dot" style="background:#e63c26"></span>
+      Fresh Minimal
+    </a>
+    <a href="index-v6.html" class="tmpl-option">
+      <span class="tmpl-dot" style="background:#c4a882"></span>
+      Natural Linen
+    </a>
+    <a href="index-v7.html" class="tmpl-option">
+      <span class="tmpl-dot" style="background:#2e6fad"></span>
+      Denim &amp; Co.
+    </a>
+    <a href="index-v8.html" class="tmpl-option">
+      <span class="tmpl-dot" style="background:#E8002D"></span>
+      Street Raw
+    </a>
+    <a href="index-v9.html" class="tmpl-option">
+      <span class="tmpl-dot" style="background:#111111;border:1px solid #555"></span>
+      The Edit
+    </a>
+    </div>
+    <button class="tmpl-btn" id="tmpl-toggle">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+      Templates
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" id="tmpl-arrow"><path d="m18 15-6-6-6 6"/></svg>
+    </button>
+  </div>
+  <script>
+    localStorage.setItem('tuasl_tmpl','classic');
+    document.getElementById('tmpl-toggle').addEventListener('click',function(){
+      var m=document.getElementById('tmpl-menu');
+      var a=document.getElementById('tmpl-arrow');
+      var o=m.classList.toggle('open');
+      a.style.transform=o?'rotate(180deg)':'';
+    });
+    document.addEventListener('click',function(e){
+      if(!e.target.closest('.tmpl-switcher')){
+        document.getElementById('tmpl-menu').classList.remove('open');
+        document.getElementById('tmpl-arrow').style.transform='';
+      }
+    });
+  </script>
+
+  <!-- Demo: quick admin access button -->
+  <a id="admin-demo-btn" href="admin/login.html" onclick="sessionStorage.setItem('tuasl_admin','true');this.href='admin/index.html';"
+    title="Admin Dashboard (demo)" style="
+      position:fixed; bottom:24px; right:20px; z-index:9999;
+      background:#1a1a2e; color:#fff; border-radius:8px;
+      padding:8px 14px; font-size:.75rem; font-weight:600;
+      font-family:'Inter',sans-serif; text-decoration:none;
+      box-shadow:0 2px 10px rgba(0,0,0,.25); letter-spacing:.03em;
+      display:flex; align-items:center; gap:6px; opacity:.85;
+      transition:opacity .2s;">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+    Admin
+  </a>
+  <style>#admin-demo-btn:hover{opacity:1!important;}</style>
+</body>
+</html>

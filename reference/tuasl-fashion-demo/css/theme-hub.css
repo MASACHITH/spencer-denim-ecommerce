@@ -1,0 +1,44 @@
+/* ── Fashion Hub Theme — inner page override ── */
+:root {
+  --primary:       #8b1e3f;
+  --primary-dark:  #5f1029;
+  --accent:        #e8c3b5;
+  --background:    #f9f5f6;
+  --surface:       #ffffff;
+  --text:          #1a0a10;
+  --muted:         #7a5a65;
+  --border:        #e8d5da;
+}
+body { background: #f9f5f6; }
+.announcement-bar { background: #1a0a10; }
+.site-header { background: #fff; border-bottom: 3px solid #8b1e3f !important; }
+.header-logo { color: #1a0a10 !important; font-weight: 900 !important; letter-spacing: .06em; }
+.header-logo span { color: #8b1e3f; }
+.site-nav { border-top: 1px solid #e8d5da; }
+.nav-link:hover, .nav-link:focus { color: #8b1e3f !important; }
+.nav-link.sale { color: #c62828 !important; }
+.nav-link.new  { color: #8b1e3f !important; font-weight: 700; }
+.page-hero { background: linear-gradient(135deg,#1a0a10 0%,#5f1029 100%); }
+.page-hero h1 { color: #fff; }
+#page-desc { color: rgba(255,255,255,.7); }
+#breadcrumb-current { color: rgba(255,255,255,.85); }
+.breadcrumb a { color: rgba(255,255,255,.6); }
+.product-card { border-color: #e8d5da; }
+.product-card:hover { box-shadow: 0 8px 28px rgba(139,30,63,.16); }
+.product-card__category { color: #8b1e3f; font-weight: 700; }
+.product-card__name a:hover { color: #8b1e3f; }
+.product-card__badge.sale  { background: #c62828; }
+.product-card__badge.new   { background: #8b1e3f; }
+.product-card__discount { color: #c62828; background: rgba(198,40,40,.08); }
+.btn-primary, .btn.btn-primary { background: #8b1e3f !important; border-color: #8b1e3f !important; }
+.btn-primary:hover, .btn.btn-primary:hover { background: #5f1029 !important; }
+.btn-outline-dark { border-color: #1a0a10; color: #1a0a10; }
+.btn-outline-dark:hover { background: #1a0a10; color: #fff; }
+.filter-sidebar .filter-section-title,
+.filter-sidebar .filter-title { color: #8b1e3f; }
+.filter-sidebar input[type=checkbox]:checked { accent-color: #8b1e3f; }
+.filter-sidebar .filter-tag.active { background: #8b1e3f; border-color: #8b1e3f; }
+.category-toolbar .sort-select:focus { border-color: #8b1e3f; box-shadow: 0 0 0 3px rgba(139,30,63,.1); }
+.mobile-filter-btn { border-color: #8b1e3f; color: #8b1e3f; }
+#load-more-btn { border-color: #1a0a10; color: #1a0a10; }
+#load-more-btn:hover { background: #1a0a10; color: #fff; }

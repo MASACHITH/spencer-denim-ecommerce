@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Checkout — TU@SL Fashion demonstration checkout.">
+  <title>Checkout — TU@SL Fashion</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css"><link rel="stylesheet" href="css/responsive.css"><link rel="stylesheet" href="css/animations.css">
+</head>
+<body>
+<div id="header-placeholder"></div>
+<main id="main-content">
+  <div class="page-hero">
+    <div class="container">
+      <nav class="breadcrumb"><a href="index.html">Home</a><span>›</span><a href="cart.html">Bag</a><span>›</span><span>Checkout</span></nav>
+      <h1>Checkout</h1>
+    </div>
+  </div>
+  <section class="section">
+    <div class="container">
+      <div class="demo-notice" style="margin-bottom:1.5rem;max-width:600px">
+        <strong>⚠ Demonstration Only</strong> — This is a prototype checkout. No real payment will be processed and no order will be placed.
+      </div>
+      <div class="checkout-layout">
+        <div>
+          <!-- Customer Details -->
+          <div class="checkout-section">
+            <h3>Customer Details</h3>
+            <div class="form-grid">
+              <div class="form-group full">
+                <label class="form-label" for="full-name">Full Name *</label>
+                <input class="form-input" type="text" id="full-name" placeholder="Sachith Perera" required>
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="email">Email Address *</label>
+                <input class="form-input" type="email" id="email" placeholder="hello@example.com" required>
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="phone">Phone Number *</label>
+                <input class="form-input" type="tel" id="phone" placeholder="+94 77 123 4567" required>
+              </div>
+            </div>
+          </div>
+
+          <!-- Delivery Address -->
+          <div class="checkout-section">
+            <h3>Delivery Address</h3>
+            <div class="form-grid">
+              <div class="form-group full">
+                <label class="form-label" for="address1">Address Line 1 *</label>
+                <input class="form-input" type="text" id="address1" placeholder="45 Galle Road" required>
+              </div>
+              <div class="form-group full">
+                <label class="form-label" for="address2">Address Line 2</label>
+                <input class="form-input" type="text" id="address2" placeholder="Apartment, suite, unit (optional)">
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="city">City *</label>
+                <input class="form-input" type="text" id="city" placeholder="Colombo" required>
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="district">District *</label>
+                <select class="form-select" id="district" required>
+                  <option value="">Select District</option>
+                  <option>Colombo</option><option>Gampaha</option><option>Kalutara</option>
+                  <option>Kandy</option><option>Matale</option><option>Nuwara Eliya</option>
+                  <option>Galle</option><option>Matara</option><option>Hambantota</option>
+                  <option>Jaffna</option><option>Kilinochchi</option><option>Mannar</option>
+                  <option>Vavuniya</option><option>Mullaitivu</option><option>Batticaloa</option>
+                  <option>Ampara</option><option>Trincomalee</option><option>Kurunegala</option>
+                  <option>Puttalam</option><option>Anuradhapura</option><option>Polonnaruwa</option>
+                  <option>Badulla</option><option>Monaragala</option><option>Ratnapura</option><option>Kegalle</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="postal">Postal Code</label>
+                <input class="form-input" type="text" id="postal" placeholder="10300">
+              </div>
+            </div>
+          </div>
+
+          <!-- Delivery Method -->
+          <div class="checkout-section">
+            <h3>Delivery Method</h3>
+            <label class="radio-option selected" id="delivery-standard" onclick="selectDelivery(this,'standard')">
+              <input type="radio" name="delivery" value="standard" checked>
+              <div class="radio-option-text">
+                <p class="radio-option-title">Standard Delivery — <span id="delivery-fee-standard"></span></p>
+                <p class="radio-option-sub">3–5 working days islandwide</p>
+              </div>
+            </label>
+            <label class="radio-option" id="delivery-express" onclick="selectDelivery(this,'express')">
+              <input type="radio" name="delivery" value="express">
+              <div class="radio-option-text">
+                <p class="radio-option-title">Express Delivery — Rs. 850</p>
+                <p class="radio-option-sub">Next working day (select areas in Colombo & Gampaha)</p>
+              </div>
+            </label>
+            <label class="radio-option" id="delivery-pickup" onclick="selectDelivery(this,'pickup')">
+              <input type="radio" name="delivery" value="pickup">
+              <div class="radio-option-text">
+                <p class="radio-option-title">Store Pickup — Free</p>
+                <p class="radio-option-sub">Ready within 2 working days — 45 Galle Road, Colombo 03</p>
+              </div>
+            </label>
+          </div>
+
+          <!-- Payment -->
+          <div class="checkout-section">
+            <h3>Payment Method</h3>
+            <div class="demo-notice" style="margin-bottom:1rem">
+              This is a demonstration. No real card details are collected or processed.
+            </div>
+            <label class="radio-option selected" id="pay-cod" onclick="selectPayment(this,'cod')">
+              <input type="radio" name="payment" value="cod" checked>
+              <div class="radio-option-text">
+                <p class="radio-option-title">Cash on Delivery</p>
+                <p class="radio-option-sub">Pay when your order arrives</p>
+              </div>
+            </label>
+            <label class="radio-option" id="pay-card" onclick="selectPayment(this,'card')">
+              <input type="radio" name="payment" value="card">
+              <div class="radio-option-text">
+                <p class="radio-option-title">Card Payment (Demonstration)</p>
+                <p class="radio-option-sub">Visa, Mastercard, Amex — demo only, no details stored</p>
+              </div>
+            </label>
+            <label class="radio-option" id="pay-bank" onclick="selectPayment(this,'bank')">
+              <input type="radio" name="payment" value="bank">
+              <div class="radio-option-text">
+                <p class="radio-option-title">Bank Transfer (Demonstration)</p>
+                <p class="radio-option-sub">Demo bank transfer — no real transaction</p>
+              </div>
+            </label>
+            <div id="card-fields" style="display:none;margin-top:1rem">
+              <div class="form-grid">
+                <div class="form-group full"><label class="form-label">Card Number (demo)</label><input class="form-input" type="text" placeholder="1234 5678 9012 3456" maxlength="19" oninput="formatCard(this)"></div>
+                <div class="form-group"><label class="form-label">Expiry</label><input class="form-input" type="text" placeholder="MM/YY" maxlength="5"></div>
+                <div class="form-group"><label class="form-label">CVV</label><input class="form-input" type="text" placeholder="123" maxlength="3"></div>
+              </div>
+            </div>
+          </div>
+
+          <button class="btn btn-primary btn-full btn-lg" onclick="placeOrder()">Place Order</button>
+        </div>
+
+        <!-- Order Summary -->
+        <div class="order-summary" id="checkout-summary">
+          <h3>Order Summary</h3>
+          <div id="checkout-items" style="margin-bottom:1rem;border-bottom:1px solid var(--border);padding-bottom:1rem;max-height:280px;overflow-y:auto"></div>
+          <div class="summary-row"><span>Subtotal</span><span id="co-subtotal">—</span></div>
+          <div class="summary-row" id="co-promo-row" style="display:none;color:var(--success)"><span>Discount</span><span id="co-discount">—</span></div>
+          <div class="summary-row"><span>Delivery</span><span id="co-delivery">—</span></div>
+          <div class="summary-row total"><span>Total</span><span id="co-total">—</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+<div id="footer-placeholder"></div>
+<script src="js/config.js"></script><script src="js/products.js"></script><script src="js/wishlist.js"></script><script src="js/cart.js"></script><script src="js/app.js"></script>
+<script>
+let selectedDelivery = 'standard';
+let selectedPayment = 'cod';
+
+function selectDelivery(el, type) {
+  document.querySelectorAll('[id^="delivery-"]').forEach(e=>e.classList.remove('selected'));
+  el.classList.add('selected');
+  selectedDelivery = type;
+  updateCheckoutSummary();
+}
+function selectPayment(el, type) {
+  document.querySelectorAll('[id^="pay-"]').forEach(e=>e.classList.remove('selected'));
+  el.classList.add('selected');
+  selectedPayment = type;
+  document.getElementById('card-fields').style.display = type==='card' ? 'block' : 'none';
+}
+function formatCard(input) {
+  input.value = input.value.replace(/\D/g,'').replace(/(.{4})/g,'$1 ').trim();
+}
+function updateCheckoutSummary() {
+  const cart = cartManager.getCart();
+  const sub = cartManager.getSubtotal();
+  const disc = cartManager.getDiscount();
+  let delivery = cartManager.getDeliveryFee();
+  if (selectedDelivery==='express') delivery = 850;
+  if (selectedDelivery==='pickup') delivery = 0;
+  const total = sub - disc + delivery;
+  document.getElementById('co-subtotal').textContent = formatPrice(sub);
+  document.getElementById('co-delivery').textContent = delivery===0?'FREE':formatPrice(delivery);
+  document.getElementById('co-total').textContent = formatPrice(total);
+  const promoRow = document.getElementById('co-promo-row');
+  if (promoRow) promoRow.style.display = disc>0?'':'none';
+  const discEl = document.getElementById('co-discount');
+  if (discEl && disc>0) discEl.textContent = `−${formatPrice(disc)}`;
+
+  // Delivery fee label
+  const fee = cartManager.getDeliveryFee();
+  const stdEl = document.getElementById('delivery-fee-standard');
+  if (stdEl) stdEl.textContent = fee===0?'FREE':`Rs. ${fee}`;
+
+  // Cart items
+  const itemsEl = document.getElementById('checkout-items');
+  if (itemsEl) {
+    if (cart.length===0) {
+      itemsEl.innerHTML = '<p style="color:var(--muted);font-size:0.875rem">Your bag is empty.</p>';
+    } else {
+      itemsEl.innerHTML = cart.map(i=>`
+        <div style="display:flex;gap:0.75rem;margin-bottom:0.75rem;align-items:flex-start">
+          <img src="${i.image}" alt="${i.name}" width="52" height="64" style="width:52px;height:64px;object-fit:cover;border-radius:4px;background:var(--border)" onerror="this.src='assets/images/placeholders/product-placeholder.svg'">
+          <div style="flex:1">
+            <p style="font-size:0.8125rem;font-weight:600;line-height:1.3">${i.name}</p>
+            <p style="font-size:0.75rem;color:var(--muted)">${i.size} · ${i.colour} · Qty: ${i.qty}</p>
+            <p style="font-size:0.875rem;font-weight:700;color:var(--primary)">${formatPrice(i.price*i.qty)}</p>
+          </div>
+        </div>`).join('');
+    }
+  }
+}
+
+function placeOrder() {
+  // Validate
+  const required = ['full-name','email','phone','address1','city','district'];
+  let valid = true;
+  required.forEach(id => {
+    const el = document.getElementById(id);
+    if (!el || !el.value.trim()) { el&&el.classList.add('error'); valid=false; } else el&&el.classList.remove('error');
+  });
+  if (!valid) { showToast('Please fill in all required fields.','error'); return; }
+  const cart = cartManager.getCart();
+  if (cart.length===0) { showToast('Your bag is empty.','error'); return; }
+
+  // Generate order
+  const orderNum = `TUASL-2026-${String(Math.floor(10000+Math.random()*90000)).padStart(6,'0')}`;
+  const order = {
+    orderNumber: orderNum,
+    date: new Date().toLocaleDateString('en-LK'),
+    items: cart,
+    subtotal: cartManager.getSubtotal(),
+    discount: cartManager.getDiscount(),
+    delivery: selectedDelivery,
+    total: cartManager.getSubtotal()-cartManager.getDiscount()+(selectedDelivery==='express'?850:selectedDelivery==='pickup'?0:cartManager.getDeliveryFee()),
+    customer: {
+      name: document.getElementById('full-name').value,
+      email: document.getElementById('email').value,
+      phone: document.getElementById('phone').value
+    },
+    payment: selectedPayment
+  };
+  localStorage.setItem('tuasl_last_order', JSON.stringify(order));
+  cartManager.clearCart();
+  window.location.href = 'success.html';
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  if (cartManager.getCart().length===0 && !window._testCheckout) {
+    // Allow through for demo
+  }
+  updateCheckoutSummary();
+});
+</script>
+
+<!-- Template Switcher -->
+<style>
+  .tmpl-switcher{position:fixed;bottom:24px;right:20px;z-index:9999;font-family:'Inter',sans-serif}
+  .tmpl-btn{background:#8b1e3f;color:#fff;padding:9px 16px;border-radius:50px;font-size:.75rem;font-weight:700;display:flex;align-items:center;gap:6px;box-shadow:0 4px 16px rgba(139,30,63,.4);cursor:pointer;border:none;font-family:inherit}
+  .tmpl-menu{position:absolute;bottom:calc(100% + 10px);right:0;background:#fff;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,.18);overflow:hidden;min-width:210px;display:none}
+  .tmpl-menu.open{display:block}
+  .tmpl-menu-head{padding:12px 16px 8px;font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#666}
+  .tmpl-option{display:flex;align-items:center;gap:10px;padding:10px 16px;font-size:.82rem;font-weight:500;border-top:1px solid #f5f5f5;text-decoration:none;color:#1a1a1a;transition:background .1s}
+  .tmpl-option:hover{background:#fef0f3}
+  .tmpl-option.active{font-weight:700;color:#8b1e3f}
+  .tmpl-option.active::after{content:'\2713';margin-left:auto;color:#8b1e3f}
+  .tmpl-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+  @media(max-width:480px){.tmpl-switcher{right:14px}.tmpl-btn{font-size:.68rem;padding:7px 12px}}
+  @media(max-width:375px){.tmpl-switcher{right:12px}.tmpl-btn{font-size:.61rem;padding:6px 10px}}
+  @media(max-width:320px){.tmpl-btn{font-size:.56rem;padding:5px 8px;gap:4px}}
+</style>
+<div class="tmpl-switcher">
+  <div class="tmpl-menu" id="tmpl-menu">
+    <div class="tmpl-menu-head">Choose Template</div>
+    <a href="index.html" class="tmpl-option active">
+      <span class="tmpl-dot" style="background:#8b1e3f"></span>
+      Classic Boutique
+    </a>
+    <a href="index-urban.html" class="tmpl-option">
+      <span class="tmpl-dot" style="background:#080808;border:1px solid #e63946"></span>
+      Urban Dark
+    </a>
+    <a href="index-v3.html" class="tmpl-option">
+      <span class="tmpl-dot" style="background:#8b1e3f;border:2px solid #fff;outline:2px solid #8b1e3f"></span>
+      Fashion Hub
+    </a>
+    <a href="index-v4.html" class="tmpl-option">
+      <span class="tmpl-dot" style="background:#c9a84c"></span>
+      Luxe Gold
+    </a>
+    <a href="index-v5.html" class="tmpl-option">
+      <span class="tmpl-dot" style="background:#e63c26"></span>
+      Fresh Minimal
+    </a>
+    <a href="index-v6.html" class="tmpl-option">
+      <span class="tmpl-dot" style="background:#c4a882"></span>
+      Natural Linen
+    </a>
+    <a href="index-v7.html" class="tmpl-option">
+      <span class="tmpl-dot" style="background:#2e6fad"></span>
+      Denim &amp; Co.
+    </a>
+    <a href="index-v8.html" class="tmpl-option">
+      <span class="tmpl-dot" style="background:#E8002D"></span>
+      Street Raw
+    </a>
+    <a href="index-v9.html" class="tmpl-option">
+      <span class="tmpl-dot" style="background:#111111;border:1px solid #555"></span>
+      The Edit
+    </a>
+  </div>
+  <button class="tmpl-btn" id="tmpl-toggle">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+    Templates
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" id="tmpl-arrow"><path d="m18 15-6-6-6 6"/></svg>
+  </button>
+</div>
+<script>
+  /* Highlight last-visited template */
+  (function(){
+    var t=localStorage.getItem('tuasl_tmpl')||'classic';
+    var opts=document.querySelectorAll('.tmpl-option');
+    opts.forEach(function(o){o.classList.remove('active');});
+    var idx={classic:0,urban:1,nolimit:2,luxe:3,minimal:4,linen:5,denim:6,street:7,edit:8}[t]||0;
+    if(opts[idx])opts[idx].classList.add('active');
+  })();
+  document.getElementById('tmpl-toggle').addEventListener('click',function(){
+    var m=document.getElementById('tmpl-menu');
+    var a=document.getElementById('tmpl-arrow');
+    var o=m.classList.toggle('open');
+    a.style.transform=o?'rotate(180deg)':'';
+  });
+  document.addEventListener('click',function(e){
+    if(!e.target.closest('.tmpl-switcher')){
+      document.getElementById('tmpl-menu').classList.remove('open');
+      document.getElementById('tmpl-arrow').style.transform='';
+    }
+  });
+</script>
+</body></html>

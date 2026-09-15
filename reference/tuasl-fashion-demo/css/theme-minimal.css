@@ -1,0 +1,51 @@
+/* ── Fresh Minimal Theme — inner page override ── */
+:root {
+  --primary:       #e63c26;
+  --primary-dark:  #c0321e;
+  --accent:        #ffd5cf;
+  --background:    #ffffff;
+  --surface:       #ffffff;
+  --text:          #111111;
+  --muted:         #666666;
+  --border:        #e5e5e5;
+  --sale:          #e63c26;
+}
+body { background: #fff; color: #111; }
+.announcement-bar { background: #111111; }
+.site-header { background: #fff; border-bottom: 1.5px solid #e5e5e5 !important; }
+.header-logo { color: #111 !important; font-weight: 900 !important; letter-spacing: .04em; }
+.header-logo span { color: #e63c26; font-weight: 400; letter-spacing: .12em; }
+.site-nav { border-top: 1px solid #f0f0f0; }
+.nav-link { color: #444 !important; font-weight: 500; }
+.nav-link:hover, .nav-link:focus { color: #e63c26 !important; }
+.nav-link.sale { color: #e63c26 !important; font-weight: 700; }
+.nav-link.new  { color: #111 !important; font-weight: 700; }
+.header-action-btn { color: #444; }
+.header-action-btn:hover { color: #e63c26; }
+.header-search input:focus { border-color: #e63c26; box-shadow: 0 0 0 3px rgba(230,60,38,.08); }
+.page-hero { background: #111111; }
+.page-hero h1 { color: #fff; font-weight: 900; letter-spacing: -.01em; }
+#page-desc { color: rgba(255,255,255,.6); }
+.breadcrumb a { color: rgba(255,255,255,.55); }
+.breadcrumb a:hover { color: #e63c26; }
+#breadcrumb-current { color: rgba(255,255,255,.85); }
+.product-card { border-color: #e5e5e5; background: #fff; }
+.product-card:hover { box-shadow: 0 6px 24px rgba(0,0,0,.1); }
+.product-card__category { color: #e63c26; font-weight: 700; letter-spacing: .04em; font-size: .68rem; }
+.product-card__name a:hover { color: #e63c26; }
+.product-card__badge.sale  { background: #e63c26; }
+.product-card__badge.new   { background: #111; }
+.product-card__discount { color: #e63c26; background: rgba(230,60,38,.07); }
+.product-card__price-now { color: #111; font-weight: 800; }
+.btn-primary, .btn.btn-primary { background: #111 !important; border-color: #111 !important; color: #fff !important; border-radius: 0 !important; letter-spacing: .06em; }
+.btn-primary:hover, .btn.btn-primary:hover { background: #e63c26 !important; border-color: #e63c26 !important; }
+.btn-outline-dark { border-color: #111; color: #111; border-radius: 0 !important; }
+.btn-outline-dark:hover { background: #111; color: #fff; }
+.filter-sidebar .filter-section-title,
+.filter-sidebar .filter-title { color: #111; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; font-size: .72rem; }
+.filter-sidebar input[type=checkbox]:checked { accent-color: #e63c26; }
+.filter-sidebar .filter-tag.active { background: #111; border-color: #111; color: #fff; border-radius: 0; }
+.category-toolbar .sort-select:focus { border-color: #111; }
+.mobile-filter-btn { border-color: #111; color: #111; border-radius: 0; }
+#load-more-btn { border-color: #111; color: #111; border-radius: 0; }
+#load-more-btn:hover { background: #111; color: #fff; }

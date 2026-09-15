@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin Login — TU@SL Fashion</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:wght@700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/admin.css">
+  <style>
+    body { display:flex; align-items:center; justify-content:center; min-height:100vh; background:#f3f4f6; }
+    .login-wrap { width:100%; max-width:400px; padding:16px; }
+    .login-card { background:#fff; border-radius:16px; padding:48px 40px; box-shadow:0 4px 24px rgba(0,0,0,.08); }
+    .login-logo { text-align:center; margin-bottom:32px; }
+    .login-logo .brand { font-family:'Playfair Display',serif; font-size:2rem; color:#8b1e3f; letter-spacing:-.5px; }
+    .login-logo .sub { font-size:.8rem; color:#6b7280; letter-spacing:2px; text-transform:uppercase; margin-top:4px; }
+    .login-title { font-size:1.1rem; font-weight:600; color:#111827; margin-bottom:24px; text-align:center; }
+    .form-group { margin-bottom:18px; }
+    .form-group label { display:block; font-size:.82rem; font-weight:500; color:#374151; margin-bottom:6px; }
+    .form-group input {
+      width:100%; padding:11px 14px; border:1.5px solid #d1d5db; border-radius:8px;
+      font-size:.95rem; font-family:inherit; outline:none; transition:border-color .2s;
+      box-sizing:border-box;
+    }
+    .form-group input:focus { border-color:#8b1e3f; }
+    .form-group .input-wrap { position:relative; }
+    .form-group .toggle-pw {
+      position:absolute; right:12px; top:50%; transform:translateY(-50%);
+      background:none; border:none; cursor:pointer; color:#9ca3af; font-size:.85rem; padding:0;
+    }
+    .login-btn {
+      width:100%; padding:12px; background:#8b1e3f; color:#fff; border:none;
+      border-radius:8px; font-size:1rem; font-weight:600; font-family:inherit;
+      cursor:pointer; transition:background .2s; margin-top:8px;
+    }
+    .login-btn:hover { background:#6d1731; }
+    .login-error {
+      display:none; background:#fef2f2; border:1px solid #fecaca; color:#dc2626;
+      border-radius:8px; padding:10px 14px; font-size:.85rem; margin-bottom:16px; text-align:center;
+    }
+    .login-hint { text-align:center; font-size:.78rem; color:#9ca3af; margin-top:20px; }
+    .login-hint span { display:inline-block; background:#f9fafb; border:1px solid #e5e7eb; border-radius:6px; padding:4px 10px; font-family:monospace; color:#6b7280; margin:2px; }
+    .back-link { text-align:center; margin-top:24px; }
+    .back-link a { font-size:.82rem; color:#8b1e3f; text-decoration:none; }
+    .back-link a:hover { text-decoration:underline; }
+  </style>
+</head>
+<body>
+  <div class="login-wrap">
+    <div class="login-card">
+      <div class="login-logo">
+        <div class="brand">TU@SL</div>
+        <div class="sub">Fashion Admin</div>
+      </div>
+      <div class="login-title">Sign in to your account</div>
+      <div class="login-error" id="login-error">Invalid username or password.</div>
+      <form id="login-form" autocomplete="on">
+        <div class="form-group">
+          <label for="username">Username</label>
+          <input type="text" id="username" name="username" placeholder="Enter username" autocomplete="username" required>
+        </div>
+        <div class="form-group">
+          <label for="password">Password</label>
+          <div class="input-wrap">
+            <input type="password" id="password" name="password" placeholder="Enter password" autocomplete="current-password" required>
+            <button type="button" class="toggle-pw" id="toggle-pw" aria-label="Show/hide password">Show</button>
+          </div>
+        </div>
+        <button type="submit" class="login-btn">Sign In</button>
+      </form>
+      <div class="login-hint">
+        Demo credentials: <span>admin</span> / <span>tuasl2026</span>
+      </div>
+    </div>
+    <div class="back-link"><a href="../index.html">&larr; Back to store</a></div>
+  </div>
+
+  <script src="js/admin-data.js"></script>
+  <script>
+    if (isAdminLoggedIn()) window.location.href = 'index.html';
+
+    const form = document.getElementById('login-form');
+    const errEl = document.getElementById('login-error');
+    const toggleBtn = document.getElementById('toggle-pw');
+    const pwInput = document.getElementById('password');
+
+    toggleBtn.addEventListener('click', () => {
+      const show = pwInput.type === 'password';
+      pwInput.type = show ? 'text' : 'password';
+      toggleBtn.textContent = show ? 'Hide' : 'Show';
+    });
+
+    form.addEventListener('submit', e => {
+      e.preventDefault();
+      const u = document.getElementById('username').value.trim();
+      const p = pwInput.value;
+      if (adminLogin(u, p)) {
+        sessionStorage.setItem('tuasl_admin', 'true');
+        window.location.href = 'index.html';
+      } else {
+        errEl.style.display = 'block';
+        pwInput.value = '';
+        pwInput.focus();
+      }
+    });
+  </script>
+</body>
+</html>

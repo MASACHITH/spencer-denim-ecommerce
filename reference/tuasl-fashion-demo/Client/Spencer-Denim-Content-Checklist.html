@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Content &amp; Information Checklist</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', Arial, Helvetica, sans-serif;
+    color: #1a1a1a;
+    font-size: 12.5px;
+    line-height: 1.5;
+    margin: 0;
+  }
+  .header {
+    display: flex; justify-content: space-between; align-items: flex-start;
+    border-bottom: 3px solid #14213d; padding-bottom: 14px; margin-bottom: 20px;
+  }
+  .company-name { font-size: 26px; font-weight: 800; letter-spacing: 1px; color: #14213d; }
+  .company-sub { font-size: 11px; color: #555; margin-top: 2px; }
+  .doc-meta { text-align: right; font-size: 11.5px; color: #333; }
+  .doc-title { text-align: center; font-size: 18px; font-weight: 700; margin: 10px 0 4px; color: #14213d; }
+  .doc-subtitle { text-align: center; font-size: 12px; color: #555; margin-bottom: 20px; }
+  .info-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 10px 30px;
+    background: #f4f6f9; border: 1px solid #e2e6ee; border-radius: 6px;
+    padding: 12px 16px; margin-bottom: 20px; font-size: 12px;
+  }
+  .info-grid div span.label { color: #666; display: inline-block; min-width: 130px; }
+  .info-grid div span.value { font-weight: 600; }
+  h2.section { font-size: 14px; font-weight: 700; color: #14213d; border-left: 4px solid #1d4ed8; padding-left: 8px; margin: 20px 0 6px; }
+  p.body-text { margin: 4px 0 8px; color: #333; }
+  ul.scope-list { margin: 4px 0 0 0; padding-left: 20px; }
+  ul.scope-list li { margin-bottom: 4px; }
+  table.status { width: 100%; border-collapse: collapse; margin-top: 4px; font-size: 12px; }
+  table.status th { background: #14213d; color: #fff; text-align: left; padding: 6px 10px; font-weight: 600; }
+  table.status td { padding: 6px 10px; border-bottom: 1px solid #e5e5e7; vertical-align: top; }
+  table.status td.item-col { width: 34%; font-weight: 600; }
+  .note { background: #fff8e6; border: 1px solid #f0d98c; border-radius: 6px; padding: 10px 14px; font-size: 11px; color: #5c4a00; margin-top: 18px; }
+  .footer { margin-top: 24px; text-align: center; font-size: 10.5px; color: #888; border-top: 1px solid #ddd; padding-top: 8px; }
+</style>
+</head>
+<body>
+
+  <div class="header">
+    <div>
+      <div class="company-name">TU2SL</div>
+      <div class="company-sub">Software &amp; Web Application Development</div>
+    </div>
+    <div class="doc-meta">
+      Ref: TU2SL-2026-0823-C<br>
+      Date: 23 August 2026
+    </div>
+  </div>
+
+  <div class="doc-title">Content &amp; Information Checklist</div>
+  <div class="doc-subtitle">Details required from client before the site can go live</div>
+
+  <div class="info-grid">
+    <div><span class="label">Client:</span> <span class="value">Manusha Weerawardene</span></div>
+    <div><span class="label">Company:</span> <span class="value">Spencer Denim Industries Pvt Ltd</span></div>
+    <div><span class="label">Prepared By:</span> <span class="value">TU2SL</span></div>
+    <div><span class="label">Project:</span> <span class="value">Fashion E-Commerce Website</span></div>
+    <div><span class="label">Address:</span> <span class="value">Kumarage Mawatha, Padukka</span></div>
+    <div><span class="label">Related Document:</span> <span class="value">Project Proposal, TU2SL-2026-0823</span></div>
+  </div>
+
+  <p class="body-text">The items below are content and account details we need from you to complete the build.
+    Send whatever you have — for anything not ready yet, we'll use a reasonable placeholder and swap it in
+    before launch.</p>
+
+  <h2 class="section">1. Store Policies</h2>
+  <table class="status">
+    <tr><th>Item</th><th>What we need</th></tr>
+    <tr><td class="item-col">Return &amp; Exchange Policy</td><td>Full written policy — return window, condition requirements, who pays return shipping, refund method/timeline</td></tr>
+    <tr><td class="item-col">Shipping / Delivery Policy</td><td>Delivery areas covered, cost per district/zone, estimated delivery times, cash-on-delivery availability if any</td></tr>
+    <tr><td class="item-col">Privacy Policy</td><td>Confirm if you have one already, or if TU2SL should draft a standard e-commerce version for your review</td></tr>
+    <tr><td class="item-col">Terms &amp; Conditions</td><td>Same as above — existing document, or draft for your review</td></tr>
+  </table>
+
+  <h2 class="section">2. About / Company</h2>
+  <table class="status">
+    <tr><th>Item</th><th>What we need</th></tr>
+    <tr><td class="item-col">Brand story</td><td>How the business started, background, what makes it different</td></tr>
+    <tr><td class="item-col">Company details</td><td>Registered business name, address, registration number (only if you want it shown), contact email/phone for the About page</td></tr>
+    <tr><td class="item-col">Mission / values</td><td>Optional — short statement if you have one</td></tr>
+  </table>
+
+  <h2 class="section">3. Contact &amp; Social</h2>
+  <table class="status">
+    <tr><th>Item</th><th>What we need</th></tr>
+    <tr><td class="item-col">Customer support</td><td>Phone number, email, and support hours for the Contact page and footer</td></tr>
+    <tr><td class="item-col">WhatsApp number</td><td>Number to connect to the site's WhatsApp contact button</td></tr>
+    <tr><td class="item-col">Social media links</td><td>Which platforms to link (Instagram, Facebook, TikTok, etc.) and the exact handle/URL for each — or confirm none yet</td></tr>
+  </table>
+
+  <h2 class="section">4. Store Setup</h2>
+  <table class="status">
+    <tr><th>Item</th><th>What we need</th></tr>
+    <tr><td class="item-col">Domain name</td><td>Preferred domain name(s), in priority order, so we can check availability before purchasing</td></tr>
+    <tr><td class="item-col">Brand colour palette</td><td>Confirm you're proceeding with our proposed Denim &amp; Co. × Natural Linen blend, or send your own brand swatches to match instead</td></tr>
+    <tr><td class="item-col">PayPal account</td><td>Business account details to connect for online payments</td></tr>
+    <tr><td class="item-col">Bank account details</td><td>Account name, number, and bank branch to display for the "Bank / Online Transfer" payment option at checkout</td></tr>
+  </table>
+
+  <div class="note">
+    <strong>Note:</strong> None of the above blocks development from starting — build work proceeds on the
+    agreed scope and theme regardless. This content is needed before go-live so the store isn't launched with
+    placeholder policies, contact details, or payment accounts.
+  </div>
+
+  <div class="footer">TU2SL &nbsp;|&nbsp; Content &amp; Information Checklist &nbsp;|&nbsp; Spencer Denim Industries Pvt Ltd &nbsp;|&nbsp; Page 1 of 1</div>
+
+</body>
+</html>

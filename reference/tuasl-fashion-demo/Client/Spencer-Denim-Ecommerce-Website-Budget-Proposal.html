@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Fashion E-Commerce Website — Project Proposal</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', Arial, Helvetica, sans-serif;
+    color: #1a1a1a;
+    font-size: 12.5px;
+    line-height: 1.5;
+    margin: 0;
+  }
+  .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    border-bottom: 3px solid #14213d;
+    padding-bottom: 14px;
+    margin-bottom: 20px;
+  }
+  .company-name { font-size: 26px; font-weight: 800; letter-spacing: 1px; color: #14213d; }
+  .company-sub { font-size: 11px; color: #555; margin-top: 2px; }
+  .doc-meta { text-align: right; font-size: 11.5px; color: #333; }
+  .doc-title { text-align: center; font-size: 18px; font-weight: 700; margin: 10px 0 4px; color: #14213d; }
+  .doc-subtitle { text-align: center; font-size: 12px; color: #555; margin-bottom: 20px; }
+  .info-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 10px 30px;
+    background: #f4f6f9; border: 1px solid #e2e6ee; border-radius: 6px;
+    padding: 12px 16px; margin-bottom: 20px; font-size: 12px;
+  }
+  .info-grid div span.label { color: #666; display: inline-block; min-width: 130px; }
+  .info-grid div span.value { font-weight: 600; }
+  h2.section { font-size: 14px; font-weight: 700; color: #14213d; border-left: 4px solid #1d4ed8; padding-left: 8px; margin: 22px 0 8px; }
+  h3.sub { font-size: 12.5px; font-weight: 700; color: #14213d; margin: 14px 0 4px; }
+  p.body-text { margin: 6px 0; color: #333; }
+  ul.scope-list { margin: 4px 0 0 0; padding-left: 20px; }
+  ul.scope-list li { margin-bottom: 4px; }
+  table.budget, table.milestones, table.timeline, table.hosting {
+    width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 12px;
+  }
+  table.budget th, table.hosting th { background: #14213d; color: #fff; text-align: left; padding: 8px 10px; font-weight: 600; }
+  table.budget th.num, table.budget td.num, table.hosting th.num, table.hosting td.num { text-align: right; }
+  table.budget td, table.hosting td { padding: 7px 10px; border-bottom: 1px solid #e5e5e7; }
+  table.budget tr.grand-total td { font-weight: 800; background: #14213d; color: #fff; font-size: 13.5px; }
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 10px; }
+  table.milestones th, table.timeline th { background: #eceef1; padding: 6px 8px; text-align: left; border-bottom: 1px solid #ccc; }
+  table.milestones td, table.timeline td { padding: 6px 8px; border-bottom: 1px solid #eee; }
+  .note { background: #fff8e6; border: 1px solid #f0d98c; border-radius: 6px; padding: 10px 14px; font-size: 11px; color: #5c4a00; margin-top: 16px; }
+  .confirm-line { margin-top: 40px; border-top: 1px solid #333; padding-top: 4px; font-size: 11.5px; max-width: 300px; }
+  .footer { margin-top: 24px; text-align: center; font-size: 10.5px; color: #888; border-top: 1px solid #ddd; padding-top: 8px; }
+</style>
+</head>
+<body>
+
+  <div class="header">
+    <div>
+      <div class="company-name">TU2SL</div>
+      <div class="company-sub">Software &amp; Web Application Development</div>
+    </div>
+    <div class="doc-meta">
+      Proposal No: TU2SL-2026-0823<br>
+      Date: 23 August 2026<br>
+      Valid Until: 3 September 2026
+    </div>
+  </div>
+
+  <div class="doc-title">Project Proposal &amp; Cost Estimate</div>
+  <div class="doc-subtitle">Fashion E-Commerce Website</div>
+
+  <div class="info-grid">
+    <div><span class="label">Client:</span> <span class="value">Manusha Weerawardene</span></div>
+    <div><span class="label">Company:</span> <span class="value">Spencer Denim Industries Pvt Ltd</span></div>
+    <div><span class="label">Prepared By:</span> <span class="value">TU2SL</span></div>
+    <div><span class="label">Project:</span> <span class="value">Fashion E-Commerce Website</span></div>
+    <div><span class="label">Address:</span> <span class="value">Kumarage Mawatha, Padukka</span></div>
+    <div><span class="label">Platform:</span> <span class="value">Responsive Web (Desktop &amp; Mobile)</span></div>
+    <div><span class="label">Estimated Delivery:</span> <span class="value">End of September 2026</span></div>
+    <div><span class="label">Currency:</span> <span class="value">LKR (Sri Lankan Rupees)</span></div>
+  </div>
+
+  <h2 class="section">1. Project Overview</h2>
+  <p class="body-text">
+    TU2SL is engaged to design and build a complete fashion e-commerce website for Spencer Denim Industries Pvt
+    Ltd (Manusha Weerawardene), a Sri Lankan family fashion retailer serving Women, Men and Kids. The site is built on the agreed "Classic Boutique" layout
+    (Template 1), recoloured with a Denim &amp; Co. × Natural Linen theme. Scope covers the customer-facing
+    storefront, product listing and checkout experience, integrated payments, and a full admin panel for
+    day-to-day store management and reporting.
+  </p>
+
+  <h2 class="section">2. Scope of Work</h2>
+
+  <h3 class="sub">2.1 Website &amp; Theme</h3>
+  <ul class="scope-list">
+    <li>"Classic Boutique" layout (Template 1), recoloured with a Denim &amp; Co. × Natural Linen theme —
+      denim-blue accents over a warm linen/neutral base.</li>
+  </ul>
+
+  <h3 class="sub">2.2 Homepage</h3>
+  <ul class="scope-list">
+    <li>Hero video banner</li>
+    <li>Shop by Department — Women / Men / Kids</li>
+    <li>New Arrivals</li>
+    <li>Trending Items — links through to the matching product listing</li>
+    <li>Full-width campaign banner</li>
+    <li>Activewear campaign feature</li>
+    <li>Sale section</li>
+    <li>Floating WhatsApp contact button (site-wide, all pages)</li>
+    <li>Social media gallery</li>
+    <li>Customer benefits (delivery / returns / quality)</li>
+    <li>Newsletter signup</li>
+  </ul>
+
+  <h3 class="sub">2.3 Listing / Category Pages</h3>
+  <ul class="scope-list">
+    <li>Filter sidebar (desktop) and slide-in filter drawer (mobile), with active filter chips</li>
+    <li>Sort by: Recommended, Newest, Best Selling, Price (Low–High / High–Low), Highest Rated, Biggest Discount</li>
+    <li>Responsive product grid, live product count, "no products found" state, Load More pagination</li>
+    <li>Product reviews &amp; ratings</li>
+  </ul>
+
+  <h3 class="sub">2.4 Payments &amp; Customer Account</h3>
+  <ul class="scope-list">
+    <li><strong>PayPal</strong> — online payment with automatic confirmation</li>
+    <li><strong>Bank / Online Transfer</strong> — customer selects at checkout; admin verifies the transfer and marks the order as paid</li>
+    <li>Guest checkout, customer registration/login, and order history</li>
+    <li>Order history shows live shipping/tracking status per order, linked through to the courier's tracking page</li>
+  </ul>
+
+  <h3 class="sub">2.5 Admin Panel</h3>
+  <p class="body-text">Sidebar sections: Dashboard, Orders, Products, Customers, Reports, Traffic, Inventory, Promo Codes, Settings.</p>
+  <ul class="scope-list">
+    <li><strong>Dashboard</strong> — KPI overview vs. previous period; Revenue &amp; Orders trend (monthly/weekly
+      toggle, last 12 months); Sales by Department revenue share; Order Status distribution; Traffic Sources
+      breakdown; Payment Methods breakdown; Top Categories by Revenue; searchable Recent Orders table; Top
+      Products table with sales trend; Low Stock Alerts; Customer Overview by district</li>
+    <li><strong>Order management</strong> — including manual approval of bank-transfer payments, and order
+      tracking numbers linked through to the courier's tracking page</li>
+    <li><strong>Product listing management</strong> — add / edit / remove products</li>
+    <li><strong>Category management</strong></li>
+    <li><strong>Sale / promotion management</strong> — promo codes and sale campaigns</li>
+    <li><strong>Inventory management</strong> — stock levels per product/variant</li>
+    <li><strong>Customer management</strong></li>
+    <li>Admin login</li>
+  </ul>
+
+  <h2 class="section">3. Cost &amp; Payment Schedule</h2>
+  <table class="budget">
+    <tr><th>Item</th><th class="num" style="width:22%">Cost (LKR)</th></tr>
+    <tr><td>Website Design &amp; Development — full scope as Section 2</td><td class="num">80,000</td></tr>
+    <tr class="grand-total"><td>TOTAL PROJECT COST</td><td class="num">LKR 80,000</td></tr>
+  </table>
+
+  <div class="two-col">
+    <div>
+      <h3 class="sub">Payment Milestones</h3>
+      <table class="milestones">
+        <tr><th>Milestone</th><th>%</th><th>Amount (LKR)</th></tr>
+        <tr><td>Advance, before work begins</td><td>50%</td><td>40,000</td></tr>
+        <tr><td>Final, on delivery/handover</td><td>50%</td><td>40,000</td></tr>
+      </table>
+    </div>
+    <div>
+      <h3 class="sub">Indicative Timeline</h3>
+      <table class="timeline">
+        <tr><th>Phase</th><th>Target</th></tr>
+        <tr><td>Theme &amp; build</td><td>September 2026</td></tr>
+        <tr><td>Delivery &amp; handover</td><td>End of September 2026</td></tr>
+        <tr><td>Support window begins</td><td>From handover</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <h2 class="section">4. Hosting &amp; Domain</h2>
+  <p class="body-text">Billed separately from the project fee. Hostinger VPS — KVM 2 plan (2 vCPU, 8 GB RAM,
+    100 GB NVMe SSD, 8 TB bandwidth). TU2SL manages the purchase and setup; the client covers the plan cost.</p>
+  <table class="hosting">
+    <tr><th>Term</th><th class="num">Due at Purchase (USD)</th><th class="num">Due at Purchase (approx. LKR)</th></tr>
+    <tr><td>1 year</td><td class="num">$119.88</td><td class="num">~40,000</td></tr>
+    <tr><td>2 years</td><td class="num">$215.76</td><td class="num">~72,000</td></tr>
+  </table>
+  <ul class="scope-list">
+    <li>Domain: approx. LKR 4,000, charged from the first purchase</li>
+    <li>Each renewal after that is also chargeable — the actual renewal price will vary based on the registrar's
+      rate on the day of renewal</li>
+    <li>Client to send preferred domain name(s) in advance so availability can be checked before purchase, and to
+      pay the advance for the domain (as with hosting) before TU2SL makes the purchase</li>
+    <li>The 50% project advance, the hosting cost, and the domain cost are all collected together at project
+      start, before work begins</li>
+  </ul>
+
+  <h2 class="section">5. Post-Launch Support (6 Months)</h2>
+  <table class="hosting">
+    <tr><th>Item</th><th class="num">Rate</th></tr>
+    <tr><td>Monthly support — includes 1 site visit/check-in (approx. 3–5 hours)</td><td class="num">LKR 15,000 /mo</td></tr>
+    <tr><td>Additional visits beyond the included one</td><td class="num">LKR 5,000 /visit</td></tr>
+    <tr><td>Indicative total, 6 months at base rate</td><td class="num">LKR 90,000</td></tr>
+  </table>
+  <ul class="scope-list">
+    <li>Admin user training/guidance included</li>
+    <li>Bug fixes for issues in our own build: free within the 6-month period</li>
+    <li>New feature requests outside the agreed scope: quoted and charged separately</li>
+  </ul>
+
+  <div class="note">
+    <strong>Note:</strong> This is a good-faith cost estimate for the scope described above. Hosting/domain LKR
+    figures are estimates based on current exchange rates and are reconfirmed against Hostinger's live pricing
+    at the time of purchase. Support is billed monthly, not prepaid. Exact delivery date within September 2026
+    to be confirmed. Additional feature requests raised outside this scope are quoted separately before starting.
+    Koko installment (BNPL) payment is not included in this phase — it can be added as a future addition, with
+    integration cost quoted separately at that time.
+  </div>
+
+  <div class="confirm-line">Confirmed by client — signature / date</div>
+
+  <div class="footer">TU2SL &nbsp;|&nbsp; Project Proposal &nbsp;|&nbsp; Spencer Denim Industries Pvt Ltd &nbsp;|&nbsp; Page 1 of 1</div>
+
+</body>
+</html>

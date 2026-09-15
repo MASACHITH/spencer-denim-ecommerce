@@ -1,0 +1,87 @@
+/* ================================================================
+   Colombo Wardrobe — Denim Theme Override
+   Injected by app.js when tuasl_tmpl === 'denim'
+   Overrides inner-page (listing/product/cart) styles to match
+   the Colombo Wardrobe / Denim & Co. template palette.
+================================================================ */
+
+/* ── CSS Variable overrides ── */
+:root {
+  --primary:       #2e6fad;
+  --primary-dark:  #192d47;
+  --accent:        #a8cfe8;
+  --background:    #eef3f9;
+  --surface:       #ffffff;
+  --text:          #101c2e;
+  --muted:         #5a6e84;
+  --border:        #c8dae8;
+  --sale:          #c0392b;
+  --success:       #1e7e45;
+}
+
+body { background: var(--background); }
+
+/* ── Announcement bar ── */
+.announcement-bar { background: #192d47; }
+
+/* ── Header ── */
+.site-header { border-bottom: 2px solid #c8dae8; background: #fff; }
+.header-logo { color: #192d47 !important; }
+.header-logo span { color: #5a6e84; }
+
+/* ── Desktop nav ── */
+.nav-link { color: #5a6e84; font-weight: 600; }
+.nav-link:hover,
+.nav-link:focus { color: #2e6fad; }
+.nav-link.sale { color: #c0392b; }
+.nav-link.new  { color: #2e6fad; }
+.site-nav { border-top: 1px solid #c8dae8; background: #fff; }
+
+/* ── Page hero bar ── */
+.page-hero { background: #192d47; }
+.page-hero h1 { color: #fff; }
+.page-hero .breadcrumb a { color: rgba(255,255,255,.65); }
+.page-hero .breadcrumb span { color: rgba(255,255,255,.45); }
+#page-desc { color: rgba(255,255,255,.68); }
+#breadcrumb-current { color: rgba(255,255,255,.85); }
+
+/* ── Buttons ── */
+.btn-primary,
+.btn.btn-primary { background: #2e6fad; border-color: #2e6fad; }
+.btn-primary:hover,
+.btn.btn-primary:hover { background: #192d47; border-color: #192d47; }
+.btn-outline-dark { border-color: #192d47; color: #192d47; }
+.btn-outline-dark:hover { background: #192d47; color: #fff; }
+
+/* ── Product cards ── */
+.product-card { border-color: #c8dae8; background: #fff; }
+.product-card:hover { box-shadow: 0 8px 28px rgba(25,45,71,.14); }
+.product-card__badge.sale    { background: #c0392b; }
+.product-card__badge.new     { background: #192d47; }
+.product-card__badge.online  { background: #2e6fad; }
+.product-card__price-now     { color: #101c2e; }
+.product-card__price-was     { color: #5a6e84; }
+.product-card__discount      { color: #c0392b; background: rgba(192,57,43,.08); }
+.product-card__name a:hover  { color: #2e6fad; }
+.product-card__category      { color: #2e6fad; }
+
+/* ── Filter sidebar ── */
+.filter-sidebar .filter-section-title,
+.filter-sidebar .filter-title { color: #192d47; }
+.filter-sidebar input[type=checkbox]:checked { accent-color: #2e6fad; }
+.filter-sidebar .filter-tag.active { background: #2e6fad; border-color: #2e6fad; }
+
+/* ── Sort / toolbar ── */
+.category-toolbar .sort-select:focus { border-color: #2e6fad; box-shadow: 0 0 0 3px rgba(46,111,173,.12); }
+.mobile-filter-btn { border-color: #192d47; color: #192d47; }
+.mobile-filter-btn:hover { background: #192d47; color: #fff; }
+
+/* ── Load more button ── */
+#load-more-btn { border-color: #192d47; color: #192d47; }
+#load-more-btn:hover { background: #192d47; color: #fff; }
+
+/* ── Breadcrumb ── */
+.breadcrumb a:hover { color: #2e6fad; }
+
+/* ── Footer accent ── */
+.footer-logo { color: #192d47; }

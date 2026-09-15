@@ -1,0 +1,786 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="TU@SL Fashion — Natural, warm style for every occasion. Shop leather tones, neutrals and earthy fashion for the whole family.">
+  <title>TU@SL Fashion — Natural Linen</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    :root{
+      --BG:#f4f1ec;--SURF:#ffffff;--GR:#ece8e1;--GR2:#e5e0d8;
+      --ACC:#7c5533;--ACC2:#c4a882;--ACC3:#4a3220;
+      --TEXT:#1a1a1a;--M:#6b5a4e;--BD:#e0d9cf;--S:#faf8f5;
+    }
+    html{font-size:16px;scroll-behavior:smooth}
+    body{font-family:'Inter',sans-serif;background:var(--BG);color:var(--TEXT);line-height:1.6;overflow-x:hidden}
+    a{text-decoration:none;color:inherit}
+    img{display:block;max-width:100%}
+    button{border:none;background:none;cursor:pointer;font-family:inherit}
+    @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:.01ms!important;transition:.01ms!important}}
+
+    /* ── STRIP ── */
+    .strip{background:var(--ACC3);overflow:hidden;padding:7px 0}
+    .strip-track{display:inline-flex;white-space:nowrap;animation:mscroll 30s linear infinite}
+    .strip-track span{padding:0 24px;font-size:11.5px;font-weight:500;color:rgba(255,255,255,.85);letter-spacing:.05em}
+    .strip-track b{color:var(--ACC2)}
+    @keyframes mscroll{to{transform:translateX(-50%)}}
+
+    /* ── HEADER ── */
+    .hdr{position:sticky;top:0;z-index:300;background:var(--SURF);border-bottom:1px solid var(--BD);box-shadow:0 1px 6px rgba(124,85,51,.06)}
+    .hdr-row{max-width:1440px;margin:0 auto;padding:0 28px;height:66px;display:flex;align-items:center;gap:22px}
+    .logo{font-family:'Cormorant Garamond',serif;font-size:1.65rem;font-weight:700;color:var(--TEXT);letter-spacing:.02em;flex-shrink:0}
+    .logo em{color:var(--ACC);font-style:normal}
+    .hdr-search{flex:1;max-width:520px;position:relative;margin:0 auto}
+    .hdr-search input{width:100%;padding:10px 44px 10px 18px;border:1.5px solid var(--BD);border-radius:4px;font-size:.86rem;font-family:'Inter',sans-serif;outline:none;background:var(--GR);color:var(--TEXT);transition:all .18s}
+    .hdr-search input:focus{border-color:var(--ACC);background:#fff;box-shadow:0 0 0 3px rgba(124,85,51,.08)}
+    .hdr-search input::placeholder{color:#b8ab9f}
+    .hdr-search button{position:absolute;right:0;top:0;bottom:0;width:44px;display:flex;align-items:center;justify-content:center;color:var(--M)}
+    .hdr-search button svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2}
+    .hdr-icons{display:flex;align-items:center;gap:2px;margin-left:auto;flex-shrink:0}
+    .hdr-icon{position:relative;padding:8px 10px;color:var(--M);display:flex;flex-direction:column;align-items:center;gap:3px;border-radius:6px;transition:all .15s}
+    .hdr-icon:hover{background:var(--GR);color:var(--ACC)}
+    .hdr-icon svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.8}
+    .hdr-icon span{font-size:.6rem;font-weight:600;letter-spacing:.01em}
+    .hdr-badge{position:absolute;top:4px;right:5px;background:var(--ACC);color:#fff;border-radius:50%;width:16px;height:16px;font-size:.58rem;font-weight:800;display:flex;align-items:center;justify-content:center}
+    .ham{display:none;padding:8px;color:var(--TEXT)}
+    .ham svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:2}
+
+    /* ── CATEGORY NAV ── */
+    .catnav{border-bottom:1px solid var(--BD);background:var(--SURF)}
+    .catnav-inner{max-width:1440px;margin:0 auto;padding:0 28px;display:flex;align-items:center;overflow-x:auto;scrollbar-width:none}
+    .catnav-inner::-webkit-scrollbar{display:none}
+    .cat-a{padding:13px 16px;font-size:.8rem;font-weight:500;color:var(--M);white-space:nowrap;border-bottom:2px solid transparent;transition:all .15s;letter-spacing:.01em}
+    .cat-a:hover,.cat-a.on{color:var(--ACC);border-bottom-color:var(--ACC)}
+    .cat-a.sale{color:#c0392b;font-weight:700}
+    .cat-a.sale:hover{border-bottom-color:#c0392b}
+
+    /* ── HERO ── */
+    .hero{display:grid;grid-template-columns:1fr 1fr;min-height:500px;overflow:hidden}
+    .hero-text{background:var(--GR);display:flex;flex-direction:column;justify-content:center;padding:60px 56px}
+    .hero-eyebrow{font-size:.65rem;font-weight:600;letter-spacing:.22em;text-transform:uppercase;color:var(--ACC);margin-bottom:16px}
+    .hero-h{font-family:'Cormorant Garamond',serif;font-size:clamp(2.2rem,4vw,3.6rem);font-weight:600;line-height:1.1;color:var(--TEXT);margin-bottom:16px}
+    .hero-h em{color:var(--ACC);font-style:italic}
+    .hero-p{font-size:.9rem;color:var(--M);margin-bottom:30px;line-height:1.7;max-width:360px}
+    .hero-btns{display:flex;gap:12px;flex-wrap:wrap}
+    .btn-acc{background:var(--ACC);color:#fff;padding:13px 30px;font-size:.82rem;font-weight:600;display:inline-block;transition:background .18s;letter-spacing:.02em}
+    .btn-acc:hover{background:var(--ACC3)}
+    .btn-ghost{border:1.5px solid var(--ACC);color:var(--ACC);padding:12px 28px;font-size:.82rem;font-weight:600;display:inline-block;transition:all .18s}
+    .btn-ghost:hover{background:var(--ACC);color:#fff}
+    .hero-image{position:relative;overflow:hidden}
+    .hero-image img{width:100%;height:100%;object-fit:cover;min-height:500px;transition:transform .6s}
+    .hero-image:hover img{transform:scale(1.03)}
+    .hero-badge{position:absolute;bottom:24px;left:24px;background:var(--SURF);color:var(--ACC);font-size:.7rem;font-weight:700;padding:8px 16px;letter-spacing:.1em;text-transform:uppercase}
+
+    /* ── SECTION ── */
+    .sec{padding:56px 0}
+    .con{max-width:1440px;margin:0 auto;padding:0 28px}
+    .sec-hd{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:28px}
+    .sec-tag{font-size:.65rem;font-weight:600;letter-spacing:.18em;text-transform:uppercase;color:var(--ACC2);margin-bottom:6px}
+    .sec-title{font-family:'Cormorant Garamond',serif;font-size:1.6rem;font-weight:600;color:var(--TEXT);letter-spacing:.01em}
+    .view-all{font-size:.78rem;font-weight:600;color:var(--ACC);text-decoration:underline;text-underline-offset:3px;transition:color .15s;white-space:nowrap}
+    .view-all:hover{color:var(--ACC3)}
+
+    /* ── PRODUCT GRID (Levi's-style) ── */
+    .pgrid{display:grid;grid-template-columns:repeat(5,1fr);gap:16px}
+    .pcard{cursor:pointer;position:relative;background:var(--SURF)}
+    .pimg-wrap{position:relative;aspect-ratio:3/4;overflow:hidden;background:var(--GR)}
+    .pimg-wrap img{width:100%;height:100%;object-fit:cover;transition:transform .45s}
+    .pcard:hover .pimg-wrap img{transform:scale(1.04)}
+    .pbadge{position:absolute;top:10px;left:10px;font-size:.58rem;font-weight:800;padding:3px 10px;text-transform:uppercase;letter-spacing:.06em;z-index:2}
+    .pbadge.sale{background:#c0392b;color:#fff}
+    .pbadge.new{background:var(--ACC3);color:#fff}
+    .pbadge.best{background:var(--ACC2);color:var(--ACC3)}
+    .pwish{position:absolute;top:10px;right:10px;background:#fff;border-radius:50%;width:32px;height:32px;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.1);opacity:0;transition:opacity .2s;z-index:2}
+    .pcard:hover .pwish{opacity:1}
+    .pwish svg{width:14px;height:14px;stroke:var(--ACC);fill:none;stroke-width:2}
+    .pwish.wished svg{fill:var(--ACC)}
+    .padd{position:absolute;bottom:0;left:0;right:0;background:rgba(74,50,32,.92);color:#fff;font-size:.72rem;font-weight:700;padding:11px;text-align:center;transform:translateY(100%);transition:transform .22s;cursor:pointer;z-index:2;border:none;width:100%;letter-spacing:.04em}
+    .pcard:hover .padd{transform:translateY(0)}
+    .pbody{padding:12px 4px 16px}
+    .pswatches{display:flex;gap:5px;margin-bottom:8px;flex-wrap:wrap}
+    .pswatch{width:14px;height:14px;border-radius:50%;border:1.5px solid transparent;transition:transform .15s;cursor:pointer;flex-shrink:0}
+    .pswatch:hover{transform:scale(1.2)}
+    .pswatch.sel{border-color:var(--TEXT)}
+    .pswatch-more{font-size:.6rem;color:var(--M);line-height:14px;font-weight:600}
+    .pstars{display:flex;align-items:center;gap:4px;margin-bottom:6px}
+    .stars-svg{display:flex;gap:1px}
+    .star-f{color:#c4a882;font-size:10px}
+    .star-e{color:#d8d0c8;font-size:10px}
+    .prating-cnt{font-size:.62rem;color:var(--M)}
+    .pdept{font-size:.62rem;color:var(--M);text-transform:uppercase;letter-spacing:.08em;margin-bottom:3px}
+    .pname{font-size:.84rem;font-weight:500;color:var(--TEXT);margin-bottom:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .pprice{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+    .pr-now{font-size:.9rem;font-weight:700;color:var(--TEXT)}
+    .pr-was{font-size:.74rem;color:var(--M);text-decoration:line-through}
+    .pr-pct{font-size:.64rem;font-weight:700;color:#c0392b;background:rgba(192,57,43,.08);padding:2px 6px}
+
+    /* ── DEPT GRID ── */
+    .dept-row{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+    .dept-card{position:relative;overflow:hidden;display:block;aspect-ratio:3/4}
+    .dept-card img{width:100%;height:100%;object-fit:cover;transition:transform .45s}
+    .dept-card:hover img{transform:scale(1.06)}
+    .dept-lbl{position:absolute;bottom:0;left:0;right:0;padding:20px 16px;background:linear-gradient(to top,rgba(26,12,4,.7),transparent)}
+    .dept-name{font-family:'Cormorant Garamond',serif;font-size:1.1rem;font-weight:600;color:#fff;letter-spacing:.02em}
+    .dept-sub{font-size:.68rem;color:rgba(255,255,255,.7);margin-top:2px}
+    .dept-link{display:inline-block;margin-top:8px;font-size:.68rem;font-weight:700;color:#fff;letter-spacing:.08em;text-transform:uppercase;border-bottom:1px solid rgba(255,255,255,.5);padding-bottom:1px;transition:border-color .15s}
+    .dept-card:hover .dept-link{border-color:#fff}
+
+    /* ── EDITORIAL CAMPAIGN ── */
+    .editorial{display:grid;grid-template-columns:1fr 1fr;gap:0;min-height:400px;overflow:hidden}
+    .ed-img{position:relative;overflow:hidden}
+    .ed-img img{width:100%;height:100%;object-fit:cover;min-height:400px;transition:transform .5s}
+    .ed-img:hover img{transform:scale(1.04)}
+    .ed-content{background:var(--ACC3);display:flex;flex-direction:column;justify-content:center;padding:64px 56px}
+    .ed-eyebrow{font-size:.62rem;font-weight:600;letter-spacing:.22em;text-transform:uppercase;color:var(--ACC2);margin-bottom:16px}
+    .ed-h{font-family:'Cormorant Garamond',serif;font-size:clamp(1.8rem,3vw,2.8rem);font-weight:600;color:#fff;line-height:1.15;margin-bottom:16px}
+    .ed-h em{font-style:italic;color:var(--ACC2)}
+    .ed-p{font-size:.86rem;color:rgba(255,255,255,.72);line-height:1.8;margin-bottom:30px;max-width:340px}
+    .btn-linen{background:var(--ACC2);color:var(--ACC3);padding:13px 30px;font-size:.82rem;font-weight:700;display:inline-block;transition:all .18s;letter-spacing:.04em;text-transform:uppercase}
+    .btn-linen:hover{background:#fff;color:var(--ACC3)}
+
+    /* ── PROMO ROW ── */
+    .promo-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px}
+    .promo-card{position:relative;overflow:hidden;display:block}
+    .promo-card img{width:100%;height:240px;object-fit:cover;transition:transform .4s}
+    .promo-card:hover img{transform:scale(1.05)}
+    .promo-ov{position:absolute;inset:0;background:linear-gradient(to top,rgba(26,12,4,.65) 0%,rgba(26,12,4,.08) 55%)}
+    .promo-body{position:absolute;bottom:0;left:0;right:0;padding:22px}
+    .promo-tag{font-size:.6rem;font-weight:700;letter-spacing:.2em;text-transform:uppercase;color:var(--ACC2);margin-bottom:6px}
+    .promo-h{font-family:'Cormorant Garamond',serif;font-size:1.15rem;font-weight:600;color:#fff;margin-bottom:12px}
+    .promo-btn{display:inline-block;background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.6);color:#fff;font-size:.7rem;font-weight:700;padding:7px 18px;letter-spacing:.04em;transition:all .18s;backdrop-filter:blur(4px)}
+    .promo-card:hover .promo-btn{background:#fff;color:var(--ACC3)}
+
+    /* ── PERKS ── */
+    .perks{background:var(--SURF);border:1px solid var(--BD)}
+    .perks-row{display:grid;grid-template-columns:repeat(4,1fr)}
+    .perk{display:flex;align-items:center;gap:14px;padding:24px 22px;border-right:1px solid var(--BD)}
+    .perk:last-child{border-right:none}
+    .perk-ico{width:44px;height:44px;background:var(--GR);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+    .perk-ico svg{width:20px;height:20px;stroke:var(--ACC);fill:none;stroke-width:1.8}
+    .perk-t{font-size:.8rem;font-weight:700;color:var(--TEXT);margin-bottom:2px}
+    .perk-s{font-size:.68rem;color:var(--M)}
+
+    /* ── NEWSLETTER ── */
+    .nl{background:var(--ACC);padding:60px 0}
+    .nl-inner{max-width:520px;margin:0 auto;padding:0 24px;text-align:center}
+    .nl-eyebrow{font-size:.62rem;font-weight:600;letter-spacing:.2em;text-transform:uppercase;color:var(--ACC2);margin-bottom:12px}
+    .nl-h{font-family:'Cormorant Garamond',serif;font-size:2rem;font-weight:600;color:#fff;margin-bottom:8px;line-height:1.2}
+    .nl-p{font-size:.85rem;color:rgba(255,255,255,.7);margin-bottom:24px}
+    .nl-form{display:flex;gap:8px}
+    .nl-inp{flex:1;padding:12px 18px;border:none;border-bottom:2px solid var(--ACC2);background:rgba(255,255,255,.12);color:#fff;font-size:.86rem;font-family:'Inter',sans-serif;outline:none;transition:border-color .18s}
+    .nl-inp::placeholder{color:rgba(255,255,255,.5)}
+    .nl-inp:focus{border-bottom-color:#fff;background:rgba(255,255,255,.18)}
+    .nl-btn{background:var(--ACC2);color:var(--ACC3);padding:12px 24px;font-weight:700;font-size:.82rem;border:none;cursor:pointer;white-space:nowrap;transition:all .18s;letter-spacing:.04em;text-transform:uppercase}
+    .nl-btn:hover{background:#fff}
+    .nl-fine{font-size:.68rem;color:rgba(255,255,255,.4);margin-top:10px}
+
+    /* ── FOOTER ── */
+    .footer{background:var(--SURF);border-top:1px solid var(--BD)}
+    .footer-main{max-width:1440px;margin:0 auto;padding:52px 28px 36px;display:grid;grid-template-columns:2.2fr 1fr 1fr 1fr;gap:44px}
+    .f-logo{font-family:'Cormorant Garamond',serif;font-size:1.55rem;font-weight:700;color:var(--TEXT);margin-bottom:12px;letter-spacing:.02em}
+    .f-logo em{color:var(--ACC);font-style:normal}
+    .f-desc{font-size:.78rem;color:var(--M);line-height:1.85;margin-bottom:20px;max-width:240px}
+    .f-soc{display:flex;gap:8px}
+    .f-soc a{width:34px;height:34px;border:1.5px solid var(--BD);display:flex;align-items:center;justify-content:center;color:var(--M);transition:all .15s}
+    .f-soc a:hover{border-color:var(--ACC);color:var(--ACC);background:rgba(124,85,51,.06)}
+    .f-soc a svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2}
+    .f-col h5{font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:var(--ACC3);margin-bottom:16px}
+    .f-col a{display:block;font-size:.78rem;color:var(--M);margin-bottom:9px;transition:color .15s}
+    .f-col a:hover{color:var(--ACC)}
+    .footer-btm{border-top:1px solid var(--BD);max-width:1440px;margin:0 auto;padding:16px 28px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px}
+    .footer-btm p{font-size:.72rem;color:var(--M)}
+    .pay-row{display:flex;gap:6px}
+    .pay-chip{background:var(--GR);border:1px solid var(--BD);padding:4px 10px;font-size:.65rem;font-weight:700;color:var(--M)}
+
+    /* ── TEMPLATE SWITCHER ── */
+    .tsw{position:fixed;bottom:24px;right:20px;z-index:9999}
+    .tsw-btn{background:var(--ACC);color:#fff;padding:9px 16px;border-radius:4px;font-size:.73rem;font-weight:700;display:flex;align-items:center;gap:6px;box-shadow:0 4px 16px rgba(124,85,51,.35);cursor:pointer;border:none;font-family:'Inter',sans-serif}
+    .tsw-btn svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:2.5;flex-shrink:0}
+    .tsw-menu{position:absolute;bottom:calc(100% + 10px);right:0;background:#fff;border-radius:6px;box-shadow:0 8px 32px rgba(0,0,0,.14);border:1px solid var(--BD);overflow:hidden;min-width:210px;display:none}
+    .tsw-menu.open{display:block}
+    .tsw-head{padding:10px 16px 6px;font-size:.62rem;font-weight:800;text-transform:uppercase;letter-spacing:.1em;color:#aaa}
+    .tsw-item{display:flex;align-items:center;gap:10px;padding:10px 16px;font-size:.8rem;font-weight:500;border-top:1px solid #f5f5f5;transition:background .1s;color:var(--TEXT)}
+    .tsw-item:hover{background:var(--S)}
+    .tsw-item.cur{font-weight:700;color:var(--ACC)}
+    .tsw-item.cur::after{content:'\2713';margin-left:auto;color:var(--ACC)}
+    .t-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+
+    /* ── WHATSAPP ── */
+    .wa{position:fixed;bottom:24px;left:20px;z-index:9998;background:#25d366;color:#fff;width:46px;height:46px;border-radius:50%;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 14px rgba(37,211,102,.4);transition:transform .2s}
+    .wa:hover{transform:scale(1.1)}
+
+    /* ── RESPONSIVE ── */
+    @media(max-width:1200px){.pgrid{grid-template-columns:repeat(4,1fr)}}
+    @media(max-width:1100px){.footer-main{grid-template-columns:1fr 1fr;gap:28px}}
+    @media(max-width:900px){
+      .hero{grid-template-columns:1fr}
+      .hero-image{display:none}
+      .hero-text{padding:48px 32px}
+      .catnav,.hdr-search{display:none}
+      .ham{display:flex}
+      .pgrid{grid-template-columns:repeat(3,1fr)}
+      .dept-row{grid-template-columns:repeat(2,1fr)}
+      .promo-row{grid-template-columns:1fr 1fr}
+      .promo-row .promo-card:last-child{display:none}
+      .editorial{grid-template-columns:1fr}
+      .ed-img{min-height:280px}
+      .ed-content{padding:44px 32px}
+      .perks-row{grid-template-columns:repeat(2,1fr)}
+      .perk:nth-child(2){border-right:none}
+      .perk:nth-child(3){border-top:1px solid var(--BD)}
+      .perk:nth-child(4){border-right:none;border-top:1px solid var(--BD)}
+    }
+    @media(max-width:640px){
+      .hdr-row{padding:0 16px;height:58px;gap:12px}
+      .logo{font-size:1.45rem}
+      .hero-text{padding:36px 20px}
+      .hero-h{font-size:2rem}
+      .hero-p{display:none}
+      .pgrid{grid-template-columns:repeat(2,1fr);gap:10px}
+      .dept-row{grid-template-columns:repeat(2,1fr);gap:8px}
+      .promo-row{grid-template-columns:1fr}
+      .promo-card img{height:200px}
+      .perks-row{grid-template-columns:1fr}
+      .perk{border-right:none;border-top:1px solid var(--BD)}
+      .perk:first-child{border-top:none}
+      .footer-main{grid-template-columns:1fr;gap:24px}
+      .nl-form{flex-direction:column}
+      .sec{padding:40px 0}
+      .con{padding:0 16px}
+    }
+    @media(max-width:480px){
+      .hero-h{font-size:1.75rem}
+      .pgrid{gap:8px}
+      .tsw-btn{font-size:.67rem;padding:8px 12px}
+      .ed-content{padding:32px 20px}
+    }
+    @media(max-width:375px){
+      .hdr-row{padding:0 12px;height:54px}
+      .logo{font-size:1.3rem}
+      .hero-h{font-size:1.5rem}
+      .tsw-btn{font-size:.61rem;padding:7px 10px}
+    }
+    @media(max-width:320px){
+      .logo{font-size:1.15rem}
+      .hero-h{font-size:1.3rem}
+      .tsw-btn{font-size:.56rem;padding:6px 9px;gap:4px}
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── ANNOUNCEMENT ── -->
+<div class="strip" role="marquee" aria-label="Promotions">
+  <div class="strip-track">
+    <span>Free delivery on orders over <b>Rs. 10,000</b></span>
+    <span>&nbsp;&middot;&nbsp;</span>
+    <span>New season neutrals — <b>Shop now</b></span>
+    <span>&nbsp;&middot;&nbsp;</span>
+    <span>Use code <b>TUASL10</b> for 10% off your first order</span>
+    <span>&nbsp;&middot;&nbsp;</span>
+    <span>Easy 14-day returns islandwide</span>
+    <span>&nbsp;&middot;&nbsp;</span>
+    <span>Free delivery on orders over <b>Rs. 10,000</b></span>
+    <span>&nbsp;&middot;&nbsp;</span>
+    <span>New season neutrals — <b>Shop now</b></span>
+    <span>&nbsp;&middot;&nbsp;</span>
+    <span>Use code <b>TUASL10</b> for 10% off your first order</span>
+    <span>&nbsp;&middot;&nbsp;</span>
+    <span>Easy 14-day returns islandwide</span>
+    <span>&nbsp;&middot;&nbsp;</span>
+  </div>
+</div>
+
+<!-- ── HEADER ── -->
+<header class="hdr">
+  <div class="hdr-row">
+    <button class="ham" id="mob-open" aria-label="Open menu">
+      <svg viewBox="0 0 24 24"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+    </button>
+    <a href="index-v6.html" class="logo">TU<em>@</em>SL</a>
+    <div class="hdr-search">
+      <input type="search" id="h-search" placeholder="Search women, men, kids, baby fashion…" autocomplete="off">
+      <button type="button" onclick="if(document.getElementById('h-search').value)location='search.html?q='+encodeURIComponent(document.getElementById('h-search').value)" aria-label="Search">
+        <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      </button>
+    </div>
+    <div class="hdr-icons">
+      <a href="wishlist.html" class="hdr-icon" aria-label="Wishlist">
+        <svg viewBox="0 0 24 24"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+        <span>Wishlist</span>
+      </a>
+      <a href="cart.html" class="hdr-icon" aria-label="Cart">
+        <svg viewBox="0 0 24 24"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>
+        <span>Cart</span>
+        <span class="hdr-badge" id="cart-cnt">0</span>
+      </a>
+    </div>
+  </div>
+</header>
+
+<!-- ── CATEGORY NAV ── -->
+<nav class="catnav" aria-label="Shop categories">
+  <div class="catnav-inner">
+    <a href="women.html" class="cat-a">Women</a>
+    <a href="men.html" class="cat-a">Men</a>
+    <a href="kids.html" class="cat-a">Kids</a>
+    <a href="baby.html" class="cat-a">Baby</a>
+    <a href="new-arrivals.html" class="cat-a on">New Arrivals</a>
+    <a href="category.html?category=dresses" class="cat-a">Dresses</a>
+    <a href="category.html?category=tops" class="cat-a">Tops</a>
+    <a href="category.html?category=jeans" class="cat-a">Jeans</a>
+    <a href="category.html?category=activewear" class="cat-a">Activewear</a>
+    <a href="category.html?category=traditional" class="cat-a">Traditional</a>
+    <a href="sale.html" class="cat-a sale">Sale</a>
+  </div>
+</nav>
+
+<!-- ── MOBILE NAV ── -->
+<div id="mob-nav" style="position:fixed;inset:0;z-index:800;pointer-events:none">
+  <div id="mob-bd" style="position:absolute;inset:0;background:rgba(0,0,0,.45);opacity:0;transition:opacity .28s"></div>
+  <div id="mob-panel" style="position:absolute;left:0;top:0;bottom:0;width:min(300px,86vw);background:#fff;transform:translateX(-105%);transition:transform .3s cubic-bezier(.4,0,.2,1);display:flex;flex-direction:column">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 18px;background:var(--ACC);color:#fff">
+      <span style="font-family:'Cormorant Garamond',serif;font-size:1.2rem;font-weight:700">TU<span style="opacity:.7">@</span>SL</span>
+      <button id="mob-close" style="color:#fff;background:none;border:none;cursor:pointer;display:flex" aria-label="Close menu">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div style="padding:12px 16px;border-bottom:1px solid var(--BD)">
+      <input id="mob-search" type="search" placeholder="Search…" style="width:100%;padding:9px 14px;border:1.5px solid var(--BD);font-size:.85rem;font-family:'Inter',sans-serif;outline:none;background:var(--GR);border-radius:4px">
+    </div>
+    <nav style="overflow-y:auto;flex:1">
+      <a href="women.html" style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;font-size:.88rem;font-weight:500;border-bottom:1px solid var(--GR)">Women <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m9 18 6-6-6-6"/></svg></a>
+      <a href="men.html" style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;font-size:.88rem;font-weight:500;border-bottom:1px solid var(--GR)">Men <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m9 18 6-6-6-6"/></svg></a>
+      <a href="kids.html" style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;font-size:.88rem;font-weight:500;border-bottom:1px solid var(--GR)">Kids <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m9 18 6-6-6-6"/></svg></a>
+      <a href="baby.html" style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;font-size:.88rem;font-weight:500;border-bottom:1px solid var(--GR)">Baby <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m9 18 6-6-6-6"/></svg></a>
+      <a href="new-arrivals.html" style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;font-size:.88rem;font-weight:500;border-bottom:1px solid var(--GR)">New Arrivals <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m9 18 6-6-6-6"/></svg></a>
+      <a href="sale.html" style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;font-size:.88rem;font-weight:700;color:#c0392b;border-bottom:1px solid var(--GR)">Sale <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#c0392b" stroke-width="2.5"><path d="m9 18 6-6-6-6"/></svg></a>
+      <a href="cart.html" style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;font-size:.88rem;font-weight:500;border-bottom:1px solid var(--GR)">Cart <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m9 18 6-6-6-6"/></svg></a>
+    </nav>
+  </div>
+</div>
+
+<!-- ── HERO ── -->
+<section class="hero">
+  <div class="hero-text">
+    <div class="hero-eyebrow">New Season · Warm Tones Collection</div>
+    <h1 class="hero-h">Wear the <em>Earth's</em><br>Palette</h1>
+    <p class="hero-p">Warm linens, rich leathers and natural sand tones — fashion rooted in comfort and quiet confidence for the whole family.</p>
+    <div class="hero-btns">
+      <a href="new-arrivals.html" class="btn-acc">Shop New Arrivals</a>
+      <a href="sale.html" class="btn-ghost">View Sale</a>
+    </div>
+  </div>
+  <div class="hero-image">
+    <img src="https://images.pexels.com/photos/2065195/pexels-photo-2065195.jpeg?auto=compress&cs=tinysrgb&w=900&h=700&fit=crop"
+      alt="Natural tones fashion — woman in warm neutral outfit"
+      width="900" height="700" loading="eager"
+      onerror="this.src='assets/images/placeholders/product-placeholder.svg'">
+    <div class="hero-badge">Natural Tones 2026</div>
+  </div>
+</section>
+
+<!-- ── DEPARTMENTS ── -->
+<section class="sec">
+  <div class="con">
+    <div class="sec-hd">
+      <div>
+        <div class="sec-tag">Shop by Department</div>
+        <h2 class="sec-title">Fashion for the Whole Family</h2>
+      </div>
+    </div>
+    <div class="dept-row">
+      <a href="women.html" class="dept-card">
+        <img src="https://images.pexels.com/photos/774909/pexels-photo-774909.jpeg?auto=compress&cs=tinysrgb&w=500&h=660&fit=crop"
+          alt="Women's neutral fashion" width="500" height="660" loading="lazy"
+          onerror="this.src='assets/images/placeholders/product-placeholder.svg'">
+        <div class="dept-lbl">
+          <div class="dept-name">Women</div>
+          <div class="dept-sub">2,400+ styles</div>
+          <div class="dept-link">Shop Now →</div>
+        </div>
+      </a>
+      <a href="men.html" class="dept-card">
+        <img src="https://images.pexels.com/photos/1121796/pexels-photo-1121796.jpeg?auto=compress&cs=tinysrgb&w=500&h=660&fit=crop"
+          alt="Men's smart casual fashion" width="500" height="660" loading="lazy"
+          onerror="this.src='assets/images/placeholders/product-placeholder.svg'">
+        <div class="dept-lbl">
+          <div class="dept-name">Men</div>
+          <div class="dept-sub">1,800+ styles</div>
+          <div class="dept-link">Shop Now →</div>
+        </div>
+      </a>
+      <a href="kids.html" class="dept-card">
+        <img src="https://images.pexels.com/photos/35537/child-children-girl-happy.jpg?auto=compress&cs=tinysrgb&w=500&h=660&fit=crop"
+          alt="Kids' colourful fashion" width="500" height="660" loading="lazy"
+          onerror="this.src='assets/images/placeholders/product-placeholder.svg'">
+        <div class="dept-lbl">
+          <div class="dept-name">Kids</div>
+          <div class="dept-sub">1,200+ styles</div>
+          <div class="dept-link">Shop Now →</div>
+        </div>
+      </a>
+      <a href="baby.html" class="dept-card">
+        <img src="https://images.pexels.com/photos/3662849/pexels-photo-3662849.jpeg?auto=compress&cs=tinysrgb&w=500&h=660&fit=crop"
+          alt="Baby clothing collection" width="500" height="660" loading="lazy"
+          onerror="this.src='assets/images/placeholders/product-placeholder.svg'">
+        <div class="dept-lbl">
+          <div class="dept-name">Baby</div>
+          <div class="dept-sub">800+ styles</div>
+          <div class="dept-link">Shop Now →</div>
+        </div>
+      </a>
+    </div>
+  </div>
+</section>
+
+<!-- ── NEW ARRIVALS (Levi's-style grid with swatches & ratings) ── -->
+<section class="sec" style="padding-top:0;background:var(--SURF)">
+  <div class="con">
+    <div class="sec-hd">
+      <div>
+        <div class="sec-tag">Just Dropped</div>
+        <h2 class="sec-title">New Arrivals</h2>
+      </div>
+      <a href="new-arrivals.html" class="view-all">See all →</a>
+    </div>
+    <div class="pgrid" id="g-new"></div>
+  </div>
+</section>
+
+<!-- ── EDITORIAL CAMPAIGN ── -->
+<section class="sec" style="padding:0">
+  <div class="editorial">
+    <div class="ed-img">
+      <img src="https://images.pexels.com/photos/5698038/pexels-photo-5698038.jpeg?auto=compress&cs=tinysrgb&w=800&h=540&fit=crop"
+        alt="Leather & neutral tones editorial" width="800" height="540" loading="lazy"
+        onerror="this.src='assets/images/placeholders/product-placeholder.svg'">
+    </div>
+    <div class="ed-content">
+      <div class="ed-eyebrow">The Leather Edit</div>
+      <h2 class="ed-h">Rich Tones.<br><em>Natural Grace.</em></h2>
+      <p class="ed-p">Camel coats, tan boots, cognac bags — our curated leather-toned edit brings warmth and texture to every wardrobe.</p>
+      <a href="category.html?category=jackets" class="btn-linen">Explore the Edit</a>
+    </div>
+  </div>
+</section>
+
+<!-- ── BEST SELLERS ── -->
+<section class="sec" style="padding-top:52px">
+  <div class="con">
+    <div class="sec-hd">
+      <div>
+        <div class="sec-tag">Most Loved</div>
+        <h2 class="sec-title">Best Sellers</h2>
+      </div>
+      <a href="category.html" class="view-all">See all →</a>
+    </div>
+    <div class="pgrid" id="g-best"></div>
+  </div>
+</section>
+
+<!-- ── PROMO ROW ── -->
+<section class="sec" style="padding-top:0">
+  <div class="con">
+    <div class="promo-row">
+      <a href="women.html" class="promo-card">
+        <img src="https://images.pexels.com/photos/6311392/pexels-photo-6311392.jpeg?auto=compress&cs=tinysrgb&w=540&h=280&fit=crop"
+          alt="Women's collection" width="540" height="280" loading="lazy"
+          onerror="this.src='assets/images/placeholders/product-placeholder.svg'">
+        <div class="promo-ov"></div>
+        <div class="promo-body">
+          <div class="promo-tag">Women's Edit</div>
+          <div class="promo-h">Effortless Style</div>
+          <span class="promo-btn">Shop Women</span>
+        </div>
+      </a>
+      <a href="men.html" class="promo-card">
+        <img src="https://images.pexels.com/photos/1183266/pexels-photo-1183266.jpeg?auto=compress&cs=tinysrgb&w=540&h=280&fit=crop"
+          alt="Men's collection" width="540" height="280" loading="lazy"
+          onerror="this.src='assets/images/placeholders/product-placeholder.svg'">
+        <div class="promo-ov"></div>
+        <div class="promo-body">
+          <div class="promo-tag">Men's Edit</div>
+          <div class="promo-h">Grounded Confidence</div>
+          <span class="promo-btn">Shop Men</span>
+        </div>
+      </a>
+      <a href="sale.html" class="promo-card">
+        <img src="https://images.pexels.com/photos/2218786/pexels-photo-2218786.jpeg?auto=compress&cs=tinysrgb&w=540&h=280&fit=crop"
+          alt="Sale items" width="540" height="280" loading="lazy"
+          onerror="this.src='assets/images/placeholders/product-placeholder.svg'">
+        <div class="promo-ov"></div>
+        <div class="promo-body">
+          <div class="promo-tag">Up to 50% Off</div>
+          <div class="promo-h">Sale — Shop Now</div>
+          <span class="promo-btn">View Sale</span>
+        </div>
+      </a>
+    </div>
+  </div>
+</section>
+
+<!-- ── PERKS ── -->
+<section class="sec" style="padding-top:0">
+  <div class="con">
+    <div class="perks">
+      <div class="perks-row">
+        <div class="perk">
+          <div class="perk-ico">
+            <svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          </div>
+          <div>
+            <div class="perk-t">Free Delivery</div>
+            <div class="perk-s">Orders above Rs. 10,000</div>
+          </div>
+        </div>
+        <div class="perk">
+          <div class="perk-ico">
+            <svg viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+          </div>
+          <div>
+            <div class="perk-t">All 25 Districts</div>
+            <div class="perk-s">Islandwide delivery</div>
+          </div>
+        </div>
+        <div class="perk">
+          <div class="perk-ico">
+            <svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+          </div>
+          <div>
+            <div class="perk-t">14-Day Returns</div>
+            <div class="perk-s">Hassle-free policy</div>
+          </div>
+        </div>
+        <div class="perk">
+          <div class="perk-ico">
+            <svg viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.15 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.12 1h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.09 8.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 21 16z"/></svg>
+          </div>
+          <div>
+            <div class="perk-t">WhatsApp Support</div>
+            <div class="perk-s">Mon–Sat 9am–6pm</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── NEWSLETTER ── -->
+<section class="nl">
+  <div class="nl-inner">
+    <div class="nl-eyebrow">Join the Community</div>
+    <h2 class="nl-h">Stay in the Loop</h2>
+    <p class="nl-p">New arrivals, exclusive offers and style inspiration straight to your inbox.</p>
+    <form class="nl-form" onsubmit="return false">
+      <input class="nl-inp" type="email" placeholder="Your email address" aria-label="Email address">
+      <button class="nl-btn" type="submit">Subscribe</button>
+    </form>
+    <p class="nl-fine">No spam, ever. Unsubscribe anytime.</p>
+  </div>
+</section>
+
+<!-- ── FOOTER ── -->
+<footer class="footer">
+  <div class="footer-main">
+    <div>
+      <div class="f-logo">TU<em>@</em>SL <span style="font-family:'Inter',sans-serif;font-size:.5em;font-weight:400;color:var(--M)">Fashion</span></div>
+      <p class="f-desc">Sri Lanka's favourite family fashion store. Women, Men, Kids &amp; Baby — quality you can trust, prices you'll love.</p>
+      <div class="f-soc">
+        <a href="#" aria-label="Instagram"><svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20" rx="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"/></svg></a>
+        <a href="#" aria-label="Facebook"><svg viewBox="0 0 24 24"><path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z"/></svg></a>
+        <a href="#" aria-label="TikTok"><svg viewBox="0 0 24 24"><path d="M9 12a4 4 0 1 0 4 4V4a5 5 0 0 0 5 5"/></svg></a>
+      </div>
+    </div>
+    <div class="f-col">
+      <h5>Shop</h5>
+      <a href="women.html">Women</a>
+      <a href="men.html">Men</a>
+      <a href="kids.html">Kids</a>
+      <a href="baby.html">Baby</a>
+      <a href="new-arrivals.html">New Arrivals</a>
+      <a href="sale.html">Sale</a>
+    </div>
+    <div class="f-col">
+      <h5>Help</h5>
+      <a href="contact.html">Contact Us</a>
+      <a href="#">Delivery Info</a>
+      <a href="#">Returns</a>
+      <a href="#">Size Guide</a>
+      <a href="#">FAQ</a>
+    </div>
+    <div class="f-col">
+      <h5>Company</h5>
+      <a href="about.html">About Us</a>
+      <a href="#">Careers</a>
+      <a href="#">Press</a>
+      <a href="#">Privacy Policy</a>
+      <a href="#">Terms</a>
+    </div>
+  </div>
+  <div class="footer-btm">
+    <p>&copy; 2026 TU@SL Fashion. All rights reserved.</p>
+    <div class="pay-row">
+      <span class="pay-chip">Visa</span>
+      <span class="pay-chip">Mastercard</span>
+      <span class="pay-chip">Cash on Delivery</span>
+    </div>
+  </div>
+</footer>
+
+<!-- ── WHATSAPP ── -->
+<a href="https://wa.me/94771234567" class="wa" target="_blank" rel="noopener" aria-label="WhatsApp">
+  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+</a>
+
+<!-- ── TEMPLATE SWITCHER ── -->
+<div class="tsw">
+  <div class="tsw-menu" id="tsw-menu">
+    <div class="tsw-head">Choose Template</div>
+    <a href="index.html" class="tsw-item"><span class="t-dot" style="background:#8b1e3f"></span>Classic Boutique</a>
+    <a href="index-urban.html" class="tsw-item"><span class="t-dot" style="background:#111;outline:1.5px solid #e63946;outline-offset:1px"></span>Urban Dark</a>
+    <a href="index-v3.html" class="tsw-item"><span class="t-dot" style="background:#8b1e3f;border:2px solid #fff;outline:2px solid #8b1e3f"></span>Fashion Hub</a>
+    <a href="index-v4.html" class="tsw-item"><span class="t-dot" style="background:#c9a84c"></span>Luxe Gold</a>
+    <a href="index-v5.html" class="tsw-item"><span class="t-dot" style="background:#e63c26"></span>Fresh Minimal</a>
+    <a href="index-v6.html" class="tsw-item cur"><span class="t-dot" style="background:#c4a882"></span>Natural Linen</a>
+    <a href="index-v7.html" class="tsw-item"><span class="t-dot" style="background:#2e6fad"></span>Denim &amp; Co.</a>
+  <a href="index-v8.html" class="tmpl-option"><span class="tmpl-dot" style="background:#E8002D"></span>Street Raw</a>
+  <a href="index-v9.html" class="tmpl-option"><span class="tmpl-dot" style="background:#111;border:1px solid #555"></span>The Edit</a>
+  </div>
+  <button class="tsw-btn" id="tsw-btn">
+    <svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+    Templates
+    <svg viewBox="0 0 24 24" id="tsw-arrow"><path d="m18 15-6-6-6 6"/></svg>
+  </button>
+</div>
+
+<!-- ── SCRIPTS ── -->
+<script src="js/config.js"></script>
+<script src="js/products.js"></script>
+<script src="js/cart.js"></script>
+<script src="js/wishlist.js"></script>
+<script>
+localStorage.setItem('tuasl_tmpl','linen');
+
+/* ── Mobile nav ── */
+var nav=document.getElementById('mob-nav'),bd=document.getElementById('mob-bd'),panel=document.getElementById('mob-panel');
+function openNav(){nav.style.pointerEvents='all';bd.style.opacity='1';panel.style.transform='translateX(0)'}
+function closeNav(){nav.style.pointerEvents='none';bd.style.opacity='0';panel.style.transform='translateX(-105%)'}
+document.getElementById('mob-open').addEventListener('click',openNav);
+document.getElementById('mob-close').addEventListener('click',closeNav);
+bd.addEventListener('click',closeNav);
+
+/* ── Search ── */
+document.getElementById('h-search').addEventListener('keydown',function(e){if(e.key==='Enter'&&this.value)location='search.html?q='+encodeURIComponent(this.value)});
+document.getElementById('mob-search').addEventListener('keydown',function(e){if(e.key==='Enter'&&this.value)location='search.html?q='+encodeURIComponent(this.value)});
+
+/* ── Cart badge ── */
+function updCart(){var c=JSON.parse(localStorage.getItem('tuasl_cart')||'[]');var cnt=c.reduce(function(a,b){return a+(b.qty||1)},0);var el=document.getElementById('cart-cnt');if(el){el.textContent=cnt;el.style.display=cnt>0?'flex':'none'}}
+updCart();window.addEventListener('storage',updCart);
+
+function rs(n){return 'Rs. '+Number(n).toLocaleString('en-LK')}
+
+/* ── Color mapping for swatches ── */
+var CMAP={
+  'Black':'#1a1a1a','White':'#f0ede8','Navy':'#1b2a4a','Red':'#c0392b',
+  'Blue':'#2980b9','Green':'#27ae60','Pink':'#e91e8c','Yellow':'#d4a017',
+  'Grey':'#9e9585','Brown':'#7c5533','Beige':'#d7c4a5','Cream':'#f5f0e8',
+  'Camel':'#c19a6b','Tan':'#d2b48c','Khaki':'#b5a98a','Orange':'#e67e22',
+  'Purple':'#8e44ad','Teal':'#1abc9c','Maroon':'#7b241c','Olive':'#6b8e23',
+  'Coral':'#e07060','Mint':'#98d8c8','Lavender':'#c8a2c8','Gold':'#c9a84c',
+  'Charcoal':'#4a4a4a','Ivory':'#fffff0','Rust':'#b5451b','Sand':'#d4bf99'
+};
+
+/* ── Stars renderer ── */
+function mkStars(rating){
+  var full=Math.floor(rating),empty=5-Math.ceil(rating),half=5-full-empty;
+  var s='';
+  for(var i=0;i<full;i++) s+='<span class="star-f">&#9733;</span>';
+  if(half) s+='<span class="star-f" style="opacity:.5">&#9733;</span>';
+  for(var j=0;j<empty;j++) s+='<span class="star-e">&#9733;</span>';
+  return s;
+}
+
+/* ── Product card with swatches & rating ── */
+function mkCard(p){
+  var iw=wishlistManager&&wishlistManager.isInWishlist(p.id);
+  var badge='';
+  if(p.discount>0||p.badge==='Sale') badge='<span class="pbadge sale">SALE</span>';
+  else if(p.badge==='Best Seller') badge='<span class="pbadge best">BESTSELLER</span>';
+  else if(p.badge==='New') badge='<span class="pbadge new">NEW</span>';
+
+  /* Rating: deterministic pseudo-random 3.5–5.0, count 12–380 */
+  var seed=p.id*7+13;
+  var rating=Math.round((3.5+(seed%15)/10)*10)/10;
+  var cnt=20+(seed%361);
+  var starsHtml=mkStars(rating);
+
+  /* Colour swatches (max 4 dots + remainder count) */
+  var cols=p.colours||[];
+  var swatchHtml='';
+  var shown=cols.slice(0,4);
+  shown.forEach(function(c,i){
+    var hex=CMAP[c]||'#ccc';
+    swatchHtml+='<span class="pswatch'+(i===0?' sel':'')+'" style="background:'+hex+'" title="'+c+'"></span>';
+  });
+  if(cols.length>4) swatchHtml+='<span class="pswatch-more">+'+( cols.length-4)+'</span>';
+
+  var pr=p.discount>0
+    ?'<span class="pr-now">'+rs(p.price)+'</span><span class="pr-was">'+rs(p.originalPrice)+'</span><span class="pr-pct">-'+p.discount+'%</span>'
+    :'<span class="pr-now">'+rs(p.price)+'</span>';
+
+  return '<article class="pcard" data-id="'+p.id+'">'
+    +'<div class="pimg-wrap">'
+    +'<a href="product.html?id='+p.id+'"><img src="'+p.image+'" alt="'+p.name+'" width="400" height="533" loading="lazy" onerror="this.src=\'assets/images/placeholders/product-placeholder.svg\'"></a>'
+    +badge
+    +'<button class="pwish'+(iw?' wished':'')+'" data-id="'+p.id+'" aria-label="Wishlist"><svg viewBox="0 0 24 24"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg></button>'
+    +'<button class="padd" data-id="'+p.id+'">Add to Cart</button>'
+    +'</div>'
+    +'<div class="pbody">'
+    +(swatchHtml?'<div class="pswatches">'+swatchHtml+'</div>':'')
+    +'<div class="pstars"><div class="stars-svg">'+starsHtml+'</div><span class="prating-cnt">('+cnt+')</span></div>'
+    +'<div class="pdept">'+p.department+'</div>'
+    +'<div class="pname">'+p.name+'</div>'
+    +'<div class="pprice">'+pr+'</div>'
+    +'</div>'
+    +'</article>';
+}
+
+window.addEventListener('DOMContentLoaded',function(){
+  if(typeof products==='undefined') return;
+  var all=products;
+  var gNew=document.getElementById('g-new');
+  var gBest=document.getElementById('g-best');
+  if(gNew) gNew.innerHTML=all.filter(function(p){return p.badge==='New'}).slice(0,10).map(mkCard).join('');
+  if(gBest) gBest.innerHTML=all.filter(function(p){return p.badge==='Best Seller'}).slice(0,10).map(mkCard).join('');
+
+  document.querySelectorAll('.pwish').forEach(function(btn){
+    btn.addEventListener('click',function(){
+      var id=parseInt(this.dataset.id);
+      if(wishlistManager.isInWishlist(id)){wishlistManager.removeItem(id);this.classList.remove('wished')}
+      else{wishlistManager.addItem(id);this.classList.add('wished')}
+    });
+  });
+  document.querySelectorAll('.padd').forEach(function(btn){
+    btn.addEventListener('click',function(){
+      var id=parseInt(this.dataset.id),p=all.find(function(x){return x.id===id});
+      if(p)cartManager.addItem(p);updCart();
+    });
+  });
+});
+
+/* ── Template Switcher ── */
+document.getElementById('tsw-btn').addEventListener('click',function(){
+  var m=document.getElementById('tsw-menu'),a=document.getElementById('tsw-arrow');
+  var o=m.classList.toggle('open');
+  a.style.transform=o?'rotate(180deg)':'';
+});
+document.addEventListener('click',function(e){
+  if(!e.target.closest('.tsw')){document.getElementById('tsw-menu').classList.remove('open');document.getElementById('tsw-arrow').style.transform=''}
+});
+</script>
+</body>
+</html>
