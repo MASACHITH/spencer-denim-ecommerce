@@ -25,6 +25,9 @@ Older drafts in `../tuasl-fashion/Client/` (`CLIENT_SCOPE_PROPOSAL.md`, `CLIENT_
 | 04 | [Design system](docs/04-design-system.md) | Theme direction (Banana Republic–inspired), responsive rules |
 | 05 | [Delivery plan & client tracker](docs/05-delivery-plan.md) | 1-month internal plan, milestones, client progress page |
 | 06 | [Engineering process](docs/06-engineering-process.md) | Developer → tester agent loop, Definition of Done, test strategy |
+| 07 | [Client progress update guide](docs/07-client-progress-update-guide.md) | How the team updates the client progress page (team only) |
+| 08 | [Database design](docs/08-database-design.md) | Baselined schema (65 tables), state machines, stock concurrency, pricing |
+| 09 | [Git & repository rules](docs/09-git-and-repository-rules.md) | **Push only to MASACHITH/spencer-denim-ecommerce with the personal account**, never the office account |
 | — | [TASKS.md](TASKS.md) | Live task board (internal) |
 | — | [MEMORY.md](MEMORY.md) | Running project log: decisions, what's done, what's next |
 

@@ -1,0 +1,33 @@
+#!/bin/sh
+# Pre-push safety check for spencer-denim-ecommerce.
+# Blocks pushes that are not going to the personal MASACHITH repository
+# with the MASACHITH GitHub CLI account active. See docs/09-git-and-repository-rules.md
+
+EXPECTED_URL_PART="github.com/MASACHITH/spencer-denim-ecommerce"
+EXPECTED_ACCOUNT="MASACHITH"
+PUSH_URL="$2"
+
+fail() {
+  echo ""
+  echo "PUSH BLOCKED (spencer-denim-ecommerce): $1"
+  echo "This project may only be pushed to https://$EXPECTED_URL_PART with account $EXPECTED_ACCOUNT."
+  echo "See docs/09-git-and-repository-rules.md"
+  echo ""
+  exit 1
+}
+
+case "$PUSH_URL" in
+  *"$EXPECTED_URL_PART"*) ;;
+  *) fail "push URL is '$PUSH_URL'." ;;
+esac
+
+if ! command -v gh >/dev/null 2>&1; then
+  fail "GitHub CLI (gh) not found, so the active account cannot be verified."
+fi
+
+ACTIVE_ACCOUNT=$(gh api user --jq .login 2>/dev/null)
+if [ "$ACTIVE_ACCOUNT" != "$EXPECTED_ACCOUNT" ]; then
+  fail "active GitHub CLI account is '${ACTIVE_ACCOUNT:-unknown}'. Run: gh auth switch --user $EXPECTED_ACCOUNT"
+fi
+
+exit 0

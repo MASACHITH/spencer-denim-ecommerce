@@ -40,6 +40,14 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 
 ## Session log
 
+### 2026-09-16 (1) — GitHub repo set up (personal account)
+**Done**
+- Private repo https://github.com/MASACHITH/spencer-denim-ecommerce created by the user; pushed planning docs, style tile, DB design, `.gitattributes`, and `reference/` archive (old demo, client documents, prototype prompt). All commits authored and pushed as MASACHITH.
+- Added `docs/09-git-and-repository-rules.md`, a project `CLAUDE.md` (git rule at top), a git rule in the root `CLAUDE.md`, and a pre-push hook `tools/git-hooks/pre-push` (repo-local `core.hooksPath`). The hook blocks any push whose URL isn't MASACHITH/spencer-denim-ecommerce or whose active `gh` account isn't MASACHITH. The URL check was tested (pass and block). The account check wasn't tested, to avoid switching to the office account.
+
+**Incident / lesson**
+- L6: the user was alarmed to see the office account `destinity-sachithm` in command output (a `gh auth switch` back after the push; nothing was pushed there). Rule: never switch to the office account unless asked; always state which account a push went to.
+
 ### 2026-09-15 (5) — Database design baselined
 **Done**
 - W0-10 **DONE**: `docs/08-database-design.md` rev 4 baselined (65 tables, 10 schemas). Path: author → review r1 (4 Critical, 9 Major) → rev 2 (63 tables) → r2 (1 Critical SMTP settings, 4 Major) → rev 3 (65) → r3 (1 Critical late PayPal COMPLETED lost, 2 Major) → rev 4 → spot-check BASELINE.
