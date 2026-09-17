@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Application: use cases, ports (interfaces) and DTOs. Depends on Domain only. -->
+  <PropertyGroup>
+    <RootNamespace>SpencerDenim.Application</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SpencerDenim.Domain\SpencerDenim.Domain.csproj" />
+  </ItemGroup>
+
+</Project>

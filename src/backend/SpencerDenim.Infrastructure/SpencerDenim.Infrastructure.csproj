@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Infrastructure: EF Core / SQL Server and other adapters that implement Application ports. -->
+  <PropertyGroup>
+    <RootNamespace>SpencerDenim.Infrastructure</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" />
+    <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks" />
+    <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SpencerDenim.Application\SpencerDenim.Application.csproj" />
+  </ItemGroup>
+
+</Project>

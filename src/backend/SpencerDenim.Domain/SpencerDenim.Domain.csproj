@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Domain: entities, value objects and domain rules. No project or package dependencies. -->
+  <PropertyGroup>
+    <RootNamespace>SpencerDenim.Domain</RootNamespace>
+  </PropertyGroup>
+
+</Project>

@@ -1,0 +1,63 @@
+# Spencer Denim: shared editor and analyzer settings
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+indent_style = space
+indent_size = 2
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.md]
+trim_trailing_whitespace = false
+
+[*.{sln,ps1,cmd,bat}]
+end_of_line = crlf
+
+[*.sln]
+indent_style = tab
+
+[*.{cs,csx}]
+indent_size = 4
+
+# ---- Organise usings ----
+dotnet_sort_system_directives_first = true
+dotnet_separate_import_directive_groups = false
+
+# ---- Language conventions ----
+csharp_style_namespace_declarations = file_scoped:warning
+csharp_prefer_braces = true:suggestion
+csharp_style_var_for_built_in_types = true:suggestion
+csharp_style_var_when_type_is_apparent = true:suggestion
+csharp_style_expression_bodied_methods = when_on_single_line:suggestion
+csharp_style_prefer_primary_constructors = true:suggestion
+dotnet_style_readonly_field = true:warning
+dotnet_style_qualification_for_field = false:suggestion
+dotnet_style_require_accessibility_modifiers = for_non_interface_members:warning
+
+# ---- Naming ----
+dotnet_naming_rule.interfaces_start_with_i.symbols = interface_symbols
+dotnet_naming_rule.interfaces_start_with_i.style = prefix_i_style
+dotnet_naming_rule.interfaces_start_with_i.severity = warning
+dotnet_naming_symbols.interface_symbols.applicable_kinds = interface
+dotnet_naming_style.prefix_i_style.required_prefix = I
+dotnet_naming_style.prefix_i_style.capitalization = pascal_case
+
+dotnet_naming_rule.private_fields_underscore.symbols = private_field_symbols
+dotnet_naming_rule.private_fields_underscore.style = underscore_camel_style
+dotnet_naming_rule.private_fields_underscore.severity = warning
+dotnet_naming_symbols.private_field_symbols.applicable_kinds = field
+dotnet_naming_symbols.private_field_symbols.applicable_accessibilities = private
+dotnet_naming_style.underscore_camel_style.required_prefix = _
+dotnet_naming_style.underscore_camel_style.capitalization = camel_case
+
+# ---- Analyzer severities ----
+# Unused usings (needs EnforceCodeStyleInBuild; GenerateDocumentationFile is not required for IDE0005 in .NET 10)
+dotnet_diagnostic.IDE0005.severity = suggestion
+# ConfigureAwait: not needed in ASP.NET Core apps
+dotnet_diagnostic.CA2007.severity = none
+# Test method names use underscores
+[tests/**.cs]
+dotnet_diagnostic.CA1707.severity = none
+dotnet_diagnostic.CA1515.severity = none
