@@ -15,6 +15,12 @@ Read first, in this order: `MEMORY.md` → `TASKS.md` → `docs/02-scope-baselin
 - The pre-push hook `tools/git-hooks/pre-push` enforces this (`core.hooksPath`). Never use `--no-verify`.
 - Full rules: `docs/09-git-and-repository-rules.md`.
 
+## Client progress page (task sheet) publishing
+- The Hostinger shared hosting at https://colombowardrobecompany-build-tracker.kt-wedding.online is **only** for the client progress page. Upload **only** `index.html`, `styles.css`, `app.js` and `progress-data.js` from `../client-progress/`. **Never** upload the main project.
+- Publish with `pwsh tools/publish-client-progress.ps1` (FTPS, pinned certificate, never deletes remote files). Details: `docs/10-client-progress-publishing.md`.
+- The FTP password lives only DPAPI-encrypted at `%USERPROFILE%\.spencer-denim\tracker-ftp-credential.xml`. Never print, log, store or commit it.
+- The office network blocks FTP data connections. Use another network or hPanel File Manager (doc 10 §5b); don't retry repeatedly.
+
 ## Non-negotiable rules
 - Discuss gaps with the user before building anything outside the scope baseline.
 - Every task: developer agent → separate tester agent. If a test fails, it goes back to the developer until it passes.

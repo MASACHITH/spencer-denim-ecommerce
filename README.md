@@ -28,6 +28,8 @@ Older drafts in `../tuasl-fashion/Client/` (`CLIENT_SCOPE_PROPOSAL.md`, `CLIENT_
 | 07 | [Client progress update guide](docs/07-client-progress-update-guide.md) | How the team updates the client progress page (team only) |
 | 08 | [Database design](docs/08-database-design.md) | Baselined schema (65 tables), state machines, stock concurrency, pricing |
 | 09 | [Git & repository rules](docs/09-git-and-repository-rules.md) | **Push only to MASACHITH/spencer-denim-ecommerce with the personal account**, never the office account |
+| 10 | [Client progress page publishing](docs/10-client-progress-publishing.md) | FTPS publishing of the task sheet **only** (4 files) to colombowardrobecompany-build-tracker.kt-wedding.online |
+| — | [Guides](docs/guides/) | DEV-GUIDE-01 Docker Desktop on Windows · DEV-GUIDE-02 Fix "WSL needs updating" (PDF + HTML source) |
 | — | [TASKS.md](TASKS.md) | Live task board (internal) |
 | — | [MEMORY.md](MEMORY.md) | Running project log: decisions, what's done, what's next |
 

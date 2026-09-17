@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Docker Desktop on Windows: Setup &amp; Usage Guide</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm 20mm 16mm; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: "Segoe UI", Arial, Helvetica, sans-serif;
+    color: #1f2328; font-size: 10.5pt; line-height: 1.5; margin: 0;
+  }
+  h1, h2, h3 { color: #0b2545; line-height: 1.25; }
+  h2 {
+    font-size: 15pt; margin: 22px 0 8px; padding-bottom: 5px;
+    border-bottom: 2px solid #1d63ed; page-break-after: avoid;
+  }
+  h3 { font-size: 11.5pt; margin: 16px 0 6px; page-break-after: avoid; }
+  p { margin: 5px 0 8px; }
+  ul, ol { margin: 4px 0 10px; padding-left: 22px; }
+  li { margin-bottom: 4px; }
+  code {
+    font-family: Consolas, "Cascadia Mono", "Courier New", monospace;
+    font-size: 9.3pt; background: #eef1f5; padding: 1px 4px; border-radius: 3px;
+  }
+  pre {
+    font-family: Consolas, "Cascadia Mono", "Courier New", monospace;
+    font-size: 9pt; line-height: 1.45; background: #0f1b2d; color: #e6edf3;
+    padding: 10px 12px; border-radius: 5px; margin: 6px 0 12px;
+    white-space: pre-wrap; word-break: break-word; page-break-inside: avoid;
+  }
+  pre .c { color: #8b9bb4; }
+  table {
+    width: 100%; border-collapse: collapse; margin: 6px 0 14px; font-size: 9.6pt;
+    page-break-inside: auto;
+  }
+  tr { page-break-inside: avoid; }
+  th { background: #0b2545; color: #fff; text-align: left; padding: 6px 8px; font-weight: 600; }
+  td { padding: 6px 8px; border-bottom: 1px solid #dde3ea; vertical-align: top; }
+  tr:nth-child(even) td { background: #f7f9fb; }
+  td code { white-space: nowrap; }
+
+  .cover {
+    border-left: 6px solid #1d63ed; background: #f3f6fb; padding: 22px 24px 18px;
+    margin-bottom: 18px;
+  }
+  .cover .kicker { font-size: 9pt; letter-spacing: .12em; text-transform: uppercase; color: #1d63ed; font-weight: 700; }
+  .cover h1 { font-size: 23pt; margin: 6px 0 4px; }
+  .cover .sub { font-size: 11.5pt; color: #3d4a5c; margin: 0 0 14px; }
+  .meta { display: grid; grid-template-columns: 1.25fr 1fr; gap: 4px 24px; font-size: 9.6pt; }
+  .meta span { color: #5b6878; display: inline-block; min-width: 84px; }
+
+  .callout { border-radius: 5px; padding: 9px 12px; margin: 8px 0 12px; font-size: 9.8pt; page-break-inside: avoid; }
+  .callout strong:first-child { display: inline-block; margin-right: 4px; }
+  .note { background: #eaf2ff; border-left: 4px solid #1d63ed; }
+  .warn { background: #fff5e0; border-left: 4px solid #d98e04; }
+  .danger { background: #fdecec; border-left: 4px solid #c62828; }
+  .ok { background: #e8f5ed; border-left: 4px solid #287a45; }
+
+  .step { display: flex; gap: 10px; margin: 10px 0 4px; page-break-inside: avoid; }
+  .step .n {
+    flex: 0 0 24px; height: 24px; border-radius: 50%; background: #1d63ed; color: #fff;
+    font-weight: 700; font-size: 10pt; text-align: center; line-height: 24px;
+  }
+  .step .b { flex: 1; }
+  .step .b > p:first-child { margin-top: 2px; font-weight: 600; color: #0b2545; }
+
+  .who { display: inline-block; font-size: 8.3pt; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+         padding: 1px 7px; border-radius: 10px; margin-left: 6px; vertical-align: 2px; }
+  .who-it { background: #fde2e2; color: #9b1c1c; }
+  .who-dev { background: #dff3e6; color: #1e6b3a; }
+
+  .toc { background: #fafbfc; border: 1px solid #dde3ea; border-radius: 5px; padding: 10px 16px; margin: 0 0 8px; }
+  .toc ol { margin: 4px 0; columns: 2; column-gap: 28px; }
+  .toc li { margin-bottom: 2px; }
+  .keep { page-break-inside: avoid; }
+  .small { font-size: 9pt; color: #5b6878; }
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <div class="kicker">Developer Guide · Local Environment</div>
+  <h1>Docker Desktop on Windows</h1>
+  <p class="sub">Installation, configuration and day-to-day usage for the Spencer Denim E-Commerce Platform</p>
+  <div class="meta">
+    <div><span>Project</span> Spencer Denim E-Commerce Platform</div>
+    <div><span>Prepared by</span> TU2SL</div>
+    <div><span>Document</span> DEV-GUIDE-01 · Version 1.1</div>
+    <div><span>Date</span> 17 September 2026</div>
+    <div><span>Audience</span> Developers, IT administrators</div>
+    <div><span>Platform</span> Windows 10 22H2 / 11 (64-bit)</div>
+  </div>
+</div>
+
+<div class="toc">
+  <strong>Contents</strong>
+  <ol>
+    <li>Purpose and scope</li>
+    <li>System requirements</li>
+    <li>Licensing</li>
+    <li>Part A: Installation (IT)</li>
+    <li>Part B: First-time configuration</li>
+    <li>Part C: Running the project</li>
+    <li>Part D: Recommended daily workflow</li>
+    <li>Part E: Troubleshooting</li>
+    <li>Security rules</li>
+    <li>Quick reference</li>
+  </ol>
+</div>
+
+<h2>1. Purpose and scope</h2>
+<p>This guide explains how to install Docker Desktop on a Windows development PC and use it to run the Spencer Denim platform locally. The platform has a .NET 10 API, an Angular 21 storefront and admin panel, SQL Server 2025 Express, and a Caddy web server.</p>
+<p>Docker runs each part of the system in an isolated container, so every developer's PC matches the production server (Hostinger VPS, Ubuntu 24.04) as closely as possible.</p>
+<div class="callout note"><strong>Note:</strong> Parts C and D describe the project's Docker setup as designed. The exact file names and commands are confirmed in the project <code>README.md</code> once the project scaffold (task W0-09) is complete.</div>
+
+<h2>2. System requirements</h2>
+<table>
+  <tr><th style="width:30%">Requirement</th><th style="width:35%">Minimum / recommended</th><th>Development PC (checked 16 Sep 2026)</th></tr>
+  <tr><td>Operating system</td><td>Windows 10 22H2 (build 19045+) or Windows 11, 64-bit, Pro/Enterprise</td><td>Windows 10 Pro, build 19045 ✔</td></tr>
+  <tr><td>CPU virtualization</td><td>Enabled in BIOS/UEFI</td><td>Enabled ✔</td></tr>
+  <tr><td>Memory (RAM)</td><td>8 GB minimum · 16 GB recommended</td><td>16 GB ✔</td></tr>
+  <tr><td>Free disk space</td><td>30 GB+ (images, database volumes)</td><td>C: 60 GB · D: 105 GB ✔</td></tr>
+  <tr><td>WSL 2 (Windows Subsystem for Linux)</td><td>Required</td><td><strong>Not installed</strong> (Part A)</td></tr>
+  <tr><td>Administrator rights</td><td>Required <em>for installation only</em></td><td><strong>Not available</strong>: IT must install</td></tr>
+  <tr><td>Network</td><td>Access to Docker Hub and mcr.microsoft.com</td><td>Check company proxy/firewall</td></tr>
+  <tr><td>Already installed</td><td>.NET SDK 10, Node.js 24, Angular CLI 21, Git, GitHub CLI</td><td>All present ✔</td></tr>
+</table>
+
+<h2>3. Licensing</h2>
+<p>Docker Desktop is <strong>free</strong> for personal use, education, non-commercial open-source projects, and small businesses with <strong>fewer than 250 employees and less than USD 10 million annual revenue</strong>. Larger organisations need a paid Docker subscription.</p>
+<div class="callout warn"><strong>Check:</strong> if the PC belongs to a company above these limits, IT must confirm licensing before installing.</div>
+
+<h2>4. Part A: Installation <span class="who who-it">IT / Administrator</span></h2>
+<p>These steps need local administrator rights. A standard user account cannot complete them.</p>
+
+<div class="step"><div class="n">1</div><div class="b">
+  <p>Enable WSL 2</p>
+  <p>Open <strong>PowerShell as Administrator</strong> (Start → type <em>PowerShell</em> → right-click → <em>Run as administrator</em>) and run:</p>
+<pre>wsl --install --no-distribution</pre>
+  <p><strong>Restart the PC</strong> when it finishes. Then, again in PowerShell as Administrator, install the current WSL and its Linux kernel:</p>
+<pre>wsl --update
+<span class="c"># If the Microsoft Store is blocked:  wsl --update --web-download</span></pre>
+  <div class="callout warn"><strong>Windows 10:</strong> skipping <code>wsl --update</code> makes Docker Desktop show “WSL needs updating” and the engine never starts. See <strong>DEV-GUIDE-02</strong>.</div>
+</div></div>
+
+<div class="step"><div class="n">2</div><div class="b">
+  <p>Install Docker Desktop</p>
+  <ol>
+    <li>Download <em>Docker Desktop for Windows – AMD64</em> from <code>https://www.docker.com/products/docker-desktop/</code></li>
+    <li>Run <code>Docker Desktop Installer.exe</code>.</li>
+    <li>On the configuration screen, tick <strong>“Use WSL 2 instead of Hyper-V (recommended)”</strong>.</li>
+    <li>Finish the installer and sign out of Windows if prompted.</li>
+  </ol>
+</div></div>
+
+<div class="step"><div class="n">3</div><div class="b">
+  <p>Allow the developer account to use Docker without admin rights (all-users install only)</p>
+  <p class="small">If Docker Desktop was installed for the current user only (it lives in <code>%LOCALAPPDATA%\Programs\DockerDesktop</code>), skip this step. The <code>docker-users</code> group isn't used.</p>
+<pre><span class="c"># PowerShell as Administrator. Replace with the developer's DOMAIN\username</span>
+net localgroup docker-users "SCIENTER\sachithi" /add</pre>
+</div></div>
+
+<div class="step"><div class="n">4</div><div class="b">
+  <p>Developer signs out and signs back in to Windows <span class="who who-dev">Developer</span></p>
+  <p>The new group membership only takes effect after signing in again.</p>
+</div></div>
+
+<div class="callout ok"><strong>Done:</strong> from this point on, the developer does everything without administrator rights.</div>
+
+<h2>5. Part B: First-time configuration <span class="who who-dev">Developer</span></h2>
+
+<h3>5.1 Limit Docker's memory and CPU</h3>
+<p>By default WSL 2 can use most of the PC's memory. Create the file <code>C:\Users\&lt;username&gt;\.wslconfig</code> (Notepad is fine; no admin needed):</p>
+<pre>[wsl2]
+memory=6GB
+processors=4
+swap=2GB</pre>
+<p>Apply it:</p>
+<pre>wsl --shutdown</pre>
+<p>Then start Docker Desktop again.</p>
+<div class="callout note"><strong>Why 6 GB:</strong> SQL Server needs at least 2 GB; the API, storefront and web server need about 1.5 GB together. This leaves the rest of a 16 GB PC for the IDE and browser.</div>
+
+<h3>5.2 Docker Desktop settings</h3>
+<table>
+  <tr><th style="width:38%">Setting (Docker Desktop → Settings)</th><th>Value</th></tr>
+  <tr><td>General → Use the WSL 2 based engine</td><td>On</td></tr>
+  <tr><td>General → Start Docker Desktop when you sign in</td><td>Your choice (Off saves memory when not coding)</td></tr>
+  <tr><td>Resources → Advanced → Disk image location</td><td><code>D:\DockerData</code> (drive with the most free space)</td></tr>
+  <tr><td>Resources → Proxies</td><td>Only if the company network uses a proxy (ask IT)</td></tr>
+  <tr><td>Software updates</td><td>Keep automatic update checks on</td></tr>
+</table>
+
+<h3>5.3 Verify the installation</h3>
+<pre>docker --version
+docker compose version
+docker run --rm hello-world</pre>
+<div class="callout ok"><strong>Expected:</strong> version numbers are printed, and the last command shows <em>“Hello from Docker!”</em>.</div>
+
+<h2>6. Part C: Running the project</h2>
+
+<h3>6.1 First run</h3>
+<pre>cd "D:\Projects\e com\spencer-denim-ecommerce"
+git pull
+
+<span class="c"># Create your local settings file from the template (never committed to git)</span>
+Copy-Item .env.example .env
+<span class="c"># Open .env and set a strong SQL Server SA password:</span>
+<span class="c"># 8+ characters with upper case, lower case, a number and a symbol</span>
+
+<span class="c"># Build and start all services in the background</span>
+docker compose up -d --build
+
+<span class="c"># Confirm every service shows "running" / "healthy"</span>
+docker compose ps</pre>
+<p>The first build downloads the base images and can take 5–15 minutes. Later starts take seconds.</p>
+
+<h3>6.2 Services and local addresses</h3>
+<table>
+  <tr><th style="width:17%">Service</th><th style="width:43%">Purpose</th><th>Local address</th></tr>
+  <tr><td><code>caddy</code></td><td>Web server / reverse proxy in front of all services</td><td><code>http://localhost</code></td></tr>
+  <tr><td><code>storefront</code></td><td>Angular 21 customer website (server-side rendered)</td><td><code>http://localhost</code></td></tr>
+  <tr><td><code>admin</code></td><td>Angular 21 admin panel</td><td><code>http://localhost/admin</code></td></tr>
+  <tr><td><code>api</code></td><td>.NET 10 API; applies database migrations and seed data on start</td><td><code>http://localhost/api</code><br>Docs: <code>/api/swagger</code></td></tr>
+  <tr><td><code>sqlserver</code></td><td>SQL Server 2025 Express database</td><td><code>localhost,1433</code> (this PC only)</td></tr>
+</table>
+
+<h3>6.3 Connecting to the database</h3>
+<p>Use <strong>SQL Server Management Studio (SSMS)</strong> or <strong>VS Code with the “SQL Server (mssql)” extension</strong>:</p>
+<ul>
+  <li>Server: <code>localhost,1433</code></li>
+  <li>Authentication: SQL Login, with the user and password from your <code>.env</code> file</li>
+  <li>Tick <em>Trust server certificate</em> (local development only)</li>
+</ul>
+
+<h3>6.4 Everyday commands</h3>
+<table>
+  <tr><th style="width:45%">Command</th><th>What it does</th></tr>
+  <tr><td><code>docker compose up -d</code></td><td>Start all services (without rebuilding)</td></tr>
+  <tr><td><code>docker compose ps</code></td><td>Show service status</td></tr>
+  <tr><td><code>docker compose logs -f api</code></td><td>Follow the API logs (Ctrl+C stops following, not the service)</td></tr>
+  <tr><td><code>docker compose restart api</code></td><td>Restart one service</td></tr>
+  <tr><td><code>docker compose up -d --build api</code></td><td>Rebuild and restart one service after code changes</td></tr>
+  <tr><td><code>docker compose down</code></td><td>Stop everything. <strong>Database data is kept.</strong></td></tr>
+  <tr><td><code>docker compose down -v</code></td><td>Stop everything <strong>and delete the local database</strong> (fresh start)</td></tr>
+</table>
+<div class="callout danger"><strong>Careful:</strong> <code>-v</code> permanently deletes the local database volume. Use it only when you want a clean database.</div>
+
+<h2>7. Part D: Recommended daily workflow</h2>
+<p>Rebuilding containers after every code change is slow. While coding, run <strong>only the database in Docker</strong> and run the API and Angular apps directly on the PC with hot reload:</p>
+<pre><span class="c"># 1) Database only</span>
+docker compose up -d sqlserver
+
+<span class="c"># 2) API with hot reload (terminal 1)</span>
+cd src\backend\SpencerDenim.Api
+dotnet watch
+
+<span class="c"># 3) Storefront or admin with hot reload (terminal 2)</span>
+cd src\frontend
+npm install
+npx ng serve storefront        <span class="c"># or: npx ng serve admin</span></pre>
+<table>
+  <tr><th style="width:35%">When</th><th>Run</th></tr>
+  <tr><td>Writing code</td><td>Database in Docker, plus <code>dotnet watch</code> and <code>ng serve</code> on the PC</td></tr>
+  <tr><td>Running tests</td><td><code>dotnet test</code>. Integration tests start their own temporary SQL Server container (Testcontainers) and remove it afterwards.</td></tr>
+  <tr><td>Before pushing to GitHub</td><td>Full stack: <code>docker compose up -d --build</code>, then check the site end to end</td></tr>
+  <tr><td>Finished for the day</td><td><code>docker compose down</code> (data kept) and optionally quit Docker Desktop</td></tr>
+</table>
+
+<h2>8. Part E: Troubleshooting</h2>
+<table>
+  <tr><th style="width:38%">Problem</th><th>Solution</th></tr>
+  <tr><td>“WSL needs updating” / engine never starts</td><td>WSL 2 kernel missing or outdated. Run <code>wsl --update</code> as Administrator, then <code>wsl --shutdown</code>, then Try Again. Full steps: <strong>DEV-GUIDE-02</strong>.</td></tr>
+  <tr><td>Docker Desktop stays on “Starting…”</td><td>Run <code>wsl --shutdown</code>, then reopen Docker Desktop. If it persists, restart Windows.</td></tr>
+  <tr><td><code>permission denied</code> or “You are not allowed to use Docker”</td><td>Your account is not in <code>docker-users</code>. IT adds it (Part A, step 3), then sign out and back in.</td></tr>
+  <tr><td>“Virtualization support not detected”</td><td>IT enables virtualization (Intel VT-x / AMD-V) in the BIOS/UEFI.</td></tr>
+  <tr><td>Image downloads fail or time out</td><td>Company proxy/firewall. Set the proxy under Settings → Resources → Proxies, or ask IT to allow Docker Hub and mcr.microsoft.com.</td></tr>
+  <tr><td>Port 80 or 1433 is already in use</td><td>Another web server (IIS) or SQL Server is running. Stop it, or change the port in <code>.env</code>.</td></tr>
+  <tr><td>SQL Server container keeps restarting</td><td>Not enough memory, or a weak SA password. Check <code>.wslconfig</code> memory (≥ 6 GB) and the password rules in <code>.env</code>. View the reason with <code>docker compose logs sqlserver</code>.</td></tr>
+  <tr><td>PC becomes slow</td><td>Lower <code>memory</code> in <code>.wslconfig</code>, run <code>docker compose down</code> when not coding, and close unused containers.</td></tr>
+  <tr><td>Disk space running low</td><td><code>docker system prune</code> removes unused images and build cache (your database volume is kept). Check usage with <code>docker system df</code>.</td></tr>
+  <tr><td>Code changes not visible in containers</td><td>Rebuild the service: <code>docker compose up -d --build &lt;service&gt;</code></td></tr>
+</table>
+
+<h2>9. Security rules</h2>
+<ul>
+  <li><strong>Never commit <code>.env</code></strong> or any file with passwords, certificates, or PayPal/SMTP credentials. <code>.gitignore</code> blocks them, but check <code>git status</code> before committing.</li>
+  <li>The local SQL Server port is bound to <strong>this PC only</strong>. On the production server the database port is <strong>never</strong> exposed to the internet.</li>
+  <li>Use strong, unique passwords, even locally, and different passwords for local, staging and production.</li>
+  <li>Keep Docker Desktop updated for security fixes.</li>
+  <li>Pull base images only from official sources (Docker Official Images, mcr.microsoft.com).</li>
+  <li>The project is pushed <strong>only</strong> to the personal repository <code>github.com/MASACHITH/spencer-denim-ecommerce</code> (see <code>docs/09-git-and-repository-rules.md</code>).</li>
+</ul>
+
+<div class="keep"><h2>10. Quick reference</h2>
+<table>
+  <tr><th style="width:45%">Task</th><th>Command</th></tr>
+  <tr><td>Check Docker is working</td><td><code>docker run --rm hello-world</code></td></tr>
+  <tr><td>Start everything</td><td><code>docker compose up -d</code></td></tr>
+  <tr><td>Start everything after code changes</td><td><code>docker compose up -d --build</code></td></tr>
+  <tr><td>Database only (daily coding)</td><td><code>docker compose up -d sqlserver</code></td></tr>
+  <tr><td>Service status</td><td><code>docker compose ps</code></td></tr>
+  <tr><td>Follow logs</td><td><code>docker compose logs -f &lt;service&gt;</code></td></tr>
+  <tr><td>Stop (keep data)</td><td><code>docker compose down</code></td></tr>
+  <tr><td>Stop and reset database</td><td><code>docker compose down -v</code></td></tr>
+  <tr><td>Restart WSL / fix a stuck Docker</td><td><code>wsl --shutdown</code></td></tr>
+  <tr><td>Free disk space</td><td><code>docker system prune</code></td></tr>
+</table>
+
+</div>
+
+<p class="small">Document control: DEV-GUIDE-01 v1.1 (added wsl --update step and per-user install note), 17 September 2026, prepared by TU2SL for the Spencer Denim E-Commerce Platform. Source file: <code>docs/guides/docker-desktop-windows-setup-guide.html</code>.</p>
+
+</body>
+</html>

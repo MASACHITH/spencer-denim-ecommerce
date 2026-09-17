@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Fix: Docker Desktop "WSL needs updating" on Windows 10</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm 20mm 16mm; }
+  * { box-sizing: border-box; }
+  body { font-family: "Segoe UI", Arial, Helvetica, sans-serif; color: #1f2328; font-size: 10.5pt; line-height: 1.5; margin: 0; }
+  h1, h2, h3 { color: #0b2545; line-height: 1.25; }
+  h2 { font-size: 15pt; margin: 20px 0 8px; padding-bottom: 5px; border-bottom: 2px solid #1d63ed; page-break-after: avoid; }
+  h3 { font-size: 11.5pt; margin: 14px 0 6px; page-break-after: avoid; }
+  p { margin: 5px 0 8px; }
+  ul, ol { margin: 4px 0 10px; padding-left: 22px; }
+  li { margin-bottom: 4px; }
+  code { font-family: Consolas, "Cascadia Mono", "Courier New", monospace; font-size: 9.3pt; background: #eef1f5; padding: 1px 4px; border-radius: 3px; }
+  pre { font-family: Consolas, "Cascadia Mono", "Courier New", monospace; font-size: 9pt; line-height: 1.45; background: #0f1b2d; color: #e6edf3;
+        padding: 10px 12px; border-radius: 5px; margin: 6px 0 12px; white-space: pre-wrap; word-break: break-word; page-break-inside: avoid; }
+  pre .c { color: #8b9bb4; }
+  pre .out { color: #7ee2a8; }
+
+  table { width: 100%; border-collapse: collapse; margin: 6px 0 14px; font-size: 9.6pt; table-layout: fixed; }
+  tr { page-break-inside: avoid; }
+  th { background: #0b2545; color: #fff; text-align: left; padding: 6px 8px; font-weight: 600; }
+  td { padding: 6px 8px; border-bottom: 1px solid #dde3ea; vertical-align: top; }
+  tr:nth-child(even) td { background: #f7f9fb; }
+  td code { white-space: normal; overflow-wrap: anywhere; }
+  .cover { border-left: 6px solid #c62828; background: #fbf4f4; padding: 20px 24px 16px; margin-bottom: 16px; }
+  .cover .kicker { font-size: 9pt; letter-spacing: .12em; text-transform: uppercase; color: #c62828; font-weight: 700; }
+  .cover h1 { font-size: 21pt; margin: 6px 0 4px; }
+  .cover .sub { font-size: 11pt; color: #3d4a5c; margin: 0 0 12px; }
+  .meta { display: grid; grid-template-columns: 1.25fr 1fr; gap: 4px 24px; font-size: 9.6pt; }
+  .meta span { color: #5b6878; display: inline-block; min-width: 84px; }
+  .callout { border-radius: 5px; padding: 9px 12px; margin: 8px 0 12px; font-size: 9.8pt; page-break-inside: avoid; }
+  .note { background: #eaf2ff; border-left: 4px solid #1d63ed; }
+  .warn { background: #fff5e0; border-left: 4px solid #d98e04; }
+  .danger { background: #fdecec; border-left: 4px solid #c62828; }
+  .ok { background: #e8f5ed; border-left: 4px solid #287a45; }
+  .step { display: flex; gap: 10px; margin: 10px 0 4px; page-break-inside: avoid; }
+  .step .n { flex: 0 0 24px; height: 24px; border-radius: 50%; background: #1d63ed; color: #fff; font-weight: 700; font-size: 10pt; text-align: center; line-height: 24px; }
+  .step .b { flex: 1; }
+  .step .b > p:first-child { margin-top: 2px; font-weight: 600; color: #0b2545; }
+  .who { display: inline-block; font-size: 8.3pt; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; padding: 1px 7px; border-radius: 10px; margin-left: 6px; vertical-align: 2px; }
+  .who-admin { background: #fde2e2; color: #9b1c1c; }
+  .who-dev { background: #dff3e6; color: #1e6b3a; }
+  .symptom { display: flex; gap: 14px; align-items: stretch; margin: 8px 0 12px; page-break-inside: avoid; }
+  .mock { flex: 0 0 46%; border: 1px solid #cfd8e3; border-radius: 6px; overflow: hidden; font-size: 9pt; }
+  .mock .bar { background: #1d63ed; color: #fff; font-weight: 700; padding: 6px 10px; }
+  .mock .body { padding: 12px 12px 10px; text-align: center; background: #fff; }
+  .mock .title { font-weight: 700; margin-bottom: 4px; }
+  .mock .cmd { font-family: Consolas, monospace; background: #f1f3f6; padding: 5px; margin: 8px 0; border-radius: 3px; }
+  .mock .btn { display: inline-block; background: #1d63ed; color: #fff; padding: 3px 12px; border-radius: 3px; font-weight: 600; }
+  .mock .foot { border-top: 1px solid #e3e8ef; padding: 5px 10px; text-align: left; color: #b26a00; font-weight: 600; background: #fafbfc; }
+  .symptom .desc { flex: 1; }
+  .keep { page-break-inside: avoid; }
+  .small { font-size: 9pt; color: #5b6878; }
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <div class="kicker">Troubleshooting Guide · Docker Desktop</div>
+  <h1>Fix: “WSL needs updating”</h1>
+  <p class="sub">Docker Desktop won't start on Windows 10 because the WSL 2 kernel is missing or out of date</p>
+  <div class="meta">
+    <div><span>Project</span> Spencer Denim E-Commerce Platform</div>
+    <div><span>Prepared by</span> TU2SL</div>
+    <div><span>Document</span> DEV-GUIDE-02 · Version 1.0</div>
+    <div><span>Date</span> 17 September 2026</div>
+    <div><span>Applies to</span> Docker Desktop 4.x · Windows 10 22H2</div>
+    <div><span>Related</span> DEV-GUIDE-01 (Docker setup)</div>
+  </div>
+</div>
+
+<h2>1. Symptom</h2>
+<div class="symptom">
+  <div class="mock">
+    <div class="bar">docker desktop</div>
+    <div class="body">
+      <div class="title">WSL needs updating</div>
+      <div>Your version of Windows Subsystem for Linux (WSL) is too old.</div>
+      <div class="cmd">wsl --update</div>
+      <span class="btn">Try Again</span>
+    </div>
+    <div class="foot">● Engine starting</div>
+  </div>
+  <div class="desc">
+    <p>After installing Docker Desktop and restarting the PC:</p>
+    <ul>
+      <li>Docker Desktop opens with the message <strong>“WSL needs updating”</strong>.</li>
+      <li>The status at the bottom left stays on <strong>“Engine starting”</strong> and never becomes “Engine running”.</li>
+      <li>RAM, CPU and Disk show <code>0.00</code> or <code>--</code>.</li>
+      <li><code>docker run</code> commands fail because the engine isn't running.</li>
+    </ul>
+  </div>
+</div>
+
+<h2>2. Cause</h2>
+<p>Windows 10 ships with an old <strong>built-in (“inbox”) WSL</strong>. The command <code>wsl --install --no-distribution</code> turns the WSL features on, but on Windows 10 it may <strong>not download the WSL 2 Linux kernel</strong>. Docker Desktop runs its engine inside a WSL 2 virtual machine, so without the kernel it can't start.</p>
+<p>The fix is to install the current <strong>WSL package from Microsoft</strong> with <code>wsl --update</code>. This is a one-time step.</p>
+
+<h2>3. Confirm the cause (optional)</h2>
+<p>Open a normal PowerShell window and run:</p>
+<pre>wsl --version
+wsl --status</pre>
+<table>
+  <tr><th style="width:34%">Command</th><th style="width:33%">Shows this problem</th><th>After the fix</th></tr>
+  <tr><td><code>wsl --version</code></td><td><em>“Invalid command line option: --version”</em> (old inbox WSL)</td><td>Prints the WSL, kernel and WSLg version numbers</td></tr>
+  <tr><td><code>wsl --status</code></td><td><em>“The WSL 2 kernel file is not found. To update or restore the kernel please run 'wsl --update'.”</em></td><td>Shows <em>Default Version: 2</em> with no kernel warning</td></tr>
+</table>
+
+<h2>4. Fix</h2>
+
+<div class="step"><div class="n">1</div><div class="b">
+  <p>Quit Docker Desktop <span class="who who-dev">Developer</span></p>
+  <p>Right-click the Docker whale icon in the Windows taskbar (bottom-right, near the clock) → <strong>Quit Docker Desktop</strong>.</p>
+</div></div>
+
+<div class="step"><div class="n">2</div><div class="b">
+  <p>Update WSL <span class="who who-admin">Administrator</span></p>
+  <p>Open <strong>PowerShell as Administrator</strong> (Start → type <em>PowerShell</em> → right-click → <em>Run as administrator</em>) and run:</p>
+<pre>wsl --update</pre>
+  <p>If it fails, hangs, or reports that the Microsoft Store is unavailable or blocked (common on company PCs), download directly from Microsoft instead:</p>
+<pre>wsl --update --web-download</pre>
+</div></div>
+
+<div class="step"><div class="n">3</div><div class="b">
+  <p>Restart WSL <span class="who who-dev">Developer</span></p>
+  <p>In any PowerShell window (admin not required):</p>
+<pre>wsl --shutdown</pre>
+</div></div>
+
+<div class="step"><div class="n">4</div><div class="b">
+  <p>Start Docker Desktop again <span class="who who-dev">Developer</span></p>
+  <p>Open Docker Desktop from the Start menu. If the message still shows, click <strong>Try Again</strong>. Wait until the bottom-left status turns green: <strong>“Engine running”</strong>.</p>
+</div></div>
+
+<h2>5. Verify</h2>
+<pre><span class="c"># 1) WSL is the current version</span>
+wsl --version
+<span class="out">WSL version: 2.x.x.x
+Kernel version: 6.x.x.x ...</span>
+
+<span class="c"># 2) The Docker engine responds</span>
+docker version
+<span class="c">#    Must show both a "Client" and a "Server" section</span>
+
+<span class="c"># 3) A test container runs</span>
+docker run --rm hello-world
+<span class="out">Hello from Docker!
+This message shows that your installation appears to be working correctly.</span></pre>
+<div class="callout ok"><strong>Fixed:</strong> all three commands succeed and Docker Desktop shows “Engine running”. Continue with DEV-GUIDE-01, Part B (first-time configuration).</div>
+
+<h2>6. If it still doesn't work</h2>
+<table>
+  <tr><th style="width:38%">What you see</th><th>What to do</th></tr>
+  <tr><td><code>wsl --update</code> says access is denied or asks for admin</td><td>The update must run in <strong>PowerShell as Administrator</strong>. Ask IT if you don't have admin rights.</td></tr>
+  <tr><td>Both update commands fail (no internet access to Microsoft)</td><td>IT downloads the latest <code>wsl.x.x.x.x64.msi</code> from the official <code>github.com/microsoft/WSL/releases</code> page and installs it as administrator, then restarts the PC.</td></tr>
+  <tr><td>“Please enable the Virtual Machine Platform Windows feature”</td><td>In PowerShell as Administrator:<br><code>dism /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart</code><br><code>dism /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart</code><br>Then restart the PC and repeat section 4.</td></tr>
+  <tr><td>“Virtualization support not detected”</td><td>IT enables Intel VT-x / AMD-V in the BIOS/UEFI. (Already enabled on the Spencer Denim development PC.)</td></tr>
+  <tr><td>Engine starts, then stops again</td><td>Run <code>wsl --shutdown</code>, restart Windows, and open Docker Desktop. Check that <code>C:\Users\&lt;you&gt;\.wslconfig</code> (if created) has valid values, e.g. <code>memory=6GB</code>.</td></tr>
+  <tr><td>Message returns after a Windows update</td><td>Run <code>wsl --update</code> again (as Administrator), then <code>wsl --shutdown</code>.</td></tr>
+</table>
+
+<div class="keep">
+<h2>7. Notes for this PC</h2>
+<ul>
+  <li><strong>Diagnosis (17 Sep 2026):</strong> WSL features on (Default Version 2), <strong>WSL 2 kernel not found</strong>, <code>wsl --version</code> not recognised. Docker Desktop 4.91 and Docker CLI 29.8.0 installed.</li>
+  <li>Docker Desktop was installed <strong>for the current user only</strong> (<code>%LOCALAPPDATA%\Programs\DockerDesktop</code>). With this install type the <code>docker-users</code> group is not used, so DEV-GUIDE-01 Part A step 3 can be skipped.</li>
+  <li>Signing in to Docker Desktop (the “Sign in” button) is <strong>not required</strong> to run this project.</li>
+  <li>Docker Desktop's built-in Kubernetes is <strong>not used</strong>; leave it disabled.</li>
+</ul>
+</div>
+
+<p class="small">Document control: DEV-GUIDE-02 v1.0, 17 September 2026, prepared by TU2SL for the Spencer Denim E-Commerce Platform. Source file: <code>docs/guides/wsl-needs-updating-fix-guide.html</code>. Related: <code>Docker-Desktop-Windows-Setup-Guide.pdf</code> (DEV-GUIDE-01).</p>
+
+</body>
+</html>

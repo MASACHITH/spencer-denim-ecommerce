@@ -40,6 +40,18 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 
 ## Session log
 
+### 2026-09-17 (1) — Docker guides, hosting, task sheet publishing
+**Done**
+- PDF guides in `docs/guides/`: DEV-GUIDE-01 Docker Desktop on Windows (v1.1, 7 pp) and DEV-GUIDE-02 Fix "WSL needs updating" (3 pp). HTML sources are kept; built with headless Chrome + a pypdf footer stamp.
+- Dev PC: Docker Desktop 4.91 installed **per-user** (CLI 29.8.0). WSL features on, but the **WSL 2 kernel is missing**. The user must run `wsl --update` as admin (DEV-GUIDE-02). Account `SCIENTER\sachithi` is not a local admin; the PC is domain-joined (scienter.lk).
+- Hostinger shared hosting bought for the task sheet: https://colombowardrobecompany-build-tracker.kt-wedding.online. FTP host 147.93.101.68:21, user `u765465138.colombowardrobecompany-build-tracker.kt-wedding.online`, opens in `/public_html` (contained only `default.php`).
+- FTP password stored DPAPI-encrypted at `%USERPROFILE%\.spencer-denim\tracker-ftp-credential.xml` (never in repo or docs). The user shared it in chat, so recommend changing it and running `-SetPassword`.
+- `tools/publish-client-progress.ps1` (allow-list of 4 files, node validation, FTPS with pinned Hostinger key `sha256//rRBXAmuSvqI5e99CZPWQDXLPWIlTIvu77x/aZc349JQ=`, cert expires 2027-01-17, size + live verification, never deletes) + `docs/10-client-progress-publishing.md`. Dry run OK; wrong pin correctly rejected (curl 90).
+- `client-progress/progress-data.js`: lastUpdated 2026-09-17; "Hosting, domain & security setup" in progress 25%; log entries for 16 and 17 Sep; overall 6%.
+
+**Blocked**
+- Publishing failed: the office network blocks FTP **data** connections (control on port 21 works; data resets or times out in both PROT P and PROT C). Live site still shows Hostinger's default page. Options: another network, hPanel File Manager, or IT allowing passive FTP. Recorded in doc 10 §5b.
+
 ### 2026-09-16 (2) — Client-item defaults accepted; plan for tomorrow
 **Decisions (user accepted recommended defaults)**
 - Style tile: all 9 recommendations (Inter only, round swatches/radios, uppercase labels, icon buttons on phone cards, WhatsApp green, hero text over photo with fade, 880 px hero cap, placeholder delivery values). Client still supplies the logo. Recorded in docs/04.
