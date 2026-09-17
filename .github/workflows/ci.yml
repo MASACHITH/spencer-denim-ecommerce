@@ -1,0 +1,193 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  # Never cancel a run on main; superseded branch runs are cancelled.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  # Throwaway password for the ephemeral SQL Server container in CI. Declared once, used through the env context.
+  # It protects nothing outside the job and is never used by the application.
+  SQL_SA_PASSWORD: CiOnly-Ephemeral-Passw0rd
+
+jobs:
+  backend:
+    name: Backend (.NET build and tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      sqlserver:
+        # Pinned tag: "2022-latest" moves, which would make a green run unreproducible.
+        # There is deliberately no --health-cmd; the "Wait for SQL Server" step below gates the tests instead.
+        image: mcr.microsoft.com/mssql/server:2022-CU27-ubuntu-22.04
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_PID: Developer
+          MSSQL_SA_PASSWORD: ${{ env.SQL_SA_PASSWORD }}
+        ports:
+          - 1433:1433
+
+    env:
+      DOTNET_NOLOGO: "true"
+      DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+      NUGET_PACKAGES: ${{ github.workspace }}/.nuget/packages
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('Directory.Packages.props', 'Directory.Build.props', 'global.json', '**/*.csproj') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
+
+      - name: Wait for SQL Server
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          container="$(docker ps --format '{{.ID}} {{.Image}}' | awk '/mssql\/server/ { print $1; exit }')"
+          if [ -z "$container" ]; then
+            echo "::error::SQL Server service container is not running."
+            docker ps -a
+            exit 1
+          fi
+
+          # A login must succeed, not just an open port: the engine accepts TCP before it finishes recovery.
+          for attempt in $(seq 1 40); do
+            for sqlcmd in /opt/mssql-tools18/bin/sqlcmd /opt/mssql-tools/bin/sqlcmd; do
+              if docker exec "$container" "$sqlcmd" -S localhost -U sa -P "$SQL_SA_PASSWORD" -C -b -Q "SELECT 1" >/dev/null 2>&1; then
+                echo "SQL Server accepted a login on attempt $attempt ($sqlcmd)."
+                echo "TEST_SQL_CONNECTION=Server=localhost,1433;User Id=sa;Password=$SQL_SA_PASSWORD;Encrypt=True;TrustServerCertificate=True" >> "$GITHUB_ENV"
+                exit 0
+              fi
+            done
+            sleep 5
+          done
+
+          echo "::error::SQL Server did not accept a login within 200 seconds."
+          docker logs "$container" | tail -n 50
+          exit 1
+
+      - name: Restore
+        run: dotnet restore SpencerDenim.sln
+
+      - name: Build
+        run: dotnet build SpencerDenim.sln --configuration Release --no-restore
+
+      - name: Test (unit and integration against SQL Server)
+        run: >-
+          dotnet test SpencerDenim.sln
+          --configuration Release
+          --no-build
+          --logger "trx;LogFilePrefix=results"
+          --logger "console;verbosity=normal"
+          --results-directory TestResults
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-results
+          path: TestResults
+          if-no-files-found: ignore
+
+  frontend:
+    name: Frontend (lint, unit tests, builds)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    defaults:
+      run:
+        working-directory: src/frontend
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: src/frontend/package-lock.json
+
+      - name: Cache Angular build cache
+        uses: actions/cache@v4
+        with:
+          path: src/frontend/.angular/cache
+          key: angular-${{ runner.os }}-${{ hashFiles('src/frontend/package-lock.json') }}-${{ github.sha }}
+          restore-keys: |
+            angular-${{ runner.os }}-${{ hashFiles('src/frontend/package-lock.json') }}-
+            angular-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests (headless)
+        run: npm run test:ci
+
+      - name: Build shared library
+        run: npm run build:shared
+
+      - name: Build storefront (SSR)
+        run: npm run build:storefront
+
+      - name: Build admin
+        run: npm run build:admin
+
+      - name: SSR smoke test
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          node dist/storefront/server/server.mjs &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+
+          ready=0
+          for attempt in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:4000/healthz >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+
+          if [ "$ready" -ne 1 ]; then
+            echo "::error::The SSR server did not answer /healthz within 30 seconds."
+            exit 1
+          fi
+
+          html="$(curl -sf http://127.0.0.1:4000/)" || {
+            echo "::error::The SSR server did not return the home page."
+            exit 1
+          }
+
+          if ! printf '%s' "$html" | grep -q 'Spencer Denim'; then
+            echo "::error::Server-rendered HTML does not contain 'Spencer Denim'."
+            printf '%s' "$html" | head -c 2000
+            exit 1
+          fi
+
+          echo "Server-rendered HTML contains 'Spencer Denim' ($(printf '%s' "$html" | wc -c) bytes)."
