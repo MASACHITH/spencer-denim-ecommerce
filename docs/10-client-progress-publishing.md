@@ -94,3 +94,4 @@ Don't retry the script repeatedly on the blocked network. Many failed connection
 | Date | Event |
 |---|---|
 | 2026-09-17 | Hosting set up. FTPS with key pinning verified; `public_html` contained only `default.php`. Publish script and this document added. |
+| 2026-09-17 | First publish succeeded after earlier data-connection failures (intermittent). Live page verified at 390 px and 1280 px; `index.html` is served ahead of `default.php`. |

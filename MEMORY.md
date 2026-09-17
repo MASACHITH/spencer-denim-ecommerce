@@ -49,8 +49,12 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 - `tools/publish-client-progress.ps1` (allow-list of 4 files, node validation, FTPS with pinned Hostinger key `sha256//rRBXAmuSvqI5e99CZPWQDXLPWIlTIvu77x/aZc349JQ=`, cert expires 2027-01-17, size + live verification, never deletes) + `docs/10-client-progress-publishing.md`. Dry run OK; wrong pin correctly rejected (curl 90).
 - `client-progress/progress-data.js`: lastUpdated 2026-09-17; "Hosting, domain & security setup" in progress 25%; log entries for 16 and 17 Sep; overall 6%.
 
-**Blocked**
-- Publishing failed: the office network blocks FTP **data** connections (control on port 21 works; data resets or times out in both PROT P and PROT C). Live site still shows Hostinger's default page. Options: another network, hPanel File Manager, or IT allowing passive FTP. Recorded in doc 10 §5b.
+**Publishing**
+- First attempts failed: FTP data connections reset or timed out (control on port 21 worked). Recorded in doc 10 §5b.
+- **Published successfully on a later single retry** (same PC): all 4 files uploaded, sizes verified, live `lastUpdated` 2026-09-17 at https://colombowardrobecompany-build-tracker.kt-wedding.online. Hostinger serves `index.html` ahead of `default.php`. Live check in Playwright at 390 px: no horizontal scroll, no overflow. Hostinger shows a short "Checking your browser" bot check on first visit.
+- The data-connection problem is **intermittent**. If publishing fails, wait and retry once later, or use hPanel File Manager.
+
+**Decision (user, 2026-09-17):** Docker work is **paused for now**. Focus is on the client progress page publishing only. The WSL 2 kernel update (`wsl --update`) is still pending whenever Docker resumes.
 
 ### 2026-09-16 (2) — Client-item defaults accepted; plan for tomorrow
 **Decisions (user accepted recommended defaults)**
