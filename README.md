@@ -2,18 +2,20 @@
 
 Production build of the fashion e-commerce website for **Spencer Denim Industries Pvt Ltd** (client: Manusha Weerawardene), delivered by **TU2SL**.
 
-> Status: **Planning / documentation phase.** No code is written until the open questions in [docs/01-project-understanding.md](docs/01-project-understanding.md) are answered and the scope baseline is signed off.
+> Status: **Build phase.** The scope baseline ([docs/02](docs/02-scope-baseline.md)) is signed off and the project scaffold (W0-09) runs locally: .NET 10 API on LocalDB plus the Angular 21 storefront (SSR) and admin — see [Getting started](#getting-started). Features are built from [TASKS.md](TASKS.md), and nothing outside the scope baseline is built. Docker packaging is deferred to W0-15.
 
 ## Source of truth
 
-| Priority | Source | Location |
-|---|---|---|
-| 1 | Signed budget proposal TU2SL-2026-0823 (23 Aug 2026) | `../douments/Spencer-Denim-Ecommerce-Website-Budget-Proposal.pdf` |
-| 2 | Theme reference (replaces "Denim & Co. × Natural Linen") | `../douments/Refrence sites/refernce.txt` → https://bananarepublic.gap.com/ |
-| 3 | Demo prototype shown to client (reference only — **not** reused as code) | `../tuasl-fashion/` |
-| 4 | Content checklist sent to client | `../tuasl-fashion/Client/Spencer-Denim-Content-Checklist.pdf` |
+Committed copies live under [`reference/`](reference/), so a fresh clone has everything. The originals stay outside the repository in the working folder (`douments/`, `tuasl-fashion/`).
 
-Older drafts in `../tuasl-fashion/Client/` (`CLIENT_SCOPE_PROPOSAL.md`, `CLIENT_COMMERCIAL_PROPOSAL.html`, `TUASL_Fashion_Proposal - Copy.html`) have been **replaced** by the signed PDF. Where they disagree, the PDF wins.
+| Priority | Source | Location in this repository |
+|---|---|---|
+| 1 | Signed budget proposal TU2SL-2026-0823 (23 Aug 2026) | `reference/client-documents/Spencer-Denim-Ecommerce-Website-Budget-Proposal.pdf` |
+| 2 | Theme reference (replaces "Denim & Co. × Natural Linen") | `reference/client-documents/Refrence sites/refernce.txt` → https://bananarepublic.gap.com/ |
+| 3 | Demo prototype shown to client (reference only — **not** reused as code) | `reference/tuasl-fashion-demo/` |
+| 4 | Content checklist sent to client | `reference/tuasl-fashion-demo/Client/Spencer-Denim-Content-Checklist.pdf` |
+
+Older drafts in `reference/tuasl-fashion-demo/Client/` (`CLIENT_SCOPE_PROPOSAL.md`, `CLIENT_COMMERCIAL_PROPOSAL.html`, `TUASL_Fashion_Proposal - Copy.html`) have been **replaced** by the signed PDF. Where they disagree, the PDF wins.
 
 ## Documents
 
