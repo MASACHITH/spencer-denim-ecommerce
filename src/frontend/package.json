@@ -4,16 +4,17 @@
   "scripts": {
     "ng": "ng",
     "start": "ng serve storefront",
-    "build": "ng build",
-    "watch": "ng build --watch --configuration development",
-    "test": "ng test",
+    "build": "ng build storefront",
+    "watch": "ng build storefront --watch --configuration development",
+    "test": "npm run test:ci",
     "serve:ssr:storefront": "node dist/storefront/server/server.mjs",
     "lint": "ng lint",
     "start:storefront": "ng serve storefront",
     "start:admin": "ng serve admin",
+    "build:shared": "ng build shared",
     "build:storefront": "ng build storefront",
     "build:admin": "ng build admin",
-    "build:all": "ng build storefront && ng build admin",
+    "build:all": "ng build shared && ng build storefront && ng build admin",
     "test:ci": "ng test shared --watch=false && ng test storefront --watch=false && ng test admin --watch=false"
   },
   "prettier": {
