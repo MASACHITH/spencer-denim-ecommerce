@@ -124,12 +124,88 @@ Never bypass it with `git push --no-verify`.
 2. Never add a second remote pointing at an office account or organisation.
 3. Never change **global** git config (`git config --global ...`) for this project; use repo-local config only.
 4. Never commit secrets: `.env`, certificates, PayPal or SMTP credentials. `.gitignore` blocks the common ones; check `git status` before committing.
-5. Commit messages reference task or feature IDs where relevant (e.g. `ADM-09: approve bank transfer`). See [06](06-engineering-process.md) §5.
+5. Commit messages follow **Conventional Commits** and reference task or feature IDs where relevant, e.g. `feat(orders): approve bank transfer (ADM-09)`. See §5b and [06](06-engineering-process.md) §5.
 6. `reference/` is a read-only archive of earlier material. Don't edit it.
 7. `client-progress/` is tracked in this repository, but **only the project owner publishes it** to the client's site ([10](10-client-progress-publishing.md)).
 8. For AI assistants: before any push, show the active account (if the GitHub CLI is available) and the remote. Never run `gh auth switch --user destinity-sachithm` unless the user explicitly asks. After a push, report which account and repository it went to.
 9. Everyone pushes **branches** and opens pull requests. Nobody pushes to `main`, and nobody force-pushes a branch that someone else is working on.
 10. Access changes (adding or removing a contributor) are made by the project owner, in GitHub **and** in §1b plus the hook, in the same pull request.
+
+## 5b. Branching workflow (adopted 2026-09-17)
+
+**Model:** short-lived branches off `main`, merged back through a **pull request only after testing passes**. `main` is always buildable and deployable. **No direct commits to `main`.**
+
+### Branch names
+| Prefix | Use | Example |
+|---|---|---|
+| `feature/` | New functionality (task or feature ID first) | `feature/W1-03-products-crud` |
+| `fix/` | Bug fix | `fix/PLP-02-filter-drawer-focus` |
+| `docs/` | Documentation only | `docs/W0-14-business-processes` |
+| `chore/` | Tooling, dependencies, config | `chore/update-angular-21-2` |
+| `ci/` | Pipeline changes | `ci/add-docker-build-cache` |
+| `hotfix/` | Urgent fix for production | `hotfix/paypal-webhook-verify` |
+
+Rules: lowercase, hyphens, and the task or feature ID from `TASKS.md` / [02](02-scope-baseline.md). One task per branch. Keep branches small (ideally merged within 1–2 days).
+
+### Commit messages: Conventional Commits
+```
+<type>(<scope>): <summary in imperative mood> (<ID>)
+
+<optional body: why, not what>
+```
+Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `ci`, `perf`, `build`. Examples:
+`feat(catalog): add product variants (ADM-10)` · `fix(storefront): stop horizontal scroll at 320px (GLB-09)` · `test(orders): cover bank transfer expiry (PAY-01)`
+
+### Workflow for every task
+```powershell
+cd "D:\Projects\e com\spencer-denim-ecommerce"
+git switch main
+git pull
+git switch -c feature/<ID>-<short-name>
+
+# ... develop in small commits ...
+git add -p                     # review what you stage
+git commit -m "feat(scope): summary (ID)"
+
+# keep up to date with main while working
+git fetch origin
+git rebase origin/main         # before opening or updating a PR (never rebase a shared branch)
+
+# push (pre-push hook checks account and remote)
+gh auth status                 # MASACHITH must be active
+git push -u origin feature/<ID>-<short-name>
+
+# open a pull request
+gh pr create --base main --fill
+```
+
+### Pull request checklist (Definition of Done, see [06](06-engineering-process.md) §3)
+- [ ] Developer agent finished, **tester agent passed** (report linked or summarised in the PR)
+- [ ] CI green: build, unit + integration tests, frontend tests, Docker build
+- [ ] Responsive checks at all 8 breakpoints, for UI work
+- [ ] No secrets, no `.env`, no debug leftovers
+- [ ] `TASKS.md` / `MEMORY.md` updated. `client-progress` updated if a client-visible feature changed (Done only after testing).
+
+### Merging
+- **Squash merge** into `main` (one clean commit per task), then **delete the branch**:
+  ```powershell
+  gh pr merge --squash --delete-branch
+  git switch main
+  git pull
+  ```
+- Never force-push to `main`. Force-push only your own feature branch after a rebase: `git push --force-with-lease`.
+- **Releases:** tag `main` with semantic versions when deploying, e.g. `git tag -a v0.1.0 -m "Staging preview"` then `git push origin v0.1.0`.
+
+### Parallel work
+Use **git worktrees** so two branches can be worked on at the same time without switching:
+```powershell
+git worktree add -b docs/<ID>-<name> "D:\Projects\e com\worktrees\<folder>" main
+git worktree list
+git worktree remove "D:\Projects\e com\worktrees\<folder>"   # after merge
+```
+
+### Branch protection
+GitHub branch protection or rulesets for `main` may need a paid GitHub plan on private personal repositories. Until it's available, the rules above apply **by convention**, and the pre-push hook plus CI are the safety net. If the plan allows it, enable: require a PR, require CI to pass, block force-push and deletion of `main`.
 
 ## 6. If something was pushed to the wrong place
 
@@ -145,4 +221,5 @@ Never bypass it with `git push --no-verify`.
 |---|---|
 | 2026-09-16 | Repo created on MASACHITH (private). Initial commits: planning docs, style tile, database design, `.gitattributes`, `reference/` archive. All pushed with MASACHITH. |
 | 2026-09-16 | This document and the pre-push hook added. |
+| 2026-09-17 | Branching workflow (§5b) adopted: feature branches, Conventional Commits, PR + squash merge after tests, worktrees for parallel work. First branches: `feature/W0-09-scaffold`, `docs/W0-14-business-processes`. |
 | 2026-09-22 | Second contributor: `tharanganuwan` given Write access by the owner. Rules widened from "owner only" to an **approved-contributor list** (§1b); the destination check and the office-account ban are unchanged. The hook now allows machines without the GitHub CLI (destination already verified), and §2a covers first-time credential setup. |
