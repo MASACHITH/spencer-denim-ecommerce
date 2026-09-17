@@ -16,6 +16,12 @@ public sealed class SqlServerDatabaseFixture : IAsyncLifetime
     /// <summary>Doc 08 §1.1: the collation is fixed at database creation.</summary>
     public const string Collation = "Latin1_General_100_CI_AS_SC";
 
+    /// <summary>Attempts for a statement on the server, for a SQL Server that is still starting up (CI).</summary>
+    private const int ConnectionAttempts = 5;
+
+    /// <summary>Base delay between attempts; it grows with the attempt number (2 s, 4 s, 6 s, 8 s).</summary>
+    private static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(2);
+
     public static readonly string SkipReason =
         $"SQL Server integration test skipped: set the {ConnectionVariable} environment variable to a SQL Server connection " +
         @"string, e.g. Server=(localdb)\MSSQLLocalDB;Trusted_Connection=True;TrustServerCertificate=True";
@@ -83,7 +89,28 @@ public sealed class SqlServerDatabaseFixture : IAsyncLifetime
 
     private string QuotedDatabaseName => string.Create(CultureInfo.InvariantCulture, $"[{DatabaseName}]");
 
+    /// <summary>
+    /// Runs a statement on the server, retrying transient failures. A SQL Server container in CI can accept a
+    /// connection while it is still warming up, so the first attempts may fail with a connection or login error.
+    /// </summary>
     private async Task ExecuteOnServerAsync(string sql, CancellationToken cancellationToken)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                await ExecuteOnceAsync(sql, cancellationToken);
+                return;
+            }
+            catch (SqlException exception) when (attempt < ConnectionAttempts && !cancellationToken.IsCancellationRequested)
+            {
+                Console.WriteLine($"SQL attempt {attempt} of {ConnectionAttempts} failed ({exception.Number}): {exception.Message}");
+                await Task.Delay(RetryDelay * attempt, cancellationToken);
+            }
+        }
+    }
+
+    private async Task ExecuteOnceAsync(string sql, CancellationToken cancellationToken)
     {
         await using var connection = new SqlConnection(_serverConnectionString);
         await connection.OpenAsync(cancellationToken);
