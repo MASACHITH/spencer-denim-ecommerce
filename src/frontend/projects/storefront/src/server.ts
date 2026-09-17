@@ -18,7 +18,7 @@ app.disable('x-powered-by');
  */
 const angularApp = new AngularNodeAppEngine();
 
-/** Liveness probe for Docker and the reverse proxy. Does not render Angular. */
+/** Liveness probe for process managers and the reverse proxy. Does not render Angular. */
 app.get('/healthz', (_req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   res.json({ status: 'ok' });
@@ -59,7 +59,7 @@ if (isMainModule(import.meta.url) || process.env['pm_id']) {
     console.log(`Spencer Denim storefront (SSR) listening on http://localhost:${port}`);
   });
 
-  // Stop cleanly on `docker stop` (SIGTERM) so in-flight requests finish.
+  // Stop cleanly on SIGTERM/SIGINT so in-flight requests finish.
   const shutdown = (signal: string) => {
     console.log(`${signal} received, closing HTTP server`);
     server.close(() => process.exit(0));

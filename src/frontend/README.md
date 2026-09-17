@@ -17,12 +17,12 @@ npm run test:ci               # Vitest, headless, all three projects
 npm run build:all             # production builds into dist/
 ```
 
-Server-side rendering environment variables (storefront container):
+Server-side rendering environment variables (storefront Node server):
 
 | Variable | Purpose |
 |---|---|
 | `PORT` | Listen port (default 4000) |
-| `API_INTERNAL_URL` | API address used during SSR, e.g. `http://api:8080` (browser calls stay same-origin `/api`) |
+| `API_INTERNAL_URL` | API address used during SSR (default `http://localhost:5080`; browser calls stay same-origin `/api`) |
 | `NG_ALLOWED_HOSTS` | Comma-separated public host names allowed for SSR (localhost is always allowed) |
 
-See the repository README for the full Docker workflow.
+See "Getting started" in the repository README for the full local workflow. Docker packaging is deferred to W0-15.

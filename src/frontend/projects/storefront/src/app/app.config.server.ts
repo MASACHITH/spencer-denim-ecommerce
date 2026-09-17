@@ -11,7 +11,7 @@ const DEFAULT_API_INTERNAL_URL = 'http://localhost:5080';
 const serverConfig: ApplicationConfig = {
   providers: [
     provideServerRendering(withRoutes(serverRoutes)),
-    // On the server, relative /api calls must go straight to the API container (API_INTERNAL_URL).
+    // On the server, relative /api calls go straight to the API (API_INTERNAL_URL), not through the browser proxy.
     {
       provide: API_BASE_URL,
       useFactory: () => process.env['API_INTERNAL_URL'] || DEFAULT_API_INTERNAL_URL,
