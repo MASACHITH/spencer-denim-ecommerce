@@ -2,6 +2,7 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
 
 permissions:
@@ -9,7 +10,13 @@ permissions:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Never cancel a run on main; superseded branch runs are cancelled.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  # Throwaway password for the ephemeral SQL Server container in CI. Declared once, used through the env context.
+  # It protects nothing outside the job and is never used by the application.
+  SQL_SA_PASSWORD: CiOnly-Ephemeral-Passw0rd
 
 jobs:
   backend:
@@ -19,26 +26,20 @@ jobs:
 
     services:
       sqlserver:
-        image: mcr.microsoft.com/mssql/server:2022-latest
+        # Pinned tag: "2022-latest" moves, which would make a green run unreproducible.
+        # There is deliberately no --health-cmd; the "Wait for SQL Server" step below gates the tests instead.
+        image: mcr.microsoft.com/mssql/server:2022-CU27-ubuntu-22.04
         env:
           ACCEPT_EULA: "Y"
           MSSQL_PID: Developer
-          # Throwaway password for this ephemeral CI container only. It protects nothing outside the job.
-          MSSQL_SA_PASSWORD: CiOnly-Ephemeral-Passw0rd
+          MSSQL_SA_PASSWORD: ${{ env.SQL_SA_PASSWORD }}
         ports:
           - 1433:1433
-        options: >-
-          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P CiOnly-Ephemeral-Passw0rd -C -Q 'SELECT 1' -b -o /dev/null"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 20
-          --health-start-period 20s
 
     env:
       DOTNET_NOLOGO: "true"
       DOTNET_CLI_TELEMETRY_OPTOUT: "true"
       NUGET_PACKAGES: ${{ github.workspace }}/.nuget/packages
-      TEST_SQL_CONNECTION: Server=localhost,1433;User Id=sa;Password=CiOnly-Ephemeral-Passw0rd;Encrypt=True;TrustServerCertificate=True
 
     steps:
       - name: Check out
@@ -60,15 +61,29 @@ jobs:
       - name: Wait for SQL Server
         shell: bash
         run: |
-          # The service health check already gates the job; this guards against a slow first login.
-          for attempt in $(seq 1 30); do
-            if (echo > /dev/tcp/127.0.0.1/1433) 2>/dev/null; then
-              echo "SQL Server port is open (attempt $attempt)."
-              exit 0
-            fi
-            sleep 2
+          set -uo pipefail
+
+          container="$(docker ps --format '{{.ID}} {{.Image}}' | awk '/mssql\/server/ { print $1; exit }')"
+          if [ -z "$container" ]; then
+            echo "::error::SQL Server service container is not running."
+            docker ps -a
+            exit 1
+          fi
+
+          # A login must succeed, not just an open port: the engine accepts TCP before it finishes recovery.
+          for attempt in $(seq 1 40); do
+            for sqlcmd in /opt/mssql-tools18/bin/sqlcmd /opt/mssql-tools/bin/sqlcmd; do
+              if docker exec "$container" "$sqlcmd" -S localhost -U sa -P "$SQL_SA_PASSWORD" -C -b -Q "SELECT 1" >/dev/null 2>&1; then
+                echo "SQL Server accepted a login on attempt $attempt ($sqlcmd)."
+                echo "TEST_SQL_CONNECTION=Server=localhost,1433;User Id=sa;Password=$SQL_SA_PASSWORD;Encrypt=True;TrustServerCertificate=True" >> "$GITHUB_ENV"
+                exit 0
+              fi
+            done
+            sleep 5
           done
-          echo "SQL Server did not open port 1433 in time." >&2
+
+          echo "::error::SQL Server did not accept a login within 200 seconds."
+          docker logs "$container" | tail -n 50
           exit 1
 
       - name: Restore
@@ -114,6 +129,15 @@ jobs:
           cache: npm
           cache-dependency-path: src/frontend/package-lock.json
 
+      - name: Cache Angular build cache
+        uses: actions/cache@v4
+        with:
+          path: src/frontend/.angular/cache
+          key: angular-${{ runner.os }}-${{ hashFiles('src/frontend/package-lock.json') }}-${{ github.sha }}
+          restore-keys: |
+            angular-${{ runner.os }}-${{ hashFiles('src/frontend/package-lock.json') }}-
+            angular-${{ runner.os }}-
+
       - name: Install dependencies
         run: npm ci
 
@@ -123,8 +147,47 @@ jobs:
       - name: Unit tests (headless)
         run: npm run test:ci
 
+      - name: Build shared library
+        run: npm run build:shared
+
       - name: Build storefront (SSR)
         run: npm run build:storefront
 
       - name: Build admin
         run: npm run build:admin
+
+      - name: SSR smoke test
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          node dist/storefront/server/server.mjs &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+
+          ready=0
+          for attempt in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:4000/healthz >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+
+          if [ "$ready" -ne 1 ]; then
+            echo "::error::The SSR server did not answer /healthz within 30 seconds."
+            exit 1
+          fi
+
+          html="$(curl -sf http://127.0.0.1:4000/)" || {
+            echo "::error::The SSR server did not return the home page."
+            exit 1
+          }
+
+          if ! printf '%s' "$html" | grep -q 'Spencer Denim'; then
+            echo "::error::Server-rendered HTML does not contain 'Spencer Denim'."
+            printf '%s' "$html" | head -c 2000
+            exit 1
+          fi
+
+          echo "Server-rendered HTML contains 'Spencer Denim' ($(printf '%s' "$html" | wc -c) bytes)."
