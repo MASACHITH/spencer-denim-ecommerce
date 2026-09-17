@@ -98,7 +98,50 @@ Other settings (environment variable names):
 | `Database__CommandTimeoutSeconds` | `30` | Command timeout |
 | `Logging__ConsoleFormat` | `text` in Development, else `json` | Serilog console output |
 
-### 2. Run the API
+### 2. Catalogue data: migrations and seed
+
+The catalogue schema (doc 08 `catalog`, `media` and `inventory`) is created by EF Core migrations.
+The database itself is **not** created by migrations, because the collation is fixed at
+`CREATE DATABASE` (step 1 above, doc 08 §10.1).
+
+```powershell
+# Apply every migration to the database in ConnectionStrings:Database
+dotnet ef database update --project src/backend/SpencerDenim.Infrastructure --startup-project src/backend/SpencerDenim.Api
+
+# Roll back to an empty database
+dotnet ef database update 0 --project src/backend/SpencerDenim.Infrastructure --startup-project src/backend/SpencerDenim.Api
+```
+
+`dotnet ef` needs the matching tool version: `dotnet tool update --global dotnet-ef --version 10.0.12`.
+
+Seeding is a separate, deliberate step and is **off** unless you ask for it. It is idempotent: it
+inserts only rows that are missing and never overwrites an admin edit.
+
+```powershell
+$env:Seed__RunOnStartup = "true"          # reference data: departments, categories, sizes, colours, attributes, size guides
+$env:Seed__IncludeDemoCatalogue = "true"  # plus the 45-product sample catalogue (development and staging only)
+dotnet run --project src/backend/SpencerDenim.Api
+# ... "Catalogue seeding inserted ..." appears in the log; stop the API and unset the variables
+Remove-Item Env:Seed__RunOnStartup, Env:Seed__IncludeDemoCatalogue
+```
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `Seed__RunOnStartup` | `false` | Run the idempotent reference-data seeder at startup |
+| `Seed__IncludeDemoCatalogue` | `false` | Also insert the sample catalogue. Never set this in production |
+| `Catalog__DefaultLowStockThreshold` | `5` | Fallback when a variant has no threshold (doc 08 §9 `Inventory.DefaultLowStockThreshold`) |
+| `Catalog__NewArrivalDays` | `30` | How long a published product keeps the "New" badge |
+| `Catalog__BestSellerTopN` | `10` | Products per department that count as best sellers |
+| `Catalog__DefaultPageSize` / `Catalog__MaxPageSize` | `24` / `96` | Listing page size and its upper bound |
+| `Catalog__MediaBaseUrl` | `/media` | Public URL prefix a stored media key is appended to |
+| `Catalog__RelatedProductCount` | `4` | Related products on the product page (PDP-06) |
+
+A seeded database holds 3 departments, 29 categories, 4 age groups, 19 attribute options,
+14 colour families, 52 sizes, 3 size guides, 45 products, 104 colourways, 480 variants with stock,
+149 media assets and 135 related-product links. Prices are LKR placeholders until the client sends
+the real price list; images are placeholder storage keys (the upload pipeline is W1-04).
+
+### 3. Run the API
 
 ```powershell
 dotnet watch --project src/backend/SpencerDenim.Api
@@ -112,8 +155,19 @@ It listens on http://localhost:5080:
 | `GET /health` | Liveness: the process answers |
 | `GET /health/ready` | Readiness: includes SQL Server connectivity (503 when unreachable) |
 | `/api/swagger` | Swagger UI, **Development only** (OpenAPI JSON at `/api/openapi/v1.json`) |
+| `GET /api/catalog/departments` | Departments with their category tree (GLB-05, DEPT-01) |
+| `GET /api/catalog/products` | Listing with filters, sort and paging (PLP-01..07, CARD-01) |
+| `GET /api/catalog/products/{slug}` | Product page payload (PDP-01..06); 404 for an unknown slug |
+| `GET /api/catalog/search?q=` | Search over the denormalised search text (SRCH-02) |
 
-### 3. Run the storefront and admin (dev servers + proxy)
+Listing parameters: `department`, `category` (includes the subtree), `ageGroup`, `minPrice`,
+`maxPrice`, `size` (size label), `colour` (colour-family slug), `material`, `fit`, `occasion`,
+`minRating`, `inStock`, `onSale`, `minDiscountPercent`, `newArrivals`, `sort`, `page`, `pageSize`.
+The repeatable ones are repeated (`?size=M&size=L`). `sort` is one of `recommended`, `newest`,
+`best-selling`, `price-asc`, `price-desc`, `rating`, `discount`. Invalid values return one 400 that
+names every rejected parameter.
+
+### 4. Run the storefront and admin (dev servers + proxy)
 
 ```powershell
 cd src/frontend
@@ -124,7 +178,7 @@ npx ng serve admin        # http://localhost:4300/admin/
 
 `proxy.conf.json` forwards `/api` and `/health` to the API on http://localhost:5080, so start the API first. Each placeholder home page calls `/api/ping` and shows "API connected" or a neutral "not reachable" message. During server-side rendering the storefront calls the API directly at `API_INTERNAL_URL` (default `http://localhost:5080`).
 
-### 4. Run the tests
+### 5. Run the tests
 
 ```powershell
 # Backend: unit + integration tests
@@ -144,7 +198,7 @@ npm run lint
 npm run test:ci           # Vitest, headless, shared + storefront + admin
 ```
 
-### 5. Build and run the storefront SSR server locally
+### 6. Build and run the storefront SSR server locally
 
 ```powershell
 cd src/frontend

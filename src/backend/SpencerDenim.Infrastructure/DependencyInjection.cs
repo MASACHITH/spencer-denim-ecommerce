@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
@@ -69,6 +70,11 @@ public static class DependencyInjection
             });
 
             builder.AddInterceptors(serviceProvider.GetRequiredService<AuditAndSoftDeleteInterceptor>());
+
+            // Anything else registered as IInterceptor joins the pipeline. Nothing does in production
+            // today; it is EF Core's documented extension point and lets a test count commands or
+            // capture SQL without a second composition root.
+            builder.AddInterceptors(serviceProvider.GetServices<IInterceptor>());
         });
 
         services.AddScoped<IDepartmentCatalogReader, DepartmentCatalogReader>();

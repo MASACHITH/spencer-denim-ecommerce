@@ -1,6 +1,9 @@
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace SpencerDenim.IntegrationTests.Infrastructure;
 
@@ -9,10 +12,15 @@ namespace SpencerDenim.IntegrationTests.Infrastructure;
 /// Extra configuration keys (e.g. <c>Seed:Admin:*</c>), applied after the connection string override — a test
 /// can use this to exercise <c>AdminSeedHostedService</c> without touching real environment variables.
 /// </param>
+/// <param name="commandInterceptor">
+/// Optional EF Core command interceptor, so a test can count the SQL round-trips the API makes.
+/// </param>
 public sealed class ApiFactory(
     string connectionString,
     string environment = "Testing",
-    IReadOnlyDictionary<string, string?>? additionalConfiguration = null) : WebApplicationFactory<Program>
+    IReadOnlyDictionary<string, string?>? additionalConfiguration = null,
+    DbCommandInterceptor? commandInterceptor = null)
+    : WebApplicationFactory<Program>
 {
     /// <summary>Loopback port 1 refuses connections at once: a SQL Server that is guaranteed to be unreachable.</summary>
     public const string UnreachableConnectionString =
@@ -40,5 +48,12 @@ public sealed class ApiFactory(
                 configuration.AddInMemoryCollection(additionalConfiguration);
             }
         });
+
+        if (commandInterceptor is not null)
+        {
+            // EF Core resolves IInterceptor registrations from the application service provider, so
+            // this reaches the AppDbContext the API actually uses.
+            builder.ConfigureTestServices(services => services.AddSingleton<IInterceptor>(commandInterceptor));
+        }
     }
 }

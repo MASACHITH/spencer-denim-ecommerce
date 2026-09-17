@@ -187,25 +187,43 @@ public sealed class CatalogQueryPlanTests(SqlServerDatabaseFixture sqlServer) : 
     }
 
     [Fact]
-    public async Task The_listing_runs_a_bounded_number_of_statements_rather_than_one_per_row()
+    public async Task The_listing_runs_a_bounded_number_of_queries_rather_than_one_per_row()
     {
-        SqlServer.SkipIfUnavailable();
-
-        await using var connection = await OpenAsync();
-
-        var before = await ReadBatchCountAsync(connection);
-
         var api = CreateApi();
-        var page = await api.ListAsync("?department=women&pageSize=24", Token);
 
-        var after = await ReadBatchCountAsync(connection);
-        var statements = after - before;
+        // Warm up, so the count excludes the model build and any first-request work.
+        await api.ListAsync("?department=women&pageSize=24", Token);
+
+        CommandCounter.Reset();
+        var page = await api.ListAsync("?department=women&pageSize=24", Token);
+        var commands = CommandCounter.Count;
 
         TestContext.Current.TestOutputHelper!.WriteLine(
-            $"{page.Items.Count} cards returned using {statements} SQL batches (filter lookups + count + page + best-seller thresholds).");
+            $"{page.Items.Count} cards returned with {commands} SQL commands " +
+            "(department lookup + count + page + one best-seller threshold).");
 
-        // A per-row query would be 24 or more on top of the fixed ones.
-        Assert.True(statements < 15, $"The listing issued {statements} SQL batches for {page.Items.Count} rows.");
+        Assert.NotEmpty(page.Items);
+
+        // A per-row query would add at least one command per card.
+        Assert.True(commands <= 6, $"The listing issued {commands} SQL commands for {page.Items.Count} rows.");
+    }
+
+    [Fact]
+    public async Task The_product_page_runs_a_bounded_number_of_queries()
+    {
+        var api = CreateApi();
+
+        await api.GetProductAsync("relaxed-linen-blend-shirt", Token);
+
+        CommandCounter.Reset();
+        var product = await api.GetProductAsync("relaxed-linen-blend-shirt", Token);
+        var commands = CommandCounter.Count;
+
+        TestContext.Current.TestOutputHelper!.WriteLine(
+            $"Product page with {product.Variants.Count} variants, {product.Images.Count} images and " +
+            $"{product.RelatedProducts.Count} related products used {commands} SQL commands.");
+
+        Assert.True(commands <= 12, $"The product page issued {commands} SQL commands.");
     }
 
     private async Task<SqlConnection> OpenAsync()
@@ -235,12 +253,4 @@ public sealed class CatalogQueryPlanTests(SqlServerDatabaseFixture sqlServer) : 
         return reader.GetString(0);
     }
 
-    private static async Task<long> ReadBatchCountAsync(SqlConnection connection)
-    {
-        await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT cntr_value FROM sys.dm_os_performance_counters WHERE counter_name = 'Batch Requests/sec';";
-
-        var value = await command.ExecuteScalarAsync(TestContext.Current.CancellationToken);
-        return Convert.ToInt64(value, CultureInfo.InvariantCulture);
-    }
 }

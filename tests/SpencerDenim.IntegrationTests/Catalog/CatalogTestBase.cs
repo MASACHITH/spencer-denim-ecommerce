@@ -11,6 +11,9 @@ public abstract class CatalogTestBase(SqlServerDatabaseFixture sqlServer) : IAsy
     private ApiFactory? _factory;
     private HttpClient? _client;
 
+    /// <summary>Counts the SQL commands the API runs, for the "no N+1" assertion.</summary>
+    protected CommandCountingInterceptor CommandCounter { get; } = new();
+
     /// <summary>The database created, migrated and seeded for this run.</summary>
     protected SqlServerDatabaseFixture SqlServer { get; } = sqlServer;
 
@@ -22,7 +25,7 @@ public abstract class CatalogTestBase(SqlServerDatabaseFixture sqlServer) : IAsy
     {
         SqlServer.SkipIfUnavailable();
 
-        _factory ??= new ApiFactory(SqlServer.ConnectionString);
+        _factory ??= new ApiFactory(SqlServer.ConnectionString, commandInterceptor: CommandCounter);
         _client ??= _factory.CreateClient();
 
         return new CatalogApiClient(_client);
