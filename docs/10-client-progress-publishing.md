@@ -17,7 +17,7 @@ Last updated: 2026-09-17 · Applies to: **the client progress page only** (`D:\P
 | FTP username | `u765465138.colombowardrobecompany-build-tracker.kt-wedding.online` |
 | Remote folder | `public_html`. The FTP account opens **directly inside** it, so upload to `/`. |
 | Password | **Not stored in any document or in git.** Kept encrypted on the developer PC (see §3). |
-| Files uploaded | **Only** `index.html`, `styles.css`, `app.js`, `progress-data.js` |
+| Files uploaded | **Only** `index.html`, `styles.css`, `app.js`, `progress-data.js`, plus `.htaccess` (cache rules) |
 | Other remote files | `default.php` (Hostinger placeholder) is left alone; the publish script never deletes anything. |
 
 ## 2. How to publish (after every daily update)
@@ -81,6 +81,17 @@ Ways to publish, in order of preference:
 3. Ask IT to allow outbound FTP passive data connections to `147.93.101.68`.
 
 Don't retry the script repeatedly on the blocked network. Many failed connections can make Hostinger temporarily block your IP.
+
+## 5c. Caching: the client must never see an old page
+
+Hostinger serves this site with `Cache-Control: public, max-age=604800` by default, so **a visitor could see a week-old page** after we publish. Fixed on 2026-09-18 by uploading `client-progress/.htaccess`, which:
+- sends `no-cache, no-store, must-revalidate, max-age=0` for `.html`, `.js` and `.css`
+- turns off LiteSpeed page cache for the site
+- puts `index.html` ahead of Hostinger's `default.php`
+
+After each publish the script checks the live `Cache-Control` header and warns if caching has returned (e.g. if `.htaccess` was deleted). If the warning appears: re-upload `.htaccess`, and purge the cache in hPanel → Websites → Performance.
+
+Anyone still seeing an old page after this should reload with **Ctrl+F5** once; their browser cached the earlier, long-lived copy.
 
 ## 6. Rules
 

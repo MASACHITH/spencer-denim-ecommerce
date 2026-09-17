@@ -35,6 +35,8 @@ $FtpUser    = "u765465138.colombowardrobecompany-build-tracker.kt-wedding.online
 $SiteUrl    = "https://colombowardrobecompany-build-tracker.kt-wedding.online"
 $SourceDir  = "D:\Projects\e com\client-progress"
 $AllowList  = @("index.html", "styles.css", "app.js", "progress-data.js")
+# Uploaded too, but not size-verified: FTP LIST hides dot-files. Verified through response headers instead.
+$ExtraFiles = @(".htaccess")
 # SHA-256 public-key pins for Hostinger's FTP certificate. Several are allowed because Hostinger
 # rotates between certificates (Let's Encrypt ones change every few months). curl accepts a
 # semicolon-separated list and connects only if the server key matches one of them.
@@ -95,7 +97,7 @@ Write-Host "== Client progress page publish ==" -ForegroundColor Cyan
 if (-not (Test-Path $SourceDir)) { throw "Source folder not found: $SourceDir" }
 $present = Get-ChildItem $SourceDir -File | Select-Object -ExpandProperty Name
 $missing = $AllowList | Where-Object { $_ -notin $present }
-$extra   = $present   | Where-Object { $_ -notin $AllowList }
+$extra   = $present   | Where-Object { $_ -notin $AllowList -and $_ -notin $ExtraFiles }
 if ($missing) { throw "Missing required files: $($missing -join ', ')" }
 if ($extra)   { Write-Warning "Ignoring files that are not on the allow-list (they will NOT be uploaded): $($extra -join ', ')" }
 if (Get-ChildItem $SourceDir -Directory) { Write-Warning "Sub-folders in $SourceDir are ignored." }
@@ -130,6 +132,15 @@ foreach ($name in $AllowList) {
   Write-Host ("Uploaded  {0,-18} {1,7:N0} bytes" -f $name, (Get-Item $local).Length)
 }
 
+# 4b) Upload the extra files (cache rules). Not size-verified: FTP LIST hides dot-files.
+foreach ($name in $ExtraFiles) {
+  $local = Join-Path $SourceDir $name
+  if (-not (Test-Path -LiteralPath $local)) { Write-Warning "$name not found in $SourceDir - skipped."; continue }
+  $r = Invoke-Curl @("-T", $local, "ftp://${FtpHost}:$FtpPort/$name")
+  if ($r.Exit -ne 0) { throw "Upload failed for $name (curl exit $($r.Exit)): $($r.Output)" }
+  Write-Host ("Uploaded  {0,-18} {1,7:N0} bytes" -f $name, (Get-Item $local).Length)
+}
+
 # 5) Verify remote sizes match
 $list = Invoke-Curl @("ftp://${FtpHost}:$FtpPort/")
 if ($list.Exit -ne 0) { throw "Could not list remote folder: $($list.Output)" }
@@ -148,6 +159,19 @@ try {
     Write-Host "Live site shows lastUpdated $lastUpdated" -ForegroundColor Green
   } else {
     Write-Warning "Upload succeeded, but the live site does not show lastUpdated $lastUpdated yet (cache). Re-check in a few minutes."
+  }
+  # Cache check: without no-cache headers the client keeps seeing an old page for up to a week.
+  # The new rules take a few seconds to apply, so retry before warning.
+  $cacheValue = ""
+  foreach ($attempt in 1..4) {
+    $cacheValue = ((& curl.exe -sSI "$SiteUrl/progress-data.js" 2>&1 | Select-String -Pattern "^cache-control:") | ForEach-Object { $_.Line.Trim() }) -join " "
+    if ($cacheValue -match "no-cache|no-store|max-age=0") { break }
+    if ($attempt -lt 4) { Start-Sleep -Seconds 5 }
+  }
+  if ($cacheValue -match "no-cache|no-store|max-age=0") {
+    Write-Host "Cache headers OK: $cacheValue" -ForegroundColor Green
+  } else {
+    Write-Warning "The server still caches the page ('$cacheValue'). Check that .htaccess uploaded, or purge the cache in hPanel; visitors may see an old version."
   }
 } catch {
   Write-Warning "Upload succeeded, but the live check failed: $($_.Exception.Message)"
