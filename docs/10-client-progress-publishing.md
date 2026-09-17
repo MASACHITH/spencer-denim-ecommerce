@@ -54,11 +54,12 @@ Last updated: 2026-09-17 · Applies to: **the client progress page only** (`D:\P
 
 - **Encrypted connection:** FTPS (explicit TLS, `--ssl-reqd`). The login is passed to `curl.exe` through standard input, so it never appears on the command line.
 - **Certificate:** Hostinger's FTP certificate is issued to `hostinger.com`, not to the IP address, so normal name checking fails. Instead of turning checks off, the script **pins the certificate's public key** (SHA-256). Any other certificate is rejected.
-- **When Hostinger renews the certificate** (current one expires **17 Jan 2027**), publishing stops with a pin error. To fix it:
+- **Several pins are allowed.** Hostinger serves more than one certificate (a Sectigo `hostinger.com` one and a Let's Encrypt `*.hstgr.io` one, which rotates every few months). `$PinnedKey` holds a semicolon-separated list, and the connection succeeds if the server key matches any of them.
+- **When a pin error appears** (`curl (90) SSL: public key does not match pinned public key`), publishing stops safely and nothing is uploaded. To fix it:
   ```powershell
   pwsh tools/publish-client-progress.ps1 -ShowPin
   ```
-  Check that the Subject is `CN=hostinger.com`, the issuer is a public CA (e.g. Sectigo), and the only error is `RemoteCertificateNameMismatch`. Then update `$PinnedKey` in the script and commit.
+  Check that the Subject is a Hostinger name (`CN=hostinger.com` or `CN=*.hstgr.io`), the issuer is a public CA (Sectigo, Let's Encrypt), and the only error is `RemoteCertificateNameMismatch`. Then **add** the new pin to `$PinnedKey` (keep at most 3, drop expired ones) and commit. If the subject or issuer is anything else, **stop and investigate**: that could be interception.
 - The page has a `noindex` tag, so search engines don't list it.
 
 ## 5. Manual fallback (if the script can't be used)

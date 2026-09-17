@@ -35,8 +35,13 @@ $FtpUser    = "u765465138.colombowardrobecompany-build-tracker.kt-wedding.online
 $SiteUrl    = "https://colombowardrobecompany-build-tracker.kt-wedding.online"
 $SourceDir  = "D:\Projects\e com\client-progress"
 $AllowList  = @("index.html", "styles.css", "app.js", "progress-data.js")
-# SHA-256 of the public key of Hostinger's FTP certificate (CN=hostinger.com, Sectigo, valid until 2027-01-17)
-$PinnedKey  = "sha256//rRBXAmuSvqI5e99CZPWQDXLPWIlTIvu77x/aZc349JQ="
+# SHA-256 public-key pins for Hostinger's FTP certificate. Several are allowed because Hostinger
+# rotates between certificates (Let's Encrypt ones change every few months). curl accepts a
+# semicolon-separated list and connects only if the server key matches one of them.
+#   1) CN=*.hstgr.io      Let's Encrypt, seen 2026-09-18, expires 2026-11-11
+#   2) CN=hostinger.com   Sectigo,       seen 2026-09-17, expires 2027-01-17
+# Refresh with:  pwsh tools/publish-client-progress.ps1 -ShowPin     (see docs/10 §4)
+$PinnedKey  = "sha256//iD1qTPTlmilSMjmnGtuhIjGlRZY9GF4YIhDr8P0WXNw=;sha256//rRBXAmuSvqI5e99CZPWQDXLPWIlTIvu77x/aZc349JQ="
 $CredFile   = Join-Path $env:USERPROFILE ".spencer-denim\tracker-ftp-credential.xml"
 
 function Save-Password {
@@ -65,7 +70,11 @@ function Show-Pin {
   } catch { }
   finally { [System.Net.ServicePointManager]::ServerCertificateValidationCallback = $null }
   Write-Host $script:info
-  Write-Host "Only update `$PinnedKey if Subject is CN=hostinger.com, the issuer is a public CA, and the only error is RemoteCertificateNameMismatch."
+  Write-Host "Add this pin to `$PinnedKey (semicolon-separated) only if ALL of these hold:"
+  Write-Host "  - Subject is a Hostinger name: CN=hostinger.com or CN=*.hstgr.io"
+  Write-Host "  - Issuer is a public CA (e.g. Sectigo, Let's Encrypt)"
+  Write-Host "  - The only error is RemoteCertificateNameMismatch (we connect by IP, so the name cannot match)"
+  Write-Host "Keep at most 3 pins; drop expired ones."
 }
 
 function Invoke-Curl([string[]]$CurlArgs) {
