@@ -33,6 +33,9 @@ public static class DependencyInjection
                 "The database connection string is missing. Set the ConnectionStrings__Database environment variable.")
             .Validate(options => options.MaxRetryCount >= 0, "Database:MaxRetryCount must be zero or more.")
             .Validate(options => options.CommandTimeoutSeconds > 0, "Database:CommandTimeoutSeconds must be greater than zero.")
+            .Validate(
+                options => options.CompatibilityLevel is >= DatabaseOptions.MinimumCompatibilityLevel and <= DatabaseOptions.MaximumCompatibilityLevel,
+                $"Database:CompatibilityLevel must be between {DatabaseOptions.MinimumCompatibilityLevel} and {DatabaseOptions.MaximumCompatibilityLevel} (150 = SQL Server 2019, 170 = SQL Server 2025 / Azure SQL).")
             .ValidateOnStart();
 
         services.AddDbContext<AppDbContext>((serviceProvider, builder) =>
@@ -42,6 +45,7 @@ public static class DependencyInjection
             builder.UseSqlServer(options.ConnectionString, sql =>
             {
                 sql.EnableRetryOnFailure(options.MaxRetryCount);
+                sql.UseCompatibilityLevel(options.CompatibilityLevel);
                 sql.CommandTimeout(options.CommandTimeoutSeconds);
                 sql.MigrationsHistoryTable(AppDbContext.MigrationsHistoryTable, AppDbContext.MigrationsHistorySchema);
             });

@@ -1,3 +1,5 @@
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.SqlServer.Infrastructure.Internal;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
@@ -19,6 +21,19 @@ public sealed class InfrastructureRegistrationTests
         services.AddInfrastructure();
 
         return services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true, ValidateOnBuild = true });
+    }
+
+    /// <summary>
+    /// EF Core only exposes the configured level through its SQL Server options extension (an internal API).
+    /// Reading it here is acceptable in a test: a breaking EF change fails this test, not production code.
+    /// </summary>
+    private static int? ReadConfiguredCompatibilityLevel(AppDbContext dbContext)
+    {
+#pragma warning disable EF1001 // Internal EF Core API usage.
+        return dbContext.GetService<IDbContextOptions>()
+            .FindExtension<SqlServerOptionsExtension>()?
+            .SqlServerCompatibilityLevel;
+#pragma warning restore EF1001
     }
 
     [Fact]
@@ -62,6 +77,53 @@ public sealed class InfrastructureRegistrationTests
         Assert.True(dbContext.Database.CreateExecutionStrategy().RetriesOnFailure);
         Assert.Empty(dbContext.Model.GetEntityTypes());
         Assert.Equal("ops", AppDbContext.MigrationsHistorySchema);
+    }
+
+    [Fact]
+    public void Compatibility_level_defaults_to_150_for_localdb_2019()
+    {
+        using var provider = BuildProvider(new Dictionary<string, string?>
+        {
+            ["ConnectionStrings:Database"] = "Server=example;Database=SpencerDenim;",
+        });
+        using var scope = provider.CreateScope();
+
+        var options = provider.GetRequiredService<IOptions<DatabaseOptions>>().Value;
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        Assert.Equal(150, options.CompatibilityLevel);
+        Assert.Equal(150, ReadConfiguredCompatibilityLevel(dbContext));
+    }
+
+    [Fact]
+    public void Compatibility_level_is_read_from_configuration_and_applied_to_ef_core()
+    {
+        using var provider = BuildProvider(new Dictionary<string, string?>
+        {
+            ["ConnectionStrings:Database"] = "Server=example;Database=SpencerDenim;",
+            ["Database:CompatibilityLevel"] = "170",
+        });
+        using var scope = provider.CreateScope();
+
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        Assert.Equal(170, ReadConfiguredCompatibilityLevel(dbContext));
+    }
+
+    [Theory]
+    [InlineData("90")]
+    [InlineData("180")]
+    public void Unsupported_compatibility_level_fails_validation(string level)
+    {
+        using var provider = BuildProvider(new Dictionary<string, string?>
+        {
+            ["ConnectionStrings:Database"] = "Server=example;Database=SpencerDenim;",
+            ["Database:CompatibilityLevel"] = level,
+        });
+
+        var exception = Assert.Throws<OptionsValidationException>(() => provider.GetRequiredService<IOptions<DatabaseOptions>>().Value);
+
+        Assert.Contains("Database:CompatibilityLevel", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
