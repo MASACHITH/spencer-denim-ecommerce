@@ -211,12 +211,50 @@ public sealed class DemoCatalogueSeeder(AppDbContext dbContext, IClock clock, IO
             variantIndex++;
         }
 
+        AddMediaUsages(product, assets, utcNow);
+
         dbContext.ProductStats.Add(BuildStats(seed, product, variants, utcNow));
         dbContext.ProductSearchIndexes.Add(BuildSearchIndex(seed, product, category, colours, variants, lookups, utcNow));
 
         await dbContext.SaveChangesAsync(cancellationToken);
 
         return new CreatedProduct(variants.Count, assets.Count);
+    }
+
+    /// <summary>
+    /// Doc 08 §3.3: every structured reference is mirrored in <c>media.MediaUsages</c>, which is what
+    /// the library's "used in…" panel and the delete guard read. The unique index is
+    /// (asset, owner type, owner id, role), so each asset contributes one row per role.
+    /// </summary>
+    private void AddMediaUsages(Product product, List<MediaAsset> assets, DateTime utcNow)
+    {
+        var ownerId = product.Id.ToString(CultureInfo.InvariantCulture);
+        var written = new HashSet<(int AssetId, string Role)>();
+
+        void Add(int assetId, string role)
+        {
+            if (!written.Add((assetId, role)))
+            {
+                return;
+            }
+
+            dbContext.MediaUsages.Add(new MediaUsage
+            {
+                MediaAssetId = assetId,
+                OwnerType = MediaUsageOwnerTypes.Product,
+                OwnerId = ownerId,
+                UsageRole = role,
+                CreatedAtUtc = utcNow,
+            });
+        }
+
+        Add(assets[0].Id, MediaUsageRoles.Card);
+        Add(assets[^1].Id, MediaUsageRoles.Hover);
+
+        foreach (var asset in assets)
+        {
+            Add(asset.Id, MediaUsageRoles.Gallery);
+        }
     }
 
     /// <summary>

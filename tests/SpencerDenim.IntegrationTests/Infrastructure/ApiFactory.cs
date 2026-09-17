@@ -29,8 +29,12 @@ public sealed class ApiFactory(
             {
                 ["ConnectionStrings:Database"] = connectionString,
                 ["Logging:ConsoleFormat"] = "text",
+                // The fixture migrates and seeds; the host under test must never do it again.
+                ["Seed:RunOnStartup"] = "false",
+                ["Seed:IncludeDemoCatalogue"] = "false",
             });
 
+            // Added last so a test can still turn a seeder back on for itself.
             if (additionalConfiguration is not null)
             {
                 configuration.AddInMemoryCollection(additionalConfiguration);

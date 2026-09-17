@@ -75,28 +75,22 @@ internal sealed class ProductCatalogReader(
         var rows = ApplyFilters(BaseQuery(), listQuery, filters);
 
         // Doc 08 §7.6: every token must match, as an escaped LIKE over the denormalised search text.
-        var searchRows = rows.Join(
-            dbContext.ProductSearchIndexes,
-            row => row.Product.Id,
-            index => index.ProductId,
-            (row, index) => new SearchRow(row.Product, row.Stats, index));
-
         foreach (var token in query.Tokens)
         {
             var pattern = SearchTerms.ToContainsPattern(token);
-            searchRows = searchRows.Where(row =>
-                EF.Functions.Like(row.Index.SearchText, pattern, EscapeString));
+            rows = rows.Where(product =>
+                EF.Functions.Like(product.SearchIndex!.SearchText, pattern, EscapeString));
         }
 
-        var totalCount = await searchRows.CountAsync(cancellationToken);
+        var totalCount = await rows.CountAsync(cancellationToken);
         if (totalCount == 0)
         {
             return PagedResult.Empty<ProductCardDto>(listQuery.Page, listQuery.PageSize);
         }
 
-        IQueryable<ProductRow> ordered = query.SortByRelevance
-            ? ApplyRelevanceSort(searchRows, query.Tokens[0])
-            : ApplySort(searchRows.Select(row => new ProductRow(row.Product, row.Stats)), listQuery, filters.CategoryId);
+        var ordered = query.SortByRelevance
+            ? ApplyRelevanceSort(rows, query.Tokens[0])
+            : ApplySort(rows, listQuery, filters.CategoryId);
 
         var page = await ordered
             .Skip(listQuery.Skip)
@@ -115,49 +109,49 @@ internal sealed class ProductCatalogReader(
         var defaultThreshold = _options.DefaultLowStockThreshold;
 
         var row = await BaseQuery()
-            .Where(product => product.Product.Slug == slug)
-            .Select(source => new ProductDetailRow(
-                source.Product.Id,
-                source.Product.ProductCode,
-                source.Product.Name,
-                source.Product.Slug,
-                source.Product.BasePrice,
-                source.Product.CompareAtPrice,
-                source.Product.DepartmentId,
-                source.Product.Department!.Name,
-                source.Product.Department.Slug,
-                source.Product.PrimaryCategoryId,
-                source.Product.PrimaryCategory!.Path,
-                source.Product.ShortDescription,
-                source.Product.Description,
-                source.Product.CareInstructions,
-                source.Product.Material != null ? source.Product.Material.Name : null,
-                source.Product.Material != null ? source.Product.Material.Slug : null,
-                source.Product.Fit != null ? source.Product.Fit.Name : null,
-                source.Product.Fit != null ? source.Product.Fit.Slug : null,
-                source.Product.Occasion != null ? source.Product.Occasion.Name : null,
-                source.Product.Occasion != null ? source.Product.Occasion.Slug : null,
-                source.Product.AgeGroup != null ? source.Product.AgeGroup.Name : null,
-                source.Product.AgeGroup != null ? source.Product.AgeGroup.Slug : null,
-                source.Product.SeoTitle,
-                source.Product.SeoDescription,
-                source.Product.SizeGuideId ?? source.Product.PrimaryCategory.SizeGuideId,
-                source.Product.SizeGuide != null
-                    ? source.Product.SizeGuide.Name
-                    : source.Product.PrimaryCategory.SizeGuide != null
-                        ? source.Product.PrimaryCategory.SizeGuide.Name
+            .Where(product => product.Slug == slug)
+            .Select(product => new ProductDetailRow(
+                product.Id,
+                product.ProductCode,
+                product.Name,
+                product.Slug,
+                product.BasePrice,
+                product.CompareAtPrice,
+                product.DepartmentId,
+                product.Department!.Name,
+                product.Department.Slug,
+                product.PrimaryCategoryId,
+                product.PrimaryCategory!.Path,
+                product.ShortDescription,
+                product.Description,
+                product.CareInstructions,
+                product.Material != null ? product.Material.Name : null,
+                product.Material != null ? product.Material.Slug : null,
+                product.Fit != null ? product.Fit.Name : null,
+                product.Fit != null ? product.Fit.Slug : null,
+                product.Occasion != null ? product.Occasion.Name : null,
+                product.Occasion != null ? product.Occasion.Slug : null,
+                product.AgeGroup != null ? product.AgeGroup.Name : null,
+                product.AgeGroup != null ? product.AgeGroup.Slug : null,
+                product.SeoTitle,
+                product.SeoDescription,
+                product.SizeGuideId ?? product.PrimaryCategory.SizeGuideId,
+                product.SizeGuide != null
+                    ? product.SizeGuide.Name
+                    : product.PrimaryCategory.SizeGuide != null
+                        ? product.PrimaryCategory.SizeGuide.Name
                         : null,
-                source.Product.BadgeOverride,
-                source.Product.NewUntilUtc,
-                source.Stats.MinSalePrice,
-                source.Stats.MaxSalePrice,
-                source.Stats.MaxOriginalPrice,
-                source.Stats.MaxDiscountPercent,
-                source.Stats.HasDiscount,
-                source.Stats.RatingAverage,
-                source.Stats.RatingCount,
-                source.Stats.SoldQty30d,
-                source.Product.Colours
+                product.BadgeOverride,
+                product.NewUntilUtc,
+                product.Stats!.MinSalePrice,
+                product.Stats!.MaxSalePrice,
+                product.Stats!.MaxOriginalPrice,
+                product.Stats!.MaxDiscountPercent,
+                product.Stats!.HasDiscount,
+                product.Stats!.RatingAverage,
+                product.Stats!.RatingCount,
+                product.Stats!.SoldQty30d,
+                product.Colours
                     .OrderBy(colour => colour.SortOrder)
                     .ThenBy(colour => colour.Id)
                     .Select(colour => new ColourRow(
@@ -169,7 +163,7 @@ internal sealed class ProductCatalogReader(
                         colour.SwatchAsset != null ? colour.SwatchAsset.StorageKey : null,
                         colour.SortOrder))
                     .ToList(),
-                source.Product.Media
+                product.Media
                     .OrderBy(media => media.SortOrder)
                     .ThenBy(media => media.Id)
                     .Select(media => new MediaRow(
@@ -183,7 +177,7 @@ internal sealed class ProductCatalogReader(
                         media.MediaAsset.PosterAsset != null ? media.MediaAsset.PosterAsset.StorageKey : null,
                         media.SortOrder))
                     .ToList(),
-                source.Product.Variants
+                product.Variants
                     .Where(variant => variant.IsActive)
                     .OrderBy(variant => variant.ProductColourId)
                     .ThenBy(variant => variant.Size!.SortOrder)
@@ -202,7 +196,7 @@ internal sealed class ProductCatalogReader(
                         variant.StockLevel != null ? variant.StockLevel.Available : 0,
                         variant.StockLevel != null ? variant.StockLevel.LowStockThreshold : null))
                     .ToList(),
-                source.Product.RelatedProducts
+                product.RelatedProducts
                     .OrderBy(related => related.SortOrder)
                     .ThenBy(related => related.RelatedProductId)
                     .Select(related => related.RelatedProductId)
@@ -228,60 +222,58 @@ internal sealed class ProductCatalogReader(
     /// soft-delete query filter is a constant too, so both render as literals and
     /// <c>IX_Products_Listing</c> (filtered on exactly those two columns) can be matched (DB28).
     /// </summary>
-    private IQueryable<ProductRow> BaseQuery() =>
+    private IQueryable<Product> BaseQuery() =>
         dbContext.Products
             .AsNoTracking()
             .Where(product => product.IsPublished)
-            .Join(
-                dbContext.ProductStats,
-                product => product.Id,
-                stats => stats.ProductId,
-                (product, stats) => new ProductRow(product, stats));
+            // ProductStats is 1:1 with a product and is written in the same transaction, so this is
+            // never false in practice; it keeps the join an inner one and the projection total.
+            .Where(product => product.Stats != null);
 
-    private static IQueryable<ProductRow> ApplyFilters(
-        IQueryable<ProductRow> rows,
+    private static IQueryable<Product> ApplyFilters(
+        IQueryable<Product> rows,
         ProductListQuery query,
         ResolvedFilters filters)
     {
         if (filters.DepartmentId is { } departmentId)
         {
-            rows = rows.Where(row => row.Product.DepartmentId == departmentId);
+            rows = rows.Where(product => product.DepartmentId == departmentId);
         }
 
         if (filters.CategorySubtreeIds.Count > 0)
         {
             var categoryIds = filters.CategorySubtreeIds;
-            rows = rows.Where(row => row.Product.CategoryLinks.Any(link => categoryIds.Contains(link.CategoryId)));
+            rows = rows.Where(product => product.CategoryLinks.Any(link => categoryIds.Contains(link.CategoryId)));
         }
 
         if (filters.AgeGroupIds.Count > 0)
         {
             var ageGroupIds = filters.AgeGroupIds;
-            rows = rows.Where(row => row.Product.AgeGroupId != null && ageGroupIds.Contains(row.Product.AgeGroupId.Value));
+            rows = rows.Where(product => product.AgeGroupId != null && ageGroupIds.Contains(product.AgeGroupId.Value));
         }
 
         if (filters.MaterialIds.Count > 0)
         {
             var materialIds = filters.MaterialIds;
-            rows = rows.Where(row => row.Product.MaterialId != null && materialIds.Contains(row.Product.MaterialId.Value));
+            rows = rows.Where(product => product.MaterialId != null && materialIds.Contains(product.MaterialId.Value));
         }
 
         if (filters.FitIds.Count > 0)
         {
             var fitIds = filters.FitIds;
-            rows = rows.Where(row => row.Product.FitId != null && fitIds.Contains(row.Product.FitId.Value));
+            rows = rows.Where(product => product.FitId != null && fitIds.Contains(product.FitId.Value));
         }
 
         if (filters.OccasionIds.Count > 0)
         {
             var occasionIds = filters.OccasionIds;
-            rows = rows.Where(row => row.Product.OccasionId != null && occasionIds.Contains(row.Product.OccasionId.Value));
+            rows = rows.Where(product => product.OccasionId != null && occasionIds.Contains(product.OccasionId.Value));
         }
 
         if (filters.ColourFamilyIds.Count > 0)
         {
             var colourFamilyIds = filters.ColourFamilyIds;
-            rows = rows.Where(row => row.Product.Colours.Any(colour => colourFamilyIds.Contains(colour.ColourFamilyId)));
+            rows = rows.Where(product => product.Colours.Any(colour => colourFamilyIds.Contains(colour.ColourFamilyId)));
         }
 
         // Size and availability are one EXISTS over the active variants (doc 08 §7.1), so SQL Server
@@ -289,59 +281,59 @@ internal sealed class ProductCatalogReader(
         var sizeIds = filters.SizeIds;
         if (sizeIds.Count > 0 && query.InStockOnly)
         {
-            rows = rows.Where(row => row.Product.Variants.Any(variant =>
+            rows = rows.Where(product => product.Variants.Any(variant =>
                 variant.IsActive
                 && sizeIds.Contains(variant.SizeId)
                 && variant.StockLevel!.Available > 0));
         }
         else if (sizeIds.Count > 0)
         {
-            rows = rows.Where(row => row.Product.Variants.Any(variant =>
+            rows = rows.Where(product => product.Variants.Any(variant =>
                 variant.IsActive && sizeIds.Contains(variant.SizeId)));
         }
         else if (query.InStockOnly)
         {
-            rows = rows.Where(row => row.Product.Variants.Any(variant =>
+            rows = rows.Where(product => product.Variants.Any(variant =>
                 variant.IsActive && variant.StockLevel!.Available > 0));
         }
 
         if (query.MinPrice is { } minPrice)
         {
-            rows = rows.Where(row => row.Stats.MinSalePrice >= minPrice);
+            rows = rows.Where(product => product.Stats!.MinSalePrice >= minPrice);
         }
 
         if (query.MaxPrice is { } maxPrice)
         {
-            rows = rows.Where(row => row.Stats.MinSalePrice <= maxPrice);
+            rows = rows.Where(product => product.Stats!.MinSalePrice <= maxPrice);
         }
 
         if (query.MinRating is { } minRating)
         {
-            rows = rows.Where(row => row.Stats.RatingAverage >= minRating);
+            rows = rows.Where(product => product.Stats!.RatingAverage >= minRating);
         }
 
         if (query.OnSaleOnly)
         {
-            rows = rows.Where(row => row.Stats.HasDiscount);
+            rows = rows.Where(product => product.Stats!.HasDiscount);
         }
 
         if (query.MinDiscountPercent is { } minDiscount and > 0m)
         {
-            rows = rows.Where(row => row.Stats.MaxDiscountPercent >= minDiscount);
+            rows = rows.Where(product => product.Stats!.MaxDiscountPercent >= minDiscount);
         }
 
         if (query.NewArrivalsOnly)
         {
             var now = filters.UtcNow;
-            rows = rows.Where(row => row.Product.NewUntilUtc != null && row.Product.NewUntilUtc > now);
+            rows = rows.Where(product => product.NewUntilUtc != null && product.NewUntilUtc > now);
         }
 
         return rows;
     }
 
     /// <summary>Doc 08 §7.3. Every sort ends with the product ID, so paging is stable.</summary>
-    private static IOrderedQueryable<ProductRow> ApplySort(
-        IQueryable<ProductRow> rows,
+    private static IOrderedQueryable<Product> ApplySort(
+        IQueryable<Product> rows,
         ProductListQuery query,
         int? categoryId)
     {
@@ -349,37 +341,37 @@ internal sealed class ProductCatalogReader(
         {
             case ProductSortOption.Newest:
                 return rows
-                    .OrderByDescending(row => row.Product.FirstPublishedAtUtc)
-                    .ThenBy(row => row.Product.Id);
+                    .OrderByDescending(product => product.FirstPublishedAtUtc)
+                    .ThenBy(product => product.Id);
 
             case ProductSortOption.BestSelling:
                 return rows
-                    .OrderByDescending(row => row.Stats.SoldQty30d)
-                    .ThenByDescending(row => row.Stats.SoldQtyTotal)
-                    .ThenBy(row => row.Product.Id);
+                    .OrderByDescending(product => product.Stats!.SoldQty30d)
+                    .ThenByDescending(product => product.Stats!.SoldQtyTotal)
+                    .ThenBy(product => product.Id);
 
             case ProductSortOption.PriceAscending:
                 return rows
-                    .OrderBy(row => row.Stats.MinSalePrice)
-                    .ThenBy(row => row.Product.Id);
+                    .OrderBy(product => product.Stats!.MinSalePrice)
+                    .ThenBy(product => product.Id);
 
             case ProductSortOption.PriceDescending:
                 return rows
-                    .OrderByDescending(row => row.Stats.MinSalePrice)
-                    .ThenBy(row => row.Product.Id);
+                    .OrderByDescending(product => product.Stats!.MinSalePrice)
+                    .ThenBy(product => product.Id);
 
             case ProductSortOption.HighestRated:
                 // NULLs last: an unrated product must not outrank a five-star one.
                 return rows
-                    .OrderBy(row => row.Stats.RatingAverage == null)
-                    .ThenByDescending(row => row.Stats.RatingAverage)
-                    .ThenByDescending(row => row.Stats.RatingCount)
-                    .ThenBy(row => row.Product.Id);
+                    .OrderBy(product => product.Stats!.RatingAverage == null)
+                    .ThenByDescending(product => product.Stats!.RatingAverage)
+                    .ThenByDescending(product => product.Stats!.RatingCount)
+                    .ThenBy(product => product.Id);
 
             case ProductSortOption.BiggestDiscount:
                 return rows
-                    .OrderByDescending(row => row.Stats.MaxDiscountPercent)
-                    .ThenBy(row => row.Product.Id);
+                    .OrderByDescending(product => product.Stats!.MaxDiscountPercent)
+                    .ThenBy(product => product.Id);
 
             case ProductSortOption.Recommended:
             default:
@@ -388,85 +380,83 @@ internal sealed class ProductCatalogReader(
                     // Category page: the merchandiser's manual order inside this category wins,
                     // NULLs last, then the global pin, then sales and recency (doc 08 §7.3).
                     return rows
-                        .OrderBy(row => row.Product.CategoryLinks
+                        .OrderBy(product => product.CategoryLinks
                             .Where(link => link.CategoryId == selectedCategory)
                             .Select(link => link.SortOrder)
                             .FirstOrDefault() == null)
-                        .ThenBy(row => row.Product.CategoryLinks
+                        .ThenBy(product => product.CategoryLinks
                             .Where(link => link.CategoryId == selectedCategory)
                             .Select(link => link.SortOrder)
                             .FirstOrDefault())
-                        .ThenBy(row => row.Product.RecommendedRank == null)
-                        .ThenBy(row => row.Product.RecommendedRank)
-                        .ThenByDescending(row => row.Stats.SoldQty30d)
-                        .ThenByDescending(row => row.Product.FirstPublishedAtUtc)
-                        .ThenBy(row => row.Product.Id);
+                        .ThenBy(product => product.RecommendedRank == null)
+                        .ThenBy(product => product.RecommendedRank)
+                        .ThenByDescending(product => product.Stats!.SoldQty30d)
+                        .ThenByDescending(product => product.FirstPublishedAtUtc)
+                        .ThenBy(product => product.Id);
                 }
 
                 return rows
-                    .OrderBy(row => row.Product.RecommendedRank == null)
-                    .ThenBy(row => row.Product.RecommendedRank)
-                    .ThenByDescending(row => row.Stats.SoldQty30d)
-                    .ThenByDescending(row => row.Product.FirstPublishedAtUtc)
-                    .ThenBy(row => row.Product.Id);
+                    .OrderBy(product => product.RecommendedRank == null)
+                    .ThenBy(product => product.RecommendedRank)
+                    .ThenByDescending(product => product.Stats!.SoldQty30d)
+                    .ThenByDescending(product => product.FirstPublishedAtUtc)
+                    .ThenBy(product => product.Id);
         }
     }
 
     /// <summary>
-    /// Doc 08 §7.6 relevance: name prefix 100, name contains 50, search text contains 10, plus
-    /// <c>SoldQty30d</c>. Scored on the first token, which is the one a shopper leads with.
+    /// Doc 08 §7.6 relevance: name prefix 100, a word prefix 50, name contains 20, every match 10,
+    /// plus <c>SoldQty30d</c>. Scored on the first token, which is the one a shopper leads with.
     /// </summary>
-    private static IQueryable<ProductRow> ApplyRelevanceSort(IQueryable<SearchRow> rows, string leadToken)
+    private static IOrderedQueryable<Product> ApplyRelevanceSort(IQueryable<Product> rows, string leadToken)
     {
         var prefix = SearchTerms.ToPrefixPattern(leadToken);
         var wordPrefix = SearchTerms.ToWordPrefixPattern(leadToken);
         var contains = SearchTerms.ToContainsPattern(leadToken);
 
-        // The ORDER BY survives the projection below: EF keeps it in the generated SQL.
         return rows
-            .OrderByDescending(row =>
-                (EF.Functions.Like(row.Index.NameText, prefix, EscapeString) ? 100 : 0)
-                + (EF.Functions.Like(row.Index.NameText, wordPrefix, EscapeString) ? 50 : 0)
-                + (EF.Functions.Like(row.Index.NameText, contains, EscapeString) ? 20 : 0)
+            .OrderByDescending(product =>
+                (EF.Functions.Like(product.SearchIndex!.NameText, prefix, EscapeString) ? 100 : 0)
+                + (EF.Functions.Like(product.SearchIndex.NameText, wordPrefix, EscapeString) ? 50 : 0)
+                + (EF.Functions.Like(product.SearchIndex.NameText, contains, EscapeString) ? 20 : 0)
                 + 10
-                + row.Stats.SoldQty30d)
-            .ThenBy(row => row.Product.Id)
-            .Select(row => new ProductRow(row.Product, row.Stats));
+                + product.Stats!.SoldQty30d)
+            .ThenBy(product => product.Id);
     }
 
     // ---------------------------------------------------------------- projections and mapping
 
-    private static System.Linq.Expressions.Expression<Func<ProductRow, ProductCardRow>> CardProjection(
+    private static System.Linq.Expressions.Expression<Func<Product, ProductCardRow>> CardProjection(
         int defaultLowStockThreshold) =>
-        source => new ProductCardRow(
-            source.Product.Id,
-            source.Product.ProductCode,
-            source.Product.Name,
-            source.Product.Slug,
-            source.Product.DepartmentId,
-            source.Product.Department!.Name,
-            source.Product.Department.Slug,
-            source.Product.PrimaryCategory!.Name,
-            source.Product.PrimaryCategory.Slug,
-            source.Product.CardImageAsset != null ? source.Product.CardImageAsset.StorageKey : null,
-            source.Product.CardImageAsset != null ? source.Product.CardImageAsset.AltText : null,
-            source.Product.HoverImageAsset != null ? source.Product.HoverImageAsset.StorageKey : null,
-            source.Stats.MinSalePrice,
-            source.Stats.MaxOriginalPrice,
-            source.Stats.MaxDiscountPercent,
-            source.Stats.HasDiscount,
-            source.Stats.RatingAverage,
-            source.Stats.RatingCount,
-            source.Stats.SoldQty30d,
-            source.Product.BadgeOverride,
-            source.Product.NewUntilUtc,
-            source.Product.Variants
+        product => new ProductCardRow(
+            product.Id,
+            product.ProductCode,
+            product.Name,
+            product.Slug,
+            product.DepartmentId,
+            product.Department!.Name,
+            product.Department.Slug,
+            product.PrimaryCategory!.Name,
+            product.PrimaryCategory.Slug,
+            product.CardImageAsset != null ? product.CardImageAsset.StorageKey : null,
+            product.CardImageAsset != null ? product.CardImageAsset.AltText : null,
+            product.HoverImageAsset != null ? product.HoverImageAsset.StorageKey : null,
+            product.Stats!.MinSalePrice,
+            product.Stats!.MaxOriginalPrice,
+            product.Stats!.MaxDiscountPercent,
+            product.Stats!.HasDiscount,
+            product.Stats!.RatingAverage,
+            product.Stats!.RatingCount,
+            product.Stats!.SoldQty30d,
+            product.BadgeOverride,
+            product.NewUntilUtc,
+            product.Variants
                 .Where(variant => variant.IsActive && variant.StockLevel != null)
                 .Sum(variant => variant.StockLevel!.Available),
-            source.Product.Variants
+            product.Variants
                 .Where(variant => variant.IsActive && variant.StockLevel != null)
                 .Sum(variant => variant.StockLevel!.LowStockThreshold ?? defaultLowStockThreshold),
-            source.Product.Colours
+            product.Colours
                 .OrderBy(colour => colour.SortOrder)
                 .ThenBy(colour => colour.Id)
                 .Select(colour => new ColourRow(
@@ -818,8 +808,9 @@ internal sealed class ProductCatalogReader(
         {
             var threshold = await dbContext.Products
                 .AsNoTracking()
-                .Where(product => product.IsPublished && product.DepartmentId == departmentId)
-                .Join(dbContext.ProductStats, product => product.Id, stats => stats.ProductId, (product, stats) => stats.SoldQty30d)
+                .Where(product => product.IsPublished && product.Stats != null)
+                .Where(product => product.DepartmentId == departmentId)
+                .Select(product => product.Stats!.SoldQty30d)
                 .OrderByDescending(soldQty => soldQty)
                 .Skip(topN - 1)
                 .Take(1)
@@ -882,7 +873,7 @@ internal sealed class ProductCatalogReader(
         if (curatedIds.Count > 0)
         {
             var curated = await BaseQuery()
-                .Where(source => curatedIds.Contains(source.Product.Id))
+                .Where(product => curatedIds.Contains(product.Id))
                 .Select(CardProjection(_options.DefaultLowStockThreshold))
                 .ToListAsync(cancellationToken);
 
@@ -899,9 +890,9 @@ internal sealed class ProductCatalogReader(
             var categoryId = row.PrimaryCategoryId;
 
             var fallback = await BaseQuery()
-                .Where(source => source.Product.PrimaryCategoryId == categoryId && !excluded.Contains(source.Product.Id))
-                .OrderByDescending(source => source.Stats.SoldQty30d)
-                .ThenBy(source => source.Product.Id)
+                .Where(product => product.PrimaryCategoryId == categoryId && !excluded.Contains(product.Id))
+                .OrderByDescending(product => product.Stats!.SoldQty30d)
+                .ThenBy(product => product.Id)
                 .Take(wanted - rows.Count)
                 .Select(CardProjection(_options.DefaultLowStockThreshold))
                 .ToListAsync(cancellationToken);
@@ -914,10 +905,6 @@ internal sealed class ProductCatalogReader(
 
     /// <summary>The <c>ESCAPE</c> clause value for every generated <c>LIKE</c> (doc 08 §7.6).</summary>
     private const string EscapeString = "\\";
-
-    private sealed record ProductRow(Product Product, ProductStats Stats);
-
-    private sealed record SearchRow(Product Product, ProductStats Stats, ProductSearchIndex Index);
 
     private sealed class ResolvedFilters
     {
