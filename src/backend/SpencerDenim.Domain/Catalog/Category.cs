@@ -13,8 +13,6 @@ public sealed class Category : IAuditable, ISoftDeletable
     /// <summary>Doc 08 §3.2: <c>CK_Categories_Depth</c> allows at most three levels.</summary>
     public const byte MaxDepth = 3;
 
-    private readonly SoftDeleteState _softDelete = new();
-
     public int Id { get; set; }
 
     public int DepartmentId { get; set; }
@@ -84,15 +82,32 @@ public sealed class Category : IAuditable, ISoftDeletable
 
     public ICollection<ProductCategory> ProductLinks { get; } = [];
 
-    public bool IsDeleted => _softDelete.IsDeleted;
+    /// <summary>Doc 08 §1.5 [SD]. Set only by <see cref="SoftDelete"/>; a filtered unique index and the
+    /// global query filter both rely on it.</summary>
+    public bool IsDeleted { get; private set; }
 
-    public DateTime? DeletedAtUtc => _softDelete.DeletedAtUtc;
+    public DateTime? DeletedAtUtc { get; private set; }
 
-    public int? DeletedByUserId => _softDelete.DeletedByUserId;
+    public int? DeletedByUserId { get; private set; }
 
-    public void SoftDelete(DateTime utcNow, int? userId) => _softDelete.Delete(utcNow, userId);
+    public void SoftDelete(DateTime utcNow, int? userId)
+    {
+        if (IsDeleted)
+        {
+            return;
+        }
 
-    public void Restore() => _softDelete.Restore();
+        IsDeleted = true;
+        DeletedAtUtc = utcNow;
+        DeletedByUserId = userId;
+    }
+
+    public void Restore()
+    {
+        IsDeleted = false;
+        DeletedAtUtc = null;
+        DeletedByUserId = null;
+    }
 
     /// <summary>
     /// Builds the materialised path for a category, given its parent's path (doc 08 §3.2).

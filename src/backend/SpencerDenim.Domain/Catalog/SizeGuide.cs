@@ -9,8 +9,6 @@ namespace SpencerDenim.Domain.Catalog;
 /// </summary>
 public sealed class SizeGuide : IAuditable, ISoftDeletable
 {
-    private readonly SoftDeleteState _softDelete = new();
-
     public int Id { get; set; }
 
     public string Name { get; set; } = string.Empty;
@@ -36,13 +34,30 @@ public sealed class SizeGuide : IAuditable, ISoftDeletable
 
     public byte[]? RowVersion { get; set; }
 
-    public bool IsDeleted => _softDelete.IsDeleted;
+    /// <summary>Doc 08 §1.5 [SD]. Set only by <see cref="SoftDelete"/>; a filtered unique index and the
+    /// global query filter both rely on it.</summary>
+    public bool IsDeleted { get; private set; }
 
-    public DateTime? DeletedAtUtc => _softDelete.DeletedAtUtc;
+    public DateTime? DeletedAtUtc { get; private set; }
 
-    public int? DeletedByUserId => _softDelete.DeletedByUserId;
+    public int? DeletedByUserId { get; private set; }
 
-    public void SoftDelete(DateTime utcNow, int? userId) => _softDelete.Delete(utcNow, userId);
+    public void SoftDelete(DateTime utcNow, int? userId)
+    {
+        if (IsDeleted)
+        {
+            return;
+        }
 
-    public void Restore() => _softDelete.Restore();
+        IsDeleted = true;
+        DeletedAtUtc = utcNow;
+        DeletedByUserId = userId;
+    }
+
+    public void Restore()
+    {
+        IsDeleted = false;
+        DeletedAtUtc = null;
+        DeletedByUserId = null;
+    }
 }

@@ -1,29 +1,37 @@
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using SpencerDenim.Domain.Auditing;
+using SpencerDenim.Domain.Catalog;
+using SpencerDenim.Domain.Inventory;
+using SpencerDenim.Domain.Media;
 using SpencerDenim.Infrastructure.Identity;
 
 namespace SpencerDenim.Infrastructure.Persistence;
 
 /// <summary>
-/// The single EF Core context for the platform (doc 08 §10.1).
+/// The single EF Core context for the platform (doc 08 §10.1). Entity configurations live in
+/// <c>Persistence/Configurations</c> per module and are picked up from this assembly.
+/// <para>
 /// A plain <see cref="DbContext"/> rather than <c>IdentityDbContext</c>: <see cref="AppUser"/> and
 /// <see cref="AppRole"/> carry doc 08's extra columns, and the supporting Identity tables (<c>UserRoles</c>,
 /// <c>RoleClaims</c>, <c>UserClaims</c>, <c>UserLogins</c>, <c>UserTokens</c>) are configured explicitly via
 /// <c>IEntityTypeConfiguration&lt;T&gt;</c> in <c>Persistence/Configurations/Identity</c> instead, so every
 /// table name/shape matches doc 08 §3.1 exactly.
+/// </para>
 /// </summary>
 /// <remarks>
-/// Mapping rules for future entity configurations (doc 08 §1.4 and §10.1):
+/// Mapping rules for entity configurations (doc 08 §1.4 and §10.1):
 /// <list type="bullet">
 /// <item><description>
-/// JSON columns are always mapped explicitly with <c>HasColumnType("nvarchar(max)")</c>, including <c>ToJson()</c>
-/// mappings, plus an <c>ISJSON(col) = 1</c> check constraint. EF Core must never pick the native <c>json</c> type,
-/// which SQL Server 2025 and Azure SQL offer but LocalDB 2019 and bacpac tooling do not handle the same way.
+/// JSON columns are always mapped explicitly with <c>HasColumnType("nvarchar(max)")</c>, including
+/// <c>ToJson()</c> mappings, plus an <c>ISJSON(col) = 1</c> check constraint. EF Core must never pick
+/// the native <c>json</c> type, which SQL Server 2025 and Azure SQL offer but LocalDB 2019 and bacpac
+/// tooling do not handle the same way.
 /// </description></item>
 /// <item><description>
-/// The database collation <c>Latin1_General_100_CI_AS_SC</c> is set when the database is created (provisioning
-/// script), never with <c>UseCollation</c>, so migrations do not try to alter it.
+/// The database collation <c>Latin1_General_100_CI_AS_SC</c> is set when the database is created
+/// (provisioning script), never with <c>UseCollation</c>, so migrations do not try to alter it.
 /// </description></item>
 /// </list>
 /// </remarks>
@@ -33,6 +41,16 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public const string MigrationsHistorySchema = "ops";
 
     public const string MigrationsHistoryTable = "__EFMigrationsHistory";
+
+    /// <summary>Doc 08 §1.2 schemas.</summary>
+    public const string CatalogSchema = "catalog";
+
+    public const string MediaSchema = "media";
+
+    public const string InventorySchema = "inventory";
+
+    /// <summary>Name of the EF Core 10 named query filter that hides soft-deleted rows (doc 08 §10.2).</summary>
+    public const string SoftDeleteFilter = "SoftDelete";
 
     public DbSet<AppUser> Users => Set<AppUser>();
 
@@ -50,10 +68,85 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
 
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
 
+    public DbSet<Department> Departments => Set<Department>();
+
+    public DbSet<Category> Categories => Set<Category>();
+
+    public DbSet<AgeGroup> AgeGroups => Set<AgeGroup>();
+
+    public DbSet<AttributeOption> AttributeOptions => Set<AttributeOption>();
+
+    public DbSet<ColourFamily> ColourFamilies => Set<ColourFamily>();
+
+    public DbSet<Size> Sizes => Set<Size>();
+
+    public DbSet<SizeGuide> SizeGuides => Set<SizeGuide>();
+
+    public DbSet<Product> Products => Set<Product>();
+
+    public DbSet<ProductStats> ProductStats => Set<ProductStats>();
+
+    public DbSet<ProductSearchIndex> ProductSearchIndexes => Set<ProductSearchIndex>();
+
+    public DbSet<ProductCategory> ProductCategories => Set<ProductCategory>();
+
+    public DbSet<ProductColour> ProductColours => Set<ProductColour>();
+
+    public DbSet<ProductVariant> ProductVariants => Set<ProductVariant>();
+
+    public DbSet<ProductMedia> ProductMedia => Set<ProductMedia>();
+
+    public DbSet<RelatedProduct> RelatedProducts => Set<RelatedProduct>();
+
+    public DbSet<MediaAsset> MediaAssets => Set<MediaAsset>();
+
+    public DbSet<MediaUsage> MediaUsages => Set<MediaUsage>();
+
+    public DbSet<StockLevel> StockLevels => Set<StockLevel>();
+
+    protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
+    {
+        ArgumentNullException.ThrowIfNull(configurationBuilder);
+
+        // Doc 08 §1.4: money is decimal(18,2). Percentages and averages override this per property.
+        configurationBuilder.Properties<decimal>().HavePrecision(18, 2);
+
+        // Doc 08 §1.4: UTC datetime2(3) everywhere. The converter also stamps DateTimeKind.Utc on read,
+        // so a value that has been round-tripped through the database still says it is UTC.
+        configurationBuilder.Properties<DateTime>()
+            .HaveColumnType("datetime2(3)")
+            .HaveConversion<UtcDateTimeConverter>();
+
+        base.ConfigureConventions(configurationBuilder);
+    }
+
+    /// <summary>
+    /// Doc 08 §10.2. Soft delete is modelled on the four aggregate roots that own it (Products,
+    /// Categories, MediaAssets, SizeGuides). Their children keep no filter of their own, which EF warns
+    /// about because a child is the required end of a filtered relationship.
+    /// <para>
+    /// The warning does not apply here: every storefront query starts at a filtered root (see
+    /// <c>ProductCatalogReader</c>), so a child of a deleted product is never reached, and the admin
+    /// reaches deleted rows deliberately with <c>IgnoreQueryFilters()</c>. Adding the same filter to
+    /// every child would put an extra join to Products inside each <c>EXISTS</c> of the listing query
+    /// (doc 08 §7.1) for no behavioural gain.
+    /// </para>
+    /// </summary>
+    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+    {
+        ArgumentNullException.ThrowIfNull(optionsBuilder);
+
+        optionsBuilder.ConfigureWarnings(warnings =>
+            warnings.Ignore(CoreEventId.PossibleIncorrectRequiredNavigationWithQueryFilterInteractionWarning));
+
+        base.OnConfiguring(optionsBuilder);
+    }
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ArgumentNullException.ThrowIfNull(modelBuilder);
 
+        modelBuilder.HasDefaultSchema(null);
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(AppDbContext).Assembly);
         base.OnModelCreating(modelBuilder);
     }
