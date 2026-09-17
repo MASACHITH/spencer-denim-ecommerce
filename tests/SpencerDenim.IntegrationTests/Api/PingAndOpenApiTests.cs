@@ -5,11 +5,13 @@ using SpencerDenim.IntegrationTests.Infrastructure;
 
 namespace SpencerDenim.IntegrationTests.Api;
 
-public sealed class PingAndOpenApiTests(SqlServerContainerFixture sqlServer)
+public sealed class PingAndOpenApiTests(SqlServerDatabaseFixture sqlServer)
 {
     [Fact]
-    public async Task Ping_returns_ok_payload()
+    public async Task Ping_returns_ok_payload_with_a_real_sql_server_configured()
     {
+        sqlServer.SkipIfUnavailable();
+
         await using var factory = new ApiFactory(sqlServer.ConnectionString);
         using var client = factory.CreateClient();
 
@@ -23,9 +25,20 @@ public sealed class PingAndOpenApiTests(SqlServerContainerFixture sqlServer)
     }
 
     [Fact]
+    public async Task Ping_does_not_depend_on_sql_server()
+    {
+        await using var factory = new ApiFactory(ApiFactory.UnreachableConnectionString);
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync(new Uri("/api/ping", UriKind.Relative), TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
     public async Task Swagger_ui_and_openapi_document_are_served_in_development()
     {
-        await using var factory = new ApiFactory(sqlServer.ConnectionString, environment: "Development");
+        await using var factory = new ApiFactory(ApiFactory.UnreachableConnectionString, environment: "Development");
         using var client = factory.CreateClient();
 
         using var ui = await client.GetAsync(new Uri("/api/swagger/index.html", UriKind.Relative), TestContext.Current.CancellationToken);
@@ -40,7 +53,7 @@ public sealed class PingAndOpenApiTests(SqlServerContainerFixture sqlServer)
     [Fact]
     public async Task Swagger_ui_is_not_served_outside_development()
     {
-        await using var factory = new ApiFactory(sqlServer.ConnectionString, environment: "Production");
+        await using var factory = new ApiFactory(ApiFactory.UnreachableConnectionString, environment: "Production");
         using var client = factory.CreateClient();
 
         using var ui = await client.GetAsync(new Uri("/api/swagger/index.html", UriKind.Relative), TestContext.Current.CancellationToken);

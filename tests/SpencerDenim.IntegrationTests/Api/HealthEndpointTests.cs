@@ -5,11 +5,13 @@ using SpencerDenim.IntegrationTests.Infrastructure;
 
 namespace SpencerDenim.IntegrationTests.Api;
 
-public sealed class HealthEndpointTests(SqlServerContainerFixture sqlServer)
+public sealed class HealthEndpointTests(SqlServerDatabaseFixture sqlServer)
 {
     [Fact]
     public async Task Readiness_is_healthy_against_a_real_sql_server()
     {
+        sqlServer.SkipIfUnavailable();
+
         await using var factory = new ApiFactory(sqlServer.ConnectionString);
         using var client = factory.CreateClient();
 
@@ -26,9 +28,8 @@ public sealed class HealthEndpointTests(SqlServerContainerFixture sqlServer)
     [Fact]
     public async Task Readiness_is_unhealthy_when_sql_server_is_unreachable()
     {
-        // Port 1 on loopback refuses connections immediately; retries are bounded by the 5 s check timeout.
-        const string unreachable = "Server=127.0.0.1,1;Database=SpencerDenim;User Id=sa;Password=Unused-Passw0rd;Connect Timeout=2;TrustServerCertificate=True";
-        await using var factory = new ApiFactory(unreachable);
+        // Retries are bounded by the 5 s health check timeout.
+        await using var factory = new ApiFactory(ApiFactory.UnreachableConnectionString);
         using var client = factory.CreateClient();
 
         using var response = await client.GetAsync(new Uri("/health/ready", UriKind.Relative), TestContext.Current.CancellationToken);
@@ -41,8 +42,7 @@ public sealed class HealthEndpointTests(SqlServerContainerFixture sqlServer)
     [Fact]
     public async Task Liveness_does_not_depend_on_sql_server()
     {
-        const string unreachable = "Server=127.0.0.1,1;Database=SpencerDenim;User Id=sa;Password=Unused-Passw0rd;Connect Timeout=2;TrustServerCertificate=True";
-        await using var factory = new ApiFactory(unreachable);
+        await using var factory = new ApiFactory(ApiFactory.UnreachableConnectionString);
         using var client = factory.CreateClient();
 
         using var response = await client.GetAsync(new Uri("/health", UriKind.Relative), TestContext.Current.CancellationToken);

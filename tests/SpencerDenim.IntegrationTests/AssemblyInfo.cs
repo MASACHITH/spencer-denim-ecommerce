@@ -1,3 +1,3 @@
 using SpencerDenim.IntegrationTests.Infrastructure;
 
-[assembly: AssemblyFixture(typeof(SqlServerContainerFixture))]
+[assembly: AssemblyFixture(typeof(SqlServerDatabaseFixture))]

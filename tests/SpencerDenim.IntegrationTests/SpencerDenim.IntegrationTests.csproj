@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- Integration tests start a real SQL Server in Docker (Testcontainers). Docker must be running. -->
+  <!-- Integration tests. SQL-backed tests need TEST_SQL_CONNECTION (see README) and are skipped without it. -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <RootNamespace>SpencerDenim.IntegrationTests</RootNamespace>
@@ -10,7 +10,6 @@
     <PackageReference Include="coverlet.collector" />
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
-    <PackageReference Include="Testcontainers.MsSql" />
     <PackageReference Include="xunit.runner.visualstudio" />
     <PackageReference Include="xunit.v3" />
   </ItemGroup>
