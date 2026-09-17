@@ -3,6 +3,8 @@
   <!-- Api: HTTP endpoints and composition root. The only project that wires DI. -->
   <PropertyGroup>
     <RootNamespace>SpencerDenim.Api</RootNamespace>
+    <!-- dotnet user-secrets set "ConnectionStrings:Database" "..." (stored outside the repository). -->
+    <UserSecretsId>spencer-denim-api-7f3c2a14-9b1e-4d6a-8c55-0e2f4b7a9d31</UserSecretsId>
   </PropertyGroup>
 
   <ItemGroup>
