@@ -1,0 +1,78 @@
+/* ==========================================================================
+   Spencer Denim design tokens (docs/04-design-system.md §3)
+   The single source of colours, type and spacing for storefront and admin.
+   Components use these variables only: no hard-coded colours.
+   ========================================================================== */
+
+:root {
+  /* ---- Design system tokens (docs/04 §3) ---- */
+  /* Neutrals */
+  --color-bg:        #ffffff;
+  --color-bg-alt:    #f7f5f1;   /* warm ivory section background */
+  --color-surface:   #ffffff;
+  --color-text:      #1a1a1a;
+  --color-text-muted:#6b6b6b;
+  --color-border:    #e3e0da;
+  /* Action */
+  --color-primary:   #1a1a1a;   /* buttons, links */
+  --color-on-primary:#ffffff;
+  --color-primary-hover: #3d3d3d;
+  /* Status */
+  --color-sale:      #b3261e;
+  --color-success:   #2e7d4f;
+  --color-warning:   #9a6700;
+  /* Shape & rhythm */
+  --radius: 0;
+  --space-unit: 8px;
+  --container-max: 1440px;
+  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  /* ---- Derived roles (confirmed by the style tile, docs/04 §4) ---- */
+  --color-border-strong: var(--color-text-muted); /* form control outlines, light swatches */
+  --color-scrim: rgb(26 26 26 / 0.5);             /* drawer overlay, hero text fade */
+  --radius-round: 50%;                            /* radios and colour swatches only */
+  --focus-width: 2.5px;                           /* draws at least 2 CSS px after pixel snapping */
+  --tap: 44px;                                    /* minimum touch target */
+
+  /* ---- Type scale ---- */
+  --text-display: clamp(2.5rem, 1.9rem + 3vw, 4.5rem);
+  --text-h1: clamp(2rem, 1.7rem + 1.5vw, 3rem);
+  --text-h2: clamp(1.5rem, 1.35rem + 0.75vw, 2rem);
+  --text-h3: 1.25rem;
+  --text-h4: 1rem;
+  --text-body: 1rem;
+  --text-small: 0.875rem;
+  --text-label: 0.75rem;
+  --text-button: 0.8125rem;
+  --text-data: 0.875rem;
+  --tracking-label: 0.12em;
+  --tracking-wordmark: 0.2em;
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+
+  /* ---- Spacing scale (multiples of the 8px unit) ---- */
+  --space-0-5: calc(var(--space-unit) * 0.5);  /* 4 */
+  --space-1: var(--space-unit);                /* 8 */
+  --space-1-5: calc(var(--space-unit) * 1.5);  /* 12 */
+  --space-2: calc(var(--space-unit) * 2);      /* 16 */
+  --space-3: calc(var(--space-unit) * 3);      /* 24 */
+  --space-4: calc(var(--space-unit) * 4);      /* 32 */
+  --space-5: calc(var(--space-unit) * 5);      /* 40 */
+  --space-6: calc(var(--space-unit) * 6);      /* 48 */
+  --space-8: calc(var(--space-unit) * 8);      /* 64 */
+  --space-12: calc(var(--space-unit) * 12);    /* 96 */
+  --gutter: var(--space-2);
+
+  /* ---- Motion ---- */
+  --duration: 250ms;
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+}
+
+@media (min-width: 768px) {
+  :root { --gutter: var(--space-4); }
+}
+
+@media (min-width: 1280px) {
+  :root { --gutter: var(--space-6); }
+}
