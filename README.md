@@ -31,6 +31,7 @@ Older drafts in `reference/tuasl-fashion-demo/Client/` (`CLIENT_SCOPE_PROPOSAL.m
 | 08 | [Database design](docs/08-database-design.md) | Baselined schema (65 tables), state machines, stock concurrency, pricing |
 | 09 | [Git & repository rules](docs/09-git-and-repository-rules.md) | **Push only to MASACHITH/spencer-denim-ecommerce with the personal account**, never the office account |
 | 10 | [Client progress page publishing](docs/10-client-progress-publishing.md) | FTPS publishing of the task sheet **only** (4 files) to colombowardrobecompany-build-tracker.kt-wedding.online |
+| 11 | [Multi-session coordination](docs/11-multi-session-coordination.md) | Handoff protocol between Claude Code sessions/machines, machine readiness check, known machines |
 | — | [Guides](docs/guides/) | DEV-GUIDE-01 Docker Desktop on Windows · DEV-GUIDE-02 Fix "WSL needs updating" (PDF + HTML source) |
 | — | [TASKS.md](TASKS.md) | Live task board (internal) |
 | — | [MEMORY.md](MEMORY.md) | Running project log: decisions, what's done, what's next |

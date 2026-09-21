@@ -7,6 +7,14 @@ Spencer Denim fashion e-commerce platform (client: Spencer Denim Industries Pvt 
 
 Read first, in this order: `MEMORY.md` → `TASKS.md` → `docs/02-scope-baseline.md`. Read other docs in `docs/` as needed.
 
+## Multiple sessions / machines
+This repo is worked on by more than one Claude Code session over time, sometimes on different
+machines, all under the one MASACHITH git identity. Before doing anything else, run the machine
+readiness check in `docs/11-multi-session-coordination.md` (repo-local identity, push hook, `gh`
+account) if this machine hasn't been confirmed today, and follow that doc's start/end-of-session
+steps so the next session — on any machine — can pick up from `MEMORY.md`/`TASKS.md` without
+re-deriving context.
+
 ## ⛔ Git: personal account only
 - Push **only** to `https://github.com/MASACHITH/spencer-denim-ecommerce` (private) with GitHub account **MASACHITH**.
 - `destinity-sachithm` is the user's **office** account. **Never** push this project with it, and **never** run `gh auth switch --user destinity-sachithm` unless the user explicitly asks.

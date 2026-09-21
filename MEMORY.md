@@ -6,16 +6,18 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 
 ## Current state (keep this section up to date)
 
-- **Phase:** Week 0 — Setup. Scope baselined v1.0. **No application code yet.**
-- **Deadline:** Thu **15 Oct 2026** (one month from 15 Sep).
+- **Phase:** Week 1 — Foundation & admin catalogue. Week 0 setup complete (scaffold + CI committed 2026-09-17). **First feature slice (admin login/RBAC foundation, W1-01) DONE 2026-09-21** after 3 developer↔tester fix rounds (all Major, all found by the tester, all fixed and re-verified). First real application code and passing tests now exist in the repo.
+- **Deadline:** Thu **15 Oct 2026** (one month from 15 Sep). Today: 21 Sep — Week 1 runs 19–25 Sep, day 3, one of seven Week 1 tasks landed.
 - **Scope:** [docs/02-scope-baseline.md](docs/02-scope-baseline.md). Every demo feature is kept, only the theme changes. Nav: Women · Men · Kids · New Arrivals · Sale. Admin can manage everything, with per-user role permissions.
 - **Theme:** Banana Republic–inspired, full replacement → [docs/04](docs/04-design-system.md)
-- **Stack (approved):** .NET 10 API + Angular 21 (SSR storefront + admin app) + SQL Server Express, Docker, Caddy, GitHub Actions. Hostinger KVM 2, Azure-portable.
+- **Stack (approved):** .NET 10 API + Angular 21 (SSR storefront + admin app) + SQL Server Express, Docker, Caddy, GitHub Actions. Hostinger KVM 2, Azure-portable. Scaffold is committed (`src/backend`, `src/frontend`); Docker packaging split out to **W0-15**, still deferred.
 - **Payments:** Bank transfer in week 3. **PayPal last** (week 4). A second gateway comes later (TBD) through `IPaymentProvider`.
-- **Repo:** https://github.com/MASACHITH/spencer-denim-ecommerce (user's **personal** account MASACHITH, branch `main`). Local git identity is set per repo (MASACHITH / sachithishara1@gmail.com). `destinity-sachithm` is the user's **office** account. **Never push this project with it, and never switch the active `gh` account to it without asking the user.** Before every push, confirm `gh auth status` shows MASACHITH as active. If it doesn't, ask the user before switching.
+- **Repo:** https://github.com/MASACHITH/spencer-denim-ecommerce (user's **personal** account MASACHITH, branch `main`). Local git identity is set **per repo, per machine** (MASACHITH / sachithishara1@gmail.com) — see [docs/11](docs/11-multi-session-coordination.md). `destinity-sachithm` is the user's **office** account. **Never push this project with it, and never switch the active `gh` account to it without asking the user.** Before every push, confirm `gh auth status` shows MASACHITH as active. If it doesn't, ask the user before switching.
+- **Multiple sessions/machines:** More than one Claude Code session now works on this repo, sometimes on different machines. Handoff protocol, machine readiness check and the known-machines log: [docs/11-multi-session-coordination.md](docs/11-multi-session-coordination.md). Referenced from the root `CLAUDE.md`.
 - **Reference archive:** `reference/` holds read-only copies (taken 2026-09-16) of the old demo (`tuasl-fashion-demo/`), the client documents (signed proposal + theme reference) and the original prototype prompt. See `reference/README.md`. The originals remain outside the repo.
-- **Blockers:** Docker Desktop not installed on dev machine (W0-05).
-- **Next:** W0-06 client progress page → W0-07 style tile → W0-08/09 repo + scaffold → W0-10 schema.
+- **Blockers:** W0-05 Docker/WSL still paused (blocks W0-15). This machine (new, 2026-09-21) has no `gh` CLI, so it can't push yet — see doc 11.
+- **Next:** W1-08 (Users & Roles CRUD), W1-09 (audit log viewer), W1-10 (2FA enrollment), W1-11 (route guard, SecurityStamp revalidation, forwarded-headers regression test) are the W1-01 follow-ups, now tracked but not started. W1-02 (categories) is the next planned feature; the user/architect should decide priority between finishing W1-01's remainder vs. moving on to W1-02 given the time three fix rounds took.
+- **Pending (can't do from this machine):** CLAUDE.md requires `../client-progress/progress-data.js` to be updated whenever a feature status changes to Done. W1-01 slice 1 just did, but the `client-progress` source folder only exists on the `SCIENTER\sachithi` PC (see docs/11) — not here. Whichever session next runs on that machine should update the admin-auth/RBAC progress line and republish.
 - **Open assumptions:** A1 (Trending Categories / Best Sellers homepage blocks stay removed per signed proposal), A2 (video MP4 ≤ 50 MB, no server conversion).
 
 ---
@@ -35,10 +37,73 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 | 2026-09-15 | Signed PDF proposal overrides earlier drafts | Latest agreed version | Team |
 | 2026-09-15 | Client progress page is separate from codebase; shows features + progress only | Client asked for task sheet | User |
 | 2026-09-15 | Every task: developer agent → tester agent → loop on failure; SOLID; Docker; 8 breakpoints | Standards | User |
+| 2026-09-21 | This repo is worked on by multiple Claude Code sessions/machines under one shared git identity; adopt a handoff protocol | A second session/machine started working on the project | User |
 
 ---
 
 ## Session log
+
+### 2026-09-21 (1) — Multi-session coordination, status review, W1-01 started
+**Context:** first session on a **new machine** (global git identity `nuwank`/scienter.lk — different from the `SCIENTER\sachithi` PC used since 2026-09-15). Confirms this project is now being worked from more than one machine/session.
+
+**Found**
+- `MEMORY.md`/`TASKS.md` had drifted from the repo since 2026-09-17: W0-09 (scaffold) was committed and CI went green on 2026-09-17 but `TASKS.md` still read `TODO`; W0-08 was still `IN PROGRESS` although CI now exists. README defers Docker to a task "W0-15" that didn't exist on the board.
+- This machine had **no repo-local git identity** (resolved to the machine's global `nuwank` identity) and **no push-safety hook active** (`core.hooksPath` unset) — both required by `docs/09` and would have let a push go out under the wrong identity/unchecked.
+- No `gh` CLI on this machine, so `gh auth status` can't be verified here — per the non-negotiable git rule, **no push from this machine** until that's fixed.
+- The `client-progress` source folder and the DPAPI FTP credential (both machine-local) aren't present here either — the client progress page can't be republished from this machine.
+
+**Done**
+- Fixed repo-local identity (`MASACHITH` / `sachithishara1@gmail.com`) and `core.hooksPath` (`tools/git-hooks`) on this machine — repo-local only, global config untouched and verified unchanged.
+- Added [docs/11-multi-session-coordination.md](docs/11-multi-session-coordination.md): start/end-of-session steps, a machine-readiness check, and a known-machines log (both machines listed). Linked from the root `CLAUDE.md` and from this file.
+- Corrected `TASKS.md`: W0-08 and W0-09 → `DONE` (with the branch-protection caveat noted), added **W0-15** (Docker packaging, still blocked on W0-05) and **W0-14** (this coordination fix). Claimed **W1-01** as `IN PROGRESS` (this session).
+- Reviewed overall status for the user: Week 0 setup essentially done, no feature code yet, Week 1 (19–25 Sep) three days in with nothing started before today.
+- Kicked off **W1-01 vertical slice 1** (admin login + RBAC foundation + audit log on auth events) via a developer agent, per doc 03 §3a's approved design: ASP.NET Core Identity, HttpOnly admin cookie scheme (no JWT), permission-based `RequirePermission` policies. Scope explicitly **excludes** from this slice: full Users/Roles management UI, 2FA enrollment (baselined for Super Admins, doc 08), and an audit log viewer — flagged as follow-up. A separate tester agent reviews it next, per the developer → tester rule; loop back to developer on any failure before this is marked done in `TASKS.md`.
+
+**Next:** tester agent on the W1-01 slice → fix loop if needed → mark W1-01 (partially) DONE and open the follow-up tasks (Users/Roles CRUD, 2FA, audit log viewer) → W1-02 categories. Get `gh` installed on this machine (or continue pushing only from the original PC) before this machine pushes anything.
+
+### 2026-09-21 (2) — Dev environment wired to a real SQL Server instance
+The user gave a running SQL Server's connection details in chat (host/port/sa credentials) to set up as this machine's dev database, in place of LocalDB.
+
+**Found:** no database-provisioning script existed anywhere in the repo. `AppDbContext`'s remarks and doc 08 §1.4/§10.1 (N12) require the collation to be set at `CREATE DATABASE` time and never altered by EF Core — `SqlServerDatabaseFixture` already does this itself for ephemeral integration-test databases, but nothing did it for a persistent named database.
+
+**Done**
+- Verified the server (SQL Server 2022) is reachable and the credentials authenticate, before storing anything.
+- Added [tools/db/provision-database.sql](tools/db/provision-database.sql): idempotent `CREATE DATABASE ... COLLATE Latin1_General_100_CI_AS_SC`, with a hard failure (not silent) if a database of that name already exists with the wrong collation. Ran it to create `SpencerDenim_Dev` on the provided server; confirmed online with the correct collation via `sys.databases`.
+- Set `ConnectionStrings:Database` via `dotnet user-secrets` (already scaffolded, `UserSecretsId` in `SpencerDenim.Api.csproj`) to point at that database — **not** written to any `appsettings*.json`, per the explicit warning in `DatabaseOptions.cs`. Never committed, never printed into a repo file.
+- Set `TEST_SQL_CONNECTION` (server-only, no database — `SqlServerDatabaseFixture` picks a fresh database name per test run) as a Windows user-level environment variable on this machine, so the integration test suite runs for real here instead of skipping.
+- Documented this as machine-specific state in [docs/11](docs/11-multi-session-coordination.md)'s known-machines table (host/port only, no password — a session on another machine sets its own).
+
+**Not done:** did not run the full `dotnet build`/`dotnet test` suite against it, since the W1-01 developer agent was actively editing backend code at the same time — that verification happens once that slice lands (its migration should target this database next). LocalDB (150 and 170), `sqlcmd`, and `dotnet-ef` 10.0.12 all turned out to already be present on this machine, corrected from "not checked" in doc 11.
+
+### 2026-09-21 (3) — W1-01 slice 1: developer done, tester FAILED it, back for a fix
+**Developer agent finished** the login/RBAC vertical slice: ASP.NET Core Identity, admin cookie scheme, permission-based authorization (`RequirePermission` + cached-by-SecurityStamp handler), RBAC schema matching doc 08 exactly, audit log on login attempts, gated/idempotent Super Admin seeder, login/logout/whoami endpoints, Angular login page, one EF migration (`20260921160620_InitialIdentityAndAudit`). Its own numbers: build clean, 51/51 unit tests, 16/16 integration tests (LocalDB), 18/18 frontend tests, lint clean, prod build OK. It found `tools/db/provision-database.sql` (from session (2) above) already on disk, correctly left it alone per doc 11, and used it to fix its own LocalDB database's collation.
+
+**Tester agent (separate, per the non-negotiable process) independently reproduced all of that** — including re-running the integration suite against **both** LocalDB and the real SQL Server at `127.0.0.1,11433` via `TEST_SQL_CONNECTION` — and additionally verified the migration schema against doc 08 line-by-line, the antiforgery/cookie/lockout/seeder logic by reading and exercising the code, and the layer-dependency test's real teeth. Verdict: **FAIL.**
+
+**Defect (Major, confirmed by measurement, not just code reading):** `AdminAuthenticator` returns early for an unknown/non-staff/inactive account **before** running the password hash check, so response time leaks whether an email belongs to an admin account — measured ~10–30 ms for unknown emails vs ~150–220 ms for a real account with a wrong password. A username-enumeration timing oracle on the admin login endpoint.
+
+Two Minor items also found: the antiforgery cookie doesn't force `Secure` (inconsistent with the auth cookie, masked behind Caddy/HTTPS in prod but worth fixing for symmetry), and no Angular route guard yet on the dashboard (explicitly a next-slice item, not a security issue since every real endpoint is server-side cookie-gated).
+
+**Done (this session, orchestrator):**
+- Fixed the `tools/db/provision-database.sql` `-v DbName` bug myself (unrelated to the developer's slice — a `:setvar` in the script always wins over a command-line `-v` override, so the hardcoded default was removed and the variable is now required). Verified with a throwaway database, then dropped it.
+- Sent the Major defect (and the cheap-to-fold-in Minor antiforgery-cookie fix) back to the **same developer agent**, per the non-negotiable fix-loop rule. Told it to re-verify with an actual timing measurement, not just a functional test, and left the route-guard item for a later slice.
+- Marked `TASKS.md` W1-01 as `FAILED TEST` rather than `IN PROGRESS`, so a later session sees the real state.
+
+**Round 2:** developer fixed both — re-measured timing itself (now within noise) and added `CookieSecurePolicy.Always` to the antiforgery cookie to match the auth cookie. Sent to the tester for a focused re-check (not a full re-review).
+
+**Tester round 2: FAIL again, but only on the second item.** Timing fix confirmed independently (own re-measurement, own methodology, varied usernames, all three early-return branches in `AdminAuthenticator.cs` checked) — genuinely fixed, doesn't need touching again. But the antiforgery `SecurePolicy = Always` change **regressed**: `GET /api/admin/auth/antiforgery-token` now throws (`AntiforgeryOptions.Cookie.SecurePolicy = Always` on a non-SSL request) whenever the API is reached over plain HTTP — which is this project's **own default dev launch profile** (`launchSettings.json` has no HTTPS profile) and, per doc 03 §4's deployment topology (Caddy terminates TLS, proxies to the API over plain HTTP internally, no `UseForwardedHeaders` configured in `Program.cs`), likely how it runs in production too. Since the Angular admin app fetches this token before calling `logout`, **logout breaks** under the project's own normal running conditions, not just in some edge case. The integration test suite didn't catch it because `AdminAuthEndpointTests.CreateClient()` hardcodes `BaseAddress = "https://localhost"`, which fakes `IsHttps = true` regardless of the real fix — the test harness itself was masking the exact bug class it needed to catch.
+
+**Round 2 fix:** developer went further than a patch — added real `UseForwardedHeaders` handling (new `Api/Http/ForwardedHeadersSetup.cs`) plus an `AdminSecurityOptions.RequireSecureCookies` toggle (default `true`, only `appsettings.Development.json` relaxes it) so both cookies' secure policy is environment-correct, and added a genuine plain-HTTP end-to-end test closing the harness gap that hid the original bug.
+
+**Tester round 3: FAIL again — a new, concretely-exploitable defect found by scrutinizing the trade-off, not just re-checking the fix.** The plain-HTTP round-trip is confirmed fixed live (real `curl`, real dev profile). But `ForwardedHeadersSetup.cs` clears `KnownIPNetworks`/`KnownProxies` entirely, trusting `X-Forwarded-For`/`X-Forwarded-Proto` from *any* direct caller, on the justification that "only Caddy can reach the API container" — a topology that **doesn't exist yet** (W0-15 Docker/Caddy is still TODO). The tester proved this is exploitable today, not hypothetical: sent a login request with a forged `X-Forwarded-For` header and confirmed the spoofed IP was written straight into `ops.AuditLogs.IpAddress` — defeating the forensic purpose of the very audit-log feature (ADM-03) this slice implements, with zero authentication required.
+
+**Round 3 fix, and the developer improved on the suggested fix:** pinning `KnownIPNetworks` to loopback alone turned out not to close the hole — loopback is exactly how `curl`/`dotnet run`/CI/tests connect, so that "restriction" wasn't restrictive at all against the tester's own repro (the developer proved this empirically before deciding). Instead it **disabled `X-Forwarded-For` processing entirely** (kept `X-Forwarded-Proto`, which is the one the round-2 fix actually needs and never touches the audit trail), so `RemoteIpAddress` always reflects the real socket peer regardless of any header. Verified with the same before/after repro the tester used: forged header before → forged IP in `ops.AuditLogs`; after → real peer IP (`::1`) recorded, forged header ignored. Full plain-HTTP round trip re-confirmed still working. A regression-guard unit test was attempted but hit an unrelated machine-specific toolchain issue (`Microsoft.AspNetCore.HttpOverrides` types not resolving in the plain-SDK test project on this machine); reverted cleanly rather than land something fragile, relying on the manual repro instead.
+
+**Tester round 4: PASS.** Independently re-ran the exact forged-header repro live (audit row now shows the real peer, not the forged one), re-ran the full plain-HTTP round trip by hand (200/200/200/204/401), rebuilt and re-ran the suite (51/51 unit, 17/17 integration, clean), and confirmed `git diff --stat` shows only `ForwardedHeadersSetup.cs` changed this round with no stray artifacts from the reverted test attempt. **W1-01 slice 1 is DONE** — no further rounds needed on this defect line.
+
+**Closed out (this session, orchestrator):** marked W1-01 `DONE` in `TASKS.md` as slice 1 of the full original scope, with the 3-round fix history recorded inline so a later session doesn't need to re-read this whole log to know why it took 3 rounds. Opened four follow-up tasks for what slice 1 deliberately left out or carried forward: **W1-08** (Users/Roles management CRUD, wiring `RoleAssignmentPolicy` to a real caller, seeding the remaining 3 default roles), **W1-09** (audit log viewer), **W1-10** (2FA enrollment for Super Admins), **W1-11** (Angular route guard, cookie `SecurityStamp` revalidation loop, the forwarded-headers regression test blocked by the toolchain issue). Added a note to **W0-15** (Docker/Caddy, still TODO) that it must re-enable `X-Forwarded-For` and widen `KnownIPNetworks` to the real Docker bridge subnet once that topology exists — currently deliberately disabled/loopback-only.
+
+**Overall shape of this task:** three fix-loop rounds, each catching a real, independently-confirmed Major defect (login timing side-channel → antiforgery regression breaking logout over plain HTTP → forgeable audit-log IP address) — the non-negotiable developer→tester process did exactly what it's for here. This took far longer than a typical first slice; the user/architect should weigh that against the Week 1 schedule when deciding whether to pick up W1-08–W1-11 now or move to **W1-02** (categories) first.
 
 ### 2026-09-17 (1) — Docker guides, hosting, task sheet publishing
 **Done**
