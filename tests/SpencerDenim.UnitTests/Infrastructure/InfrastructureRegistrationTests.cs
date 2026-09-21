@@ -18,6 +18,12 @@ public sealed class InfrastructureRegistrationTests
         var services = new ServiceCollection();
         services.AddSingleton<IConfiguration>(configuration);
         services.AddLogging();
+
+        // The real host (Api's Program.cs, via WebApplication.CreateBuilder) always has endpoint routing
+        // available; AddInfrastructure's authorization policy cache needs an EndpointDataSource to validate,
+        // so this bare ServiceCollection needs the same routing registration to build/validate correctly.
+        services.AddRouting();
+
         services.AddInfrastructure();
 
         return services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true, ValidateOnBuild = true });
@@ -75,7 +81,7 @@ public sealed class InfrastructureRegistrationTests
 
         Assert.Equal("Microsoft.EntityFrameworkCore.SqlServer", dbContext.Database.ProviderName);
         Assert.True(dbContext.Database.CreateExecutionStrategy().RetriesOnFailure);
-        Assert.Empty(dbContext.Model.GetEntityTypes());
+        Assert.NotEmpty(dbContext.Model.GetEntityTypes());
         Assert.Equal("ops", AppDbContext.MigrationsHistorySchema);
     }
 

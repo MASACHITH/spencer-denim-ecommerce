@@ -1,0 +1,5 @@
+# EF Core scaffolds this folder; treat it as generated code so style/analysis rules (which regenerating a
+# migration would otherwise re-trigger every time) do not block the build. Nothing here is hand-maintained
+# except the intentional raw-SQL additions called out in migration file comments.
+[*.cs]
+generated_code = true

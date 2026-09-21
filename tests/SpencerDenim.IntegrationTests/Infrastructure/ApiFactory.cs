@@ -5,7 +5,14 @@ using Microsoft.Extensions.Configuration;
 namespace SpencerDenim.IntegrationTests.Infrastructure;
 
 /// <summary>Hosts the real API in memory with a given connection string and environment.</summary>
-public sealed class ApiFactory(string connectionString, string environment = "Testing") : WebApplicationFactory<Program>
+/// <param name="additionalConfiguration">
+/// Extra configuration keys (e.g. <c>Seed:Admin:*</c>), applied after the connection string override — a test
+/// can use this to exercise <c>AdminSeedHostedService</c> without touching real environment variables.
+/// </param>
+public sealed class ApiFactory(
+    string connectionString,
+    string environment = "Testing",
+    IReadOnlyDictionary<string, string?>? additionalConfiguration = null) : WebApplicationFactory<Program>
 {
     /// <summary>Loopback port 1 refuses connections at once: a SQL Server that is guaranteed to be unreachable.</summary>
     public const string UnreachableConnectionString =
@@ -16,10 +23,18 @@ public sealed class ApiFactory(string connectionString, string environment = "Te
         builder.UseEnvironment(environment);
 
         // Added last, so it wins over appsettings.Development.json, user-secrets and developer environment variables.
-        builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(new Dictionary<string, string?>
+        builder.ConfigureAppConfiguration((_, configuration) =>
         {
-            ["ConnectionStrings:Database"] = connectionString,
-            ["Logging:ConsoleFormat"] = "text",
-        }));
+            configuration.AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["ConnectionStrings:Database"] = connectionString,
+                ["Logging:ConsoleFormat"] = "text",
+            });
+
+            if (additionalConfiguration is not null)
+            {
+                configuration.AddInMemoryCollection(additionalConfiguration);
+            }
+        });
     }
 }

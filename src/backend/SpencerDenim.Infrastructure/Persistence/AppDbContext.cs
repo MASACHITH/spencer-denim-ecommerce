@@ -1,10 +1,17 @@
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using SpencerDenim.Domain.Auditing;
+using SpencerDenim.Infrastructure.Identity;
 
 namespace SpencerDenim.Infrastructure.Persistence;
 
 /// <summary>
 /// The single EF Core context for the platform (doc 08 §10.1).
-/// No entities yet: entity configurations are added per feature and picked up from this assembly.
+/// A plain <see cref="DbContext"/> rather than <c>IdentityDbContext</c>: <see cref="AppUser"/> and
+/// <see cref="AppRole"/> carry doc 08's extra columns, and the supporting Identity tables (<c>UserRoles</c>,
+/// <c>RoleClaims</c>, <c>UserClaims</c>, <c>UserLogins</c>, <c>UserTokens</c>) are configured explicitly via
+/// <c>IEntityTypeConfiguration&lt;T&gt;</c> in <c>Persistence/Configurations/Identity</c> instead, so every
+/// table name/shape matches doc 08 §3.1 exactly.
 /// </summary>
 /// <remarks>
 /// Mapping rules for future entity configurations (doc 08 §1.4 and §10.1):
@@ -26,6 +33,22 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public const string MigrationsHistorySchema = "ops";
 
     public const string MigrationsHistoryTable = "__EFMigrationsHistory";
+
+    public DbSet<AppUser> Users => Set<AppUser>();
+
+    public DbSet<AppRole> Roles => Set<AppRole>();
+
+    public DbSet<IdentityUserRole<int>> UserRoles => Set<IdentityUserRole<int>>();
+
+    public DbSet<IdentityRoleClaim<int>> RoleClaims => Set<IdentityRoleClaim<int>>();
+
+    public DbSet<IdentityUserClaim<int>> UserClaims => Set<IdentityUserClaim<int>>();
+
+    public DbSet<IdentityUserLogin<int>> UserLogins => Set<IdentityUserLogin<int>>();
+
+    public DbSet<IdentityUserToken<int>> UserTokens => Set<IdentityUserToken<int>>();
+
+    public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

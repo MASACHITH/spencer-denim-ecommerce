@@ -1,5 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using SpencerDenim.Application.Abstractions.Messaging;
+using SpencerDenim.Application.Admin.Authentication;
+using SpencerDenim.Application.Admin.CurrentUser;
 using SpencerDenim.Application.Diagnostics.Ping;
 
 namespace SpencerDenim.Application;
@@ -12,6 +14,8 @@ public static class DependencyInjection
         ArgumentNullException.ThrowIfNull(services);
 
         services.AddScoped<IQueryHandler<PingQuery, PingResponse>, PingQueryHandler>();
+        services.AddScoped<ICommandHandler<AdminLoginCommand, AdminLoginResult>, AdminLoginCommandHandler>();
+        services.AddScoped<IQueryHandler<WhoAmIQuery, WhoAmIResponse?>, WhoAmIQueryHandler>();
 
         return services;
     }

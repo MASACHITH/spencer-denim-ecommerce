@@ -5,10 +5,21 @@
     <RootNamespace>SpencerDenim.Infrastructure</RootNamespace>
   </PropertyGroup>
 
+  <!--
+    Plain Sdk (not Sdk.Web): AddIdentity, UserManager/SignInManager/RoleManager and cookie authentication live in
+    the ASP.NET Core shared framework rather than a separately restorable package, so a class library needs this
+    to use them (the documented pattern for Identity outside a Web SDK project). No hosting/Kestrel is pulled in.
+    Once this is present, the SDK's package-pruning feature treats Microsoft.Extensions.Diagnostics.HealthChecks,
+    Microsoft.Extensions.Options.ConfigurationExtensions and Microsoft.Extensions.Caching.Memory as already
+    supplied by the framework (NU1510), so they are deliberately not also listed as PackageReference below.
+  -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" />
-    <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks" />
-    <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" />
+    <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" />
   </ItemGroup>
 
   <ItemGroup>

@@ -1,11 +1,10 @@
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using SpencerDenim.Application.Abstractions.Time;
 using SpencerDenim.Infrastructure.Health;
+using SpencerDenim.Infrastructure.Identity;
 using SpencerDenim.Infrastructure.Persistence;
 using SpencerDenim.Infrastructure.Time;
 
@@ -51,11 +50,6 @@ public static class DependencyInjection
                 sql.CommandTimeout(options.CommandTimeoutSeconds);
                 sql.MigrationsHistoryTable(AppDbContext.MigrationsHistoryTable, AppDbContext.MigrationsHistorySchema);
             });
-
-            // Scaffold only: there are no entity configurations yet, so ApplyConfigurationsFromAssembly warns on
-            // every model build. Logged at Debug instead of Warning. REMOVE this line with the first entity
-            // configuration (W1 catalogue work), so a genuinely empty scan is noticed. No other warning is touched.
-            builder.ConfigureWarnings(warnings => warnings.Log((CoreEventId.NoEntityTypeConfigurationsWarning, LogLevel.Debug)));
         });
 
         services.AddHealthChecks()
@@ -64,6 +58,8 @@ public static class DependencyInjection
                 failureStatus: null,
                 tags: [HealthCheckTags.Ready],
                 timeout: DatabaseHealthCheckTimeout);
+
+        services.AddAdminIdentity();
 
         return services;
     }
