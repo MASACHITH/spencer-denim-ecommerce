@@ -12,9 +12,13 @@ import { ApiStatus } from '@spencer-denim/shared';
         <p class="eyebrow">New season</p>
         <h1 class="hero__title">Spencer Denim</h1>
         <p class="hero__lead">Timeless denim and everyday essentials. Our new store is on its way.</p>
-        <sd-api-status />
       </div>
     </section>
+
+    <!-- Scaffold wiring check (W0-09), kept out of the way until HOME-01 replaces this page. -->
+    <div class="container build-status">
+      <sd-api-status />
+    </div>
   `,
   styles: `
     :host { display: block; }
@@ -32,6 +36,7 @@ import { ApiStatus } from '@spencer-denim/shared';
     }
     .hero__title { font-size: var(--text-display); letter-spacing: -0.01em; }
     .hero__lead { max-width: 40ch; color: var(--color-text-muted); }
+    .build-status { padding-block: var(--space-2); }
   `,
 })
 export class HomePage {}

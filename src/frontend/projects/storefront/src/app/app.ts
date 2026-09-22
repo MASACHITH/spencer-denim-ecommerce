@@ -1,34 +1,41 @@
 import { ChangeDetectionStrategy, Component } from '@angular/core';
-import { RouterLink, RouterOutlet } from '@angular/router';
+import { RouterOutlet } from '@angular/router';
 
+import { SiteFooter } from './layout/site-footer/site-footer';
+import { SiteHeader } from './layout/site-header/site-header';
+import { WhatsappButton } from './layout/whatsapp-button/whatsapp-button';
+
+/**
+ * The storefront shell every customer page sits inside (GLB-03..GLB-09).
+ *
+ * The landmarks are here and only here: one `banner`, one `main`, one `contentinfo`. Pages supply
+ * the single `h1` for their own content.
+ */
 @Component({
   selector: 'sd-root',
-  imports: [RouterOutlet, RouterLink],
+  imports: [RouterOutlet, SiteFooter, SiteHeader, WhatsappButton],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <a class="skip-link sr-only" href="#main">Skip to content</a>
-    <header class="site-header">
-      <div class="container site-header__inner">
-        <a class="wordmark" routerLink="/">Spencer Denim</a>
-      </div>
-    </header>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <sd-site-header />
     <main id="main" tabindex="-1">
       <router-outlet />
     </main>
+    <sd-site-footer />
+    <sd-whatsapp-button />
   `,
   styles: `
-    :host { display: block; min-height: 100vh; }
-    .site-header { border-bottom: 1px solid var(--color-border); background: var(--color-surface); }
-    .site-header__inner { display: flex; align-items: center; min-height: calc(var(--tap) + var(--space-2)); }
-    .wordmark {
-      font-size: var(--text-small);
-      font-weight: var(--weight-semibold);
-      letter-spacing: var(--tracking-wordmark);
-      text-transform: uppercase;
-      text-decoration: none;
+    :host {
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
     }
-    .skip-link:focus { position: static !important; width: auto; height: auto; margin: 0; clip: auto; }
-    main:focus { outline: none; }
+    main {
+      flex: 1 0 auto;
+    }
+    main:focus {
+      outline: none;
+    }
   `,
 })
 export class App {}
