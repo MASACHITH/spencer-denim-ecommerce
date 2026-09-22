@@ -1,0 +1,152 @@
+/*
+ * Progress page content.
+ *   status   : "planned" | "in-progress" | "done"
+ *   progress : 0–100, used when status is "in-progress"
+ *              (Done always counts as 100, Planned always counts as 0)
+ *   dates    : "YYYY-MM-DD"
+ *   Text values go in "double quotes"; progress is a plain number (40, not "40").
+ */
+const progressData = {
+  project: {
+    title: "Spencer Denim — Website Build Progress",
+    client: "Spencer Denim Industries Pvt Ltd",
+    agency: "TU2SL",
+    startDate: "2026-09-15",
+    endDate: "2026-10-15"
+  },
+
+  lastUpdated: "2026-09-18",
+
+  milestones: [
+    { week: "Week 0", title: "Setup & design", start: "2026-09-15", end: "2026-09-18" },
+    { week: "Week 1", title: "Foundation & admin catalogue", start: "2026-09-19", end: "2026-09-25" },
+    { week: "Week 2", title: "Shopping website", start: "2026-09-26", end: "2026-10-02" },
+    { week: "Week 3", title: "Checkout & orders", start: "2026-10-03", end: "2026-10-09" },
+    { week: "Week 4", title: "Payments, dashboard & launch", start: "2026-10-10", end: "2026-10-15" }
+  ],
+
+  groups: [
+    {
+      name: "Project Planning & Design",
+      features: [
+        { name: "Requirements & scope finalised", status: "done", progress: 100 },
+        { name: "Technical plan & architecture", status: "done", progress: 100 },
+        { name: "Design style guide", status: "in-progress", progress: 90 },
+        { name: "Hosting, domain & security setup", status: "in-progress", progress: 25 }
+      ]
+    },
+    {
+      name: "Homepage",
+      features: [
+        { name: "Hero video banner", status: "planned", progress: 0 },
+        { name: "Shop by department (Women, Men, Kids)", status: "planned", progress: 0 },
+        { name: "New arrivals", status: "planned", progress: 0 },
+        { name: "Trending items", status: "planned", progress: 0 },
+        { name: "Campaign banner", status: "planned", progress: 0 },
+        { name: "Activewear feature", status: "planned", progress: 0 },
+        { name: "Sale section", status: "planned", progress: 0 },
+        { name: "Social media gallery", status: "planned", progress: 0 },
+        { name: "Customer benefits", status: "planned", progress: 0 },
+        { name: "Newsletter signup", status: "planned", progress: 0 }
+      ]
+    },
+    {
+      name: "Shopping Pages",
+      features: [
+        { name: "Site header with announcement bar, footer, WhatsApp chat button & delivery district selector", status: "planned", progress: 0 },
+        { name: "Main menu (Women · Men · Kids · New Arrivals · Sale) with mega menu & mobile menu", status: "planned", progress: 0 },
+        { name: "Department pages", status: "in-progress", progress: 10 },
+        { name: "Category listings with filters & sorting", status: "in-progress", progress: 25 },
+        { name: "Product cards with quick view", status: "in-progress", progress: 10 },
+        { name: "Search", status: "in-progress", progress: 10 },
+        { name: "Store pages: About, Contact, Returns, Shipping, Privacy & Terms", status: "planned", progress: 0 }
+      ]
+    },
+    {
+      name: "Product Page",
+      features: [
+        { name: "Image gallery, zoom & video", status: "in-progress", progress: 5 },
+        { name: "Colour & size selection with size guide", status: "in-progress", progress: 10 },
+        { name: "Product details & delivery information", status: "in-progress", progress: 10 },
+        { name: "Related & recently viewed products", status: "in-progress", progress: 5 },
+        { name: "Reviews & ratings", status: "planned", progress: 0 }
+      ]
+    },
+    {
+      name: "Wishlist, Bag & Checkout",
+      features: [
+        { name: "Wishlist", status: "planned", progress: 0 },
+        { name: "Shopping bag & mini bag", status: "planned", progress: 0 },
+        { name: "Promo codes", status: "planned", progress: 0 },
+        { name: "Checkout & guest checkout", status: "planned", progress: 0 },
+        { name: "Delivery options", status: "planned", progress: 0 },
+        { name: "Bank transfer payment", status: "planned", progress: 0 },
+        { name: "PayPal payment", status: "planned", progress: 0 },
+        { name: "Order confirmation page", status: "planned", progress: 0 }
+      ]
+    },
+    {
+      name: "Customer Account",
+      features: [
+        { name: "Register & login", status: "planned", progress: 0 },
+        { name: "Order history with tracking", status: "planned", progress: 0 },
+        { name: "Order & shipping emails", status: "planned", progress: 0 }
+      ]
+    },
+    {
+      name: "Admin Panel",
+      features: [
+        { name: "Admin login with user roles & permissions", status: "planned", progress: 0 },
+        { name: "Product management (images & video)", status: "in-progress", progress: 10 },
+        { name: "Category management", status: "in-progress", progress: 10 },
+        { name: "Inventory", status: "in-progress", progress: 10 },
+        { name: "Order management & payment approval", status: "planned", progress: 0 },
+        { name: "Promo codes & sale campaigns", status: "planned", progress: 0 },
+        { name: "Customers", status: "planned", progress: 0 },
+        { name: "Review moderation", status: "planned", progress: 0 },
+        { name: "Newsletter subscriber list", status: "planned", progress: 0 },
+        { name: "Homepage & content management", status: "planned", progress: 0 },
+        { name: "Dashboard", status: "planned", progress: 0 },
+        { name: "Reports & traffic", status: "planned", progress: 0 },
+        { name: "Settings", status: "planned", progress: 0 }
+      ]
+    },
+    {
+      name: "Launch",
+      features: [
+        { name: "Preview website for your review", status: "planned", progress: 0 },
+        { name: "Mobile, tablet & desktop testing", status: "planned", progress: 0 },
+        { name: "Website live on the domain with SSL", status: "planned", progress: 0 },
+        { name: "Admin training & handover", status: "planned", progress: 0 }
+      ]
+    }
+  ],
+
+  // Newest first.
+  updates: [
+    {
+      date: "2026-09-18",
+      text: "Development environment and project foundation completed and tested. The product catalogue is now built in the database: departments, categories, products, colours, sizes, stock and product images, with sample products loaded for testing. This is the groundwork behind the shop pages, the product page and the admin product screens, which are built next."
+    },
+    {
+      date: "2026-09-17",
+      text: "Hosting purchased. Development environment setup is under way; server security and domain configuration are next."
+    },
+    {
+      date: "2026-09-16",
+      text: "Project code repository set up and design decisions recorded for the build. A short list of items for your confirmation (logo, delivery fees and couriers, PayPal currency) will be shared with you."
+    },
+    {
+      date: "2026-09-15",
+      text: "Database design reviewed and finalised, covering products, stock, orders, payments, delivery zones, user roles and security."
+    },
+    {
+      date: "2026-09-15",
+      text: "Design style guide prepared (colours, fonts, buttons, menus, product cards, product page, shopping bag) and ready for your review. Database design drafted."
+    },
+    {
+      date: "2026-09-15",
+      text: "Project kick-off. Requirements and scope finalised from the agreed proposal. Technical plan prepared. Next: design style guide and project setup."
+    }
+  ]
+};
