@@ -11,7 +11,11 @@ html {
 
 body {
   margin: 0;
-  min-width: 320px;
+  /* 320px is the narrowest layout we support, but a classic (space-taking) scrollbar leaves
+     only 305px of content box at a 320px viewport. A flat `min-width: 320px` would then force
+     15px of horizontal scroll on a page whose content fits. `min()` keeps the floor without
+     ever exceeding what the viewport actually offers. */
+  min-width: min(320px, 100%);
   font-family: var(--font-sans);
   font-size: var(--text-body);
   line-height: 1.6;
