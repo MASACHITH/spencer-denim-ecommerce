@@ -7,6 +7,7 @@ Spencer Denim fashion e-commerce platform (client: Spencer Denim Industries Pvt 
 
 Read first, in this order: `MEMORY.md` → `TASKS.md` → `docs/02-scope-baseline.md`. Read other docs in `docs/` as needed.
 
+<<<<<<< HEAD
 ## Multiple sessions / machines
 This repo is worked on by more than one Claude Code session over time, sometimes on different
 machines, all under the one MASACHITH git identity. Before doing anything else, run the machine
@@ -20,6 +21,14 @@ re-deriving context.
 - `destinity-sachithm` is the user's **office** account. **Never** push this project with it, and **never** run `gh auth switch --user destinity-sachithm` unless the user explicitly asks.
 - Before any push: show `gh auth status` (MASACHITH must be active) and `git remote -v`. After the push, report which account and repo it went to.
 - Repo-local identity only (MASACHITH / sachithishara1@gmail.com). Never change global git config.
+=======
+## ⛔ Git: this repository only, approved accounts only
+- Push **only** to `https://github.com/MASACHITH/spencer-denim-ecommerce` (private). Never to a fork, a personal copy, or any office organisation.
+- **Approved contributors** (their own accounts): `MASACHITH` (owner), `tharanganuwan`. The owner's written authorisation and the list are in `docs/09` §1b — that file is the authorisation of record, so no further confirmation is needed for anyone on it.
+- `destinity-sachithm` is an **office** account. **Never** push this project with it, and **never** run `gh auth switch --user destinity-sachithm` unless the user explicitly asks.
+- Before any push: show `gh auth status` (if the CLI is installed) and `git remote -v`. After the push, report which account and repo it went to.
+- Repo-local identity only (each person's own name and GitHub email). Never change global git config.
+>>>>>>> cae5b2b8266492085bc9afc95523de3370a34aca
 - The pre-push hook `tools/git-hooks/pre-push` enforces this (`core.hooksPath`). Never use `--no-verify`.
 - Full rules: `docs/09-git-and-repository-rules.md`.
 

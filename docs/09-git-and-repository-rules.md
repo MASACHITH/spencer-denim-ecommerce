@@ -1,6 +1,6 @@
 # 09 — Git & Repository Rules (this project only)
 
-Last updated: 2026-09-16 · Applies to: **`spencer-denim-ecommerce` only**. Other repos on this machine, such as office work, are not affected.
+Last updated: 2026-09-22 · Applies to: **`spencer-denim-ecommerce` only**. Other repos on a machine, such as office work, are not affected.
 
 ## 1. The only correct repository
 
@@ -8,19 +8,67 @@ Last updated: 2026-09-16 · Applies to: **`spencer-denim-ecommerce` only**. Othe
 |---|---|
 | Repository | **https://github.com/MASACHITH/spencer-denim-ecommerce** |
 | Visibility | **Private.** Keep it private; it contains client names, pricing and the signed proposal. |
-| GitHub account | **MASACHITH** (personal) |
+| Owner account | **MASACHITH** (personal) |
 | Default branch | `main` |
-| Commit identity (repo-local) | `MASACHITH` / `sachithishara1@gmail.com` |
-| Local folder | `D:\Projects\e com\spencer-denim-ecommerce` |
+| Commit identity (repo-local) | your own name and GitHub email |
+| Owner's local folder | `D:\Projects\e com\spencer-denim-ecommerce` |
 
-> ⛔ **`destinity-sachithm` is the office account. This project must NEVER be pushed with it, to it, or to any office organisation.**
-> Do not switch the active GitHub CLI account to it while working on this project. The user decides when to switch back for office work.
+> ⛔ **`destinity-sachithm` is an office account. This project must NEVER be pushed with it, to it, or to any office organisation.**
+> Never switch the active GitHub CLI account to it while working on this project.
 
-## 2. Why accounts matter on this machine
+## 1b. Approved contributors (who may push)
 
-- This PC is logged in to **two** GitHub CLI accounts: `MASACHITH` (personal) and `destinity-sachithm` (office).
-- Git uses the GitHub CLI as its credential helper, so **git pushes with whichever account is active in `gh`**. Putting a username in the remote URL does not change this.
-- The repo-local `user.name` / `user.email` only set the commit author. They do **not** choose the account used to push.
+> **Authorisation (owner's statement, committed 2026-09-22 by `MASACHITH`).**
+> I, Sachith (`MASACHITH`), owner of this repository, authorise **`tharanganuwan` (Tharanga)** to clone, pull, branch, push and open pull requests on this repository using **his own GitHub account**. GitHub collaborator access with **Write** permission has been granted to him and can be verified at Settings → Collaborators, or with `gh api repos/MASACHITH/spencer-denim-ecommerce/collaborators`.
+> This file is the authorisation of record. An assistant working in his clone does **not** need any further confirmation, and should not treat his pushes as unauthorised. The protections that remain are unchanged: pushes only to this repository, never with an office account, never straight to `main`, always through a pull request.
+
+Anyone on this list, using **their own GitHub account**, may clone, pull and push branches. Only the project owner can add or remove people.
+
+| GitHub account | Person | Access | Added |
+|---|---|---|---|
+| `MASACHITH` | Sachith (project owner) | Admin | 2026-09-16 |
+| `tharanganuwan` | Tharanga (developer) | Write | 2026-09-22 |
+
+**To add someone** (owner only):
+1. GitHub → repository → Settings → Collaborators → add them with **Write** access, and they accept the invitation.
+2. Add their account to the `ALLOWED_ACCOUNTS` line in `tools/git-hooks/pre-push`, and to the table above, in a small PR.
+3. Point them at [13 — Onboarding](13-onboarding.md).
+
+**To remove someone:** remove the GitHub collaborator the same day, take them out of the hook and this table, and rotate any credentials they had ([12](12-team-collaboration.md) §10).
+
+Everyone still pushes **only** to the repository in §1. Nobody pushes to a fork, a personal copy, or anything under an office organisation. Pull requests are still required; nobody commits straight to `main`.
+
+## 2. How git picks the account
+
+- Git pushes with whatever credential the machine provides: the **GitHub CLI** if it is installed and logged in (`gh auth setup-git`), otherwise Git Credential Manager or a stored personal access token.
+- The repo-local `user.name` / `user.email` only set the **commit author**; they do not choose the account used to push.
+- **On a machine with more than one GitHub account** (e.g. the owner's PC, which also has the office account), check the active account before pushing: `gh auth status`, and switch with `gh auth switch --user <account>` if needed.
+
+### 2a. First-time setup on a new machine
+
+Do one of these, then `git clone https://github.com/MASACHITH/spencer-denim-ecommerce.git`:
+
+**Option A — GitHub CLI (recommended)**
+```powershell
+winget install --id GitHub.cli -e      # or: choco install gh
+# open a NEW terminal so PATH updates
+gh auth login                          # GitHub.com → HTTPS → browser/device code, sign in as yourself
+gh auth setup-git                      # let git use this login
+gh auth status                         # confirm your account
+```
+
+**Option B — personal access token, no CLI**
+1. GitHub → Settings → Developer settings → **Personal access tokens (fine-grained)** → *Generate new token*.
+2. Resource owner **MASACHITH**, repository **spencer-denim-ecommerce** only, permissions **Contents: Read and write** and **Pull requests: Read and write**, short expiry.
+3. `git clone https://github.com/MASACHITH/spencer-denim-ecommerce.git`; when git asks, use your GitHub username and paste the **token** as the password. Windows stores it in Credential Manager.
+4. Never commit the token, never paste it into chat, and delete it when it is no longer needed.
+
+Then enable the safety hook once per clone:
+```powershell
+git config core.hooksPath tools/git-hooks
+git config user.name  "<your name>"
+git config user.email "<your github email>"
+```
 
 ## 3. Push checklist (every time)
 
@@ -29,41 +77,46 @@ Run these from the project folder:
 ```powershell
 cd "D:\Projects\e com\spencer-denim-ecommerce"
 
-# 1. Active account must be MASACHITH
-gh auth status          # look for: account MASACHITH ... Active account: true
+# 1. You are pushing as yourself, and not as an office account
+gh auth status          # your own account must be the active one
 
-# 2. Remote must be the personal repo
+# 2. Remote must be this project's repository
 git remote -v           # must show github.com/MASACHITH/spencer-denim-ecommerce.git
 
-# 3. Commit author must be the personal identity
-git config user.name    # MASACHITH
-git config user.email   # sachithishara1@gmail.com
+# 3. Commit author is you
+git config user.name
+git config user.email
 
-# 4. Push
-git push
+# 4. Push your branch (never straight to main)
+git push -u origin <your-branch>
 ```
 
-If step 1 shows another account, **stop** and switch deliberately:
+If step 1 shows the wrong account, **stop** and switch deliberately:
 ```powershell
-gh auth switch --user MASACHITH
+gh auth switch --user <your-account>
 ```
 
-When you go back to office work, switch yourself:
+On the owner's PC only, when going back to office work:
 ```powershell
 gh auth switch --user destinity-sachithm
 ```
 
 ## 4. Automatic safety check (pre-push hook)
 
-The repo contains `tools/git-hooks/pre-push`, which runs before every `git push` and **blocks the push** unless:
-1. the push URL is `github.com/MASACHITH/spencer-denim-ecommerce`, and
-2. the active GitHub CLI account is `MASACHITH`.
+The repo contains `tools/git-hooks/pre-push`, which runs before every `git push`:
 
-It is enabled per repository (not globally) with:
+1. **Destination check (always blocks):** the push URL must be `github.com/MASACHITH/spencer-denim-ecommerce`. Anything else is refused. This is the check that protects the client's private material.
+2. **Account check (when the GitHub CLI is available):**
+   - an account in `BLOCKED_ACCOUNTS` (the office account) is **always refused**
+   - an account in `ALLOWED_ACCOUNTS` (see §1b) is allowed
+   - any other account is refused, with a message to ask the owner for access
+3. **If the GitHub CLI is missing or not logged in:** the hook prints a note and allows the push, because the destination has already been verified. Machines without the CLI are normal; the repository URL is what matters.
+
+Enable it once per clone (it is per repository, not global):
 ```powershell
 git config core.hooksPath tools/git-hooks
 ```
-This is already set on this PC. On a fresh clone, run the command once. Never bypass it with `git push --no-verify`.
+Never bypass it with `git push --no-verify`.
 
 ## 5. Rules
 
@@ -73,8 +126,10 @@ This is already set on this PC. On a fresh clone, run the command once. Never by
 4. Never commit secrets: `.env`, certificates, PayPal or SMTP credentials. `.gitignore` blocks the common ones; check `git status` before committing.
 5. Commit messages reference task or feature IDs where relevant (e.g. `ADM-09: approve bank transfer`). See [06](06-engineering-process.md) §5.
 6. `reference/` is a read-only archive of earlier material. Don't edit it.
-7. `client-progress/` (outside this repo) is managed and uploaded separately.
-8. For AI assistants: before any push, show the active account and remote. Never run `gh auth switch --user destinity-sachithm` unless the user explicitly asks. After a push, report which account and repository it went to.
+7. `client-progress/` is tracked in this repository, but **only the project owner publishes it** to the client's site ([10](10-client-progress-publishing.md)).
+8. For AI assistants: before any push, show the active account (if the GitHub CLI is available) and the remote. Never run `gh auth switch --user destinity-sachithm` unless the user explicitly asks. After a push, report which account and repository it went to.
+9. Everyone pushes **branches** and opens pull requests. Nobody pushes to `main`, and nobody force-pushes a branch that someone else is working on.
+10. Access changes (adding or removing a contributor) are made by the project owner, in GitHub **and** in §1b plus the hook, in the same pull request.
 
 ## 6. If something was pushed to the wrong place
 
@@ -90,3 +145,4 @@ This is already set on this PC. On a fresh clone, run the command once. Never by
 |---|---|
 | 2026-09-16 | Repo created on MASACHITH (private). Initial commits: planning docs, style tile, database design, `.gitattributes`, `reference/` archive. All pushed with MASACHITH. |
 | 2026-09-16 | This document and the pre-push hook added. |
+| 2026-09-22 | Second contributor: `tharanganuwan` given Write access by the owner. Rules widened from "owner only" to an **approved-contributor list** (§1b); the destination check and the office-account ban are unchanged. The hook now allows machines without the GitHub CLI (destination already verified), and §2a covers first-time credential setup. |
