@@ -47,20 +47,30 @@ import { NavItem, hasMenu } from '../../core/navigation/navigation.model';
             @if (menuOf(item)) {
               <div class="mega" [id]="panelId(item)" [hidden]="openId() !== item.id">
                 <div class="container mega__grid">
+                  @if (item.shopAll; as shopAll) {
+                    <a class="mega__all" [routerLink]="shopAll.path" (click)="close(item.id)">
+                      {{ shopAll.label }}
+                      <sd-icon name="chevron-right" size="sm" />
+                    </a>
+                  }
+
                   @for (column of item.columns; track column.key) {
                     <div class="mega__col">
                       <ul>
                         @for (group of column.groups; track group.link.path) {
                           <li>
-                            <a
-                              class="mega__link"
-                              [class.mega__link--group]="group.children.length > 0"
-                              [routerLink]="group.link.path"
-                              (click)="close(item.id)"
-                            >
-                              {{ group.link.label }}
-                            </a>
                             @if (group.children.length > 0) {
+                              <!-- A category with children heads its group; a leaf category is
+                                   just a link, so no empty heading is drawn for it. -->
+                              <h3 class="mega__title">
+                                <a
+                                  class="mega__link mega__link--group"
+                                  [routerLink]="group.link.path"
+                                  (click)="close(item.id)"
+                                >
+                                  {{ group.link.label }}
+                                </a>
+                              </h3>
                               <ul>
                                 @for (child of group.children; track child.path) {
                                   <li>
@@ -74,6 +84,14 @@ import { NavItem, hasMenu } from '../../core/navigation/navigation.model';
                                   </li>
                                 }
                               </ul>
+                            } @else {
+                              <a
+                                class="mega__link"
+                                [routerLink]="group.link.path"
+                                (click)="close(item.id)"
+                              >
+                                {{ group.link.label }}
+                              </a>
                             }
                           </li>
                         }
@@ -168,11 +186,32 @@ import { NavItem, hasMenu } from '../../core/navigation/navigation.model';
     .mega__grid {
       display: grid;
       grid-template-columns: repeat(4, minmax(0, 1fr)) minmax(200px, 1.1fr);
-      gap: var(--space-4);
+      gap: var(--space-2) var(--space-4);
       text-align: left;
+    }
+    /* "Shop all Women" is the menu's own first link, on a row above the categories, so it never
+       reads as one more category in the first column. */
+    .mega__all {
+      grid-column: 1 / -1;
+      display: inline-flex;
+      align-items: center;
+      gap: var(--space-0-5);
+      justify-self: start;
+      min-height: var(--tap);
+      padding-inline-end: var(--space-1);
+      font-size: var(--text-label);
+      font-weight: var(--weight-semibold);
+      letter-spacing: var(--tracking-label);
+      text-transform: uppercase;
+      text-decoration: underline;
+      text-underline-offset: 4px;
     }
     .mega__col ul {
       list-style: none;
+    }
+    .mega__title {
+      font-size: var(--text-small);
+      font-weight: var(--weight-semibold);
     }
     .mega__link {
       display: flex;

@@ -14,10 +14,19 @@ export const STATIC_NAV_ITEMS: readonly NavItem[] = [
     label: 'New Arrivals',
     path: '/new-arrivals',
     tone: 'default',
+    shopAll: null,
     columns: [],
     promo: null,
   },
-  { id: 'sale', label: 'Sale', path: '/sale', tone: 'sale', columns: [], promo: null },
+  {
+    id: 'sale',
+    label: 'Sale',
+    path: '/sale',
+    tone: 'sale',
+    shopAll: null,
+    columns: [],
+    promo: null,
+  },
 ];
 
 /**
@@ -41,6 +50,9 @@ function toNavItem(department: DepartmentDto): NavItem {
     label: department.name,
     path,
     tone: 'default',
+    // A link of its own above the columns, so the department page stays one click away even
+    // when a shopper opens the menu instead of following the department link.
+    shopAll: columns.length > 0 ? { label: `Shop all ${department.name}`, path } : null,
     columns,
     promo: columns.length > 0 ? toPromo(department) : null,
   };
@@ -56,10 +68,6 @@ function toColumns(
 
   const buckets: MegaMenuGroup[][] = Array.from({ length: MEGA_MENU_COLUMN_COUNT }, () => []);
   const departmentPath = `/${department.slug}`;
-
-  // "Shop all" always heads the first column, so the department page is one click away
-  // even when a shopper opens the menu instead of following the department link.
-  buckets[0].push({ link: { label: `Shop all ${department.name}`, path: departmentPath }, children: [] });
 
   categories.forEach((category, index) => {
     const column = columnIndex(category, index, categories.length);

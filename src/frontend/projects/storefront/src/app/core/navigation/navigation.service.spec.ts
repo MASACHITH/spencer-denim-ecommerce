@@ -96,15 +96,36 @@ describe('NavigationService', () => {
     ]);
   });
 
-  it('puts "Shop all" first and builds category routes under the department', () => {
+  it('offers "Shop all" as its own link, not as one of the categories', () => {
     const women = find(service.items(), 'women');
 
-    expect(women.columns[0].groups[0].link).toEqual({
-      label: 'Shop all Women',
-      path: '/women',
-    });
+    expect(women.shopAll).toEqual({ label: 'Shop all Women', path: '/women' });
+    expect(pathsOf(women).filter((path) => path === '/women')).toHaveLength(0);
+  });
+
+  it('builds category routes under the department', () => {
+    const women = find(service.items(), 'women');
+
     expect(pathsOf(women)).toContain('/women/dresses');
     expect(pathsOf(women)).toContain('/women/accessories');
+  });
+
+  it('heads a group with a category that has children, and leaves leaf columns untitled', () => {
+    const kids = find(service.items(), 'kids');
+    const groups = kids.columns.flatMap((column) => column.groups);
+
+    const girls = groups.find((group) => group.link.label === 'Girls');
+    expect(girls?.children.map((child) => child.label)).toEqual([
+      'Girls Dresses',
+      'Girls Tops',
+      'Girls Bottoms',
+    ]);
+
+    // Women is a flat department: every group is a leaf, so no headings are drawn.
+    const women = find(service.items(), 'women');
+    expect(
+      women.columns.flatMap((column) => column.groups).every((group) => group.children.length === 0),
+    ).toBe(true);
   });
 
   it('nests a child category under its parent category', () => {
@@ -140,9 +161,9 @@ describe('toNavigation', () => {
     ]);
 
     const women = find(items, 'women');
-    // Column 1 holds "Shop all", column 3 holds both categories; column 2 is dropped as empty.
-    expect(women.columns.map((column) => column.key)).toEqual(['column-1', 'column-3']);
-    expect(women.columns[1].groups.map((group) => group.link.label)).toEqual(['Dresses', 'Jeans']);
+    // Both categories sit in column 3; the empty columns are dropped rather than drawn blank.
+    expect(women.columns.map((column) => column.key)).toEqual(['column-3']);
+    expect(women.columns[0].groups.map((group) => group.link.label)).toEqual(['Dresses', 'Jeans']);
   });
 
   it('spreads categories across the columns when no column is assigned yet', () => {
@@ -179,6 +200,7 @@ describe('toNavigation', () => {
     const women = find(items, 'women');
     expect(women.columns).toHaveLength(0);
     expect(women.promo).toBeNull();
+    expect(women.shopAll).toBeNull();
     expect(women.path).toBe('/women');
   });
 

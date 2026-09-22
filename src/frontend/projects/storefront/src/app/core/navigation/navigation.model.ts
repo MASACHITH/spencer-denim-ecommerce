@@ -4,7 +4,13 @@ export interface NavLink {
   readonly path: string;
 }
 
-/** One category in a mega-menu column, with its child categories beneath it. */
+/**
+ * One category in a mega-menu column.
+ *
+ * A category that has children of its own heads the group as a heading, with the children listed
+ * under it. A category with no children is simply a link in the column, and no empty heading is
+ * drawn for it.
+ */
 export interface MegaMenuGroup {
   readonly link: NavLink;
   readonly children: readonly NavLink[];
@@ -40,6 +46,8 @@ export interface NavItem {
   readonly label: string;
   readonly path: string;
   readonly tone: NavTone;
+  /** "Shop all Women": its own link above the columns, not one entry among the categories. */
+  readonly shopAll: NavLink | null;
   readonly columns: readonly MegaMenuColumn[];
   readonly promo: MegaMenuPromo | null;
 }

@@ -176,21 +176,26 @@ export class MobileNav {
   /** The department section that is expanded, or `null`. */
   readonly expandedId = this.expanded.asReadonly();
 
-  /** Every department's menu flattened to a single indented list. */
+  /** Every department's menu flattened to a single indented list, "Shop all" first. */
   private readonly flattened = computed(() =>
     new Map(
       this.items().map((item) => [
         item.id,
-        item.columns.flatMap((column) =>
-          column.groups.flatMap((group) => [
-            { label: group.link.label, path: group.link.path, depth: 0 },
-            ...group.children.map((child) => ({
-              label: child.label,
-              path: child.path,
-              depth: 1,
-            })),
-          ]),
-        ),
+        [
+          ...(item.shopAll
+            ? [{ label: item.shopAll.label, path: item.shopAll.path, depth: 0 }]
+            : []),
+          ...item.columns.flatMap((column) =>
+            column.groups.flatMap((group) => [
+              { label: group.link.label, path: group.link.path, depth: 0 },
+              ...group.children.map((child) => ({
+                label: child.label,
+                path: child.path,
+                depth: 1,
+              })),
+            ]),
+          ),
+        ],
       ]),
     ),
   );
