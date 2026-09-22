@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using SpencerDenim.Domain.Auditing;
 using SpencerDenim.Domain.Catalog;
 using SpencerDenim.Domain.Common;
 using SpencerDenim.Domain.Inventory;
@@ -38,10 +39,20 @@ public sealed class CatalogModelTests
         return scope.ServiceProvider.GetRequiredService<AppDbContext>().Model;
     }
 
+    /// <summary>
+    /// The entity types this milestone owns. One <see cref="AppDbContext"/> now also holds W1-01's Identity
+    /// and audit model (doc 08 §3.1 and §3.8), so a test about the catalogue has to say so rather than
+    /// assert over every entity in the context.
+    /// </summary>
+    private static IEnumerable<IEntityType> CatalogueEntities => Model.GetEntityTypes()
+        .Where(entity => entity.GetSchema() is AppDbContext.CatalogSchema
+            or AppDbContext.MediaSchema
+            or AppDbContext.InventorySchema);
+
     [Fact]
     public void The_catalogue_media_and_inventory_tables_of_doc_08_are_all_mapped()
     {
-        var tables = Model.GetEntityTypes()
+        var tables = CatalogueEntities
             .Select(entity => $"{entity.GetSchema()}.{entity.GetTableName()}")
             .ToHashSet(StringComparer.Ordinal);
 
@@ -96,6 +107,21 @@ public sealed class CatalogModelTests
             $"{nameof(SizeGuide)}.{nameof(SizeGuide.IntroHtml)}",
             $"{nameof(SizeGuide)}.{nameof(SizeGuide.TableJson)}",
             $"{nameof(SizeGuide)}.{nameof(SizeGuide.MeasuringTipsHtml)}",
+
+            // W1-01, doc 08 §3.1: "PasswordHash, SecurityStamp, ConcurrencyStamp | nvarchar(max)" on Users
+            // and Roles, and "Identity standard tables" for UserClaims / UserLogins / UserTokens.
+            "AppUser.PasswordHash",
+            "AppUser.SecurityStamp",
+            "AppUser.ConcurrencyStamp",
+            "AppRole.ConcurrencyStamp",
+            "IdentityUserClaim.ClaimType",
+            "IdentityUserClaim.ClaimValue",
+            "IdentityUserLogin.ProviderDisplayName",
+            "IdentityUserToken.Value",
+
+            // W1-01, doc 08 §3.8 and §1.4 (DB15): audit diffs are JSON, so nvarchar(max) with ISJSON checks.
+            $"{nameof(AuditLog)}.{nameof(AuditLog.BeforeJson)}",
+            $"{nameof(AuditLog)}.{nameof(AuditLog.AfterJson)}",
         ];
 
         var offenders = Model.GetEntityTypes()
@@ -246,6 +272,8 @@ public sealed class CatalogModelTests
                 .Select(foreignKey => $"{entity.ShortName()} -> {foreignKey.PrincipalEntityType.ShortName()}"))
             .ToList();
 
+        // Doc 08 §1.6: "CASCADE only for pure child rows: CartItems, UserRoles, RoleClaims,
+        // UserClaims/Logins/Tokens, ProductCategories, RelatedProducts, ProductMedia, ...".
         string[] allowed =
         [
             "ProductCategory -> Product",
@@ -254,6 +282,14 @@ public sealed class CatalogModelTests
             "RelatedProduct -> Product",
             "ProductStats -> Product",
             "ProductSearchIndex -> Product",
+
+            // W1-01's Identity model, the same doc 08 §1.6 list.
+            "IdentityUserRole -> AppUser",
+            "IdentityUserRole -> AppRole",
+            "IdentityRoleClaim -> AppRole",
+            "IdentityUserClaim -> AppUser",
+            "IdentityUserLogin -> AppUser",
+            "IdentityUserToken -> AppUser",
         ];
 
         Assert.All(cascading, relationship => Assert.Contains(relationship, allowed, StringComparer.Ordinal));
