@@ -1,0 +1,46 @@
+name: Bug
+description: Something does not work as intended
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: textarea
+    id: expected_actual
+    attributes:
+      label: Expected vs actual
+      value: |
+        **Expected:**
+        **Actual:**
+    validations:
+      required: true
+  - type: input
+    id: where
+    attributes:
+      label: Where
+      description: Page or endpoint, browser, screen width, environment (local / staging / live)
+      placeholder: Product listing, Chrome, 390 px, local
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      options:
+        - Critical - data loss, money, security, or nothing works
+        - Major - a feature is broken with no workaround
+        - Minor - broken but there is a workaround
+        - Cosmetic - visual only
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Screenshot, error message, log excerpt, failing test name

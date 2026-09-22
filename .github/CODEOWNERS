@@ -1,0 +1,25 @@
+# Code owners are requested for review automatically.
+# See docs/12-team-collaboration.md §4.
+
+# Default: the project owner sees everything
+*                                   @MASACHITH
+
+# Scope, client documents, architecture and database design: owner only
+/docs/01-project-understanding.md   @MASACHITH
+/docs/02-scope-baseline.md          @MASACHITH
+/docs/03-architecture-and-tech-stack.md @MASACHITH
+/docs/08-database-design.md         @MASACHITH
+/docs/09-git-and-repository-rules.md @MASACHITH
+/docs/10-client-progress-publishing.md @MASACHITH
+/reference/                         @MASACHITH
+
+# Infrastructure and tooling: owner only
+/.github/                           @MASACHITH
+/tools/                             @MASACHITH
+
+# Database migrations: owner reviews every one (only one in flight at a time)
+/src/backend/SpencerDenim.Infrastructure/Migrations/ @MASACHITH
+
+# Shared design system: both apps depend on it, so review carefully
+/src/frontend/projects/shared/      @MASACHITH
+/design/                            @MASACHITH

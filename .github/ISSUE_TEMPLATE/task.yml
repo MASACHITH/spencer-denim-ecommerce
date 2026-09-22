@@ -1,0 +1,51 @@
+name: Task
+description: A piece of work from the plan (a feature, chore or documentation task)
+title: "[<ID>] "
+labels: ["task"]
+body:
+  - type: input
+    id: feature_id
+    attributes:
+      label: Feature / task ID
+      description: From TASKS.md or docs/02-scope-baseline.md, e.g. W1-03, ADM-10, PLP-02
+      placeholder: ADM-10
+    validations:
+      required: true
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What must exist when this is done, in plain words
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: How the tester will judge it. Be specific.
+      value: |
+        - [ ]
+        - [ ]
+        - [ ] Responsive at 320 / 768 / 1280 px (UI work)
+        - [ ] Tests added and green
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options: [backend, storefront, admin, shared, docs, infra]
+    validations:
+      required: true
+  - type: checkboxes
+    id: coordination
+    attributes:
+      label: Coordination
+      options:
+        - label: Needs a database migration (only one in flight across the team)
+        - label: Touches the shared library, design tokens or CI
+        - label: Blocked by another issue (say which below)
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes, links, dependencies
