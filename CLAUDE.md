@@ -21,6 +21,17 @@ Read first, in this order: `MEMORY.md` → `TASKS.md` → `docs/02-scope-baselin
 - The FTP password lives only DPAPI-encrypted at `%USERPROFILE%\.spencer-denim\tracker-ftp-credential.xml`. Never print, log, store or commit it.
 - The office network blocks FTP data connections. Use another network or hPanel File Manager (doc 10 §5b); don't retry repeatedly.
 
+## Team: two developers working in parallel
+- People: **Sachith (`MASACHITH`)** project owner, architect, client contact · **Tharanga (`tharanganuwan`)** developer. Each runs their own Claude Code session.
+- **Live board = GitHub Issues.** Claim work by assigning the issue to yourself before starting. One task = one issue = one branch = one PR.
+- **Never commit to `main`**; branch, PR, tester pass, green CI, squash merge (`docs/09` §5b).
+- **Don't edit `TASKS.md` or `MEMORY.md` during the day** (they conflict between sessions). Write `docs/journal/YYYY-MM-DD-<name>.md` instead; the owner folds them in at the end of the day.
+- **One database migration in flight at a time** across the whole team; announce it in the issue.
+- Stay inside your issue's area. Shared library, design tokens, `angular.json`, CI and `Directory.Packages.props` are coordinated changes.
+- Only the **project owner's session** publishes the client progress page, changes scope (`docs/02`) or the database design (`docs/08`), and talks to the client.
+- Never touch, rebase or push another person's branch.
+- Full process: `docs/12-team-collaboration.md`. New joiner: `docs/13-onboarding.md`. Short version: `CONTRIBUTING.md`.
+
 ## Non-negotiable rules
 - Discuss gaps with the user before building anything outside the scope baseline.
 - Every task: developer agent → separate tester agent. If a test fails, it goes back to the developer until it passes.

@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: How we work together
+    url: https://github.com/MASACHITH/spencer-denim-ecommerce/blob/main/docs/12-team-collaboration.md
+    about: Branches, issues, reviews, ownership and the daily rhythm
+  - name: New developer onboarding
+    url: https://github.com/MASACHITH/spencer-denim-ecommerce/blob/main/docs/13-onboarding.md
+    about: Set up your machine and make your first pull request
+  - name: Scope baseline
+    url: https://github.com/MASACHITH/spencer-denim-ecommerce/blob/main/docs/02-scope-baseline.md
+    about: What is in and out of scope. New ideas need a decision first.
