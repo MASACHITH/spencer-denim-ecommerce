@@ -27,6 +27,9 @@ const FOCUSABLE_SELECTOR = [
   '[tabindex]:not([tabindex="-1"])',
 ].join(',');
 
+/** How many extra frames to spend trying to put focus in the panel before giving up. */
+const FOCUS_ATTEMPTS = 3;
+
 let nextDrawerId = 0;
 
 /**
@@ -260,8 +263,43 @@ export class Drawer {
     }
   }
 
-  private focusFirst(): void {
-    this.focusable()[0]?.focus();
+  /**
+   * Moves focus to the first thing in the panel, and keeps trying for a few frames.
+   *
+   * Lesson L3: the panel is revealed by a class on the host, and a browser refuses to focus an
+   * element that is still `visibility: hidden` at that instant. CSS makes the reveal immediate,
+   * but a single `.focus()` call is one point of failure for a dialog that must trap focus, so
+   * a miss is retried on the next frames until focus really is inside the panel.
+   */
+  private focusFirst(attempt = 0): void {
+    const target = this.focusable()[0];
+    if (!target) {
+      return;
+    }
+
+    target.focus();
+
+    const panel = this.panel().nativeElement;
+    const landed = panel.contains(this.document.activeElement);
+    if (landed || !this.isActive || attempt >= FOCUS_ATTEMPTS) {
+      return;
+    }
+
+    this.retryFocus(attempt + 1);
+  }
+
+  private retryFocus(attempt: number): void {
+    const retry = () => {
+      if (this.isActive && !this.panel().nativeElement.contains(this.document.activeElement)) {
+        this.focusFirst(attempt);
+      }
+    };
+
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(retry);
+    } else {
+      setTimeout(retry, 16);
+    }
   }
 
   private focusable(): HTMLElement[] {

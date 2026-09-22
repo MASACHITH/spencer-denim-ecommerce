@@ -62,6 +62,18 @@ a { color: inherit; }
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+
+  /* Lesson L3. `transition-property` defaults to `all`, so the blanket rule above puts every
+     animatable property — including the inherited `visibility` that reveals a drawer — on a
+     0.01ms transition. An element that is being revealed has to be focusable in the same frame,
+     or moving focus into it silently does nothing. A drawer therefore never transitions at all
+     under reduced motion. The rule is global rather than scoped to the component because a
+     drawer's contents are projected, and projected nodes carry the projecting component's
+     style scope, not the drawer's. */
+  .sd-drawer,
+  .sd-drawer * {
+    transition: none !important;
+  }
 }
 
 /* ==========================================================================
