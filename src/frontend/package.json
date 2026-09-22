@@ -15,7 +15,8 @@
     "build:storefront": "ng build storefront",
     "build:admin": "ng build admin",
     "build:all": "ng build shared && ng build storefront && ng build admin",
-    "test:ci": "ng test shared --watch=false && ng test storefront --watch=false && ng test admin --watch=false"
+    "test:ci": "ng test shared --watch=false && ng test storefront --watch=false && ng test admin --watch=false",
+    "test:e2e": "npm run build:storefront && playwright test"
   },
   "prettier": {
     "printWidth": 100,
@@ -50,6 +51,7 @@
     "@angular/cli": "^21.1.4",
     "@angular/compiler-cli": "^21.1.0",
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "1.62.0",
     "@types/express": "^5.0.1",
     "@types/node": "^24.13.5",
     "angular-eslint": "21.4.0",
