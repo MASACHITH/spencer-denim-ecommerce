@@ -179,18 +179,23 @@ export type NewsletterState = 'idle' | 'coming-soon';
     .site-footer__col ul {
       list-style: none;
     }
-    .site-footer__col a {
-      display: inline-flex;
+    /* The link fills its row, so the tap target is the full column width rather than the few
+       characters of the label ("Men" measured 28px wide). Social icons keep the icon-button
+       shape and are already 44 x 44. */
+    .site-footer__col a:not(.icon-btn) {
+      display: flex;
       align-items: center;
       min-height: var(--tap);
+      min-width: var(--tap);
+      max-width: 100%;
       font-size: var(--text-small);
       text-decoration: none;
+      overflow-wrap: anywhere;
     }
-    .site-footer__col a:hover {
+    .site-footer__col a:not(.icon-btn):hover {
       text-decoration: underline;
       text-underline-offset: 4px;
     }
-    .site-footer__col a,
     .site-footer__address span {
       max-width: 100%;
       min-width: 0;
