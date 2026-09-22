@@ -20,13 +20,15 @@ The repository is **private** and contains client contracts and pricing. Don't f
 | Node.js | **24** (npm 11) | `node -v` |
 | SQL Server **LocalDB** | 2019+ | `sqllocaldb info MSSQLLocalDB` — comes with SQL Server Express or the SSMS installer |
 | Git | 2.4x | `git --version` |
-| GitHub CLI | 2.x | `gh --version`, then `gh auth login` |
+| GitHub CLI | 2.x | `winget install --id GitHub.cli -e`, open a new terminal, then `gh auth login` and `gh auth setup-git`. No CLI? Use a fine-grained token instead: [docs/09 §2a](09-git-and-repository-rules.md#2a-first-time-setup-on-a-new-machine) |
 | An editor | VS Code or Visual Studio 2026 | |
 | SSMS or VS Code "SQL Server (mssql)" | optional, for looking in the database | |
 
 Docker is deferred (task W0-15) because the office firewall blocks it. Don't install it for this project.
 
 ## 3. Clone and configure
+
+You push with **your own GitHub account**; the owner has already given you Write access ([docs/09 §1b](09-git-and-repository-rules.md)). If cloning asks for a username and password, set up credentials first: [docs/09 §2a](09-git-and-repository-rules.md#2a-first-time-setup-on-a-new-machine).
 
 ```powershell
 git clone https://github.com/MASACHITH/spencer-denim-ecommerce.git

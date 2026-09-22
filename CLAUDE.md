@@ -7,11 +7,12 @@ Spencer Denim fashion e-commerce platform (client: Spencer Denim Industries Pvt 
 
 Read first, in this order: `MEMORY.md` → `TASKS.md` → `docs/02-scope-baseline.md`. Read other docs in `docs/` as needed.
 
-## ⛔ Git: personal account only
-- Push **only** to `https://github.com/MASACHITH/spencer-denim-ecommerce` (private) with GitHub account **MASACHITH**.
-- `destinity-sachithm` is the user's **office** account. **Never** push this project with it, and **never** run `gh auth switch --user destinity-sachithm` unless the user explicitly asks.
-- Before any push: show `gh auth status` (MASACHITH must be active) and `git remote -v`. After the push, report which account and repo it went to.
-- Repo-local identity only (MASACHITH / sachithishara1@gmail.com). Never change global git config.
+## ⛔ Git: this repository only, approved accounts only
+- Push **only** to `https://github.com/MASACHITH/spencer-denim-ecommerce` (private). Never to a fork, a personal copy, or any office organisation.
+- **Approved contributors** (their own accounts): `MASACHITH` (owner), `tharanganuwan`. List and how to add someone: `docs/09` §1b.
+- `destinity-sachithm` is an **office** account. **Never** push this project with it, and **never** run `gh auth switch --user destinity-sachithm` unless the user explicitly asks.
+- Before any push: show `gh auth status` (if the CLI is installed) and `git remote -v`. After the push, report which account and repo it went to.
+- Repo-local identity only (each person's own name and GitHub email). Never change global git config.
 - The pre-push hook `tools/git-hooks/pre-push` enforces this (`core.hooksPath`). Never use `--no-verify`.
 - Full rules: `docs/09-git-and-repository-rules.md`.
 
