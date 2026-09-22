@@ -63,3 +63,126 @@ a { color: inherit; }
     scroll-behavior: auto !important;
   }
 }
+
+/* ==========================================================================
+   Design-system utility classes (design/style-tile §03, §04, §13).
+   These are shared by components across both apps, so they live here rather than
+   being repeated in every component's scoped styles.
+   ========================================================================== */
+
+/* ---- Typography helpers ---- */
+.label {
+  font-size: var(--text-label);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  line-height: 1.4;
+}
+.t-small { font-size: var(--text-small); line-height: 1.5; }
+.muted { color: var(--color-text-muted); }
+.text-sale { color: var(--color-sale); }
+
+.wordmark {
+  font-size: 1rem;
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-wordmark);
+  text-transform: uppercase;
+  line-height: 1.2;
+  text-decoration: none;
+  color: inherit;
+}
+
+/* ---- Buttons and links ---- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  min-height: 48px;
+  padding: var(--space-1-5) var(--space-4);
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius);
+  background: transparent;
+  font-size: var(--text-button);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  line-height: 1.2;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background-color var(--duration) var(--ease), color var(--duration) var(--ease),
+    border-color var(--duration) var(--ease);
+}
+.btn--primary { background: var(--color-primary); color: var(--color-on-primary); }
+.btn--primary:hover:not(:disabled) { background: var(--color-primary-hover); border-color: var(--color-primary-hover); }
+.btn--secondary { color: var(--color-primary); }
+.btn--secondary:hover:not(:disabled) { background: var(--color-primary); color: var(--color-on-primary); }
+.btn:disabled {
+  background: var(--color-border);
+  border-color: var(--color-border);
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+}
+.btn--block { width: 100%; }
+
+.link {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 4px;
+}
+.link:hover { text-decoration-thickness: 2px; }
+
+/* ---- Icon button and count badge ---- */
+.icon-btn {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: var(--tap);
+  height: var(--tap);
+  flex: none;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--color-text);
+  text-decoration: none;
+  cursor: pointer;
+}
+.icon-btn:hover { background: var(--color-bg-alt); }
+
+/* Style tile QA r2 carry-forward: a count badge never wraps. */
+.count {
+  position: absolute;
+  top: 5px;
+  right: 2px;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+  font-size: 0.6875rem;
+  font-weight: var(--weight-medium);
+  line-height: 17px;
+  text-align: center;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Skip link ---- */
+.skip-link {
+  position: absolute;
+  left: var(--space-2);
+  top: var(--space-2);
+  z-index: 200;
+  padding: var(--space-1-5) var(--space-2);
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+  text-decoration: none;
+  transform: translateY(-200%);
+}
+.skip-link:focus { transform: none; }
+
+/* ---- Modal helper: the page behind an open drawer must not scroll ---- */
+body.sd-no-scroll { overflow: hidden; }
