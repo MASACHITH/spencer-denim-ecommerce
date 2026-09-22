@@ -101,6 +101,17 @@ Each developer runs their own session, in their own clone or worktree. Sessions 
 
 **Two sessions must never** work in the same folder at the same time. Use separate clones, or `git worktree add` for a second branch ([09](09-git-and-repository-rules.md) §5b).
 
+**How sessions "talk" to each other.** They can't message each other directly, so everything goes through GitHub and the repo:
+| Purpose | Channel |
+|---|---|
+| "I'm taking this" | Assign the GitHub issue to yourself, before branching |
+| "Here's where I got to" | Comment on that issue at the end of your session |
+| "Heads-up for whoever works next" | `docs/journal/YYYY-MM-DD-<name>.md` |
+| "This affects your area" | Comment on the other person's issue or PR, and mention it in chat |
+| "What is in flight right now?" | `gh issue list --assignee "*"`, `git branch -r`, and the newest journal files |
+
+Machine setup and session handoff: [14 — Multi-session coordination](14-multi-session-coordination.md).
+
 ## 9. Communication
 
 | Need | Where |
