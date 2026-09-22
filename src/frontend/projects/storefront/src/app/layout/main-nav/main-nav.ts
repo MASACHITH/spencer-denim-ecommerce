@@ -122,8 +122,13 @@ import { NavItem, hasMenu } from '../../core/navigation/navigation.model';
       display: flex;
       flex-wrap: nowrap;
       justify-content: center;
-      gap: 0 var(--space-3);
+      gap: 0 var(--space-2);
       list-style: none;
+    }
+    @media (min-width: 1440px) {
+      .site-nav__list {
+        gap: 0 var(--space-4);
+      }
     }
     .site-nav__item {
       position: static;

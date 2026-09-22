@@ -120,7 +120,9 @@ export type NewsletterState = 'idle' | 'coming-soon';
       display: block;
     }
     .site-footer {
-      padding-block: var(--space-6) var(--space-4);
+      /* The bottom padding clears the floating WhatsApp button (56px + its offset), so the
+         legal line is never hidden behind it at the foot of the page. */
+      padding-block: var(--space-6) calc(var(--space-4) + 56px);
       background: var(--color-bg-alt);
       border-top: 1px solid var(--color-border);
     }
@@ -167,6 +169,13 @@ export type NewsletterState = 'idle' | 'coming-soon';
       margin-bottom: var(--space-1);
       color: var(--color-text-muted);
     }
+    .site-footer__col {
+      min-width: 0;
+    }
+    /* Contact details are the longest strings in the footer; give them the full row on phones. */
+    .site-footer__col:last-child {
+      grid-column: 1 / -1;
+    }
     .site-footer__col ul {
       list-style: none;
     }
@@ -181,13 +190,20 @@ export type NewsletterState = 'idle' | 'coming-soon';
       text-decoration: underline;
       text-underline-offset: 4px;
     }
+    .site-footer__col a,
+    .site-footer__address span {
+      max-width: 100%;
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
     .site-footer__address {
       display: grid;
       font-size: var(--text-small);
       font-style: normal;
     }
     .site-footer__contact-link {
-      gap: var(--space-0-5);
+      flex-wrap: wrap;
+      gap: 0 var(--space-0-5);
     }
     .site-footer__hours {
       list-style: none;
@@ -215,11 +231,17 @@ export type NewsletterState = 'idle' | 'coming-soon';
         grid-column: 1 / -1;
       }
       .site-footer__columns {
-        grid-template-columns: repeat(4, minmax(0, 1fr));
         gap: var(--space-4);
+      }
+      .site-footer__col:last-child {
+        grid-column: auto;
       }
     }
     @media (min-width: 1024px) {
+      /* Four columns only when each is wide enough for a full email address on one line. */
+      .site-footer__columns {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+      }
       .site-footer__legal {
         display: flex;
         justify-content: space-between;

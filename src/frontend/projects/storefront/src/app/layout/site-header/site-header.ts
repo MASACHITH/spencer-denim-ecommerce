@@ -75,7 +75,7 @@ import { StorefrontCounts } from '../../core/storefront-counts.service';
               <sd-icon name="search" />
             </button>
 
-            <a class="icon-btn" routerLink="/account">
+            <a class="icon-btn site-header__account" routerLink="/account">
               <sd-icon name="user" />
               <span class="sr-only">Account</span>
             </a>
@@ -113,46 +113,54 @@ import { StorefrontCounts } from '../../core/storefront-counts.service';
     </header>
   `,
   styles: `
+    /* The host is what sticks: a sticky element can only travel inside its own containing
+       block, and .site-header's parent is exactly its own height. Sticking the host lets it
+       travel the height of the page shell instead, with no layout shift. */
     :host {
       display: block;
-    }
-    .site-header {
       position: sticky;
       top: 0;
       z-index: 80;
+    }
+    .site-header {
       background: var(--color-surface);
       border-bottom: 1px solid var(--color-border);
     }
+    /* Phones and tablets: menu | wordmark | tools on one row, the district strip below.
+       A grid, not a wrapping flex row, so the icons can never be pushed onto a second line. */
     .site-header__inner {
-      display: flex;
-      flex-wrap: wrap;
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
       align-items: center;
-      gap: 0 var(--space-1);
+      column-gap: var(--space-1);
       padding-block: var(--space-0-5);
     }
+    .site-header__menu {
+      grid-area: 1 / 1;
+    }
     .site-header__wordmark {
+      grid-area: 1 / 2;
       display: inline-flex;
       align-items: center;
-      order: 2;
-      flex: 1 1 auto;
       justify-content: center;
+      min-width: 0;
       min-height: var(--tap);
-      font-size: 0.8125rem;
-      letter-spacing: 0.18em;
+      font-size: 0.75rem;
+      letter-spacing: 0.16em;
       text-align: center;
     }
-    .site-header__menu {
-      order: 1;
-    }
     .site-header__tools {
-      order: 3;
+      grid-area: 1 / 3;
       display: flex;
       align-items: center;
       justify-content: flex-end;
     }
+    /* The drawer already offers Sign in / Register, so the icon would only crowd the row. */
+    .site-header__account {
+      display: none;
+    }
     .site-header__district {
-      order: 4;
-      flex-basis: 100%;
+      grid-area: 2 / 1 / 2 / 4;
       justify-content: center;
       padding-block: var(--space-0-5);
       border-top: 1px solid var(--color-border);
@@ -168,15 +176,17 @@ import { StorefrontCounts } from '../../core/storefront-counts.service';
 
     @media (min-width: 1024px) {
       .site-header__inner {
-        gap: 0 var(--space-3);
+        display: flex;
+        flex-wrap: nowrap;
+        column-gap: var(--space-2);
         padding-block: var(--space-1);
         min-height: 72px;
       }
+      .site-header__district {
+        min-width: 0;
+      }
       .site-header__menu {
         display: none;
-      }
-      sd-main-nav {
-        order: 2;
       }
       .site-header__wordmark {
         order: 1;
@@ -185,14 +195,25 @@ import { StorefrontCounts } from '../../core/storefront-counts.service';
         letter-spacing: var(--tracking-wordmark);
         white-space: nowrap;
       }
+      sd-main-nav {
+        order: 2;
+      }
       .site-header__district {
         order: 3;
-        flex-basis: auto;
         padding-block: 0;
         border-top: 0;
       }
       .site-header__tools {
         order: 4;
+      }
+      .site-header__account {
+        display: inline-grid;
+      }
+    }
+
+    @media (min-width: 1440px) {
+      .site-header__inner {
+        column-gap: var(--space-3);
       }
     }
 
