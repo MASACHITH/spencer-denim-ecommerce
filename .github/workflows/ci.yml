@@ -158,18 +158,29 @@ jobs:
 
       # Browser tests catch what jsdom cannot see: reduced-motion focus handling,
       # real layout at each breakpoint, and touch-target sizes. See docs/06 §4.
+      # Browsers are keyed to the exact Playwright version, so the lockfile is a reliable cache key.
+      - name: Cache Playwright browser
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('src/frontend/package-lock.json') }}
+
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
 
       - name: Browser tests (storefront shell)
         run: npx playwright test
 
-      - name: Upload Playwright report on failure
+      - name: Upload Playwright report and traces on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report
-          path: src/frontend/playwright-report
+          path: |
+            src/frontend/playwright-report
+            src/frontend/test-results
+          if-no-files-found: ignore
           retention-days: 7
 
       - name: SSR smoke test
