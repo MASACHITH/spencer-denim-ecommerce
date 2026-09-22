@@ -1,8 +1,12 @@
 # 08 — Database Design
 
-Last updated: 2026-09-15 · Status: **Revision 4.** Review rounds 1 (DB1–DB30, simplifications, traceability), 2 (N1–N17) and 3 (R1–R12; R11 is fixed in docs 02/03) applied. · Inputs: [01](01-project-understanding.md), [02](02-scope-baseline.md), [03](03-architecture-and-tech-stack.md), demo catalogue/filters (`../tuasl-fashion/js/products.js`, `filters.js`).
+Last updated: 2026-09-22 · Status: **Revision 5.** Review rounds 1 (DB1–DB30, simplifications, traceability), 2 (N1–N17) and 3 (R1–R12; R11 is fixed in docs 02/03) applied. · Inputs: [01](01-project-understanding.md), [02](02-scope-baseline.md), [03](03-architecture-and-tech-stack.md), demo catalogue/filters (`../tuasl-fashion/js/products.js`, `filters.js`).
 
 Design only. No application code. SQL fragments illustrate intent and are not final DDL. Items marked **(verify)** are unconfirmed and are checked in the week-0 spike. Items deferred from v1 are listed in **Appendix A**.
+
+**Revision history**
+- **Revision 5 — 2026-09-22.** Review-driven changes from the business-process review ([11](11-business-processes.md)), resolving gaps G-03, G-06, G-09, G-11, G-13, G-17b, G-18, G-23 and G-30: the System can no longer cancel an order (§4.1); `sales.Refunds.CreatedByUserId` is nullable so a provider webhook can create a refund (§3.5); money received on a bank transfer for an Expired or Cancelled order can now be refunded (§4.1, §4.3); auto-deliver skips PICKUP orders (§4.1); PDPA anonymisation is keyed by `EmailNormalized` and blocked by open orders (§3.1); `EmailConfirmation` added to the outbox templates with immediate body deletion (§3.8); PayPal-dashboard refunds have a defined effect on the order (§4.3); the promo discount is clamped so the grand total never falls below Rs. 1.00 (§6); `content.ContactSubmissions` permissions named (§3.7); `DashboardRefund` and `EmailDeliveryFailed` added to `ops.AdminAlerts` (§3.8).
+- **Revision 4 — 2026-09-15.** Review round 3 (R1–R12) applied; build-time notes in **Appendix B**.
 
 ## 1. Overview and principles
 
@@ -378,6 +382,10 @@ Identity standard tables, renamed into `identity`. UserClaims and UserLogins sta
 
 #### PDPA anonymisation (G10; permission `Customers.Delete`)
 One transaction, after staff verify the request.
+
+**Keyed by `EmailNormalized`, not by user (G-17b).** The routine takes the normalised email address as its input, so a **guest** who never created an account — and therefore has no `identity.Users` row — can still be anonymised: steps 2–6 match on `EmailNormalized` (and on `CustomerUserId` as well when a `Users` row exists). Step 1 is skipped when there is no user row.
+
+**Precondition — an open order blocks anonymisation (G-30).** The request is **refused** while the email has any order in `Status IN (0 PendingPayment, 1 Paid, 2 Processing, 3 Shipped)`: those orders are still being fulfilled and need the real name, phone and address. The error names the blocking order numbers, e.g. *"Cannot anonymise: orders SD-2026-000431, SD-2026-000512 are still open. Complete, cancel or let them expire first."* **`4 Delivered` does not block** (the order is finished; the invoice bill-to is preserved separately by `Privacy.RetainInvoiceBillTo`), and neither do `5 Cancelled`, `6 Expired` or `7 Refunded`.
 
 **Audit suppression (R3):** every PII change below is a set-based `ExecuteUpdate` / `ExecuteDelete`. These bypass the `SaveChanges` audit interceptor, so **no Users or Orders before/after diff** holding the real email, phone or name is written, and no `EmailChanged` event is raised. The only new audit row is step 7.
 1. **Users:** Email and UserName become `anon-{Id}@anonymised.invalid` (normalised columns too). PhoneNumber, LastName, PasswordHash and DefaultDistrictId are set to NULL, FirstName to `Anonymised`, and SecurityStamp is regenerated. `IsActive = 0`, `LockoutEnd = max`, and `AnonymisedAtUtc` is set.
@@ -1036,7 +1044,7 @@ Stock is **not** reserved in the cart. The cart row is created on the first Add 
 | Status | tinyint | N | 0 Pending, 1 Completed, 2 Failed. CK |
 | Reason | nvarchar(500) | N | |
 | RestockItems | bit | N | **Input to the Refunded transition (R6):** read when that transition runs, either immediately or later from the PayPal `PAYMENT.CAPTURE.REFUNDED` webhook. Only whole-order restock is guarded (`StockState 1 → 3`); future partial restocks need their own per-line guard |
-| CreatedByUserId | int | N | |
+| CreatedByUserId | int | **Y** | **NULL = system (provider webhook)**, the same convention as `InventoryMovements.CreatedByUserId`. A refund initiated in the PayPal dashboard reaches us only as `PAYMENT.CAPTURE.REFUNDED`, with no staff user behind it, so the column must be nullable for that row to persist (G-23) |
 | CreatedAtUtc / CompletedAtUtc | datetime2(3) | N/Y | |
 - `IX (CompletedAtUtc) WHERE Status = 1`.
 - **v1 UI refunds the full payment only (D6).** The schema (`OrderLines.RefundedQuantity`, multiple Refund rows) already supports partial refunds.
@@ -1207,6 +1215,10 @@ Stock is **not** reserved in the cart. The cart row is created on the first Add 
 | CreatedAtUtc | datetime2(3) | N | |
 - `IX (Status, CreatedAtUtc DESC)`.
 - Retention: 2 years.
+- **Permissions (G-06).** Contact submissions are customer data, so they are governed by the **Customers** module, not by Content:
+  - **`Customers.View`** — list and read submissions (including the message body, `Email`, `Phone` and `IpAddress`).
+  - **`Customers.Edit`** — change `Status` (New → Read → Replied) and mark a submission as **Spam (3)**; this sets `HandledByUserId` / `HandledAtUtc`.
+  - **`Customers.Delete`** — delete a submission. The one case where deletion is expected is a submission in which the customer has pasted **card or bank account details** into the free-text `Message`: it must be removed rather than merely hidden. The delete is audited (`EntityType = 'ContactSubmission'`) with the reason, and the audit row holds **no copy of the message body**.
 
 ### 3.8 `ops` and `analytics`
 
@@ -1288,12 +1300,12 @@ EF Core standard table (`Id`, `FriendlyName`, `Xml`), never purged or audited.
 | Column | Type | Null | Notes |
 |---|---|---|---|
 | Id | bigint | N | PK |
-| TemplateCode | varchar(50) | N | `Welcome`, `OrderPlaced`, `BankTransferInstructions`, `PaymentConfirmed`, `OrderShipped`, `OrderExpired`, `PasswordReset`, `StaffInvite`, `AccountExists`, **`SensitiveSettingsChanged`**, **`PaymentException`**, **`CaptureRecoveryFailed`**, **`BreakGlassUsed`**, **`ReconciliationDrift`**, **`StaffEmailChanged`**. **No UI or API can cancel or delete security alert emails** (`SensitiveSettingsChanged`, `BreakGlassUsed`, `StaffEmailChanged`); they can only be retried (R5) |
+| TemplateCode | varchar(50) | N | `Welcome`, **`EmailConfirmation`** (G-03: the confirm-your-email link, required before guest orders can be linked — D5, 11 P11), `OrderPlaced`, `BankTransferInstructions`, `PaymentConfirmed`, `OrderShipped`, `OrderExpired`, `PasswordReset`, `StaffInvite`, `AccountExists`, **`SensitiveSettingsChanged`**, **`PaymentException`**, **`CaptureRecoveryFailed`**, **`BreakGlassUsed`**, **`ReconciliationDrift`**, **`StaffEmailChanged`**. **No UI or API can cancel or delete security alert emails** (`SensitiveSettingsChanged`, `BreakGlassUsed`, `StaffEmailChanged`); they can only be retried (R5) |
 | DeduplicationKey | varchar(150) | Y | Filtered UX |
 | TransportOverrideProtected | nvarchar(max) | Y | Data Protection ciphertext (dedicated purpose `SpencerDenim.EmailOutbox.SmtpOverride.v1`) of an SMTP configuration to use instead of the current one. Used only for the previous-configuration copy of `SensitiveSettingsChanged` (N2). **NULLed on any terminal status** (Sent, Dead, Cancelled; R5). Never audited |
 | ToEmail / ToName | nvarchar(256) / nvarchar(120) | N/Y | |
 | Subject | nvarchar(200) | N | |
-| BodyHtml / BodyText | nvarchar(max) | Y | NULLed after 30 days, or immediately after sending for PasswordReset |
+| BodyHtml / BodyText | nvarchar(max) | Y | NULLed after 30 days, or **immediately after sending for `PasswordReset` and `EmailConfirmation`** — both carry a single-use token in the link, so the body must not sit in the outbox table or in a backup (G-03) |
 | RelatedEntityType / RelatedEntityId | varchar(40) / varchar(100) | Y | |
 | Status | tinyint | N | 0 Pending, 1 Sending, 2 Sent, 3 Failed, 4 Dead, 5 Cancelled. CK |
 | AttemptCount / MaxAttempts | smallint | N | |
@@ -1308,7 +1320,7 @@ EF Core standard table (`Id`, `FriendlyName`, `Xml`), never purged or audited.
 | Column | Type | Null | Notes |
 |---|---|---|---|
 | Id | int | N | PK |
-| AlertType | varchar(40) | N | `SensitiveSettingsChanged`, `PaymentException`, `CaptureRecoveryFailed`, `ReconciliationDrift`, `BreakGlassUsed` |
+| AlertType | varchar(40) | N | `SensitiveSettingsChanged`, `PaymentException`, `CaptureRecoveryFailed`, `ReconciliationDrift`, `BreakGlassUsed`, **`DashboardRefund`** (a refund made in the PayPal dashboard; stock may need a manual adjustment — §4.3, G-23), **`EmailDeliveryFailed`** (one or more outbox rows reached status 4 Dead; 11 G-37) |
 | Severity | tinyint | N | 1 Info, 2 Warning, 3 Critical. CK |
 | Title | nvarchar(200) | N | |
 | DetailsJson | nvarchar(max) | Y | Keys, entity IDs, amounts; never secret values. CK ISJSON |
@@ -1380,7 +1392,7 @@ stateDiagram-v2
   [*] --> PendingPayment : Place order
   PendingPayment --> Paid : Orders.Approve (bank) / System (PayPal capture)
   PendingPayment --> Expired : System (due passed, no capture lock)
-  PendingPayment --> Cancelled : Orders.Edit / customer (own) / System (payment failed)
+  PendingPayment --> Cancelled : Orders.Edit / customer (own)
   Expired --> Paid : Orders.Approve (late payment, stock re-check)
   Cancelled --> Paid : Orders.Approve (exception payment accepted, stock re-check)
   Paid --> Processing : Orders.Edit
@@ -1390,8 +1402,8 @@ stateDiagram-v2
   Processing --> Refunded : Orders.Refund
   Shipped --> Refunded : Orders.Refund
   Delivered --> Refunded : Orders.Refund
-  Expired --> Refunded : Orders.Refund (exception payment refunded)
-  Cancelled --> Refunded : Orders.Refund (exception payment refunded)
+  Expired --> Refunded : Orders.Refund (exception payment or money received refunded)
+  Cancelled --> Refunded : Orders.Refund (exception payment or money received refunded)
 ```
 
 | From → To | Actor / permission | Guard (inside the conditional UPDATE or transaction) | Side effects (same transaction) |
@@ -1399,13 +1411,14 @@ stateDiagram-v2
 | — → PendingPayment | Customer or guest | Every line reserved; promo total limit and per-customer applock pass | Order (`StockState = 0`), lines, Reserve movements, Payment (bank: Pending; PayPal: Initiated), `UsageCount + 1`, history, `OrderPlaced` (+ `BankTransferInstructions`) |
 | PendingPayment → Paid | `Orders.Approve` (bank) or System (PayPal) | `Status = 0 AND StockState = 0` | **Paid effects:** deduct per line (§5.5), `StockState = 1`, settlement payment `Succeeded` + `IsOrderSettlement = 1`, gapless `InvoiceNumber` + seller snapshot, `PaidAtUtc`, clear `CaptureLockedUntilUtc`, history, `PaymentConfirmed` |
 | PendingPayment → Expired | System (`ExpireUnpaidOrders`, every 5 min) | `Status = 0 AND StockState = 0 AND PaymentDueAtUtc < now AND (CaptureLockedUntilUtc IS NULL OR CaptureLockedUntilUtc < now)` | Release per line (§5.6), `StockState = 2`, `UsageCount − 1`, open payments (0/1) → Expired, `ClosedAtUtc`, `OrderExpired` |
-| PendingPayment → Cancelled | `Orders.Edit`; customer (own order); System (PayPal DENIED with no retry) | Same capture-lock guard as expiry; no settlement payment. **If a PayPal payment is Pending (R1, decision):** customers and `Orders.Edit` are **blocked**. Only **`Orders.Approve`** can cancel, after an **explicit warning** that a late capture will arrive as a payment exception needing a refund | As Expired, reason Cancelled; the open payment → Cancelled |
+| PendingPayment → Cancelled | `Orders.Edit`; customer (own order). **Never the System** (G-09): a DENIED PayPal capture only shortens `PaymentDueAtUtc` (R2), and the order then reaches **Expired**, not Cancelled | Same capture-lock guard as expiry; no settlement payment. **If a PayPal payment is Pending (R1, decision):** customers and `Orders.Edit` are **blocked**. Only **`Orders.Approve`** can cancel, after an **explicit warning** that a late capture will arrive as a payment exception needing a refund | As Expired, reason Cancelled; the open payment → Cancelled |
 | Expired / Cancelled → Paid (**DB8**) | `Orders.Approve` | `Status IN (5,6) AND StockState = 2`. Stock re-acquired with a conditional deduct (`OnHand − Reserved ≥ q`); any line failing rolls back the whole approval | Sale movements, `StockState = 1`. **Promo:** the use is restored with `UsageCount + 1` **ignoring TotalUsageLimit** and the per-customer limit (the order holds its use again, §3.6). **Payment (N7, same rule as §4.3):** for a bank transfer, the order's latest bank payment row moves `Expired → Succeeded` (or `Pending → Succeeded` for a resubmission made after a rejection); for PayPal, the exception payment moves `7 → 3`. Both set `IsOrderSettlement = 1`, guarded by `NOT EXISTS` on another settlement. A payment with `FailureCode = 'AMOUNT_MISMATCH'` can't be accepted, only refunded (R9). **Invoice:** a new gapless number issued now. `PaidAtUtc = now`, so revenue lands on the approval date. **Customer statistics:** nothing to update (computed live, §3.1). `ClosedAtUtc = NULL`, history note "late payment accepted", `PaymentConfirmed` |
 | Paid → Processing | `Orders.Edit` | `Status = 1` | — |
 | Processing → Shipped | `Orders.Edit` | `Status = 2`; CourierId and TrackingNumber required unless PICKUP (then Shipped = "Ready for collection") | `ShippedAtUtc`, `OrderShipped` |
-| Shipped → Delivered | `Orders.Edit`, or System (`AutoDeliverShipped`, daily) | `Status = 3`; the System path also requires `ShippedAtUtc < now − Orders.AutoDeliverAfterDays` (default 7, D4) | `DeliveredAtUtc`. Enables "Verified buyer" |
+| Shipped → Delivered | `Orders.Edit`, or System (`AutoDeliverShipped`, daily) | `Status = 3`; the System path also requires `ShippedAtUtc < now − Orders.AutoDeliverAfterDays` (default 7, D4) **AND `DeliveryMethodCode <> 'PICKUP'`** (G-18). For PICKUP, "Shipped" only means *ready for collection*, so an uncollected order must never be auto-marked Delivered — that would also hand out a false "Verified buyer" badge. Pickup orders are marked Delivered by staff (`Orders.Edit`) when the customer collects | `DeliveredAtUtc`. Enables "Verified buyer" |
 | Paid / Processing / Shipped / Delivered → Refunded | **`Orders.Refund`** (DB9) | Conditional UPDATE `Status IN (1,2,3,4) AND StockState = 1`; completed refunds = settlement payment amount (full refund, D6) | Refund row(s), settlement payment → Refunded, `RefundedAmount`, `ClosedAtUtc`. **Restock happens only inside this transition (N8):** with restock the UPDATE sets `StockState = 3` and OnHand is added back per line; without restock `StockState` stays 1. A repeated or duplicate refund finds `Status = 7` (0 rows), so stock can't be restocked twice. `UsageCount` unchanged |
 | Expired / Cancelled → Refunded (**DB1**) | **`Orders.Refund`** | Every `CapturedRequiresRefund` payment on the order refunded | Refund row(s), payment 7 → 9, no stock effect, `ClosedAtUtc`, history note "payment exception refunded" |
+| Expired / Cancelled → Refunded, **money received on a bank transfer** (**G-13**) | **`Orders.Refund`** | `Status IN (5,6)` and the order's latest **bank transfer** payment is in status **6 Expired** or **1 Pending**. The staff member must supply a **mandatory reason** and the **bank reference** of the outgoing transfer. No PayPal payment may be in 2 Capturing | One `Refunds` row with `Method = 2 (Manual bank transfer)`, `Status = 1 Completed`; that payment → **9 Refunded**; **no stock effect** (the stock was already released at expiry or cancel); `ClosedAtUtc`; history note "money received for an unpaid order refunded". **`Orders.RefundedAmount` stays 0**, because the payment was never a settlement (`IsOrderSettlement = 0`) |
 - Orders never move backwards (e.g. Shipped → Processing). Corrections use `InternalNote` plus a history note.
 - An order that is already Paid and receives a **duplicate** capture keeps its status. Only the extra payment is refunded (7 → 9); `Orders.RefundedAmount` is unaffected.
 
@@ -1473,6 +1486,8 @@ stateDiagram-v2
   Pending --> Cancelled : Orders.Edit / customer (bank) · Orders.Approve only, with warning (PayPal PENDING, R1)
   Expired --> Succeeded : Orders.Approve (late bank transfer)
   Expired --> CapturedRequiresRefund : System (late PayPal COMPLETED)
+  Expired --> Refunded : Orders.Refund (bank money received, order not paid, G-13)
+  Pending --> Refunded : Orders.Refund (bank money received, order not paid, G-13)
   Failed --> Succeeded : System (late PayPal COMPLETED, order still payable, R1)
   Failed --> CapturedRequiresRefund : System (late PayPal COMPLETED, order not payable, R1)
   Cancelled --> Succeeded : System (late PayPal COMPLETED, order still payable, R1)
@@ -1487,9 +1502,18 @@ stateDiagram-v2
   - A resubmission while Pending **updates the open row**.
   - After a rejection (`Pending → Failed`, row closed), a resubmission creates a **new** Pending row.
   - **Late approval:** the Expired bank row itself moves `Expired → Succeeded`, the same rule as the §4.1 table.
+  - **Money received but the order is not revived (G-13).** When the customer paid into the bank account for an order that is now **Expired (6)** or **Cancelled (5)** and the order is *not* approved — the stock is gone, the customer no longer wants it, or the amount is wrong — staff refund the money from the system with **`Orders.Refund`**. The bank payment row moves **`Expired (6) → Refunded (9)`**, or **`Pending (1) → Refunded (9)`** when the slip was submitted before the deadline but never approved. A `Refunds` row is written with `Method = 2 (Manual bank transfer)`, `Status = 1 Completed`, a **mandatory `Reason`** and the **bank reference of the outgoing transfer** (recorded in `Reason`, or in the order's `InternalNote` when the reason field is used for the customer-facing explanation). There is **no stock effect** — the reservation was released when the order expired or was cancelled — and **`Orders.RefundedAmount` stays 0**, because `IsOrderSettlement = 0`: nothing was ever settled. The order moves to **Refunded** (§4.1). Without this path, money physically received for an expired order could not be refunded in the system at all.
 - **Cancelling an unpaid order** closes its open payment (`Pending → Cancelled` or `Initiated → Cancelled`). If that payment is a PayPal PENDING capture, only `Orders.Approve` may cancel, with a warning (R1, §4.1).
 - **PENDING → DENIED (R2):** the payment moves `Pending → Failed` and the order's extended hold is cut back with `PaymentDueAtUtc = min(PaymentDueAtUtc, now + Orders.PayPalExpiryMinutes)`. The order then expires normally, releasing stock and the promo use, unless the buyer retries in time.
-- **Refunds made in the PayPal dashboard** arrive as `PAYMENT.CAPTURE.REFUNDED` (System). A Refund row is created if none matches `ProviderRefundId`.
+- **Refunds made in the PayPal dashboard (G-23).** They arrive as `PAYMENT.CAPTURE.REFUNDED` (System). A `Refunds` row is created if none matches `ProviderRefundId`, with `CreatedByUserId = NULL` (system, §3.5) and `Method = 3 (Manual other)` — the refund was not made through our provider API. **What happens to the order** depends on the amount, compared against the captured `ProviderAmount` of that payment:
+
+  | Webhook | Payment | Order | Also |
+  |---|---|---|---|
+  | **Full** refund (refunded total = captured amount) of the **settlement** payment (`IsOrderSettlement = 1`) | → **9 Refunded** | Run the **normal Refunded transition** (§4.1), with **`RestockItems = 0`** | `RefundedAmount` set, `ClosedAtUtc`, history note "refunded in the PayPal dashboard", the customer `OrderRefunded` email if that template is built (11 G-14), plus an **`AdminAlerts` `DashboardRefund`** telling staff to **adjust stock manually** if the goods came back |
+  | **Partial** refund (refunded total < captured amount) | → **8 PartiallyRefunded**, `RefundedAmount` increased by the refunded amount | **Unchanged** (v1 has no partial-refund order state, D6) | `AdminAlerts` `DashboardRefund` only. If later refunds bring the total up to the captured amount, that webhook is the full case above |
+  | Refund of a **non-settlement** payment (an exception, `IsOrderSettlement = 0`) | → **9 Refunded** | **Unchanged** | `Orders.RefundedAmount` unaffected (§3.5) |
+
+  Restock is deliberately **not** automatic here: nobody in the system decided whether the goods came back, so the alert asks a human. The event must be **signature-verified** like every other webhook (§4.2) before any of this runs.
 - **Permissions summary:**
 
   | Permission | Allows |
@@ -1597,7 +1621,7 @@ Prices are computed on every cart read and again at placement, then stored in th
 | 8 | Promo discount | Percent → `round(base × v/100)`, capped by `MaxDiscountAmount`; Fixed → `min(v, base)`; FreeDelivery → 0 here |
 | 9 | Allocation | Pro-rata by line subtotal over eligible lines, each share rounded to 2 dp. The remainder goes to the largest eligible line. A share never exceeds its line subtotal, so `LineTotal ≥ 0` |
 | 10 | Delivery (N4) | District → `DeliveryZone` → the `DeliveryMethodZoneRates` row, which must exist and be available. Fee = its `Fee`. The delivery discount = fee when its `FreeAboveAmount` is set and `items subtotal − promo ≥ FreeAboveAmount`, or when the promo type is FreeDelivery. Estimated days come from the same row |
-| 11 | Grand total | `items subtotal − promo + delivery fee − delivery discount` |
+| 11 | Grand total | `items subtotal − promo + delivery fee − delivery discount`. **Minimum-total clamp (G-11):** if that figure is below **Rs. 1.00**, the **promo discount is reduced** so the grand total is exactly Rs. 1.00 — `PromoDiscountAmount = max(0, items subtotal + delivery fee − delivery discount − 1.00)` — and step 9's allocation is re-run over the clamped amount. The customer sees "discount limited to the order total". This keeps every order payable through the existing bank-transfer and PayPal paths: **no zero-total order, and no new "no payment needed" path** |
 | 12 | Tax | VAT-inclusive; `TaxAmount = 0` (D2) |
 | 13 | PayPal amount (D1) | `USD = round(GrandTotal / LkrPerUsd × (1 + FxBufferPercent/100), 2)`, shown before redirect. Stored on the Payment |
 
