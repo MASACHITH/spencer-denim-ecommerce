@@ -1,6 +1,6 @@
 # 10 — Publishing the Client Progress Page (Task Sheet)
 
-Last updated: 2026-09-17 · Applies to: **the client progress page only** (`D:\Projects\e com\client-progress\`)
+Last updated: 2026-09-22 · Applies to: **the client progress page only** (`client-progress/` in this repository)
 
 > ⛔ This hosting is **only** for the client progress page. **Never upload the main project** (`spencer-denim-ecommerce`) or any other files here.
 > The e-commerce platform itself deploys to the Hostinger **VPS** with Docker ([03](03-architecture-and-tech-stack.md) §4).
@@ -22,7 +22,7 @@ Last updated: 2026-09-17 · Applies to: **the client progress page only** (`D:\P
 
 ## 2. How to publish (after every daily update)
 
-1. Update `client-progress/progress-data.js` as described in [07](07-client-progress-update-guide.md): statuses, progress, a new log line, and `lastUpdated`.
+1. Update `client-progress/progress-data.js` **in this repository** as described in [07](07-client-progress-update-guide.md): statuses, progress, a new log line, and `lastUpdated`. Commit it like any other change (a small `docs:`/`chore:` PR is fine, and the history then shows exactly what the client saw on each date).
 2. Run from the repo folder:
    ```powershell
    cd "D:\Projects\e com\spencer-denim-ecommerce"

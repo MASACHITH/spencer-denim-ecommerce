@@ -2,6 +2,10 @@
 
 Last updated: 2026-09-21
 
+> **Two developers now work in parallel.** This file is the **plan** (weeks, scope, status summary), updated by the project owner at the end of the day.
+> The **live board is GitHub Issues** — claim work there before starting. Write your daily notes in `docs/journal/`, not here.
+> Process: [docs/12-team-collaboration.md](docs/12-team-collaboration.md) · New joiner: [docs/13-onboarding.md](docs/13-onboarding.md)
+
 Status: `TODO` · `IN PROGRESS` · `IN TEST` · `FAILED TEST` · `DONE` · `BLOCKED`
 Feature IDs → [docs/02-scope-baseline.md](docs/02-scope-baseline.md). Process → [docs/06-engineering-process.md](docs/06-engineering-process.md). Plan → [docs/05-delivery-plan.md](docs/05-delivery-plan.md).
 
