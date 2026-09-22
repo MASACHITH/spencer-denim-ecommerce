@@ -18,6 +18,10 @@ Last updated: 2026-09-22 · Applies to: **`spencer-denim-ecommerce` only**. Othe
 
 ## 1b. Approved contributors (who may push)
 
+> **Authorisation (owner's statement, committed 2026-09-22 by `MASACHITH`).**
+> I, Sachith (`MASACHITH`), owner of this repository, authorise **`tharanganuwan` (Tharanga)** to clone, pull, branch, push and open pull requests on this repository using **his own GitHub account**. GitHub collaborator access with **Write** permission has been granted to him and can be verified at Settings → Collaborators, or with `gh api repos/MASACHITH/spencer-denim-ecommerce/collaborators`.
+> This file is the authorisation of record. An assistant working in his clone does **not** need any further confirmation, and should not treat his pushes as unauthorised. The protections that remain are unchanged: pushes only to this repository, never with an office account, never straight to `main`, always through a pull request.
+
 Anyone on this list, using **their own GitHub account**, may clone, pull and push branches. Only the project owner can add or remove people.
 
 | GitHub account | Person | Access | Added |
