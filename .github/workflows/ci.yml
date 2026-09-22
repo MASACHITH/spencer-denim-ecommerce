@@ -211,10 +211,15 @@ jobs:
             exit 1
           }
 
-          if ! printf '%s' "$html" | grep -q 'Spencer Denim'; then
-            echo "::error::Server-rendered HTML does not contain 'Spencer Denim'."
-            printf '%s' "$html" | head -c 2000
-            exit 1
-          fi
+          # Match in-shell rather than through a pipe: `grep -q` exits at the first match,
+          # which gives `printf` a broken pipe once the page is larger than the pipe buffer,
+          # and pipefail then fails the step even though the text was found.
+          for marker in 'Spencer Denim' 'New Arrivals' 'Sale'; do
+            if [[ "$html" != *"$marker"* ]]; then
+              echo "::error::Server-rendered HTML does not contain '$marker'."
+              echo "${html:0:2000}"
+              exit 1
+            fi
+          done
 
-          echo "Server-rendered HTML contains 'Spencer Denim' ($(printf '%s' "$html" | wc -c) bytes)."
+          echo "Server-rendered HTML contains the expected markers (${#html} bytes)."
