@@ -34,6 +34,14 @@
   --focus-width: 2.5px;                           /* draws at least 2 CSS px after pixel snapping */
   --tap: 44px;                                    /* minimum touch target */
 
+  /* ---- Brand exception: WhatsApp (docs/04 style-tile decision 6) ---- */
+  /* WhatsApp's darker brand green. The bright #25d366 gives only 1.9:1 against white,
+     which fails WCAG 2.2 AA non-text contrast (1.4.11) for both the button edge and the
+     white glyph on it. This green gives 4.1:1 for both. */
+  --color-whatsapp:       #128c7e;
+  --color-whatsapp-hover: #0e6f64;
+  --color-on-whatsapp:    #ffffff;
+
   /* ---- Type scale ---- */
   --text-display: clamp(2.5rem, 1.9rem + 3vw, 4.5rem);
   --text-h1: clamp(2rem, 1.7rem + 1.5vw, 3rem);

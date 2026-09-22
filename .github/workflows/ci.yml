@@ -156,6 +156,33 @@ jobs:
       - name: Build admin
         run: npm run build:admin
 
+      # Browser tests catch what jsdom cannot see: reduced-motion focus handling,
+      # real layout at each breakpoint, and touch-target sizes. See docs/06 §4.
+      # Browsers are keyed to the exact Playwright version, so the lockfile is a reliable cache key.
+      - name: Cache Playwright browser
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('src/frontend/package-lock.json') }}
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Browser tests (storefront shell)
+        run: npx playwright test
+
+      - name: Upload Playwright report and traces on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            src/frontend/playwright-report
+            src/frontend/test-results
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: SSR smoke test
         shell: bash
         run: |
@@ -184,10 +211,15 @@ jobs:
             exit 1
           }
 
-          if ! printf '%s' "$html" | grep -q 'Spencer Denim'; then
-            echo "::error::Server-rendered HTML does not contain 'Spencer Denim'."
-            printf '%s' "$html" | head -c 2000
-            exit 1
-          fi
+          # Match in-shell rather than through a pipe: `grep -q` exits at the first match,
+          # which gives `printf` a broken pipe once the page is larger than the pipe buffer,
+          # and pipefail then fails the step even though the text was found.
+          for marker in 'Spencer Denim' 'New Arrivals' 'Sale'; do
+            if [[ "$html" != *"$marker"* ]]; then
+              echo "::error::Server-rendered HTML does not contain '$marker'."
+              echo "${html:0:2000}"
+              exit 1
+            fi
+          done
 
-          echo "Server-rendered HTML contains 'Spencer Denim' ($(printf '%s' "$html" | wc -c) bytes)."
+          echo "Server-rendered HTML contains the expected markers (${#html} bytes)."
