@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="description" content="Website build progress for Spencer Denim, prepared by TU2SL.">
+  <title>Spencer Denim — Website Build Progress</title>
+  <link rel="icon" href="data:,">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <div class="container">
+      <p class="eyebrow" id="prepared-by">Prepared by TU2SL</p>
+      <h1 class="site-header__title" id="project-title">Spencer Denim — Website Build Progress</h1>
+      <p class="site-header__client" id="project-client"></p>
+      <dl class="meta">
+        <div class="meta__item" hidden>
+          <dt class="eyebrow">Project timeline</dt>
+          <dd id="project-timeline"></dd>
+        </div>
+        <div class="meta__item" hidden>
+          <dt class="eyebrow">Last updated</dt>
+          <dd><time id="last-updated"></time></dd>
+        </div>
+      </dl>
+    </div>
+  </header>
+
+  <main id="main" tabindex="-1">
+    <section class="section" aria-labelledby="overall-heading">
+      <div class="container">
+        <h2 class="section__title" id="overall-heading">Overall progress</h2>
+        <div id="overall"></div>
+      </div>
+    </section>
+
+    <section class="section section--alt" aria-labelledby="timeline-heading">
+      <div class="container">
+        <h2 class="section__title" id="timeline-heading">Timeline</h2>
+        <ol class="timeline" id="timeline" role="list"></ol>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="features-heading">
+      <div class="container">
+        <h2 class="section__title" id="features-heading">What we are building</h2>
+        <p class="section__intro">Each feature shows its status: Planned, In progress or Done.</p>
+        <div class="groups" id="groups"></div>
+      </div>
+    </section>
+
+    <section class="section section--alt" aria-labelledby="log-heading">
+      <div class="container">
+        <h2 class="section__title" id="log-heading">Daily updates</h2>
+        <ol class="log" id="log" role="list"></ol>
+      </div>
+    </section>
+
+    <noscript>
+      <div class="container">
+        <p class="notice">Please enable JavaScript to see the latest progress.</p>
+      </div>
+    </noscript>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <p id="footer-text">Prepared by TU2SL</p>
+    </div>
+  </footer>
+
+  <script src="progress-data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

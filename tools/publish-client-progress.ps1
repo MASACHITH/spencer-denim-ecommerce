@@ -7,7 +7,7 @@
   Site   : https://colombowardrobecompany-build-tracker.kt-wedding.online
   FTP    : 147.93.101.68:21, FTPS (explicit TLS) with the Hostinger certificate public key pinned
   Folder : /public_html (the FTP account opens there directly)
-  Source : D:\Projects\e com\client-progress\  (outside this repo)
+  Source : client-progress\ in this repository (tracked, so it is backed up and reviewable)
   Login  : read from %USERPROFILE%\.spencer-denim\tracker-ftp-credential.xml
            (DPAPI-encrypted for the current Windows user). The password is never stored in the repo or docs.
 
@@ -33,7 +33,8 @@ $FtpHost    = "147.93.101.68"
 $FtpPort    = 21
 $FtpUser    = "u765465138.colombowardrobecompany-build-tracker.kt-wedding.online"
 $SiteUrl    = "https://colombowardrobecompany-build-tracker.kt-wedding.online"
-$SourceDir  = "D:\Projects\e com\client-progress"
+# Tracked in this repository (moved in 2026-09-22, task W0-18), so it is backed up and has history.
+$SourceDir  = Join-Path (Split-Path -Parent $PSScriptRoot) "client-progress"
 $AllowList  = @("index.html", "styles.css", "app.js", "progress-data.js")
 # Uploaded too, but not size-verified: FTP LIST hides dot-files. Verified through response headers instead.
 $ExtraFiles = @(".htaccess")
