@@ -14,6 +14,8 @@ export type IconName =
   | 'chevron-down'
   | 'chevron-left'
   | 'chevron-right'
+  | 'pause'
+  | 'play'
   | 'whatsapp'
   | 'truck'
   | 'mail'
@@ -68,6 +70,12 @@ export type IconSize = 'sm' | 'md';
         }
         @case ('chevron-right') {
           <path d="M9 6l6 6-6 6" />
+        }
+        @case ('pause') {
+          <path d="M9.5 5.5v13M14.5 5.5v13" />
+        }
+        @case ('play') {
+          <path d="M7.5 5.2l11 6.8-11 6.8z" />
         }
         @case ('whatsapp') {
           <path d="M20.5 12a8.5 8.5 0 0 1-12.6 7.44L3.5 20.5l1.1-4.2A8.5 8.5 0 1 1 20.5 12z" />
