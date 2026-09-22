@@ -15,7 +15,7 @@ const progressData = {
     endDate: "2026-10-15"
   },
 
-  lastUpdated: "2026-09-18",
+  lastUpdated: "2026-09-22",
 
   milestones: [
     { week: "Week 0", title: "Setup & design", start: "2026-09-15", end: "2026-09-18" },
@@ -96,7 +96,7 @@ const progressData = {
     {
       name: "Admin Panel",
       features: [
-        { name: "Admin login with user roles & permissions", status: "planned", progress: 0 },
+        { name: "Admin login with user roles & permissions", status: "in-progress", progress: 45 },
         { name: "Product management (images & video)", status: "in-progress", progress: 10 },
         { name: "Category management", status: "in-progress", progress: 10 },
         { name: "Inventory", status: "in-progress", progress: 10 },
@@ -124,6 +124,10 @@ const progressData = {
 
   // Newest first.
   updates: [
+    {
+      date: "2026-09-22",
+      text: "Secure admin sign-in is built and tested: staff accounts, roles and permissions, and an activity log that records every sign-in and sign-out. The remaining admin screens (managing staff users, viewing the activity log) come next. Work also continued on the product catalogue."
+    },
     {
       date: "2026-09-18",
       text: "Development environment and project foundation completed and tested. The product catalogue is now built in the database: departments, categories, products, colours, sizes, stock and product images, with sample products loaded for testing. This is the groundwork behind the shop pages, the product page and the admin product screens, which are built next."
