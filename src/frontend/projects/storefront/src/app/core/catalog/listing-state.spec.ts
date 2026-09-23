@@ -280,11 +280,46 @@ describe('toRestoreRequests', () => {
     expect(requests.at(-1)?.['page']).toBe(String(requests.length));
   });
 
-  it('asks for exactly the rows the URL claims, no more', () => {
-    const requests = toRestoreRequests(state({ loadedPages: 5 }));
-    const rows = requests.reduce((sum, request) => sum + Number(request['pageSize']), 0);
+  /**
+   * This replaces a test that asserted the page sizes summed to exactly the rows wanted. That is
+   * not a property of a correct restore — it is what *forced* the defect, because the only way to
+   * hit the sum is to shrink the last request, and the API's offset is
+   * `(Page - 1) * PageSize` against that request's own page size (`ProductListQuery.Skip`). A
+   * smaller last page therefore moved its window backwards instead of trimming it: at
+   * `?pages=5` the second request asked for rows 25–48 rather than 97–120, and the listing
+   * rendered 120 cards of which 96 were distinct.
+   *
+   * What matters is that the windows tile the listing: start at the beginning, no gap, no repeat.
+   */
+  it('asks for windows that tile the listing, with no gap and no repeat', () => {
+    for (const loadedPages of [1, 2, 3, 4, 5, 6, 7, 17, MAX_LOADED_PAGES]) {
+      const requests = toRestoreRequests(state({ loadedPages }));
+      let nextRow = 0;
 
-    expect(rows).toBe(5 * PAGE_SIZE);
+      for (const request of requests) {
+        const pageSize = Number(request['pageSize']);
+        const skip = (Number(request['page']) - 1) * pageSize;
+
+        expect(skip, `gap or overlap at pages=${loadedPages}`).toBe(nextRow);
+        nextRow += pageSize;
+      }
+
+      expect(nextRow, `pages=${loadedPages} stops short`).toBeGreaterThanOrEqual(
+        loadedPages * PAGE_SIZE,
+      );
+    }
+  });
+
+  it('never over-fetches by more than one page', () => {
+    for (const loadedPages of [1, 5, 6, 17, MAX_LOADED_PAGES]) {
+      const wanted = loadedPages * PAGE_SIZE;
+      const fetched = toRestoreRequests(state({ loadedPages })).reduce(
+        (sum, request) => sum + Number(request['pageSize']),
+        0,
+      );
+
+      expect(fetched - wanted, `pages=${loadedPages}`).toBeLessThan(MAX_PAGE_SIZE);
+    }
   });
 });
 

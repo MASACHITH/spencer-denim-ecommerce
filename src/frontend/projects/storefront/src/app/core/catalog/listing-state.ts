@@ -242,9 +242,19 @@ export function toRestoreRequests(state: ListingState): Params[] {
   const wanted = state.loadedPages * PAGE_SIZE;
   const requests: Params[] = [];
 
-  for (let page = 1; (page - 1) * MAX_PAGE_SIZE < wanted; page++) {
-    const remaining = wanted - (page - 1) * MAX_PAGE_SIZE;
-    requests.push(toRequestParams(state, page, Math.min(remaining, MAX_PAGE_SIZE)));
+  // One page size for the whole restore, because the API's offset is `(Page - 1) * PageSize`
+  // against *that request's* page size (`ProductListQuery.Skip`). Shrinking the last request to
+  // the remainder moved its window instead of trimming it: at `?pages=5` the second request asked
+  // for page 2 of 24 — rows 25–48, not 97–120 — and the listing rendered 120 cards of which 96
+  // were distinct. The store slices the tail off instead.
+  //
+  // `min(wanted, cap)` rather than the cap: a fresh listing wants 24 rows and asking for 96 would
+  // fetch four times what it shows, on the most common page view in the storefront. From four
+  // pages up it is the cap, and the last request over-fetches by less than one page.
+  const pageSize = Math.min(wanted, MAX_PAGE_SIZE);
+
+  for (let page = 1; (page - 1) * pageSize < wanted; page++) {
+    requests.push(toRequestParams(state, page, pageSize));
   }
 
   return requests;
