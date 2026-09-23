@@ -18,17 +18,24 @@ namespace SpencerDenim.Api.Endpoints.Catalog;
 /// </summary>
 internal static class CatalogEndpoints
 {
+    /// <summary>
+    /// Every catalogue endpoint answers HEAD as well as GET. Uptime monitors and link checkers lead
+    /// with HEAD, and ASP.NET Core answers it from the GET handler with the body dropped, so mapping
+    /// only GET turned a health probe into a 405.
+    /// </summary>
+    private static readonly string[] ReadMethods = [HttpMethods.Get, HttpMethods.Head];
+
     public static IEndpointRouteBuilder MapCatalogEndpoints(this IEndpointRouteBuilder endpoints)
     {
         var catalog = endpoints.MapGroup("/api/catalog").WithTags("Catalog");
 
-        catalog.MapGet("/departments", GetDepartmentsAsync)
+        catalog.MapMethods("/departments", ReadMethods, GetDepartmentsAsync)
             .WithName("GetDepartments")
             .WithSummary("Departments with their category tree.")
             .WithDescription("Drives the mega menu (GLB-05) and the department landing pages (DEPT-01). Inactive departments and categories are omitted.")
             .Produces<IReadOnlyList<DepartmentDto>>();
 
-        catalog.MapGet("/products", GetProductsAsync)
+        catalog.MapMethods("/products", ReadMethods, GetProductsAsync)
             .WithName("GetProducts")
             .WithSummary("Product listing with filters, sorting and paging.")
             .WithDescription(
@@ -37,7 +44,7 @@ internal static class CatalogEndpoints
             .Produces<PagedResult<ProductCardDto>>()
             .ProducesValidationProblem();
 
-        catalog.MapGet("/products/{slug}", GetProductBySlugAsync)
+        catalog.MapMethods("/products/{slug}", ReadMethods, GetProductBySlugAsync)
             .WithName("GetProductBySlug")
             .WithSummary("One product page payload.")
             .WithDescription("PDP-01..06: gallery, colours, sizes, variants with stock status, price and discount, attributes and related products.")
@@ -45,7 +52,7 @@ internal static class CatalogEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesValidationProblem();
 
-        catalog.MapGet("/search", SearchProductsAsync)
+        catalog.MapMethods("/search", ReadMethods, SearchProductsAsync)
             .WithName("SearchProducts")
             .WithSummary("Search products by name, category, colour and attributes.")
             .WithDescription("SRCH-02. All of up to five tokens must match the denormalised search text (doc 08 §7.6). The listing filters and sorts apply on top.")
@@ -65,7 +72,7 @@ internal static class CatalogEndpoints
 
     private static async Task<Results<Ok<PagedResult<ProductCardDto>>, ValidationProblem>> GetProductsAsync(
         [AsParameters] ProductListRequest request,
-        IQueryHandler<ProductListQuery, PagedResult<ProductCardDto>> handler,
+        IQueryHandler<ProductListQuery, Result<PagedResult<ProductCardDto>>> handler,
         IOptions<CatalogOptions> options,
         CancellationToken cancellationToken)
     {
@@ -76,25 +83,30 @@ internal static class CatalogEndpoints
         }
 
         var page = await handler.HandleAsync(query.Value, cancellationToken);
-        return TypedResults.Ok(page);
+        return page.IsSuccess
+            ? TypedResults.Ok(page.Value)
+            : ToValidationProblem(page.Errors);
     }
 
     private static async Task<Results<Ok<ProductDetailDto>, ProblemHttpResult, ValidationProblem>> GetProductBySlugAsync(
         string slug,
-        IQueryHandler<GetProductBySlugQuery, Result<ProductDetailDto?>> handler,
+        IQueryHandler<GetProductBySlugQuery, ProductDetailDto?> handler,
         CancellationToken cancellationToken)
     {
-        var result = await handler.HandleAsync(new GetProductBySlugQuery(slug), cancellationToken);
-        if (!result.IsSuccess)
+        var query = GetProductBySlugQuery.Create(slug);
+        if (!query.IsSuccess)
         {
-            return ToValidationProblem(result.Errors);
+            return ToValidationProblem(query.Errors);
         }
 
-        if (result.Value is not { } product)
+        var product = await handler.HandleAsync(query.Value, cancellationToken);
+        if (product is null)
         {
+            // The normalised slug, never the raw route value: only a value that passed the slug
+            // pattern is ever written into a response body.
             return TypedResults.Problem(
                 title: "Product not found",
-                detail: $"No published product has the slug '{slug}'.",
+                detail: $"No published product has the slug '{query.Value.Slug}'.",
                 statusCode: StatusCodes.Status404NotFound);
         }
 
@@ -104,7 +116,7 @@ internal static class CatalogEndpoints
     private static async Task<Results<Ok<ProductSearchResponse>, ValidationProblem>> SearchProductsAsync(
         [FromQuery] string? q,
         [AsParameters] ProductListRequest request,
-        IQueryHandler<ProductSearchQuery, PagedResult<ProductCardDto>> handler,
+        IQueryHandler<ProductSearchQuery, Result<PagedResult<ProductCardDto>>> handler,
         IOptions<CatalogOptions> options,
         CancellationToken cancellationToken)
     {
@@ -115,7 +127,9 @@ internal static class CatalogEndpoints
         }
 
         var page = await handler.HandleAsync(query.Value, cancellationToken);
-        return TypedResults.Ok(new ProductSearchResponse(query.Value.Term, query.Value.Tokens, page));
+        return page.IsSuccess
+            ? TypedResults.Ok(new ProductSearchResponse(query.Value.Term, query.Value.Tokens, page.Value))
+            : ToValidationProblem(page.Errors);
     }
 
     /// <summary>One RFC 9457 response carrying every rejected parameter, keyed by its query-string name.</summary>

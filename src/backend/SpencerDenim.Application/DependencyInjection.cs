@@ -27,13 +27,13 @@ public static class DependencyInjection
             IQueryHandler<GetDepartmentsQuery, IReadOnlyList<DepartmentDto>>,
             GetDepartmentsQueryHandler>();
         services.AddScoped<
-            IQueryHandler<ProductListQuery, PagedResult<ProductCardDto>>,
+            IQueryHandler<ProductListQuery, Result<PagedResult<ProductCardDto>>>,
             GetProductsQueryHandler>();
         services.AddScoped<
-            IQueryHandler<GetProductBySlugQuery, Result<ProductDetailDto?>>,
+            IQueryHandler<GetProductBySlugQuery, ProductDetailDto?>,
             GetProductBySlugQueryHandler>();
         services.AddScoped<
-            IQueryHandler<ProductSearchQuery, PagedResult<ProductCardDto>>,
+            IQueryHandler<ProductSearchQuery, Result<PagedResult<ProductCardDto>>>,
             SearchProductsQueryHandler>();
 
         return services;

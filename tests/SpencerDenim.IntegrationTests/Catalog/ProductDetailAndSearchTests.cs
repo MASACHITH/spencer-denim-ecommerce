@@ -134,6 +134,26 @@ public sealed class ProductDetailAndSearchTests(SqlServerDatabaseFixture sqlServ
         Assert.Equal(HttpStatusCode.BadRequest, status);
     }
 
+    /// <summary>
+    /// A slug that is not a slug is a 400 naming the parameter, and nothing the URL carried is echoed
+    /// back: the 404 path used to reflect the raw text into <c>detail</c>.
+    /// </summary>
+    [Theory]
+    [InlineData("%3Cscript%3E")]
+    [InlineData("under_score")]
+    [InlineData("double--hyphen")]
+    [InlineData("100%25")]
+    public async Task A_malformed_slug_is_a_400_naming_the_parameter(string slug)
+    {
+        var api = CreateApi();
+
+        var (status, body) = await api.GetRawAsync("/api/catalog/products/" + slug, Token);
+
+        Assert.Equal(HttpStatusCode.BadRequest, status);
+        Assert.True(body.GetProperty("errors").TryGetProperty("slug", out _), body.ToString());
+        Assert.DoesNotContain("script", body.ToString(), StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public async Task Search_matches_the_product_name()
     {
@@ -181,6 +201,50 @@ public sealed class ProductDetailAndSearchTests(SqlServerDatabaseFixture sqlServ
         var response = await api.SearchAsync("?q=jeans", Token);
 
         Assert.Contains("Jeans", response.Results.Items[0].Name, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Doc 08 §7.6 bands: name prefix 100, name contains 50, category or colour 20, anything else 10.
+    /// The popularity term is bounded, so the best seller among the "anything else" matches cannot
+    /// climb past a name match.
+    /// </summary>
+    [Fact]
+    public async Task Search_ranks_a_name_prefix_above_a_best_seller_that_matches_no_name()
+    {
+        var api = CreateApi();
+
+        // "denim" is the leading word of one product name, appears inside another, and is the material
+        // of every pair of jeans — including SD-W-0009, the highest-selling product that matches.
+        var response = await api.SearchAsync("?q=denim&pageSize=96", Token);
+        var order = response.Results.Items.Select(card => card.Slug).ToList();
+
+        Assert.Equal("denim-wrap-mini-skirt", order[0]);
+        Assert.Equal("girls-denim-pinafore", order[1]);
+        Assert.Contains("high-rise-slim-fit-jeans", order);
+        Assert.True(
+            order.IndexOf("girls-denim-pinafore") < order.IndexOf("high-rise-slim-fit-jeans"),
+            string.Join(", ", order));
+    }
+
+    /// <summary>
+    /// Doc 08 §7.6: a name match (50) outranks a category match (20), and the bounded popularity term
+    /// cannot close that gap. "Cotton Twill Chinos" sits in the Trousers category and outsells two of
+    /// the three products with "Trousers" in the name, so an unbounded <c>SoldQty30d</c> would put it
+    /// above them.
+    /// </summary>
+    [Fact]
+    public async Task Search_keeps_a_category_match_below_the_name_matches_however_well_it_sells()
+    {
+        var api = CreateApi();
+
+        var response = await api.SearchAsync("?q=trousers&pageSize=96", Token);
+        var order = response.Results.Items.Select(card => card.Slug).ToList();
+
+        Assert.Equal(4, order.Count);
+        Assert.Equal("cotton-twill-chinos", order[^1]);
+        Assert.All(
+            order[..^1],
+            slug => Assert.EndsWith("-trousers", slug, StringComparison.Ordinal));
     }
 
     [Fact]

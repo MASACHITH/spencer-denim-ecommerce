@@ -456,21 +456,117 @@ public sealed class CatalogListingTests(SqlServerDatabaseFixture sqlServer) : Ca
     }
 
     [Theory]
-    [InlineData("?sort=cheapest", "sort")]
-    [InlineData("?page=0", "page")]
-    [InlineData("?pageSize=500", "pageSize")]
-    [InlineData("?minPrice=5000&maxPrice=100", "minPrice")]
-    [InlineData("?minRating=9", "minRating")]
-    [InlineData("?department=not%20a%20slug", "department")]
-    public async Task An_invalid_parameter_is_a_400_naming_the_parameter(string query, string field)
+    [InlineData("/api/catalog/products", "?sort=cheapest", "sort")]
+    [InlineData("/api/catalog/products", "?page=0", "page")]
+    [InlineData("/api/catalog/products", "?pageSize=500", "pageSize")]
+    [InlineData("/api/catalog/products", "?minPrice=5000&maxPrice=100", "minPrice")]
+    [InlineData("/api/catalog/products", "?minRating=9", "minRating")]
+    [InlineData("/api/catalog/products", "?department=not%20a%20slug", "department")]
+
+    // A value the framework cannot parse used to escape as a 500 with an ERROR log, on endpoints any
+    // visitor can call. Every one of these is now the same 400 that an out-of-range value gets.
+    [InlineData("/api/catalog/products", "?page=abc", "page")]
+    [InlineData("/api/catalog/products", "?pageSize=1.5", "pageSize")]
+    [InlineData("/api/catalog/products", "?minPrice=abc", "minPrice")]
+    [InlineData("/api/catalog/products", "?maxPrice=1,000", "maxPrice")]
+    [InlineData("/api/catalog/products", "?minRating=nope", "minRating")]
+    [InlineData("/api/catalog/products", "?minDiscountPercent=ten", "minDiscountPercent")]
+    [InlineData("/api/catalog/products", "?inStock=yes", "inStock")]
+    [InlineData("/api/catalog/products", "?onSale=maybe", "onSale")]
+    [InlineData("/api/catalog/products", "?newArrivals=on", "newArrivals")]
+    [InlineData("/api/catalog/search", "?q=linen&minRating=nope", "minRating")]
+    [InlineData("/api/catalog/search", "?q=linen&page=abc", "page")]
+    [InlineData("/api/catalog/search", "?q=linen&inStock=yes", "inStock")]
+    public async Task An_invalid_parameter_is_a_400_naming_the_parameter(string path, string query, string field)
     {
         var api = CreateApi();
 
-        var (status, body) = await api.GetRawAsync("/api/catalog/products" + query, Token);
+        var (status, body) = await api.GetRawAsync(path + query, Token);
 
         Assert.Equal(HttpStatusCode.BadRequest, status);
         Assert.True(body.GetProperty("errors").TryGetProperty(field, out var messages), body.ToString());
         Assert.NotEmpty(messages.EnumerateArray().ToList());
+    }
+
+    [Theory]
+    [InlineData("?inStock=true", 43)]
+    [InlineData("?inStock=1", 43)]
+    [InlineData("?inStock=false", 45)]
+    [InlineData("?inStock=0", 45)]
+    public async Task A_flag_accepts_both_spellings_a_query_string_carries(string query, int expected)
+    {
+        var api = CreateApi();
+
+        var page = await api.ListAsync(query + "&pageSize=96", Token);
+
+        Assert.Equal(expected, page.TotalCount);
+    }
+
+    /// <summary>
+    /// Doc 08 §3.2 makes a category slug unique per (department, parent): "jeans" is a Women's category
+    /// and a Men's one. Answering with whichever sorts first hid a whole department's products.
+    /// </summary>
+    [Theory]
+    [InlineData("jeans")]
+    [InlineData("footwear")]
+    public async Task An_ambiguous_category_slug_is_a_400_listing_the_departments(string slug)
+    {
+        var api = CreateApi();
+
+        var (status, body) = await api.GetRawAsync($"/api/catalog/products?category={slug}", Token);
+
+        Assert.Equal(HttpStatusCode.BadRequest, status);
+        var messages = body.GetProperty("errors").GetProperty("category").EnumerateArray().ToList();
+        var message = Assert.Single(messages).GetString()!;
+
+        Assert.Contains($"'{slug}' exists in more than one department", message, StringComparison.Ordinal);
+        Assert.Contains("department=women", message, StringComparison.Ordinal);
+        Assert.Contains("department=men", message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task An_ambiguous_category_slug_is_answered_once_the_department_is_named()
+    {
+        var api = CreateApi();
+
+        var women = await api.ListAsync("?category=jeans&department=women&pageSize=96", Token);
+        var men = await api.ListAsync("?category=jeans&department=men&pageSize=96", Token);
+
+        Assert.Equal(2, women.TotalCount);
+        Assert.Equal(3, men.TotalCount);
+        Assert.All(women.Items, card => Assert.Equal("women", card.DepartmentSlug));
+        Assert.All(men.Items, card => Assert.Equal("men", card.DepartmentSlug));
+    }
+
+    [Fact]
+    public async Task A_category_slug_that_names_one_category_still_needs_no_department()
+    {
+        var api = CreateApi();
+
+        var page = await api.ListAsync("?category=girls-dresses&pageSize=96", Token);
+
+        Assert.Equal(2, page.TotalCount);
+        Assert.All(page.Items, card => Assert.Equal("kids", card.DepartmentSlug));
+    }
+
+    /// <summary>
+    /// Uptime monitors and link checkers lead with HEAD. Mapping only GET answered them with a 405.
+    /// Only the status and headers are asserted: dropping the body is the server's job, and Kestrel
+    /// does it for every HEAD response, while the in-memory test server hands the body back.
+    /// </summary>
+    [Theory]
+    [InlineData("/api/catalog/departments")]
+    [InlineData("/api/catalog/products?pageSize=1")]
+    [InlineData("/api/catalog/products/relaxed-linen-blend-shirt")]
+    [InlineData("/api/catalog/search?q=linen")]
+    public async Task Head_is_answered_like_get(string path)
+    {
+        var api = CreateApi();
+
+        using var response = await api.HeadAsync(path, Token);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
     }
 
     [Fact]

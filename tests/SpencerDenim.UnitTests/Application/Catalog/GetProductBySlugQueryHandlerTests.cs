@@ -1,3 +1,5 @@
+using System.Globalization;
+using SpencerDenim.Application.Abstractions.Results;
 using SpencerDenim.Application.Catalog.Abstractions;
 using SpencerDenim.Application.Catalog.Contracts;
 using SpencerDenim.Application.Catalog.Products;
@@ -18,11 +20,18 @@ public sealed class GetProductBySlugQueryHandlerTests
             return Task.FromResult(product);
         }
 
-        public Task<PagedResult<ProductCardDto>> ListAsync(ProductListQuery query, CancellationToken cancellationToken) =>
+        public Task<Result<PagedResult<ProductCardDto>>> ListAsync(ProductListQuery query, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
-        public Task<PagedResult<ProductCardDto>> SearchAsync(ProductSearchQuery query, CancellationToken cancellationToken) =>
+        public Task<Result<PagedResult<ProductCardDto>>> SearchAsync(ProductSearchQuery query, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+    }
+
+    private static GetProductBySlugQuery Accepted(string slug)
+    {
+        var result = GetProductBySlugQuery.Create(slug);
+        Assert.True(result.IsSuccess, string.Join("; ", result.Errors.Select(error => error.Message)));
+        return result.Value;
     }
 
     [Fact]
@@ -31,45 +40,71 @@ public sealed class GetProductBySlugQueryHandlerTests
         var reader = new RecordingReader(null);
         var handler = new GetProductBySlugQueryHandler(reader);
 
-        await handler.HandleAsync(new GetProductBySlugQuery("  Relaxed-Linen-Blend-Shirt "), TestContext.Current.CancellationToken);
+        await handler.HandleAsync(Accepted("  Relaxed-Linen-Blend-Shirt "), TestContext.Current.CancellationToken);
 
         Assert.Equal("relaxed-linen-blend-shirt", reader.RequestedSlug);
     }
 
     [Fact]
-    public async Task An_unknown_slug_succeeds_with_a_null_value_so_the_endpoint_can_return_404()
+    public async Task An_unknown_slug_reaches_the_store_and_comes_back_null_so_the_endpoint_can_return_404()
     {
         var handler = new GetProductBySlugQueryHandler(new RecordingReader(null));
 
-        var result = await handler.HandleAsync(new GetProductBySlugQuery("nothing-here"), TestContext.Current.CancellationToken);
+        var product = await handler.HandleAsync(Accepted("nothing-here"), TestContext.Current.CancellationToken);
 
-        Assert.True(result.IsSuccess);
-        Assert.Null(result.Value);
+        Assert.Null(product);
     }
 
     [Theory]
     [InlineData("")]
     [InlineData("   ")]
-    public async Task An_empty_slug_fails_validation(string slug)
+    [InlineData(null)]
+    public void An_empty_slug_fails_validation(string? slug)
     {
-        var handler = new GetProductBySlugQueryHandler(new RecordingReader(null));
-
-        var result = await handler.HandleAsync(new GetProductBySlugQuery(slug), TestContext.Current.CancellationToken);
+        var result = GetProductBySlugQuery.Create(slug);
 
         Assert.False(result.IsSuccess);
         Assert.Equal("slug", Assert.Single(result.Errors).Field);
     }
 
     [Fact]
-    public async Task A_slug_longer_than_the_column_fails_validation()
+    public void A_slug_longer_than_the_column_fails_validation()
     {
-        var handler = new GetProductBySlugQueryHandler(new RecordingReader(null));
-        var slug = new string('a', GetProductBySlugQuery.MaxSlugLength + 1);
+        var result = GetProductBySlugQuery.Create(new string('a', GetProductBySlugQuery.MaxSlugLength + 1));
 
-        var result = await handler.HandleAsync(new GetProductBySlugQuery(slug), TestContext.Current.CancellationToken);
+        Assert.False(result.IsSuccess);
+        var error = Assert.Single(result.Errors);
+        Assert.Equal("slug", error.Field);
+        Assert.Contains(GetProductBySlugQuery.MaxSlugLength.ToString(CultureInfo.InvariantCulture), error.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The doc comment always promised a 400 for a malformed slug, but only length and emptiness were
+    /// checked, so <c>&lt;script&gt;</c> reached the store and came back inside the 404 body.
+    /// </summary>
+    [Theory]
+    [InlineData("<script>")]
+    [InlineData("has space")]
+    [InlineData("under_score")]
+    [InlineData("double--hyphen")]
+    [InlineData("trailing-")]
+    [InlineData("../../etc/passwd")]
+    [InlineData("100%")]
+    public void A_malformed_slug_fails_validation(string slug)
+    {
+        var result = GetProductBySlugQuery.Create(slug);
 
         Assert.False(result.IsSuccess);
         Assert.Equal("slug", Assert.Single(result.Errors).Field);
+    }
+
+    [Theory]
+    [InlineData("relaxed-linen-blend-shirt")]
+    [InlineData("baby-ribbed-bodysuit-set")]
+    [InlineData("tee2")]
+    public void A_well_formed_slug_is_accepted(string slug)
+    {
+        Assert.Equal(slug, Accepted(slug).Slug);
     }
 
     [Fact]

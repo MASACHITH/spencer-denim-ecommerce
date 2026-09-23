@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using SpencerDenim.Application.Abstractions.Results;
 using SpencerDenim.Application.Abstractions.Time;
 using SpencerDenim.Application.Catalog;
 using SpencerDenim.Application.Catalog.Abstractions;
@@ -27,18 +28,23 @@ internal sealed class ProductCatalogReader(
 {
     private readonly CatalogOptions _options = options.Value;
 
-    public async Task<PagedResult<ProductCardDto>> ListAsync(
+    public async Task<Result<PagedResult<ProductCardDto>>> ListAsync(
         ProductListQuery query,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(query);
 
         var filters = await ResolveFiltersAsync(query, cancellationToken);
+        if (filters.Rejection is { } rejection)
+        {
+            return Result.Failure<PagedResult<ProductCardDto>>(rejection.Field, rejection.Message);
+        }
+
         if (filters.MatchesNothing)
         {
             // A filter named a slug or size that does not exist: the correct answer is the PLP-06
             // "No products found" state, not an error and not an unfiltered listing.
-            return PagedResult.Empty<ProductCardDto>(query.Page, query.PageSize);
+            return Result.Success(PagedResult.Empty<ProductCardDto>(query.Page, query.PageSize));
         }
 
         var rows = ApplyFilters(BaseQuery(), query, filters);
@@ -46,7 +52,7 @@ internal sealed class ProductCatalogReader(
         var totalCount = await rows.CountAsync(cancellationToken);
         if (totalCount == 0)
         {
-            return PagedResult.Empty<ProductCardDto>(query.Page, query.PageSize);
+            return Result.Success(PagedResult.Empty<ProductCardDto>(query.Page, query.PageSize));
         }
 
         var page = await ApplySort(rows, query, filters.CategoryId)
@@ -56,10 +62,10 @@ internal sealed class ProductCatalogReader(
             .ToListAsync(cancellationToken);
 
         var cards = await ToCardsAsync(page, cancellationToken);
-        return new PagedResult<ProductCardDto>(cards, query.Page, query.PageSize, totalCount);
+        return Result.Success(new PagedResult<ProductCardDto>(cards, query.Page, query.PageSize, totalCount));
     }
 
-    public async Task<PagedResult<ProductCardDto>> SearchAsync(
+    public async Task<Result<PagedResult<ProductCardDto>>> SearchAsync(
         ProductSearchQuery query,
         CancellationToken cancellationToken)
     {
@@ -67,9 +73,14 @@ internal sealed class ProductCatalogReader(
 
         var listQuery = query.ListQuery;
         var filters = await ResolveFiltersAsync(listQuery, cancellationToken);
+        if (filters.Rejection is { } rejection)
+        {
+            return Result.Failure<PagedResult<ProductCardDto>>(rejection.Field, rejection.Message);
+        }
+
         if (filters.MatchesNothing)
         {
-            return PagedResult.Empty<ProductCardDto>(listQuery.Page, listQuery.PageSize);
+            return Result.Success(PagedResult.Empty<ProductCardDto>(listQuery.Page, listQuery.PageSize));
         }
 
         var rows = ApplyFilters(BaseQuery(), listQuery, filters);
@@ -85,7 +96,7 @@ internal sealed class ProductCatalogReader(
         var totalCount = await rows.CountAsync(cancellationToken);
         if (totalCount == 0)
         {
-            return PagedResult.Empty<ProductCardDto>(listQuery.Page, listQuery.PageSize);
+            return Result.Success(PagedResult.Empty<ProductCardDto>(listQuery.Page, listQuery.PageSize));
         }
 
         var ordered = query.SortByRelevance
@@ -99,7 +110,7 @@ internal sealed class ProductCatalogReader(
             .ToListAsync(cancellationToken);
 
         var cards = await ToCardsAsync(page, cancellationToken);
-        return new PagedResult<ProductCardDto>(cards, listQuery.Page, listQuery.PageSize, totalCount);
+        return Result.Success(new PagedResult<ProductCardDto>(cards, listQuery.Page, listQuery.PageSize, totalCount));
     }
 
     public async Task<ProductDetailDto?> GetBySlugAsync(string slug, CancellationToken cancellationToken)
@@ -405,22 +416,37 @@ internal sealed class ProductCatalogReader(
     }
 
     /// <summary>
-    /// Doc 08 §7.6 relevance: name prefix 100, a word prefix 50, name contains 20, every match 10,
-    /// plus <c>SoldQty30d</c>. Scored on the first token, which is the one a shopper leads with.
+    /// How much <c>SoldQty30d</c> may contribute to the relevance score of doc 08 §7.6. The raw column
+    /// is an unbounded unit count, so adding it whole let a product that sells well overtake a
+    /// name-prefix match (worth 100) as soon as real sales arrived. Held below 10, the narrowest gap
+    /// between two of the section's bands, popularity can only order products that scored alike.
+    /// </summary>
+    private const int MaxPopularityBonus = 9;
+
+    /// <summary>
+    /// Doc 08 §7.6 relevance, exactly as the section words it: name prefix 100, name contains 50,
+    /// category or colour 20, any other match 10, then <c>SoldQty30d</c> as a bounded tie-break. The
+    /// section describes one <c>CASE</c> score, applied here to the first token, which is the word a
+    /// shopper leads with; the later tokens have already narrowed the result set.
     /// </summary>
     private static IOrderedQueryable<Product> ApplyRelevanceSort(IQueryable<Product> rows, string leadToken)
     {
         var prefix = SearchTerms.ToPrefixPattern(leadToken);
-        var wordPrefix = SearchTerms.ToWordPrefixPattern(leadToken);
         var contains = SearchTerms.ToContainsPattern(leadToken);
 
         return rows
             .OrderByDescending(product =>
-                (EF.Functions.Like(product.SearchIndex!.NameText, prefix, EscapeString) ? 100 : 0)
-                + (EF.Functions.Like(product.SearchIndex.NameText, wordPrefix, EscapeString) ? 50 : 0)
-                + (EF.Functions.Like(product.SearchIndex.NameText, contains, EscapeString) ? 20 : 0)
-                + 10
-                + product.Stats!.SoldQty30d)
+                EF.Functions.Like(product.SearchIndex!.NameText, prefix, EscapeString) ? 100
+                : EF.Functions.Like(product.SearchIndex.NameText, contains, EscapeString) ? 50
+                : product.CategoryLinks.Any(link =>
+                        EF.Functions.Like(link.Category!.Name, contains, EscapeString))
+                    || product.Colours.Any(colour =>
+                        EF.Functions.Like(colour.Name, contains, EscapeString)
+                        || EF.Functions.Like(colour.ColourFamily!.Name, contains, EscapeString)) ? 20
+                : 10)
+            .ThenByDescending(product => product.Stats!.SoldQty30d < MaxPopularityBonus
+                ? product.Stats!.SoldQty30d
+                : MaxPopularityBonus)
             .ThenBy(product => product.Id);
     }
 
@@ -686,21 +712,46 @@ internal sealed class ProductCatalogReader(
         if (query.CategorySlug is { } categorySlug)
         {
             var departmentId = filters.DepartmentId;
-            var category = await dbContext.Categories
+            var matches = await dbContext.Categories
                 .AsNoTracking()
                 .Where(candidate => candidate.Slug == categorySlug && candidate.IsActive)
                 .Where(candidate => departmentId == null || candidate.DepartmentId == departmentId)
                 .OrderBy(candidate => candidate.Depth)
                 .ThenBy(candidate => candidate.Id)
-                .Select(candidate => new { candidate.Id, candidate.Path })
-                .FirstOrDefaultAsync(cancellationToken);
+                .Select(candidate => new
+                {
+                    candidate.Id,
+                    candidate.Path,
+                    candidate.DepartmentId,
+                    DepartmentSlug = candidate.Department!.Slug,
+                })
+                .ToListAsync(cancellationToken);
 
-            if (category is null)
+            if (matches.Count == 0)
             {
                 filters.MatchesNothing = true;
                 return filters;
             }
 
+            // Doc 08 §3.2 makes a category slug unique per (department, parent), not globally, so
+            // "jeans" names one category in each department. Serving whichever one sorts first would
+            // quietly hide the other departments' products, so the caller is asked which it meant.
+            if (departmentId is null && matches.Count > 1)
+            {
+                var departmentSlugs = matches
+                    .OrderBy(match => match.DepartmentId)
+                    .Select(match => match.DepartmentSlug)
+                    .Distinct(StringComparer.Ordinal)
+                    .ToList();
+
+                filters.Rejection = new ValidationError(
+                    "category",
+                    $"The category '{categorySlug}' exists in more than one department. " +
+                    $"Add {DescribeChoices(departmentSlugs)}.");
+                return filters;
+            }
+
+            var category = matches[0];
             filters.CategoryId = category.Id;
 
             // Doc 08 §3.2: the materialised path turns "this category and its children" into one
@@ -757,6 +808,16 @@ internal sealed class ProductCatalogReader(
             cancellationToken);
 
         return filters;
+    }
+
+    /// <summary>Renders the choices as "department=women, department=men or department=kids".</summary>
+    private static string DescribeChoices(IReadOnlyList<string> departmentSlugs)
+    {
+        var choices = departmentSlugs.Select(slug => $"department={slug}").ToList();
+
+        return choices.Count == 1
+            ? choices[0]
+            : string.Join(", ", choices.Take(choices.Count - 1)) + " or " + choices[^1];
     }
 
     private static async Task<IReadOnlyList<int>> ResolveIdsAsync(
@@ -909,6 +970,9 @@ internal sealed class ProductCatalogReader(
     private sealed class ResolvedFilters
     {
         public bool MatchesNothing { get; set; }
+
+        /// <summary>Set when a filter cannot be answered at all, rather than simply matching nothing.</summary>
+        public ValidationError? Rejection { get; set; }
 
         public DateTime UtcNow { get; set; }
 

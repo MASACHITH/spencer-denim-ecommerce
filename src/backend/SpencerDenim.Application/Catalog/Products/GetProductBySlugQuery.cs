@@ -5,42 +5,53 @@ using SpencerDenim.Application.Catalog.Contracts;
 
 namespace SpencerDenim.Application.Catalog.Products;
 
-/// <summary>Query behind <c>GET /api/catalog/products/{slug}</c> (PDP-01..06).</summary>
-/// <param name="Slug">The product slug from the URL.</param>
-public sealed record GetProductBySlugQuery(string Slug)
+/// <summary>A validated request for one product page (PDP-01..06).</summary>
+public sealed record GetProductBySlugQuery
 {
     /// <summary><c>catalog.Products.Slug</c> is <c>varchar(220)</c>.</summary>
     public const int MaxSlugLength = 220;
+
+    private GetProductBySlugQuery(string slug) => Slug = slug;
+
+    /// <summary>
+    /// The normalised slug: lower-case letters, digits and single hyphens. Because it is checked
+    /// rather than merely trimmed, the API can name it in a 404 without echoing the raw URL.
+    /// </summary>
+    public string Slug { get; }
+
+    /// <summary>
+    /// Validates and normalises the slug from the URL, using the same rule
+    /// <see cref="ProductListQuery.Create"/> applies to the listing's slugs, so a slug the listing
+    /// links to is always a slug the product page accepts. Empty, too long or not a slug at all is a
+    /// 400 naming <c>slug</c>; an unknown but well-formed slug is the handler's 404.
+    /// </summary>
+    public static Result<GetProductBySlugQuery> Create(string? slug)
+    {
+        if (string.IsNullOrWhiteSpace(slug))
+        {
+            return Result.Failure<GetProductBySlugQuery>("slug", "slug is required.");
+        }
+
+        var errors = new List<ValidationError>();
+        var normalised = ProductListQuery.NormaliseSlug(slug, "slug", errors, MaxSlugLength);
+
+        return normalised is null
+            ? Result.Failure<GetProductBySlugQuery>(errors.AsReadOnly())
+            : Result.Success(new GetProductBySlugQuery(normalised));
+    }
 }
 
 /// <summary>
-/// Reads the product page payload. A slug that is too long, empty or malformed is a 400; a slug that
-/// is simply unknown (or belongs to an unpublished or deleted product) yields <c>null</c> → 404.
+/// Reads the product page payload. A slug that is simply unknown (or belongs to an unpublished or
+/// deleted product) yields <c>null</c>, which the endpoint turns into a 404.
 /// </summary>
 public sealed class GetProductBySlugQueryHandler(IProductCatalogReader reader)
-    : IQueryHandler<GetProductBySlugQuery, Result<ProductDetailDto?>>
+    : IQueryHandler<GetProductBySlugQuery, ProductDetailDto?>
 {
-    public async Task<Result<ProductDetailDto?>> HandleAsync(
-        GetProductBySlugQuery query,
-        CancellationToken cancellationToken)
+    public Task<ProductDetailDto?> HandleAsync(GetProductBySlugQuery query, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(query);
 
-        var slug = query.Slug?.Trim().ToLowerInvariant();
-
-        if (string.IsNullOrEmpty(slug))
-        {
-            return Result.Failure<ProductDetailDto?>("slug", "slug is required.");
-        }
-
-        if (slug.Length > GetProductBySlugQuery.MaxSlugLength)
-        {
-            return Result.Failure<ProductDetailDto?>(
-                "slug",
-                $"slug must be {GetProductBySlugQuery.MaxSlugLength} characters or fewer.");
-        }
-
-        var product = await reader.GetBySlugAsync(slug, cancellationToken);
-        return Result.Success<ProductDetailDto?>(product);
+        return reader.GetBySlugAsync(query.Slug, cancellationToken);
     }
 }

@@ -30,6 +30,13 @@ public sealed class CatalogApiClient(HttpClient client)
     public Task<SearchResponse> SearchAsync(string query, CancellationToken cancellationToken) =>
         GetAsync<SearchResponse>("/api/catalog/search" + query, cancellationToken);
 
+    /// <summary>Sends a HEAD request and returns the status and the headers, for the monitoring case.</summary>
+    public async Task<HttpResponseMessage> HeadAsync(string path, CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Head, new Uri(path, UriKind.Relative));
+        return await client.SendAsync(request, cancellationToken);
+    }
+
     /// <summary>Sends a request and returns the raw response, for the 400 and 404 cases.</summary>
     public async Task<(HttpStatusCode Status, JsonElement Body)> GetRawAsync(string path, CancellationToken cancellationToken)
     {

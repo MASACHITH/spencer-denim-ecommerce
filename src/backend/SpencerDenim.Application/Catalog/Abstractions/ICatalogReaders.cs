@@ -1,3 +1,4 @@
+using SpencerDenim.Application.Abstractions.Results;
 using SpencerDenim.Application.Catalog.Contracts;
 using SpencerDenim.Application.Catalog.Products;
 using SpencerDenim.Application.Catalog.Search;
@@ -21,12 +22,15 @@ public interface IDepartmentCatalogReader
 /// </summary>
 public interface IProductCatalogReader
 {
-    /// <summary>One page of the listing (PLP-01..07), already filtered, sorted and counted.</summary>
-    Task<PagedResult<ProductCardDto>> ListAsync(ProductListQuery query, CancellationToken cancellationToken);
+    /// <summary>
+    /// One page of the listing (PLP-01..07), already filtered, sorted and counted, or the reasons the
+    /// filters cannot be answered — an ambiguous category slug, for instance (doc 08 §3.2).
+    /// </summary>
+    Task<Result<PagedResult<ProductCardDto>>> ListAsync(ProductListQuery query, CancellationToken cancellationToken);
 
     /// <summary>The product page payload (PDP-01..06), or <c>null</c> when the slug is unknown.</summary>
     Task<ProductDetailDto?> GetBySlugAsync(string slug, CancellationToken cancellationToken);
 
     /// <summary>Search results (SRCH-02), ordered by relevance unless another sort was asked for.</summary>
-    Task<PagedResult<ProductCardDto>> SearchAsync(ProductSearchQuery query, CancellationToken cancellationToken);
+    Task<Result<PagedResult<ProductCardDto>>> SearchAsync(ProductSearchQuery query, CancellationToken cancellationToken);
 }
