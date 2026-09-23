@@ -423,3 +423,12 @@ function all(raw: string | readonly string[] | undefined): readonly string[] {
 
   return Array.isArray(raw) ? raw : [raw as string];
 }
+
+/**
+ * A stable identity for everything one listing asks the API for. Two states with the same key ask
+ * for exactly the same rows in the same order, which is what lets the server hand its page to the
+ * browser without the browser fetching it again.
+ */
+export function requestKey(state: ListingState): string {
+  return JSON.stringify(toRestoreRequests(state));
+}

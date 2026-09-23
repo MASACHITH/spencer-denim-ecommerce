@@ -15,6 +15,7 @@ import {
   toQueryParams,
   toRequestParams,
   toRestoreRequests,
+  requestKey,
   toggleListValue,
   withFilter,
 } from './listing-state';
@@ -340,5 +341,20 @@ describe('sameFilters', () => {
     expect(
       sameFilters(state({ colours: ['navy', 'black'] }), state({ colours: ['black', 'navy'] })),
     ).toBe(false);
+  });
+});
+
+describe('requestKey', () => {
+  it('is the same for two states that ask the API for the same rows', () => {
+    expect(requestKey(state({ colours: ['navy'] }))).toBe(requestKey(state({ colours: ['navy'] })));
+  });
+
+  it('changes with the filters, the sort and how many pages are wanted', () => {
+    const base = state();
+
+    expect(requestKey(base)).not.toBe(requestKey(state({ colours: ['navy'] })));
+    expect(requestKey(base)).not.toBe(requestKey(state({ sort: 'newest' })));
+    expect(requestKey(base)).not.toBe(requestKey(state({ loadedPages: 2 })));
+    expect(requestKey(base)).not.toBe(requestKey(state({ category: 'jeans' })));
   });
 });

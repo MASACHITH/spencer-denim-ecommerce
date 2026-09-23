@@ -155,7 +155,12 @@ interface Placement {
             />
           </aside>
 
-          <section class="plp__results" aria-labelledby="listing-results-title">
+          <section
+            class="plp__results"
+            aria-labelledby="listing-results-title"
+            [class.plp__results--busy]="store.isBusy()"
+            [attr.aria-busy]="store.isBusy()"
+          >
             <h2 class="sr-only" id="listing-results-title">Products</h2>
 
             <!-- One live region for the whole listing: the visible count updates on its own, and
@@ -426,6 +431,11 @@ interface Placement {
     .plp__results {
       min-width: 0;
     }
+    /* A listing that is being refetched keeps its rows and says so, rather than emptying. */
+    .plp__results--busy {
+      opacity: 0.6;
+      transition: opacity var(--duration) var(--ease);
+    }
 
 
     .plp__state {
@@ -600,7 +610,9 @@ export class ListingPage {
       return `${category.name} | ${department.name} | Spencer Denim`;
     }
 
-    return `${department.seoTitle ?? department.name} | Spencer Denim`;
+    // An admin-written SEO title is the whole title, brand included — the seeded Women department
+    // is literally "Women's clothing | Spencer Denim" — so appending the brand would say it twice.
+    return department.seoTitle ?? `${department.name} | Spencer Denim`;
   });
 
   private readonly metaDescription = computed(() => {

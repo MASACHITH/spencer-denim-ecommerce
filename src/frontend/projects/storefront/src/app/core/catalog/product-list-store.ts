@@ -1,4 +1,15 @@
-import { DestroyRef, Injectable, Signal, computed, inject, signal } from '@angular/core';
+import { isPlatformBrowser } from '@angular/common';
+import {
+  DestroyRef,
+  Injectable,
+  PLATFORM_ID,
+  Signal,
+  TransferState,
+  computed,
+  inject,
+  makeStateKey,
+  signal,
+} from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { forkJoin, map } from 'rxjs';
 
@@ -7,12 +18,16 @@ import { PagedResult, ProductCardDto } from './catalog.model';
 import {
   ListingState,
   PAGE_SIZE,
+  requestKey,
   toRequestParams,
   toRestoreRequests,
 } from './listing-state';
 
+/** One page of a listing, as it travels from the server render to the browser. */
+type ListingPage = Pick<PagedResult<ProductCardDto>, 'items' | 'totalCount'>;
+
 /** What the listing is doing, which is what the page renders around. */
-export type ListingPhase = 'loading' | 'appending' | 'ready' | 'error';
+export type ListingPhase = 'loading' | 'refreshing' | 'appending' | 'ready' | 'error';
 
 /**
  * The products a listing is showing, and how they got there (PLP-06, PLP-07).
@@ -29,6 +44,8 @@ export type ListingPhase = 'loading' | 'appending' | 'ready' | 'error';
 export class ProductListStore {
   private readonly api = inject(CatalogApi);
   private readonly destroyRef = inject(DestroyRef);
+  private readonly transferState = inject(TransferState);
+  private readonly isBrowser = isPlatformBrowser(inject(PLATFORM_ID));
 
   private readonly products = signal<readonly ProductCardDto[]>([]);
   private readonly total = signal(0);
@@ -47,8 +64,11 @@ export class ProductListStore {
   /** A sentence for the shopper, never a status code (PLP-06, error handling). */
   readonly errorMessage: Signal<string | null> = this.error.asReadonly();
 
-  /** True while the first page of a new filter set is on its way. */
+  /** True only when there is nothing on screen yet, which is the one case worth a placeholder. */
   readonly isLoading = computed(() => this.phase() === 'loading');
+
+  /** True whenever a request is in flight, so the results can be dimmed and marked `aria-busy`. */
+  readonly isBusy = computed(() => this.phase() !== 'ready' && this.phase() !== 'error');
 
   /** True while "Load More" is fetching, so the button can say so without blanking the grid. */
   readonly isAppending = computed(() => this.phase() === 'appending');
@@ -64,8 +84,18 @@ export class ProductListStore {
    */
   load(state: ListingState): void {
     const ticket = ++this.ticket;
-    this.phase.set('loading');
     this.error.set(null);
+
+    const handedOver = this.takeFromServer(state);
+    if (handedOver) {
+      this.accept(ticket, handedOver.items, handedOver.totalCount);
+      return;
+    }
+
+    // Rows already on screen stay there while the new ones are fetched. Blanking the grid on
+    // every filter change throws the page around under the shopper, and it is what turned a
+    // hydration-time refetch into a visible flash of nothing.
+    this.phase.set(this.products().length === 0 ? 'loading' : 'refreshing');
 
     const wanted = state.loadedPages * PAGE_SIZE;
 
@@ -75,7 +105,10 @@ export class ProductListStore {
         takeUntilDestroyed(this.destroyRef),
       )
       .subscribe({
-        next: (page) => this.accept(ticket, page.items, page.totalCount),
+        next: (page) => {
+          this.handOver(state, page);
+          this.accept(ticket, page.items, page.totalCount);
+        },
         error: (failure: unknown) => this.reject(ticket, failure),
       });
   }
@@ -103,6 +136,41 @@ export class ProductListStore {
       });
   }
 
+  /**
+   * Hands the server's page to the browser through the hydration state, and takes it there.
+   *
+   * Angular's own HTTP transfer cache cannot do this for us here: it keys a response on the
+   * request URL as it sees it, and it runs *after* the application's interceptors
+   * (`HttpInterceptorHandler`: `[...HTTP_INTERCEPTOR_FNS, ...HTTP_ROOT_INTERCEPTOR_FNS]`), so the
+   * absolute internal address `apiBaseUrlInterceptor` writes during SSR is stored under a key the
+   * browser — which asks for the relative URL — can never look up. Without this, the browser
+   * fetched every page of the catalogue a second time during hydration and replaced the grid it
+   * had just been served with a loading message.
+   *
+   * The key covers the whole request, so a different filter, sort or page count is a different
+   * entry, and it is consumed once: a later navigation back to the same listing fetches fresh
+   * stock and prices rather than replaying the first render.
+   */
+  private takeFromServer(state: ListingState): ListingPage | null {
+    if (!this.isBrowser) {
+      return null;
+    }
+
+    const key = makeStateKey<ListingPage | null>(handoverKey(state));
+    const page = this.transferState.get(key, null);
+    if (page) {
+      this.transferState.remove(key);
+    }
+
+    return page;
+  }
+
+  private handOver(state: ListingState, page: ListingPage): void {
+    if (!this.isBrowser) {
+      this.transferState.set(makeStateKey<ListingPage | null>(handoverKey(state)), page);
+    }
+  }
+
   private accept(ticket: number, items: readonly ProductCardDto[], totalCount: number): void {
     if (ticket !== this.ticket) {
       return;
@@ -123,6 +191,11 @@ export class ProductListStore {
     this.error.set(listingErrorMessage(failure));
     this.phase.set('error');
   }
+}
+
+/** Where one listing's server-rendered page waits for the browser. */
+function handoverKey(state: ListingState): string {
+  return `plp:${requestKey(state)}`;
 }
 
 /** Joins the restore requests back into the one page the URL asked for. */

@@ -99,6 +99,25 @@ test.describe('server-side rendering (GLB-11)', () => {
     expect(html).toContain('Denim in high-rise, straight and wide-leg cuts.');
   });
 
+  /**
+   * The browser must not re-fetch what it was just served. Angular's own HTTP transfer cache
+   * cannot see these requests (see `ProductListStore.takeFromServer`), so the store hands the
+   * page over itself; without it, hydration replaced the rendered grid with a loading message.
+   */
+  test('the browser does not fetch the products the server already sent', async ({ page }) => {
+    const calls: string[] = [];
+    page.on('request', (request) => {
+      if (request.url().includes('/api/catalog/products')) {
+        calls.push(request.url());
+      }
+    });
+
+    await page.goto(LISTING);
+    await expect(page.locator('.product-grid > li')).toHaveCount(24);
+
+    expect(calls).toEqual([]);
+  });
+
   test('a filtered listing is rendered filtered, not rendered then filtered', async ({ request }) => {
     const html = await (await request.get(`${LISTING}?colour=blue`)).text();
 

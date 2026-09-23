@@ -246,6 +246,8 @@ let nextPanelId = 0;
     .filters__summary {
       display: flex;
       align-items: center;
+      justify-content: space-between;
+      gap: var(--space-1);
       /* PLP-02 is a touch surface first: every row of this panel is a 44px target. */
       min-height: var(--tap);
       font-size: var(--text-label);
@@ -253,7 +255,27 @@ let nextPanelId = 0;
       letter-spacing: var(--tracking-label);
       text-transform: uppercase;
       cursor: pointer;
-      list-style-position: inside;
+    }
+    /* display:flex drops the native disclosure triangle, so the chevron is drawn back on:
+       a group that collapses has to look like one. */
+    .filters__summary::marker,
+    .filters__summary::-webkit-details-marker {
+      display: none;
+      content: '';
+    }
+    .filters__summary::after {
+      content: '';
+      flex: none;
+      width: 8px;
+      height: 8px;
+      margin-inline-end: 4px;
+      border-right: 1.5px solid currentColor;
+      border-bottom: 1.5px solid currentColor;
+      transform: translateY(-2px) rotate(45deg);
+      transition: transform var(--duration) var(--ease);
+    }
+    .filters__group[open] > .filters__summary::after {
+      transform: translateY(2px) rotate(-135deg);
     }
     .filters__set {
       display: grid;
