@@ -26,4 +26,9 @@
     <ProjectReference Include="..\SpencerDenim.Application\SpencerDenim.Application.csproj" />
   </ItemGroup>
 
+  <!-- The demo seeder's deterministic generator is an implementation detail with a unit test on it. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="SpencerDenim.UnitTests" />
+  </ItemGroup>
+
 </Project>

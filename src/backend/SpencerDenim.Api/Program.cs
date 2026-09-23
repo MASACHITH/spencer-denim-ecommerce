@@ -1,5 +1,7 @@
+using System.Text.Json.Serialization;
 using SpencerDenim.Api.Endpoints;
 using SpencerDenim.Api.Endpoints.Admin;
+using SpencerDenim.Api.Endpoints.Catalog;
 using SpencerDenim.Api.Health;
 using SpencerDenim.Api.Http;
 using SpencerDenim.Api.Logging;
@@ -12,6 +14,11 @@ var builder = WebApplication.CreateBuilder(args);
 builder.AddSerilogLogging();
 
 builder.Services.AddProblemDetails();
+
+// Enums travel as their names ("Sale", "LowStock", "OutOfStock"), so a client never has to keep a
+// copy of our numeric values in sync.
+builder.Services.ConfigureHttpJsonOptions(options =>
+    options.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 builder.Services.AddApiOpenApi();
 builder.Services.AddApiHealthChecks();
 builder.Services.AddApiForwardedHeaders();
@@ -40,5 +47,6 @@ app.UseAuthorization();
 app.MapApiHealthChecks();
 app.MapPingEndpoints();
 app.MapAdminAuthEndpoints();
+app.MapCatalogEndpoints();
 
 await app.RunAsync();

@@ -1,7 +1,12 @@
 using Microsoft.Extensions.DependencyInjection;
 using SpencerDenim.Application.Abstractions.Messaging;
+using SpencerDenim.Application.Abstractions.Results;
 using SpencerDenim.Application.Admin.Authentication;
 using SpencerDenim.Application.Admin.CurrentUser;
+using SpencerDenim.Application.Catalog.Contracts;
+using SpencerDenim.Application.Catalog.Departments;
+using SpencerDenim.Application.Catalog.Products;
+using SpencerDenim.Application.Catalog.Search;
 using SpencerDenim.Application.Diagnostics.Ping;
 
 namespace SpencerDenim.Application;
@@ -16,6 +21,20 @@ public static class DependencyInjection
         services.AddScoped<IQueryHandler<PingQuery, PingResponse>, PingQueryHandler>();
         services.AddScoped<ICommandHandler<AdminLoginCommand, AdminLoginResult>, AdminLoginCommandHandler>();
         services.AddScoped<IQueryHandler<WhoAmIQuery, WhoAmIResponse?>, WhoAmIQueryHandler>();
+
+        // Catalogue read side (W1-02). The ports they depend on are registered by Infrastructure.
+        services.AddScoped<
+            IQueryHandler<GetDepartmentsQuery, IReadOnlyList<DepartmentDto>>,
+            GetDepartmentsQueryHandler>();
+        services.AddScoped<
+            IQueryHandler<ProductListQuery, Result<PagedResult<ProductCardDto>>>,
+            GetProductsQueryHandler>();
+        services.AddScoped<
+            IQueryHandler<GetProductBySlugQuery, ProductDetailDto?>,
+            GetProductBySlugQueryHandler>();
+        services.AddScoped<
+            IQueryHandler<ProductSearchQuery, Result<PagedResult<ProductCardDto>>>,
+            SearchProductsQueryHandler>();
 
         return services;
     }

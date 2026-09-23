@@ -61,3 +61,10 @@ dotnet_diagnostic.CA2007.severity = none
 [tests/**.cs]
 dotnet_diagnostic.CA1707.severity = none
 dotnet_diagnostic.CA1515.severity = none
+
+# EF Core generates migration files; they are not hand-written and are never edited by us.
+# Reformatting them would make `dotnet ef migrations add` produce a diff on every run.
+[src/backend/SpencerDenim.Infrastructure/Persistence/Migrations/**.cs]
+# Block-scoped namespace and inline array arguments are what the EF scaffolder emits.
+dotnet_diagnostic.IDE0161.severity = none
+dotnet_diagnostic.CA1861.severity = none
