@@ -15,7 +15,7 @@ const progressData = {
     endDate: "2026-10-15"
   },
 
-  lastUpdated: "2026-09-22",
+  lastUpdated: "2026-09-23",
 
   milestones: [
     { week: "Week 0", title: "Setup & design", start: "2026-09-15", end: "2026-09-18" },
@@ -53,8 +53,8 @@ const progressData = {
     {
       name: "Shopping Pages",
       features: [
-        { name: "Site header with announcement bar, footer, WhatsApp chat button & delivery district selector", status: "planned", progress: 0 },
-        { name: "Main menu (Women · Men · Kids · New Arrivals · Sale) with mega menu & mobile menu", status: "planned", progress: 0 },
+        { name: "Site header with announcement bar, footer, WhatsApp chat button & delivery district selector", status: "done", progress: 100 },
+        { name: "Main menu (Women · Men · Kids · New Arrivals · Sale) with mega menu & mobile menu", status: "done", progress: 100 },
         { name: "Department pages", status: "in-progress", progress: 10 },
         { name: "Category listings with filters & sorting", status: "in-progress", progress: 25 },
         { name: "Product cards with quick view", status: "in-progress", progress: 10 },
@@ -124,6 +124,10 @@ const progressData = {
 
   // Newest first.
   updates: [
+    {
+      date: "2026-09-23",
+      text: "The shop frame is built and tested: the top announcement bar, the header with your logo area, search, wishlist and bag, the main menu with drop-down categories on desktop and a slide-out menu on phones, the delivery district selector, the footer, and the WhatsApp chat button. Checked on phone, tablet and desktop sizes."
+    },
     {
       date: "2026-09-22",
       text: "Secure admin sign-in is built and tested: staff accounts, roles and permissions, and an activity log that records every sign-in and sign-out. The remaining admin screens (managing staff users, viewing the activity log) come next. Work also continued on the product catalogue."
