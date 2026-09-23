@@ -1,1 +1,71 @@
 /* Storefront global styles. Tokens and the base reset come from projects/shared/src/styles (see angular.json). */
+
+/* ==========================================================================
+   Storefront design-system pieces (design/style-tile §08, §09, §10).
+
+   These three are shared by more than one page — the listing today, the product page, search
+   results and the home page rows next — so they live here rather than being copied into each
+   component's scoped styles. Anything that belongs to one component stays with that component.
+   ========================================================================== */
+
+/* ---- Breadcrumb (PLP-01, PDP-01) ---- */
+.breadcrumb ol {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  list-style: none;
+  font-size: var(--text-small);
+}
+.breadcrumb li { display: flex; align-items: center; }
+.breadcrumb li + li::before {
+  content: "/";
+  margin-inline: var(--space-1);
+  color: var(--color-text-muted);
+}
+.breadcrumb a,
+.breadcrumb [aria-current] {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--tap);
+  text-underline-offset: 3px;
+}
+.breadcrumb [aria-current] { color: var(--color-text-muted); }
+
+/* ---- Active filter chips (PLP-03, SRCH-02) ---- */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  list-style: none;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: var(--tap);
+  padding: var(--space-1) var(--space-1-5) var(--space-1) var(--space-2);
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  font-size: var(--text-small);
+  text-align: left;
+  cursor: pointer;
+}
+.chip:hover { background: var(--color-bg-alt); }
+
+/* ---- Product grid: 2 / 3 / 4 / 5 columns (PLP-05, docs/04 §4) ---- */
+.product-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4) var(--space-1-5);
+  list-style: none;
+}
+@media (min-width: 768px) {
+  .product-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-5) var(--space-2); }
+}
+@media (min-width: 1024px) {
+  .product-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-6) var(--space-3); }
+}
+@media (min-width: 1440px) {
+  .product-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+}
