@@ -1650,7 +1650,7 @@ ORDER BY <sort>, p.Id
 OFFSET @skip ROWS FETCH NEXT 24 ROWS ONLY;
 ```
 - Predicates are composed only for the filters that are present. The subtree IDs come from the cached category tree.
-- **A product is on the storefront only while its department and its primary category are `IsActive`.** `IsActive` is the admin's switch for taking a section off the shop (ADM-11), so the listing, search and the product page all join both and filter on them; a product's *secondary* `ProductCategories` links never keep it visible. Without this, deactivating a category leaves its products in the listing with a breadcrumb into a category that answers nothing.
+- **A product is on the storefront only while its department and its primary category are `IsActive`.** `IsActive` is the admin's switch for taking a section off the shop (ADM-11), so the listing, search and the product page all join both and filter on them; a product's *secondary* `ProductCategories` links never keep it visible. A **soft-deleted** primary category hides its products the same way, because the query filter on Categories applies to the joined side. Without this, deactivating a category leaves its products in the listing with a breadcrumb into a category that answers nothing.
 - **Page-row enrichment** (24 rows) uses `OUTER APPLY` over active variants and StockLevels to get `Σ Available` and `Σ COALESCE(LowStockThreshold, Inventory.DefaultLowStockThreshold)`.
   - These give the out-of-stock label and the **Low Stock** badge, shown when `0 < Σ Available ≤ Σ threshold`, i.e. using **each variant's own threshold** (N11).
   - The PDP stock message uses the selected variant's own threshold.
