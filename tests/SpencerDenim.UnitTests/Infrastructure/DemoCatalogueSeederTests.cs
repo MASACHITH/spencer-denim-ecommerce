@@ -59,8 +59,9 @@ public sealed class DemoCatalogueSeederTests
     [Fact]
     public void The_partly_sold_out_demo_product_always_has_both_a_sold_out_and_a_stocked_variant()
     {
-        var stock = DrawStock("SD-M-0003", StockProfile.Mixed);
+        var stock = DrawStock("SD-M-0003");
 
+        Assert.Equal(10, stock.Length);
         Assert.Contains(0, stock);
         Assert.Contains(stock, quantity => quantity > 0);
     }
@@ -96,11 +97,17 @@ public sealed class DemoCatalogueSeederTests
         }
     }
 
-    /// <summary>One product's variant stock, drawn the way <c>SeedProductAsync</c> draws it.</summary>
-    private static int[] DrawStock(string code, StockProfile profile)
+    /// <summary>
+    /// One product's variant stock, drawn exactly the way <c>SeedProductAsync</c> draws it: one value
+    /// per variant, and a product has one variant per colour and size. Drawing more than the real
+    /// count would let a zero that only appears at draw 11 satisfy a test the seeder never reaches.
+    /// </summary>
+    private static int[] DrawStock(string code, StockProfile? profile = null)
     {
+        var seed = DemoCatalogueData.Products.Single(product => product.Code == code);
+        var variants = seed.Colours.Length * seed.SizeLabels.Length;
         var random = new DemoCatalogueSeeder.DeterministicRandom(code);
 
-        return [.. Enumerable.Range(0, 15).Select(_ => DemoCatalogueSeeder.OnHandFor(profile, random))];
+        return [.. Enumerable.Range(0, variants).Select(_ => DemoCatalogueSeeder.OnHandFor(profile ?? seed.Stock, random))];
     }
 }
