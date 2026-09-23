@@ -1,6 +1,7 @@
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
+import { firstValueFrom } from 'rxjs';
 
 import { DepartmentDto } from './catalog-departments.model';
 import { MEGA_MENU_COLUMN_COUNT, toNavigation } from './navigation.mapper';
@@ -292,10 +293,48 @@ describe('NavigationService and the catalogue API', () => {
     expect(service.departments()).toEqual(PLACEHOLDER_DEPARTMENTS);
   });
 
-  it('falls back rather than draw a menu with no departments in it', () => {
-    http.expectOne('/api/catalog/departments').flush([]);
+  /**
+   * Every shape that leaves the storefront without a usable tree, checked on `tree$` as well as on
+   * the signal. They have to agree: `usable` was applied only to the signal, so the route guards
+   * read the raw response and a `200 []` — which the API legitimately answers for a freshly
+   * migrated database before anyone runs the seeder — sent every listing URL to the home page
+   * while the mega menu still listed all three departments. `catchError` cannot see either of
+   * these: a useless body is still a successful response.
+   */
+  describe('an answer it cannot use', () => {
+    async function treeOf(): Promise<readonly DepartmentDto[]> {
+      return firstValueFrom(service.tree$);
+    }
 
-    expect(service.departments()).toEqual(PLACEHOLDER_DEPARTMENTS);
+    it('falls back on an empty catalogue, and the guards see the same tree', async () => {
+      http.expectOne('/api/catalog/departments').flush([]);
+
+      expect(service.departments()).toEqual(PLACEHOLDER_DEPARTMENTS);
+      expect(await treeOf()).toEqual(PLACEHOLDER_DEPARTMENTS);
+    });
+
+    it('falls back on a body that is not an array, rather than throwing in a route guard', async () => {
+      http.expectOne('/api/catalog/departments').flush({ oops: true });
+
+      expect(service.departments()).toEqual(PLACEHOLDER_DEPARTMENTS);
+      expect(await treeOf()).toEqual(PLACEHOLDER_DEPARTMENTS);
+    });
+
+    it('falls back on a failure', async () => {
+      http
+        .expectOne('/api/catalog/departments')
+        .flush('boom', { status: 500, statusText: 'Server Error' });
+
+      expect(service.departments()).toEqual(PLACEHOLDER_DEPARTMENTS);
+      expect(await treeOf()).toEqual(PLACEHOLDER_DEPARTMENTS);
+    });
+
+    it('gives the guards a department to match in every one of those cases', async () => {
+      http.expectOne('/api/catalog/departments').flush([]);
+
+      const tree = await treeOf();
+      expect(tree.map((department) => department.slug)).toEqual(['women', 'men', 'kids']);
+    });
   });
 });
 
@@ -328,5 +367,8 @@ describe('NavigationService and a catalogue that never answers', () => {
     expect(service.departments()).toEqual(PLACEHOLDER_DEPARTMENTS);
     expect(service.items()).toHaveLength(5);
     expect(request.cancelled).toBe(true);
+
+    // And the guards get the same tree, not a pending observable.
+    expect(await firstValueFrom(service.tree$)).toEqual(PLACEHOLDER_DEPARTMENTS);
   });
 });

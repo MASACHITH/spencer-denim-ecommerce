@@ -1,6 +1,6 @@
 import { Injectable, Signal, computed, inject } from '@angular/core';
 import { toSignal } from '@angular/core/rxjs-interop';
-import { Observable, catchError, of, shareReplay, tap, timeout } from 'rxjs';
+import { Observable, catchError, map, of, shareReplay, tap, timeout } from 'rxjs';
 
 import { CatalogApi } from '../catalog/catalog-api';
 import { ServerHandover } from '../platform/server-handover';
@@ -38,21 +38,28 @@ export class NavigationService {
   private readonly handover = inject(ServerHandover);
 
   /**
-   * The tree, resolved once and replayed. The route guards subscribe to this rather than reading
-   * {@link departments}, because a signal cannot tell "still loading" from "the fallback".
+   * The tree, resolved once and replayed — already vetted, so every reader sees the same one.
+   *
+   * {@link usable} sits inside the pipeline rather than on the signal that reads it. It used to be
+   * applied only to {@link departments}, which left the route guards reading the raw response: a
+   * `200 []` — what the API legitimately answers for a freshly migrated database before anyone
+   * runs the seeder, and for a site whose departments have all been deactivated — sent every
+   * listing URL to the home page while the mega menu still listed all three departments, and a
+   * `200 {"oops":true}` threw inside a guard and served Express's own error page. `catchError`
+   * cannot help with either: a useless body is still a successful response.
+   *
+   * The route guards subscribe to this rather than reading {@link departments}, because a signal
+   * cannot tell "still loading" from "the fallback".
    */
   readonly tree$: Observable<readonly DepartmentDto[]> = this.load().pipe(
+    map(usable),
     shareReplay({ bufferSize: 1, refCount: false }),
   );
 
-  private readonly feed = toSignal(this.tree$, { initialValue: PLACEHOLDER_DEPARTMENTS });
-
-  /**
-   * The department tree. An answer that is not a non-empty array is treated as a failure and
-   * falls back too: an empty menu is not a menu, and an empty tree would leave every listing
-   * page without a breadcrumb or a category filter.
-   */
-  readonly departments: Signal<readonly DepartmentDto[]> = computed(() => usable(this.feed()));
+  /** The department tree, live or fallback, and never empty. */
+  readonly departments: Signal<readonly DepartmentDto[]> = toSignal(this.tree$, {
+    initialValue: PLACEHOLDER_DEPARTMENTS,
+  });
 
   /** All five entries, in order. */
   readonly items: Signal<readonly NavItem[]> = computed(() => toNavigation(this.departments()));
@@ -74,7 +81,12 @@ export class NavigationService {
   }
 }
 
-/** Guards the menu against an empty or malformed payload without hiding a real failure. */
+/**
+ * Guards every reader against an empty or malformed payload without hiding a real failure.
+ *
+ * An empty menu is not a menu, and an empty tree leaves every listing page without a breadcrumb,
+ * a category filter, or a route the guards will match (lesson L1).
+ */
 export function usable(departments: readonly DepartmentDto[]): readonly DepartmentDto[] {
   return Array.isArray(departments) && departments.length > 0
     ? departments
@@ -98,6 +110,12 @@ export function trailTo(
   categories: readonly CategoryNodeDto[],
   slug: string,
 ): readonly CategoryNodeDto[] {
+  // A department object without a `categories` array would otherwise throw here, and this runs
+  // inside a route guard, where a throw costs the whole page rather than one menu column.
+  if (!Array.isArray(categories)) {
+    return [];
+  }
+
   for (const category of categories) {
     if (category.slug === slug) {
       return [category];
