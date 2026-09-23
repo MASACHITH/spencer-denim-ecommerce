@@ -262,7 +262,10 @@ public sealed class CatalogModelTests
             index.Properties.Select(property => property.Name));
     }
 
-    /// <summary>Doc 08 §1.6: nothing cascades except pure child rows.</summary>
+    /// <summary>
+    /// Doc 08 §1.6: nothing cascades except pure child rows. Asserted both ways, so the model can
+    /// neither add a cascade the section does not permit nor quietly drop one it lists.
+    /// </summary>
     [Fact]
     public void Only_pure_child_rows_cascade_on_delete()
     {
@@ -270,10 +273,12 @@ public sealed class CatalogModelTests
             .SelectMany(entity => entity.GetForeignKeys()
                 .Where(foreignKey => foreignKey.DeleteBehavior == DeleteBehavior.Cascade)
                 .Select(foreignKey => $"{entity.ShortName()} -> {foreignKey.PrincipalEntityType.ShortName()}"))
-            .ToList();
+            .ToHashSet(StringComparer.Ordinal);
 
         // Doc 08 §1.6: "CASCADE only for pure child rows: CartItems, UserRoles, RoleClaims,
-        // UserClaims/Logins/Tokens, ProductCategories, RelatedProducts, ProductMedia, ...".
+        // UserClaims/Logins/Tokens, ProductCategories, ProductColours, ProductStats,
+        // ProductSearchIndex, RelatedProducts, ProductMedia, ...". The tables of later milestones are
+        // not mapped yet, so only this milestone's rows can appear.
         string[] allowed =
         [
             "ProductCategory -> Product",
@@ -292,6 +297,6 @@ public sealed class CatalogModelTests
             "IdentityUserToken -> AppUser",
         ];
 
-        Assert.All(cascading, relationship => Assert.Contains(relationship, allowed, StringComparer.Ordinal));
+        Assert.Equal(allowed.Order(StringComparer.Ordinal), cascading.Order(StringComparer.Ordinal));
     }
 }
