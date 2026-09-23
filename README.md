@@ -178,6 +178,20 @@ npx ng serve admin        # http://localhost:4300/admin/
 
 `proxy.conf.json` forwards `/api` and `/health` to the API on http://localhost:5080, so start the API first. Each placeholder home page calls `/api/ping` and shows "API connected" or a neutral "not reachable" message. During server-side rendering the storefront calls the API directly at `API_INTERNAL_URL` (default `http://localhost:5080`).
 
+**`proxy.conf.json` only applies to `ng serve`.** The built SSR server (`npm run serve:ssr:storefront`) serves the storefront and nothing else: it renders pages, it does **not** forward `/api`. That is the reverse proxy's job in production (doc 03 §4, Caddy), and it is why a built storefront run on its own answers a page fine but fails anything the browser fetches afterwards — "Load More", a filter change, the product search.
+
+So:
+
+| Running | `/api` reaches the API | Use it for |
+|---|---|---|
+| `npx ng serve storefront` (4200) | yes, via `proxy.conf.json` | day-to-day development, clicking through a page |
+| `npm run serve:ssr:storefront` (4000) | **no** | checking the server-rendered HTML, the production bundle |
+| behind Caddy / the reverse proxy | yes | staging and production |
+
+`npx playwright test` needs neither: it starts the built SSR server *and* a stub catalogue
+(`e2e/support/catalog-api-stub.mjs`), points the SSR process at it with `API_INTERNAL_URL`, and
+routes the browser's own `/api` calls to the same stub — which is what the reverse proxy does.
+
 ### 5. Run the tests
 
 ```powershell

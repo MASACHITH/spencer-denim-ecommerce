@@ -176,7 +176,9 @@ describe('ProductCard content (CARD-01)', () => {
     });
 
     expect(element.querySelectorAll('.dot')).toHaveLength(2);
-    expect(element.querySelector('.dots')?.textContent).toContain('Colours: Ecru, Black');
+    // The family is named alongside the colour when they differ, so a card a Red filter returned
+    // does not read as though the filter had gone wrong.
+    expect(element.querySelector('.dots')?.textContent).toContain('Colours: Ecru (Cream), Black');
   });
 
   it('counts the colours it had no room for', async () => {

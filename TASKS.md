@@ -49,9 +49,9 @@ Feature IDs → [docs/02-scope-baseline.md](docs/02-scope-baseline.md). Process 
 | ID | Task | Features | Status |
 |---|---|---|---|
 | W2-01 | Homepage blocks + Content admin | HOME-01–10, ADM-17 | TODO |
-| W2-02 | Department, New Arrivals, Sale pages | DEPT-01–03 | TODO |
-| W2-03 | Listing: filters, chips, sort, count, empty, load more | PLP-01–07 | TODO |
-| W2-04 | Product card + Quick View | CARD-01, QV-01 | TODO |
+| W2-02 | Department, New Arrivals, Sale pages | DEPT-01–03 | IN REVIEW — DEPT-01 and the New Arrivals / Sale listings landed with W2-03 (two of the five permanent nav entries could not point at a missing page). Their promo banners and editorial copy are still TODO |
+| W2-03 | Listing: filters, chips, sort, count, empty, load more | PLP-01–07 | IN REVIEW — fix round 1 delivered on `feature/W2-03-product-listing`, back with the tester |
+| W2-04 | Product card + Quick View | CARD-01, QV-01 | IN PROGRESS — the card landed with W2-03 minus Quick View (QV-01) and Add to Bag (needs the bag API, W2-09); the product detail page is still TODO |
 | W2-05 | Product page: gallery/zoom/video, variants, size guide, details, related, recently viewed | PDP-01–07 | TODO |
 | W2-06 | Reviews + moderation | PDP-08, ADM-16 | TODO |
 | W2-07 | Search overlay + results | SRCH-01–02 | TODO |

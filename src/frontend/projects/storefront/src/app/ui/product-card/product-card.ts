@@ -182,7 +182,7 @@ interface ColourDot {
       /* Keeps clear of the wishlist button whatever the label says. */
       max-width: calc(100% - var(--tap) - var(--space-2));
       padding: 3px 6px;
-      font-size: 0.6875rem;
+      font-size: var(--text-label);
       font-weight: var(--weight-medium);
       letter-spacing: 0.1em;
       text-transform: uppercase;
@@ -275,7 +275,7 @@ interface ColourDot {
       color: var(--color-text-muted);
     }
     .card__cat {
-      font-size: 0.6875rem;
+      font-size: var(--text-label);
       letter-spacing: 0.1em;
       text-transform: uppercase;
       color: var(--color-text-muted);
@@ -301,7 +301,7 @@ interface ColourDot {
     }
     @media (min-width: 768px) {
       .card__name {
-        font-size: 0.9375rem;
+        font-size: var(--text-body);
       }
     }
     .rating {
@@ -315,7 +315,7 @@ interface ColourDot {
       flex-wrap: wrap;
       align-items: baseline;
       gap: 2px var(--space-1);
-      font-size: 0.9375rem;
+      font-size: var(--text-body);
       line-height: 1.4;
     }
     .price__now {
@@ -324,12 +324,12 @@ interface ColourDot {
     }
     .price__was {
       color: var(--color-text-muted);
-      font-size: 0.8125rem;
+      font-size: var(--text-small);
       white-space: nowrap;
     }
     .price__off {
       color: var(--color-sale);
-      font-size: 0.8125rem;
+      font-size: var(--text-small);
       font-weight: var(--weight-medium);
     }
     .price--sale .price__now {
@@ -400,9 +400,18 @@ export class ProductCard {
     Math.max(0, this.product().colours.length - MAX_COLOUR_DOTS),
   );
 
-  /** The dots are decorative; this sentence is what a screen reader reads instead. */
+  /**
+   * The dots are decorative; this sentence is what a screen reader reads instead. The family is
+   * named alongside the colour when they differ, so a card that a Red filter returned reads as
+   * "Deep Maroon (Red)" rather than looking like the filter was wrong.
+   */
   protected readonly colourSummary = computed(() => {
-    const names = this.product().colours.map((colour: ColourSwatchDto) => colour.name);
+    const names = this.product().colours.map((colour: ColourSwatchDto) =>
+      colour.familyName && colour.familyName !== colour.name
+        ? `${colour.name} (${colour.familyName})`
+        : colour.name,
+    );
+
     return names.length === 1 ? `Colour: ${names[0]}` : `Colours: ${names.join(', ')}`;
   });
 

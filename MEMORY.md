@@ -43,6 +43,54 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 
 ## Session log
 
+### 2026-09-23 (3) — W2-03 product listing: tester FAILED it, developer fix round 1
+
+The tester rejected the branch on 2 Blockers, 4 Majors and a set of Minors. All fixed on
+`feature/W2-03-product-listing`.
+
+**Blockers**
+- **Load More past the ceiling collapsed the listing.** `readLoadedPages` dropped an out-of-range
+  value back to 1, and the button was still offered at the cap, so one more click took a listing of
+  480 products down to 24. The count is now clamped at both ends and the button is hidden at the
+  ceiling, with a line saying why.
+- **`/:department` swallowed every single-segment path.** Eleven live header and footer links —
+  `/bag`, `/account`, `/wishlist`, `/contact`, `/privacy` and the rest — rendered the listing's
+  not-found state at HTTP 200, telling the shopper a *department* was missing when they had clicked
+  "Bag". A `canMatch` guard now accepts only a slug the department tree knows, so everything else
+  falls through to `**` and the home page as before.
+
+**Majors**
+- `/new-arrivals` and `/sale` are real listings now (DEPT-02/DEPT-03 happy path), each with its own
+  heading, title and meta description, so no permanent navigation entry points at a missing page.
+- An unknown category (`/women/shirts`, a Men's category) rendered as the department page with
+  "0 products". It is now a genuine **404** — status set from the component through `RESPONSE_INIT`,
+  because a server route's `status` is matched by path and no pattern can express "a category this
+  department does not have". `noindex` with it, and listings now carry a relative `<link rel="canonical">`.
+- Angular's HTTP transfer cache was still on and serialising every SSR response into the page under
+  a key the browser cannot use — 23.8 kB of dead JSON on a department listing, each entry carrying
+  `API_INTERNAL_URL`. Off (`withNoHttpTransferCache`); `ServerHandover` already hands the two
+  catalogue calls over explicitly.
+- The department feed had `catchError` but no timeout, so a 12 s API gave every page a 12 s TTFB.
+  2 s, then the seeded fallback.
+- The wishlist heart saved the product and left the header reading "Wishlist, 0 items". Wired, and
+  taken up only after the first render so hydration is not asked to grow the header.
+
+**Minors:** a reversed price range drops both bounds (no chip that contradicts the URL); no products
+request at all on a 404; literal font sizes replaced with the type-scale tokens; the filter panel is
+rendered once instead of once per container (202 inputs in the DOM, doubled in the HTML); sizes are
+grouped into real `fieldset`/`legend` scales and only the scales a department stocks; a card's
+colour summary names the family ("Ecru (Cream)"); README §4 documents that the built SSR server does
+not proxy `/api`.
+
+**Numbers:** 203 frontend unit tests (was 174), 57 Playwright tests (was 42), backend unchanged at
+232 + 146, 0 skipped. Lint and all four builds clean.
+
+**Still open, filed rather than built:** the facets endpoint (the filter option lists are still a
+copy of the seed data, and the API cannot filter a size by scale), and the
+interceptor/transfer-cache ordering in the shared SSR setup.
+
+**Next:** back to the tester.
+
 ### 2026-09-23 (2) — W1-02 fix round 2: tester verified round 1, failed it on two more Majors
 
 The tester confirmed all nine round-1 fixes as real and rejected the branch again.

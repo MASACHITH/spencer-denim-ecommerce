@@ -19,10 +19,25 @@ export interface FilterOption {
   /** What goes in the URL and in the API request. */
   readonly value: string;
   readonly label: string;
-  /** Optional sub-heading, so a long list (sizes) can be read in blocks. */
-  readonly group?: string;
   /** Colour families carry their swatch colour. */
   readonly hex?: string;
+}
+
+/**
+ * One size scale — `catalog.Sizes.ScaleName` (doc 08 §3.2). Sizes are offered scale by scale
+ * because a bare list of labels is unreadable and, worse, ambiguous: the same "36" is a women's
+ * waist and a shoe. Only the scales a department can produce are offered, so a Baby size never
+ * appears on a Women listing where it could only ever return nothing.
+ */
+export interface SizeScale {
+  readonly name: string;
+  /** Department slugs this scale belongs to; empty means every department. */
+  readonly departments: readonly string[];
+  readonly options: readonly FilterOption[];
+}
+
+function labels(values: readonly string[]): readonly FilterOption[] {
+  return values.map((label) => ({ value: label, label }));
 }
 
 /** Age groups — `catalog.AgeGroups.Slug` (DEPT-01: Kids covers Baby, Toddler, Kids, Juniors). */
@@ -34,38 +49,55 @@ export const AGE_GROUP_OPTIONS: readonly FilterOption[] = [
 ];
 
 /**
- * Size labels — `catalog.Sizes.Label`. The API matches on the label, not a slug, and a label is
- * at most 20 characters. Footwear EU numbers and the alpha scale overlap with the waist numbers,
- * so the groups are named: "32" means one thing on a waistband and another on a shoe, and the
- * API treats them as the same label either way.
+ * The seeded size scales of doc 08 §9. The API matches on the label, not on a slug or a scale, so
+ * the scale is a label for the shopper rather than something it can filter by: ticking a "36"
+ * still means every 36 in the catalogue. Narrowing a scale to its departments is as far as the
+ * current contract goes — a `size` parameter that took a scale would be the real fix, and belongs
+ * with the facets work.
  */
-export const SIZE_OPTIONS: readonly FilterOption[] = [
-  ...['XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL'].map((label) => ({
-    value: label,
-    label,
-    group: 'Clothing',
-  })),
-  ...['24', '26', '28', '30', '32', '34', '36', '38', '40'].map((label) => ({
-    value: label,
-    label,
-    group: 'Waist',
-  })),
-  ...['2-3Y', '4-5Y', '6-7Y', '8-9Y', '10-11Y', '12-13Y'].map((label) => ({
-    value: label,
-    label,
-    group: 'Kids',
-  })),
-  ...['0-3M', '3-6M', '6-9M', '9-12M', '12-18M', '18-24M'].map((label) => ({
-    value: label,
-    label,
-    group: 'Baby',
-  })),
-  ...['35', '37', '39', '41', '43', '45'].map((label) => ({
-    value: label,
-    label,
-    group: 'Footwear (EU)',
-  })),
+export const SIZE_SCALES: readonly SizeScale[] = [
+  {
+    name: 'Clothing',
+    departments: ['women', 'men'],
+    options: labels(['XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL']),
+  },
+  {
+    name: 'Women waist',
+    departments: ['women'],
+    options: labels(['24', '26', '28', '30', '32', '34', '36']),
+  },
+  {
+    name: 'Men waist',
+    departments: ['men'],
+    options: labels(['28', '30', '32', '34', '36', '38', '40']),
+  },
+  {
+    name: 'Kids age',
+    departments: ['kids'],
+    options: labels(['2-3Y', '4-5Y', '6-7Y', '8-9Y', '10-11Y', '12-13Y']),
+  },
+  {
+    name: 'Baby months',
+    departments: ['kids'],
+    options: labels(['0-3M', '3-6M', '6-9M', '9-12M', '12-18M', '18-24M']),
+  },
+  {
+    name: 'Footwear (EU)',
+    departments: [],
+    options: labels(['35', '37', '39', '41', '43', '45']),
+  },
 ];
+
+/** The scales a department offers; every scale when no department is chosen (New Arrivals, Sale). */
+export function sizeScalesFor(department: string | null): readonly SizeScale[] {
+  if (department === null) {
+    return SIZE_SCALES;
+  }
+
+  return SIZE_SCALES.filter(
+    (scale) => scale.departments.length === 0 || scale.departments.includes(department),
+  );
+}
 
 /** Colour families — `catalog.ColourFamilies.Slug`, with the seeded swatch colour. */
 export const COLOUR_OPTIONS: readonly FilterOption[] = [

@@ -12,7 +12,8 @@ import {
   OCCASION_OPTIONS,
   PRICE_BANDS,
   RATING_OPTIONS,
-  SIZE_OPTIONS,
+  SizeScale,
+  sizeScalesFor,
 } from '../../core/catalog/filter-options';
 import {
   ListFilterKey,
@@ -29,7 +30,7 @@ interface CategoryChoice {
   readonly depth: number;
 }
 
-/** A group of checkboxes, so the eleven groups are declared as data rather than as markup. */
+/** A group of checkboxes, so the filter groups are declared as data rather than as markup. */
 interface CheckboxGroup {
   readonly key: ListFilterKey;
   readonly legend: string;
@@ -41,7 +42,8 @@ interface CheckboxGroup {
 let nextPanelId = 0;
 
 /**
- * The PLP-02 filter controls, used twice: as the desktop sidebar and inside the mobile drawer.
+ * The PLP-02 filter controls: the desktop sidebar and the contents of the mobile drawer, which
+ * are the same component rendered once (the page decides which container it goes in).
  *
  * It owns no state. Every control reports the state it would produce through {@link changed}, and
  * the page turns that into a URL — which is the only place the listing's state lives. That is
@@ -49,18 +51,19 @@ let nextPanelId = 0;
  *
  * Department and category are radio groups rather than checkboxes because the API takes one of
  * each (`ProductListQuery.DepartmentSlug`, `CategorySlug` are single values), and because they
- * are the page's own address: choosing one navigates.
+ * are the page's own address: choosing one navigates. On New Arrivals and Sale neither is
+ * offered, because those listings have no department to be in.
  *
  * Native `fieldset`/`legend` and real `input` elements throughout: a checkbox that is a `div`
  * has to have its name, its state and its keyboard behaviour rebuilt by hand, and this page has
- * over a hundred of them.
+ * dozens of them.
  */
 @Component({
   selector: 'sd-listing-filters',
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="filters">
-      @if (departments().length > 0) {
+      @if (showsPlacement() && departments().length > 0) {
         <details class="filters__group" open>
           <summary class="filters__summary">Department</summary>
           <fieldset class="filters__set">
@@ -81,7 +84,7 @@ let nextPanelId = 0;
         </details>
       }
 
-      @if (categories().length > 0) {
+      @if (showsPlacement() && categories().length > 0) {
         <details class="filters__group" open>
           <summary class="filters__summary">Category</summary>
           <fieldset class="filters__set">
@@ -141,15 +144,38 @@ let nextPanelId = 0;
         </fieldset>
       </details>
 
+      <!-- Sizes are grouped by scale, each its own fieldset: "36" is a women's waist and a shoe,
+           and a flat list of labels says which is which to nobody. -->
+      <details class="filters__group" open>
+        <summary class="filters__summary">{{ sizeLegend }}</summary>
+        <fieldset class="filters__set filters__set--scales">
+          <legend class="sr-only">{{ sizeLegend }}</legend>
+          @for (scale of sizeScales(); track scale.name) {
+            <fieldset class="filters__scale">
+              <legend class="filters__scale-legend">{{ scale.name }}</legend>
+              <div class="filters__scale-options">
+                @for (option of scale.options; track option.value) {
+                  <label class="opt">
+                    <input
+                      type="checkbox"
+                      [checked]="isChecked('sizes', option.value)"
+                      (change)="toggle('sizes', option.value)"
+                    />
+                    <span>{{ option.label }}</span>
+                  </label>
+                }
+              </div>
+            </fieldset>
+          }
+        </fieldset>
+      </details>
+
       @for (group of checkboxGroups; track group.key) {
         <details class="filters__group" [open]="group.open || isGroupActive(group.key)">
           <summary class="filters__summary">{{ group.legend }}</summary>
           <fieldset class="filters__set" [class.filters__set--swatches]="group.swatches">
             <legend class="sr-only">{{ group.legend }}</legend>
-            @for (option of group.options; track option.value + ':' + (option.group ?? '')) {
-              @if (startsGroup(group.options, $index)) {
-                <p class="filters__subhead">{{ option.group }}</p>
-              }
+            @for (option of group.options; track option.value) {
               <label class="opt" [class.opt--swatch]="group.swatches">
                 <input
                   type="checkbox"
@@ -206,34 +232,36 @@ let nextPanelId = 0;
         </fieldset>
       </details>
 
-      <details class="filters__group" [open]="state().onSale">
-        <summary class="filters__summary">Discount</summary>
-        <fieldset class="filters__set">
-          <legend class="sr-only">Discount</legend>
-          <label class="opt">
-            <input
-              type="radio"
-              [name]="id + '-discount'"
-              value=""
-              [checked]="!state().onSale"
-              (change)="chooseDiscount(null)"
-            />
-            <span>Any</span>
-          </label>
-          @for (option of discountOptions; track option.value) {
+      @if (showsDiscount()) {
+        <details class="filters__group" [open]="state().onSale">
+          <summary class="filters__summary">Discount</summary>
+          <fieldset class="filters__set">
+            <legend class="sr-only">Discount</legend>
             <label class="opt">
               <input
                 type="radio"
                 [name]="id + '-discount'"
-                [value]="option.value"
-                [checked]="discountChoice() === option.value"
-                (change)="chooseDiscount(+option.value)"
+                value=""
+                [checked]="!state().onSale"
+                (change)="chooseDiscount(null)"
               />
-              <span>{{ option.label }}</span>
+              <span>Any</span>
             </label>
-          }
-        </fieldset>
-      </details>
+            @for (option of discountOptions; track option.value) {
+              <label class="opt">
+                <input
+                  type="radio"
+                  [name]="id + '-discount'"
+                  [value]="option.value"
+                  [checked]="discountChoice() === option.value"
+                  (change)="chooseDiscount(+option.value)"
+                />
+                <span>{{ option.label }}</span>
+              </label>
+            }
+          </fieldset>
+        </details>
+      }
     </div>
   `,
   styles: `
@@ -287,13 +315,22 @@ let nextPanelId = 0;
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 0 var(--space-1);
     }
-    .filters__subhead {
-      grid-column: 1 / -1;
-      padding-top: var(--space-1);
+    .filters__scale {
+      border: 0;
+      padding: 0;
+      min-width: 0;
+    }
+    .filters__scale-legend {
+      padding: var(--space-1) 0 0;
       font-size: var(--text-label);
       letter-spacing: var(--tracking-label);
       text-transform: uppercase;
       color: var(--color-text-muted);
+    }
+    .filters__scale-options {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0 var(--space-1);
     }
     .opt {
       display: flex;
@@ -334,24 +371,24 @@ export class ListingFilters {
   readonly state = input.required<ListingState>();
   readonly departments = input.required<readonly DepartmentDto[]>();
 
+  /**
+   * Which filter this listing's address already fixes, if any. New Arrivals and Sale have no
+   * department, and their own filter is not something a shopper can take off here.
+   */
+  readonly fixedFilter = input<'newArrivals' | 'discount' | null>(null);
+
   /** The state the shopper's last change would produce. The page decides what to do with it. */
   readonly changed = output<ListingState>();
 
-  /** Radio groups need a name that is unique per instance: this panel is rendered twice. */
+  /** Radio groups need a name that is unique per instance. */
   protected readonly id = `sd-filters-${nextPanelId++}`;
 
   protected readonly priceBands = PRICE_BANDS;
   protected readonly ratingOptions = RATING_OPTIONS;
   protected readonly discountOptions = DISCOUNT_OPTIONS;
+  protected readonly sizeLegend = FILTER_GROUP_LABEL.sizes;
 
   protected readonly checkboxGroups: readonly CheckboxGroup[] = [
-    {
-      key: 'sizes',
-      legend: FILTER_GROUP_LABEL.sizes,
-      options: SIZE_OPTIONS,
-      swatches: false,
-      open: true,
-    },
     {
       key: 'colours',
       legend: FILTER_GROUP_LABEL.colours,
@@ -383,6 +420,16 @@ export class ListingFilters {
     },
   ];
 
+  /** A listing that is a department shows where it sits; New Arrivals and Sale do not. */
+  protected readonly showsPlacement = computed(() => this.fixedFilter() === null);
+
+  /** Sale is already the discount filter; offering it again would let a shopper unset the page. */
+  protected readonly showsDiscount = computed(() => this.fixedFilter() !== 'discount');
+
+  protected readonly sizeScales = computed<readonly SizeScale[]>(() =>
+    sizeScalesFor(this.state().department),
+  );
+
   private readonly department = computed(() =>
     this.departments().find((candidate) => candidate.slug === this.state().department),
   );
@@ -411,12 +458,6 @@ export class ListingFilters {
 
   protected isGroupActive(key: ListFilterKey): boolean {
     return this.state()[key].length > 0;
-  }
-
-  /** True when this option opens a new named block, so the sub-heading is drawn once. */
-  protected startsGroup(options: readonly FilterOption[], index: number): boolean {
-    const current = options[index]?.group;
-    return current !== undefined && current !== options[index - 1]?.group;
   }
 
   protected toggle(key: ListFilterKey, value: string): void {

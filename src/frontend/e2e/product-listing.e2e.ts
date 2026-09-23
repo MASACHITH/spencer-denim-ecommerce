@@ -127,11 +127,113 @@ test.describe('server-side rendering (GLB-11)', () => {
     await expect(page.locator('.breadcrumb')).toContainText('Girls Dresses');
   });
 
+  test('the page carries no second copy of the catalogue, and no internal address', async ({
+    request,
+  }) => {
+    const html = await (await request.get(LISTING)).text();
+    const state = /<script[^>]*id="ng-state"[^>]*>([\s\S]*?)<\/script>/.exec(html)?.[1] ?? '';
+
+    // Angular's transfer cache is off (see app.config.ts): it stored every SSR response under a
+    // key the browser cannot use, so the payload shipped twice — with API_INTERNAL_URL in it.
+    expect(state).not.toContain('/api/catalog/');
+    expect(html).not.toContain('localhost:4421');
+    expect(html).not.toContain('API_INTERNAL_URL');
+  });
+
+  test('the listing names the one address it should be indexed at', async ({ request }) => {
+    const html = await (await request.get('/WOMEN/jeans?colour=blue&pages=2')).text();
+    const canonical = /<link rel="canonical" href="([^"]*)"/.exec(html)?.[1];
+
+    // Upper case and "how much is loaded" are not different pages.
+    expect(canonical).toBe('/women/jeans?colour=blue');
+  });
+
   test('a filtered listing is rendered filtered, not rendered then filtered', async ({ request }) => {
     const html = await (await request.get(`${LISTING}?colour=blue`)).text();
 
     expect(html).toContain('30');
     expect(html).toContain('Colour: Blue');
+  });
+});
+
+test.describe('addresses that are not a department', () => {
+  /**
+   * `/:department` matches any single segment. Every header and footer link that is not built yet
+   * used to render the listing's not-found state at HTTP 200 — the copy told a shopper that a
+   * *department* no longer existed when they had clicked "Bag".
+   */
+  for (const path of ['/bag', '/wishlist', '/account', '/about', '/privacy', '/terms', '/contact']) {
+    test(`${path} goes to the home page`, async ({ page }) => {
+      const response = await page.goto(path);
+
+      expect(response?.status()).toBe(200);
+      await expect(page).toHaveURL('/');
+      await expect(page.locator('.product-grid')).toHaveCount(0);
+    });
+  }
+
+  test('a category from another department is a real 404, not a 200 that says so', async ({
+    request,
+  }) => {
+    // /women/shirts names a Men's category. It used to render as the Women department page:
+    // an <h1>Women</h1> over "0 products" while /women itself had products.
+    const response = await request.get('/women/shirts');
+    const html = await response.text();
+
+    expect(response.status()).toBe(404);
+    expect(html).toContain('We could not find that page');
+    expect(html).toContain('<meta name="robots" content="noindex">');
+    expect(html).not.toContain('No products found');
+  });
+
+  test('a 404 asks the catalogue for nothing', async ({ page }) => {
+    const calls: string[] = [];
+    page.on('request', (request) => {
+      if (request.url().includes('/api/catalog/products')) {
+        calls.push(request.url());
+      }
+    });
+
+    await page.goto('/women/shirts');
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText('We could not find that page');
+
+    expect(calls).toEqual([]);
+  });
+});
+
+test.describe('New Arrivals and Sale (DEPT-02, DEPT-03)', () => {
+  for (const entry of [
+    { path: '/new-arrivals', heading: 'New Arrivals', title: 'New Arrivals | Spencer Denim' },
+    { path: '/sale', heading: 'Sale', title: 'Sale | Spencer Denim' },
+  ]) {
+    test(`${entry.path} is a listing, not a missing page`, async ({ page, request }) => {
+      const response = await request.get(entry.path);
+      const html = await response.text();
+
+      expect(response.status()).toBe(200);
+      expect(html).toContain(`<title>${entry.title}</title>`);
+      expect(html).not.toContain('We could not find that page');
+
+      await page.goto(entry.path);
+      await expect(page.getByRole('heading', { level: 1 })).toHaveText(entry.heading);
+      await expect(page.locator('.product-grid > li').first()).toBeVisible();
+    });
+  }
+
+  test('every main navigation entry leads somewhere that exists', async ({ page }) => {
+    await page.goto('/');
+
+    const links = await page
+      .locator('.site-nav__list a.site-nav__link')
+      .evaluateAll((nodes) => nodes.map((node) => (node as HTMLAnchorElement).pathname));
+
+    expect(links).toEqual(['/women', '/men', '/kids', '/new-arrivals', '/sale']);
+
+    for (const link of links) {
+      await page.goto(link);
+      await expect(page.locator('h1')).not.toHaveText('We could not find that page');
+      await expect(page).toHaveURL(link);
+    }
   });
 });
 
@@ -153,6 +255,22 @@ test.describe('the grid at every breakpoint (PLP-05, GLB-09)', () => {
 
     await expect(page.locator('.plp__sidebar')).toBeVisible();
     await expect(page.locator('.plp__filters-btn')).toBeHidden();
+  });
+
+  test('the filter panel exists once, not once per container', async ({ page, request }) => {
+    // Rendering the sidebar and the drawer both shipped every control twice: 202 inputs in the
+    // DOM at every width, and the same doubled in the HTML the server sends.
+    const html = await (await request.get(LISTING)).text();
+    // Opening tags only: the closing tag would count every panel twice.
+    expect((html.match(/<sd-listing-filters[\s>]/g) ?? []).length).toBe(1);
+
+    for (const width of [390, 1280]) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto(LISTING);
+      await expect(page.locator('.product-grid > li').first()).toBeVisible();
+
+      await expect(page.locator('sd-listing-filters')).toHaveCount(1);
+    }
   });
 
   test('the Filters button replaces the sidebar on a phone', async ({ page }) => {

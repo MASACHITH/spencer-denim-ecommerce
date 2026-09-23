@@ -135,6 +135,9 @@ function productsFor(params) {
   return { items, page, pageSize, totalCount: total };
 }
 
+/** A slow answer, so a test can prove the menu does not hold the page open waiting for it. */
+const DELAY_MS = Number(process.env.E2E_API_DELAY_MS ?? 0);
+
 const server = createServer((request, response) => {
   const url = new URL(request.url ?? '/', `http://localhost:${PORT}`);
 
@@ -145,7 +148,7 @@ const server = createServer((request, response) => {
   response.setHeader('Cache-Control', 'no-store');
 
   if (url.pathname === '/api/catalog/departments') {
-    response.end(JSON.stringify(DEPARTMENTS));
+    setTimeout(() => response.end(JSON.stringify(DEPARTMENTS)), DELAY_MS);
     return;
   }
 
