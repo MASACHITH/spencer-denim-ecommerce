@@ -239,7 +239,12 @@ internal sealed class ProductCatalogReader(
             .Where(product => product.IsPublished)
             // ProductStats is 1:1 with a product and is written in the same transaction, so this is
             // never false in practice; it keeps the join an inner one and the projection total.
-            .Where(product => product.Stats != null);
+            .Where(product => product.Stats != null)
+            // Doc 08 §7.1: IsActive is the only switch an admin has for taking a section off the
+            // storefront, so a product leaves with its department or its primary category. Its other
+            // category links do not keep it visible — a product whose primary category is gone has a
+            // breadcrumb into nothing, which is a dead end reachable from a live page.
+            .Where(product => product.Department!.IsActive && product.PrimaryCategory!.IsActive);
 
     private static IQueryable<Product> ApplyFilters(
         IQueryable<Product> rows,
@@ -416,18 +421,15 @@ internal sealed class ProductCatalogReader(
     }
 
     /// <summary>
-    /// How much <c>SoldQty30d</c> may contribute to the relevance score of doc 08 §7.6. The raw column
-    /// is an unbounded unit count, so adding it whole let a product that sells well overtake a
-    /// name-prefix match (worth 100) as soon as real sales arrived. Held below 10, the narrowest gap
-    /// between two of the section's bands, popularity can only order products that scored alike.
-    /// </summary>
-    private const int MaxPopularityBonus = 9;
-
-    /// <summary>
     /// Doc 08 §7.6 relevance, exactly as the section words it: name prefix 100, name contains 50,
-    /// category or colour 20, any other match 10, then <c>SoldQty30d</c> as a bounded tie-break. The
-    /// section describes one <c>CASE</c> score, applied here to the first token, which is the word a
-    /// shopper leads with; the later tokens have already narrowed the result set.
+    /// category or colour 20, any other match 10, then <c>SoldQty30d</c> to order the products that
+    /// scored the same. The section describes one <c>CASE</c> score, applied here to the first token,
+    /// which is the word a shopper leads with; the later tokens have already narrowed the result set.
+    /// <para>
+    /// Popularity is a separate sort key rather than a term added to the score, which is what stops it
+    /// reaching past a band however high it climbs. Nothing caps it: a cap would only flatten the
+    /// products it is there to tell apart.
+    /// </para>
     /// </summary>
     private static IOrderedQueryable<Product> ApplyRelevanceSort(IQueryable<Product> rows, string leadToken)
     {
@@ -444,9 +446,7 @@ internal sealed class ProductCatalogReader(
                         EF.Functions.Like(colour.Name, contains, EscapeString)
                         || EF.Functions.Like(colour.ColourFamily!.Name, contains, EscapeString)) ? 20
                 : 10)
-            .ThenByDescending(product => product.Stats!.SoldQty30d < MaxPopularityBonus
-                ? product.Stats!.SoldQty30d
-                : MaxPopularityBonus)
+            .ThenByDescending(product => product.Stats!.SoldQty30d)
             .ThenBy(product => product.Id);
     }
 
@@ -734,9 +734,10 @@ internal sealed class ProductCatalogReader(
             }
 
             // Doc 08 §3.2 makes a category slug unique per (department, parent), not globally, so
-            // "jeans" names one category in each department. Serving whichever one sorts first would
-            // quietly hide the other departments' products, so the caller is asked which it meant.
-            if (departmentId is null && matches.Count > 1)
+            // "jeans" names one category in each department — and two categories under different
+            // parents of one department may share a slug too. Serving whichever sorts first would
+            // quietly hide the rest, so an ambiguous slug is refused however it came about.
+            if (matches.Count > 1)
             {
                 var departmentSlugs = matches
                     .OrderBy(match => match.DepartmentId)
@@ -746,8 +747,12 @@ internal sealed class ProductCatalogReader(
 
                 filters.Rejection = new ValidationError(
                     "category",
-                    $"The category '{categorySlug}' exists in more than one department. " +
-                    $"Add {DescribeChoices(departmentSlugs)}.");
+                    departmentSlugs.Count > 1
+                        ? $"The category '{categorySlug}' exists in more than one department. " +
+                          $"Add {DescribeChoices(departmentSlugs)}."
+                        : $"The category '{categorySlug}' names {matches.Count} active categories in " +
+                          $"department={departmentSlugs[0]}, so naming the department does not tell them " +
+                          "apart. The duplicate slugs have to be corrected in the catalogue.");
                 return filters;
             }
 

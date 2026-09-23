@@ -227,10 +227,40 @@ public sealed class ProductDetailAndSearchTests(SqlServerDatabaseFixture sqlServ
     }
 
     /// <summary>
-    /// Doc 08 §7.6: a name match (50) outranks a category match (20), and the bounded popularity term
-    /// cannot close that gap. "Cotton Twill Chinos" sits in the Trousers category and outsells two of
-    /// the three products with "Trousers" in the name, so an unbounded <c>SoldQty30d</c> would put it
-    /// above them.
+    /// Doc 08 §7.6's tie-break: products that land in the same relevance band come back by recent
+    /// sales, highest first. The five jeans below all match "denim" through their material only, so
+    /// they share the bottom band and nothing but <c>SoldQty30d</c> separates them — their Ids run in a
+    /// different order, so a tie-break that does not work leaves them sorted by Id instead.
+    /// </summary>
+    [Fact]
+    public async Task Search_orders_products_inside_one_relevance_band_by_recent_sales()
+    {
+        var api = CreateApi();
+
+        var response = await api.SearchAsync("?q=denim&pageSize=96", Token);
+
+        // Everything after the two products with "denim" in the name matches on material alone.
+        var band = response.Results.Items
+            .SkipWhile(card => card.Name.Contains("Denim", StringComparison.OrdinalIgnoreCase))
+            .Select(card => card.Slug)
+            .ToList();
+
+        Assert.Equal(
+            [
+                "high-rise-slim-fit-jeans",   // SoldQty30d 88, Id 9
+                "straight-fit-rigid-jeans",   // 51, Id 26
+                "slim-stretch-jeans",         // 47, Id 27
+                "wide-leg-rinse-jeans",       // 45, Id 10
+                "relaxed-carpenter-jeans",    // 23, Id 28
+            ],
+            band);
+    }
+
+    /// <summary>
+    /// Doc 08 §7.6: a name match (50) outranks a category match (20), and sales cannot close that gap
+    /// because popularity is a separate sort key rather than a term in the score. "Cotton Twill Chinos"
+    /// sits in the Trousers category and outsells two of the three products with "Trousers" in the
+    /// name, so a score that simply added <c>SoldQty30d</c> would put it above them.
     /// </summary>
     [Fact]
     public async Task Search_keeps_a_category_match_below_the_name_matches_however_well_it_sells()
