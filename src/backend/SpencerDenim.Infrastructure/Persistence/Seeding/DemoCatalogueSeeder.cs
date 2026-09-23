@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
@@ -457,10 +458,23 @@ public sealed class DemoCatalogueSeeder(AppDbContext dbContext, IClock clock, IO
     private static decimal? PriceOverrideFor(DemoProductSeed seed, string label) =>
         label is "XXL" or "XXXL" ? seed.BasePrice + 300m : null;
 
-    private static bool ShouldUseExplicitThreshold(string code) =>
-        Math.Abs(string.GetHashCode(code, StringComparison.Ordinal)) % 7 == 0;
+    /// <summary>
+    /// Gives roughly one product in seven an explicit low-stock threshold, so the storefront exercises
+    /// both the per-variant value and the configured fallback. Uses the same stable hash as
+    /// <see cref="DeterministicRandom"/>, not <see cref="string.GetHashCode(string?)"/>, which .NET
+    /// randomises per process.
+    /// </summary>
+    internal static bool ShouldUseExplicitThreshold(string code) => StableSeed(code) % 7 == 0;
 
-    private static int OnHandFor(StockProfile profile, DeterministicRandom random) => profile switch
+    /// <summary>
+    /// A stable 32-bit seed for a product code: the first four bytes of its SHA-256 digest, the same
+    /// hash <see cref="DeterministicGuid"/> uses. Unsigned throughout, so there is no
+    /// <c>Math.Abs(int.MinValue)</c> to overflow.
+    /// </summary>
+    internal static uint StableSeed(string value) =>
+        BinaryPrimitives.ReadUInt32LittleEndian(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
+
+    internal static int OnHandFor(StockProfile profile, DeterministicRandom random) => profile switch
     {
         StockProfile.OutOfStock => 0,
         StockProfile.Low => 1 + random.Next(4),
@@ -530,11 +544,16 @@ public sealed class DemoCatalogueSeeder(AppDbContext dbContext, IClock clock, IO
     /// <summary>
     /// A tiny linear congruential generator seeded from the product code. Deterministic, so the seeded
     /// catalogue is identical on every machine and the integration tests can assert exact counts.
+    /// <para>
+    /// The seed comes from <see cref="StableSeed"/> rather than <see cref="string.GetHashCode(string?)"/>:
+    /// string hashing is randomised per process by default, which made the stock of a re-seeded database
+    /// differ from run to run and the "partly sold out" assertions fail on a small share of CI runs.
+    /// </para>
     /// It is never used for anything security-related.
     /// </summary>
-    private sealed class DeterministicRandom(string seed)
+    internal sealed class DeterministicRandom(string seed)
     {
-        private uint _state = (uint)Math.Abs(string.GetHashCode(seed, StringComparison.Ordinal)) | 1u;
+        private uint _state = StableSeed(seed) | 1u;
 
         public int Next(int exclusiveMaximum)
         {
