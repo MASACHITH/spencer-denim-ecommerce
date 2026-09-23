@@ -1,11 +1,12 @@
 import { CategoryNodeDto, DepartmentDto } from './catalog-departments.model';
 
 /**
- * Placeholder navigation, in the exact shape of `GET /api/catalog/departments`.
+ * The navigation `NavigationService` falls back to when `GET /api/catalog/departments` cannot be
+ * reached — during an outage, a deployment, or offline.
  *
- * The names, slugs and tree depth match the catalogue seed data of docs/08 §9, so what the menu
- * shows now is what the API will return. Nothing here is fetched: see the TODO(W1-02) in
- * `NavigationService`.
+ * The names, slugs and tree depth match the catalogue seed data of docs/08 §9, so the fallback
+ * menu links to the same pages the live one does. It is not test data: the header is on every
+ * page and must never come up empty (lesson L1).
  */
 
 let nextId = 1;

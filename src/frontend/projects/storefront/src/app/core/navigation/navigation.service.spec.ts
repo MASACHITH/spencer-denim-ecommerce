@@ -1,9 +1,12 @@
+import { provideHttpClient } from '@angular/common/http';
+import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
 
 import { DepartmentDto } from './catalog-departments.model';
 import { MEGA_MENU_COLUMN_COUNT, toNavigation } from './navigation.mapper';
 import { NavItem, hasMenu } from './navigation.model';
 import { NavigationService } from './navigation.service';
+import { PLACEHOLDER_DEPARTMENTS } from './navigation.data';
 
 function department(overrides: Partial<DepartmentDto> = {}): DepartmentDto {
   return {
@@ -60,7 +63,9 @@ describe('NavigationService', () => {
   let service: NavigationService;
 
   beforeEach(() => {
-    TestBed.configureTestingModule({});
+    TestBed.configureTestingModule({
+      providers: [provideHttpClient(), provideHttpClientTesting()],
+    });
     service = TestBed.inject(NavigationService);
   });
 
@@ -206,5 +211,90 @@ describe('toNavigation', () => {
 
   it('still returns New Arrivals and Sale when the API sends nothing', () => {
     expect(toNavigation([]).map((item) => item.id)).toEqual(['new-arrivals', 'sale']);
+  });
+});
+
+/**
+ * The departments now come from `GET /api/catalog/departments`. The header is on every page, so
+ * what matters as much as the happy path is that nothing about it can empty the menu (lesson L1).
+ */
+describe('NavigationService and the catalogue API', () => {
+  let http: HttpTestingController;
+  let service: NavigationService;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({
+      providers: [provideHttpClient(), provideHttpClientTesting()],
+    });
+    service = TestBed.inject(NavigationService);
+    http = TestBed.inject(HttpTestingController);
+  });
+
+  afterEach(() => http.verify());
+
+  it('asks the catalogue for the departments, once', () => {
+    service.items();
+
+    http.expectOne('/api/catalog/departments').flush([]);
+  });
+
+  it('builds the menu from what the API sends', () => {
+    const request = http.expectOne('/api/catalog/departments');
+    request.flush([
+      department({
+        id: 9,
+        name: 'Womenswear',
+        slug: 'womenswear',
+        categories: [category('Jumpsuits', 'jumpsuits')],
+      }),
+    ]);
+
+    expect(service.items().map((item) => item.label)).toEqual([
+      'Womenswear',
+      'New Arrivals',
+      'Sale',
+    ]);
+    expect(pathsOf(find(service.items(), 'womenswear'))).toContain('/womenswear/jumpsuits');
+  });
+
+  it('shows the seeded menu until the API answers, so SSR never renders an empty header', () => {
+    expect(service.items().map((item) => item.label)).toEqual([
+      'Women',
+      'Men',
+      'Kids',
+      'New Arrivals',
+      'Sale',
+    ]);
+
+    http.expectOne('/api/catalog/departments').flush([]);
+  });
+
+  it('falls back to the seeded menu when the API fails', () => {
+    http
+      .expectOne('/api/catalog/departments')
+      .flush('boom', { status: 500, statusText: 'Server Error' });
+
+    expect(service.departments()).toEqual(PLACEHOLDER_DEPARTMENTS);
+    expect(service.items().map((item) => item.id)).toEqual([
+      'women',
+      'men',
+      'kids',
+      'new-arrivals',
+      'sale',
+    ]);
+  });
+
+  it('falls back when the API is unreachable', () => {
+    http
+      .expectOne('/api/catalog/departments')
+      .error(new ProgressEvent('offline'));
+
+    expect(service.departments()).toEqual(PLACEHOLDER_DEPARTMENTS);
+  });
+
+  it('falls back rather than draw a menu with no departments in it', () => {
+    http.expectOne('/api/catalog/departments').flush([]);
+
+    expect(service.departments()).toEqual(PLACEHOLDER_DEPARTMENTS);
   });
 });
