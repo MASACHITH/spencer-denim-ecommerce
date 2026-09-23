@@ -43,6 +43,22 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 
 ## Session log
 
+### 2026-09-23 (1) — W1-02 catalogue foundation: tester FAILED it, developer fix round 1
+
+**Context:** `feature/W1-02-catalogue-foundation` (worktree `worktrees/sd-catalog`) delivers the catalogue schema + demo seeder + the read-only storefront catalogue API. An independent tester rejected it with 3 major and 5 minor findings plus a board correction. All fixed on the branch; not pushed, no PR.
+
+**Fixed**
+- **Major — 500 on an unparseable query parameter.** `ProductListRequest` bound `int?`/`decimal?`/`bool?` straight from the query string, so `?page=abc`, `?minPrice=abc`, `?inStock=yes` and friends threw in model binding: a 500 with an ERROR log on a public endpoint. Those parameters bind as `string?` now and are parsed in `ProductListQuery.Create` with `InvariantCulture`, so an unreadable value is the same 400 naming the parameter that an out-of-range value already got. Flags accept `true`/`false` and `1`/`0`, and nothing else — a typo is named, not silently read as false.
+- **Major — the "deterministic" seeder was not.** `DemoCatalogueSeeder` seeded its generator from `string.GetHashCode`, which .NET randomises per process, so seeded stock differed run to run (≈3% of CI runs failed on the partly-sold-out product) and `Math.Abs(int.MinValue)` could throw. The seed is now the first four bytes of the product code's SHA-256 digest, read unsigned — the same hash `DeterministicGuid` already used.
+- **Major — an ambiguous `category` slug served one department silently.** Slugs are unique per `(DepartmentId, ParentCategoryId)` (doc 08 §3.2), so `?category=jeans` with no `department` matched Women's and Men's jeans and returned only the first. It is a 400 now, naming the departments to choose from. One match still works with no `department`.
+- **Minor** — the product slug is pattern-validated (a malformed slug is a 400, and only the validated slug is echoed into the 404); all four catalogue endpoints answer HEAD as well as GET; `ProductListQuery.ToCacheKey` deleted with its self-comparing test (caching and facets belong to the listing-page task); search relevance rewritten to doc 08 §7.6's actual bands with the `SoldQty30d` term bounded to 9 so it can only break ties.
+- **Minor** — doc 08 §1.6's permitted-cascade list now names `ProductStats`, `ProductSearchIndex` and `ProductColours` (all three were already in the model and the migration; only the first two were in the tester's report). No new migration. The model test now asserts the list and the model match **both ways**.
+- **Board** — W1-02 was titled "Departments & categories (create/edit/reorder) — ADM-11", an admin write feature this branch never touched. Retitled to what it delivers; ADM-11's admin screens are now **W1-12 (TODO)**.
+
+**Numbers:** build clean, 215 unit + 141 integration tests green, 0 skipped (baseline before the fixes: 180 + 111).
+
+**Next:** back to the tester agent. Facet counts and the 60 s response cache of doc 08 §7.5 are deliberately **not** in this slice.
+
 ### 2026-09-21 (1) — Multi-session coordination, status review, W1-01 started
 **Context:** first session on a **new machine** (global git identity `nuwank`/scienter.lk — different from the `SCIENTER\sachithi` PC used since 2026-09-15). Confirms this project is now being worked from more than one machine/session.
 
