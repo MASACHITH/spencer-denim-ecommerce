@@ -1,17 +1,20 @@
+import { DOCUMENT } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, effect, inject, signal, untracked } from '@angular/core';
 import { toSignal } from '@angular/core/rxjs-interop';
 import { Meta, Title } from '@angular/platform-browser';
-import { ActivatedRoute, Router, RouterLink } from '@angular/router';
+import { ActivatedRoute, Params, Router, RouterLink } from '@angular/router';
 import { Drawer, Icon } from '@spencer-denim/shared';
 
+import { LISTING_MODES, ListingMode, readListingMode } from './listing-mode';
 import { ListingFilters } from './listing-filters';
 import { ProductCard } from '../../ui/product-card/product-card';
 import { ProductListStore } from '../../core/catalog/product-list-store';
 import { SORT_OPTIONS, SortValue, readSort } from '../../core/catalog/product-sort';
 import {
   ListingState,
+  MAX_LOADED_PAGES,
+  clampLoadedPages,
   clearFilters,
-  hasActiveFilters,
   readListingState,
   sameFilters,
   toQueryParams,
@@ -19,7 +22,8 @@ import {
 } from '../../core/catalog/listing-state';
 import { FilterChip, activeChips, removeChip } from '../../core/catalog/listing-chips';
 import { CategoryNodeDto, DepartmentDto } from '../../core/navigation/catalog-departments.model';
-import { NavigationService } from '../../core/navigation/navigation.service';
+import { NavigationService, findDepartment, trailTo } from '../../core/navigation/navigation.service';
+import { Viewport } from '../../core/platform/viewport';
 
 /** One breadcrumb step. The last one is the page itself and is not a link. */
 interface Crumb {
@@ -52,8 +56,7 @@ interface Placement {
   changeDetection: ChangeDetectionStrategy.OnPush,
   providers: [ProductListStore],
   template: `
-    @if (department()) {
-      <div class="container plp">
+    <div class="container plp">
         <nav class="breadcrumb" aria-label="Breadcrumb">
           <ol>
             @for (crumb of breadcrumb(); track crumb.path; let last = $last) {
@@ -93,7 +96,7 @@ interface Placement {
             <button
               class="btn btn--secondary plp__filters-btn"
               type="button"
-              aria-controls="listing-filters"
+              [attr.aria-controls]="isDesktop() ? null : 'listing-filters'"
               [attr.aria-expanded]="filtersOpen()"
               (click)="openFilters()"
             >
@@ -147,13 +150,20 @@ interface Placement {
         }
 
         <div class="plp__layout">
-          <aside class="plp__sidebar" aria-label="Filters">
-            <sd-listing-filters
-              [state]="state()"
-              [departments]="departments()"
-              (changed)="apply($event)"
-            />
-          </aside>
+          <!-- One panel, not two. The sidebar and the drawer hold the same controls, and
+               rendering both shipped every control twice in the server HTML and kept two copies
+               of them in the DOM at every width. The Viewport service says why the server picks the
+               sidebar and a phone swaps to the drawer a frame after hydration. -->
+          @if (isDesktop()) {
+            <aside class="plp__sidebar" aria-label="Filters">
+              <sd-listing-filters
+                [state]="state()"
+                [departments]="departments()"
+                [fixedFilter]="fixedFilter()"
+                (changed)="apply($event)"
+              />
+            </aside>
+          }
 
           <section
             class="plp__results"
@@ -211,15 +221,24 @@ interface Placement {
                       Clear all filters
                     </button>
                   </div>
-                } @else {
+                } @else if (department(); as current) {
                   <p>
                     There is nothing in {{ heading() }} yet. Try another category from the menu, or
-                    browse everything in {{ departmentName() }}.
+                    browse everything in {{ current.name }}.
                   </p>
                   <div class="plp__state-actions">
-                    <a class="btn btn--primary" [routerLink]="departmentPath()">
-                      Shop all {{ departmentName() }}
+                    <a class="btn btn--primary" [routerLink]="'/' + current.slug">
+                      Shop all {{ current.name }}
                     </a>
+                  </div>
+                } @else {
+                  <p>There is nothing in {{ heading() }} just now. Try a department instead:</p>
+                  <div class="plp__state-actions">
+                    @for (candidate of departments(); track candidate.slug) {
+                      <a class="btn btn--secondary" [routerLink]="'/' + candidate.slug">
+                        {{ candidate.name }}
+                      </a>
+                    }
                   </div>
                 }
               </div>
@@ -233,8 +252,8 @@ interface Placement {
               </ul>
 
               <div class="plp__more">
-                @if (store.hasMore()) {
-                  <p class="plp__more-count">{{ shownSummary() }}</p>
+                <p class="plp__more-count">{{ shownSummary() }}</p>
+                @if (canLoadMore()) {
                   <button
                     class="btn btn--secondary"
                     type="button"
@@ -243,8 +262,12 @@ interface Placement {
                   >
                     {{ store.isAppending() ? 'Loading…' : 'Load More' }}
                   </button>
-                } @else if (products().length > 0) {
-                  <p class="plp__more-count">{{ shownSummary() }}</p>
+                } @else if (store.hasMore()) {
+                  <!-- At the ceiling. Offering the button here would ask for a page the listing
+                       will not load and leave the shopper wondering why nothing happened. -->
+                  <p class="plp__more-count">
+                    That is as many as one page shows. Narrow the filters to reach the rest.
+                  </p>
                 }
               </div>
             }
@@ -252,42 +275,31 @@ interface Placement {
         </div>
       </div>
 
-      <sd-drawer
-        [open]="filtersOpen()"
-        panelId="listing-filters"
-        heading="Filters"
-        side="end"
-        closeLabel="Close filters"
-        (closed)="closeFilters()"
-      >
-        <sd-listing-filters
-          [state]="state()"
-          [departments]="departments()"
-          (changed)="apply($event)"
-        />
-        <div class="plp__drawer-actions">
-          <button class="btn btn--secondary" type="button" (click)="onClearFilters()">
-            Clear filters
-          </button>
-          <button class="btn btn--primary" type="button" (click)="closeFilters()">
-            Show {{ totalCount() }} {{ totalCount() === 1 ? 'product' : 'products' }}
-          </button>
-        </div>
-      </sd-drawer>
-    } @else {
-      <div class="container plp plp--missing">
-        <h1 class="plp__title">We could not find that page</h1>
-        <p class="plp__intro">
-          The address may have changed, or the department may no longer exist. Everything we sell
-          is one of these:
-        </p>
-        <ul class="plp__missing-links">
-          @for (candidate of departments(); track candidate.slug) {
-            <li><a class="btn btn--secondary" [routerLink]="'/' + candidate.slug">{{ candidate.name }}</a></li>
-          }
-        </ul>
-      </div>
-    }
+      @if (!isDesktop()) {
+        <sd-drawer
+          [open]="filtersOpen()"
+          panelId="listing-filters"
+          heading="Filters"
+          side="end"
+          closeLabel="Close filters"
+          (closed)="closeFilters()"
+        >
+          <sd-listing-filters
+            [state]="state()"
+            [departments]="departments()"
+            [fixedFilter]="fixedFilter()"
+            (changed)="apply($event)"
+          />
+          <div class="plp__drawer-actions">
+            <button class="btn btn--secondary" type="button" (click)="onClearFilters()">
+              Clear filters
+            </button>
+            <button class="btn btn--primary" type="button" (click)="closeFilters()">
+              Show {{ totalCount() }} {{ totalCount() === 1 ? 'product' : 'products' }}
+            </button>
+          </div>
+        </sd-drawer>
+      }
   `,
   // The breadcrumb, the chips and the product grid are storefront-wide design-system pieces and
   // live in projects/storefront/src/styles.css; only this page's own layout is scoped here.
@@ -497,6 +509,10 @@ export class ListingPage {
   private readonly navigation = inject(NavigationService);
   private readonly title = inject(Title);
   private readonly meta = inject(Meta);
+  private readonly document = inject(DOCUMENT);
+
+  /** Which container the single filter panel goes in. See {@link Viewport}. */
+  protected readonly isDesktop = inject(Viewport).isDesktop;
 
   protected readonly store = inject(ProductListStore);
   protected readonly sortOptions = SORT_OPTIONS;
@@ -509,6 +525,21 @@ export class ListingPage {
     initialValue: this.route.snapshot.queryParams,
   });
 
+  private readonly routeData = toSignal(this.route.data, {
+    initialValue: this.route.snapshot.data,
+  });
+
+  /** `new-arrivals` or `sale` when the route is one of those, otherwise `null` (DEPT-02, DEPT-03). */
+  protected readonly mode = computed<ListingMode | null>(() =>
+    readListingMode(this.routeData()['listing']),
+  );
+
+  /** The filter this listing's address fixes, which the panel does not offer as a choice. */
+  protected readonly fixedFilter = computed(() => {
+    const mode = this.mode();
+    return mode === null ? null : LISTING_MODES[mode].fixedFilter;
+  });
+
   /**
    * The listing the URL describes. The deepest path segment is the category the API filters on:
    * the mega menu links three levels deep for Kids (`/kids/girls/girls-dresses`), and the API
@@ -516,19 +547,21 @@ export class ListingPage {
    */
   protected readonly state = computed<ListingState>(() => {
     const params = this.routeParams();
-    return readListingState(
+    const state = readListingState(
       params['department'],
       params['subcategory'] ?? params['category'],
       this.queryParams(),
     );
+
+    const mode = this.mode();
+    return mode === null ? state : LISTING_MODES[mode].apply(state);
   });
 
   protected readonly departments = this.navigation.departments;
 
   private readonly placement = computed<Placement>(() => {
     const state = this.state();
-    const department =
-      this.departments().find((candidate) => candidate.slug === state.department) ?? null;
+    const department = findDepartment(this.departments(), state.department) ?? null;
 
     return {
       department,
@@ -537,25 +570,41 @@ export class ListingPage {
   });
 
   protected readonly department = computed(() => this.placement().department);
-  protected readonly departmentName = computed(() => this.department()?.name ?? '');
-  protected readonly departmentPath = computed(() => `/${this.state().department ?? ''}`);
 
   /** The category the URL names, when the tree knows it. */
   private readonly category = computed(() => this.placement().trail.at(-1) ?? null);
 
-  protected readonly heading = computed(
-    () => this.category()?.name ?? this.departmentName() ?? 'Products',
-  );
+  protected readonly heading = computed(() => {
+    const mode = this.mode();
+    if (mode !== null) {
+      return LISTING_MODES[mode].heading;
+    }
 
-  protected readonly description = computed(
-    () => this.category()?.description ?? this.department()?.description ?? null,
-  );
+    return this.category()?.name ?? this.department()?.name ?? 'Products';
+  });
+
+  protected readonly description = computed(() => {
+    const mode = this.mode();
+    if (mode !== null) {
+      return LISTING_MODES[mode].description;
+    }
+
+    return this.category()?.description ?? this.department()?.description ?? null;
+  });
 
   protected readonly promoImage = computed(
     () => this.category()?.imageUrl ?? this.department()?.heroImageUrl ?? null,
   );
 
   protected readonly breadcrumb = computed<readonly Crumb[]>(() => {
+    const mode = this.mode();
+    if (mode !== null) {
+      return [
+        { label: 'Home', path: '/' },
+        { label: LISTING_MODES[mode].heading, path: LISTING_MODES[mode].path },
+      ];
+    }
+
     const department = this.department();
     if (!department) {
       return [];
@@ -577,8 +626,31 @@ export class ListingPage {
 
   protected readonly products = this.store.items;
   protected readonly totalCount = this.store.totalCount;
-  protected readonly chips = computed<readonly FilterChip[]>(() => activeChips(this.state()));
-  protected readonly filtersActive = computed(() => hasActiveFilters(this.state()));
+  /**
+   * The chips a shopper may take off. On New Arrivals and Sale the page's own filter is not one
+   * of them — it is the address — but a discount the shopper chose *on top* of Sale still is, and
+   * removing it drops back to the plain sale listing.
+   */
+  protected readonly chips = computed<readonly FilterChip[]>(() => {
+    const chips = activeChips(this.state());
+    const fixed = this.fixedFilter();
+    if (fixed === null) {
+      return chips;
+    }
+
+    const narrowed = this.state().minDiscountPercent !== null;
+    return chips.filter(
+      (chip) => chip.kind !== fixed || (fixed === 'discount' && narrowed),
+    );
+  });
+
+  /** What the shopper can undo, which is exactly what the chips offer. */
+  protected readonly filtersActive = computed(() => this.chips().length > 0);
+
+  /** PLP-07: there is more to load, and the listing has not reached its ceiling. */
+  protected readonly canLoadMore = computed(
+    () => this.store.hasMore() && this.state().loadedPages < MAX_LOADED_PAGES,
+  );
 
   protected readonly shownSummary = computed(
     () => `Showing ${this.products().length} of ${this.totalCount()} products`,
@@ -600,9 +672,14 @@ export class ListingPage {
   });
 
   private readonly documentTitle = computed(() => {
+    const mode = this.mode();
+    if (mode !== null) {
+      return LISTING_MODES[mode].title;
+    }
+
     const department = this.department();
     if (!department) {
-      return 'Page not found | Spencer Denim';
+      return 'Products | Spencer Denim';
     }
 
     const category = this.category();
@@ -616,9 +693,14 @@ export class ListingPage {
   });
 
   private readonly metaDescription = computed(() => {
+    const mode = this.mode();
+    if (mode !== null) {
+      return LISTING_MODES[mode].metaDescription;
+    }
+
     const department = this.department();
     if (!department) {
-      return 'The page you asked for is not part of the Spencer Denim store.';
+      return 'Shop Spencer Denim.';
     }
 
     const category = this.category();
@@ -649,15 +731,17 @@ export class ListingPage {
     effect(() => {
       const title = this.documentTitle();
       const description = this.metaDescription();
+      const canonical = this.canonicalUrl();
       untracked(() => {
         this.title.setTitle(title);
         this.meta.updateTag({ name: 'description', content: description });
+        this.setCanonical(canonical);
       });
     });
   }
 
   protected apply(next: ListingState): void {
-    this.router.navigate(this.commandsFor(next), { queryParams: toQueryParams(next) });
+    this.router.navigate(this.commandsFor(next), { queryParams: this.queryParamsFor(next) });
   }
 
   protected onSortChange(event: Event): void {
@@ -673,10 +757,21 @@ export class ListingPage {
     this.apply(clearFilters(this.state()));
   }
 
-  /** PLP-07: one more page, recorded in the URL so the depth survives a share and a reload. */
+  /**
+   * PLP-07: one more page, recorded in the URL so the depth survives a share and a reload.
+   *
+   * Clamped, because asking for one past the ceiling used to be read back as page 1 and collapsed
+   * a listing of 480 products to 24. The button is hidden at the ceiling too; this is the guard
+   * behind it.
+   */
   protected loadMore(): void {
     const state = this.state();
-    this.apply({ ...state, loadedPages: state.loadedPages + 1 });
+    const loadedPages = clampLoadedPages(state.loadedPages + 1);
+    if (loadedPages === state.loadedPages) {
+      return;
+    }
+
+    this.apply({ ...state, loadedPages });
   }
 
   protected retry(): void {
@@ -713,41 +808,87 @@ export class ListingPage {
     this.store.load(next);
   }
 
+  /**
+   * The query string for a state. On New Arrivals and Sale the page's own filter is the address,
+   * so writing it into the query as well would only make the URL longer and less shareable.
+   */
+  private queryParamsFor(next: ListingState): Params {
+    const params = toQueryParams(next);
+    const mode = this.mode();
+
+    if (mode === 'new-arrivals') {
+      params['newArrivals'] = null;
+    }
+    if (mode === 'sale') {
+      params['onSale'] = null;
+    }
+
+    return params;
+  }
+
   /** The route for a state: department, then the category's full path through the tree. */
   private commandsFor(next: ListingState): unknown[] {
+    const mode = this.mode();
+    if (mode !== null && next.department === null) {
+      return [LISTING_MODES[mode].path];
+    }
+
     const department = next.department;
     if (!department) {
       return ['/'];
     }
 
-    const tree =
-      this.departments().find((candidate) => candidate.slug === department)?.categories ?? [];
+    const tree = findDepartment(this.departments(), department)?.categories ?? [];
     const trail = next.category ? trailTo(tree, next.category) : [];
 
     return ['/', department, ...trail.map((node) => node.slug)];
   }
 
-}
+  /**
+   * The one address this listing should be indexed at.
+   *
+   * Relative on purpose: the storefront sits behind a reverse proxy and the render has no
+   * reliable idea of the public origin, and a relative `canonical` is resolved against the
+   * document just as well. It drops `pages`, because "Load More" shows the same products further
+   * down rather than different ones, and it rebuilds the path from the catalogue's own slugs, so
+   * `/WOMEN/jeans` and `/women/jeans` stop being two pages with the same contents.
+   */
+  private readonly canonicalUrl = computed(() => {
+    const state = this.state();
+    // `commandsFor` speaks the router's language — a leading '/' segment, and a whole path for
+    // the fixed listings — so the segments are flattened back into one before they are joined.
+    const path = this.commandsFor(state)
+      .map((segment) => String(segment))
+      .flatMap((segment) => segment.split('/'))
+      .filter((segment) => segment.length > 0)
+      .join('/');
+    const query = new URLSearchParams();
 
-/**
- * The category and its ancestors, nearest last. Searching the whole tree rather than trusting the
- * URL's middle segments means `/women/anything/jeans` still resolves to Women › Jeans instead of
- * drawing a breadcrumb out of a segment that names nothing.
- */
-function trailTo(
-  categories: readonly CategoryNodeDto[],
-  slug: string,
-): readonly CategoryNodeDto[] {
-  for (const category of categories) {
-    if (category.slug === slug) {
-      return [category];
+    for (const [key, value] of Object.entries(this.queryParamsFor({ ...state, loadedPages: 1 }))) {
+      if (value === null || value === undefined) {
+        continue;
+      }
+      for (const entry of Array.isArray(value) ? value : [value]) {
+        query.append(key, String(entry));
+      }
     }
 
-    const nested = trailTo(category.children, slug);
-    if (nested.length > 0) {
-      return [category, ...nested];
+    const search = query.toString();
+    return `/${path}${search ? `?${search}` : ''}`;
+  });
+
+  /** Keeps exactly one `<link rel="canonical">` in the head, whichever listing is showing. */
+  private setCanonical(href: string): void {
+    const head = this.document.head;
+    let link = head.querySelector<HTMLLinkElement>('link[rel="canonical"]');
+
+    if (!link) {
+      link = this.document.createElement('link');
+      link.setAttribute('rel', 'canonical');
+      head.appendChild(link);
     }
+
+    link.setAttribute('href', href);
   }
 
-  return [];
 }

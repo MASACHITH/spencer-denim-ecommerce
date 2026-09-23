@@ -5,8 +5,9 @@ import { Router, provideRouter } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 
 import { routes } from '../../app.routes';
+import { NavigationService } from '../../core/navigation/navigation.service';
 import { PagedResult, ProductCardDto } from '../../core/catalog/catalog.model';
-import { PAGE_SIZE } from '../../core/catalog/listing-state';
+import { MAX_LOADED_PAGES, PAGE_SIZE } from '../../core/catalog/listing-state';
 import { CategoryNodeDto, DepartmentDto } from '../../core/navigation/catalog-departments.model';
 
 /**
@@ -123,12 +124,26 @@ describe('ListingPage', () => {
     harness.detectChanges();
   }
 
-  async function open(url: string, result = page(2)) {
-    harness = await RouterTestingHarness.create(url);
+  /**
+   * Answers the department feed before anything navigates.
+   *
+   * The route guards read it to tell a department from any other first path segment, so a
+   * navigation cannot complete until it has an answer. Priming it here rather than after
+   * `RouterTestingHarness.create` is what stops the two waiting on each other.
+   */
+  function primeDepartments(departments: readonly DepartmentDto[] = DEPARTMENTS): void {
     http = TestBed.inject(HttpTestingController);
+    TestBed.inject(NavigationService);
+    http.expectOne('/api/catalog/departments').flush(departments);
+  }
 
-    // The header's department feed; the listing reads the same tree for its breadcrumb.
-    http.expectOne('/api/catalog/departments').flush(DEPARTMENTS);
+  async function goTo(url: string): Promise<void> {
+    primeDepartments();
+    harness = await RouterTestingHarness.create(url);
+  }
+
+  async function open(url: string, result = page(2)) {
+    await goTo(url);
     productRequest().flush(result);
     harness.detectChanges();
   }
@@ -143,9 +158,7 @@ describe('ListingPage', () => {
 
   describe('the request it makes (PLP-01, PLP-02)', () => {
     it('asks for the department the route names', async () => {
-      harness = await RouterTestingHarness.create('/women');
-      http = TestBed.inject(HttpTestingController);
-      http.expectOne('/api/catalog/departments').flush(DEPARTMENTS);
+      await goTo('/women');
 
       const request = productRequest();
       expect(request.request.params.get('department')).toBe('women');
@@ -158,9 +171,7 @@ describe('ListingPage', () => {
     });
 
     it('filters on the deepest category segment, which is what the API needs', async () => {
-      harness = await RouterTestingHarness.create('/kids/girls/girls-dresses');
-      http = TestBed.inject(HttpTestingController);
-      http.expectOne('/api/catalog/departments').flush(DEPARTMENTS);
+      await goTo('/kids/girls/girls-dresses');
 
       const request = productRequest();
       expect(request.request.params.get('department')).toBe('kids');
@@ -171,11 +182,7 @@ describe('ListingPage', () => {
     });
 
     it('passes the filters and the sort from the query string', async () => {
-      harness = await RouterTestingHarness.create(
-        '/women/jeans?colour=navy&colour=black&size=M&minPrice=2500&inStock=true&sort=newest',
-      );
-      http = TestBed.inject(HttpTestingController);
-      http.expectOne('/api/catalog/departments').flush(DEPARTMENTS);
+      await goTo('/women/jeans?colour=navy&colour=black&size=M&minPrice=2500&inStock=true&sort=newest');
 
       const request = productRequest();
       expect(request.request.params.getAll('colour')).toEqual(['navy', 'black']);
@@ -226,9 +233,7 @@ describe('ListingPage', () => {
     });
 
     it('offers the seven sorts, with the URL\'s one selected', async () => {
-      harness = await RouterTestingHarness.create('/women/jeans?sort=price-desc');
-      http = TestBed.inject(HttpTestingController);
-      http.expectOne('/api/catalog/departments').flush(DEPARTMENTS);
+      await goTo('/women/jeans?sort=price-desc');
       productRequest().flush(page(1));
       harness.detectChanges();
 
@@ -288,9 +293,7 @@ describe('ListingPage', () => {
 
   describe('a rejected query string', () => {
     it('shows the API\'s own message for an ambiguous category, not a status code', async () => {
-      harness = await RouterTestingHarness.create('/women/jeans');
-      http = TestBed.inject(HttpTestingController);
-      http.expectOne('/api/catalog/departments').flush(DEPARTMENTS);
+      await goTo('/women/jeans');
 
       productRequest().flush(
         {
@@ -312,9 +315,7 @@ describe('ListingPage', () => {
     });
 
     it('says something a shopper can act on when the API cannot be reached', async () => {
-      harness = await RouterTestingHarness.create('/women/jeans');
-      http = TestBed.inject(HttpTestingController);
-      http.expectOne('/api/catalog/departments').flush(DEPARTMENTS);
+      await goTo('/women/jeans');
 
       productRequest().error(new ProgressEvent('offline'));
       harness.detectChanges();
@@ -367,9 +368,7 @@ describe('ListingPage', () => {
     });
 
     it('restores every loaded page from a shared link, in as few requests as the API allows', async () => {
-      harness = await RouterTestingHarness.create('/women/jeans?pages=3');
-      http = TestBed.inject(HttpTestingController);
-      http.expectOne('/api/catalog/departments').flush(DEPARTMENTS);
+      await goTo('/women/jeans?pages=3');
 
       const request = productRequest();
       expect(request.request.params.get('pageSize')).toBe(String(3 * PAGE_SIZE));
@@ -395,16 +394,165 @@ describe('ListingPage', () => {
     });
   });
 
-  describe('an address the catalogue does not know', () => {
-    it('says so instead of showing an empty listing', async () => {
-      harness = await RouterTestingHarness.create('/not-a-department');
-      http = TestBed.inject(HttpTestingController);
-      http.expectOne('/api/catalog/departments').flush(DEPARTMENTS);
-      productRequest().flush(page(0));
+  describe('the Load More ceiling (PLP-07)', () => {
+    /** Every outstanding products request, for a restore that needs more than one. */
+    function productRequests(): TestRequest[] {
+      return http.match((request) => request.url === '/api/catalog/products');
+    }
+
+    it('stops offering Load More at the ceiling instead of collapsing the listing', async () => {
+      // One click past the ceiling used to be read back as page 1: 480 products became 24, and
+      // the button was still on screen inviting the next one.
+      await goTo(`/women/jeans?pages=${MAX_LOADED_PAGES}`);
+
+      const requests = productRequests();
+      requests.forEach((request, index) => request.flush(page(96, 2000, index * 96 + 1)));
       harness.detectChanges();
+
+      expect(queryAll('.product-grid > li')).toHaveLength(MAX_LOADED_PAGES * PAGE_SIZE);
+      expect(text()).not.toContain('Load More');
+      expect(text()).toContain('as many as one page shows');
+    });
+
+    it('clamps a URL that asks for more pages than the listing will load', async () => {
+      await goTo(`/women/jeans?pages=${MAX_LOADED_PAGES + 1}`);
+
+      const requests = productRequests();
+      const wanted = requests.reduce(
+        (sum, request) => sum + Number(request.request.params.get('pageSize')),
+        0,
+      );
+
+      expect(wanted).toBe(MAX_LOADED_PAGES * PAGE_SIZE);
+      requests.forEach((request, index) => request.flush(page(96, 2000, index * 96 + 1)));
+      harness.detectChanges();
+
+      expect(queryAll('.product-grid > li')).toHaveLength(MAX_LOADED_PAGES * PAGE_SIZE);
+    });
+  });
+
+  describe('New Arrivals and Sale (DEPT-02, DEPT-03)', () => {
+    it('asks the API for new arrivals across every department', async () => {
+      await goTo('/new-arrivals');
+
+      const request = productRequest();
+      expect(request.request.params.get('newArrivals')).toBe('true');
+      expect(request.request.params.get('department')).toBeNull();
+
+      request.flush(page(3));
+      harness.detectChanges();
+
+      expect(query('h1')?.textContent?.trim()).toBe('New Arrivals');
+      expect(harness.fixture.nativeElement.ownerDocument.title).toBe(
+        'New Arrivals | Spencer Denim',
+      );
+    });
+
+    it('asks the API for the sale', async () => {
+      await goTo('/sale');
+
+      const request = productRequest();
+      expect(request.request.params.get('onSale')).toBe('true');
+
+      request.flush(page(3));
+      harness.detectChanges();
+
+      expect(query('h1')?.textContent?.trim()).toBe('Sale');
+    });
+
+    it("does not offer the listing's own filter as a chip to take off", async () => {
+      await open('/sale', page(3));
+
+      expect(queryAll('.chips .chip')).toHaveLength(0);
+    });
+
+    it('still lets a shopper narrow the sale, and take that back off', async () => {
+      await goTo('/sale?minDiscountPercent=50');
+      productRequest().flush(page(3));
+      harness.detectChanges();
+
+      expect(queryAll('.chips .chip').map((chip) => chip.textContent?.trim())).toEqual([
+        '50% off or more',
+      ]);
+
+      queryAll<HTMLButtonElement>('.chips .chip')[0].click();
+      await settle();
+
+      expect(TestBed.inject(Router).url).toBe('/sale');
+      expect(productRequest().request.params.get('onSale')).toBe('true');
+    });
+
+    it('offers no department or category group: the listing has neither', async () => {
+      await open('/new-arrivals', page(3));
+
+      expect(text()).not.toContain('Department');
+      expect(text()).not.toContain('Category');
+    });
+  });
+
+  describe('the canonical address (GLB-11)', () => {
+    function canonical(): string | null {
+      return (harness.routeNativeElement as HTMLElement).ownerDocument
+        .querySelector('link[rel="canonical"]')
+        ?.getAttribute('href') ?? null;
+    }
+
+    it('points an upper-case address at the one the catalogue spells', async () => {
+      await open('/WOMEN/JEANS');
+
+      expect(canonical()).toBe('/women/jeans');
+    });
+
+    it('keeps the filters and the sort, and drops how much has been loaded', async () => {
+      await goTo('/women/jeans?colour=navy&sort=newest&pages=3');
+      productRequest().flush(page(72, 200));
+      harness.detectChanges();
+
+      expect(canonical()).toBe('/women/jeans?colour=navy&sort=newest');
+    });
+
+    it('leaves the fixed filter off a New Arrivals address', async () => {
+      await open('/new-arrivals', page(3));
+
+      expect(canonical()).toBe('/new-arrivals');
+    });
+  });
+
+  describe('an address the catalogue does not know', () => {
+    /**
+     * `/:department` matches any single segment. Before the route guard, every header and footer
+     * link that is not built yet rendered this listing's not-found state at HTTP 200 and told the
+     * shopper a *department* was missing when they had clicked "Bag".
+     */
+    for (const path of ['/bag', '/wishlist', '/account', '/privacy', '/contact', '/not-a-department']) {
+      it(`${path} goes back to the home page, not to the listing`, async () => {
+        await goTo(path);
+
+        // The home page's own wiring check; reaching it is the point of the test.
+        http.match((request) => request.url.startsWith('/api/ping')).forEach((ping) => ping.flush({}));
+
+        expect(TestBed.inject(Router).url).toBe('/');
+        expect(text()).not.toContain('No products found');
+        expect(text()).not.toContain('could not find that page');
+      });
+    }
+
+    it('shows the missing page for a category that belongs to another department', async () => {
+      // /women/shirts names a Men's category. It used to render as the Women department page:
+      // an <h1>Women</h1> over "0 products" while /women itself had nineteen.
+      await goTo('/women/shirts');
 
       expect(text()).toContain('could not find that page');
       expect(text()).not.toContain('No products found');
+      expect(TestBed.inject(Router).url).toBe('/women/shirts');
+    });
+
+    it('asks the API for nothing at all when the page does not exist', async () => {
+      await goTo('/women/shirts');
+
+      // `verify()` in afterEach is the assertion: a products request here would be one nobody
+      // flushed, and the listing used to fire one for every unknown address.
+      expect(text()).toContain('could not find that page');
     });
   });
 });

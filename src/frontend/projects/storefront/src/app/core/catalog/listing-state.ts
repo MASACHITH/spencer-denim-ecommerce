@@ -128,6 +128,7 @@ export function readListingState(
   const minPrice = readNumber(query['minPrice'], 0, MAX_PRICE);
   const maxPrice = readNumber(query['maxPrice'], 0, MAX_PRICE);
   const minDiscountPercent = readNumber(query['minDiscountPercent'], 0, 100);
+  const reversed = minPrice !== null && maxPrice !== null && minPrice > maxPrice;
 
   return {
     department: readSlug(department),
@@ -139,9 +140,10 @@ export function readListingState(
     fits: readSlugList(query[LIST_FILTER_PARAM.fits]),
     occasions: readSlugList(query[LIST_FILTER_PARAM.occasions]),
     // A reversed range is the one combination the API answers with a 400 rather than an empty
-    // page, and a shopper can produce it by hand. Dropping the upper bound keeps the listing.
-    minPrice,
-    maxPrice: minPrice !== null && maxPrice !== null && minPrice > maxPrice ? null : maxPrice,
+    // page, and a shopper can produce it by hand. Both bounds go, not just the upper one: keeping
+    // the lower one would show a chip reading "Over Rs. 9,000" for a URL that never asked for it.
+    minPrice: reversed ? null : minPrice,
+    maxPrice: reversed ? null : maxPrice,
     minRating: readNumber(query['minRating'], 0, 5),
     inStock: readBoolean(query['inStock']),
     // Asking for a discount is asking for the sale, which is how the API reads it too.
@@ -403,9 +405,29 @@ function readBoolean(raw: string | readonly string[] | undefined): boolean {
   return value === 'true' || value === '1';
 }
 
+/**
+ * How many pages the URL claims, clamped rather than dropped.
+ *
+ * {@link readNumber} answers `null` for anything out of range, and falling back to 1 there made
+ * `?pages=21` collapse a listing that was showing 480 products down to 24 — the shopper lost
+ * everything past the first page for asking for one more. Above the ceiling means the ceiling.
+ */
 function readLoadedPages(raw: string | readonly string[] | undefined): number {
-  const value = readNumber(raw, 1, MAX_LOADED_PAGES);
-  return value === null ? 1 : Math.floor(value);
+  const value = first(raw)?.trim();
+  if (!value || !/^-?\d+(\.\d+)?$/.test(value)) {
+    return 1;
+  }
+
+  return clampLoadedPages(Number(value));
+}
+
+/** Keeps a page count inside 1…{@link MAX_LOADED_PAGES}, whoever asked for it. */
+export function clampLoadedPages(pages: number): number {
+  if (!Number.isFinite(pages)) {
+    return 1;
+  }
+
+  return Math.min(MAX_LOADED_PAGES, Math.max(1, Math.floor(pages)));
 }
 
 function numberParam(value: number | null): string | null {

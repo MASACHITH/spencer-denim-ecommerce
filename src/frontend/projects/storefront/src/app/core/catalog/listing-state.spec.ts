@@ -1,5 +1,6 @@
 import {
   EMPTY_LISTING_STATE,
+  clampLoadedPages,
   LIST_FILTER_KEYS,
   ListingState,
   MAX_FILTER_VALUES,
@@ -94,10 +95,12 @@ describe('readListingState', () => {
     expect(read({ minPrice: '1,500' }).minPrice).toBeNull();
   });
 
-  it('drops the upper bound rather than send the one range the API answers with a 400', () => {
+  it('drops both bounds of the one range the API answers with a 400, not just the upper one', () => {
+    // Keeping the lower bound would leave a chip reading "Over Rs. 5,000" on a listing whose URL
+    // never asked for that, which is a filter the shopper cannot account for.
     const result = read({ minPrice: '5000', maxPrice: '1000' });
 
-    expect(result.minPrice).toBe(5000);
+    expect(result.minPrice).toBeNull();
     expect(result.maxPrice).toBeNull();
   });
 
@@ -132,12 +135,19 @@ describe('readListingState', () => {
     expect(read({ sort: '' }).sort).toBe('recommended');
   });
 
-  it('reads the loaded page count, and never more than the ceiling', () => {
+  it('reads the loaded page count', () => {
     expect(read({ pages: '3' }).loadedPages).toBe(3);
-    expect(read({ pages: '0' }).loadedPages).toBe(1);
     expect(read({ pages: 'lots' }).loadedPages).toBe(1);
-    expect(read({ pages: String(MAX_LOADED_PAGES + 50) }).loadedPages).toBe(1);
     expect(read({ pages: '2.7' }).loadedPages).toBe(2);
+  });
+
+  it('clamps a page count past the ceiling instead of collapsing to the first page', () => {
+    // Dropping an out-of-range value back to 1 meant one click past the ceiling took a listing of
+    // 480 products down to 24 — the shopper lost everything for asking for more.
+    expect(read({ pages: String(MAX_LOADED_PAGES + 1) }).loadedPages).toBe(MAX_LOADED_PAGES);
+    expect(read({ pages: '9999' }).loadedPages).toBe(MAX_LOADED_PAGES);
+    expect(read({ pages: '0' }).loadedPages).toBe(1);
+    expect(read({ pages: '-4' }).loadedPages).toBe(1);
   });
 
   it('survives a query string that is nothing but junk', () => {
@@ -146,11 +156,11 @@ describe('readListingState', () => {
       size: [''],
       minPrice: 'NaN',
       maxPrice: 'Infinity',
+      pages: '0',
       minRating: '-3',
       minDiscountPercent: 'half',
       inStock: 'maybe',
       sort: '../../etc/passwd',
-      pages: '-4',
     });
 
     expect(result).toEqual(state());
@@ -356,5 +366,16 @@ describe('requestKey', () => {
     expect(requestKey(base)).not.toBe(requestKey(state({ sort: 'newest' })));
     expect(requestKey(base)).not.toBe(requestKey(state({ loadedPages: 2 })));
     expect(requestKey(base)).not.toBe(requestKey(state({ category: 'jeans' })));
+  });
+});
+
+describe('clampLoadedPages', () => {
+  it('keeps a page count inside its bounds, whoever asked', () => {
+    expect(clampLoadedPages(1)).toBe(1);
+    expect(clampLoadedPages(0)).toBe(1);
+    expect(clampLoadedPages(-3)).toBe(1);
+    expect(clampLoadedPages(MAX_LOADED_PAGES)).toBe(MAX_LOADED_PAGES);
+    expect(clampLoadedPages(MAX_LOADED_PAGES + 1)).toBe(MAX_LOADED_PAGES);
+    expect(clampLoadedPages(Number.NaN)).toBe(1);
   });
 });
