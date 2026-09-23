@@ -43,6 +43,19 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 
 ## Session log
 
+### 2026-09-23 (2) — W1-02 fix round 2: tester verified round 1, failed it on two more Majors
+
+The tester confirmed all nine round-1 fixes as real and rejected the branch again.
+
+**Fixed**
+- **Major, a regression from round 1's relevance fix.** Moving `SoldQty30d` out of the additive score into its own `ThenByDescending` is what stops popularity crossing a band — keeping the cap of 9 as well made the key inert: every product selling 9+ clamped to the same value, so the real tie-break became `ThenBy(Id)` and `?q=denim` served 45 sales above 51. Cap deleted, the key is the raw column. Lesson: two changes that each solve the same problem, made in one step, and only one of them was needed.
+- **Major, pre-existing and missed in round 1.** `IsActive` was honoured in the menu and in filter resolution but not in the product query, so deactivating a category left its products in the listing and in search with a breadcrumb into a category that answered nothing. A product is now on the storefront only while its **department and primary category** are active; secondary category links do not keep it visible. Written into doc 08 §7.1.
+- **Minor** — the product slug rule moved to `Domain.Catalog.CatalogSlug` and guards `Product.Slug` on write, so a slug the PDP refuses cannot be persisted through the app (the matching `CK_Products_Slug` is a **W1-03** migration, on the board); the category-ambiguity guard now fires on the match count alone, since two categories under different parents of one department can share a slug and naming the department does not tell them apart; `MEMORY.md`'s Current state corrected; the seeder determinism test draws the real variant count instead of 15.
+
+**Numbers:** build clean, 232 unit + 146 integration green, 0 skipped (round 1: 215 + 141).
+
+**Next:** back to the tester.
+
 ### 2026-09-23 (1) — W1-02 catalogue foundation: tester FAILED it, developer fix round 1
 
 **Context:** `feature/W1-02-catalogue-foundation` (worktree `worktrees/sd-catalog`) delivers the catalogue schema + demo seeder + the read-only storefront catalogue API. An independent tester rejected it with 3 major and 5 minor findings plus a board correction. All fixed on the branch; not pushed, no PR.
