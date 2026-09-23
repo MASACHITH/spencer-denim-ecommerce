@@ -1,5 +1,6 @@
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, TestRequest, provideHttpClientTesting } from '@angular/common/http/testing';
+import { ApplicationRef } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { Router, provideRouter } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
@@ -118,6 +119,13 @@ describe('ListingPage', () => {
     return [...(harness.routeNativeElement as HTMLElement).querySelectorAll<T>(selector)];
   }
 
+  /** The product names on screen, de-duplicated: a restore must never show one twice. */
+  function distinctNames(): string[] {
+    return [
+      ...new Set(queryAll('.card__name').map((name) => name.textContent?.trim() ?? '')),
+    ];
+  }
+
   /** A click that navigates is asynchronous; the reload it causes happens on the way back. */
   async function settle(): Promise<void> {
     await harness.fixture.whenStable();
@@ -138,29 +146,22 @@ describe('ListingPage', () => {
   }
 
   /**
-   * Waits until the router has really put a component on screen.
+   * Waits for the router to finish, then renders once.
    *
    * `canMatch` puts an asynchronous hop between "navigate" and "the component exists", and
-   * `RouterTestingHarness.create` resolving does not guarantee the other side of it has run. This
-   * suite read the listing's requests straight afterwards and went red about one run in fourteen
-   * on a loaded machine — over a blocker fix, which is the kind of test that gets deleted rather
-   * than trusted. Once the component is up, its constructor has already issued every request the
-   * URL implies, synchronously.
-   *
-   * Note it waits on the component, not on the requests: `HttpTestingController.match` takes the
-   * requests it matches off the queue, so polling with it would eat what the test came to flush.
+   * `RouterTestingHarness.create` resolving does not guarantee the other side of it has run.
+   * An earlier version of this polled, calling `detectChanges()` on every attempt; measuring it
+   * showed activation always completes on the first attempt, so the loop only ever added the risk
+   * of fifty change-detection passes on a test that renders hundreds of cards. Waiting on the
+   * application is the right shape and costs one render.
    */
   async function activated(): Promise<void> {
-    for (let attempt = 0; attempt < 50; attempt++) {
-      harness.detectChanges();
-      if (harness.routeDebugElement) {
-        return;
-      }
+    await TestBed.inject(ApplicationRef).whenStable();
+    harness.detectChanges();
 
-      await new Promise((resolve) => setTimeout(resolve, 0));
+    if (!harness.routeDebugElement) {
+      throw new Error('The router never activated a component.');
     }
-
-    throw new Error('The router never activated a component.');
   }
 
   async function goTo(url: string): Promise<void> {
@@ -180,9 +181,31 @@ describe('ListingPage', () => {
     harness.detectChanges();
   }
 
-  /** Answers a restore that needs more than one request, 96 rows at a time. */
+  /**
+   * Answers a request the way the API would: from the `page` and `pageSize` it was actually sent.
+   *
+   * This used to fabricate the rows the component expected — 96 at a time, numbered from the
+   * request's index — which meant it could only ever confirm the component's arithmetic against
+   * itself. It agreed happily while `toRestoreRequests` was asking for the wrong window, and that
+   * is how a duplicate-rendering blocker survived three rounds of green tests. `Skip` here is
+   * `ProductListQuery.Skip`: `(Page - 1) * PageSize`, against the page size of that request.
+   */
+  function answer(request: TestRequest, total: number): void {
+    const pageSize = Number(request.request.params.get('pageSize'));
+    const skip = (Number(request.request.params.get('page')) - 1) * pageSize;
+    const count = Math.max(0, Math.min(pageSize, total - skip));
+
+    request.flush({
+      items: Array.from({ length: count }, (_, index) => product(skip + index + 1)),
+      page: Number(request.request.params.get('page')),
+      pageSize,
+      totalCount: total,
+    });
+  }
+
+  /** Answers a restore that needs more than one request. */
   function flushAll(requests: readonly TestRequest[], total: number): void {
-    requests.forEach((request, index) => request.flush(page(96, total, index * 96 + 1)));
+    requests.forEach((request) => answer(request, total));
     harness.detectChanges();
   }
 
@@ -387,7 +410,7 @@ describe('ListingPage', () => {
       expect(request.request.params.get('page')).toBe('2');
       expect(request.request.params.get('pageSize')).toBe(String(PAGE_SIZE));
 
-      request.flush({ ...page(24, 120, 25), page: 2 });
+      answer(request, 120);
       harness.detectChanges();
 
       expect(queryAll('.product-grid > li')).toHaveLength(48);
@@ -400,7 +423,7 @@ describe('ListingPage', () => {
 
       query<HTMLButtonElement>('.plp__more button')?.click();
       await settle();
-      productRequest().flush({ ...page(24, 120, 25), page: 2 });
+      answer(productRequest(), 120);
 
       expect(TestBed.inject(Router).url).toBe('/women/jeans?pages=2');
     });
@@ -411,11 +434,31 @@ describe('ListingPage', () => {
       const request = productRequest();
       expect(request.request.params.get('pageSize')).toBe(String(3 * PAGE_SIZE));
 
-      request.flush(page(72, 120));
+      answer(request, 120);
       harness.detectChanges();
 
       expect(queryAll('.product-grid > li')).toHaveLength(72);
+      expect(distinctNames()).toHaveLength(72);
     });
+
+    /**
+     * The restore path is the whole reason `pages` is in the URL, and it was serving the same
+     * products twice whenever the page count was not a multiple of four.
+     */
+    for (const loadedPages of [5, 6, 7, 17]) {
+      it(`restores ${loadedPages} pages without repeating a product`, async () => {
+        const total = 399;
+        await goTo(`/women/jeans?pages=${loadedPages}`);
+
+        flushAll(productRequests(), total);
+
+        const shown = Math.min(loadedPages * PAGE_SIZE, total);
+        expect(queryAll('.product-grid > li')).toHaveLength(shown);
+        expect(distinctNames()).toHaveLength(shown);
+        expect(text()).toContain(`Showing ${shown} of ${total} products`);
+        // Same stated budget as the ceiling tests: 17 pages is 399 cards of real rendering.
+      }, 20_000);
+    }
 
     it('announces the new count to a screen reader', async () => {
       await open('/women/jeans', page(24, 120));
@@ -425,7 +468,7 @@ describe('ListingPage', () => {
 
       query<HTMLButtonElement>('.plp__more button')?.click();
       await settle();
-      productRequest().flush({ ...page(24, 120, 25), page: 2 });
+      answer(productRequest(), 120);
       harness.detectChanges();
 
       expect(live?.textContent?.trim()).toBe('Showing 48 of 120 products.');
@@ -435,6 +478,19 @@ describe('ListingPage', () => {
   describe('the Load More ceiling (PLP-07)', () => {
     /** A ceiling listing is 480 rows, which the API's page-size cap serves in five requests. */
     const CEILING_REQUESTS = Math.ceil((MAX_LOADED_PAGES * PAGE_SIZE) / MAX_PAGE_SIZE);
+
+    /**
+     * A stated budget for the few tests that render hundreds of product cards.
+     *
+     * Measured on an idle machine: the navigation costs ~30 ms and rendering 480 cards ~650 ms.
+     * That is real work the assertions need — proving the button is gone *while more exists*
+     * requires a listing that really is at the ceiling — and vitest's 5 s default left it a
+     * seven-fold margin, which a machine running the backend suite alongside ate twice in
+     * thirty-two runs. This is the budget such a test should have had, not a knob turned until
+     * red went green: the fix for the race was the helper above, and this is the fix for a test
+     * whose honest cost was mis-declared.
+     */
+    const HEAVY_RENDER_TIMEOUT_MS = 20_000;
 
     it('stops offering Load More at the ceiling instead of collapsing the listing', async () => {
       // One click past the ceiling used to be read back as page 1: 480 products became 24, and
@@ -448,7 +504,7 @@ describe('ListingPage', () => {
       expect(queryAll('.product-grid > li')).toHaveLength(MAX_LOADED_PAGES * PAGE_SIZE);
       expect(text()).not.toContain('Load More');
       expect(text()).toContain('as many as one page shows');
-    });
+    }, HEAVY_RENDER_TIMEOUT_MS);
 
     it('clamps a URL that asks for more pages than the listing will load', async () => {
       await goTo(`/women/jeans?pages=${MAX_LOADED_PAGES + 1}`);
@@ -463,7 +519,7 @@ describe('ListingPage', () => {
       flushAll(requests, 2000);
 
       expect(queryAll('.product-grid > li')).toHaveLength(MAX_LOADED_PAGES * PAGE_SIZE);
-    });
+    }, HEAVY_RENDER_TIMEOUT_MS);
   });
 
   describe('New Arrivals and Sale (DEPT-02, DEPT-03)', () => {
