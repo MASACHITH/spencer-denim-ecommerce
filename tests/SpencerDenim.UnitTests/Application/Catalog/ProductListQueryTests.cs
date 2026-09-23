@@ -1,3 +1,4 @@
+using System.Globalization;
 using SpencerDenim.Application.Catalog;
 using SpencerDenim.Application.Catalog.Products;
 
@@ -102,7 +103,7 @@ public sealed class ProductListQueryTests
     [Fact]
     public void Prices_are_rounded_to_two_decimals()
     {
-        var query = Create(new ProductListCriteria(MinPrice: 1000.005m, MaxPrice: 2000.004m));
+        var query = Create(new ProductListCriteria(MinPrice: "1000.005", MaxPrice: "2000.004"));
 
         Assert.Equal(1000.01m, query.MinPrice);
         Assert.Equal(2000.00m, query.MaxPrice);
@@ -111,33 +112,35 @@ public sealed class ProductListQueryTests
     [Fact]
     public void A_negative_price_is_rejected()
     {
-        Assert.Contains("minPrice", FailureFields(new ProductListCriteria(MinPrice: -1m)));
+        Assert.Contains("minPrice", FailureFields(new ProductListCriteria(MinPrice: "-1")));
     }
 
     [Fact]
     public void A_price_above_the_cap_is_rejected()
     {
-        Assert.Contains("maxPrice", FailureFields(new ProductListCriteria(MaxPrice: ProductListQuery.MaxPriceValue + 1m)));
+        var price = (ProductListQuery.MaxPriceValue + 1m).ToString(CultureInfo.InvariantCulture);
+
+        Assert.Contains("maxPrice", FailureFields(new ProductListCriteria(MaxPrice: price)));
     }
 
     [Fact]
     public void An_inverted_price_range_is_rejected()
     {
-        Assert.Contains("minPrice", FailureFields(new ProductListCriteria(MinPrice: 5000m, MaxPrice: 1000m)));
+        Assert.Contains("minPrice", FailureFields(new ProductListCriteria(MinPrice: "5000", MaxPrice: "1000")));
     }
 
     [Theory]
-    [InlineData(-0.1)]
-    [InlineData(5.1)]
-    public void A_rating_outside_zero_to_five_is_rejected(double rating)
+    [InlineData("-0.1")]
+    [InlineData("5.1")]
+    public void A_rating_outside_zero_to_five_is_rejected(string rating)
     {
-        Assert.Contains("minRating", FailureFields(new ProductListCriteria(MinRating: (decimal)rating)));
+        Assert.Contains("minRating", FailureFields(new ProductListCriteria(MinRating: rating)));
     }
 
     [Theory]
-    [InlineData(-1)]
-    [InlineData(101)]
-    public void A_discount_outside_zero_to_one_hundred_is_rejected(int discount)
+    [InlineData("-1")]
+    [InlineData("101")]
+    public void A_discount_outside_zero_to_one_hundred_is_rejected(string discount)
     {
         Assert.Contains("minDiscountPercent", FailureFields(new ProductListCriteria(MinDiscountPercent: discount)));
     }
@@ -145,7 +148,7 @@ public sealed class ProductListQueryTests
     [Fact]
     public void Asking_for_a_minimum_discount_implies_the_on_sale_filter()
     {
-        var query = Create(new ProductListCriteria(MinDiscountPercent: 20m));
+        var query = Create(new ProductListCriteria(MinDiscountPercent: "20"));
 
         Assert.True(query.OnSaleOnly);
         Assert.Equal(20m, query.MinDiscountPercent);
@@ -154,7 +157,7 @@ public sealed class ProductListQueryTests
     [Fact]
     public void A_zero_minimum_discount_does_not_imply_the_on_sale_filter()
     {
-        var query = Create(new ProductListCriteria(MinDiscountPercent: 0m));
+        var query = Create(new ProductListCriteria(MinDiscountPercent: "0"));
 
         Assert.False(query.OnSaleOnly);
     }
@@ -186,26 +189,90 @@ public sealed class ProductListQueryTests
     [Fact]
     public void Paging_skips_the_pages_before_the_requested_one()
     {
-        var query = Create(new ProductListCriteria(Page: 4, PageSize: 12));
+        var query = Create(new ProductListCriteria(Page: "4", PageSize: "12"));
 
         Assert.Equal(36, query.Skip);
     }
 
     [Theory]
-    [InlineData(0)]
-    [InlineData(-1)]
-    [InlineData(ProductListQuery.MaxPage + 1)]
-    public void An_out_of_range_page_is_rejected(int page)
+    [InlineData("0")]
+    [InlineData("-1")]
+    public void An_out_of_range_page_is_rejected(string page)
     {
         Assert.Contains("page", FailureFields(new ProductListCriteria(Page: page)));
     }
 
+    [Fact]
+    public void A_page_beyond_the_cap_is_rejected()
+    {
+        var page = (ProductListQuery.MaxPage + 1).ToString(CultureInfo.InvariantCulture);
+
+        Assert.Contains("page", FailureFields(new ProductListCriteria(Page: page)));
+    }
+
     [Theory]
-    [InlineData(0)]
-    [InlineData(97)]
-    public void A_page_size_outside_the_configured_bounds_is_rejected(int pageSize)
+    [InlineData("0")]
+    [InlineData("97")]
+    public void A_page_size_outside_the_configured_bounds_is_rejected(string pageSize)
     {
         Assert.Contains("pageSize", FailureFields(new ProductListCriteria(PageSize: pageSize)));
+    }
+
+    /// <summary>
+    /// The parameters that used to bind as <c>int?</c>, <c>decimal?</c> and <c>bool?</c>: a value that
+    /// is not a number is a named 400 here, not a model-binding exception at the edge.
+    /// </summary>
+    [Theory]
+    [InlineData("page", "abc")]
+    [InlineData("page", "1.5")]
+    [InlineData("pageSize", "1.5")]
+    [InlineData("minPrice", "abc")]
+    [InlineData("maxPrice", "1,000")]
+    [InlineData("minRating", "nope")]
+    [InlineData("minDiscountPercent", "ten")]
+    public void A_number_that_cannot_be_read_is_rejected_by_name(string field, string value)
+    {
+        Assert.Contains(field, FailureFields(WithRawValue(field, value)));
+    }
+
+    [Fact]
+    public void The_message_for_an_unreadable_number_says_what_was_expected()
+    {
+        var result = ProductListQuery.Create(new ProductListCriteria(Page: "abc"), Options);
+
+        var error = Assert.Single(result.Errors, candidate => candidate.Field == "page");
+        Assert.Contains("whole number", error.Message, StringComparison.Ordinal);
+        Assert.Contains("1000", error.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("true", true)]
+    [InlineData("TRUE", true)]
+    [InlineData(" true ", true)]
+    [InlineData("1", true)]
+    [InlineData("false", false)]
+    [InlineData("0", false)]
+    public void The_flag_spellings_a_query_string_really_carries_are_accepted(string value, bool expected)
+    {
+        var query = Create(new ProductListCriteria(InStock: value, OnSale: value, NewArrivals: value));
+
+        Assert.Equal(expected, query.InStockOnly);
+        Assert.Equal(expected, query.OnSaleOnly);
+        Assert.Equal(expected, query.NewArrivalsOnly);
+    }
+
+    [Theory]
+    [InlineData("yes")]
+    [InlineData("on")]
+    [InlineData("2")]
+    public void A_flag_that_is_not_a_boolean_is_rejected_rather_than_read_as_false(string value)
+    {
+        var result = ProductListQuery.Create(new ProductListCriteria(InStock: value), Options);
+
+        Assert.False(result.IsSuccess);
+        var error = Assert.Single(result.Errors, candidate => candidate.Field == "inStock");
+        Assert.Contains("true or false", error.Message, StringComparison.Ordinal);
+        Assert.Contains("1 and 0", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -214,9 +281,9 @@ public sealed class ProductListQueryTests
         var fields = FailureFields(new ProductListCriteria(
             Department: "not a slug",
             Sort: "nonsense",
-            Page: 0,
-            PageSize: 500,
-            MinRating: 9m));
+            Page: "0",
+            PageSize: "500",
+            MinRating: "9"));
 
         Assert.Contains("department", fields);
         Assert.Contains("sort", fields);
@@ -234,20 +301,20 @@ public sealed class ProductListQueryTests
     }
 
     [Fact]
-    public void The_cache_key_is_stable_for_equivalent_queries_and_differs_otherwise()
-    {
-        var first = Create(new ProductListCriteria(Department: "Women", Colours: ["navy", "NAVY"], Sort: "newest"));
-        var second = Create(new ProductListCriteria(Department: "women", Colours: [" navy "], Sort: "newest"));
-        var third = Create(new ProductListCriteria(Department: "women", Colours: ["navy"], Sort: "price-asc"));
-
-        Assert.Equal(first.ToCacheKey(), second.ToCacheKey());
-        Assert.NotEqual(first.ToCacheKey(), third.ToCacheKey());
-    }
-
-    [Fact]
     public void Null_arguments_are_rejected()
     {
         Assert.Throws<ArgumentNullException>(() => ProductListQuery.Create(null!, Options));
         Assert.Throws<ArgumentNullException>(() => ProductListQuery.Create(new ProductListCriteria(), null!));
     }
+
+    private static ProductListCriteria WithRawValue(string field, string value) => field switch
+    {
+        "page" => new ProductListCriteria(Page: value),
+        "pageSize" => new ProductListCriteria(PageSize: value),
+        "minPrice" => new ProductListCriteria(MinPrice: value),
+        "maxPrice" => new ProductListCriteria(MaxPrice: value),
+        "minRating" => new ProductListCriteria(MinRating: value),
+        "minDiscountPercent" => new ProductListCriteria(MinDiscountPercent: value),
+        _ => throw new ArgumentOutOfRangeException(nameof(field), field, "Unknown query parameter."),
+    };
 }

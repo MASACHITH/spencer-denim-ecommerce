@@ -80,7 +80,7 @@ public sealed class ProductSearchQueryTests
     {
         var result = ProductSearchQuery.Create(
             "  Linen Shirt ",
-            new ProductListCriteria(Department: "women", Sort: "price-asc", PageSize: 12),
+            new ProductListCriteria(Department: "women", Sort: "price-asc", PageSize: "12"),
             Options);
 
         Assert.True(result.IsSuccess);

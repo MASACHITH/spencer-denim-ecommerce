@@ -27,6 +27,13 @@ public sealed partial record ProductListQuery
     /// <summary>Highest page number, so <c>OFFSET</c> stays sane on a catalogue of ≤ 5,000 products.</summary>
     public const int MaxPage = 1_000;
 
+    /// <summary>
+    /// A query string carries no culture, so prices, ratings and discounts are read as invariant
+    /// <c>-1234.56</c>. Group separators are rejected: they mean different things in different locales,
+    /// and the storefront never writes them.
+    /// </summary>
+    private const NumberStyles QueryNumberStyles = NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint;
+
     private ProductListQuery()
     {
     }
@@ -107,6 +114,10 @@ public sealed partial record ProductListQuery
         var minRating = NormaliseRange(criteria.MinRating, "minRating", 0m, 5m, errors);
         var minDiscount = NormaliseRange(criteria.MinDiscountPercent, "minDiscountPercent", 0m, 100m, errors);
 
+        var inStock = ParseBoolean(criteria.InStock, "inStock", errors);
+        var onSale = ParseBoolean(criteria.OnSale, "onSale", errors);
+        var newArrivals = ParseBoolean(criteria.NewArrivals, "newArrivals", errors);
+
         if (!ProductSortOptions.TryParse(criteria.Sort, out var sort))
         {
             errors.Add(new ValidationError(
@@ -114,13 +125,14 @@ public sealed partial record ProductListQuery
                 $"sort must be one of: {string.Join(", ", ProductSortOptions.All)}."));
         }
 
-        var page = criteria.Page ?? 1;
+        var page = ParseWholeNumber(criteria.Page, "page", 1, MaxPage, errors) ?? 1;
         if (page is < 1 or > MaxPage)
         {
             errors.Add(new ValidationError("page", $"page must be between 1 and {MaxPage}."));
         }
 
-        var pageSize = criteria.PageSize ?? options.DefaultPageSize;
+        var pageSize = ParseWholeNumber(criteria.PageSize, "pageSize", 1, options.MaxPageSize, errors)
+            ?? options.DefaultPageSize;
         if (pageSize < 1 || pageSize > options.MaxPageSize)
         {
             errors.Add(new ValidationError("pageSize", $"pageSize must be between 1 and {options.MaxPageSize}."));
@@ -145,47 +157,29 @@ public sealed partial record ProductListQuery
             OccasionSlugs = occasions,
             MinRating = minRating,
             // "on sale" and a minimum discount are the same predicate; asking for a discount implies the flag.
-            InStockOnly = criteria.InStock ?? false,
-            OnSaleOnly = (criteria.OnSale ?? false) || minDiscount > 0m,
+            InStockOnly = inStock ?? false,
+            OnSaleOnly = (onSale ?? false) || minDiscount > 0m,
             MinDiscountPercent = minDiscount,
-            NewArrivalsOnly = criteria.NewArrivals ?? false,
+            NewArrivalsOnly = newArrivals ?? false,
             Sort = sort,
             Page = page,
             PageSize = pageSize,
         });
     }
 
-    /// <summary>A stable key for the 60 s response cache in doc 08 §7.5. Same filters → same key.</summary>
-    public string ToCacheKey()
+    /// <summary>
+    /// Normalises one slug parameter, or records why it was rejected. The product page reuses it
+    /// (<see cref="GetProductBySlugQuery"/>) so a slug is spelled the same way wherever it is read.
+    /// </summary>
+    /// <param name="maxLength">The column the slug is looked up in; product slugs are longer than category ones.</param>
+    internal static string? NormaliseSlug(
+        string? raw,
+        string field,
+        List<ValidationError> errors,
+        int maxLength = MaxSlugLength)
     {
-        var parts = new List<string>(16)
-        {
-            $"d={DepartmentSlug}",
-            $"c={CategorySlug}",
-            $"ag={string.Join('|', AgeGroupSlugs)}",
-            $"p={Format(MinPrice)}-{Format(MaxPrice)}",
-            $"sz={string.Join('|', SizeLabels)}",
-            $"cl={string.Join('|', ColourFamilySlugs)}",
-            $"m={string.Join('|', MaterialSlugs)}",
-            $"f={string.Join('|', FitSlugs)}",
-            $"o={string.Join('|', OccasionSlugs)}",
-            $"r={Format(MinRating)}",
-            $"in={InStockOnly}",
-            $"sale={OnSaleOnly}",
-            $"disc={Format(MinDiscountPercent)}",
-            $"new={NewArrivalsOnly}",
-            $"s={ProductSortOptions.ToQueryValue(Sort)}",
-            $"pg={Page.ToString(CultureInfo.InvariantCulture)}x{PageSize.ToString(CultureInfo.InvariantCulture)}",
-        };
+        ArgumentNullException.ThrowIfNull(errors);
 
-        return string.Join(';', parts);
-    }
-
-    private static string Format(decimal? value) =>
-        value?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
-
-    private static string? NormaliseSlug(string? raw, string field, List<ValidationError> errors)
-    {
         if (string.IsNullOrWhiteSpace(raw))
         {
             return null;
@@ -193,9 +187,9 @@ public sealed partial record ProductListQuery
 
         var slug = raw.Trim().ToLowerInvariant();
 
-        if (slug.Length > MaxSlugLength)
+        if (slug.Length > maxLength)
         {
-            errors.Add(new ValidationError(field, $"{field} must be {MaxSlugLength} characters or fewer."));
+            errors.Add(new ValidationError(field, $"{field} must be {maxLength} characters or fewer."));
             return null;
         }
 
@@ -279,8 +273,9 @@ public sealed partial record ProductListQuery
         return values.AsReadOnly();
     }
 
-    private static decimal? NormaliseMoney(decimal? value, string field, List<ValidationError> errors)
+    private static decimal? NormaliseMoney(string? raw, string field, List<ValidationError> errors)
     {
+        var value = ParseNumber(raw, field, 0m, MaxPriceValue, errors);
         if (value is null)
         {
             return null;
@@ -296,12 +291,13 @@ public sealed partial record ProductListQuery
     }
 
     private static decimal? NormaliseRange(
-        decimal? value,
+        string? raw,
         string field,
         decimal minimum,
         decimal maximum,
         List<ValidationError> errors)
     {
+        var value = ParseNumber(raw, field, minimum, maximum, errors);
         if (value is null)
         {
             return null;
@@ -314,6 +310,85 @@ public sealed partial record ProductListQuery
         }
 
         return value;
+    }
+
+    /// <summary>
+    /// Reads a decimal parameter. Binding the query string straight to a <c>decimal?</c> makes
+    /// <c>?minPrice=abc</c> a 500 before <see cref="Create"/> ever runs, so the parse belongs here,
+    /// where an unreadable value joins the other 400 errors, named and with the shape it should have.
+    /// </summary>
+    private static decimal? ParseNumber(
+        string? raw,
+        string field,
+        decimal minimum,
+        decimal maximum,
+        List<ValidationError> errors)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return null;
+        }
+
+        if (!decimal.TryParse(raw.Trim(), QueryNumberStyles, CultureInfo.InvariantCulture, out var value))
+        {
+            errors.Add(new ValidationError(
+                field,
+                $"{field} must be a number between {minimum:0.##} and {maximum:0.##}."));
+            return null;
+        }
+
+        return value;
+    }
+
+    /// <summary>Reads an integer parameter; <see cref="ParseNumber"/> says why the parse is here.</summary>
+    private static int? ParseWholeNumber(
+        string? raw,
+        string field,
+        int minimum,
+        int maximum,
+        List<ValidationError> errors)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return null;
+        }
+
+        if (!int.TryParse(raw.Trim(), NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var value))
+        {
+            errors.Add(new ValidationError(
+                field,
+                $"{field} must be a whole number between {minimum} and {maximum}."));
+            return null;
+        }
+
+        return value;
+    }
+
+    /// <summary>
+    /// Reads a flag parameter; <see cref="ParseNumber"/> says why the parse is here. Four spellings are
+    /// accepted: <c>true</c>/<c>false</c>, which is what the storefront writes, and <c>1</c>/<c>0</c>,
+    /// which is what hand-built links and older clients write. Anything else is a typo worth naming
+    /// rather than a filter that silently turns itself off.
+    /// </summary>
+    private static bool? ParseBoolean(string? raw, string field, List<ValidationError> errors)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return null;
+        }
+
+        return raw.Trim().ToLowerInvariant() switch
+        {
+            "true" or "1" => true,
+            "false" or "0" => false,
+            _ => RejectBoolean(field, errors),
+        };
+    }
+
+    private static bool? RejectBoolean(string field, List<ValidationError> errors)
+    {
+        errors.Add(new ValidationError(field, $"{field} must be true or false (1 and 0 are also accepted)."));
+        return null;
     }
 
     [GeneratedRegex("^[a-z0-9]+(?:-[a-z0-9]+)*$", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 200)]

@@ -3,6 +3,12 @@ namespace SpencerDenim.Application.Catalog.Products;
 /// <summary>
 /// The raw, unvalidated query string of <c>GET /api/catalog/products</c>, exactly as it arrives.
 /// <see cref="ProductListQuery.Create"/> turns it into a validated query or a list of 400 errors.
+/// <para>
+/// Every value is a <see cref="string"/>, including the numbers and flags: model binding a typed
+/// <c>int?</c> or <c>bool?</c> turns <c>?page=abc</c> into a 500 before any of our code runs, so the
+/// parsing happens in <see cref="ProductListQuery.Create"/> alongside the range checks and reaches the
+/// caller as the same 400 that names the parameter.
+/// </para>
 /// </summary>
 /// <param name="Department">Department slug, e.g. <c>women</c>.</param>
 /// <param name="Category">Category slug. Matches the category and its whole subtree.</param>
@@ -26,18 +32,18 @@ public sealed record ProductListCriteria(
     string? Department = null,
     string? Category = null,
     IReadOnlyList<string>? AgeGroups = null,
-    decimal? MinPrice = null,
-    decimal? MaxPrice = null,
+    string? MinPrice = null,
+    string? MaxPrice = null,
     IReadOnlyList<string>? Sizes = null,
     IReadOnlyList<string>? Colours = null,
     IReadOnlyList<string>? Materials = null,
     IReadOnlyList<string>? Fits = null,
     IReadOnlyList<string>? Occasions = null,
-    decimal? MinRating = null,
-    bool? InStock = null,
-    bool? OnSale = null,
-    decimal? MinDiscountPercent = null,
-    bool? NewArrivals = null,
+    string? MinRating = null,
+    string? InStock = null,
+    string? OnSale = null,
+    string? MinDiscountPercent = null,
+    string? NewArrivals = null,
     string? Sort = null,
-    int? Page = null,
-    int? PageSize = null);
+    string? Page = null,
+    string? PageSize = null);
