@@ -55,43 +55,85 @@ export const AGE_GROUP_OPTIONS: readonly FilterOption[] = [
  * current contract goes — a `size` parameter that took a scale would be the real fix, and belongs
  * with the facets work.
  */
+const CLOTHING_SIZES: SizeScale = {
+  name: 'Clothing',
+  departments: ['women', 'men'],
+  options: labels(['XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL']),
+};
+
+const WOMEN_WAIST: SizeScale = {
+  name: 'Women waist',
+  departments: ['women'],
+  options: labels(['24', '26', '28', '30', '32', '34', '36']),
+};
+
+const MEN_WAIST: SizeScale = {
+  name: 'Men waist',
+  departments: ['men'],
+  options: labels(['28', '30', '32', '34', '36', '38', '40']),
+};
+
+/**
+ * One waist group for a listing with no department to tell the two apart.
+ *
+ * Women's and men's waists are the same numbers, so offering both scales at once put 28 to 36 on
+ * screen twice, bound to the same value: two checkboxes with the same accessible name that ticked
+ * each other. The API matches a bare label anyway, so one group is also the truth about what the
+ * filter does.
+ */
+const MIXED_WAIST: SizeScale = {
+  name: 'Waist',
+  departments: [],
+  options: labels(['24', '26', '28', '30', '32', '34', '36', '38', '40']),
+};
+
+const KIDS_AGE: SizeScale = {
+  name: 'Kids age',
+  departments: ['kids'],
+  options: labels(['2-3Y', '4-5Y', '6-7Y', '8-9Y', '10-11Y', '12-13Y']),
+};
+
+const BABY_MONTHS: SizeScale = {
+  name: 'Baby months',
+  departments: ['kids'],
+  options: labels(['0-3M', '3-6M', '6-9M', '9-12M', '12-18M', '18-24M']),
+};
+
+const FOOTWEAR: SizeScale = {
+  name: 'Footwear (EU)',
+  departments: [],
+  options: labels(['35', '37', '39', '41', '43', '45']),
+};
+
+/**
+ * The seeded size scales of doc 08 §9. The API matches on the label, not on a slug or a scale, so
+ * the scale is a label for the shopper rather than something it can filter by: ticking a "36"
+ * still means every 36 in the catalogue. Narrowing a scale to its departments is as far as the
+ * current contract goes — a `size` parameter that took a scale would be the real fix, and belongs
+ * with the facets work.
+ */
 export const SIZE_SCALES: readonly SizeScale[] = [
-  {
-    name: 'Clothing',
-    departments: ['women', 'men'],
-    options: labels(['XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL']),
-  },
-  {
-    name: 'Women waist',
-    departments: ['women'],
-    options: labels(['24', '26', '28', '30', '32', '34', '36']),
-  },
-  {
-    name: 'Men waist',
-    departments: ['men'],
-    options: labels(['28', '30', '32', '34', '36', '38', '40']),
-  },
-  {
-    name: 'Kids age',
-    departments: ['kids'],
-    options: labels(['2-3Y', '4-5Y', '6-7Y', '8-9Y', '10-11Y', '12-13Y']),
-  },
-  {
-    name: 'Baby months',
-    departments: ['kids'],
-    options: labels(['0-3M', '3-6M', '6-9M', '9-12M', '12-18M', '18-24M']),
-  },
-  {
-    name: 'Footwear (EU)',
-    departments: [],
-    options: labels(['35', '37', '39', '41', '43', '45']),
-  },
+  CLOTHING_SIZES,
+  WOMEN_WAIST,
+  MEN_WAIST,
+  KIDS_AGE,
+  BABY_MONTHS,
+  FOOTWEAR,
 ];
 
-/** The scales a department offers; every scale when no department is chosen (New Arrivals, Sale). */
+/** What New Arrivals and Sale offer: every scale, with the two waists folded into one. */
+const MIXED_SCALES: readonly SizeScale[] = [
+  CLOTHING_SIZES,
+  MIXED_WAIST,
+  KIDS_AGE,
+  BABY_MONTHS,
+  FOOTWEAR,
+];
+
+/** The scales a department offers; the mixed set when no department narrows it. */
 export function sizeScalesFor(department: string | null): readonly SizeScale[] {
   if (department === null) {
-    return SIZE_SCALES;
+    return MIXED_SCALES;
   }
 
   return SIZE_SCALES.filter(

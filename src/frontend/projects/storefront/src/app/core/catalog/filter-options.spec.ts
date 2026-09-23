@@ -22,8 +22,42 @@ describe('sizeScalesFor', () => {
     expect(scaleNames('kids')).not.toContain('Clothing');
   });
 
-  it('offers every scale where there is no department to narrow by (New Arrivals, Sale)', () => {
-    expect(sizeScalesFor(null)).toEqual(SIZE_SCALES);
+  /**
+   * On New Arrivals and Sale there is no department to tell a women's 32 from a men's 32, and
+   * offering both scales put the same label on screen twice bound to the same value: two
+   * checkboxes with the same accessible name that ticked each other.
+   */
+  it('folds the two waists into one group where there is no department', () => {
+    expect(scaleNames(null)).toEqual([
+      'Clothing',
+      'Waist',
+      'Kids age',
+      'Baby months',
+      'Footwear (EU)',
+    ]);
+  });
+
+  it('keeps every waist size when it folds them', () => {
+    const waist = sizeScalesFor(null).find((scale) => scale.name === 'Waist');
+    const both = new Set(
+      SIZE_SCALES.filter((scale) => scale.name.endsWith('waist')).flatMap((scale) =>
+        scale.options.map((option) => option.value),
+      ),
+    );
+
+    expect(new Set(waist?.options.map((option) => option.value))).toEqual(both);
+  });
+
+  it('never offers one label twice, whichever listing is showing', () => {
+    for (const department of [null, 'women', 'men', 'kids']) {
+      const labels = sizeScalesFor(department).flatMap((scale) =>
+        scale.options.map((option) => option.value),
+      );
+
+      expect(new Set(labels).size, `duplicate size on ${department ?? 'a mixed listing'}`).toBe(
+        labels.length,
+      );
+    }
   });
 
   it('offers footwear everywhere, because every department sells it', () => {

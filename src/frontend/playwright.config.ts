@@ -22,6 +22,16 @@ const baseURL = `http://localhost:${PORT}`;
 /** Exported so a test can send the browser's own `/api` calls to the same stub. */
 export const apiURL = `http://localhost:${API_PORT}`;
 
+/**
+ * A second pair of servers whose catalogue answers `200 []` — a freshly migrated database before
+ * anyone runs the seeder, which the README says is off by default. The storefront has to render
+ * from its seeded fallback there, not send every listing link home.
+ */
+const EMPTY_PORT = Number(process.env['E2E_EMPTY_PORT'] ?? 4422);
+const EMPTY_API_PORT = Number(process.env['E2E_EMPTY_API_PORT'] ?? 4423);
+
+export const emptyCatalogueURL = `http://localhost:${EMPTY_PORT}`;
+
 export default defineConfig({
   testDir: './e2e',
   testMatch: '**/*.e2e.ts',
@@ -48,6 +58,23 @@ export default defineConfig({
       command: 'npm run serve:ssr:storefront',
       url: `${baseURL}/healthz`,
       env: { PORT: String(PORT), API_INTERNAL_URL: apiURL },
+      reuseExistingServer: !process.env['CI'],
+      timeout: 120_000,
+    },
+    {
+      command: 'node e2e/support/catalog-api-stub.mjs',
+      url: `http://localhost:${EMPTY_API_PORT}/api/catalog/departments`,
+      env: { E2E_API_PORT: String(EMPTY_API_PORT), E2E_DEPARTMENTS: 'empty' },
+      reuseExistingServer: !process.env['CI'],
+      timeout: 30_000,
+    },
+    {
+      command: 'npm run serve:ssr:storefront',
+      url: `${emptyCatalogueURL}/healthz`,
+      env: {
+        PORT: String(EMPTY_PORT),
+        API_INTERNAL_URL: `http://localhost:${EMPTY_API_PORT}`,
+      },
       reuseExistingServer: !process.env['CI'],
       timeout: 120_000,
     },

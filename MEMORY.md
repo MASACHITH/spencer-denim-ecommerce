@@ -43,6 +43,46 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 
 ## Session log
 
+### 2026-09-23 (4) — W2-03 fix round 2: one regression the guards introduced
+
+The tester verified every round-1 fix as genuinely fixed and **backed the 404 reasoning** — he read
+the Angular source and the wire himself and confirmed `ServerRoute.status` matches by path pattern,
+so it would have 404'd every category page. He failed the branch on one regression.
+
+**Major, a regression from round 1.** `usable()` guarded only the `departments` signal; the route
+guards read `tree$`, the raw pipeline, and `catchError` does not catch a *successful* response with
+a useless body. `200 []` — what the API legitimately answers for a freshly migrated database
+before anyone runs the seeder, and the README says seeding is off by default — sent every listing
+URL to the home page while the mega menu still listed all three departments and all 29 categories.
+The first boot of a new staging or production environment would have looked like that. `200
+{"oops":true}` threw inside a guard and served Express's own 144-byte error page on every listing
+URL. `map(usable)` now sits at the end of `tree$`, so the menu and the routes cannot disagree by
+construction; the redundant guard on the signal is gone, and `trailTo` no longer trusts that a
+department carries a `categories` array. Verified against both shapes: 206 kB pages with real
+headings instead of a redirect and an error page. **Lesson: the defensive read has to sit where
+every reader passes, not on the one reader you were looking at.**
+
+**Minors** — the test guarding the Load More blocker was flaky (1 run in 14 on a loaded machine)
+because `canMatch` puts an async hop before activation; it now waits for the router to put a
+component on screen, and *not* by polling `HttpTestingController.match`, which takes the requests it
+matches off the queue. 16 consecutive clean runs with the backend suite running alongside. The
+canonical tag leaked across client-side navigations (home inherited the listing's) — it moved to a
+`CanonicalLink` service the page clears on destroy. `/sale` and `/new-arrivals` showed waist sizes
+28–36 twice, under "Women waist" and "Men waist", bound to the same value: two checkboxes with one
+accessible name that ticked each other; with no department they are one "Waist" group now.
+`CatalogReferenceDataSeeder` built `SeoTitle` as `$"{Name}'s clothing"`, which read
+**"Kids's clothing"** on every Kids listing — the title is seed data now, not a string operation.
+That last one touches the catalogue branch's data and is flagged for the PR.
+
+**Left as decided, not built:** a mistyped department redirecting home while an unknown category
+404s (`/bag` and the footer paths share that `**` route until GLB-10 lands); the 1.77 MB document at
+the Load More ceiling; `/wishlist` redirecting home until W2-08.
+
+**Numbers:** 212 frontend unit tests (round 1: 203), 60 Playwright tests (57), backend 232 + 146,
+0 skipped. Lint and all builds clean.
+
+**Next:** back to the tester.
+
 ### 2026-09-23 (3) — W2-03 product listing: tester FAILED it, developer fix round 1
 
 The tester rejected the branch on 2 Blockers, 4 Majors and a set of Minors. All fixed on

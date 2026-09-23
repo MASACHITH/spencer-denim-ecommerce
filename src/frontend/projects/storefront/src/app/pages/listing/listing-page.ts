@@ -1,5 +1,13 @@
-import { DOCUMENT } from '@angular/common';
-import { ChangeDetectionStrategy, Component, computed, effect, inject, signal, untracked } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  DestroyRef,
+  computed,
+  effect,
+  inject,
+  signal,
+  untracked,
+} from '@angular/core';
 import { toSignal } from '@angular/core/rxjs-interop';
 import { Meta, Title } from '@angular/platform-browser';
 import { ActivatedRoute, Params, Router, RouterLink } from '@angular/router';
@@ -23,6 +31,7 @@ import {
 import { FilterChip, activeChips, removeChip } from '../../core/catalog/listing-chips';
 import { CategoryNodeDto, DepartmentDto } from '../../core/navigation/catalog-departments.model';
 import { NavigationService, findDepartment, trailTo } from '../../core/navigation/navigation.service';
+import { CanonicalLink } from '../../core/platform/canonical-link';
 import { Viewport } from '../../core/platform/viewport';
 
 /** One breadcrumb step. The last one is the page itself and is not a link. */
@@ -509,7 +518,7 @@ export class ListingPage {
   private readonly navigation = inject(NavigationService);
   private readonly title = inject(Title);
   private readonly meta = inject(Meta);
-  private readonly document = inject(DOCUMENT);
+  private readonly canonical = inject(CanonicalLink);
 
   /** Which container the single filter panel goes in. See {@link Viewport}. */
   protected readonly isDesktop = inject(Viewport).isDesktop;
@@ -735,9 +744,13 @@ export class ListingPage {
       untracked(() => {
         this.title.setTitle(title);
         this.meta.updateTag({ name: 'description', content: description });
-        this.setCanonical(canonical);
+        this.canonical.set(canonical);
       });
     });
+
+    // The next page owns its own canonical address, or has none. Leaving this one behind made the
+    // home page claim to be the listing the shopper had just come from.
+    inject(DestroyRef).onDestroy(() => this.canonical.clear());
   }
 
   protected apply(next: ListingState): void {
@@ -877,18 +890,5 @@ export class ListingPage {
     return `/${path}${search ? `?${search}` : ''}`;
   });
 
-  /** Keeps exactly one `<link rel="canonical">` in the head, whichever listing is showing. */
-  private setCanonical(href: string): void {
-    const head = this.document.head;
-    let link = head.querySelector<HTMLLinkElement>('link[rel="canonical"]');
-
-    if (!link) {
-      link = this.document.createElement('link');
-      link.setAttribute('rel', 'canonical');
-      head.appendChild(link);
-    }
-
-    link.setAttribute('href', href);
-  }
 
 }

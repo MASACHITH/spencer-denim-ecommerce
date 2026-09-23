@@ -1,6 +1,6 @@
 import { Page, expect, test } from '@playwright/test';
 
-import { apiURL } from '../playwright.config';
+import { apiURL, emptyCatalogueURL } from '../playwright.config';
 
 /**
  * Browser checks for the product listing page (DEPT-01, PLP-01..07, CARD-01).
@@ -198,6 +198,50 @@ test.describe('addresses that are not a department', () => {
     await expect(page.getByRole('heading', { level: 1 })).toHaveText('We could not find that page');
 
     expect(calls).toEqual([]);
+  });
+});
+
+test.describe('a catalogue with no active departments', () => {
+  /**
+   * `GET /api/catalog/departments` answers `200 []` when nothing is active — the state of a
+   * freshly migrated database before anyone runs the seeder, which the README says is off by
+   * default and deliberate. `catchError` does not see a successful response, so before the fix the
+   * route guards refused every department and the first boot of a new environment gave a
+   * storefront whose every listing link silently went home.
+   */
+  test.use({ baseURL: emptyCatalogueURL });
+
+  test('a department still renders, from the seeded fallback', async ({ page }) => {
+    const response = await page.goto('/women');
+
+    expect(response?.status()).toBe(200);
+    await expect(page).toHaveURL(`${emptyCatalogueURL}/women`);
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText('Women');
+  });
+
+  test('the menu and the routes agree about which departments exist', async ({ page }) => {
+    await page.goto('/');
+
+    const links = await page
+      .locator('.site-nav__list a.site-nav__link')
+      .evaluateAll((nodes) => nodes.map((node) => (node as HTMLAnchorElement).pathname));
+
+    expect(links).toEqual(['/women', '/men', '/kids', '/new-arrivals', '/sale']);
+
+    for (const link of links.slice(0, 3)) {
+      const response = await page.goto(link);
+      expect(response?.status(), `${link} should render, not redirect`).toBe(200);
+      await expect(page).toHaveURL(`${emptyCatalogueURL}${link}`);
+    }
+  });
+
+  test('a category under a fallback department is still a page, not the home page', async ({
+    page,
+  }) => {
+    await page.goto('/women/jeans');
+
+    await expect(page).toHaveURL(`${emptyCatalogueURL}/women/jeans`);
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText('Jeans');
   });
 });
 

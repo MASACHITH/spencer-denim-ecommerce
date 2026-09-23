@@ -7,7 +7,7 @@ import { RouterTestingHarness } from '@angular/router/testing';
 import { routes } from '../../app.routes';
 import { NavigationService } from '../../core/navigation/navigation.service';
 import { PagedResult, ProductCardDto } from '../../core/catalog/catalog.model';
-import { MAX_LOADED_PAGES, PAGE_SIZE } from '../../core/catalog/listing-state';
+import { MAX_LOADED_PAGES, MAX_PAGE_SIZE, PAGE_SIZE } from '../../core/catalog/listing-state';
 import { CategoryNodeDto, DepartmentDto } from '../../core/navigation/catalog-departments.model';
 
 /**
@@ -137,14 +137,52 @@ describe('ListingPage', () => {
     http.expectOne('/api/catalog/departments').flush(departments);
   }
 
+  /**
+   * Waits until the router has really put a component on screen.
+   *
+   * `canMatch` puts an asynchronous hop between "navigate" and "the component exists", and
+   * `RouterTestingHarness.create` resolving does not guarantee the other side of it has run. This
+   * suite read the listing's requests straight afterwards and went red about one run in fourteen
+   * on a loaded machine — over a blocker fix, which is the kind of test that gets deleted rather
+   * than trusted. Once the component is up, its constructor has already issued every request the
+   * URL implies, synchronously.
+   *
+   * Note it waits on the component, not on the requests: `HttpTestingController.match` takes the
+   * requests it matches off the queue, so polling with it would eat what the test came to flush.
+   */
+  async function activated(): Promise<void> {
+    for (let attempt = 0; attempt < 50; attempt++) {
+      harness.detectChanges();
+      if (harness.routeDebugElement) {
+        return;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    throw new Error('The router never activated a component.');
+  }
+
   async function goTo(url: string): Promise<void> {
     primeDepartments();
     harness = await RouterTestingHarness.create(url);
+    await activated();
+  }
+
+  /** Every outstanding products request, for a restore that needs more than one. */
+  function productRequests(): TestRequest[] {
+    return http.match((request) => request.url === '/api/catalog/products');
   }
 
   async function open(url: string, result = page(2)) {
     await goTo(url);
     productRequest().flush(result);
+    harness.detectChanges();
+  }
+
+  /** Answers a restore that needs more than one request, 96 rows at a time. */
+  function flushAll(requests: readonly TestRequest[], total: number): void {
+    requests.forEach((request, index) => request.flush(page(96, total, index * 96 + 1)));
     harness.detectChanges();
   }
 
@@ -395,10 +433,8 @@ describe('ListingPage', () => {
   });
 
   describe('the Load More ceiling (PLP-07)', () => {
-    /** Every outstanding products request, for a restore that needs more than one. */
-    function productRequests(): TestRequest[] {
-      return http.match((request) => request.url === '/api/catalog/products');
-    }
+    /** A ceiling listing is 480 rows, which the API's page-size cap serves in five requests. */
+    const CEILING_REQUESTS = Math.ceil((MAX_LOADED_PAGES * PAGE_SIZE) / MAX_PAGE_SIZE);
 
     it('stops offering Load More at the ceiling instead of collapsing the listing', async () => {
       // One click past the ceiling used to be read back as page 1: 480 products became 24, and
@@ -406,8 +442,8 @@ describe('ListingPage', () => {
       await goTo(`/women/jeans?pages=${MAX_LOADED_PAGES}`);
 
       const requests = productRequests();
-      requests.forEach((request, index) => request.flush(page(96, 2000, index * 96 + 1)));
-      harness.detectChanges();
+      expect(requests).toHaveLength(CEILING_REQUESTS);
+      flushAll(requests, 2000);
 
       expect(queryAll('.product-grid > li')).toHaveLength(MAX_LOADED_PAGES * PAGE_SIZE);
       expect(text()).not.toContain('Load More');
@@ -424,8 +460,7 @@ describe('ListingPage', () => {
       );
 
       expect(wanted).toBe(MAX_LOADED_PAGES * PAGE_SIZE);
-      requests.forEach((request, index) => request.flush(page(96, 2000, index * 96 + 1)));
-      harness.detectChanges();
+      flushAll(requests, 2000);
 
       expect(queryAll('.product-grid > li')).toHaveLength(MAX_LOADED_PAGES * PAGE_SIZE);
     });
@@ -515,6 +550,63 @@ describe('ListingPage', () => {
       await open('/new-arrivals', page(3));
 
       expect(canonical()).toBe('/new-arrivals');
+    });
+
+    it('takes the tag with it when the shopper leaves the listing', async () => {
+      // Nothing removed it, so following the wordmark home left the home page claiming to be
+      // canonically the jeans listing.
+      await open('/women/jeans');
+      expect(canonical()).toBe('/women/jeans');
+
+      await harness.navigateByUrl('/');
+      http.match((request) => request.url.startsWith('/api/ping')).forEach((ping) => ping.flush({}));
+      harness.detectChanges();
+
+      expect(canonical()).toBeNull();
+    });
+  });
+
+  /**
+   * The guards read the department tree to tell a department from any other first path segment.
+   * When that tree is unusable they must fall back with the menu, not disagree with it: a
+   * `200 []` — a freshly migrated database before the seeder runs — sent every listing URL to the
+   * home page while the mega menu still offered all three departments.
+   */
+  describe('a catalogue that answers with nothing usable', () => {
+    async function openWith(body: unknown): Promise<void> {
+      http = TestBed.inject(HttpTestingController);
+      TestBed.inject(NavigationService);
+      http
+        .expectOne('/api/catalog/departments')
+        .flush(body as readonly DepartmentDto[]);
+
+      harness = await RouterTestingHarness.create('/women');
+      await activated();
+      productRequest().flush(page(2));
+      harness.detectChanges();
+    }
+
+    for (const [name, body] of [
+      ['an empty catalogue', []],
+      ['a body that is not an array', { oops: true }],
+    ] as const) {
+      it(`still routes /women from the seeded tree with ${name}`, async () => {
+        await openWith(body);
+
+        expect(TestBed.inject(Router).url).toBe('/women');
+        expect(query('h1')?.textContent?.trim()).toBe('Women');
+        expect(text()).not.toContain('could not find that page');
+      });
+    }
+
+    it('keeps the menu and the routes agreeing about which departments exist', async () => {
+      await openWith([]);
+
+      const menu = TestBed.inject(NavigationService)
+        .itemsWithMenu()
+        .map((item) => item.id);
+
+      expect(menu).toEqual(['women', 'men', 'kids']);
     });
   });
 

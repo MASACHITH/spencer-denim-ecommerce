@@ -138,6 +138,13 @@ function productsFor(params) {
 /** A slow answer, so a test can prove the menu does not hold the page open waiting for it. */
 const DELAY_MS = Number(process.env.E2E_API_DELAY_MS ?? 0);
 
+/**
+ * What `/departments` answers instead of the tree, for the shapes that are a successful response
+ * carrying a useless body: `empty` is a freshly migrated database before anyone runs the seeder,
+ * `garbage` is a proxy or a bad deploy answering 200 with something else entirely.
+ */
+const DEPARTMENTS_MODE = process.env.E2E_DEPARTMENTS ?? 'tree';
+
 const server = createServer((request, response) => {
   const url = new URL(request.url ?? '/', `http://localhost:${PORT}`);
 
@@ -148,7 +155,10 @@ const server = createServer((request, response) => {
   response.setHeader('Cache-Control', 'no-store');
 
   if (url.pathname === '/api/catalog/departments') {
-    setTimeout(() => response.end(JSON.stringify(DEPARTMENTS)), DELAY_MS);
+    const body =
+      DEPARTMENTS_MODE === 'empty' ? [] : DEPARTMENTS_MODE === 'garbage' ? { oops: true } : DEPARTMENTS;
+
+    setTimeout(() => response.end(JSON.stringify(body)), DELAY_MS);
     return;
   }
 
