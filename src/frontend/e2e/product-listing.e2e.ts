@@ -104,11 +104,11 @@ test.describe('server-side rendering (GLB-11)', () => {
    * cannot see these requests (see `ProductListStore.takeFromServer`), so the store hands the
    * page over itself; without it, hydration replaced the rendered grid with a loading message.
    */
-  test('the browser does not fetch the products the server already sent', async ({ page }) => {
+  test('the browser does not fetch what the server already sent', async ({ page }) => {
     const calls: string[] = [];
     page.on('request', (request) => {
-      if (request.url().includes('/api/catalog/products')) {
-        calls.push(request.url());
+      if (request.url().includes('/api/catalog/')) {
+        calls.push(new URL(request.url()).pathname);
       }
     });
 
@@ -116,6 +116,15 @@ test.describe('server-side rendering (GLB-11)', () => {
     await expect(page.locator('.product-grid > li')).toHaveCount(24);
 
     expect(calls).toEqual([]);
+  });
+
+  test('hydration keeps the live category copy, not the offline fallback', async ({ page }) => {
+    await page.goto('/kids/girls/girls-dresses');
+
+    // The fallback tree carries no category descriptions, so this text can only come from the
+    // department feed the server handed over.
+    await expect(page.locator('.plp__intro')).toHaveText('Cotton dresses.');
+    await expect(page.locator('.breadcrumb')).toContainText('Girls Dresses');
   });
 
   test('a filtered listing is rendered filtered, not rendered then filtered', async ({ request }) => {

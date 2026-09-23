@@ -1,19 +1,9 @@
-import { isPlatformBrowser } from '@angular/common';
-import {
-  DestroyRef,
-  Injectable,
-  PLATFORM_ID,
-  Signal,
-  TransferState,
-  computed,
-  inject,
-  makeStateKey,
-  signal,
-} from '@angular/core';
+import { DestroyRef, Injectable, Signal, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { forkJoin, map } from 'rxjs';
 
 import { CatalogApi, listingErrorMessage } from './catalog-api';
+import { ServerHandover } from '../platform/server-handover';
 import { PagedResult, ProductCardDto } from './catalog.model';
 import {
   ListingState,
@@ -44,8 +34,7 @@ export type ListingPhase = 'loading' | 'refreshing' | 'appending' | 'ready' | 'e
 export class ProductListStore {
   private readonly api = inject(CatalogApi);
   private readonly destroyRef = inject(DestroyRef);
-  private readonly transferState = inject(TransferState);
-  private readonly isBrowser = isPlatformBrowser(inject(PLATFORM_ID));
+  private readonly handover = inject(ServerHandover);
 
   private readonly products = signal<readonly ProductCardDto[]>([]);
   private readonly total = signal(0);
@@ -137,38 +126,16 @@ export class ProductListStore {
   }
 
   /**
-   * Hands the server's page to the browser through the hydration state, and takes it there.
-   *
-   * Angular's own HTTP transfer cache cannot do this for us here: it keys a response on the
-   * request URL as it sees it, and it runs *after* the application's interceptors
-   * (`HttpInterceptorHandler`: `[...HTTP_INTERCEPTOR_FNS, ...HTTP_ROOT_INTERCEPTOR_FNS]`), so the
-   * absolute internal address `apiBaseUrlInterceptor` writes during SSR is stored under a key the
-   * browser — which asks for the relative URL — can never look up. Without this, the browser
-   * fetched every page of the catalogue a second time during hydration and replaced the grid it
-   * had just been served with a loading message.
-   *
-   * The key covers the whole request, so a different filter, sort or page count is a different
-   * entry, and it is consumed once: a later navigation back to the same listing fetches fresh
-   * stock and prices rather than replaying the first render.
+   * The page the server rendered, handed over so the browser does not fetch it again. The key
+   * covers the whole request, so a different filter, sort or page count is a different entry.
+   * {@link ServerHandover} says why Angular's own transfer cache cannot do this here.
    */
   private takeFromServer(state: ListingState): ListingPage | null {
-    if (!this.isBrowser) {
-      return null;
-    }
-
-    const key = makeStateKey<ListingPage | null>(handoverKey(state));
-    const page = this.transferState.get(key, null);
-    if (page) {
-      this.transferState.remove(key);
-    }
-
-    return page;
+    return this.handover.take<ListingPage>(handoverKey(state));
   }
 
   private handOver(state: ListingState, page: ListingPage): void {
-    if (!this.isBrowser) {
-      this.transferState.set(makeStateKey<ListingPage | null>(handoverKey(state)), page);
-    }
+    this.handover.give(handoverKey(state), page);
   }
 
   private accept(ticket: number, items: readonly ProductCardDto[], totalCount: number): void {
