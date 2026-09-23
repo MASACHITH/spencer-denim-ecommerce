@@ -32,6 +32,18 @@ const EMPTY_API_PORT = Number(process.env['E2E_EMPTY_API_PORT'] ?? 4423);
 
 export const emptyCatalogueURL = `http://localhost:${EMPTY_PORT}`;
 
+/**
+ * A third pair whose catalogue is deep enough for a restore to be worth restoring: 399 products,
+ * so `?pages=5` spans two requests and the second one has to start where the first stopped.
+ */
+const DEEP_PORT = Number(process.env['E2E_DEEP_PORT'] ?? 4424);
+const DEEP_API_PORT = Number(process.env['E2E_DEEP_API_PORT'] ?? 4425);
+
+export const deepCatalogueURL = `http://localhost:${DEEP_PORT}`;
+
+/** What the deep stub holds, so a test can work out what a page count should show. */
+export const DEEP_CATALOGUE_TOTAL = 399;
+
 export default defineConfig({
   testDir: './e2e',
   testMatch: '**/*.e2e.ts',
@@ -75,6 +87,23 @@ export default defineConfig({
         PORT: String(EMPTY_PORT),
         API_INTERNAL_URL: `http://localhost:${EMPTY_API_PORT}`,
       },
+      reuseExistingServer: !process.env['CI'],
+      timeout: 120_000,
+    },
+    {
+      command: 'node e2e/support/catalog-api-stub.mjs',
+      url: `http://localhost:${DEEP_API_PORT}/api/catalog/departments`,
+      env: {
+        E2E_API_PORT: String(DEEP_API_PORT),
+        E2E_PRODUCT_TOTAL: String(DEEP_CATALOGUE_TOTAL),
+      },
+      reuseExistingServer: !process.env['CI'],
+      timeout: 30_000,
+    },
+    {
+      command: 'npm run serve:ssr:storefront',
+      url: `${deepCatalogueURL}/healthz`,
+      env: { PORT: String(DEEP_PORT), API_INTERNAL_URL: `http://localhost:${DEEP_API_PORT}` },
       reuseExistingServer: !process.env['CI'],
       timeout: 120_000,
     },

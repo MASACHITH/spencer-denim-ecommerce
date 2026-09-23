@@ -43,6 +43,71 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 
 ## Session log
 
+### 2026-09-23 (5) — W2-03 fix round 3: a blocker the tests were built to miss
+
+Round-2 work verified on the wire. The tester then found a blocker that had been on the branch
+since round 1 and that he had missed twice himself, because the tests could not see it.
+
+**Blocker — a shared, bookmarked or reloaded deep listing rendered duplicates.**
+`toRestoreRequests` shrank its last request to the rows still wanted, but the API's offset is
+`(Page - 1) * PageSize` against *that request's own* page size (`ProductListQuery.Skip`), so a
+smaller last page moved its window backwards instead of trimming it. `?pages=5` asked for rows
+25–48 where it meant 97–120. Measured on a 399-product listing: `?pages=5` rendered 120 cards of
+which 96 were distinct, `?pages=17` said "Showing 408 of 399". Only the restore path — which is the
+entire reason `pages` is in the URL — and only when the page count was not a multiple of four.
+
+One page size for the whole restore now, `min(wanted, MaxPageSize)` rather than always the cap: a
+fresh listing wants 24 rows, and asking for 96 would fetch four times what it shows on the most
+common page view in the storefront. Verified by hand at 1, 2, 4, 5, 6, 7, 17 and 20 pages: every
+one distinct, every count line honest.
+
+**The test lesson is the real finding.** `flushAll` answered every request with the rows the
+component *expected* — 96 at a time, numbered from the request's index — regardless of the `page`
+and `pageSize` actually sent, so it could only ever confirm the component's arithmetic against
+itself. Worse, a unit test asserted the page sizes summed to exactly the rows wanted, which is not
+a property of a correct restore: it is what *forced* the defect. The stub now answers from the
+request, and the test asserts the honest property — the windows tile the listing with no gap and no
+repeat. Both changes fail on the old code (5 tests red). **Lesson: a stub that fabricates what the
+caller expected tests nothing; answer from the request, and assert a property the implementation
+could not have chosen for itself.**
+
+**Minors** — `usable()` now requires a department with a non-empty string `slug`, so
+`[{"nope":1}]` falls back too; "Wishlist, 1 items" pluralises; the flaky ceiling test was
+root-caused rather than guessed at a third time (see below).
+
+**The ceiling test flake, measured.** The guess was that the `activated()` helper's polling loop
+ran up to fifty change-detection passes. It does not: instrumenting it showed activation completes
+on the first attempt every time, across three full runs. The real cost is the test itself —
+~30 ms to navigate and **~650 ms to render 480 product cards** in jsdom, which is work the
+assertion genuinely needs, against vitest's 5 s default. A machine running the backend suite
+alongside ate that seven-fold margin twice in thirty-two runs. The polling loop is gone anyway
+(it was the wrong shape and a latent hazard), and the three tests that render hundreds of cards
+carry a stated 20 s budget with the measurement written next to it.
+
+**Numbers:** 220 frontend unit tests (round 2: 212), 65 Playwright tests (60), backend 232 + 146,
+0 skipped.
+
+**Operational note — the `SeoTitle` fix does not reach already-seeded databases.** The seeder skips
+a department whose slug exists, which is the right policy for an admin-editable field, so any
+database seeded before this branch still reads `Kids's clothing`. That is every developer's
+`SpencerDenim_Dev` (all three worktrees) and any seeded staging. Integration tests build a fresh
+database per run and are unaffected. The one-off correction:
+
+```sql
+UPDATE catalog.Departments
+SET    SeoTitle = N'Kids'' clothing | Spencer Denim'
+WHERE  Slug = 'kids' AND SeoTitle = N'Kids''s clothing | Spencer Denim';
+```
+
+**Filed against ADM-11, not built:** when the departments feed is unhealthy the storefront falls
+back to the seeded tree, so a category that exists only in the live catalogue 404s with `noindex`.
+Nothing can diverge today — the fallback is an exact copy of the seed and ADM-11 is not built — but
+once admin can add categories, `tree$` should say whether the tree is live or fallback and the
+missing-page route should answer **503 with `Retry-After`** rather than 404 + noindex while it is
+the fallback: a crawler retries a 503 and keeps the URL, it drops a 404.
+
+**Next:** back to the tester.
+
 ### 2026-09-23 (4) — W2-03 fix round 2: one regression the guards introduced
 
 The tester verified every round-1 fix as genuinely fixed and **backed the 404 reasoning** — he read

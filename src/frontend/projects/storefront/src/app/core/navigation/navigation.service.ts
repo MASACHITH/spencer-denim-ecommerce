@@ -88,9 +88,18 @@ export class NavigationService {
  * a category filter, or a route the guards will match (lesson L1).
  */
 export function usable(departments: readonly DepartmentDto[]): readonly DepartmentDto[] {
-  return Array.isArray(departments) && departments.length > 0
-    ? departments
-    : PLACEHOLDER_DEPARTMENTS;
+  // At least one department the route guards can match. Checking only that the array is non-empty
+  // let `[{"nope":1}]` through, and then every department URL went home while the menu rendered
+  // perfectly — the same split as before, on a narrower trigger. It is not far-fetched either:
+  // turning off the JSON naming policy would serve `[{"Slug":"women"}]`, where every `slug` is
+  // `undefined`.
+  const routable =
+    Array.isArray(departments) &&
+    departments.some(
+      (department) => typeof department?.slug === 'string' && department.slug.length > 0,
+    );
+
+  return routable ? departments : PLACEHOLDER_DEPARTMENTS;
 }
 
 /** The department a slug names, or `undefined`. */

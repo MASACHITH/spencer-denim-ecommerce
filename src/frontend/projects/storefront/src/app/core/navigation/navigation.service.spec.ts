@@ -320,6 +320,25 @@ describe('NavigationService and the catalogue API', () => {
       expect(await treeOf()).toEqual(PLACEHOLDER_DEPARTMENTS);
     });
 
+    it('falls back on entries no route could ever match', async () => {
+      // A non-empty array is not enough: every department URL would go home while the menu
+      // rendered perfectly. `[{"Slug":"women"}]` is what turning off the JSON naming policy
+      // would serve, and every `slug` there is `undefined`.
+      http
+        .expectOne('/api/catalog/departments')
+        .flush([{ nope: 1 }, { Slug: 'women' }] as unknown as readonly DepartmentDto[]);
+
+      expect(service.departments()).toEqual(PLACEHOLDER_DEPARTMENTS);
+      expect(await treeOf()).toEqual(PLACEHOLDER_DEPARTMENTS);
+    });
+
+    it('keeps a payload where at least one department can be routed to', async () => {
+      const live = [department({ id: 7, name: 'Womenswear', slug: 'womenswear' })];
+      http.expectOne('/api/catalog/departments').flush(live);
+
+      expect(await treeOf()).toEqual(live);
+    });
+
     it('falls back on a failure', async () => {
       http
         .expectOne('/api/catalog/departments')

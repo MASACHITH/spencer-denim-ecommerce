@@ -1,6 +1,6 @@
 import { Page, expect, test } from '@playwright/test';
 
-import { apiURL, emptyCatalogueURL } from '../playwright.config';
+import { DEEP_CATALOGUE_TOTAL, apiURL, deepCatalogueURL, emptyCatalogueURL } from '../playwright.config';
 
 /**
  * Browser checks for the product listing page (DEPT-01, PLP-01..07, CARD-01).
@@ -532,6 +532,45 @@ test.describe('Load More (PLP-07)', () => {
     await page.goBack();
     await expect(page.locator('.product-grid > li')).toHaveCount(24);
     await expect(page).not.toHaveURL(/pages=/);
+  });
+});
+
+test.describe('a shared or reloaded deep listing (PLP-07)', () => {
+  /**
+   * The restore path is the whole reason `pages` is in the URL, and no browser test went past
+   * `pages=2` — a single request, where the arithmetic cannot go wrong. `toRestoreRequests` shrank
+   * its last request to the rows still wanted, and because the API's offset is
+   * `(Page - 1) * PageSize` against that request's own page size, the smaller last page moved its
+   * window backwards: `?pages=5` served rows 25–48 where it meant 97–120, and the shopper got 120
+   * cards of which 96 were distinct.
+   */
+  test.use({ baseURL: deepCatalogueURL });
+
+  for (const loadedPages of [2, 5, 6, 17]) {
+    test(`?pages=${loadedPages} shows every product once`, async ({ page }) => {
+      await page.goto(`/women/jeans?pages=${loadedPages}`);
+
+      const shown = Math.min(loadedPages * 24, DEEP_CATALOGUE_TOTAL);
+      const cards = page.locator('.product-grid > li');
+      await expect(cards).toHaveCount(shown);
+
+      const names = await page
+        .locator('.card__name a')
+        .evaluateAll((nodes) => nodes.map((node) => node.textContent?.trim() ?? ''));
+
+      expect(new Set(names).size, `${loadedPages} pages repeated a product`).toBe(shown);
+      await expect(page.locator('.plp__more-count').first()).toHaveText(
+        `Showing ${shown} of ${DEEP_CATALOGUE_TOTAL} products`,
+      );
+    });
+  }
+
+  test('the server renders the deep listing without repeating one either', async ({ request }) => {
+    const html = await (await request.get('/women/jeans?pages=5')).text();
+    const names = [...html.matchAll(/>(Test Product \d+)</g)].map((match) => match[1]);
+
+    expect(names.length).toBe(120);
+    expect(new Set(names).size).toBe(120);
   });
 });
 

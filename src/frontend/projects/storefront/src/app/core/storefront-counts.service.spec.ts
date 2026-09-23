@@ -52,6 +52,16 @@ describe('StorefrontCounts and the wishlist', () => {
     expect(element.querySelector('.count')).toBeNull();
   });
 
+  it('says "1 item", not "1 items"', async () => {
+    const { host, element, settle } = await render();
+
+    host.wishlist.toggle('linen-wrap-midi-dress');
+    await settle();
+
+    expect(element.textContent?.replace(/\s+/g, ' ')).toContain('Wishlist, 1 item');
+    expect(element.textContent).not.toContain('1 items');
+  });
+
   it('counts what the product card saved', async () => {
     const { host, element, settle } = await render();
 
@@ -59,7 +69,7 @@ describe('StorefrontCounts and the wishlist', () => {
     host.wishlist.toggle('relaxed-straight-jeans');
     await settle();
 
-    expect(element.textContent).toContain('Wishlist, 2 items');
+    expect(element.textContent?.replace(/\s+/g, ' ')).toContain('Wishlist, 2 items');
     expect(element.querySelector('.count')?.textContent?.trim()).toBe('2');
   });
 
@@ -71,7 +81,7 @@ describe('StorefrontCounts and the wishlist', () => {
     host.wishlist.toggle('linen-wrap-midi-dress');
     await settle();
 
-    expect(element.textContent).toContain('Wishlist, 0 items');
+    expect(element.textContent?.replace(/\s+/g, ' ')).toContain('Wishlist, 0 items');
     expect(element.querySelector('.count')).toBeNull();
   });
 

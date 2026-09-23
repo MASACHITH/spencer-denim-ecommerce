@@ -67,8 +67,11 @@ const COLOURS = [
 
 const BADGES = [null, 'New', 'Sale', 'BestSeller', 'LowStock'];
 
-/** Enough products that "Load More" has something to add at every page size the listing asks for. */
-const TOTAL_PRODUCTS = 120;
+/**
+ * Enough products that "Load More" has something to add at every page size the listing asks for.
+ * Raised through the environment when a test needs a deep restore to be worth restoring.
+ */
+const TOTAL_PRODUCTS = Number(process.env.E2E_PRODUCT_TOTAL ?? 120);
 
 /** One colour filter narrows the catalogue; another matches nothing, for the empty state. */
 const COLOUR_TOTALS = { blue: 30, black: 18, cream: 0 };
