@@ -1,7 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Globalization;
-using System.Text.RegularExpressions;
 using SpencerDenim.Application.Abstractions.Results;
+using SpencerDenim.Domain.Catalog;
 
 namespace SpencerDenim.Application.Catalog.Products;
 
@@ -10,7 +10,7 @@ namespace SpencerDenim.Application.Catalog.Products;
 /// lower-cased, de-duplicated and inside its bounds, so the read store composes predicates without
 /// re-checking anything (doc 08 §7.1: predicates are only added for filters that are present).
 /// </summary>
-public sealed partial record ProductListQuery
+public sealed record ProductListQuery
 {
     /// <summary>Longest slug the schema stores (<c>catalog.Categories.Slug varchar(100)</c>).</summary>
     public const int MaxSlugLength = 100;
@@ -193,7 +193,7 @@ public sealed partial record ProductListQuery
             return null;
         }
 
-        if (!SlugPattern().IsMatch(slug))
+        if (!CatalogSlug.IsValid(slug))
         {
             errors.Add(new ValidationError(
                 field,
@@ -391,6 +391,4 @@ public sealed partial record ProductListQuery
         return null;
     }
 
-    [GeneratedRegex("^[a-z0-9]+(?:-[a-z0-9]+)*$", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 200)]
-    private static partial Regex SlugPattern();
 }

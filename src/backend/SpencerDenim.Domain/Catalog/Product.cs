@@ -10,14 +10,27 @@ namespace SpencerDenim.Domain.Catalog;
 /// </summary>
 public sealed class Product : IAuditable, ISoftDeletable
 {
+    private string _slug = string.Empty;
+
     public int Id { get; set; }
 
     public string ProductCode { get; set; } = string.Empty;
 
     public string Name { get; set; } = string.Empty;
 
-    /// <summary>Storefront URL is <c>/p/{slug}</c>. Redirects are deferred, so a slug change breaks links.</summary>
-    public string Slug { get; set; } = string.Empty;
+    /// <summary>
+    /// Storefront URL is <c>/p/{slug}</c>. Redirects are deferred, so a slug change breaks links.
+    /// <para>
+    /// Guarded by <see cref="CatalogSlug"/>: the product page refuses a URL that is not a slug, so a
+    /// row that is not one is a product the listing links to and nobody can open. EF reads and writes
+    /// the backing field, so existing rows still materialise; only a write goes through the check.
+    /// </para>
+    /// </summary>
+    public string Slug
+    {
+        get => _slug;
+        set => _slug = CatalogSlug.Require(value, nameof(Slug));
+    }
 
     public int DepartmentId { get; set; }
 

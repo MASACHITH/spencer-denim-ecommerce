@@ -33,6 +33,8 @@ internal sealed class ProductConfiguration : IEntityTypeConfiguration<Product>
 
         builder.Property(product => product.ProductCode).HasColumnType("varchar(40)").IsRequired();
         builder.Property(product => product.Name).HasMaxLength(200).IsRequired();
+        // W1-03 owns the next catalogue migration; it adds CK_Products_Slug for the pattern
+        // CatalogSlug enforces in the domain, so the rule holds for a direct SQL write too.
         builder.Property(product => product.Slug).HasColumnType("varchar(220)").IsRequired();
         builder.Property(product => product.ShortDescription).HasMaxLength(500);
         builder.Property(product => product.Description).HasColumnType("nvarchar(max)");
