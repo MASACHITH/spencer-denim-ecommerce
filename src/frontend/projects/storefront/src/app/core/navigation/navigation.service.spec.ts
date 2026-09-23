@@ -5,7 +5,7 @@ import { TestBed } from '@angular/core/testing';
 import { DepartmentDto } from './catalog-departments.model';
 import { MEGA_MENU_COLUMN_COUNT, toNavigation } from './navigation.mapper';
 import { NavItem, hasMenu } from './navigation.model';
-import { NavigationService } from './navigation.service';
+import { DEPARTMENTS_TIMEOUT_MS, NavigationService } from './navigation.service';
 import { PLACEHOLDER_DEPARTMENTS } from './navigation.data';
 
 function department(overrides: Partial<DepartmentDto> = {}): DepartmentDto {
@@ -296,5 +296,37 @@ describe('NavigationService and the catalogue API', () => {
     http.expectOne('/api/catalog/departments').flush([]);
 
     expect(service.departments()).toEqual(PLACEHOLDER_DEPARTMENTS);
+  });
+});
+
+/**
+ * `catchError` catches a failure; an answer that never comes is not one. Without a timeout a slow
+ * catalogue held every page open for as long as it took — the header is on every page, and the
+ * route guards wait on this same feed. A 12 s API gave a department listing a 12 s time to first
+ * byte.
+ *
+ * Its own TestBed: the clock has to be faked before the service subscribes, because that is when
+ * the timeout is scheduled.
+ */
+describe('NavigationService and a catalogue that never answers', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    TestBed.configureTestingModule({
+      providers: [provideHttpClient(), provideHttpClientTesting()],
+    });
+  });
+
+  afterEach(() => vi.useRealTimers());
+
+  it('settles on the seeded menu instead of holding the page open', async () => {
+    const service = TestBed.inject(NavigationService);
+    const http = TestBed.inject(HttpTestingController);
+    const request = http.expectOne('/api/catalog/departments');
+
+    await vi.advanceTimersByTimeAsync(DEPARTMENTS_TIMEOUT_MS + 1);
+
+    expect(service.departments()).toEqual(PLACEHOLDER_DEPARTMENTS);
+    expect(service.items()).toHaveLength(5);
+    expect(request.cancelled).toBe(true);
   });
 });
