@@ -46,7 +46,7 @@ Cash on delivery, card payments outside PayPal, a second gateway, Koko/BNPL, new
 | Actor | Who | How they interact |
 |---|---|---|
 | **Guest customer** | A shopper who is not signed in | Browses, keeps a bag (cookie token) and a wishlist (browser storage), checks out with an email address, follows the order link in emails |
-| **Registered customer** | A shopper with a confirmed account (`UserType = Customer`) | Everything a guest can do, plus saved addresses, account bag and wishlist across devices, order history and tracking, reviews |
+| **Registered customer** | A shopper with an account (`UserType = Customer`). Email confirmation is needed only to link earlier guest orders (P11, 08 D5) — an unconfirmed customer can still sign in, shop and check out | Everything a guest can do, plus saved addresses, account bag and wishlist across devices, order history and tracking, reviews |
 | **Staff user** | A person with an admin account (`UserType = Staff`) holding one or more roles | Uses the admin app. Sees only the menus and buttons their permissions allow; the API enforces the same rules (03 §3a) |
 | **System jobs** | .NET background services with job leases (08 §3.8 `ops.JobLeases`) | `ExpireUnpaidOrders` (every 5 min), `AutoDeliverShipped` (daily), `SendEmails`, `RetryPaymentEvents`, `RecoverPayPalCaptures` (every 2 min), `RefreshCampaignPricing` (every 5 min), `NightlyStats` (00:30), `Retention` (01:30), `ReconcileStock` (nightly). They carry no staff permission and cannot be called from the admin API (08 §4) |
 | **PayPal** | External payment provider | Hosts buyer approval, captures money, sends verified webhooks (08 §4.2) |
@@ -68,8 +68,9 @@ Super Admin can edit these roles or create custom ones. Permissions are `Module 
 **Special permissions** (08 §3.1):
 - `Orders.Refund`: every refund. Not held by Order Staff.
 - `Settings.Payments`: bank details, payment providers, PayPal credentials and exchange rate.
-- `Settings.Security`: SMTP, login security, invoice bill-to retention. Held **only** by the Super Admin role; it cannot be granted to any other role.
-- `Users.Manage`: create and manage staff users (subset rule, P14).
+- `Settings.Security`: SMTP, login security, invoice bill-to retention. It applies **only through the Super Admin role's `GrantsAll` flag**: it is never stored as a permission on any role, and `CK_RoleClaims_NoSecurity` rejects it at the database if anyone tries (08 §3.1). So it cannot be granted, copied into a custom role, or held by a user who is not a Super Admin.
+- `Users.View`: read-only access to the staff list and staff user detail.
+- `Users.Manage`: create and manage staff users — every change (subset rule, P14).
 
 ### 1.6 Key settings referred to in this document (08 §3.8)
 
@@ -159,7 +160,7 @@ stateDiagram-v2
   [*] --> PendingPayment : P6 place order
   PendingPayment --> Paid : P7 staff approve / P8 PayPal capture
   PendingPayment --> Expired : P10 system, payment due passed
-  PendingPayment --> Cancelled : P10 customer, staff or system
+  PendingPayment --> Cancelled : P10 customer or staff
   Expired --> Paid : P10 late payment accepted
   Cancelled --> Paid : P10 exception payment accepted
   Paid --> Processing : P9
@@ -252,7 +253,7 @@ Every process uses the same headings. "08 §x" points to the baselined database 
 
 **WooCommerce comparison** ([managing products](https://woocommerce.com/document/managing-products/), [variable products](https://woocommerce.com/document/variable-product/))
 - *Matches:* hierarchical categories, product gallery, variations that each carry SKU, price and stock, publish/unpublish, catalogue visibility.
-- *Differs:* Woo lets any attributes form variations; we fix the axes to **colour × size**, because every fashion product in the demo uses them and it keeps filters and stock simple. Woo stores "regular price" and a scheduled "sale price" on each product; we store **price plus an optional original price** (markdown) and run time-limited discounts as **sale campaigns** across departments, categories or products (P3), which suits seasonal fashion sales. Woo has tags and draft/pending-review/private statuses; we have published or not, and tags are deferred (08 Appendix A). Woo core has no product video; we support one MP4 per product (PDP-01).
+- *Differs:* Woo lets any attributes form variations; we fix the axes to **colour × size**, because every fashion product in the demo uses them and it keeps filters and stock simple. Woo stores "regular price" and a scheduled "sale price" on each product; we store **price plus an optional original price** (markdown) and run time-limited discounts as **sale campaigns** across departments, categories or products (P3), which suits seasonal fashion sales. Woo has tags, and its product statuses are **Published, Pending review and Draft** — "Private" is a **visibility** option on a published product, not a status; we have published or not, and tags are deferred (08 Appendix A). **Product video:** WooCommerce **11.1** added product **gallery videos** to core, but as a **beta feature that is off by default**: video goes in the **gallery only** (it can never be the main image), there are **no variation galleries**, and it is **not covered by the CSV importer or the REST API**. Ours is a first-class product field from the start — one MP4 per product, imported and exposed like any other media (PDP-01).
 
 **Feature IDs.** ADM-10, ADM-11, ADM-18, PDP-01, PDP-04, PDP-06, CARD-01, GLB-05, GLB-11, DEPT-01, DEPT-02.
 
@@ -305,7 +306,7 @@ Every process uses the same headings. "08 §x" points to the baselined database 
 | Refund with "return items to stock" ticked | P10 | On hand + qty | Restock |
 
 *D. Low-stock monitoring*
-9. **[System]** Shows variants with `0 < available ≤ threshold` on the dashboard **Low Stock** widget and shows the **Low Stock** badge on product cards when the product's total available is at or below the sum of its variants' thresholds (08 §3.2, §7.1).
+9. **[System]** Shows variants with `0 < available ≤ threshold` on the dashboard **Low Stock** widget and shows the **Low Stock** badge on product cards when the product's total available is **above zero and** at or below the sum of its variants' thresholds (08 §3.2, §7.1). A product with zero available shows **Out of stock**, never Low Stock.
 10. **[Staff]** Reviews the widget daily (§6) and arranges replenishment outside the system.
 
 *E. Nightly reconciliation (alert-only)*
@@ -423,7 +424,7 @@ stateDiagram-v2
 
 *B. Create a promo code (ADM-13)*
 6. **[Staff]** Opens **Promotions → Promo codes → Add**: code (stored upper-case, unique), description, type:
-   - **Percent** (0–100%, optional maximum discount, e.g. 10% capped at Rs. 2,000.00);
+   - **Percent** (**above 0% and up to 100%**; 0% is rejected as meaningless, optional maximum discount, e.g. 10% capped at Rs. 2,000.00);
    - **Fixed amount** (e.g. Rs. 1,000.00 off, never more than the eligible items);
    - **Free delivery** (delivery fee discounted in full).
 7. **[Staff]** Sets optional minimum spend, "exclude sale items", start (required) and end (optional), total usage limit, per-customer limit, active.
@@ -738,6 +739,7 @@ sequenceDiagram
 **Exceptions and edge cases**
 - Item sold out between bag and **Place order** → rollback; message per line ("Relaxed Linen Blend Shirt, Beige / M: only 1 left"); the bag is updated.
 - Promo code fully used or per-customer limit reached at placement → order not placed; customer removes the code and retries.
+- **Promo code expires or is deactivated between the review step and Place order** (the customer left the page open, or staff ended the code) → the code is re-validated at placement, so the **order is not placed**. The customer is shown the totals **recalculated without the code** — the discount line gone, the new grand total highlighted — with the reason ("This code ended on 21 Sep") and must **confirm again** before the order is created. We never place an order at a total the customer has not seen: the alternative, honouring a code that has ended, would let an expired code be used indefinitely by anyone holding an open tab.
 - Delivery method switched off or zone rate removed after the customer chose it → "This delivery option is no longer available, choose another."
 - PayPal exchange rate becomes older than 7 days → PayPal is hidden; the customer uses bank transfer.
 - Total at placement differs from the total displayed (a campaign ended in between) → see §7 G-10.
@@ -813,8 +815,8 @@ sequenceDiagram
 **Business rules**
 - Expiry (48 h) is set in `Orders.BankTransferExpiryHours` and fixed on the order at placement (08 §3.5).
 - Approval succeeds only if the order is still PendingPayment with stock Reserved. If the expiry job or another staff member acted first, the approver is told and the screen reloads (08 §4.1 conditional update).
-- **At most one open** (*Pending*) payment per order. While *Pending*, a new reference or slip **updates** that record; after a rejection a **new** record is created (08 §3.5 DB26, N7).
-- Slips are **private** files: never publicly reachable, shown only to staff with `Orders.View`, excluded from the media library, one current file per payment, uploads rate-limited to 5 per hour (08 §3.3 N10).
+- **At most one open payment per order** — *Initiated* **or** *Pending* (`UX_Payments_OneOpen` covers statuses 0 and 1, 08 §3.5). "Open" is not the same as "Pending": a PayPal *Initiated* row is open too, which is why a PayPal retry cancels the abandoned attempt before creating a new one (P8 step 9). While a bank payment is *Pending*, a new reference or slip **updates** that record; after a rejection a **new** record is created (08 §3.5 DB26, N7).
+- Slips are **private** files: never publicly reachable, shown only to staff with `Orders.View`, excluded from the media library, one current file per payment, uploads rate-limited to **5 per hour per order and per IP address** (08 §3.3 N10) — the per-order limit stops one customer flooding their own order, the per-IP limit stops a script walking order links.
 - Guests can upload only through the secret order link, and only while the order is PendingPayment with an open bank payment (08 §3.3).
 - Invoice number is issued **inside** the approval transaction, so numbers are gapless (08 §3.5).
 - Revenue is counted on the **paid date** (approval date), not the placed date (08 §8.1).
@@ -857,6 +859,7 @@ sequenceDiagram
 - Customer quotes no reference → staff match by amount, name and date; approve only when certain.
 - Two orders from the same customer with identical totals → match by reference or slip; if unclear, contact the customer.
 - Slip uploaded 1 hour before expiry and not reviewed in time → the order expires; staff accept late payment if stock allows. Review the queue at least twice a day (§6).
+- **Customer paid close to the deadline and the order expires before they can send evidence.** Once the order is Expired the customer's upload route is closed (uploads need an open bank payment), so they have no way to send the slip or reference for money they have genuinely transferred. **A holder of `Orders.Approve` can attach a bank reference or a slip to the Expired bank payment on the customer's behalf** — taken by phone, WhatsApp or email — which puts the evidence on the order where the approver and the audit log can see it. Attaching evidence changes no status: it is followed by **Accept late payment** if stock allows, or by a **refund of the money received** if it does not (G-13, 08 §4.3). Without this, the only record of the payment lives in someone's WhatsApp.
 - Staff approve at the same moment the expiry job runs → exactly one wins; if expiry won, use **Accept late payment**.
 - Customer cancels their own unpaid order after transferring → money received for a Cancelled order; staff can **accept** it (Cancelled → Paid, stock re-check) or refund it outside the system (see §7 G-13).
 - Bank details changed by a Super Admin → all Super Admins receive a security email and a dashboard banner (P14). Orders already placed keep the instructions they were emailed; the email shows the old details (see §7 G-16).
@@ -914,7 +917,8 @@ sequenceDiagram
    | Voided or not found | Payment *Failed* |
    | PayPal unreachable | Retry with backoff; after **24 h** payment *Failed* (`RECOVERY_TIMEOUT`), **Capture recovery failed** alert and email; staff check PayPal manually. A later verified COMPLETED webhook still applies step 6 |
 
-9. **[Customer] Retry.** While the order is PendingPayment and no capture is in progress, the customer can pay again from the order link. The abandoned *Initiated* payment is cancelled and a new one is created at the **current** exchange rate.
+9. **[Customer] Retry.** While the order is PendingPayment and no capture is in progress, the customer can pay again from the order link. The abandoned *Initiated* payment is cancelled and a new one is created at the **current** exchange rate — there is never more than one open payment on an order (P7 rules, 08 §3.5 `UX_Payments_OneOpen`).
+   - **Exception — a PENDING capture blocks retry.** While the PayPal payment is *Pending* (an eCheck or a PayPal review), the payment is still **open**, so a new attempt cannot be created. Retry is unavailable until **PayPal resolves the capture** (COMPLETED → the order is paid; DENIED → the payment becomes *Failed* and retry reopens) **or the hold expires**. The customer sees **"Your payment is pending with PayPal"** with the date the hold runs out, and the **Pay again** button is hidden rather than shown failing.
 10. **[System] Expiry.** When the due time passes (60 min, or the extended PENDING hold) and no capture lock is active, the order expires (P10).
 11. **[Staff] Resolve an exception** (dashboard banner and email):
     - **Accept** (`Orders.Approve`): Expired or Cancelled order → Paid with a stock re-check; the exception payment becomes the settling payment. **Not allowed for `AMOUNT_MISMATCH`.**
@@ -1001,7 +1005,7 @@ sequenceDiagram
 
 **WooCommerce comparison** ([WooCommerce PayPal Payments](https://woocommerce.com/document/woocommerce-paypal-payments/), [order statuses](https://woocommerce.com/document/managing-orders/order-statuses/))
 - *Matches:* PayPal-hosted approval, server-side capture, webhooks to update the order, card payments through PayPal, refunds from the order screen.
-- *Differs:* Woo requires the store currency to be supported by PayPal; LKR is not, so we **convert to USD at an admin rate plus a buffer** and show it before redirect. Woo puts delayed payments **On hold**; we keep the order **PendingPayment** with stock held up to 5 days. We add an explicit **claim and lock**, a **recovery job** for stuck captures, and an exception status (*CapturedRequiresRefund*) with staff alerts for late, duplicate or mismatched captures, so no payment can silently settle an expired order.
+- *Differs:* **currency.** WooCommerce does not require the store currency to be one PayPal supports — the extension runs either way. The real constraint is PayPal itself: it **cannot settle in LKR**. So we **convert to USD at an admin rate plus a buffer** and show that amount before redirect (D1), rather than leaving the customer to discover a currency conversion at PayPal. **Delayed payments:** Woo moves an order to **On hold** when the payment mechanism defers settlement — an authorize-only (not capture) setting, an eCheck, or a currency mismatch needing conversion — not as a blanket rule for every PayPal order. We keep the order **PendingPayment** with stock held up to 5 days instead (D13), so one status means "money not confirmed" whatever the reason. We add an explicit **claim and lock**, a **recovery job** for stuck captures, and an exception status (*CapturedRequiresRefund*) with staff alerts for late, duplicate or mismatched captures, so no payment can silently settle an expired order.
 
 **Feature IDs.** PAY-02, PAY-03, ADM-09, ADM-22, ADM-04, CHK-04, ACC-03.
 
@@ -1032,7 +1036,7 @@ sequenceDiagram
 1. Steps 1–3 as above.
 2. **[Staff]** Places the packed order at the pickup location and clicks **Ready for collection**. **[System]** Order **Processing → Shipped** (shown to staff and customer as "Ready for collection"); no courier or tracking number is needed; **Order shipped** email is sent with pickup wording, location and hours.
 3. **[Customer]** Collects, showing the order number and ID.
-4. **[Staff]** Clicks **Mark as collected** → **Delivered**. Auto-delivery after 7 days also applies (see §7 G-18).
+4. **[Staff]** Clicks **Mark as collected** → **Delivered**. **Auto-delivery does not apply to pickup orders** (08 §4.1, G-18): an order nobody has collected stays "Ready for collection" until staff hand it over, so it is never silently recorded as delivered and never earns a "Verified buyer" badge for goods still on the shelf. Uncollected orders are chased from the daily checklist (§6.2 step 8).
 
 ```mermaid
 flowchart LR
@@ -1047,8 +1051,10 @@ flowchart LR
 **Business rules**
 - Transitions are one step at a time: Paid → Processing → Shipped → Delivered; **orders never move backwards**. Mistakes are corrected with an internal note and a history note (08 §4.1).
 - **Shipped** requires courier and tracking number unless the method is Store pickup (08 §4.1).
+- **One dispatch per order. There is no split shipment in v1** (§7 G-38): an order has exactly one courier and one tracking number, and moving it to Shipped ships all of it. If part of an order cannot go out — an item is damaged or missing — staff do **not** send the rest and mark it Shipped. They either hold the whole order until it is complete, or agree a refund with the customer and place a separate new order for what can be sent (P10). Two parcels for one order would leave the second one with no tracking number anywhere in the system.
+- **After placement, only three things are editable:** the **courier**, the **tracking number** and the **internal note**. Items, quantities, prices, the promo code, the delivery address and the delivery method **never change** on a placed order — the order lines are an immutable snapshot and the totals were fixed at placement (08 §3.5, §6). Anything else is handled by cancelling or refunding and placing a new order (§7 G-21).
 - There is **no separate "Packed" status**: packing happens inside Processing (use the internal note if needed).
-- Auto-delivery runs daily for orders shipped more than 7 days ago (08 §4.1, D4).
+- Auto-delivery runs daily for orders shipped more than 7 days ago, **excluding Store pickup** (08 §4.1, D4, G-18).
 - Tracking links are built from the courier's **current** template; editing a template changes the link on older orders too (08 §3.5 `Couriers`).
 - Courier name is copied into the order when shipped.
 - Every transition writes status history (who, when, source) and is audited.
@@ -1073,10 +1079,10 @@ flowchart LR
 
 **Exceptions and edge cases**
 - Item found damaged while packing → no automatic path to swap or remove one item; staff contact the customer; if the order cannot be fulfilled, refund in full with restock of the good items handled by a stock adjustment (P10, §7 G-19).
-- Wrong tracking number entered → staff correct it on the order (audited); the customer is not re-emailed.
+- Wrong tracking number entered → staff correct it on the order (audited). **No second `OrderShipped` email is sent**, so the customer is still holding a tracking link that does not work: whoever corrects it **tells the customer by phone or WhatsApp** the same day and records that in the internal note. (A "tracking number corrected" email is not in v1; see §7 G-14.)
 - Courier returns the parcel undelivered → no "returned" status; staff record an internal note and refund (P10) or re-ship outside the system (§7 G-20).
 - Customer asks to change the delivery address after payment → not supported in the system; handle with the courier and record an internal note (§7 G-21).
-- Customer never collects a pickup order → auto-marked Delivered after 7 days (§7 G-18).
+- Customer never collects a pickup order → it stays **Shipped (Ready for collection)**; auto-delivery skips pickup (G-18). Staff chase the customer and, if it is never collected, agree a refund (P10) and return the items to stock.
 - Staff forget to mark Shipped → the order stays Processing; the daily checklist (§6) catches it.
 
 **WooCommerce comparison** ([order statuses](https://woocommerce.com/document/managing-orders/order-statuses/), [Shipment Tracking extension](https://woocommerce.com/document/shipment-tracking/))
@@ -1105,6 +1111,7 @@ flowchart LR
 | Accept late / exception payment (Expired or Cancelled → Paid) | — | — | ✔ | — | — |
 | Refund a paid order (full) | — | — | — | ✔ | ✔ (PayPal dashboard refund webhook) |
 | Refund an exception payment | — | — | — | ✔ | — |
+| Refund bank money received on an Expired or Cancelled order (G-13) | — | — | — | ✔ | — |
 | Cancel a paid order | ✘ (refund instead) | ✘ | ✘ | refund | — |
 
 Default roles: Order Staff hold Edit and Approve but **not Refund**; Store Manager and Super Admin hold all three.
@@ -1124,7 +1131,7 @@ Default roles: Order Staff hold Edit and Approve but **not Refund**; Store Manag
 6. **[Staff: `Orders.Refund`]** Opens the order (Paid, Processing, Shipped or Delivered) and clicks **Refund**. The form shows the full paid amount (e.g. Rs. 15,596.60, or USD 53.55 for PayPal), requires a **reason**, and offers **Return items to stock** (tick only when the items are back and sellable).
 7. **[System]** By payment method:
    - **PayPal:** calls the PayPal refund API for the captured USD amount. A completed refund applies step 8 at once; a pending refund is recorded as *Pending* and step 8 runs when the refund webhook confirms it, using the restock choice saved on the refund.
-   - **Bank transfer:** staff first send the money back from the store's bank account, then record the refund as **manual bank transfer** with the bank reference. Step 8 applies at once.
+   - **Bank transfer:** staff first send the money back from the store's bank account, then record the refund as **manual bank transfer** with the bank reference. Step 8 applies at once. **The customer's bank account details are collected out of band** — by phone, WhatsApp or email — used once at the bank, and **never entered into the system**: there is no field for them anywhere, and staff must not paste them into the refund reason or an internal note. The system records only the **outgoing bank reference**, which is enough to trace the payment. (Privacy: this keeps customer bank account numbers out of the database, out of backups and out of the audit log entirely, so a data request or a breach cannot expose them. If a customer sends account details through the contact form, the submission is deleted under `Customers.Delete`, 08 §3.7.)
 8. **[System]** In one transaction, only if the order is still Paid/Processing/Shipped/Delivered with stock Committed: refund record *Completed*; settling payment → *Refunded*; order **→ Refunded**, refunded amount and closed time set; if **Return items to stock** was ticked, on hand is increased for every line and stock state becomes **Restocked**; history and audit. Promo use is **not** returned.
 
 *D. Refund or accept an exception payment* (from P8)
@@ -1133,7 +1140,10 @@ Default roles: Order Staff hold Edit and Approve but **not Refund**; Store Manag
 11. **[Staff: `Orders.Approve`]** or **Accept** it (not for amount mismatches) → Expired/Cancelled **→ Paid**, stock re-deducted if available for every line, promo use restored, new invoice number, **Payment confirmed** email.
 
 *E. Refund made directly in PayPal*
-12. **[PayPal → System]** Verified refund webhook → a refund record is created if none matches; for the settling payment the order moves to Refunded (no restock, since no choice was made; staff adjust stock in P2 if items came back).
+12. **[PayPal → System]** Verified refund webhook (`PAYMENT.CAPTURE.REFUNDED`) → a refund record is created if none matches, with no staff user against it (system) and method **Manual other**, because the money was sent outside our admin (08 §3.5, §4.3). What happens next depends on the amount:
+    - **Full refund of the settling payment** (refunded total = captured amount) → the payment becomes *Refunded* and the order runs the **normal Refunded transition** with **restock off**; a **Dashboard refund** alert tells staff to adjust stock by hand in P2 if the items came back.
+    - **Partial refund** → the payment becomes *PartiallyRefunded*, the refunded amount is recorded, **the order is unchanged** (v1 has no partial-refund order state, 08 D6), and staff get the same alert. Later refunds that bring the total up to the captured amount are handled as the full case.
+    - **Refund of an exception payment** (not the settlement) → the payment becomes *Refunded*; the order and its refunded amount are unchanged.
 
 ```mermaid
 sequenceDiagram
@@ -1166,6 +1176,8 @@ sequenceDiagram
 
 **Business rules**
 - **Full refunds only** in v1; the schema supports partial refunds later (08 D6).
+- **No customer bank account details are stored in the system.** Staff take them out of band for the one transfer and record only the outgoing bank reference (step 7, privacy point).
+- **Money received for an order that was never paid can be refunded** (08 §4.1, §4.3, G-13): for an **Expired** or **Cancelled** order whose bank payment is *Expired* or *Pending*, `Orders.Refund` records a manual bank refund with a **mandatory reason** and the **bank reference**. The payment becomes *Refunded* and the order becomes **Refunded**. There is **no stock effect** (the items were released when the order closed) and the order's **refunded amount stays Rs. 0.00**, because that payment never settled the order — it must not appear as a refund of revenue in the reports.
 - Refund requires `Orders.Refund` (08 §3.1 DB9); every refund is audited and never deleted.
 - **Restock happens only inside the refund transition, once per order**. A repeated or duplicate refund request finds the order already Refunded and does nothing (08 §5.7 N8).
 - Cancel and expiry skip orders with an active capture lock (08 §4.1).
@@ -1187,6 +1199,7 @@ sequenceDiagram
 | Refund paid, restock | Paid…Delivered → Refunded | Succeeded → Refunded | Committed → Restocked |
 | Refund paid, no restock | Paid…Delivered → Refunded | Succeeded → Refunded | Committed (unchanged) |
 | Refund exception (order expired/cancelled) | Expired/Cancelled → Refunded | CapturedRequiresRefund → Refunded | Released (unchanged) |
+| Refund bank money received on a never-paid order (G-13) | Expired/Cancelled → Refunded | Expired or Pending → Refunded | Released (unchanged) |
 | Refund duplicate on paid order | unchanged | CapturedRequiresRefund → Refunded | unchanged |
 | Accept late/exception payment | Expired/Cancelled → Paid | Expired/CapturedRequiresRefund → Succeeded | Released → Committed |
 
@@ -1211,13 +1224,13 @@ sequenceDiagram
 - Refund of a Delivered order where goods are not returned (e.g. goodwill) → untick restock.
 - Items returned damaged → refund without restock, then record an adjust-out if needed (P2).
 - PayPal refund fails (e.g. capture older than PayPal's refund window, or insufficient PayPal balance) → refund *Failed*, order unchanged; staff refund another way and record it as manual (§7 G-22).
-- Money received by bank transfer for an **Expired** order where stock is gone → cannot accept; there is no exception payment record to refund against (§7 G-13).
+- Money received by bank transfer for an **Expired** or **Cancelled** order where the stock is gone → acceptance fails the stock re-check, so staff **refund the money received** against that expired bank payment: reason plus bank reference, payment → *Refunded*, order → **Refunded**, no stock effect, refunded amount Rs. 0.00 (G-13, 08 §4.3). If the customer could not send the slip before expiry, an `Orders.Approve` holder attaches it first (P7 exceptions).
 - Two staff click Refund together → one succeeds; the other sees the order is already Refunded; stock restocked once.
 - Customer cancels while a PayPal capture is in progress → blocked ("payment is being processed").
 
 **WooCommerce comparison** ([refunds](https://woocommerce.com/document/woocommerce-refunds/), [order statuses](https://woocommerce.com/document/managing-orders/order-statuses/), [inventory settings](https://woocommerce.com/document/configuring-woocommerce-settings/products/))
-- *Matches:* automatic refund through the gateway (PayPal) or manual refund recording (bank transfer); optional "restock refunded items"; order becomes Refunded when fully refunded; unpaid orders are cancelled automatically after the hold time and stock is restored.
-- *Differs:* Woo supports **partial refunds** per line; v1 does **full refunds only** (D6). Woo uses **Cancelled** for both auto-cancelled and manually cancelled unpaid orders; we separate **Expired** (system) and **Cancelled** (person), which makes reports clearer. Woo lets any shop manager refund; we require a separate **`Orders.Refund`** permission. Our restock is guarded so it cannot happen twice, and late payments on closed orders go through an explicit accept-or-refund decision.
+- *Matches:* automatic refund through the gateway (PayPal) or manual refund recording (bank transfer); optional "restock refunded items"; an order flips to **Refunded** only when the **full** amount has been refunded — a partial refund leaves the status alone. That is a useful way to explain our v1: because we refund in full or not at all, the order status and the money always agree, and the partial case Woo has to handle simply cannot arise (D6). Woo also restores stock when an order in *Pending payment* is auto-cancelled by the hold-stock setting.
+- *Differs:* Woo supports **partial refunds** per line; v1 does **full refunds only** (D6). Woo uses **Cancelled** for both auto-cancelled and manually cancelled unpaid orders; we separate **Expired** (system) and **Cancelled** (person), which makes reports clearer. Woo's auto-cancel never touches an **On hold** bank-transfer order (§5.1), so our 48-hour expiry has no Woo equivalent at all. Woo lets any shop manager refund; we require a separate **`Orders.Refund`** permission. Our restock is guarded so it cannot happen twice, and late payments on closed orders go through an explicit accept-or-refund decision.
 
 **Feature IDs.** ADM-09, PAY-01, PAY-02, PAY-03, ADM-12, ADM-13, ACC-02, ACC-03, GLB-10.
 
@@ -1238,7 +1251,7 @@ sequenceDiagram
 *A. Register*
 1. **[Customer]** Enters first name, last name, email and password (and optionally phone).
 2. **[System]** Always shows the same message: "If this email can be used, we've sent you a link." If the email already has a customer account, the **Account exists** email is sent ("sign in or reset your password"); if it belongs to a staff account, nothing is sent (08 §3.1 DB10).
-3. **[System]** For a new customer, creates the account and sends an **email confirmation** link and the **Welcome** email (see §7 G-03).
+3. **[System]** For a new customer, creates the account and sends the **`EmailConfirmation`** link and the **`Welcome`** email (08 §3.8; G-03 resolved). The confirmation body is deleted from the outbox as soon as it is sent, because it carries a single-use token.
 4. **[Customer]** Clicks the confirmation link. **[System]** Marks the email confirmed and **links past guest orders** placed with the same email that have no account yet; the linked order IDs are written to the audit log (08 §3.1 D5).
 
 *B. Sign in and out*
@@ -1258,9 +1271,10 @@ sequenceDiagram
 
 *E. Guest order access*
 14. **[Customer]** A guest uses the secure order link from the order emails to view status, tracking, upload a slip or retry payment. The link is the only guest access (see §7 G-26).
+15. **[System]** The link carries the order's unguessable token (`Orders.PublicId`, a random GUID, 08 §1.3). It **never expires**: a customer who finds a two-year-old order email can still open that order, which is deliberate — the alternative is a customer locked out of their own order history with nobody to ask. Because it never expires, it is **rate-limited in the same way as slip uploads** (5 per hour per order and per IP, P7): guessing a 122-bit token is infeasible, and the limit stops anyone trying at scale or walking a list of leaked links. The page shows the order only — never the customer's saved addresses, other orders or account settings, all of which need a sign-in.
 
 *F. Staff view (ADM-15)*
-15. **[Staff]** Opens **Customers**: list with search, district, order count, lifetime spend and last order (calculated live), detail with addresses and order history.
+16. **[Staff]** Opens **Customers**: list with search, district, order count, lifetime spend and last order (calculated live), detail with addresses and order history.
 
 **Business rules**
 - One account per email across customers and staff; a staff member who shops uses a different email (08 D7).
@@ -1278,7 +1292,7 @@ sequenceDiagram
 
 **Notifications**
 - `Welcome` → new customer.
-- Email confirmation → new customer (template not in the doc 08 list; §7 G-03).
+- `EmailConfirmation` → new customer, and to the new address when a customer changes their email. Body deleted immediately after sending (08 §3.8).
 - `AccountExists` → existing customer who tries to register again.
 - `PasswordReset` → customer.
 
@@ -1357,7 +1371,7 @@ sequenceDiagram
 
 **WooCommerce comparison** ([product settings: reviews](https://woocommerce.com/document/configuring-woocommerce-settings/products/))
 - *Matches:* star ratings, a "verified owner" label, an option to require manual approval, a moderation queue.
-- *Differs:* Woo's "verified owner" means any completed/processing purchase and reviews can be left by guests if allowed; ours requires **sign-in** and a **Delivered** order for the badge, which the client chose to limit review abuse (01 G5, Q13).
+- *Differs:* Woo can restrict reviews to **verified owners** and show a "verified owner" label, with a setting for each; whether a given purchase counts is left to Woo's own rules and is not restated here. Ours is explicit: the badge requires **sign-in** and a **Delivered** order, and reviews cannot be left by guests at all, which the client chose to limit review abuse (01 G5, Q13).
 
 **Feature IDs.** PDP-08, ADM-16, CARD-01, PLP-02, PLP-04.
 
@@ -1454,8 +1468,8 @@ sequenceDiagram
 
 *A. Admin sign-in (ADM-01)*
 1. **[Staff]** Opens `/admin`, enters email and password.
-2. **[System]** Refuses customer accounts. After **5** failures locks the account for **15 minutes** (applies to everyone, including the last Super Admin; it always expires).
-3. **[System]** Super Admins must pass **two-factor authentication**; a Super Admin who has not enrolled can only reach the 2FA enrolment page. A user flagged "must change password" must change it first.
+2. **[System]** An **unknown email**, a **customer account** and a **deactivated staff account** all get exactly the same reply: HTTP **401** with the generic message *"Invalid email or password."* The sign-in endpoint is therefore no use for discovering which addresses exist (P14-BR11). After **5** failures the account is locked for **15 minutes** (applies to everyone, including the last Super Admin; it always expires) and the reply becomes HTTP **423 Locked** carrying the **lockout end time**, so the admin app can say when to try again (P14-BR12).
+3. **[System]** Super Admins must pass **two-factor authentication**; a Super Admin who has not enrolled can only reach the 2FA enrolment page. A user flagged "must change password" must change it first. **Both are a later build slice — see the footnote under the business rules.**
 4. **[System]** Loads permissions from the user's roles (never from the cookie) and shows only permitted menus and buttons; the API checks every action again. Permission changes take effect within 1 minute.
 5. **[Staff]** Forgot password → `/admin/forgot-password` (staff accounts only), or asks a Super Admin to reset it.
 
@@ -1498,6 +1512,12 @@ sequenceDiagram
 - At least **two** Super Admin accounts (client owner and vendor), both with 2FA, before go-live (08 §9).
 - Staff users are never deleted, only deactivated (08 §1.6).
 - Audit log keeps 3 years (08 D9). Password hashes, security tokens and 2FA secrets are never logged (08 §3.8).
+- **Every sign-in attempt is audited** (W1-01): a successful sign-in writes `Login`, a refused one writes `LoginFailed` (with the reason), and the attempt that trips the limit writes **both** `LoginFailed` **and** `Lockout`. Each row carries the **IP address and user agent**, plus the user ID and email where one was matched. So the audit log answers "who signed in, from where, and who is being attacked" without a separate security log.
+- **No account enumeration at sign-in** (W1-01): an unknown email, a **customer** account and a **deactivated staff** account return the identical generic **401**, and each of those three paths runs the password hasher against a fixed **dummy hash** so it costs the same time as a real wrong-password check. Without that, response timing alone would reveal which addresses are real staff accounts.
+- **Lockout is reported differently from the customer flow** (W1-01): staff get HTTP **423 Locked** with the lockout end time, because the admin app has a named audience who should be told exactly when they can try again and whether to call a Super Admin. The storefront deliberately stays vague (P11).
+- **Read vs change on staff accounts:** `Users.View` gives read-only access to the staff list and a staff user's detail; **`Users.Manage`** is required for every change (create, edit, assign roles, deactivate, reset password or 2FA) and is still subject to the subset rule.
+
+> **Not built yet (testers, please do not mark these verified).** Step 3's **two-factor authentication** and the **forced password change** are specified here but arrive in a later slice — tracked as issues **#16** (staff 2FA) and **#17** (forced password change on first sign-in). W1-01 delivered password sign-in, the lockout, the audit trail and permission loading only.
 
 **Status changes.** Staff user: Invited → Active ↔ Deactivated; Active ↔ Locked (temporary). Alert: Open → Acknowledged.
 
@@ -1513,7 +1533,8 @@ sequenceDiagram
 
 | Screen | Permission |
 |---|---|
-| Users list, add, edit, deactivate, reset password / 2FA | `Users.Manage` (subset rule) or Super Admin |
+| Users list and staff user detail (read-only) | `Users.View` |
+| Users add, edit, assign roles, deactivate, reset password / 2FA | `Users.Manage` (subset rule) or Super Admin |
 | Roles and permissions | Super Admin only |
 | Settings by group | `Settings.View/Edit`, `Settings.Payments`, `Settings.Security` |
 | Audit log | `AuditLog.View` |
@@ -1529,7 +1550,7 @@ sequenceDiagram
 
 **WooCommerce comparison** ([roles and capabilities](https://woocommerce.com/document/roles-capabilities/))
 - *Matches:* separate store-management and administrator roles.
-- *Differs:* WooCommerce ships fixed WordPress roles (Administrator, Shop Manager) and needs plugins for custom roles, 2FA and audit logs. We provide **custom roles with per-module permissions**, a separate refund permission, protected payment and security settings, mandatory 2FA for Super Admins, and a built-in audit log, as required by ADM-02/03.
+- *Differs:* WooCommerce adds **three** roles on top of WordPress's own — an **Administrator** extended with the shop capabilities, **Shop Manager**, and **Customer** — and they are fixed; custom roles, 2FA and audit logs all need plugins. We provide **custom roles with per-module permissions**, a separate refund permission, protected payment and security settings, mandatory 2FA for Super Admins, and a built-in audit log, as required by ADM-02/03.
 
 **Feature IDs.** ADM-01, ADM-02, ADM-03, ADM-04, ADM-22, OPS-04.
 
@@ -1757,12 +1778,18 @@ sequenceDiagram
 
 All emails go through the transactional outbox: written in the same transaction as the business change, sent by `SendEmails`, retried at 1/5/15/60/240 min (08 §3.8). Template codes are those in 08 §3.8 `EmailOutbox.TemplateCode`.
 
+**Emails that die need an owner (§7 G-37).** After the last retry an outbox row becomes **Dead** and nothing happens — nobody is told, and a customer who never received their bank details or their order link simply waits. So:
+- One or more rows reaching **Dead** raises an **`EmailDeliveryFailed`** dashboard alert (severity Warning) naming the template, the recipient and the related order; where that is too much for v1, the dashboard shows at least a **failed-email count** that links to the outbox list. Either way, a human sees it (§6.1 step 6).
+- Staff can **retry** a dead email (it re-enters the queue) after fixing the cause, most often a wrong address or an SMTP outage.
+- **Security alert emails** (`SensitiveSettingsChanged`, `BreakGlassUsed`, `StaffEmailChanged`) are the exception to any "clear the queue" action: they **can only be retried, never cancelled or deleted**, by anyone, through any screen or API (08 §3.8 R5). A Super Admin who can silence their own security alerts is not an audit trail.
+- Retrying a dead `PasswordReset` or `EmailConfirmation` is rarely useful: by the time anyone notices, the token in the stored body has usually expired. Staff ask the customer to request a fresh link instead.
+
 ### 4.1 Customer emails
 
 | Template | Trigger | Recipient | Content summary | Process |
 |---|---|---|---|---|
 | `Welcome` | Customer account created | Customer | Welcome, link to account, store benefits | P11 |
-| *Email confirmation* (no code in doc 08) | Registration; email change | Customer (new address) | Confirmation link | P11 (§7 G-03) |
+| `EmailConfirmation` | Registration; email change | Customer (new address) | Confirmation link; body deleted immediately after sending | P11 |
 | `AccountExists` | Registration attempted with an existing customer email | Customer | "You already have an account: sign in or reset password" | P11 |
 | `PasswordReset` | Forgot password (customer match only) | Customer | Reset link; body deleted after sending | P11 |
 | `OrderPlaced` | Order placed (any method) | Order email | Order number, items (colour, size, qty), prices, discounts, delivery method and address or pickup location, total, payment method, order link | P6 |
@@ -1792,6 +1819,7 @@ All emails go through the transactional outbox: written in the same transaction 
 | `PaymentException` | Warning | Super Admins, `Orders.Approve`, `Orders.Refund` | P8, P10 |
 | `CaptureRecoveryFailed` | Warning | Super Admins, `Orders.Approve`, `Orders.Refund` | P8 |
 | `ReconciliationDrift` | Warning | Super Admins | P2 |
+| `EmailDeliveryFailed` | Warning | Super Admins, Store Manager | P7–P11, P14 (§7 G-37) |
 
 ### 4.4 Events with no notification in v1
 Bank transfer rejected · order cancelled · order refunded · order processing · order delivered · PayPal PENDING / DENIED · payment due soon reminder · new order for staff · slip uploaded · low stock · review submitted or approved · newsletter subscription confirmation · contact enquiry received. These are raised in §7 G-05, G-06, G-14, G-15, G-25.
@@ -1805,13 +1833,15 @@ Bank transfer rejected · order cancelled · order refunded · order processing 
 | 0 | **PendingPayment** | Order placed, money not yet confirmed | Bank transfer: check bank and approve/reject. PayPal: nothing (system confirms) | Reserved | Pending payment (PayPal); **On hold** (bank transfer) |
 | 1 | **Paid** | Money confirmed, invoice issued, not yet started | Start processing | Deducted | Processing |
 | 2 | **Processing** | Being picked and packed | Pack, book courier, mark shipped | Deducted | Processing |
-| 3 | **Shipped** | With the courier (or ready for collection for pickup) | Mark delivered when confirmed (auto after 7 days) | Deducted | No core status (extension "Shipped") |
+| 3 | **Shipped** | With the courier (or ready for collection for pickup) | Mark delivered when confirmed (auto after 7 days for courier orders; **never automatic for pickup**, G-18) | Deducted | No core status (extension "Shipped") |
 | 4 | **Delivered** | Customer has the goods | None; reviews now verified | Deducted | Completed |
 | 5 | **Cancelled** | Unpaid order cancelled by customer or staff | None, unless money arrives later (accept or refund) | Released | Cancelled |
-| 6 | **Expired** | Unpaid order passed its due time | None, unless money arrives later (accept or refund) | Released | Cancelled (auto, after hold-stock time) |
+| 6 | **Expired** | Unpaid order passed its due time | None, unless money arrives later (accept or refund) | Released | **No equivalent.** Woo's hold-stock setting auto-cancels only ***Pending payment*** orders; an **On hold** bank-transfer order is never auto-cancelled |
 | 7 | **Refunded** | Money returned in full | None | Restocked if chosen, otherwise deducted | Refunded |
 
 WooCommerce **Failed** has no order equivalent: a failed payment attempt is a *Failed* payment while the order stays PendingPayment and can be retried until it expires. WooCommerce **Draft** has no equivalent: our bag is not an order.
+
+**Our 48-hour bank-transfer expiry is our own rule, not a WooCommerce behaviour.** Woo's "hold stock (minutes)" setting cancels an unpaid order and restores its stock, but it applies **only to orders in *Pending payment***. A bank-transfer (BACS) order in Woo goes to **On hold**, and Woo **never auto-cancels an On hold order**: it sits there, holding its reduced stock, until a human acts. That is precisely the problem `Orders.BankTransferExpiryHours` and the `ExpireUnpaidOrders` job exist to solve (P7, P10). Testers should not expect any Woo setting to reproduce it.
 
 ### 5.2 Payment status (08 §3.5 `Payments.Status`, §4.3)
 
@@ -1874,33 +1904,62 @@ Times are suggestions. Role in brackets is the default role that holds the permi
 3. **Expired orders from the last 24 h** (Order Staff): compare with the bank statement; if money arrived, **Accept late payment** or escalate for refund (P10).
 4. **Paid orders** (Order Staff): start processing every order, oldest first (P9).
 5. **Contact enquiries and WhatsApp** (Store Manager): reply to new enquiries; forward order issues to Order Staff; PDPA requests to Store Manager (P15, P17).
+6. **Failed emails** (Store Manager): open the **Email delivery failed** alert or the failed-email count. For each dead message, fix the cause (wrong address, SMTP outage) and **retry**; if it was a payment-slip or order email, phone or WhatsApp the customer the same morning so nobody is left waiting on an email that never arrived (§4, §7 G-37).
 
 ### 6.2 During the day
-6. **Processing orders** (Order Staff): pack; book couriers; mark **Shipped** with courier and tracking number before the courier pick-up cut-off (P9).
-7. **Pickup orders** (Order Staff): mark **Ready for collection** once at the location; mark **Collected** when handed over.
-8. **Second bank-transfer check** (Order Staff), early afternoon (P7).
+7. **Processing orders** (Order Staff): pack; book couriers; mark **Shipped** with courier and tracking number before the courier pick-up cut-off (P9).
+8. **Pickup orders** (Order Staff): mark **Ready for collection** once at the location; mark **Collected** when handed over.
+9. **Second bank-transfer check** (Order Staff), early afternoon (P7).
 
 ### 6.3 End of day
-9. **Bank transfers** (Order Staff): final check, especially orders due to expire overnight.
-10. **Shipped orders** (Order Staff): mark delivered where the courier has confirmed.
-11. **Refund requests** (Store Manager): process agreed refunds; tick "return items to stock" only for items back and sellable (P10).
+10. **Bank transfers** (Order Staff): final check, especially orders due to expire overnight.
+11. **Shipped orders** (Order Staff): mark delivered where the courier has confirmed.
+12. **Refund requests** (Store Manager): process agreed refunds; tick "return items to stock" only for items back and sellable (P10).
 
 ### 6.4 Weekly
-12. **PayPal exchange rate** (Super Admin): update LKR per USD at least **every 7 days**; otherwise PayPal disappears from checkout (P8).
-13. **Low stock** (Store Manager): review the low-stock widget and inventory report; plan replenishment; adjust thresholds (P2).
-14. **Receive stock** (Store Manager): record deliveries and adjustments with reasons; run CSV bulk update after stock-takes (P2).
-15. **Reviews** (Content Editor): moderate pending reviews (P12).
-16. **Promotions** (Store Manager): check upcoming campaign dates and code limits; end expired codes (P3).
-17. **Content** (Content Editor): check announcement messages, homepage blocks and Trending Items links for the coming week (P13).
-18. **Stuck orders** (Store Manager): Shipped for more than 7 days (auto-delivered, check for courier problems); Processing for more than 2 days (P9).
-19. **Sales report** (Store Manager): review week vs previous week; export if needed (P16).
+13. **PayPal exchange rate** (Super Admin): update LKR per USD at least **every 7 days**; otherwise PayPal disappears from checkout (P8).
+14. **Low stock** (Store Manager): review the low-stock widget and inventory report; plan replenishment; adjust thresholds (P2).
+15. **Receive stock** (Store Manager): record deliveries and adjustments with reasons; run CSV bulk update after stock-takes (P2).
+16. **Reviews** (Content Editor): moderate pending reviews (P12).
+17. **Promotions** (Store Manager): check upcoming campaign dates and code limits; end expired codes (P3).
+18. **Content** (Content Editor): check announcement messages, homepage blocks and Trending Items links for the coming week (P13).
+19. **Stuck orders** (Store Manager): **orders auto-marked Delivered in the last week** — confirm with the courier that each one really was delivered, because nobody pressed the button (filter Delivered with no staff entry in the status history); **Processing for more than 2 days** (P9). *Shipped for more than 7 days is not a useful filter: the daily `AutoDeliverShipped` job moves those orders to Delivered, so the list is always empty — except for pickup orders, which the job now skips (08 §4.1, G-18) and which appear under step 8 instead.*
+20. **Sales report** (Store Manager): review week vs previous week; export if needed (P16).
 
 ### 6.5 Monthly
-20. **Staff access review** (Super Admin): deactivate leavers; check roles; confirm two Super Admins with 2FA (P14).
-21. **Audit log spot check** (Super Admin): refunds, settings changes, permission changes (P14).
-22. **Newsletter export** (Store Manager) for the external email tool (P15).
-23. **Delivery settings** (Store Manager): fees, zones, couriers, pickup locations still correct (P6).
-24. **Backups** (technical owner): confirm off-server backups are current; quarterly restore test (08 §8.5).
+21. **Staff access review** (Super Admin): deactivate leavers; check roles; confirm two Super Admins with 2FA (P14).
+22. **Audit log spot check** (Super Admin): refunds, settings changes, permission changes (P14).
+23. **Newsletter export** (Store Manager) for the external email tool (P15).
+24. **Delivery settings** (Store Manager): fees, zones, couriers, pickup locations still correct (P6).
+25. **Backups** (technical owner): confirm off-server backups are current; quarterly restore test (08 §8.5).
+26. **Escalation cover** (Super Admin): confirm both Super Admin accounts are active, reachable and 2FA-enrolled, and that the technical owner still holds the break-glass procedure and the migration login. Record who covers for whom during leave.
+
+**Escalation rules** (they apply every day, not monthly)
+- **An alert nobody has acknowledged for more than 24 hours** is escalated: the Store Manager contacts a Super Admin directly (phone or WhatsApp, not email — a mail problem may be the alert). A `PaymentException` or `CaptureRecoveryFailed` left unacknowledged means real money is sitting unresolved, so it is escalated **the same day**, not after 24 hours.
+- **The only available Super Admin is away or unreachable.** The store has two Super Admin accounts for exactly this reason (08 §9): the second one acts. If both are unavailable, the Store Manager raises it with the **technical owner**, who can run the audited break-glass recovery (P14 step 16) — the last resort, never a convenience.
+- **Nothing is ever resolved by silencing it.** Acknowledging an alert records that a human saw it; it does not fix the underlying issue, and security alert emails cannot be cancelled at all (§4).
+- Write the escalation contacts (Super Admins, Store Manager, technical owner) on the admin handover sheet (OPS-04) and keep them current at this monthly review.
+
+### 6.6 A customer phones about an order
+
+The most common unscheduled task, and the one the checklist above does not cover. Needs `Orders.View`.
+
+1. **Find the order.** In **Orders**, search by **order number** (`SD-2026-000123`) if they have it; otherwise by **email**, **phone** or **customer name**. Confirm you have the right person before saying anything: read back the order date and the item, and let them confirm the amount — never read out the address first.
+2. **Read the status** (§5.1) and answer from it:
+
+   | Status | What to tell the customer |
+   |---|---|
+   | **PendingPayment** (bank) | "We haven't seen the payment yet. It's due by *{due time}*." Offer the bank details and the slip-upload link again; if they have already paid, take the **bank reference** and pass it to whoever approves (P7). |
+   | **PendingPayment** (PayPal, *Pending*) | "PayPal is still holding your payment; they'll confirm within a few days. You can't pay again until then." (P8 step 9 exception.) |
+   | **Paid** / **Processing** | "We have your payment; your order is being packed." Give the expected dispatch day, not a promise. |
+   | **Shipped** | Read the **courier and tracking number**, and resend the tracking link. Pickup: give the location and opening hours. |
+   | **Delivered** | Confirm the delivery date. If they say they did not receive it, check whether it was **auto-marked Delivered** (nobody pressed the button, §6.4) before telling them it arrived — then check with the courier. |
+   | **Expired** / **Cancelled** | "The order closed because payment wasn't confirmed in time, and the items were released." If they insist they paid, take the reference and escalate: staff can still accept it, or refund the money (P7 step 8, P10). |
+   | **Refunded** | State the amount and the date it was sent, plus the bank or PayPal reference. |
+
+3. **Never** ask for or write down card numbers, CVVs, passwords or PayPal credentials, and never ask for their bank account details unless a refund has actually been agreed (P10).
+4. **Record it.** Add an **internal note** to the order saying who called, what was asked and what was promised. The next person to open the order sees it; a WhatsApp thread in someone's phone does not count.
+5. **Hand off, don't guess.** Anything involving money out — a refund, a disputed amount, a payment exception — goes to a `Orders.Refund` holder (Store Manager or Super Admin), not to the person who took the call.
 
 ## 7. Gaps and questions
 
@@ -1908,44 +1967,48 @@ Points where the scope (02), the database design (08) and normal e-commerce prac
 
 Decision owner: **Client** = needs client decision · **Architect** = needs architect decision (design change or clarification in doc 08) · **Build** = build-time note for the developer and tester (no design change).
 
-| # | Topic | Observation | Suggested default | Owner | Process |
+**Status.** A row marked **✅ Resolved (2026-09-22)** has been decided and the decision is already written into doc 08 revision 5 or into this document; it needs no further discussion, only building and testing. Every other row is still open.
+
+| # | Topic | Observation | Resolution, or suggested default if still open | Owner | Process |
 |---|---|---|---|---|---|
 | G-01 | Product publish checklist | 08 only requires alt text on public images at publish. Standard practice also requires at least one active variant, a card image and a price | Block publish without ≥ 1 active variant, a card image and alt text | Build | P1 |
 | G-02 | Permissions for departments and reference data | 08 lists no module for editing departments, attribute options, colour families, sizes and age groups | Departments under `Categories.Edit`; attribute lists, colours, sizes, age groups under `Products.Edit` | Architect | P1 |
-| G-03 | Email confirmation email | D5 requires email confirmation before linking guest orders, but no confirmation template is in the 08 template list; ACC-03 lists only "welcome" | Add an `EmailConfirmation` template (or put the link in `Welcome`) | Architect | P11 |
+| G-03 | Email confirmation email | D5 requires email confirmation before linking guest orders, but no confirmation template is in the 08 template list; ACC-03 lists only "welcome" | **✅ Resolved (2026-09-22, 08 rev 5).** An `EmailConfirmation` template is in the outbox list and its body is deleted as soon as it is sent (08 §3.8); it goes out with `Welcome` at registration (P11) | Architect | P11 |
 | G-04 | Stock CSV format | ADM-12 "bulk update" has no defined file layout, duplicate-SKU rule or download | Columns SKU, OnHand, LowStockThreshold, Reason; duplicates rejected per row; download of current stock provided | Build | P2 |
 | G-05 | Low-stock email | WooCommerce emails low and out-of-stock notices; scope and 08 have dashboard widget only | Keep dashboard only in v1; client to confirm | Client | P2 |
-| G-06 | Contact enquiries admin | 08 has `ContactSubmissions` with statuses, but no admin module/permission, no sidebar entry (doc 02 §G), no staff notification, no spam protection and no delete | Put under Customers (`Customers.View/Edit`); rate limit + honeypot; optional staff notification email to store address | Architect + Client (notification) | P15 |
+| G-06 | Contact enquiries admin | 08 has `ContactSubmissions` with statuses, but no admin module/permission, no sidebar entry (doc 02 §G), no staff notification, no spam protection and no delete | **✅ Resolved (2026-09-22, 08 rev 5).** The module sits under Customers (`Customers.View/Edit`, 08 §3.7), with rate limit and honeypot. **Still open (Client):** whether staff also get a notification email | Architect + Client (notification) | P15 |
 | G-07 | "Exclude sale items" vs markdowns | 08 §6 excludes only campaign-priced lines. A product with only an original price shows a Sale badge and is on the Sale page but still gets the promo | Client to confirm whether markdown-only lines count as sale items | Client | P3 |
 | G-08 | Bag lines over available stock | 08 checks stock at placement; silent on whether the bag auto-reduces quantity or only warns | Warn and block checkout until the customer adjusts; do not change quantities silently | Build | P5 |
-| G-09 | System cancel on PayPal DENIED | 08 §4.1 table lists "System (PayPal DENIED with no retry)" as a cancel actor, but §4.2/§4.3 leave a denied payment Failed and let the order **expire** | Treat as expiry only (no system cancel); correct 08 §4.1 wording | Architect | P8, P10 |
+| G-09 | System cancel on PayPal DENIED | 08 §4.1 table lists "System (PayPal DENIED with no retry)" as a cancel actor, but §4.2/§4.3 leave a denied payment Failed and let the order **expire** | **✅ Resolved (2026-09-22, 08 rev 5).** Expiry only: the System never cancels an order. A DENIED capture shortens `PaymentDueAtUtc` and the order then expires (08 §4.1, §4.2 R2) | Architect | P8, P10 |
 | G-10 | Total changed between review and placement | Prices are recomputed at placement (e.g. a campaign ended a minute earlier). 08 silent on whether the customer must re-confirm | Send the displayed total with the request; if the placed total differs, reject with "prices changed, please review" | Build | P6 |
-| G-11 | Zero-total order | CK allows `GrandTotal = 0` (fixed code + free delivery). A bank transfer or PayPal payment of Rs. 0 makes no sense | Client decision: forbid (minimum total Rs. 1.00) or auto-pay with no payment step (needs architect design) | Client + Architect | P3, P6 |
+| G-11 | Zero-total order | CK allows `GrandTotal = 0` (fixed code + free delivery). A bank transfer or PayPal payment of Rs. 0 makes no sense | **✅ Resolved (2026-09-22, 08 rev 5).** Forbidden: the promo discount is clamped so the grand total never falls below Rs. 1.00, and there is no zero-payment path (08 §6) | Client + Architect | P3, P6 |
 | G-12 | Bank transfer part or over payment | No handling for short or excess transfers | Staff reject short payments with the shortfall; excess refunded outside the system; document in training | Client | P7 |
-| G-13 | Bank money on an Expired/Cancelled order with no stock | Late acceptance fails when stock is gone; Expired/Cancelled → Refunded requires a *CapturedRequiresRefund* payment, which only PayPal creates. No way to record a bank refund for this order | Allow `Orders.Refund` to record a manual refund against the expired bank payment (Expired → Refunded) | Architect | P7, P10 |
+| G-13 | Bank money on an Expired/Cancelled order with no stock | Late acceptance fails when stock is gone; Expired/Cancelled → Refunded requires a *CapturedRequiresRefund* payment, which only PayPal creates. No way to record a bank refund for this order | **✅ Resolved (2026-09-22, 08 rev 5).** `Orders.Refund` records a manual bank refund against the Expired or Pending payment: order → Refunded, no stock effect, refunded amount stays Rs. 0.00 (08 §4.1, §4.3) | Architect | P7, P10 |
 | G-14 | Missing customer emails | Scope ACC-03 and 08 have no email for: bank transfer rejected, payment due reminder, order cancelled, order refunded, delivered/collected, PayPal pending or declined, payment exception ("we will refund you"). WooCommerce sends cancelled, refunded and completed emails as standard | Recommend at least **Bank transfer rejected**, **Order cancelled**, **Order refunded**; client to decide (adds templates, small scope increase) | Client | P7–P10, P12 |
 | G-15 | Staff notification of new orders and slip uploads | WooCommerce emails the store on every new order; ours relies on the admin queue | Optional "new order" and "slip uploaded" email to a store address setting | Client | P6, P7 |
 | G-16 | Bank details changed with orders awaiting payment | Instructions already emailed show old details | Process rule: keep the old account able to receive funds for 48 h after a change | Build (training) | P7, P14 |
-| G-17 | PDPA access/export and guest-only requests | PDPA gives a right of access; 08 has no data export. Anonymisation is per customer account; a guest who never registered has no account to anonymise | Client/legal to confirm need for export; architect to add "anonymise by email" for guest-only data | Client + Architect | P17 |
-| G-18 | Uncollected pickup orders | Auto-Delivered after 7 days also applies to pickup, so an uncollected order becomes Delivered and reviewable | Exclude PICKUP from auto-deliver, or use a longer period; client to set collection deadline policy | Client + Architect | P9 |
+| G-17 | PDPA access/export and guest-only requests | PDPA gives a right of access; 08 has no data export. Anonymisation is per customer account; a guest who never registered has no account to anonymise | **Partly ✅ (2026-09-22, 08 rev 5):** anonymisation is keyed by `EmailNormalized`, so guest-only data can be anonymised (08 §3.1). **Still open (Client/legal):** whether a data export is required | Client + Architect | P17 |
+| G-18 | Uncollected pickup orders | Auto-Delivered after 7 days also applies to pickup, so an uncollected order becomes Delivered and reviewable | **✅ Resolved (2026-09-22, 08 rev 5).** Auto-deliver skips PICKUP orders, so staff mark collection themselves (08 §4.1). **Still open (Client):** the collection-deadline policy | Client + Architect | P9 |
 | G-19 | Partial returns and exchanges | Returns page exists (GLB-10) but v1 refunds only full orders (D6). Returning one item of three or exchanging a size has no system path | Client to confirm v1 policy (e.g. exchanges handled as new order + full refund, or partial refund UI brought forward) | Client | P9, P10 |
 | G-20 | Courier return to sender / failed delivery | No status for a parcel returned to the store | Internal note + refund with restock, or re-ship outside the system; confirm policy | Client | P9 |
 | G-21 | Order edits after placement | No way to change address, phone, delivery method or items after placement | Internal note only in v1; address changes agreed with courier | Client | P9 |
 | G-22 | PayPal refund fails | 08 has refund status Failed and method "Manual other", but no defined flow for a failed provider refund (e.g. refund window passed) | Allow `Orders.Refund` to record a manual refund after a failed API refund | Build | P10 |
-| G-23 | Refund made in PayPal dashboard | 08 creates a refund row from the webhook but does not state whether the order becomes Refunded, or how restock is chosen | Order → Refunded when the full settlement amount is refunded; no restock (staff adjust stock in P2); alert staff | Architect | P10 |
+| G-23 | Refund made in PayPal dashboard | 08 creates a refund row from the webhook but does not state whether the order becomes Refunded, or how restock is chosen | **✅ Resolved (2026-09-22, 08 rev 5).** The order becomes Refunded when the full settlement amount is refunded, with no restock (staff adjust stock in P2) and a `DashboardRefund` alert (08 §4.3, §3.8) | Architect | P10 |
 | G-24 | Sign-in before email confirmation | 08 requires confirmation only for guest order linking; silent on whether unconfirmed customers can sign in and check out | Allow sign-in and checkout; show a "confirm your email" banner | Build | P11 |
 | G-25 | Newsletter consent and unsubscribe | No subscription confirmation (double opt-in), and no email in v1 carries the unsubscribe link; staff cannot mark someone unsubscribed | Single opt-in with consent text; staff action "Unsubscribe" on the list; link included when campaigns start | Client | P15 |
 | G-26 | Guest order lookup | Guests reach orders only via the emailed link; no "track order by number + email" page, common in retail | Client to decide; if wanted, rate-limited lookup that emails the link | Client | P11 |
 | G-27 | Verified buyer after refund | Badge is set when the review is written; a later refund does not remove it | Keep as is (simple); client may prefer removal | Client | P12 |
 | G-28 | 2FA for other sensitive roles | 2FA is mandatory only for Super Admins; custom roles may hold `Orders.Refund` or `Users.Manage` | Recommend optional 2FA for all staff, required for `Orders.Refund` / `Users.Manage` holders | Architect | P14 |
 | G-29 | Refunded orders in sales widgets | Department, category and top-product figures use paid orders (including later refunded); net revenue subtracts refunds only at total level | State clearly on screen, or exclude Refunded orders from product/category rankings | Architect | P16 |
-| G-30 | Anonymisation with open orders | 08 does not block anonymising a customer who has unpaid or undelivered orders | Block while orders are PendingPayment/Paid/Processing/Shipped, with a message | Architect | P17 |
+| G-30 | Anonymisation with open orders | 08 does not block anonymising a customer who has unpaid or undelivered orders | **✅ Resolved (2026-09-22, 08 rev 5).** Anonymisation is blocked while the customer has PendingPayment, Paid, Processing or Shipped orders (08 §3.1) | Architect | P17 |
 | G-31 | Terms and privacy acceptance | No recorded acceptance of Terms at checkout or registration | Show "By placing this order you agree to the Terms" text; no stored flag in v1 | Client | P6, P11 |
 | G-32 | Editing a review | One review per customer per product, but no rule for edits or re-moderation | An edited approved review returns to Pending when approval is required | Build | P12 |
 | G-33 | "Packed" step | Brief and warehouse practice often use a Packed step; 08 has none | Keep within Processing (internal note) | Client (confirm) | P9 |
 | G-34 | Invoice/pro-forma for unpaid orders | Invoice number exists only after payment; business customers paying by bank transfer may ask for a pro-forma | Print an "order summary" (no invoice number) for unpaid orders | Build | P7, P9 |
 | G-35 | Pickup location wording in `OrderShipped` | Same template for courier and pickup | Template variant by delivery method | Build | P9 |
 | G-36 | Customer cancel with bank transfer already made | Customer can cancel an unpaid order after transferring money; staff then accept or refund | Show a warning on the cancel button: "Don't cancel if you've already paid" | Build | P7, P10 |
+| G-37 | Nobody owns an email that dies | After the last retry an outbox row becomes Dead and nothing happens: a customer waiting for bank details or an order link simply waits | **✅ Resolved (2026-09-22, 08 rev 5).** An `EmailDeliveryFailed` alert goes to Super Admins and the Store Manager (08 §3.8); the daily admin routine retries dead messages and phones or WhatsApps the customer when it was a payment or order email (§4) | Architect | P7–P11, P14 |
+| G-38 | Split shipment | An order that cannot go out complete has nowhere to record a second parcel: one courier and one tracking number per order | **✅ Resolved (2026-09-22).** No split shipment in v1. Staff hold the whole order until it is complete, or agree a refund and place a separate order for what can be sent (P9, P10) | Architect | P9 |
 
 ## 8. Traceability table
 
