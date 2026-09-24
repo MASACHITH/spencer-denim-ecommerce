@@ -19,7 +19,12 @@ import { ProductGallery } from './product-gallery';
 import { SizeGuideModal } from './size-guide-modal';
 import { NotFoundPage } from '../not-found/not-found-page';
 import { ProductCard } from '../../ui/product-card/product-card';
-import { ProductBadge, ProductDetailDto, StockStatus } from '../../core/catalog/catalog.model';
+import {
+  ProductBadge,
+  ProductDetailDto,
+  StockStatus,
+  hasSizeGuideContent,
+} from '../../core/catalog/catalog.model';
 import { ProductDetailStore } from '../../core/catalog/product-detail-store';
 import { productErrorMessage } from '../../core/catalog/catalog-api';
 import { formatLkr } from '../../core/catalog/money';
@@ -191,6 +196,7 @@ const RECENT_SHOWN = 6;
                       <span
                         class="swatch__dot"
                         [class.swatch__dot--light]="isLight(option.colour.hexCode)"
+                        [class.is-sold-out]="!option.isInStock"
                         [style.--swatch]="option.colour.hexCode ?? 'transparent'"
                       ></span>
                     </button>
@@ -210,6 +216,7 @@ const RECENT_SHOWN = 6;
                       class="size"
                       type="button"
                       [class.is-selected]="option.size.id === selection().sizeId"
+                      [class.is-sold-out]="option.offered && !option.isInStock"
                       [disabled]="!option.offered"
                       [attr.aria-pressed]="option.size.id === selection().sizeId"
                       [attr.aria-label]="sizeLabel(option)"
@@ -364,12 +371,6 @@ const RECENT_SHOWN = 6;
       text-transform: uppercase;
       color: var(--color-text-muted);
     }
-    .rating {
-      display: flex;
-      align-items: center;
-      gap: var(--space-0-5);
-      font-size: var(--text-small);
-    }
     .pdp__price {
       font-size: var(--text-h3);
     }
@@ -442,6 +443,33 @@ const RECENT_SHOWN = 6;
     }
     .swatch__dot--light {
       border-color: var(--color-border-strong);
+    }
+    /* Sold out, but still made and still selectable — a different thing from a size this
+       colourway is not made in (disabled, struck through) and a different thing again from one in
+       stock. The screen reader was told "Indigo, out of stock" and the sighted shopper was not:
+       a wholly sold-out colourway drew exactly the same swatch as a live one. A diagonal slash
+       rather than a colour change, so it does not rest on colour alone (WCAG 1.4.1), and the same
+       mark on a size button so "sold out" reads the same wherever it appears. It is inset inside
+       the border box and so can never reach the focus ring, which is drawn further out again. */
+    .size.is-sold-out,
+    .swatch__dot.is-sold-out {
+      position: relative;
+      color: var(--color-text-muted);
+    }
+    /* The chosen size is a dark button; muting its label there would drop it below AA. */
+    .size.is-sold-out.is-selected {
+      color: var(--color-on-primary);
+    }
+    .size.is-sold-out::after,
+    .swatch__dot.is-sold-out::after {
+      content: '';
+      position: absolute;
+      inset: 1px;
+      background: linear-gradient(to top left, transparent 47%, currentColor 47% 53%, transparent 53%);
+      pointer-events: none;
+    }
+    .swatch__dot.is-sold-out::after {
+      border-radius: var(--radius-round);
     }
     .size {
       min-width: var(--tap);
@@ -644,7 +672,20 @@ export class ProductPage {
     return rating && rating.count > 0 && rating.average !== null ? rating.average : null;
   });
 
-  protected readonly sizeGuide = computed(() => this.product()?.sizeGuide ?? null);
+  /**
+   * The size guide, **only when there is one worth opening** (PDP-04).
+   *
+   * The API sends a guide's id and name and none of its measurements (issue #32), so this is null
+   * for every product today and neither the trigger nor the dialog renders. A button that opened
+   * a dialog to say "nothing to show here" is a dead control wearing a coat.
+   *
+   * `SizeGuideModal` stays in the template on purpose: when the API projects the content, this
+   * one condition starts answering true and the guide appears with no other change.
+   */
+  protected readonly sizeGuide = computed(() => {
+    const guide = this.product()?.sizeGuide ?? null;
+    return hasSizeGuideContent(guide) ? guide : null;
+  });
 
   protected readonly selectedColourName = computed(() => {
     const id = this.selection().colourId;
@@ -694,8 +735,28 @@ export class ProductPage {
 
   private readonly quantityWanted = signal(1);
 
-  /** Never more than there is, and never fewer than one. */
-  protected readonly maxQuantity = computed(() => Math.max(1, this.stock().available));
+  /** The exact colour × size the shopper has settled on, or null while a choice is outstanding. */
+  private readonly chosenVariant = computed(() => {
+    const item = this.product();
+    return item ? variantFor(item, this.selection()) : null;
+  });
+
+  /**
+   * How many may be asked for.
+   *
+   * Until a variant is settled this is **1**, not the whole colourway's stock. A shopper with no
+   * size chosen was being offered up to 138 of a jean, which is the sum across every size and a
+   * number no single thing can be bought in. Once a size is chosen it is that variant's stock.
+   * A product with no sizes at all has nothing outstanding, so its own stock is the ceiling.
+   */
+  protected readonly maxQuantity = computed(() => {
+    const variant = this.chosenVariant();
+    if (variant) {
+      return Math.max(1, variant.availableQuantity);
+    }
+
+    return this.sizes().length === 0 ? Math.max(1, this.stock().available) : 1;
+  });
 
   protected readonly quantity = computed(() =>
     Math.min(Math.max(this.quantityWanted(), 1), this.maxQuantity()),
@@ -704,15 +765,29 @@ export class ProductPage {
   /**
    * What the quantity box says underneath. It is a live region, so a shopper who types 99 into a
    * box that tops out at 4 is told, rather than watching the number silently change (docs/04 §4).
+   *
+   * **No total until a variant is settled.** While the price line still reads "From Rs. 5,990",
+   * this said "3 × Rs. 5,990 = Rs. 17,970" — a definite sum at an indefinite price, for an amount
+   * of nothing in particular. A shopper who has not chosen a size is told to choose one instead.
    */
   protected readonly quantityNote = computed(() => {
-    const { status, available } = this.stock();
-    if (status === 'OutOfStock') {
+    const variant = this.chosenVariant();
+    const outstanding = !variant && this.sizes().length > 0;
+
+    if (this.stock().status === 'OutOfStock') {
       return '';
     }
 
     if (this.quantityWanted() > this.maxQuantity()) {
-      return `Only ${available} available, so the quantity is ${this.quantity()}.`;
+      // The ceiling, not the colourway's total: with no size chosen those are different numbers,
+      // and quoting the colourway's would explain the clamp with a figure that did not cause it.
+      return outstanding
+        ? 'Choose a size before increasing the quantity.'
+        : `Only ${this.maxQuantity()} available, so the quantity is ${this.quantity()}.`;
+    }
+
+    if (outstanding) {
+      return 'Choose a size to see the total.';
     }
 
     return `${this.quantity()} × ${formatLkr(this.price().current)} = ${formatLkr(
@@ -810,9 +885,21 @@ export class ProductPage {
     this.quantityWanted.set(Math.min(Math.max(this.quantity() + step, 1), this.maxQuantity()));
   }
 
+  /**
+   * Reads the box, clamps it, and **writes the clamped number back into the element**.
+   *
+   * The write-back is not belt and braces. `[value]` only touches the DOM when the bound value
+   * changes, so whenever the typed text clamped to the number the binding already held — `0`, an
+   * empty box, `1.7`, or `99` on a product with one left — Angular wrote nothing and the box went
+   * on showing the raw text while the page priced and stepped from 1. docs/04 §4 asks for the
+   * clamp to happen live rather than on blur, and this is what makes it visible.
+   */
   protected onQuantityInput(event: Event): void {
-    const raw = Number((event.target as HTMLInputElement).value);
-    this.quantityWanted.set(Number.isFinite(raw) ? Math.floor(raw) : 1);
+    const input = event.target as HTMLInputElement;
+    const raw = Number(input.value);
+
+    this.quantityWanted.set(Number.isFinite(raw) && raw >= 1 ? Math.floor(raw) : 1);
+    input.value = String(this.quantity());
   }
 
   protected toggleWishlist(): void {

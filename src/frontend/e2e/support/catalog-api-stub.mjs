@@ -162,15 +162,16 @@ const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 /**
  * How many units of one colour x size there are. Deliberately uneven, the way a real catalogue
- * is: the second colourway is never made in L, and the first colourway's M is always sold out.
- * A grid where everything exists and everything is in stock would agree with any implementation.
+ * is: the second colourway is never made in L, the first colourway's M is always sold out, and
+ * every eleventh product has nothing left at all. A grid where everything exists and everything
+ * is in stock would agree with any implementation.
  */
-function availableFor(colourIndex, sizeIndex) {
+function availableFor(index, colourIndex, sizeIndex) {
   if (colourIndex === 1 && sizeIndex === 2) {
     return null; // not made in this size at all
   }
 
-  if (colourIndex === 0 && sizeIndex === 1) {
+  if (index % 11 === 0 || (colourIndex === 0 && sizeIndex === 1)) {
     return 0; // made, sold out
   }
 
@@ -240,7 +241,7 @@ function productDetail(index, slug) {
     let anyStock = false;
 
     colours.forEach((colour, colourIndex) => {
-      const available = availableFor(colourIndex, sizeIndex);
+      const available = availableFor(index, colourIndex, sizeIndex);
       if (available === null) {
         return;
       }
@@ -249,6 +250,10 @@ function productDetail(index, slug) {
       // The last size costs more, which is what ProductVariants.PriceOverride does in the demo
       // catalogue, and what makes "from Rs. X" mean something.
       const current = sizeIndex === 2 ? base + 500 : base;
+      // Follows the card's own rule rather than always being on: the real API sends
+      // hasDiscount: false for two products in three, and a stub that discounts everything never
+      // lets the no-discount branch reach a browser.
+      const discounted = card.price.hasDiscount;
 
       variants.push({
         id: variants.length + 1,
@@ -260,9 +265,9 @@ function productDetail(index, slug) {
         scaleName: size.scaleName,
         price: {
           current,
-          original: Math.round(current * 1.4),
-          discountPercent: 28,
-          hasDiscount: true,
+          original: discounted ? Math.round(current * 1.4) : current,
+          discountPercent: discounted ? 28 : 0,
+          hasDiscount: discounted,
           currency: 'LKR',
         },
         stockStatus: available === 0 ? 'OutOfStock' : available <= 3 ? 'LowStock' : 'InStock',
@@ -275,6 +280,9 @@ function productDetail(index, slug) {
   });
 
   const prices = variants.map((variant) => variant.price.current);
+  const discounted = card.price.hasDiscount;
+  const inStock = variants.reduce((total, variant) => total + variant.availableQuantity, 0);
+  const lowStock = inStock > 0 && variants.every((variant) => variant.availableQuantity <= 3);
 
   return {
     id: index,
@@ -300,19 +308,24 @@ function productDetail(index, slug) {
     },
     price: {
       current: Math.min(...prices),
-      original: Math.round(Math.max(...prices) * 1.4),
-      discountPercent: 28,
-      hasDiscount: true,
+      original: discounted ? Math.round(Math.max(...prices) * 1.4) : Math.max(...prices),
+      discountPercent: discounted ? 28 : 0,
+      hasDiscount: discounted,
       currency: 'LKR',
     },
     minPrice: Math.min(...prices),
     maxPrice: Math.max(...prices),
     rating: card.rating,
     badge: card.badge,
-    stockStatus: 'InStock',
-    isInStock: true,
+    // Derived from the variants, the way the API derives it, rather than asserted: a payload
+    // that says InStock over a grid of zeroes is a payload the API cannot produce.
+    stockStatus: inStock === 0 ? 'OutOfStock' : lowStock ? 'LowStock' : 'InStock',
+    isInStock: inStock > 0,
     seo: { title: card.name, description: `${card.name} at Spencer Denim.` },
-    sizeGuide: { id: 1, name: 'Women apparel' },
+    // The real API sends null for 6 of its 45 products — a category with no guide set. It also
+    // sends no measurements with the ones it does fill in, which is issue #32 and why the
+    // storefront shows no size-guide trigger at all today.
+    sizeGuide: index % 4 === 0 ? null : { id: 1, name: 'Women apparel' },
     newUntilUtc: null,
     images,
     colours,

@@ -70,6 +70,14 @@
   .product-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 }
 
+/* ---- Rating row: one star, the average, the count (CARD-01, PDP-02, PDP-08) ---- */
+.rating {
+  display: flex;
+  align-items: center;
+  gap: var(--space-0-5);
+  font-size: var(--text-small);
+}
+
 /* ---- Price block: current / original / discount (CARD-01, PDP-02, SRCH-02) ----
    Shared by the product card and the product page, which is why it moved out of the card's own
    scoped styles: two components rendering the same design-system piece from two copies of the

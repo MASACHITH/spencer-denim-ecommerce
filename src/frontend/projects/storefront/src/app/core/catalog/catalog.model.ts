@@ -157,18 +157,70 @@ export interface ProductVariantDto {
   readonly availableQuantity: number;
 }
 
+/** The measurement table of a size guide: `catalog.SizeGuides.TableJson` (doc 08 §1.4, DB15). */
+export interface SizeGuideTableDto {
+  readonly columns: readonly string[];
+  readonly rows: readonly (readonly string[])[];
+}
+
+/**
+ * What a size guide would have to carry for the product page to be able to show one.
+ *
+ * It mirrors `catalog.SizeGuides` column for column, and **the API projects none of it today**
+ * (issue #32). The shape is written down rather than guessed at later so that serving it is the
+ * only change needed here.
+ */
+export interface SizeGuideContentDto {
+  readonly introHtml: string | null;
+  readonly table: SizeGuideTableDto | null;
+  readonly measuringTipsHtml: string | null;
+  readonly imageUrl: string | null;
+}
+
 /**
  * The size guide the product page opens (PDP-04).
  *
- * This is the whole shape the API sends: an id and a name, and nothing else. The measurements
- * exist in the database — `catalog.SizeGuides` has `IntroHtml`, `TableJson`, `MeasuringTipsHtml`
- * and an image, and the seeder fills all four — but `SizeGuideRefDto` does not project them, and
- * no endpoint serves them. The modal is therefore built against this shape and says so; nothing
- * here is hard-coded, and when the contract grows the modal grows with it. See the task report.
+ * `id` and `name` are the whole of what the API sends. The measurements exist in the database —
+ * `catalog.SizeGuides` has `IntroHtml`, `TableJson`, `MeasuringTipsHtml` and an image, and
+ * `CatalogReferenceDataSeeder` fills all four — but `SizeGuideRefDto` does not project them and
+ * no endpoint serves them, which is **issue #32**.
+ *
+ * `content` is therefore optional and, today, always absent. {@link hasSizeGuideContent} is the
+ * one condition the trigger and the modal hang on, so the day the API projects it the guide
+ * appears with no other change.
  */
 export interface SizeGuideRefDto {
   readonly id: number;
   readonly name: string;
+  /** TODO(#32): the API does not send this yet, so a guide never has measurements to show. */
+  readonly content?: SizeGuideContentDto | null;
+}
+
+/**
+ * Whether a size guide has anything a shopper could read.
+ *
+ * A guide with a name and no measurements is not worth a button: opening it would say only that
+ * there is nothing to see, which is worse than the control not being there. Until issue #32 lands
+ * this is false for every product, and the trigger and the dialog do not render at all.
+ */
+export function hasSizeGuideContent(
+  guide: SizeGuideRefDto | null | undefined,
+): guide is SizeGuideRefDto {
+  const content = guide?.content;
+  if (!content) {
+    return false;
+  }
+
+  return (
+    (content.table?.rows.length ?? 0) > 0 ||
+    hasText(content.introHtml) ||
+    hasText(content.measuringTipsHtml) ||
+    hasText(content.imageUrl)
+  );
+}
+
+function hasText(value: string | null): boolean {
+  return typeof value === 'string' && value.trim().length > 0;
 }
 
 /** The admin-written meta tags for one product (GLB-11). `title` already includes the brand. */

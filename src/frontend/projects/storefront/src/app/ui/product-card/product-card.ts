@@ -304,10 +304,8 @@ interface ColourDot {
         font-size: var(--text-body);
       }
     }
+    /* The shared rating row (storefront styles.css); a card sets it a size smaller. */
     .rating {
-      display: flex;
-      align-items: center;
-      gap: var(--space-0-5);
       font-size: var(--text-label);
     }
   `,

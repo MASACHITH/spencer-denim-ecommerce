@@ -110,7 +110,9 @@ function detail(slug: string, overrides: Partial<ProductDetailDto> = {}): Produc
     department: { id: 1, name: 'Women', slug: 'women' },
     breadcrumb: [{ id: 12, name: 'Jeans', slug: 'jeans' }],
     shortDescription: 'A clean high-rise straight leg.',
-    description: 'Cut from rigid cotton denim with a touch of stretch.',
+    // HTML, because `Products.Description` is sanitised HTML (doc 08 §3.2) and the API never
+    // sends anything else. A plain sentence here is what let the page print its own tags.
+    description: '<p>Cut from rigid cotton denim with a touch of stretch.</p>',
     careInstructions: 'Machine wash cold, inside out.',
     attributes: {
       material: 'Denim',
@@ -436,6 +438,52 @@ describe('ProductPage (PDP-01..07)', () => {
       expect(query('.pdp__qty-note')?.textContent).toContain('Only 2 available');
     });
 
+    it('quotes no total, and offers no second unit, until a size is chosen', async () => {
+      await open('/product/high-rise-straight-jean');
+
+      // The price line still says "From", so a total here would be a definite sum at an
+      // indefinite price, for an amount of nothing in particular.
+      expect(query('.pdp__from')).not.toBeNull();
+      expect(query('.pdp__qty-note')?.textContent).toContain('Choose a size');
+      expect(query('.pdp__qty-note')?.textContent).not.toContain('=');
+
+      // And the ceiling is one, not the whole colourway's stock.
+      const up = queryAll<HTMLButtonElement>('.qty__step')[1];
+      expect(up.disabled).toBe(true);
+    });
+
+    it('says why, rather than quoting a stock figure that did not cause the clamp', async () => {
+      await open('/product/high-rise-straight-jean');
+
+      const input = query<HTMLInputElement>('#pdp-quantity')!;
+      input.value = '9';
+      input.dispatchEvent(new Event('input'));
+      harness.detectChanges();
+
+      expect(query('.pdp__qty-note')?.textContent).toContain('Choose a size');
+      // Indigo has seven across its sizes; none of them is a number that explains this clamp.
+      expect(query('.pdp__qty-note')?.textContent).not.toContain('7');
+    });
+
+    /**
+     * The box is bound with `[value]`, which writes nothing when the bound number has not
+     * changed — so a typed value that clamped to the number already held left the raw text on
+     * screen while the page priced and stepped from something else.
+     */
+    it('writes the clamped number back into the box', async () => {
+      await open('/product/high-rise-straight-jean?colour=1&size=10');
+
+      const input = query<HTMLInputElement>('#pdp-quantity')!;
+
+      for (const typed of ['0', '', '1.7', '-4', 'abc']) {
+        input.value = typed;
+        input.dispatchEvent(new Event('input'));
+        harness.detectChanges();
+
+        expect(query<HTMLInputElement>('#pdp-quantity')?.value).toBe('1');
+      }
+    });
+
     it('shows what the chosen quantity costs', async () => {
       await open('/product/high-rise-straight-jean?colour=1&size=10');
 
@@ -469,25 +517,86 @@ describe('ProductPage (PDP-01..07)', () => {
     });
   });
 
+  /**
+   * PDP-04. `SizeGuideRefDto` is `(id, name)` and the API projects none of the measurements that
+   * sit in `catalog.SizeGuides` — issue #32 — so there is nothing a trigger could open. The one
+   * condition the trigger hangs on is `hasSizeGuideContent`, which is false for every product
+   * until the API sends the content.
+   */
   describe('the size guide (PDP-04)', () => {
-    it('offers the guide the API names, and opens it as a dialog', async () => {
+    it('offers no trigger for a guide that carries no measurements', async () => {
       await open('/product/high-rise-straight-jean');
+
+      // The API does send a guide here — an id and a name — and it is still not enough.
+      expect(query('.pdp__guide')).toBeNull();
+      expect(text()).not.toContain('size guide');
+    });
+
+    it('offers nothing when the product has no size guide at all', async () => {
+      await open('/product/no-guide', { sizeGuide: null });
+
+      expect(query('.pdp__guide')).toBeNull();
+    });
+
+    it('offers the trigger the moment the API does send measurements', async () => {
+      // The whole of what issue #32 has to change, expressed as a test: nothing else here moves.
+      await open('/product/with-a-guide', {
+        sizeGuide: {
+          id: 1,
+          name: "Women's apparel",
+          content: {
+            introHtml: '<p>Measurements are in centimetres.</p>',
+            table: { columns: ['Size', 'Bust'], rows: [['S', '83-87']] },
+            measuringTipsHtml: null,
+            imageUrl: null,
+          },
+        },
+      });
 
       const trigger = query<HTMLButtonElement>('.pdp__guide')!;
       expect(trigger.textContent).toContain("Women's apparel size guide");
-      expect(trigger.getAttribute('aria-expanded')).toBe('false');
 
       trigger.click();
       harness.detectChanges();
 
       expect(query('[role="dialog"]')).not.toBeNull();
-      expect(text()).toContain("Women's apparel");
+    });
+  });
+
+  /**
+   * A size that is made but sold out used to render byte for byte like one in stock: the screen
+   * reader was told and the sighted shopper was not.
+   */
+  describe('sold out (PDP-03)', () => {
+    it('marks a sold-out size without disabling it', async () => {
+      await open('/product/high-rise-straight-jean?colour=1');
+
+      const sizes = queryAll<HTMLButtonElement>('.size');
+      // Indigo: S has five, M has none, L has two.
+      expect(sizes[0].classList.contains('is-sold-out')).toBe(false);
+      expect(sizes[1].classList.contains('is-sold-out')).toBe(true);
+      expect(sizes[1].disabled).toBe(false);
+      expect(sizes[1].getAttribute('aria-label')).toContain('out of stock');
     });
 
-    it('offers nothing when the product has no size guide', async () => {
-      await open('/product/no-guide', { sizeGuide: null });
+    it('keeps "sold out" and "not made in this colour" apart', async () => {
+      await open('/product/high-rise-straight-jean?colour=2');
 
-      expect(query('.pdp__guide')).toBeNull();
+      const sizes = queryAll<HTMLButtonElement>('.size');
+      // Ecru has no L variant at all, which is a disabled button, not a sold-out one.
+      expect(sizes[2].disabled).toBe(true);
+      expect(sizes[2].classList.contains('is-sold-out')).toBe(false);
+      expect(sizes[2].getAttribute('aria-label')).toContain('not made in this colour');
+    });
+
+    it('marks a colourway with nothing left', async () => {
+      await open('/product/sold-out', {
+        variants: [variant(1, INDIGO, SMALL, 0), variant(2, ECRU, SMALL, 4)],
+      });
+
+      const dots = queryAll<HTMLElement>('.swatch__dot');
+      expect(dots[0].classList.contains('is-sold-out')).toBe(true);
+      expect(dots[1].classList.contains('is-sold-out')).toBe(false);
     });
   });
 
