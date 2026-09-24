@@ -287,6 +287,41 @@ Two Minor items also found: the antiforgery cookie doesn't force `Secure` (incon
 
 **Overall shape of this task:** three fix-loop rounds, each catching a real, independently-confirmed Major defect (login timing side-channel → antiforgery regression breaking logout over plain HTTP → forgeable audit-log IP address) — the non-negotiable developer→tester process did exactly what it's for here. This took far longer than a typical first slice; the user/architect should weigh that against the Week 1 schedule when deciding whether to pick up W1-08–W1-11 now or move to **W1-02** (categories) first.
 
+### 2026-09-18 — End of day: where to resume
+**State**
+- `main` = `W0-09 scaffold` + `fix(publish)` pin rotation (PR #1, #2 both merged, CI green).
+- **Open branch `feature/W1-02-catalogue-foundation`** (pushed, no PR): 4 commits — catalogue domain, EF mapping + migration + seeders + read-only catalogue API, unit/integration tests, an SQL-command-count test. **Not yet tested by a tester agent** (the developer agent's final report never arrived; its work is committed and the tree is clean).
+- **Open branch `docs/W0-14-business-processes`** (pushed, no PR): `docs/11-business-processes.md` (17 processes, WooCommerce-informed, 36 gaps), docs/06 §4 + docs/09 §5b updates, TASKS/MEMORY. **Independent review was still running when the day ended**; its findings are not yet applied.
+- Client progress page published 2026-09-18: 6% overall, 2 done, 3 in progress, 49 planned.
+
+**Resume tomorrow, in this order**
+1. `git switch feature/W1-02-catalogue-foundation`; re-run the developer's verification (build, `dotnet test` with `TEST_SQL_CONNECTION`, migrate+seed `SpencerDenim_Dev`, exercise the catalogue endpoints), then hand it to a **tester agent**; fix → PR → squash merge.
+2. Re-run the **doc 11 review** (the earlier run's findings were lost when the day ended), apply the fixes, then PR the docs branch and merge.
+3. Then the next build task: **storefront pages** (home, listing with filters, product page) on the real catalogue API, or **admin auth + catalogue screens** — the user still has to choose the order.
+4. Small tasks queued: **W0-16** update GitHub Actions to current majors (Node 20 deprecation warning on every run), **W0-15** Docker packaging (blocked by the office firewall).
+
+**Notes**
+- Publishing the task sheet broke because Hostinger rotated its FTPS certificate to a Let's Encrypt `*.hstgr.io` one. `$PinnedKey` now accepts a list; refresh with `-ShowPin` (docs/10 §4).
+- `SpencerDenim_Dev` on LocalDB currently holds the scaffold-era schema; the catalogue migration may still need applying.
+
+### 2026-09-17 (2) — Scaffold merged, branching workflow adopted, no Docker
+**Decisions (user)**
+- **No Docker for now** (company firewall). Development runs directly on Windows; Docker packaging = W0-15.
+- **Git best practice:** branch per task, Conventional Commits, PR + squash merge after tester pass. Documented in docs/09 §5b; worktrees for parallel agents.
+- **WooCommerce** is the reference for standard e-commerce operations; our baselined design wins where they differ.
+
+**Done**
+- Docker Desktop fixed (`wsl --update --web-download` → WSL 2.7.14) but **not used**; a stuck Docker instance was blocking the UI and was closed.
+- **W0-09 scaffold merged to `main` (`4efe767`, PR #1)**: .NET 10 clean-architecture backend (`/api/ping`, `/health`, `/health/ready`, Swagger in Dev only, EF `AppDbContext` with configurable compatibility level), Angular 21 workspace (storefront SSR, admin, shared tokens library), 20 unit + 8 integration + architecture tests, GitHub Actions CI. **First CI run green.**
+- Local dev database: **LocalDB** `(localdb)\MSSQLLocalDB`, databases `SpencerDenim_*` only. `SpencerDenim_Dev` exists (empty, collation `Latin1_General_100_CI_AS_SC`). The default office SQL instance is never touched (the dev account cannot even log in to it).
+- Integration tests use `TEST_SQL_CONNECTION` (skip with a reason when unset); CI uses a pinned SQL Server service container with a login-based readiness gate. Testcontainers dropped until Docker returns.
+- QA found and the developer fixed: stale README status/paths, broken npm scripts, EF warning noise, missing shared-library and SSR coverage in CI, repeated CI password, and 5 CI first-run risks.
+
+**In progress**
+- `docs/W0-14-business-processes` branch pushed: `docs/11-business-processes.md` (17 processes, WooCommerce-informed, 36 gaps) under independent review; docs/06 §4 and docs/09 §5b updated.
+
+**Open question for the user:** storefront first with sample data, or admin catalogue first (current plan)?
+
 ### 2026-09-17 (1) — Docker guides, hosting, task sheet publishing
 **Done**
 - PDF guides in `docs/guides/`: DEV-GUIDE-01 Docker Desktop on Windows (v1.1, 7 pp) and DEV-GUIDE-02 Fix "WSL needs updating" (3 pp). HTML sources are kept; built with headless Chrome + a pypdf footer stamp.

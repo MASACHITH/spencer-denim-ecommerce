@@ -55,12 +55,18 @@ A task is **Done** only when all of these hold:
 | Level | Tooling | Covers |
 |---|---|---|
 | Unit | xUnit (backend), Angular test runner (frontend) | Domain rules: order state machine, pricing, promo/sale precedence, stock reservation |
-| Integration | xUnit + Testcontainers SQL Server + WebApplicationFactory | API endpoints, EF mappings, auth, PayPal webhook handling (sandbox/mocked) |
+| Integration | xUnit + `WebApplicationFactory` against a **real SQL Server** given by `TEST_SQL_CONNECTION` | API endpoints, EF mappings, auth, PayPal webhook handling (sandbox/mocked) |
 | E2E | Playwright | Critical journeys: browse → filter → PDP → cart → checkout (PayPal sandbox, bank transfer) → admin approves → customer sees status + tracking link |
 | Responsive | Playwright at all 8 breakpoints + screenshot diffs | Every storefront and admin page |
 | Accessibility | axe-core in Playwright | WCAG 2.2 AA |
 | Performance | Lighthouse CI on home, PLP, PDP | Mobile LCP < 2.5 s, CLS < 0.1 |
 | Security | OWASP ZAP baseline on staging, dependency audit | Before go-live |
+
+**Integration-test database (decided 2026-09-17, W0-09).** Testcontainers is **not** used: the office firewall blocks Docker. Instead:
+- **Locally:** set `TEST_SQL_CONNECTION` to LocalDB (`Server=(localdb)\MSSQLLocalDB;Trusted_Connection=True;TrustServerCertificate=True`). The fixture creates a throwaway `SpencerDenim_Test_<guid>` database with collation `Latin1_General_100_CI_AS_SC` and drops it afterwards. Never point tests at the default SQL Server instance; it may hold office databases.
+- **Without the variable:** SQL-backed tests **skip** with a clear reason instead of failing.
+- **In CI:** GitHub Actions runs them against a SQL Server service container on GitHub's own runners, where the firewall doesn't apply.
+- Testcontainers can return once Docker is available (task W0-15).
 
 ## 5. Coding standards
 
@@ -79,6 +85,8 @@ A task is **Done** only when all of these hold:
 | L2 | A class with `display:` overrode the `hidden` attribute, so removed or empty-state elements stayed visible (style tile QA r1) | The global reset must include `[hidden]{display:none !important}`. Test every show/hide state visually, not only in the DOM. |
 | L3 | Under reduced motion, a 0.01ms override on `visibility` meant `focus()` ran on a still-hidden drawer (style tile QA r1) | Move focus only after the element is visible (next frame or after transitionend). Test drawers and dialogs with reduced motion on. |
 | L4 | A pseudo-element with `inset:0` painted over an inset focus outline (style tile QA r1) | Check the focus ring at every breakpoint. Avoid inset outlines on elements that have overlay pseudo-elements. |
+| L5 | A large design document was produced in one agent response, hit the output limit and was lost (DB design, 2026-09-15) | Write long documents to disk section by section, never in a single response. |
+| L6 | An architecture test that only inspected emitted assembly references missed an unused-but-declared dependency; the project-file check caught it (W0-09 QA) | Keep both checks: project references **and** assembly references. Prove a rule fails by deliberately breaking it in a scratch copy. |
 
 ## 7. Session discipline
 
