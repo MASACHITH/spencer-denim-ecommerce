@@ -146,20 +146,41 @@ test.describe('layout', () => {
     });
   }
 
-  test('every visible control is at least 44px on both axes at 320px', async ({ page }) => {
+  /**
+   * The **shell's** controls, which is what this file is about.
+   *
+   * It used to sweep every `a[href]` on the page, which was the same thing while `/` was a
+   * placeholder with nothing on it. HOME-01..10 put a real homepage there, and a product card's
+   * name is a stretched link — its own box is one line of text while the thing a thumb hits is the
+   * whole card. Measuring those boxes here would report a failure that is not one and say nothing
+   * about the header. `home-page.e2e.ts` measures the homepage's own controls, and proves the
+   * stretched link's target really is the card rather than taking the exemption on trust.
+   */
+  test('every control in the shell is at least 44px on both axes at 320px', async ({ page }) => {
     await page.setViewportSize({ width: 320, height: 720 });
     await page.goto('/');
 
-    const tooSmall = await page.evaluate(() =>
-      [...document.querySelectorAll<HTMLElement>('a[href], button, select, input')]
+    const tooSmall = await page.evaluate(() => {
+      const shell = ['sd-site-header', 'sd-site-footer', 'sd-whatsapp-button']
+        .flatMap((host) => [...document.querySelectorAll<HTMLElement>(`${host} a[href], ${host} button, ${host} select, ${host} input`)]);
+
+      // The skip link is the shell's too, and it is the first thing a keyboard meets. It sits at
+      // the root rather than inside any of the three hosts above, so narrowing the sweep to them
+      // had quietly dropped it.
+      const skip = document.querySelector<HTMLElement>('.skip-link');
+      if (skip) {
+        shell.push(skip);
+      }
+
+      return shell
         .filter((el) => el.getClientRects().length > 0)
         .map((el) => ({
           label: `${el.tagName}.${el.className}`.slice(0, 60),
           width: Math.round(el.getBoundingClientRect().width),
           height: Math.round(el.getBoundingClientRect().height),
         }))
-        .filter((box) => box.width < 44 || box.height < 44),
-    );
+        .filter((box) => box.width < 44 || box.height < 44);
+    });
 
     expect(tooSmall).toEqual([]);
   });

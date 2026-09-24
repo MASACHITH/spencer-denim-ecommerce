@@ -54,6 +54,19 @@ const FAULTY_API_PORT = Number(process.env['E2E_FAULTY_API_PORT'] ?? 4427);
 
 export const faultyCatalogueURL = `http://localhost:${FAULTY_PORT}`;
 
+/**
+ * A fifth pair whose **content** service is down while the catalogue is fine. The homepage is
+ * the one page whose whole body comes from that service, and it still has to render the shell
+ * and the way into the shop at a real 200 rather than a blank screen (HOME-01..10).
+ */
+const CONTENT_FAULT_PORT = Number(process.env['E2E_CONTENT_FAULT_PORT'] ?? 4428);
+const CONTENT_FAULT_API_PORT = Number(process.env['E2E_CONTENT_FAULT_API_PORT'] ?? 4429);
+
+export const faultyContentURL = `http://localhost:${CONTENT_FAULT_PORT}`;
+
+/** Exported so a browser-side route can send the page's own calls to the same failing stub. */
+export const faultyContentApiURL = `http://localhost:${CONTENT_FAULT_API_PORT}`;
+
 export default defineConfig({
   testDir: './e2e',
   testMatch: '**/*.e2e.ts',
@@ -114,6 +127,23 @@ export default defineConfig({
       command: 'npm run serve:ssr:storefront',
       url: `${deepCatalogueURL}/healthz`,
       env: { PORT: String(DEEP_PORT), API_INTERNAL_URL: `http://localhost:${DEEP_API_PORT}` },
+      reuseExistingServer: !process.env['CI'],
+      timeout: 120_000,
+    },
+    {
+      command: 'node e2e/support/catalog-api-stub.mjs',
+      url: `http://localhost:${CONTENT_FAULT_API_PORT}/api/catalog/departments`,
+      env: { E2E_API_PORT: String(CONTENT_FAULT_API_PORT), E2E_CONTENT_STATUS: '500' },
+      reuseExistingServer: !process.env['CI'],
+      timeout: 30_000,
+    },
+    {
+      command: 'npm run serve:ssr:storefront',
+      url: `${faultyContentURL}/healthz`,
+      env: {
+        PORT: String(CONTENT_FAULT_PORT),
+        API_INTERNAL_URL: faultyContentApiURL,
+      },
       reuseExistingServer: !process.env['CI'],
       timeout: 120_000,
     },

@@ -45,6 +45,37 @@ git config user.email "<your github email>"
 
 Add a row the first time a session runs on a new machine.
 
+## Scratch scripts and ports are shared too
+
+The temporary directory and the machine's ports are shared by every session on that machine, and
+neither is namespaced. This has now bitten two sessions on one task (W2-01, 2026-09-24):
+
+- A developer wrote `scratchpad/proxy.mjs`, verified the contents, and later read the same path back
+  to find **a different script** — another session's, with different ports and behaviour.
+- A tester started a proxy on a port another session's `node` process already held. It bound, the
+  measurements looked plausible, and the **first batch of results came from someone else's
+  process** before he noticed and redid them.
+
+Neither failure announced itself. A script at a familiar path runs; a port that is already in use
+usually still answers something. So:
+
+1. **Work in a private, uniquely named directory** under the scratch area — `w201-<task>/`,
+   `qa-<task>/` — never the shared root.
+2. **Write every script fresh** at the start of the run, with a name nobody else would choose
+   (`w201-proxy.mjs`, not `proxy.mjs`). Never reuse one you find already there.
+3. **Check it is yours immediately before running it:** `sha256sum <script>`, compared with the
+   hash of what you just wrote. Do this even when you wrote it a minute ago — a minute is long
+   enough.
+4. **Pick per-session ports**, not the conventional ones. 4500/4501 and 8080 are the ports everyone
+   reaches for; take a block nobody else is using and verify it is free first
+   (`netstat -ano | grep ":<port> "`), then verify the thing answering is yours (a banner line, a
+   known response body).
+5. **Never run a script you did not write this session**, whatever its name suggests. Read it first
+   or delete it.
+
+The same applies to databases: the integration fixture already generates a per-run name
+(`SpencerDenim_Test_<guid>`), and a hand-made verification database should too.
+
 ## Ending every session
 
 1. Write your own journal file: `docs/journal/YYYY-MM-DD-<yourname>.md` (done, in progress, blocked, decisions, next). Never edit someone else's.

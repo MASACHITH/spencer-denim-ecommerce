@@ -164,6 +164,20 @@ describe('ListingPage', () => {
     }
   }
 
+  /**
+   * Answers the home page's own content call.
+   *
+   * Several of these tests land on `/` on purpose — it is where an address the catalogue does not
+   * know is sent — and the home page fetches `GET /api/content/home` from its constructor
+   * (HOME-01..10). An empty payload is a real answer: the client may switch every section off, and
+   * the page then renders its fallback.
+   */
+  function flushHomeContent(): void {
+    http
+      .match((request) => request.url === '/api/content/home')
+      .forEach((request) => request.flush({ sections: [] }));
+  }
+
   async function goTo(url: string): Promise<void> {
     primeDepartments();
     harness = await RouterTestingHarness.create(url);
@@ -615,10 +629,14 @@ describe('ListingPage', () => {
       expect(canonical()).toBe('/women/jeans');
 
       await harness.navigateByUrl('/');
-      http.match((request) => request.url.startsWith('/api/ping')).forEach((ping) => ping.flush({}));
+      flushHomeContent();
       harness.detectChanges();
 
-      expect(canonical()).toBeNull();
+      // The home page sets a canonical address of its own (GLB-11), so what matters is that the
+      // listing's is gone rather than that the tag is absent. `clear()` on destroy is what makes
+      // that true for a page with none — the not-found page, for one.
+      expect(canonical()).toBe('/');
+      expect(canonical()).not.toBe('/women/jeans');
     });
   });
 
@@ -676,8 +694,8 @@ describe('ListingPage', () => {
       it(`${path} goes back to the home page, not to the listing`, async () => {
         await goTo(path);
 
-        // The home page's own wiring check; reaching it is the point of the test.
-        http.match((request) => request.url.startsWith('/api/ping')).forEach((ping) => ping.flush({}));
+        // Reaching the home page is the point of the test, and the home page fetches its content.
+        flushHomeContent();
 
         expect(TestBed.inject(Router).url).toBe('/');
         expect(text()).not.toContain('No products found');

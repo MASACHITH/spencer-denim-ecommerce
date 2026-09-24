@@ -9,6 +9,7 @@ namespace SpencerDenim.Infrastructure.Persistence.Seeding;
 /// </summary>
 public sealed partial class CatalogSeedRunner(
     CatalogReferenceDataSeeder referenceData,
+    HomeContentSeeder homeContent,
     DemoCatalogueSeeder demoCatalogue,
     ILogger<CatalogSeedRunner> logger)
 {
@@ -20,6 +21,13 @@ public sealed partial class CatalogSeedRunner(
     public async Task<SeedCounts> RunAsync(bool includeDemoCatalogue, CancellationToken cancellationToken)
     {
         var counts = await referenceData.SeedAsync(cancellationToken);
+
+        // After the reference data, because the department tiles of HOME-02 point at the three
+        // seeded departments and cannot be written before they exist.
+        var content = await homeContent.SeedAsync(cancellationToken);
+        counts.HomeSections = content.Sections;
+        counts.HomeSectionItems = content.SectionItems;
+        counts.AnnouncementMessages = content.Announcements;
 
         if (includeDemoCatalogue)
         {

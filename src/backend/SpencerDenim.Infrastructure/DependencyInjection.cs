@@ -6,7 +6,11 @@ using Microsoft.Extensions.Options;
 using SpencerDenim.Application.Abstractions.Time;
 using SpencerDenim.Application.Catalog;
 using SpencerDenim.Application.Catalog.Abstractions;
+using SpencerDenim.Application.Content.Abstractions;
+using SpencerDenim.Application.Marketing.Newsletter;
 using SpencerDenim.Infrastructure.Catalog;
+using SpencerDenim.Infrastructure.Content;
+using SpencerDenim.Infrastructure.Marketing;
 using SpencerDenim.Infrastructure.Health;
 using SpencerDenim.Infrastructure.Identity;
 using SpencerDenim.Infrastructure.Persistence;
@@ -55,6 +59,11 @@ public static class DependencyInjection
             .Validate(options => options.RelatedProductCount >= 0, "Catalog:RelatedProductCount must be zero or more.")
             .ValidateOnStart();
 
+        // The bound value, for use cases in the Application layer: that project deliberately takes
+        // no options package, so a handler that needs a setting asks for the settings object rather
+        // than for IOptions<T>. IOptions<T> is itself a singleton, so this is the same instance.
+        services.AddSingleton(provider => provider.GetRequiredService<IOptions<CatalogOptions>>().Value);
+
         services.AddScoped<AuditAndSoftDeleteInterceptor>();
 
         services.AddDbContext<AppDbContext>((serviceProvider, builder) =>
@@ -80,8 +89,17 @@ public static class DependencyInjection
         services.AddScoped<IDepartmentCatalogReader, DepartmentCatalogReader>();
         services.AddScoped<IProductCatalogReader, ProductCatalogReader>();
 
+        // Content and newsletter (W2-01, HOME-01..10, GLB-03).
+        services.AddScoped<IHomeContentReader, HomeContentReader>();
+        services.AddScoped<INewsletterSubscriptions, NewsletterSubscriptions>();
+
+        // Doc 08 §3.7's homepage cache. A singleton, because a cache scoped to one request caches
+        // nothing at all.
+        services.AddSingleton<IHomePageCache, HomePageCache>();
+
         services.AddOptions<SeedOptions>().BindConfiguration(SeedOptions.SectionName);
         services.AddScoped<CatalogReferenceDataSeeder>();
+        services.AddScoped<HomeContentSeeder>();
         services.AddScoped<DemoCatalogueSeeder>();
         services.AddScoped<CatalogSeedRunner>();
         services.AddHostedService<CatalogSeedHostedService>();

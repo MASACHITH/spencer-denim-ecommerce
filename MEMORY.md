@@ -16,6 +16,7 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 - **Multiple sessions/machines:** More than one Claude Code session now works on this repo, sometimes on different machines. Handoff protocol, machine readiness check and the known-machines log: [docs/14-multi-session-coordination.md](docs/14-multi-session-coordination.md). Referenced from the root `CLAUDE.md`.
 - **Reference archive:** `reference/` holds read-only copies (taken 2026-09-16) of the old demo (`tuasl-fashion-demo/`), the client documents (signed proposal + theme reference) and the original prototype prompt. See `reference/README.md`. The originals remain outside the repo.
 - **Blockers:** W0-05 Docker/WSL still paused (blocks W0-15). This machine (new, 2026-09-21) has no `gh` CLI, so it can't push yet — see doc 11.
+- **Next:** **W2-01 (homepage, HOME-01..10) PASSED the tester** and is pushed to `origin feature/W2-01-homepage` awaiting a PR: content schema, seeder, read-only content API, newsletter signup endpoint and the page itself. ADM-17's admin screens are **not** in it. Issue #37 (the homepage cache rounds schedule boundaries to its five-minute TTL) is filed, not built.
 - **Next:** **W1-02 (catalogue foundation — schema + demo seeder + the read-only storefront catalogue API) is in the developer↔tester loop** on `feature/W1-02-catalogue-foundation` (worktree `worktrees/sd-catalog`): tester round 1 failed it on 3 major + 5 minor, round 2 on 2 major + 4 minor, all fixed; not pushed, not merged, not Done. Its ADM-11 admin screens are a separate task, **W1-12 (TODO)** — W1-02 no longer means "categories (create/edit/reorder)". W1-08 (Users & Roles CRUD), W1-09 (audit log viewer), W1-10 (2FA enrollment), W1-11 (route guard, SecurityStamp revalidation, forwarded-headers regression test) are the W1-01 follow-ups, tracked but not started; the user/architect should decide priority between those and W1-03 once W1-02 passes.
 - **Pending (can't do from this machine):** CLAUDE.md requires `../client-progress/progress-data.js` to be updated whenever a feature status changes to Done. W1-01 slice 1 just did, but the `client-progress` source folder only exists on the `SCIENTER\sachithi` PC (see docs/11) — not here. Whichever session next runs on that machine should update the admin-auth/RBAC progress line and republish.
 - **Open assumptions:** A1 (Trending Categories / Best Sellers homepage blocks stay removed per signed proposal), A2 (video MP4 ≤ 50 MB, no server conversion).
@@ -42,6 +43,256 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 ---
 
 ## Session log
+
+### 2026-09-24 (6) — W2-01 PASSED, and three things found on the way out
+
+The tester verified all eleven round-1 fixes against a fresh database and the real stack rather
+than against the description, confirmed every number, and **passed the branch**. He backed both
+judgement calls — the hero test rewrite and the flake root-cause — and improved the second:
+`MediaUrlBuilder.ToPublicUrl` passes an `http`/`https` key through but **prefixes anything else**,
+so the old `data:` URI would have reached a real storefront as `/media/data:video/mp4;…`. The
+fidelity argument for serving the video from an absolute URL was stronger than it was put.
+
+Three small things fixed before the PR.
+
+**Minor, and the most interesting: one public-address call permanently silenced the shared-bucket
+warning.** In `NewsletterSignupThrottle` the once-only guard ran *before* the is-this-local test, so
+the first call spent the flag whatever address it came from. The tester proved it against the
+shipped Release assembly: loopback first → 1 warning; **public first, then loopback three times → 0
+warnings**. One signup from a monitor, a probe or a real visitor in any window before Caddy fronts
+the API, and the warning that exists to announce the W0-15 shared-bucket state never fires again for
+the life of the process. The guards are swapped. **The lesson is about the tests, not the code:** the
+three existing tests each used one kind of address on a fresh instance, so not one of them could
+see it — the bug lived in the *sequence*, and nothing tested a sequence. The new theory does
+(`203.0.113.7` then `::1`, and two more pairs); proven red on the old order, 3 failures, green after.
+
+**Two stale comments.** The browser suite still exempted failed `data:` requests "the hero's `data:`
+video is a stand-in the browser cannot decode" — inert since the hero became a real WebM, and an
+exemption nothing needs is one that hides the next failure; it is gone, with no exemptions at all.
+`TASKS.md` still said four sections are seeded off; it is five, HOME-04 among them.
+
+**Filed, not built (issue #37): the cache flattens scheduling precision.** `HomePageCache` always
+expires at `now + 5 minutes`, so a section whose `EndsAtUtc` falls inside a warm entry outlives it —
+measured, a sale that had ended was still served ~250 s later, and a campaign set to end at midnight
+shows until 00:05. Inside doc 08 §3.7's five minutes and harmless to data, but the scheduling rule
+was built and tested to the millisecond and nothing said that caching rounds it off. The class doc
+now says so and names the issue and its fix (clamp to `Min(now + Lifetime, nextScheduleBoundaryUtc)`).
+
+**A process rule that has now cost two sessions on one task, written down in
+[docs/14](docs/14-multi-session-coordination.md) and pointed at from [docs/06](docs/06-engineering-process.md)
+§4.** The scratch directory and the machine's ports are shared and not namespaced. A script this
+session wrote as `scratchpad/proxy.mjs` came back, on a later read, as **another session's script**;
+and the tester's round-2 proxy bound a port a **foreign `node` process already held**, so his first
+batch of measurements went through someone else's process before he caught it and redid them.
+Neither failure announces itself. The rule: a private uniquely named directory, every script written
+fresh with a name nobody else would choose, `sha256sum` checked immediately before running,
+per-session ports verified free and verified to be answering with your own banner — and never run a
+script you did not write this session, whatever its name suggests.
+
+**Numbers:** backend 385 unit (round 1: 382) + 212 integration, 0 skipped; storefront unit 443,
+shared 19, admin 9; Playwright 184, three consecutive clean runs. Lint clean, all builds clean.
+
+**Next:** pushed to `origin feature/W2-01-homepage`; the owner opens the PR.
+
+### 2026-09-24 (5) — W2-01 fix round 1: two gates that disagreed with the rendering
+
+The tester verified every number and every claim from the developer pass — schema, seed counts,
+scheduling, the server-side rows, the `routerLink` fix and all eight API-failure modes, against the
+real stack — and failed the branch on six majors and five minors. All fixed on
+`feature/W2-01-homepage`.
+
+**Major, and the shape of the round: a section's has-content gate and its rendering disagreed.**
+`isUsableTile` counted an *external* link as content; both tile components render with `routerLink`
+and drop anything that is not a path on this site. So a HOME-02 or HOME-04 section whose tiles all
+carried an absolute URL passed the gate and then drew an empty list — a bare heading over a gap
+between two real blocks. Pasting a full `https://spencerdenim.lk/women` into a department tile is an
+ordinary ADM-17 mistake. Reproduced on the real stack: with all three department tiles set to
+absolute URLs the served HTML contained **0 tiles, 0 headings and no section element**, and the four
+other sections were untouched; with one tile absolute, only that tile went. **The lesson is the one
+from W2-05 in a new place: a gate that asks a different question from the renderer is a gate that
+passes things the renderer then drops.** The gate now asks `toLink(...)?.kind === 'internal'`, which
+is exactly what the components can draw.
+
+**Major: the hero video could never autoplay, and the pause control lied about it.** The `<video>` is
+never in the server's HTML — the server always renders the still — so it is always created by
+Angular, and on that path a bare `muted` **attribute** does not set the `muted` **property**.
+Measured live, twice: `HTMLMediaElement.muted === false` with the attribute, `true` with
+`[muted]="true"`. Worse, `playing` was `signal(true)` — an assumption, not an observation — so with
+playback refused no event ever fired and the button read "Pause" over a stopped video; pressing Pause
+started it. `playing` now starts `false` and moves only on the element's own `play`/`playing`/`pause`
+events, and `toggle()` no longer sets it optimistically.
+
+**And the test was one that could not fail.** `${width}px: the video plays, with a way to stop it`
+asserted that the element existed and that a hard-coded label matched `/pause/i`. It passed with the
+product broken. Two things were needed to make it real: it now reads the `muted` **property**, and
+the e2e stub serves a genuinely decodable video (`e2e/support/hero-sample.webm`, three seconds of
+VP8 recorded with this same Chromium) instead of a `data:` URI carrying an MP4 header and nothing
+else. With that in place the test polls `!video.paused`, watches `currentTime` advance, and presses
+the control both ways. **Proven red on the old markup** — the five width cases fail, reporting
+`muted: false`.
+
+**What could not be proven, and is not claimed:** that Chrome *refuses* the unmuted element.
+Playwright's Chromium disables the autoplay policy, and overriding it per test
+(`--autoplay-policy=document-user-activation-required`) did not take; a fixture with an audio track
+played unmuted too. The wrong property is measured; the consequence rests on Chrome's documented
+policy. The one direct sighting of it: while the video URL was still being fetched from the wrong
+origin, the element did not play and the control correctly read **"Play the background video"** —
+which is the honest behaviour the fix introduces.
+
+**Major: re-running the seeder resurrected announcement copy the client had removed.** An
+announcement has no key but the sentence itself, so "insert what is missing" could not tell a
+rewritten line from a deleted one: the "Free island-wide delivery on orders over Rs. 10,000"
+placeholder — a promise the client may have deliberately taken down — came back on the next
+deployment, onto every page of the site. Doc 08 §9/N13 forbids overwriting an admin edit. That step
+is all-or-nothing now: once the table holds anything, it does nothing. Reproduced end to end on a
+fresh database — delete one line, rewrite the other, reseed: `announcements 0`, deletion respected,
+rewrite intact. The class doc claimed every seeded row had a key copy could not change; it now says
+which rows that is true of and which it is not.
+
+**Major: doc 08 §3.7's five-minute homepage cache was simply not implemented**, and one render cost
+16 SQL commands (18 with a department listing) against 5 for a whole listing page — on the busiest
+page on the site. Built as a decorator (`CachedHomePageQueryHandler`) over a keyed registration, with
+the eviction hook ADM-17's save has to call (`IHomePageCache.Evict`, `TODO(ADM-17)` naming it) and a
+`TimeProvider`-driven store. An integration test proves the second render costs **0** SQL commands
+and that evicting makes a change visible at once. On the real stack: 2–17 ms warm against 9–70 ms for
+the equivalent uncached listing call. The per-row cost inherited from the listing reader is
+unchanged and is not this task's to fix.
+
+**Major: `id="newsletter-email"` was on both the homepage form and the footer's**, which is on every
+page including that one. An id is document-unique, so the footer's label pointed at the homepage's
+input: the footer field had **no accessible name at all** and activating its label threw focus up the
+page. axe 4.10 retired `duplicate-id`, so nothing was going to catch it. Scoped per section, like
+`hintId()` and `errorId()` already were. Verified live: no duplicate id anywhere in the document, and
+each label resolves to the input in its own section.
+
+**Major: the signup rate limit was one bucket for the whole site behind a proxy.** Partitioning on
+`RemoteIpAddress` is right and unspoofable, but doc 03 §4 puts Caddy in front and W1-01 deliberately
+left `X-Forwarded-For` off, so every visitor lands in Caddy's partition. **Forwarded headers were not
+turned on here** — that would re-open the audit-log spoofing defect with no proxy address to pin.
+Instead the limit moved *inside* the use case as a port, so the order is validate → take a permit →
+write and a mistyped address costs nobody anything; the ceiling is sized for the shared-bucket case
+(600 per 10 minutes); and the throttle logs a warning, once, naming W0-15 when the address it sees is
+loopback or private. W0-15's row now carries the forwarded-headers work as a **launch blocker**.
+Verified live: 800 mistyped addresses consumed **zero** permits and a real signup still went through;
+620 valid ones produced exactly 600 rows and then 429 with `Retry-After: 600`.
+
+**Minors** — the footer signup is wired to the endpoint and recorded as `footer` rather than telling
+every visitor on every page that nothing was saved (GLB-07 finished; the API accepts `homepage` and
+`footer` and nothing else, so no caller's string reaches a `varchar(30)` the client reads); two more
+tests that could not fail (the announcement assertion looked for a line that is *also* in
+`PLACEHOLDER_ANNOUNCEMENTS`, so it passed whether the feed worked or not — the stub now serves a line
+the fallback does not contain; and narrowing the shell's touch-target sweep had silently dropped the
+root-level `.skip-link`, which is back); the newsletter's timing side channel (95 ms for a new
+address against 7.6 ms for a known one) closed with a 250 ms floor on every answer, driven through
+`TimeProvider` so the tests do not sleep; `parseQuery` builds on `Object.create(null)`, so
+`?__proto__=x` adds a key instead of reassigning a prototype; and the newsletter consent IP joined
+P17's retention table at 90 days, matching the order and enquiry IPs, with both signup forms now
+saying an IP is recorded and a `TODO(GLB-10)` for the policy link.
+
+**HOME-04's seed changed on the tester's argument, and he is right.** Seeding it `auto` shipped a
+best-selling *product row* labelled "Trending now" — not one of HOME-01..10, not the thing HOME-04 is
+defined by, and with a "view all" pointing at `/`. It is seeded `{"mode":"manual"}` and **disabled**,
+alongside the four other artwork-dependent sections, for exactly their reason. A best-sellers row is
+a change request to discuss, not a default. Both modes stay built and tested.
+
+**A flake root-caused rather than retried:** an unrelated newsletter e2e timed out about one run in
+three once the hero had a real video. The video was being proxied through the tests' own
+`page.route` handler, and a looping video held that handler open while everything else on the page
+queued behind it. The stub serves the video from an absolute URL of its own now, so it never enters
+the route handler. Three consecutive clean runs.
+
+**Numbers:** backend 382 unit (round 1: 348) + 212 integration (204), 0 skipped; storefront unit 443
+(431), shared 19, admin 9; Playwright 184 (183), three consecutive clean runs. Lint clean, all builds
+clean, no new runtime dependency.
+
+**Next:** back to the tester.
+
+### 2026-09-24 (4) — W2-01 homepage, developer pass
+
+The placeholder home page is gone. `/` is a real, server-rendered page on
+`feature/W2-01-homepage` (worktree `worktrees/sd-home`), built on the product-page branch. Not
+pushed, not merged, not Done: it goes to the tester next.
+
+**The page has no opinion about what is on it.** Ten section types, every one of them a row in
+`content.HomeSections` that the client will edit in ADM-17: which blocks appear, in what order,
+with what heading, for how long. The page renders the list the API sends, and a section that
+arrives with nothing in it renders **nothing at all** — no frame, no heading over a gap, no
+"coming soon". `hasContent` is one pure function with one test over all ten types, rather than ten
+`@if`s that have to agree.
+
+**The decision worth recording: a product row is resolved server-side, from its own listing URL.**
+`SettingsJson` carries a storefront listing URL (`/new-arrivals`, `/sale`, `/?sort=best-selling`),
+`ListingUrl.ToCriteria` turns it into the criteria the catalogue read store already takes, and the
+same URL is the section's "view all". So the row *is* the head of the listing it links to, by
+construction — they cannot drift apart, and an integration test asserts it against the catalogue
+endpoint itself. Verified live: the homepage's New Arrivals row and `/new-arrivals` both show the
+same two products. The alternative — the page fetching each row — would have put three HTTP round
+trips inside the render of the page a crawler reads, and made the row and its link two definitions
+of one listing. Cost: three sequential SQL queries in one request (sequential because they share a
+DbContext).
+
+**Four sections are seeded switched off**, per doc 08 §9's "media-dependent sections disabled until
+content exists": the hero video, the campaign banner, the activewear feature and the social
+gallery are nothing but artwork and W1-04 has not landed. All four are built against the real
+shape and exercised in the browser through a stub that is deliberately **richer** than the seed —
+mirroring the seed would have left them untested in the one place their behaviour can be seen.
+
+**HOME-04 is the one place the brief and doc 08 disagree, and doc 08 wins.** The brief listed
+Trending among the product-backed rows; doc 08 §3.7 says "trending items store a filtered listing
+URL" and scope HOME-04 says "each card opens the matching filtered listing", which is a row of
+tiles, not of products. Both modes are built: `mode: manual` renders the client's tiles, each
+opening its listing, and that is what HOME-04 means. It is **seeded `auto`** anyway, because §9
+pins the seed at six items and a tile needs artwork — so the row works on day one and becomes the
+tile row the moment the client uploads pictures.
+
+**HOME-10 really subscribes.** `marketing.NewsletterSubscribers` is specified in doc 08 §3.6, so
+the minimal endpoint was built rather than the form being disabled with an explanation. Single
+opt-in, which is the shape that table has (two statuses, no "pending"); a double opt-in needs the
+§3.8 outbox. The answer is the same sentence whether or not the address was already on the list,
+because a form that said otherwise is a way to test whether someone shops here. Rate-limited per
+caller. Verified live end to end: a row with status Subscribed, source `homepage`, the real socket
+peer as the consent IP, and an unsubscribe token.
+
+**Three defects the browser found and jsdom could not:**
+- **`routerLink` given a whole URL as one command percent-encodes the `?`.** A trending tile
+  pointing at `/women/jeans?fit=wide-leg` landed on a path literally called "jeans?fit=wide-leg" —
+  a 404 dressed up as a filter, on the one feature whose entire point is that the card opens the
+  matching filtered listing. `toLink` now splits the query off and hands it over as `queryParams`,
+  repeatable filters included. The announcement bar had the same hole.
+- **The gallery's inset focus ring was no ring at all** from outside the photograph. `edgesWithoutRing`
+  reported all four edges, correctly: the cell was clipping its overflow, so the first version went
+  inset — which is what lesson L4 is about. `object-fit: cover` already crops the square, so the
+  clip was never needed and the ring is an ordinary outward one now.
+- **A container section flush against the banner below it lost the focus ring on its last row.**
+  The full-bleed blocks are `position: relative`, so they paint above the static content before
+  them. Measured on a trending tile at 1280, bottom edge. Fixed with real bottom spacing, which the
+  layout wanted anyway.
+
+**Two shared tests were pointed somewhere they could no longer mean what they said**, and were
+corrected rather than worked around: the shell's touch-target sweep took every `a[href]` on `/`,
+which was fine while `/` was a placeholder and is not now that a product card's stretched link is
+on it — it measures the shell's own controls, and `home-page.e2e.ts` proves the stretched link's
+target really is the card; and the listing's "not the listing" assertion read `.product-grid`,
+which the homepage now uses too, so it asks about the component.
+
+**What the API and the data could not serve, and was therefore not invented:**
+- **No media at all (W1-04).** Department tiles render without photographs — a named panel that
+  opens the department is usable, unlike an empty banner frame — and the four artwork sections stay
+  off the page.
+- **New Arrivals is two products on the seeded catalogue**, because `Catalog.NewArrivalDays` is 30
+  and only two of the 45 demo products are still inside their window. Thin, and honest: it is
+  exactly what `/new-arrivals` shows.
+- **There is no "everything" listing route**, so the trending row has no "view all" to offer and
+  renders none rather than a link to the home page.
+- The benefits copy and the two announcement lines are **placeholders** the client replaces before
+  go-live (docs/04 §4 decision 8, D8). None of them states a figure the system has not been
+  configured with.
+
+**Numbers:** backend 348 unit (was 232) + 204 integration (146), 0 skipped; storefront unit 431
+(361), shared 19, admin 9; Playwright 183 (128), three consecutive clean runs. Lint clean, all
+builds clean, no new runtime dependency.
+
+**Next:** the tester.
 
 ### 2026-09-24 (3) — W2-05 fix round 2: the same blindness, one layer down
 

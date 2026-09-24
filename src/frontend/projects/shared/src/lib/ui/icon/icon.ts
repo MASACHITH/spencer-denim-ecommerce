@@ -25,7 +25,11 @@ export type IconName =
   | 'pin'
   | 'facebook'
   | 'instagram'
-  | 'tiktok';
+  | 'tiktok'
+  // Added for the homepage benefits row (HOME-09): the three seeded benefits are delivery,
+  // returns and quality, and only the first had an icon in this set.
+  | 'refresh'
+  | 'shield';
 
 export type IconSize = 'xs' | 'sm' | 'md';
 
@@ -122,6 +126,14 @@ export type IconSize = 'xs' | 'sm' | 'md';
         @case ('tiktok') {
           <path d="M14 3.5v11.1a3.4 3.4 0 1 1-2.8-3.35" />
           <path d="M14 3.5a5 5 0 0 0 5 5" />
+        }
+        @case ('refresh') {
+          <path d="M20 12a8 8 0 1 1-2.6-5.9" />
+          <path d="M20.5 4v4.5H16" />
+        }
+        @case ('shield') {
+          <path d="M12 3.2l7 2.6v5.4c0 4.4-2.9 7.7-7 9.6-4.1-1.9-7-5.2-7-9.6V5.8z" />
+          <path d="M9 12l2.2 2.2L15.4 10" />
         }
       }
     </svg>

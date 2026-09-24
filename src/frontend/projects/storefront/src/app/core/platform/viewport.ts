@@ -13,6 +13,12 @@ import {
 export const DESKTOP_QUERY = '(min-width: 1024px)';
 
 /**
+ * docs/04 §4: the hero is an image on a phone and a video from 768 px. Nothing else in the
+ * storefront switches at this width today.
+ */
+export const TABLET_QUERY = '(min-width: 768px)';
+
+/**
  * Whether the viewport is wide enough for the desktop layout.
  *
  * This exists so a page can render one thing or the other rather than both. A listing that
@@ -27,9 +33,13 @@ export const DESKTOP_QUERY = '(min-width: 1024px)';
  */
 @Injectable({ providedIn: 'root' })
 export class Viewport {
-  private readonly state = signal(true);
+  private readonly desktop = signal(true);
+  private readonly tablet = signal(true);
 
-  readonly isDesktop: Signal<boolean> = this.state.asReadonly();
+  readonly isDesktop: Signal<boolean> = this.desktop.asReadonly();
+
+  /** True from 768 px: wide enough for the hero to be a video rather than a still (HOME-01). */
+  readonly isAtLeastTablet: Signal<boolean> = this.tablet.asReadonly();
 
   constructor() {
     if (!isPlatformBrowser(inject(PLATFORM_ID)) || typeof window.matchMedia !== 'function') {
@@ -39,12 +49,21 @@ export class Viewport {
     const destroyRef = inject(DestroyRef);
 
     afterNextRender(() => {
-      const query = window.matchMedia(DESKTOP_QUERY);
-      this.state.set(query.matches);
-
-      const onChange = (event: MediaQueryListEvent) => this.state.set(event.matches);
-      query.addEventListener('change', onChange);
-      destroyRef.onDestroy(() => query.removeEventListener('change', onChange));
+      this.track(DESKTOP_QUERY, this.desktop, destroyRef);
+      this.track(TABLET_QUERY, this.tablet, destroyRef);
     });
+  }
+
+  private track(
+    query: string,
+    into: { set(value: boolean): void },
+    destroyRef: DestroyRef,
+  ): void {
+    const media = window.matchMedia(query);
+    into.set(media.matches);
+
+    const onChange = (event: MediaQueryListEvent) => into.set(event.matches);
+    media.addEventListener('change', onChange);
+    destroyRef.onDestroy(() => media.removeEventListener('change', onChange));
   }
 }

@@ -14,8 +14,10 @@ const notFoundPage = () => import('./pages/not-found/not-found-page').then((m) =
 
 export const routes: Routes = [
   {
+    // No `title` here: the page sets its own, as the listing and product pages do. A route title
+    // and a component title are applied by different mechanisms at different moments, and the
+    // loser is whichever ran first.
     path: '',
-    title: 'Spencer Denim',
     loadComponent: () => import('./pages/home/home-page').then((m) => m.HomePage),
   },
   // The product page (W2-05, PDP-01..07). It is listed ahead of the department routes so a

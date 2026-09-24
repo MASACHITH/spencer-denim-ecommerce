@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using SpencerDenim.Domain.Auditing;
 using SpencerDenim.Domain.Catalog;
 using SpencerDenim.Domain.Common;
+using SpencerDenim.Domain.Content;
 using SpencerDenim.Domain.Inventory;
 using SpencerDenim.Infrastructure;
 using SpencerDenim.Infrastructure.Persistence;
@@ -122,6 +123,9 @@ public sealed class CatalogModelTests
             // W1-01, doc 08 §3.8 and §1.4 (DB15): audit diffs are JSON, so nvarchar(max) with ISJSON checks.
             $"{nameof(AuditLog)}.{nameof(AuditLog.BeforeJson)}",
             $"{nameof(AuditLog)}.{nameof(AuditLog.AfterJson)}",
+
+            // W2-01, doc 08 §3.7 and §1.4 (DB15): per-type section settings are JSON.
+            $"{nameof(HomeSection)}.{nameof(HomeSection.SettingsJson)}",
         ];
 
         var offenders = Model.GetEntityTypes()
@@ -287,6 +291,10 @@ public sealed class CatalogModelTests
             "RelatedProduct -> Product",
             "ProductStats -> Product",
             "ProductSearchIndex -> Product",
+
+            // W2-01's content model. Doc 08 §1.6 already names HomeSectionItems in the permitted
+            // list; no cascade was added to that list for this task.
+            "HomeSectionItem -> HomeSection",
 
             // W1-01's Identity model, the same doc 08 §1.6 list.
             "IdentityUserRole -> AppUser",

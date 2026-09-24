@@ -3,7 +3,6 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
-import { PingApi } from '@spencer-denim/shared';
 
 import { App } from './app';
 import { routes } from './app.routes';
@@ -24,16 +23,61 @@ describe('Storefront App', () => {
     expect(wordmark?.textContent?.trim()).toBe('Spencer Denim');
   });
 
-  it('home page shows the brand heading and checks the API', async () => {
+  /**
+   * The scaffold's `/api/ping` wiring check lived on the placeholder home page and said so: "kept
+   * out of the way until HOME-01 replaces this page". HOME-01..10 has replaced it, and the home
+   * page now asks the content service for the sections the client arranged.
+   */
+  it('the home page names the store and asks the content service for its sections', async () => {
     const harness = await RouterTestingHarness.create('/');
     const controller = TestBed.inject(HttpTestingController);
 
     expect(harness.routeNativeElement?.querySelector('h1')?.textContent).toContain('Spencer Denim');
 
-    controller.expectOne(PingApi.url).flush({ status: 'ok', service: 'SpencerDenim.Api', version: '1.0.0', serverTimeUtc: '' });
-    await harness.fixture.whenStable();
+    controller.expectOne('/api/content/home').flush({
+      sections: [
+        {
+          id: 9,
+          type: 'Benefits',
+          title: null,
+          subtitle: null,
+          sortOrder: 9,
+          linkUrl: null,
+          linkLabel: null,
+          overlay: null,
+          items: [
+            {
+              id: 1,
+              title: 'Island-wide delivery',
+              subtitle: null,
+              body: 'We deliver across Sri Lanka.',
+              buttonLabel: null,
+              linkUrl: null,
+              imageUrl: null,
+              imageAltText: null,
+              mobileImageUrl: null,
+              mobileImageAltText: null,
+              videoUrl: null,
+              videoPosterUrl: null,
+              iconKey: 'delivery',
+              departmentSlug: null,
+              departmentName: null,
+              productSlug: null,
+              sortOrder: 1,
+            },
+          ],
+          products: [],
+        },
+      ],
+    });
 
-    expect(harness.routeNativeElement?.textContent).toContain('API connected');
+    await harness.fixture.whenStable();
+    harness.detectChanges();
+
+    expect(harness.routeNativeElement?.textContent).toContain('Island-wide delivery');
+
+    // The department feed is the shell's, not this page's; it is not rendered by the harness.
+    controller.match('/api/catalog/departments').forEach((request) => request.flush([]));
     controller.verify();
   });
 });

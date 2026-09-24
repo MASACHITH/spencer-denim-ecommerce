@@ -168,7 +168,13 @@ test.describe('addresses that are not a department', () => {
 
       expect(response?.status()).toBe(200);
       await expect(page).toHaveURL('/');
-      await expect(page.locator('.product-grid')).toHaveCount(0);
+
+      // The home page, not the listing. `.product-grid` is a design-system class the homepage's
+      // own product rows use as well (HOME-03, HOME-07), so the question has to be asked about
+      // the listing component rather than about a shared stylesheet hook.
+      await expect(page.locator('sd-listing-page')).toHaveCount(0);
+      await expect(page.locator('sd-home-page')).toHaveCount(1);
+      await expect(page.getByText('could not find that page')).toHaveCount(0);
     });
   }
 

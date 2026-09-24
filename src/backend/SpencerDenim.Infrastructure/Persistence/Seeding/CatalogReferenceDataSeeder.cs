@@ -319,8 +319,16 @@ public sealed class SeedCounts
 
     public int MediaAssets { get; set; }
 
+    public int HomeSections { get; set; }
+
+    public int HomeSectionItems { get; set; }
+
+    public int AnnouncementMessages { get; set; }
+
     public override string ToString() =>
         $"departments {Departments}, age groups {AgeGroups}, attribute options {AttributeOptions}, " +
         $"colour families {ColourFamilies}, sizes {Sizes}, size guides {SizeGuides}, categories {Categories}, " +
-        $"products {Products}, variants {Variants}, media assets {MediaAssets}";
+        $"products {Products}, variants {Variants}, media assets {MediaAssets}, " +
+        $"home sections {HomeSections}, home section items {HomeSectionItems}, " +
+        $"announcements {AnnouncementMessages}";
 }
