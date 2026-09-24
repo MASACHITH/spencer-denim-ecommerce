@@ -62,6 +62,12 @@ A task is **Done** only when all of these hold:
 | Performance | Lighthouse CI on home, PLP, PDP | Mobile LCP < 2.5 s, CLS < 0.1 |
 | Security | OWASP ZAP baseline on staging, dependency audit | Before go-live |
 
+**Scratch scripts and ports during verification.** The temporary directory and the machine's
+ports are shared by every session, and a script at a familiar path or a port that answers is not
+proof that either is yours — both have already gone wrong on this project. Private uniquely named
+directory, scripts written fresh and hash-checked immediately before running, per-session ports
+verified free: [14](14-multi-session-coordination.md) "Scratch scripts and ports are shared too".
+
 **Integration-test database (decided 2026-09-17, W0-09).** Testcontainers is **not** used: the office firewall blocks Docker. Instead:
 - **Locally:** set `TEST_SQL_CONNECTION` to LocalDB (`Server=(localdb)\MSSQLLocalDB;Trusted_Connection=True;TrustServerCertificate=True`). The fixture creates a throwaway `SpencerDenim_Test_<guid>` database with collation `Latin1_General_100_CI_AS_SC` and drops it afterwards. Never point tests at the default SQL Server instance; it may hold office databases.
 - **Without the variable:** SQL-backed tests **skip** with a clear reason instead of failing.

@@ -531,11 +531,11 @@ test.describe('the page does not break itself', () => {
         problems.push(`console: ${message.text()}`);
       }
     });
+    // No exemptions. There was one for `data:` URLs while the hero's video was a stand-in the
+    // browser could not decode; the hero serves a real WebM now, every `data:` image in the stub
+    // decodes, and an exemption nothing needs is an exemption that hides the next failure.
     page.on('requestfailed', (request) => {
-      // The hero's data: video is a stand-in the browser cannot decode; nothing else may fail.
-      if (!request.url().startsWith('data:')) {
-        problems.push(`request: ${request.url()}`);
-      }
+      problems.push(`request: ${request.url()}`);
     });
 
     await useStubApi(page);

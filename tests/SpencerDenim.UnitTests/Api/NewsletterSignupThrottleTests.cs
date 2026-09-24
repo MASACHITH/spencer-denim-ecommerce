@@ -108,6 +108,39 @@ public sealed class NewsletterSignupThrottleTests
         Assert.Empty(logger.Warnings);
     }
 
+    /// <summary>
+    /// The order the flag and the address test are applied in.
+    ///
+    /// <para>
+    /// The once-only flag used to be spent first, so the very first call burned it whatever address
+    /// it came from — one signup from a real visitor, a monitor or an uptime probe, arriving in any
+    /// window before Caddy fronts the API, and the shared-bucket warning never fired again for the
+    /// life of the process. The three tests above each use one kind of address on a fresh instance,
+    /// so not one of them could see it: the bug lives in the *sequence*.
+    /// </para>
+    /// </summary>
+    [Theory]
+    [InlineData("203.0.113.7", "::1")]
+    [InlineData("203.0.113.7", "127.0.0.1")]
+    [InlineData("2001:db8::1", "10.0.0.5")]
+    public void A_public_address_first_does_not_silence_the_warning_for_the_shared_one(
+        string publicAddress,
+        string sharedAddress)
+    {
+        var logger = new RecordingLogger();
+        using var throttle = new NewsletterSignupThrottle(logger);
+
+        throttle.TryAcquire(publicAddress);
+        Assert.Empty(logger.Warnings);
+
+        throttle.TryAcquire(sharedAddress);
+        throttle.TryAcquire(sharedAddress);
+        throttle.TryAcquire(sharedAddress);
+
+        var warning = Assert.Single(logger.Warnings);
+        Assert.Contains(sharedAddress, warning, StringComparison.Ordinal);
+    }
+
     /// <summary>Once, not on every signup: a warning on every request is a warning nobody reads.</summary>
     [Fact]
     public void The_warning_is_logged_once()

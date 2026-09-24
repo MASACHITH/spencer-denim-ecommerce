@@ -89,15 +89,22 @@ internal sealed partial class NewsletterSignupThrottle : INewsletterSignupThrott
     /// to fix, and this is what says so out loud rather than leaving it to be noticed when a
     /// launch-day signup is refused.
     /// </para>
+    /// <para>
+    /// <b>The address is tested before the flag is spent</b>, and the order is the whole point. The
+    /// other way round, the first call burned the once-only flag whatever address it came from — so
+    /// a single signup from a real visitor, a monitor or a probe, arriving in any window before
+    /// Caddy fronts the API, silenced this warning for the life of the process. The flag exists to
+    /// stop the warning repeating, not to stop it happening.
+    /// </para>
     /// </summary>
     private void WarnIfTheAddressIsNotAVisitor(string partition)
     {
-        if (Interlocked.CompareExchange(ref _warned, 1, 0) != 0)
+        if (!IsLocal(partition))
         {
             return;
         }
 
-        if (!IsLocal(partition))
+        if (Interlocked.CompareExchange(ref _warned, 1, 0) != 0)
         {
             return;
         }
