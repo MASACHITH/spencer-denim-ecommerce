@@ -104,3 +104,51 @@
 .rich ol { padding-left: var(--space-3); list-style: revert; }
 .rich li + li { padding-top: var(--space-0-5); }
 .rich strong { font-weight: var(--weight-medium); color: var(--color-text); }
+
+/* ---- Homepage section chrome (HOME-01..10) ----
+   Eight components draw a heading, an optional standfirst and an optional "view all" in the same
+   place at the same size. Scoped styles cannot be shared between components, and copying the rules
+   into each one is how two sections end up with headings a few pixels apart. */
+.home-section {
+  display: block;
+}
+.home-section__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-1) var(--space-3);
+  padding-bottom: var(--space-3);
+}
+.home-section__heading {
+  display: grid;
+  gap: var(--space-0-5);
+  min-width: 0;
+}
+.home-section__title {
+  font-size: var(--text-h2);
+  line-height: 1.15;
+}
+.home-section__subtitle {
+  color: var(--color-text-muted);
+  font-size: var(--text-small);
+  line-height: 1.5;
+  max-width: 60ch;
+}
+/* A full-height target: it sits on a baseline with the heading, and a link that is only as tall
+   as its text is a 20 px target on a phone. */
+.home-section__link {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--tap);
+  font-size: var(--text-label);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  white-space: nowrap;
+}
+.home-section__link:hover {
+  text-decoration-thickness: 2px;
+}

@@ -10,9 +10,11 @@ import {
   signal,
   untracked,
 } from '@angular/core';
+import { RouterLink } from '@angular/router';
 import { Icon, ReducedMotion } from '@spencer-denim/shared';
 
 import { AnnouncementService } from '../../core/announcements/announcement.service';
+import { toLink } from '../../core/content/home-sections';
 
 /** How long each message stays up before the next one takes over. */
 export const ANNOUNCEMENT_ROTATION_MS = 6000;
@@ -32,7 +34,7 @@ export const ANNOUNCEMENT_ROTATION_MS = 6000;
  */
 @Component({
   selector: 'sd-announcement-bar',
-  imports: [Icon],
+  imports: [Icon, RouterLink],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: {
     '(mouseenter)': 'setHovered(true)',
@@ -54,7 +56,21 @@ export const ANNOUNCEMENT_ROTATION_MS = 6000;
           </button>
         }
 
-        <p class="announce__text" data-testid="announcement">{{ current().text }}</p>
+        <!-- The client can give a line somewhere to go (content.AnnouncementMessages.LinkUrl).
+             The link is the message itself rather than an extra "read more", so the strip stays
+             one tap target and the accessible name is the sentence a visitor just read. -->
+        <p class="announce__text" data-testid="announcement">
+          @if (destination(); as target) {
+            <a
+              class="announce__link"
+              [routerLink]="target.path"
+              [queryParams]="target.queryParams"
+              >{{ current().text }}</a
+            >
+          } @else {
+            {{ current().text }}
+          }
+        </p>
 
         @if (hasMany()) {
           <button
@@ -106,6 +122,14 @@ export const ANNOUNCEMENT_ROTATION_MS = 6000;
     .announce__control[aria-pressed='true'] {
       background: var(--color-border);
     }
+    .announce__link {
+      display: inline-flex;
+      align-items: center;
+      min-height: var(--tap);
+      color: inherit;
+      text-decoration: underline;
+      text-underline-offset: 3px;
+    }
     .announce__text {
       flex: 1 1 auto;
       min-width: 0;
@@ -148,10 +172,22 @@ export class AnnouncementBar {
   /** Text for the visually hidden status: set only by a previous/next press, never by the timer. */
   protected readonly spokenMessage = this.spoken.asReadonly();
 
+  /**
+   * Where the current line goes, when the client gave it somewhere.
+   *
+   * Through `toLink` rather than straight into `routerLink`: the router encodes a whole URL given
+   * as one command, so `/sale?onSale=true` would land on a path literally called
+   * "sale?onSale=true". Only a path on this site is accepted.
+   */
+  protected readonly destination = computed(() => {
+    const target = toLink(this.current().linkUrl);
+    return target?.kind === 'internal' ? target : null;
+  });
+
   /** Always a message: the index is wrapped against the current list length. */
   protected readonly current = computed(() => {
     const list = this.messages();
-    return list[this.index() % list.length] ?? { id: 'empty', text: '' };
+    return list[this.index() % list.length] ?? { id: 'empty', text: '', linkUrl: null };
   });
 
   private timer: ReturnType<typeof setInterval> | null = null;

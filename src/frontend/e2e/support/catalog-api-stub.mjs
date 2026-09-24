@@ -191,6 +191,9 @@ const SIZES = [
   { id: 12, label: 'L', scaleName: 'Apparel alpha', sortOrder: 3 },
 ];
 
+/** Roughly what `NewsletterEmail.TryNormalise` accepts: enough to tell the two branches apart. */
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@.]+\.[^\s@.]{2,}$/;
+
 /** `CatalogSlug`: lower-case letters and digits, separated by single hyphens. */
 const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
@@ -412,6 +415,176 @@ function productBySlug(slug) {
   return { status: 200, body: productDetail(index, slug) };
 }
 
+
+// ---------------------------------------------------------------- the storefront content API
+
+/**
+ * The homepage as GET /api/content/home sends it (HOME-01..10).
+ *
+ * It is deliberately **richer than the seeded database**, not tidier than it. The seeder switches
+ * the four artwork sections off because there is no media library yet (W1-04), so a stub that
+ * mirrored the seed would leave the hero, both banners and the gallery untested in a browser —
+ * and those are exactly the blocks whose reduced-motion, focus and overflow behaviour only a real
+ * browser can show. So every section is here, with the artwork the client will eventually upload,
+ * plus the two states the page has to survive: a section that is on with nothing in it, and a
+ * tile whose stored link must never reach an href.
+ */
+function homePage() {
+  return process.env.E2E_CONTENT === 'empty' ? { sections: [] } : { sections: SECTIONS };
+}
+
+function contentItem(id, overrides) {
+  return {
+    id,
+    title: null,
+    subtitle: null,
+    body: null,
+    buttonLabel: null,
+    linkUrl: null,
+    imageUrl: null,
+    imageAltText: null,
+    mobileImageUrl: null,
+    mobileImageAltText: null,
+    videoUrl: null,
+    videoPosterUrl: null,
+    iconKey: null,
+    departmentSlug: null,
+    departmentName: null,
+    productSlug: null,
+    sortOrder: 1,
+    ...overrides,
+  };
+}
+
+function contentSection(id, type, overrides) {
+  return {
+    id,
+    type,
+    title: null,
+    subtitle: null,
+    sortOrder: id,
+    linkUrl: null,
+    linkLabel: null,
+    overlay: null,
+    items: [],
+    products: [],
+    ...overrides,
+  };
+}
+
+/**
+ * A real MP4 would be several kilobytes of base64 for no gain: what the hero tests measure is
+ * whether a video element is created and whether it autoplays, not whether it decodes. Its
+ * presence, its controls and its absence under reduced motion are what is under test.
+ */
+const VIDEO = 'data:video/mp4;base64,AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDE=';
+
+const SECTIONS = [
+  contentSection(1, 'HeroVideo', {
+    overlay: 'dark',
+    items: [
+      contentItem(11, {
+        title: 'New season linen',
+        subtitle: 'Cut for the weather here',
+        buttonLabel: 'Shop new arrivals',
+        linkUrl: '/new-arrivals',
+        imageUrl: PIXEL,
+        imageAltText: 'A linen shirt on a balcony',
+        mobileImageUrl: PIXEL,
+        mobileImageAltText: 'A linen shirt on a balcony',
+        videoUrl: VIDEO,
+        videoPosterUrl: PIXEL,
+      }),
+    ],
+  }),
+  contentSection(2, 'ShopByDepartment', {
+    title: 'Shop by department',
+    items: [
+      contentItem(21, { departmentSlug: 'women', departmentName: 'Women', linkUrl: '/women', buttonLabel: 'Shop Women', imageUrl: PIXEL, sortOrder: 1 }),
+      contentItem(22, { departmentSlug: 'men', departmentName: 'Men', linkUrl: '/men', buttonLabel: 'Shop Men', imageUrl: PIXEL, sortOrder: 2 }),
+      // No picture, which is how the seeder writes all three today.
+      contentItem(23, { departmentSlug: 'kids', departmentName: 'Kids', linkUrl: '/kids', buttonLabel: 'Shop Kids', sortOrder: 3 }),
+    ],
+  }),
+  contentSection(3, 'NewArrivals', {
+    title: 'New arrivals',
+    linkUrl: '/new-arrivals',
+    linkLabel: 'View all new arrivals',
+    products: Array.from({ length: 8 }, (_, index) => product(index + 1)),
+  }),
+  contentSection(4, 'TrendingItems', {
+    title: 'Trending now',
+    items: [
+      contentItem(41, { title: 'Wide leg denim', subtitle: 'Women', linkUrl: '/women/jeans?fit=wide-leg', imageUrl: PIXEL, sortOrder: 1 }),
+      contentItem(42, { title: 'Linen shirts', subtitle: 'Men', linkUrl: '/men/shirts?material=linen', imageUrl: PIXEL, sortOrder: 2 }),
+      contentItem(43, { title: 'Half price or better', linkUrl: '/sale?minDiscountPercent=50', imageUrl: PIXEL, sortOrder: 3 }),
+      // A tile the admin screens will eventually refuse. It must not reach an href, and it must
+      // not keep a section alive on its own.
+      contentItem(44, { title: 'Unsafe', linkUrl: 'javascript:alert(1)', imageUrl: PIXEL, sortOrder: 4 }),
+    ],
+  }),
+  contentSection(5, 'CampaignBanner', {
+    overlay: 'dark',
+    items: [
+      contentItem(51, {
+        title: 'Mid-season sale',
+        subtitle: 'Up to 50% off selected styles',
+        buttonLabel: 'Shop the sale',
+        linkUrl: '/sale',
+        imageUrl: PIXEL,
+        mobileImageUrl: PIXEL,
+      }),
+    ],
+  }),
+  contentSection(6, 'ActivewearFeature', {
+    title: 'Activewear',
+    overlay: 'dark',
+    items: [
+      contentItem(61, {
+        title: 'Move in it',
+        body: 'Breathable pieces for the gym and the walk home.',
+        buttonLabel: 'Shop activewear',
+        linkUrl: '/women/dresses?occasion=active',
+        imageUrl: PIXEL,
+      }),
+    ],
+  }),
+  contentSection(7, 'SaleSection', {
+    title: 'Sale',
+    linkUrl: '/sale',
+    linkLabel: 'Shop all sale',
+    products: Array.from({ length: 4 }, (_, index) => product(index + 3)),
+  }),
+  contentSection(8, 'SocialGallery', {
+    title: 'Follow us',
+    items: [
+      contentItem(81, { imageUrl: PIXEL, imageAltText: 'A denim jacket', linkUrl: 'https://instagram.com/example', title: 'Spencer Denim on Instagram', sortOrder: 1 }),
+      contentItem(82, { imageUrl: PIXEL, imageAltText: 'A summer dress', sortOrder: 2 }),
+      contentItem(83, { imageUrl: PIXEL, imageAltText: 'A pair of jeans', linkUrl: 'https://facebook.com/example', title: 'Spencer Denim on Facebook', sortOrder: 3 }),
+    ],
+  }),
+  contentSection(9, 'Benefits', {
+    items: [
+      contentItem(91, { iconKey: 'delivery', title: 'Island-wide delivery', body: 'We deliver across Sri Lanka. The charge for your district is shown at checkout.', sortOrder: 1 }),
+      contentItem(92, { iconKey: 'returns', title: 'Returns and exchanges', body: 'Changed your mind, or need another size? Get in touch and we will sort it out.', sortOrder: 2 }),
+      contentItem(93, { iconKey: 'quality', title: 'Made to last', body: 'Denim and everyday pieces in fabrics chosen for the weather here.', sortOrder: 3 }),
+    ],
+  }),
+  contentSection(10, 'Newsletter', {
+    title: 'Newsletter',
+    subtitle: 'New arrivals and sale news, straight to your inbox.',
+  }),
+  // On, and empty. The API sends it because the client switched it on; the page must draw
+  // absolutely nothing for it — no heading, no frame, no bordered gap.
+  contentSection(11, 'CampaignBanner', { title: 'Nothing to see', sortOrder: 11 }),
+];
+
+/** The announcement strip (GLB-03), with one line that carries a link. */
+const ANNOUNCEMENTS = [
+  { id: 1, message: 'Free island-wide delivery on orders over Rs. 10,000', linkUrl: null },
+  { id: 2, message: 'Easy 14-day returns and exchanges on every order', linkUrl: '/sale' },
+];
+
 /** A slow answer, so a test can prove the menu does not hold the page open waiting for it. */
 const DELAY_MS = Number(process.env.E2E_API_DELAY_MS ?? 0);
 
@@ -436,6 +609,53 @@ const server = createServer((request, response) => {
       DEPARTMENTS_MODE === 'empty' ? [] : DEPARTMENTS_MODE === 'garbage' ? { oops: true } : DEPARTMENTS;
 
     setTimeout(() => response.end(JSON.stringify(body)), DELAY_MS);
+    return;
+  }
+
+  if (url.pathname === '/api/content/home') {
+    const forced = Number(process.env.E2E_CONTENT_STATUS ?? 0);
+    if (forced >= 400) {
+      response.statusCode = forced;
+      response.end(JSON.stringify({ title: 'Forced failure', status: forced }));
+      return;
+    }
+
+    response.end(JSON.stringify(homePage()));
+    return;
+  }
+
+  if (url.pathname === '/api/content/announcements') {
+    response.end(JSON.stringify(process.env.E2E_CONTENT === 'empty' ? [] : ANNOUNCEMENTS));
+    return;
+  }
+
+  if (url.pathname === '/api/content/newsletter') {
+    // Mirrors the endpoint: an address the API will not hold is an RFC 9457 problem naming the
+    // field, and everything else is one sentence, whether or not the address was already listed.
+    let body = '';
+    request.on('data', (chunk) => (body += chunk));
+    request.on('end', () => {
+      let email = '';
+      try {
+        email = String(JSON.parse(body || '{}').email ?? '');
+      } catch {
+        email = '';
+      }
+
+      if (!EMAIL_PATTERN.test(email.trim())) {
+        response.statusCode = 400;
+        response.end(
+          JSON.stringify({
+            title: 'That email address could not be read.',
+            status: 400,
+            errors: { email: ['Enter an email address, for example name@example.com.'] },
+          }),
+        );
+        return;
+      }
+
+      response.end(JSON.stringify({ message: 'Thank you. Your email address is on the list.' }));
+    });
     return;
   }
 

@@ -1,0 +1,278 @@
+import { ChangeDetectionStrategy, Component, computed, inject, input, signal } from '@angular/core';
+import { RouterLink } from '@angular/router';
+import { Icon, ReducedMotion } from '@spencer-denim/shared';
+
+import { HomeSectionDto } from '../../../core/content/content.model';
+import { toLink } from '../../../core/content/home-sections';
+import { Viewport } from '../../../core/platform/viewport';
+
+/**
+ * HOME-01: the hero banner.
+ *
+ * <b>It is an image far more often than it is a video.</b> docs/04 §4 makes the hero an image on a
+ * phone and a video from 768 px, and `prefers-reduced-motion` switches the video off at every
+ * width. On the server it is always the image: `ReducedMotion` answers `true` there, because
+ * server-rendered HTML must never depend on an animation having run, and a crawler or a phone on a
+ * slow connection then gets the still without ever fetching the video.
+ *
+ * <b>It carries a pause control.</b> WCAG 2.2.2 (Level A) asks for a way to stop anything that
+ * moves on its own for more than five seconds, and a looping hero video is exactly that. The
+ * announcement bar has the same control for the same reason.
+ *
+ * The video is decorative: the words are in the markup beside it, and the still carries the alt
+ * text the client wrote in the media library, so the video element is `aria-hidden`.
+ */
+@Component({
+  selector: 'sd-home-hero',
+  imports: [Icon, RouterLink],
+  changeDetection: ChangeDetectionStrategy.OnPush,
+  template: `
+    <section class="hero" [attr.aria-label]="label()">
+      <div class="hero__media" [class.hero__media--scrim]="overlay() !== 'none'">
+        @if (showVideo()) {
+          <video
+            class="hero__video"
+            data-testid="hero-video"
+            [src]="videoUrl()"
+            [poster]="posterUrl()"
+            autoplay
+            muted
+            loop
+            playsinline
+            preload="metadata"
+            aria-hidden="true"
+            tabindex="-1"
+            (playing)="playing.set(true)"
+            (pause)="playing.set(false)"
+          ></video>
+        } @else if (stillUrl(); as still) {
+          <picture>
+            @if (desktopStill(); as wide) {
+              <source media="(min-width: 768px)" [srcset]="wide" />
+            }
+            <img
+              class="hero__image"
+              data-testid="hero-image"
+              [src]="still"
+              [alt]="stillAlt()"
+              fetchpriority="high"
+              decoding="async"
+            />
+          </picture>
+        }
+      </div>
+
+      <div class="container hero__inner">
+        <div class="hero__copy" [class.hero__copy--light]="overlay() === 'dark'">
+          @if (title(); as heading) {
+            <p class="hero__title">{{ heading }}</p>
+          }
+          @if (subtitle(); as standfirst) {
+            <p class="hero__lead">{{ standfirst }}</p>
+          }
+          @if (link(); as target) {
+            @if (target.kind === 'internal') {
+              <a
+                class="btn btn--primary hero__cta"
+                [routerLink]="target.path"
+                [queryParams]="target.queryParams"
+              >
+                {{ buttonLabel() }}
+              </a>
+            } @else {
+              <a class="btn btn--primary hero__cta" [href]="target.href" rel="noopener noreferrer">
+                {{ buttonLabel() }}
+              </a>
+            }
+          }
+        </div>
+
+        @if (showVideo()) {
+          <button
+            class="hero__toggle"
+            type="button"
+            data-testid="hero-toggle"
+            [attr.aria-pressed]="!playing()"
+            [attr.aria-label]="playing() ? 'Pause the background video' : 'Play the background video'"
+            (click)="toggle($event)"
+          >
+            <sd-icon [name]="playing() ? 'pause' : 'play'" size="sm" />
+          </button>
+        }
+      </div>
+    </section>
+  `,
+  styles: `
+    :host {
+      display: block;
+    }
+    .hero {
+      position: relative;
+      /* docs/04 §4: 4:5 on phones, 16:9 from 768 px, capped at 880 px on very wide screens. The
+         box is fixed either way, so swapping the still for the video after hydration moves
+         nothing. */
+      aspect-ratio: 4 / 5;
+      max-height: 880px;
+      background: var(--color-bg-alt);
+      overflow: hidden;
+    }
+    @media (min-width: 768px) {
+      .hero {
+        aspect-ratio: 16 / 9;
+      }
+    }
+    .hero__media {
+      position: absolute;
+      inset: 0;
+    }
+    .hero__media img,
+    .hero__media video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    /* docs/04 decision 7: light text over the photograph with a soft dark fade under it. The fade
+       is on the media, never over the copy, so it can never paint across a focus ring (lesson L4). */
+    .hero__media--scrim::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(to top, rgb(26 26 26 / 0.66) 0%, rgb(26 26 26 / 0.15) 55%, transparent 100%);
+    }
+    .hero__inner {
+      position: relative;
+      height: 100%;
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: var(--space-2);
+      padding-block: var(--space-4);
+    }
+    .hero__copy {
+      display: grid;
+      gap: var(--space-2);
+      justify-items: start;
+      max-width: 34ch;
+    }
+    .hero__copy--light {
+      color: var(--color-on-primary);
+    }
+    .hero__title {
+      font-size: var(--text-display);
+      line-height: 1.05;
+      letter-spacing: -0.01em;
+    }
+    .hero__lead {
+      font-size: var(--text-body);
+      line-height: 1.5;
+    }
+    .hero__cta {
+      background: var(--color-bg);
+      border-color: var(--color-bg);
+      color: var(--color-text);
+    }
+    .hero__cta:hover {
+      background: var(--color-bg-alt);
+      border-color: var(--color-bg-alt);
+    }
+    .hero__toggle {
+      display: inline-grid;
+      place-items: center;
+      flex: none;
+      width: var(--tap);
+      height: var(--tap);
+      padding: 0;
+      border: 1px solid var(--color-bg);
+      background: rgb(26 26 26 / 0.55);
+      color: var(--color-on-primary);
+      cursor: pointer;
+    }
+    .hero__toggle:hover {
+      background: rgb(26 26 26 / 0.8);
+    }
+    /* The ring is drawn outside the border box and the hero clips its overflow, so a control
+       flush against the edge would lose three of its four sides (lesson L4, and the thumbnail
+       rail of W2-05). Both controls sit inside the container's gutter, which is at least 16 px. */
+    .hero__toggle:focus-visible,
+    .hero__cta:focus-visible {
+      outline-offset: 2px;
+    }
+  `,
+})
+export class HomeHero {
+  private readonly reducedMotion = inject(ReducedMotion);
+  private readonly viewport = inject(Viewport);
+
+  readonly section = input.required<HomeSectionDto>();
+
+  /** Whether the video is running, for the pause control's label and icon. */
+  protected readonly playing = signal(true);
+
+  /** The hero is one item; the client arranges the rest of the page, not this. */
+  private readonly item = computed(() => this.section().items[0] ?? null);
+
+  protected readonly title = computed(() => this.item()?.title?.trim() || this.section().title);
+
+  protected readonly subtitle = computed(
+    () => this.item()?.subtitle?.trim() || this.section().subtitle,
+  );
+
+  protected readonly buttonLabel = computed(() => this.item()?.buttonLabel?.trim() || 'Shop now');
+
+  protected readonly link = computed(() => toLink(this.item()?.linkUrl));
+
+  protected readonly overlay = computed(() => this.section().overlay ?? 'dark');
+
+  protected readonly videoUrl = computed(() => this.item()?.videoUrl ?? null);
+
+  /**
+   * The poster is the video's own frame when the media library made one, and the still otherwise.
+   * Doc 08 §3.3 makes a poster mandatory on a video asset, so the first branch is the usual one.
+   */
+  protected readonly posterUrl = computed(
+    () => this.item()?.videoPosterUrl ?? this.stillUrl() ?? null,
+  );
+
+  /** The phone still, falling back to the wide one when the client uploaded only one picture. */
+  protected readonly stillUrl = computed(
+    () => this.item()?.mobileImageUrl ?? this.item()?.imageUrl ?? null,
+  );
+
+  /** The wide still, used from 768 px when the client uploaded a separate one. */
+  protected readonly desktopStill = computed(() => {
+    const item = this.item();
+    return item?.imageUrl && item.mobileImageUrl ? item.imageUrl : null;
+  });
+
+  protected readonly stillAlt = computed(
+    () => this.item()?.mobileImageAltText ?? this.item()?.imageAltText ?? '',
+  );
+
+  /**
+   * The video plays only where docs/04 says it may: in a browser, wide enough for it, with motion
+   * allowed, and with a video to play. Anything else renders the still.
+   */
+  protected readonly showVideo = computed(
+    () => !!this.videoUrl() && this.viewport.isAtLeastTablet() && !this.reducedMotion.enabled(),
+  );
+
+  protected readonly label = computed(() => this.title() ?? this.section().title ?? 'Featured');
+
+  protected toggle(event: Event): void {
+    const video = (event.currentTarget as HTMLElement)
+      .closest('.hero')
+      ?.querySelector<HTMLVideoElement>('.hero__video');
+
+    if (!video) {
+      return;
+    }
+
+    if (video.paused) {
+      void video.play();
+      this.playing.set(true);
+    } else {
+      video.pause();
+      this.playing.set(false);
+    }
+  }
+}
