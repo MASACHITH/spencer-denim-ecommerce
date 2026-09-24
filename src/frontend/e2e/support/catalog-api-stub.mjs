@@ -68,6 +68,40 @@ const COLOURS = [
 const BADGES = [null, 'New', 'Sale', 'BestSeller', 'LowStock'];
 
 /**
+ * Every colourway the demo catalogue seeds, hex for hex (`DemoCatalogueData`).
+ *
+ * The three colours above are enough for a card, but not for the sold-out swatch: whether its
+ * mark can be seen depends entirely on the colour underneath it, and testing one swatch tests one
+ * colour. The wholly sold-out product carries all sixteen so the check covers the palette a
+ * shopper can actually meet.
+ */
+const SEEDED_PALETTE = [
+  ['Sandstone Beige', 'beige', '#D8CBB6'],
+  ['Optic White', 'white', '#FFFFFF'],
+  ['Coconut Cream', 'cream', '#F3EADA'],
+  ['Deep Navy', 'navy', '#1F2A44'],
+  ['True Black', 'black', '#101010'],
+  ['Charcoal Grey', 'grey', '#4A4D52'],
+  ['Indigo Rinse', 'blue', '#3A5A8C'],
+  ['Mid Wash Blue', 'blue', '#6E93C4'],
+  ['Olive Green', 'green', '#5C6B4A'],
+  ['Terracotta', 'orange', '#C4703F'],
+  ['Blush Pink', 'pink', '#E8A0BF'],
+  ['Deep Maroon', 'red', '#7E2B2B'],
+  ['Mustard', 'yellow', '#D9A93C'],
+  ['Plum', 'purple', '#6C4A8F'],
+  ['Chocolate', 'brown', '#5B3F2E'],
+  ['Deep Teal', 'green', '#2E6B66'],
+].map(([name, familySlug, hexCode], index) => ({
+  id: 101 + index,
+  name,
+  familyName: familySlug[0].toUpperCase() + familySlug.slice(1),
+  familySlug,
+  hexCode,
+  swatchImageUrl: null,
+}));
+
+/**
  * Enough products that "Load More" has something to add at every page size the listing asks for.
  * Raised through the environment when a test needs a deep restore to be worth restoring.
  */
@@ -189,7 +223,9 @@ function availableFor(index, colourIndex, sizeIndex) {
  */
 function productDetail(index, slug) {
   const card = product(index);
-  const colours = card.colours;
+  // The wholly sold-out product wears the whole seeded palette, so the sold-out mark is checked
+  // against every colour it has to show up on rather than against one.
+  const colours = index % 11 === 0 ? SEEDED_PALETTE : card.colours;
   const base = card.price.current;
 
   const images =
