@@ -17,9 +17,18 @@ import { SizeGuideRefDto } from '../../core/catalog/catalog.model';
  * is on and says, in the shopper's language, that the measurements are not published yet, with
  * the one route to help that does exist today (GLB-08, the WhatsApp button).
  *
- * The follow-up is an API change, not a component change: project `IntroHtml`, the parsed
- * `TableJson` and `MeasuringTipsHtml` onto `SizeGuideRefDto` (or add
- * `GET /api/catalog/size-guides/{id}`), and this component grows a table where the notice is.
+ * **TODO(#32) — there are two halves to this, not one.**
+ *
+ * 1. *The API.* Project `IntroHtml`, the parsed `TableJson` and `MeasuringTipsHtml` onto
+ *    `SizeGuideRefDto`, or add `GET /api/catalog/size-guides/{id}`. `SizeGuideContentDto` in
+ *    `core/catalog/catalog.model.ts` already writes down the shape it has to arrive in.
+ * 2. *This component.* `hasSizeGuideContent` is what brings the trigger and the dialog back, and
+ *    it is wired — but **the body below is not**. It renders the "not published yet" notice
+ *    unconditionally, so a guide that did arrive with measurements would open and still say there
+ *    are none. The table, the intro, the measuring tips and the image all have to be built here.
+ *
+ * Neither half is any use without the other, and the first one is the one that looks like the
+ * whole job from the outside.
  */
 @Component({
   selector: 'sd-size-guide-modal',

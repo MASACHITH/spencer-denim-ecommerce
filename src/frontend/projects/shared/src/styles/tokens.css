@@ -34,6 +34,16 @@
   --focus-width: 2.5px;                           /* draws at least 2 CSS px after pixel snapping */
   --tap: 44px;                                    /* minimum touch target */
 
+  /* How much of the viewport the sticky header (GLB-04) covers, which is what an anchor jump or
+     a focused element has to be pushed clear of. It is *tallest on a phone*, not on a desktop:
+     below 1024 px the header is a two-row grid and the announcement bar wraps. Measured on the
+     product page, worst placeholder message at each width: 320 -> 170, 375 -> 154, 390 -> 154,
+     768 -> 151, 1024 and up -> 118. The values below carry a little headroom over those.
+
+     It is a token rather than a number in base.css because the header owns its own height: the
+     announcement bar changing is what will move it next. See the note in site-header.ts. */
+  --header-height: 176px;
+
   /* ---- Brand exception: WhatsApp (docs/04 style-tile decision 6) ---- */
   /* WhatsApp's darker brand green. The bright #25d366 gives only 1.9:1 against white,
      which fails WCAG 2.2 AA non-text contrast (1.4.11) for both the button edge and the
@@ -79,6 +89,11 @@
 
 @media (min-width: 768px) {
   :root { --gutter: var(--space-4); }
+}
+
+/* From 1024 px the header is one flex row with no district strip below it, and loses ~52 px. */
+@media (min-width: 1024px) {
+  :root { --header-height: 128px; }
 }
 
 @media (min-width: 1280px) {

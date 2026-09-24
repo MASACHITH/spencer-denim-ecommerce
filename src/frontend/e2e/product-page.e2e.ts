@@ -551,32 +551,6 @@ test.describe('reduced motion', () => {
   }
 
   /**
-   * The browser scrolls a focused element to the very top of the viewport, which on this site is
-   * underneath the sticky header (GLB-04). Tabbing to the zoom button left 78 px of it behind the
-   * header at 1280×800. `scroll-padding-top` on `html` is the fix, and it belongs to the shell
-   * rather than to this page — but it is measurable here, so it is guarded here.
-   */
-  test('a focused control is not scrolled under the sticky header', async ({ page }) => {
-    await page.setViewportSize({ width: 1280, height: 800 });
-    await page.goto(PRODUCT);
-    await recorded(page, 'test-product-1');
-
-    const hidden = await page.evaluate(() => {
-      const header = document.querySelector('header');
-      const target = document.querySelector<HTMLElement>('.gallery__open');
-      if (!header || !target) {
-        return -1;
-      }
-
-      target.scrollIntoView({ block: 'start', behavior: 'instant' });
-      return Math.round(header.getBoundingClientRect().bottom - target.getBoundingClientRect().top);
-    });
-
-    // Nothing of the control may sit above the header's lower edge.
-    expect(hidden).toBeLessThanOrEqual(0);
-  });
-
-  /**
    * The rail is a scrolling row on a phone and a scrolling column from 768 px, and the two clip on
    * different axes, so the ring has to be checked at both. It was cropped at 375 px as well.
    */
@@ -602,6 +576,50 @@ test.describe('responsive (GLB-09)', () => {
       await expect(page.locator('h1')).toBeVisible();
 
       expect(await horizontalOverflow(page)).toBeLessThanOrEqual(0);
+    });
+  }
+
+  /**
+   * The browser scrolls a focused element to the very top of the viewport, which on this site is
+   * underneath the sticky header (GLB-04): 118 px of the zoom button sat behind it. The fix is
+   * `scroll-padding-top` on `html`, which belongs to the shell rather than to this page, but it
+   * is measurable here.
+   *
+   * **At every width, not at one.** The first version of this ran only at 1280×800 — the single
+   * width where the value already worked — which is the third time in this task a check has been
+   * pointed somewhere it could not fail. The header is *tallest on a phone*, because the
+   * announcement bar wraps: 170 px at 320, against 118 at 1280.
+   */
+  for (const width of BREAKPOINTS) {
+    test(`${width}px: a focused control is not scrolled under the sticky header`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width, height: 800 });
+      await page.goto(PRODUCT);
+      await recorded(page, 'test-product-1');
+
+      const measured = await page.evaluate(() => {
+        const header = document.querySelector('header');
+        const target = document.querySelector<HTMLElement>('.gallery__open');
+        if (!header || !target) {
+          return null;
+        }
+
+        target.scrollIntoView({ block: 'start', behavior: 'instant' });
+        return {
+          headerHeight: Math.round(header.getBoundingClientRect().height),
+          hidden: Math.round(
+            header.getBoundingClientRect().bottom - target.getBoundingClientRect().top,
+          ),
+        };
+      });
+
+      // Reported rather than just asserted, so a failure says how tall the header actually was.
+      expect(measured, 'the page did not render a header and a zoom button').not.toBeNull();
+      expect(
+        measured!.hidden,
+        `${measured!.headerHeight}px of header at ${width}px wide`,
+      ).toBeLessThanOrEqual(0);
     });
   }
 

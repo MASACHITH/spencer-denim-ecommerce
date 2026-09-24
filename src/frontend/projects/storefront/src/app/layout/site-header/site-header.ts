@@ -117,7 +117,20 @@ import { StorefrontCounts } from '../../core/storefront-counts.service';
   styles: `
     /* The host is what sticks: a sticky element can only travel inside its own containing
        block, and .site-header's parent is exactly its own height. Sticking the host lets it
-       travel the height of the page shell instead, with no layout shift. */
+       travel the height of the page shell instead, with no layout shift.
+
+       Because it sticks, it covers the top of the viewport, and anything scrolled to — an anchor
+       jump, a focused control — has to clear it. That is --header-height in tokens.css, and this
+       component's height is what it describes: **if the rows here change, that token moves with
+       them.** It is measured, not derived, and nothing enforces the link but the breakpoint tests
+       in e2e/product-page.e2e.ts.
+
+       The awkward part is that this height is not constant. The announcement bar wraps, so the
+       header is 170 px at 320 px wide against 118 at 1280, and at 320 it changes *as the bar
+       rotates* — 170 for the delivery line, 151 for the shorter one. The token covers every
+       placeholder message at every width; a longer one an admin writes later would out-grow it
+       (a 110-character line measures 206 px at 320). TODO(ADM-17): when the messages become admin
+       text, set --header-height from this element's observed height instead of from a token. */
     :host {
       display: block;
       position: sticky;

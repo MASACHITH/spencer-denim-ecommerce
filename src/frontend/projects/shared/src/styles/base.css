@@ -8,11 +8,13 @@ html {
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
   /* The header is sticky (GLB-04), and the browser scrolls a focused element to the very top of
-     the viewport — underneath it. Tabbing to the product page's zoom button left 78 px of it
-     behind the header at 1280x800. This is the one declaration that fixes it for every page and
-     every anchor jump; the value is the tallest the header gets, and erring high only leaves a
-     little more room above the thing you tabbed to. */
-  scroll-padding-top: 128px;
+     the viewport — underneath it. Tabbing to the product page's zoom button left 118 px of it
+     behind the header. One declaration fixes it for every page and every anchor jump.
+
+     The first attempt hard-coded 128 px and called it "the tallest the header gets", which was
+     wrong twice over: 128 is the *desktop* height plus ten, and the header is tallest on a phone,
+     where it still hid 23-42 px. --header-height carries the real figures per breakpoint. */
+  scroll-padding-top: var(--header-height);
 }
 
 body {
