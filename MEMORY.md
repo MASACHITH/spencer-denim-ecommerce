@@ -43,6 +43,66 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 
 ## Session log
 
+### 2026-09-24 (2) — W2-05 fix round 1: a test that could not fail
+
+The tester verified every number and every claim from the developer pass and failed the branch on
+two majors and five minors. All fixed on `feature/W2-05-product-page`.
+
+**Major, and the lesson of the round: the thumbnail focus ring was clipped, and the test was
+structurally incapable of noticing.** The rail scrolls, so its padding box is the clip edge, and
+the thumbnails sat flush against it; a ring is drawn *outside* the border box, so three of its four
+sides were cropped and a 2 px sliver along the top survived. Lesson L4 again. The assertion read
+`getComputedStyle(element).outlineWidth` — the outline the element *would* paint — which no
+ancestor's clipping can ever change, so it passed on a ring three quarters invisible. It now
+screenshots the strip outside each edge with the control focused and again blurred and fails on any
+edge whose pixels come back identical. **Proven red on the old CSS before the fix** (all four edges
+at 1280 and at 375), green after, green for the other six controls throughout.
+
+Two of its first reds were the helper *refusing to measure* rather than passing quietly — a control
+flush against the viewport edge, and the zoom button's top strip covered by the sticky header at
+y=118 — which is the behaviour worth having. Both were answered by the viewport the test sets, not
+by loosening the assertion. **Rule: an accessibility assertion that reads a computed style is
+testing the stylesheet, not the screen. Measure the pixels, and make the unmeasurable case throw.**
+
+**Major: a sold-out size or colour looked exactly like one in stock.** The CSS distinguished only
+`:disabled`, bound to "not made in this colourway"; a variant that is made with nothing left got no
+treatment at all. Measured on the live API: sizes 26 and 28 of `wide-leg-rinse-jeans` were
+byte-identical to 30/32/34, and both swatches of `sleeveless-column-dress` drew the in-stock
+border. The screen reader was told and the sighted shopper was not. Three states now, the sold-out
+one marked with a diagonal slash rather than a colour change (WCAG 1.4.1), inset inside the border
+box so it can never reach the focus ring.
+
+**Minors** — the quantity box kept showing `0`, an empty string or `1.7` whenever the typed value
+clamped to the number the binding already held (`[value]` writes nothing when the value is
+unchanged), so the clamped number is written back to the element; with no size chosen the page
+quoted "3 × Rs. 5,990 = Rs. 17,970" under a price line reading "From", and offered a ceiling of 138
+— the whole colourway's stock — so the ceiling is 1 and the note asks for a size until a variant is
+settled; the touch-target test claimed "every control" while excluding every link, and now says
+what it measures, with the links checked separately against the exemption each one actually stands
+on (a stretched card link whose target is the card, or a breadcrumb crumb at 44 px tall and over
+the AA 24 px minimum); `role="tabpanel"` no longer renders without a tab list.
+
+**The size-guide trigger is gone until issue #32.** `SizeGuideRefDto` is `(id, name)` and the API
+projects none of the content in `catalog.SizeGuides`, so the button opened a dialog to say there
+was nothing to see. `SizeGuideContentDto` now writes down the shape the API has to send,
+`hasSizeGuideContent` is the single condition the trigger and the modal hang on, and a test proves
+both come back the moment content arrives. `SizeGuideModal` stays in the tree.
+
+**The stub was still shaped more politely than the API** — everything in stock, everything
+discounted, every product with a size guide — so those branches never reached a browser. Stock and
+discount are derived from the variant grid now, every eleventh product is wholly out of stock and
+every fourth has no size guide. **Same lesson as W2-03 round 3 and as the description bug: a stub
+that is tidier than the real API tests nothing.**
+
+`Modal` also got its own spec (14 cases), because the only cover it had was the size-guide tests
+that just went away; and the rating row joined the price block in the shared stylesheet rather than
+being copied into two components.
+
+**Numbers:** storefront unit 333 (round 1: 312), Playwright 117 (112), shared 19, admin 9; backend
+232 + 146, 0 skipped. Lint clean, builds clean with no budget warnings.
+
+**Next:** back to the tester.
+
 ### 2026-09-24 (1) — W2-05 product detail page, developer pass
 
 `/product/:slug` is a real, server-rendered page on `feature/W2-05-product-page` (worktree
