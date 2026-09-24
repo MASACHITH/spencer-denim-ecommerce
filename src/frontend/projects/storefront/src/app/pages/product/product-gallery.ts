@@ -142,9 +142,10 @@ const ZOOM_STEPS = [1, 2, 3] as const;
           @if (fullScreenSource(); as source) {
             <img
               class="viewer__img"
+              [class.viewer__img--fit]="zoom() === minZoom"
               [src]="source"
               [alt]="altFor(current())"
-              [style.width.%]="zoom() * 100"
+              [style.width.%]="zoom() > minZoom ? zoom() * 100 : null"
               decoding="async"
             />
           } @else {
@@ -304,6 +305,12 @@ const ZOOM_STEPS = [1, 2, 3] as const;
       display: inline-block;
       max-width: none;
       height: auto;
+    }
+    /* At 1x the photograph fits the frame; every step above it overflows and the frame pans. */
+    .viewer__img--fit {
+      width: auto;
+      max-width: 100%;
+      max-height: 100%;
     }
     .viewer__bar {
       display: flex;

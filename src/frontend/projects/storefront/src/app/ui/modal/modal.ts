@@ -114,10 +114,15 @@ let nextModalId = 0;
       background: var(--color-surface);
       border: 1px solid var(--color-border);
     }
+    /* Absolute against the fixed host rather than a grid item at height 100%: a grid track sizes
+       to its content, so a tall photograph pushed the panel past the bottom of the screen and
+       took the zoom controls with it. An inset of 0 cannot grow. */
     :host(.sd-modal--full) .sd-modal__panel {
-      width: 100%;
+      position: absolute;
+      inset: 0;
+      width: auto;
       max-width: none;
-      height: 100%;
+      height: auto;
       max-height: none;
       border: 0;
       background: var(--color-bg);
@@ -146,6 +151,7 @@ let nextModalId = 0;
     :host(.sd-modal--full) .sd-modal__body {
       display: flex;
       flex-direction: column;
+      min-height: 0;
       padding: 0;
     }
   `,
@@ -173,9 +179,16 @@ export class Modal {
   constructor() {
     // afterRenderEffect only runs in the browser, and only once the panel is on the page, so
     // there is never a hidden element to focus.
+    //
+    // The panel is a dependency, not just the flag: the `@if` and the view query settle in the
+    // same render, and reading only `open()` let the effect run once while `panel()` was still
+    // undefined. `activate()` bailed out, `isActive` stayed false, and the dialog opened with no
+    // focus trap and no Escape at all. Depending on the panel makes the effect run again the
+    // moment the query resolves.
     afterRenderEffect(() => {
       const isOpen = this.open();
-      untracked(() => (isOpen ? this.activate() : this.deactivate()));
+      const panel = this.panel();
+      untracked(() => (isOpen && panel ? this.activate() : this.deactivate()));
     });
 
     inject(DestroyRef).onDestroy(() => this.deactivate());

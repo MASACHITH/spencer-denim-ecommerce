@@ -138,6 +138,229 @@ function productsFor(params) {
   return { items, page, pageSize, totalCount: total };
 }
 
+/**
+ * A 1x1 transparent GIF, used as every gallery image and every video poster.
+ *
+ * There is no media server behind these tests (W1-04 has not landed), and a broken image is a
+ * Definition-of-Done failure, so the stub serves a picture the browser can really decode rather
+ * than a URL that 404s. The real API can legitimately produce an absolute URL here too:
+ * `MediaUrlBuilder.ToPublicUrl` returns a storage key unchanged when it is already an absolute
+ * URL, which is how a remote placeholder reaches the storefront.
+ */
+const PIXEL =
+  'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+
+/** The sizes every demo product is made in, in the API's shape. */
+const SIZES = [
+  { id: 10, label: 'S', scaleName: 'Apparel alpha', sortOrder: 1 },
+  { id: 11, label: 'M', scaleName: 'Apparel alpha', sortOrder: 2 },
+  { id: 12, label: 'L', scaleName: 'Apparel alpha', sortOrder: 3 },
+];
+
+/** `CatalogSlug`: lower-case letters and digits, separated by single hyphens. */
+const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+/**
+ * How many units of one colour x size there are. Deliberately uneven, the way a real catalogue
+ * is: the second colourway is never made in L, and the first colourway's M is always sold out.
+ * A grid where everything exists and everything is in stock would agree with any implementation.
+ */
+function availableFor(colourIndex, sizeIndex) {
+  if (colourIndex === 1 && sizeIndex === 2) {
+    return null; // not made in this size at all
+  }
+
+  if (colourIndex === 0 && sizeIndex === 1) {
+    return 0; // made, sold out
+  }
+
+  return 2 + colourIndex + sizeIndex;
+}
+
+/**
+ * The product page payload for one product index, mirroring
+ * `SpencerDenim.Application.Catalog.Contracts.ProductDetailDto` field for field.
+ *
+ * The media follow the demo seeder: one gallery shot per colourway carrying its `colourId`, then
+ * one shared detail shot with no colour. Every fifth product also has a video and every seventh
+ * has no media at all, so a test reaches all three gallery shapes by asking for a slug rather
+ * than by telling the stub what to say.
+ */
+function productDetail(index, slug) {
+  const card = product(index);
+  const colours = card.colours;
+  const base = card.price.current;
+
+  const images =
+    index % 7 === 0
+      ? []
+      : [
+          ...colours.map((colour, position) => ({
+            id: index * 100 + position,
+            url: PIXEL,
+            altText: `${card.name} in ${colour.name}`,
+            role: 'Gallery',
+            colourId: colour.id,
+            width: 1200,
+            height: 1600,
+            posterUrl: null,
+            sortOrder: position + 1,
+          })),
+          {
+            id: index * 100 + 90,
+            url: PIXEL,
+            altText: `${card.name}, fabric detail`,
+            role: 'Hover',
+            colourId: null,
+            width: 1200,
+            height: 1600,
+            posterUrl: null,
+            sortOrder: colours.length + 1,
+          },
+        ];
+
+  if (index % 5 === 0 && images.length > 0) {
+    images.push({
+      id: index * 100 + 95,
+      url: `${PIXEL}#video`,
+      altText: null,
+      role: 'Video',
+      colourId: null,
+      width: 1920,
+      height: 1080,
+      posterUrl: PIXEL,
+      sortOrder: colours.length + 2,
+    });
+  }
+
+  const variants = [];
+  const sizes = [];
+
+  SIZES.forEach((size, sizeIndex) => {
+    let anyStock = false;
+
+    colours.forEach((colour, colourIndex) => {
+      const available = availableFor(colourIndex, sizeIndex);
+      if (available === null) {
+        return;
+      }
+
+      anyStock = anyStock || available > 0;
+      // The last size costs more, which is what ProductVariants.PriceOverride does in the demo
+      // catalogue, and what makes "from Rs. X" mean something.
+      const current = sizeIndex === 2 ? base + 500 : base;
+
+      variants.push({
+        id: variants.length + 1,
+        sku: `${card.productCode}-${colour.id}-${size.id}`,
+        colourId: colour.id,
+        colourName: colour.name,
+        sizeId: size.id,
+        sizeLabel: size.label,
+        scaleName: size.scaleName,
+        price: {
+          current,
+          original: Math.round(current * 1.4),
+          discountPercent: 28,
+          hasDiscount: true,
+          currency: 'LKR',
+        },
+        stockStatus: available === 0 ? 'OutOfStock' : available <= 3 ? 'LowStock' : 'InStock',
+        isInStock: available > 0,
+        availableQuantity: available,
+      });
+    });
+
+    sizes.push({ ...size, isInStock: anyStock });
+  });
+
+  const prices = variants.map((variant) => variant.price.current);
+
+  return {
+    id: index,
+    productCode: card.productCode,
+    name: card.name,
+    slug,
+    department: { id: 1, name: 'Women', slug: 'women' },
+    breadcrumb: [{ id: 12, name: 'Jeans', slug: 'jeans' }],
+    shortDescription: `${card.name}, cut for Sri Lankan weather.`,
+    description: `${card.name}: rigid cotton denim with a touch of stretch, cut high on the waist and straight through the leg.`,
+    careInstructions: 'Machine wash cold, inside out. Line dry.',
+    attributes: {
+      material: 'Denim',
+      materialSlug: 'denim',
+      fit: 'Straight',
+      fitSlug: 'straight',
+      occasion: null,
+      occasionSlug: null,
+      ageGroup: null,
+      ageGroupSlug: null,
+    },
+    price: {
+      current: Math.min(...prices),
+      original: Math.round(Math.max(...prices) * 1.4),
+      discountPercent: 28,
+      hasDiscount: true,
+      currency: 'LKR',
+    },
+    minPrice: Math.min(...prices),
+    maxPrice: Math.max(...prices),
+    rating: card.rating,
+    badge: card.badge,
+    stockStatus: 'InStock',
+    isInStock: true,
+    seo: { title: card.name, description: `${card.name} at Spencer Denim.` },
+    sizeGuide: { id: 1, name: 'Women apparel' },
+    newUntilUtc: null,
+    images,
+    colours,
+    sizes,
+    variants,
+    relatedProducts: [product(index + 1), product(index + 2)],
+  };
+}
+
+/**
+ * Answers `GET /api/catalog/products/{slug}` the way the API does: a slug that is not a slug is a
+ * 400 naming `slug`, a well-formed slug nothing is published under is a 404, and anything else is
+ * the payload. `E2E_PRODUCT_STATUS` forces a status, for the fault branches.
+ */
+function productBySlug(slug) {
+  const forced = Number(process.env.E2E_PRODUCT_STATUS ?? 0);
+  if (forced >= 400) {
+    return { status: forced, body: { title: 'Forced failure', status: forced } };
+  }
+
+  if (!slug || slug.length > 220 || !SLUG_PATTERN.test(slug)) {
+    return {
+      status: 400,
+      body: {
+        title: 'One or more query parameters are invalid.',
+        status: 400,
+        errors: {
+          slug: ['slug must be lower-case letters and digits separated by single hyphens.'],
+        },
+      },
+    };
+  }
+
+  const match = /^test-product-(\d+)$/.exec(slug);
+  const index = match ? Number(match[1]) : 0;
+
+  if (!match || index < 1 || index > TOTAL_PRODUCTS) {
+    return {
+      status: 404,
+      body: {
+        title: 'Product not found',
+        status: 404,
+        detail: `No published product has the slug '${slug}'.`,
+      },
+    };
+  }
+
+  return { status: 200, body: productDetail(index, slug) };
+}
+
 /** A slow answer, so a test can prove the menu does not hold the page open waiting for it. */
 const DELAY_MS = Number(process.env.E2E_API_DELAY_MS ?? 0);
 
@@ -167,6 +390,16 @@ const server = createServer((request, response) => {
 
   if (url.pathname === '/api/catalog/products') {
     response.end(JSON.stringify(productsFor(url.searchParams)));
+    return;
+  }
+
+  if (url.pathname.startsWith('/api/catalog/products/')) {
+    // Decoded, because the storefront encodes the segment before it asks.
+    const slug = decodeURIComponent(url.pathname.slice('/api/catalog/products/'.length));
+    const answer = productBySlug(slug);
+
+    response.statusCode = answer.status;
+    response.end(JSON.stringify(answer.body));
     return;
   }
 
