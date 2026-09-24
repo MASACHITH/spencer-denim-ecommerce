@@ -382,6 +382,11 @@ test.describe('reduced motion', () => {
   for (const control of FOCUSABLE) {
     test(`${control.name} has a focus ring that is visible`, async ({ page }) => {
       await page.goto(PRODUCT);
+      // Hydration first. `goto` resolves on `load`, which is before Angular has claimed the
+      // server's DOM, and focus placed in that window can be lost to the hydration that follows
+      // — a failure `toBeFocused` can never recover from, because nothing focuses it again.
+      // Recording the visit is the last thing the page does, so it is the signal that it is live.
+      await recorded(page, 'test-product-1');
 
       // A press of Tab first, so the browser is in keyboard modality: Chromium only matches
       // `:focus-visible` on a button when the last interaction was a keyboard one, and a bare
