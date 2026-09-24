@@ -43,6 +43,159 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 
 ## Session log
 
+### 2026-09-23 (5) — W2-03 fix round 3: a blocker the tests were built to miss
+
+Round-2 work verified on the wire. The tester then found a blocker that had been on the branch
+since round 1 and that he had missed twice himself, because the tests could not see it.
+
+**Blocker — a shared, bookmarked or reloaded deep listing rendered duplicates.**
+`toRestoreRequests` shrank its last request to the rows still wanted, but the API's offset is
+`(Page - 1) * PageSize` against *that request's own* page size (`ProductListQuery.Skip`), so a
+smaller last page moved its window backwards instead of trimming it. `?pages=5` asked for rows
+25–48 where it meant 97–120. Measured on a 399-product listing: `?pages=5` rendered 120 cards of
+which 96 were distinct, `?pages=17` said "Showing 408 of 399". Only the restore path — which is the
+entire reason `pages` is in the URL — and only when the page count was not a multiple of four.
+
+One page size for the whole restore now, `min(wanted, MaxPageSize)` rather than always the cap: a
+fresh listing wants 24 rows, and asking for 96 would fetch four times what it shows on the most
+common page view in the storefront. Verified by hand at 1, 2, 4, 5, 6, 7, 17 and 20 pages: every
+one distinct, every count line honest.
+
+**The test lesson is the real finding.** `flushAll` answered every request with the rows the
+component *expected* — 96 at a time, numbered from the request's index — regardless of the `page`
+and `pageSize` actually sent, so it could only ever confirm the component's arithmetic against
+itself. Worse, a unit test asserted the page sizes summed to exactly the rows wanted, which is not
+a property of a correct restore: it is what *forced* the defect. The stub now answers from the
+request, and the test asserts the honest property — the windows tile the listing with no gap and no
+repeat. Both changes fail on the old code (5 tests red). **Lesson: a stub that fabricates what the
+caller expected tests nothing; answer from the request, and assert a property the implementation
+could not have chosen for itself.**
+
+**Minors** — `usable()` now requires a department with a non-empty string `slug`, so
+`[{"nope":1}]` falls back too; "Wishlist, 1 items" pluralises; the flaky ceiling test was
+root-caused rather than guessed at a third time (see below).
+
+**The ceiling test flake, measured.** The guess was that the `activated()` helper's polling loop
+ran up to fifty change-detection passes. It does not: instrumenting it showed activation completes
+on the first attempt every time, across three full runs. The real cost is the test itself —
+~30 ms to navigate and **~650 ms to render 480 product cards** in jsdom, which is work the
+assertion genuinely needs, against vitest's 5 s default. A machine running the backend suite
+alongside ate that seven-fold margin twice in thirty-two runs. The polling loop is gone anyway
+(it was the wrong shape and a latent hazard), and the three tests that render hundreds of cards
+carry a stated 20 s budget with the measurement written next to it.
+
+**Numbers:** 220 frontend unit tests (round 2: 212), 65 Playwright tests (60), backend 232 + 146,
+0 skipped.
+
+**Operational note — the `SeoTitle` fix does not reach already-seeded databases.** The seeder skips
+a department whose slug exists, which is the right policy for an admin-editable field, so any
+database seeded before this branch still reads `Kids's clothing`. That is every developer's
+`SpencerDenim_Dev` (all three worktrees) and any seeded staging. Integration tests build a fresh
+database per run and are unaffected. The one-off correction:
+
+```sql
+UPDATE catalog.Departments
+SET    SeoTitle = N'Kids'' clothing | Spencer Denim'
+WHERE  Slug = 'kids' AND SeoTitle = N'Kids''s clothing | Spencer Denim';
+```
+
+**Filed against ADM-11, not built:** when the departments feed is unhealthy the storefront falls
+back to the seeded tree, so a category that exists only in the live catalogue 404s with `noindex`.
+Nothing can diverge today — the fallback is an exact copy of the seed and ADM-11 is not built — but
+once admin can add categories, `tree$` should say whether the tree is live or fallback and the
+missing-page route should answer **503 with `Retry-After`** rather than 404 + noindex while it is
+the fallback: a crawler retries a 503 and keeps the URL, it drops a 404.
+
+**Next:** back to the tester.
+
+### 2026-09-23 (4) — W2-03 fix round 2: one regression the guards introduced
+
+The tester verified every round-1 fix as genuinely fixed and **backed the 404 reasoning** — he read
+the Angular source and the wire himself and confirmed `ServerRoute.status` matches by path pattern,
+so it would have 404'd every category page. He failed the branch on one regression.
+
+**Major, a regression from round 1.** `usable()` guarded only the `departments` signal; the route
+guards read `tree$`, the raw pipeline, and `catchError` does not catch a *successful* response with
+a useless body. `200 []` — what the API legitimately answers for a freshly migrated database
+before anyone runs the seeder, and the README says seeding is off by default — sent every listing
+URL to the home page while the mega menu still listed all three departments and all 29 categories.
+The first boot of a new staging or production environment would have looked like that. `200
+{"oops":true}` threw inside a guard and served Express's own 144-byte error page on every listing
+URL. `map(usable)` now sits at the end of `tree$`, so the menu and the routes cannot disagree by
+construction; the redundant guard on the signal is gone, and `trailTo` no longer trusts that a
+department carries a `categories` array. Verified against both shapes: 206 kB pages with real
+headings instead of a redirect and an error page. **Lesson: the defensive read has to sit where
+every reader passes, not on the one reader you were looking at.**
+
+**Minors** — the test guarding the Load More blocker was flaky (1 run in 14 on a loaded machine)
+because `canMatch` puts an async hop before activation; it now waits for the router to put a
+component on screen, and *not* by polling `HttpTestingController.match`, which takes the requests it
+matches off the queue. 16 consecutive clean runs with the backend suite running alongside. The
+canonical tag leaked across client-side navigations (home inherited the listing's) — it moved to a
+`CanonicalLink` service the page clears on destroy. `/sale` and `/new-arrivals` showed waist sizes
+28–36 twice, under "Women waist" and "Men waist", bound to the same value: two checkboxes with one
+accessible name that ticked each other; with no department they are one "Waist" group now.
+`CatalogReferenceDataSeeder` built `SeoTitle` as `$"{Name}'s clothing"`, which read
+**"Kids's clothing"** on every Kids listing — the title is seed data now, not a string operation.
+That last one touches the catalogue branch's data and is flagged for the PR.
+
+**Left as decided, not built:** a mistyped department redirecting home while an unknown category
+404s (`/bag` and the footer paths share that `**` route until GLB-10 lands); the 1.77 MB document at
+the Load More ceiling; `/wishlist` redirecting home until W2-08.
+
+**Numbers:** 212 frontend unit tests (round 1: 203), 60 Playwright tests (57), backend 232 + 146,
+0 skipped. Lint and all builds clean.
+
+**Next:** back to the tester.
+
+### 2026-09-23 (3) — W2-03 product listing: tester FAILED it, developer fix round 1
+
+The tester rejected the branch on 2 Blockers, 4 Majors and a set of Minors. All fixed on
+`feature/W2-03-product-listing`.
+
+**Blockers**
+- **Load More past the ceiling collapsed the listing.** `readLoadedPages` dropped an out-of-range
+  value back to 1, and the button was still offered at the cap, so one more click took a listing of
+  480 products down to 24. The count is now clamped at both ends and the button is hidden at the
+  ceiling, with a line saying why.
+- **`/:department` swallowed every single-segment path.** Eleven live header and footer links —
+  `/bag`, `/account`, `/wishlist`, `/contact`, `/privacy` and the rest — rendered the listing's
+  not-found state at HTTP 200, telling the shopper a *department* was missing when they had clicked
+  "Bag". A `canMatch` guard now accepts only a slug the department tree knows, so everything else
+  falls through to `**` and the home page as before.
+
+**Majors**
+- `/new-arrivals` and `/sale` are real listings now (DEPT-02/DEPT-03 happy path), each with its own
+  heading, title and meta description, so no permanent navigation entry points at a missing page.
+- An unknown category (`/women/shirts`, a Men's category) rendered as the department page with
+  "0 products". It is now a genuine **404** — status set from the component through `RESPONSE_INIT`,
+  because a server route's `status` is matched by path and no pattern can express "a category this
+  department does not have". `noindex` with it, and listings now carry a relative `<link rel="canonical">`.
+- Angular's HTTP transfer cache was still on and serialising every SSR response into the page under
+  a key the browser cannot use — 23.8 kB of dead JSON on a department listing, each entry carrying
+  `API_INTERNAL_URL`. Off (`withNoHttpTransferCache`); `ServerHandover` already hands the two
+  catalogue calls over explicitly.
+- The department feed had `catchError` but no timeout, so a 12 s API gave every page a 12 s TTFB.
+  2 s, then the seeded fallback.
+- The wishlist heart saved the product and left the header reading "Wishlist, 0 items". Wired, and
+  taken up only after the first render so hydration is not asked to grow the header.
+
+**Minors:** a reversed price range drops both bounds (no chip that contradicts the URL); no products
+request at all on a 404; literal font sizes replaced with the type-scale tokens; the filter panel is
+rendered once instead of once per container (202 inputs in the DOM, doubled in the HTML); sizes are
+grouped into real `fieldset`/`legend` scales and only the scales a department stocks; a card's
+colour summary names the family ("Ecru (Cream)"); README §4 documents that the built SSR server does
+not proxy `/api`.
+
+**Numbers:** 203 frontend unit tests (was 174), 57 Playwright tests (was 42), backend unchanged at
+232 + 146, 0 skipped. Lint and all four builds clean.
+
+**Still open, filed rather than built:** the facets endpoint (the filter option lists are still a
+copy of the seed data, and the API cannot filter a size by scale), and the
+interceptor/transfer-cache ordering in the shared SSR setup.
+
+**Next:** back to the tester.
+
 ### 2026-09-23 (2) — W1-02 fix round 2: tester verified round 1, failed it on two more Majors
 
 The tester confirmed all nine round-1 fixes as real and rejected the branch again.

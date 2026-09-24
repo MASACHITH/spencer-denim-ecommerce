@@ -85,7 +85,9 @@ import { StorefrontCounts } from '../../core/storefront-counts.service';
               @if (wishlistCount() > 0) {
                 <span class="count" aria-hidden="true">{{ wishlistCount() }}</span>
               }
-              <span class="sr-only">Wishlist, {{ wishlistCount() }} items</span>
+              <span class="sr-only">
+                Wishlist, {{ wishlistCount() }} {{ wishlistCount() === 1 ? 'item' : 'items' }}
+              </span>
             </a>
 
             <a class="icon-btn" routerLink="/bag">

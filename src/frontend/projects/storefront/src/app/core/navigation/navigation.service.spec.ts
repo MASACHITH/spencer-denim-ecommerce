@@ -1,9 +1,13 @@
+import { provideHttpClient } from '@angular/common/http';
+import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
+import { firstValueFrom } from 'rxjs';
 
 import { DepartmentDto } from './catalog-departments.model';
 import { MEGA_MENU_COLUMN_COUNT, toNavigation } from './navigation.mapper';
 import { NavItem, hasMenu } from './navigation.model';
-import { NavigationService } from './navigation.service';
+import { DEPARTMENTS_TIMEOUT_MS, NavigationService } from './navigation.service';
+import { PLACEHOLDER_DEPARTMENTS } from './navigation.data';
 
 function department(overrides: Partial<DepartmentDto> = {}): DepartmentDto {
   return {
@@ -60,7 +64,9 @@ describe('NavigationService', () => {
   let service: NavigationService;
 
   beforeEach(() => {
-    TestBed.configureTestingModule({});
+    TestBed.configureTestingModule({
+      providers: [provideHttpClient(), provideHttpClientTesting()],
+    });
     service = TestBed.inject(NavigationService);
   });
 
@@ -206,5 +212,182 @@ describe('toNavigation', () => {
 
   it('still returns New Arrivals and Sale when the API sends nothing', () => {
     expect(toNavigation([]).map((item) => item.id)).toEqual(['new-arrivals', 'sale']);
+  });
+});
+
+/**
+ * The departments now come from `GET /api/catalog/departments`. The header is on every page, so
+ * what matters as much as the happy path is that nothing about it can empty the menu (lesson L1).
+ */
+describe('NavigationService and the catalogue API', () => {
+  let http: HttpTestingController;
+  let service: NavigationService;
+
+  beforeEach(() => {
+    TestBed.configureTestingModule({
+      providers: [provideHttpClient(), provideHttpClientTesting()],
+    });
+    service = TestBed.inject(NavigationService);
+    http = TestBed.inject(HttpTestingController);
+  });
+
+  afterEach(() => http.verify());
+
+  it('asks the catalogue for the departments, once', () => {
+    service.items();
+
+    http.expectOne('/api/catalog/departments').flush([]);
+  });
+
+  it('builds the menu from what the API sends', () => {
+    const request = http.expectOne('/api/catalog/departments');
+    request.flush([
+      department({
+        id: 9,
+        name: 'Womenswear',
+        slug: 'womenswear',
+        categories: [category('Jumpsuits', 'jumpsuits')],
+      }),
+    ]);
+
+    expect(service.items().map((item) => item.label)).toEqual([
+      'Womenswear',
+      'New Arrivals',
+      'Sale',
+    ]);
+    expect(pathsOf(find(service.items(), 'womenswear'))).toContain('/womenswear/jumpsuits');
+  });
+
+  it('shows the seeded menu until the API answers, so SSR never renders an empty header', () => {
+    expect(service.items().map((item) => item.label)).toEqual([
+      'Women',
+      'Men',
+      'Kids',
+      'New Arrivals',
+      'Sale',
+    ]);
+
+    http.expectOne('/api/catalog/departments').flush([]);
+  });
+
+  it('falls back to the seeded menu when the API fails', () => {
+    http
+      .expectOne('/api/catalog/departments')
+      .flush('boom', { status: 500, statusText: 'Server Error' });
+
+    expect(service.departments()).toEqual(PLACEHOLDER_DEPARTMENTS);
+    expect(service.items().map((item) => item.id)).toEqual([
+      'women',
+      'men',
+      'kids',
+      'new-arrivals',
+      'sale',
+    ]);
+  });
+
+  it('falls back when the API is unreachable', () => {
+    http
+      .expectOne('/api/catalog/departments')
+      .error(new ProgressEvent('offline'));
+
+    expect(service.departments()).toEqual(PLACEHOLDER_DEPARTMENTS);
+  });
+
+  /**
+   * Every shape that leaves the storefront without a usable tree, checked on `tree$` as well as on
+   * the signal. They have to agree: `usable` was applied only to the signal, so the route guards
+   * read the raw response and a `200 []` — which the API legitimately answers for a freshly
+   * migrated database before anyone runs the seeder — sent every listing URL to the home page
+   * while the mega menu still listed all three departments. `catchError` cannot see either of
+   * these: a useless body is still a successful response.
+   */
+  describe('an answer it cannot use', () => {
+    async function treeOf(): Promise<readonly DepartmentDto[]> {
+      return firstValueFrom(service.tree$);
+    }
+
+    it('falls back on an empty catalogue, and the guards see the same tree', async () => {
+      http.expectOne('/api/catalog/departments').flush([]);
+
+      expect(service.departments()).toEqual(PLACEHOLDER_DEPARTMENTS);
+      expect(await treeOf()).toEqual(PLACEHOLDER_DEPARTMENTS);
+    });
+
+    it('falls back on a body that is not an array, rather than throwing in a route guard', async () => {
+      http.expectOne('/api/catalog/departments').flush({ oops: true });
+
+      expect(service.departments()).toEqual(PLACEHOLDER_DEPARTMENTS);
+      expect(await treeOf()).toEqual(PLACEHOLDER_DEPARTMENTS);
+    });
+
+    it('falls back on entries no route could ever match', async () => {
+      // A non-empty array is not enough: every department URL would go home while the menu
+      // rendered perfectly. `[{"Slug":"women"}]` is what turning off the JSON naming policy
+      // would serve, and every `slug` there is `undefined`.
+      http
+        .expectOne('/api/catalog/departments')
+        .flush([{ nope: 1 }, { Slug: 'women' }] as unknown as readonly DepartmentDto[]);
+
+      expect(service.departments()).toEqual(PLACEHOLDER_DEPARTMENTS);
+      expect(await treeOf()).toEqual(PLACEHOLDER_DEPARTMENTS);
+    });
+
+    it('keeps a payload where at least one department can be routed to', async () => {
+      const live = [department({ id: 7, name: 'Womenswear', slug: 'womenswear' })];
+      http.expectOne('/api/catalog/departments').flush(live);
+
+      expect(await treeOf()).toEqual(live);
+    });
+
+    it('falls back on a failure', async () => {
+      http
+        .expectOne('/api/catalog/departments')
+        .flush('boom', { status: 500, statusText: 'Server Error' });
+
+      expect(service.departments()).toEqual(PLACEHOLDER_DEPARTMENTS);
+      expect(await treeOf()).toEqual(PLACEHOLDER_DEPARTMENTS);
+    });
+
+    it('gives the guards a department to match in every one of those cases', async () => {
+      http.expectOne('/api/catalog/departments').flush([]);
+
+      const tree = await treeOf();
+      expect(tree.map((department) => department.slug)).toEqual(['women', 'men', 'kids']);
+    });
+  });
+});
+
+/**
+ * `catchError` catches a failure; an answer that never comes is not one. Without a timeout a slow
+ * catalogue held every page open for as long as it took — the header is on every page, and the
+ * route guards wait on this same feed. A 12 s API gave a department listing a 12 s time to first
+ * byte.
+ *
+ * Its own TestBed: the clock has to be faked before the service subscribes, because that is when
+ * the timeout is scheduled.
+ */
+describe('NavigationService and a catalogue that never answers', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    TestBed.configureTestingModule({
+      providers: [provideHttpClient(), provideHttpClientTesting()],
+    });
+  });
+
+  afterEach(() => vi.useRealTimers());
+
+  it('settles on the seeded menu instead of holding the page open', async () => {
+    const service = TestBed.inject(NavigationService);
+    const http = TestBed.inject(HttpTestingController);
+    const request = http.expectOne('/api/catalog/departments');
+
+    await vi.advanceTimersByTimeAsync(DEPARTMENTS_TIMEOUT_MS + 1);
+
+    expect(service.departments()).toEqual(PLACEHOLDER_DEPARTMENTS);
+    expect(service.items()).toHaveLength(5);
+    expect(request.cancelled).toBe(true);
+
+    // And the guards get the same tree, not a pending observable.
+    expect(await firstValueFrom(service.tree$)).toEqual(PLACEHOLDER_DEPARTMENTS);
   });
 });

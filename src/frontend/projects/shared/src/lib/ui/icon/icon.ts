@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, input } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
 
 /**
  * The icon set of the style tile (design/style-tile/index.html §13): one 24px grid,
@@ -14,6 +14,8 @@ export type IconName =
   | 'chevron-down'
   | 'chevron-left'
   | 'chevron-right'
+  | 'filter'
+  | 'star'
   | 'pause'
   | 'play'
   | 'whatsapp'
@@ -25,7 +27,7 @@ export type IconName =
   | 'instagram'
   | 'tiktok';
 
-export type IconSize = 'sm' | 'md';
+export type IconSize = 'xs' | 'sm' | 'md';
 
 /**
  * Decorative inline SVG icon. It is always `aria-hidden`: every icon in this code base is
@@ -37,7 +39,7 @@ export type IconSize = 'sm' | 'md';
 @Component({
   selector: 'sd-icon',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  host: { '[class]': '"sd-icon sd-icon--" + size()' },
+  host: { '[class]': 'hostClasses()' },
   template: `
     <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
       @switch (name()) {
@@ -70,6 +72,12 @@ export type IconSize = 'sm' | 'md';
         }
         @case ('chevron-right') {
           <path d="M9 6l6 6-6 6" />
+        }
+        @case ('filter') {
+          <path d="M3.5 6.5h17M6.5 12h11M10 17.5h4" />
+        }
+        @case ('star') {
+          <path d="M12 3.8l2.5 5.1 5.6.8-4 3.9 1 5.6-5.1-2.7-5.1 2.7 1-5.6-4-3.9 5.6-.8z" />
         }
         @case ('pause') {
           <path d="M9.5 5.5v13M14.5 5.5v13" />
@@ -136,9 +144,23 @@ export type IconSize = 'sm' | 'md';
       width: 20px;
       height: 20px;
     }
+    :host(.sd-icon--xs) svg {
+      width: 16px;
+      height: 16px;
+    }
+    /* A rating star and a saved wishlist heart read as "on" only when they are solid. */
+    :host(.sd-icon--filled) svg {
+      fill: currentColor;
+    }
   `,
 })
 export class Icon {
   readonly name = input.required<IconName>();
   readonly size = input<IconSize>('md');
+  /** Paints the glyph solid: a selected wishlist heart, a filled rating star. */
+  readonly filled = input(false);
+
+  protected readonly hostClasses = computed(
+    () => `sd-icon sd-icon--${this.size()}${this.filled() ? ' sd-icon--filled' : ''}`,
+  );
 }

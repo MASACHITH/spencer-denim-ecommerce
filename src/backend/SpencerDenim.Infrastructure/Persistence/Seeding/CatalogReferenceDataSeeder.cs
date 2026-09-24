@@ -52,7 +52,7 @@ public sealed class CatalogReferenceDataSeeder(AppDbContext dbContext)
                 Description = seed.Description,
                 SortOrder = seed.SortOrder,
                 IsActive = true,
-                SeoTitle = $"{seed.Name}'s clothing | Spencer Denim",
+                SeoTitle = seed.SeoTitle,
                 SeoDescription = seed.Description,
             });
             added++;

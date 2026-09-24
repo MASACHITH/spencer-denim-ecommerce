@@ -10,9 +10,9 @@ internal static class CatalogReferenceData
 {
     public static IReadOnlyList<DepartmentSeed> Departments { get; } =
     [
-        new("Women", "women", "Everyday essentials and occasion pieces, cut for Sri Lankan weather.", 1),
-        new("Men", "men", "Workwear, weekend shirts and denim built to last.", 2),
-        new("Kids", "kids", "Girls, boys and baby — soft fabrics and room to grow.", 3),
+        new("Women", "women", "Everyday essentials and occasion pieces, cut for Sri Lankan weather.", 1, "Women's clothing | Spencer Denim"),
+        new("Men", "men", "Workwear, weekend shirts and denim built to last.", 2, "Men's clothing | Spencer Denim"),
+        new("Kids", "kids", "Girls, boys and baby — soft fabrics and room to grow.", 3, "Kids' clothing | Spencer Denim"),
     ];
 
     public static IReadOnlyList<AgeGroupSeed> AgeGroups { get; } =
@@ -172,7 +172,17 @@ internal static class CatalogReferenceData
     }
 }
 
-internal sealed record DepartmentSeed(string Name, string Slug, string Description, short SortOrder);
+/// <param name="SeoTitle">
+/// The whole page title, brand included, because it is copy rather than a pattern. Building it as
+/// <c>$"{Name}'s clothing"</c> read as "Kids's clothing" on every Kids listing: English possessives
+/// are not a string operation. Admin edits it like any other SEO field.
+/// </param>
+internal sealed record DepartmentSeed(
+    string Name,
+    string Slug,
+    string Description,
+    short SortOrder,
+    string SeoTitle);
 
 internal sealed record AgeGroupSeed(string Name, string Slug, short MinMonths, short MaxMonths, short SortOrder);
 
