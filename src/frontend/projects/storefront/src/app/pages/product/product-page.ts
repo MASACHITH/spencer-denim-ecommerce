@@ -884,11 +884,23 @@ function documentTitle(product: ProductDetailDto): string {
   return title.includes('Spencer Denim') ? title : `${title} | Spencer Denim`;
 }
 
+/**
+ * The meta description. `Products.Description` is sanitised HTML (doc 08 §3.2), so its tags are
+ * taken out before it can reach a `<meta>` — the admin-written SEO description and the plain
+ * short description are preferred over it precisely because they are prose.
+ */
 function metaDescription(product: ProductDetailDto): string {
   const text =
     product.seo.description?.trim() ||
     product.shortDescription?.trim() ||
-    product.description?.trim();
+    stripTags(product.description ?? '');
 
   return text ? text.slice(0, 300) : `${product.name} at Spencer Denim.`;
+}
+
+function stripTags(html: string): string {
+  return html
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }

@@ -284,7 +284,9 @@ function productDetail(index, slug) {
     department: { id: 1, name: 'Women', slug: 'women' },
     breadcrumb: [{ id: 12, name: 'Jeans', slug: 'jeans' }],
     shortDescription: `${card.name}, cut for Sri Lankan weather.`,
-    description: `${card.name}: rigid cotton denim with a touch of stretch, cut high on the waist and straight through the leg.`,
+    // Sanitised HTML, as `catalog.Products.Description` is (doc 08 §3.2) and as the demo seeder
+    // writes it. A plain sentence here would have hidden the page printing the tags at a shopper.
+    description: `<p>${card.name}: rigid cotton denim with a touch of stretch.</p><p>Cut high on the waist and straight through the leg.</p>`,
     careInstructions: 'Machine wash cold, inside out. Line dry.',
     attributes: {
       material: 'Denim',

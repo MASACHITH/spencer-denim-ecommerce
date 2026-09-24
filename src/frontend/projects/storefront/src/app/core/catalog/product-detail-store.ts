@@ -56,9 +56,15 @@ export class ProductDetailStore {
     const ticket = ++this.ticket;
     this.failure.set(null);
 
-    const handedOver = this.handover.take<ProductDetailDto>(handoverKey(slug));
+    const handedOver = this.handover.take<Handover>(handoverKey(slug));
     if (handedOver) {
-      this.accept(ticket, handedOver);
+      if (isMissing(handedOver)) {
+        this.current.set(null);
+        this.failure.set('missing');
+        this.phase.set('error');
+      } else {
+        this.accept(ticket, handedOver);
+      }
       return;
     }
 
@@ -70,13 +76,10 @@ export class ProductDetailStore {
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
         next: (product) => {
-          // Only a success is handed over. A failure is worth one more attempt in the browser —
-          // a 500 while the server rendered may be over by the time the page hydrates — and
-          // replaying it would freeze a transient fault into the page.
-          this.handover.give(handoverKey(slug), product);
+          this.handover.give<Handover>(handoverKey(slug), product);
           this.accept(ticket, product);
         },
-        error: (error: unknown) => this.reject(ticket, error),
+        error: (error: unknown) => this.reject(ticket, error, slug),
       });
   }
 
@@ -95,18 +98,40 @@ export class ProductDetailStore {
     this.phase.set('ready');
   }
 
-  private reject(ticket: number, error: unknown): void {
+  private reject(ticket: number, error: unknown, slug?: string): void {
     if (ticket !== this.ticket) {
       return;
     }
 
+    const failure = productFailure(error);
+
+    // A product that is not there will not be there a second later either, so the browser is
+    // told and does not ask again — that repeat request was a guaranteed 404 in the console on
+    // every not-found page. A *fault* is handed over to nobody: a 500 while the server rendered
+    // may well be over by the time the page hydrates, and replaying it would freeze a passing
+    // problem into the page.
+    if (failure === 'missing' && slug !== undefined) {
+      this.handover.give<Handover>(handoverKey(slug), MISSING);
+    }
+
     this.current.set(null);
-    this.failure.set(productFailure(error));
+    this.failure.set(failure);
     this.phase.set('error');
   }
 }
 
-/** Where one product's server-rendered payload waits for the browser. */
+/**
+ * What the server leaves for the browser: the product, or a note that there is no such product.
+ */
+type Handover = ProductDetailDto | typeof MISSING;
+
+const MISSING = { missing: true } as const;
+
+function isMissing(value: Handover): value is typeof MISSING {
+  return (value as { missing?: boolean }).missing === true;
+}
+
+/** Where one product's server-rendered answer waits for the browser. */
 function handoverKey(slug: string): string {
   return `pdp:${slug}`;
 }

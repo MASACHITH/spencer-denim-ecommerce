@@ -86,3 +86,13 @@
 .price__was { color: var(--color-text-muted); font-size: var(--text-small); white-space: nowrap; }
 .price__off { color: var(--color-sale); font-size: var(--text-small); font-weight: var(--weight-medium); }
 .price--sale .price__now { color: var(--color-sale); }
+
+/* ---- Admin-written rich text (PDP-05, GLB-10 content pages next) ----
+   Content injected with [innerHTML] carries no _ngcontent attribute, so a component's own scoped
+   styles can never reach it. These live here rather than behind ::ng-deep, which is deprecated.
+   Only the handful of elements a product description actually uses. */
+.rich > p + p { padding-top: var(--space-1); }
+.rich ul,
+.rich ol { padding-left: var(--space-3); list-style: revert; }
+.rich li + li { padding-top: var(--space-0-5); }
+.rich strong { font-weight: var(--weight-medium); color: var(--color-text); }

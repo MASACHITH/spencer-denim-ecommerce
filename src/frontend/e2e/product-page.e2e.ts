@@ -110,6 +110,19 @@ test.describe('what the server puts on the wire (GLB-11)', () => {
     expect(html).toContain('Choose a size');
   });
 
+  /**
+   * `catalog.Products.Description` is sanitised HTML (doc 08 §3.2) and the seeder writes real
+   * markup into it. Interpolating it printed `<p>` at the shopper on the live API — found by
+   * clicking through, not by a test, which is why this one exists.
+   */
+  test('the description is rendered as rich text, not as its own tags', async ({ page }) => {
+    await page.goto(PRODUCT);
+
+    const body = page.locator('.rich');
+    await expect(body.locator('p')).toHaveCount(2);
+    await expect(body).not.toContainText('<p>');
+  });
+
   test('a shared colourway link renders that colourway on the server', async ({ request }) => {
     const html = await (await request.get(`${PRODUCT}?colour=2`)).text();
 
@@ -140,6 +153,28 @@ test.describe('what the server puts on the wire (GLB-11)', () => {
 
     expect(response.status()).toBe(404);
     expect(await response.text()).toContain('We could not find that page');
+  });
+
+  /**
+   * The server already knows there is no such product, so the browser must not ask again. It did,
+   * and every not-found page carried a second, guaranteed 404 in the console.
+   */
+  test('the browser does not re-ask for a product the server already said is missing', async ({
+    page,
+  }) => {
+    const asked: string[] = [];
+    page.on('request', (request) => {
+      if (request.url().includes('/api/catalog/products/')) {
+        asked.push(request.url());
+      }
+    });
+
+    await page.goto('/product/no-such-product');
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText(
+      'We could not find that page',
+    );
+
+    expect(asked).toEqual([]);
   });
 
   test('a slug the API will not even accept is the same 404', async ({ request }) => {

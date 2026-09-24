@@ -315,6 +315,40 @@ describe('ProductPage (PDP-01..07)', () => {
 
       expect(text()).toContain('Cut from rigid cotton denim');
     });
+
+    /**
+     * `catalog.Products.Description` is `nvarchar(max)` holding sanitised HTML (doc 08 §3.2) and
+     * the demo seeder writes `<p>…</p><p>…</p>` into it. Interpolating it printed the tags.
+     */
+    it('renders the description as rich text, not as its own tags', async () => {
+      await open('/product/rich', {
+        description: '<p>First paragraph.</p><p>Second paragraph.</p>',
+      });
+
+      const body = query('.rich');
+      expect(body?.querySelectorAll('p')).toHaveLength(2);
+      expect(text()).not.toContain('<p>');
+      expect(text()).toContain('Second paragraph.');
+    });
+
+    it('strips the markup out of anything it copies into a meta tag', async () => {
+      await open('/product/rich', {
+        seo: { title: 'Rich', description: null },
+        shortDescription: null,
+        description: '<p>First paragraph.</p><p>Second paragraph.</p>',
+      });
+
+      expect(document.querySelector('meta[name="description"]')?.getAttribute('content')).toBe(
+        'First paragraph. Second paragraph.',
+      );
+    });
+
+    it('falls back to the plain teaser when there is no long copy', async () => {
+      await open('/product/teaser-only', { description: null });
+
+      expect(query('.rich')).toBeNull();
+      expect(text()).toContain('A clean high-rise straight leg.');
+    });
   });
 
   describe('the selection in the URL (PDP-03)', () => {

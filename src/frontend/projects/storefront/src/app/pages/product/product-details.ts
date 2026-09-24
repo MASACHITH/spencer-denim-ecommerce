@@ -32,7 +32,12 @@ interface DetailRow {
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="details">
-      @if (description(); as text) {
+      @if (descriptionHtml(); as html) {
+        <details class="details__block" open>
+          <summary class="details__summary">Description</summary>
+          <div class="details__body rich" [innerHTML]="html"></div>
+        </details>
+      } @else if (shortDescription(); as text) {
         <details class="details__block" open>
           <summary class="details__summary">Description</summary>
           <div class="details__body">
@@ -113,9 +118,22 @@ interface DetailRow {
 export class ProductDetails {
   readonly product = input.required<ProductDetailDto>();
 
-  /** The long copy, falling back to the short one so a product with only a teaser still reads. */
-  protected readonly description = computed(
-    () => trimmed(this.product().description) ?? trimmed(this.product().shortDescription),
+  /**
+   * The long copy, which is **rich text, not a sentence**.
+   *
+   * `catalog.Products.Description` is `nvarchar(max)` documented in doc 08 §3.2 as "Sanitised
+   * HTML", and the demo seeder writes real markup into it (`<p>…</p><p>…</p>`). Interpolating it
+   * printed the tags at the shopper, which is what clicking through the real API showed.
+   *
+   * `[innerHTML]` puts it through Angular's own sanitiser as well (`SecurityContext.HTML`), which
+   * strips scripts, event handlers and `javascript:` URLs whatever an admin pasted in. That is a
+   * second line of defence, not the first: the field is sanitised on the way in.
+   */
+  protected readonly descriptionHtml = computed(() => trimmed(this.product().description));
+
+  /** The teaser, which is plain text. Shown when a product has no long copy of its own. */
+  protected readonly shortDescription = computed(() =>
+    trimmed(this.product().shortDescription),
   );
 
   protected readonly care = computed(() => trimmed(this.product().careInstructions));
