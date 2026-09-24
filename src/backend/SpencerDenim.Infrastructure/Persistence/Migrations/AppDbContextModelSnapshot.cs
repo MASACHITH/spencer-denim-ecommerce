@@ -1209,6 +1209,230 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("SpencerDenim.Domain.Content.AnnouncementMessage", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2(3)")
+                        .HasDefaultValueSql("sysutcdatetime()");
+
+                    b.Property<int?>("CreatedByUserId")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("EndsAtUtc")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<bool>("IsActive")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(true);
+
+                    b.Property<string>("LinkUrl")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<string>("Message")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<short>("SortOrder")
+                        .HasColumnType("smallint");
+
+                    b.Property<DateTime?>("StartsAtUtc")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<int?>("UpdatedByUserId")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("IsActive", "SortOrder")
+                        .HasDatabaseName("IX_AnnouncementMessages_Active_SortOrder");
+
+                    b.ToTable("AnnouncementMessages", "content");
+                });
+
+            modelBuilder.Entity("SpencerDenim.Domain.Content.HomeSection", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2(3)")
+                        .HasDefaultValueSql("sysutcdatetime()");
+
+                    b.Property<int?>("CreatedByUserId")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("EndsAtUtc")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<bool>("IsEnabled")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false);
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.Property<byte>("SectionType")
+                        .HasColumnType("tinyint");
+
+                    b.Property<string>("SettingsJson")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<short>("SortOrder")
+                        .HasColumnType("smallint");
+
+                    b.Property<DateTime?>("StartsAtUtc")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<string>("Subtitle")
+                        .HasMaxLength(300)
+                        .HasColumnType("nvarchar(300)");
+
+                    b.Property<string>("Title")
+                        .HasMaxLength(150)
+                        .HasColumnType("nvarchar(150)");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<int?>("UpdatedByUserId")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("IsEnabled", "SortOrder")
+                        .HasDatabaseName("IX_HomeSections_Enabled_SortOrder");
+
+                    b.ToTable("HomeSections", "content", t =>
+                        {
+                            t.HasCheckConstraint("CK_HomeSections_SectionType", "[SectionType] BETWEEN 1 AND 10");
+
+                            t.HasCheckConstraint("CK_HomeSections_SettingsJson", "[SettingsJson] IS NULL OR ISJSON([SettingsJson]) = 1");
+                        });
+                });
+
+            modelBuilder.Entity("SpencerDenim.Domain.Content.HomeSectionItem", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("Body")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<string>("ButtonLabel")
+                        .HasMaxLength(40)
+                        .HasColumnType("nvarchar(40)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2(3)")
+                        .HasDefaultValueSql("sysutcdatetime()");
+
+                    b.Property<int?>("CreatedByUserId")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("DepartmentId")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("EndsAtUtc")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<int>("HomeSectionId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("IconKey")
+                        .HasColumnType("varchar(40)");
+
+                    b.Property<int?>("ImageAssetId")
+                        .HasColumnType("int");
+
+                    b.Property<bool>("IsEnabled")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(true);
+
+                    b.Property<string>("LinkUrl")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<int?>("MobileImageAssetId")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("ProductId")
+                        .HasColumnType("int");
+
+                    b.Property<short>("SortOrder")
+                        .HasColumnType("smallint");
+
+                    b.Property<DateTime?>("StartsAtUtc")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<string>("Subtitle")
+                        .HasMaxLength(300)
+                        .HasColumnType("nvarchar(300)");
+
+                    b.Property<string>("Title")
+                        .HasMaxLength(150)
+                        .HasColumnType("nvarchar(150)");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<int?>("UpdatedByUserId")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("VideoAssetId")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DepartmentId")
+                        .HasDatabaseName("IX_HomeSectionItems_DepartmentId");
+
+                    b.HasIndex("ImageAssetId")
+                        .HasDatabaseName("IX_HomeSectionItems_ImageAssetId");
+
+                    b.HasIndex("MobileImageAssetId")
+                        .HasDatabaseName("IX_HomeSectionItems_MobileImageAssetId");
+
+                    b.HasIndex("ProductId")
+                        .HasDatabaseName("IX_HomeSectionItems_ProductId");
+
+                    b.HasIndex("VideoAssetId")
+                        .HasDatabaseName("IX_HomeSectionItems_VideoAssetId");
+
+                    b.HasIndex("HomeSectionId", "SortOrder")
+                        .HasDatabaseName("IX_HomeSectionItems_Section_SortOrder");
+
+                    b.ToTable("HomeSectionItems", "content", t =>
+                        {
+                            t.HasCheckConstraint("CK_HomeSectionItems_VideoFallback", "[VideoAssetId] IS NULL OR [ImageAssetId] IS NOT NULL OR [MobileImageAssetId] IS NOT NULL");
+                        });
+                });
+
             modelBuilder.Entity("SpencerDenim.Domain.Inventory.StockLevel", b =>
                 {
                     b.Property<int>("VariantId")
@@ -1253,6 +1477,73 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                             t.HasCheckConstraint("CK_StockLevels_Reserved", "[Reserved] >= 0");
 
                             t.HasCheckConstraint("CK_StockLevels_ReservedLeOnHand", "[Reserved] <= [OnHand]");
+                        });
+                });
+
+            modelBuilder.Entity("SpencerDenim.Domain.Marketing.NewsletterSubscriber", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime>("ConsentAtUtc")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<string>("ConsentIpAddress")
+                        .HasColumnType("varchar(45)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2(3)")
+                        .HasDefaultValueSql("sysutcdatetime()");
+
+                    b.Property<string>("Email")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("EmailNormalized")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasColumnType("varchar(30)");
+
+                    b.Property<byte>("Status")
+                        .HasColumnType("tinyint");
+
+                    b.Property<Guid>("UnsubscribeToken")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("UnsubscribedAtUtc")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<int?>("UserId")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EmailNormalized")
+                        .IsUnique()
+                        .HasDatabaseName("UX_NewsletterSubscribers_EmailNormalized");
+
+                    b.HasIndex("UnsubscribeToken")
+                        .IsUnique()
+                        .HasDatabaseName("UX_NewsletterSubscribers_UnsubscribeToken");
+
+                    b.HasIndex("UserId")
+                        .HasDatabaseName("IX_NewsletterSubscribers_UserId");
+
+                    b.HasIndex("Status", "CreatedAtUtc")
+                        .HasDatabaseName("IX_NewsletterSubscribers_Status_CreatedAtUtc");
+
+                    b.ToTable("NewsletterSubscribers", "marketing", t =>
+                        {
+                            t.HasCheckConstraint("CK_NewsletterSubscribers_Status", "[Status] IN (1, 2)");
                         });
                 });
 
@@ -1924,6 +2215,52 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                     b.Navigation("ImageAsset");
                 });
 
+            modelBuilder.Entity("SpencerDenim.Domain.Content.HomeSectionItem", b =>
+                {
+                    b.HasOne("SpencerDenim.Domain.Catalog.Department", "Department")
+                        .WithMany()
+                        .HasForeignKey("DepartmentId")
+                        .OnDelete(DeleteBehavior.NoAction);
+
+                    b.HasOne("SpencerDenim.Domain.Content.HomeSection", "HomeSection")
+                        .WithMany("Items")
+                        .HasForeignKey("HomeSectionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("SpencerDenim.Domain.Media.MediaAsset", "ImageAsset")
+                        .WithMany()
+                        .HasForeignKey("ImageAssetId")
+                        .OnDelete(DeleteBehavior.NoAction);
+
+                    b.HasOne("SpencerDenim.Domain.Media.MediaAsset", "MobileImageAsset")
+                        .WithMany()
+                        .HasForeignKey("MobileImageAssetId")
+                        .OnDelete(DeleteBehavior.NoAction);
+
+                    b.HasOne("SpencerDenim.Domain.Catalog.Product", "Product")
+                        .WithMany()
+                        .HasForeignKey("ProductId")
+                        .OnDelete(DeleteBehavior.NoAction);
+
+                    b.HasOne("SpencerDenim.Domain.Media.MediaAsset", "VideoAsset")
+                        .WithMany()
+                        .HasForeignKey("VideoAssetId")
+                        .OnDelete(DeleteBehavior.NoAction);
+
+                    b.Navigation("Department");
+
+                    b.Navigation("HomeSection");
+
+                    b.Navigation("ImageAsset");
+
+                    b.Navigation("MobileImageAsset");
+
+                    b.Navigation("Product");
+
+                    b.Navigation("VideoAsset");
+                });
+
             modelBuilder.Entity("SpencerDenim.Domain.Inventory.StockLevel", b =>
                 {
                     b.HasOne("SpencerDenim.Domain.Catalog.ProductVariant", "Variant")
@@ -1933,6 +2270,14 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                         .IsRequired();
 
                     b.Navigation("Variant");
+                });
+
+            modelBuilder.Entity("SpencerDenim.Domain.Marketing.NewsletterSubscriber", b =>
+                {
+                    b.HasOne("SpencerDenim.Infrastructure.Identity.AppUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.NoAction);
                 });
 
             modelBuilder.Entity("SpencerDenim.Domain.Media.MediaAsset", b =>
@@ -1997,6 +2342,11 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("SpencerDenim.Domain.Catalog.ProductVariant", b =>
                 {
                     b.Navigation("StockLevel");
+                });
+
+            modelBuilder.Entity("SpencerDenim.Domain.Content.HomeSection", b =>
+                {
+                    b.Navigation("Items");
                 });
 #pragma warning restore 612, 618
         }

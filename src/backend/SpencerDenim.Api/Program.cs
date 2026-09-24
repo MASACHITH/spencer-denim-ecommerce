@@ -2,6 +2,7 @@ using System.Text.Json.Serialization;
 using SpencerDenim.Api.Endpoints;
 using SpencerDenim.Api.Endpoints.Admin;
 using SpencerDenim.Api.Endpoints.Catalog;
+using SpencerDenim.Api.Endpoints.Content;
 using SpencerDenim.Api.Health;
 using SpencerDenim.Api.Http;
 using SpencerDenim.Api.Logging;
@@ -22,6 +23,7 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 builder.Services.AddApiOpenApi();
 builder.Services.AddApiHealthChecks();
 builder.Services.AddApiForwardedHeaders();
+builder.Services.AddContentRateLimiting();
 
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure();
@@ -41,6 +43,10 @@ if (app.Environment.IsDevelopment())
     app.UseApiOpenApi();
 }
 
+// After the exception handler so a rejection is still a well-formed response, and before the
+// endpoints so the policy on the newsletter signup is applied.
+app.UseRateLimiter();
+
 app.UseAuthentication();
 app.UseAuthorization();
 
@@ -48,5 +54,6 @@ app.MapApiHealthChecks();
 app.MapPingEndpoints();
 app.MapAdminAuthEndpoints();
 app.MapCatalogEndpoints();
+app.MapContentEndpoints();
 
 await app.RunAsync();

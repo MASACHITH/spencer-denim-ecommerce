@@ -3,7 +3,9 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using SpencerDenim.Domain.Auditing;
 using SpencerDenim.Domain.Catalog;
+using SpencerDenim.Domain.Content;
 using SpencerDenim.Domain.Inventory;
+using SpencerDenim.Domain.Marketing;
 using SpencerDenim.Domain.Media;
 using SpencerDenim.Infrastructure.Identity;
 
@@ -48,6 +50,10 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public const string MediaSchema = "media";
 
     public const string InventorySchema = "inventory";
+
+    public const string ContentSchema = "content";
+
+    public const string MarketingSchema = "marketing";
 
     /// <summary>Name of the EF Core 10 named query filter that hides soft-deleted rows (doc 08 §10.2).</summary>
     public const string SoftDeleteFilter = "SoftDelete";
@@ -103,6 +109,14 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<MediaUsage> MediaUsages => Set<MediaUsage>();
 
     public DbSet<StockLevel> StockLevels => Set<StockLevel>();
+
+    public DbSet<HomeSection> HomeSections => Set<HomeSection>();
+
+    public DbSet<HomeSectionItem> HomeSectionItems => Set<HomeSectionItem>();
+
+    public DbSet<AnnouncementMessage> AnnouncementMessages => Set<AnnouncementMessage>();
+
+    public DbSet<NewsletterSubscriber> NewsletterSubscribers => Set<NewsletterSubscriber>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
