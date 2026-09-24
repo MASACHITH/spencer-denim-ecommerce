@@ -16,6 +16,7 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 - **Multiple sessions/machines:** More than one Claude Code session now works on this repo, sometimes on different machines. Handoff protocol, machine readiness check and the known-machines log: [docs/14-multi-session-coordination.md](docs/14-multi-session-coordination.md). Referenced from the root `CLAUDE.md`.
 - **Reference archive:** `reference/` holds read-only copies (taken 2026-09-16) of the old demo (`tuasl-fashion-demo/`), the client documents (signed proposal + theme reference) and the original prototype prompt. See `reference/README.md`. The originals remain outside the repo.
 - **Blockers:** W0-05 Docker/WSL still paused (blocks W0-15). This machine (new, 2026-09-21) has no `gh` CLI, so it can't push yet — see doc 11.
+- **Next:** **W2-01 (homepage, HOME-01..10) is with the tester** on `feature/W2-01-homepage` (worktree `worktrees/sd-home`): content schema, seeder, read-only content API, newsletter signup endpoint and the page itself. ADM-17's admin screens are **not** in it.
 - **Next:** **W1-02 (catalogue foundation — schema + demo seeder + the read-only storefront catalogue API) is in the developer↔tester loop** on `feature/W1-02-catalogue-foundation` (worktree `worktrees/sd-catalog`): tester round 1 failed it on 3 major + 5 minor, round 2 on 2 major + 4 minor, all fixed; not pushed, not merged, not Done. Its ADM-11 admin screens are a separate task, **W1-12 (TODO)** — W1-02 no longer means "categories (create/edit/reorder)". W1-08 (Users & Roles CRUD), W1-09 (audit log viewer), W1-10 (2FA enrollment), W1-11 (route guard, SecurityStamp revalidation, forwarded-headers regression test) are the W1-01 follow-ups, tracked but not started; the user/architect should decide priority between those and W1-03 once W1-02 passes.
 - **Pending (can't do from this machine):** CLAUDE.md requires `../client-progress/progress-data.js` to be updated whenever a feature status changes to Done. W1-01 slice 1 just did, but the `client-progress` source folder only exists on the `SCIENTER\sachithi` PC (see docs/11) — not here. Whichever session next runs on that machine should update the admin-auth/RBAC progress line and republish.
 - **Open assumptions:** A1 (Trending Categories / Best Sellers homepage blocks stay removed per signed proposal), A2 (video MP4 ≤ 50 MB, no server conversion).
@@ -42,6 +43,93 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 ---
 
 ## Session log
+
+### 2026-09-24 (4) — W2-01 homepage, developer pass
+
+The placeholder home page is gone. `/` is a real, server-rendered page on
+`feature/W2-01-homepage` (worktree `worktrees/sd-home`), built on the product-page branch. Not
+pushed, not merged, not Done: it goes to the tester next.
+
+**The page has no opinion about what is on it.** Ten section types, every one of them a row in
+`content.HomeSections` that the client will edit in ADM-17: which blocks appear, in what order,
+with what heading, for how long. The page renders the list the API sends, and a section that
+arrives with nothing in it renders **nothing at all** — no frame, no heading over a gap, no
+"coming soon". `hasContent` is one pure function with one test over all ten types, rather than ten
+`@if`s that have to agree.
+
+**The decision worth recording: a product row is resolved server-side, from its own listing URL.**
+`SettingsJson` carries a storefront listing URL (`/new-arrivals`, `/sale`, `/?sort=best-selling`),
+`ListingUrl.ToCriteria` turns it into the criteria the catalogue read store already takes, and the
+same URL is the section's "view all". So the row *is* the head of the listing it links to, by
+construction — they cannot drift apart, and an integration test asserts it against the catalogue
+endpoint itself. Verified live: the homepage's New Arrivals row and `/new-arrivals` both show the
+same two products. The alternative — the page fetching each row — would have put three HTTP round
+trips inside the render of the page a crawler reads, and made the row and its link two definitions
+of one listing. Cost: three sequential SQL queries in one request (sequential because they share a
+DbContext).
+
+**Four sections are seeded switched off**, per doc 08 §9's "media-dependent sections disabled until
+content exists": the hero video, the campaign banner, the activewear feature and the social
+gallery are nothing but artwork and W1-04 has not landed. All four are built against the real
+shape and exercised in the browser through a stub that is deliberately **richer** than the seed —
+mirroring the seed would have left them untested in the one place their behaviour can be seen.
+
+**HOME-04 is the one place the brief and doc 08 disagree, and doc 08 wins.** The brief listed
+Trending among the product-backed rows; doc 08 §3.7 says "trending items store a filtered listing
+URL" and scope HOME-04 says "each card opens the matching filtered listing", which is a row of
+tiles, not of products. Both modes are built: `mode: manual` renders the client's tiles, each
+opening its listing, and that is what HOME-04 means. It is **seeded `auto`** anyway, because §9
+pins the seed at six items and a tile needs artwork — so the row works on day one and becomes the
+tile row the moment the client uploads pictures.
+
+**HOME-10 really subscribes.** `marketing.NewsletterSubscribers` is specified in doc 08 §3.6, so
+the minimal endpoint was built rather than the form being disabled with an explanation. Single
+opt-in, which is the shape that table has (two statuses, no "pending"); a double opt-in needs the
+§3.8 outbox. The answer is the same sentence whether or not the address was already on the list,
+because a form that said otherwise is a way to test whether someone shops here. Rate-limited per
+caller. Verified live end to end: a row with status Subscribed, source `homepage`, the real socket
+peer as the consent IP, and an unsubscribe token.
+
+**Three defects the browser found and jsdom could not:**
+- **`routerLink` given a whole URL as one command percent-encodes the `?`.** A trending tile
+  pointing at `/women/jeans?fit=wide-leg` landed on a path literally called "jeans?fit=wide-leg" —
+  a 404 dressed up as a filter, on the one feature whose entire point is that the card opens the
+  matching filtered listing. `toLink` now splits the query off and hands it over as `queryParams`,
+  repeatable filters included. The announcement bar had the same hole.
+- **The gallery's inset focus ring was no ring at all** from outside the photograph. `edgesWithoutRing`
+  reported all four edges, correctly: the cell was clipping its overflow, so the first version went
+  inset — which is what lesson L4 is about. `object-fit: cover` already crops the square, so the
+  clip was never needed and the ring is an ordinary outward one now.
+- **A container section flush against the banner below it lost the focus ring on its last row.**
+  The full-bleed blocks are `position: relative`, so they paint above the static content before
+  them. Measured on a trending tile at 1280, bottom edge. Fixed with real bottom spacing, which the
+  layout wanted anyway.
+
+**Two shared tests were pointed somewhere they could no longer mean what they said**, and were
+corrected rather than worked around: the shell's touch-target sweep took every `a[href]` on `/`,
+which was fine while `/` was a placeholder and is not now that a product card's stretched link is
+on it — it measures the shell's own controls, and `home-page.e2e.ts` proves the stretched link's
+target really is the card; and the listing's "not the listing" assertion read `.product-grid`,
+which the homepage now uses too, so it asks about the component.
+
+**What the API and the data could not serve, and was therefore not invented:**
+- **No media at all (W1-04).** Department tiles render without photographs — a named panel that
+  opens the department is usable, unlike an empty banner frame — and the four artwork sections stay
+  off the page.
+- **New Arrivals is two products on the seeded catalogue**, because `Catalog.NewArrivalDays` is 30
+  and only two of the 45 demo products are still inside their window. Thin, and honest: it is
+  exactly what `/new-arrivals` shows.
+- **There is no "everything" listing route**, so the trending row has no "view all" to offer and
+  renders none rather than a link to the home page.
+- The benefits copy and the two announcement lines are **placeholders** the client replaces before
+  go-live (docs/04 §4 decision 8, D8). None of them states a figure the system has not been
+  configured with.
+
+**Numbers:** backend 348 unit (was 232) + 204 integration (146), 0 skipped; storefront unit 431
+(361), shared 19, admin 9; Playwright 183 (128), three consecutive clean runs. Lint clean, all
+builds clean, no new runtime dependency.
+
+**Next:** the tester.
 
 ### 2026-09-24 (3) — W2-05 fix round 2: the same blindness, one layer down
 

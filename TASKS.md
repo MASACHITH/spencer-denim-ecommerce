@@ -49,7 +49,7 @@ Feature IDs → [docs/02-scope-baseline.md](docs/02-scope-baseline.md). Process 
 ## Week 2 — Storefront (26 Sep–2 Oct)
 | ID | Task | Features | Status |
 |---|---|---|---|
-| W2-01 | Homepage blocks + Content admin | HOME-01–10, ADM-17 | TODO |
+| W2-01 | Homepage blocks + Content admin | HOME-01–10, ADM-17 | IN REVIEW — the storefront half is built on `feature/W2-01-homepage` and going to the tester: `content.HomeSections` / `HomeSectionItems` / `AnnouncementMessages` and `marketing.NewsletterSubscribers` with their migration and seeder, the read-only content API, the newsletter signup endpoint, and the homepage itself. **ADM-17's admin screens are not in it** and remain TODO — see W1-12 for the same split on the catalogue. HOME-01/05/06/08 are seeded switched off until the media library lands (W1-04) |
 | W2-02 | Department, New Arrivals, Sale pages | DEPT-01–03 | IN REVIEW — DEPT-01 and the New Arrivals / Sale listings landed with W2-03 (two of the five permanent nav entries could not point at a missing page). Their promo banners and editorial copy are still TODO |
 | W2-03 | Listing: filters, chips, sort, count, empty, load more | PLP-01–07 | IN REVIEW — fix round 1 delivered on `feature/W2-03-product-listing`, back with the tester |
 | W2-04 | Product card + Quick View | CARD-01, QV-01 | IN PROGRESS — the card landed with W2-03 minus Quick View (QV-01) and Add to Bag (needs the bag API, W2-09); the product detail page is still TODO |
