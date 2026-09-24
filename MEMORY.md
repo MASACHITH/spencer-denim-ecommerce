@@ -43,6 +43,61 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 
 ## Session log
 
+### 2026-09-24 (3) — W2-05 fix round 2: the same blindness, one layer down
+
+The tester re-implemented round 1's `edgesWithoutRing` himself, proved it falsifiable and
+deterministic over 10 controls at all eight breakpoints, and then found that **the fix I made
+alongside it had exactly the fault the round was about.**
+
+**Major: the sold-out slash was invisible on 12 of the 16 seeded colourways.** It painted in
+`--color-text-muted` whatever the swatch under it was — the dot has no text, so that `color` only
+fed the gradient. Measured against WCAG 2.2 AA 1.4.11's 3:1: Olive Green **1.08:1**, Deep Teal
+1.16, Indigo Rinse 1.30, Plum 1.31, Terracotta 1.46, Charcoal 1.59, Mid Wash Blue 1.68, Deep
+Maroon 1.74, Chocolate 1.80, Mustard 2.46, Blush Pink 2.59, Deep Navy 2.68. Only Sandstone, True
+Black, Coconut Cream and Optic White passed. So the size buttons got a real third state and the
+swatches got a mark that mostly was not there.
+
+**And my test made the same mistake the ring test used to**: it asserted `::after { content }` was
+not `"none"` — that the mark was *specified* — on a single stub colourway that was itself one of
+the invisible cases. **Specified is not visible. That is twice now in one task**, so it is worth
+stating as a rule: *an assertion that reads back a declaration is testing the stylesheet. If the
+finding is "a shopper cannot see this", the test has to measure what reaches the screen.*
+
+The new test reads the colour Chromium resolved for the slash and for the dot beneath it and
+computes the real ratio, over all sixteen seeded colourways (the e2e stub carries the full palette
+now, all sold out on one product). Proven red first, naming the same twelve with the same ratios.
+
+**The fix is a measurement, not a threshold.** `core/platform/contrast.ts` picks between
+`--color-text` and `--color-on-primary` by measuring both against the swatch. Choosing the better
+of two inks at opposite ends of the scale has a floor — the crossover where both score alike —
+which for these two is **4.17:1** at luminance 0.2017. I first wrote 4.58, which is the figure for
+*pure* black and white; the dark ink is `#1a1a1a`. The spec walks the whole colour cube and pins
+the real number, so an admin's next colour cannot fall through. Worst across the seeded palette is
+now 4.75:1 (Terracotta). `isLight()` is deliberately not reused — it answers "does this need a
+border against white?", and its 0.8 threshold calls Mustard and Blush Pink dark, where white scores
+2.17:1 and 2.06:1.
+
+**Minor, and the same shape again: the ring test was aimed at the one control that could not
+fail.** The quantity group is three controls edge to edge, so each one's right-hand ring lands
+under the next sibling; `FOCUSABLE` listed `.qty__step:not(:disabled)` and `.first()` resolved to
+the **plus** — the last child, the only one whose ring cannot be covered. The box and the minus
+both lost `right` at all eight breakpoints. All three are listed now, with the page put into the
+state where the minus is live.
+
+**Minors** — `scroll-padding-top` on `html`, because the browser scrolls a focused element to the
+top of the viewport and the header is sticky (118 px of the zoom button sat behind it); the size
+guide's dead CSS moved to a shared `button.link` rather than being deleted, since the markup stays
+for issue #32 and deleting the styling would have left it unstyled the day the API serves content;
+one more pre-hydration flake (reading `document.body` the instant a replayed click resolves).
+
+**The 4-vs-8 sub-44 px link count is settled**: 4 on the stub's profile, 7 on the real catalogue, 9
+with a recently-viewed row on screen. The invariants the test asserts hold in all three.
+
+**Numbers:** storefront unit 361 (round 1: 333), Playwright 121 (117), shared 19, admin 9; backend
+232 + 146, 0 skipped. Lint clean, builds clean, four consecutive clean Playwright runs.
+
+**Next:** back to the tester.
+
 ### 2026-09-24 (2) — W2-05 fix round 1: a test that could not fail
 
 The tester verified every number and every claim from the developer pass and failed the branch on
