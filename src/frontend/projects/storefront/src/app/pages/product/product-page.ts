@@ -45,6 +45,7 @@ import {
   videosFor,
 } from '../../core/catalog/product-variants';
 import { CanonicalLink } from '../../core/platform/canonical-link';
+import { readableInk } from '../../core/platform/contrast';
 import { LocalWishlist } from '../../core/wishlist/local-wishlist.service';
 
 /** How long a crawler is asked to wait before retrying a product the store could not serve. */
@@ -198,6 +199,7 @@ const RECENT_SHOWN = 6;
                         [class.swatch__dot--light]="isLight(option.colour.hexCode)"
                         [class.is-sold-out]="!option.isInStock"
                         [style.--swatch]="option.colour.hexCode ?? 'transparent'"
+                        [style.--slash]="slashInk(option.colour.hexCode)"
                       ></span>
                     </button>
                   }
@@ -228,7 +230,7 @@ const RECENT_SHOWN = 6;
                 </div>
                 @if (sizeGuide(); as guide) {
                   <button
-                    class="pdp__guide"
+                    class="link pdp__guide"
                     type="button"
                     aria-haspopup="dialog"
                     aria-controls="size-guide"
@@ -413,6 +415,12 @@ const RECENT_SHOWN = 6;
     .pdp__chosen {
       color: var(--color-text);
     }
+    /* The trigger is a shared button.link; this is the only thing it needs from the page, and it
+       is here rather than deleted because the markup stays (issue #32) and a grid child would
+       otherwise stretch the full width of the column. */
+    .pdp__guide {
+      justify-self: start;
+    }
     .pdp__swatches,
     .pdp__sizes {
       display: flex;
@@ -456,6 +464,11 @@ const RECENT_SHOWN = 6;
       position: relative;
       color: var(--color-text-muted);
     }
+    /* A size button has text and a known background, so the mark can follow its own colour. A
+       swatch is whatever an admin chose, so the mark is given one measured against it. */
+    .swatch__dot.is-sold-out {
+      color: var(--slash);
+    }
     /* The chosen size is a dark button; muting its label there would drop it below AA. */
     .size.is-sold-out.is-selected {
       color: var(--color-on-primary);
@@ -494,23 +507,19 @@ const RECENT_SHOWN = 6;
       text-decoration: line-through;
       cursor: not-allowed;
     }
-    .pdp__guide {
-      justify-self: start;
-      min-height: var(--tap);
-      padding: 0;
-      border: 0;
-      background: none;
-      font-size: var(--text-small);
-      text-decoration: underline;
-      text-underline-offset: 4px;
-      cursor: pointer;
-    }
 
     .qty {
       display: flex;
       align-items: stretch;
       width: max-content;
       border: 1px solid var(--color-border-strong);
+    }
+    /* The three controls sit edge to edge with no gap, so each one's ring landed underneath the
+       next sibling and its right-hand side was invisible. Lifting whichever has focus puts the
+       ring on top of its neighbours instead. */
+    .qty > :focus-visible {
+      position: relative;
+      z-index: 1;
     }
     .qty__step {
       width: var(--tap);
@@ -934,7 +943,25 @@ export class ProductPage {
       : `Size ${option.size.label}, out of stock`;
   }
 
-  /** A pale swatch needs an edge to be visible on white (docs/04 §4). Same rule as the card. */
+  /**
+   * The colour to draw the sold-out slash in, chosen for the swatch it lands on.
+   *
+   * It used to be `--color-text-muted` on every swatch, which is a mark that is mostly not there:
+   * 1.08:1 on Olive Green, 1.16:1 on Deep Teal, under 3:1 (WCAG 2.2 AA 1.4.11) on twelve of the
+   * sixteen seeded colourways. {@link readableInk} measures both inks against the swatch rather
+   * than reading a lightness threshold — {@link isLight} below is a threshold, and it is the
+   * wrong question here: it calls Mustard and Blush Pink dark, and white on those scores 2.17:1
+   * and 2.06:1. Worst measured across the palette is now 4.75:1.
+   */
+  protected slashInk(hex: string | null): string {
+    return readableInk(hex) === 'dark' ? 'var(--color-text)' : 'var(--color-on-primary)';
+  }
+
+  /**
+   * Whether a pale swatch needs a stronger edge to be seen against white (docs/04 §4). The same
+   * rule as the card, and a different question from {@link slashInk}: this is about the ring
+   * around the dot, that is about what can be drawn on top of it.
+   */
   protected isLight(hex: string | null): boolean {
     if (!hex || !/^#[0-9a-f]{6}$/i.test(hex)) {
       return true;

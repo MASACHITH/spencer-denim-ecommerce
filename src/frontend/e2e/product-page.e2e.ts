@@ -18,6 +18,9 @@ import { apiURL, faultyCatalogueURL } from '../playwright.config';
 
 const PRODUCT = '/product/test-product-1';
 
+/** The same product with a colourway and size settled, so a variant is resolved. */
+const SIZED = `${PRODUCT}?colour=1&size=10`;
+
 /** docs/04 §4 and the project's non-negotiable list. */
 const BREAKPOINTS = [320, 375, 390, 768, 1024, 1280, 1440, 1920] as const;
 
@@ -397,6 +400,11 @@ test.describe('the full-screen view (PDP-01)', () => {
   test('the page behind does not scroll while it is open', async ({ page }) => {
     await page.goto(PRODUCT);
     await page.locator('.gallery__open').click();
+    // The dialog first. A click made before hydration is replayed afterwards, so reading the
+    // body's style the instant the click resolves can catch the page before the dialog exists —
+    // it did, about one run in thirty. Every other test here waits on a locator, which retries;
+    // this one read the DOM once.
+    await expect(page.getByRole('dialog')).toBeVisible();
 
     expect(
       await page.evaluate(() => getComputedStyle(document.body).overflow),
@@ -465,13 +473,22 @@ test.describe('reduced motion', () => {
    * on this page is checked for a ring that is really drawn and really on top — an outline with
    * a width, or a visible `::after` ring like the card's heart uses.
    */
+  /**
+   * The quantity group is three controls edge to edge with no gap, so each one's right-hand ring
+   * lands underneath the next sibling. Aiming at `.qty__step:not(:disabled)` and taking
+   * `.first()` was aiming at the **plus** — the last child, the only one of the three whose ring
+   * could not be covered, and so the only one that could not fail. The box and the minus are
+   * listed explicitly, and `quantity` puts the page in the state where the minus is live.
+   */
   const FOCUSABLE = [
     { name: 'a colour swatch', selector: '.swatch' },
     { name: 'a size button', selector: '.size:not(:disabled)' },
     { name: 'the wishlist button', selector: '.pdp__wish' },
-    // With no size chosen the stepper's ceiling is one, so both of its buttons are disabled and
+    // With no size chosen the stepper's ceiling is one and both its buttons are disabled, so
     // there is nothing to focus. A size is the state a shopper is in when they use it anyway.
-    { name: 'the quantity stepper', selector: '.qty__step:not(:disabled)', url: `${PRODUCT}?colour=1&size=10` },
+    { name: 'the quantity box', selector: '#pdp-quantity', url: SIZED },
+    { name: 'the quantity minus', selector: '.qty__step:first-child', url: SIZED, quantity: 2 },
+    { name: 'the quantity plus', selector: '.qty__step:last-child', url: SIZED },
     { name: 'the zoom button', selector: '.gallery__open' },
     { name: 'a thumbnail', selector: '[role="tab"]' },
   ] as const;
@@ -496,6 +513,13 @@ test.describe('reduced motion', () => {
       // `:focus-visible` on a button when the last interaction was a keyboard one, and a bare
       // programmatic `focus()` would test a ring the shopper never sees.
       await page.keyboard.press('Tab');
+
+      // Some controls only come alive in a particular state — the minus is disabled at one.
+      if ('quantity' in control) {
+        const box = page.locator('#pdp-quantity');
+        await box.fill(String(control.quantity));
+        await expect(box).toHaveValue(String(control.quantity));
+      }
 
       const target = page.locator(control.selector).first();
       await target.focus();
@@ -525,6 +549,32 @@ test.describe('reduced motion', () => {
       expect(await edgesWithoutRing(page, target)).toEqual([]);
     });
   }
+
+  /**
+   * The browser scrolls a focused element to the very top of the viewport, which on this site is
+   * underneath the sticky header (GLB-04). Tabbing to the zoom button left 78 px of it behind the
+   * header at 1280×800. `scroll-padding-top` on `html` is the fix, and it belongs to the shell
+   * rather than to this page — but it is measurable here, so it is guarded here.
+   */
+  test('a focused control is not scrolled under the sticky header', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto(PRODUCT);
+    await recorded(page, 'test-product-1');
+
+    const hidden = await page.evaluate(() => {
+      const header = document.querySelector('header');
+      const target = document.querySelector<HTMLElement>('.gallery__open');
+      if (!header || !target) {
+        return -1;
+      }
+
+      target.scrollIntoView({ block: 'start', behavior: 'instant' });
+      return Math.round(header.getBoundingClientRect().bottom - target.getBoundingClientRect().top);
+    });
+
+    // Nothing of the control may sit above the header's lower edge.
+    expect(hidden).toBeLessThanOrEqual(0);
+  });
 
   /**
    * The rail is a scrolling row on a phone and a scrolling column from 768 px, and the two clip on
@@ -719,6 +769,69 @@ test.describe('sold out looks sold out (PDP-03)', () => {
 
     // This colourway is made in every size, so the third state is not on screen to confuse it.
     await expect(notMade).toHaveCount(0);
+  });
+
+  /**
+   * The mark has to be *visible*, on every colour it can land on.
+   *
+   * The first version of this test asserted `::after { content }` was not "none" — that the mark
+   * was *specified* — on a single stub colourway, and it would have passed unchanged while the
+   * slash was painted in a grey that scored 1.08:1 against Olive Green. Specified is not the same
+   * as visible, the same mistake the focus-ring assertion made.
+   *
+   * So this reads the colour the browser actually resolved for the slash (Chromium resolves
+   * `currentColor` inside a computed gradient, which is what makes this a measurement rather than
+   * a restatement of the stylesheet), reads the colour actually resolved for the dot under it,
+   * and computes the WCAG 2.1 contrast ratio between the two — over all sixteen colourways the
+   * demo catalogue seeds, not one. 3:1 is the non-text minimum (WCAG 2.2 AA 1.4.11).
+   */
+  test('the sold-out mark clears 3:1 on every seeded colourway', async ({ page }) => {
+    await page.goto('/product/test-product-11');
+    await expect(page.locator('h1')).toBeVisible();
+
+    const measured = await page.evaluate(() => {
+      const channel = (value: number) => {
+        const part = value / 255;
+        return part <= 0.04045 ? part / 12.92 : Math.pow((part + 0.055) / 1.055, 2.4);
+      };
+
+      const luminance = (rgb: number[]) =>
+        0.2126 * channel(rgb[0]) + 0.7152 * channel(rgb[1]) + 0.0722 * channel(rgb[2]);
+
+      const contrast = (a: number[], b: number[]) => {
+        const [high, low] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+        return (high + 0.05) / (low + 0.05);
+      };
+
+      /** Every rgb()/rgba() in a value, dropping the fully transparent stops. */
+      const opaque = (value: string): number[][] =>
+        [...value.matchAll(/rgba?\(([^)]+)\)/g)]
+          .map((match) => match[1].split(/[,/]/).map((part) => parseFloat(part.trim())))
+          .filter((parts) => parts.length < 4 || parts[3] > 0);
+
+      return [...document.querySelectorAll<HTMLElement>('.swatch__dot')].map((dot) => {
+        const after = getComputedStyle(dot, '::after');
+        const slash = opaque(after.backgroundImage)[0] ?? null;
+        const behind = opaque(getComputedStyle(dot).backgroundColor)[0] ?? [255, 255, 255];
+
+        return {
+          name: dot.closest('button')?.getAttribute('aria-label') ?? '?',
+          marked: after.content !== 'none',
+          slash,
+          ratio: slash ? Math.round(contrast(slash, behind) * 100) / 100 : 0,
+        };
+      });
+    });
+
+    // The palette really is all of it, and every swatch really is marked.
+    expect(measured).toHaveLength(16);
+    expect(measured.filter((swatch) => !swatch.marked)).toEqual([]);
+
+    const failing = measured
+      .filter((swatch) => swatch.ratio < 3)
+      .map((swatch) => `${swatch.name}: ${swatch.ratio}:1`);
+
+    expect(failing).toEqual([]);
   });
 
   test('a sold-out colourway is marked too', async ({ page }) => {
