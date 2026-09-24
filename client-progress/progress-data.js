@@ -15,7 +15,7 @@ const progressData = {
     endDate: "2026-10-15"
   },
 
-  lastUpdated: "2026-09-22",
+  lastUpdated: "2026-09-24",
 
   milestones: [
     { week: "Week 0", title: "Setup & design", start: "2026-09-15", end: "2026-09-18" },
@@ -40,11 +40,11 @@ const progressData = {
       features: [
         { name: "Hero video banner", status: "planned", progress: 0 },
         { name: "Shop by department (Women, Men, Kids)", status: "planned", progress: 0 },
-        { name: "New arrivals", status: "planned", progress: 0 },
+        { name: "New arrivals", status: "in-progress", progress: 60 },
         { name: "Trending items", status: "planned", progress: 0 },
         { name: "Campaign banner", status: "planned", progress: 0 },
         { name: "Activewear feature", status: "planned", progress: 0 },
-        { name: "Sale section", status: "planned", progress: 0 },
+        { name: "Sale section", status: "in-progress", progress: 60 },
         { name: "Social media gallery", status: "planned", progress: 0 },
         { name: "Customer benefits", status: "planned", progress: 0 },
         { name: "Newsletter signup", status: "planned", progress: 0 }
@@ -53,12 +53,12 @@ const progressData = {
     {
       name: "Shopping Pages",
       features: [
-        { name: "Site header with announcement bar, footer, WhatsApp chat button & delivery district selector", status: "planned", progress: 0 },
-        { name: "Main menu (Women · Men · Kids · New Arrivals · Sale) with mega menu & mobile menu", status: "planned", progress: 0 },
-        { name: "Department pages", status: "in-progress", progress: 10 },
-        { name: "Category listings with filters & sorting", status: "in-progress", progress: 25 },
-        { name: "Product cards with quick view", status: "in-progress", progress: 10 },
-        { name: "Search", status: "in-progress", progress: 10 },
+        { name: "Site header with announcement bar, footer, WhatsApp chat button & delivery district selector", status: "done", progress: 100 },
+        { name: "Main menu (Women · Men · Kids · New Arrivals · Sale) with mega menu & mobile menu", status: "done", progress: 100 },
+        { name: "Department pages", status: "done", progress: 100 },
+        { name: "Category listings with filters & sorting", status: "done", progress: 100 },
+        { name: "Product cards with quick view", status: "in-progress", progress: 70 },
+        { name: "Search", status: "in-progress", progress: 40 },
         { name: "Store pages: About, Contact, Returns, Shipping, Privacy & Terms", status: "planned", progress: 0 }
       ]
     },
@@ -97,9 +97,9 @@ const progressData = {
       name: "Admin Panel",
       features: [
         { name: "Admin login with user roles & permissions", status: "in-progress", progress: 45 },
-        { name: "Product management (images & video)", status: "in-progress", progress: 10 },
-        { name: "Category management", status: "in-progress", progress: 10 },
-        { name: "Inventory", status: "in-progress", progress: 10 },
+        { name: "Product management (images & video)", status: "in-progress", progress: 35 },
+        { name: "Category management", status: "in-progress", progress: 35 },
+        { name: "Inventory", status: "in-progress", progress: 25 },
         { name: "Order management & payment approval", status: "planned", progress: 0 },
         { name: "Promo codes & sale campaigns", status: "planned", progress: 0 },
         { name: "Customers", status: "planned", progress: 0 },
@@ -124,6 +124,14 @@ const progressData = {
 
   // Newest first.
   updates: [
+    {
+      date: "2026-09-24",
+      text: "Shopping pages are working. You can now open Women, Men or Kids, narrow the products by size, colour, price, material and more, sort them, and load more as you scroll. New Arrivals and Sale pages are live too. Product cards show the photo, a second photo on hover, the price with any discount, the rating and the available colours. A filtered page keeps its own web address, so you can share or bookmark it. Tested on phone, tablet and desktop, and with keyboard and screen-reader use."
+    },
+    {
+      date: "2026-09-23",
+      text: "The shop frame is built and tested: the top announcement bar, the header with your logo area, search, wishlist and bag, the main menu with drop-down categories on desktop and a slide-out menu on phones, the delivery district selector, the footer, and the WhatsApp chat button. Checked on phone, tablet and desktop sizes."
+    },
     {
       date: "2026-09-22",
       text: "Secure admin sign-in is built and tested: staff accounts, roles and permissions, and an activity log that records every sign-in and sign-out. The remaining admin screens (managing staff users, viewing the activity log) come next. Work also continued on the product catalogue."
