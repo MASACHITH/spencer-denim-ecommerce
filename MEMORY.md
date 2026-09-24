@@ -43,6 +43,71 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 
 ## Session log
 
+### 2026-09-24 (1) — W2-05 product detail page, developer pass
+
+`/product/:slug` is a real, server-rendered page on `feature/W2-05-product-page` (worktree
+`worktrees/sd-pdp`), built on the listing branch. Not pushed, not merged, not Done: it goes to the
+tester next.
+
+**The decision worth recording: the colourway and the size live in the query string.** The rule
+was "shareable and server-renderable if it changes what is shown", and both do. A colour changes
+the *photographs* — `catalog.ProductMedia.ProductColourId` ties each gallery shot to one colourway
+and the demo seeder gives every colour its own, so `?colour=47` and `?colour=48` are different
+pictures. A size changes the *money* — `ProductVariants.PriceOverride` is real and seeded, and
+Washed Linen Camp Shirt is Rs. 5,990 in XL and Rs. 6,290 in XXL. The **canonical** address carries
+neither, so the colourways stay one page in an index rather than one URL per colour.
+
+**Three failures, three answers.** A slug the catalogue does not know (404) and a slug the API will
+not accept (400) are the same thing to a shopper, so both render the site's own not-found page at
+a real HTTP 404. A store that answers badly is different — the product probably exists — so that
+is a "try again" page and **503 with `Retry-After`**, which a crawler retries where it drops a 404.
+Same reasoning as the fallback-tree note filed against ADM-11 last session.
+
+**What the API cannot serve, and was therefore not invented:**
+- **PDP-04 has no size-guide content.** `catalog.SizeGuides` holds `IntroHtml`, `TableJson`,
+  `MeasuringTipsHtml` and an image, and `CatalogReferenceDataSeeder` fills all four — but
+  `SizeGuideRefDto` is `(int Id, string Name)` and no endpoint serves the rest. The modal is built
+  against the real shape and says plainly that the chart is not published yet, pointing at the
+  WhatsApp button. **The fix is an API change, not a component change**: project the guide's
+  content onto `SizeGuideRefDto` or add `GET /api/catalog/size-guides/{id}`. Filed for W1-02/ADM-17.
+- **PDP-05's delivery estimate, delivery methods and returns terms have no source at all.**
+  Delivery methods and fees are ADM-22/CHK-02 settings and the returns copy is a GLB-10 content
+  page, both week 3. Nothing was written: "2–3 working days" on a storefront is a promise no part
+  of the system has made yet. The description, material, fit, occasion, age group and care are all
+  from the API and all render.
+- No seeded product has a **video**. The gallery handles one (role `Video`, poster, its own slide);
+  the e2e stub is what exercises it.
+- **Media is still not served (W1-04)**, so every `<img>` on the page 404s today. Every frame is a
+  fixed 3:4 box and a failed image swaps for a placeholder inside it, so the layout is identical
+  either way and nothing moves.
+
+**Two defects that only clicking through the real API found, after the suites were green:**
+- `Products.Description` is **sanitised HTML** (doc 08 §3.2) and the seeder writes `<p>…</p>` into
+  it. Interpolating it printed the tags at the shopper. It goes through `[innerHTML]` now (Angular
+  sanitises it again), with the markup stripped out of anything copied into a `<meta>`. The e2e
+  stub served a plain sentence in that field, which is exactly why no test saw it — **a stub that
+  is shaped more politely than the real API tests nothing**, the same lesson as round 3 of W2-03 in
+  a different coat. The stub serves HTML there now.
+- A not-found page re-asked the API after hydration and collected a second, guaranteed 404 in the
+  console. A missing product is handed over as missing; a *fault* still is not, because a 500
+  during the render may be over by the time the page hydrates.
+
+**Two the browser tests found, both in the new modal:** the full-screen panel was a grid item at
+`height: 100%` and a grid track sizes to its content, so a tall photograph pushed the zoom controls
+off the bottom of the screen; and the focus trap never armed, because the `@if` and the view query
+settle in the same render and the effect read only `open()`, so it ran once while the panel was
+still undefined and gave up. Both fixed. A third was in a test, not the code: a helper looked for
+`[role="dialog"]` and found the shell's permanently mounted, hidden mobile nav drawer.
+
+**Deliberately absent:** Add to Bag and Buy Now (bag API is W2-09), the real wishlist (W2-08 — the
+heart is the same per-browser `LocalWishlist` the card uses), reviews (PDP-08, W2-06) and Quick
+View (QV-01, W2-04). Nothing dead or disabled stands in for any of them.
+
+**Numbers:** storefront unit 312 (was 220), Playwright 112 (was 65), shared 19, admin 9; backend
+232 + 146, 0 skipped. Lint and all builds clean, no new runtime dependency.
+
+**Next:** the tester.
+
 ### 2026-09-23 (5) — W2-03 fix round 3: a blocker the tests were built to miss
 
 Round-2 work verified on the wire. The tester then found a blocker that had been on the branch
