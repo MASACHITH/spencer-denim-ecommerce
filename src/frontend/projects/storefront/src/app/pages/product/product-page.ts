@@ -786,8 +786,15 @@ export class ProductPage {
     this.store.retry(this.slug());
   }
 
+  /**
+   * The new colourway keeps the size only if it is made in it; `resolveSelection` is the same
+   * rule the URL is read with, so the address bar can never end up naming a variant that does
+   * not exist (`?colour=2&size=12` when Ecru stops at M).
+   */
   protected chooseColour(colourId: number): void {
-    this.apply({ colourId, sizeId: this.selection().sizeId });
+    const item = this.product();
+    const next = { colourId, sizeId: this.selection().sizeId };
+    this.apply(item ? resolveSelection(item, next) : next);
   }
 
   /** Tapping the chosen size again clears it, which is how a shopper undoes a mis-tap. */
