@@ -38,16 +38,16 @@ const progressData = {
     {
       name: "Homepage",
       features: [
-        { name: "Hero video banner", status: "planned", progress: 0 },
-        { name: "Shop by department (Women, Men, Kids)", status: "planned", progress: 0 },
-        { name: "New arrivals", status: "in-progress", progress: 60 },
-        { name: "Trending items", status: "planned", progress: 0 },
-        { name: "Campaign banner", status: "planned", progress: 0 },
-        { name: "Activewear feature", status: "planned", progress: 0 },
-        { name: "Sale section", status: "in-progress", progress: 60 },
-        { name: "Social media gallery", status: "planned", progress: 0 },
-        { name: "Customer benefits", status: "planned", progress: 0 },
-        { name: "Newsletter signup", status: "planned", progress: 0 }
+        { name: "Hero video banner", status: "in-progress", progress: 70 },
+        { name: "Shop by department (Women, Men, Kids)", status: "done", progress: 100 },
+        { name: "New arrivals", status: "done", progress: 100 },
+        { name: "Trending items", status: "in-progress", progress: 70 },
+        { name: "Campaign banner", status: "in-progress", progress: 70 },
+        { name: "Activewear feature", status: "in-progress", progress: 70 },
+        { name: "Sale section", status: "done", progress: 100 },
+        { name: "Social media gallery", status: "in-progress", progress: 70 },
+        { name: "Customer benefits", status: "done", progress: 100 },
+        { name: "Newsletter signup", status: "done", progress: 100 }
       ]
     },
     {
@@ -57,7 +57,7 @@ const progressData = {
         { name: "Main menu (Women · Men · Kids · New Arrivals · Sale) with mega menu & mobile menu", status: "done", progress: 100 },
         { name: "Department pages", status: "done", progress: 100 },
         { name: "Category listings with filters & sorting", status: "done", progress: 100 },
-        { name: "Product cards with quick view", status: "in-progress", progress: 70 },
+        { name: "Product cards with quick view", status: "in-progress", progress: 80 },
         { name: "Search", status: "in-progress", progress: 40 },
         { name: "Store pages: About, Contact, Returns, Shipping, Privacy & Terms", status: "planned", progress: 0 }
       ]
@@ -65,10 +65,10 @@ const progressData = {
     {
       name: "Product Page",
       features: [
-        { name: "Image gallery, zoom & video", status: "in-progress", progress: 5 },
-        { name: "Colour & size selection with size guide", status: "in-progress", progress: 10 },
-        { name: "Product details & delivery information", status: "in-progress", progress: 10 },
-        { name: "Related & recently viewed products", status: "in-progress", progress: 5 },
+        { name: "Image gallery, zoom & video", status: "done", progress: 100 },
+        { name: "Colour & size selection with size guide", status: "in-progress", progress: 80 },
+        { name: "Product details & delivery information", status: "in-progress", progress: 60 },
+        { name: "Related & recently viewed products", status: "done", progress: 100 },
         { name: "Reviews & ratings", status: "planned", progress: 0 }
       ]
     },
@@ -105,7 +105,7 @@ const progressData = {
         { name: "Customers", status: "planned", progress: 0 },
         { name: "Review moderation", status: "planned", progress: 0 },
         { name: "Newsletter subscriber list", status: "planned", progress: 0 },
-        { name: "Homepage & content management", status: "planned", progress: 0 },
+        { name: "Homepage & content management", status: "in-progress", progress: 35 },
         { name: "Dashboard", status: "planned", progress: 0 },
         { name: "Reports & traffic", status: "planned", progress: 0 },
         { name: "Settings", status: "planned", progress: 0 }
@@ -124,6 +124,10 @@ const progressData = {
 
   // Newest first.
   updates: [
+    {
+      date: "2026-09-24",
+      text: "The home page and the product page are built. The home page now shows Shop by Department, New Arrivals, Trending, Sale, why-shop-with-us and newsletter sign-up, and every part of it is stored so you can edit it yourself later. The product page has the photo gallery with zoom and full screen, colour and size choice with prices per size, product details and related items. The picture-led blocks (hero video, campaign banner, activewear, social wall) are built and switched off until your photographs and video are uploaded."
+    },
     {
       date: "2026-09-24",
       text: "Shopping pages are working. You can now open Women, Men or Kids, narrow the products by size, colour, price, material and more, sort them, and load more as you scroll. New Arrivals and Sale pages are live too. Product cards show the photo, a second photo on hover, the price with any discount, the rating and the available colours. A filtered page keeps its own web address, so you can share or bookmark it. Tested on phone, tablet and desktop, and with keyboard and screen-reader use."
