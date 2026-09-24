@@ -1,4 +1,4 @@
-import { Page, expect, test } from '@playwright/test';
+import { Locator, Page, expect, test } from '@playwright/test';
 
 import { apiURL, faultyCatalogueURL } from '../playwright.config';
 
@@ -69,6 +69,101 @@ async function recorded(page: Page, slug: string): Promise<void> {
   await expect
     .poll(() => page.evaluate(() => localStorage.getItem('sd.recently-viewed') ?? ''))
     .toContain(slug);
+}
+
+/**
+ * How far outside a control's border box the focus ring is drawn: `outline-offset: 2px` plus
+ * `--focus-width: 2.5px`, rounded up.
+ */
+const RING_BAND = 6;
+
+/**
+ * The edges of a focused control where the focus ring does not actually reach the screen.
+ *
+ * **Why this takes pictures.** The obvious assertion — `getComputedStyle(element).outlineWidth` —
+ * reads the outline the element *would* paint, and is structurally blind to an ancestor clipping
+ * it away. It passed happily on a thumbnail rail that was cropping three of the four edges off
+ * the ring: lesson L4 again, behind a test that could not fail. This screenshots the strip just
+ * outside each edge with the control focused and again with it blurred, and reports the edges
+ * whose pixels come back byte for byte identical. If the ring painted there, they cannot be.
+ *
+ * The control must be focused on the way in; it is left blurred on the way out.
+ */
+async function edgesWithoutRing(page: Page, control: Locator): Promise<string[]> {
+  // Centred, not merely "scrolled into view": a control resting against the bottom of the
+  // viewport has no room below it for the strip, and the guard below would rightly refuse to
+  // measure rather than quietly report the ring intact.
+  await control.evaluate((element: HTMLElement) =>
+    element.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' }),
+  );
+
+  const box = await control.boundingBox();
+  const viewport = page.viewportSize();
+  if (!box || !viewport) {
+    throw new Error('the control has no box to look around');
+  }
+
+  const strips: Record<string, Clip> = {
+    top: {
+      x: box.x - RING_BAND,
+      y: box.y - RING_BAND,
+      width: box.width + RING_BAND * 2,
+      height: RING_BAND,
+    },
+    bottom: {
+      x: box.x - RING_BAND,
+      y: box.y + box.height,
+      width: box.width + RING_BAND * 2,
+      height: RING_BAND,
+    },
+    left: { x: box.x - RING_BAND, y: box.y, width: RING_BAND, height: box.height },
+    right: { x: box.x + box.width, y: box.y, width: RING_BAND, height: box.height },
+  };
+
+  for (const [edge, clip] of Object.entries(strips)) {
+    // A strip off the edge of the viewport would be unreadable, and a silent pass is the one
+    // thing this helper exists to prevent.
+    if (
+      clip.x < 0 ||
+      clip.y < 0 ||
+      clip.x + clip.width > viewport.width ||
+      clip.y + clip.height > viewport.height
+    ) {
+      throw new Error(`the ${edge} strip falls outside the viewport, so the ring cannot be seen`);
+    }
+  }
+
+  const lit: Record<string, Buffer> = {};
+  for (const [edge, clip] of Object.entries(strips)) {
+    lit[edge] = await page.screenshot({ clip: round(clip) });
+  }
+
+  await control.evaluate((element: HTMLElement) => element.blur());
+
+  const missing: string[] = [];
+  for (const [edge, clip] of Object.entries(strips)) {
+    if ((await page.screenshot({ clip: round(clip) })).equals(lit[edge])) {
+      missing.push(edge);
+    }
+  }
+
+  return missing;
+}
+
+interface Clip {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+function round(clip: Clip): Clip {
+  return {
+    x: Math.round(clip.x),
+    y: Math.round(clip.y),
+    width: Math.max(1, Math.round(clip.width)),
+    height: Math.max(1, Math.round(clip.height)),
+  };
 }
 
 /**
@@ -188,6 +283,10 @@ test.describe('what the server puts on the wire (GLB-11)', () => {
 test.describe('the gallery from the keyboard (PDP-01)', () => {
   test('arrows move through the thumbnails and change the stage', async ({ page }) => {
     await page.goto('/product/test-product-5');
+    // Hydration first. A click made before it lands is replayed by `withEventReplay`, but a
+    // keystroke is not: an arrow pressed at a server-rendered thumbnail simply does nothing, and
+    // the test failed about one run in ten on a loaded machine with the rail never moving.
+    await recorded(page, 'test-product-5');
 
     // Product 5 has three colourways, one shot that belongs to all of them and one video, so
     // one colourway's stage holds three slides: its own photograph, the shared one, the film.
@@ -285,6 +384,16 @@ test.describe('the full-screen view (PDP-01)', () => {
     await expect(page.getByRole('button', { name: 'Zoom in' })).toBeDisabled();
   });
 
+  test('closes on the scrim too', async ({ page }) => {
+    await page.goto(PRODUCT);
+    await page.locator('.gallery__open').click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+
+    // The full-screen panel covers the viewport, so the scrim is only reachable underneath it.
+    await page.locator('.sd-modal__scrim').dispatchEvent('click');
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+  });
+
   test('the page behind does not scroll while it is open', async ({ page }) => {
     await page.goto(PRODUCT);
     await page.locator('.gallery__open').click();
@@ -296,36 +405,23 @@ test.describe('the full-screen view (PDP-01)', () => {
 });
 
 test.describe('the size guide (PDP-04)', () => {
-  test('traps focus, and hands it back to the control that opened it', async ({ page }) => {
+  /**
+   * The API sends a guide's id and name and none of its measurements (issue #32), so there is
+   * nothing to open. A trigger that opened a dialog saying "nothing to show here" is a dead
+   * control wearing a coat, and the one condition it hangs on is `hasSizeGuideContent`.
+   */
+  test('offers no trigger while the API carries no measurements', async ({ page }) => {
     await page.goto(PRODUCT);
+    await expect(page.locator('h1')).toBeVisible();
 
-    const trigger = page.locator('.pdp__guide');
-    await trigger.focus();
-    await trigger.click();
-
-    const dialog = page.getByRole('dialog');
-    await expect(dialog).toBeVisible();
-    await expect(trigger).toHaveAttribute('aria-expanded', 'true');
-    await expect.poll(() => focusIsInsideModal(page)).toBe(true);
-
-    for (let press = 0; press < 5; press++) {
-      await page.keyboard.press('Tab');
-      expect(await focusIsInsideModal(page)).toBe(true);
-    }
-
-    await page.keyboard.press('Escape');
-    await expect(dialog).toHaveCount(0);
-    await expect(trigger).toBeFocused();
-    await expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    await expect(page.locator('.pdp__guide')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: /size guide/i })).toHaveCount(0);
   });
 
-  test('closes on the scrim too', async ({ page }) => {
-    await page.goto(PRODUCT);
-    await page.locator('.pdp__guide').click();
-    await expect(page.getByRole('dialog')).toBeVisible();
-
-    await page.locator('.sd-modal__scrim').click({ position: { x: 5, y: 5 } });
-    await expect(page.getByRole('dialog')).toHaveCount(0);
+  test('says nothing about a size guide in the server-rendered HTML either', async ({
+    request,
+  }) => {
+    expect(await (await request.get(PRODUCT)).text()).not.toContain('size guide');
   });
 });
 
@@ -352,16 +448,16 @@ test.describe('reduced motion', () => {
     await expect.poll(() => focusIsInsideModal(page)).toBe(true);
   });
 
-  test('the size guide still takes focus and hands it back', async ({ page }) => {
+  test('the full-screen view still hands focus back on Escape', async ({ page }) => {
     await page.goto(PRODUCT);
 
-    const trigger = page.locator('.pdp__guide');
-    await trigger.focus();
-    await trigger.click();
+    const opener = page.locator('.gallery__open');
+    await opener.focus();
+    await opener.click();
     await expect.poll(() => focusIsInsideModal(page)).toBe(true);
 
     await page.keyboard.press('Escape');
-    await expect(trigger).toBeFocused();
+    await expect(opener).toBeFocused();
   });
 
   /**
@@ -372,16 +468,24 @@ test.describe('reduced motion', () => {
   const FOCUSABLE = [
     { name: 'a colour swatch', selector: '.swatch' },
     { name: 'a size button', selector: '.size:not(:disabled)' },
-    { name: 'the size guide link', selector: '.pdp__guide' },
     { name: 'the wishlist button', selector: '.pdp__wish' },
-    { name: 'the quantity stepper', selector: '.qty__step:not(:disabled)' },
+    // With no size chosen the stepper's ceiling is one, so both of its buttons are disabled and
+    // there is nothing to focus. A size is the state a shopper is in when they use it anyway.
+    { name: 'the quantity stepper', selector: '.qty__step:not(:disabled)', url: `${PRODUCT}?colour=1&size=10` },
     { name: 'the zoom button', selector: '.gallery__open' },
     { name: 'a thumbnail', selector: '[role="tab"]' },
   ] as const;
 
   for (const control of FOCUSABLE) {
     test(`${control.name} has a focus ring that is visible`, async ({ page }) => {
-      await page.goto(PRODUCT);
+      // Taller than the default 720, for two measured reasons. The zoom button is the whole 3:4
+      // stage — 771 px at this width — so a shorter viewport leaves no room above or below it for
+      // the strip the ring is measured in; and at 1000 px its centred top lands at y=114, under a
+      // header that ends at y=118, so the top strip showed the header in both shots and the
+      // helper reported a ring that was in fact drawn. Neither was a page defect; both would have
+      // been a red test for the wrong reason.
+      await page.setViewportSize({ width: 1280, height: 1200 });
+      await page.goto('url' in control ? control.url : PRODUCT);
       // Hydration first. `goto` resolves on `load`, which is before Angular has claimed the
       // server's DOM, and focus placed in that window can be lost to the hydration that follows
       // — a failure `toBeFocused` can never recover from, because nothing focuses it again.
@@ -415,8 +519,29 @@ test.describe('reduced motion', () => {
       expect(
         (ring.outlineStyle !== 'none' && ring.outlineWidth >= 2) || ring.afterBorder >= 2,
       ).toBe(true);
+
+      // …and that it reaches the screen on all four sides. The check above only says what the
+      // element would paint; this one says what a shopper can see (WCAG 2.2 AA 2.4.11).
+      expect(await edgesWithoutRing(page, target)).toEqual([]);
     });
   }
+
+  /**
+   * The rail is a scrolling row on a phone and a scrolling column from 768 px, and the two clip on
+   * different axes, so the ring has to be checked at both. It was cropped at 375 px as well.
+   */
+  test('a thumbnail keeps its ring where the rail is a scrolling row', async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 1200 });
+    await page.goto(PRODUCT);
+    await recorded(page, 'test-product-1');
+    await page.keyboard.press('Tab');
+
+    const thumb = page.locator('[role="tab"]').first();
+    await thumb.focus();
+    expect(await thumb.evaluate((element) => element.matches(':focus-visible'))).toBe(true);
+
+    expect(await edgesWithoutRing(page, thumb)).toEqual([]);
+  });
 });
 
 test.describe('responsive (GLB-09)', () => {
@@ -430,7 +555,9 @@ test.describe('responsive (GLB-09)', () => {
     });
   }
 
-  test('every control on the page meets the 44px touch minimum at 320px', async ({ page }) => {
+  test('every button, input and thumbnail meets the 44px touch minimum at 320px', async ({
+    page,
+  }) => {
     await page.setViewportSize({ width: 320, height: 640 });
     await page.goto(PRODUCT);
     await expect(page.locator('h1')).toBeVisible();
@@ -438,9 +565,65 @@ test.describe('responsive (GLB-09)', () => {
     expect(
       await undersized(
         page,
-        '.pdp__info button, .pdp__info input, .gallery__thumb, .pdp__guide, .details__summary',
+        '.pdp__info button, .pdp__info input, .gallery__thumb, .details__summary',
       ),
     ).toEqual([]);
+  });
+
+  /**
+   * The test above deliberately excludes links, and used to claim "every control" while doing so.
+   * This one covers them, and says exactly which exemption each one is standing on rather than
+   * waving at "inline text" — there are only two kinds on this page, and both are checkable:
+   *
+   * - a **stretched** link, whose `::after` covers its whole card, so the real target is the card
+   *   and the anchor's own 96×17 box is not what anyone taps;
+   * - a **trail** link in the breadcrumb, 44 px tall and as wide as its word, which clears the
+   *   WCAG 2.2 AA minimum of 24×24 (2.5.8). The project's own 44 px rule is the AAA figure
+   *   (2.5.5), and widening a word in a breadcrumb to reach it would space the trail oddly.
+   *
+   * Anything else under 44 px — a bare icon link, say — fails here, which is the point.
+   */
+  test('every link under 44px is a stretched card link or a breadcrumb crumb', async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 640 });
+    await page.goto(PRODUCT);
+    await expect(page.locator('h1')).toBeVisible();
+
+    const small = await page.evaluate(() =>
+      [...document.querySelectorAll<HTMLAnchorElement>('main a[href]')]
+        .filter((link) => link.getClientRects().length > 0)
+        .map((link) => {
+          const box = link.getBoundingClientRect();
+          const after = getComputedStyle(link, '::after');
+          const card = link.closest('li')?.getBoundingClientRect();
+
+          return {
+            text: (link.textContent ?? '').trim().slice(0, 40),
+            width: Math.round(box.width),
+            height: Math.round(box.height),
+            // A stretched link: the whole card is the target, so measure the card.
+            stretched: after.position === 'absolute' && after.inset === '0px',
+            cardWidth: Math.round(card?.width ?? 0),
+            cardHeight: Math.round(card?.height ?? 0),
+            inBreadcrumb: !!link.closest('.breadcrumb'),
+          };
+        })
+        .filter((link) => link.width < 44 || link.height < 44),
+    );
+
+    // Nothing under 44 px that is neither of the two known shapes.
+    expect(small.filter((link) => !link.stretched && !link.inBreadcrumb)).toEqual([]);
+
+    // A stretched link's real target is the card, and that is comfortably over 44 px.
+    for (const link of small.filter((entry) => entry.stretched)) {
+      expect(link.cardWidth).toBeGreaterThanOrEqual(44);
+      expect(link.cardHeight).toBeGreaterThanOrEqual(44);
+    }
+
+    // A crumb is full height and clears the AA minimum on the other axis.
+    for (const link of small.filter((entry) => entry.inBreadcrumb)) {
+      expect(link.height).toBeGreaterThanOrEqual(44);
+      expect(link.width).toBeGreaterThanOrEqual(24);
+    }
   });
 
   test('the gallery and the details sit side by side from 768px, and stack below it', async ({
@@ -497,6 +680,69 @@ test.describe('the selection (PDP-03)', () => {
 
     await expect(page).toHaveURL(/size=12/);
     await expect(now).toHaveText('Rs. 3,100');
+  });
+});
+
+test.describe('sold out looks sold out (PDP-03)', () => {
+  /**
+   * The screen reader was told and the sighted shopper was not: a size that is made but has none
+   * left rendered byte for byte like one in stock. The three states have to differ from each
+   * other, and by something other than colour alone.
+   */
+  test('a sold-out size is marked, and differs from both in stock and not made', async ({
+    page,
+  }) => {
+    await page.goto(`${PRODUCT}?colour=1`);
+
+    const sizes = page.locator('.size');
+    const inStock = sizes.nth(0);
+    const soldOut = sizes.nth(1);
+    const notMade = page.locator('.size:disabled');
+
+    await expect(soldOut).toBeEnabled();
+    await expect(soldOut).toHaveClass(/is-sold-out/);
+    await expect(soldOut).toHaveAttribute('aria-label', /out of stock/);
+    await expect(inStock).not.toHaveClass(/is-sold-out/);
+
+    // The mark is drawn, not merely classed, and it is not a colour change on its own.
+    const mark = await soldOut.evaluate((element) => {
+      const after = getComputedStyle(element, '::after');
+      return { content: after.content, image: after.backgroundImage };
+    });
+    expect(mark.content).not.toBe('none');
+    expect(mark.image).toContain('gradient');
+
+    // An in-stock size draws no mark at all, so the two really do differ on screen.
+    expect(
+      await inStock.evaluate((element) => getComputedStyle(element, '::after').content),
+    ).toBe('none');
+
+    // This colourway is made in every size, so the third state is not on screen to confuse it.
+    await expect(notMade).toHaveCount(0);
+  });
+
+  test('a sold-out colourway is marked too', async ({ page }) => {
+    // Every variant of product 11 has nothing left.
+    await page.goto('/product/test-product-11');
+    await expect(page.locator('h1')).toBeVisible();
+
+    const dots = page.locator('.swatch__dot');
+    await expect(dots.first()).toHaveClass(/is-sold-out/);
+    expect(
+      await dots.first().evaluate((element) => getComputedStyle(element, '::after').content),
+    ).not.toBe('none');
+    await expect(page.locator('.pdp__stock')).toHaveText('Out of stock');
+  });
+
+  test('an in-stock colourway carries no mark', async ({ page }) => {
+    await page.goto(PRODUCT);
+
+    expect(
+      await page
+        .locator('.swatch__dot')
+        .first()
+        .evaluate((element) => getComputedStyle(element, '::after').content),
+    ).toBe('none');
   });
 });
 

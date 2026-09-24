@@ -39,7 +39,7 @@ const ZOOM_STEPS = [1, 2, 3] as const;
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="gallery">
-      @if (slides().length > 1) {
+      @if (hasRail()) {
         <div
           class="gallery__rail"
           role="tablist"
@@ -79,12 +79,14 @@ const ZOOM_STEPS = [1, 2, 3] as const;
         </div>
       }
 
+      <!-- A tabpanel with no tab list is a half a pattern: the role only makes sense while the
+           rail exists, which is from two slides up. One slide or none is just a picture. -->
       <div
         class="gallery__stage"
         [id]="stageId"
-        role="tabpanel"
-        [attr.aria-labelledby]="slides().length > 1 ? tabId(selected()) : null"
-        [attr.aria-label]="slides().length > 1 ? null : productName()"
+        [attr.role]="hasRail() ? 'tabpanel' : null"
+        [attr.aria-labelledby]="hasRail() ? tabId(selected()) : null"
+        [attr.aria-label]="hasRail() ? null : productName()"
       >
         @if (current(); as slide) {
           @if (slide.role === 'Video') {
@@ -185,14 +187,24 @@ const ZOOM_STEPS = [1, 2, 3] as const;
     }
     /* The thumbnails sit under the stage on phones and beside it from 768 px, which is the
        vertical rail docs/04 §2 names as the PDP reference. */
+    /* The rail scrolls, so its padding box is the clip edge — and a focus ring is drawn *outside*
+       the control's border box, two pixels out and two and a half wide. With the thumbnails flush
+       against that edge, three of the ring's four sides were cropped away and only a sliver along
+       the top survived (lesson L4, WCAG 2.2 AA 2.4.11). The gutter is the ring's own width plus
+       the offset, taken from the token so a thicker ring widens it, and scroll-padding keeps it
+       when a thumbnail is scrolled to by arrow key. An inset outline would have been the other
+       way out, and the wrong one: it reads as a border, not as focus. */
     .gallery__rail {
+      --ring-gap: calc(var(--focus-width) + 3px);
+
       display: flex;
       gap: var(--space-1);
       order: 2;
       overflow-x: auto;
       overscroll-behavior-x: contain;
-      scroll-padding: var(--space-0-5);
-      padding-block: 2px;
+      padding: var(--ring-gap);
+      scroll-padding: var(--ring-gap);
+      margin: calc(var(--ring-gap) * -1);
     }
     .gallery__thumb {
       position: relative;
@@ -280,8 +292,9 @@ const ZOOM_STEPS = [1, 2, 3] as const;
         order: 0;
         flex-direction: column;
         max-height: 720px;
-        overflow-x: visible;
-        overflow-y: auto;
+        /* One axis, not two: overflow-x visible with overflow-y auto computes to auto on both,
+           so writing the pair only hid that this clips horizontally as well. */
+        overflow: auto;
       }
       .gallery__thumb {
         width: 100%;
@@ -351,6 +364,9 @@ export class ProductGallery {
   });
 
   protected readonly current = computed(() => this.slides()[this.selected()] ?? null);
+
+  /** Whether there is a thumbnail rail at all, which is what makes the stage a tab panel. */
+  protected readonly hasRail = computed(() => this.slides().length > 1);
 
   private readonly viewerOpen = signal(false);
   protected readonly fullScreen = this.viewerOpen.asReadonly();
