@@ -1,12 +1,23 @@
 using System.Globalization;
 using Microsoft.Data.SqlClient;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using SpencerDenim.Infrastructure;
+using SpencerDenim.Infrastructure.Persistence;
+using SpencerDenim.Infrastructure.Persistence.Seeding;
 
 namespace SpencerDenim.IntegrationTests.Infrastructure;
 
 /// <summary>
-/// Creates one empty, uniquely named database (<c>SpencerDenim_Test_&lt;guid&gt;</c>) on the SQL Server given by the
-/// <c>TEST_SQL_CONNECTION</c> environment variable, and drops it when the test run ends.
+/// Creates one uniquely named database (<c>SpencerDenim_Test_&lt;guid&gt;</c>) on the SQL Server given
+/// by the <c>TEST_SQL_CONNECTION</c> environment variable, applies every EF migration to it, seeds the
+/// catalogue, and drops the database when the test run ends.
 /// When the variable is not set, <see cref="IsAvailable"/> is false and SQL-backed tests skip themselves.
+/// <para>
+/// The fixture applies the migrations itself, so CI needs no migration step before <c>dotnet test</c>.
+/// </para>
 /// </summary>
 public sealed class SqlServerDatabaseFixture : IAsyncLifetime
 {
@@ -27,6 +38,8 @@ public sealed class SqlServerDatabaseFixture : IAsyncLifetime
         @"string, e.g. Server=(localdb)\MSSQLLocalDB;Trusted_Connection=True;TrustServerCertificate=True";
 
     private readonly string? _serverConnectionString;
+
+    private ServiceProvider? _services;
 
     public SqlServerDatabaseFixture()
     {
@@ -51,8 +64,19 @@ public sealed class SqlServerDatabaseFixture : IAsyncLifetime
     /// <summary>Connection string to the test database (empty when not available).</summary>
     public string ConnectionString { get; } = string.Empty;
 
+    /// <summary>What the seeders inserted, so tests can assert against the real catalogue size.</summary>
+    public SeedCounts SeedCounts { get; private set; } = new();
+
     /// <summary>Skips the calling test when no SQL Server is configured.</summary>
     public void SkipIfUnavailable() => Assert.SkipUnless(IsAvailable, SkipReason);
+
+    /// <summary>
+    /// A DI scope on the seeded database, for tests that check mappings, run raw SQL or call a seeder
+    /// again. The caller disposes it.
+    /// </summary>
+    public IServiceScope CreateScope() =>
+        (_services ?? throw new InvalidOperationException("The fixture is not available; call SkipIfUnavailable() first."))
+            .CreateScope();
 
     public async ValueTask InitializeAsync()
     {
@@ -61,9 +85,21 @@ public sealed class SqlServerDatabaseFixture : IAsyncLifetime
             return;
         }
 
+        var cancellationToken = TestContext.Current.CancellationToken;
+
         await ExecuteOnServerAsync(
             $"CREATE DATABASE {QuotedDatabaseName} COLLATE {Collation};",
-            TestContext.Current.CancellationToken);
+            cancellationToken);
+
+        _services = BuildServices(ConnectionString);
+
+        using var scope = _services.CreateScope();
+
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await dbContext.Database.MigrateAsync(cancellationToken);
+
+        var runner = scope.ServiceProvider.GetRequiredService<CatalogSeedRunner>();
+        SeedCounts = await runner.RunAsync(includeDemoCatalogue: true, cancellationToken);
     }
 
     public async ValueTask DisposeAsync()
@@ -71,6 +107,12 @@ public sealed class SqlServerDatabaseFixture : IAsyncLifetime
         if (!IsAvailable)
         {
             return;
+        }
+
+        if (_services is not null)
+        {
+            await _services.DisposeAsync();
+            _services = null;
         }
 
         // Pooled connections from the API under test would keep the database in use.
@@ -87,11 +129,29 @@ public sealed class SqlServerDatabaseFixture : IAsyncLifetime
             CancellationToken.None);
     }
 
+    private static ServiceProvider BuildServices(string connectionString)
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["ConnectionStrings:Database"] = connectionString,
+            })
+            .Build();
+
+        var services = new ServiceCollection();
+        services.AddSingleton<IConfiguration>(configuration);
+        services.AddLogging(logging => logging.SetMinimumLevel(LogLevel.Warning));
+        services.AddInfrastructure();
+
+        return services.BuildServiceProvider();
+    }
+
     private string QuotedDatabaseName => string.Create(CultureInfo.InvariantCulture, $"[{DatabaseName}]");
 
     /// <summary>
-    /// Runs a statement on the server, retrying transient failures. A SQL Server container in CI can accept a
-    /// connection while it is still warming up, so the first attempts may fail with a connection or login error.
+    /// Runs a statement on the server, retrying transient failures. A SQL Server container in CI can
+    /// accept a connection while it is still warming up, so the first attempts may fail with a
+    /// connection or login error.
     /// </summary>
     private async Task ExecuteOnServerAsync(string sql, CancellationToken cancellationToken)
     {

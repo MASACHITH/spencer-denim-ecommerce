@@ -16,7 +16,7 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 - **Multiple sessions/machines:** More than one Claude Code session now works on this repo, sometimes on different machines. Handoff protocol, machine readiness check and the known-machines log: [docs/14-multi-session-coordination.md](docs/14-multi-session-coordination.md). Referenced from the root `CLAUDE.md`.
 - **Reference archive:** `reference/` holds read-only copies (taken 2026-09-16) of the old demo (`tuasl-fashion-demo/`), the client documents (signed proposal + theme reference) and the original prototype prompt. See `reference/README.md`. The originals remain outside the repo.
 - **Blockers:** W0-05 Docker/WSL still paused (blocks W0-15). This machine (new, 2026-09-21) has no `gh` CLI, so it can't push yet — see doc 11.
-- **Next:** W1-08 (Users & Roles CRUD), W1-09 (audit log viewer), W1-10 (2FA enrollment), W1-11 (route guard, SecurityStamp revalidation, forwarded-headers regression test) are the W1-01 follow-ups, now tracked but not started. W1-02 (categories) is the next planned feature; the user/architect should decide priority between finishing W1-01's remainder vs. moving on to W1-02 given the time three fix rounds took.
+- **Next:** **W1-02 (catalogue foundation — schema + demo seeder + the read-only storefront catalogue API) is in the developer↔tester loop** on `feature/W1-02-catalogue-foundation` (worktree `worktrees/sd-catalog`): tester round 1 failed it on 3 major + 5 minor, round 2 on 2 major + 4 minor, all fixed; not pushed, not merged, not Done. Its ADM-11 admin screens are a separate task, **W1-12 (TODO)** — W1-02 no longer means "categories (create/edit/reorder)". W1-08 (Users & Roles CRUD), W1-09 (audit log viewer), W1-10 (2FA enrollment), W1-11 (route guard, SecurityStamp revalidation, forwarded-headers regression test) are the W1-01 follow-ups, tracked but not started; the user/architect should decide priority between those and W1-03 once W1-02 passes.
 - **Pending (can't do from this machine):** CLAUDE.md requires `../client-progress/progress-data.js` to be updated whenever a feature status changes to Done. W1-01 slice 1 just did, but the `client-progress` source folder only exists on the `SCIENTER\sachithi` PC (see docs/11) — not here. Whichever session next runs on that machine should update the admin-auth/RBAC progress line and republish.
 - **Open assumptions:** A1 (Trending Categories / Best Sellers homepage blocks stay removed per signed proposal), A2 (video MP4 ≤ 50 MB, no server conversion).
 
@@ -42,6 +42,35 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 ---
 
 ## Session log
+
+### 2026-09-23 (2) — W1-02 fix round 2: tester verified round 1, failed it on two more Majors
+
+The tester confirmed all nine round-1 fixes as real and rejected the branch again.
+
+**Fixed**
+- **Major, a regression from round 1's relevance fix.** Moving `SoldQty30d` out of the additive score into its own `ThenByDescending` is what stops popularity crossing a band — keeping the cap of 9 as well made the key inert: every product selling 9+ clamped to the same value, so the real tie-break became `ThenBy(Id)` and `?q=denim` served 45 sales above 51. Cap deleted, the key is the raw column. Lesson: two changes that each solve the same problem, made in one step, and only one of them was needed.
+- **Major, pre-existing and missed in round 1.** `IsActive` was honoured in the menu and in filter resolution but not in the product query, so deactivating a category left its products in the listing and in search with a breadcrumb into a category that answered nothing. A product is now on the storefront only while its **department and primary category** are active; secondary category links do not keep it visible. Written into doc 08 §7.1.
+- **Minor** — the product slug rule moved to `Domain.Catalog.CatalogSlug` and guards `Product.Slug` on write, so a slug the PDP refuses cannot be persisted through the app (the matching `CK_Products_Slug` is a **W1-03** migration, on the board); the category-ambiguity guard now fires on the match count alone, since two categories under different parents of one department can share a slug and naming the department does not tell them apart; `MEMORY.md`'s Current state corrected; the seeder determinism test draws the real variant count instead of 15.
+
+**Numbers:** build clean, 232 unit + 146 integration green, 0 skipped (round 1: 215 + 141).
+
+**Next:** back to the tester.
+
+### 2026-09-23 (1) — W1-02 catalogue foundation: tester FAILED it, developer fix round 1
+
+**Context:** `feature/W1-02-catalogue-foundation` (worktree `worktrees/sd-catalog`) delivers the catalogue schema + demo seeder + the read-only storefront catalogue API. An independent tester rejected it with 3 major and 5 minor findings plus a board correction. All fixed on the branch; not pushed, no PR.
+
+**Fixed**
+- **Major — 500 on an unparseable query parameter.** `ProductListRequest` bound `int?`/`decimal?`/`bool?` straight from the query string, so `?page=abc`, `?minPrice=abc`, `?inStock=yes` and friends threw in model binding: a 500 with an ERROR log on a public endpoint. Those parameters bind as `string?` now and are parsed in `ProductListQuery.Create` with `InvariantCulture`, so an unreadable value is the same 400 naming the parameter that an out-of-range value already got. Flags accept `true`/`false` and `1`/`0`, and nothing else — a typo is named, not silently read as false.
+- **Major — the "deterministic" seeder was not.** `DemoCatalogueSeeder` seeded its generator from `string.GetHashCode`, which .NET randomises per process, so seeded stock differed run to run (≈3% of CI runs failed on the partly-sold-out product) and `Math.Abs(int.MinValue)` could throw. The seed is now the first four bytes of the product code's SHA-256 digest, read unsigned — the same hash `DeterministicGuid` already used.
+- **Major — an ambiguous `category` slug served one department silently.** Slugs are unique per `(DepartmentId, ParentCategoryId)` (doc 08 §3.2), so `?category=jeans` with no `department` matched Women's and Men's jeans and returned only the first. It is a 400 now, naming the departments to choose from. One match still works with no `department`.
+- **Minor** — the product slug is pattern-validated (a malformed slug is a 400, and only the validated slug is echoed into the 404); all four catalogue endpoints answer HEAD as well as GET; `ProductListQuery.ToCacheKey` deleted with its self-comparing test (caching and facets belong to the listing-page task); search relevance rewritten to doc 08 §7.6's actual bands with the `SoldQty30d` term bounded to 9 so it can only break ties.
+- **Minor** — doc 08 §1.6's permitted-cascade list now names `ProductStats`, `ProductSearchIndex` and `ProductColours` (all three were already in the model and the migration; only the first two were in the tester's report). No new migration. The model test now asserts the list and the model match **both ways**.
+- **Board** — W1-02 was titled "Departments & categories (create/edit/reorder) — ADM-11", an admin write feature this branch never touched. Retitled to what it delivers; ADM-11's admin screens are now **W1-12 (TODO)**.
+
+**Numbers:** build clean, 215 unit + 141 integration tests green, 0 skipped (baseline before the fixes: 180 + 111).
+
+**Next:** back to the tester agent. Facet counts and the 60 s response cache of doc 08 §7.5 are deliberately **not** in this slice.
 
 ### 2026-09-21 (1) — Multi-session coordination, status review, W1-01 started
 **Context:** first session on a **new machine** (global git identity `nuwank`/scienter.lk — different from the `SCIENTER\sachithi` PC used since 2026-09-15). Confirms this project is now being worked from more than one machine/session.
