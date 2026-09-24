@@ -44,6 +44,16 @@ export const deepCatalogueURL = `http://localhost:${DEEP_PORT}`;
 /** What the deep stub holds, so a test can work out what a page count should show. */
 export const DEEP_CATALOGUE_TOTAL = 399;
 
+/**
+ * A fourth pair whose catalogue answers every product request with a 500. The product page has to
+ * tell "this product is not there" (404) from "the store is broken" (503 with `Retry-After`), and
+ * the status on the wire is the part only a real server can show.
+ */
+const FAULTY_PORT = Number(process.env['E2E_FAULTY_PORT'] ?? 4426);
+const FAULTY_API_PORT = Number(process.env['E2E_FAULTY_API_PORT'] ?? 4427);
+
+export const faultyCatalogueURL = `http://localhost:${FAULTY_PORT}`;
+
 export default defineConfig({
   testDir: './e2e',
   testMatch: '**/*.e2e.ts',
@@ -104,6 +114,20 @@ export default defineConfig({
       command: 'npm run serve:ssr:storefront',
       url: `${deepCatalogueURL}/healthz`,
       env: { PORT: String(DEEP_PORT), API_INTERNAL_URL: `http://localhost:${DEEP_API_PORT}` },
+      reuseExistingServer: !process.env['CI'],
+      timeout: 120_000,
+    },
+    {
+      command: 'node e2e/support/catalog-api-stub.mjs',
+      url: `http://localhost:${FAULTY_API_PORT}/api/catalog/departments`,
+      env: { E2E_API_PORT: String(FAULTY_API_PORT), E2E_PRODUCT_STATUS: '500' },
+      reuseExistingServer: !process.env['CI'],
+      timeout: 30_000,
+    },
+    {
+      command: 'npm run serve:ssr:storefront',
+      url: `${faultyCatalogueURL}/healthz`,
+      env: { PORT: String(FAULTY_PORT), API_INTERNAL_URL: `http://localhost:${FAULTY_API_PORT}` },
       reuseExistingServer: !process.env['CI'],
       timeout: 120_000,
     },

@@ -68,6 +68,40 @@ const COLOURS = [
 const BADGES = [null, 'New', 'Sale', 'BestSeller', 'LowStock'];
 
 /**
+ * Every colourway the demo catalogue seeds, hex for hex (`DemoCatalogueData`).
+ *
+ * The three colours above are enough for a card, but not for the sold-out swatch: whether its
+ * mark can be seen depends entirely on the colour underneath it, and testing one swatch tests one
+ * colour. The wholly sold-out product carries all sixteen so the check covers the palette a
+ * shopper can actually meet.
+ */
+const SEEDED_PALETTE = [
+  ['Sandstone Beige', 'beige', '#D8CBB6'],
+  ['Optic White', 'white', '#FFFFFF'],
+  ['Coconut Cream', 'cream', '#F3EADA'],
+  ['Deep Navy', 'navy', '#1F2A44'],
+  ['True Black', 'black', '#101010'],
+  ['Charcoal Grey', 'grey', '#4A4D52'],
+  ['Indigo Rinse', 'blue', '#3A5A8C'],
+  ['Mid Wash Blue', 'blue', '#6E93C4'],
+  ['Olive Green', 'green', '#5C6B4A'],
+  ['Terracotta', 'orange', '#C4703F'],
+  ['Blush Pink', 'pink', '#E8A0BF'],
+  ['Deep Maroon', 'red', '#7E2B2B'],
+  ['Mustard', 'yellow', '#D9A93C'],
+  ['Plum', 'purple', '#6C4A8F'],
+  ['Chocolate', 'brown', '#5B3F2E'],
+  ['Deep Teal', 'green', '#2E6B66'],
+].map(([name, familySlug, hexCode], index) => ({
+  id: 101 + index,
+  name,
+  familyName: familySlug[0].toUpperCase() + familySlug.slice(1),
+  familySlug,
+  hexCode,
+  swatchImageUrl: null,
+}));
+
+/**
  * Enough products that "Load More" has something to add at every page size the listing asks for.
  * Raised through the environment when a test needs a deep restore to be worth restoring.
  */
@@ -138,6 +172,246 @@ function productsFor(params) {
   return { items, page, pageSize, totalCount: total };
 }
 
+/**
+ * A 1x1 transparent GIF, used as every gallery image and every video poster.
+ *
+ * There is no media server behind these tests (W1-04 has not landed), and a broken image is a
+ * Definition-of-Done failure, so the stub serves a picture the browser can really decode rather
+ * than a URL that 404s. The real API can legitimately produce an absolute URL here too:
+ * `MediaUrlBuilder.ToPublicUrl` returns a storage key unchanged when it is already an absolute
+ * URL, which is how a remote placeholder reaches the storefront.
+ */
+const PIXEL =
+  'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+
+/** The sizes every demo product is made in, in the API's shape. */
+const SIZES = [
+  { id: 10, label: 'S', scaleName: 'Apparel alpha', sortOrder: 1 },
+  { id: 11, label: 'M', scaleName: 'Apparel alpha', sortOrder: 2 },
+  { id: 12, label: 'L', scaleName: 'Apparel alpha', sortOrder: 3 },
+];
+
+/** `CatalogSlug`: lower-case letters and digits, separated by single hyphens. */
+const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+/**
+ * How many units of one colour x size there are. Deliberately uneven, the way a real catalogue
+ * is: the second colourway is never made in L, the first colourway's M is always sold out, and
+ * every eleventh product has nothing left at all. A grid where everything exists and everything
+ * is in stock would agree with any implementation.
+ */
+function availableFor(index, colourIndex, sizeIndex) {
+  if (colourIndex === 1 && sizeIndex === 2) {
+    return null; // not made in this size at all
+  }
+
+  if (index % 11 === 0 || (colourIndex === 0 && sizeIndex === 1)) {
+    return 0; // made, sold out
+  }
+
+  return 2 + colourIndex + sizeIndex;
+}
+
+/**
+ * The product page payload for one product index, mirroring
+ * `SpencerDenim.Application.Catalog.Contracts.ProductDetailDto` field for field.
+ *
+ * The media follow the demo seeder: one gallery shot per colourway carrying its `colourId`, then
+ * one shared detail shot with no colour. Every fifth product also has a video and every seventh
+ * has no media at all, so a test reaches all three gallery shapes by asking for a slug rather
+ * than by telling the stub what to say.
+ */
+function productDetail(index, slug) {
+  const card = product(index);
+  // The wholly sold-out product wears the whole seeded palette, so the sold-out mark is checked
+  // against every colour it has to show up on rather than against one.
+  const colours = index % 11 === 0 ? SEEDED_PALETTE : card.colours;
+  const base = card.price.current;
+
+  const images =
+    index % 7 === 0
+      ? []
+      : [
+          ...colours.map((colour, position) => ({
+            id: index * 100 + position,
+            url: PIXEL,
+            altText: `${card.name} in ${colour.name}`,
+            role: 'Gallery',
+            colourId: colour.id,
+            width: 1200,
+            height: 1600,
+            posterUrl: null,
+            sortOrder: position + 1,
+          })),
+          {
+            id: index * 100 + 90,
+            url: PIXEL,
+            altText: `${card.name}, fabric detail`,
+            role: 'Hover',
+            colourId: null,
+            width: 1200,
+            height: 1600,
+            posterUrl: null,
+            sortOrder: colours.length + 1,
+          },
+        ];
+
+  if (index % 5 === 0 && images.length > 0) {
+    images.push({
+      id: index * 100 + 95,
+      url: `${PIXEL}#video`,
+      altText: null,
+      role: 'Video',
+      colourId: null,
+      width: 1920,
+      height: 1080,
+      posterUrl: PIXEL,
+      sortOrder: colours.length + 2,
+    });
+  }
+
+  const variants = [];
+  const sizes = [];
+
+  SIZES.forEach((size, sizeIndex) => {
+    let anyStock = false;
+
+    colours.forEach((colour, colourIndex) => {
+      const available = availableFor(index, colourIndex, sizeIndex);
+      if (available === null) {
+        return;
+      }
+
+      anyStock = anyStock || available > 0;
+      // The last size costs more, which is what ProductVariants.PriceOverride does in the demo
+      // catalogue, and what makes "from Rs. X" mean something.
+      const current = sizeIndex === 2 ? base + 500 : base;
+      // Follows the card's own rule rather than always being on: the real API sends
+      // hasDiscount: false for two products in three, and a stub that discounts everything never
+      // lets the no-discount branch reach a browser.
+      const discounted = card.price.hasDiscount;
+
+      variants.push({
+        id: variants.length + 1,
+        sku: `${card.productCode}-${colour.id}-${size.id}`,
+        colourId: colour.id,
+        colourName: colour.name,
+        sizeId: size.id,
+        sizeLabel: size.label,
+        scaleName: size.scaleName,
+        price: {
+          current,
+          original: discounted ? Math.round(current * 1.4) : current,
+          discountPercent: discounted ? 28 : 0,
+          hasDiscount: discounted,
+          currency: 'LKR',
+        },
+        stockStatus: available === 0 ? 'OutOfStock' : available <= 3 ? 'LowStock' : 'InStock',
+        isInStock: available > 0,
+        availableQuantity: available,
+      });
+    });
+
+    sizes.push({ ...size, isInStock: anyStock });
+  });
+
+  const prices = variants.map((variant) => variant.price.current);
+  const discounted = card.price.hasDiscount;
+  const inStock = variants.reduce((total, variant) => total + variant.availableQuantity, 0);
+  const lowStock = inStock > 0 && variants.every((variant) => variant.availableQuantity <= 3);
+
+  return {
+    id: index,
+    productCode: card.productCode,
+    name: card.name,
+    slug,
+    department: { id: 1, name: 'Women', slug: 'women' },
+    breadcrumb: [{ id: 12, name: 'Jeans', slug: 'jeans' }],
+    shortDescription: `${card.name}, cut for Sri Lankan weather.`,
+    // Sanitised HTML, as `catalog.Products.Description` is (doc 08 §3.2) and as the demo seeder
+    // writes it. A plain sentence here would have hidden the page printing the tags at a shopper.
+    description: `<p>${card.name}: rigid cotton denim with a touch of stretch.</p><p>Cut high on the waist and straight through the leg.</p>`,
+    careInstructions: 'Machine wash cold, inside out. Line dry.',
+    attributes: {
+      material: 'Denim',
+      materialSlug: 'denim',
+      fit: 'Straight',
+      fitSlug: 'straight',
+      occasion: null,
+      occasionSlug: null,
+      ageGroup: null,
+      ageGroupSlug: null,
+    },
+    price: {
+      current: Math.min(...prices),
+      original: discounted ? Math.round(Math.max(...prices) * 1.4) : Math.max(...prices),
+      discountPercent: discounted ? 28 : 0,
+      hasDiscount: discounted,
+      currency: 'LKR',
+    },
+    minPrice: Math.min(...prices),
+    maxPrice: Math.max(...prices),
+    rating: card.rating,
+    badge: card.badge,
+    // Derived from the variants, the way the API derives it, rather than asserted: a payload
+    // that says InStock over a grid of zeroes is a payload the API cannot produce.
+    stockStatus: inStock === 0 ? 'OutOfStock' : lowStock ? 'LowStock' : 'InStock',
+    isInStock: inStock > 0,
+    seo: { title: card.name, description: `${card.name} at Spencer Denim.` },
+    // The real API sends null for 6 of its 45 products — a category with no guide set. It also
+    // sends no measurements with the ones it does fill in, which is issue #32 and why the
+    // storefront shows no size-guide trigger at all today.
+    sizeGuide: index % 4 === 0 ? null : { id: 1, name: 'Women apparel' },
+    newUntilUtc: null,
+    images,
+    colours,
+    sizes,
+    variants,
+    relatedProducts: [product(index + 1), product(index + 2)],
+  };
+}
+
+/**
+ * Answers `GET /api/catalog/products/{slug}` the way the API does: a slug that is not a slug is a
+ * 400 naming `slug`, a well-formed slug nothing is published under is a 404, and anything else is
+ * the payload. `E2E_PRODUCT_STATUS` forces a status, for the fault branches.
+ */
+function productBySlug(slug) {
+  const forced = Number(process.env.E2E_PRODUCT_STATUS ?? 0);
+  if (forced >= 400) {
+    return { status: forced, body: { title: 'Forced failure', status: forced } };
+  }
+
+  if (!slug || slug.length > 220 || !SLUG_PATTERN.test(slug)) {
+    return {
+      status: 400,
+      body: {
+        title: 'One or more query parameters are invalid.',
+        status: 400,
+        errors: {
+          slug: ['slug must be lower-case letters and digits separated by single hyphens.'],
+        },
+      },
+    };
+  }
+
+  const match = /^test-product-(\d+)$/.exec(slug);
+  const index = match ? Number(match[1]) : 0;
+
+  if (!match || index < 1 || index > TOTAL_PRODUCTS) {
+    return {
+      status: 404,
+      body: {
+        title: 'Product not found',
+        status: 404,
+        detail: `No published product has the slug '${slug}'.`,
+      },
+    };
+  }
+
+  return { status: 200, body: productDetail(index, slug) };
+}
+
 /** A slow answer, so a test can prove the menu does not hold the page open waiting for it. */
 const DELAY_MS = Number(process.env.E2E_API_DELAY_MS ?? 0);
 
@@ -167,6 +441,16 @@ const server = createServer((request, response) => {
 
   if (url.pathname === '/api/catalog/products') {
     response.end(JSON.stringify(productsFor(url.searchParams)));
+    return;
+  }
+
+  if (url.pathname.startsWith('/api/catalog/products/')) {
+    // Decoded, because the storefront encodes the segment before it asks.
+    const slug = decodeURIComponent(url.pathname.slice('/api/catalog/products/'.length));
+    const answer = productBySlug(slug);
+
+    response.statusCode = answer.status;
+    response.end(JSON.stringify(answer.body));
     return;
   }
 

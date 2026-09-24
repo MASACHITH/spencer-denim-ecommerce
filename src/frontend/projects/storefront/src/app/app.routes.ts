@@ -6,6 +6,9 @@ import { ListingMode } from './pages/listing/listing-mode';
 /** The listing serves a department, its category tree, New Arrivals and Sale (DEPT-01..03, PLP-01..07). */
 const listingPage = () => import('./pages/listing/listing-page').then((m) => m.ListingPage);
 
+/** The product detail page (PDP-01..07). */
+const productPage = () => import('./pages/product/product-page').then((m) => m.ProductPage);
+
 /** An address the catalogue does not have. Answers a real 404 (see the component). */
 const notFoundPage = () => import('./pages/not-found/not-found-page').then((m) => m.NotFoundPage);
 
@@ -15,10 +18,11 @@ export const routes: Routes = [
     title: 'Spencer Denim',
     loadComponent: () => import('./pages/home/home-page').then((m) => m.HomePage),
   },
-  // Reserved for the product detail page (W2-04, PDP-01..08). It is listed ahead of the
-  // department routes so a product link is never read as a department listing; until that page
-  // exists it falls back to the home page rather than to an empty one.
-  { path: 'product/:slug', redirectTo: '' },
+  // The product page (W2-05, PDP-01..07). It is listed ahead of the department routes so a
+  // product link is never read as a department listing. No `canMatch` guard: only the catalogue
+  // knows whether a slug is a product, and the page answers a real 404 when it is not — which is
+  // also what a malformed slug gets, because the API refuses to look one up.
+  { path: 'product/:slug', loadComponent: productPage },
 
   // Two of the five permanent navigation entries (GLB-05). They are the same listing with one
   // filter fixed and no department, so neither points at a not-found page while DEPT-02 and

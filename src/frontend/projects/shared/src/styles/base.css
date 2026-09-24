@@ -7,6 +7,14 @@
 html {
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
+  /* The header is sticky (GLB-04), and the browser scrolls a focused element to the very top of
+     the viewport — underneath it. Tabbing to the product page's zoom button left 118 px of it
+     behind the header. One declaration fixes it for every page and every anchor jump.
+
+     The first attempt hard-coded 128 px and called it "the tallest the header gets", which was
+     wrong twice over: 128 is the *desktop* height plus ten, and the header is tallest on a phone,
+     where it still hid 23-42 px. --header-height carries the real figures per breakpoint. */
+  scroll-padding-top: var(--header-height);
 }
 
 body {
@@ -149,6 +157,18 @@ a { color: inherit; }
   text-underline-offset: 4px;
 }
 .link:hover { text-decoration-thickness: 2px; }
+
+/* A button that reads as a link. The size guide's trigger is the first (PDP-04, behind issue
+   #32); anything that performs an action but belongs in a sentence wants it. Full tap height,
+   because it is a control however it reads. */
+button.link {
+  min-height: var(--tap);
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+}
 
 /* ---- Icon button and count badge ---- */
 .icon-btn {

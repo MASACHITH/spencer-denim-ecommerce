@@ -304,36 +304,9 @@ interface ColourDot {
         font-size: var(--text-body);
       }
     }
+    /* The shared rating row (storefront styles.css); a card sets it a size smaller. */
     .rating {
-      display: flex;
-      align-items: center;
-      gap: var(--space-0-5);
       font-size: var(--text-label);
-    }
-    .price {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: baseline;
-      gap: 2px var(--space-1);
-      font-size: var(--text-body);
-      line-height: 1.4;
-    }
-    .price__now {
-      font-weight: var(--weight-medium);
-      white-space: nowrap;
-    }
-    .price__was {
-      color: var(--color-text-muted);
-      font-size: var(--text-small);
-      white-space: nowrap;
-    }
-    .price__off {
-      color: var(--color-sale);
-      font-size: var(--text-small);
-      font-weight: var(--weight-medium);
-    }
-    .price--sale .price__now {
-      color: var(--color-sale);
     }
   `,
 })

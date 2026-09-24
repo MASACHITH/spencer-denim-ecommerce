@@ -43,6 +43,186 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 
 ## Session log
 
+### 2026-09-24 (3) — W2-05 fix round 2: the same blindness, one layer down
+
+The tester re-implemented round 1's `edgesWithoutRing` himself, proved it falsifiable and
+deterministic over 10 controls at all eight breakpoints, and then found that **the fix I made
+alongside it had exactly the fault the round was about.**
+
+**Major: the sold-out slash was invisible on 12 of the 16 seeded colourways.** It painted in
+`--color-text-muted` whatever the swatch under it was — the dot has no text, so that `color` only
+fed the gradient. Measured against WCAG 2.2 AA 1.4.11's 3:1: Olive Green **1.08:1**, Deep Teal
+1.16, Indigo Rinse 1.30, Plum 1.31, Terracotta 1.46, Charcoal 1.59, Mid Wash Blue 1.68, Deep
+Maroon 1.74, Chocolate 1.80, Mustard 2.46, Blush Pink 2.59, Deep Navy 2.68. Only Sandstone, True
+Black, Coconut Cream and Optic White passed. So the size buttons got a real third state and the
+swatches got a mark that mostly was not there.
+
+**And my test made the same mistake the ring test used to**: it asserted `::after { content }` was
+not `"none"` — that the mark was *specified* — on a single stub colourway that was itself one of
+the invisible cases. **Specified is not visible. That is twice now in one task**, so it is worth
+stating as a rule: *an assertion that reads back a declaration is testing the stylesheet. If the
+finding is "a shopper cannot see this", the test has to measure what reaches the screen.*
+
+The new test reads the colour Chromium resolved for the slash and for the dot beneath it and
+computes the real ratio, over all sixteen seeded colourways (the e2e stub carries the full palette
+now, all sold out on one product). Proven red first, naming the same twelve with the same ratios.
+
+**The fix is a measurement, not a threshold.** `core/platform/contrast.ts` picks between
+`--color-text` and `--color-on-primary` by measuring both against the swatch. Choosing the better
+of two inks at opposite ends of the scale has a floor — the crossover where both score alike —
+which for these two is **4.17:1** at luminance 0.2017. I first wrote 4.58, which is the figure for
+*pure* black and white; the dark ink is `#1a1a1a`. The spec walks the whole colour cube and pins
+the real number, so an admin's next colour cannot fall through. Worst across the seeded palette is
+now 4.75:1 (Terracotta). `isLight()` is deliberately not reused — it answers "does this need a
+border against white?", and its 0.8 threshold calls Mustard and Blush Pink dark, where white scores
+2.17:1 and 2.06:1.
+
+**Minor, and the same shape again: the ring test was aimed at the one control that could not
+fail.** The quantity group is three controls edge to edge, so each one's right-hand ring lands
+under the next sibling; `FOCUSABLE` listed `.qty__step:not(:disabled)` and `.first()` resolved to
+the **plus** — the last child, the only one whose ring cannot be covered. The box and the minus
+both lost `right` at all eight breakpoints. All three are listed now, with the page put into the
+state where the minus is live.
+
+**Minors** — `scroll-padding-top` on `html`, because the browser scrolls a focused element to the
+top of the viewport and the header is sticky (118 px of the zoom button sat behind it); the size
+guide's dead CSS moved to a shared `button.link` rather than being deleted, since the markup stays
+for issue #32 and deleting the styling would have left it unstyled the day the API serves content;
+one more pre-hydration flake (reading `document.body` the instant a replayed click resolves).
+
+**The 4-vs-8 sub-44 px link count is settled**: 4 on the stub's profile, 7 on the real catalogue, 9
+with a recently-viewed row on screen. The invariants the test asserts hold in all three.
+
+**Numbers:** storefront unit 361 (round 1: 333), Playwright 121 (117), shared 19, admin 9; backend
+232 + 146, 0 skipped. Lint clean, builds clean, four consecutive clean Playwright runs.
+
+**Next:** back to the tester.
+
+### 2026-09-24 (2) — W2-05 fix round 1: a test that could not fail
+
+The tester verified every number and every claim from the developer pass and failed the branch on
+two majors and five minors. All fixed on `feature/W2-05-product-page`.
+
+**Major, and the lesson of the round: the thumbnail focus ring was clipped, and the test was
+structurally incapable of noticing.** The rail scrolls, so its padding box is the clip edge, and
+the thumbnails sat flush against it; a ring is drawn *outside* the border box, so three of its four
+sides were cropped and a 2 px sliver along the top survived. Lesson L4 again. The assertion read
+`getComputedStyle(element).outlineWidth` — the outline the element *would* paint — which no
+ancestor's clipping can ever change, so it passed on a ring three quarters invisible. It now
+screenshots the strip outside each edge with the control focused and again blurred and fails on any
+edge whose pixels come back identical. **Proven red on the old CSS before the fix** (all four edges
+at 1280 and at 375), green after, green for the other six controls throughout.
+
+Two of its first reds were the helper *refusing to measure* rather than passing quietly — a control
+flush against the viewport edge, and the zoom button's top strip covered by the sticky header at
+y=118 — which is the behaviour worth having. Both were answered by the viewport the test sets, not
+by loosening the assertion. **Rule: an accessibility assertion that reads a computed style is
+testing the stylesheet, not the screen. Measure the pixels, and make the unmeasurable case throw.**
+
+**Major: a sold-out size or colour looked exactly like one in stock.** The CSS distinguished only
+`:disabled`, bound to "not made in this colourway"; a variant that is made with nothing left got no
+treatment at all. Measured on the live API: sizes 26 and 28 of `wide-leg-rinse-jeans` were
+byte-identical to 30/32/34, and both swatches of `sleeveless-column-dress` drew the in-stock
+border. The screen reader was told and the sighted shopper was not. Three states now, the sold-out
+one marked with a diagonal slash rather than a colour change (WCAG 1.4.1), inset inside the border
+box so it can never reach the focus ring.
+
+**Minors** — the quantity box kept showing `0`, an empty string or `1.7` whenever the typed value
+clamped to the number the binding already held (`[value]` writes nothing when the value is
+unchanged), so the clamped number is written back to the element; with no size chosen the page
+quoted "3 × Rs. 5,990 = Rs. 17,970" under a price line reading "From", and offered a ceiling of 138
+— the whole colourway's stock — so the ceiling is 1 and the note asks for a size until a variant is
+settled; the touch-target test claimed "every control" while excluding every link, and now says
+what it measures, with the links checked separately against the exemption each one actually stands
+on (a stretched card link whose target is the card, or a breadcrumb crumb at 44 px tall and over
+the AA 24 px minimum); `role="tabpanel"` no longer renders without a tab list.
+
+**The size-guide trigger is gone until issue #32.** `SizeGuideRefDto` is `(id, name)` and the API
+projects none of the content in `catalog.SizeGuides`, so the button opened a dialog to say there
+was nothing to see. `SizeGuideContentDto` now writes down the shape the API has to send,
+`hasSizeGuideContent` is the single condition the trigger and the modal hang on, and a test proves
+both come back the moment content arrives. `SizeGuideModal` stays in the tree.
+
+**The stub was still shaped more politely than the API** — everything in stock, everything
+discounted, every product with a size guide — so those branches never reached a browser. Stock and
+discount are derived from the variant grid now, every eleventh product is wholly out of stock and
+every fourth has no size guide. **Same lesson as W2-03 round 3 and as the description bug: a stub
+that is tidier than the real API tests nothing.**
+
+`Modal` also got its own spec (14 cases), because the only cover it had was the size-guide tests
+that just went away; and the rating row joined the price block in the shared stylesheet rather than
+being copied into two components.
+
+**Numbers:** storefront unit 333 (round 1: 312), Playwright 117 (112), shared 19, admin 9; backend
+232 + 146, 0 skipped. Lint clean, builds clean with no budget warnings.
+
+**Next:** back to the tester.
+
+### 2026-09-24 (1) — W2-05 product detail page, developer pass
+
+`/product/:slug` is a real, server-rendered page on `feature/W2-05-product-page` (worktree
+`worktrees/sd-pdp`), built on the listing branch. Not pushed, not merged, not Done: it goes to the
+tester next.
+
+**The decision worth recording: the colourway and the size live in the query string.** The rule
+was "shareable and server-renderable if it changes what is shown", and both do. A colour changes
+the *photographs* — `catalog.ProductMedia.ProductColourId` ties each gallery shot to one colourway
+and the demo seeder gives every colour its own, so `?colour=47` and `?colour=48` are different
+pictures. A size changes the *money* — `ProductVariants.PriceOverride` is real and seeded, and
+Washed Linen Camp Shirt is Rs. 5,990 in XL and Rs. 6,290 in XXL. The **canonical** address carries
+neither, so the colourways stay one page in an index rather than one URL per colour.
+
+**Three failures, three answers.** A slug the catalogue does not know (404) and a slug the API will
+not accept (400) are the same thing to a shopper, so both render the site's own not-found page at
+a real HTTP 404. A store that answers badly is different — the product probably exists — so that
+is a "try again" page and **503 with `Retry-After`**, which a crawler retries where it drops a 404.
+Same reasoning as the fallback-tree note filed against ADM-11 last session.
+
+**What the API cannot serve, and was therefore not invented:**
+- **PDP-04 has no size-guide content.** `catalog.SizeGuides` holds `IntroHtml`, `TableJson`,
+  `MeasuringTipsHtml` and an image, and `CatalogReferenceDataSeeder` fills all four — but
+  `SizeGuideRefDto` is `(int Id, string Name)` and no endpoint serves the rest. The modal is built
+  against the real shape and says plainly that the chart is not published yet, pointing at the
+  WhatsApp button. **The fix is an API change, not a component change**: project the guide's
+  content onto `SizeGuideRefDto` or add `GET /api/catalog/size-guides/{id}`. Filed for W1-02/ADM-17.
+- **PDP-05's delivery estimate, delivery methods and returns terms have no source at all.**
+  Delivery methods and fees are ADM-22/CHK-02 settings and the returns copy is a GLB-10 content
+  page, both week 3. Nothing was written: "2–3 working days" on a storefront is a promise no part
+  of the system has made yet. The description, material, fit, occasion, age group and care are all
+  from the API and all render.
+- No seeded product has a **video**. The gallery handles one (role `Video`, poster, its own slide);
+  the e2e stub is what exercises it.
+- **Media is still not served (W1-04)**, so every `<img>` on the page 404s today. Every frame is a
+  fixed 3:4 box and a failed image swaps for a placeholder inside it, so the layout is identical
+  either way and nothing moves.
+
+**Two defects that only clicking through the real API found, after the suites were green:**
+- `Products.Description` is **sanitised HTML** (doc 08 §3.2) and the seeder writes `<p>…</p>` into
+  it. Interpolating it printed the tags at the shopper. It goes through `[innerHTML]` now (Angular
+  sanitises it again), with the markup stripped out of anything copied into a `<meta>`. The e2e
+  stub served a plain sentence in that field, which is exactly why no test saw it — **a stub that
+  is shaped more politely than the real API tests nothing**, the same lesson as round 3 of W2-03 in
+  a different coat. The stub serves HTML there now.
+- A not-found page re-asked the API after hydration and collected a second, guaranteed 404 in the
+  console. A missing product is handed over as missing; a *fault* still is not, because a 500
+  during the render may be over by the time the page hydrates.
+
+**Two the browser tests found, both in the new modal:** the full-screen panel was a grid item at
+`height: 100%` and a grid track sizes to its content, so a tall photograph pushed the zoom controls
+off the bottom of the screen; and the focus trap never armed, because the `@if` and the view query
+settle in the same render and the effect read only `open()`, so it ran once while the panel was
+still undefined and gave up. Both fixed. A third was in a test, not the code: a helper looked for
+`[role="dialog"]` and found the shell's permanently mounted, hidden mobile nav drawer.
+
+**Deliberately absent:** Add to Bag and Buy Now (bag API is W2-09), the real wishlist (W2-08 — the
+heart is the same per-browser `LocalWishlist` the card uses), reviews (PDP-08, W2-06) and Quick
+View (QV-01, W2-04). Nothing dead or disabled stands in for any of them.
+
+**Numbers:** storefront unit 312 (was 220), Playwright 112 (was 65), shared 19, admin 9; backend
+232 + 146, 0 skipped. Lint and all builds clean, no new runtime dependency.
+
+**Next:** the tester.
+
 ### 2026-09-23 (5) — W2-03 fix round 3: a blocker the tests were built to miss
 
 Round-2 work verified on the wire. The tester then found a blocker that had been on the branch

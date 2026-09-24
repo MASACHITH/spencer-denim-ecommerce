@@ -3,7 +3,12 @@ import { Injectable, inject } from '@angular/core';
 import { Params } from '@angular/router';
 import { Observable } from 'rxjs';
 
-import { PagedResult, ProductCardDto, ValidationProblemDetails } from './catalog.model';
+import {
+  PagedResult,
+  ProductCardDto,
+  ProductDetailDto,
+  ValidationProblemDetails,
+} from './catalog.model';
 import { DepartmentDto } from '../navigation/catalog-departments.model';
 
 /**
@@ -26,6 +31,51 @@ export class CatalogApi {
   products(params: Params): Observable<PagedResult<ProductCardDto>> {
     return this.http.get<PagedResult<ProductCardDto>>('/api/catalog/products', { params });
   }
+
+  /**
+   * One product page (PDP-01..06).
+   *
+   * The slug is encoded rather than trusted: it arrives from the address bar, and a segment
+   * carrying a `?` or a `#` would otherwise change which resource is asked for. The API rejects
+   * anything that is not a slug with a 400 naming `slug`, which {@link productFailure} reads as
+   * "this address is not a product" rather than as a fault.
+   */
+  product(slug: string): Observable<ProductDetailDto> {
+    return this.http.get<ProductDetailDto>(`/api/catalog/products/${encodeURIComponent(slug)}`);
+  }
+}
+
+/**
+ * What went wrong with a product request, as the page has to treat it (not as a status code).
+ *
+ * - `missing`: there is no such product. The API answers **404** for a well-formed slug it does
+ *   not know and **400** for something that is not a slug at all, and both mean the same thing to
+ *   a shopper who followed a stale link: this address is not a product. Both become a real 404.
+ * - `offline`: the browser could not reach the store (status 0).
+ * - `failed`: the store answered, badly — a 500, a 502 from the proxy, an HTML error page. The
+ *   product may well exist, so the page says "try again" and the server answers 503, which a
+ *   crawler retries instead of dropping the URL.
+ */
+export type ProductFailure = 'missing' | 'offline' | 'failed';
+
+/** Classifies a failed `GET /api/catalog/products/{slug}`. */
+export function productFailure(error: unknown): ProductFailure {
+  if (!(error instanceof HttpErrorResponse)) {
+    return 'failed';
+  }
+
+  if (error.status === 400 || error.status === 404) {
+    return 'missing';
+  }
+
+  return error.status === 0 ? 'offline' : 'failed';
+}
+
+/** A sentence for the shopper. `missing` has no message: it is a page, not a banner. */
+export function productErrorMessage(failure: ProductFailure): string {
+  return failure === 'offline'
+    ? 'We could not reach the store. Check your connection and try again.'
+    : 'We could not load this product just now. Please try again in a moment.';
 }
 
 /**
