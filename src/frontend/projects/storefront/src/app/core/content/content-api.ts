@@ -6,6 +6,7 @@ import {
   AnnouncementDto,
   HomePageDto,
   NewsletterSignupResponse,
+  NewsletterSource,
 } from './content.model';
 import { ValidationProblemDetails } from '../catalog/catalog.model';
 
@@ -30,9 +31,14 @@ export class ContentApi {
     return this.http.get<readonly AnnouncementDto[]>('/api/content/announcements');
   }
 
-  /** Records a newsletter consent (HOME-10). */
-  subscribe(email: string): Observable<NewsletterSignupResponse> {
-    return this.http.post<NewsletterSignupResponse>('/api/content/newsletter', { email });
+  /**
+   * Records a newsletter consent (HOME-10, GLB-07).
+   *
+   * `source` says which form it was, and the API accepts only the values it knows — nothing a
+   * caller types reaches `marketing.NewsletterSubscribers.Source`.
+   */
+  subscribe(email: string, source: NewsletterSource = 'homepage'): Observable<NewsletterSignupResponse> {
+    return this.http.post<NewsletterSignupResponse>('/api/content/newsletter', { email, source });
   }
 }
 

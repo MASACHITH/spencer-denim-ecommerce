@@ -88,11 +88,18 @@ test.describe('the page the server sends (HOME-01..10)', () => {
     expect(html).toContain('/women/jeans?fit=wide-leg');
   });
 
-  /** The strip above the header is the client's copy too (GLB-03), from the same service. */
+  /**
+   * The strip above the header is the client's copy too (GLB-03), from the same service.
+   *
+   * The line asserted here is deliberately **not** one of `PLACEHOLDER_ANNOUNCEMENTS`. The first
+   * version of this test looked for the free-delivery line, which is both what the stub serves
+   * *and* what the storefront falls back to when the content call fails — so it passed identically
+   * whether the feed worked or not, which is no test at all.
+   */
   test('the announcement strip is the one the content service sent', async ({ request }) => {
     const html = await (await request.get('/')).text();
 
-    expect(html).toContain('Free island-wide delivery on orders over Rs. 10,000');
+    expect(html).toContain('Stitched in Sri Lanka since 2011');
   });
 
   test('one h1, and it names the store', async ({ page }) => {
@@ -127,8 +134,16 @@ test.describe('the page the server sends (HOME-01..10)', () => {
 });
 
 test.describe('the hero (HOME-01)', () => {
+  /**
+   * Autoplay is a request a browser may refuse, and a muted video is the one form of it Chrome
+   * grants. The element is never in the server's HTML — the server always renders the still — so
+   * it is always created by Angular, and on that path a bare `muted` *attribute* does not set the
+   * `muted` **property**: it stayed `false`, Chrome refused, and the hero was a frozen poster.
+   *
+   * This asserts the property, not the attribute, because the attribute was there all along.
+   */
   for (const width of VIDEO_WIDTHS) {
-    test(`${width}px: the video plays, with a way to stop it`, async ({ page }) => {
+    test(`${width}px: the hero video is muted, which is what lets it autoplay`, async ({ page }) => {
       await page.setViewportSize({ width, height: 900 });
       await useStubApi(page);
       await page.goto('/');
@@ -138,13 +153,51 @@ test.describe('the hero (HOME-01)', () => {
       await expect(video).toHaveCount(1);
       await expect(page.locator('[data-testid="hero-image"]')).toHaveCount(0);
 
-      // WCAG 2.2.2: anything that moves on its own for more than five seconds needs a way to stop
-      // it, and a looping hero video is exactly that.
-      const toggle = page.locator('[data-testid="hero-toggle"]');
-      await expect(toggle).toBeVisible();
-      await expect(toggle).toHaveAttribute('aria-label', /pause/i);
+      expect(await video.evaluate((element: HTMLVideoElement) => element.muted)).toBe(true);
+      expect(await video.evaluate((element: HTMLVideoElement) => element.autoplay)).toBe(true);
+      expect(await video.evaluate((element: HTMLVideoElement) => element.loop)).toBe(true);
     });
   }
+
+  /**
+   * The video really runs, and the control really stops it.
+   *
+   * <b>WCAG 2.2.2</b>: anything that moves on its own for more than five seconds needs a way to
+   * stop it, and a looping hero video is exactly that. <b>And the control has to tell the truth
+   * about what the video is doing.</b> Its label used to come from a signal hard-coded to
+   * "playing", so with autoplay refused it read "Pause" over a stopped video and pressing Pause
+   * started it. The label comes from the element's own events now, and this reads it back against
+   * `element.paused` rather than against itself.
+   */
+  test('1280px: the video plays, and the control stops it and says so', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await useStubApi(page);
+    await page.goto('/');
+    await hydrated(page);
+
+    const video = page.locator('[data-testid="hero-video"]');
+    const toggle = page.locator('[data-testid="hero-toggle"]');
+    const paused = () => video.evaluate((element: HTMLVideoElement) => element.paused);
+
+    await expect(toggle).toBeVisible();
+
+    // Actually running, not merely present and configured.
+    await expect.poll(paused).toBe(false);
+    await expect
+      .poll(() => video.evaluate((element: HTMLVideoElement) => element.currentTime))
+      .toBeGreaterThan(0);
+    await expect(toggle).toHaveAttribute('aria-label', /pause/i);
+
+    await toggle.click();
+
+    await expect.poll(paused).toBe(true);
+    await expect(toggle).toHaveAttribute('aria-label', /play/i);
+
+    await toggle.click();
+
+    await expect.poll(paused).toBe(false);
+    await expect(toggle).toHaveAttribute('aria-label', /pause/i);
+  });
 
   for (const width of PHONE_WIDTHS) {
     test(`${width}px: a phone gets the still, not the video`, async ({ page }) => {

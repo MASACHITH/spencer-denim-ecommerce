@@ -81,7 +81,13 @@ export interface AnnouncementDto {
   readonly linkUrl: string | null;
 }
 
-/** `POST /api/content/newsletter` (HOME-10). */
+/**
+ * `marketing.NewsletterSubscribers.Source` (doc 08 §3.6): which form the address came from.
+ * The API accepts these two and nothing else.
+ */
+export type NewsletterSource = 'homepage' | 'footer';
+
+/** `POST /api/content/newsletter` (HOME-10, GLB-07). */
 export interface NewsletterSignupResponse {
   readonly message: string;
 }

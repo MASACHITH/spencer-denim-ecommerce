@@ -23,7 +23,7 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 builder.Services.AddApiOpenApi();
 builder.Services.AddApiHealthChecks();
 builder.Services.AddApiForwardedHeaders();
-builder.Services.AddContentRateLimiting();
+builder.Services.AddNewsletterSignupThrottle();
 
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure();
@@ -42,10 +42,6 @@ if (app.Environment.IsDevelopment())
 {
     app.UseApiOpenApi();
 }
-
-// After the exception handler so a rejection is still a well-formed response, and before the
-// endpoints so the policy on the newsletter signup is applied.
-app.UseRateLimiter();
 
 app.UseAuthentication();
 app.UseAuthorization();

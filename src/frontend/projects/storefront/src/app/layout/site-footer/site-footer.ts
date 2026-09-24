@@ -1,19 +1,23 @@
-import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, inject, signal } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { RouterLink } from '@angular/router';
 import { Icon } from '@spencer-denim/shared';
 
+import { ContentApi, newsletterErrorMessage } from '../../core/content/content-api';
 import { NavigationService } from '../../core/navigation/navigation.service';
 import { SITE_CONFIG } from '../../core/config/site-config';
 
-/** What the newsletter form is showing. There is no "subscribed": no backend accepts it yet. */
-export type NewsletterState = 'idle' | 'coming-soon';
+/** What the newsletter form is showing (GLB-07). */
+export type NewsletterState = 'idle' | 'sending' | 'done' | 'error';
 
 /**
  * The storefront footer (GLB-07): shop links, help and policies, contact, social and a newsletter
  * field.
  *
- * TODO(HOME-10): the newsletter has no endpoint yet, so submitting says exactly that. It must not
- * report success for something that was never stored.
+ * The newsletter field is real. It used to tell a shopper on every page of the site that nothing
+ * had been saved, which was true until HOME-10 built `POST /api/content/newsletter`; it now writes
+ * the same consent row the homepage form does, recorded against `footer` rather than `homepage` so
+ * the client can see where an address came from (doc 08 §3.6 `Source`).
  */
 @Component({
   selector: 'sd-site-footer',
@@ -27,24 +31,53 @@ export type NewsletterState = 'idle' | 'coming-soon';
             <h2 class="newsletter__title" id="newsletter-title">Join the Spencer Denim list</h2>
             <p class="t-small muted">New arrivals, restocks and sale previews. No more than twice a month.</p>
           </div>
-          <form class="newsletter__form" (submit)="onNewsletterSubmit($event)">
-            <label class="sr-only" for="newsletter-email">Email address</label>
-            <input
-              class="newsletter__input"
-              id="newsletter-email"
-              type="email"
-              name="email"
-              autocomplete="email"
-              required
-              placeholder="you@example.com"
-            />
-            <button class="btn btn--primary newsletter__submit" type="submit">Sign up</button>
-          </form>
-          <p class="newsletter__status t-small" role="status" data-testid="newsletter-status">
-            @if (newsletterState() === 'coming-soon') {
-              Newsletter sign-up is not switched on yet, so nothing was saved. It will be ready
-              before the store opens — please try again then.
-            }
+          @if (newsletterState() === 'done') {
+            <p class="newsletter__status t-small" role="status" data-testid="newsletter-status">
+              {{ newsletterMessage() }}
+            </p>
+          } @else {
+            <form class="newsletter__form" novalidate (submit)="onNewsletterSubmit($event)">
+              <!-- A prefixed id, because the homepage carries a newsletter field of its own and
+                   an id may appear once in a document. -->
+              <label class="sr-only" for="footer-newsletter-email">Email address</label>
+              <input
+                class="newsletter__input"
+                id="footer-newsletter-email"
+                data-testid="footer-newsletter-email"
+                type="email"
+                name="email"
+                autocomplete="email"
+                inputmode="email"
+                spellcheck="false"
+                required
+                placeholder="you@example.com"
+                [value]="newsletterEmail()"
+                [disabled]="newsletterState() === 'sending'"
+                [attr.aria-invalid]="newsletterState() === 'error' ? 'true' : null"
+                [attr.aria-describedby]="'footer-newsletter-status'"
+                (input)="onNewsletterInput($event)"
+              />
+              <button
+                class="btn btn--primary newsletter__submit"
+                type="submit"
+                [disabled]="newsletterState() === 'sending'"
+              >
+                {{ newsletterState() === 'sending' ? 'Signing up…' : 'Sign up' }}
+              </button>
+            </form>
+            <!-- Always mounted so a screen reader is watching before there is anything to say. -->
+            <p
+              class="newsletter__status t-small"
+              id="footer-newsletter-status"
+              role="alert"
+              data-testid="newsletter-status"
+            >
+              {{ newsletterState() === 'error' ? newsletterMessage() : '' }}
+            </p>
+          }
+          <!-- TODO(GLB-10): link "privacy policy" to the content page once it is published. -->
+          <p class="t-small muted">
+            We record your IP address as proof of consent. Unsubscribe from any email.
           </p>
         </section>
 
@@ -264,12 +297,60 @@ export class SiteFooter {
   protected readonly social = this.config.social;
   protected readonly year = new Date().getFullYear();
 
+  private readonly api = inject(ContentApi);
+  private readonly destroyRef = inject(DestroyRef);
+
   private readonly state = signal<NewsletterState>('idle');
+  private readonly email = signal('');
+  private readonly answer = signal('');
 
   readonly newsletterState = this.state.asReadonly();
 
+  protected readonly newsletterEmail = this.email.asReadonly();
+  protected readonly newsletterMessage = this.answer.asReadonly();
+
+  protected onNewsletterInput(event: Event): void {
+    this.email.set((event.target as HTMLInputElement).value);
+
+    if (this.state() === 'error') {
+      this.state.set('idle');
+      this.answer.set('');
+    }
+  }
+
   protected onNewsletterSubmit(event: Event): void {
     event.preventDefault();
-    this.state.set('coming-soon');
+
+    if (this.state() === 'sending') {
+      return;
+    }
+
+    const email = this.email().trim();
+    if (email.length === 0) {
+      this.answer.set('Enter your email address to sign up.');
+      this.state.set('error');
+      return;
+    }
+
+    this.state.set('sending');
+    this.answer.set('');
+
+    this.api
+      .subscribe(email, 'footer')
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        // The server's own sentence: it is the same whether the address was new or already on the
+        // list, and only the server knows which.
+        next: (response) => {
+          this.answer.set(
+            response?.message?.trim() || 'Thank you. Your email address is on the list.',
+          );
+          this.state.set('done');
+        },
+        error: (failure: unknown) => {
+          this.answer.set(newsletterErrorMessage(failure));
+          this.state.set('error');
+        },
+      });
   }
 }

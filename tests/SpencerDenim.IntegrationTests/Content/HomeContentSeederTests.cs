@@ -14,12 +14,19 @@ namespace SpencerDenim.IntegrationTests.Content;
 public sealed class HomeContentSeederTests(SqlServerDatabaseFixture sqlServer)
 {
     /// <summary>
-    /// Doc 08 §9's table says "media-dependent sections disabled until content exists". These four
-    /// are nothing but artwork, and W1-04 has not landed.
+    /// Doc 08 §9's table says "media-dependent sections disabled until content exists". These five
+    /// are each a picture with words on it, and W1-04 has not landed.
+    /// <para>
+    /// HOME-04 is on this list rather than seeded as a product row. Doc 08 §3.7 says a trending
+    /// item stores a filtered listing URL and doc 02 says each card opens that listing, so a row
+    /// of best-selling products under the heading "Trending now" is a different block from the one
+    /// HOME-04 names — and one whose "view all" had nowhere on this site to go.
+    /// </para>
     /// </summary>
     private static readonly HomeSectionType[] SeededDisabled =
     [
         HomeSectionType.HeroVideo,
+        HomeSectionType.TrendingItems,
         HomeSectionType.CampaignBanner,
         HomeSectionType.ActivewearFeature,
         HomeSectionType.SocialGallery,
@@ -228,12 +235,11 @@ public sealed class HomeContentSeederTests(SqlServerDatabaseFixture sqlServer)
     }
 
     /// <summary>
-    /// The three product rows are configured with a listing URL the catalogue can answer. A typo
+    /// The two product rows are configured with a listing URL the catalogue can answer. A typo
     /// here would be an empty row on the front page with nothing to say why.
     /// </summary>
     [Theory]
     [InlineData(HomeSectionType.NewArrivals, "/new-arrivals")]
-    [InlineData(HomeSectionType.TrendingItems, "/?sort=best-selling")]
     [InlineData(HomeSectionType.SaleSection, "/sale")]
     public async Task A_product_row_is_seeded_with_the_listing_it_draws_from(
         HomeSectionType type,
@@ -244,16 +250,163 @@ public sealed class HomeContentSeederTests(SqlServerDatabaseFixture sqlServer)
         using var scope = sqlServer.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
+        var settings = await ReadSettingsAsync(dbContext, type);
+
+        Assert.Equal(expectedListingUrl, settings.ListingUrl);
+        Assert.Equal(SpencerDenim.Application.Content.HomeSectionMode.Auto, settings.Mode);
+        Assert.Equal(8, settings.Count);
+    }
+
+    /// <summary>
+    /// HOME-04 is seeded for the block it actually is: tiles the client arranges, each opening its
+    /// own filtered listing. It is off until there are pictures to put on them, like the hero and
+    /// the banners.
+    /// </summary>
+    [Fact]
+    public async Task Trending_is_seeded_as_tiles_and_not_as_a_product_row()
+    {
+        sqlServer.SkipIfUnavailable();
+
+        using var scope = sqlServer.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        var settings = await ReadSettingsAsync(dbContext, HomeSectionType.TrendingItems);
+
+        Assert.Equal(SpencerDenim.Application.Content.HomeSectionMode.Manual, settings.Mode);
+        Assert.Null(settings.ListingUrl);
+
+        var enabled = await dbContext.HomeSections
+            .Where(section => section.SectionType == HomeSectionType.TrendingItems)
+            .Select(section => section.IsEnabled)
+            .SingleAsync(Token);
+
+        Assert.False(enabled);
+    }
+
+    private static async Task<SpencerDenim.Application.Content.HomeSectionSettings> ReadSettingsAsync(
+        AppDbContext dbContext,
+        HomeSectionType type)
+    {
         var settingsJson = await dbContext.HomeSections
             .Where(section => section.SectionType == type)
             .Select(section => section.SettingsJson)
             .SingleAsync(Token);
 
-        var settings = SpencerDenim.Application.Content.HomeSectionSettings.Parse(settingsJson);
+        return SpencerDenim.Application.Content.HomeSectionSettings.Parse(settingsJson);
+    }
 
-        Assert.Equal(expectedListingUrl, settings.ListingUrl);
-        Assert.Equal(SpencerDenim.Application.Content.HomeSectionMode.Auto, settings.Mode);
-        Assert.Equal(8, settings.Count);
+    /// <summary>
+    /// Doc 08 §9/N13 forbids overwriting an admin edit, and an announcement has no key except the
+    /// sentence itself — so "insert what is missing" could not tell a rewritten line from a
+    /// missing one, and a placeholder the client had <b>deleted</b> came back on the next
+    /// deployment, onto every page of the site. "Free island-wide delivery on orders over
+    /// Rs. 10,000" is a promise they may have removed on purpose.
+    /// </summary>
+    [Fact]
+    public async Task A_deleted_announcement_is_not_resurrected_by_a_reseed()
+    {
+        sqlServer.SkipIfUnavailable();
+
+        using var scope = sqlServer.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var seeder = scope.ServiceProvider.GetRequiredService<HomeContentSeeder>();
+
+        var removed = await dbContext.AnnouncementMessages.OrderBy(message => message.SortOrder).FirstAsync(Token);
+        var text = removed.Message;
+
+        dbContext.AnnouncementMessages.Remove(removed);
+        await dbContext.SaveChangesAsync(Token);
+
+        try
+        {
+            var counts = await seeder.SeedAsync(Token);
+
+            Assert.Equal(0, counts.Announcements);
+            Assert.False(
+                await dbContext.AnnouncementMessages.AnyAsync(message => message.Message == text, Token),
+                "a deleted announcement came back");
+            Assert.Equal(1, await dbContext.AnnouncementMessages.CountAsync(Token));
+        }
+        finally
+        {
+            dbContext.AnnouncementMessages.Add(new AnnouncementMessage
+            {
+                Message = text,
+                SortOrder = removed.SortOrder,
+                IsActive = removed.IsActive,
+            });
+            await dbContext.SaveChangesAsync(Token);
+        }
+    }
+
+    /// <summary>A rewritten line is not duplicated by the original coming back beside it.</summary>
+    [Fact]
+    public async Task A_rewritten_announcement_is_not_joined_by_the_original()
+    {
+        sqlServer.SkipIfUnavailable();
+
+        using var scope = sqlServer.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var seeder = scope.ServiceProvider.GetRequiredService<HomeContentSeeder>();
+
+        var message = await dbContext.AnnouncementMessages.OrderBy(row => row.SortOrder).FirstAsync(Token);
+        var original = message.Message;
+
+        message.Message = "Free delivery over Rs. 15,000 this month";
+        await dbContext.SaveChangesAsync(Token);
+
+        try
+        {
+            await seeder.SeedAsync(Token);
+
+            Assert.Equal(2, await dbContext.AnnouncementMessages.CountAsync(Token));
+            Assert.False(
+                await dbContext.AnnouncementMessages.AnyAsync(row => row.Message == original, Token),
+                "the original line came back beside the client's own");
+        }
+        finally
+        {
+            message.Message = original;
+            await dbContext.SaveChangesAsync(Token);
+        }
+    }
+
+    /// <summary>
+    /// An empty table is a store that has never been seeded, not a client who cleared the strip —
+    /// there is no way to tell those apart, and a new environment with no announcements at all is
+    /// the worse failure.
+    /// </summary>
+    [Fact]
+    public async Task An_empty_table_is_seeded_from_scratch()
+    {
+        sqlServer.SkipIfUnavailable();
+
+        using var scope = sqlServer.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var seeder = scope.ServiceProvider.GetRequiredService<HomeContentSeeder>();
+
+        var saved = await dbContext.AnnouncementMessages.AsNoTracking().ToListAsync(Token);
+        await dbContext.AnnouncementMessages.ExecuteDeleteAsync(Token);
+
+        try
+        {
+            var counts = await seeder.SeedAsync(Token);
+
+            Assert.Equal(2, counts.Announcements);
+            Assert.Equal(2, await dbContext.AnnouncementMessages.CountAsync(Token));
+        }
+        finally
+        {
+            await dbContext.AnnouncementMessages.ExecuteDeleteAsync(Token);
+            dbContext.AnnouncementMessages.AddRange(saved.Select(row => new AnnouncementMessage
+            {
+                Message = row.Message,
+                LinkUrl = row.LinkUrl,
+                SortOrder = row.SortOrder,
+                IsActive = row.IsActive,
+            }));
+            await dbContext.SaveChangesAsync(Token);
+        }
     }
 
     private static async Task<(int Sections, int Items, int Announcements)> CountsAsync(AppDbContext dbContext) =>

@@ -150,8 +150,9 @@ export class DepartmentTiles {
     const link = toLink(destinationOf(item));
     const label = labelOf(item);
 
-    // `isUsableTile` has already established both, but narrowing them here keeps the template free
-    // of non-null assertions.
+    // `isUsableTile` has already established both — it requires an internal link, which is the
+    // only kind either tile component can draw. This narrows them for the template; it is not a
+    // second opinion, and a tile that reached here without them would be a bug in that filter.
     if (link?.kind !== 'internal' || !label) {
       return null;
     }

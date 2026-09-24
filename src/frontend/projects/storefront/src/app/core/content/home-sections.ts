@@ -80,9 +80,20 @@ function isUsable(section: HomeSectionDto | null | undefined): section is HomeSe
   );
 }
 
-/** Whether a tile can be drawn as a link with a name on it. */
+/**
+ * Whether a tile can be drawn as a link with a name on it.
+ *
+ * **Internal only.** A tile is rendered with `routerLink`, and both tile components drop anything
+ * that is not a path on this site — so counting an external link as content made the has-content
+ * gate and the rendering disagree: the section passed the gate and then drew an empty list under
+ * its heading. Pasting a full `https://spencerdenim.lk/women` into a department tile is an
+ * ordinary thing to do in ADM-17, and it took the whole block down to a bare heading over a gap.
+ *
+ * The social gallery (HOME-08) is the one block whose links may leave the site, and it does not
+ * use this: it decides on the photograph, which is what that block is made of.
+ */
 export function isUsableTile(item: HomeSectionItemDto): boolean {
-  return toLink(destinationOf(item)) !== null && labelOf(item) !== null;
+  return toLink(destinationOf(item))?.kind === 'internal' && labelOf(item) !== null;
 }
 
 /** A tile's destination: its own link, or the department it names. */
@@ -201,7 +212,13 @@ export function toLink(url: string | null | undefined): SectionLink {
  * and keeping only the last value would quietly narrow the listing the tile promised.
  */
 function parseQuery(query: string): Readonly<Record<string, string | string[]>> | null {
-  const params: Record<string, string | string[]> = {};
+  // `Object.create(null)`, not `{}`: a query of `?__proto__=x` assigns to the prototype of a
+  // normal object instead of adding a key, so the parameter is silently lost and the object is
+  // left in a shape nothing else expects. A null-prototype bag has no such key to hit.
+  const params: Record<string, string | string[]> = Object.create(null) as Record<
+    string,
+    string | string[]
+  >;
   let any = false;
 
   for (const pair of query.split('&')) {
@@ -218,7 +235,9 @@ function parseQuery(query: string): Readonly<Record<string, string | string[]>> 
     }
 
     any = true;
-    const existing = params[key];
+    // `Object.hasOwn` rather than `!== undefined`: on a null-prototype bag they agree, and this
+    // says what is meant if the bag ever changes.
+    const existing = Object.hasOwn(params, key) ? params[key] : undefined;
 
     if (existing === undefined) {
       params[key] = value;

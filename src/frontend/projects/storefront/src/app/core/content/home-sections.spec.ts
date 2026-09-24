@@ -157,16 +157,27 @@ describe('hasContent', () => {
   });
 
   /**
-   * A stored link that cannot safely reach an `href` is not a destination, so the tile does not
-   * count as content and the section is not drawn half-dead around it.
+   * A stored link the tile cannot be drawn with is not a destination, so the tile does not count
+   * as content and the section is not drawn half-dead around it.
+   *
+   * The `https://` case is the one that bit: both tile components render with `routerLink` and
+   * drop anything that is not a path on this site, so an absolute URL passed the gate and then
+   * rendered nothing — a bare heading over an empty list. Pasting a full
+   * `https://spencerdenim.lk/women` into a department tile is an ordinary ADM-17 mistake.
    */
-  it('a tile whose link is not safe does not keep its section alive', () => {
+  it.each([
+    ['a javascript: URL', 'javascript:alert(1)'],
+    ['an absolute URL to this very site', 'https://spencerdenim.lk/women'],
+    ['an absolute URL somewhere else', 'https://example.com/women'],
+    ['a protocol-relative URL', '//evil.example/women'],
+    ['a relative path with no leading slash', 'women'],
+  ])('a tile whose link is %s does not keep its section alive', (_name, linkUrl) => {
     expect(
-      hasContent(
-        section('ShopByDepartment', {
-          items: [item({ linkUrl: 'javascript:alert(1)', title: 'Women' })],
-        }),
-      ),
+      hasContent(section('ShopByDepartment', { items: [item({ linkUrl, title: 'Women' })] })),
+    ).toBe(false);
+
+    expect(
+      hasContent(section('TrendingItems', { items: [item({ linkUrl, title: 'Wide leg' })] })),
     ).toBe(false);
   });
 });

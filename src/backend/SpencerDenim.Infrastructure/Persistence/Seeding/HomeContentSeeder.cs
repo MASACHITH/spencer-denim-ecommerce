@@ -7,12 +7,22 @@ namespace SpencerDenim.Infrastructure.Persistence.Seeding;
 /// The homepage and announcement part of doc 08 §9's idempotent seed step (N13): it inserts only
 /// what is missing and never touches a row the client has edited.
 /// <para>
-/// Every seeded row has a key the client cannot change by editing copy — the section's type, a
-/// tile's department, a benefit's icon key — so re-running this after the client has renamed a
-/// heading, reordered the page, switched a section on or rewritten a benefit leaves all of it alone.
-/// Re-running it after the client has <b>deleted</b> a seeded row does put that row back; that is
-/// the same behaviour the catalogue seeder has for a deleted department, and the same trade-off:
-/// the seeder is the definition of "the shape a Spencer Denim store starts in".
+/// <b>Sections, department tiles and benefits</b> are keyed on something the client cannot change
+/// by editing copy — the section's type, the tile's department, the benefit's icon key — so
+/// re-running this after a heading has been rewritten, the page reordered, a section switched on or
+/// a benefit's wording replaced leaves all of it alone. Re-running it after one of those rows has
+/// been <b>deleted</b> does put it back, which is the same trade-off the catalogue seeder makes for
+/// a deleted department: the seeder is the definition of the shape a Spencer Denim store starts in,
+/// and those rows are structure.
+/// </para>
+/// <para>
+/// <b>Announcements are different, and are seeded all or nothing.</b> An announcement has no key
+/// except the sentence itself, so "insert what is missing" and "the client rewrote it" are the same
+/// event: an edited line looked like a missing one and the seeder put the original back beside it.
+/// Worse, a placeholder the client <i>deleted</i> — "Free island-wide delivery on orders over
+/// Rs. 10,000" is a promise they may have removed on purpose — came back on the next deployment, on
+/// every page of the site. Doc 08 §9/N13 forbids overwriting an admin edit, so once the table has
+/// any row in it at all, this step does nothing.
 /// </para>
 /// </summary>
 public sealed class HomeContentSeeder(AppDbContext dbContext)
@@ -157,22 +167,26 @@ public sealed class HomeContentSeeder(AppDbContext dbContext)
         return added;
     }
 
-    /// <summary>GLB-03. Keyed on the message itself, which is all an announcement is.</summary>
+    /// <summary>
+    /// GLB-03, all or nothing.
+    ///
+    /// <para>
+    /// The message <i>is</i> the row, so there is no key to match on that survives the client
+    /// editing it. The test is therefore "has anyone put anything here yet", not "is this exact
+    /// sentence present": the strip belongs to the client from the first time they touch it, and a
+    /// line they deleted stays deleted.
+    /// </para>
+    /// </summary>
     private async Task<int> SeedAnnouncementsAsync(CancellationToken cancellationToken)
     {
-        var existing = await dbContext.AnnouncementMessages
-            .Select(message => message.Message)
-            .ToListAsync(cancellationToken);
-
-        var present = existing.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (await dbContext.AnnouncementMessages.AnyAsync(cancellationToken))
+        {
+            return 0;
+        }
 
         var added = 0;
         foreach (var seed in HomeContentData.Announcements)
         {
-            if (!present.Add(seed.Message))
-            {
-                continue;
-            }
 
             dbContext.AnnouncementMessages.Add(new AnnouncementMessage
             {

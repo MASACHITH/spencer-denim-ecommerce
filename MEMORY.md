@@ -44,6 +44,119 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 
 ## Session log
 
+### 2026-09-24 (5) — W2-01 fix round 1: two gates that disagreed with the rendering
+
+The tester verified every number and every claim from the developer pass — schema, seed counts,
+scheduling, the server-side rows, the `routerLink` fix and all eight API-failure modes, against the
+real stack — and failed the branch on six majors and five minors. All fixed on
+`feature/W2-01-homepage`.
+
+**Major, and the shape of the round: a section's has-content gate and its rendering disagreed.**
+`isUsableTile` counted an *external* link as content; both tile components render with `routerLink`
+and drop anything that is not a path on this site. So a HOME-02 or HOME-04 section whose tiles all
+carried an absolute URL passed the gate and then drew an empty list — a bare heading over a gap
+between two real blocks. Pasting a full `https://spencerdenim.lk/women` into a department tile is an
+ordinary ADM-17 mistake. Reproduced on the real stack: with all three department tiles set to
+absolute URLs the served HTML contained **0 tiles, 0 headings and no section element**, and the four
+other sections were untouched; with one tile absolute, only that tile went. **The lesson is the one
+from W2-05 in a new place: a gate that asks a different question from the renderer is a gate that
+passes things the renderer then drops.** The gate now asks `toLink(...)?.kind === 'internal'`, which
+is exactly what the components can draw.
+
+**Major: the hero video could never autoplay, and the pause control lied about it.** The `<video>` is
+never in the server's HTML — the server always renders the still — so it is always created by
+Angular, and on that path a bare `muted` **attribute** does not set the `muted` **property**.
+Measured live, twice: `HTMLMediaElement.muted === false` with the attribute, `true` with
+`[muted]="true"`. Worse, `playing` was `signal(true)` — an assumption, not an observation — so with
+playback refused no event ever fired and the button read "Pause" over a stopped video; pressing Pause
+started it. `playing` now starts `false` and moves only on the element's own `play`/`playing`/`pause`
+events, and `toggle()` no longer sets it optimistically.
+
+**And the test was one that could not fail.** `${width}px: the video plays, with a way to stop it`
+asserted that the element existed and that a hard-coded label matched `/pause/i`. It passed with the
+product broken. Two things were needed to make it real: it now reads the `muted` **property**, and
+the e2e stub serves a genuinely decodable video (`e2e/support/hero-sample.webm`, three seconds of
+VP8 recorded with this same Chromium) instead of a `data:` URI carrying an MP4 header and nothing
+else. With that in place the test polls `!video.paused`, watches `currentTime` advance, and presses
+the control both ways. **Proven red on the old markup** — the five width cases fail, reporting
+`muted: false`.
+
+**What could not be proven, and is not claimed:** that Chrome *refuses* the unmuted element.
+Playwright's Chromium disables the autoplay policy, and overriding it per test
+(`--autoplay-policy=document-user-activation-required`) did not take; a fixture with an audio track
+played unmuted too. The wrong property is measured; the consequence rests on Chrome's documented
+policy. The one direct sighting of it: while the video URL was still being fetched from the wrong
+origin, the element did not play and the control correctly read **"Play the background video"** —
+which is the honest behaviour the fix introduces.
+
+**Major: re-running the seeder resurrected announcement copy the client had removed.** An
+announcement has no key but the sentence itself, so "insert what is missing" could not tell a
+rewritten line from a deleted one: the "Free island-wide delivery on orders over Rs. 10,000"
+placeholder — a promise the client may have deliberately taken down — came back on the next
+deployment, onto every page of the site. Doc 08 §9/N13 forbids overwriting an admin edit. That step
+is all-or-nothing now: once the table holds anything, it does nothing. Reproduced end to end on a
+fresh database — delete one line, rewrite the other, reseed: `announcements 0`, deletion respected,
+rewrite intact. The class doc claimed every seeded row had a key copy could not change; it now says
+which rows that is true of and which it is not.
+
+**Major: doc 08 §3.7's five-minute homepage cache was simply not implemented**, and one render cost
+16 SQL commands (18 with a department listing) against 5 for a whole listing page — on the busiest
+page on the site. Built as a decorator (`CachedHomePageQueryHandler`) over a keyed registration, with
+the eviction hook ADM-17's save has to call (`IHomePageCache.Evict`, `TODO(ADM-17)` naming it) and a
+`TimeProvider`-driven store. An integration test proves the second render costs **0** SQL commands
+and that evicting makes a change visible at once. On the real stack: 2–17 ms warm against 9–70 ms for
+the equivalent uncached listing call. The per-row cost inherited from the listing reader is
+unchanged and is not this task's to fix.
+
+**Major: `id="newsletter-email"` was on both the homepage form and the footer's**, which is on every
+page including that one. An id is document-unique, so the footer's label pointed at the homepage's
+input: the footer field had **no accessible name at all** and activating its label threw focus up the
+page. axe 4.10 retired `duplicate-id`, so nothing was going to catch it. Scoped per section, like
+`hintId()` and `errorId()` already were. Verified live: no duplicate id anywhere in the document, and
+each label resolves to the input in its own section.
+
+**Major: the signup rate limit was one bucket for the whole site behind a proxy.** Partitioning on
+`RemoteIpAddress` is right and unspoofable, but doc 03 §4 puts Caddy in front and W1-01 deliberately
+left `X-Forwarded-For` off, so every visitor lands in Caddy's partition. **Forwarded headers were not
+turned on here** — that would re-open the audit-log spoofing defect with no proxy address to pin.
+Instead the limit moved *inside* the use case as a port, so the order is validate → take a permit →
+write and a mistyped address costs nobody anything; the ceiling is sized for the shared-bucket case
+(600 per 10 minutes); and the throttle logs a warning, once, naming W0-15 when the address it sees is
+loopback or private. W0-15's row now carries the forwarded-headers work as a **launch blocker**.
+Verified live: 800 mistyped addresses consumed **zero** permits and a real signup still went through;
+620 valid ones produced exactly 600 rows and then 429 with `Retry-After: 600`.
+
+**Minors** — the footer signup is wired to the endpoint and recorded as `footer` rather than telling
+every visitor on every page that nothing was saved (GLB-07 finished; the API accepts `homepage` and
+`footer` and nothing else, so no caller's string reaches a `varchar(30)` the client reads); two more
+tests that could not fail (the announcement assertion looked for a line that is *also* in
+`PLACEHOLDER_ANNOUNCEMENTS`, so it passed whether the feed worked or not — the stub now serves a line
+the fallback does not contain; and narrowing the shell's touch-target sweep had silently dropped the
+root-level `.skip-link`, which is back); the newsletter's timing side channel (95 ms for a new
+address against 7.6 ms for a known one) closed with a 250 ms floor on every answer, driven through
+`TimeProvider` so the tests do not sleep; `parseQuery` builds on `Object.create(null)`, so
+`?__proto__=x` adds a key instead of reassigning a prototype; and the newsletter consent IP joined
+P17's retention table at 90 days, matching the order and enquiry IPs, with both signup forms now
+saying an IP is recorded and a `TODO(GLB-10)` for the policy link.
+
+**HOME-04's seed changed on the tester's argument, and he is right.** Seeding it `auto` shipped a
+best-selling *product row* labelled "Trending now" — not one of HOME-01..10, not the thing HOME-04 is
+defined by, and with a "view all" pointing at `/`. It is seeded `{"mode":"manual"}` and **disabled**,
+alongside the four other artwork-dependent sections, for exactly their reason. A best-sellers row is
+a change request to discuss, not a default. Both modes stay built and tested.
+
+**A flake root-caused rather than retried:** an unrelated newsletter e2e timed out about one run in
+three once the hero had a real video. The video was being proxied through the tests' own
+`page.route` handler, and a looping video held that handler open while everything else on the page
+queued behind it. The stub serves the video from an absolute URL of its own now, so it never enters
+the route handler. Three consecutive clean runs.
+
+**Numbers:** backend 382 unit (round 1: 348) + 212 integration (204), 0 skipped; storefront unit 443
+(431), shared 19, admin 9; Playwright 184 (183), three consecutive clean runs. Lint clean, all builds
+clean, no new runtime dependency.
+
+**Next:** back to the tester.
+
 ### 2026-09-24 (4) — W2-01 homepage, developer pass
 
 The placeholder home page is gone. `/` is a real, server-rendered page on

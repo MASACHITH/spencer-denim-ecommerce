@@ -202,6 +202,59 @@ public sealed class AnnouncementAndNewsletterTests(SqlServerDatabaseFixture sqlS
         Assert.Equal(0, await CountAsync(email));
     }
 
+    /// <summary>
+    /// GLB-07. The footer form is on every page, and doc 08 §3.6's <c>Source</c> is what tells the
+    /// client in ADM-21 where an address came from.
+    /// </summary>
+    [Fact]
+    public async Task A_footer_signup_is_recorded_as_coming_from_the_footer()
+    {
+        var api = CreateApi();
+        const string Email = "footer-signup@example.com";
+
+        await RemoveAsync(Email);
+        try
+        {
+            var (status, _) = await api.SubscribeAsync(new { email = Email, source = "footer" }, Token);
+
+            Assert.Equal(HttpStatusCode.OK, status);
+            Assert.Equal(NewsletterSource.Footer, (await FindAsync(Email))!.Source);
+        }
+        finally
+        {
+            await RemoveAsync(Email);
+        }
+    }
+
+    /// <summary>
+    /// <c>Source</c> is a <c>varchar(30)</c> the client reads in a report, on a public endpoint.
+    /// Anything the API does not recognise is the homepage — the caller's string never reaches the
+    /// column.
+    /// </summary>
+    [Theory]
+    [InlineData("instagram-campaign")]
+    [InlineData("'; DROP TABLE marketing.NewsletterSubscribers; --")]
+    [InlineData("")]
+    [InlineData(null)]
+    public async Task A_source_the_api_does_not_know_is_recorded_as_the_homepage(string? source)
+    {
+        var api = CreateApi();
+        const string Email = "unknown-source@example.com";
+
+        await RemoveAsync(Email);
+        try
+        {
+            var (status, _) = await api.SubscribeAsync(new { email = Email, source }, Token);
+
+            Assert.Equal(HttpStatusCode.OK, status);
+            Assert.Equal(NewsletterSource.Homepage, (await FindAsync(Email))!.Source);
+        }
+        finally
+        {
+            await RemoveAsync(Email);
+        }
+    }
+
     [Fact]
     public async Task A_body_with_no_email_at_all_is_a_400_rather_than_a_500()
     {

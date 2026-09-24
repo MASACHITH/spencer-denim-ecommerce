@@ -6,11 +6,11 @@ namespace SpencerDenim.Infrastructure.Persistence.Seeding;
 /// The homepage and announcement rows of doc 08 §9: ten sections in the signed proposal's order,
 /// six items (three department tiles and three benefits) and two announcement lines.
 /// <para>
-/// <b>Media-dependent sections are seeded switched off.</b> The hero video (HOME-01), the campaign
-/// banner (HOME-05), the activewear feature (HOME-06) and the social gallery (HOME-08) are nothing
-/// but artwork, and there is no artwork: the media library and its storage are W1-04. A banner with
-/// an empty frame in it is worse than no banner, so these four arrive off and the client turns each
-/// one on in ADM-17 when it has something to show.
+/// <b>Media-dependent sections are seeded switched off.</b> The hero video (HOME-01), the trending
+/// tiles (HOME-04), the campaign banner (HOME-05), the activewear feature (HOME-06) and the social
+/// gallery (HOME-08) are each a picture with words on it, and there is no picture: the media library
+/// and its storage are W1-04. A banner with an empty frame in it is worse than no banner, so these
+/// five arrive off and the client turns each one on in ADM-17 when it has something to show.
 /// </para>
 /// <para>
 /// <b>The copy is deliberately plain.</b> docs/04 §4 decision 8 makes the delivery threshold, the
@@ -54,12 +54,18 @@ internal static class HomeContentData
             SortOrder: 4,
             Title: "Trending now",
             Subtitle: null,
-            // Auto, because the alternative — the tiles of HOME-04, each opening its own filtered
-            // listing — is pure artwork and there is none yet (W1-04), and doc 08 §9 pins this
-            // seed at six items. There is no "everything" listing route to link a row of the whole
-            // catalogue to, so no linkLabel is set and the section renders no "view all".
-            SettingsJson: """{"mode":"auto","count":8,"listingUrl":"/?sort=best-selling"}""",
-            IsEnabled: true),
+            // Manual, which is what HOME-04 *is*: "each card opens the matching filtered listing"
+            // (doc 02), and doc 08 §3.7 says a trending item stores that listing URL. Seeding it
+            // `auto` instead shipped a best-selling product row under the heading "Trending now" —
+            // a block that is not one of HOME-01..10, that does not do the thing HOME-04 is
+            // defined by, and whose "view all" had nowhere on this site to go. A best-sellers row
+            // is a change request to discuss, not a default.
+            //
+            // Off, for the same reason as the hero and the banners: a trending tile is a picture
+            // with a link on it, doc 08 §9 pins this seed at six items, and the media library is
+            // W1-04. Both modes are built and tested; the client switches this on with either.
+            SettingsJson: """{"mode":"manual"}""",
+            IsEnabled: false),
 
         new(
             HomeSectionType.CampaignBanner,

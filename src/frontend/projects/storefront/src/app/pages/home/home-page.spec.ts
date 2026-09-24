@@ -210,6 +210,22 @@ describe('HomePage', () => {
     });
 
     /** Every section is the client's to remove, so the page's own heading cannot be a section's. */
+    /**
+     * `id` is document-unique, and the footer carries a newsletter field on every page. A bare
+     * `newsletter-email` on this one left the footer's input with no accessible name at all and
+     * sent its label's click up the page. axe 4.10 retired `duplicate-id`, so nothing caught it.
+     */
+    it('gives the newsletter field an id of its own, scoped to its section', async () => {
+      await open([section('Newsletter', { id: 10 })]);
+
+      const input = root().querySelector<HTMLInputElement>('[data-testid="newsletter-email"]')!;
+      const label = root().querySelector<HTMLLabelElement>('label')!;
+
+      expect(input.id).toBe('newsletter-email-10');
+      expect(label.getAttribute('for')).toBe('newsletter-email-10');
+      expect(input.id).not.toBe('newsletter-email');
+    });
+
     it('has exactly one h1, whatever the client has switched on', async () => {
       await open([DEPARTMENT_TILES, section('NewArrivals', { products: [card(1)] })]);
 
@@ -253,6 +269,7 @@ describe('HomePage', () => {
             item({ id: 21, departmentSlug: 'women', departmentName: 'Women', linkUrl: '/women' }),
             item({ id: 24, title: 'Nowhere' }),
             item({ id: 25, title: 'Unsafe', linkUrl: 'javascript:alert(1)' }),
+            item({ id: 26, title: 'Absolute', linkUrl: 'https://spencerdenim.lk/men' }),
           ],
         }),
       ]);
@@ -260,6 +277,32 @@ describe('HomePage', () => {
       const tiles = queryAll<HTMLAnchorElement>('[data-testid="department-tile"]');
       expect(tiles).toHaveLength(1);
       expect(tiles[0].getAttribute('href')).toBe('/women');
+    });
+
+    /**
+     * The section passed the has-content gate and then drew nothing: a heading over an empty list
+     * between two real blocks. Both tile components render with `routerLink` and drop anything
+     * that is not a path on this site, so counting an external link as content made the gate and
+     * the rendering disagree.
+     */
+    it.each([
+      ['ShopByDepartment' as const, 'department-tile'],
+      ['TrendingItems' as const, 'trending-tile'],
+    ])('leaves %s out entirely when every tile carries an absolute URL', async (type, testid) => {
+      await open([
+        section(type, {
+          title: 'Would be a bare heading',
+          items: [
+            item({ id: 31, title: 'Women', linkUrl: 'https://spencerdenim.lk/women' }),
+            item({ id: 32, title: 'Men', linkUrl: 'https://spencerdenim.lk/men' }),
+          ],
+        }),
+        BENEFITS,
+      ]);
+
+      expect(rendered()).toEqual(['sd-benefits-row']);
+      expect(queryAll(`[data-testid="${testid}"]`)).toHaveLength(0);
+      expect(text()).not.toContain('Would be a bare heading');
     });
   });
 
@@ -549,7 +592,8 @@ describe('HomePage', () => {
 
       const request = http.expectOne('/api/content/newsletter');
       expect(request.request.method).toBe('POST');
-      expect(request.request.body).toEqual({ email: 'shopper@example.com' });
+      // The source travels with it, so ADM-21 can tell a homepage signup from a footer one.
+      expect(request.request.body).toEqual({ email: 'shopper@example.com', source: 'homepage' });
 
       request.flush({ message: 'Thank you. Your email address is on the list.' });
       harness.detectChanges();

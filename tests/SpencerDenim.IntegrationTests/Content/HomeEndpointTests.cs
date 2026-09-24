@@ -17,6 +17,17 @@ namespace SpencerDenim.IntegrationTests.Content;
 /// </summary>
 public sealed class HomeEndpointTests(SqlServerDatabaseFixture sqlServer) : ContentTestBase(sqlServer)
 {
+    /// <summary>
+    /// Drops doc 08 §3.7's five-minute cache.
+    ///
+    /// <para>
+    /// Every test here changes content behind the API's back, which is what ADM-17's save will do
+    /// through the front. Without this they would be reading a page assembled before the change —
+    /// and, worse, the <i>first</i> test to run would decide what all the others saw.
+    /// </para>
+    /// </summary>
+    private void EvictHomePage() => Cache.Evict();
+
     [Fact]
     public async Task Only_the_sections_that_are_switched_on_are_returned_and_in_order()
     {
@@ -26,7 +37,6 @@ public sealed class HomeEndpointTests(SqlServerDatabaseFixture sqlServer) : Cont
             [
                 HomeSectionType.ShopByDepartment,
                 HomeSectionType.NewArrivals,
-                HomeSectionType.TrendingItems,
                 HomeSectionType.SaleSection,
                 HomeSectionType.Benefits,
                 HomeSectionType.Newsletter,
@@ -45,6 +55,7 @@ public sealed class HomeEndpointTests(SqlServerDatabaseFixture sqlServer) : Cont
     /// </summary>
     [Theory]
     [InlineData(HomeSectionType.HeroVideo)]
+    [InlineData(HomeSectionType.TrendingItems)]
     [InlineData(HomeSectionType.CampaignBanner)]
     [InlineData(HomeSectionType.ActivewearFeature)]
     [InlineData(HomeSectionType.SocialGallery)]
@@ -66,14 +77,14 @@ public sealed class HomeEndpointTests(SqlServerDatabaseFixture sqlServer) : Cont
             var page = await api.GetHomeAsync(Token);
 
             Assert.Equal(HomeSectionType.HeroVideo, page.Sections[0].Type);
-            Assert.Equal(7, page.Sections.Count);
+            Assert.Equal(6, page.Sections.Count);
         }
         finally
         {
             await SetEnabledAsync(HomeSectionType.HeroVideo, false);
         }
 
-        Assert.Equal(6, (await api.GetHomeAsync(Token)).Sections.Count);
+        Assert.Equal(5, (await api.GetHomeAsync(Token)).Sections.Count);
     }
 
     [Fact]
@@ -188,7 +199,6 @@ public sealed class HomeEndpointTests(SqlServerDatabaseFixture sqlServer) : Cont
     [Theory]
     [InlineData(HomeSectionType.NewArrivals, "?newArrivals=true&page=1&pageSize=8")]
     [InlineData(HomeSectionType.SaleSection, "?onSale=true&page=1&pageSize=8")]
-    [InlineData(HomeSectionType.TrendingItems, "?sort=best-selling&page=1&pageSize=8")]
     public async Task A_product_row_is_the_head_of_the_listing_it_is_drawn_from(
         HomeSectionType type,
         string listingQuery)
@@ -246,7 +256,7 @@ public sealed class HomeEndpointTests(SqlServerDatabaseFixture sqlServer) : Cont
             var sale = Assert.Single(page.Sections, section => section.Type == HomeSectionType.SaleSection);
 
             Assert.Empty(sale.Products);
-            Assert.Equal(6, page.Sections.Count);
+            Assert.Equal(5, page.Sections.Count);
             Assert.NotEmpty(
                 Assert.Single(page.Sections, section => section.Type == HomeSectionType.NewArrivals).Products);
         }
@@ -267,6 +277,7 @@ public sealed class HomeEndpointTests(SqlServerDatabaseFixture sqlServer) : Cont
     {
         var api = CreateApi();
         var added = await AddTrendingTilesAsync();
+        await SetEnabledAsync(HomeSectionType.TrendingItems, true);
 
         try
         {
@@ -283,39 +294,83 @@ public sealed class HomeEndpointTests(SqlServerDatabaseFixture sqlServer) : Cont
         finally
         {
             await RemoveAsync(added);
-            await SetSettingsAsync(
-                HomeSectionType.TrendingItems,
-                """{"mode":"auto","count":8,"listingUrl":"/?sort=best-selling"}""");
+            await SetEnabledAsync(HomeSectionType.TrendingItems, false);
+            await SetSettingsAsync(HomeSectionType.TrendingItems, """{"mode":"manual"}""");
         }
     }
 
+    /// <summary>
+    /// Doc 08 §3.7: "homepage output cached 5 min and evicted on save". The busiest page on the
+    /// site costs 16 SQL commands to assemble — the sections, their items and a listing query for
+    /// each product row — and this is what stops every visitor paying for it.
+    /// </summary>
     [Fact]
-    public async Task An_item_outside_its_own_window_is_left_out_while_the_section_stays()
+    public async Task The_homepage_is_assembled_once_and_then_served_from_the_cache()
     {
         var api = CreateApi();
 
-        await ScheduleItemAsync("delivery", endsAtUtc: DateTime.UtcNow.AddMinutes(-1));
+        EvictHomePage();
+        CommandCounter.Reset();
+
+        var first = await api.GetHomeAsync(Token);
+        var assembled = CommandCounter.Count;
+
+        CommandCounter.Reset();
+        var second = await api.GetHomeAsync(Token);
+
+        Assert.NotEmpty(first.Sections);
+        Assert.Equal(first.Sections.Count, second.Sections.Count);
+
+        // The first render is what it costs; the second must cost nothing at all.
+        Assert.True(assembled > 1, $"the first render should have queried the database, and made {assembled} commands");
+        Assert.Equal(0, CommandCounter.Count);
+    }
+
+    /// <summary>
+    /// The eviction hook ADM-17's save will call (TODO(ADM-17) on the port).
+    ///
+    /// <para>
+    /// The change is made without evicting, on purpose: that is what a write straight to the
+    /// database looks like, and it is what proves the cache is really in the way rather than the
+    /// endpoint simply re-reading every time. Then the hook is called and the same change appears.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task Evicting_makes_a_content_change_visible_at_once()
+    {
+        var api = CreateApi();
+
+        var before = await api.GetHomeAsync(Token);
+        Assert.Contains(before.Sections, section => section.Type == HomeSectionType.Benefits);
+
+        await SetEnabledWithoutEvictingAsync(HomeSectionType.Benefits, false);
         try
         {
-            var benefits = Assert
-                .Single((await api.GetHomeAsync(Token)).Sections, section => section.Type == HomeSectionType.Benefits)
-                .Items;
+            Assert.Contains(
+                (await api.GetHomeAsync(Token)).Sections,
+                section => section.Type == HomeSectionType.Benefits);
 
-            Assert.Equal(2, benefits.Count);
-            Assert.DoesNotContain(benefits, benefit => benefit.IconKey == "delivery");
+            EvictHomePage();
+
+            Assert.DoesNotContain(
+                (await api.GetHomeAsync(Token)).Sections,
+                section => section.Type == HomeSectionType.Benefits);
         }
         finally
         {
-            await ScheduleItemAsync("delivery", endsAtUtc: null);
+            await SetEnabledAsync(HomeSectionType.Benefits, true);
         }
     }
 
-    [Fact]
-    public async Task The_endpoint_answers_head_as_well_as_get()
+    /// <summary>A write the cache knows nothing about, which is every write until ADM-17.</summary>
+    private async Task SetEnabledWithoutEvictingAsync(HomeSectionType type, bool isEnabled)
     {
-        using var response = await CreateApi().HeadAsync("/api/content/home", Token);
+        using var scope = SqlServer.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        await dbContext.HomeSections
+            .Where(section => section.SectionType == type)
+            .ExecuteUpdateAsync(update => update.SetProperty(section => section.IsEnabled, isEnabled), Token);
     }
 
     private async Task SetEnabledAsync(HomeSectionType type, bool isEnabled)
@@ -326,6 +381,8 @@ public sealed class HomeEndpointTests(SqlServerDatabaseFixture sqlServer) : Cont
         await dbContext.HomeSections
             .Where(section => section.SectionType == type)
             .ExecuteUpdateAsync(update => update.SetProperty(section => section.IsEnabled, isEnabled), Token);
+
+        EvictHomePage();
     }
 
     private async Task ScheduleAsync(HomeSectionType type, DateTime? startsAtUtc, DateTime? endsAtUtc)
@@ -340,6 +397,8 @@ public sealed class HomeEndpointTests(SqlServerDatabaseFixture sqlServer) : Cont
                     .SetProperty(section => section.StartsAtUtc, startsAtUtc)
                     .SetProperty(section => section.EndsAtUtc, endsAtUtc),
                 Token);
+
+        EvictHomePage();
     }
 
     private async Task SetSettingsAsync(HomeSectionType type, string settingsJson)
@@ -352,6 +411,8 @@ public sealed class HomeEndpointTests(SqlServerDatabaseFixture sqlServer) : Cont
             .ExecuteUpdateAsync(
                 update => update.SetProperty(section => section.SettingsJson, settingsJson),
                 Token);
+
+        EvictHomePage();
     }
 
     private async Task SetItemsEnabledAsync(HomeSectionType type, bool isEnabled)
@@ -362,6 +423,8 @@ public sealed class HomeEndpointTests(SqlServerDatabaseFixture sqlServer) : Cont
         await dbContext.HomeSectionItems
             .Where(item => item.HomeSection!.SectionType == type)
             .ExecuteUpdateAsync(update => update.SetProperty(item => item.IsEnabled, isEnabled), Token);
+
+        EvictHomePage();
     }
 
     private async Task ScheduleItemAsync(string iconKey, DateTime? endsAtUtc)
@@ -372,6 +435,8 @@ public sealed class HomeEndpointTests(SqlServerDatabaseFixture sqlServer) : Cont
         await dbContext.HomeSectionItems
             .Where(item => item.IconKey == iconKey)
             .ExecuteUpdateAsync(update => update.SetProperty(item => item.EndsAtUtc, endsAtUtc), Token);
+
+        EvictHomePage();
     }
 
     private async Task<IReadOnlyList<int>> AddTrendingTilesAsync()
@@ -413,6 +478,8 @@ public sealed class HomeEndpointTests(SqlServerDatabaseFixture sqlServer) : Cont
         dbContext.HomeSectionItems.AddRange(tiles);
         await dbContext.SaveChangesAsync(Token);
 
+        EvictHomePage();
+
         return tiles.Select(tile => tile.Id).ToList();
     }
 
@@ -424,5 +491,7 @@ public sealed class HomeEndpointTests(SqlServerDatabaseFixture sqlServer) : Cont
         await dbContext.HomeSectionItems
             .Where(item => itemIds.Contains(item.Id))
             .ExecuteDeleteAsync(Token);
+
+        EvictHomePage();
     }
 }

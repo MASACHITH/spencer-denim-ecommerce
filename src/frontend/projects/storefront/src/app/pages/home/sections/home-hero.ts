@@ -1,4 +1,13 @@
-import { ChangeDetectionStrategy, Component, computed, inject, input, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  ElementRef,
+  computed,
+  inject,
+  input,
+  signal,
+  viewChild,
+} from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { Icon, ReducedMotion } from '@spencer-denim/shared';
 
@@ -30,18 +39,25 @@ import { Viewport } from '../../../core/platform/viewport';
     <section class="hero" [attr.aria-label]="label()">
       <div class="hero__media" [class.hero__media--scrim]="overlay() !== 'none'">
         @if (showVideo()) {
+          <!-- A bound muted, not a bare muted attribute. This element is never in the server's
+               HTML — the server always renders the still — so it is always created by Angular,
+               and on that path the attribute does not set the muted *property*:
+               HTMLMediaElement.muted stayed false, which is the one thing that stops Chrome
+               autoplaying, and would have played sound if it ever had. -->
           <video
+            #video
             class="hero__video"
             data-testid="hero-video"
             [src]="videoUrl()"
             [poster]="posterUrl()"
+            [muted]="true"
             autoplay
-            muted
             loop
             playsinline
             preload="metadata"
             aria-hidden="true"
             tabindex="-1"
+            (play)="playing.set(true)"
             (playing)="playing.set(true)"
             (pause)="playing.set(false)"
           ></video>
@@ -94,7 +110,7 @@ import { Viewport } from '../../../core/platform/viewport';
             data-testid="hero-toggle"
             [attr.aria-pressed]="!playing()"
             [attr.aria-label]="playing() ? 'Pause the background video' : 'Play the background video'"
-            (click)="toggle($event)"
+            (click)="toggle()"
           >
             <sd-icon [name]="playing() ? 'pause' : 'play'" size="sm" />
           </button>
@@ -205,8 +221,17 @@ export class HomeHero {
 
   readonly section = input.required<HomeSectionDto>();
 
-  /** Whether the video is running, for the pause control's label and icon. */
-  protected readonly playing = signal(true);
+  private readonly video = viewChild<ElementRef<HTMLVideoElement>>('video');
+
+  /**
+   * Whether the video is actually running, for the pause control's label and icon.
+   *
+   * It starts `false` and is moved only by the element's own events. It used to start `true`,
+   * which was an assumption rather than an observation: autoplay is a request the browser may
+   * refuse — a data saver, a battery saver, a site permission — and when it is refused no event
+   * ever fires, so the button read "Pause" over a stopped video and pressing Pause started it.
+   */
+  protected readonly playing = signal(false);
 
   /** The hero is one item; the client arranges the rest of the page, not this. */
   private readonly item = computed(() => this.section().items[0] ?? null);
@@ -258,21 +283,24 @@ export class HomeHero {
 
   protected readonly label = computed(() => this.title() ?? this.section().title ?? 'Featured');
 
-  protected toggle(event: Event): void {
-    const video = (event.currentTarget as HTMLElement)
-      .closest('.hero')
-      ?.querySelector<HTMLVideoElement>('.hero__video');
-
+  /**
+   * Plays or pauses the video.
+   *
+   * The signal is not set optimistically: `play()` returns a promise the browser can reject, and
+   * a button that says "Pause" over a video that never started is exactly the bug this control
+   * exists to avoid. `pause()` and a successful `play()` both raise the events above, which is
+   * what moves the signal.
+   */
+  protected toggle(): void {
+    const video = this.video()?.nativeElement;
     if (!video) {
       return;
     }
 
     if (video.paused) {
-      void video.play();
-      this.playing.set(true);
+      void video.play().catch(() => this.playing.set(false));
     } else {
       video.pause();
-      this.playing.set(false);
     }
   }
 }

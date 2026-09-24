@@ -1730,7 +1730,7 @@ sequenceDiagram
 | Data | Kept for |
 |---|---|
 | Raw page views (human / bot) | 90 / 7 days |
-| Order IP address, enquiry IP address | 90 days |
+| Order IP address, enquiry IP address, **newsletter consent IP** | 90 days |
 | Guest / customer bags | 30 / 180 days inactive |
 | Email bodies / email records | 30 days / 1 year |
 | Search statistics | 13 months |
@@ -1749,6 +1749,7 @@ sequenceDiagram
 - Tester check: after anonymising a customer with paid and unpaid orders, a review, an address, a subscription, queued emails, PayPal events and audit rows, a search of every table for the original email, phone and name finds nothing except the retained invoice bill-to (08 §3.1 step 8).
 - Traffic tracking stores no IP and no persistent visitor ID (08 §3.8).
 - Request logs and backups also hold personal data for their retention period; the privacy policy says so (08 Appendix B2, B3).
+- **Newsletter consent IP** (`marketing.NewsletterSubscribers.ConsentIpAddress`, 08 §3.6) is proof that the address was given willingly, which is what it is kept for — so it follows the same 90 days as the order and enquiry IPs rather than living as long as the subscription. The address itself and its consent *time* stay: they are the subscription. The signup forms say an IP is recorded (HOME-10, GLB-07); the privacy policy will say so properly with GLB-10.
 
 **Status changes.** Customer account: Active → Anonymised.
 

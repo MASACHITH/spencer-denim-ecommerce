@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
 using SpencerDenim.Application.Abstractions.Messaging;
@@ -22,9 +23,6 @@ internal static class ContentEndpoints
 {
     /// <summary>Same rule as the catalogue: a monitor or a link checker leads with HEAD.</summary>
     private static readonly string[] ReadMethods = [HttpMethods.Get, HttpMethods.Head];
-
-    /// <summary>The rate-limiter policy the signup endpoint runs under (see <c>Program</c>).</summary>
-    public const string NewsletterRateLimitPolicy = "newsletter-signup";
 
     public static IEndpointRouteBuilder MapContentEndpoints(this IEndpointRouteBuilder endpoints)
     {
@@ -53,8 +51,8 @@ internal static class ContentEndpoints
                 "HOME-10, GLB-07. Single opt-in, which is the shape doc 08 §3.6 gives the table. " +
                 "The answer does not say whether the address was already on the list: a form that did " +
                 "would be a way to test whether someone shops here.")
-            .RequireRateLimiting(NewsletterRateLimitPolicy)
             .Produces<NewsletterSignupResponse>()
+            .ProducesProblem(StatusCodes.Status429TooManyRequests)
             .ProducesValidationProblem();
 
         return endpoints;
@@ -84,15 +82,16 @@ internal static class ContentEndpoints
     /// the row was new, already there or an unsubscribe being undone.
     /// </para>
     /// </summary>
-    private static async Task<Results<Ok<NewsletterSignupResponse>, ValidationProblem>> SubscribeAsync(
+    private static async Task<Results<Ok<NewsletterSignupResponse>, ProblemHttpResult, ValidationProblem>> SubscribeAsync(
         [FromBody] NewsletterSignupRequest request,
         ICommandHandler<SubscribeToNewsletterCommand, NewsletterSubscriptionOutcome> handler,
+        INewsletterSignupThrottle throttle,
         HttpContext httpContext,
         CancellationToken cancellationToken)
     {
         var command = new SubscribeToNewsletterCommand(
             request?.Email,
-            NewsletterSource.Homepage,
+            ReadSource(request?.Source),
             // The real socket peer. X-Forwarded-For processing is deliberately off (W1-01 round 3),
             // so a caller cannot write someone else's address into the consent record.
             httpContext.Connection.RemoteIpAddress?.ToString());
@@ -109,14 +108,43 @@ internal static class ContentEndpoints
                 title: "That email address could not be read.");
         }
 
+        if (outcome == NewsletterSubscriptionOutcome.RateLimited)
+        {
+            httpContext.Response.Headers.RetryAfter =
+                ((int)throttle.Window.TotalSeconds).ToString(CultureInfo.InvariantCulture);
+
+            return TypedResults.Problem(
+                title: "Too many signups",
+                detail: "Too many signups have been made from here in a short time. Please try again shortly.",
+                statusCode: StatusCodes.Status429TooManyRequests);
+        }
+
         return TypedResults.Ok(new NewsletterSignupResponse(
             "Thank you. Your email address is on the list."));
     }
+
+    /// <summary>
+    /// Which form the address came from, from a fixed list.
+    ///
+    /// <para>
+    /// Never the caller's string: <c>marketing.NewsletterSubscribers.Source</c> is a
+    /// <c>varchar(30)</c> the client reads in ADM-21, and a field on a public endpoint that lands
+    /// in a report is a field someone will write something else into. Anything unrecognised is the
+    /// homepage, which is where the great majority of signups come from.
+    /// </para>
+    /// </summary>
+    private static string ReadSource(string? source) =>
+        string.Equals(source?.Trim(), NewsletterSource.Footer, StringComparison.OrdinalIgnoreCase)
+            ? NewsletterSource.Footer
+            : NewsletterSource.Homepage;
 }
 
-/// <summary>The newsletter signup form's body (HOME-10).</summary>
+/// <summary>The newsletter signup form's body (HOME-10, GLB-07).</summary>
 /// <param name="Email">The address as typed.</param>
-public sealed record NewsletterSignupRequest(string? Email);
+/// <param name="Source">
+/// Which form it was: <c>homepage</c> or <c>footer</c>. Anything else is read as the homepage.
+/// </param>
+public sealed record NewsletterSignupRequest(string? Email, string? Source);
 
 /// <summary>
 /// What the storefront shows after a signup. One sentence, identical for a new address and one that

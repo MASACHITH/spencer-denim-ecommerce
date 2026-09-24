@@ -43,9 +43,9 @@ type SignupPhase = 'idle' | 'sending' | 'done' | 'error';
         } @else {
           <form class="signup__form" novalidate (submit)="onSubmit($event)">
             <div class="signup__field">
-              <label class="signup__label" for="newsletter-email">Email address</label>
+              <label class="signup__label" [attr.for]="emailId()">Email address</label>
               <input
-                id="newsletter-email"
+                [id]="emailId()"
                 class="signup__input"
                 data-testid="newsletter-email"
                 type="email"
@@ -71,8 +71,10 @@ type SignupPhase = 'idle' | 'sending' | 'done' | 'error';
               {{ phase() === 'sending' ? 'Signing up…' : 'Sign up' }}
             </button>
 
+            <!-- TODO(GLB-10): link "privacy policy" to the content page once it is published. -->
             <p class="signup__hint" [id]="hintId()">
-              We use your address for Spencer Denim emails only. Unsubscribe from any of them.
+              We use your address for Spencer Denim emails only, and record your IP address as
+              proof of consent. Unsubscribe from any of them.
             </p>
 
             <!-- Always in the DOM so a screen reader is watching it before the message arrives;
@@ -193,6 +195,16 @@ export class NewsletterSignup {
   protected readonly message = this.answer.asReadonly();
 
   protected readonly headingId = computed(() => `home-section-${this.section().id}`);
+
+  /**
+   * Scoped per section, like the hint and the error below.
+   *
+   * A bare `newsletter-email` collided with the footer's field, which is on every page including
+   * this one: an `id` may appear once in a document, so the footer's label pointed at *this*
+   * input. The footer field was left with no accessible name at all, and clicking its label
+   * jumped focus up the page. axe 4.10 retired `duplicate-id`, so nothing was going to catch it.
+   */
+  protected readonly emailId = computed(() => `newsletter-email-${this.section().id}`);
   protected readonly hintId = computed(() => `newsletter-hint-${this.section().id}`);
   protected readonly errorId = computed(() => `newsletter-error-${this.section().id}`);
 

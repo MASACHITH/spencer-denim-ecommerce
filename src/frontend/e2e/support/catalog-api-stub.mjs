@@ -10,6 +10,7 @@
  * `SpencerDenim.Application.Catalog.Contracts`. When that contract changes, this changes with it —
  * the unit tests are what pin the mapping; this only has to be shaped like the real thing.
  */
+import { readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 
 const PORT = Number(process.env.E2E_API_PORT ?? 4421);
@@ -473,11 +474,28 @@ function contentSection(id, type, overrides) {
 }
 
 /**
- * A real MP4 would be several kilobytes of base64 for no gain: what the hero tests measure is
- * whether a video element is created and whether it autoplays, not whether it decodes. Its
- * presence, its controls and its absence under reduced motion are what is under test.
+ * A hero video the browser can really decode, served from this stub at {@link VIDEO}.
+ *
+ * It used to be a `data:` URI carrying an MP4 header and nothing else, which was enough to prove a
+ * `<video>` element existed and nothing more — so the test could not tell autoplay working from
+ * autoplay refused, and it passed while the hero was a frozen poster (the `muted` property was
+ * never set on the element Angular creates). `support/hero-sample.webm` is three seconds of VP8
+ * recorded with this same Chromium, so "it plays" is now a thing a test can watch happen.
+ *
+ * It has no audio track, which is the honest limit of what this can show: Playwright's Chromium
+ * runs with the autoplay policy disabled, so an unmuted video plays here whether or not it should.
+ * What the tests measure is the `muted` property itself — which really was `false` before — and
+ * that the element is running and the control agrees with it.
+ *
+ * The URL is absolute and points straight back at this stub, so the video never travels through
+ * the tests' own `page.route` handler. A looping video held that handler open while everything
+ * else on the page queued behind it, which made an unrelated newsletter assertion time out about
+ * one run in three. The real API can produce an absolute URL here too: `MediaUrlBuilder` returns a
+ * storage key unchanged when it is already one.
  */
-const VIDEO = 'data:video/mp4;base64,AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDE=';
+const VIDEO = `http://localhost:${PORT}/e2e/hero-sample.webm`;
+
+const HERO_VIDEO_FILE = new URL('./hero-sample.webm', import.meta.url);
 
 const SECTIONS = [
   contentSection(1, 'HeroVideo', {
@@ -580,9 +598,15 @@ const SECTIONS = [
 ];
 
 /** The announcement strip (GLB-03), with one line that carries a link. */
+/**
+ * The third line is deliberately **not** one of `PLACEHOLDER_ANNOUNCEMENTS`. A test that asserted
+ * the free-delivery line passed identically whether the content feed worked or fell back to its
+ * constants, because that sentence is in both — which is no test at all.
+ */
 const ANNOUNCEMENTS = [
   { id: 1, message: 'Free island-wide delivery on orders over Rs. 10,000', linkUrl: null },
   { id: 2, message: 'Easy 14-day returns and exchanges on every order', linkUrl: '/sale' },
+  { id: 3, message: 'Stitched in Sri Lanka since 2011', linkUrl: null },
 ];
 
 /** A slow answer, so a test can prove the menu does not hold the page open waiting for it. */
@@ -609,6 +633,13 @@ const server = createServer((request, response) => {
       DEPARTMENTS_MODE === 'empty' ? [] : DEPARTMENTS_MODE === 'garbage' ? { oops: true } : DEPARTMENTS;
 
     setTimeout(() => response.end(JSON.stringify(body)), DELAY_MS);
+    return;
+  }
+
+  if (url.pathname === '/e2e/hero-sample.webm') {
+    // Served with a real media type and range support off: the element only has to decode it.
+    response.setHeader('Content-Type', 'video/webm');
+    response.end(readFileSync(HERO_VIDEO_FILE));
     return;
   }
 

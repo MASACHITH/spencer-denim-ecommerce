@@ -164,6 +164,14 @@ test.describe('layout', () => {
       const shell = ['sd-site-header', 'sd-site-footer', 'sd-whatsapp-button']
         .flatMap((host) => [...document.querySelectorAll<HTMLElement>(`${host} a[href], ${host} button, ${host} select, ${host} input`)]);
 
+      // The skip link is the shell's too, and it is the first thing a keyboard meets. It sits at
+      // the root rather than inside any of the three hosts above, so narrowing the sweep to them
+      // had quietly dropped it.
+      const skip = document.querySelector<HTMLElement>('.skip-link');
+      if (skip) {
+        shell.push(skip);
+      }
+
       return shell
         .filter((el) => el.getClientRects().length > 0)
         .map((el) => ({
