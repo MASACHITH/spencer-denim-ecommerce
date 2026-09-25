@@ -713,7 +713,7 @@ public sealed class MediaService(
         var cleaned = new string(stem
             .Where(character => char.IsLetterOrDigit(character) || character is ' ' or '-' or '_' or '.' or '(' or ')')
             .ToArray())
-            .Trim();
+            .Trim(' ', '.');
 
         if (cleaned.Length == 0)
         {

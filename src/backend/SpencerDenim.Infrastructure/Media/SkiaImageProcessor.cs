@@ -124,7 +124,11 @@ public sealed class SkiaImageProcessor(IOptions<MediaOptions> options)
 
         try
         {
-            if (codec.GetPixels(target, bitmap.GetPixels()) is not (SKCodecResult.Success or SKCodecResult.IncompleteInput))
+            // Success only. IncompleteInput means the file was cut short — an upload that dropped part
+            // way, or a deliberately truncated one — and Skia would happily hand back the rows it managed
+            // with grey below them. Publishing half a photograph is worse than refusing the upload, and
+            // this is the only place that can tell: a truncated JPEG's header parses perfectly.
+            if (codec.GetPixels(target, bitmap.GetPixels()) != SKCodecResult.Success)
             {
                 bitmap.Dispose();
                 return null;
