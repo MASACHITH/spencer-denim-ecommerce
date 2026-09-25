@@ -18,7 +18,7 @@ import { ProductDetails } from './product-details';
 import { ProductGallery } from './product-gallery';
 import { SizeGuideModal } from './size-guide-modal';
 import { NotFoundPage } from '../not-found/not-found-page';
-import { ProductCard } from '../../ui/product-card/product-card';
+import { FULL_WIDTH_GRID_CARD_SIZES, ProductCard } from '../../ui/product-card/product-card';
 import {
   ProductBadge,
   ProductDetailDto,
@@ -300,7 +300,7 @@ const RECENT_SHOWN = 6;
             <h2 class="pdp__row-title" id="pdp-related">You may also like</h2>
             <ul class="product-grid">
               @for (related of item.relatedProducts; track related.id) {
-                <li><sd-product-card [product]="related" /></li>
+                <li><sd-product-card [product]="related" [sizes]="cardSizes" /></li>
               }
             </ul>
           </section>
@@ -311,7 +311,7 @@ const RECENT_SHOWN = 6;
             <h2 class="pdp__row-title" id="pdp-recent">Recently viewed</h2>
             <ul class="product-grid">
               @for (recent of recentlyViewed(); track recent.id) {
-                <li><sd-product-card [product]="recent" /></li>
+                <li><sd-product-card [product]="recent" [sizes]="cardSizes" /></li>
               }
             </ul>
           </section>
@@ -589,6 +589,9 @@ export class ProductPage {
   private readonly response = inject(RESPONSE_INIT, { optional: true });
 
   protected readonly store = inject(ProductDetailStore);
+
+  /** The two rows below run the full width of the container, with no filter sidebar beside them. */
+  protected readonly cardSizes = FULL_WIDTH_GRID_CARD_SIZES;
 
   private readonly routeParams = toSignal(this.route.params, {
     initialValue: this.route.snapshot.params,

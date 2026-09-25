@@ -44,6 +44,58 @@ public static class MediaRenditions
         new(Zoom, 2000),
     ];
 
+    /// <summary>
+    /// The rendition set an asset recorded as <paramref name="setVersion"/> was rendered with, or
+    /// <see langword="null"/> when this build cannot name that set's files.
+    /// <para>
+    /// This is what <c>MediaAssets.RenditionSetVersion</c> is <i>for</i>. The key convention
+    /// (<c>public/renditions/{PublicId}/{code}.webp</c>) carries no version, so the recorded version is
+    /// the only thing that says which codes are actually on disk for a given asset. A URL builder must
+    /// ask here rather than assume <see cref="Current"/>: when the set is changed — a code renamed, a
+    /// width altered, a size added — <see cref="CurrentSetVersion"/> is bumped, and until the
+    /// regeneration job has caught up the database holds assets of both versions at once. Linking a
+    /// v2 code on a v1 asset would be a 404 on a shopper's screen.
+    /// </para>
+    /// <para>
+    /// <b>When you bump the version:</b> keep the old set here as its own case, so URLs for the assets
+    /// that have not been regenerated yet stay correct while the job runs. Drop a case only once no row
+    /// carries that version any more.
+    /// </para>
+    /// <para>
+    /// An unrecognised version — a row written by a newer deployment than this one, or a
+    /// <see langword="null"/> meaning the asset was never rendered — returns <see langword="null"/>.
+    /// The caller's contract is to fall back to the original file, which always exists, so an asset
+    /// this build does not understand degrades to a larger image rather than to a broken one.
+    /// </para>
+    /// </summary>
+    public static IReadOnlyList<MediaRendition>? ForVersion(byte? setVersion) => setVersion switch
+    {
+        CurrentSetVersion => Current,
+        _ => null,
+    };
+
+    /// <summary>
+    /// The rendition named <paramref name="code"/> within <paramref name="set"/>, or
+    /// <see langword="null"/> when that set does not contain it.
+    /// </summary>
+    public static MediaRendition? Find(IReadOnlyList<MediaRendition>? set, string? code)
+    {
+        if (set is null || code is null)
+        {
+            return null;
+        }
+
+        foreach (var rendition in set)
+        {
+            if (string.Equals(rendition.Code, code, StringComparison.Ordinal))
+            {
+                return rendition;
+            }
+        }
+
+        return null;
+    }
+
     /// <summary>Whether <paramref name="code"/> is one of <see cref="Current"/>'s codes.</summary>
     public static bool IsKnownCode(string? code)
     {

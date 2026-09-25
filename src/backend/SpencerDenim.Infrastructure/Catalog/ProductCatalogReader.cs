@@ -9,6 +9,7 @@ using SpencerDenim.Application.Catalog.Products;
 using SpencerDenim.Application.Catalog.Search;
 using SpencerDenim.Domain.Catalog;
 using SpencerDenim.Domain.Inventory;
+using SpencerDenim.Domain.Media;
 using SpencerDenim.Infrastructure.Persistence;
 
 namespace SpencerDenim.Infrastructure.Catalog;
@@ -171,7 +172,13 @@ internal sealed class ProductCatalogReader(
                         colour.ColourFamily!.Name,
                         colour.ColourFamily.Slug,
                         colour.SwatchHex,
-                        colour.SwatchAsset != null ? colour.SwatchAsset.StorageKey : null,
+                        colour.SwatchAsset != null
+                            ? new MediaRef(
+                                colour.SwatchAsset.StorageKey,
+                                colour.SwatchAsset.PublicId,
+                                colour.SwatchAsset.RenditionSetVersion,
+                                colour.SwatchAsset.Width)
+                            : null,
                         colour.SortOrder))
                     .ToList(),
                 product.Media
@@ -179,13 +186,23 @@ internal sealed class ProductCatalogReader(
                     .ThenBy(media => media.Id)
                     .Select(media => new MediaRow(
                         media.Id,
-                        media.MediaAsset!.StorageKey,
+                        new MediaRef(
+                            media.MediaAsset!.StorageKey,
+                            media.MediaAsset.PublicId,
+                            media.MediaAsset.RenditionSetVersion,
+                            media.MediaAsset.Width),
                         media.AltTextOverride ?? media.MediaAsset.AltText,
                         media.MediaRole,
                         media.ProductColourId,
                         media.MediaAsset.Width,
                         media.MediaAsset.Height,
-                        media.MediaAsset.PosterAsset != null ? media.MediaAsset.PosterAsset.StorageKey : null,
+                        media.MediaAsset.PosterAsset != null
+                            ? new MediaRef(
+                                media.MediaAsset.PosterAsset.StorageKey,
+                                media.MediaAsset.PosterAsset.PublicId,
+                                media.MediaAsset.PosterAsset.RenditionSetVersion,
+                                media.MediaAsset.PosterAsset.Width)
+                            : null,
                         media.SortOrder))
                     .ToList(),
                 product.Variants
@@ -464,9 +481,21 @@ internal sealed class ProductCatalogReader(
             product.Department.Slug,
             product.PrimaryCategory!.Name,
             product.PrimaryCategory.Slug,
-            product.CardImageAsset != null ? product.CardImageAsset.StorageKey : null,
+            product.CardImageAsset != null
+                ? new MediaRef(
+                    product.CardImageAsset.StorageKey,
+                    product.CardImageAsset.PublicId,
+                    product.CardImageAsset.RenditionSetVersion,
+                    product.CardImageAsset.Width)
+                : null,
             product.CardImageAsset != null ? product.CardImageAsset.AltText : null,
-            product.HoverImageAsset != null ? product.HoverImageAsset.StorageKey : null,
+            product.HoverImageAsset != null
+                ? new MediaRef(
+                    product.HoverImageAsset.StorageKey,
+                    product.HoverImageAsset.PublicId,
+                    product.HoverImageAsset.RenditionSetVersion,
+                    product.HoverImageAsset.Width)
+                : null,
             product.Stats!.MinSalePrice,
             product.Stats!.MaxOriginalPrice,
             product.Stats!.MaxDiscountPercent,
@@ -491,7 +520,13 @@ internal sealed class ProductCatalogReader(
                     colour.ColourFamily!.Name,
                     colour.ColourFamily.Slug,
                     colour.SwatchHex,
-                    colour.SwatchAsset != null ? colour.SwatchAsset.StorageKey : null,
+                    colour.SwatchAsset != null
+                        ? new MediaRef(
+                            colour.SwatchAsset.StorageKey,
+                            colour.SwatchAsset.PublicId,
+                            colour.SwatchAsset.RenditionSetVersion,
+                            colour.SwatchAsset.Width)
+                        : null,
                     colour.SortOrder))
                 .ToList());
 
@@ -531,6 +566,21 @@ internal sealed class ProductCatalogReader(
             row.NewUntilUtc,
             utcNow);
 
+        // CARD-01 draws both photos in the same fixed 3:4 frame, so they take the same sizes. The cap
+        // is `large`: a card is a column of a grid, never the full width of a screen, so there is no
+        // layout in which `zoom` could be the right answer and every reason not to offer it.
+        var cardImage = MediaUrlBuilder.ToImageSources(
+            _options.MediaBaseUrl,
+            row.CardImage,
+            MediaRenditions.Card,
+            MediaRenditions.Large);
+
+        var hoverImage = MediaUrlBuilder.ToImageSources(
+            _options.MediaBaseUrl,
+            row.HoverImage,
+            MediaRenditions.Card,
+            MediaRenditions.Large);
+
         return new ProductCardDto(
             row.Id,
             row.ProductCode,
@@ -540,8 +590,10 @@ internal sealed class ProductCatalogReader(
             row.DepartmentSlug,
             row.CategoryName,
             row.CategorySlug,
-            MediaUrlBuilder.ToPublicUrl(_options.MediaBaseUrl, row.CardImageKey),
-            MediaUrlBuilder.ToPublicUrl(_options.MediaBaseUrl, row.HoverImageKey),
+            cardImage.Url,
+            cardImage.SrcSet,
+            hoverImage.Url,
+            hoverImage.SrcSet,
             row.CardImageAltText,
             new PriceDto(
                 row.MinSalePrice,
@@ -562,7 +614,7 @@ internal sealed class ProductCatalogReader(
         colour.FamilyName,
         colour.FamilySlug,
         colour.SwatchHex,
-        MediaUrlBuilder.ToPublicUrl(_options.MediaBaseUrl, colour.SwatchImageKey));
+        MediaUrlBuilder.ToRenditionUrl(_options.MediaBaseUrl, colour.SwatchImage, MediaRenditions.Thumb));
 
     private ProductDetailDto MapDetail(
         ProductDetailRow row,
@@ -627,17 +679,32 @@ internal sealed class ProductCatalogReader(
                 group.Any(variant => variant.Available > 0)))
             .ToList();
 
+        // PDP-01 shows one asset in three sizes at once: the rail, the stage and — once the shopper
+        // opens it — the full-screen viewer. The stage is capped at `zoom` rather than `large` because
+        // it is full-width below 768 px, where a retina phone can want more than 1200 px.
         var images = row.Media
-            .Select(media => new ProductImageDto(
-                media.Id,
-                MediaUrlBuilder.ToPublicUrl(_options.MediaBaseUrl, media.StorageKey) ?? string.Empty,
-                media.AltText,
-                media.Role,
-                media.ColourId,
-                media.Width,
-                media.Height,
-                MediaUrlBuilder.ToPublicUrl(_options.MediaBaseUrl, media.PosterKey),
-                media.SortOrder))
+            .Select(media =>
+            {
+                var stage = MediaUrlBuilder.ToImageSources(
+                    _options.MediaBaseUrl,
+                    media.Media,
+                    MediaRenditions.Large,
+                    MediaRenditions.Zoom);
+
+                return new ProductImageDto(
+                    media.Id,
+                    stage.Url ?? string.Empty,
+                    stage.SrcSet,
+                    MediaUrlBuilder.ToRenditionUrl(_options.MediaBaseUrl, media.Media, MediaRenditions.Thumb),
+                    MediaUrlBuilder.ToRenditionUrl(_options.MediaBaseUrl, media.Media, MediaRenditions.Zoom),
+                    media.AltText,
+                    media.Role,
+                    media.ColourId,
+                    media.Width,
+                    media.Height,
+                    MediaUrlBuilder.ToRenditionUrl(_options.MediaBaseUrl, media.Poster, MediaRenditions.Large),
+                    media.SortOrder);
+            })
             .ToList();
 
         return new ProductDetailDto(

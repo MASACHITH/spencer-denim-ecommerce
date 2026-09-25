@@ -11,9 +11,21 @@ interface Tile {
   readonly path: string;
   readonly queryParams: Readonly<Record<string, string | string[]>> | null;
   readonly imageUrl: string | null;
+  readonly imageSrcSet: string | null;
   readonly imageAltText: string;
   readonly buttonLabel: string;
 }
+
+/**
+ * The `.tiles` grid below: one column, three from 768 px, a 16 px gap, inside a container that
+ * caps at 1440 px with 16 / 32 / 48 px gutters. Without it a browser sizes each tile against the
+ * whole viewport and fetches the widest rendition for a third of a row.
+ */
+const TILE_SIZES =
+  '(min-width: 1440px) 438px,' +
+  ' (min-width: 1280px) calc((100vw - 128px) / 3),' +
+  ' (min-width: 768px) calc((100vw - 96px) / 3),' +
+  ' calc(100vw - 32px)';
 
 /**
  * HOME-02: Shop by Department — Women, Men, Kids.
@@ -53,7 +65,14 @@ interface Tile {
             >
               <span class="tile__media">
                 @if (tile.imageUrl; as image) {
-                  <img [src]="image" [alt]="tile.imageAltText" loading="lazy" decoding="async" />
+                  <img
+                    [src]="image"
+                    [attr.srcset]="tile.imageSrcSet"
+                    [attr.sizes]="tile.imageSrcSet ? tileSizes : null"
+                    [alt]="tile.imageAltText"
+                    loading="lazy"
+                    decoding="async"
+                  />
                 }
               </span>
               <span class="tile__body">
@@ -137,6 +156,8 @@ interface Tile {
 export class DepartmentTiles {
   readonly section = input.required<HomeSectionDto>();
 
+  protected readonly tileSizes = TILE_SIZES;
+
   protected readonly headingId = computed(() => `home-section-${this.section().id}`);
 
   protected readonly tiles = computed<readonly Tile[]>(() =>
@@ -163,6 +184,9 @@ export class DepartmentTiles {
       path: link.path,
       queryParams: link.queryParams,
       imageUrl: item.imageUrl ?? item.mobileImageUrl,
+      // The candidate list of the crop that was chosen: the wide and phone pictures are two
+      // assets, and pairing one URL with the other's renditions would serve the wrong photograph.
+      imageSrcSet: item.imageUrl ? item.imageSrcSet : item.mobileImageSrcSet,
       // Decorative: the tile's own name is right beside it and the link already says where it goes.
       imageAltText: '',
       buttonLabel: item.buttonLabel?.trim() || `Shop ${label}`,

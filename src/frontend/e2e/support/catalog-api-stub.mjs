@@ -15,6 +15,59 @@ import { createServer } from 'node:http';
 
 const PORT = Number(process.env.E2E_API_PORT ?? 4421);
 
+/**
+ * Where the media pipeline's files live, as the API reports them.
+ *
+ * Doc 08 §3.3: the database holds a relative storage key and `MediaUrlBuilder.ToPublicUrl` joins
+ * it to the configured base. The base here is absolute and points back at this stub — the same
+ * arrangement the hero video below uses, and a shape the real API can genuinely produce, because
+ * that builder returns an absolute key unchanged. These tests have no reverse proxy putting a
+ * media server on the storefront's own origin, and a URL nothing answers for is a broken image
+ * and a Definition-of-Done failure.
+ */
+const MEDIA_BASE = `http://localhost:${PORT}/media`;
+
+/**
+ * A 1x1 WebP, served for every rendition below.
+ *
+ * WebP rather than the GIF used elsewhere in this file: the URLs end `.webp` and the browser is
+ * told so, and a picture whose bytes disagree with its type is one the browser refuses to decode.
+ * Nothing here measures pixels — what matters is that the file really arrives, so the card does
+ * not fall back to its placeholder and `currentSrc` says which candidate was chosen.
+ */
+const WEBP_PIXEL = Buffer.from(
+  'UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==',
+  'base64',
+);
+
+/** A stable asset id per picture, in the shape of the GUIDs `MediaAssets.PublicId` holds. */
+function publicId(seed) {
+  return `00000000-0000-4000-8000-${String(seed).padStart(12, '0')}`;
+}
+
+/** `public/renditions/{PublicId}/{code}.webp` — the key convention of `MediaRenditions`. */
+function rendition(id, code) {
+  return `${MEDIA_BASE}/public/renditions/${id}/${code}.webp`;
+}
+
+/**
+ * What a card's `imageSrcSet` looks like: thumb, card and large with their real widths. The zoom
+ * rendition is deliberately absent — a card is never drawn at 2000 px, and only the product
+ * gallery offers it ({@link gallerySrcSet}).
+ */
+function cardSrcSet(id) {
+  return (
+    `${rendition(id, 'thumb')} 160w, ` +
+    `${rendition(id, 'card')} 600w, ` +
+    `${rendition(id, 'large')} 1200w`
+  );
+}
+
+/** The gallery's ladder, which runs all the way to the full-screen view's 2000 px file. */
+function gallerySrcSet(id) {
+  return `${cardSrcSet(id)}, ${rendition(id, 'zoom')} 2000w`;
+}
+
 /** Matches the seeded tree of docs/08 §9 closely enough to exercise all three route depths. */
 const DEPARTMENTS = [
   {
@@ -23,6 +76,7 @@ const DEPARTMENTS = [
     slug: 'women',
     description: 'Everyday essentials and occasion pieces, cut for Sri Lankan weather.',
     heroImageUrl: null,
+    heroImageSrcSet: null,
     seoTitle: null,
     seoDescription: null,
     categories: [
@@ -37,6 +91,7 @@ const DEPARTMENTS = [
     slug: 'men',
     description: 'Workwear, weekend shirts and denim built to last.',
     heroImageUrl: null,
+    heroImageSrcSet: null,
     seoTitle: null,
     seoDescription: null,
     categories: [
@@ -50,6 +105,7 @@ const DEPARTMENTS = [
     slug: 'kids',
     description: 'Girls, boys and baby — soft fabrics and room to grow.',
     heroImageUrl: null,
+    heroImageSrcSet: null,
     seoTitle: null,
     seoDescription: null,
     categories: [
@@ -119,6 +175,7 @@ function category(id, name, slug, description, megaMenuColumn, children = [], de
     depth,
     description,
     imageUrl: null,
+    imageSrcSet: null,
     showInMegaMenu: true,
     megaMenuColumn,
     ageGroupSlug: null,
@@ -129,6 +186,8 @@ function category(id, name, slug, description, megaMenuColumn, children = [], de
 function product(index) {
   const discounted = index % 3 === 0;
   const current = 2490 + index * 110;
+  const main = publicId(index * 10 + 1);
+  const hover = publicId(index * 10 + 2);
 
   return {
     id: index,
@@ -139,9 +198,12 @@ function product(index) {
     departmentSlug: 'women',
     categoryName: 'Jeans',
     categorySlug: 'jeans',
-    // Null rather than a URL: there is no media server here, and a broken image is a DoD failure.
-    imageUrl: null,
-    hoverImageUrl: null,
+    // The card rendition, never the original: a listing that fetched originals weighed about
+    // 1,780 KB a page. This is the shape the regression test in `product-listing.e2e.ts` reads.
+    imageUrl: rendition(main, 'card'),
+    imageSrcSet: cardSrcSet(main),
+    hoverImageUrl: rendition(hover, 'card'),
+    hoverImageSrcSet: cardSrcSet(hover),
     imageAltText: null,
     price: {
       current,
@@ -184,6 +246,31 @@ function productsFor(params) {
  */
 const PIXEL =
   'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+
+/**
+ * One gallery slide, in the API's shape: `url` is the large rendition, with the thumb the rail
+ * draws and the zoom the full-screen view magnifies named separately, because the three are
+ * wanted at 56 px, ~600 px and 3x and one file cannot be right for all of them.
+ */
+function galleryImage(id, overrides) {
+  const asset = publicId(id);
+
+  return {
+    id,
+    url: rendition(asset, 'large'),
+    srcSet: gallerySrcSet(asset),
+    thumbnailUrl: rendition(asset, 'thumb'),
+    zoomUrl: rendition(asset, 'zoom'),
+    altText: null,
+    role: 'Gallery',
+    colourId: null,
+    width: 1200,
+    height: 1600,
+    posterUrl: null,
+    sortOrder: 1,
+    ...overrides,
+  };
+}
 
 /** The sizes every demo product is made in, in the API's shape. */
 const SIZES = [
@@ -236,34 +323,29 @@ function productDetail(index, slug) {
     index % 7 === 0
       ? []
       : [
-          ...colours.map((colour, position) => ({
-            id: index * 100 + position,
-            url: PIXEL,
+          ...colours.map((colour, position) => galleryImage(index * 100 + position, {
             altText: `${card.name} in ${colour.name}`,
             role: 'Gallery',
             colourId: colour.id,
-            width: 1200,
-            height: 1600,
-            posterUrl: null,
             sortOrder: position + 1,
           })),
-          {
-            id: index * 100 + 90,
-            url: PIXEL,
+          galleryImage(index * 100 + 90, {
             altText: `${card.name}, fabric detail`,
             role: 'Hover',
             colourId: null,
-            width: 1200,
-            height: 1600,
-            posterUrl: null,
             sortOrder: colours.length + 1,
-          },
+          }),
         ];
 
   if (index % 5 === 0 && images.length > 0) {
+    // A video has no renditions — the pipeline only resizes images — so it is the one slide that
+    // still carries an original, and the null srcset the gallery has to fall back from.
     images.push({
       id: index * 100 + 95,
       url: `${PIXEL}#video`,
+      srcSet: null,
+      thumbnailUrl: null,
+      zoomUrl: null,
       altText: null,
       role: 'Video',
       colourId: null,
@@ -443,8 +525,10 @@ function contentItem(id, overrides) {
     buttonLabel: null,
     linkUrl: null,
     imageUrl: null,
+    imageSrcSet: null,
     imageAltText: null,
     mobileImageUrl: null,
+    mobileImageSrcSet: null,
     mobileImageAltText: null,
     videoUrl: null,
     videoPosterUrl: null,
@@ -633,6 +717,15 @@ const server = createServer((request, response) => {
       DEPARTMENTS_MODE === 'empty' ? [] : DEPARTMENTS_MODE === 'garbage' ? { oops: true } : DEPARTMENTS;
 
     setTimeout(() => response.end(JSON.stringify(body)), DELAY_MS);
+    return;
+  }
+
+  // Stands in for `MediaFileEndpoints`: anything under the media base is a real file with a real
+  // media type, so an `<img>` that asks for a rendition gets one instead of a 404 the card would
+  // have to swap for its placeholder.
+  if (url.pathname.startsWith('/media/public/')) {
+    response.setHeader('Content-Type', 'image/webp');
+    response.end(WEBP_PIXEL);
     return;
   }
 

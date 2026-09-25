@@ -410,7 +410,10 @@ public sealed class CatalogListingTests(SqlServerDatabaseFixture sqlServer) : Ca
         Assert.Equal("Relaxed Linen Blend Shirt", card.Name);
         Assert.Equal("Women", card.DepartmentName);
         Assert.Equal("Shirts & Blouses", card.CategoryName);
-        Assert.StartsWith("/media/public/originals/demo/relaxed-linen-blend-shirt-", card.ImageUrl, StringComparison.Ordinal);
+        // The card links the `card` rendition, not the original it was rendered from (doc 03 §3b);
+        // CatalogRenditionTests is where that rule is pinned across the whole payload.
+        Assert.StartsWith("/media/public/renditions/", card.ImageUrl, StringComparison.Ordinal);
+        Assert.EndsWith("/card.webp", card.ImageUrl, StringComparison.Ordinal);
         Assert.NotNull(card.HoverImageUrl);
         Assert.NotEqual(card.ImageUrl, card.HoverImageUrl);
         Assert.False(string.IsNullOrWhiteSpace(card.ImageAltText));

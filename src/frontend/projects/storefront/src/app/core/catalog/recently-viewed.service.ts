@@ -174,8 +174,14 @@ export function toRecentCard(product: ProductDetailDto): ProductCardDto {
     departmentSlug: product.department.slug,
     categoryName: category.name,
     categorySlug: category.slug,
+    // The gallery's `url` is the large rendition rather than the card one, which is the wrong
+    // size on its own — but `srcSet` carries the whole ladder down to the 160 px thumb, so the
+    // card's `sizes` still gets the browser to the right file. There is nothing narrower to
+    // store: the detail payload has no card projection.
     imageUrl: image?.url ?? null,
+    imageSrcSet: image?.srcSet ?? null,
     hoverImageUrl: null,
+    hoverImageSrcSet: null,
     imageAltText: image?.altText ?? null,
     price: product.price,
     rating: product.rating,

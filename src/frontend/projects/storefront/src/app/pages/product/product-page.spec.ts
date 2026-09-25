@@ -62,6 +62,9 @@ function image(id: number, colourId: number | null, sortOrder: number): ProductI
   return {
     id,
     url: `/media/${id}.jpg`,
+    srcSet: null,
+    thumbnailUrl: null,
+    zoomUrl: null,
     altText: null,
     role: 'Gallery',
     colourId,
@@ -83,7 +86,9 @@ function relatedCard(id: number): ProductCardDto {
     categoryName: 'Jeans',
     categorySlug: 'jeans',
     imageUrl: null,
+    imageSrcSet: null,
     hoverImageUrl: null,
+    hoverImageSrcSet: null,
     imageAltText: null,
     price: price(4990),
     rating: { average: null, count: 0 },
@@ -161,6 +166,7 @@ const DEPARTMENTS: readonly DepartmentDto[] = [
     slug: 'women',
     description: null,
     heroImageUrl: null,
+    heroImageSrcSet: null,
     seoTitle: null,
     seoDescription: null,
     categories: [],
@@ -772,6 +778,58 @@ describe('ProductPage (PDP-01..07)', () => {
 
       expect(query('[role="tablist"]')).toBeNull();
       expect(query('.gallery__img')).not.toBeNull();
+    });
+  });
+
+  /**
+   * The media pipeline builds four WebP renditions of every public image (doc 08 §3.3), and the
+   * gallery is the one place that draws the same photograph at three sizes nowhere near each
+   * other: a 56 px thumbnail, a stage of a few hundred pixels and a full-screen view magnified to
+   * three times. One URL for all three is a 1200 px file behind a 56 px box at one end and a
+   * soft picture at the other, so each size names its own rendition.
+   */
+  describe('renditions (PDP-01)', () => {
+    const LARGE = '/media/public/renditions/cccc/large.webp';
+    const THUMB = '/media/public/renditions/cccc/thumb.webp';
+    const ZOOM = '/media/public/renditions/cccc/zoom.webp';
+    const SRCSET = `${THUMB} 160w, ${LARGE} 1200w, ${ZOOM} 2000w`;
+
+    /** One photographed product: the first slide has renditions, the second has none. */
+    const PHOTOGRAPHED: Partial<ProductDetailDto> = {
+      images: [
+        { ...image(101, null, 1), url: LARGE, srcSet: SRCSET, thumbnailUrl: THUMB, zoomUrl: ZOOM },
+        image(102, null, 2),
+      ],
+    };
+
+    it('draws the rail from the thumb and the stage from the large rendition', async () => {
+      await open('/product/photographed', PHOTOGRAPHED);
+
+      expect(query<HTMLImageElement>('.gallery__thumb img')?.getAttribute('src')).toBe(THUMB);
+
+      const stage = query<HTMLImageElement>('.gallery__img');
+      expect(stage?.getAttribute('src')).toBe(LARGE);
+      expect(stage?.getAttribute('srcset')).toBe(SRCSET);
+      expect(stage?.getAttribute('sizes')).toContain('100vw');
+    });
+
+    it('magnifies the zoom rendition in the full-screen view', async () => {
+      await open('/product/photographed', PHOTOGRAPHED);
+
+      query<HTMLButtonElement>('.gallery__open')?.click();
+      await settle();
+
+      expect(query<HTMLImageElement>('.viewer__img')?.getAttribute('src')).toBe(ZOOM);
+    });
+
+    /** A photograph taken before the pipeline existed still shows, at its one available size. */
+    it('falls back to the one URL a photograph without renditions has', async () => {
+      await open('/product/one-photo', { images: [image(101, null, 1)] });
+
+      const stage = query<HTMLImageElement>('.gallery__img');
+      expect(stage?.getAttribute('src')).toBe('/media/101.jpg');
+      expect(stage?.hasAttribute('srcset')).toBe(false);
+      expect(stage?.hasAttribute('sizes')).toBe(false);
     });
   });
 });

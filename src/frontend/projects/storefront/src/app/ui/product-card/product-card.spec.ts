@@ -2,7 +2,11 @@ import { Component, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 
-import { ProductCard } from './product-card';
+import {
+  FULL_WIDTH_GRID_CARD_SIZES,
+  LISTING_GRID_CARD_SIZES,
+  ProductCard,
+} from './product-card';
 import { ProductCardDto } from '../../core/catalog/catalog.model';
 import { LocalWishlist } from '../../core/wishlist/local-wishlist.service';
 
@@ -17,7 +21,9 @@ function product(overrides: Partial<ProductCardDto> = {}): ProductCardDto {
     categoryName: 'Dresses',
     categorySlug: 'dresses',
     imageUrl: '/media/products/dress-1.jpg',
+    imageSrcSet: null,
     hoverImageUrl: '/media/products/dress-2.jpg',
+    hoverImageSrcSet: null,
     imageAltText: 'Linen wrap midi dress',
     price: { current: 7490, original: 7490, discountPercent: 0, hasDiscount: false, currency: 'LKR' },
     rating: { average: 4.6, count: 38 },
@@ -249,5 +255,96 @@ describe('ProductCard wishlist', () => {
     await settle();
 
     expect(heart.getAttribute('aria-pressed')).toBe('false');
+  });
+});
+
+/**
+ * The renditions the media pipeline builds are only worth building if the card offers them, and
+ * a `srcset` is only worth offering with a `sizes` beside it: without one a browser assumes the
+ * picture fills the viewport and fetches the widest candidate anyway, which is how a listing
+ * ended up weighing 1,780 KB of full-size originals.
+ *
+ * jsdom has no layout, so which file a browser would then choose is not a thing this suite can
+ * see — `product-listing.e2e.ts` measures that. What is pinned here is what reaches the DOM.
+ */
+const CARD_SRCSET =
+  '/media/public/renditions/aaaa/thumb.webp 160w,' +
+  ' /media/public/renditions/aaaa/card.webp 600w,' +
+  ' /media/public/renditions/aaaa/large.webp 1200w';
+
+const HOVER_SRCSET = CARD_SRCSET.replaceAll('/aaaa/', '/bbbb/');
+
+/** A row with no filter sidebar beside it, which is the one thing {@link CardHost} cannot show. */
+@Component({
+  imports: [ProductCard],
+  template: `<sd-product-card [product]="item()" [sizes]="width" />`,
+})
+class WideCardHost {
+  readonly item = signal<ProductCardDto>(
+    product({ imageSrcSet: CARD_SRCSET, hoverImageSrcSet: HOVER_SRCSET }),
+  );
+  readonly width = FULL_WIDTH_GRID_CARD_SIZES;
+}
+
+describe('ProductCard renditions (CARD-01)', () => {
+  it('offers the candidates the API sent, on both photographs', async () => {
+    const { element } = await render({
+      imageSrcSet: CARD_SRCSET,
+      hoverImageSrcSet: HOVER_SRCSET,
+    });
+
+    const [main, hover] = [...element.querySelectorAll('img')];
+
+    expect(main.getAttribute('srcset')).toBe(CARD_SRCSET);
+    expect(hover.getAttribute('srcset')).toBe(HOVER_SRCSET);
+  });
+
+  it('describes the listing column it sits in, because a card cannot see its own grid', async () => {
+    const { element } = await render({ imageSrcSet: CARD_SRCSET });
+
+    expect(element.querySelector('img')?.getAttribute('sizes')).toBe(LISTING_GRID_CARD_SIZES);
+  });
+
+  it('takes the width a row gives it instead', async () => {
+    TestBed.configureTestingModule({ imports: [WideCardHost], providers: [provideRouter([])] });
+
+    const fixture = TestBed.createComponent(WideCardHost);
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    const images = (fixture.nativeElement as HTMLElement).querySelectorAll('img');
+    for (const image of images) {
+      expect(image.getAttribute('sizes')).toBe(FULL_WIDTH_GRID_CARD_SIZES);
+    }
+  });
+
+  /**
+   * A product photographed before the pipeline existed has no candidate list, and `srcset=""` is
+   * not the same as no `srcset`: an empty list is a list with nothing usable in it. The attribute
+   * has to be absent rather than blank, which is why the template binds it with `[attr.]`.
+   */
+  it('emits no srcset at all when the product has no renditions', async () => {
+    const { element } = await render({ imageSrcSet: null, hoverImageSrcSet: null });
+
+    const images = element.querySelectorAll('img');
+    expect(images).toHaveLength(2);
+
+    for (const image of images) {
+      expect(image.hasAttribute('srcset')).toBe(false);
+      expect(image.hasAttribute('sizes')).toBe(false);
+    }
+  });
+
+  /** The candidates follow their photograph: a dropped image must not leave a list behind. */
+  it('drops the candidates with the image the browser could not fetch', async () => {
+    const { element, settle } = await render({
+      imageSrcSet: CARD_SRCSET,
+      hoverImageSrcSet: HOVER_SRCSET,
+    });
+
+    element.querySelector('img')?.dispatchEvent(new Event('error'));
+    await settle();
+
+    expect(element.querySelector('img')).toBeNull();
   });
 });

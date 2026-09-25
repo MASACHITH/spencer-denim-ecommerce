@@ -85,8 +85,29 @@ public static class MediaStorageKey
             throw new ArgumentException($"'{renditionCode}' is not one of the rendition codes.", nameof(renditionCode));
         }
 
-        return string.Create(CultureInfo.InvariantCulture, $"{RenditionsFolder}/{publicId:D}/{renditionCode}.webp");
+        return Format(publicId, renditionCode);
     }
+
+    /// <summary>
+    /// The key of a rendition that came from a <see cref="MediaRenditions.ForVersion"/> set.
+    /// <para>
+    /// The overload above whitelists against <see cref="MediaRenditions.Current"/>, which is right for a
+    /// writer: nothing should ever be rendered under a code this build does not generate. A reader is the
+    /// other case — it addresses the files of an asset recorded at an <i>older</i> set version, whose
+    /// codes may no longer be in <see cref="MediaRenditions.Current"/> — so it passes the rendition it
+    /// already resolved from that asset's own set rather than a bare string, and the code is validated by
+    /// where it came from.
+    /// </para>
+    /// </summary>
+    public static string ForRendition(Guid publicId, MediaRendition rendition)
+    {
+        ArgumentNullException.ThrowIfNull(rendition);
+
+        return Format(publicId, rendition.Code);
+    }
+
+    private static string Format(Guid publicId, string renditionCode) =>
+        string.Create(CultureInfo.InvariantCulture, $"{RenditionsFolder}/{publicId:D}/{renditionCode}.webp");
 
     /// <summary>The folder holding every rendition of one asset, so a purge removes them together.</summary>
     public static string RenditionFolderFor(Guid publicId) =>

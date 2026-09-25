@@ -360,6 +360,73 @@ test.describe('the grid at every breakpoint (PLP-05, GLB-09)', () => {
   });
 });
 
+/**
+ * The media pipeline builds a WebP rendition of every public image at four widths, and for a
+ * while nothing used them: the API sent the rendition URLs, the cards rendered them, and the
+ * browser still fetched the 1200 px file for a 200 px card because no `<img>` carried a `sizes`.
+ * One page of this listing weighed about 1,780 KB where it should have weighed about 330 KB.
+ *
+ * Neither half of that is visible in jsdom — the unit suite has no layout, so every `sizes` is
+ * true there — which is why the check lives here, against a real viewport and a real image the
+ * browser really chose.
+ */
+test.describe('card imagery comes from the renditions (CARD-01)', () => {
+  test('every picture in the grid is a rendition, never an original', async ({ page }) => {
+    await page.goto(LISTING);
+    await expect(page.locator('.product-grid > li').first()).toBeVisible();
+
+    const images = await page.locator('.product-grid img').evaluateAll((nodes) =>
+      nodes.map((node) => ({
+        src: node.getAttribute('src') ?? '',
+        srcset: node.getAttribute('srcset'),
+      })),
+    );
+
+    // The card drops an `<img>` whose file would not load, so an empty grid would pass every
+    // assertion below without a picture having been rendered at all.
+    expect(images.length).toBeGreaterThan(0);
+
+    for (const image of images) {
+      expect(image.src).toContain('/renditions/');
+      expect(image.src).not.toContain('/originals/');
+    }
+
+    // The stub gives every card a candidate list, so every card has to render one: a `srcset`
+    // the component quietly drops is exactly the regression this test exists for.
+    expect(images.filter((image) => image.srcset !== null)).toHaveLength(images.length);
+
+    for (const image of images) {
+      const candidates = image.srcset!.split(',').map((candidate) => candidate.trim());
+
+      expect(candidates.length).toBeGreaterThan(1);
+      for (const candidate of candidates) {
+        expect(candidate).toMatch(/^\S*\/renditions\/\S+\.webp \d+w$/);
+      }
+    }
+  });
+
+  test('the file the browser really fetches is the one a card is wide enough for', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.goto(LISTING);
+
+    const first = page.locator('.product-grid img').first();
+    await expect(first).toBeVisible();
+    // The choice is only the browser's to make if it was given one; without this the assertion
+    // below passes on any component that renders the card URL and no candidates at all.
+    await expect(first).toHaveAttribute('srcset', /\/thumb\.webp 160w/);
+    await first.evaluate((image: HTMLImageElement) => image.decode());
+
+    // A card is about 206 px wide here, so the 600 px rendition is the smallest that covers it.
+    // Without a `sizes` the browser assumes the image fills the 1280 px viewport and takes the
+    // 1200 px one instead, which is the whole of the bug.
+    expect(await first.evaluate((image: HTMLImageElement) => image.currentSrc)).toContain(
+      '/card.webp',
+    );
+  });
+});
+
 test.describe('the mobile filter drawer (PLP-02)', () => {
   test.beforeEach(async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });

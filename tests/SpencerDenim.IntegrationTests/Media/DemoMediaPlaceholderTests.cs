@@ -14,9 +14,14 @@ namespace SpencerDenim.IntegrationTests.Media;
 /// The point of the demo placeholders: the seeded catalogue's image URLs stop being grey boxes, without a
 /// single invented product photograph reaching a screen.
 /// <para>
-/// The generator is driven one asset at a time rather than over the whole catalogue: the demo set is well
-/// over a hundred assets and several hundred encodes, which belongs in a developer's first boot, not in
-/// every run of the test suite.
+/// The generator is driven one asset at a time here rather than over the whole catalogue, because these
+/// tests are about what one asset's generation produces. The whole set <i>is</i> now drawn once per run,
+/// by <see cref="SqlServerDatabaseFixture"/> during seeding — without it the catalogue's assets carry no
+/// <c>RenditionSetVersion</c> and no test can tell a reader that picks the right rendition from one that
+/// ignores renditions altogether, which is how doc 03 §3b's renditions came to be generated and linked
+/// nowhere. The cost that was feared when this class was written turned out not to bite at this size:
+/// about 600 encodes of a 1200x1600 placeholder add a couple of seconds to a suite that runs in over a
+/// minute.
 /// </para>
 /// </summary>
 public sealed class DemoMediaPlaceholderTests(SqlServerDatabaseFixture sqlServer)
@@ -84,6 +89,13 @@ public sealed class DemoMediaPlaceholderTests(SqlServerDatabaseFixture sqlServer
     /// <summary>
     /// The demo catalogue seeds its rows as <c>Processing</c>, so a deployment with no media volume serves
     /// an honest 404 for them rather than claiming a published image that is not there.
+    /// <para>
+    /// The row is written by the test rather than picked out of the seeded catalogue. It used to be the
+    /// last seeded demo asset, which worked only while nothing had rendered it — and the fixture now
+    /// seeds a real media volume, so every demo row reaches this class already <c>Ready</c>. Depending on
+    /// "an asset no other test has touched yet" was the fragile part; a row this test owns says the same
+    /// thing and cannot be raced.
+    /// </para>
     /// </summary>
     [Fact]
     public async Task Before_the_files_exist_a_demo_image_url_is_a_404_not_a_broken_ready_asset()
@@ -93,17 +105,25 @@ public sealed class DemoMediaPlaceholderTests(SqlServerDatabaseFixture sqlServer
         await using var scope = host.Factory.Services.CreateAsyncScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-        // The last demo asset, deliberately: the whole assembly shares one database and the generator
-        // tests above fill in the first one, so asking for "the first" here would be asking about an asset
-        // another test has already finished.
-        var asset = await dbContext.MediaAssets
-            .AsNoTracking()
-            .IgnoreQueryFilters()
-            .Where(candidate => EF.Functions.Like(candidate.StorageKey, DemoMediaPlaceholders.StorageKeyPrefix + "%"))
-            .OrderByDescending(candidate => candidate.Id)
-            .FirstAsync(TestContext.Current.CancellationToken);
+        // Exactly what DemoCatalogueSeeder writes before the generator has drawn anything: a demo key,
+        // placeholder alt text, and no file behind it.
+        var asset = new MediaAsset
+        {
+            MediaType = MediaAssetType.Image,
+            Visibility = MediaVisibility.Public,
+            Status = MediaAssetStatus.Processing,
+            OriginalFileName = "unrendered.jpg",
+            StorageKey = DemoMediaPlaceholders.StorageKeyPrefix + $"unrendered-{Guid.NewGuid():N}.jpg",
+            ContentType = "image/jpeg",
+            // CK_MediaAssets_SizeBytes requires a positive size: the seeder writes a nominal one too,
+            // because the real size is only known once the file behind the row has been drawn.
+            SizeBytes = 1,
+            Checksum = System.Security.Cryptography.SHA256.HashData([]),
+            AltText = "Placeholder image — no photograph has been supplied yet",
+        };
 
-        Assert.Equal(MediaAssetStatus.Processing, asset.Status);
+        dbContext.MediaAssets.Add(asset);
+        await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         using var client = host.CreateAnonymousClient();
         using var response = await client.GetAsync(new Uri("/media/" + asset.StorageKey, UriKind.Relative), TestContext.Current.CancellationToken);

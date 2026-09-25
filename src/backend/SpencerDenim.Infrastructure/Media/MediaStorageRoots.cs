@@ -95,6 +95,15 @@ public sealed class MediaStorageRoots
         }
 
         var root = container == MediaStorageContainer.Private ? _privateRoot! : _publicRoot!;
+
+        // The *whole* key is appended, including the container segment it was selected by, so a public
+        // file lands at `<PublicRoot>/public/originals/…`. The repeated segment is deliberate, not a bug
+        // to tidy away: doc 08 §3.3 defines the key as the asset's address, and this adapter keeps key
+        // and path identical so that the mapping stays reversible and the Azure Blob adapter doc 03 §5
+        // plans for can use the key verbatim as the blob name. Stripping the prefix here would also mean
+        // the containment check below validated a path built from a different string than the one
+        // MediaStorageKey.Validate approved, which is exactly the gap the check exists to close.
+        // (It looks doubled in development only because Media:PublicRoot is itself named ".../public".)
         var combined = Path.GetFullPath(Path.Combine(root, storageKey!.Replace('/', Path.DirectorySeparatorChar)));
 
         if (!Contains(root, combined))

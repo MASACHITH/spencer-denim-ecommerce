@@ -204,7 +204,7 @@ public sealed class GetHomePageQueryHandlerTests
         new((int)type, type, type.ToString(), null, sortOrder, settingsJson, items ?? []);
 
     private static HomeSectionItemDto Item(int id, string title, string linkUrl) =>
-        new(id, title, null, null, null, linkUrl, null, null, null, null, null, null, null, null, null, null, 1);
+        new(id, title, null, null, null, linkUrl, null, null, null, null, null, null, null, null, null, null, null, null, 1);
 
     private sealed class FixedClock(DateTimeOffset now) : IClock
     {
@@ -297,6 +297,8 @@ public sealed class GetHomePageQueryHandlerTests
                 query.DepartmentSlug ?? "women",
                 "Jeans",
                 query.CategorySlug ?? "jeans",
+                null,
+                null,
                 null,
                 null,
                 null,

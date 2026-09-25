@@ -34,6 +34,17 @@ import { NavigationService, findDepartment, trailTo } from '../../core/navigatio
 import { CanonicalLink } from '../../core/platform/canonical-link';
 import { Viewport } from '../../core/platform/viewport';
 
+/**
+ * The PLP-01 promo banner runs the full width of the container, which caps at 1440 px and has
+ * gutters of 16 / 32 / 48 px. It sits above the sidebar split, so no filter column is taken off
+ * it — the cards below are the narrow ones, not this.
+ */
+const PROMO_SIZES =
+  '(min-width: 1440px) 1344px,' +
+  ' (min-width: 1280px) calc(100vw - 96px),' +
+  ' (min-width: 768px) calc(100vw - 64px),' +
+  ' calc(100vw - 32px)';
+
 /** One breadcrumb step. The last one is the page itself and is not a link. */
 interface Crumb {
   readonly label: string;
@@ -91,7 +102,12 @@ interface Placement {
              category has one, the slot renders nothing rather than an empty framed box. -->
         @if (promoImage(); as promo) {
           <p class="plp__promo">
-            <img [src]="promo" alt="" />
+            <img
+              [src]="promo"
+              [attr.srcset]="promoSrcSet()"
+              [attr.sizes]="promoSrcSet() ? promoSizes : null"
+              alt=""
+            />
           </p>
         }
 
@@ -523,6 +539,8 @@ export class ListingPage {
   /** Which container the single filter panel goes in. See {@link Viewport}. */
   protected readonly isDesktop = inject(Viewport).isDesktop;
 
+  protected readonly promoSizes = PROMO_SIZES;
+
   protected readonly store = inject(ProductListStore);
   protected readonly sortOptions = SORT_OPTIONS;
 
@@ -604,6 +622,15 @@ export class ListingPage {
   protected readonly promoImage = computed(
     () => this.category()?.imageUrl ?? this.department()?.heroImageUrl ?? null,
   );
+
+  /**
+   * The candidate list of whichever picture {@link promoImage} settled on — a category's own
+   * artwork and its department's hero are different assets, so the two must not be mixed.
+   */
+  protected readonly promoSrcSet = computed(() => {
+    const category = this.category();
+    return category?.imageUrl ? category.imageSrcSet : (this.department()?.heroImageSrcSet ?? null);
+  });
 
   protected readonly breadcrumb = computed<readonly Crumb[]>(() => {
     const mode = this.mode();

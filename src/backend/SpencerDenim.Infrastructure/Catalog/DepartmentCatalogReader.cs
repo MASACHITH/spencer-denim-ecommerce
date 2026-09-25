@@ -3,6 +3,7 @@ using Microsoft.Extensions.Options;
 using SpencerDenim.Application.Catalog;
 using SpencerDenim.Application.Catalog.Abstractions;
 using SpencerDenim.Application.Catalog.Contracts;
+using SpencerDenim.Domain.Media;
 using SpencerDenim.Infrastructure.Persistence;
 
 namespace SpencerDenim.Infrastructure.Catalog;
@@ -29,7 +30,13 @@ internal sealed class DepartmentCatalogReader(AppDbContext dbContext, IOptions<C
                 department.Name,
                 department.Slug,
                 department.Description,
-                department.HeroImageAsset != null ? department.HeroImageAsset.StorageKey : null,
+                department.HeroImageAsset != null
+                    ? new MediaRef(
+                        department.HeroImageAsset.StorageKey,
+                        department.HeroImageAsset.PublicId,
+                        department.HeroImageAsset.RenditionSetVersion,
+                        department.HeroImageAsset.Width)
+                    : null,
                 department.SeoTitle,
                 department.SeoDescription))
             .ToListAsync(cancellationToken);
@@ -47,7 +54,13 @@ internal sealed class DepartmentCatalogReader(AppDbContext dbContext, IOptions<C
                 category.Name,
                 category.Slug,
                 category.Description,
-                category.ImageAsset != null ? category.ImageAsset.StorageKey : null,
+                category.ImageAsset != null
+                    ? new MediaRef(
+                        category.ImageAsset.StorageKey,
+                        category.ImageAsset.PublicId,
+                        category.ImageAsset.RenditionSetVersion,
+                        category.ImageAsset.Width)
+                    : null,
                 category.ShowInMegaMenu,
                 category.MegaMenuColumn,
                 category.AgeGroup != null ? category.AgeGroup.Slug : null))
@@ -58,13 +71,24 @@ internal sealed class DepartmentCatalogReader(AppDbContext dbContext, IOptions<C
             .GroupBy(category => category.ParentCategoryId!.Value)
             .ToDictionary(group => group.Key, group => group.ToList());
 
+        // A department banner is drawn full-bleed, so it is the one storefront slot whose candidates
+        // are allowed to run all the way to `zoom`.
+        var heroImages = departments.ToDictionary(
+            department => department.Id,
+            department => MediaUrlBuilder.ToImageSources(
+                _options.MediaBaseUrl,
+                department.HeroImage,
+                MediaRenditions.Large,
+                MediaRenditions.Zoom));
+
         return departments
             .Select(department => new DepartmentDto(
                 department.Id,
                 department.Name,
                 department.Slug,
                 department.Description,
-                MediaUrlBuilder.ToPublicUrl(_options.MediaBaseUrl, department.HeroImageKey),
+                heroImages[department.Id].Url,
+                heroImages[department.Id].SrcSet,
                 department.SeoTitle,
                 department.SeoDescription,
                 categories
@@ -84,13 +108,22 @@ internal sealed class DepartmentCatalogReader(AppDbContext dbContext, IOptions<C
             ? rows.Select(child => BuildNode(child, childrenByParent, mediaBaseUrl)).ToList()
             : [];
 
+        // A category tile is a grid cell — a mega-menu promo or a department-page tile — so it takes
+        // the same sizes a product card does.
+        var image = MediaUrlBuilder.ToImageSources(
+            mediaBaseUrl,
+            category.Image,
+            MediaRenditions.Card,
+            MediaRenditions.Large);
+
         return new CategoryNodeDto(
             category.Id,
             category.Name,
             category.Slug,
             category.Depth,
             category.Description,
-            MediaUrlBuilder.ToPublicUrl(mediaBaseUrl, category.ImageKey),
+            image.Url,
+            image.SrcSet,
             category.ShowInMegaMenu,
             category.MegaMenuColumn,
             category.AgeGroupSlug,
@@ -102,7 +135,7 @@ internal sealed class DepartmentCatalogReader(AppDbContext dbContext, IOptions<C
         string Name,
         string Slug,
         string? Description,
-        string? HeroImageKey,
+        MediaRef? HeroImage,
         string? SeoTitle,
         string? SeoDescription);
 
@@ -114,7 +147,7 @@ internal sealed class DepartmentCatalogReader(AppDbContext dbContext, IOptions<C
         string Name,
         string Slug,
         string? Description,
-        string? ImageKey,
+        MediaRef? Image,
         bool ShowInMegaMenu,
         byte? MegaMenuColumn,
         string? AgeGroupSlug);

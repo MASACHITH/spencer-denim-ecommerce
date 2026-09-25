@@ -32,6 +32,8 @@ export interface MegaMenuPromo {
   readonly caption: string;
   readonly cta: NavLink;
   readonly imageUrl: string | null;
+  /** The candidate list for {@link imageUrl}; `null` for an asset with no renditions. */
+  readonly imageSrcSet: string | null;
 }
 
 /** `sale` paints the label in the sale colour; nothing else changes. */

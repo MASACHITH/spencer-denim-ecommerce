@@ -17,10 +17,37 @@ public sealed record ProductAttributesDto(
     string? AgeGroup,
     string? AgeGroupSlug);
 
-/// <summary>One gallery item (PDP-01). Videos carry a poster image.</summary>
+/// <summary>
+/// One gallery item (PDP-01). Videos carry a poster image.
+/// <para>
+/// The gallery draws the same asset in three places at three very different sizes, so it is given
+/// three URLs rather than being left to guess: the rail, the stage and the full-screen viewer. Each of
+/// the rendition fields falls back to <paramref name="Url"/> being the original when the asset has no
+/// rendition set, so a gallery never has a slot with nothing in it.
+/// </para>
+/// </summary>
+/// <param name="Url">The stage: the <c>large</c> rendition, or the original when there is none.</param>
+/// <param name="SrcSet">
+/// Candidates for the stage, up to <c>zoom</c> — a full-width stage on a retina tablet genuinely wants
+/// more than <c>large</c>. Null when the asset has no renditions.
+/// </param>
+/// <param name="ThumbnailUrl">The rail: the <c>thumb</c> rendition. Null when the asset has none.</param>
+/// <param name="ZoomUrl">
+/// The full-screen viewer: the <c>zoom</c> rendition. Null when the asset has none. It is a separate
+/// field rather than the largest <paramref name="SrcSet"/> candidate because the viewer is opened
+/// deliberately and magnifies past 1×, so it wants the biggest file unconditionally — which is exactly
+/// the choice a <c>srcset</c> is designed to stop the browser making.
+/// </param>
+/// <param name="PosterUrl">
+/// A video's poster frame. Always an original: a poster is a separate asset that the pipeline renders
+/// no renditions for.
+/// </param>
 public sealed record ProductImageDto(
     int Id,
     string Url,
+    string? SrcSet,
+    string? ThumbnailUrl,
+    string? ZoomUrl,
     string? AltText,
     ProductMediaRole Role,
     int? ColourId,

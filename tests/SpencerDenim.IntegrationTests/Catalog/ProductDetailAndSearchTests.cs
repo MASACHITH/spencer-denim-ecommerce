@@ -34,7 +34,9 @@ public sealed class ProductDetailAndSearchTests(SqlServerDatabaseFixture sqlServ
         Assert.Contains(product.Images, image => image.Role == ProductMediaRole.Hover);
         Assert.All(product.Images, image =>
         {
-            Assert.StartsWith("/media/public/originals/demo/", image.Url, StringComparison.Ordinal);
+            // The stage takes the `large` rendition; the rail and the viewer take their own sizes,
+            // which CatalogRenditionTests covers.
+            Assert.StartsWith("/media/public/renditions/", image.Url, StringComparison.Ordinal);
             Assert.False(string.IsNullOrWhiteSpace(image.AltText));
             Assert.Equal(1200, image.Width);
         });

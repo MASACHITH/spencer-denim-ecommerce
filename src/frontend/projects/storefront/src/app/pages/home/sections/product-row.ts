@@ -3,7 +3,7 @@ import { RouterLink } from '@angular/router';
 
 import { HomeSectionDto, HomeSectionItemDto } from '../../../core/content/content.model';
 import { destinationOf, isUsableTile, labelOf, toLink } from '../../../core/content/home-sections';
-import { ProductCard } from '../../../ui/product-card/product-card';
+import { FULL_WIDTH_GRID_CARD_SIZES, ProductCard } from '../../../ui/product-card/product-card';
 
 /** One trending tile, resolved once (HOME-04, manual mode). */
 interface Tile {
@@ -13,7 +13,20 @@ interface Tile {
   readonly path: string;
   readonly queryParams: Readonly<Record<string, string | string[]>> | null;
   readonly imageUrl: string | null;
+  readonly imageSrcSet: string | null;
 }
+
+/**
+ * The `.trending` grid below: two columns, four from 1024 px, a 16 px gap, inside a container
+ * that caps at 1440 px with 16 / 32 / 48 px gutters. Same reasoning as the card sizes — a srcset
+ * with no `sizes` makes the browser fetch the widest candidate whatever the tile measures.
+ */
+const TILE_SIZES =
+  '(min-width: 1440px) 324px,' +
+  ' (min-width: 1280px) calc((100vw - 144px) / 4),' +
+  ' (min-width: 1024px) calc((100vw - 112px) / 4),' +
+  ' (min-width: 768px) calc((100vw - 80px) / 2),' +
+  ' calc((100vw - 48px) / 2)';
 
 /**
  * HOME-03 New Arrivals, HOME-04 Trending Items and HOME-07 Sale: a row under a heading.
@@ -60,7 +73,7 @@ interface Tile {
         <ul class="product-grid">
           @for (product of products(); track product.id) {
             <li>
-              <sd-product-card [product]="product" />
+              <sd-product-card [product]="product" [sizes]="cardSizes" />
             </li>
           }
         </ul>
@@ -76,7 +89,14 @@ interface Tile {
               >
                 <span class="trending__media">
                   @if (tile.imageUrl; as image) {
-                    <img [src]="image" alt="" loading="lazy" decoding="async" />
+                    <img
+                      [src]="image"
+                      [attr.srcset]="tile.imageSrcSet"
+                      [attr.sizes]="tile.imageSrcSet ? tileSizes : null"
+                      alt=""
+                      loading="lazy"
+                      decoding="async"
+                    />
                   }
                 </span>
                 <span class="trending__body">
@@ -148,6 +168,10 @@ interface Tile {
 export class ProductRow {
   readonly section = input.required<HomeSectionDto>();
 
+  /** A homepage row gives up no filter sidebar, so its cards are wider than a listing's. */
+  protected readonly cardSizes = FULL_WIDTH_GRID_CARD_SIZES;
+  protected readonly tileSizes = TILE_SIZES;
+
   protected readonly headingId = computed(() => `home-section-${this.section().id}`);
 
   protected readonly products = computed(() => this.section().products);
@@ -184,6 +208,9 @@ export class ProductRow {
       path: link.path,
       queryParams: link.queryParams,
       imageUrl: item.imageUrl ?? item.mobileImageUrl,
+      // The candidate list has to belong to the picture that was chosen, not to whichever one
+      // the client happened to upload: the two crops are different assets with different ids.
+      imageSrcSet: item.imageUrl ? item.imageSrcSet : item.mobileImageSrcSet,
     };
   }
 }
