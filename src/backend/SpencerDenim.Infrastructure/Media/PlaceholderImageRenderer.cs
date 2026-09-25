@@ -24,11 +24,23 @@ namespace SpencerDenim.Infrastructure.Media;
 /// </summary>
 public static class PlaceholderImageRenderer
 {
-    /// <summary>Width of a generated placeholder. 3:4, which is the aspect ratio the storefront reserves.</summary>
-    public const int Width = 900;
+    /// <summary>
+    /// Width of a generated placeholder. 3:4, which is the aspect ratio the storefront reserves, and the
+    /// size the catalogue seeder records on the row before the file exists.
+    /// </summary>
+    public const int Width = 1200;
 
     /// <summary>Height of a generated placeholder.</summary>
-    public const int Height = 1200;
+    public const int Height = 1600;
+
+    /// <summary>
+    /// The layout is written once in this coordinate space and the canvas is scaled to
+    /// <see cref="Width"/> × <see cref="Height"/>, so changing the output size does not mean re-tuning
+    /// every font size and offset.
+    /// </summary>
+    private const float DesignWidth = 900f;
+
+    private const float DesignHeight = 1200f;
 
     private static readonly SKColor Background = new(0xE8, 0xE6, 0xE1);
     private static readonly SKColor Rule = new(0xC7, 0xC1, 0xB8);
@@ -68,17 +80,18 @@ public static class PlaceholderImageRenderer
         {
             using var canvas = new SKCanvas(bitmap);
             canvas.Clear(Background);
+            canvas.Scale(Width / DesignWidth, Height / DesignHeight);
 
             using var line = new SKPaint { Color = Diagonal, IsAntialias = true, StrokeWidth = 2, Style = SKPaintStyle.Stroke };
-            canvas.DrawLine(0, 0, Width, Height, line);
-            canvas.DrawLine(Width, 0, 0, Height, line);
+            canvas.DrawLine(0, 0, DesignWidth, DesignHeight, line);
+            canvas.DrawLine(DesignWidth, 0, 0, DesignHeight, line);
 
             using var rule = new SKPaint { Color = Rule, IsAntialias = true, StrokeWidth = 3, Style = SKPaintStyle.Stroke };
-            canvas.DrawRect(new SKRect(24, 24, Width - 24, Height - 24), rule);
+            canvas.DrawRect(new SKRect(24, 24, DesignWidth - 24, DesignHeight - 24), rule);
 
             // A band behind the text, so the diagonals do not run through the words.
             using var band = new SKPaint { Color = Background, IsAntialias = true, Style = SKPaintStyle.Fill };
-            canvas.DrawRect(new SKRect(48, (Height / 2f) - 210, Width - 48, (Height / 2f) + 210), band);
+            canvas.DrawRect(new SKRect(48, (DesignHeight / 2f) - 210, DesignWidth - 48, (DesignHeight / 2f) + 210), band);
 
             DrawSwatch(canvas, swatchHex);
             DrawText(canvas, productName, colourName);
@@ -99,7 +112,7 @@ public static class PlaceholderImageRenderer
         using var fill = new SKPaint { Color = colour, IsAntialias = true, Style = SKPaintStyle.Fill };
         using var outline = new SKPaint { Color = Rule, IsAntialias = true, StrokeWidth = 2, Style = SKPaintStyle.Stroke };
 
-        var centre = new SKPoint(Width / 2f, (Height / 2f) - 150);
+        var centre = new SKPoint(DesignWidth / 2f, (DesignHeight / 2f) - 150);
         canvas.DrawCircle(centre, 34, fill);
         canvas.DrawCircle(centre, 34, outline);
     }
@@ -113,13 +126,13 @@ public static class PlaceholderImageRenderer
         using var normal = new SKPaint { Color = Ink, IsAntialias = true };
         using var faint = new SKPaint { Color = FaintInk, IsAntialias = true };
 
-        var middle = Height / 2f;
+        var middle = DesignHeight / 2f;
 
-        Write(canvas, "PLACEHOLDER", Width / 2f, middle - 60, new SKFont(bold, 62), strong);
-        Write(canvas, "NO PRODUCT PHOTOGRAPH", Width / 2f, middle - 10, new SKFont(regular, 26), normal);
-        Write(canvas, Shorten(productName, 34), Width / 2f, middle + 70, new SKFont(bold, 34), strong);
-        Write(canvas, colourName is null ? "Fabric detail frame" : Shorten(colourName, 34), Width / 2f, middle + 120, new SKFont(regular, 30), normal);
-        Write(canvas, "Spencer Denim — demo data, not a real product image", Width / 2f, Height - 70, new SKFont(regular, 22), faint);
+        Write(canvas, "PLACEHOLDER", DesignWidth / 2f, middle - 60, new SKFont(bold, 62), strong);
+        Write(canvas, "NO PRODUCT PHOTOGRAPH", DesignWidth / 2f, middle - 10, new SKFont(regular, 26), normal);
+        Write(canvas, Shorten(productName, 34), DesignWidth / 2f, middle + 70, new SKFont(bold, 34), strong);
+        Write(canvas, colourName is null ? "Fabric detail frame" : Shorten(colourName, 34), DesignWidth / 2f, middle + 120, new SKFont(regular, 30), normal);
+        Write(canvas, "Spencer Denim — demo data, not a real product image", DesignWidth / 2f, DesignHeight - 70, new SKFont(regular, 22), faint);
     }
 
     private static void Write(SKCanvas canvas, string text, float x, float y, SKFont font, SKPaint paint)

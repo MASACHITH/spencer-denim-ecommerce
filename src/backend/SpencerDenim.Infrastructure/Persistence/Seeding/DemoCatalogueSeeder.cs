@@ -9,6 +9,7 @@ using SpencerDenim.Application.Catalog;
 using SpencerDenim.Domain.Catalog;
 using SpencerDenim.Domain.Inventory;
 using SpencerDenim.Domain.Media;
+using SpencerDenim.Infrastructure.Media;
 
 namespace SpencerDenim.Infrastructure.Persistence.Seeding;
 
@@ -441,7 +442,13 @@ public sealed class DemoCatalogueSeeder(AppDbContext dbContext, IClock clock, IO
                 OriginalFileName = DemoMediaPlaceholders.FileNameFor(seed.Slug, index),
                 StorageKey = placeholder.StorageKey,
                 ContentType = "image/jpeg",
+
+                // A placeholder size and checksum: there is no file yet, and the generator replaces both
+                // with the real ones the moment it writes it. The dimensions are the ones it will produce,
+                // so the storefront can reserve the right box even before the files exist.
                 SizeBytes = 1,
+                Width = PlaceholderImageRenderer.Width,
+                Height = PlaceholderImageRenderer.Height,
                 Checksum = SHA256.HashData(Encoding.UTF8.GetBytes(placeholder.StorageKey)),
                 AltText = placeholder.AltText,
                 Title = seed.Name,

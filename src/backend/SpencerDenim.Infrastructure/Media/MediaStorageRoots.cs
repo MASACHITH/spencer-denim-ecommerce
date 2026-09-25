@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using SpencerDenim.Application.Media;
@@ -27,12 +28,16 @@ public sealed class MediaStorageRoots
     private readonly string? _publicRoot;
     private readonly string? _privateRoot;
 
-    public MediaStorageRoots(IOptions<MediaOptions> options, IHostEnvironment environment)
+    public MediaStorageRoots(IOptions<MediaOptions> options, IServiceProvider services)
     {
         ArgumentNullException.ThrowIfNull(options);
-        ArgumentNullException.ThrowIfNull(environment);
+        ArgumentNullException.ThrowIfNull(services);
 
-        var contentRoot = environment.ContentRootPath;
+        // The content root is where a Docker volume mount lands, so it is the right base for a relative
+        // setting — but AddInfrastructure is also used outside a host (the integration fixture builds a
+        // plain ServiceCollection to migrate and seed), and requiring IHostEnvironment there would make
+        // every non-web consumer register a fake one. Asked for, not demanded.
+        var contentRoot = services.GetService<IHostEnvironment>()?.ContentRootPath ?? AppContext.BaseDirectory;
         _publicRoot = Resolve(options.Value.PublicRoot, contentRoot);
         _privateRoot = Resolve(options.Value.PrivateRoot, contentRoot);
 
