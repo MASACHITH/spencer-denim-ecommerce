@@ -3,6 +3,7 @@ using SpencerDenim.Api.Endpoints;
 using SpencerDenim.Api.Endpoints.Admin;
 using SpencerDenim.Api.Endpoints.Catalog;
 using SpencerDenim.Api.Endpoints.Content;
+using SpencerDenim.Api.Endpoints.Media;
 using SpencerDenim.Api.Health;
 using SpencerDenim.Api.Http;
 using SpencerDenim.Api.Logging;
@@ -51,5 +52,7 @@ app.MapPingEndpoints();
 app.MapAdminAuthEndpoints();
 app.MapCatalogEndpoints();
 app.MapContentEndpoints();
+app.MapAdminMediaEndpoints();
+app.MapMediaFileEndpoints();
 
 await app.RunAsync();

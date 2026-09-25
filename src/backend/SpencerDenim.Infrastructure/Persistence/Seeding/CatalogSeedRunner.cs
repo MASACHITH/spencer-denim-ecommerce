@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using SpencerDenim.Infrastructure.Media;
 
 namespace SpencerDenim.Infrastructure.Persistence.Seeding;
 
@@ -11,6 +12,7 @@ public sealed partial class CatalogSeedRunner(
     CatalogReferenceDataSeeder referenceData,
     HomeContentSeeder homeContent,
     DemoCatalogueSeeder demoCatalogue,
+    DemoMediaPlaceholderGenerator demoMedia,
     ILogger<CatalogSeedRunner> logger)
 {
     /// <param name="includeDemoCatalogue">
@@ -35,6 +37,12 @@ public sealed partial class CatalogSeedRunner(
             counts.Products = demo.Products;
             counts.Variants = demo.Variants;
             counts.MediaAssets = demo.MediaAssets;
+
+            // The rows above point at public/originals/demo/…; this draws the files behind them, so a
+            // development or staging storefront shows labelled placeholders rather than broken images
+            // (W1-04). It is a no-op when no media volume is configured.
+            var placeholders = await demoMedia.RunAsync(cancellationToken);
+            counts.MediaPlaceholders = placeholders.Generated;
         }
 
         LogSeeded(logger, counts);

@@ -17,6 +17,15 @@
     <PackageVersion Include="Microsoft.Extensions.Diagnostics.HealthChecks" Version="10.0.12" />
     <PackageVersion Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="10.0.12" />
     <PackageVersion Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="10.0.12" />
+    <!--
+      Imaging for the media library (W1-04, ADM-18). SkiaSharp is MIT and is what doc 03 §2 names;
+      SixLabors.ImageSharp is deliberately not used (Six Labors Split License, not free above their
+      revenue threshold), for the same reason MediatR and AutoMapper are not.
+      The second id is not a second dependency: it is the same library's self-contained Linux native
+      asset, so the API image needs no libfontconfig1/libfreetype6 layer (doc 03 §4).
+    -->
+    <PackageVersion Include="SkiaSharp" Version="4.152.1" />
+    <PackageVersion Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="4.152.1" />
   </ItemGroup>
 
   <ItemGroup Label="Application">
