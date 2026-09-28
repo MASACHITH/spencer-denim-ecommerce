@@ -63,7 +63,8 @@ public sealed class AdminAuthenticator(
             await userManager.UpdateAsync(user);
 
             var (grantsAll, permissions) = await LoadPermissionsAsync(user);
-            return AdminAuthenticationOutcome.Succeeded(user.Id, user.Email ?? email, user.FirstName, user.LastName, grantsAll, permissions);
+            var securityStamp = await userManager.GetSecurityStampAsync(user);
+            return AdminAuthenticationOutcome.Succeeded(user.Id, user.Email ?? email, user.FirstName, user.LastName, grantsAll, permissions, securityStamp);
         }
 
         if (checkResult.IsLockedOut)

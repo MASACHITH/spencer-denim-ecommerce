@@ -78,6 +78,7 @@ internal static class AdminAuthEndpoints
             new(ClaimTypes.Email, success.Email),
             new(ClaimTypes.GivenName, success.FirstName),
             new(AdminAuthenticationDefaults.UserTypeClaimType, ((byte)UserType.Staff).ToString(CultureInfo.InvariantCulture)),
+            new(AdminAuthenticationDefaults.SecurityStampClaimType, success.SecurityStamp),
         };
 
         if (!string.IsNullOrWhiteSpace(success.LastName))

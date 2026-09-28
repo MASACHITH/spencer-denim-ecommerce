@@ -18,7 +18,8 @@ public abstract record AdminLoginResult
         string FirstName,
         string? LastName,
         bool GrantsAllPermissions,
-        IReadOnlyCollection<string> Permissions) : AdminLoginResult;
+        IReadOnlyCollection<string> Permissions,
+        string SecurityStamp) : AdminLoginResult;
 
     /// <summary>Unknown email, wrong password, a non-staff or inactive account. Deliberately generic.</summary>
     public sealed record InvalidCredentials : AdminLoginResult;

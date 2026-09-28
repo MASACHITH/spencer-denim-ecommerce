@@ -146,6 +146,70 @@ public sealed class AdminAuthEndpointTests(SqlServerDatabaseFixture sqlServer)
         Assert.Equal((HttpStatusCode)423, stillLockedResponse.StatusCode);
     }
 
+    /// <summary>
+    /// Regression test for the defect in issue #16: before this fix, <c>IsActive</c> was only checked at login and
+    /// on <c>/whoami</c>, so a deactivated staff account's cookie kept authenticating every other endpoint for the
+    /// rest of its 60-minute sliding lifetime. <c>AdminSecurity:SecurityStampValidationIntervalSeconds</c> is
+    /// shrunk to 1 second here so the test proves the real revalidation path without waiting out a real minute.
+    /// Deliberately doesn't also assert that a request made *before* the interval elapses is still accepted: with
+    /// a real HTTP client against a real SQL Server, the round-trips around that request are themselves not
+    /// reliably faster than a 1-second window, which would make that assertion flaky rather than meaningful — the
+    /// throttling itself is a plain time comparison, in no way dependent on doing this over HTTP.
+    /// </summary>
+    [Fact]
+    public async Task A_deactivated_admin_is_rejected_on_the_next_request_once_the_revalidation_interval_has_passed()
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, TestContext.Current.CancellationToken);
+
+        var email = UniqueEmail("deactivated-mid-session");
+        const string password = "Correct-Password-1!";
+        var configuration = new Dictionary<string, string?> { ["AdminSecurity:SecurityStampValidationIntervalSeconds"] = "1" };
+        await using var factory = new ApiFactory(sqlServer.ConnectionString, additionalConfiguration: configuration);
+        var userId = await CreateStaffUserAsync(factory, email, password, isActive: true);
+        using var client = CreateClient(factory);
+
+        using var login = await client.PostAsJsonAsync(LoginUrl, new { email, password }, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+
+        await DeactivateStaffUserAsync(factory, userId);
+        await Task.Delay(TimeSpan.FromSeconds(1.5), TestContext.Current.CancellationToken);
+
+        // Same cookie, no new login: the next request re-checks the database because the interval has elapsed,
+        // finds IsActive false, and ends the session — instead of trusting the cookie's claims for the rest of
+        // its 60-minute sliding lifetime, which is the defect this test guards against.
+        using var whoAmIAfterInterval = await client.GetAsync(new Uri(WhoAmIUrl, UriKind.Relative), TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.Unauthorized, whoAmIAfterInterval.StatusCode);
+    }
+
+    /// <summary>
+    /// Same mechanism as the deactivation test above, but for the other trigger doc 08 §3.1 DB10 names: a
+    /// security-stamp bump (what a password reset does, once that feature exists) ends the session too, even
+    /// though <c>IsActive</c> never changes.
+    /// </summary>
+    [Fact]
+    public async Task A_security_stamp_bump_rejects_the_session_on_the_next_request_once_the_revalidation_interval_has_passed()
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, TestContext.Current.CancellationToken);
+
+        var email = UniqueEmail("stamp-bumped-mid-session");
+        const string password = "Correct-Password-1!";
+        var configuration = new Dictionary<string, string?> { ["AdminSecurity:SecurityStampValidationIntervalSeconds"] = "1" };
+        await using var factory = new ApiFactory(sqlServer.ConnectionString, additionalConfiguration: configuration);
+        var userId = await CreateStaffUserAsync(factory, email, password, isActive: true);
+        using var client = CreateClient(factory);
+
+        using var login = await client.PostAsJsonAsync(LoginUrl, new { email, password }, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+
+        await BumpSecurityStampAsync(factory, userId);
+        await Task.Delay(TimeSpan.FromSeconds(1.5), TestContext.Current.CancellationToken);
+
+        using var whoAmIAfterInterval = await client.GetAsync(new Uri(WhoAmIUrl, UriKind.Relative), TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.Unauthorized, whoAmIAfterInterval.StatusCode);
+    }
+
     [Fact]
     public async Task WhoAmI_requires_authentication()
     {
@@ -300,7 +364,7 @@ public sealed class AdminAuthEndpointTests(SqlServerDatabaseFixture sqlServer)
     private static HttpClient CreateClient(ApiFactory factory) =>
         factory.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://localhost") });
 
-    private static async Task CreateStaffUserAsync(ApiFactory factory, string email, string password, bool isActive)
+    private static async Task<int> CreateStaffUserAsync(ApiFactory factory, string email, string password, bool isActive)
     {
         await using var scope = factory.Services.CreateAsyncScope();
         var userManager = scope.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
@@ -318,6 +382,38 @@ public sealed class AdminAuthEndpointTests(SqlServerDatabaseFixture sqlServer)
         };
 
         var result = await userManager.CreateAsync(user, password);
+        Assert.True(result.Succeeded, string.Join("; ", result.Errors.Select(e => e.Description)));
+        return user.Id;
+    }
+
+    /// <summary>
+    /// Stands in for the (not yet built, see W1-08) admin "deactivate user" action: sets <c>IsActive</c> directly
+    /// through <see cref="UserManager{TUser}"/>, exactly as that future endpoint will.
+    /// </summary>
+    private static async Task DeactivateStaffUserAsync(ApiFactory factory, int userId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var userManager = scope.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
+
+        var user = await userManager.FindByIdAsync(userId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        Assert.NotNull(user);
+        user.IsActive = false;
+        var result = await userManager.UpdateAsync(user);
+        Assert.True(result.Succeeded, string.Join("; ", result.Errors.Select(e => e.Description)));
+    }
+
+    /// <summary>
+    /// Stands in for whatever future action bumps the security stamp (a password reset, once that feature
+    /// exists — <c>UserManager</c> does this automatically for its own password-changing methods).
+    /// </summary>
+    private static async Task BumpSecurityStampAsync(ApiFactory factory, int userId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var userManager = scope.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
+
+        var user = await userManager.FindByIdAsync(userId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        Assert.NotNull(user);
+        var result = await userManager.UpdateSecurityStampAsync(user);
         Assert.True(result.Succeeded, string.Join("; ", result.Errors.Select(e => e.Description)));
     }
 
