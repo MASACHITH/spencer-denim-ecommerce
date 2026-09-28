@@ -28,9 +28,12 @@ public sealed class AppUserConfiguration : IEntityTypeConfiguration<AppUser>
         builder.Property(u => u.MustChangePassword).HasDefaultValue(false);
 
         builder.Property(u => u.LastLoginAtUtc).HasColumnType("datetime2(3)");
-        builder.Property(u => u.CreatedAtUtc).HasColumnType("datetime2(3)").HasDefaultValueSql("sysutcdatetime()");
-        builder.Property(u => u.UpdatedAtUtc).HasColumnType("datetime2(3)");
         builder.Property(u => u.AnonymisedAtUtc).HasColumnType("datetime2(3)");
+
+        // Issue #18: was two manual .Property() calls here for CreatedAtUtc/UpdatedAtUtc — same column type and
+        // default as every other [A] table (doc 08 §1.5), now via the shared extension like the rest of them, now
+        // that AppUser implements IAuditable. No column, type or default changes; see the PR for the model diff.
+        builder.ApplyAuditColumns();
 
         // Doc 08 §3.1: "UX_Users_NormalizedEmail and UX_Users_NormalizedUserName (filtered NOT NULL)".
         builder.HasIndex(u => u.NormalizedEmail)
