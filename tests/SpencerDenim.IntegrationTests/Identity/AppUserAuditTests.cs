@@ -73,8 +73,15 @@ public sealed class AppUserAuditTests(SqlServerDatabaseFixture sqlServer)
         var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var persisted = await dbContext.Users.AsNoTracking().SingleAsync(u => u.Id == user.Id, TestContext.Current.CancellationToken);
         Assert.NotNull(persisted.UpdatedAtUtc);
-        Assert.Equal(createdAtUtc, persisted.CreatedAtUtc);
+
+        // Compared at millisecond precision (doc 08 §1.4, datetime2(3)): createdAtUtc came straight from
+        // IClock.UtcNow in memory, at full tick resolution, and round-tripping through the database truncates
+        // it to milliseconds, so an exact Assert.Equal against the untruncated value is a false failure.
+        Assert.Equal(TruncateToMillisecond(createdAtUtc), persisted.CreatedAtUtc);
     }
+
+    private static DateTime TruncateToMillisecond(DateTime value) =>
+        new(value.Ticks - (value.Ticks % TimeSpan.TicksPerMillisecond), value.Kind);
 
     private static AppUser NewStaffUser()
     {
