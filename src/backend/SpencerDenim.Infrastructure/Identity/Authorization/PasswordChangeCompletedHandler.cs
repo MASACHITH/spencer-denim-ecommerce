@@ -23,12 +23,6 @@ public sealed class PasswordChangeCompletedHandler(IAdminUserLookup userLookup)
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(requirement);
 
-        if (IsExempt(context.Resource))
-        {
-            context.Succeed(requirement);
-            return;
-        }
-
         // Only staff principals carry this flag. Anything else (no principal yet, or a future customer-scheme
         // principal) is not this gate's business: the policy's other requirements decide.
         if (context.User.FindFirstValue(AdminAuthenticationDefaults.UserTypeClaimType)
@@ -48,6 +42,24 @@ public sealed class PasswordChangeCompletedHandler(IAdminUserLookup userLookup)
         var user = await userLookup.FindByIdAsync(userId, CancellationToken.None);
         if (user is null)
         {
+            return;
+        }
+
+        // A password change rotates the stamp and clears the flag in one update. Without this check, every
+        // session opened before the change (another browser, or a copy of the old cookie) would pass the gate
+        // with full access until its next cookie revalidation, up to a minute later. Checked before the
+        // exemptions, so such a session cannot use who-am-I or change-password either; the caller's own
+        // session was re-issued with the new stamp and is unaffected.
+        var sessionStamp = context.User.FindFirstValue(AdminAuthenticationDefaults.SecurityStampClaimType);
+        if (string.IsNullOrEmpty(sessionStamp) || !string.Equals(sessionStamp, user.SecurityStamp, StringComparison.Ordinal))
+        {
+            context.Fail(new SessionSupersededFailureReason(this));
+            return;
+        }
+
+        if (IsExempt(context.Resource))
+        {
+            context.Succeed(requirement);
             return;
         }
 

@@ -19,6 +19,6 @@ public sealed class AdminUserLookup(UserManager<AppUser> userManager) : IAdminUs
             return null;
         }
 
-        return new AdminUserSummary(user.Id, user.Email ?? string.Empty, user.FirstName, user.LastName, user.IsActive, user.MustChangePassword);
+        return new AdminUserSummary(user.Id, user.Email ?? string.Empty, user.FirstName, user.LastName, user.IsActive, user.MustChangePassword, user.SecurityStamp);
     }
 }

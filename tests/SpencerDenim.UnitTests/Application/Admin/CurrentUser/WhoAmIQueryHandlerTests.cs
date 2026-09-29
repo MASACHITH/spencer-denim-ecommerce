@@ -18,7 +18,7 @@ public sealed class WhoAmIQueryHandlerTests
     [Fact]
     public async Task Returns_profile_and_permissions_for_an_active_user()
     {
-        var summary = new AdminUserSummary(5, "admin@example.com", "Ada", "Lovelace", IsActive: true, MustChangePassword: false);
+        var summary = new AdminUserSummary(5, "admin@example.com", "Ada", "Lovelace", IsActive: true, MustChangePassword: false, SecurityStamp: "stamp");
         var permissions = new EffectivePermissions(false, ["Orders.View"]);
         var handler = new WhoAmIQueryHandler(new StubUserLookup(summary), new StubPermissionsProvider(permissions));
 
@@ -34,7 +34,7 @@ public sealed class WhoAmIQueryHandlerTests
     [Fact]
     public async Task Reports_a_pending_forced_password_change()
     {
-        var summary = new AdminUserSummary(5, "admin@example.com", "Ada", null, IsActive: true, MustChangePassword: true);
+        var summary = new AdminUserSummary(5, "admin@example.com", "Ada", null, IsActive: true, MustChangePassword: true, SecurityStamp: "stamp");
         var handler = new WhoAmIQueryHandler(new StubUserLookup(summary), new StubPermissionsProvider(new EffectivePermissions(true, [])));
 
         var response = await handler.HandleAsync(new WhoAmIQuery(5), TestContext.Current.CancellationToken);
@@ -56,7 +56,7 @@ public sealed class WhoAmIQueryHandlerTests
     [Fact]
     public async Task Returns_null_for_a_deactivated_user()
     {
-        var summary = new AdminUserSummary(5, "admin@example.com", "Ada", "Lovelace", IsActive: false, MustChangePassword: false);
+        var summary = new AdminUserSummary(5, "admin@example.com", "Ada", "Lovelace", IsActive: false, MustChangePassword: false, SecurityStamp: "stamp");
         var handler = new WhoAmIQueryHandler(new StubUserLookup(summary), new StubPermissionsProvider(new EffectivePermissions(false, [])));
 
         var response = await handler.HandleAsync(new WhoAmIQuery(5), TestContext.Current.CancellationToken);

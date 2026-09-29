@@ -282,6 +282,48 @@ public sealed class AdminPasswordChangeEndpointTests(SqlServerDatabaseFixture sq
         Assert.Equal(HttpStatusCode.OK, callerWhoAmI.StatusCode);
     }
 
+    /// <summary>
+    /// Tester finding on #17: clearing the flag must not unlock sessions opened before the change. The default
+    /// 60-second revalidation interval is kept and nothing waits, so this proves the gate itself refuses the
+    /// older session on its very next request, instead of the cookie revalidation doing so up to a minute later.
+    /// </summary>
+    [Fact]
+    public async Task A_session_opened_before_the_change_is_refused_immediately_after_it()
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, TestContext.Current.CancellationToken);
+
+        var email = UniqueEmail("stale-session");
+        await using var factory = new ApiFactory(sqlServer.ConnectionString);
+        await using var host = WithProbeEndpoints(factory);
+        await CreateStaffUserAsync(host, email, BootstrapPassword, mustChangePassword: true);
+        using var caller = await SignedInClientAsync(host, email, BootstrapPassword);
+        using var otherSession = await SignedInClientAsync(host, email, BootstrapPassword);
+
+        // A newly issued cookie is revalidated on its first request; make that happen now, so the request after
+        // the change falls inside the 60-second window and only the gate can refuse it.
+        using var otherBefore = await otherSession.GetAsync(new Uri(WhoAmIUrl, UriKind.Relative), Ct);
+        Assert.Equal(HttpStatusCode.OK, otherBefore.StatusCode);
+
+        using var change = await PostChangePasswordAsync(caller, BootstrapPassword, NewPassword);
+        Assert.Equal(HttpStatusCode.NoContent, change.StatusCode);
+
+        // The older session: refused on a gated endpoint and on the exempt ones, with the session ended.
+        using var otherProbe = await otherSession.GetAsync(new Uri(AuthorizedProbeUrl, UriKind.Relative), Ct);
+        Assert.Equal(HttpStatusCode.Unauthorized, otherProbe.StatusCode);
+        var otherProbeBody = await otherProbe.Content.ReadFromJsonAsync<JsonElement>(Ct);
+        Assert.Equal("session_ended", otherProbeBody.GetProperty("error").GetString());
+
+        using var otherWhoAmI = await otherSession.GetAsync(new Uri(WhoAmIUrl, UriKind.Relative), Ct);
+        Assert.Equal(HttpStatusCode.Unauthorized, otherWhoAmI.StatusCode);
+
+        // The caller's re-issued cookie carries the new stamp and keeps full access.
+        using var callerProbe = await caller.GetAsync(new Uri(AuthorizedProbeUrl, UriKind.Relative), Ct);
+        Assert.Equal(HttpStatusCode.OK, callerProbe.StatusCode);
+        using var callerWhoAmI = await caller.GetAsync(new Uri(WhoAmIUrl, UriKind.Relative), Ct);
+        Assert.Equal(HttpStatusCode.OK, callerWhoAmI.StatusCode);
+    }
+
     [Fact]
     public async Task Repeated_wrong_current_passwords_lock_the_account_like_sign_in_does()
     {

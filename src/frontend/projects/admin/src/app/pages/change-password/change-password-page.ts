@@ -1,9 +1,29 @@
-import { ChangeDetectionStrategy, Component, OnInit, inject, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  ElementRef,
+  Injector,
+  OnInit,
+  afterNextRender,
+  computed,
+  inject,
+  signal,
+  viewChild,
+} from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 
 import { AdminAuthApi, type ChangePasswordError } from '../../core/auth/admin-auth-api';
 import { loginPath } from '../../core/auth/auth-guards';
+
+type PasswordField = 'currentPassword' | 'newPassword' | 'confirmPassword';
+
+/** Which field an error is about. Errors not tied to one field (lockout, server failure) have none. */
+const fieldInError: Partial<Record<ChangePasswordError['kind'] | 'mismatch', PasswordField>> = {
+  invalid_current_password: 'currentPassword',
+  new_password_rejected: 'newPassword',
+  mismatch: 'confirmPassword',
+};
 
 /**
  * Issue #17: the signed-in admin changes their own password. When the account was flagged "must change password"
@@ -29,35 +49,41 @@ import { loginPath } from '../../core/auth/auth-guards';
         <!-- Lets password managers file the new password under the right account. -->
         <input type="email" name="username" autocomplete="username" [value]="email()" hidden readonly />
 
+        <!--
+          Inputs are read-only rather than disabled while saving, so they can take focus back the moment an
+          error arrives. Only the field an error is about is marked invalid and described by the error.
+        -->
         <label class="change__field">
           <span class="change__label">Current password</span>
           <input
+            #currentPasswordInput
             class="change__input"
             type="password"
             name="currentPassword"
             autocomplete="current-password"
             required
-            [attr.aria-invalid]="errorKind() === 'invalid_current_password' ? 'true' : null"
-            [attr.aria-describedby]="errorMessage() ? 'change-error' : null"
+            [attr.aria-invalid]="errorField() === 'currentPassword' ? 'true' : null"
+            [attr.aria-describedby]="errorField() === 'currentPassword' ? 'change-error' : null"
             [ngModel]="currentPassword"
             (ngModelChange)="currentPassword = $event"
-            [disabled]="submitting()"
+            [readonly]="submitting()"
           />
         </label>
 
         <label class="change__field">
           <span class="change__label">New password</span>
           <input
+            #newPasswordInput
             class="change__input"
             type="password"
             name="newPassword"
             autocomplete="new-password"
             required
-            aria-describedby="change-rules"
-            [attr.aria-invalid]="errorKind() === 'new_password_rejected' ? 'true' : null"
+            [attr.aria-describedby]="errorField() === 'newPassword' ? 'change-rules change-error' : 'change-rules'"
+            [attr.aria-invalid]="errorField() === 'newPassword' ? 'true' : null"
             [ngModel]="newPassword"
             (ngModelChange)="newPassword = $event"
-            [disabled]="submitting()"
+            [readonly]="submitting()"
           />
         </label>
         <p class="change__hint" id="change-rules">
@@ -67,20 +93,22 @@ import { loginPath } from '../../core/auth/auth-guards';
         <label class="change__field">
           <span class="change__label">Confirm new password</span>
           <input
+            #confirmPasswordInput
             class="change__input"
             type="password"
             name="confirmPassword"
             autocomplete="new-password"
             required
-            [attr.aria-invalid]="mismatch() ? 'true' : null"
+            [attr.aria-invalid]="errorField() === 'confirmPassword' ? 'true' : null"
+            [attr.aria-describedby]="errorField() === 'confirmPassword' ? 'change-error' : null"
             [ngModel]="confirmPassword"
             (ngModelChange)="confirmPassword = $event"
-            [disabled]="submitting()"
+            [readonly]="submitting()"
           />
         </label>
 
         @if (errorMessage(); as message) {
-          <div class="change__error" id="change-error" role="alert">
+          <div class="change__error" id="change-error" role="alert" tabindex="-1" #errorSummary>
             <p class="change__error-text">{{ message }}</p>
             @if (rules().length > 0) {
               <ul class="change__rules">
@@ -150,6 +178,7 @@ import { loginPath } from '../../core/auth/auth-guards';
       background: color-mix(in srgb, var(--color-sale) 8%, transparent);
       border: 1px solid var(--color-sale);
     }
+    .change__error:focus-visible { outline-offset: 2px; }
     .change__error-text { margin: 0; }
     .change__rules { margin: 0; padding-inline-start: var(--space-2); overflow-wrap: anywhere; }
     .change__submit,
@@ -181,6 +210,12 @@ import { loginPath } from '../../core/auth/auth-guards';
 export class ChangePasswordPage implements OnInit {
   private readonly authApi = inject(AdminAuthApi);
   private readonly router = inject(Router);
+  private readonly injector = inject(Injector);
+
+  private readonly currentPasswordInput = viewChild.required<ElementRef<HTMLInputElement>>('currentPasswordInput');
+  private readonly newPasswordInput = viewChild.required<ElementRef<HTMLInputElement>>('newPasswordInput');
+  private readonly confirmPasswordInput = viewChild.required<ElementRef<HTMLInputElement>>('confirmPasswordInput');
+  private readonly errorSummary = viewChild<ElementRef<HTMLElement>>('errorSummary');
 
   protected currentPassword = '';
   protected newPassword = '';
@@ -188,8 +223,11 @@ export class ChangePasswordPage implements OnInit {
   protected readonly required = signal(false);
   protected readonly email = signal('');
   protected readonly submitting = signal(false);
-  protected readonly mismatch = signal(false);
   protected readonly errorKind = signal<ChangePasswordError['kind'] | 'mismatch' | null>(null);
+  protected readonly errorField = computed(() => {
+    const kind = this.errorKind();
+    return kind ? (fieldInError[kind] ?? null) : null;
+  });
   protected readonly errorMessage = signal<string | null>(null);
   protected readonly rules = signal<string[]>([]);
 
@@ -211,13 +249,10 @@ export class ChangePasswordPage implements OnInit {
 
     this.rules.set([]);
     if (this.newPassword !== this.confirmPassword) {
-      this.mismatch.set(true);
-      this.errorKind.set('mismatch');
-      this.errorMessage.set('The new passwords do not match.');
+      this.showError('mismatch', 'The new passwords do not match.');
       return;
     }
 
-    this.mismatch.set(false);
     this.errorKind.set(null);
     this.errorMessage.set(null);
     this.submitting.set(true);
@@ -234,11 +269,34 @@ export class ChangePasswordPage implements OnInit {
           return;
         }
 
-        this.errorKind.set(error.kind);
-        this.errorMessage.set(error.message);
         this.rules.set(error.rules ?? []);
+        this.showError(error.kind, error.message);
       },
     });
+  }
+
+  /**
+   * Shows an error and moves keyboard focus to the field it is about, or to the error summary when no single
+   * field is at fault, so focus never falls back to the page body (the submit button it was on is disabled).
+   */
+  private showError(kind: ChangePasswordError['kind'] | 'mismatch', message: string): void {
+    this.errorKind.set(kind);
+    this.errorMessage.set(message);
+
+    afterNextRender(
+      () => {
+        const field = this.errorField();
+        const target = field
+          ? {
+              currentPassword: this.currentPasswordInput,
+              newPassword: this.newPasswordInput,
+              confirmPassword: this.confirmPasswordInput,
+            }[field]()
+          : this.errorSummary();
+        target?.nativeElement.focus();
+      },
+      { injector: this.injector },
+    );
   }
 
   protected logout(): void {

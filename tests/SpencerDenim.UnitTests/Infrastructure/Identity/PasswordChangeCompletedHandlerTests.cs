@@ -30,16 +30,25 @@ public sealed class PasswordChangeCompletedHandlerTests
         }
     }
 
-    private static AdminUserSummary Summary(bool mustChangePassword) =>
-        new(42, "admin@example.com", "Ada", null, IsActive: true, MustChangePassword: mustChangePassword);
+    private const string CurrentStamp = "stamp-current";
 
-    private static ClaimsPrincipal StaffPrincipal(int userId = 42) =>
-        new(new ClaimsIdentity(
-            [
-                new Claim(ClaimTypes.NameIdentifier, userId.ToString(CultureInfo.InvariantCulture)),
-                new Claim(AdminAuthenticationDefaults.UserTypeClaimType, ((byte)UserType.Staff).ToString(CultureInfo.InvariantCulture)),
-            ],
-            AdminAuthenticationDefaults.Scheme));
+    private static AdminUserSummary Summary(bool mustChangePassword, string securityStamp = CurrentStamp) =>
+        new(42, "admin@example.com", "Ada", null, IsActive: true, MustChangePassword: mustChangePassword, SecurityStamp: securityStamp);
+
+    private static ClaimsPrincipal StaffPrincipal(int userId = 42, string? sessionStamp = CurrentStamp)
+    {
+        List<Claim> claims =
+        [
+            new Claim(ClaimTypes.NameIdentifier, userId.ToString(CultureInfo.InvariantCulture)),
+            new Claim(AdminAuthenticationDefaults.UserTypeClaimType, ((byte)UserType.Staff).ToString(CultureInfo.InvariantCulture)),
+        ];
+        if (sessionStamp is not null)
+        {
+            claims.Add(new Claim(AdminAuthenticationDefaults.SecurityStampClaimType, sessionStamp));
+        }
+
+        return new ClaimsPrincipal(new ClaimsIdentity(claims, AdminAuthenticationDefaults.Scheme));
+    }
 
     private static AuthorizationHandlerContext ContextFor(ClaimsPrincipal user, object? resource = null) =>
         new([PasswordChangeCompletedRequirement.Instance], user, resource);
@@ -79,16 +88,52 @@ public sealed class PasswordChangeCompletedHandlerTests
     }
 
     [Fact]
-    public async Task Allows_an_exempt_endpoint_without_reading_the_database()
+    public async Task Allows_an_exempt_endpoint_while_the_change_is_pending()
     {
-        var lookup = new StubUserLookup(Summary(mustChangePassword: true));
-        var handler = new PasswordChangeCompletedHandler(lookup);
+        var handler = new PasswordChangeCompletedHandler(new StubUserLookup(Summary(mustChangePassword: true)));
         var context = ContextFor(StaffPrincipal(), HttpContextFor(exempt: true));
 
         await handler.HandleAsync(context);
 
         Assert.True(context.HasSucceeded);
-        Assert.Equal(0, lookup.Calls);
+    }
+
+    [Fact]
+    public async Task Refuses_a_session_issued_before_the_stamp_changed_even_with_no_change_pending()
+    {
+        // Tester finding on #17: right after a forced change the flag is false, so without this a session opened
+        // before the change had full access until its next cookie revalidation.
+        var handler = new PasswordChangeCompletedHandler(new StubUserLookup(Summary(mustChangePassword: false, securityStamp: "stamp-after-change")));
+        var context = ContextFor(StaffPrincipal(sessionStamp: "stamp-before-change"), HttpContextFor(exempt: false));
+
+        await handler.HandleAsync(context);
+
+        Assert.False(context.HasSucceeded);
+        Assert.Contains(context.FailureReasons, r => r is SessionSupersededFailureReason);
+    }
+
+    [Fact]
+    public async Task Refuses_a_stale_session_on_exempt_endpoints_too()
+    {
+        var handler = new PasswordChangeCompletedHandler(new StubUserLookup(Summary(mustChangePassword: false, securityStamp: "stamp-after-change")));
+        var context = ContextFor(StaffPrincipal(sessionStamp: "stamp-before-change"), HttpContextFor(exempt: true));
+
+        await handler.HandleAsync(context);
+
+        Assert.False(context.HasSucceeded);
+        Assert.Contains(context.FailureReasons, r => r is SessionSupersededFailureReason);
+    }
+
+    [Fact]
+    public async Task Refuses_a_staff_session_that_carries_no_stamp_at_all()
+    {
+        var handler = new PasswordChangeCompletedHandler(new StubUserLookup(Summary(mustChangePassword: false)));
+        var context = ContextFor(StaffPrincipal(sessionStamp: null), HttpContextFor(exempt: false));
+
+        await handler.HandleAsync(context);
+
+        Assert.False(context.HasSucceeded);
+        Assert.Contains(context.FailureReasons, r => r is SessionSupersededFailureReason);
     }
 
     [Fact]

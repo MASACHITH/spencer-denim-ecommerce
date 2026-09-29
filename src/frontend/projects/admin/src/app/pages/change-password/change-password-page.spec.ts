@@ -128,6 +128,77 @@ describe('ChangePasswordPage', () => {
     expect(items[1].textContent).toContain('at least one digit');
   });
 
+  function input(fixture: ComponentFixture<ChangePasswordPage>, name: string): HTMLInputElement {
+    return (fixture.nativeElement as HTMLElement).querySelector(`input[name="${name}"]`) as HTMLInputElement;
+  }
+
+  async function failWith(fixture: ComponentFixture<ChangePasswordPage>, status: number, body: object) {
+    submitWithToken(fixture).flush(body, { status, statusText: 'Error' });
+    await fixture.whenStable();
+    fixture.detectChanges();
+    await fixture.whenStable();
+  }
+
+  it('links the error only to the field it is about', async () => {
+    const fixture = create();
+    fill(fixture, 'Wrong-1!', 'Brand-New-2!');
+
+    await failWith(fixture, 400, { error: 'invalid_current_password' });
+
+    expect(input(fixture, 'currentPassword').getAttribute('aria-describedby')).toBe('change-error');
+    expect(input(fixture, 'newPassword').getAttribute('aria-describedby')).toBe('change-rules');
+    expect(input(fixture, 'newPassword').getAttribute('aria-invalid')).toBeNull();
+    expect(input(fixture, 'confirmPassword').getAttribute('aria-describedby')).toBeNull();
+  });
+
+  it('describes a rejected new password by both the rules hint and the error', async () => {
+    const fixture = create();
+    fill(fixture, 'Bootstrap-1!', 'short');
+
+    await failWith(fixture, 400, { error: 'new_password_rejected', errors: { newPassword: ['Too short.'] } });
+
+    expect(input(fixture, 'newPassword').getAttribute('aria-describedby')).toBe('change-rules change-error');
+    expect(input(fixture, 'newPassword').getAttribute('aria-invalid')).toBe('true');
+    expect(input(fixture, 'currentPassword').getAttribute('aria-describedby')).toBeNull();
+  });
+
+  it('links the mismatch error to the confirm field and focuses it', async () => {
+    const fixture = create();
+    document.body.appendChild(fixture.nativeElement as HTMLElement);
+    fill(fixture, 'Bootstrap-1!', 'Brand-New-2!', 'Something-Else-3!');
+
+    fixture.componentInstance['submit']();
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    const confirm = input(fixture, 'confirmPassword');
+    expect(confirm.getAttribute('aria-describedby')).toBe('change-error');
+    expect(document.activeElement).toBe(confirm);
+    (fixture.nativeElement as HTMLElement).remove();
+  });
+
+  it('moves focus back to the field in error after a server error', async () => {
+    const fixture = create();
+    document.body.appendChild(fixture.nativeElement as HTMLElement);
+    fill(fixture, 'Wrong-1!', 'Brand-New-2!');
+
+    await failWith(fixture, 400, { error: 'invalid_current_password' });
+
+    expect(document.activeElement).toBe(input(fixture, 'currentPassword'));
+    (fixture.nativeElement as HTMLElement).remove();
+  });
+
+  it('moves focus to the error summary when no single field is at fault', async () => {
+    const fixture = create();
+    document.body.appendChild(fixture.nativeElement as HTMLElement);
+    fill(fixture, 'Bootstrap-1!', 'Brand-New-2!');
+
+    await failWith(fixture, 423, { error: 'locked_out', detail: 'Locked.' });
+
+    expect(document.activeElement?.id).toBe('change-error');
+    (fixture.nativeElement as HTMLElement).remove();
+  });
+
   it('goes back to sign-in when the session has ended', async () => {
     const fixture = create();
     fill(fixture, 'Bootstrap-1!', 'Brand-New-2!');
