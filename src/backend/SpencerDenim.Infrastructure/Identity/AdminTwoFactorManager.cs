@@ -47,6 +47,12 @@ public sealed class AdminTwoFactorManager(
         // Resumed rather than replaced when a key already exists, so reloading the enrolment page does not
         // invalidate a QR code the user has just scanned. Disabling discards the key, so every fresh enrolment
         // after a disable still gets a new one.
+        //
+        // Expected behaviour: creating the key (the first set-up after sign-in or after turning 2FA off) goes
+        // through Identity's ResetAuthenticatorKeyAsync, which also rotates the security stamp. The endpoint
+        // re-issues the caller's cookie with the new stamp, so this session carries on, but every OTHER session
+        // for the account is refused on its next request (401 session_ended). Resuming an existing key changes
+        // nothing.
         var key = await userManager.GetAuthenticatorKeyAsync(user);
         if (string.IsNullOrEmpty(key))
         {

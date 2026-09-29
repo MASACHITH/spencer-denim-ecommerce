@@ -183,8 +183,8 @@ public sealed class AdminTwoFactorEndpointTests(SqlServerDatabaseFixture sqlServ
         Assert.Equal("invalid_two_factor_code", (await ReadJsonAsync(wrong)).GetProperty("error").GetString());
         await AssertAuditAsync(host, email, "TwoFactorFailed");
 
-        // A wrong code leaves the pending sign-in open for another try.
-        using var right = await PostWithTokenAsync(client, LoginTwoFactorUrl, new { code = TotpTestCodes.Current(key), isRecoveryCode = false });
+        // A wrong code leaves the pending sign-in open for another try. (Enrolment used the current step.)
+        using var right = await PostWithTokenAsync(client, LoginTwoFactorUrl, new { code = TotpTestCodes.Next(key), isRecoveryCode = false });
         var rightBody = await ReadJsonAsync(right);
         Assert.Equal(HttpStatusCode.OK, right.StatusCode);
         Assert.Equal(email, rightBody.GetProperty("email").GetString());
@@ -202,6 +202,106 @@ public sealed class AdminTwoFactorEndpointTests(SqlServerDatabaseFixture sqlServ
         // A 2FA account can still change its password: SignInManager's password check takes its 2FA branch here.
         using var change = await PostWithTokenAsync(client, ChangePasswordUrl, new { currentPassword = Password, newPassword = NewPassword });
         Assert.Equal(HttpStatusCode.NoContent, change.StatusCode);
+    }
+
+    /// <summary>
+    /// Tester finding on W1-10: the pending cookie was only a signed pointer, so a copy taken before a successful
+    /// sign-in, replayed from another client within its five minutes with a fresh code, opened a second session
+    /// without the password. The pending sign-in is now single-use on the server.
+    /// </summary>
+    [Fact]
+    public async Task A_copied_pending_cookie_cannot_be_used_after_the_sign_in_it_belonged_to()
+    {
+        await using var host = await StartAsync();
+        var email = UniqueEmail("pending-replay");
+        await CreateStaffUserAsync(host, email);
+        var key = await EnrolThroughApiAsync(host, email);
+
+        // The attacker's copy: a client that manages its cookies by hand, so the pending cookie can be lifted.
+        using var raw = CreateClient(host, handleCookies: false);
+        using var login = await PostJsonAsync(raw, LoginUrl, new { email, password = Password });
+        Assert.True((await ReadJsonAsync(login)).GetProperty("twoFactorRequired").GetBoolean());
+        var pendingCookie = CookiePair(login, "sd_admin_2fa");
+
+        using (var victim = CreateClient(host, handleCookies: false))
+        {
+            using var completed = await PostTwoFactorWithCookieAsync(victim, pendingCookie, TotpTestCodes.Next(key, 1));
+            Assert.Equal(HttpStatusCode.OK, completed.StatusCode);
+        }
+
+        // Same cookie, a different client, a fresh valid code, well inside the cookie's own lifetime.
+        using var replayed = await PostTwoFactorWithCookieAsync(raw, pendingCookie, TotpTestCodes.Next(key, 2));
+        Assert.Equal(HttpStatusCode.Unauthorized, replayed.StatusCode);
+        Assert.Equal("two_factor_session_expired", (await ReadJsonAsync(replayed)).GetProperty("error").GetString());
+        Assert.Null(CookiePairOrNull(replayed, "sd_admin_auth"));
+    }
+
+    [Fact]
+    public async Task A_newer_password_step_ends_an_older_pending_sign_in()
+    {
+        await using var host = await StartAsync();
+        var email = UniqueEmail("pending-superseded");
+        await CreateStaffUserAsync(host, email);
+        var key = await EnrolThroughApiAsync(host, email);
+
+        using var older = await PendingSignInAsync(host, email);
+        using var newer = await PendingSignInAsync(host, email);
+
+        using var olderAttempt = await PostWithTokenAsync(older, LoginTwoFactorUrl, new { code = TotpTestCodes.Next(key), isRecoveryCode = false });
+        Assert.Equal("two_factor_session_expired", (await ReadJsonAsync(olderAttempt)).GetProperty("error").GetString());
+
+        using var newerAttempt = await PostWithTokenAsync(newer, LoginTwoFactorUrl, new { code = TotpTestCodes.Next(key), isRecoveryCode = false });
+        Assert.Equal(HttpStatusCode.OK, newerAttempt.StatusCode);
+    }
+
+    /// <summary>
+    /// Tester finding on W1-10: an authenticator code stays valid for about two minutes (drift window), and Identity
+    /// accepted it any number of times. Each time step is now accepted once per account, across enrolment and
+    /// sign-in. A refused reuse counts as a failed attempt, exactly like a wrong code: the server cannot tell a
+    /// replay by someone who watched the code from a wrong guess, and answering differently would tell an attacker
+    /// the code had been right. The real user only waits for the next code.
+    /// </summary>
+    [Fact]
+    public async Task An_authenticator_code_is_accepted_once_only()
+    {
+        await using var host = await StartAsync();
+        var email = UniqueEmail("code-replay");
+        var userId = await CreateStaffUserAsync(host, email);
+
+        // Enrolment accepts the current code; the same code cannot then sign in.
+        string key;
+        string enrolmentCode;
+        using (var enrolling = await SignedInClientAsync(host, email))
+        {
+            using var setup = await PostWithTokenAsync(enrolling, SetupUrl, null);
+            key = TotpTestCodes.SecretFromUri((await ReadJsonAsync(setup)).GetProperty("authenticatorUri").GetString()!);
+            enrolmentCode = TotpTestCodes.Current(key);
+            using var enable = await PostWithTokenAsync(enrolling, EnableUrl, new { code = enrolmentCode });
+            Assert.Equal(HttpStatusCode.OK, enable.StatusCode);
+        }
+
+        using (var client = await PendingSignInAsync(host, email))
+        {
+            using var reused = await PostWithTokenAsync(client, LoginTwoFactorUrl, new { code = enrolmentCode, isRecoveryCode = false });
+            Assert.Equal(HttpStatusCode.Unauthorized, reused.StatusCode);
+            Assert.Equal("invalid_two_factor_code", (await ReadJsonAsync(reused)).GetProperty("error").GetString());
+            Assert.Equal(1, (await FindUserAsync(host, userId)).AccessFailedCount);
+
+            // A later code signs in.
+            using var fresh = await PostWithTokenAsync(client, LoginTwoFactorUrl, new { code = TotpTestCodes.Next(key, 1), isRecoveryCode = false });
+            Assert.Equal(HttpStatusCode.OK, fresh.StatusCode);
+        }
+
+        // That code is spent too, and so is every earlier step.
+        using var again = await PendingSignInAsync(host, email);
+        foreach (var code in new[] { TotpTestCodes.Next(key, 1), enrolmentCode })
+        {
+            using var response = await PostWithTokenAsync(again, LoginTwoFactorUrl, new { code, isRecoveryCode = false });
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        }
+
+        using var nextStep = await PostWithTokenAsync(again, LoginTwoFactorUrl, new { code = TotpTestCodes.Next(key, 2), isRecoveryCode = false });
+        Assert.Equal(HttpStatusCode.OK, nextStep.StatusCode);
     }
 
     [Fact]
@@ -233,6 +333,14 @@ public sealed class AdminTwoFactorEndpointTests(SqlServerDatabaseFixture sqlServ
 
             var status = await GetJsonAsync(client, StatusUrl);
             Assert.Equal(9, status.GetProperty("recoveryCodesLeft").GetInt32());
+        }
+
+        // Typed without its hyphen, or with a space in its place: still the same code (tester finding on W1-10).
+        foreach (var typed in new[] { recoveryCodes[2].Replace("-", string.Empty, StringComparison.Ordinal), recoveryCodes[3].Replace('-', ' ') })
+        {
+            using var client = await PendingSignInAsync(host, email);
+            using var response = await PostWithTokenAsync(client, LoginTwoFactorUrl, new { code = typed, isRecoveryCode = true });
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         }
 
         await AssertAuditAsync(host, email, "RecoveryCodeUsed", afterJsonContains: "\"recoveryCodesLeft\":9");
@@ -314,7 +422,7 @@ public sealed class AdminTwoFactorEndpointTests(SqlServerDatabaseFixture sqlServ
         }
 
         Assert.Equal(3, (await FindUserAsync(host, userId)).AccessFailedCount);
-        using var right = await PostWithTokenAsync(client, LoginTwoFactorUrl, new { code = TotpTestCodes.Current(key), isRecoveryCode = false });
+        using var right = await PostWithTokenAsync(client, LoginTwoFactorUrl, new { code = TotpTestCodes.Next(key), isRecoveryCode = false });
         Assert.Equal(HttpStatusCode.OK, right.StatusCode);
         Assert.Equal(0, (await FindUserAsync(host, userId)).AccessFailedCount);
     }
@@ -562,8 +670,33 @@ public sealed class AdminTwoFactorEndpointTests(SqlServerDatabaseFixture sqlServ
     }
 
     /// <summary>HTTPS base address so the Secure admin cookies round-trip (see <see cref="AdminAuthEndpointTests"/>).</summary>
-    private static HttpClient CreateClient(WebApplicationFactory<Program> factory) =>
-        factory.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://localhost") });
+    private static HttpClient CreateClient(WebApplicationFactory<Program> factory, bool handleCookies = true) =>
+        factory.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://localhost"), HandleCookies = handleCookies });
+
+    /// <summary>"name=value" of a cookie a response set, for clients that manage cookies by hand.</summary>
+    private static string CookiePair(HttpResponseMessage response, string name) =>
+        CookiePairOrNull(response, name) ?? throw new InvalidOperationException($"The response set no '{name}' cookie.");
+
+    private static string? CookiePairOrNull(HttpResponseMessage response, string name) =>
+        response.Headers.TryGetValues("Set-Cookie", out var values)
+            ? values.Select(v => v.Split(';', 2)[0]).FirstOrDefault(pair => pair.StartsWith(name + "=", StringComparison.Ordinal) && pair.Length > name.Length + 1)
+            : null;
+
+    /// <summary>The second sign-in step from a cookie-less client: a fresh antiforgery pair plus the given pending cookie.</summary>
+    private static async Task<HttpResponseMessage> PostTwoFactorWithCookieAsync(HttpClient client, string pendingCookie, string code)
+    {
+        using var tokenResponse = await client.GetAsync(new Uri(AntiforgeryUrl, UriKind.Relative), Ct);
+        var token = (await ReadJsonAsync(tokenResponse)).GetProperty("token").GetString()!;
+        var antiforgeryCookie = CookiePair(tokenResponse, "sd_admin_xsrf");
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, LoginTwoFactorUrl)
+        {
+            Content = JsonContent.Create(new { code, isRecoveryCode = false }),
+        };
+        request.Headers.Add("X-XSRF-TOKEN", token);
+        request.Headers.Add("Cookie", $"{antiforgeryCookie}; {pendingCookie}");
+        return await client.SendAsync(request, Ct);
+    }
 
     private static async Task<HttpClient> SignedInClientAsync(WebApplicationFactory<Program> factory, string email)
     {

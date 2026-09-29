@@ -94,7 +94,8 @@ internal static class AdminAuthEndpoints
         if (result is AdminLoginResult.TwoFactorRequired challenge)
         {
             // W1-10: no session yet. The pending cookie ties the second step to this user and this stamp.
-            await BeginTwoFactorSignInAsync(httpContext, new PendingTwoFactorSignIn(challenge.UserId, challenge.SecurityStamp));
+            await BeginTwoFactorSignInAsync(
+                httpContext, new PendingTwoFactorSignIn(challenge.UserId, challenge.SecurityStamp, challenge.PendingSignInId));
             return TypedResults.Ok(new AdminTwoFactorChallengeResponse(TwoFactorRequired: true));
         }
 
@@ -129,6 +130,7 @@ internal static class AdminAuthEndpoints
         var command = new CompleteAdminTwoFactorSignInCommand(
             pending.UserId,
             pending.SecurityStamp,
+            pending.SignInId,
             request.Code ?? string.Empty,
             request.IsRecoveryCode,
             httpContext.Connection.RemoteIpAddress?.ToString(),

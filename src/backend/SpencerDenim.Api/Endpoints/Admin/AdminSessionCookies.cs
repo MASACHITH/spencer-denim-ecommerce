@@ -19,8 +19,10 @@ internal static class AdminSessionCookies
     /// <summary>The fields the admin cookie principal is built from.</summary>
     public sealed record SessionIdentity(int UserId, string Email, string FirstName, string? LastName, string SecurityStamp);
 
-    /// <summary>The user and security stamp a pending 2FA sign-in belongs to.</summary>
-    public sealed record PendingTwoFactorSignIn(int UserId, string SecurityStamp);
+    /// <summary>The user and security stamp a pending 2FA sign-in belongs to, and its single-use id.</summary>
+    public sealed record PendingTwoFactorSignIn(int UserId, string SecurityStamp, string SignInId);
+
+    private const string PendingSignInIdClaimType = "sd_pending_sign_in";
 
     public static Task SignInAsync(HttpContext httpContext, SessionIdentity session)
     {
@@ -54,6 +56,7 @@ internal static class AdminSessionCookies
             [
                 new Claim(ClaimTypes.NameIdentifier, pending.UserId.ToString(CultureInfo.InvariantCulture)),
                 new Claim(AdminAuthenticationDefaults.SecurityStampClaimType, pending.SecurityStamp),
+                new Claim(PendingSignInIdClaimType, pending.SignInId),
             ],
             AdminAuthenticationDefaults.TwoFactorPendingScheme);
 
@@ -71,8 +74,11 @@ internal static class AdminSessionCookies
 
         var userIdValue = result.Principal.FindFirstValue(ClaimTypes.NameIdentifier);
         var stamp = result.Principal.FindFirstValue(AdminAuthenticationDefaults.SecurityStampClaimType);
-        return int.TryParse(userIdValue, NumberStyles.Integer, CultureInfo.InvariantCulture, out var userId) && !string.IsNullOrEmpty(stamp)
-            ? new PendingTwoFactorSignIn(userId, stamp)
+        var signInId = result.Principal.FindFirstValue(PendingSignInIdClaimType);
+        return int.TryParse(userIdValue, NumberStyles.Integer, CultureInfo.InvariantCulture, out var userId)
+            && !string.IsNullOrEmpty(stamp)
+            && !string.IsNullOrEmpty(signInId)
+            ? new PendingTwoFactorSignIn(userId, stamp, signInId)
             : null;
     }
 

@@ -44,9 +44,10 @@ public abstract record AdminLoginResult
 
     /// <summary>
     /// The password was right and the account has 2FA on (W1-10). No session is issued: the endpoint stores these
-    /// in a short-lived pending cookie and the user completes sign-in with a code.
+    /// in a short-lived pending cookie and the user completes sign-in with a code. <see cref="PendingSignInId"/> is
+    /// single-use: the server keeps only its hash and spends it when the sign-in completes or the account locks.
     /// </summary>
-    public sealed record TwoFactorRequired(int UserId, string SecurityStamp) : AdminLoginResult;
+    public sealed record TwoFactorRequired(int UserId, string SecurityStamp, string PendingSignInId) : AdminLoginResult;
 
     /// <summary>The authenticator or recovery code was wrong. The pending sign-in stays open for another try.</summary>
     public sealed record InvalidTwoFactorCode : AdminLoginResult;

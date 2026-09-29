@@ -25,6 +25,7 @@ public sealed class AdminLoginCommandHandlerTests
         public Task<AdminAuthenticationOutcome> CompleteTwoFactorSignInAsync(
             int userId,
             string pendingSecurityStamp,
+            string pendingSignInId,
             string code,
             bool isRecoveryCode,
             CancellationToken cancellationToken) =>
@@ -158,7 +159,7 @@ public sealed class AdminLoginCommandHandlerTests
     public async Task A_right_password_on_a_two_factor_account_asks_for_the_code_and_audits_nothing_yet()
     {
         // W1-10: no session and no Login row until the second step; that step writes Login or TwoFactorFailed.
-        var outcome = AdminAuthenticationOutcome.TwoFactorRequired(7, "admin@example.com", "stamp-7");
+        var outcome = AdminAuthenticationOutcome.TwoFactorRequired(7, "admin@example.com", "stamp-7", "pending-7");
         var auditWriter = new RecordingAuditLogWriter();
         var handler = new AdminLoginCommandHandler(new StubAuthenticator(outcome), auditWriter, Clock);
 
@@ -169,6 +170,7 @@ public sealed class AdminLoginCommandHandlerTests
         var challenge = Assert.IsType<AdminLoginResult.TwoFactorRequired>(result);
         Assert.Equal(7, challenge.UserId);
         Assert.Equal("stamp-7", challenge.SecurityStamp);
+        Assert.Equal("pending-7", challenge.PendingSignInId);
         Assert.Empty(auditWriter.Entries);
     }
 

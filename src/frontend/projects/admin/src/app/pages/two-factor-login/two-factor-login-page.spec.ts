@@ -54,6 +54,13 @@ describe('TwoFactorLoginPage', () => {
     };
   }
 
+  it('puts focus in the code field on arrival', async () => {
+    const fixture = create();
+    await fixture.whenStable();
+
+    expect(document.activeElement).toBe(codeInput(fixture));
+  });
+
   it('asks for a one-time code with a labelled numeric field that phones can autofill', () => {
     const input = codeInput(create());
 

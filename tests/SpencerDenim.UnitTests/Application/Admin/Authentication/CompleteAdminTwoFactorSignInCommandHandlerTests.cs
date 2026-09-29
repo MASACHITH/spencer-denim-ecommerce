@@ -17,7 +17,7 @@ public sealed class CompleteAdminTwoFactorSignInCommandHandlerTests
 
     private sealed class StubAuthenticator(AdminAuthenticationOutcome outcome) : IAdminAuthenticator
     {
-        public (int UserId, string Stamp, string Code, bool IsRecovery)? Received { get; private set; }
+        public (int UserId, string Stamp, string SignInId, string Code, bool IsRecovery)? Received { get; private set; }
 
         public Task<AdminAuthenticationOutcome> AuthenticateAsync(string email, string password, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
@@ -25,11 +25,12 @@ public sealed class CompleteAdminTwoFactorSignInCommandHandlerTests
         public Task<AdminAuthenticationOutcome> CompleteTwoFactorSignInAsync(
             int userId,
             string pendingSecurityStamp,
+            string pendingSignInId,
             string code,
             bool isRecoveryCode,
             CancellationToken cancellationToken)
         {
-            Received = (userId, pendingSecurityStamp, code, isRecoveryCode);
+            Received = (userId, pendingSecurityStamp, pendingSignInId, code, isRecoveryCode);
             return Task.FromResult(outcome);
         }
     }
@@ -48,7 +49,7 @@ public sealed class CompleteAdminTwoFactorSignInCommandHandlerTests
     private static readonly IClock Clock = new FixedClock(new DateTimeOffset(2026, 9, 29, 12, 0, 0, TimeSpan.Zero));
 
     private static CompleteAdminTwoFactorSignInCommand Command(bool isRecoveryCode = false) =>
-        new(7, "stamp-7", Code, isRecoveryCode, "203.0.113.9", "test-agent");
+        new(7, "stamp-7", "pending-7", Code, isRecoveryCode, "203.0.113.9", "test-agent");
 
     private static async Task<(AdminLoginResult Result, RecordingAuditLogWriter Audit, StubAuthenticator Authenticator)> RunAsync(
         AdminAuthenticationOutcome outcome, bool isRecoveryCode = false)
@@ -70,7 +71,7 @@ public sealed class CompleteAdminTwoFactorSignInCommandHandlerTests
         var success = Assert.IsType<AdminLoginResult.Success>(result);
         Assert.True(success.TwoFactorEnabled);
         Assert.False(success.TwoFactorEnrolmentRequired);
-        Assert.Equal((7, "stamp-7", Code, false), authenticator.Received);
+        Assert.Equal((7, "stamp-7", "pending-7", Code, false), authenticator.Received);
         var entry = Assert.Single(audit.Entries);
         Assert.Equal(AuditActions.Login, entry.Action);
         Assert.Equal("203.0.113.9", entry.IpAddress);

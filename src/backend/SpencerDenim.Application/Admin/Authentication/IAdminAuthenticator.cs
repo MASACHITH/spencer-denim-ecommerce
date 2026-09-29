@@ -19,12 +19,14 @@ public interface IAdminAuthenticator
     /// <summary>
     /// The second step (W1-10): checks an authenticator code, or redeems a recovery code (each works once), for
     /// the user the password step was passed for. Wrong codes count towards the same time-boxed lockout as wrong
-    /// passwords (doc 08 §3.1 N14).
+    /// passwords (doc 08 §3.1 N14). An authenticator code is accepted once only.
     /// </summary>
     /// <param name="pendingSecurityStamp">The stamp at the password step; a different current stamp ends the attempt.</param>
+    /// <param name="pendingSignInId">The single-use id from the password step; unknown, spent or expired ends the attempt.</param>
     Task<AdminAuthenticationOutcome> CompleteTwoFactorSignInAsync(
         int userId,
         string pendingSecurityStamp,
+        string pendingSignInId,
         string code,
         bool isRecoveryCode,
         CancellationToken cancellationToken);

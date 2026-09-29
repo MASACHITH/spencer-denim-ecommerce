@@ -34,7 +34,7 @@ type PasswordAction = 'regenerate' | 'disable';
 
         @if (status(); as status) {
           <section class="security__section" aria-labelledby="two-factor-title">
-            <h2 class="security__heading" id="two-factor-title">Two-factor authentication</h2>
+            <h2 class="security__heading" id="two-factor-title" tabindex="-1" #twoFactorHeading>Two-factor authentication</h2>
             @if (status.enabled) {
               <p class="security__text">
                 On. You enter a code from your authenticator app each time you sign in.
@@ -125,7 +125,11 @@ type PasswordAction = 'regenerate' | 'disable';
           <p class="security__text" role="status">Loading…</p>
         }
 
-        <p class="security__text" role="status">{{ notice() }}</p>
+        <!--
+          Always in the page (never added together with its text) so screen readers treat it as a live region and
+          announce each message set into it.
+        -->
+        <p class="security__status" role="status">{{ notice() }}</p>
 
         <nav class="security__links" aria-label="Account">
           <a routerLink="/change-password">Change password</a>
@@ -155,6 +159,8 @@ type PasswordAction = 'regenerate' | 'disable';
     .security__heading { font-size: var(--text-h4); font-weight: var(--weight-semibold); }
     .security__text { margin: 0; font-size: var(--text-small); }
     .security__text:empty { display: none; }
+    .security__heading:focus { outline: none; }
+    .security__status { margin: 0; font-size: var(--text-small); min-height: 1lh; }
     .security__muted { color: var(--color-text-muted); font-size: var(--text-small); }
     .security__warning { margin: 0; font-size: var(--text-small); color: var(--color-warning); }
     .security__choice { display: grid; gap: var(--space-0-5); margin: 0; padding: 0; border: none; }
@@ -218,6 +224,8 @@ export class SecurityPage implements OnInit {
 
   private readonly passwordInput = viewChild<ElementRef<HTMLInputElement>>('passwordInput');
   private readonly errorSummary = viewChild<ElementRef<HTMLElement>>('errorSummary');
+  private readonly twoFactorHeading = viewChild<ElementRef<HTMLElement>>('twoFactorHeading');
+  private readonly codesPanel = viewChild(RecoveryCodesPanel);
 
   protected password = '';
   protected readonly status = signal<TwoFactorStatus | null>(null);
@@ -251,21 +259,28 @@ export class SecurityPage implements OnInit {
 
     if (this.action() === 'disable') {
       this.twoFactorApi.disable(this.password).subscribe({
-        next: () => this.succeeded([], 'Two-factor authentication is off.'),
+        // The form disappears with 2FA off, so focus goes to the section heading, which now reads "Off".
+        next: () => this.succeeded([], 'Two-factor authentication is off.', () => this.twoFactorHeading()?.nativeElement.focus()),
         error: (error: TwoFactorError) => this.failed(error),
       });
       return;
     }
 
     this.twoFactorApi.regenerateRecoveryCodes(this.password).subscribe({
-      next: (codes) => this.succeeded(codes, 'New recovery codes are ready. Your old codes no longer work.'),
+      next: (codes) =>
+        this.succeeded(codes, 'New recovery codes are ready. Your old codes no longer work.', () => this.codesPanel()?.focus()),
       error: (error: TwoFactorError) => this.failed(error),
     });
   }
 
-  private refresh(): void {
+  private refresh(afterLoad?: () => void): void {
     this.twoFactorApi.status().subscribe({
-      next: (status) => this.status.set(status),
+      next: (status) => {
+        this.status.set(status);
+        if (afterLoad) {
+          afterNextRender(afterLoad, { injector: this.injector });
+        }
+      },
       error: (error: TwoFactorError) => {
         if (error.kind === 'session_expired') {
           void this.router.navigateByUrl(loginPath);
@@ -276,13 +291,14 @@ export class SecurityPage implements OnInit {
     });
   }
 
-  private succeeded(codes: readonly string[], notice: string): void {
+  /** Shows the result, announces it through the live region, and moves focus to it once the page has updated. */
+  private succeeded(codes: readonly string[], notice: string, moveFocus: () => void): void {
     this.submitting.set(false);
     this.password = '';
     this.action.set('regenerate');
     this.newCodes.set(codes);
     this.notice.set(notice);
-    this.refresh();
+    this.refresh(moveFocus);
   }
 
   /** Focus goes to the password when it was wrong, otherwise to the error itself (lockout, server failure). */

@@ -15,6 +15,13 @@ internal static class TotpTestCodes
 
     public static string Current(string base32Key) => At(base32Key, DateTimeOffset.UtcNow);
 
+    /// <summary>
+    /// The code for a time step <paramref name="stepsAhead"/> steps from now: still inside the server's drift window,
+    /// and later than a step already accepted. Each authenticator step is accepted once only, so a test that signs
+    /// in again after enrolling (which used the current step) needs a later one, like a real user a few seconds on.
+    /// </summary>
+    public static string Next(string base32Key, int stepsAhead = 1) => At(base32Key, DateTimeOffset.UtcNow.AddSeconds(30 * stepsAhead));
+
     public static string At(string base32Key, DateTimeOffset instant)
     {
         var step = instant.ToUnixTimeSeconds() / 30;

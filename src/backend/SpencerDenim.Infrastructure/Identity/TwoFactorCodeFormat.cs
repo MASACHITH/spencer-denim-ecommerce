@@ -17,11 +17,18 @@ internal static class TwoFactorCodeFormat
         new([.. code.Where(c => !char.IsWhiteSpace(c) && c != '-')]);
 
     /// <summary>
-    /// Recovery codes are issued in upper case with one hyphen (<c>XXXXX-XXXXX</c>); spaces are dropped and case is
-    /// ignored, the hyphen is kept because it is part of the stored code.
+    /// Recovery codes are issued in upper case as two groups of five (<c>XXXXX-XXXXX</c>), and Identity compares
+    /// the stored string exactly. People type them without the hyphen, with a space instead, or in lower case, so
+    /// all whitespace and hyphens are dropped, case is ignored, and a ten-character result is put back into the
+    /// stored shape. Anything else is passed on as typed (upper-cased) and simply does not match.
     /// </summary>
-    public static string NormaliseRecoveryCode(string code) =>
-        new string([.. code.Where(c => !char.IsWhiteSpace(c))]).ToUpperInvariant();
+    public static string NormaliseRecoveryCode(string code)
+    {
+        var compact = new string([.. code.Where(c => !char.IsWhiteSpace(c) && c != '-')]).ToUpperInvariant();
+        return compact.Length == RecoveryCodeLength ? $"{compact[..5]}-{compact[5..]}" : compact;
+    }
+
+    private const int RecoveryCodeLength = 10;
 
     /// <summary>The key in lower-case groups of four, the way authenticator apps ask for it to be typed.</summary>
     public static string FormatSharedKey(string unformattedKey)

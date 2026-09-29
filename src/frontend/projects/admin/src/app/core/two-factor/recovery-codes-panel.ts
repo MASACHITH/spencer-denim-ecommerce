@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, DOCUMENT, inject, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DOCUMENT, ElementRef, inject, input, signal, viewChild } from '@angular/core';
 
 /**
  * W1-10: shows a freshly issued set of recovery codes, once, with copy and download. The codes live only in this
@@ -9,7 +9,7 @@ import { ChangeDetectionStrategy, Component, DOCUMENT, inject, input, signal } f
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <section class="codes" aria-labelledby="codes-title">
-      <h2 class="codes__title" id="codes-title">Your recovery codes</h2>
+      <h2 class="codes__title" id="codes-title" tabindex="-1" #heading>Your recovery codes</h2>
       <p class="codes__lead">
         Each code signs you in once if you lose your phone. Store them somewhere safe, such as a password manager.
         They will not be shown again.
@@ -30,6 +30,7 @@ import { ChangeDetectionStrategy, Component, DOCUMENT, inject, input, signal } f
     :host { display: block; }
     .codes { display: grid; gap: var(--space-1-5); }
     .codes__title { font-size: var(--text-h4); font-weight: var(--weight-semibold); }
+    .codes__title:focus { outline: none; }
     .codes__lead,
     .codes__status { color: var(--color-text-muted); font-size: var(--text-small); }
     .codes__status:empty { display: none; }
@@ -72,6 +73,13 @@ export class RecoveryCodesPanel {
   readonly account = input('');
 
   protected readonly status = signal('');
+
+  private readonly heading = viewChild.required<ElementRef<HTMLElement>>('heading');
+
+  /** Moves keyboard and screen-reader focus to the panel's heading, e.g. right after new codes arrive. */
+  focus(): void {
+    this.heading().nativeElement.focus();
+  }
 
   protected copy(): void {
     const clipboard = this.document.defaultView?.navigator.clipboard;

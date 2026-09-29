@@ -179,6 +179,12 @@ export class TwoFactorLoginPage {
   protected readonly codeInError = signal(false);
   protected readonly expired = signal(false);
 
+  constructor() {
+    // Arriving from the password step, the code is the only thing to do: put the cursor there (tester finding),
+    // instead of leaving focus on the page body.
+    this.focusAfterRender(() => this.codeInput());
+  }
+
   protected toggleMode(): void {
     this.useRecoveryCode.update((value) => !value);
     this.code = '';

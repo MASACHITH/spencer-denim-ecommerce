@@ -38,6 +38,10 @@ public enum AdminAuthenticationStatus
 /// <param name="TwoFactorEnabled">Whether the account has 2FA on (true on every second-step success).</param>
 /// <param name="UsedRecoveryCode">Second step only: the code was a recovery code, now spent.</param>
 /// <param name="RecoveryCodesLeft">Second step only: recovery codes still unused after this sign-in.</param>
+/// <param name="PendingSignInId">
+/// On <see cref="AdminAuthenticationStatus.TwoFactorRequired"/>: the random, single-use id of this pending sign-in.
+/// The second step must present it; it is spent on success or lockout, so a copied pending cookie is useless after.
+/// </param>
 public sealed record AdminAuthenticationOutcome(
     AdminAuthenticationStatus Status,
     int? UserId,
@@ -52,7 +56,8 @@ public sealed record AdminAuthenticationOutcome(
     bool MustChangePassword,
     bool TwoFactorEnabled = false,
     bool UsedRecoveryCode = false,
-    int RecoveryCodesLeft = 0)
+    int RecoveryCodesLeft = 0,
+    string? PendingSignInId = null)
 {
     public static AdminAuthenticationOutcome InvalidCredentials(int? userId, string? email) =>
         new(AdminAuthenticationStatus.InvalidCredentials, userId, email, null, null, false, [], null, false, null, false);
@@ -65,8 +70,8 @@ public sealed record AdminAuthenticationOutcome(
         bool usedRecoveryCode = false) =>
         new(AdminAuthenticationStatus.LockedOut, userId, email, null, null, false, [], lockoutEndUtc, wasNewlyLockedOut, null, false, UsedRecoveryCode: usedRecoveryCode);
 
-    public static AdminAuthenticationOutcome TwoFactorRequired(int userId, string email, string securityStamp) =>
-        new(AdminAuthenticationStatus.TwoFactorRequired, userId, email, null, null, false, [], null, false, securityStamp, false, TwoFactorEnabled: true);
+    public static AdminAuthenticationOutcome TwoFactorRequired(int userId, string email, string securityStamp, string pendingSignInId) =>
+        new(AdminAuthenticationStatus.TwoFactorRequired, userId, email, null, null, false, [], null, false, securityStamp, false, TwoFactorEnabled: true, PendingSignInId: pendingSignInId);
 
     public static AdminAuthenticationOutcome InvalidTwoFactorCode(int userId, string? email, bool usedRecoveryCode) =>
         new(AdminAuthenticationStatus.InvalidTwoFactorCode, userId, email, null, null, false, [], null, false, null, false, TwoFactorEnabled: true, UsedRecoveryCode: usedRecoveryCode);

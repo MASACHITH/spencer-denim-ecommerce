@@ -17,8 +17,12 @@ public sealed class TwoFactorCodeFormatTests
     [InlineData("ABCDE-FGHIJ", "ABCDE-FGHIJ")]
     [InlineData(" abcde-fghij ", "ABCDE-FGHIJ")]
     [InlineData("ABCDE - FGHIJ", "ABCDE-FGHIJ")]
+    [InlineData("W293PDBX9F", "W293P-DBX9F")]
+    [InlineData("w293p dbx9f", "W293P-DBX9F")]
+    [InlineData("W29-3PD-BX9F", "W293P-DBX9F")]
+    [InlineData("W293PDBX9", "W293PDBX9")]
     [InlineData("  ", "")]
-    public void Recovery_codes_lose_spaces_and_case_but_keep_the_hyphen(string typed, string expected) =>
+    public void Recovery_codes_are_put_back_into_the_stored_shape_however_they_are_typed(string typed, string expected) =>
         Assert.Equal(expected, TwoFactorCodeFormat.NormaliseRecoveryCode(typed));
 
     [Fact]

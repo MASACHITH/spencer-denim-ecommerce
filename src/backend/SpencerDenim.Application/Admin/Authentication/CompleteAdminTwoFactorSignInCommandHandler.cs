@@ -25,6 +25,7 @@ public sealed class CompleteAdminTwoFactorSignInCommandHandler(IAdminAuthenticat
         var outcome = await authenticator.CompleteTwoFactorSignInAsync(
             command.UserId,
             command.PendingSecurityStamp,
+            command.PendingSignInId,
             command.Code,
             command.IsRecoveryCode,
             cancellationToken);

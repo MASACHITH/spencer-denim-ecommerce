@@ -72,19 +72,33 @@ describe('SecurityPage', () => {
 
     const root = fixture.nativeElement as HTMLElement;
     expect(root.querySelector('.codes__code')?.textContent).toContain('AAAAA-BBBBB');
-    expect(root.textContent).toContain('old codes no longer work');
+    expect(root.querySelector('[role="status"].security__status')?.textContent).toContain('old codes no longer work');
     expect(fixture.componentInstance['password']).toBe('');
+    expect(document.activeElement).toBe(root.querySelector('#codes-title'));
   });
 
-  it('turns it off with the password', () => {
+  it('keeps its live region in the page before any message, so the first message is announced', () => {
+    const live = (create(status()).nativeElement as HTMLElement).querySelector('[role="status"].security__status');
+
+    expect(live).not.toBeNull();
+    expect(live?.textContent?.trim()).toBe('');
+  });
+
+  it('turns it off with the password, announces it and moves focus to the section heading', async () => {
     const fixture = create(status());
     fixture.componentInstance['chooseAction']('disable');
+    const live = (fixture.nativeElement as HTMLElement).querySelector('[role="status"].security__status');
 
     post(fixture, TwoFactorApi.disableUrl, 'Current-1!').flush(null, { status: 204, statusText: 'No Content' });
     controller.expectOne(TwoFactorApi.statusUrl).flush(status({ enabled: false, canDisable: false, recoveryCodesLeft: 0 }));
     fixture.detectChanges();
+    await fixture.whenStable();
 
-    expect((fixture.nativeElement as HTMLElement).textContent).toContain('Two-factor authentication is off.');
+    const root = fixture.nativeElement as HTMLElement;
+    // The same live-region element, now with the message in it.
+    expect(root.querySelector('[role="status"].security__status')).toBe(live);
+    expect(live?.textContent).toContain('Two-factor authentication is off.');
+    expect(document.activeElement).toBe(root.querySelector('#two-factor-title'));
   });
 
   it('marks a wrong password invalid, links the error and focuses the field', async () => {

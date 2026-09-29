@@ -59,7 +59,10 @@ public static class IdentityRegistration
             .AddRoles<AppRole>()
             .AddEntityFrameworkStores<AppDbContext>()
             .AddSignInManager()
-            .AddDefaultTokenProviders();
+            .AddDefaultTokenProviders()
+            // W1-10: registered after the defaults so it replaces Identity's authenticator provider under the same
+            // name, and every authenticator check (sign-in and enrolment) refuses a code that was already used.
+            .AddTokenProvider<ReplayProtectedAuthenticatorTokenProvider>(TokenOptions.DefaultAuthenticatorProvider);
 
         services.AddOptions<IdentityOptions>()
             .Configure<IOptions<AdminSecurityOptions>>((identityOptions, adminSecurity) =>
