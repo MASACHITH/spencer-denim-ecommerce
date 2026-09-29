@@ -15,7 +15,7 @@ const progressData = {
     endDate: "2026-10-15"
   },
 
-  lastUpdated: "2026-09-24",
+  lastUpdated: "2026-09-29",
 
   milestones: [
     { week: "Week 0", title: "Setup & design", start: "2026-09-15", end: "2026-09-18" },
@@ -96,8 +96,8 @@ const progressData = {
     {
       name: "Admin Panel",
       features: [
-        { name: "Admin login with user roles & permissions", status: "in-progress", progress: 45 },
-        { name: "Product management (images & video)", status: "in-progress", progress: 35 },
+        { name: "Admin login with user roles & permissions", status: "in-progress", progress: 60 },
+        { name: "Product management (images & video)", status: "in-progress", progress: 50 },
         { name: "Category management", status: "in-progress", progress: 35 },
         { name: "Inventory", status: "in-progress", progress: 25 },
         { name: "Order management & payment approval", status: "planned", progress: 0 },
@@ -124,6 +124,10 @@ const progressData = {
 
   // Newest first.
   updates: [
+    {
+      date: "2026-09-29",
+      text: "Admin sign-in security tightened: when a staff account is switched off it loses access immediately rather than staying signed in, and every change an administrator makes is now recorded against their name. The photo and video library is being built and tested — that is the part that lets you upload your own product pictures, the hero video and the campaign banners, and it is what the remaining picture-led home page sections are waiting for."
+    },
     {
       date: "2026-09-24",
       text: "The home page and the product page are built. The home page now shows Shop by Department, New Arrivals, Trending, Sale, why-shop-with-us and newsletter sign-up, and every part of it is stored so you can edit it yourself later. The product page has the photo gallery with zoom and full screen, colour and size choice with prices per size, product details and related items. The picture-led blocks (hero video, campaign banner, activewear, social wall) are built and switched off until your photographs and video are uploaded."
