@@ -1,15 +1,21 @@
 using Microsoft.AspNetCore.Identity;
+using SpencerDenim.Domain.Common;
 using SpencerDenim.Domain.Identity;
 
 namespace SpencerDenim.Infrastructure.Identity;
 
 /// <summary>
-/// <c>identity.Users</c> (doc 08 §3.1, D7): one Identity store for customers and staff, distinguished by
+/// <c>identity.Users</c> (doc 08 §3.1, D7) [A]: one Identity store for customers and staff, distinguished by
 /// <see cref="UserType"/>. This class is a persistence-layer construct (it must extend
 /// <see cref="IdentityUser{TKey}"/>, which needs the Identity packages), which is why it lives in Infrastructure
 /// rather than Domain — the framework-free RBAC rules live in <c>SpencerDenim.Domain.Identity</c> instead.
+/// <see cref="IAuditable"/> so <c>UpdatedAtUtc</c> / <c>*ByUserId</c> are actually stamped (issue #18: they
+/// weren't, because this class implemented neither <see cref="IAuditable"/> nor
+/// <see cref="SpencerDenim.Domain.Common.ISoftDeletable"/>, so <c>AuditAndSoftDeleteInterceptor</c> skipped it
+/// entirely even though doc 08 tags this table <b>[A]</b>). Not <c>ISoftDeletable</c>: doc 08 §1.6 lists Users
+/// under "never deleted" with its own anonymisation path instead, not the generic soft-delete one.
 /// </summary>
-public sealed class AppUser : IdentityUser<int>
+public sealed class AppUser : IdentityUser<int>, IAuditable
 {
     public UserType UserType { get; set; }
 
