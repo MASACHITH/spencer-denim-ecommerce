@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using SpencerDenim.Application.Abstractions.Messaging;
 using SpencerDenim.Application.Abstractions.Results;
+using SpencerDenim.Application.Admin.Account;
 using SpencerDenim.Application.Admin.Authentication;
 using SpencerDenim.Application.Admin.CurrentUser;
 using SpencerDenim.Application.Catalog.Contracts;
@@ -32,6 +33,9 @@ public static class DependencyInjection
         services.AddScoped<IQueryHandler<PingQuery, PingResponse>, PingQueryHandler>();
         services.AddScoped<ICommandHandler<AdminLoginCommand, AdminLoginResult>, AdminLoginCommandHandler>();
         services.AddScoped<IQueryHandler<WhoAmIQuery, WhoAmIResponse?>, WhoAmIQueryHandler>();
+        services.AddScoped<
+            ICommandHandler<ChangeAdminPasswordCommand, ChangeAdminPasswordResult>,
+            ChangeAdminPasswordCommandHandler>();
 
         // Catalogue read side (W1-02). The ports they depend on are registered by Infrastructure.
         services.AddScoped<

@@ -10,6 +10,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using SpencerDenim.Application.Abstractions.Auditing;
+using SpencerDenim.Application.Admin.Account;
 using SpencerDenim.Application.Admin.Authentication;
 using SpencerDenim.Application.Admin.CurrentUser;
 using SpencerDenim.Domain.Identity;
@@ -108,15 +109,24 @@ public static class IdentityRegistration
                 cookieOptions.Events.OnValidatePrincipal = async context => await ValidateAdminPrincipalAsync(context);
             });
 
-        services.AddAuthorizationBuilder();
+        // Every admin policy also carries the account-state gates (forced password change today, 2FA enrolment
+        // with W1-10): the default policy behind a bare RequireAuthorization() as well as each permission policy.
+        services.AddAuthorizationBuilder()
+            .SetDefaultPolicy(new AuthorizationPolicyBuilder()
+                .RequireAuthenticatedUser()
+                .RequireAdminAccountGates()
+                .Build());
 
-        // Scoped, not singleton: it depends on IEffectivePermissionsProvider, which reads AppDbContext (scoped).
+        // Scoped, not singleton: they depend on ports that read AppDbContext (scoped).
         services.AddScoped<IAuthorizationHandler, PermissionAuthorizationHandler>();
+        services.AddScoped<IAuthorizationHandler, PasswordChangeCompletedHandler>();
         foreach (var permission in PermissionCatalog.All)
         {
             var policyName = PermissionPolicy.NameFor(permission);
             services.AddAuthorization(options =>
-                options.AddPolicy(policyName, policy => policy.Requirements.Add(new PermissionRequirement(permission))));
+                options.AddPolicy(policyName, policy => policy
+                    .AddRequirements(new PermissionRequirement(permission))
+                    .RequireAdminAccountGates()));
         }
 
         services.AddAntiforgery(options =>
@@ -134,6 +144,7 @@ public static class IdentityRegistration
                 options.Cookie.SecurePolicy = ResolveSecurePolicy(adminSecurity.Value));
 
         services.AddScoped<IAdminAuthenticator, AdminAuthenticator>();
+        services.AddScoped<IAdminPasswordChanger, AdminPasswordChanger>();
         services.AddScoped<IAdminUserLookup, AdminUserLookup>();
         services.AddScoped<IEffectivePermissionsProvider, EffectivePermissionsProvider>();
         services.AddScoped<IAuditLogWriter, AuditLogWriter>();

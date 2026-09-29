@@ -2,8 +2,9 @@ namespace SpencerDenim.Domain.Auditing;
 
 /// <summary>
 /// The fixed <c>ops.AuditLogs.Action</c> vocabulary (doc 08 §3.8, <c>varchar(30)</c>). Only <see cref="Login"/>,
-/// <see cref="LoginFailed"/> and <see cref="Lockout"/> are written by this slice; the rest are declared now so
-/// later features reuse these exact values instead of inventing new ones.
+/// <see cref="LoginFailed"/>, <see cref="Lockout"/>, <see cref="PasswordChanged"/> and <see cref="PasswordChangeFailed"/>
+/// are written so far; the rest are declared now so later features reuse these exact values instead of inventing
+/// new ones.
 /// </summary>
 public static class AuditActions
 {
@@ -31,4 +32,14 @@ public static class AuditActions
     public const string RoleUnassigned = "RoleUnassigned";
     public const string BreakGlass = "BreakGlass";
     public const string AlertAcknowledged = "AlertAcknowledged";
+
+    /// <summary>
+    /// A staff user changed their own password (issue #17, doc 11 P14 step 3 — the forced first-sign-in change
+    /// included). Not in doc 08 §3.8's list yet: <see cref="AdminPasswordReset"/> there is the Super Admin
+    /// resetting someone else's password, which is a different event with a different actor.
+    /// </summary>
+    public const string PasswordChanged = "PasswordChanged";
+
+    /// <summary>A self-service password change refused because the current password was wrong (issue #17).</summary>
+    public const string PasswordChangeFailed = "PasswordChangeFailed";
 }

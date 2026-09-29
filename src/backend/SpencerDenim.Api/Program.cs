@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using SpencerDenim.Api.Authorization;
 using SpencerDenim.Api.Endpoints;
 using SpencerDenim.Api.Endpoints.Admin;
 using SpencerDenim.Api.Endpoints.Catalog;
@@ -27,6 +28,7 @@ builder.Services.AddNewsletterSignupThrottle();
 
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure();
+builder.Services.AddAdminAuthorizationResponses();
 
 var app = builder.Build();
 

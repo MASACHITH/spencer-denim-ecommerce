@@ -37,10 +37,35 @@ describe('LoginPage', () => {
       lastName: null,
       grantsAllPermissions: true,
       permissions: [],
+      mustChangePassword: false,
     });
     await fixture.whenStable();
 
     expect(navigateSpy).toHaveBeenCalledWith('/');
+  });
+
+  it('goes to the change-password page instead when the account must change its password', async () => {
+    const fixture = TestBed.createComponent(LoginPage);
+    const navigateSpy = vi.spyOn(router, 'navigateByUrl').mockImplementation(() => Promise.resolve(true));
+    fixture.detectChanges();
+
+    fixture.componentInstance['email'] = 'admin@example.com';
+    fixture.componentInstance['password'] = 'bootstrap-password';
+    fixture.componentInstance['submit']();
+
+    controller.expectOne(AdminAuthApi.loginUrl).flush({
+      userId: 1,
+      email: 'admin@example.com',
+      firstName: 'Ada',
+      lastName: null,
+      grantsAllPermissions: true,
+      permissions: [],
+      mustChangePassword: true,
+    });
+    await fixture.whenStable();
+
+    expect(navigateSpy).toHaveBeenCalledWith('/change-password');
+    expect(navigateSpy).not.toHaveBeenCalledWith('/');
   });
 
   it('shows the server error message and does not navigate on failure', async () => {

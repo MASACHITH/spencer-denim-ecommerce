@@ -34,7 +34,8 @@ public sealed class AdminLoginCommandHandler(IAdminAuthenticator authenticator, 
                     outcome.LastName,
                     outcome.GrantsAllPermissions,
                     outcome.Permissions,
-                    outcome.SecurityStamp!);
+                    outcome.SecurityStamp!,
+                    outcome.MustChangePassword);
 
             case AdminAuthenticationStatus.LockedOut:
                 await WriteAuditAsync(AuditActions.LoginFailed, outcome, command, beforeJson: null, cancellationToken);

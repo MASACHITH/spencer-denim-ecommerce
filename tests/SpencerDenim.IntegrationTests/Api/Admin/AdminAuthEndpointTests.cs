@@ -50,6 +50,7 @@ public sealed class AdminAuthEndpointTests(SqlServerDatabaseFixture sqlServer)
         Assert.Equal(HttpStatusCode.OK, loginResponse.StatusCode);
         Assert.Equal(email, loginBody.GetProperty("email").GetString());
         Assert.False(loginBody.GetProperty("grantsAllPermissions").GetBoolean());
+        Assert.False(loginBody.GetProperty("mustChangePassword").GetBoolean());
 
         using var whoAmIResponse = await client.GetAsync(new Uri(WhoAmIUrl, UriKind.Relative), TestContext.Current.CancellationToken);
         var whoAmIBody = await whoAmIResponse.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
@@ -325,13 +326,17 @@ public sealed class AdminAuthEndpointTests(SqlServerDatabaseFixture sqlServer)
             await using var firstScope = firstFactory.Services.CreateAsyncScope();
             var firstUserManager = firstScope.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
             var holdersAfterFirstBoot = await firstUserManager.GetUsersInRoleAsync(AdminSeedHostedService.SuperAdminRoleName);
-            Assert.Single(holdersAfterFirstBoot, u => string.Equals(u.NormalizedEmail, normalizedEmail, StringComparison.Ordinal));
+            var seeded = Assert.Single(holdersAfterFirstBoot, u => string.Equals(u.NormalizedEmail, normalizedEmail, StringComparison.Ordinal));
+
+            // Issue #17 / doc 08 §9: the bootstrap password from .env must be replaced on first sign-in.
+            Assert.True(seeded.MustChangePassword);
 
             using var client = CreateClient(firstFactory);
             using var loginResponse = await client.PostAsJsonAsync(LoginUrl, new { email, password }, TestContext.Current.CancellationToken);
             var loginBody = await loginResponse.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
             Assert.Equal(HttpStatusCode.OK, loginResponse.StatusCode);
             Assert.True(loginBody.GetProperty("grantsAllPermissions").GetBoolean());
+            Assert.True(loginBody.GetProperty("mustChangePassword").GetBoolean());
         }
 
         // A second host start with the same configuration must not create a second Super Admin.

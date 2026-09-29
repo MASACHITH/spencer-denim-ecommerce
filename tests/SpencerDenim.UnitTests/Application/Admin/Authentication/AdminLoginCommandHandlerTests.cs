@@ -39,7 +39,7 @@ public sealed class AdminLoginCommandHandlerTests
     [Fact]
     public async Task Successful_login_returns_success_result_and_writes_one_login_audit_row()
     {
-        var outcome = AdminAuthenticationOutcome.Succeeded(1, "admin@example.com", "Ada", "Lovelace", true, [], "stamp-1");
+        var outcome = AdminAuthenticationOutcome.Succeeded(1, "admin@example.com", "Ada", "Lovelace", true, [], "stamp-1", mustChangePassword: false);
         var authenticator = new StubAuthenticator(outcome);
         var auditWriter = new RecordingAuditLogWriter();
         var handler = new AdminLoginCommandHandler(authenticator, auditWriter, Clock);
@@ -129,6 +129,21 @@ public sealed class AdminLoginCommandHandlerTests
 
         var entry = Assert.Single(auditWriter.Entries);
         Assert.Equal(AuditActions.LoginFailed, entry.Action);
+    }
+
+    [Fact]
+    public async Task Successful_login_passes_a_pending_forced_password_change_through_to_the_result()
+    {
+        // Issue #17: sign-in itself still succeeds, but the endpoint has to tell the client to change the password.
+        var outcome = AdminAuthenticationOutcome.Succeeded(1, "admin@example.com", "Ada", null, true, [], "stamp-1", mustChangePassword: true);
+        var handler = new AdminLoginCommandHandler(new StubAuthenticator(outcome), new RecordingAuditLogWriter(), Clock);
+
+        var result = await handler.HandleAsync(
+            new AdminLoginCommand("admin@example.com", "bootstrap-password", null, null),
+            TestContext.Current.CancellationToken);
+
+        var success = Assert.IsType<AdminLoginResult.Success>(result);
+        Assert.True(success.MustChangePassword);
     }
 
     [Fact]

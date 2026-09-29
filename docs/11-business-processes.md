@@ -1519,7 +1519,9 @@ sequenceDiagram
 - **Lockout is reported differently from the customer flow** (W1-01): staff get HTTP **423 Locked** with the lockout end time, because the admin app has a named audience who should be told exactly when they can try again and whether to call a Super Admin. The storefront deliberately stays vague (P11).
 - **Read vs change on staff accounts:** `Users.View` gives read-only access to the staff list and a staff user's detail; **`Users.Manage`** is required for every change (create, edit, assign roles, deactivate, reset password or 2FA) and is still subject to the subset rule.
 
-> **Not built yet (testers, please do not mark these verified).** Step 3's **two-factor authentication** and the **forced password change** are specified here but arrive in a later slice — tracked as issues **#16** (staff 2FA) and **#17** (forced password change on first sign-in). W1-01 delivered password sign-in, the lockout, the audit trail and permission loading only.
+> **Forced password change: built (issue #17).** A staff account with `MustChangePassword` set (the seeded first Super Admin always is) can sign in, but the API answers every admin endpoint except who-am-I, change-password and logout with **403** `password_change_required` until the password is changed at `/admin/change-password`. Changing it checks the current password with the same lockout as sign-in, applies the password rules, clears the flag, and ends every other session for the account within a minute. It is audited as `PasswordChanged` / `PasswordChangeFailed`.
+>
+> **Not built yet (testers, please do not mark this verified).** Step 3's **two-factor authentication** for Super Admins arrives with **W1-10**. W1-01 delivered password sign-in, the lockout, the audit trail and permission loading.
 
 **Status changes.** Staff user: Invited → Active ↔ Deactivated; Active ↔ Locked (temporary). Alert: Open → Acknowledged.
 
