@@ -28,6 +28,7 @@ public sealed class WhoAmIQueryHandler(IAdminUserLookup userLookup, IEffectivePe
             user.FirstName,
             user.LastName,
             permissions.GrantsAllPermissions,
-            permissions.Permissions);
+            permissions.Permissions,
+            user.MustChangePassword);
     }
 }

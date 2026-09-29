@@ -17,4 +17,18 @@ public static class EndpointAuthorizationExtensions
 
         return builder.RequireAuthorization(PermissionPolicy.NameFor(permission));
     }
+
+    /// <summary>
+    /// Lets a signed-in staff user reach this endpoint while their account still has a forced password change
+    /// pending (issue #17, doc 11 P14 step 3). Every other authorized admin endpoint answers 403
+    /// <c>password_change_required</c> until the password is changed. Only for the endpoints needed to get
+    /// through that change: who-am-I, change-password and logout.
+    /// </summary>
+    public static TBuilder AllowWhilePasswordChangeRequired<TBuilder>(this TBuilder builder)
+        where TBuilder : IEndpointConventionBuilder
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+
+        return builder.WithMetadata(AllowWhilePasswordChangeRequiredMetadata.Instance);
+    }
 }
