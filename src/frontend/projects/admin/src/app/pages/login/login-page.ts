@@ -3,8 +3,12 @@ import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 
 import { AdminAuthApi, type AdminLoginError } from '../../core/auth/admin-auth-api';
+import { changePasswordPath } from '../../core/auth/auth-guards';
 
-/** ADM-01 admin sign-in. Redirects to the dashboard on success; shows a neutral error otherwise (lesson L1). */
+/**
+ * ADM-01 admin sign-in. Redirects to the dashboard on success — or to the change-password page when the account
+ * must change its password first (issue #17) — and shows a neutral error otherwise (lesson L1).
+ */
 @Component({
   selector: 'sda-login-page',
   imports: [FormsModule],
@@ -130,9 +134,9 @@ export class LoginPage {
     this.errorMessage.set(null);
 
     this.authApi.login(this.email, this.password).subscribe({
-      next: () => {
+      next: (session) => {
         this.submitting.set(false);
-        void this.router.navigateByUrl('/');
+        void this.router.navigateByUrl(session.mustChangePassword ? changePasswordPath : '/');
       },
       error: (error: AdminLoginError) => {
         this.submitting.set(false);
