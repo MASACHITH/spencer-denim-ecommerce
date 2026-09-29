@@ -1,0 +1,159 @@
+# Spencer Denim application stack (W0-15, docs/15-deployment-runbook.md).
+#
+# Never used on its own: always together with exactly one environment file (compose.production.yml,
+# compose.staging.yml, or compose.local.yml on a developer machine), which fixes the published port, the edge
+# subnet and the gateway's address, the ASP.NET Core environment and the resource limits. Secrets and the image tag
+# come from the server's config/app.env (template: .env.example).
+#
+#   docker compose -p sd-production -f compose.yml -f compose.production.yml --env-file ../config/app.env up -d --wait
+#
+# (scripts/deploy.sh does exactly this.) Services:
+#
+#   web         nginx gateway, the ONLY published port (127.0.0.1:<port>, behind the host's nginx + certbot)
+#   storefront  Angular SSR server
+#   api         .NET API
+#   migrator    one-shot EF Core migrations bundle; the API starts only after it exits 0
+#
+# SQL Server is NOT in this stack. It runs as its own stack under /opt/server/database/<env>/ (deploy/database/),
+# so stopping, rebuilding or removing the application can never touch the database files. This stack joins that
+# stack's network (sd-<env>-db), which is internal: nothing on it can reach the internet, and SQL Server
+# publishes no port at all.
+#
+# Networks and trust (the W0-15 forwarded-headers launch blocker):
+#   edge  fixed subnet per environment. The gateway has a fixed address on it, and the API trusts X-Forwarded-For
+#         from that one address only (ForwardedHeaders__KnownProxies). The storefront is on edge too, so it can
+#         reach the API, but its address is not trusted.
+#   db    external, internal-only: api + migrator + SQL Server.
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+x-hardening: &hardening
+  restart: unless-stopped
+  read_only: true
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  logging: *default-logging
+
+services:
+  migrator:
+    image: ${SD_IMAGE_REPOSITORY:-spencer-denim}/migrator:${SD_IMAGE_TAG:?set SD_IMAGE_TAG}
+    build:
+      context: ../..
+      dockerfile: deploy/docker/backend.Dockerfile
+      target: migrator
+    restart: "no"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging: *default-logging
+    tmpfs:
+      - /tmp
+    environment:
+      # The migrator login (db_owner, doc 08 §10.4). The API never gets this one.
+      ConnectionStrings__Database: ${SD_MIGRATOR_DB_CONNECTION:?set SD_MIGRATOR_DB_CONNECTION}
+      Database__CompatibilityLevel: ${SD_DB_COMPATIBILITY_LEVEL:-170}
+      Logging__ConsoleFormat: json
+      # The bundle is a single self-contained file; it unpacks its native parts here.
+      DOTNET_BUNDLE_EXTRACT_BASE_DIR: /tmp
+    networks:
+      - db
+
+  api:
+    <<: *hardening
+    image: ${SD_IMAGE_REPOSITORY:-spencer-denim}/api:${SD_IMAGE_TAG:?set SD_IMAGE_TAG}
+    build:
+      context: ../..
+      dockerfile: deploy/docker/backend.Dockerfile
+      target: api
+    depends_on:
+      migrator:
+        condition: service_completed_successfully
+    tmpfs:
+      - /tmp
+    volumes:
+      # Data Protection key ring: admin sign-ins and antiforgery tokens survive a restart (docs/15 §6).
+      - ${SD_DATA_DIR:-../data}/dataprotection-keys:/home/app/.aspnet/DataProtection-Keys
+    environment:
+      ConnectionStrings__Database: ${SD_APP_DB_CONNECTION:?set SD_APP_DB_CONNECTION}
+      Database__CompatibilityLevel: ${SD_DB_COMPATIBILITY_LEVEL:-170}
+      Logging__ConsoleFormat: json
+      # ForwardedHeaders__KnownProxies (the gateway's fixed address) is set by the environment file. Never set
+      # ASPNETCORE_FORWARDEDHEADERS_ENABLED: that framework switch means "trust everybody".
+      AdminSecurity__RequireSecureCookies: "true"
+      # Reference data (departments, categories, sizes...) is seeded idempotently on every start. The demo
+      # catalogue is switched on by the staging/local environment files only.
+      Seed__RunOnStartup: "true"
+      Seed__IncludeDemoCatalogue: "false"
+      Seed__Admin__Enabled: ${SD_SEED_ADMIN_ENABLED:-false}
+      Seed__Admin__Email: ${SD_SEED_ADMIN_EMAIL:-}
+      Seed__Admin__Password: ${SD_SEED_ADMIN_PASSWORD:-}
+      Catalog__MediaBaseUrl: /media
+    healthcheck:
+      # Readiness, not liveness: the gateway starts only once the API can reach SQL Server.
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/health/ready || exit 1"]
+      interval: 15s
+      timeout: 6s
+      start_period: 30s
+      retries: 5
+    networks:
+      edge: {}
+      db: {}
+
+  storefront:
+    <<: *hardening
+    image: ${SD_IMAGE_REPOSITORY:-spencer-denim}/storefront:${SD_IMAGE_TAG:?set SD_IMAGE_TAG}
+    build:
+      context: ../..
+      dockerfile: deploy/docker/frontend.Dockerfile
+      target: storefront
+    tmpfs:
+      - /tmp
+    environment:
+      PORT: "4000"
+      # Server-side rendering calls the API directly, not through the gateway.
+      API_INTERNAL_URL: http://api:8080
+      # The public host name(s) the SSR engine will render for (comma-separated). Anything else is refused.
+      NG_ALLOWED_HOSTS: ${SD_PUBLIC_HOSTS:?set SD_PUBLIC_HOSTS}
+    networks:
+      edge: {}
+
+  web:
+    <<: *hardening
+    image: ${SD_IMAGE_REPOSITORY:-spencer-denim}/web:${SD_IMAGE_TAG:?set SD_IMAGE_TAG}
+    build:
+      context: ../..
+      dockerfile: deploy/docker/frontend.Dockerfile
+      target: web
+    depends_on:
+      api:
+        condition: service_healthy
+      storefront:
+        condition: service_healthy
+    tmpfs:
+      - /tmp
+    volumes:
+      - ${SD_DATA_DIR:-../data}/media-public:/srv/media:ro
+    environment:
+      SD_API_UPSTREAM: api:8080
+      SD_STOREFRONT_UPSTREAM: storefront:4000
+      # SD_REAL_IP_FROM (the only peer whose X-Forwarded-For the gateway believes) is set by the environment file.
+      SD_MAX_BODY_SIZE: 60m
+    # The published port (127.0.0.1 only) and the fixed address are set by the environment file.
+    networks:
+      edge: {}
+
+networks:
+  edge:
+    driver: bridge
+    # Subnet, dynamic range and gateway address: set by the environment file.
+  db:
+    # Created by the database stack (deploy/database/compose.yml); its name is set by the environment file.
+    external: true

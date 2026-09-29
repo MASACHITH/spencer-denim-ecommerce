@@ -1,0 +1,61 @@
+# Spencer Denim application stack: staging (W0-15, docs/15-deployment-runbook.md §3).
+#
+# Everything that differs between environments and is not a secret. Used with compose.yml:
+#
+#   docker compose -p sd-staging -f compose.yml -f compose.staging.yml --env-file ../config/app.env up -d --wait
+#
+# Addresses (see docs/15 §3 for the full table):
+#   published port   127.0.0.1:38081   (the host's nginx proxies https://<staging host>/ to it)
+#   edge subnet      10.251.1.0/24    host side 10.251.1.1, gateway 10.251.1.10, dynamic 10.251.1.128/25
+#   database network sd-staging-db       (created by the staging database stack)
+#
+# The gateway's address appears twice below (its fixed address and the API's trusted proxy) and the host-side
+# address twice (the network's gateway and the gateway container's trusted peer). The YAML anchors keep each pair
+# identical; change the values here, in x-sd-addresses, and nowhere else.
+
+# The compose project name: container, network and volume names all start with it.
+name: sd-staging
+
+x-sd-addresses:
+  edge-subnet: &edge_subnet 10.251.1.0/24
+  edge-dynamic-range: &edge_dynamic_range 10.251.1.128/25
+  edge-host-ip: &edge_host_ip 10.251.1.1
+  gateway-ip: &gateway_ip 10.251.1.10
+
+services:
+  migrator:
+    environment:
+      ASPNETCORE_ENVIRONMENT: Staging
+    mem_limit: 384m
+
+  api:
+    environment:
+      ASPNETCORE_ENVIRONMENT: Staging
+      ForwardedHeaders__KnownProxies: *gateway_ip
+      # Staging shows the 45-product sample catalogue (never in production).
+      Seed__IncludeDemoCatalogue: "true"
+    mem_limit: 512m
+    cpus: 0.5
+
+  storefront:
+    mem_limit: 384m
+
+  web:
+    environment:
+      SD_REAL_IP_FROM: *edge_host_ip
+    mem_limit: 96m
+    ports:
+      - "127.0.0.1:38081:8080"
+    networks:
+      edge:
+        ipv4_address: *gateway_ip
+
+networks:
+  edge:
+    ipam:
+      config:
+        - subnet: *edge_subnet
+          ip_range: *edge_dynamic_range
+          gateway: *edge_host_ip
+  db:
+    name: sd-staging-db

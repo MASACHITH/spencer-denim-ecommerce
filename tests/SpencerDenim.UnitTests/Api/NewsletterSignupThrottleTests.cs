@@ -24,8 +24,8 @@ public sealed class NewsletterSignupThrottleTests
 
     /// <summary>
     /// The point of partitioning: one caller exhausting its budget must not refuse anybody else.
-    /// Behind a reverse proxy every visitor shares one partition, which is why the ceiling is
-    /// sized for that case and why W0-15's forwarded-headers work is a launch blocker.
+    /// It only holds in a deployment because the gateway's forwarded headers are trusted (W0-15),
+    /// so each visitor is a partition of their own rather than all of them sharing the gateway's.
     /// </summary>
     [Fact]
     public void One_caller_spending_its_whole_budget_does_not_refuse_another()
@@ -56,6 +56,25 @@ public sealed class NewsletterSignupThrottleTests
         Assert.True(throttle.Window > TimeSpan.Zero);
     }
 
+    /// <summary>
+    /// The ceiling is one address's, not the whole site's (W0-15 tightened it from 600 once visitors
+    /// stopped sharing the reverse proxy's address). A person, a household or a carrier-grade NAT
+    /// gets a couple of dozen signups a window at most; a script gets no more than that either.
+    /// </summary>
+    [Fact]
+    public void One_address_gets_a_couple_of_dozen_signups_a_window_at_most()
+    {
+        using var throttle = new NewsletterSignupThrottle(NullLogger<NewsletterSignupThrottle>.Instance);
+
+        var spent = 0;
+        while (throttle.TryAcquire("198.51.100.3") && spent < 10_000)
+        {
+            spent++;
+        }
+
+        Assert.InRange(spent, 10, 25);
+    }
+
     /// <summary>A caller with no address at all is still throttled, in a bucket of its own.</summary>
     [Theory]
     [InlineData(null)]
@@ -70,9 +89,9 @@ public sealed class NewsletterSignupThrottleTests
 
     /// <summary>
     /// The signal that the deployment cannot see its visitors. A loopback or private address here
-    /// means every caller is arriving through a proxy or a container network and the whole site is
-    /// sharing one partition — which is exactly the state W0-15 has to fix, and which would
-    /// otherwise only be noticed when a launch-day signup was refused.
+    /// means the caller arrived through a proxy or a container network whose forwarded headers the
+    /// API is not trusting — in a deployment, a missing or wrong <c>ForwardedHeaders__KnownNetworks</c>
+    /// — which would otherwise only be noticed when a genuine signup was refused.
     /// </summary>
     [Theory]
     [InlineData("127.0.0.1")]
@@ -92,7 +111,7 @@ public sealed class NewsletterSignupThrottleTests
 
         var warning = Assert.Single(logger.Warnings);
         Assert.Contains("forwarded headers", warning, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("W0-15", warning, StringComparison.Ordinal);
+        Assert.Contains("ForwardedHeaders__KnownNetworks", warning, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -113,9 +132,8 @@ public sealed class NewsletterSignupThrottleTests
     ///
     /// <para>
     /// The once-only flag used to be spent first, so the very first call burned it whatever address
-    /// it came from — one signup from a real visitor, a monitor or an uptime probe, arriving in any
-    /// window before Caddy fronts the API, and the shared-bucket warning never fired again for the
-    /// life of the process. The three tests above each use one kind of address on a fresh instance,
+    /// it came from — one signup from a real visitor, a monitor or an uptime probe, and the
+    /// shared-bucket warning never fired again for the life of the process. The three tests above each use one kind of address on a fresh instance,
     /// so not one of them could see it: the bug lives in the *sequence*.
     /// </para>
     /// </summary>

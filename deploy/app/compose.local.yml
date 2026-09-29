@@ -1,0 +1,52 @@
+# Spencer Denim application stack: local smoke test on a developer machine (W0-15, docs/15 §9).
+#
+# Runs the production images exactly as a server would, with a few developer conveniences. One env file drives
+# both this and the local database stack (deploy/database/compose.yml); keep it OUTSIDE the repository (or name it
+# .env.local, which .gitignore covers):
+#
+#   docker compose -f ../database/compose.yml --env-file <file> up -d --wait
+#   docker compose -f compose.yml -f compose.local.yml --env-file <file> up -d --wait
+#
+# The file needs the database template's variables plus the application template's, and SD_LOCAL_PROJECT,
+# SD_LOCAL_HTTP_PORT and SD_LOCAL_EDGE_PREFIX chosen so that several people or sessions on one machine never
+# collide (docs/14 "Scratch scripts and ports are shared too"). docs/15 §9 has a worked example.
+
+name: ${SD_LOCAL_PROJECT:-sd-local}
+
+x-sd-addresses:
+  edge-subnet: &edge_subnet ${SD_LOCAL_EDGE_PREFIX:-10.251.9}.0/24
+  edge-dynamic-range: &edge_dynamic_range ${SD_LOCAL_EDGE_PREFIX:-10.251.9}.128/25
+  edge-host-ip: &edge_host_ip ${SD_LOCAL_EDGE_PREFIX:-10.251.9}.1
+  gateway-ip: &gateway_ip ${SD_LOCAL_EDGE_PREFIX:-10.251.9}.10
+
+services:
+  migrator:
+    environment:
+      ASPNETCORE_ENVIRONMENT: Staging
+
+  api:
+    environment:
+      ASPNETCORE_ENVIRONMENT: Staging
+      ForwardedHeaders__KnownProxies: *gateway_ip
+      Seed__IncludeDemoCatalogue: "true"
+      # Plain http://127.0.0.1 has no TLS anywhere in the chain, so secure-only cookies would never be sent.
+      AdminSecurity__RequireSecureCookies: "false"
+
+  web:
+    environment:
+      SD_REAL_IP_FROM: *edge_host_ip
+    ports:
+      - "127.0.0.1:${SD_LOCAL_HTTP_PORT:-38090}:8080"
+    networks:
+      edge:
+        ipv4_address: *gateway_ip
+
+networks:
+  edge:
+    ipam:
+      config:
+        - subnet: *edge_subnet
+          ip_range: *edge_dynamic_range
+          gateway: *edge_host_ip
+  db:
+    name: sd-${SD_ENV:-local}-db
