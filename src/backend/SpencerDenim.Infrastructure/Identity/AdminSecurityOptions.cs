@@ -20,6 +20,15 @@ public sealed class AdminSecurityOptions
     public int CookieLifetimeMinutes { get; set; } = 60;
 
     /// <summary>
+    /// How often an already-signed-in request re-checks the staff account's <c>IsActive</c> flag and
+    /// <c>SecurityStamp</c> against the database (doc 08 §3.1 DB10, doc 11 P14 "sessions end within 1 minute").
+    /// Between checks, a request is accepted on the cookie alone, same as any other claims-based auth. Kept
+    /// configurable (rather than a literal 60 in <see cref="IdentityRegistration"/>) so an integration test can
+    /// shrink it and prove the rejection without waiting out a real minute.
+    /// </summary>
+    public int SecurityStampValidationIntervalSeconds { get; set; } = 60;
+
+    /// <summary>
     /// Whether the admin auth cookie and the antiforgery cookie require HTTPS
     /// (<see cref="Microsoft.AspNetCore.Http.CookieSecurePolicy.Always"/> vs <c>SameAsRequest</c>).
     /// True (secure-by-default) everywhere: doc 03 §4's deployment topology always terminates TLS at Caddy, and

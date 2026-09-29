@@ -23,13 +23,14 @@ public sealed record AdminAuthenticationOutcome(
     bool GrantsAllPermissions,
     IReadOnlyCollection<string> Permissions,
     DateTimeOffset? LockoutEndUtc,
-    bool WasNewlyLockedOut)
+    bool WasNewlyLockedOut,
+    string? SecurityStamp)
 {
     public static AdminAuthenticationOutcome InvalidCredentials(int? userId, string? email) =>
-        new(AdminAuthenticationStatus.InvalidCredentials, userId, email, null, null, false, [], null, false);
+        new(AdminAuthenticationStatus.InvalidCredentials, userId, email, null, null, false, [], null, false, null);
 
     public static AdminAuthenticationOutcome LockedOut(int userId, string email, DateTimeOffset lockoutEndUtc, bool wasNewlyLockedOut) =>
-        new(AdminAuthenticationStatus.LockedOut, userId, email, null, null, false, [], lockoutEndUtc, wasNewlyLockedOut);
+        new(AdminAuthenticationStatus.LockedOut, userId, email, null, null, false, [], lockoutEndUtc, wasNewlyLockedOut, null);
 
     public static AdminAuthenticationOutcome Succeeded(
         int userId,
@@ -37,6 +38,7 @@ public sealed record AdminAuthenticationOutcome(
         string firstName,
         string? lastName,
         bool grantsAllPermissions,
-        IReadOnlyCollection<string> permissions) =>
-        new(AdminAuthenticationStatus.Succeeded, userId, email, firstName, lastName, grantsAllPermissions, permissions, null, false);
+        IReadOnlyCollection<string> permissions,
+        string securityStamp) =>
+        new(AdminAuthenticationStatus.Succeeded, userId, email, firstName, lastName, grantsAllPermissions, permissions, null, false, securityStamp);
 }

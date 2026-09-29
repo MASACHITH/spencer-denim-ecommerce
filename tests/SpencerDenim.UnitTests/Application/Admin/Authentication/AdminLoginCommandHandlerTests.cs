@@ -39,7 +39,7 @@ public sealed class AdminLoginCommandHandlerTests
     [Fact]
     public async Task Successful_login_returns_success_result_and_writes_one_login_audit_row()
     {
-        var outcome = AdminAuthenticationOutcome.Succeeded(1, "admin@example.com", "Ada", "Lovelace", true, []);
+        var outcome = AdminAuthenticationOutcome.Succeeded(1, "admin@example.com", "Ada", "Lovelace", true, [], "stamp-1");
         var authenticator = new StubAuthenticator(outcome);
         var auditWriter = new RecordingAuditLogWriter();
         var handler = new AdminLoginCommandHandler(authenticator, auditWriter, Clock);
