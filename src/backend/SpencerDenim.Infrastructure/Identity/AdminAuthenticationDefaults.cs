@@ -1,3 +1,5 @@
+using Microsoft.AspNetCore.Identity;
+
 namespace SpencerDenim.Infrastructure.Identity;
 
 /// <summary>
@@ -20,4 +22,13 @@ public static class AdminAuthenticationDefaults
     /// it — ends the session promptly instead of waiting out the sliding cookie lifetime (doc 08 §3.1 DB10).
     /// </summary>
     public const string SecurityStampClaimType = "sd_security_stamp";
+
+    /// <summary>
+    /// W1-10: the short-lived cookie scheme that holds "password accepted, code still needed" between the two
+    /// sign-in steps of a 2FA account. It is Identity's own two-factor user-id scheme name; this cookie is never
+    /// an admin session (the default scheme and every admin policy use <see cref="Scheme"/> only).
+    /// </summary>
+    public static readonly string TwoFactorPendingScheme = IdentityConstants.TwoFactorUserIdScheme;
+
+    public const string TwoFactorPendingCookieName = "sd_admin_2fa";
 }

@@ -42,6 +42,9 @@ public static class IdentityRegistration
             .Validate(o => o.LockoutMinutes > 0, "AdminSecurity:LockoutMinutes must be greater than zero.")
             .Validate(o => o.CookieLifetimeMinutes > 0, "AdminSecurity:CookieLifetimeMinutes must be greater than zero.")
             .Validate(o => o.SecurityStampValidationIntervalSeconds > 0, "AdminSecurity:SecurityStampValidationIntervalSeconds must be greater than zero.")
+            .Validate(o => o.TwoFactorPendingSignInMinutes > 0, "AdminSecurity:TwoFactorPendingSignInMinutes must be greater than zero.")
+            .Validate(o => !string.IsNullOrWhiteSpace(o.TwoFactorIssuer) && !o.TwoFactorIssuer.Contains(':', StringComparison.Ordinal), "AdminSecurity:TwoFactorIssuer is required and must not contain ':'.")
+            .Validate(o => o.TwoFactorRecoveryCodeCount is >= 5 and <= 20, "AdminSecurity:TwoFactorRecoveryCodeCount must be between 5 and 20.")
             .ValidateOnStart();
 
         services.AddOptions<SeedAdminOptions>()
@@ -70,7 +73,27 @@ public static class IdentityRegistration
             });
 
         services.AddAuthentication(AdminAuthenticationDefaults.Scheme)
-            .AddCookie(AdminAuthenticationDefaults.Scheme);
+            .AddCookie(AdminAuthenticationDefaults.Scheme)
+            .AddCookie(AdminAuthenticationDefaults.TwoFactorPendingScheme);
+
+        // W1-10: "password accepted, code still needed". Short-lived and never sliding, scoped to the auth
+        // endpoints, and never an admin session: nothing authorizes against this scheme; only the second sign-in
+        // step reads it, and it is deleted as soon as that step succeeds or the account locks.
+        services.AddOptions<CookieAuthenticationOptions>(AdminAuthenticationDefaults.TwoFactorPendingScheme)
+            .Configure<IOptions<AdminSecurityOptions>>((cookieOptions, adminSecurity) =>
+            {
+                cookieOptions.Cookie.Name = AdminAuthenticationDefaults.TwoFactorPendingCookieName;
+                cookieOptions.Cookie.Path = "/api/admin/auth";
+                cookieOptions.Cookie.HttpOnly = true;
+                cookieOptions.Cookie.SecurePolicy = ResolveSecurePolicy(adminSecurity.Value);
+                cookieOptions.Cookie.SameSite = SameSiteMode.Strict;
+                cookieOptions.SlidingExpiration = false;
+                cookieOptions.ExpireTimeSpan = TimeSpan.FromMinutes(adminSecurity.Value.TwoFactorPendingSignInMinutes);
+            });
+
+        // Identity's "remember this browser for 2FA" scheme is deliberately not registered: SignInManager then
+        // treats no browser as remembered, so staff give a code at every sign-in and a right password alone never
+        // resets the failed-attempt count of a 2FA account.
 
         services.AddOptions<CookieAuthenticationOptions>(AdminAuthenticationDefaults.Scheme)
             .Configure<IOptions<AdminSecurityOptions>>((cookieOptions, adminSecurity) =>
@@ -109,8 +132,9 @@ public static class IdentityRegistration
                 cookieOptions.Events.OnValidatePrincipal = async context => await ValidateAdminPrincipalAsync(context);
             });
 
-        // Every admin policy also carries the account-state gates (forced password change today, 2FA enrolment
-        // with W1-10): the default policy behind a bare RequireAuthorization() as well as each permission policy.
+        // Every admin policy also carries the account-state gates (forced password change, then 2FA enrolment for
+        // GrantsAll holders): the default policy behind a bare RequireAuthorization() as well as each permission
+        // policy.
         services.AddAuthorizationBuilder()
             .SetDefaultPolicy(new AuthorizationPolicyBuilder()
                 .RequireAuthenticatedUser()
@@ -120,6 +144,7 @@ public static class IdentityRegistration
         // Scoped, not singleton: they depend on ports that read AppDbContext (scoped).
         services.AddScoped<IAuthorizationHandler, PermissionAuthorizationHandler>();
         services.AddScoped<IAuthorizationHandler, PasswordChangeCompletedHandler>();
+        services.AddScoped<IAuthorizationHandler, TwoFactorEnrolmentCompletedHandler>();
         foreach (var permission in PermissionCatalog.All)
         {
             var policyName = PermissionPolicy.NameFor(permission);
@@ -145,6 +170,7 @@ public static class IdentityRegistration
 
         services.AddScoped<IAdminAuthenticator, AdminAuthenticator>();
         services.AddScoped<IAdminPasswordChanger, AdminPasswordChanger>();
+        services.AddScoped<IAdminTwoFactorManager, AdminTwoFactorManager>();
         services.AddScoped<IAdminUserLookup, AdminUserLookup>();
         services.AddScoped<IEffectivePermissionsProvider, EffectivePermissionsProvider>();
         services.AddScoped<IAuditLogWriter, AuditLogWriter>();

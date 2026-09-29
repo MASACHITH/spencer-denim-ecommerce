@@ -37,6 +37,10 @@ public sealed class AdminLoginCommandHandler(IAdminAuthenticator authenticator, 
                     outcome.SecurityStamp!,
                     outcome.MustChangePassword);
 
+            // Nothing is audited yet: the attempt is only complete (Login, or TwoFactorFailed) once the code arrives.
+            case AdminAuthenticationStatus.TwoFactorRequired:
+                return new AdminLoginResult.TwoFactorRequired(outcome.UserId!.Value, outcome.SecurityStamp!);
+
             case AdminAuthenticationStatus.LockedOut:
                 await WriteAuditAsync(AuditActions.LoginFailed, outcome, command, beforeJson: null, cancellationToken);
                 if (outcome.WasNewlyLockedOut)

@@ -1,4 +1,5 @@
 using SpencerDenim.Application.Abstractions.Messaging;
+using SpencerDenim.Domain.Identity;
 
 namespace SpencerDenim.Application.Admin.CurrentUser;
 
@@ -29,6 +30,8 @@ public sealed class WhoAmIQueryHandler(IAdminUserLookup userLookup, IEffectivePe
             user.LastName,
             permissions.GrantsAllPermissions,
             permissions.Permissions,
-            user.MustChangePassword);
+            user.MustChangePassword,
+            user.TwoFactorEnabled,
+            TwoFactorPolicy.IsRequired(permissions.GrantsAllPermissions) && !user.TwoFactorEnabled);
     }
 }
