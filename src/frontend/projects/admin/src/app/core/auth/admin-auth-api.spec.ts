@@ -40,6 +40,37 @@ describe('AdminAuthApi', () => {
     expect(result).toEqual(session);
   });
 
+  it('sends the second-step code with a fresh antiforgery token (W1-10)', () => {
+    let result: unknown;
+
+    api.completeTwoFactorLogin('123 456', false).subscribe((value) => (result = value));
+
+    controller.expectOne(AdminAuthApi.antiforgeryUrl).flush({ token: 'the-token' });
+    const request = controller.expectOne(AdminAuthApi.loginTwoFactorUrl);
+    expect(request.request.method).toBe('POST');
+    expect(request.request.headers.get('X-XSRF-TOKEN')).toBe('the-token');
+    expect(request.request.body).toEqual({ code: '123 456', isRecoveryCode: false });
+    request.flush({ userId: 1 });
+
+    expect(result).toEqual({ userId: 1 });
+  });
+
+  it.each([
+    [401, 'invalid_two_factor_code', 'invalid_two_factor_code'],
+    [401, 'two_factor_session_expired', 'two_factor_session_expired'],
+    [423, 'locked_out', 'locked_out'],
+    [500, undefined, 'unknown'],
+  ])('maps a %s %s second-step reply to %s', (status, code, kind) => {
+    let error: { kind: string } | undefined;
+
+    api.completeTwoFactorLogin('000000', true).subscribe({ error: (e) => (error = e) });
+
+    controller.expectOne(AdminAuthApi.antiforgeryUrl).flush({ token: 't' });
+    controller.expectOne(AdminAuthApi.loginTwoFactorUrl).flush({ error: code }, { status, statusText: 'x' });
+
+    expect(error?.kind).toBe(kind);
+  });
+
   it('maps a 401 response to an invalid_credentials error with the server message', () => {
     let error: { kind: string; message: string } | undefined;
 

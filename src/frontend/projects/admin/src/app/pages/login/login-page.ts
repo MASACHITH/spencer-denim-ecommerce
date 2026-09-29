@@ -3,11 +3,13 @@ import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 
 import { AdminAuthApi, type AdminLoginError } from '../../core/auth/admin-auth-api';
-import { changePasswordPath } from '../../core/auth/auth-guards';
+import { pendingAccountStep, twoFactorLoginPath } from '../../core/auth/auth-guards';
 
 /**
- * ADM-01 admin sign-in. Redirects to the dashboard on success — or to the change-password page when the account
- * must change its password first (issue #17) — and shows a neutral error otherwise (lesson L1).
+ * ADM-01 admin sign-in. Redirects to the dashboard on success — or first to the second sign-in step when the
+ * account uses two-factor authentication (W1-10), to the change-password page when the account must change its
+ * password (issue #17), or to 2FA enrolment for a Super Admin without it — and shows a neutral error otherwise
+ * (lesson L1).
  */
 @Component({
   selector: 'sda-login-page',
@@ -134,9 +136,14 @@ export class LoginPage {
     this.errorMessage.set(null);
 
     this.authApi.login(this.email, this.password).subscribe({
-      next: (session) => {
+      next: (reply) => {
         this.submitting.set(false);
-        void this.router.navigateByUrl(session.mustChangePassword ? changePasswordPath : '/');
+        if (reply.twoFactorRequired) {
+          void this.router.navigateByUrl(twoFactorLoginPath);
+          return;
+        }
+
+        void this.router.navigateByUrl(pendingAccountStep(reply) ?? '/');
       },
       error: (error: AdminLoginError) => {
         this.submitting.set(false);
