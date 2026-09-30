@@ -3,7 +3,12 @@ import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 
 import { AdminAuthApi, type AdminLoginError } from '../../core/auth/admin-auth-api';
-import { changePasswordPath, returnUrlParam, sanitizeReturnUrl } from '../../core/auth/auth-guards';
+import {
+  pendingAccountStep,
+  returnUrlParam,
+  sanitizeReturnUrl,
+  twoFactorLoginPath,
+} from '../../core/auth/auth-guards';
 
 /**
  * ADM-01 admin sign-in. Redirects to the dashboard on success — or to the change-password page when the account
@@ -143,22 +148,31 @@ export class LoginPage {
       next: (reply) => {
         this.submitting.set(false);
 
+        // A two-factor challenge is not a session yet, so there is no pending step to read from it.
+        // The code is entered on its own page; carry returnUrl so the visitor still lands where they meant to.
+        if ('twoFactorRequired' in reply && reply.twoFactorRequired) {
+          void this.router.navigateByUrl(this.withReturnUrl(twoFactorLoginPath, returnUrl));
+          return;
+        }
+
         // Built as a string (rather than passed as a UrlTree) so a plain sign-in with no returnUrl still
         // navigates to the bare path, exactly as it did before returnUrl handling existed.
-        const target = session.mustChangePassword
-          ? this.router.serializeUrl(
-              this.router.createUrlTree(
-                [changePasswordPath],
-                returnUrl ? { queryParams: { [returnUrlParam]: returnUrl } } : undefined,
-              ),
-            )
-          : (returnUrl ?? '/');
-        void this.router.navigateByUrl(target);
+        const step = pendingAccountStep(reply);
+        void this.router.navigateByUrl(step ? this.withReturnUrl(step, returnUrl) : (returnUrl ?? '/'));
       },
       error: (error: AdminLoginError) => {
         this.submitting.set(false);
         this.errorMessage.set(error.message);
       },
     });
+  }
+
+  /** A path with the visitor's intended destination attached, or the bare path when there is none. */
+  private withReturnUrl(path: string, returnUrl: string | null): string {
+    return returnUrl
+      ? this.router.serializeUrl(
+          this.router.createUrlTree([path], { queryParams: { [returnUrlParam]: returnUrl } }),
+        )
+      : path;
   }
 }

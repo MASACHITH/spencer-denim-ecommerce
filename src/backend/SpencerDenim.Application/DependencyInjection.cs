@@ -36,6 +36,9 @@ public static class DependencyInjection
         services.AddScoped<ICommandHandler<AdminLoginCommand, AdminLoginResult>, AdminLoginCommandHandler>();
         services.AddScoped<IQueryHandler<WhoAmIQuery, WhoAmIResponse?>, WhoAmIQueryHandler>();
         services.AddScoped<
+            IQueryHandler<GetAuditLogsQuery, PagedResult<AuditLogEntryDto>>,
+            GetAuditLogsQueryHandler>();
+        services.AddScoped<
             ICommandHandler<ChangeAdminPasswordCommand, ChangeAdminPasswordResult>,
             ChangeAdminPasswordCommandHandler>();
 

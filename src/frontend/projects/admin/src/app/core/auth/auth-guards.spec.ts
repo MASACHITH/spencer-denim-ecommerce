@@ -6,7 +6,12 @@ import { Router, provideRouter } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 
 import { AdminAuthApi, type AdminSession } from './admin-auth-api';
-import { adminSessionGuard, sanitizeReturnUrl, signedInGuard } from './auth-guards';
+import {
+  adminSessionGuard,
+  sanitizeReturnUrl,
+  signedInGuard,
+  twoFactorSetupGuard,
+} from './auth-guards';
 
 @Component({ template: 'dashboard' })
 class DashboardStub {}
@@ -107,13 +112,15 @@ describe('admin auth guards', () => {
   it('twoFactorSetupGuard sends a user who must still change their password to change-password first', async () => {
     await navigate('/setup-guarded', (request) => request.flush(session(true, true)));
 
-    expect(router.url).toBe('/change-password');
+    // Carries returnUrl like every other redirect here (W1-11): finish the password change and you land
+    // back on setup, rather than on the dashboard with enrolment still pending.
+    expect(router.url).toBe('/change-password?returnUrl=%2Fsetup-guarded');
   });
 
   it('twoFactorSetupGuard keeps a signed-out visitor out', async () => {
     await navigate('/setup-guarded', (request) => request.flush(null, { status: 401, statusText: 'Unauthorized' }));
 
-    expect(router.url).toBe('/login');
+    expect(router.url).toBe('/login?returnUrl=%2Fsetup-guarded');
   });
 
   it('sends a signed-out visitor to the sign-in page', async () => {
