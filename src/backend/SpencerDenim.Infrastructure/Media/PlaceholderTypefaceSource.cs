@@ -166,7 +166,13 @@ public sealed class PlaceholderTypefaceSource : IPlaceholderLabelFont, IDisposab
         }
 
         var fallback = SKTypeface.Default;
-        return Measures(fallback) ? (fallback, fallback, "Skia's default") : (null, null, null);
+        if (Measures(fallback))
+        {
+            return (fallback, fallback, "Skia's default");
+        }
+
+        fallback.Dispose();
+        return (null, null, null);
     }
 
     private static bool Measures(SKTypeface? typeface)
