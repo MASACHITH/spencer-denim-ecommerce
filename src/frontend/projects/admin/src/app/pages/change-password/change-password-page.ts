@@ -11,10 +11,10 @@ import {
   viewChild,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { Router } from '@angular/router';
+import { ActivatedRoute, Router } from '@angular/router';
 
 import { AdminAuthApi, type ChangePasswordError } from '../../core/auth/admin-auth-api';
-import { loginPath } from '../../core/auth/auth-guards';
+import { loginPath, returnUrlParam, sanitizeReturnUrl } from '../../core/auth/auth-guards';
 
 type PasswordField = 'currentPassword' | 'newPassword' | 'confirmPassword';
 
@@ -210,7 +210,11 @@ const fieldInError: Partial<Record<ChangePasswordError['kind'] | 'mismatch', Pas
 export class ChangePasswordPage implements OnInit {
   private readonly authApi = inject(AdminAuthApi);
   private readonly router = inject(Router);
+  private readonly route = inject(ActivatedRoute);
   private readonly injector = inject(Injector);
+
+  /** Where the login page's `returnUrl` says the visitor was headed before this forced change (W1-11, #8). */
+  private readonly returnUrl = sanitizeReturnUrl(this.route.snapshot.queryParamMap.get(returnUrlParam));
 
   private readonly currentPasswordInput = viewChild.required<ElementRef<HTMLInputElement>>('currentPasswordInput');
   private readonly newPasswordInput = viewChild.required<ElementRef<HTMLInputElement>>('newPasswordInput');
@@ -260,7 +264,7 @@ export class ChangePasswordPage implements OnInit {
     this.authApi.changePassword(this.currentPassword, this.newPassword).subscribe({
       next: () => {
         this.submitting.set(false);
-        void this.router.navigateByUrl('/');
+        void this.router.navigateByUrl(this.returnUrl ?? '/');
       },
       error: (error: ChangePasswordError) => {
         this.submitting.set(false);

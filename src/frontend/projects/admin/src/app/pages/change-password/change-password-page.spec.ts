@@ -1,10 +1,17 @@
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { Router, provideRouter } from '@angular/router';
+import { ActivatedRoute, Router, convertToParamMap, provideRouter } from '@angular/router';
 
 import { AdminAuthApi } from '../../core/auth/admin-auth-api';
 import { ChangePasswordPage } from './change-password-page';
+
+/** Stands in for the ActivatedRoute the router would give this page when it was reached via `?returnUrl=…`. */
+function activatedRouteWithReturnUrl(returnUrl: string | null) {
+  return {
+    snapshot: { queryParamMap: convertToParamMap(returnUrl ? { returnUrl } : {}) },
+  };
+}
 
 describe('ChangePasswordPage', () => {
   let controller: HttpTestingController;
@@ -47,6 +54,26 @@ describe('ChangePasswordPage', () => {
     fixture.componentInstance['submit']();
     controller.expectOne(AdminAuthApi.antiforgeryUrl).flush({ token: 'the-token' });
     return controller.expectOne(AdminAuthApi.changePasswordUrl);
+  }
+
+  /**
+   * Rebuilds the testing module with a stand-in ActivatedRoute carrying `?returnUrl=…`, for the tests below that
+   * need one. `TestBed.overrideProvider` cannot be used here: the outer `beforeEach` above already instantiated
+   * the module (its own `TestBed.inject` calls), and Angular refuses to override a provider after that.
+   */
+  function configureWithReturnUrl(returnUrl: string): void {
+    TestBed.resetTestingModule();
+    TestBed.configureTestingModule({
+      imports: [ChangePasswordPage],
+      providers: [
+        provideRouter([]),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        { provide: ActivatedRoute, useValue: activatedRouteWithReturnUrl(returnUrl) },
+      ],
+    });
+    controller = TestBed.inject(HttpTestingController);
+    navigateSpy = vi.spyOn(TestBed.inject(Router), 'navigateByUrl').mockImplementation(() => Promise.resolve(true));
   }
 
   it('explains that a temporary password must be replaced when the change is required', () => {
@@ -207,5 +234,31 @@ describe('ChangePasswordPage', () => {
     await fixture.whenStable();
 
     expect(navigateSpy).toHaveBeenCalledWith('/login');
+  });
+
+  // W1-11, #8: the login page carries a `returnUrl` forward onto this page when a forced change came from a
+  // route guard redirect, so the visitor lands back where they meant to go once the change is done.
+  describe('with a returnUrl', () => {
+    it('goes to returnUrl instead of the dashboard once the change succeeds', async () => {
+      configureWithReturnUrl('/reports');
+      const fixture = create();
+      fill(fixture, 'Bootstrap-1!', 'Brand-New-2!');
+
+      submitWithToken(fixture).flush(null, { status: 204, statusText: 'No Content' });
+      await fixture.whenStable();
+
+      expect(navigateSpy).toHaveBeenCalledWith('/reports');
+    });
+
+    it('never navigates to a returnUrl that is not an in-app path (open-redirect guard)', async () => {
+      configureWithReturnUrl('https://evil.example/phish');
+      const fixture = create();
+      fill(fixture, 'Bootstrap-1!', 'Brand-New-2!');
+
+      submitWithToken(fixture).flush(null, { status: 204, statusText: 'No Content' });
+      await fixture.whenStable();
+
+      expect(navigateSpy).toHaveBeenCalledWith('/');
+    });
   });
 });
