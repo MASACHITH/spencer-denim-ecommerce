@@ -29,6 +29,22 @@ public sealed class AdminSecurityOptions
     public int SecurityStampValidationIntervalSeconds { get; set; } = 60;
 
     /// <summary>
+    /// W1-10: how long the password step of a 2FA sign-in stays open for the code (the short-lived pending
+    /// cookie's lifetime, not sliding). Five minutes covers finding the phone without leaving a half-signed-in
+    /// browser around for long.
+    /// </summary>
+    public int TwoFactorPendingSignInMinutes { get; set; } = 5;
+
+    /// <summary>
+    /// W1-10: the issuer name authenticator apps show next to the account (the <c>otpauth://</c> URI's label and
+    /// <c>issuer</c> parameter). Staff-facing, so the store's own name rather than the vendor's.
+    /// </summary>
+    public string TwoFactorIssuer { get; set; } = "Spencer Denim Admin";
+
+    /// <summary>W1-10: how many single-use recovery codes are issued at enrolment and on each regeneration.</summary>
+    public int TwoFactorRecoveryCodeCount { get; set; } = 10;
+
+    /// <summary>
     /// Whether the admin auth cookie and the antiforgery cookie require HTTPS
     /// (<see cref="Microsoft.AspNetCore.Http.CookieSecurePolicy.Always"/> vs <c>SameAsRequest</c>).
     /// True (secure-by-default) everywhere: doc 03 §4's deployment topology always terminates TLS at Caddy, and

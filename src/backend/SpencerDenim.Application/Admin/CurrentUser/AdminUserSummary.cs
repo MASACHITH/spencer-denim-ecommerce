@@ -2,7 +2,8 @@ namespace SpencerDenim.Application.Admin.CurrentUser;
 
 /// <summary>
 /// Basic profile fields a staff user's principal is built from and displayed with, plus the account-state flags
-/// the admin API gates on (<paramref name="MustChangePassword"/>: doc 08 §9, doc 11 P14 step 3).
+/// the admin API gates on (<paramref name="MustChangePassword"/>: doc 08 §9, doc 11 P14 step 3;
+/// <paramref name="TwoFactorEnabled"/>: doc 08 §3.1 N14, W1-10).
 /// <paramref name="SecurityStamp"/> is the current database value, compared with the stamp the session was
 /// issued with so a session opened before a password change can never pass the admin gates. It is never
 /// returned to a client.
@@ -14,4 +15,5 @@ public sealed record AdminUserSummary(
     string? LastName,
     bool IsActive,
     bool MustChangePassword,
-    string? SecurityStamp);
+    string? SecurityStamp,
+    bool TwoFactorEnabled = false);

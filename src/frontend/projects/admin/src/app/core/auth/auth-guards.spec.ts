@@ -17,7 +17,10 @@ class ChangePasswordStub {}
 @Component({ template: 'login' })
 class LoginStub {}
 
-function session(mustChangePassword: boolean): AdminSession {
+@Component({ template: 'two-factor setup' })
+class TwoFactorSetupStub {}
+
+function session(mustChangePassword: boolean, twoFactorEnrolmentRequired = false): AdminSession {
   return {
     userId: 1,
     email: 'admin@example.com',
@@ -26,6 +29,8 @@ function session(mustChangePassword: boolean): AdminSession {
     grantsAllPermissions: true,
     permissions: [],
     mustChangePassword,
+    twoFactorEnabled: !twoFactorEnrolmentRequired,
+    twoFactorEnrolmentRequired,
   };
 }
 
@@ -43,6 +48,9 @@ describe('admin auth guards', () => {
           { path: 'signed-in-only', component: ChangePasswordStub, canActivate: [signedInGuard] },
           { path: 'reports', component: DashboardStub, canActivate: [adminSessionGuard] },
           { path: 'login', component: LoginStub },
+          // Unguarded here for the same reason as change-password.
+          { path: 'two-factor/setup', component: TwoFactorSetupStub },
+          { path: 'setup-guarded', component: TwoFactorSetupStub, canActivate: [twoFactorSetupGuard] },
         ]),
         provideHttpClient(),
         provideHttpClientTesting(),
@@ -75,6 +83,37 @@ describe('admin auth guards', () => {
 
     expect(router.url).toBe('/change-password');
     expect(harness.routeNativeElement?.textContent).toContain('change password');
+  });
+
+  it('sends a Super Admin without two-factor authentication to the enrolment page (W1-10)', async () => {
+    const harness = await navigate('/', (request) => request.flush(session(false, true)));
+
+    expect(router.url).toBe('/two-factor/setup');
+    expect(harness.routeNativeElement?.textContent).toContain('two-factor setup');
+  });
+
+  it('sends the password change first when both steps are pending, as the API orders them', async () => {
+    await navigate('/', (request) => request.flush(session(true, true)));
+
+    expect(router.url).toBe('/change-password');
+  });
+
+  it('twoFactorSetupGuard lets a user with the password change done reach enrolment', async () => {
+    await navigate('/setup-guarded', (request) => request.flush(session(false, true)));
+
+    expect(router.url).toBe('/setup-guarded');
+  });
+
+  it('twoFactorSetupGuard sends a user who must still change their password to change-password first', async () => {
+    await navigate('/setup-guarded', (request) => request.flush(session(true, true)));
+
+    expect(router.url).toBe('/change-password');
+  });
+
+  it('twoFactorSetupGuard keeps a signed-out visitor out', async () => {
+    await navigate('/setup-guarded', (request) => request.flush(null, { status: 401, statusText: 'Unauthorized' }));
+
+    expect(router.url).toBe('/login');
   });
 
   it('sends a signed-out visitor to the sign-in page', async () => {

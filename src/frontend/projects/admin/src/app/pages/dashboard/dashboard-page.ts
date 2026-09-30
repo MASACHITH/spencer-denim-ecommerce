@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
-import { Router } from '@angular/router';
+import { Router, RouterLink } from '@angular/router';
 import { ApiStatus } from '@spencer-denim/shared';
 
 import { AdminAuthApi } from '../../core/auth/admin-auth-api';
@@ -7,13 +7,16 @@ import { AdminAuthApi } from '../../core/auth/admin-auth-api';
 /** Scaffold placeholder dashboard (W0-09). Replaced by the full dashboard in a later milestone. */
 @Component({
   selector: 'sda-dashboard-page',
-  imports: [ApiStatus],
+  imports: [ApiStatus, RouterLink],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <section class="panel">
       <h1 class="panel__title">Spencer Denim Admin</h1>
       <p class="panel__lead">The admin panel is being built. More dashboards arrive in the next milestones.</p>
       <sd-api-status />
+      <nav class="panel__nav" aria-label="Admin sections">
+        <a class="panel__link" routerLink="/audit-log">Audit log</a>
+      </nav>
       <button class="panel__logout" type="button" (click)="logout()" [disabled]="loggingOut()">
         {{ loggingOut() ? 'Signing out…' : 'Sign out' }}
       </button>
@@ -32,6 +35,14 @@ import { AdminAuthApi } from '../../core/auth/admin-auth-api';
     }
     .panel__title { font-size: var(--text-h2); }
     .panel__lead { color: var(--color-text-muted); }
+    .panel__nav { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+    .panel__link {
+      display: inline-flex;
+      align-items: center;
+      min-height: var(--tap);
+      color: var(--color-text);
+      text-decoration: underline;
+    }
     .panel__logout {
       justify-self: start;
       min-height: var(--tap);

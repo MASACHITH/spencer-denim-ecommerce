@@ -3,10 +3,24 @@ import { inject } from '@angular/core';
 import { CanActivateFn, Router, RouterStateSnapshot, UrlTree } from '@angular/router';
 import { catchError, map, of } from 'rxjs';
 
-import { AdminAuthApi } from './admin-auth-api';
+import { AdminAuthApi, type AdminSession } from './admin-auth-api';
 
 export const loginPath = '/login';
+export const twoFactorLoginPath = '/login/two-factor';
 export const changePasswordPath = '/change-password';
+export const twoFactorSetupPath = '/two-factor/setup';
+
+/**
+ * Where a signed-in user has to go before anything else, in the API's own order (doc 11 P14 step 3): a forced
+ * password change first (issue #17), then two-factor enrolment for a Super Admin (W1-10). Null when neither.
+ */
+export function pendingAccountStep(session: AdminSession): string | null {
+  if (session.mustChangePassword) {
+    return changePasswordPath;
+  }
+
+  return session.twoFactorEnrolmentRequired ? twoFactorSetupPath : null;
+}
 
 /**
  * Query param a redirect-to-login/change-password carries the visitor's intended destination in, so the login
@@ -17,10 +31,9 @@ export const returnUrlParam = 'returnUrl';
 
 /**
  * Guards the admin pages. Asks the API who is signed in (the HttpOnly cookie is invisible to script), then:
- * not signed in → sign-in page; a forced password change pending (issue #17) → change-password page; otherwise
- * through. Convenience only: the API refuses every admin endpoint itself while the change is pending (doc 03
- * §3a — the server is the security boundary). If the API cannot be reached at all the page is shown anyway, so
- * the dashboard's API status panel can say so.
+ * not signed in → sign-in page; a pending account step → that page; otherwise through. Convenience only: the API
+ * refuses every admin endpoint itself while a step is pending (doc 03 §3a — the server is the security boundary).
+ * If the API cannot be reached at all the page is shown anyway, so the dashboard's API status panel can say so.
  */
 export const adminSessionGuard: CanActivateFn = (_route, state) => {
   const authApi = inject(AdminAuthApi);

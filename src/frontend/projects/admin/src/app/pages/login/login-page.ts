@@ -140,7 +140,7 @@ export class LoginPage {
     const returnUrl = sanitizeReturnUrl(this.route.snapshot.queryParamMap.get(returnUrlParam));
 
     this.authApi.login(this.email, this.password).subscribe({
-      next: (session) => {
+      next: (reply) => {
         this.submitting.set(false);
 
         // Built as a string (rather than passed as a UrlTree) so a plain sign-in with no returnUrl still
