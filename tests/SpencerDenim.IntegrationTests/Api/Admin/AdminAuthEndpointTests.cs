@@ -1,6 +1,8 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
@@ -307,6 +309,87 @@ public sealed class AdminAuthEndpointTests(SqlServerDatabaseFixture sqlServer)
         Assert.Equal(HttpStatusCode.Unauthorized, whoAmIAfterLogout.StatusCode);
     }
 
+    /// <summary>
+    /// Regression test for the defect the tester found in W1-01's forwarded-headers round 3 (see MEMORY.md,
+    /// 2026-09-18): with no real proxy in front of this API yet (W0-15 Docker/Caddy is still TODO),
+    /// <c>ForwardedHeadersSetup</c> deliberately leaves <c>X-Forwarded-For</c> out of
+    /// <c>ForwardedHeadersOptions.ForwardedHeaders</c> — trusting that header from *any* direct caller, even a
+    /// loopback one (which is ASP.NET Core's own middleware default, not some special-cased exemption), let an
+    /// unauthenticated caller plant an arbitrary IP address straight into <c>ops.AuditLogs.IpAddress</c> (ADM-03)
+    /// through this very endpoint. This proves that protection still holds today: a forged header from a direct,
+    /// non-proxied caller must never reach the audit row a login attempt writes.
+    /// <para>
+    /// Placed here rather than in a new unit test (W1-11, #8): the old blocker note (TASKS.md / MEMORY.md) said
+    /// <c>Microsoft.AspNetCore.HttpOverrides</c> types didn't resolve in "the plain-SDK unit test project" and
+    /// guessed it might be machine-specific. Reproduced on this machine too — it isn't: <c>SpencerDenim.UnitTests</c>
+    /// is a plain <c>Microsoft.NET.Sdk</c> project with only a <c>ProjectReference</c> to <c>SpencerDenim.Api</c>
+    /// (a <c>Microsoft.NET.Sdk.Web</c> project); a <c>ProjectReference</c> alone does not carry the ASP.NET Core
+    /// shared framework's ref assemblies down to a consuming plain-SDK project — that needs either the Web SDK
+    /// itself or an explicit <c>FrameworkReference</c> (or a package that brings one). This integration test
+    /// project already has that, via its <c>Microsoft.AspNetCore.Mvc.Testing</c> package reference, so the type
+    /// resolves here with no project changes needed. It is also simply the right layer for this particular
+    /// regression: proving it requires driving the real HTTP pipeline (<see cref="WebApplicationFactory{TEntryPoint}"/>
+    /// / TestServer) end to end — header in, audit row out — not just exercising the options object in isolation.
+    /// </para>
+    /// <para>
+    /// <see cref="TestServer"/> has no real socket, so <c>HttpContext.Connection.RemoteIpAddress</c> is <c>null</c>
+    /// by default — there is no "real peer" for the test to fall back on the way a live Kestrel connection would
+    /// have one. <see cref="SimulatedRemoteIpStartupFilter"/> stands in for that real peer with a fixed, known
+    /// address, stamped onto the connection before <c>UseForwardedHeaders</c> runs (it must not be the loopback
+    /// address <see cref="ForwardedHeadersSetup"/> also happens to pin <c>KnownIPNetworks</c> to, or a false pass
+    /// could hide the middleware actually trusting the header instead of ignoring it). The header then claims a
+    /// different address again, so the only way the test passes is if the audit row ends up with the *simulated
+    /// connection's* address and neither of the header's.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task A_forged_X_Forwarded_For_header_from_a_direct_caller_does_not_reach_the_audit_log()
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, TestContext.Current.CancellationToken);
+
+        var email = UniqueEmail("forged-xff");
+        const string password = "Correct-Password-1!";
+        var realPeer = IPAddress.Parse("198.51.100.7");
+        const string forgedHeaderValue = "203.0.113.99";
+
+        await using var factory = new ApiFactory(sqlServer.ConnectionString);
+        await CreateStaffUserAsync(factory, email, password, isActive: true);
+
+        await using var factoryWithSimulatedPeer = factory.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services => services.AddSingleton<IStartupFilter>(new SimulatedRemoteIpStartupFilter(realPeer))));
+        using var client = factoryWithSimulatedPeer.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://localhost") });
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, LoginUrl)
+        {
+            Content = JsonContent.Create(new { email, password }),
+        };
+        // A direct caller forging the header a real reverse proxy would otherwise be the one to set — exactly the
+        // shape of the exploit the tester's round-3 repro used against this login endpoint.
+        request.Headers.Add("X-Forwarded-For", forgedHeaderValue);
+
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var recordedIp = await GetAuditIpAddressAsync(factory, email, "Login");
+        Assert.Equal(realPeer.ToString(), recordedIp);
+        Assert.NotEqual(forgedHeaderValue, recordedIp);
+    }
+
+    /// <summary>Stamps a fixed "real connection" peer address onto every request, standing in for the real socket peer a live Kestrel connection would have that <see cref="TestServer"/> does not simulate on its own.</summary>
+    private sealed class SimulatedRemoteIpStartupFilter(IPAddress remoteIpAddress) : IStartupFilter
+    {
+        public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => app =>
+        {
+            app.Use(async (context, nextMiddleware) =>
+            {
+                context.Connection.RemoteIpAddress = remoteIpAddress;
+                await nextMiddleware(context);
+            });
+            next(app);
+        };
+    }
+
     [Fact]
     public async Task Admin_seeding_creates_exactly_one_super_admin_who_can_then_sign_in()
     {
@@ -429,5 +512,17 @@ public sealed class AdminAuthEndpointTests(SqlServerDatabaseFixture sqlServer)
 
         var found = await dbContext.AuditLogs.AnyAsync(a => a.UserEmail == email && a.Action == action, TestContext.Current.CancellationToken);
         Assert.True(found, $"Expected an AuditLogs row with Action '{action}' for '{email}'.");
+    }
+
+    /// <summary>The <c>IpAddress</c> column of the audit row a login attempt wrote, for asserting what actually landed there.</summary>
+    private static async Task<string?> GetAuditIpAddressAsync(ApiFactory factory, string email, string action)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        return await dbContext.AuditLogs
+            .Where(a => a.UserEmail == email && a.Action == action)
+            .Select(a => a.IpAddress)
+            .SingleAsync(TestContext.Current.CancellationToken);
     }
 }
