@@ -54,6 +54,27 @@ internal sealed class MediaAssetConfiguration : IEntityTypeConfiguration<MediaAs
         builder.HasIndex(asset => asset.StorageKey).IsUnique().HasDatabaseName("UX_MediaAssets_StorageKey");
         builder.HasIndex(asset => asset.Checksum).HasDatabaseName("IX_MediaAssets_Checksum");
 
+        // Doc 08 §3.3 states deduplication by checksum as a guarantee, and a guarantee it is not while
+        // it lives only in application code: FindDuplicateAsync is a read followed, much later, by a
+        // write, and a bulk upload of a fashion catalogue is exactly the load that drives several
+        // requests through that gap at once. Measured before this index existed: eight simultaneous
+        // uploads of byte-identical JPEGs produced eight assets and forty files.
+        //
+        // The columns are the narrowing FindDuplicateAsync already applies, so the index and the query
+        // cannot drift: the same bytes uploaded as private are a different asset from the same bytes
+        // uploaded as public, which is what stops a customer's bank slip ever being answered by a file
+        // on the volume the reverse proxy serves.
+        //
+        // Filtered on Status = 1 (Ready) rather than covering every row, because an upload is inserted
+        // as Processing and only published once its files are on disk. So the index is enforced at the
+        // moment of publication — by which point the loser has real files to roll back — and a row left
+        // behind as Failed never blocks a later, successful upload of the same bytes.
+        builder
+            .HasIndex(asset => new { asset.Checksum, asset.MediaType, asset.Visibility })
+            .IsUnique()
+            .HasFilter("[IsDeleted] = 0 AND [Status] = 1")
+            .HasDatabaseName("UX_MediaAssets_Checksum_Ready");
+
         builder
             .HasIndex(asset => new { asset.Visibility, asset.MediaType, asset.CreatedAtUtc })
             .IsDescending(false, false, true)

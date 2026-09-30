@@ -31,6 +31,7 @@ internal sealed class DepartmentCatalogReader(AppDbContext dbContext, IOptions<C
                 department.Slug,
                 department.Description,
                 department.HeroImageAsset != null
+                    && department.HeroImageAsset.Status == MediaAssetStatus.Ready
                     ? new MediaRef(
                         department.HeroImageAsset.StorageKey,
                         department.HeroImageAsset.PublicId,
@@ -54,7 +55,7 @@ internal sealed class DepartmentCatalogReader(AppDbContext dbContext, IOptions<C
                 category.Name,
                 category.Slug,
                 category.Description,
-                category.ImageAsset != null
+                category.ImageAsset != null && category.ImageAsset.Status == MediaAssetStatus.Ready
                     ? new MediaRef(
                         category.ImageAsset.StorageKey,
                         category.ImageAsset.PublicId,

@@ -1655,6 +1655,11 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                         .IsUnique()
                         .HasDatabaseName("UX_MediaAssets_StorageKey");
 
+                    b.HasIndex("Checksum", "MediaType", "Visibility")
+                        .IsUnique()
+                        .HasDatabaseName("UX_MediaAssets_Checksum_Ready")
+                        .HasFilter("[IsDeleted] = 0 AND [Status] = 1");
+
                     b.HasIndex("Visibility", "MediaType", "CreatedAtUtc")
                         .IsDescending(false, false, true)
                         .HasDatabaseName("IX_MediaAssets_Library")

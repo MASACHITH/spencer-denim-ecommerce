@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Security.Cryptography;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -53,6 +54,15 @@ public sealed class MediaService(
     IOptions<CatalogOptions> catalogOptions,
     ILogger<MediaService> logger) : IMediaService
 {
+    /// <summary>SQL Server: a unique index refused the row.</summary>
+    private const int DuplicateUniqueIndexError = 2601;
+
+    /// <summary>SQL Server: a unique constraint refused the row.</summary>
+    private const int DuplicateKeyError = 2627;
+
+    /// <summary>The index that enforces doc 08 §3.3's deduplication guarantee.</summary>
+    private const string ChecksumIndexName = "UX_MediaAssets_Checksum_Ready";
+
     private readonly MediaOptions _media = mediaOptions.Value;
     private readonly CatalogOptions _catalog = catalogOptions.Value;
 
@@ -179,6 +189,23 @@ public sealed class MediaService(
                     video.CreatedAtUtc))
                 .ToList());
         }
+
+        // Doc 08 §3.3: "An owner's save rewrites its usage rows in the same transaction." A soft delete
+        // is such a save, so the rows this asset *owns* — what it uses, today only a video's poster —
+        // go with it, in the same SaveChangesAsync below.
+        //
+        // Leaving them behind bricks the poster permanently: LoadUsagesAsync would keep finding a row
+        // pointing at a video the soft-delete filter hides, so the poster could never be deleted (409
+        // for ever) and the "used in…" panel would list it with no label at all, because the label
+        // lookup reads through that same filter. The rows recording what *other* owners use of this
+        // asset are deliberately untouched — those belong to those owners, and the guard above has
+        // already refused the delete if any exist.
+        var ownerId = asset.Id.ToString(CultureInfo.InvariantCulture);
+        var owned = await dbContext.MediaUsages
+            .Where(usage => usage.OwnerType == MediaUsageOwnerTypes.MediaAsset && usage.OwnerId == ownerId)
+            .ToListAsync(cancellationToken);
+
+        dbContext.MediaUsages.RemoveRange(owned);
 
         // Doc 08 §3.3: soft delete now, files purged after 30 days (MediaRetention).
         asset.SoftDelete(DateTime.UtcNow, deletedByUserId);
@@ -321,8 +348,10 @@ public sealed class MediaService(
                 asset.RenditionSetVersion = MediaRenditions.CurrentSetVersion;
             }
 
-            asset.Status = MediaAssetStatus.Ready;
-            await dbContext.SaveChangesAsync(cancellationToken);
+            if (await PublishAsync(asset, written, cancellationToken) is { } winner)
+            {
+                return new StoreResult(new MediaUploadOutcome.Duplicate(ToDto(winner)), winner.Id, WasExisting: true);
+            }
 
             return new StoreResult(new MediaUploadOutcome.Created(ToDto(asset)), asset.Id, WasExisting: false);
         }
@@ -440,8 +469,12 @@ public sealed class MediaService(
                 UsageRole = MediaUsageRoles.Poster,
             });
 
-            asset.Status = MediaAssetStatus.Ready;
-            await dbContext.SaveChangesAsync(cancellationToken);
+            if (await PublishAsync(asset, written, cancellationToken) is { } winner)
+            {
+                // The poster was created for this upload a moment ago and the winner has its own, so it
+                // is rolled back exactly as it is when the checksum lookup answers before any of this.
+                return new VideoStoreResult(new MediaUploadOutcome.Duplicate(ToDto(winner)), RollBackPoster: true);
+            }
 
             var stored = await dbContext.MediaAssets
                 .AsNoTracking()
@@ -657,6 +690,121 @@ public sealed class MediaService(
     /// invariant "no row ever claims Ready over a file that is not there" holds even for a disk that
     /// filled up half way through the rendition set.
     /// </summary>
+    /// <summary>
+    /// The last step of an upload: publish the asset as <c>Ready</c>, or discover that another request
+    /// published the identical bytes first and stand down in its favour.
+    /// <para>
+    /// <c>UX_MediaAssets_Checksum_Ready</c> is what makes doc 08 §3.3's deduplication an actual
+    /// guarantee rather than a hope. <see cref="FindDuplicateAsync"/> still runs first, because
+    /// answering from the index without writing anything is far cheaper than writing a file set and
+    /// taking it back out again — but it is a read, and two requests carrying the same bytes can both
+    /// pass it. The database settles that race, and this method turns the resulting error into the
+    /// same <c>Duplicate</c> answer the early lookup would have given, so a caller cannot tell which
+    /// of the two paths served it.
+    /// </para>
+    /// <para>
+    /// The loser's row is removed outright rather than marked <c>Failed</c>: nothing failed, it simply
+    /// lost, and a <c>Failed</c> row would sit in the library as a permanent record of a race the
+    /// person who uploaded never saw.
+    /// </para>
+    /// </summary>
+    /// <returns>
+    /// The winning asset when this upload lost the race and has to answer <c>Duplicate</c>;
+    /// <see langword="null"/> when it published its own.
+    /// </returns>
+    private async Task<MediaAsset?> PublishAsync(
+        MediaAsset asset,
+        List<string> written,
+        CancellationToken cancellationToken)
+    {
+        asset.Status = MediaAssetStatus.Ready;
+
+        try
+        {
+            await dbContext.SaveChangesAsync(cancellationToken);
+            return null;
+        }
+        catch (DbUpdateException exception) when (IsDuplicateChecksum(exception))
+        {
+            await StandDownAsync(asset, written, cancellationToken);
+
+            var winner = await FindDuplicateAsync(
+                asset.Checksum,
+                asset.MediaType,
+                asset.Visibility,
+                cancellationToken);
+
+            if (winner is null)
+            {
+                // The only way here is for the winner to have been deleted between the unique index
+                // refusing this publish and this lookup. Nothing sensible is left to answer with, and
+                // pretending otherwise would hand the caller a DTO for a row that is gone.
+                throw;
+            }
+
+            MediaLog.UploadDeduplicatedByIndex(logger, asset.PublicId, winner.PublicId);
+            return winner;
+        }
+    }
+
+    /// <summary>
+    /// Takes a lost race back out: the files this request wrote, the rows it was holding, and the
+    /// <c>Processing</c> row it inserted before any of it.
+    /// </summary>
+    private async Task StandDownAsync(
+        MediaAsset asset,
+        List<string> written,
+        CancellationToken cancellationToken)
+    {
+        // The failed SaveChanges left its entries pending. A video's poster usage row is one of them,
+        // and it must not be retried: it names this asset as the owner, and this asset is about to
+        // stop existing.
+        foreach (var entry in dbContext.ChangeTracker.Entries<MediaUsage>().ToList())
+        {
+            if (entry.State == EntityState.Added)
+            {
+                entry.State = EntityState.Detached;
+            }
+        }
+
+        foreach (var key in written)
+        {
+            try
+            {
+                await storage.DeleteAsync(key, cancellationToken);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                MediaLog.RollbackFileNotRemoved(logger, exception, key);
+            }
+        }
+
+        // A hard delete, not SoftDelete: this row was never Ready, so nothing ever linked it and there is
+        // nothing for the 30-day purge window to protect. AuditAndSoftDeleteInterceptor refuses Remove()
+        // on a soft-deletable entity and names ExecuteDeleteAsync as the deliberate exception, which is
+        // exactly what this is — so the row goes in one statement, and the tracked entity is detached
+        // afterwards so nothing later tries to update a row that is gone.
+        await dbContext.MediaAssets
+            .IgnoreQueryFilters()
+            .Where(candidate => candidate.Id == asset.Id)
+            .ExecuteDeleteAsync(cancellationToken);
+
+        dbContext.Entry(asset).State = EntityState.Detached;
+    }
+
+    /// <summary>
+    /// Whether the update failed because <c>UX_MediaAssets_Checksum_Ready</c> refused it.
+    /// <para>
+    /// The index is named in the check rather than matching any unique violation, because
+    /// <c>UX_MediaAssets_PublicId</c> and <c>UX_MediaAssets_StorageKey</c> are also unique on this
+    /// table. A collision on either of those is a generated GUID repeating itself, which is not a
+    /// duplicate upload and must not be answered as one.
+    /// </para>
+    /// </summary>
+    private static bool IsDuplicateChecksum(DbUpdateException exception) =>
+        exception.InnerException is SqlException { Number: DuplicateKeyError or DuplicateUniqueIndexError } sql
+        && sql.Message.Contains(ChecksumIndexName, StringComparison.Ordinal);
+
     private async Task FailAsync(
         MediaAsset asset,
         List<string> written,
@@ -762,11 +910,18 @@ public sealed class MediaService(
         var renditions = new Dictionary<string, string>(StringComparer.Ordinal);
         if (isPublic && asset.MediaType == MediaAssetType.Image && asset.RenditionSetVersion is not null)
         {
-            foreach (var rendition in MediaRenditions.Current)
+            // The set this asset was rendered with, trimmed to the files that were actually written:
+            // a source no wider than `large` produces no `zoom`, and listing a URL for it here would
+            // put a 404 in the admin library's payload.
+            var produced = MediaRenditions.ProducedFor(
+                MediaRenditions.ForVersion(asset.RenditionSetVersion),
+                asset.Width);
+
+            foreach (var (rendition, _) in produced)
             {
                 var url = MediaUrlBuilder.ToPublicUrl(
                     _catalog.MediaBaseUrl,
-                    MediaStorageKey.ForRendition(asset.PublicId, rendition.Code));
+                    MediaStorageKey.ForRendition(asset.PublicId, rendition));
 
                 if (url is not null)
                 {

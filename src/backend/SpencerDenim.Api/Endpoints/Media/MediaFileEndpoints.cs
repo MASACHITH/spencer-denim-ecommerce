@@ -43,7 +43,11 @@ internal static class MediaFileEndpoints
             .Produces(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status206PartialContent)
             .Produces(StatusCodes.Status304NotModified)
-            .ProducesProblem(StatusCodes.Status404NotFound);
+            // A bare 404, not a problem document. Every refusal this endpoint makes answers identically
+            // — a private key, an unpublished asset, a malformed key, a missing file — and a body that
+            // described which one would hand an anonymous caller the very distinction PublicMediaFiles
+            // exists to withhold.
+            .Produces(StatusCodes.Status404NotFound);
 
         return endpoints;
     }

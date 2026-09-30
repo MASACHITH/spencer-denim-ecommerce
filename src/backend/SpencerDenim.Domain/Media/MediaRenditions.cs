@@ -6,6 +6,16 @@ namespace SpencerDenim.Domain.Media;
 public sealed record MediaRendition(string Code, int Width);
 
 /// <summary>
+/// A rendition as it is actually written for one particular source image: the set entry, and the width
+/// it really has once clamped to that source.
+/// </summary>
+/// <param name="Width">
+/// <c>min(target, source)</c>. This is the number a <c>srcset</c> has to advertise — the target would be
+/// a lie for any source narrower than it.
+/// </param>
+public sealed record ProducedRendition(MediaRendition Rendition, int Width);
+
+/// <summary>
 /// The rendition set of doc 08 §3.3 ("the codes and target widths are code constants") and doc 03 §3b
 /// ("resized to WebP renditions (thumb / card / large / zoom)"). There is no table: the key convention
 /// <c>public/renditions/{PublicId}/{code}.webp</c> is the index.
@@ -73,6 +83,55 @@ public static class MediaRenditions
         CurrentSetVersion => Current,
         _ => null,
     };
+
+    /// <summary>
+    /// The renditions a source <paramref name="sourceWidth"/> pixels wide actually produces, smallest
+    /// first, each with the width it really has.
+    /// <para>
+    /// Renditions are clamped to the source and never upscaled, so a 1200 px photograph renders
+    /// <c>large</c> and <c>zoom</c> as the same 1200 px image twice. This is the one rule that decides
+    /// where that stops, and <b>both</b> ends of the pipeline ask it: the encoder, so the duplicate is
+    /// never written, and the URL builder, so nothing ever links a file the encoder did not write.
+    /// Keeping the rule in one place is the point — when they disagreed, a quarter of the seeded
+    /// renditions were byte-identical copies and the product page made the shopper download the stage
+    /// image a second time to open the viewer.
+    /// </para>
+    /// <para>
+    /// This is deliberately <b>not</b> a change of <see cref="CurrentSetVersion"/>. The codes and their
+    /// target widths are untouched; what changed is only that a redundant file is no longer written.
+    /// The files this returns are a prefix of the set, so they are present on an asset rendered under
+    /// either rule, and an older asset simply carries a spare file nothing links.
+    /// </para>
+    /// </summary>
+    public static IReadOnlyList<ProducedRendition> ProducedFor(
+        IReadOnlyList<MediaRendition>? set,
+        int? sourceWidth)
+    {
+        if (set is null)
+        {
+            return [];
+        }
+
+        var produced = new List<ProducedRendition>(set.Count);
+        var lastWidth = 0;
+
+        foreach (var rendition in set.OrderBy(candidate => candidate.Width))
+        {
+            var width = sourceWidth is > 0 ? Math.Min(rendition.Width, sourceWidth.Value) : rendition.Width;
+
+            // The set is walked smallest-first, so once one has matched the source width every larger
+            // one can only repeat it.
+            if (width <= lastWidth)
+            {
+                break;
+            }
+
+            produced.Add(new ProducedRendition(rendition, width));
+            lastWidth = width;
+        }
+
+        return produced;
+    }
 
     /// <summary>
     /// The rendition named <paramref name="code"/> within <paramref name="set"/>, or

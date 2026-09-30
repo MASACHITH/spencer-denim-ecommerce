@@ -136,7 +136,10 @@ test.describe('server-side rendering (GLB-11)', () => {
     // Angular's transfer cache is off (see app.config.ts): it stored every SSR response under a
     // key the browser cannot use, so the payload shipped twice — with API_INTERNAL_URL in it.
     expect(state).not.toContain('/api/catalog/');
-    expect(html).not.toContain('localhost:4421');
+    // Taken from the config rather than written out. It was the literal `localhost:4421`, which
+    // matches nothing at all once the ports are moved by the environment — the check would have
+    // gone on passing over HTML full of internal addresses.
+    expect(html).not.toContain(new URL(apiURL).host);
     expect(html).not.toContain('API_INTERNAL_URL');
   });
 

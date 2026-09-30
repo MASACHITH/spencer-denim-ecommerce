@@ -36,10 +36,23 @@ public sealed class DemoMediaPlaceholderTests(SqlServerDatabaseFixture sqlServer
         // Original and every rendition are on disk.
         Assert.True(host.PublicFileExists(storageKey), storageKey);
 
-        foreach (var rendition in MediaRenditions.Current)
+        // The placeholder is PlaceholderImageRenderer.Width wide, which decides how many of the set's
+        // codes produce distinct pixels: anything at or below the `large` target makes no `zoom`.
+        var produced = MediaRenditions.ProducedFor(MediaRenditions.Current, PlaceholderImageRenderer.Width);
+        Assert.NotEmpty(produced);
+
+        foreach (var (rendition, _) in produced)
+        {
+            var key = MediaStorageKey.ForRendition(publicId, rendition);
+            Assert.True(host.PublicFileExists(key), key);
+        }
+
+        // And nothing beyond them: a file written here would be a byte-for-byte copy of the one before.
+        foreach (var rendition in MediaRenditions.Current.Where(candidate =>
+            !produced.Any(entry => entry.Rendition.Code == candidate.Code)))
         {
             var key = MediaStorageKey.ForRendition(publicId, rendition.Code);
-            Assert.True(host.PublicFileExists(key), key);
+            Assert.False(host.PublicFileExists(key), key);
         }
 
         // And the URL the catalogue API builds for that key answers with a real image.

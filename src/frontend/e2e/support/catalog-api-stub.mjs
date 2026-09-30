@@ -19,13 +19,24 @@ const PORT = Number(process.env.E2E_API_PORT ?? 4421);
  * Where the media pipeline's files live, as the API reports them.
  *
  * Doc 08 §3.3: the database holds a relative storage key and `MediaUrlBuilder.ToPublicUrl` joins
- * it to the configured base. The base here is absolute and points back at this stub — the same
- * arrangement the hero video below uses, and a shape the real API can genuinely produce, because
- * that builder returns an absolute key unchanged. These tests have no reverse proxy putting a
- * media server on the storefront's own origin, and a URL nothing answers for is a broken image
- * and a Definition-of-Done failure.
+ * it to the configured base. In a deployment that base is root-relative, because Caddy serves
+ * `/media` from the public uploads volume on the storefront's own origin (doc 03 §"Deployment
+ * topology"), so a published media address never names a host. This stub says the same thing.
+ *
+ * It used to say `http://localhost:${PORT}/media` instead, which the builder can indeed emit —
+ * it returns an already-absolute key unchanged — but these URLs are server-rendered into card
+ * and gallery markup, so the stub's own port ended up in the HTML. GLB-11 in
+ * `product-listing.e2e.ts` asserts that no internal address does, and it failed every run. The
+ * assertion is the right one: HTML that names the machine it was rendered on is HTML that breaks
+ * as soon as it is served from anywhere else.
+ *
+ * The bytes still have to arrive — several tests turn vacuous if a card quietly falls back to
+ * its placeholder — and these tests have no reverse proxy. So the SSR server carries the proxy's
+ * job for the length of a run: `MEDIA_INTERNAL_URL`, set per storefront in
+ * `playwright.config.ts` beside the `API_INTERNAL_URL` it mirrors, mounts a `/media` passthrough
+ * back to this stub. Unset, which is every real deployment, that route does not exist.
  */
-const MEDIA_BASE = `http://localhost:${PORT}/media`;
+const MEDIA_BASE = '/media';
 
 /**
  * A 1x1 WebP, served for every rendition below.
@@ -571,13 +582,14 @@ function contentSection(id, type, overrides) {
  * What the tests measure is the `muted` property itself — which really was `false` before — and
  * that the element is running and the control agrees with it.
  *
- * The URL is absolute and points straight back at this stub, so the video never travels through
- * the tests' own `page.route` handler. A looping video held that handler open while everything
- * else on the page queued behind it, which made an unrelated newsletter assertion time out about
- * one run in three. The real API can produce an absolute URL here too: `MediaUrlBuilder` returns a
- * storage key unchanged when it is already one.
+ * The URL sits under {@link MEDIA_BASE} and so is root-relative for the same reason the
+ * renditions are, and reaches this stub by the same `/media` passthrough — a video is a media
+ * asset in the real API too, not a thing of its own. What it must keep clear of is the tests'
+ * own `page.route` handler: a looping video held that handler open while everything else on the
+ * page queued behind it, which made an unrelated newsletter assertion time out about one run in
+ * three. Those handlers match paths under `/api/` only, so `/media/...` stays outside them.
  */
-const VIDEO = `http://localhost:${PORT}/e2e/hero-sample.webm`;
+const VIDEO = `${MEDIA_BASE}/hero-sample.webm`;
 
 const HERO_VIDEO_FILE = new URL('./hero-sample.webm', import.meta.url);
 
@@ -729,7 +741,7 @@ const server = createServer((request, response) => {
     return;
   }
 
-  if (url.pathname === '/e2e/hero-sample.webm') {
+  if (url.pathname === '/media/hero-sample.webm') {
     // Served with a real media type and range support off: the element only has to decode it.
     response.setHeader('Content-Type', 'video/webm');
     response.end(readFileSync(HERO_VIDEO_FILE));

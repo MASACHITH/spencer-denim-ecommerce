@@ -164,11 +164,15 @@ public sealed class SkiaImageProcessor(IOptions<MediaOptions> options)
     {
         ArgumentNullException.ThrowIfNull(upright);
 
-        var results = new List<EncodedRendition>(MediaRenditions.Current.Count);
+        // Only the renditions this source actually produces distinct pixels for. A 1200 px photograph
+        // used to be written as `large` and then again, byte for byte, as `zoom`; MediaRenditions.
+        // ProducedFor is the single rule that stops that, and MediaUrlBuilder reads the same rule so
+        // nothing links a file this loop did not write.
+        var produced = MediaRenditions.ProducedFor(MediaRenditions.Current, upright.Width);
+        var results = new List<EncodedRendition>(produced.Count);
 
-        foreach (var rendition in MediaRenditions.Current)
+        foreach (var (rendition, width) in produced)
         {
-            var width = Math.Min(rendition.Width, upright.Width);
             var height = Math.Max(1, (int)Math.Round(upright.Height * (double)width / upright.Width));
 
             byte[] bytes;

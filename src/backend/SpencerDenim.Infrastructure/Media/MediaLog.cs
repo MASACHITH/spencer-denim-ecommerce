@@ -28,6 +28,12 @@ internal static partial class MediaLog
     public static partial void UploadFailed(ILogger logger, Exception exception, Guid publicId, int writtenCount);
 
     [LoggerMessage(
+        EventId = 1106,
+        Level = LogLevel.Information,
+        Message = "Media upload {PublicId} lost a deduplication race and was withdrawn in favour of {WinnerPublicId}.")]
+    public static partial void UploadDeduplicatedByIndex(ILogger logger, Guid publicId, Guid winnerPublicId);
+
+    [LoggerMessage(
         EventId = 1103,
         Level = LogLevel.Warning,
         Message = "Could not remove {StorageKey} while rolling back a failed upload.")]

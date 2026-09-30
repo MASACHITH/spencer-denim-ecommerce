@@ -172,7 +172,7 @@ internal sealed class ProductCatalogReader(
                         colour.ColourFamily!.Name,
                         colour.ColourFamily.Slug,
                         colour.SwatchHex,
-                        colour.SwatchAsset != null
+                        colour.SwatchAsset != null && colour.SwatchAsset.Status == MediaAssetStatus.Ready
                             ? new MediaRef(
                                 colour.SwatchAsset.StorageKey,
                                 colour.SwatchAsset.PublicId,
@@ -182,6 +182,10 @@ internal sealed class ProductCatalogReader(
                         colour.SortOrder))
                     .ToList(),
                 product.Media
+                    // A slide whose file is not on disk is not a slide. Unlike a card image, which can
+                    // fall back to an empty frame, a gallery item with nothing to show would still take
+                    // a thumbnail in the rail and a stop in the keyboard order (PDP-01).
+                    .Where(media => media.MediaAsset!.Status == MediaAssetStatus.Ready)
                     .OrderBy(media => media.SortOrder)
                     .ThenBy(media => media.Id)
                     .Select(media => new MediaRow(
@@ -197,6 +201,7 @@ internal sealed class ProductCatalogReader(
                         media.MediaAsset.Width,
                         media.MediaAsset.Height,
                         media.MediaAsset.PosterAsset != null
+                            && media.MediaAsset.PosterAsset.Status == MediaAssetStatus.Ready
                             ? new MediaRef(
                                 media.MediaAsset.PosterAsset.StorageKey,
                                 media.MediaAsset.PosterAsset.PublicId,
@@ -481,7 +486,7 @@ internal sealed class ProductCatalogReader(
             product.Department.Slug,
             product.PrimaryCategory!.Name,
             product.PrimaryCategory.Slug,
-            product.CardImageAsset != null
+            product.CardImageAsset != null && product.CardImageAsset.Status == MediaAssetStatus.Ready
                 ? new MediaRef(
                     product.CardImageAsset.StorageKey,
                     product.CardImageAsset.PublicId,
@@ -489,7 +494,7 @@ internal sealed class ProductCatalogReader(
                     product.CardImageAsset.Width)
                 : null,
             product.CardImageAsset != null ? product.CardImageAsset.AltText : null,
-            product.HoverImageAsset != null
+            product.HoverImageAsset != null && product.HoverImageAsset.Status == MediaAssetStatus.Ready
                 ? new MediaRef(
                     product.HoverImageAsset.StorageKey,
                     product.HoverImageAsset.PublicId,
@@ -520,7 +525,7 @@ internal sealed class ProductCatalogReader(
                     colour.ColourFamily!.Name,
                     colour.ColourFamily.Slug,
                     colour.SwatchHex,
-                    colour.SwatchAsset != null
+                    colour.SwatchAsset != null && colour.SwatchAsset.Status == MediaAssetStatus.Ready
                         ? new MediaRef(
                             colour.SwatchAsset.StorageKey,
                             colour.SwatchAsset.PublicId,

@@ -142,15 +142,33 @@ public sealed class MediaUrlBuilderTests
     [Fact]
     public void A_source_smaller_than_every_rendition_gets_no_srcset_to_choose_from()
     {
-        // One candidate is not a choice, and an empty or single-entry srcset is noise in the payload.
+        // A 120 px source produces thumb.webp and nothing else: every larger code would clamp to the
+        // same 120 px. So `card` is not a file that exists, and asking for it has to come back with the
+        // largest that does — not with a card URL that would 404, and not with the original either.
         var sources = MediaUrlBuilder.ToImageSources(
             BaseUrl,
             Rendered(width: 120),
             MediaRenditions.Card,
             MediaRenditions.Large);
 
-        Assert.Equal($"/media/public/renditions/{AssetId:D}/card.webp", sources.Url);
+        Assert.Equal($"/media/public/renditions/{AssetId:D}/thumb.webp", sources.Url);
+
+        // One candidate is not a choice, and a single-entry srcset is noise in the payload.
         Assert.Null(sources.SrcSet);
+    }
+
+    /// <summary>
+    /// The reader must never name a file the encoder declined to write. Both sides read the rule from
+    /// <see cref="MediaRenditions.ProducedFor"/>, which is what keeps them from drifting.
+    /// </summary>
+    [Fact]
+    public void A_code_the_source_was_too_small_to_produce_clamps_to_the_largest_that_exists()
+    {
+        // 1200 px is exactly the `large` target, so zoom.webp is never written — the seeded catalogue's
+        // placeholders are all in this case.
+        var url = MediaUrlBuilder.ToRenditionUrl(BaseUrl, Rendered(width: 1200), MediaRenditions.Zoom);
+
+        Assert.Equal($"/media/public/renditions/{AssetId:D}/large.webp", url);
     }
 
     [Fact]

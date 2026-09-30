@@ -1,5 +1,9 @@
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using SpencerDenim.Application.Catalog.Contracts;
 using SpencerDenim.Domain.Catalog;
+using SpencerDenim.Domain.Media;
+using SpencerDenim.Infrastructure.Persistence;
 using SpencerDenim.IntegrationTests.Infrastructure;
 
 namespace SpencerDenim.IntegrationTests.Catalog;
@@ -135,16 +139,15 @@ public sealed class CatalogRenditionTests(SqlServerDatabaseFixture sqlServer) : 
             Assert.EndsWith("/thumb.webp", image.ThumbnailUrl, StringComparison.Ordinal);
 
             // The viewer is opened deliberately and magnifies past 1x, so it always names the largest
-            // file — the one choice a srcset must not be allowed to make on the shopper's behalf.
-            Assert.EndsWith("/zoom.webp", image.ZoomUrl, StringComparison.Ordinal);
+            // file that exists — the one choice a srcset must not be allowed to make on the shopper's
+            // behalf. For the seeded placeholders, which are 1200 px, the largest that exists is
+            // `large`: `zoom` would be the same pixels, so the encoder never wrote it and the URL
+            // builder clamps to what it did. It is emphatically still a rendition, not the original.
+            Assert.Contains(Renditions, image.ZoomUrl, StringComparison.Ordinal);
+            Assert.EndsWith("/large.webp", image.ZoomUrl, StringComparison.Ordinal);
 
             Assert.DoesNotContain(Originals, image.SrcSet, StringComparison.Ordinal);
             Assert.Contains("/large.webp 1200w", image.SrcSet, StringComparison.Ordinal);
-
-            // Not "/zoom.webp": the seeded placeholders are 1200 px, so the zoom rendition is the same
-            // pixels re-encoded and the builder drops it from the candidates rather than invite the
-            // browser to spend bytes on no extra detail. MediaUrlBuilderTests pins both halves of that
-            // rule on widths the seed does not happen to produce.
             Assert.DoesNotContain("/zoom.webp", image.SrcSet, StringComparison.Ordinal);
         });
     }
@@ -170,6 +173,116 @@ public sealed class CatalogRenditionTests(SqlServerDatabaseFixture sqlServer) : 
         // A banner is full-bleed and a tile is a grid cell, which is the whole reason they differ.
         Assert.All(heroes, url => Assert.EndsWith("/large.webp", url, StringComparison.Ordinal));
         Assert.All(tiles, url => Assert.EndsWith("/card.webp", url, StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// A card links a file that exists, or it links nothing.
+    /// <para>
+    /// The global query filter hides a soft-deleted asset, so a deleted card image always came back as
+    /// <see langword="null"/> — but it says nothing about <c>Status</c>, and the rendition projections
+    /// originally carried no status guard. A row left <c>Failed</c> by a processing error therefore
+    /// produced a perfectly formed rendition URL for a file that was never written: a broken image on
+    /// the listing, where the same row soft-deleted produced a clean empty frame. Two ways for an asset
+    /// to have no file, two different answers. <c>HomeContentReader</c> had the guard from the start,
+    /// which is what made the asymmetry visible.
+    /// </para>
+    /// <para>
+    /// The seeded catalogue is changed and put back in a <c>finally</c>, the way
+    /// <c>CatalogVisibilityTests</c> does; the assembly runs its classes sequentially, so nothing else
+    /// observes the half-applied state.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task An_asset_that_is_not_ready_is_linked_no_differently_from_one_that_is_deleted()
+    {
+        var api = CreateApi();
+
+        const string Slug = "relaxed-linen-blend-shirt";
+
+        var before = (await api.ListAsync("?pageSize=96", Token)).Items.Single(item => item.Slug == Slug);
+        Assert.NotNull(before.ImageUrl);
+        Assert.Contains(Renditions, before.ImageUrl, StringComparison.Ordinal);
+
+        await SetCardImageStatusAsync(Slug, MediaAssetStatus.Failed);
+        try
+        {
+            var card = (await api.ListAsync("?pageSize=96", Token)).Items.Single(item => item.Slug == Slug);
+
+            // Not a rendition URL, and emphatically not the original either: there is no file.
+            Assert.Null(card.ImageUrl);
+            Assert.Null(card.ImageSrcSet);
+        }
+        finally
+        {
+            await SetCardImageStatusAsync(Slug, MediaAssetStatus.Ready);
+        }
+
+        var restored = (await api.ListAsync("?pageSize=96", Token)).Items.Single(item => item.Slug == Slug);
+        Assert.Equal(before.ImageUrl, restored.ImageUrl);
+        Assert.Equal(before.ImageSrcSet, restored.ImageSrcSet);
+    }
+
+    /// <summary>
+    /// The same rule on the product page, where an unusable slide is worse than a missing one: it would
+    /// still take a thumbnail in the rail and a stop in the keyboard order (PDP-01).
+    /// </summary>
+    [Fact]
+    public async Task A_gallery_drops_a_slide_whose_file_was_never_written()
+    {
+        var api = CreateApi();
+
+        const string Slug = "relaxed-linen-blend-shirt";
+
+        var before = await api.GetProductAsync(Slug, Token);
+        Assert.NotEmpty(before.Images);
+
+        await SetGalleryImageStatusAsync(Slug, MediaAssetStatus.Processing);
+        try
+        {
+            var product = await api.GetProductAsync(Slug, Token);
+
+            Assert.Equal(before.Images.Count - 1, product.Images.Count);
+            Assert.All(product.Images, image => Assert.Contains(Renditions, image.Url, StringComparison.Ordinal));
+        }
+        finally
+        {
+            await SetGalleryImageStatusAsync(Slug, MediaAssetStatus.Ready);
+        }
+
+        var restored = await api.GetProductAsync(Slug, Token);
+        Assert.Equal(before.Images.Count, restored.Images.Count);
+    }
+
+    private async Task SetCardImageStatusAsync(string slug, MediaAssetStatus status)
+    {
+        using var scope = SqlServer.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        var assetId = await dbContext.Products
+            .Where(product => product.Slug == slug)
+            .Select(product => product.CardImageAssetId)
+            .SingleAsync(Token);
+
+        await dbContext.MediaAssets
+            .Where(asset => asset.Id == assetId)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(asset => asset.Status, status), Token);
+    }
+
+    private async Task SetGalleryImageStatusAsync(string slug, MediaAssetStatus status)
+    {
+        using var scope = SqlServer.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        var assetId = await dbContext.ProductMedia
+            .Where(media => media.Product!.Slug == slug)
+            .OrderBy(media => media.SortOrder)
+            .ThenBy(media => media.Id)
+            .Select(media => media.MediaAssetId)
+            .FirstAsync(Token);
+
+        await dbContext.MediaAssets
+            .Where(asset => asset.Id == assetId)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(asset => asset.Status, status), Token);
     }
 
     [Fact]

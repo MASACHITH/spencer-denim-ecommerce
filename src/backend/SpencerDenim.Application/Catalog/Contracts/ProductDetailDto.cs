@@ -31,12 +31,13 @@ public sealed record ProductAttributesDto(
 /// Candidates for the stage, up to <c>zoom</c> — a full-width stage on a retina tablet genuinely wants
 /// more than <c>large</c>. Null when the asset has no renditions.
 /// </param>
-/// <param name="ThumbnailUrl">The rail: the <c>thumb</c> rendition. Null when the asset has none.</param>
+/// <param name="ThumbnailUrl">The rail: the <c>thumb</c> rendition, or the original when there is none.</param>
 /// <param name="ZoomUrl">
-/// The full-screen viewer: the <c>zoom</c> rendition. Null when the asset has none. It is a separate
-/// field rather than the largest <paramref name="SrcSet"/> candidate because the viewer is opened
-/// deliberately and magnifies past 1×, so it wants the biggest file unconditionally — which is exactly
-/// the choice a <c>srcset</c> is designed to stop the browser making.
+/// The full-screen viewer: the largest rendition that exists — <c>zoom</c>, or <c>large</c> when the
+/// source was too small for the two to differ — or the original when the asset has no renditions at
+/// all. It is a separate field rather than the largest <paramref name="SrcSet"/> candidate because the
+/// viewer is opened deliberately and magnifies past 1×, so it wants the biggest file unconditionally —
+/// which is exactly the choice a <c>srcset</c> is designed to stop the browser making.
 /// </param>
 /// <param name="PosterUrl">
 /// A video's poster frame. Always an original: a poster is a separate asset that the pipeline renders

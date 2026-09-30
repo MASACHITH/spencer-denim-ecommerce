@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using Microsoft.Extensions.Options;
 using SkiaSharp;
 using SpencerDenim.Application.Media;
@@ -174,12 +175,14 @@ public sealed class SkiaImageProcessorTests
     /// has to ask which ones were generated — they are just capped at the source width.
     /// </summary>
     [Fact]
-    public void A_small_source_is_never_upscaled_but_still_gets_every_code()
+    public void A_small_source_is_never_upscaled_and_never_written_twice()
     {
         using var upright = Processor().DecodeUpright(TestImages.Png(400, 300))!;
         var renditions = Processor().EncodeRenditions(upright);
 
-        Assert.Equal(MediaRenditions.Current.Count, renditions.Count);
+        // thumb clamps to 160 and card to 400; large and zoom would clamp to 400 as well, so they
+        // would be byte-identical copies of card and are not written at all.
+        Assert.Equal([MediaRenditions.Thumb, MediaRenditions.Card], renditions.Select(r => r.Rendition.Code));
 
         foreach (var rendition in renditions)
         {
@@ -187,6 +190,11 @@ public sealed class SkiaImageProcessorTests
             Assert.NotNull(codec);
             Assert.Equal(Math.Min(rendition.Rendition.Width, 400), codec.Info.Width);
         }
+
+        // No two renditions of one source are the same picture.
+        Assert.Equal(
+            renditions.Count,
+            renditions.Select(rendition => Convert.ToHexString(SHA256.HashData(rendition.Bytes))).Distinct().Count());
     }
 
     /// <summary>

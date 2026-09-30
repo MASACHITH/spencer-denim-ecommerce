@@ -7,6 +7,15 @@ namespace SpencerDenim.Infrastructure.Catalog;
 /// <summary>
 /// A public image as a read projection returns it: enough to address the original <i>and</i> its
 /// renditions, which is why a projection now selects these four columns rather than just the key.
+/// <para>
+/// <b>Only ever built for an asset that is <c>Ready</c>.</b> The global query filter hides a
+/// soft-deleted row, but it says nothing about <see cref="MediaAssetStatus"/>: a row that is still
+/// <c>Processing</c>, or whose processing <c>Failed</c>, has no file behind it and no renditions, so
+/// linking it would put a 404 on a shopper's screen where a missing image should have been. Every
+/// projection that builds one therefore guards on the status, and a gallery drops the row outright
+/// rather than carrying a slide with nothing in it. <c>PublicMediaFiles</c> enforces the same rule
+/// from the serving end, which is what makes the two agree.
+/// </para>
 /// </summary>
 /// <param name="StorageKey">The original's key. Always present, and always the safe fallback.</param>
 /// <param name="PublicId">The folder name in the rendition key convention (doc 08 §3.3).</param>
@@ -83,13 +92,26 @@ internal static class MediaUrlBuilder
             return null;
         }
 
-        var rendition = MediaRenditions.Find(MediaRenditions.ForVersion(media.RenditionSetVersion), code);
+        var produced = MediaRenditions.ProducedFor(
+            MediaRenditions.ForVersion(media.RenditionSetVersion),
+            media.Width);
 
-        // No rendition set this build understands, or a set without this code: the original always
-        // exists, so the slot shows a heavier picture rather than a broken one.
-        return rendition is null
-            ? ToPublicUrl(baseUrl, media.StorageKey)
-            : ToPublicUrl(baseUrl, MediaStorageKey.ForRendition(media.PublicId, rendition));
+        if (produced.Count == 0)
+        {
+            // No rendition set this build understands, so nothing can be named. The original always
+            // exists, so the slot shows a heavier picture rather than a broken one.
+            return ToPublicUrl(baseUrl, media.StorageKey);
+        }
+
+        // The requested code, or the largest that was actually written. Asking for `zoom` on a 1200 px
+        // photograph is the ordinary case, not an error: the encoder stops once a clamped width repeats,
+        // so zoom.webp is simply not there, and large.webp holds the identical pixels. Falling through
+        // to the original instead would undo the whole point and hand back the full-size JPEG.
+        var chosen = produced.FirstOrDefault(candidate =>
+            string.Equals(candidate.Rendition.Code, code, StringComparison.Ordinal))
+            ?? produced[^1];
+
+        return ToPublicUrl(baseUrl, MediaStorageKey.ForRendition(media.PublicId, chosen.Rendition));
     }
 
     /// <summary>
@@ -148,29 +170,19 @@ internal static class MediaUrlBuilder
     {
         var set = MediaRenditions.ForVersion(media.RenditionSetVersion);
         var widest = MediaRenditions.Find(set, widestCode);
-        if (set is null || widest is null)
+        if (widest is null)
         {
             return null;
         }
 
         var builder = new StringBuilder();
         var count = 0;
-        var lastWidth = 0;
 
-        foreach (var rendition in set.OrderBy(candidate => candidate.Width))
+        // Rule 2 lives in MediaRenditions.ProducedFor, which is also what the encoder writes from — so
+        // a candidate offered here is a file that exists, by construction rather than by agreement.
+        foreach (var (rendition, width) in MediaRenditions.ProducedFor(set, media.Width))
         {
             if (rendition.Width > widest.Width)
-            {
-                break;
-            }
-
-            var actualWidth = media.Width is > 0
-                ? Math.Min(rendition.Width, media.Width.Value)
-                : rendition.Width;
-
-            // Rule 2. The set is walked smallest-first, so once one candidate has matched the source
-            // width the next can only repeat it; rule 1's clamp is what makes that visible here.
-            if (actualWidth <= lastWidth)
             {
                 break;
             }
@@ -186,12 +198,12 @@ internal static class MediaUrlBuilder
                 builder.Append(", ");
             }
 
+            // Rule 1: the width it really has, not the width the set aimed at.
             builder.Append(url)
                 .Append(' ')
-                .Append(actualWidth.ToString(CultureInfo.InvariantCulture))
+                .Append(width.ToString(CultureInfo.InvariantCulture))
                 .Append('w');
 
-            lastWidth = actualWidth;
             count++;
         }
 

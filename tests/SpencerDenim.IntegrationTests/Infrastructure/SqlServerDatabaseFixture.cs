@@ -145,6 +145,11 @@ public sealed class SqlServerDatabaseFixture : IAsyncLifetime
             try
             {
                 Directory.Delete(_mediaRoot, recursive: true);
+
+                // And the shared parent, which is this run's only trace once its own directory is gone.
+                // Non-recursive on purpose: it throws when a concurrent run still has a directory in
+                // there, which is precisely when it must be left alone.
+                Directory.Delete(Path.GetDirectoryName(_mediaRoot)!);
             }
             catch (IOException)
             {
