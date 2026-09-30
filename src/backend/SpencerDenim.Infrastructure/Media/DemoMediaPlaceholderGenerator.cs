@@ -39,6 +39,7 @@ public sealed class DemoMediaPlaceholderGenerator(
     AppDbContext dbContext,
     IFileStorage storage,
     SkiaImageProcessor imageProcessor,
+    IPlaceholderLabelFont typefaces,
     ILogger<DemoMediaPlaceholderGenerator> logger)
 {
     /// <summary>What one run did, so the seeder can report it the way it reports row counts.</summary>
@@ -86,7 +87,11 @@ public sealed class DemoMediaPlaceholderGenerator(
             return new Result(0, alreadyPresent);
         }
 
-        if (!PlaceholderImageRenderer.CanDrawText)
+        if (typefaces.CanDrawText)
+        {
+            MediaLog.PlaceholderFontResolved(logger, typefaces.Source);
+        }
+        else
         {
             MediaLog.DemoPlaceholdersHaveNoFont(logger);
         }
@@ -139,7 +144,11 @@ public sealed class DemoMediaPlaceholderGenerator(
         string swatchHex,
         CancellationToken cancellationToken)
     {
-        using var bitmap = PlaceholderImageRenderer.Render(productName, colourName, swatchHex);
+        // The identity is the storage key, which carries a unique index: that is what makes two frames
+        // two different images even when no glyph can be drawn (see PlaceholderImageRenderer).
+        using var bitmap = PlaceholderImageRenderer.Render(
+            new PlaceholderSubject(storageKey, productName, colourName, swatchHex),
+            typefaces.Font);
 
         // The demo rows were seeded with a .jpg key, and they keep it: the point of this task is to put a
         // file behind the key the catalogue already published, not to renumber the catalogue.

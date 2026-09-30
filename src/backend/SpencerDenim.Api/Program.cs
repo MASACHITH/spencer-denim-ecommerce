@@ -27,6 +27,10 @@ builder.Services.AddApiHealthChecks();
 builder.Services.AddApiForwardedHeaders();
 builder.Services.AddNewsletterSignupThrottle();
 
+// Where a media upload is spooled while it streams in (doc 03 §7: not the host's temp directory by
+// assumption). Api is the composition root, and this needs IHostEnvironment.
+builder.Services.AddSingleton<SpencerDenim.Api.Http.UploadSpool>();
+
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure();
 builder.Services.AddAdminAuthorizationResponses();

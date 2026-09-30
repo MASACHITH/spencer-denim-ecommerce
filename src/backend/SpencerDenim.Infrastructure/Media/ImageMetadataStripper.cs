@@ -148,16 +148,68 @@ public static class ImageMetadataStripper
 
             if (marker == 0xDA)
             {
-                // Start of scan: the entropy-coded data runs to the end of the file (a progressive JPEG
-                // has several scans, and copying the remainder verbatim keeps all of them, together with
-                // any trailing EOI). Nothing after this point can be a metadata segment we would drop,
-                // so there is no reason to walk the scan data.
+                // Start of scan. The entropy-coded data that follows has no length field, so it has to be
+                // walked to find where it ends — which is worth doing rather than copying the rest of the
+                // file, because "the rest of the file" is where a polyglot keeps its payload. Inside
+                // entropy-coded data a 0xFF byte is always followed by 0x00 (byte stuffing) or by a
+                // restart marker, so any other marker really is the end of this scan.
                 output.WriteByte(0xFF);
                 output.WriteByte(marker);
                 output.Write(segment);
-                output.Write(source[(position + segmentLength)..]);
-                stripped = output.ToArray();
-                return true;
+
+                position += segmentLength;
+                var scanStart = position;
+
+                while (position < source.Length)
+                {
+                    if (source[position] != 0xFF)
+                    {
+                        position++;
+                        continue;
+                    }
+
+                    if (position + 1 >= source.Length)
+                    {
+                        position = source.Length;
+                        break;
+                    }
+
+                    var next = source[position + 1];
+
+                    // Stuffed byte, fill byte, or a restart marker: still scan data.
+                    if (next == 0x00 || next == 0xFF || (next >= 0xD0 && next <= 0xD7))
+                    {
+                        position += next == 0xFF ? 1 : 2;
+                        continue;
+                    }
+
+                    break;
+                }
+
+                output.Write(source[scanStart..position]);
+
+                if (position + 1 < source.Length && source[position] == 0xFF && source[position + 1] == 0xD9)
+                {
+                    // End of image. Anything after it — an appended script, a second file, a zip — is not
+                    // part of the picture and does not travel to the public volume with it.
+                    output.WriteByte(0xFF);
+                    output.WriteByte(0xD9);
+                    stripped = output.ToArray();
+                    return true;
+                }
+
+                if (position >= source.Length)
+                {
+                    // Ran out before an end-of-image marker. A truncated upload, or one of the rare files
+                    // that simply has no EOI: keep what there is and let the decoder be the judge, which
+                    // it is anyway — a truncated JPEG's header parses perfectly and only the decode fails.
+                    stripped = output.ToArray();
+                    return true;
+                }
+
+                // Another marker segment: a progressive JPEG's next scan, or a table between scans. Back
+                // to the segment loop, which will copy or drop it on its own merits.
+                continue;
             }
 
             if (!IsJpegSegmentToDrop(marker))

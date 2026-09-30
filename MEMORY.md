@@ -207,6 +207,72 @@ clean, no new runtime dependency.
 
 **Next:** back to the tester.
 
+### 2026-10-01 (2) — W1-04: the Linux CI job caught a defect Windows structurally cannot
+
+PR #60 was green on Windows and failed the backend job on Linux. Two failures, one bug.
+
+**The bug: two different products produced byte-identical files.** The demo placeholder put the
+whole difference between frames in its *text* — the product name and the colourway. The GitHub
+runner's container has no font SkiaSharp can find, so the renderer drew no glyphs, every
+placeholder came out as the same image, every one hashed to the same SHA-256, and
+`UX_MediaAssets_Checksum_Ready` refused the second one. Seeding died with a duplicate-key
+exception and took most of the integration suite with it. **The index was doing its job.** The
+worst shape was the shared fabric-detail frame: no colourway, the same fallback swatch, so all
+forty-five of them were one picture even before the font question.
+
+**Fix 1 — the image is distinct without a glyph.** A SHA-256 of the asset's storage key (which
+already carries a unique index) now drives a ground tint and a forty-cell identity block: a grid of
+small neutral squares, drawn, not written. Text is an *enhancement* on top. Proved against the real
+data rather than argued from entropy: every one of the 149 demo frames, rendered with no font,
+hashes to a distinct value, and twelve of them now generate and **save in one transaction** — the
+save that used to throw.
+
+**Fix 2 — no host font is required at all.** Doc 03 §7, and this was that rule broken quietly. The
+obvious move was to reuse the storefront's Inter (`@fontsource/inter`, OFL, which does permit
+bundling). It cannot be done: that package ships only `.woff`/`.woff2`, and Skia opens neither —
+measured, `SKTypeface.FromFile` returns null for both. Rather than commit a new TrueType binary and
+its licence for words on a development-only image, labels now come from
+`Media__PlaceholderFontPath` when a deployment names a `.ttf`/`.otf`, from the host's font manager
+when it has one, and from nowhere otherwise. A missing or unreadable file logs and falls back; it
+never takes the API down.
+
+**Fix 3 — the test asserted something that cannot always be true.** `The_renderer_can_draw_text_on_this_host`
+failed the build on any fontless machine. The placeholder tests now render with `font: null`
+throughout — the deployment path — and the label assertion is gated on a font actually being
+present. `IPlaceholderLabelFont` is the seam that lets the **integration** suite run the fontless
+path on Windows, which is the only way this class of defect is ever catchable here.
+
+**The other host assumption, found while looking:** the upload spool used `Path.GetTempPath()`. On
+a Linux image `/tmp` is frequently `tmpfs` — RAM, on a VPS where doc 03 §4 has already given SQL
+Server 2 GB of 8, and a 50 MB video goes through it. Now `Media__UploadSpoolPath`, resolved against
+the content root, created at startup.
+
+**`proxy.conf.json` did not proxy `/media`** — so under `ng serve` every card image 404'd and fell
+back to its placeholder. It forwards **`/media/public`**, not `/media`: the Angular build emits its
+own webfonts to `/media/inter-*.woff2`, and a blanket rule swallows them — the same trap doc 03 §4
+already describes for Caddy. Verified under a real `ng serve`: the product image 200s from the API,
+`inter-latin-400-normal.woff2` 200s from the dev server.
+
+**Found by hand, not by a test: the stored original still carried a polyglot's payload.** The
+renditions were always clean (they are re-encoded from pixels), but the JPEG stripper copied
+everything after the start-of-scan marker verbatim — which is exactly where an appended script
+lives. It now walks the entropy-coded data properly (stuffed bytes, fill bytes, restart markers,
+progressive JPEG's later scans) and stops at the end-of-image marker, so anything after it is
+dropped. A file with no EOI is still kept whole and left to the decoder.
+
+**The hand check, end to end** — API + built SSR storefront behind a reverse proxy, per-session
+ports, private scratch directory, throwaway database, all torn down after: a real JPEG carrying a
+real EXIF GPS block and camera serial uploaded and stored with both gone; a real H.264 MP4 (1.1 MB,
+CC0) read as 960×540 / 5.06 s with a byte range returning 1,000 bytes identical to the source and
+`If-None-Match` answering 304; a script, a zip and a 20 MB body refused 415/415/413; a filename of
+`../../../../etc/passwd<script>.jpg` stored as `passwdscript.jpg`; and a bank slip on the private
+volume with a Ready row in the database refused by **ten** spellings of its key through `/media`
+while a public key answered 200 on the same endpoint. The storefront shows labelled placeholders,
+not grey boxes.
+
+**Numbers:** backend 690 unit (was 680) + 343 integration (341), 0 skipped; frontend 19 / 451 / 131;
+Playwright 186. Lint clean, all builds clean, no new dependency.
+
 ### 2026-10-01 — W1-04 media library: PASSED after two fix rounds
 
 The media pipeline is done and the tester passed it. Branch `feature/W1-04-media-library`

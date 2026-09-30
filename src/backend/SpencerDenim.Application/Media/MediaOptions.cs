@@ -51,6 +51,30 @@ public sealed class MediaOptions
     /// </summary>
     public int MaxImageMegapixels { get; set; } = 60;
 
+    /// <summary>
+    /// A TrueType or OpenType file to label the demo placeholders with, or empty for none.
+    /// <para>
+    /// A font is a host resource, and doc 03 §7 forbids depending on one: the API's own container may have
+    /// no font at all. So the labels are optional, this is how a deployment supplies one, and a relative
+    /// value is resolved against the content root. <b>Not</b> a <c>.woff</c> or <c>.woff2</c> — Skia does
+    /// not read either, which is why the storefront's Inter files cannot be reused here (see
+    /// <c>PlaceholderTypefaceSource</c>).
+    /// </para>
+    /// </summary>
+    public string PlaceholderFontPath { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Where an upload is spooled while it streams in, or empty for the operating system's temporary
+    /// directory.
+    /// <para>
+    /// Worth setting on the VPS. A 50 MB video is written here before it is stored, and on many Linux
+    /// images <c>/tmp</c> is a <c>tmpfs</c> — that is RAM, on a box where doc 03 §4 has already budgeted
+    /// SQL Server 2 GB of 8. A relative value is resolved against the content root, so a Docker volume
+    /// mount works without an absolute path (doc 03 §7).
+    /// </para>
+    /// </summary>
+    public string UploadSpoolPath { get; set; } = string.Empty;
+
     /// <summary>WebP quality for renditions. 82 is the usual "indistinguishable at 1×" point.</summary>
     public int RenditionQuality { get; set; } = 82;
 

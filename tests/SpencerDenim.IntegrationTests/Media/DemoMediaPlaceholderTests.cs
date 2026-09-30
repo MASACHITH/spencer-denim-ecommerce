@@ -175,6 +175,114 @@ public sealed class DemoMediaPlaceholderTests(SqlServerDatabaseFixture sqlServer
         Assert.All(overrides, text => Assert.StartsWith("Placeholder image", text!, StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// The regression test for the failure that took the Linux CI job down, at the level it actually broke:
+    /// several demo placeholders generated and then <b>saved in one transaction</b>, with no font
+    /// configured, which is the deployment shape.
+    /// <para>
+    /// Before the identity block, every fontless placeholder was the same image, so the second row to reach
+    /// <c>Ready</c> tripped <c>UX_MediaAssets_Checksum_Ready</c> and the save threw a
+    /// <c>DbUpdateException</c> — killing the seeder and most of the suite behind it. Deliberately one
+    /// <c>SaveChangesAsync</c> for all of them, because that is what makes the unique index the thing under
+    /// test rather than an incidental detail of the ordering.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task Several_demo_placeholders_save_together_without_tripping_the_checksum_index()
+    {
+        // No font, deliberately: this is the container's own state, and with a font present the test would
+        // pass for the wrong reason — the labels would be doing the work the identity block has to do.
+        await using var host = await StartWithoutFontsAsync();
+        await using var scope = host.Factory.Services.CreateAsyncScope();
+
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var generator = scope.ServiceProvider.GetRequiredService<DemoMediaPlaceholderGenerator>();
+
+        // The last twelve seeded demo frames, so the single-asset tests above (which take the first) cannot
+        // have finished them. Filtered to keys the demo data actually declares: other tests in this
+        // assembly insert their own rows under the same prefix, and they have no placeholder descriptor.
+        var candidates = await dbContext.MediaAssets
+            .IgnoreQueryFilters()
+            .Where(candidate => EF.Functions.Like(candidate.StorageKey, DemoMediaPlaceholders.StorageKeyPrefix + "%"))
+            .OrderByDescending(candidate => candidate.Id)
+            .Take(80)
+            .ToListAsync(TestContext.Current.CancellationToken);
+
+        var assets = candidates
+            .Where(candidate => DemoMediaPlaceholders.ByStorageKey.ContainsKey(candidate.StorageKey))
+            .Take(12)
+            .ToList();
+
+        Assert.Equal(12, assets.Count);
+
+        foreach (var asset in assets)
+        {
+            var placeholder = DemoMediaPlaceholders.ByStorageKey[asset.StorageKey];
+
+            var files = await generator.GenerateAsync(
+                asset.PublicId,
+                asset.StorageKey,
+                placeholder.ProductName,
+                placeholder.ColourName,
+                placeholder.ColourHex,
+                TestContext.Current.CancellationToken);
+
+            DemoMediaPlaceholderGenerator.Apply(asset, files, placeholder.AltText);
+        }
+
+        // Every checksum distinct, before the database is asked — so a failure says which half is wrong.
+        var checksums = assets
+            .Select(asset => Convert.ToHexString(asset.Checksum))
+            .ToList();
+
+        Assert.Equal(checksums.Count, checksums.Distinct(StringComparer.Ordinal).Count());
+
+        // And the index agrees: this is the save that used to throw.
+        await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        Assert.All(assets, asset => Assert.Equal(MediaAssetStatus.Ready, asset.Status));
+    }
+
+    /// <summary>
+    /// The other half of the same defect: the demo placeholders must not need a font at all, so the whole
+    /// generate-and-serve path runs here against a host that reports none.
+    /// </summary>
+    [Fact]
+    public async Task No_placeholder_font_is_configured_and_generation_works_anyway()
+    {
+        await using var host = await StartWithoutFontsAsync();
+        await using var scope = host.Factory.Services.CreateAsyncScope();
+
+        var options = scope.ServiceProvider
+            .GetRequiredService<Microsoft.Extensions.Options.IOptions<SpencerDenim.Application.Media.MediaOptions>>();
+
+        Assert.Equal(string.Empty, options.Value.PlaceholderFontPath);
+
+        var (_, storageKey) = await GenerateOneAsync(host);
+        Assert.True(host.PublicFileExists(storageKey), storageKey);
+
+        // And it serves: a fontless placeholder is a real, decodable image, not an empty file.
+        using var client = host.CreateAnonymousClient();
+        using var response = await client.GetAsync(
+            new Uri("/media/" + storageKey, UriKind.Relative),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var bytes = await response.Content.ReadAsByteArrayAsync(TestContext.Current.CancellationToken);
+        using var codec = SKCodec.Create(new SKMemoryStream(bytes));
+
+        Assert.NotNull(codec);
+        Assert.Equal(PlaceholderImageRenderer.Width, codec.Info.Width);
+    }
+
+    private async Task<MediaTestHost> StartWithoutFontsAsync()
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, TestContext.Current.CancellationToken);
+        return MediaTestHost.CreateWithoutFonts(sqlServer.ConnectionString);
+    }
+
     private async Task<MediaTestHost> StartAsync()
     {
         sqlServer.SkipIfUnavailable();

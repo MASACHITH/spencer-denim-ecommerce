@@ -60,11 +60,32 @@ internal static partial class MediaLog
     public static partial void DemoPlaceholdersSkipped(ILogger logger);
 
     [LoggerMessage(
+        EventId = 1115,
+        Level = LogLevel.Warning,
+        Message = "Media:PlaceholderFontPath points at '{Path}', which does not exist. " +
+                  "The demo placeholders will carry no labels; they stay unique and unmistakable without them.")]
+    public static partial void PlaceholderFontFileMissing(ILogger logger, string path);
+
+    [LoggerMessage(
+        EventId = 1116,
+        Level = LogLevel.Warning,
+        Message = "Media:PlaceholderFontPath points at '{Path}', which Skia could not open as a typeface. " +
+                  "It has to be a TrueType or OpenType file — .woff and .woff2 are not readable. " +
+                  "The demo placeholders will carry no labels.")]
+    public static partial void PlaceholderFontFileUnreadable(ILogger logger, string path);
+
+    [LoggerMessage(
+        EventId = 1117,
+        Level = LogLevel.Information,
+        Message = "Demo placeholder labels come from {Source}.")]
+    public static partial void PlaceholderFontResolved(ILogger logger, string source);
+
+    [LoggerMessage(
         EventId = 1111,
         Level = LogLevel.Warning,
-        Message = "No usable font was found, so the demo placeholders will carry no text — only the grey block, " +
-                  "the diagonals and the colourway swatch. Install a font package (for example fonts-dejavu-core) " +
-                  "in the API image to get the labels back.")]
+        Message = "No usable font was found, so the demo placeholders carry no words — only the tinted ground, " +
+                  "the diagonals, the colourway swatch and the identity block, which is what makes each one " +
+                  "distinct. Set Media__PlaceholderFontPath to a .ttf or .otf file to get the labels back.")]
     public static partial void DemoPlaceholdersHaveNoFont(ILogger logger);
 
     [LoggerMessage(

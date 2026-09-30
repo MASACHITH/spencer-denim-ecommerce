@@ -76,6 +76,33 @@ public sealed class ImageMetadataStripperTests
         Assert.True(Contains(stripped, "ICC_PROFILE"u8), "APP2 (ICC profile) must survive");
     }
 
+    /// <summary>
+    /// The polyglot, at the stored file rather than at the rendition: a valid JPEG with a script appended
+    /// past its end-of-image marker. The renditions were always safe — they are re-encoded from pixels —
+    /// but the <b>original</b> is what <c>MediaAssets.StorageKey</c> points at and what <c>/media</c>
+    /// serves, so the trailing bytes have to go with it. Found by hand against the running stack, where
+    /// the stored original still carried the payload.
+    /// </summary>
+    [Fact]
+    public void Anything_appended_after_the_end_of_image_marker_is_dropped()
+    {
+        const string script = "<script>fetch('/api/admin/auth/whoami')</script>";
+        var source = TestImages.JpegWithAppendedScript(script);
+
+        Assert.True(Contains(source, Encoding.ASCII.GetBytes(script)), "the fixture should carry the payload");
+        Assert.True(ImageMetadataStripper.TryStrip(source, MediaFileKind.Jpeg, out var stripped));
+
+        Assert.False(Contains(stripped, Encoding.ASCII.GetBytes(script)));
+
+        // Trimmed exactly at the end-of-image marker, and still a whole image.
+        Assert.Equal(0xFF, stripped[^2]);
+        Assert.Equal(0xD9, stripped[^1]);
+
+        using var codec = SKCodec.Create(new SKMemoryStream(stripped));
+        Assert.NotNull(codec);
+        Assert.Equal(640, codec.Info.Width);
+    }
+
     [Fact]
     public void A_jpeg_comment_which_is_the_classic_hiding_place_is_removed()
     {

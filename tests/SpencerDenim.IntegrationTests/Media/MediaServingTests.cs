@@ -358,6 +358,12 @@ public sealed class MediaServingTests(SqlServerDatabaseFixture sqlServer)
         Assert.Equal("nosniff", original.Headers.GetValues("X-Content-Type-Options").Single());
         Assert.Equal("inline", original.Content.Headers.ContentDisposition?.DispositionType);
 
+        // And the payload is not in the served original either. It used to be: the stripper copied
+        // everything after the start-of-scan marker verbatim, which is exactly where a polyglot keeps its
+        // second file. Found by hand against the running stack, not by a test — hence this one.
+        var servedOriginal = await original.Content.ReadAsByteArrayAsync(TestContext.Current.CancellationToken);
+        Assert.DoesNotContain(script, Encoding.Latin1.GetString(servedOriginal), StringComparison.Ordinal);
+
         foreach (var rendition in MediaRenditions.Current)
         {
             var key = MediaStorageKey.ForRendition(asset.PublicId, rendition.Code);

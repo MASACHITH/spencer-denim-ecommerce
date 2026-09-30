@@ -50,6 +50,13 @@ public static class MediaRegistration
         services.AddSingleton<MediaStorageRoots>();
         services.AddSingleton<SkiaImageProcessor>();
 
+        // Singleton: resolving a typeface means touching the filesystem or the host's font manager, and the
+        // answer cannot change while the process runs. Registered under its interface as well, which is
+        // the seam that lets a test run the no-font path a Linux container actually has.
+        services.AddSingleton<PlaceholderTypefaceSource>();
+        services.AddSingleton<IPlaceholderLabelFont>(provider =>
+            provider.GetRequiredService<PlaceholderTypefaceSource>());
+
         services.AddScoped<IFileStorage, LocalFileStorage>();
         services.AddScoped<IMediaService, MediaService>();
         services.AddScoped<IPublicMediaFiles, PublicMediaFiles>();

@@ -85,6 +85,25 @@ public sealed class MediaTestHost : IAsyncDisposable
     }
 
     /// <summary>
+    /// The same, but with no label font at all — which is what the API's own Linux container has
+    /// (doc 03 §4; <c>SkiaSharp.NativeAssets.Linux.NoDependencies</c> brings no fontconfig and the base
+    /// image brings no font file). A Windows machine always has fonts, so this substitution is the only way
+    /// to run the deployment path here; the defect this guards against was invisible on Windows and failed
+    /// the Linux CI job.
+    /// </summary>
+    public static MediaTestHost CreateWithoutFonts(string connectionString)
+    {
+        var (root, publicRoot, privateRoot, configuration) = PrepareVolumes();
+
+        var factory = new ApiFactory(
+            connectionString,
+            additionalConfiguration: configuration,
+            configureServices: services => services.AddSingleton<IPlaceholderLabelFont>(new NoLabelFont()));
+
+        return new MediaTestHost(factory, root, publicRoot, privateRoot);
+    }
+
+    /// <summary>
     /// The same, with the real storage adapter wrapped — a test can then make a write fail on the third
     /// file, which is the only honest way to observe the rollback: the files written before the failure
     /// really are on disk.
@@ -219,6 +238,32 @@ public sealed class MediaTestHost : IAsyncDisposable
         {
             // A handle the host has not released yet. The temp directory is per test and disposable.
         }
+    }
+
+    private static (string Root, string PublicRoot, string PrivateRoot, Dictionary<string, string?> Configuration)
+        PrepareVolumes()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "sd-media-it-" + Guid.NewGuid().ToString("N"));
+        var publicRoot = Path.Combine(root, "public-volume");
+        var privateRoot = Path.Combine(root, "private-volume");
+        Directory.CreateDirectory(publicRoot);
+        Directory.CreateDirectory(privateRoot);
+
+        return (root, publicRoot, privateRoot, new Dictionary<string, string?>(StringComparer.Ordinal)
+        {
+            ["Media:PublicRoot"] = publicRoot,
+            ["Media:PrivateRoot"] = privateRoot,
+        });
+    }
+
+    /// <summary>A host with no usable typeface. Not a stub of convenience: it is the production shape.</summary>
+    private sealed class NoLabelFont : IPlaceholderLabelFont
+    {
+        public bool CanDrawText => false;
+
+        public string Source => "none";
+
+        public PlaceholderLabelFont? Font => null;
     }
 
     private static List<string> Files(string root) =>

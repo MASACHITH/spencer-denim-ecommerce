@@ -113,6 +113,7 @@ internal static class AdminMediaEndpoints
         IAntiforgery antiforgery,
         IMediaService media,
         IOptions<MediaOptions> options,
+        UploadSpool spool,
         CancellationToken cancellationToken)
     {
         if (await ValidateAntiforgeryAsync(httpContext, antiforgery) is { } antiforgeryProblem)
@@ -123,7 +124,12 @@ internal static class AdminMediaEndpoints
         var limits = options.Value;
         AllowLargeBody(httpContext, limits.MaxRequestBytes);
 
-        await using var upload = await MultipartUpload.ReadAsync(httpContext.Request, limits.MaxRequestBytes, cancellationToken);
+        await using var upload = await MultipartUpload.ReadAsync(
+            httpContext.Request,
+            limits.MaxRequestBytes,
+            spool.Directory,
+            cancellationToken);
+
         if (ToProblem(upload) is { } readProblem)
         {
             return readProblem;
@@ -156,6 +162,7 @@ internal static class AdminMediaEndpoints
         IAntiforgery antiforgery,
         IMediaService media,
         IOptions<MediaOptions> options,
+        UploadSpool spool,
         CancellationToken cancellationToken)
     {
         if (await ValidateAntiforgeryAsync(httpContext, antiforgery) is { } antiforgeryProblem)
@@ -166,7 +173,12 @@ internal static class AdminMediaEndpoints
         var limits = options.Value;
         AllowLargeBody(httpContext, limits.MaxRequestBytes);
 
-        await using var upload = await MultipartUpload.ReadAsync(httpContext.Request, limits.MaxRequestBytes, cancellationToken);
+        await using var upload = await MultipartUpload.ReadAsync(
+            httpContext.Request,
+            limits.MaxRequestBytes,
+            spool.Directory,
+            cancellationToken);
+
         if (ToProblem(upload) is { } readProblem)
         {
             return readProblem;

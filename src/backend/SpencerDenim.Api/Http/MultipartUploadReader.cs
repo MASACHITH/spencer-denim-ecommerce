@@ -79,6 +79,10 @@ public sealed class MultipartUpload : IAsyncDisposable
     /// <see cref="Error"/> into a status code.
     /// </summary>
     /// <param name="request">The incoming request.</param>
+    /// <param name="spoolDirectory">
+    /// Where the parts are written while they stream. From <c>Media:UploadSpoolPath</c>, so a deployment
+    /// can keep a 50 MB video off a RAM-backed <c>/tmp</c> (doc 03 §7: nothing here assumes a host path).
+    /// </param>
     /// <param name="maxBytes">
     /// The total the body may carry. Kestrel is told the same number, so an oversized upload is usually
     /// already refused by the time this sees it; this is the second of the three size defences (the third
@@ -88,9 +92,11 @@ public sealed class MultipartUpload : IAsyncDisposable
     public static async Task<MultipartUpload> ReadAsync(
         HttpRequest request,
         long maxBytes,
+        string spoolDirectory,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
+        ArgumentException.ThrowIfNullOrWhiteSpace(spoolDirectory);
 
         if (!request.HasFormContentType
             || !MediaTypeHeaderValue.TryParse(request.ContentType, out var contentType)
@@ -137,7 +143,7 @@ public sealed class MultipartUpload : IAsyncDisposable
                     upload._files.Add(new UploadedFilePart(
                         name,
                         HeaderUtilities.RemoveQuotes(fileName).Value ?? string.Empty,
-                        await SpoolAsync(section.Body, cancellationToken)));
+                        await SpoolAsync(section.Body, spoolDirectory, cancellationToken)));
                 }
                 else
                 {
@@ -183,11 +189,11 @@ public sealed class MultipartUpload : IAsyncDisposable
     private static MultipartUpload Failed(MultipartReadError error, string message) =>
         new() { Error = error, ErrorMessage = message };
 
-    private static async Task<Stream> SpoolAsync(Stream body, CancellationToken cancellationToken)
+    private static async Task<Stream> SpoolAsync(Stream body, string spoolDirectory, CancellationToken cancellationToken)
     {
         // DeleteOnClose: the file is unlinked when the handle closes, whatever happens next — a rejected
-        // upload, a cancelled request or an unhandled exception leaves nothing in the temp directory.
-        var path = Path.Combine(Path.GetTempPath(), $"sd-media-{Guid.NewGuid():N}.tmp");
+        // upload, a cancelled request or an unhandled exception leaves nothing behind.
+        var path = Path.Combine(spoolDirectory, $"sd-media-{Guid.NewGuid():N}.tmp");
 
         var file = new FileStream(
             path,
