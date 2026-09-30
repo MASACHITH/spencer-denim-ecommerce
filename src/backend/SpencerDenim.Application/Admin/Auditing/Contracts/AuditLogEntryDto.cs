@@ -2,9 +2,14 @@ namespace SpencerDenim.Application.Admin.Auditing.Contracts;
 
 /// <summary>
 /// One <c>ops.AuditLogs</c> row (ADM-03, doc 08 §3.8), projected straight from the entity: no field is
-/// renamed or recomputed, because the redaction the screen must respect already happened at write time
-/// (DB24, the <c>[AuditIgnore]</c> / <c>[AuditRedact]</c> attributes the audit interceptor honours) — this
-/// DTO only ever carries what was already safe to store.
+/// renamed or recomputed, so this screen shows exactly what was written, nothing more. This is a
+/// read-only passthrough, not an enforcement point: doc 08 §3.8 (DB24) describes a generic
+/// <c>[AuditIgnore]</c> / <c>[AuditRedact]</c> attribute mechanism (plus a model test asserting the
+/// redaction list) that has not been built yet — today only two hand-written use cases write
+/// <c>ops.AuditLogs</c> rows (<c>AdminLoginCommandHandler</c>, <c>ChangeAdminPasswordCommandHandler</c>),
+/// and each is manually careful not to embed a secret. Before a generic audited-entity write path is
+/// added, DB24's actual attribute mechanism needs to exist — this viewer will otherwise display whatever
+/// that future writer produces with no enforcement in between (tester finding, W1-09, 2026-09-30).
 /// </summary>
 /// <param name="Id">The row's identity.</param>
 /// <param name="OccurredAtUtc">When the change happened, UTC.</param>

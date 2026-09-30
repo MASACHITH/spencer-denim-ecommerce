@@ -1,7 +1,10 @@
 /**
- * One `ops.AuditLogs` row (ADM-03, doc 08 §3.8), exactly as `GetAuditLogsAsync` returns it. Before/after
- * JSON was already redacted when the row was written (DB24, the audit interceptor) — this screen only
- * ever renders what was already safe to store, and renders it as text, never as evaluated markup.
+ * One `ops.AuditLogs` row (ADM-03, doc 08 §3.8), exactly as `GetAuditLogsAsync` returns it. This screen
+ * only ever renders what was already stored, as text, never as evaluated markup — but it enforces
+ * nothing of its own: doc 08 §3.8 (DB24)'s generic redaction-attribute mechanism doesn't exist yet (only
+ * today's two hand-written audit-writing use cases are manually careful about secrets), so this screen
+ * will show whatever a future generic audit writer produces until DB24 is actually built (tester finding,
+ * W1-09, 2026-09-30).
  */
 export interface AuditLogEntry {
   readonly id: number;
