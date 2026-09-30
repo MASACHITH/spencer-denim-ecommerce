@@ -34,5 +34,18 @@ export const routes: Routes = [
     canActivate: [adminSessionGuard],
     loadComponent: () => import('./pages/audit-log/audit-log-page').then((m) => m.AuditLogPage),
   },
+  {
+    path: 'two-factor/setup',
+    title: 'Set up two-factor authentication — Spencer Denim Admin',
+    canActivate: [twoFactorSetupGuard],
+    loadComponent: () =>
+      import('./pages/two-factor-setup/two-factor-setup-page').then((m) => m.TwoFactorSetupPage),
+  },
+  {
+    path: 'security',
+    title: 'Account security — Spencer Denim Admin',
+    canActivate: [adminSessionGuard],
+    loadComponent: () => import('./pages/security/security-page').then((m) => m.SecurityPage),
+  },
   { path: '**', redirectTo: '' },
 ];
