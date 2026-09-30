@@ -46,6 +46,14 @@ public sealed class AdminTwoFactorEndpointTests(SqlServerDatabaseFixture sqlServ
     private const string AuthorizedProbeUrl = "/api/admin/test-probe/authorized";
     private const string PermissionProbeUrl = "/api/admin/test-probe/permission";
 
+    /// <summary>
+    /// A real feature area, not a probe. The gate is built into the admin policies, so every area gets
+    /// it by construction and none of them mention 2FA — which is exactly why one of them is swept here
+    /// as well as the probes: a policy refactor that quietly stopped applying the gate would leave both
+    /// probes passing if it were only ever proved against endpoints that exist to be probed.
+    /// </summary>
+    private const string MediaLibraryUrl = "/api/admin/media/00000000-0000-0000-0000-000000000001";
+
     private const string Password = "Correct-Horse-Battery-1!";
     private const string NewPassword = "Brand-New-Password-2!";
 
@@ -70,6 +78,11 @@ public sealed class AdminTwoFactorEndpointTests(SqlServerDatabaseFixture sqlServ
 
         await AssertRefusedAsync(client, AuthorizedProbeUrl, "two_factor_enrolment_required");
         await AssertRefusedAsync(client, PermissionProbeUrl, "two_factor_enrolment_required");
+
+        // The media library (W1-04, ADM-18) is refused for the same reason, and the 403 arrives before
+        // the asset is looked up — the GUID below belongs to nothing, so a 404 here would mean the gate
+        // had let the request through to the handler.
+        await AssertRefusedAsync(client, MediaLibraryUrl, "two_factor_enrolment_required");
 
         var status = await GetJsonAsync(client, StatusUrl);
         Assert.False(status.GetProperty("enabled").GetBoolean());

@@ -76,6 +76,13 @@ public static class Permissions
     public static class Media
     {
         public const string View = "Media.View";
+
+        /// <summary>Upload a new asset to the library (ADM-18, W1-04).</summary>
+        public const string Create = "Media.Create";
+
+        /// <summary>Edit an asset's alt text and title (ADM-18).</summary>
+        public const string Edit = "Media.Edit";
+
         public const string Delete = "Media.Delete";
     }
 

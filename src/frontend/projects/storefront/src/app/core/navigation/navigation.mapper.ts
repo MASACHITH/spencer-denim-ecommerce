@@ -113,5 +113,6 @@ function toPromo(department: DepartmentDto): MegaMenuPromo {
     caption: department.description ?? '',
     cta: { label: 'Shop now', path: '/new-arrivals' } satisfies NavLink,
     imageUrl: department.heroImageUrl,
+    imageSrcSet: department.heroImageSrcSet,
   };
 }

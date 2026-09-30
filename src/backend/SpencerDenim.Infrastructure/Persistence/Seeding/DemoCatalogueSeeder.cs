@@ -9,6 +9,7 @@ using SpencerDenim.Application.Catalog;
 using SpencerDenim.Domain.Catalog;
 using SpencerDenim.Domain.Inventory;
 using SpencerDenim.Domain.Media;
+using SpencerDenim.Infrastructure.Media;
 
 namespace SpencerDenim.Infrastructure.Persistence.Seeding;
 
@@ -17,8 +18,9 @@ namespace SpencerDenim.Infrastructure.Persistence.Seeding;
 /// already exists is skipped whole, so re-running the seeder never duplicates rows and never
 /// overwrites an edit made in the admin.
 /// <para>
-/// No files are uploaded here (W1-04 owns the media pipeline). Media rows point at placeholder
-/// storage keys, which is all the storefront needs to render a gallery.
+/// Media rows point at <c>public/originals/demo/…</c>; the files behind them are drawn by
+/// <c>DemoMediaPlaceholderGenerator</c> (W1-04) as labelled placeholders, never as invented product
+/// photography. See <see cref="DemoMediaPlaceholders"/>.
 /// </para>
 /// </summary>
 public sealed class DemoCatalogueSeeder(AppDbContext dbContext, IClock clock, IOptions<CatalogOptions> options)
@@ -148,7 +150,7 @@ public sealed class DemoCatalogueSeeder(AppDbContext dbContext, IClock clock, IO
                 ProductColourId = colours[index].Id,
                 MediaRole = ProductMediaRole.Gallery,
                 SortOrder = mediaOrder,
-                AltTextOverride = $"{seed.Name} in {colours[index].Name}",
+                AltTextOverride = DemoMediaPlaceholders.AltTextFor(seed.Name, colours[index].Name),
             });
             mediaOrder++;
         }
@@ -160,7 +162,7 @@ public sealed class DemoCatalogueSeeder(AppDbContext dbContext, IClock clock, IO
             ProductColourId = null,
             MediaRole = ProductMediaRole.Hover,
             SortOrder = mediaOrder,
-            AltTextOverride = $"{seed.Name}, fabric detail",
+            AltTextOverride = DemoMediaPlaceholders.AltTextFor(seed.Name, colourName: null),
         });
 
         // Variants: colour × size, with deterministic stock so a re-seed of a fresh database produces
@@ -412,34 +414,47 @@ public sealed class DemoCatalogueSeeder(AppDbContext dbContext, IClock clock, IO
 
     // ---------------------------------------------------------------- helpers
 
+    /// <summary>
+    /// The asset rows for one product. The bytes behind them are drawn by
+    /// <c>DemoMediaPlaceholderGenerator</c> (W1-04), which also replaces the placeholder metadata below
+    /// with the real size, checksum and dimensions of the file it writes.
+    /// <para>
+    /// The row is created as <see cref="MediaAssetStatus.Processing"/>, not <c>Ready</c>: until a file
+    /// exists, <c>Ready</c> would be a claim the serving endpoint acts on, and it would answer 404 anyway
+    /// because there is nothing on disk. A deployment with no media volume therefore keeps its demo images
+    /// honestly marked as unfinished rather than broken.
+    /// </para>
+    /// </summary>
     private static List<MediaAsset> CreateMediaAssets(DemoProductSeed seed)
     {
-        var assets = new List<MediaAsset>(seed.Colours.Length + 1);
+        var placeholders = DemoMediaPlaceholders.ForProduct(seed);
+        var assets = new List<MediaAsset>(placeholders.Count);
+        var index = 1;
 
-        for (var index = 1; index <= seed.Colours.Length + 1; index++)
+        foreach (var placeholder in placeholders)
         {
-            var storageKey = $"public/originals/demo/{seed.Slug}-{index.ToString(CultureInfo.InvariantCulture)}.jpg";
-            var isDetail = index == seed.Colours.Length + 1;
-
             assets.Add(new MediaAsset
             {
-                PublicId = DeterministicGuid(storageKey),
+                PublicId = DeterministicGuid(placeholder.StorageKey),
                 MediaType = MediaAssetType.Image,
                 Visibility = MediaVisibility.Public,
-                Status = MediaAssetStatus.Ready,
-                OriginalFileName = $"{seed.Slug}-{index.ToString(CultureInfo.InvariantCulture)}.jpg",
-                StorageKey = storageKey,
+                Status = MediaAssetStatus.Processing,
+                OriginalFileName = DemoMediaPlaceholders.FileNameFor(seed.Slug, index),
+                StorageKey = placeholder.StorageKey,
                 ContentType = "image/jpeg",
-                SizeBytes = 240_000 + (index * 1_000),
-                Width = 1200,
-                Height = 1600,
-                RenditionSetVersion = 1,
-                Checksum = SHA256.HashData(Encoding.UTF8.GetBytes(storageKey)),
-                AltText = isDetail
-                    ? $"{seed.Name}, fabric detail"
-                    : $"{seed.Name} in {seed.Colours[index - 1].Name}",
+
+                // A placeholder size and checksum: there is no file yet, and the generator replaces both
+                // with the real ones the moment it writes it. The dimensions are the ones it will produce,
+                // so the storefront can reserve the right box even before the files exist.
+                SizeBytes = 1,
+                Width = PlaceholderImageRenderer.Width,
+                Height = PlaceholderImageRenderer.Height,
+                Checksum = SHA256.HashData(Encoding.UTF8.GetBytes(placeholder.StorageKey)),
+                AltText = placeholder.AltText,
                 Title = seed.Name,
             });
+
+            index++;
         }
 
         return assets;

@@ -36,6 +36,72 @@ app.use(
 );
 
 /**
+ * **A test fixture. Never point this at a real media service.**
+ *
+ * `CatalogOptions.MediaBaseUrl` is `/media` by default, so the API publishes media addresses on
+ * the storefront's own origin and something in front has to route them: Caddy, from the public
+ * uploads volume (doc 03 §"Deployment topology"), or the API's own `MediaFileEndpoints`. This
+ * route is not that. It exists for the one stack with no reverse proxy in it — the browser tests
+ * — whose media come from the catalogue stub on another port. Without it the stub would have to
+ * publish absolute URLs naming that port, and those URLs are server-rendered into the markup:
+ * the internal address GLB-11 (`product-listing.e2e.ts`) refuses to let the HTML carry.
+ *
+ * It is deliberately named `E2E_...` rather than reading like a deployment knob, because it is
+ * only good enough for a few-kilobyte fixture and silently wrong for anything else:
+ *
+ * - it forwards no `Range`, so a video could not be seeked through it;
+ * - it forwards no `If-None-Match`/`If-Modified-Since` and returns no `ETag`, so every request
+ *   is a full transfer and the 304 that `PublicMediaFiles` works to produce never happens;
+ *   `Cache-Control: no-store` is set on purpose to stop a test caching a fixture, and is the
+ *   exact opposite of the year-long immutable cache real media is served with;
+ * - it buffers the whole body in memory.
+ *
+ * A deployment that needs `/media` on this origin routes it in the reverse proxy, which does all
+ * three properly. If that ever stops being true, this is not the thing to reach for.
+ *
+ * Mounted **after** the static middleware, and it has to stay there: the browser build writes
+ * its own fonts to `/media` too (`dist/storefront/browser/media/inter-*.woff2`), so `/media` is
+ * a shared namespace on this origin, not the uploads volume's alone. In front of the static
+ * files this route swallowed every webfont and the homepage's own "no failed requests" check
+ * caught it. Whatever routes `/media` in a deployment has the same problem to solve — see the
+ * deployment notes in `docs/03-architecture-and-tech-stack.md`.
+ */
+const e2eMediaPassthroughUrl = process.env['E2E_MEDIA_PASSTHROUGH_URL'];
+
+if (e2eMediaPassthroughUrl) {
+  app.use('/media', (req, res, next) => {
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      next();
+      return;
+    }
+
+    void (async () => {
+      try {
+        // `originalUrl` and not `req.url`: mounting on a path strips the prefix, and the media
+        // service is addressed by the same `/media/...` key the catalogue published.
+        const upstream = await fetch(new URL(req.originalUrl, e2eMediaPassthroughUrl), {
+          method: req.method,
+        });
+        const contentType = upstream.headers.get('content-type');
+
+        res.status(upstream.status);
+        if (contentType) {
+          // The type has to survive the hop: a `.webp` served as anything else is a picture the
+          // browser refuses to decode, and a card that silently falls back to its placeholder.
+          res.setHeader('Content-Type', contentType);
+        }
+        res.setHeader('Cache-Control', 'no-store');
+        // Buffered rather than streamed: the only thing that ever travels this route is a test
+        // fixture of a few kilobytes, and a stream would be a moving part with nothing to move.
+        res.end(Buffer.from(await upstream.arrayBuffer()));
+      } catch (error) {
+        next(error);
+      }
+    })();
+  });
+}
+
+/**
  * Handle all other requests by rendering the Angular application.
  */
 app.use((req, res, next) => {

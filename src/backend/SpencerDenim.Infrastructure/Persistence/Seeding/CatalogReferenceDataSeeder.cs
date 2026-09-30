@@ -319,6 +319,9 @@ public sealed class SeedCounts
 
     public int MediaAssets { get; set; }
 
+    /// <summary>Demo placeholder image sets drawn and written by the media pipeline (W1-04).</summary>
+    public int MediaPlaceholders { get; set; }
+
     public int HomeSections { get; set; }
 
     public int HomeSectionItems { get; set; }
@@ -329,6 +332,7 @@ public sealed class SeedCounts
         $"departments {Departments}, age groups {AgeGroups}, attribute options {AttributeOptions}, " +
         $"colour families {ColourFamilies}, sizes {Sizes}, size guides {SizeGuides}, categories {Categories}, " +
         $"products {Products}, variants {Variants}, media assets {MediaAssets}, " +
+        $"media placeholders {MediaPlaceholders}, " +
         $"home sections {HomeSections}, home section items {HomeSectionItems}, " +
         $"announcements {AnnouncementMessages}";
 }

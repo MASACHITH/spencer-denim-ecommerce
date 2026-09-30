@@ -30,6 +30,7 @@ function node(
     depth,
     description,
     imageUrl: null,
+    imageSrcSet: null,
     showInMegaMenu: true,
     megaMenuColumn: null,
     ageGroupSlug: null,
@@ -44,6 +45,7 @@ const DEPARTMENTS: readonly DepartmentDto[] = [
     slug: 'women',
     description: 'Everyday essentials and occasion pieces.',
     heroImageUrl: null,
+    heroImageSrcSet: null,
     seoTitle: null,
     seoDescription: null,
     categories: [
@@ -57,6 +59,7 @@ const DEPARTMENTS: readonly DepartmentDto[] = [
     slug: 'kids',
     description: 'Girls, boys and baby.',
     heroImageUrl: null,
+    heroImageSrcSet: null,
     seoTitle: null,
     seoDescription: null,
     categories: [
@@ -78,7 +81,9 @@ function product(id: number): ProductCardDto {
     categoryName: 'Jeans',
     categorySlug: 'jeans',
     imageUrl: null,
+    imageSrcSet: null,
     hoverImageUrl: null,
+    hoverImageSrcSet: null,
     imageAltText: null,
     price: { current: 5990, original: 7990, discountPercent: 25, hasDiscount: true, currency: 'LKR' },
     rating: { average: 4.4, count: 12 },

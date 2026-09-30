@@ -20,15 +20,22 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" />
     <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" />
+    <PackageReference Include="SkiaSharp" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\SpencerDenim.Application\SpencerDenim.Application.csproj" />
   </ItemGroup>
 
-  <!-- The demo seeder's deterministic generator is an implementation detail with a unit test on it. -->
+  <!--
+    The demo seeder's deterministic generator and its media placeholder descriptors are implementation
+    details with tests on them: the unit tests check what a placeholder looks like, and the integration
+    tests drive the generator against a real database and a real volume.
+  -->
   <ItemGroup>
     <InternalsVisibleTo Include="SpencerDenim.UnitTests" />
+    <InternalsVisibleTo Include="SpencerDenim.IntegrationTests" />
   </ItemGroup>
 
 </Project>

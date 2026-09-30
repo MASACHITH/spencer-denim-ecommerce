@@ -40,6 +40,7 @@ public sealed class SqlServerDatabaseFixture : IAsyncLifetime
     private readonly string? _serverConnectionString;
 
     private ServiceProvider? _services;
+    private string? _mediaRoot;
 
     public SqlServerDatabaseFixture()
     {
@@ -67,6 +68,21 @@ public sealed class SqlServerDatabaseFixture : IAsyncLifetime
     /// <summary>What the seeders inserted, so tests can assert against the real catalogue size.</summary>
     public SeedCounts SeedCounts { get; private set; } = new();
 
+    /// <summary>
+    /// The throwaway public media volume this run seeded into, or empty when the fixture is unavailable.
+    /// <para>
+    /// The fixture configures one at all because <c>DemoMediaPlaceholderGenerator</c> is a no-op without
+    /// a media volume (W1-04). Without it the seeded catalogue's assets keep a null
+    /// <c>RenditionSetVersion</c> — no renditions were ever rendered — and every catalogue payload
+    /// legitimately falls back to the original file. That is precisely the blind spot that let doc 03
+    /// §3b's renditions be generated in production and linked nowhere: the suite could not tell a reader
+    /// that picks the right rendition from one that ignores renditions entirely, because in the fixture
+    /// both answered with the original. Seeding a real volume costs one placeholder render per demo
+    /// asset and makes the catalogue tests exercise the pipeline the storefront actually runs on.
+    /// </para>
+    /// </summary>
+    public string MediaPublicRoot { get; private set; } = string.Empty;
+
     /// <summary>Skips the calling test when no SQL Server is configured.</summary>
     public void SkipIfUnavailable() => Assert.SkipUnless(IsAvailable, SkipReason);
 
@@ -91,7 +107,14 @@ public sealed class SqlServerDatabaseFixture : IAsyncLifetime
             $"CREATE DATABASE {QuotedDatabaseName} COLLATE {Collation};",
             cancellationToken);
 
-        _services = BuildServices(ConnectionString);
+        // Siblings, never nested: MediaStorageRoots refuses a configuration where one volume can reach
+        // the other, and the fixture has to satisfy the same rule the VPS does.
+        _mediaRoot = Path.Combine(Path.GetTempPath(), "sd-media-tests", Guid.NewGuid().ToString("N"));
+        MediaPublicRoot = Path.Combine(_mediaRoot, "public");
+        Directory.CreateDirectory(MediaPublicRoot);
+        Directory.CreateDirectory(Path.Combine(_mediaRoot, "private"));
+
+        _services = BuildServices(ConnectionString, _mediaRoot);
 
         using var scope = _services.CreateScope();
 
@@ -115,6 +138,29 @@ public sealed class SqlServerDatabaseFixture : IAsyncLifetime
             _services = null;
         }
 
+        if (_mediaRoot is not null)
+        {
+            // Best effort: a locked file must not fail a run that has otherwise passed, and the
+            // directory is under the OS temp path either way.
+            try
+            {
+                Directory.Delete(_mediaRoot, recursive: true);
+
+                // And the shared parent, which is this run's only trace once its own directory is gone.
+                // Non-recursive on purpose: it throws when a concurrent run still has a directory in
+                // there, which is precisely when it must be left alone.
+                Directory.Delete(Path.GetDirectoryName(_mediaRoot)!);
+            }
+            catch (IOException)
+            {
+            }
+            catch (UnauthorizedAccessException)
+            {
+            }
+
+            _mediaRoot = null;
+        }
+
         // Pooled connections from the API under test would keep the database in use.
         SqlConnection.ClearAllPools();
 
@@ -129,12 +175,14 @@ public sealed class SqlServerDatabaseFixture : IAsyncLifetime
             CancellationToken.None);
     }
 
-    private static ServiceProvider BuildServices(string connectionString)
+    private static ServiceProvider BuildServices(string connectionString, string mediaRoot)
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["ConnectionStrings:Database"] = connectionString,
+                ["Media:PublicRoot"] = Path.Combine(mediaRoot, "public"),
+                ["Media:PrivateRoot"] = Path.Combine(mediaRoot, "private"),
             })
             .Build();
 

@@ -5,6 +5,12 @@
     "changeOrigin": false,
     "logLevel": "warn"
   },
+  "/media/public": {
+    "target": "http://localhost:5080",
+    "secure": false,
+    "changeOrigin": false,
+    "logLevel": "warn"
+  },
   "/health": {
     "target": "http://localhost:5080",
     "secure": false,

@@ -75,11 +75,19 @@ internal sealed class HomeContentReader(AppDbContext dbContext, IOptions<Catalog
                 // "no image" rather than as a URL that 404s on the shopper's screen. The global
                 // query filter already hides soft-deleted assets; the status check is this reader's.
                 item.ImageAsset != null && item.ImageAsset.Status == MediaAssetStatus.Ready
-                    ? item.ImageAsset.StorageKey
+                    ? new MediaRef(
+                        item.ImageAsset.StorageKey,
+                        item.ImageAsset.PublicId,
+                        item.ImageAsset.RenditionSetVersion,
+                        item.ImageAsset.Width)
                     : null,
                 item.ImageAsset != null ? item.ImageAsset.AltText : null,
                 item.MobileImageAsset != null && item.MobileImageAsset.Status == MediaAssetStatus.Ready
-                    ? item.MobileImageAsset.StorageKey
+                    ? new MediaRef(
+                        item.MobileImageAsset.StorageKey,
+                        item.MobileImageAsset.PublicId,
+                        item.MobileImageAsset.RenditionSetVersion,
+                        item.MobileImageAsset.Width)
                     : null,
                 item.MobileImageAsset != null ? item.MobileImageAsset.AltText : null,
                 item.VideoAsset != null && item.VideoAsset.Status == MediaAssetStatus.Ready
@@ -95,9 +103,22 @@ internal sealed class HomeContentReader(AppDbContext dbContext, IOptions<Catalog
                 item.SortOrder))
             .ToListAsync(cancellationToken);
 
+        // Which rendition an item's image wants depends on how its section draws it, and the item row
+        // does not carry that — a hero is full-bleed, a department or social tile is a grid cell. The
+        // items were filtered to these section ids, so the lookup cannot miss; if it ever did, a tile's
+        // sizes are the safe answer, because guessing full-bleed would hand a phone the 2000 px file.
+        var fullBleedSections = sections
+            .Where(section => IsFullBleed(section.SectionType))
+            .Select(section => section.Id)
+            .ToHashSet();
+
         var itemsBySection = items
             .GroupBy(item => item.HomeSectionId)
-            .ToDictionary(group => group.Key, group => group.Select(ToDto).ToList());
+            .ToDictionary(
+                group => group.Key,
+                group => group
+                    .Select(item => ToDto(item, fullBleedSections.Contains(group.Key)))
+                    .ToList());
 
         return sections
             .Select(section => new HomeSectionContent(
@@ -137,24 +158,53 @@ internal sealed class HomeContentReader(AppDbContext dbContext, IOptions<Catalog
             .AsReadOnly();
     }
 
-    private HomeSectionItemDto ToDto(ItemRow item) => new(
-        item.Id,
-        item.Title,
-        item.Subtitle,
-        item.Body,
-        item.ButtonLabel,
-        item.LinkUrl,
-        MediaUrlBuilder.ToPublicUrl(_options.MediaBaseUrl, item.ImageKey),
-        item.ImageAltText,
-        MediaUrlBuilder.ToPublicUrl(_options.MediaBaseUrl, item.MobileImageKey),
-        item.MobileImageAltText,
-        MediaUrlBuilder.ToPublicUrl(_options.MediaBaseUrl, item.VideoKey),
-        MediaUrlBuilder.ToPublicUrl(_options.MediaBaseUrl, item.VideoPosterKey),
-        item.IconKey,
-        item.DepartmentSlug,
-        item.DepartmentName,
-        item.ProductSlug,
-        item.SortOrder);
+    /// <summary>
+    /// Whether a section draws its image edge to edge. Those are the only places on the home page where
+    /// a rendition above <c>large</c> can be the right file; everything else is a tile in a grid and
+    /// takes a product card's sizes.
+    /// </summary>
+    private static bool IsFullBleed(HomeSectionType sectionType) => sectionType
+        is HomeSectionType.HeroVideo
+        or HomeSectionType.CampaignBanner
+        or HomeSectionType.ActivewearFeature;
+
+    private HomeSectionItemDto ToDto(ItemRow item, bool isFullBleed)
+    {
+        // The mobile image is by definition the narrow-viewport one, so it never needs more than
+        // `large` however the section draws the desktop image.
+        var image = MediaUrlBuilder.ToImageSources(
+            _options.MediaBaseUrl,
+            item.Image,
+            isFullBleed ? MediaRenditions.Large : MediaRenditions.Card,
+            isFullBleed ? MediaRenditions.Zoom : MediaRenditions.Large);
+
+        var mobileImage = MediaUrlBuilder.ToImageSources(
+            _options.MediaBaseUrl,
+            item.MobileImage,
+            MediaRenditions.Card,
+            MediaRenditions.Large);
+
+        return new HomeSectionItemDto(
+            item.Id,
+            item.Title,
+            item.Subtitle,
+            item.Body,
+            item.ButtonLabel,
+            item.LinkUrl,
+            image.Url,
+            image.SrcSet,
+            item.ImageAltText,
+            mobileImage.Url,
+            mobileImage.SrcSet,
+            item.MobileImageAltText,
+            MediaUrlBuilder.ToPublicUrl(_options.MediaBaseUrl, item.VideoKey),
+            MediaUrlBuilder.ToPublicUrl(_options.MediaBaseUrl, item.VideoPosterKey),
+            item.IconKey,
+            item.DepartmentSlug,
+            item.DepartmentName,
+            item.ProductSlug,
+            item.SortOrder);
+    }
 
     /// <summary>One <c>content.HomeSections</c> row, as the projection returns it.</summary>
     private sealed record SectionRow(
@@ -174,9 +224,9 @@ internal sealed class HomeContentReader(AppDbContext dbContext, IOptions<Catalog
         string? Body,
         string? ButtonLabel,
         string? LinkUrl,
-        string? ImageKey,
+        MediaRef? Image,
         string? ImageAltText,
-        string? MobileImageKey,
+        MediaRef? MobileImage,
         string? MobileImageAltText,
         string? VideoKey,
         string? VideoPosterKey,

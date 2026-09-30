@@ -36,6 +36,7 @@ export interface ColourSwatchDto {
   readonly familyName: string;
   readonly familySlug: string;
   readonly hexCode: string | null;
+  /** The **thumb** rendition (160 w): a swatch is never drawn larger, so it carries no srcset. */
   readonly swatchImageUrl: string | null;
 }
 
@@ -49,8 +50,20 @@ export interface ProductCardDto {
   readonly departmentSlug: string;
   readonly categoryName: string;
   readonly categorySlug: string;
+  /**
+   * The **card** rendition (600 w WebP), or the original for an asset that has no rendition set.
+   *
+   * The `*Url` names are unchanged from when they held the originals, so nothing that only reads
+   * a URL had to move; the `*SrcSet` fields are the optimisation on top of them — the candidate
+   * list thumb → card → large, and `null` when the asset has no renditions. A listing that
+   * fetched the originals weighed about 1,780 KB a page against about 330 KB for the renditions,
+   * and the saving only lands if the browser is told how wide a card really is, which is why
+   * every consumer pairs the srcset with a `sizes` describing its own grid.
+   */
   readonly imageUrl: string | null;
+  readonly imageSrcSet: string | null;
   readonly hoverImageUrl: string | null;
+  readonly hoverImageSrcSet: string | null;
   readonly imageAltText: string | null;
   readonly price: PriceDto;
   readonly rating: RatingDto;
@@ -113,15 +126,29 @@ export interface ProductAttributesDto {
 /**
  * One gallery item (PDP-01). `colourId` ties a photo to one colourway, which is what lets the
  * gallery follow the colour the shopper picked. A `Video` carries `posterUrl`.
+ *
+ * The gallery draws the same photograph at three very different sizes — a 56 px thumbnail, a
+ * stage about 600 px wide and a full-screen view magnified to 3× — so it is the one place where
+ * one URL for all three is measurably wrong. Each size therefore names its own rendition, and
+ * each falls back to {@link url} so a product photographed before the renditions existed still
+ * shows everywhere.
  */
 export interface ProductImageDto {
   readonly id: number;
+  /** The **large** rendition (1200 w), or the original when the asset has no rendition set. */
   readonly url: string;
+  /** Candidates thumb → zoom for {@link url}; `null` when the asset has no renditions. */
+  readonly srcSet: string | null;
+  /** The **thumb** rendition (160 w) for the rail; `null` means fall back to {@link url}. */
+  readonly thumbnailUrl: string | null;
+  /** The **zoom** rendition (2000 w) for the full-screen view; `null` falls back to {@link url}. */
+  readonly zoomUrl: string | null;
   readonly altText: string | null;
   readonly role: ProductMediaRole;
   readonly colourId: number | null;
   readonly width: number | null;
   readonly height: number | null;
+  /** A video's poster frame. Videos have no renditions, so this is always the original. */
   readonly posterUrl: string | null;
   readonly sortOrder: number;
 }

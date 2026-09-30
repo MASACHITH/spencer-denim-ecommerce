@@ -13,6 +13,7 @@ using SpencerDenim.Infrastructure.Admin.Auditing;
 using SpencerDenim.Infrastructure.Catalog;
 using SpencerDenim.Infrastructure.Content;
 using SpencerDenim.Infrastructure.Marketing;
+using SpencerDenim.Infrastructure.Media;
 using SpencerDenim.Infrastructure.Health;
 using SpencerDenim.Infrastructure.Identity;
 using SpencerDenim.Infrastructure.Persistence;
@@ -99,6 +100,8 @@ public static class DependencyInjection
         // Doc 08 §3.7's homepage cache. A singleton, because a cache scoped to one request caches
         // nothing at all.
         services.AddSingleton<IHomePageCache, HomePageCache>();
+
+        services.AddMediaLibrary();
 
         services.AddOptions<SeedOptions>().BindConfiguration(SeedOptions.SectionName);
         services.AddScoped<CatalogReferenceDataSeeder>();

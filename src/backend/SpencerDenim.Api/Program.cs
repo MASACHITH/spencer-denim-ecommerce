@@ -4,6 +4,7 @@ using SpencerDenim.Api.Endpoints;
 using SpencerDenim.Api.Endpoints.Admin;
 using SpencerDenim.Api.Endpoints.Catalog;
 using SpencerDenim.Api.Endpoints.Content;
+using SpencerDenim.Api.Endpoints.Media;
 using SpencerDenim.Api.Health;
 using SpencerDenim.Api.Http;
 using SpencerDenim.Api.Logging;
@@ -25,6 +26,10 @@ builder.Services.AddApiOpenApi();
 builder.Services.AddApiHealthChecks();
 builder.Services.AddApiForwardedHeaders();
 builder.Services.AddNewsletterSignupThrottle();
+
+// Where a media upload is spooled while it streams in (doc 03 §7: not the host's temp directory by
+// assumption). Api is the composition root, and this needs IHostEnvironment.
+builder.Services.AddSingleton<SpencerDenim.Api.Http.UploadSpool>();
 
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure();
@@ -57,5 +62,7 @@ app.MapAuditLogEndpoints();
 
 app.MapCatalogEndpoints();
 app.MapContentEndpoints();
+app.MapAdminMediaEndpoints();
+app.MapMediaFileEndpoints();
 
 await app.RunAsync();

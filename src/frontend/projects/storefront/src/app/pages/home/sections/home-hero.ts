@@ -64,12 +64,18 @@ import { Viewport } from '../../../core/platform/viewport';
         } @else if (stillUrl(); as still) {
           <picture>
             @if (desktopStill(); as wide) {
-              <source media="(min-width: 768px)" [srcset]="wide" />
+              <source
+                media="(min-width: 768px)"
+                [srcset]="desktopStillSrcSet() ?? wide"
+                [attr.sizes]="desktopStillSrcSet() ? '100vw' : null"
+              />
             }
             <img
               class="hero__image"
               data-testid="hero-image"
               [src]="still"
+              [attr.srcset]="stillSrcSet()"
+              [attr.sizes]="stillSrcSet() ? '100vw' : null"
               [alt]="stillAlt()"
               fetchpriority="high"
               decoding="async"
@@ -263,11 +269,25 @@ export class HomeHero {
     () => this.item()?.mobileImageUrl ?? this.item()?.imageUrl ?? null,
   );
 
+  /**
+   * The candidate list for whichever still {@link stillUrl} settled on. The phone crop and the
+   * wide crop are separate assets, so their rendition sets are not interchangeable — and the
+   * hero is full-bleed at every width, which is why both sources describe themselves as `100vw`.
+   */
+  protected readonly stillSrcSet = computed(() => {
+    const item = this.item();
+    return (item?.mobileImageUrl ? item.mobileImageSrcSet : item?.imageSrcSet) ?? null;
+  });
+
   /** The wide still, used from 768 px when the client uploaded a separate one. */
   protected readonly desktopStill = computed(() => {
     const item = this.item();
     return item?.imageUrl && item.mobileImageUrl ? item.imageUrl : null;
   });
+
+  protected readonly desktopStillSrcSet = computed(() =>
+    this.desktopStill() ? (this.item()?.imageSrcSet ?? null) : null,
+  );
 
   protected readonly stillAlt = computed(
     () => this.item()?.mobileImageAltText ?? this.item()?.imageAltText ?? '',

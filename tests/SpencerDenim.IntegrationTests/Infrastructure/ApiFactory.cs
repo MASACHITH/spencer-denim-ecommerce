@@ -15,11 +15,16 @@ namespace SpencerDenim.IntegrationTests.Infrastructure;
 /// <param name="commandInterceptor">
 /// Optional EF Core command interceptor, so a test can count the SQL round-trips the API makes.
 /// </param>
+/// <param name="configureServices">
+/// Optional service overrides, applied after the application's own registrations — how a media test
+/// substitutes a storage adapter that fails part way through, to force the rollback path.
+/// </param>
 public sealed class ApiFactory(
     string connectionString,
     string environment = "Testing",
     IReadOnlyDictionary<string, string?>? additionalConfiguration = null,
-    DbCommandInterceptor? commandInterceptor = null)
+    DbCommandInterceptor? commandInterceptor = null,
+    Action<IServiceCollection>? configureServices = null)
     : WebApplicationFactory<Program>
 {
     /// <summary>Loopback port 1 refuses connections at once: a SQL Server that is guaranteed to be unreachable.</summary>
@@ -48,6 +53,11 @@ public sealed class ApiFactory(
                 configuration.AddInMemoryCollection(additionalConfiguration);
             }
         });
+
+        if (configureServices is not null)
+        {
+            builder.ConfigureTestServices(configureServices);
+        }
 
         if (commandInterceptor is not null)
         {

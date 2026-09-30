@@ -6,6 +6,17 @@ import { NavigationService } from '../../core/navigation/navigation.service';
 import { NavItem, hasMenu } from '../../core/navigation/navigation.model';
 
 /**
+ * The promo card's column in `.mega__grid` below — `repeat(4, 1fr) minmax(200px, 1.1fr)` with a
+ * 32 px column gap — inside a container that caps at 1440 px. The mega menu only exists from
+ * 1024 px, so there is nothing narrower to describe; without this the browser would size the
+ * card against the whole viewport and fetch the largest rendition for a 260 px picture.
+ */
+const PROMO_SIZES =
+  '(min-width: 1440px) 263px,' +
+  ' (min-width: 1280px) calc(1.1 * (100vw - 224px) / 5.1),' +
+  ' calc(1.1 * (100vw - 192px) / 5.1)';
+
+/**
  * The desktop main navigation and its mega menus (GLB-05).
  *
  * A department's menu opens on hover *and* on keyboard focus, so a mouse and a keyboard reach the
@@ -103,7 +114,12 @@ import { NavItem, hasMenu } from '../../core/navigation/navigation.model';
                     <a class="mega__promo" [routerLink]="promo.cta.path" (click)="close(item.id)">
                       <span class="mega__promo-media">
                         @if (promo.imageUrl) {
-                          <img [src]="promo.imageUrl" alt="" />
+                          <img
+                            [src]="promo.imageUrl"
+                            [attr.srcset]="promo.imageSrcSet"
+                            [attr.sizes]="promo.imageSrcSet ? promoSizes : null"
+                            alt=""
+                          />
                         } @else {
                           <span class="mega__promo-tag">Promo image</span>
                         }
@@ -278,6 +294,8 @@ export class MainNav {
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
 
   readonly items = this.navigation.items;
+
+  protected readonly promoSizes = PROMO_SIZES;
 
   private readonly expanded = signal<string | null>(null);
 

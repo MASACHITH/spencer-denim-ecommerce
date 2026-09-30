@@ -37,11 +37,19 @@ export interface HomeSectionItemDto {
   readonly buttonLabel: string | null;
   /** Where the tile goes. A trending tile carries a filtered listing URL (HOME-04). */
   readonly linkUrl: string | null;
+  /**
+   * A rendition rather than the original: **large** for a hero, **card** for everything else.
+   * The name is unchanged, so a block that only reads a URL kept working; `imageSrcSet` is the
+   * candidate list beside it, and `null` for an asset with no renditions.
+   */
   readonly imageUrl: string | null;
+  readonly imageSrcSet: string | null;
   readonly imageAltText: string | null;
   /** Artwork for phones, and the hero's still under reduced motion (HOME-01). */
   readonly mobileImageUrl: string | null;
+  readonly mobileImageSrcSet: string | null;
   readonly mobileImageAltText: string | null;
+  /** A video and its poster are served as originals; only images have renditions. */
   readonly videoUrl: string | null;
   readonly videoPosterUrl: string | null;
   /** Names an icon in the storefront's own set (HOME-09), never a file. */

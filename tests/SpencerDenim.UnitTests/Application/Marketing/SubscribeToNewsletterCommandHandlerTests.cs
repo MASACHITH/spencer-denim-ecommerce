@@ -1,6 +1,7 @@
 using SpencerDenim.Application.Abstractions.Time;
 using SpencerDenim.Application.Marketing.Newsletter;
 using SpencerDenim.Domain.Marketing;
+using SpencerDenim.Tests.MediaFixtures;
 using SpencerDenim.UnitTests.Support;
 
 namespace SpencerDenim.UnitTests.Application.Marketing;

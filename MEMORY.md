@@ -207,6 +207,158 @@ clean, no new runtime dependency.
 
 **Next:** back to the tester.
 
+### 2026-10-01 (2) — W1-04: the Linux CI job caught a defect Windows structurally cannot
+
+PR #60 was green on Windows and failed the backend job on Linux. Two failures, one bug.
+
+**The bug: two different products produced byte-identical files.** The demo placeholder put the
+whole difference between frames in its *text* — the product name and the colourway. The GitHub
+runner's container has no font SkiaSharp can find, so the renderer drew no glyphs, every
+placeholder came out as the same image, every one hashed to the same SHA-256, and
+`UX_MediaAssets_Checksum_Ready` refused the second one. Seeding died with a duplicate-key
+exception and took most of the integration suite with it. **The index was doing its job.** The
+worst shape was the shared fabric-detail frame: no colourway, the same fallback swatch, so all
+forty-five of them were one picture even before the font question.
+
+**Fix 1 — the image is distinct without a glyph.** A SHA-256 of the asset's storage key (which
+already carries a unique index) now drives a ground tint and a forty-cell identity block: a grid of
+small neutral squares, drawn, not written. Text is an *enhancement* on top. Proved against the real
+data rather than argued from entropy: every one of the 149 demo frames, rendered with no font,
+hashes to a distinct value, and twelve of them now generate and **save in one transaction** — the
+save that used to throw.
+
+**Fix 2 — no host font is required at all.** Doc 03 §7, and this was that rule broken quietly. The
+obvious move was to reuse the storefront's Inter (`@fontsource/inter`, OFL, which does permit
+bundling). It cannot be done: that package ships only `.woff`/`.woff2`, and Skia opens neither —
+measured, `SKTypeface.FromFile` returns null for both. Rather than commit a new TrueType binary and
+its licence for words on a development-only image, labels now come from
+`Media__PlaceholderFontPath` when a deployment names a `.ttf`/`.otf`, from the host's font manager
+when it has one, and from nowhere otherwise. A missing or unreadable file logs and falls back; it
+never takes the API down.
+
+**Fix 3 — the test asserted something that cannot always be true.** `The_renderer_can_draw_text_on_this_host`
+failed the build on any fontless machine. The placeholder tests now render with `font: null`
+throughout — the deployment path — and the label assertion is gated on a font actually being
+present. `IPlaceholderLabelFont` is the seam that lets the **integration** suite run the fontless
+path on Windows, which is the only way this class of defect is ever catchable here.
+
+**The other host assumption, found while looking:** the upload spool used `Path.GetTempPath()`. On
+a Linux image `/tmp` is frequently `tmpfs` — RAM, on a VPS where doc 03 §4 has already given SQL
+Server 2 GB of 8, and a 50 MB video goes through it. Now `Media__UploadSpoolPath`, resolved against
+the content root, created at startup.
+
+**`proxy.conf.json` did not proxy `/media`** — so under `ng serve` every card image 404'd and fell
+back to its placeholder. It forwards **`/media/public`**, not `/media`: the Angular build emits its
+own webfonts to `/media/inter-*.woff2`, and a blanket rule swallows them — the same trap doc 03 §4
+already describes for Caddy. Verified under a real `ng serve`: the product image 200s from the API,
+`inter-latin-400-normal.woff2` 200s from the dev server.
+
+**Found by hand, not by a test: the stored original still carried a polyglot's payload.** The
+renditions were always clean (they are re-encoded from pixels), but the JPEG stripper copied
+everything after the start-of-scan marker verbatim — which is exactly where an appended script
+lives. It now walks the entropy-coded data properly (stuffed bytes, fill bytes, restart markers,
+progressive JPEG's later scans) and stops at the end-of-image marker, so anything after it is
+dropped. A file with no EOI is still kept whole and left to the decoder.
+
+**The hand check, end to end** — API + built SSR storefront behind a reverse proxy, per-session
+ports, private scratch directory, throwaway database, all torn down after: a real JPEG carrying a
+real EXIF GPS block and camera serial uploaded and stored with both gone; a real H.264 MP4 (1.1 MB,
+CC0) read as 960×540 / 5.06 s with a byte range returning 1,000 bytes identical to the source and
+`If-None-Match` answering 304; a script, a zip and a 20 MB body refused 415/415/413; a filename of
+`../../../../etc/passwd<script>.jpg` stored as `passwdscript.jpg`; and a bank slip on the private
+volume with a Ready row in the database refused by **ten** spellings of its key through `/media`
+while a public key answered 200 on the same endpoint. The storefront shows labelled placeholders,
+not grey boxes.
+
+**And one more gate that asked the wrong question.** The generator's "is this asset already finished?"
+check looked for every code in `MediaRenditions.Current`, but a 1200 px placeholder has no
+`zoom.webp` — `ProducedFor` clamps it to `large`'s width and does not write it. So the check never
+found the file, always answered "not finished", and re-rendered all 149 placeholders on **every
+startup**. Nothing failed and nothing logged; it was simply a few hundred encodes of blocked boot
+that the class documentation said were not happening. The same shape as the defect `ProducedFor`
+was introduced to fix, one layer up. Now gated on the produced set, with an integration test that
+runs the generator twice and checks the file's write time did not move — proven red on the old gate
+first (`the finished asset should have been counted as already present`).
+
+**Numbers:** backend 690 unit (was 680) + 344 integration (341), 0 skipped; frontend 19 / 451 / 131;
+Playwright 186. Lint clean, all builds clean, no new dependency. CI green on Linux.
+
+### 2026-10-01 — W1-04 media library: PASSED after two fix rounds
+
+The media pipeline is done and the tester passed it. Branch `feature/W1-04-media-library`
+(worktree `worktrees/sd-media`), pushed, awaiting a PR. **Not Done until merged and the client
+progress page is updated** — and `client-progress/progress-data.js` lives outside this repo, so it
+is not in this branch.
+
+**The find that mattered.** The renditions had been generated, stored and served with a year's
+cache since the first commit of this task, and *nothing linked them*. Every card, every home row
+and every gallery served the full-size original. The pipeline was half a feature that looked
+finished, and no test could see it: the integration fixture never configured a media root, so the
+demo placeholder generator was a silent no-op, every seeded asset had a null `RenditionSetVersion`,
+and the payloads legitimately fell back to originals. The suite could not tell a reader that picks
+the right rendition from one that ignores renditions entirely. Giving the fixture a real throwaway
+volume is what made the gap visible — and the reason to prefer a fixture that runs the real thing
+over one that is merely fast.
+
+**Measured, not estimated:** a 32-image listing went from 2,101 KB to 383 KB (82%); the card
+rendition a card now links is 10,432 bytes against the original's 56,976.
+
+**Decisions worth keeping:**
+
+- **`src` *and* `srcset`, with `sizes` from the client.** `srcset` alone buys nothing: with no
+  `sizes` the browser assumes the image fills the viewport and fetches the widest candidate. Proved
+  it — the control run fetched `large.webp` where `card.webp` was wanted. `sizes` describes the grid
+  an image sits in, and only the component drawing that grid knows it, so the server ships
+  candidates and their true widths and the client ships layout. The DTO cost is one nullable string
+  per image slot.
+- **One rule for which renditions exist** (`MediaRenditions.ProducedFor`), read by both the encoder
+  and the URL builder. Renditions clamp to the source and never upscale, so a 1200 px photograph
+  rendered `large` and then `zoom` byte for byte — a quarter of the seeded renditions were pure
+  copies. When the two sides disagreed, one wrote a file the other would not link, or worse linked
+  one that was never written. Seeding dropped 745 files to 596. An unknown source width is treated
+  like an unknown set version: claim nothing and fall back to the original, because a heavier
+  picture beats a broken one.
+- **A guarantee in the doc needs a constraint in the database.** Doc 08 §3.3 promises deduplication
+  by checksum; it was a read followed much later by a write, and eight simultaneous identical
+  uploads produced eight assets and forty files. Now a filtered unique index
+  `(Checksum, MediaType, Visibility) WHERE IsDeleted = 0 AND Status = 1` settles the race and the
+  loser withdraws and answers `Duplicate`, so a caller cannot tell which path served it. Filtered on
+  `Ready` so the index bites at publication, when the loser has real files to roll back, and so a
+  `Failed` row never blocks a retry.
+- **Soft delete is a save, so it rewrites the rows the asset owns.** Deleting a video used to leave
+  the usage row naming it as the poster's owner, which bricked the poster for ever: 409 blocked by a
+  video the query filter hides, with a null label because the label lookup reads through that same
+  filter. Two assets ruined by one delete.
+- **`Status` is not covered by the soft-delete filter.** The new projections guarded `IsDeleted` by
+  inheritance and `Status` not at all, so a `Failed` asset produced a perfectly formed URL for a
+  file that was never written, where the same asset soft-deleted produced a clean empty frame. Two
+  ways to have no file, two different answers. `HomeContentReader` had the guard from the start,
+  which is what made the asymmetry visible.
+- **The doubled `<PublicRoot>/public/...` path segment is deliberate.** The key is the asset's
+  address (doc 08 §3.3), so key and path stay identical: the mapping is reversible and the planned
+  Azure Blob adapter can use the key verbatim as the blob name. Stripping the prefix would also mean
+  the containment guard validated a different string than the grammar approved. Only the dev root
+  was renamed, to `.local-media/uploads`, so the repetition stops reading as a mistake.
+
+**Two hazards found and written down rather than fixed here:**
+
+- **`/media` is a shared namespace in production.** The Angular browser build emits its own webfonts
+  under `/media` (`dist/storefront/browser/media/inter-*.woff2`), so a Caddy rule that serves
+  `/media` from the uploads volume and stops there will shadow them. Noted in doc 03's deployment
+  topology; it needs a fall-through to SSR on a miss, or a different `resourcesOutputPath`.
+- **`proxy.conf.json` does not proxy `/media`,** so under `ng serve` every card image 404s and
+  silently falls back to its placeholder. One line, unrelated to this branch, no test covers it.
+
+**Not in scope, filed separately by the coordinator:** media uploads and deletes write no
+`ops.AuditLogs` row. `IAuditLogWriter` is injected only by the auth handlers, and doc 08 requires
+"every write is audited" for Settings and RBAC but never for media — a cross-cutting gap, not a
+media bug.
+
+**Numbers at hand-off:** backend 680 unit + 341 integration, 0 skipped, 0 warnings. Frontend 19 /
+451 / 131 unit, lint clean, both builds clean, Playwright 186 across two consecutive clean runs.
+
+**Next:** the coordinator opens the PR.
+
 ### 2026-09-24 (4) — W2-01 homepage, developer pass
 
 The placeholder home page is gone. `/` is a real, server-rendered page on

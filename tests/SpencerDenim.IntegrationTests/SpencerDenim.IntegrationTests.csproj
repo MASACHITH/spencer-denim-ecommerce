@@ -22,4 +22,11 @@
     <Using Include="Xunit" />
   </ItemGroup>
 
+  <!-- Shared media fixtures: real images and MP4 containers, built byte by byte so both test projects
+       exercise the same files and no binary fixture has to be trusted. -->
+  <ItemGroup>
+    <Compile Include="..\Shared\TestImages.cs" Link="Support\TestImages.cs" />
+    <Compile Include="..\Shared\TestVideos.cs" Link="Support\TestVideos.cs" />
+  </ItemGroup>
+
 </Project>

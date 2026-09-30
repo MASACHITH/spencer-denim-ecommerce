@@ -25,6 +25,7 @@ function category(
     depth,
     description: null,
     imageUrl: null,
+    imageSrcSet: null,
     showInMegaMenu: true,
     megaMenuColumn,
     ageGroupSlug: null,
@@ -43,6 +44,7 @@ export const PLACEHOLDER_DEPARTMENTS: readonly DepartmentDto[] = [
     slug: 'women',
     description: 'Everyday essentials and occasion pieces, cut for Sri Lankan weather.',
     heroImageUrl: null,
+    heroImageSrcSet: null,
     seoTitle: null,
     seoDescription: null,
     categories: [
@@ -64,6 +66,7 @@ export const PLACEHOLDER_DEPARTMENTS: readonly DepartmentDto[] = [
     slug: 'men',
     description: 'Workwear, weekend shirts and denim built to last.',
     heroImageUrl: null,
+    heroImageSrcSet: null,
     seoTitle: null,
     seoDescription: null,
     categories: [
@@ -83,6 +86,7 @@ export const PLACEHOLDER_DEPARTMENTS: readonly DepartmentDto[] = [
     slug: 'kids',
     description: 'Girls, boys and baby — soft fabrics and room to grow.',
     heroImageUrl: null,
+    heroImageSrcSet: null,
     seoTitle: null,
     seoDescription: null,
     categories: [

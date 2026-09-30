@@ -85,6 +85,9 @@ function image(
   return {
     id,
     url: `/media/${id}.jpg`,
+    srcSet: null,
+    thumbnailUrl: null,
+    zoomUrl: null,
     altText: null,
     role,
     colourId,

@@ -17,9 +17,9 @@ internal sealed record ProductCardRow(
     string DepartmentSlug,
     string CategoryName,
     string CategorySlug,
-    string? CardImageKey,
+    MediaRef? CardImage,
     string? CardImageAltText,
-    string? HoverImageKey,
+    MediaRef? HoverImage,
     decimal MinSalePrice,
     decimal MaxOriginalPrice,
     decimal MaxDiscountPercent,
@@ -40,19 +40,24 @@ internal sealed record ColourRow(
     string FamilyName,
     string FamilySlug,
     string? SwatchHex,
-    string? SwatchImageKey,
+    MediaRef? SwatchImage,
     short SortOrder);
 
 /// <summary>One gallery row as the projection returns it.</summary>
+/// <param name="Poster">
+/// A video's poster image. It is a <see cref="MediaRef"/> like any other asset, but the pipeline renders
+/// no renditions for a poster, so it resolves to the original — which is exactly the fallback path
+/// <see cref="MediaUrlBuilder.ToRenditionUrl"/> exists to take.
+/// </param>
 internal sealed record MediaRow(
     int Id,
-    string StorageKey,
+    MediaRef Media,
     string? AltText,
     ProductMediaRole Role,
     int? ColourId,
     int? Width,
     int? Height,
-    string? PosterKey,
+    MediaRef? Poster,
     short SortOrder);
 
 /// <summary>One variant as the projection returns it, before pricing and stock rules are applied.</summary>

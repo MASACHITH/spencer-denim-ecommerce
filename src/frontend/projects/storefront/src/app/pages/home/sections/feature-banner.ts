@@ -23,10 +23,21 @@ import { toLink } from '../../../core/content/home-sections';
       <div class="banner__media" [class.banner__media--scrim]="overlay() !== 'none'">
         <picture>
           @if (desktopImage(); as wide) {
-            <source media="(min-width: 768px)" [srcset]="wide" />
+            <source
+              media="(min-width: 768px)"
+              [srcset]="desktopImageSrcSet() ?? wide"
+              [attr.sizes]="desktopImageSrcSet() ? '100vw' : null"
+            />
           }
           @if (imageUrl(); as image) {
-            <img [src]="image" alt="" loading="lazy" decoding="async" />
+            <img
+              [src]="image"
+              [attr.srcset]="imageSrcSet()"
+              [attr.sizes]="imageSrcSet() ? '100vw' : null"
+              alt=""
+              loading="lazy"
+              decoding="async"
+            />
           }
         </picture>
       </div>
@@ -156,8 +167,21 @@ export class FeatureBanner {
     () => this.item()?.mobileImageUrl ?? this.item()?.imageUrl ?? null,
   );
 
+  /**
+   * The candidate list belonging to the crop above, never the other one: the two are separate
+   * assets. A banner is full-bleed at every width, so both describe themselves as `100vw`.
+   */
+  protected readonly imageSrcSet = computed(() => {
+    const item = this.item();
+    return (item?.mobileImageUrl ? item.mobileImageSrcSet : item?.imageSrcSet) ?? null;
+  });
+
   protected readonly desktopImage = computed(() => {
     const item = this.item();
     return item?.imageUrl && item.mobileImageUrl ? item.imageUrl : null;
   });
+
+  protected readonly desktopImageSrcSet = computed(() =>
+    this.desktopImage() ? (this.item()?.imageSrcSet ?? null) : null,
+  );
 }

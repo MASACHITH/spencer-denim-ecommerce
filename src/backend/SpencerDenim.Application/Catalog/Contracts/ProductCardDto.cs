@@ -22,7 +22,14 @@ public sealed record PriceDto(
 /// <summary>Review summary (PDP-08, CARD-01). <paramref name="Average"/> is null until a product has an approved review.</summary>
 public sealed record RatingDto(decimal? Average, int Count);
 
-/// <summary>One colour dot on a card, and one swatch on the product page.</summary>
+/// <summary>
+/// One colour dot on a card, and one swatch on the product page.
+/// </summary>
+/// <param name="SwatchImageUrl">
+/// The <c>thumb</c> rendition. A swatch is drawn at 14 px on a card and a little larger on the product
+/// page, so it is the one slot where the smallest rendition is genuinely the right file and there is
+/// nothing for a <c>srcset</c> to choose between.
+/// </param>
 public sealed record ColourSwatchDto(
     int Id,
     string Name,
@@ -35,6 +42,18 @@ public sealed record ColourSwatchDto(
 /// Everything CARD-01 renders: main and hover image, badge, name, category, price, rating and colour
 /// dots. Built by one projection, so a listing page is a single round trip.
 /// </summary>
+/// <param name="ImageUrl">
+/// The <c>card</c> rendition (doc 03 §3b), or the original when the asset has none. A listing draws
+/// 24 of these, so this is the field that decides whether a page on mobile data weighs a few hundred
+/// kilobytes or nearly two megabytes.
+/// </param>
+/// <param name="ImageSrcSet">
+/// The candidate widths for <paramref name="ImageUrl"/>, up to <c>large</c>; null when the asset has no
+/// renditions. The client pairs it with a <c>sizes</c> attribute describing its own grid — see
+/// <c>MediaUrlBuilder.ToImageSources</c> for why <c>sizes</c> is not the server's to give.
+/// </param>
+/// <param name="HoverImageUrl">The second photo, same rendition as <paramref name="ImageUrl"/>.</param>
+/// <param name="HoverImageSrcSet">The candidate widths for <paramref name="HoverImageUrl"/>.</param>
 public sealed record ProductCardDto(
     int Id,
     string ProductCode,
@@ -45,7 +64,9 @@ public sealed record ProductCardDto(
     string CategoryName,
     string CategorySlug,
     string? ImageUrl,
+    string? ImageSrcSet,
     string? HoverImageUrl,
+    string? HoverImageSrcSet,
     string? ImageAltText,
     PriceDto Price,
     RatingDto Rating,

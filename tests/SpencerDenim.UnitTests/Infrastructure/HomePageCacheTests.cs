@@ -4,6 +4,7 @@ using SpencerDenim.Application.Content.Contracts;
 using SpencerDenim.Application.Content.Home;
 using SpencerDenim.Domain.Content;
 using SpencerDenim.Infrastructure.Content;
+using SpencerDenim.Tests.MediaFixtures;
 using SpencerDenim.UnitTests.Support;
 
 namespace SpencerDenim.UnitTests.Infrastructure;

@@ -19,6 +19,21 @@ import { ProductImageDto } from '../../core/catalog/catalog.model';
 const ZOOM_STEPS = [1, 2, 3] as const;
 
 /**
+ * How wide the main stage really is, so the browser can pick a rendition rather than assume the
+ * image fills the viewport and fetch the widest candidate there is.
+ *
+ * The arithmetic is `.pdp__layout` below (one column, then two equal columns from 768 px, then
+ * 7fr/5fr with a 48 px gap from 1280 px) minus this gallery's own 72 px thumbnail rail and its
+ * 12 px gap, inside a container that caps at 1440 px with 16 / 32 / 48 px gutters. On a phone
+ * the rail is under the stage, not beside it, so the stage is the full content width.
+ */
+const STAGE_SIZES =
+  '(min-width: 1440px) 672px,' +
+  ' (min-width: 1280px) calc(7 * (100vw - 144px) / 12 - 84px),' +
+  ' (min-width: 768px) calc((100vw - 96px) / 2 - 84px),' +
+  ' calc(100vw - 32px)';
+
+/**
  * The product image gallery (PDP-01): thumbnails, a main stage, zoom, a full-screen view and the
  * product video when there is one.
  *
@@ -110,6 +125,8 @@ const ZOOM_STEPS = [1, 2, 3] as const;
               <img
                 class="gallery__img"
                 [src]="source"
+                [attr.srcset]="stageSrcSet(slide)"
+                [attr.sizes]="stageSrcSet(slide) ? stageSizes : null"
                 [alt]="altFor(slide)"
                 fetchpriority="high"
                 decoding="async"
@@ -345,6 +362,7 @@ export class ProductGallery {
   readonly media = input.required<readonly ProductImageDto[]>();
   readonly productName = input.required<string>();
 
+  protected readonly stageSizes = STAGE_SIZES;
   protected readonly minZoom = ZOOM_STEPS[0];
   protected readonly maxZoom = ZOOM_STEPS[ZOOM_STEPS.length - 1];
   protected readonly stageId = `gallery-stage-${nextGalleryId++}`;
@@ -409,18 +427,32 @@ export class ProductGallery {
     return slide?.altText?.trim() || this.productName();
   }
 
+  /** The stage shows the large rendition, with {@link stageSrcSet} offering the other three. */
   protected stageSource(slide: ProductImageDto): string | null {
     return this.sourceOf(slide, slide.url);
   }
 
-  /** A video's thumbnail is its poster; without one it falls back to the placeholder box. */
-  protected thumbSource(slide: ProductImageDto): string | null {
-    return this.sourceOf(slide, slide.role === 'Video' ? slide.posterUrl : slide.url);
+  protected stageSrcSet(slide: ProductImageDto): string | null {
+    return this.stageSource(slide) ? slide.srcSet : null;
   }
 
+  /**
+   * A thumbnail is 56 px wide, 72 px from 768 px: the thumb rendition exists precisely so the
+   * rail does not pull four copies of a 1200 px photograph to draw them. A video's thumbnail is
+   * its poster, which has no renditions; without one it falls back to the placeholder box.
+   */
+  protected thumbSource(slide: ProductImageDto): string | null {
+    return slide.role === 'Video'
+      ? this.sourceOf(slide, slide.posterUrl)
+      : this.sourceOf(slide, slide.thumbnailUrl ?? slide.url);
+  }
+
+  /** The full-screen view magnifies to 3×, so it is the one place the zoom rendition earns its size. */
   protected fullScreenSource(): string | null {
     const slide = this.current();
-    return slide && slide.role !== 'Video' ? this.stageSource(slide) : null;
+    return slide && slide.role !== 'Video'
+      ? this.sourceOf(slide, slide.zoomUrl ?? slide.url)
+      : null;
   }
 
   protected onStageError(id: number): void {

@@ -9,6 +9,38 @@ import { LocalWishlist } from '../../core/wishlist/local-wishlist.service';
 /** How many colour dots fit under a card at 320 px before the rest become "+3". */
 const MAX_COLOUR_DOTS = 4;
 
+/**
+ * How wide a card really is, for the browser to pick a rendition with.
+ *
+ * `srcset` on its own buys nothing: without `sizes` a browser assumes the image fills the
+ * viewport and fetches the widest candidate anyway, which is how a listing ended up weighing
+ * 1,780 KB of full-size originals. These two strings are the arithmetic of the grids the card is
+ * actually laid out in, taken from the rules that draw them rather than guessed:
+ *
+ * - `.product-grid` (storefront `styles.css`) is 2 columns, then 3 from 768 px, 4 from 1024 px
+ *   and 5 from 1440 px, with column gaps of 12 / 16 / 24 px;
+ * - `.container` (shared `base.css`) caps at 1440 px and has gutters of 16 / 32 / 48 px;
+ * - a listing also gives up a 240 px filter sidebar plus a 48 px gap from 1024 px, and 264 px of
+ *   sidebar from 1440 px (`listing-page.ts`).
+ *
+ * Above 1440 px the container stops growing, so both end in a fixed pixel width rather than a
+ * `vw` expression that would keep over-estimating on a 1920 px screen.
+ */
+export const LISTING_GRID_CARD_SIZES =
+  '(min-width: 1440px) 188px,' +
+  ' (min-width: 1280px) calc((100vw - 456px) / 4),' +
+  ' (min-width: 1024px) calc((100vw - 424px) / 4),' +
+  ' (min-width: 768px) calc((100vw - 96px) / 3),' +
+  ' calc((100vw - 44px) / 2)';
+
+/** The same grid without a sidebar: the homepage rows and the product page's two rows. */
+export const FULL_WIDTH_GRID_CARD_SIZES =
+  '(min-width: 1440px) 250px,' +
+  ' (min-width: 1280px) calc((100vw - 168px) / 4),' +
+  ' (min-width: 1024px) calc((100vw - 136px) / 4),' +
+  ' (min-width: 768px) calc((100vw - 96px) / 3),' +
+  ' calc((100vw - 44px) / 2)';
+
 /** Badge text. The API sends the enum member name, and only these five exist. */
 const BADGE_LABEL: Readonly<Record<ProductBadge, string>> = {
   New: 'New',
@@ -49,8 +81,18 @@ interface ColourDot {
              two links to the same place is two stops for a keyboard and two reads for a screen
              reader. The whole card is still clickable through the stretched link below. -->
         <a class="card__img" [routerLink]="link()" tabindex="-1" aria-hidden="true">
+          <!-- attr bindings, not property ones: a product photographed before the renditions
+               existed has no candidate list, and an empty srcset is not the same as none. -->
           @if (mainImage(); as image) {
-            <img [src]="image" alt="" loading="lazy" decoding="async" (error)="onImageError()" />
+            <img
+              [src]="image"
+              [attr.srcset]="mainSrcSet()"
+              [attr.sizes]="mainSrcSet() ? sizes() : null"
+              alt=""
+              loading="lazy"
+              decoding="async"
+              (error)="onImageError()"
+            />
           } @else {
             <span class="card__placeholder"></span>
           }
@@ -58,6 +100,8 @@ interface ColourDot {
             <img
               class="card__alt"
               [src]="image"
+              [attr.srcset]="hoverSrcSet()"
+              [attr.sizes]="hoverSrcSet() ? sizes() : null"
               alt=""
               loading="lazy"
               decoding="async"
@@ -313,6 +357,13 @@ interface ColourDot {
 export class ProductCard {
   readonly product = input.required<ProductCardDto>();
 
+  /**
+   * How wide this card will be laid out, as a `sizes` list. It defaults to the listing grid,
+   * which is where most cards are; a row that gives up no sidebar passes
+   * {@link FULL_WIDTH_GRID_CARD_SIZES} instead, because the card cannot see the grid it is in.
+   */
+  readonly sizes = input<string>(LISTING_GRID_CARD_SIZES);
+
   private readonly wishlist = inject(LocalWishlist);
 
   /** An image the browser could not fetch is dropped, so a card never shows a broken picture. */
@@ -330,6 +381,18 @@ export class ProductCard {
 
   protected readonly hoverImage = computed(() =>
     this.hoverFailed() || this.mainImage() === null ? null : this.product().hoverImageUrl,
+  );
+
+  /**
+   * The candidate lists follow their own image: an `<img>` that has been dropped for failing to
+   * load must not leave a srcset behind for the browser to try the same asset from again.
+   */
+  protected readonly mainSrcSet = computed(() =>
+    this.mainImage() ? this.product().imageSrcSet : null,
+  );
+
+  protected readonly hoverSrcSet = computed(() =>
+    this.hoverImage() ? this.product().hoverImageSrcSet : null,
   );
 
   protected readonly badge = computed(() => {

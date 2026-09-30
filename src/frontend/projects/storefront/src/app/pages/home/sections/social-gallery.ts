@@ -8,10 +8,24 @@ import { SectionLink, toLink } from '../../../core/content/home-sections';
 interface Shot {
   readonly id: number;
   readonly imageUrl: string;
+  readonly imageSrcSet: string | null;
   readonly altText: string;
   readonly link: SectionLink;
   readonly label: string;
 }
+
+/**
+ * The `.gallery` grid below: two columns, three from 768 px, six from 1024 px, an 8 px gap,
+ * inside a container that caps at 1440 px with 16 / 32 / 48 px gutters. Six across is the
+ * smallest picture on the homepage — about 218 px — so this is where a srcset without a `sizes`
+ * would waste the most.
+ */
+const SHOT_SIZES =
+  '(min-width: 1440px) 218px,' +
+  ' (min-width: 1280px) calc((100vw - 136px) / 6),' +
+  ' (min-width: 1024px) calc((100vw - 104px) / 6),' +
+  ' (min-width: 768px) calc((100vw - 80px) / 3),' +
+  ' calc((100vw - 40px) / 2)';
 
 /**
  * HOME-08: the social gallery — admin-uploaded images that link to social profiles.
@@ -52,7 +66,14 @@ interface Shot {
                   rel="noopener noreferrer"
                   data-testid="social-link"
                 >
-                  <img [src]="shot.imageUrl" [alt]="shot.altText" loading="lazy" decoding="async" />
+                  <img
+                    [src]="shot.imageUrl"
+                    [attr.srcset]="shot.imageSrcSet"
+                    [attr.sizes]="shot.imageSrcSet ? shotSizes : null"
+                    [alt]="shot.altText"
+                    loading="lazy"
+                    decoding="async"
+                  />
                   <span class="sr-only">{{ shot.label }} (opens in a new tab)</span>
                 </a>
               } @else {
@@ -62,12 +83,26 @@ interface Shot {
                   [queryParams]="target.queryParams"
                   data-testid="social-link"
                 >
-                  <img [src]="shot.imageUrl" [alt]="shot.altText" loading="lazy" decoding="async" />
+                  <img
+                    [src]="shot.imageUrl"
+                    [attr.srcset]="shot.imageSrcSet"
+                    [attr.sizes]="shot.imageSrcSet ? shotSizes : null"
+                    [alt]="shot.altText"
+                    loading="lazy"
+                    decoding="async"
+                  />
                   <span class="sr-only">{{ shot.label }}</span>
                 </a>
               }
             } @else {
-              <img [src]="shot.imageUrl" [alt]="shot.altText" loading="lazy" decoding="async" />
+              <img
+                [src]="shot.imageUrl"
+                [attr.srcset]="shot.imageSrcSet"
+                [attr.sizes]="shot.imageSrcSet ? shotSizes : null"
+                [alt]="shot.altText"
+                loading="lazy"
+                decoding="async"
+              />
             }
           </li>
         }
@@ -121,6 +156,8 @@ interface Shot {
 export class SocialGallery {
   readonly section = input.required<HomeSectionDto>();
 
+  protected readonly shotSizes = SHOT_SIZES;
+
   protected readonly headingId = computed(() => `home-section-${this.section().id}`);
 
   protected readonly heading = computed(() => this.section().title?.trim() || 'Follow us');
@@ -140,6 +177,8 @@ export class SocialGallery {
     return {
       id: item.id,
       imageUrl,
+      // Whichever crop was chosen above, with its own renditions and not the other asset's.
+      imageSrcSet: item.imageUrl ? item.imageSrcSet : item.mobileImageSrcSet,
       // The alt text the client wrote in the media library, or none: a photograph with a link is
       // named by the visually hidden label below it, and one without is decoration.
       altText: item.imageAltText?.trim() ?? '',
