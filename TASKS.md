@@ -65,16 +65,18 @@ Feature IDs → [docs/02-scope-baseline.md](docs/02-scope-baseline.md). Process 
 |---|---|---|---|
 | W3-01 | Customer register/login/reset + My account | ACC-01–02 | TODO |
 | W3-02 | Checkout, guest, delivery methods, success page | CHK-01–04 | TODO |
-| W3-03 | Payment provider abstraction + Bank transfer + stock reservation/expiry | PAY-01, PAY-03 | TODO |
+| W3-03 | Payment provider abstraction + Bank transfer + stock reservation/expiry. **Tharanga** — issue #53, which also carries the `sales` schema (orders, payments, refunds), because none of it exists yet. Read docs/11 P7 before building; the states are already decided. | PAY-01, PAY-03 | TODO |
 | W3-04 | Admin orders: workflow, approve transfer, courier tracking, invoice | ADM-09 | TODO |
 | W3-05 | Promo codes + sale campaigns | ADM-13–14 | TODO |
 | W3-06 | Transactional emails | ACC-03 | TODO |
 | W3-07 | Customers, newsletter subscribers, settings | ADM-15, ADM-21, ADM-22 | TODO |
 
+> **Cash on Delivery is out of the signed scope** (docs/02:166, docs/11:42 and :719) and is **not** part of W3-03 or W4. It came up as work to assign; it is raised as a change request in issue #55 and nobody builds it until the client decides. See that issue for why it is not a small addition.
+
 ## Week 4 — PayPal, insight & launch (10–15 Oct)
 | ID | Task | Features | Status |
 |---|---|---|---|
-| W4-01 | **PayPal** (server capture + webhook) | PAY-02 | TODO |
+| W4-01 | **PayPal** (server capture + webhook) | PAY-02 **Tharanga** — issue #54. Build and test on the **sandbox**; live credentials are a settings change, not a code change. Blocked by #53. | TODO |
 | W4-02 | Dashboard widgets | ADM-04–08 | TODO |
 | W4-03 | Reports + traffic | ADM-19–20 | TODO |
 | W4-04 | Full regression: journeys × 8 breakpoints, axe, Lighthouse, ZAP | — | TODO |
