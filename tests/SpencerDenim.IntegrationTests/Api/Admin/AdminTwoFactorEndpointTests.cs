@@ -280,6 +280,12 @@ public sealed class AdminTwoFactorEndpointTests(SqlServerDatabaseFixture sqlServ
             Assert.Equal(HttpStatusCode.OK, enable.StatusCode);
         }
 
+        // Captured once and reused as the same string below: TotpTestCodes.Next(key, 1) is derived from
+        // DateTimeOffset.UtcNow at the instant it's called, so calling it a second time to "reproduce" this code
+        // is not guaranteed to return the same value — if a 30-second step boundary falls between the two calls,
+        // the second call computes a genuinely later, unused code, which the server correctly accepts, making the
+        // test fail intolerantly around that boundary (round 2 finding).
+        string laterCode;
         using (var client = await PendingSignInAsync(host, email))
         {
             using var reused = await PostWithTokenAsync(client, LoginTwoFactorUrl, new { code = enrolmentCode, isRecoveryCode = false });
@@ -288,13 +294,14 @@ public sealed class AdminTwoFactorEndpointTests(SqlServerDatabaseFixture sqlServ
             Assert.Equal(1, (await FindUserAsync(host, userId)).AccessFailedCount);
 
             // A later code signs in.
-            using var fresh = await PostWithTokenAsync(client, LoginTwoFactorUrl, new { code = TotpTestCodes.Next(key, 1), isRecoveryCode = false });
+            laterCode = TotpTestCodes.Next(key, 1);
+            using var fresh = await PostWithTokenAsync(client, LoginTwoFactorUrl, new { code = laterCode, isRecoveryCode = false });
             Assert.Equal(HttpStatusCode.OK, fresh.StatusCode);
         }
 
         // That code is spent too, and so is every earlier step.
         using var again = await PendingSignInAsync(host, email);
-        foreach (var code in new[] { TotpTestCodes.Next(key, 1), enrolmentCode })
+        foreach (var code in new[] { laterCode, enrolmentCode })
         {
             using var response = await PostWithTokenAsync(again, LoginTwoFactorUrl, new { code, isRecoveryCode = false });
             Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
