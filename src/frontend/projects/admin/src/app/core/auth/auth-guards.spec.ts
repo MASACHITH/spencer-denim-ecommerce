@@ -131,4 +131,14 @@ describe('sanitizeReturnUrl', () => {
       expect(sanitizeReturnUrl(value)).toBeNull();
     },
   );
+
+  // Tester finding, W1-11, 2026-09-30: the WHATWG URL parser strips ASCII TAB/CR/LF anywhere in a URL before
+  // resolving it, so any of these collapse to a protocol-relative `//evil.example` in real browser URL
+  // resolution even though the raw string doesn't start with a second literal `/` or `\`.
+  it.each(['/\t/evil.example', '/\r/evil.example', '/\n/evil.example', '/\\\t\\evil.example'])(
+    'rejects %j (a control character hiding a second slash/backslash)',
+    (value) => {
+      expect(sanitizeReturnUrl(value)).toBeNull();
+    },
+  );
 });

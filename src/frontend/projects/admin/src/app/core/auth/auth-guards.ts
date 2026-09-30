@@ -49,13 +49,24 @@ export const signedInGuard: CanActivateFn = (_route, state) => {
   );
 };
 
+/** True if any character in `value` is an ASCII control character (TAB, CR, LF among them). The WHATWG URL
+ * parser strips these anywhere in a URL before resolving it, so `/` + TAB + `/evil.example` collapses to
+ * `//evil.example` (a protocol-relative redirect) in any context that does real browser URL resolution, even
+ * though it doesn't start with a second literal `/` or `\` as written (tester finding, W1-11, 2026-09-30).
+ * Checked by character code, not a regex, so the control characters themselves never appear literally in
+ * source (a bare control-character regex is also an ESLint `no-control-regex` violation). */
+function hasControlCharacter(value: string): boolean {
+  return Array.from(value).some((char) => char.charCodeAt(0) <= 0x1f);
+}
+
 /**
  * Only ever accepts a same-origin, in-app path (starts with a single `/`) — never a scheme-relative or
- * protocol-carrying value (`//evil.example`, `https://…`) that could turn "take me back where I was" into an
- * open redirect. Anything else, including a missing or empty param, falls back to the caller's default.
+ * protocol-carrying value (`//evil.example`, `https://…`, or one hiding a second slash/backslash behind an
+ * embedded control character) that could turn "take me back where I was" into an open redirect. Anything
+ * else, including a missing or empty param, falls back to the caller's default.
  */
 export function sanitizeReturnUrl(value: string | null | undefined): string | null {
-  if (!value || !value.startsWith('/') || value.startsWith('//') || value.startsWith('/\\')) {
+  if (!value || hasControlCharacter(value) || !value.startsWith('/') || value.startsWith('//') || value.startsWith('/\\')) {
     return null;
   }
 
