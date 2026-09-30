@@ -1,13 +1,16 @@
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { Router } from '@angular/router';
+import { ActivatedRoute, Router } from '@angular/router';
 
 import { AdminAuthApi, type AdminLoginError } from '../../core/auth/admin-auth-api';
-import { changePasswordPath } from '../../core/auth/auth-guards';
+import { changePasswordPath, returnUrlParam, sanitizeReturnUrl } from '../../core/auth/auth-guards';
 
 /**
  * ADM-01 admin sign-in. Redirects to the dashboard on success — or to the change-password page when the account
- * must change its password first (issue #17) — and shows a neutral error otherwise (lesson L1).
+ * must change its password first (issue #17) — and shows a neutral error otherwise (lesson L1). When the route
+ * guard sent the visitor here with a `returnUrl` (W1-11, #8: they were headed somewhere else in the admin app
+ * before being asked to sign in), they land back there afterwards instead of always on the dashboard; a pending
+ * forced password change still takes priority, carrying the same `returnUrl` forward to the change-password page.
  */
 @Component({
   selector: 'sda-login-page',
@@ -119,6 +122,7 @@ import { changePasswordPath } from '../../core/auth/auth-guards';
 export class LoginPage {
   private readonly authApi = inject(AdminAuthApi);
   private readonly router = inject(Router);
+  private readonly route = inject(ActivatedRoute);
 
   protected email = '';
   protected password = '';
@@ -133,10 +137,23 @@ export class LoginPage {
     this.submitting.set(true);
     this.errorMessage.set(null);
 
+    const returnUrl = sanitizeReturnUrl(this.route.snapshot.queryParamMap.get(returnUrlParam));
+
     this.authApi.login(this.email, this.password).subscribe({
       next: (session) => {
         this.submitting.set(false);
-        void this.router.navigateByUrl(session.mustChangePassword ? changePasswordPath : '/');
+
+        // Built as a string (rather than passed as a UrlTree) so a plain sign-in with no returnUrl still
+        // navigates to the bare path, exactly as it did before returnUrl handling existed.
+        const target = session.mustChangePassword
+          ? this.router.serializeUrl(
+              this.router.createUrlTree(
+                [changePasswordPath],
+                returnUrl ? { queryParams: { [returnUrlParam]: returnUrl } } : undefined,
+              ),
+            )
+          : (returnUrl ?? '/');
+        void this.router.navigateByUrl(target);
       },
       error: (error: AdminLoginError) => {
         this.submitting.set(false);

@@ -6,7 +6,7 @@ import { Router, provideRouter } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 
 import { AdminAuthApi, type AdminSession } from './admin-auth-api';
-import { adminSessionGuard, signedInGuard } from './auth-guards';
+import { adminSessionGuard, sanitizeReturnUrl, signedInGuard } from './auth-guards';
 
 @Component({ template: 'dashboard' })
 class DashboardStub {}
@@ -41,6 +41,7 @@ describe('admin auth guards', () => {
           // Unguarded here, so a redirect to it is one navigation with one who-am-I request.
           { path: 'change-password', component: ChangePasswordStub },
           { path: 'signed-in-only', component: ChangePasswordStub, canActivate: [signedInGuard] },
+          { path: 'reports', component: DashboardStub, canActivate: [adminSessionGuard] },
           { path: 'login', component: LoginStub },
         ]),
         provideHttpClient(),
@@ -94,9 +95,40 @@ describe('admin auth guards', () => {
     expect(router.url).toBe('/signed-in-only');
   });
 
-  it('signedInGuard keeps a signed-out visitor out', async () => {
+  it('signedInGuard keeps a signed-out visitor out, with returnUrl set to where they were headed (W1-11, #8)', async () => {
     await navigate('/signed-in-only', (request) => request.flush(null, { status: 401, statusText: 'Unauthorized' }));
+
+    expect(router.url).toBe('/login?returnUrl=%2Fsigned-in-only');
+  });
+
+  it('sends a signed-out visitor to login with the page they meant to reach as returnUrl (W1-11, #8)', async () => {
+    await navigate('/reports', (request) => request.flush(null, { status: 401, statusText: 'Unauthorized' }));
+
+    expect(router.url).toBe('/login?returnUrl=%2Freports');
+  });
+
+  it('does not add a returnUrl when the destination is already the dashboard root', async () => {
+    await navigate('/', (request) => request.flush(null, { status: 401, statusText: 'Unauthorized' }));
 
     expect(router.url).toBe('/login');
   });
+
+  it('carries returnUrl through the forced-password-change redirect too', async () => {
+    await navigate('/reports', (request) => request.flush(session(true)));
+
+    expect(router.url).toBe('/change-password?returnUrl=%2Freports');
+  });
+});
+
+describe('sanitizeReturnUrl', () => {
+  it('accepts a plain in-app path', () => {
+    expect(sanitizeReturnUrl('/reports/monthly?x=1')).toBe('/reports/monthly?x=1');
+  });
+
+  it.each([null, undefined, '', 'https://evil.example/phish', '//evil.example', '/\\evil.example', 'reports'])(
+    'rejects %j',
+    (value) => {
+      expect(sanitizeReturnUrl(value)).toBeNull();
+    },
+  );
 });
