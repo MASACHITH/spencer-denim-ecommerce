@@ -130,6 +130,109 @@ public sealed class UserEndpointTests(SqlServerDatabaseFixture sqlServer)
         await RemoveFromGrantsAllRoleAsync(factory, grantsAllTargetId);
     }
 
+    /// <summary>
+    /// Tester-round-1 fix (W1-08, #8, defect 1): before this fix, a non-GrantsAll <c>Users.Manage</c> actor
+    /// got a distinct, machine-readable reason ("TargetIsOrWouldBecomeGrantsAll") for a target that holds
+    /// Super Admin, versus the generic "NotSubsetOfActorPermissions" for a target that merely has one extra
+    /// ordinary permission — an identity oracle letting that actor fish for who is a Super Admin. This proves
+    /// the two 403 bodies are now identical in every field that reaches the actor, not just "both 403".
+    /// </summary>
+    [Fact]
+    public async Task GrantsAll_target_and_merely_over_permissioned_target_produce_byte_identical_denial_bodies()
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, TestContext.Current.CancellationToken);
+
+        await using var factory = new ApiFactory(sqlServer.ConnectionString);
+        var actorRoleId = await CreateRoleAsync(factory, UniqueName("manage-only-oracle"), [Permissions.Users.Manage, Permissions.Orders.View]);
+        var overPermissionedRoleId = await CreateRoleAsync(factory, UniqueName("over-permissioned"), [Permissions.Content.View]);
+        var grantsAllRoleId = await GetOrCreateGrantsAllRoleIdAsync(factory);
+
+        var (actorEmail, actorPassword) = UniqueCredentials("actor-oracle-check");
+        await CreateStaffUserWithRolesAsync(factory, actorEmail, actorPassword, [actorRoleId]);
+        var overPermissionedTargetId = await CreateStaffUserWithRolesAsync(factory, UniqueEmail("over-permissioned-target"), "Target-Pass-1!", [overPermissionedRoleId]);
+        var grantsAllTargetId = await CreateStaffUserWithRolesAsync(factory, UniqueEmail("grantsall-target-oracle"), "Target-Pass-1!", [grantsAllRoleId]);
+
+        using var client = CreateClient(factory);
+        await LoginAsync(client, actorEmail, actorPassword);
+
+        var tokenForOverPermissioned = await GetAntiforgeryTokenAsync(client);
+        using var overPermissionedResponse = await PostAsync(client, $"{UsersUrl}/{overPermissionedTargetId}/deactivate", tokenForOverPermissioned);
+        var tokenForGrantsAll = await GetAntiforgeryTokenAsync(client);
+        using var grantsAllResponse = await PostAsync(client, $"{UsersUrl}/{grantsAllTargetId}/deactivate", tokenForGrantsAll);
+
+        Assert.Equal(HttpStatusCode.Forbidden, overPermissionedResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, grantsAllResponse.StatusCode);
+
+        var overPermissionedBody = await overPermissionedResponse.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
+        var grantsAllBody = await grantsAllResponse.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
+
+        Assert.Equal(nameof(RbacDenialReasonMirror.NotSubsetOfActorPermissions), overPermissionedBody.GetProperty("error").GetString());
+        Assert.Equal(overPermissionedBody.GetProperty("error").GetString(), grantsAllBody.GetProperty("error").GetString());
+        Assert.Equal(overPermissionedBody.GetProperty("title").GetString(), grantsAllBody.GetProperty("title").GetString());
+        Assert.Equal(overPermissionedBody.GetProperty("detail").GetString(), grantsAllBody.GetProperty("detail").GetString());
+        Assert.Equal(overPermissionedBody.GetProperty("status").GetInt32(), grantsAllBody.GetProperty("status").GetInt32());
+
+        // No extra property on either side that could itself become a new oracle (e.g. a richer field only
+        // present for the GrantsAll case).
+        var overPermissionedNames = overPermissionedBody.EnumerateObject().Select(p => p.Name).OrderBy(n => n, StringComparer.Ordinal).ToList();
+        var grantsAllNames = grantsAllBody.EnumerateObject().Select(p => p.Name).OrderBy(n => n, StringComparer.Ordinal).ToList();
+        Assert.Equal(overPermissionedNames, grantsAllNames);
+
+        await RemoveFromGrantsAllRoleAsync(factory, grantsAllTargetId);
+    }
+
+    /// <summary>
+    /// Tester-round-1 fix (defect 1): the tester specifically flagged that combining a real 404 for "doesn't
+    /// exist" with the distinguishable 403 reason worsened the oracle. A non-GrantsAll actor must now get the
+    /// exact same 403 body for a target that does not exist at all as for one that exists but is protected.
+    /// </summary>
+    [Fact]
+    public async Task Non_grants_all_actor_gets_the_generic_denial_not_a_404_for_a_target_that_does_not_exist()
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, TestContext.Current.CancellationToken);
+
+        await using var factory = new ApiFactory(sqlServer.ConnectionString);
+        var actorRoleId = await CreateRoleAsync(factory, UniqueName("manage-only-404"), [Permissions.Users.Manage]);
+        var (actorEmail, actorPassword) = UniqueCredentials("actor-404-check");
+        await CreateStaffUserWithRolesAsync(factory, actorEmail, actorPassword, [actorRoleId]);
+
+        using var client = CreateClient(factory);
+        await LoginAsync(client, actorEmail, actorPassword);
+        var token = await GetAntiforgeryTokenAsync(client);
+
+        // Some very large id that certainly does not exist in this test's shared database.
+        using var response = await PostAsync(client, $"{UsersUrl}/2000000000/deactivate", token);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
+        Assert.Equal(nameof(RbacDenialReasonMirror.NotSubsetOfActorPermissions), body.GetProperty("error").GetString());
+    }
+
+    /// <summary>A Super Admin is allowed to know a target genuinely doesn't exist — unaffected by defect 1.</summary>
+    [Fact]
+    public async Task GrantsAll_actor_still_gets_a_real_404_for_a_target_that_does_not_exist()
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, TestContext.Current.CancellationToken);
+
+        await using var factory = new ApiFactory(sqlServer.ConnectionString);
+        var grantsAllRoleId = await GetOrCreateGrantsAllRoleIdAsync(factory);
+        var (actorEmail, actorPassword) = UniqueCredentials("actor-404-grantsall");
+        var actorId = await CreateStaffUserWithRolesAsync(factory, actorEmail, actorPassword, [grantsAllRoleId]);
+
+        using var client = CreateClient(factory);
+        await LoginAsync(client, actorEmail, actorPassword);
+        var token = await GetAntiforgeryTokenAsync(client);
+
+        using var response = await PostAsync(client, $"{UsersUrl}/2000000001/deactivate", token);
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+
+        await RemoveFromGrantsAllRoleAsync(factory, actorId);
+    }
+
     [Fact]
     public async Task Only_grants_all_can_change_a_staff_users_email()
     {
@@ -613,12 +716,17 @@ public sealed class UserEndpointTests(SqlServerDatabaseFixture sqlServer)
         Assert.True(found, $"Expected an AuditLogs row with Action '{action}' for '{email}'.");
     }
 
-    /// <summary>Mirrors the API's serialized <c>RbacDenialReason</c> enum names, so test assertions read clearly without a project reference to the Application layer's internal enum from this file.</summary>
+    /// <summary>
+    /// Mirrors the API's serialized <c>RbacDenialReason</c> enum names, so test assertions read clearly without
+    /// a project reference to the Application layer's internal enum from this file. Tester-round-1 fix (W1-08,
+    /// #8, defect 1) removed <c>TargetIsOrWouldBecomeGrantsAll</c> from the real enum entirely — do not add it
+    /// back here; see the tests below that specifically prove a non-GrantsAll actor can no longer tell that
+    /// case apart from <see cref="NotSubsetOfActorPermissions"/>.
+    /// </summary>
     private enum RbacDenialReasonMirror
     {
         NotAuthorized,
         SelfEditNotAllowed,
-        TargetIsOrWouldBecomeGrantsAll,
         NotSubsetOfActorPermissions,
         EmailChangeRequiresGrantsAll,
     }

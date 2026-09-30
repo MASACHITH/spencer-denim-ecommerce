@@ -34,15 +34,23 @@ public sealed class UpdateStaffUserProfileCommandHandler(
             return new UpdateStaffUserProfileResult.ValidationFailed([new ValidationError("firstName", "First name is required.")]);
         }
 
-        var target = await store.GetStaffUserSnapshotAsync(command.TargetUserId, cancellationToken);
-        if (target is null)
-        {
-            return new UpdateStaffUserProfileResult.TargetNotFound();
-        }
-
+        // Loaded before the target lookup (tester-round-1 fix, defect 1): see the target-null branch below.
         var actor = await permissionsProvider.GetEffectivePermissionsAsync(command.ActorUserId, cancellationToken);
         var actorHasUsersManage = actor.Has(Permissions.Users.Manage);
         var actorPermissions = new HashSet<string>(actor.Permissions);
+
+        var target = await store.GetStaffUserSnapshotAsync(command.TargetUserId, cancellationToken);
+        if (target is null)
+        {
+            if (actor.GrantsAllPermissions)
+            {
+                return new UpdateStaffUserProfileResult.TargetNotFound();
+            }
+
+            // A non-GrantsAll actor must not be able to distinguish "doesn't exist" from "exists but is
+            // protected" by the response shape.
+            return new UpdateStaffUserProfileResult.Forbidden(RbacDenialReason.NotSubsetOfActorPermissions, RbacDenialClassifier.Message(RbacDenialReason.NotSubsetOfActorPermissions));
+        }
 
         var allowed = RoleAssignmentPolicy.CanManageStaffUser(
             actorHasGrantsAll: actor.GrantsAllPermissions,
@@ -75,7 +83,13 @@ public sealed class UpdateStaffUserProfileCommandHandler(
             return new UpdateStaffUserProfileResult.EmailAlreadyInUse();
         }
 
-        var writeResult = await store.UpdateProfileAsync(command.TargetUserId, command.FirstName, command.LastName, newEmail, cancellationToken);
+        var writeResult = await store.UpdateProfileAsync(
+            command.TargetUserId,
+            command.FirstName,
+            command.LastName,
+            newEmail,
+            new RbacActorContext(actor.GrantsAllPermissions, actorHasUsersManage, actorPermissions),
+            cancellationToken);
 
         switch (writeResult)
         {
@@ -94,6 +108,10 @@ public sealed class UpdateStaffUserProfileCommandHandler(
             case UpdateProfileStoreResult.IdentityErrors identityErrors:
                 return new UpdateStaffUserProfileResult.ValidationFailed(
                     [.. identityErrors.Errors.Select(error => new ValidationError("email", error))]);
+
+            case UpdateProfileStoreResult.AuthorizationStale:
+                // Tester-round-1 fix (defect 2): see AssignUserRolesCommandHandler's matching remark.
+                return new UpdateStaffUserProfileResult.Forbidden(RbacDenialReason.NotSubsetOfActorPermissions, RbacDenialClassifier.Message(RbacDenialReason.NotSubsetOfActorPermissions));
 
             default:
                 throw new InvalidOperationException($"Unhandled {nameof(UpdateProfileStoreResult)}: {writeResult.GetType().Name}");

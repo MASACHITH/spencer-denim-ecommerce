@@ -62,8 +62,9 @@ public sealed class CreateStaffUserCommandHandlerTests
 
         var result = await handler.HandleAsync(Command([10]), TestContext.Current.CancellationToken);
 
+        // Tester-round-1 fix (defect 1): same generic reason as any other over-permissioned request.
         var forbidden = Assert.IsType<CreateStaffUserResult.Forbidden>(result);
-        Assert.Equal(RbacDenialReason.TargetIsOrWouldBecomeGrantsAll, forbidden.Reason);
+        Assert.Equal(RbacDenialReason.NotSubsetOfActorPermissions, forbidden.Reason);
     }
 
     [Fact]

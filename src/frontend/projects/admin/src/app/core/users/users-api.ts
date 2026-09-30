@@ -137,10 +137,15 @@ interface ProblemDetailsBody extends ValidationProblemDetails {
 
 const GENERIC_ERROR = 'Something went wrong. Please try again.';
 
+// Tester-round-1 fix (W1-08, #8, defect 1): there is deliberately no `TargetIsOrWouldBecomeGrantsAll` entry
+// here any more. The API used to send that as a distinct reason for a target who holds (or would gain) Super
+// Admin, separate from `NotSubsetOfActorPermissions` for any other over-permissioned target — which let a
+// non-GrantsAll actor tell the two apart from the response alone (an identity oracle, the same enumeration-bug
+// class as the W1-01 login-timing fix). The API now always sends `NotSubsetOfActorPermissions` for both cases
+// (and for a target that doesn't exist at all, to a non-GrantsAll actor), so do not reintroduce this key.
 const FORBIDDEN_MESSAGES: Record<string, string> = {
   NotAuthorized: 'You do not have permission to manage staff users.',
   SelfEditNotAllowed: 'You cannot change your own role assignments or deactivate your own account.',
-  TargetIsOrWouldBecomeGrantsAll: 'Only a Super Admin can manage a Super Admin account or grant the Super Admin role.',
   NotSubsetOfActorPermissions: 'That action grants or affects permissions you do not hold yourself.',
   EmailChangeRequiresGrantsAll: "Only a Super Admin can change a staff user's email address.",
 };

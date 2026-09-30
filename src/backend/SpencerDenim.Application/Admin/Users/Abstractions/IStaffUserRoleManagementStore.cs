@@ -24,24 +24,32 @@ public interface IStaffUserRoleManagementStore
     /// <summary>
     /// Replaces the target's entire role assignment with <paramref name="roleIds"/> and, on success, rotates
     /// their <c>SecurityStamp</c> (doc 08 §3.1 DB4 rule 5) so the 1-minute revalidation loop (issue #16) picks
-    /// up the change. The caller must have already authorized this exact before/after transition.
+    /// up the change. The caller must have already authorized this exact before/after transition — but
+    /// <paramref name="actor"/> is that same authorization re-validated by this store against the target's
+    /// fresh in-transaction state immediately before writing (tester-round-1 fix, defect 2), so a concurrent
+    /// change to the same target between the caller's read and this call fails this call cleanly
+    /// (<see cref="ReplaceRolesStoreResult.AuthorizationStale"/>) instead of being silently overwritten.
     /// </summary>
-    Task<ReplaceRolesStoreResult> ReplaceRolesAsync(int targetUserId, IReadOnlyList<int> roleIds, CancellationToken cancellationToken);
+    Task<ReplaceRolesStoreResult> ReplaceRolesAsync(int targetUserId, IReadOnlyList<int> roleIds, RbacActorContext actor, CancellationToken cancellationToken);
 
     /// <summary>
     /// Flips <c>IsActive</c>. Deactivating rejects under the same last-Super-Admin guard as unassigning the
     /// GrantsAll role; reactivating never reduces the active GrantsAll count, so it never runs the guard.
+    /// See <see cref="ReplaceRolesAsync"/>'s remarks on <paramref name="actor"/> — the same re-validation
+    /// applies here against the target's current (roles unchanged by this operation) permission set.
     /// </summary>
-    Task<SetActiveStoreResult> SetActiveAsync(int targetUserId, bool active, CancellationToken cancellationToken);
+    Task<SetActiveStoreResult> SetActiveAsync(int targetUserId, bool active, RbacActorContext actor, CancellationToken cancellationToken);
 
     /// <summary>
     /// Updates profile fields. <paramref name="newEmail"/> is null when the email is not changing; the caller
     /// must have already checked <see cref="RoleAssignmentPolicy.CanChangeStaffEmail"/> before passing a value.
+    /// See <see cref="ReplaceRolesAsync"/>'s remarks on <paramref name="actor"/>.
     /// </summary>
     Task<UpdateProfileStoreResult> UpdateProfileAsync(
         int targetUserId,
         string firstName,
         string? lastName,
         string? newEmail,
+        RbacActorContext actor,
         CancellationToken cancellationToken);
 }

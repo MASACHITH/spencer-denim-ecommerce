@@ -10,17 +10,21 @@ using SpencerDenim.Infrastructure.Persistence.Configurations.Identity;
 namespace SpencerDenim.Infrastructure.Identity;
 
 /// <summary>
-/// Write port for staff user and role-assignment mutations (ADM-02, doc 08 §3.1 DB4, issue #8). RBAC
-/// authorization (the subset rule, self-edit block, GrantsAll gating) has already happened in the command
-/// handler by the time any write method here runs — this class only ever enforces DB4 rule 4, the last-Super-
-/// Admin guard, because that is the one rule that needs real transactional machinery (<c>sp_getapplock</c>)
-/// to be correct under concurrency; everything else is a per-request decision with no analogous race.
+/// Write port for staff user and role-assignment mutations (ADM-02, doc 08 §3.1 DB4, issue #8). The command
+/// handler makes the doc 08 §3.1 DB4 rules 1/2 (GrantsAll gating, the subset rule) authorization decision
+/// first, against a snapshot it read outside any transaction — but every write method here re-validates that
+/// exact decision against the target's fresh, in-transaction state before writing (tester-round-1 fix, W1-08,
+/// #8, defect 2), via the <see cref="RbacActorContext"/> the handler supplies, so a concurrent change to the
+/// same target between the handler's read and this write can never be silently clobbered (lost update) or
+/// leave a write applied against a state that no longer satisfies the subset rule. This class also enforces
+/// DB4 rule 4, the last-Super-Admin guard, which needs the same <c>sp_getapplock</c> machinery for the same
+/// reason: a per-request decision is not enough under concurrency.
 /// <para>
-/// <see cref="ReplaceRolesAsync"/> and <see cref="SetActiveAsync"/> open an explicit transaction on the
-/// shared <see cref="AppDbContext"/> and then call <see cref="UserManager{TUser}"/> methods against that same
-/// context — those methods each trigger their own <c>SaveChangesAsync</c>, but because the context already
-/// has an ambient transaction, every one of those saves is enlisted in it and only becomes durable when this
-/// class commits.
+/// <see cref="ReplaceRolesAsync"/>, <see cref="SetActiveAsync"/> and <see cref="UpdateProfileAsync"/> each open
+/// an explicit transaction on the shared <see cref="AppDbContext"/> and then call
+/// <see cref="UserManager{TUser}"/> methods against that same context — those methods each trigger their own
+/// <c>SaveChangesAsync</c>, but because the context already has an ambient transaction, every one of those
+/// saves is enlisted in it and only becomes durable when this class commits.
 /// </para>
 /// </summary>
 internal sealed class StaffUserRoleManagementStore(
@@ -114,22 +118,20 @@ internal sealed class StaffUserRoleManagementStore(
         return new CreateStaffUserStoreResult.Success(user.Id, stamp);
     }
 
-    public async Task<ReplaceRolesStoreResult> ReplaceRolesAsync(int targetUserId, IReadOnlyList<int> roleIds, CancellationToken cancellationToken)
+    public async Task<ReplaceRolesStoreResult> ReplaceRolesAsync(int targetUserId, IReadOnlyList<int> roleIds, RbacActorContext actor, CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(actor);
+
         var user = await userManager.FindByIdAsync(targetUserId.ToString(CultureInfo.InvariantCulture));
         if (user is null)
         {
             return new ReplaceRolesStoreResult.TargetNotFound();
         }
 
-        var currentRoleNames = await userManager.GetRolesAsync(user);
         var newRoles = await roleManager.Roles.Where(r => roleIds.Contains(r.Id)).ToListAsync(cancellationToken);
         var newRoleNames = newRoles.ConvertAll(r => r.Name!);
-
-        var currentHasGrantsAll = currentRoleNames.Count > 0
-            && await roleManager.Roles.AnyAsync(r => r.Name != null && currentRoleNames.Contains(r.Name) && r.GrantsAllPermissions, cancellationToken);
         var newHasGrantsAll = newRoles.Exists(r => r.GrantsAllPermissions);
-        var reducesActiveGrantsAllCount = currentHasGrantsAll && !newHasGrantsAll;
+        var newPermissions = await LoadRolePermissionsAsync(newRoles.ConvertAll(r => r.Id), cancellationToken);
 
         // Database:MaxRetryCount configures EnableRetryOnFailure (Infrastructure/DependencyInjection.cs), whose
         // retrying execution strategy refuses a bare Database.BeginTransactionAsync() outside itself ("does not
@@ -140,6 +142,34 @@ internal sealed class StaffUserRoleManagementStore(
         {
             await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
 
+            // Tester-round-1 fix (defect 2): serialise on this target before re-reading its current role
+            // state, so a concurrent writer for the SAME target either finishes first (and this re-read sees
+            // its result) or blocks until this transaction commits or rolls back — closing the gap between the
+            // handler's necessarily non-transactional authorization read and this write.
+            await AcquireUserLockAsync(targetUserId, cancellationToken);
+
+            var currentRoleNames = await userManager.GetRolesAsync(user);
+            var (currentHasGrantsAll, currentPermissions) = await LoadCurrentPermissionStateAsync(targetUserId, cancellationToken);
+
+            if (!actor.HasGrantsAll)
+            {
+                var stillAllowed = actor.HasUsersManage && RoleAssignmentPolicy.CanManageStaffUser(
+                    actorHasGrantsAll: false,
+                    actorHasUsersManage: actor.HasUsersManage,
+                    actorEffectivePermissions: actor.EffectivePermissions,
+                    targetHasGrantsAllBefore: currentHasGrantsAll,
+                    targetPermissionsBefore: currentPermissions,
+                    targetHasGrantsAllAfter: newHasGrantsAll,
+                    targetPermissionsAfter: newPermissions);
+
+                if (!stillAllowed)
+                {
+                    await transaction.RollbackAsync(cancellationToken);
+                    return (ReplaceRolesStoreResult)new ReplaceRolesStoreResult.AuthorizationStale();
+                }
+            }
+
+            var reducesActiveGrantsAllCount = currentHasGrantsAll && !newHasGrantsAll;
             if (reducesActiveGrantsAllCount)
             {
                 await AcquireGrantsAllLockAsync(cancellationToken);
@@ -186,20 +216,15 @@ internal sealed class StaffUserRoleManagementStore(
         });
     }
 
-    public async Task<SetActiveStoreResult> SetActiveAsync(int targetUserId, bool active, CancellationToken cancellationToken)
+    public async Task<SetActiveStoreResult> SetActiveAsync(int targetUserId, bool active, RbacActorContext actor, CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(actor);
+
         var user = await dbContext.Users.FirstOrDefaultAsync(u => u.Id == targetUserId && u.UserType == UserType.Staff, cancellationToken);
         if (user is null)
         {
             return new SetActiveStoreResult.TargetNotFound();
         }
-
-        // Reactivating can never reduce the active GrantsAll count, so only deactivating a current GrantsAll
-        // holder needs the guard.
-        var mayReduceActiveGrantsAllCount = !active
-            && await dbContext.UserRoles.AnyAsync(
-                ur => ur.UserId == targetUserId && dbContext.Roles.Any(r => r.Id == ur.RoleId && r.GrantsAllPermissions),
-                cancellationToken);
 
         // See the matching remark in ReplaceRolesAsync: EnableRetryOnFailure requires the transaction to be
         // opened and committed inside CreateExecutionStrategy().ExecuteAsync, not around it.
@@ -208,7 +233,35 @@ internal sealed class StaffUserRoleManagementStore(
         {
             await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
 
-            if (mayReduceActiveGrantsAllCount)
+            // Tester-round-1 fix (defect 2): see ReplaceRolesAsync's remarks — this operation does not change
+            // the target's roles itself, but a concurrent role change elsewhere to the SAME target between the
+            // handler's authorization read and this write could make that earlier decision stale.
+            await AcquireUserLockAsync(targetUserId, cancellationToken);
+
+            var (currentHasGrantsAll, currentPermissions) = await LoadCurrentPermissionStateAsync(targetUserId, cancellationToken);
+
+            if (!actor.HasGrantsAll)
+            {
+                var stillAllowed = actor.HasUsersManage && RoleAssignmentPolicy.CanManageStaffUser(
+                    actorHasGrantsAll: false,
+                    actorHasUsersManage: actor.HasUsersManage,
+                    actorEffectivePermissions: actor.EffectivePermissions,
+                    targetHasGrantsAllBefore: currentHasGrantsAll,
+                    targetPermissionsBefore: currentPermissions,
+                    targetHasGrantsAllAfter: currentHasGrantsAll,
+                    targetPermissionsAfter: currentPermissions);
+
+                if (!stillAllowed)
+                {
+                    await transaction.RollbackAsync(cancellationToken);
+                    return (SetActiveStoreResult)new SetActiveStoreResult.AuthorizationStale();
+                }
+            }
+
+            // Reactivating can never reduce the active GrantsAll count, so only deactivating a (freshly
+            // re-read) current GrantsAll holder needs the guard.
+            var reducesActiveGrantsAllCount = !active && currentHasGrantsAll;
+            if (reducesActiveGrantsAllCount)
             {
                 await AcquireGrantsAllLockAsync(cancellationToken);
 
@@ -233,37 +286,79 @@ internal sealed class StaffUserRoleManagementStore(
         string firstName,
         string? lastName,
         string? newEmail,
+        RbacActorContext actor,
         CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(actor);
+
         var user = await userManager.FindByIdAsync(targetUserId.ToString(CultureInfo.InvariantCulture));
         if (user is null || user.UserType != UserType.Staff)
         {
             return new UpdateProfileStoreResult.TargetNotFound();
         }
 
-        if (newEmail is not null)
+        // See ReplaceRolesAsync's remarks (tester-round-1 fix, defect 2). This operation does not touch roles,
+        // but still needs the same fresh re-validation: a concurrent role change to this target between the
+        // handler's authorization read and this write could make that earlier decision stale.
+        var strategy = dbContext.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
         {
-            var setEmailResult = await userManager.SetEmailAsync(user, newEmail);
-            if (!setEmailResult.Succeeded)
+            await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+
+            await AcquireUserLockAsync(targetUserId, cancellationToken);
+
+            if (!actor.HasGrantsAll)
             {
-                return MapProfileError(setEmailResult);
+                var (currentHasGrantsAll, currentPermissions) = await LoadCurrentPermissionStateAsync(targetUserId, cancellationToken);
+                var stillAllowed = actor.HasUsersManage && RoleAssignmentPolicy.CanManageStaffUser(
+                    actorHasGrantsAll: false,
+                    actorHasUsersManage: actor.HasUsersManage,
+                    actorEffectivePermissions: actor.EffectivePermissions,
+                    targetHasGrantsAllBefore: currentHasGrantsAll,
+                    targetPermissionsBefore: currentPermissions,
+                    targetHasGrantsAllAfter: currentHasGrantsAll,
+                    targetPermissionsAfter: currentPermissions);
+
+                if (!stillAllowed)
+                {
+                    await transaction.RollbackAsync(cancellationToken);
+                    return (UpdateProfileStoreResult)new UpdateProfileStoreResult.AuthorizationStale();
+                }
             }
 
-            // Login resolves by email (AdminAuthenticator.FindByEmailAsync), but UserName mirrors Email at
-            // creation (AdminSeedHostedService, and CreateStaffUserAsync above) — kept in sync here too, so
-            // NormalizedUserName never silently drifts from NormalizedEmail.
-            var setUserNameResult = await userManager.SetUserNameAsync(user, newEmail);
-            if (!setUserNameResult.Succeeded)
+            if (newEmail is not null)
             {
-                return MapProfileError(setUserNameResult);
+                var setEmailResult = await userManager.SetEmailAsync(user, newEmail);
+                if (!setEmailResult.Succeeded)
+                {
+                    await transaction.RollbackAsync(cancellationToken);
+                    return (UpdateProfileStoreResult)MapProfileError(setEmailResult);
+                }
+
+                // Login resolves by email (AdminAuthenticator.FindByEmailAsync), but UserName mirrors Email at
+                // creation (AdminSeedHostedService, and CreateStaffUserAsync above) — kept in sync here too, so
+                // NormalizedUserName never silently drifts from NormalizedEmail.
+                var setUserNameResult = await userManager.SetUserNameAsync(user, newEmail);
+                if (!setUserNameResult.Succeeded)
+                {
+                    await transaction.RollbackAsync(cancellationToken);
+                    return (UpdateProfileStoreResult)MapProfileError(setUserNameResult);
+                }
             }
-        }
 
-        user.FirstName = firstName;
-        user.LastName = lastName;
+            user.FirstName = firstName;
+            user.LastName = lastName;
 
-        var updateResult = await userManager.UpdateAsync(user);
-        return updateResult.Succeeded ? new UpdateProfileStoreResult.Success() : MapProfileError(updateResult);
+            var updateResult = await userManager.UpdateAsync(user);
+            if (!updateResult.Succeeded)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return (UpdateProfileStoreResult)MapProfileError(updateResult);
+            }
+
+            await transaction.CommitAsync(cancellationToken);
+            return (UpdateProfileStoreResult)new UpdateProfileStoreResult.Success();
+        });
     }
 
     private static UpdateProfileStoreResult MapProfileError(IdentityResult result)
@@ -301,6 +396,64 @@ internal sealed class StaffUserRoleManagementStore(
         dbContext.Database.ExecuteSqlInterpolatedAsync(
             $"EXEC sp_getapplock @Resource = {GrantsAllLockResource}, @LockMode = N'Exclusive', @LockOwner = N'Transaction';",
             cancellationToken);
+
+    /// <summary>
+    /// Tester-round-1 fix (W1-08, #8, defect 2): one <c>sp_getapplock</c> resource per target user, so a
+    /// concurrent write to the SAME target serialises here exactly like rule 4 already serialises on the
+    /// global GrantsAll headcount — but scoped per-target, since rules 1/2's subset condition is per-target,
+    /// not global, and locking every write against the single global resource would serialise unrelated users'
+    /// writes against each other for no reason. Same infinite-timeout, block-don't-fail-fast semantics as
+    /// <see cref="AcquireGrantsAllLockAsync"/>.
+    /// </summary>
+    private Task<int> AcquireUserLockAsync(int targetUserId, CancellationToken cancellationToken) =>
+        dbContext.Database.ExecuteSqlInterpolatedAsync(
+            $"EXEC sp_getapplock @Resource = {UserLockResource(targetUserId)}, @LockMode = N'Exclusive', @LockOwner = N'Transaction';",
+            cancellationToken);
+
+    private static string UserLockResource(int targetUserId) =>
+        string.Create(CultureInfo.InvariantCulture, $"rbac:manage-user:{targetUserId}");
+
+    /// <summary>
+    /// Tester-round-1 fix (defect 2): the target's CURRENT GrantsAll/permission state, read fresh inside the
+    /// caller's transaction (and after <see cref="AcquireUserLockAsync"/>, so it reflects any write from a
+    /// concurrent caller for the same target that got there first) — never the possibly-stale snapshot the
+    /// command handler read before this call started.
+    /// </summary>
+    private async Task<(bool HasGrantsAll, IReadOnlySet<string> Permissions)> LoadCurrentPermissionStateAsync(int targetUserId, CancellationToken cancellationToken)
+    {
+        var roleIds = await dbContext.UserRoles.AsNoTracking()
+            .Where(ur => ur.UserId == targetUserId)
+            .Select(ur => ur.RoleId)
+            .ToListAsync(cancellationToken);
+
+        if (roleIds.Count == 0)
+        {
+            return (false, new HashSet<string>());
+        }
+
+        var hasGrantsAll = await dbContext.Roles.AsNoTracking()
+            .AnyAsync(r => roleIds.Contains(r.Id) && r.GrantsAllPermissions, cancellationToken);
+
+        var permissions = await LoadRolePermissionsAsync(roleIds, cancellationToken);
+
+        return (hasGrantsAll, permissions);
+    }
+
+    /// <summary>The union of permissions granted by the given roles, via their <see cref="RoleClaimConfiguration.PermissionClaimType"/> claims.</summary>
+    private async Task<IReadOnlySet<string>> LoadRolePermissionsAsync(List<int> roleIds, CancellationToken cancellationToken)
+    {
+        if (roleIds.Count == 0)
+        {
+            return new HashSet<string>();
+        }
+
+        var claims = await dbContext.RoleClaims.AsNoTracking()
+            .Where(rc => roleIds.Contains(rc.RoleId) && rc.ClaimType == RoleClaimConfiguration.PermissionClaimType)
+            .Select(rc => rc.ClaimValue!)
+            .ToListAsync(cancellationToken);
+
+        return new HashSet<string>(claims);
+    }
 
     private async Task<List<RoleGrantSnapshot>> LoadRoleSnapshotsAsync(IReadOnlyCollection<int> roleIds, CancellationToken cancellationToken)
     {

@@ -43,8 +43,10 @@ public sealed class SetStaffUserActiveCommandHandlerTests
 
         var result = await handler.HandleAsync(new SetStaffUserActiveCommand(1, 2, false, null, null), TestContext.Current.CancellationToken);
 
+        // Tester-round-1 fix (defect 1): same generic reason as any other over-permissioned target — no
+        // distinct "this one is Super Admin" identity oracle.
         var forbidden = Assert.IsType<SetStaffUserActiveResult.Forbidden>(result);
-        Assert.Equal(RbacDenialReason.TargetIsOrWouldBecomeGrantsAll, forbidden.Reason);
+        Assert.Equal(RbacDenialReason.NotSubsetOfActorPermissions, forbidden.Reason);
         Assert.Null(store.SetActiveCall);
     }
 
@@ -134,5 +136,38 @@ public sealed class SetStaffUserActiveCommandHandlerTests
         var result = await handler.HandleAsync(new SetStaffUserActiveCommand(1, 404, false, null, null), TestContext.Current.CancellationToken);
 
         Assert.IsType<SetStaffUserActiveResult.TargetNotFound>(result);
+    }
+
+    /// <summary>Tester-round-1 fix (defect 1): a non-GrantsAll actor must not be able to tell "doesn't exist"
+    /// apart from "exists but is protected" by getting a 404-shaped result for one and a 403-shaped result for
+    /// the other.</summary>
+    [Fact]
+    public async Task Non_grants_all_actor_gets_the_same_generic_denial_for_a_target_that_does_not_exist()
+    {
+        var store = new FakeStaffUserRoleManagementStore();
+        var audit = new RecordingAuditLogWriter();
+        var handler = CreateHandler(store, new EffectivePermissions(false, [Permissions.Users.Manage]), audit);
+
+        var result = await handler.HandleAsync(new SetStaffUserActiveCommand(1, 404, false, null, null), TestContext.Current.CancellationToken);
+
+        var forbidden = Assert.IsType<SetStaffUserActiveResult.Forbidden>(result);
+        Assert.Equal(RbacDenialReason.NotSubsetOfActorPermissions, forbidden.Reason);
+    }
+
+    /// <summary>Tester-round-1 fix (defect 2): a stale-authorization outcome from the store surfaces as the
+    /// same generic denial as any other subset-rule refusal.</summary>
+    [Fact]
+    public async Task Store_reported_authorization_stale_surfaces_as_the_generic_subset_denial()
+    {
+        var store = new FakeStaffUserRoleManagementStore { NextSetActiveTriggersAuthorizationStale = true };
+        store.Users[2] = Target(2, true, Role(30, grantsAll: false, Permissions.Orders.View));
+        var audit = new RecordingAuditLogWriter();
+        var handler = CreateHandler(store, new EffectivePermissions(false, [Permissions.Users.Manage, Permissions.Orders.View]), audit);
+
+        var result = await handler.HandleAsync(new SetStaffUserActiveCommand(1, 2, false, null, null), TestContext.Current.CancellationToken);
+
+        var forbidden = Assert.IsType<SetStaffUserActiveResult.Forbidden>(result);
+        Assert.Equal(RbacDenialReason.NotSubsetOfActorPermissions, forbidden.Reason);
+        Assert.Empty(audit.Entries);
     }
 }

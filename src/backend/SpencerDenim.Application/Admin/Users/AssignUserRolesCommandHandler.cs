@@ -36,10 +36,24 @@ public sealed class AssignUserRolesCommandHandler(
             return new AssignUserRolesResult.SelfEditNotAllowed();
         }
 
+        // Loaded before the target lookup (tester-round-1 fix, defect 1): a non-GrantsAll actor must get the
+        // exact same denial shape whether the target doesn't exist, holds GrantsAll, or merely has one extra
+        // permission — see the target-null branch below.
+        var actor = await permissionsProvider.GetEffectivePermissionsAsync(command.ActorUserId, cancellationToken);
+        var actorHasUsersManage = actor.Has(Permissions.Users.Manage);
+        var actorPermissions = new HashSet<string>(actor.Permissions);
+
         var target = await store.GetStaffUserSnapshotAsync(command.TargetUserId, cancellationToken);
         if (target is null)
         {
-            return new AssignUserRolesResult.TargetNotFound();
+            if (actor.GrantsAllPermissions)
+            {
+                return new AssignUserRolesResult.TargetNotFound();
+            }
+
+            // A Super Admin is allowed to know a target genuinely doesn't exist; anyone else must not be able
+            // to distinguish "doesn't exist" from "exists but is protected" by the response shape.
+            return new AssignUserRolesResult.Forbidden(RbacDenialReason.NotSubsetOfActorPermissions, RbacDenialClassifier.Message(RbacDenialReason.NotSubsetOfActorPermissions));
         }
 
         var distinctRoleIds = command.RoleIds.Distinct().ToList();
@@ -49,10 +63,6 @@ public sealed class AssignUserRolesCommandHandler(
         {
             return new AssignUserRolesResult.RoleNotFound(unknownRoleIds);
         }
-
-        var actor = await permissionsProvider.GetEffectivePermissionsAsync(command.ActorUserId, cancellationToken);
-        var actorHasUsersManage = actor.Has(Permissions.Users.Manage);
-        var actorPermissions = new HashSet<string>(actor.Permissions);
 
         var afterGrantsAll = roles.Values.Any(role => role.GrantsAllPermissions);
         var afterPermissions = new HashSet<string>(roles.Values.SelectMany(role => role.Permissions));
@@ -72,7 +82,11 @@ public sealed class AssignUserRolesCommandHandler(
             return new AssignUserRolesResult.Forbidden(reason, RbacDenialClassifier.Message(reason));
         }
 
-        var writeResult = await store.ReplaceRolesAsync(command.TargetUserId, distinctRoleIds, cancellationToken);
+        var writeResult = await store.ReplaceRolesAsync(
+            command.TargetUserId,
+            distinctRoleIds,
+            new RbacActorContext(actor.GrantsAllPermissions, actorHasUsersManage, actorPermissions),
+            cancellationToken);
 
         switch (writeResult)
         {
@@ -87,6 +101,12 @@ public sealed class AssignUserRolesCommandHandler(
 
             case ReplaceRolesStoreResult.LastSuperAdminGuardTriggered:
                 return new AssignUserRolesResult.LastSuperAdminGuardTriggered();
+
+            case ReplaceRolesStoreResult.AuthorizationStale:
+                // Tester-round-1 fix (defect 2): a concurrent change to the target invalidated the
+                // authorization decision above between the read and this write. Same generic shape as an
+                // ordinary subset-rule refusal (defect 1) — this is not a new, separately-observable reason.
+                return new AssignUserRolesResult.Forbidden(RbacDenialReason.NotSubsetOfActorPermissions, RbacDenialClassifier.Message(RbacDenialReason.NotSubsetOfActorPermissions));
 
             default:
                 throw new InvalidOperationException($"Unhandled {nameof(ReplaceRolesStoreResult)}: {writeResult.GetType().Name}");

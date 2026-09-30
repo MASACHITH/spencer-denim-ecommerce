@@ -10,35 +10,6 @@ namespace SpencerDenim.Domain.Identity;
 public static class RoleAssignmentPolicy
 {
     /// <summary>
-    /// DB4 rule 1: only a GrantsAll holder may assign or unassign the GrantsAll role.
-    /// DB4 rule 2 (subset rule, N3): a <see cref="Permissions.Users.Manage"/> holder without GrantsAll may
-    /// assign a role only if every permission of that role is already in the actor's own effective set.
-    /// A GrantsAll actor always passes (rule 1 covers the GrantsAll-role case specifically).
-    /// </summary>
-    public static bool CanAssignRole(
-        bool actorHasGrantsAll,
-        bool actorHasUsersManage,
-        IReadOnlySet<string> actorEffectivePermissions,
-        bool roleGrantsAllPermissions,
-        IReadOnlySet<string> rolePermissions)
-    {
-        ArgumentNullException.ThrowIfNull(actorEffectivePermissions);
-        ArgumentNullException.ThrowIfNull(rolePermissions);
-
-        if (roleGrantsAllPermissions)
-        {
-            return actorHasGrantsAll;
-        }
-
-        if (actorHasGrantsAll)
-        {
-            return true;
-        }
-
-        return actorHasUsersManage && rolePermissions.IsSubsetOf(actorEffectivePermissions);
-    }
-
-    /// <summary>
     /// DB4 rule 2: a <see cref="Permissions.Users.Manage"/> holder without GrantsAll may modify, reset the
     /// password or 2FA of, deactivate, reactivate or change the roles of a staff user only if the target's
     /// effective permissions, both before and after the change, are a subset of the actor's own. GrantsAll

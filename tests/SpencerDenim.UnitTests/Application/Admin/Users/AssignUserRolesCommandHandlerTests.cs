@@ -59,8 +59,10 @@ public sealed class AssignUserRolesCommandHandlerTests
 
         var result = await handler.HandleAsync(new AssignUserRolesCommand(1, 2, [10], null, null), TestContext.Current.CancellationToken);
 
+        // Tester-round-1 fix (defect 1): a non-GrantsAll actor must get the exact same reason as any other
+        // over-permissioned target, not a distinct "this one is Super Admin" reason (identity oracle).
         var forbidden = Assert.IsType<AssignUserRolesResult.Forbidden>(result);
-        Assert.Equal(RbacDenialReason.TargetIsOrWouldBecomeGrantsAll, forbidden.Reason);
+        Assert.Equal(RbacDenialReason.NotSubsetOfActorPermissions, forbidden.Reason);
         Assert.Null(store.ReplaceRolesCall);
     }
 
@@ -117,7 +119,59 @@ public sealed class AssignUserRolesCommandHandlerTests
         var result = await handler.HandleAsync(new AssignUserRolesCommand(1, 2, [30], null, null), TestContext.Current.CancellationToken);
 
         var forbidden = Assert.IsType<AssignUserRolesResult.Forbidden>(result);
-        Assert.Equal(RbacDenialReason.TargetIsOrWouldBecomeGrantsAll, forbidden.Reason);
+        Assert.Equal(RbacDenialReason.NotSubsetOfActorPermissions, forbidden.Reason);
+    }
+
+    /// <summary>Tester-round-1 fix (defect 1): the oracle the tester flagged specifically combined the two —
+    /// a non-GrantsAll actor must not be able to tell "target doesn't exist" apart from "target is protected"
+    /// by getting a 404-shaped result for one and a 403-shaped result for the other.</summary>
+    [Fact]
+    public async Task Non_grants_all_actor_gets_the_same_generic_denial_for_a_target_that_does_not_exist()
+    {
+        var store = new FakeStaffUserRoleManagementStore();
+        var audit = new RecordingAuditLogWriter();
+        var actorPermissions = new EffectivePermissions(false, [Permissions.Users.Manage, Permissions.Orders.View]);
+        var handler = CreateHandler(store, actorPermissions, audit);
+
+        var result = await handler.HandleAsync(new AssignUserRolesCommand(1, 404, [], null, null), TestContext.Current.CancellationToken);
+
+        var forbidden = Assert.IsType<AssignUserRolesResult.Forbidden>(result);
+        Assert.Equal(RbacDenialReason.NotSubsetOfActorPermissions, forbidden.Reason);
+        Assert.Equal("That action grants or affects permissions you do not hold yourself.", forbidden.Message);
+    }
+
+    /// <summary>Tester-round-1 fix (defect 2): the store detecting a stale authorization at write time must
+    /// surface through the handler as the same generic denial as any other subset-rule refusal, not a new,
+    /// separately-observable reason.</summary>
+    [Fact]
+    public async Task Store_reported_authorization_stale_surfaces_as_the_generic_subset_denial()
+    {
+        var store = new FakeStaffUserRoleManagementStore { NextReplaceRolesTriggersAuthorizationStale = true };
+        store.Users[2] = Target(2);
+        store.Roles[30] = Role(30, "Order Staff-like", grantsAll: false, Permissions.Orders.View);
+        var audit = new RecordingAuditLogWriter();
+        var actorPermissions = new EffectivePermissions(false, [Permissions.Users.Manage, Permissions.Orders.View]);
+        var handler = CreateHandler(store, actorPermissions, audit);
+
+        var result = await handler.HandleAsync(new AssignUserRolesCommand(1, 2, [30], null, null), TestContext.Current.CancellationToken);
+
+        var forbidden = Assert.IsType<AssignUserRolesResult.Forbidden>(result);
+        Assert.Equal(RbacDenialReason.NotSubsetOfActorPermissions, forbidden.Reason);
+        Assert.Equal("That action grants or affects permissions you do not hold yourself.", forbidden.Message);
+        Assert.Empty(audit.Entries);
+    }
+
+    /// <summary>A GrantsAll actor is allowed to know a target genuinely doesn't exist (unaffected by defect 1).</summary>
+    [Fact]
+    public async Task GrantsAll_actor_still_gets_a_real_not_found_for_a_missing_target()
+    {
+        var store = new FakeStaffUserRoleManagementStore();
+        var audit = new RecordingAuditLogWriter();
+        var handler = CreateHandler(store, new EffectivePermissions(true, []), audit);
+
+        var result = await handler.HandleAsync(new AssignUserRolesCommand(1, 404, [], null, null), TestContext.Current.CancellationToken);
+
+        Assert.IsType<AssignUserRolesResult.TargetNotFound>(result);
     }
 
     [Fact]

@@ -29,6 +29,13 @@ namespace SpencerDenim.IntegrationTests.Identity;
 /// </summary>
 public sealed class StaffUserRoleManagementStoreTests(SqlServerDatabaseFixture sqlServer)
 {
+    /// <summary>
+    /// A GrantsAll actor's context never fails the store's tester-round-1 defect-2 re-validation (see
+    /// <see cref="RbacActorContext"/>), so tests that only exercise rule 4 (the last-Super-Admin guard) pass
+    /// this — exactly mirroring how a real GrantsAll actor's authorization decision is never actually stale.
+    /// </summary>
+    private static readonly RbacActorContext GrantsAllActor = new(HasGrantsAll: true, HasUsersManage: true, EffectivePermissions: new HashSet<string>());
+
     [Fact]
     public async Task Deactivating_the_sole_active_GrantsAll_holder_is_rejected()
     {
@@ -43,7 +50,7 @@ public sealed class StaffUserRoleManagementStoreTests(SqlServerDatabaseFixture s
         await DeactivateAllOtherActiveGrantsAllHoldersAsync(scope.ServiceProvider, soleAdminId);
 
         var store = scope.ServiceProvider.GetRequiredService<IStaffUserRoleManagementStore>();
-        var result = await store.SetActiveAsync(soleAdminId, active: false, TestContext.Current.CancellationToken);
+        var result = await store.SetActiveAsync(soleAdminId, active: false, GrantsAllActor, TestContext.Current.CancellationToken);
 
         Assert.IsType<SetActiveStoreResult.LastSuperAdminGuardTriggered>(result);
 
@@ -68,7 +75,7 @@ public sealed class StaffUserRoleManagementStoreTests(SqlServerDatabaseFixture s
         await DeactivateAllOtherActiveGrantsAllHoldersAsync(scope.ServiceProvider, soleAdminId);
 
         var store = scope.ServiceProvider.GetRequiredService<IStaffUserRoleManagementStore>();
-        var result = await store.ReplaceRolesAsync(soleAdminId, [], TestContext.Current.CancellationToken);
+        var result = await store.ReplaceRolesAsync(soleAdminId, [], GrantsAllActor, TestContext.Current.CancellationToken);
 
         Assert.IsType<ReplaceRolesStoreResult.LastSuperAdminGuardTriggered>(result);
 
@@ -98,7 +105,7 @@ public sealed class StaffUserRoleManagementStoreTests(SqlServerDatabaseFixture s
         await DeactivateAllOtherActiveGrantsAllHoldersAsync(scope.ServiceProvider, firstId, secondId);
 
         var store = scope.ServiceProvider.GetRequiredService<IStaffUserRoleManagementStore>();
-        var result = await store.SetActiveAsync(firstId, active: false, TestContext.Current.CancellationToken);
+        var result = await store.SetActiveAsync(firstId, active: false, GrantsAllActor, TestContext.Current.CancellationToken);
 
         Assert.IsType<SetActiveStoreResult.Success>(result);
 
@@ -107,6 +114,152 @@ public sealed class StaffUserRoleManagementStoreTests(SqlServerDatabaseFixture s
         Assert.True(secondStillActive);
 
         await RemoveFromGrantsAllRoleAsync(scope.ServiceProvider, firstId, secondId);
+    }
+
+    /// <summary>
+    /// Tester-round-1 fix (W1-08, #8, defect 2): reproduces exactly the scenario the tester described —
+    /// a non-GrantsAll actor's authorization decision is made against the target's state at read time, but
+    /// before that actor's write reaches the store, a DIFFERENT (GrantsAll) admin fully commits a role change
+    /// to the SAME target that pushes it above the first actor's own permissions. The first actor's write must
+    /// now fail cleanly (<see cref="SetActiveStoreResult.AuthorizationStale"/>) instead of silently deactivating
+    /// a user who, at the true moment of the write, the actor was no longer authorized to manage — proving the
+    /// lost-update / stale-authorization gap is closed, not just "the last-Super-Admin guard still works".
+    /// </summary>
+    [Fact]
+    public async Task Deactivation_authorized_against_a_stale_snapshot_is_rejected_after_a_concurrent_role_change_widens_the_target()
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, TestContext.Current.CancellationToken);
+
+        await using var factory = new ApiFactory(sqlServer.ConnectionString);
+        await using var scope = factory.Services.CreateAsyncScope();
+        var userManager = scope.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
+        var roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<AppRole>>();
+
+        var narrowRoleId = await CreateRoleAsync(roleManager, Permissions.Orders.View);
+        var wideRoleId = await CreateRoleAsync(roleManager, Permissions.Content.Edit);
+        var targetId = await CreateStaffUserWithRoleAsync(userManager, roleManager, "stale-target", narrowRoleId);
+
+        // The low-privilege actor's authorization decision, made when the target only held the narrow role —
+        // this is deliberately never refreshed, standing in for the handler's now-stale, non-transactional read.
+        var lowPrivilegeActor = new RbacActorContext(HasGrantsAll: false, HasUsersManage: true, EffectivePermissions: new HashSet<string> { Permissions.Orders.View });
+
+        // A different (GrantsAll) admin fully commits a role change to the SAME target in between — before the
+        // low-privilege actor's write below ever reaches the store.
+        var grantsAllStore = scope.ServiceProvider.GetRequiredService<IStaffUserRoleManagementStore>();
+        var concurrentChange = await grantsAllStore.ReplaceRolesAsync(targetId, [wideRoleId], GrantsAllActor, TestContext.Current.CancellationToken);
+        Assert.IsType<ReplaceRolesStoreResult.Success>(concurrentChange);
+
+        var store = scope.ServiceProvider.GetRequiredService<IStaffUserRoleManagementStore>();
+        var result = await store.SetActiveAsync(targetId, active: false, lowPrivilegeActor, TestContext.Current.CancellationToken);
+
+        Assert.IsType<SetActiveStoreResult.AuthorizationStale>(result);
+
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var stillActive = await dbContext.Users.AsNoTracking().Where(u => u.Id == targetId).Select(u => u.IsActive).SingleAsync(TestContext.Current.CancellationToken);
+        Assert.True(stillActive, "The stale write must not have silently deactivated the target.");
+    }
+
+    /// <summary>
+    /// Tester-round-1 fix (defect 2), true concurrency: two writers race for the SAME target — a GrantsAll
+    /// admin widening the target's roles, and a non-GrantsAll actor whose authorization was only ever valid
+    /// against the target's original (narrow) roles. Whichever of the two actually acquires the per-target
+    /// <c>sp_getapplock</c> first, the outcome must never violate the subset invariant: either the low-privilege
+    /// write commits first (while the target still legitimately qualifies) and the GrantsAll write then
+    /// (unconditionally) supersedes it, or the GrantsAll write commits first and the low-privilege write is
+    /// then correctly refused against the now-fresh, wider state. Either way the target's FINAL role must be the
+    /// GrantsAll admin's, never silently reverted by a stale low-privilege write racing in afterwards — that
+    /// reversion is exactly the lost update this fix closes.
+    /// </summary>
+    [Fact]
+    public async Task Two_concurrent_writers_to_the_same_target_never_leave_a_lost_update_from_the_stale_actor()
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, TestContext.Current.CancellationToken);
+
+        await using var factory = new ApiFactory(sqlServer.ConnectionString);
+        await using var setupScope = factory.Services.CreateAsyncScope();
+        var userManager = setupScope.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
+        var roleManager = setupScope.ServiceProvider.GetRequiredService<RoleManager<AppRole>>();
+
+        var narrowRoleId = await CreateRoleAsync(roleManager, Permissions.Orders.View);
+        var wideRoleId = await CreateRoleAsync(roleManager, Permissions.Content.Edit);
+        var targetId = await CreateStaffUserWithRoleAsync(userManager, roleManager, "race-target", narrowRoleId);
+
+        var lowPrivilegeActor = new RbacActorContext(HasGrantsAll: false, HasUsersManage: true, EffectivePermissions: new HashSet<string> { Permissions.Orders.View });
+
+        // Two independent scopes, exactly like two concurrent HTTP requests each getting their own DbContext.
+        await using var scopeA = factory.Services.CreateAsyncScope();
+        await using var scopeB = factory.Services.CreateAsyncScope();
+        var storeA = scopeA.ServiceProvider.GetRequiredService<IStaffUserRoleManagementStore>();
+        var storeB = scopeB.ServiceProvider.GetRequiredService<IStaffUserRoleManagementStore>();
+
+        var lowPrivilegeWriteTask = storeA.ReplaceRolesAsync(targetId, [narrowRoleId], lowPrivilegeActor, TestContext.Current.CancellationToken);
+        var grantsAllWriteTask = storeB.ReplaceRolesAsync(targetId, [wideRoleId], GrantsAllActor, TestContext.Current.CancellationToken);
+
+        var results = await Task.WhenAll(lowPrivilegeWriteTask, grantsAllWriteTask);
+        var lowPrivilegeResult = results[0];
+        var grantsAllResult = results[1];
+
+        // The GrantsAll write is never subject to the subset rule, so it must always succeed regardless of
+        // which writer's per-target applock acquisition won the race.
+        Assert.IsType<ReplaceRolesStoreResult.Success>(grantsAllResult);
+
+        // The low-privilege write must either have committed legitimately (it ran first, while the target was
+        // still narrow) or been cleanly refused as stale (the GrantsAll write ran first) — never anything else.
+        Assert.True(
+            lowPrivilegeResult is ReplaceRolesStoreResult.Success or ReplaceRolesStoreResult.AuthorizationStale,
+            $"Unexpected low-privilege result: {lowPrivilegeResult.GetType().Name}");
+
+        // Whichever order the two writers actually ran in, the target's FINAL role must be the GrantsAll
+        // admin's — proving the low-privilege actor never got to (re-)apply its stale narrow role on top of the
+        // GrantsAll admin's change, which is exactly the lost update this fix closes.
+        await using var assertionScope = factory.Services.CreateAsyncScope();
+        var dbContext = assertionScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var finalUserManager = assertionScope.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
+        var targetUser = await finalUserManager.FindByIdAsync(targetId.ToString(CultureInfo.InvariantCulture));
+        Assert.NotNull(targetUser);
+        var finalRoles = await finalUserManager.GetRolesAsync(targetUser);
+        var wideRoleName = await dbContext.Roles.AsNoTracking().Where(r => r.Id == wideRoleId).Select(r => r.Name).SingleAsync(TestContext.Current.CancellationToken);
+        Assert.NotNull(wideRoleName);
+        Assert.Equal([wideRoleName], finalRoles);
+    }
+
+    /// <summary>Creates a fresh, uniquely-named, non-GrantsAll role granting exactly one permission.</summary>
+    private static async Task<int> CreateRoleAsync(RoleManager<AppRole> roleManager, string permission)
+    {
+        var role = new AppRole { Name = $"{permission}-{Guid.NewGuid():N}", GrantsAllPermissions = false, IsSystem = false };
+        var createResult = await roleManager.CreateAsync(role);
+        Assert.True(createResult.Succeeded, string.Join("; ", createResult.Errors.Select(e => e.Description)));
+
+        var claimResult = await roleManager.AddClaimAsync(role, new System.Security.Claims.Claim("perm", permission));
+        Assert.True(claimResult.Succeeded, string.Join("; ", claimResult.Errors.Select(e => e.Description)));
+
+        return role.Id;
+    }
+
+    private static async Task<int> CreateStaffUserWithRoleAsync(UserManager<AppUser> userManager, RoleManager<AppRole> roleManager, string label, int roleId)
+    {
+        var email = $"{label}-{Guid.NewGuid():N}@example.com";
+        var user = new AppUser
+        {
+            UserName = email,
+            Email = email,
+            EmailConfirmed = true,
+            UserType = UserType.Staff,
+            FirstName = "Test",
+            LastName = "Staff",
+            IsActive = true,
+        };
+
+        var createResult = await userManager.CreateAsync(user, "Correct-Password-1!");
+        Assert.True(createResult.Succeeded, string.Join("; ", createResult.Errors.Select(e => e.Description)));
+
+        var roleName = await roleManager.Roles.Where(r => r.Id == roleId).Select(r => r.Name!).SingleAsync(TestContext.Current.CancellationToken);
+        var addResult = await userManager.AddToRoleAsync(user, roleName);
+        Assert.True(addResult.Succeeded, string.Join("; ", addResult.Errors.Select(e => e.Description)));
+
+        return user.Id;
     }
 
     /// <summary>Finds the one existing GrantsAll role by its flag, or creates it (named "Super Admin", matching the real seeder) only if truly none exists yet.</summary>

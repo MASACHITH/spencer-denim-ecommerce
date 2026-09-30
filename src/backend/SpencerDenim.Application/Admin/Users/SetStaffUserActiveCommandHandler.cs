@@ -35,15 +35,23 @@ public sealed class SetStaffUserActiveCommandHandler(
             return new SetStaffUserActiveResult.SelfEditNotAllowed();
         }
 
-        var target = await store.GetStaffUserSnapshotAsync(command.TargetUserId, cancellationToken);
-        if (target is null)
-        {
-            return new SetStaffUserActiveResult.TargetNotFound();
-        }
-
+        // Loaded before the target lookup (tester-round-1 fix, defect 1): see the target-null branch below.
         var actor = await permissionsProvider.GetEffectivePermissionsAsync(command.ActorUserId, cancellationToken);
         var actorHasUsersManage = actor.Has(Permissions.Users.Manage);
         var actorPermissions = new HashSet<string>(actor.Permissions);
+
+        var target = await store.GetStaffUserSnapshotAsync(command.TargetUserId, cancellationToken);
+        if (target is null)
+        {
+            if (actor.GrantsAllPermissions)
+            {
+                return new SetStaffUserActiveResult.TargetNotFound();
+            }
+
+            // A non-GrantsAll actor must not be able to distinguish "doesn't exist" from "exists but is
+            // protected" by the response shape.
+            return new SetStaffUserActiveResult.Forbidden(RbacDenialReason.NotSubsetOfActorPermissions, RbacDenialClassifier.Message(RbacDenialReason.NotSubsetOfActorPermissions));
+        }
 
         var allowed = RoleAssignmentPolicy.CanManageStaffUser(
             actorHasGrantsAll: actor.GrantsAllPermissions,
@@ -66,7 +74,11 @@ public sealed class SetStaffUserActiveCommandHandler(
             return new SetStaffUserActiveResult.Success(command.TargetUserId, command.Active);
         }
 
-        var writeResult = await store.SetActiveAsync(command.TargetUserId, command.Active, cancellationToken);
+        var writeResult = await store.SetActiveAsync(
+            command.TargetUserId,
+            command.Active,
+            new RbacActorContext(actor.GrantsAllPermissions, actorHasUsersManage, actorPermissions),
+            cancellationToken);
 
         switch (writeResult)
         {
@@ -80,6 +92,10 @@ public sealed class SetStaffUserActiveCommandHandler(
 
             case SetActiveStoreResult.LastSuperAdminGuardTriggered:
                 return new SetStaffUserActiveResult.LastSuperAdminGuardTriggered();
+
+            case SetActiveStoreResult.AuthorizationStale:
+                // Tester-round-1 fix (defect 2): see AssignUserRolesCommandHandler's matching remark.
+                return new SetStaffUserActiveResult.Forbidden(RbacDenialReason.NotSubsetOfActorPermissions, RbacDenialClassifier.Message(RbacDenialReason.NotSubsetOfActorPermissions));
 
             default:
                 throw new InvalidOperationException($"Unhandled {nameof(SetActiveStoreResult)}: {writeResult.GetType().Name}");

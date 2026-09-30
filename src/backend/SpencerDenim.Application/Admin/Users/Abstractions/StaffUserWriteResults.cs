@@ -33,9 +33,18 @@ public abstract record ReplaceRolesStoreResult
     public sealed record TargetNotFound : ReplaceRolesStoreResult;
 
     public sealed record LastSuperAdminGuardTriggered : ReplaceRolesStoreResult;
+
+    /// <summary>
+    /// Tester-round-1 fix (defect 2): the handler's pre-write authorization decision no longer holds against
+    /// the target's fresh, in-transaction state (re-checked under the per-target <c>sp_getapplock</c>) — a
+    /// concurrent change landed between the handler's read and this write. The caller must map this to the
+    /// exact same generic denial shape as an ordinary subset-rule refusal (see <c>RbacDenialClassifier</c>);
+    /// it is not a new, separately-observable reason.
+    /// </summary>
+    public sealed record AuthorizationStale : ReplaceRolesStoreResult;
 }
 
-/// <summary>Result of <see cref="IStaffUserRoleManagementStore.SetActiveAsync"/>. See <see cref="ReplaceRolesStoreResult"/> for the guard note.</summary>
+/// <summary>Result of <see cref="IStaffUserRoleManagementStore.SetActiveAsync"/>. See <see cref="ReplaceRolesStoreResult"/> for the guard and <see cref="ReplaceRolesStoreResult.AuthorizationStale"/> notes.</summary>
 public abstract record SetActiveStoreResult
 {
     private SetActiveStoreResult()
@@ -47,6 +56,9 @@ public abstract record SetActiveStoreResult
     public sealed record TargetNotFound : SetActiveStoreResult;
 
     public sealed record LastSuperAdminGuardTriggered : SetActiveStoreResult;
+
+    /// <summary>See <see cref="ReplaceRolesStoreResult.AuthorizationStale"/>.</summary>
+    public sealed record AuthorizationStale : SetActiveStoreResult;
 }
 
 /// <summary>Result of <see cref="IStaffUserRoleManagementStore.UpdateProfileAsync"/>.</summary>
@@ -63,4 +75,7 @@ public abstract record UpdateProfileStoreResult
     public sealed record EmailAlreadyInUse : UpdateProfileStoreResult;
 
     public sealed record IdentityErrors(IReadOnlyList<string> Errors) : UpdateProfileStoreResult;
+
+    /// <summary>See <see cref="ReplaceRolesStoreResult.AuthorizationStale"/>.</summary>
+    public sealed record AuthorizationStale : UpdateProfileStoreResult;
 }

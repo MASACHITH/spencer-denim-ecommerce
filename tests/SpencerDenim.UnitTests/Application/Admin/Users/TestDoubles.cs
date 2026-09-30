@@ -57,9 +57,23 @@ internal sealed class FakeStaffUserRoleManagementStore : IStaffUserRoleManagemen
 
     public bool NextSetActiveTriggersGuard { get; set; }
 
+    /// <summary>
+    /// Tester-round-1 fix (defect 2): lets a handler test simulate the store detecting, at write time, that a
+    /// concurrent change made the handler's earlier authorization decision stale — without needing the real
+    /// <c>sp_getapplock</c> transaction (that mechanism is proven for real against SQL Server in
+    /// <c>StaffUserRoleManagementStoreTests</c>).
+    /// </summary>
+    public bool NextReplaceRolesTriggersAuthorizationStale { get; set; }
+
+    public bool NextSetActiveTriggersAuthorizationStale { get; set; }
+
+    public bool NextUpdateProfileTriggersAuthorizationStale { get; set; }
+
     public (int TargetUserId, IReadOnlyList<int> RoleIds)? ReplaceRolesCall { get; private set; }
 
     public (int TargetUserId, bool Active)? SetActiveCall { get; private set; }
+
+    public RbacActorContext? LastActorContext { get; private set; }
 
     public Task<StaffUserSnapshot?> GetStaffUserSnapshotAsync(int userId, CancellationToken cancellationToken) =>
         Task.FromResult(Users.TryGetValue(userId, out var user) ? user : null);
@@ -83,13 +97,19 @@ internal sealed class FakeStaffUserRoleManagementStore : IStaffUserRoleManagemen
         return Task.FromResult<CreateStaffUserStoreResult>(new CreateStaffUserStoreResult.Success(newId, "stamp-0"));
     }
 
-    public Task<ReplaceRolesStoreResult> ReplaceRolesAsync(int targetUserId, IReadOnlyList<int> roleIds, CancellationToken cancellationToken)
+    public Task<ReplaceRolesStoreResult> ReplaceRolesAsync(int targetUserId, IReadOnlyList<int> roleIds, RbacActorContext actor, CancellationToken cancellationToken)
     {
         ReplaceRolesCall = (targetUserId, roleIds);
+        LastActorContext = actor;
 
         if (!Users.TryGetValue(targetUserId, out var existing))
         {
             return Task.FromResult<ReplaceRolesStoreResult>(new ReplaceRolesStoreResult.TargetNotFound());
+        }
+
+        if (NextReplaceRolesTriggersAuthorizationStale)
+        {
+            return Task.FromResult<ReplaceRolesStoreResult>(new ReplaceRolesStoreResult.AuthorizationStale());
         }
 
         if (NextReplaceRolesTriggersGuard)
@@ -103,13 +123,19 @@ internal sealed class FakeStaffUserRoleManagementStore : IStaffUserRoleManagemen
         return Task.FromResult<ReplaceRolesStoreResult>(new ReplaceRolesStoreResult.Success(newStamp));
     }
 
-    public Task<SetActiveStoreResult> SetActiveAsync(int targetUserId, bool active, CancellationToken cancellationToken)
+    public Task<SetActiveStoreResult> SetActiveAsync(int targetUserId, bool active, RbacActorContext actor, CancellationToken cancellationToken)
     {
         SetActiveCall = (targetUserId, active);
+        LastActorContext = actor;
 
         if (!Users.TryGetValue(targetUserId, out var existing))
         {
             return Task.FromResult<SetActiveStoreResult>(new SetActiveStoreResult.TargetNotFound());
+        }
+
+        if (NextSetActiveTriggersAuthorizationStale)
+        {
+            return Task.FromResult<SetActiveStoreResult>(new SetActiveStoreResult.AuthorizationStale());
         }
 
         if (NextSetActiveTriggersGuard)
@@ -121,11 +147,18 @@ internal sealed class FakeStaffUserRoleManagementStore : IStaffUserRoleManagemen
         return Task.FromResult<SetActiveStoreResult>(new SetActiveStoreResult.Success());
     }
 
-    public Task<UpdateProfileStoreResult> UpdateProfileAsync(int targetUserId, string firstName, string? lastName, string? newEmail, CancellationToken cancellationToken)
+    public Task<UpdateProfileStoreResult> UpdateProfileAsync(int targetUserId, string firstName, string? lastName, string? newEmail, RbacActorContext actor, CancellationToken cancellationToken)
     {
+        LastActorContext = actor;
+
         if (!Users.TryGetValue(targetUserId, out var existing))
         {
             return Task.FromResult<UpdateProfileStoreResult>(new UpdateProfileStoreResult.TargetNotFound());
+        }
+
+        if (NextUpdateProfileTriggersAuthorizationStale)
+        {
+            return Task.FromResult<UpdateProfileStoreResult>(new UpdateProfileStoreResult.AuthorizationStale());
         }
 
         Users[targetUserId] = existing with { FirstName = firstName, LastName = lastName, Email = newEmail ?? existing.Email };
