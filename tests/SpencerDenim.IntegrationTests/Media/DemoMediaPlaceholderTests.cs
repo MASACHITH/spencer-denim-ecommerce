@@ -276,6 +276,76 @@ public sealed class DemoMediaPlaceholderTests(SqlServerDatabaseFixture sqlServer
         Assert.Equal(PlaceholderImageRenderer.Width, codec.Info.Width);
     }
 
+    /// <summary>
+    /// The generator is idempotent, and this is the test that says so at the level it is claimed: a second
+    /// run over an asset the first run finished must skip it, not redraw it.
+    /// <para>
+    /// It did redraw it. The skip gate looked for every code in <c>MediaRenditions.Current</c>, but a
+    /// 1200 px placeholder has no <c>zoom.webp</c> — <c>ProducedFor</c> clamps it to <c>large</c>'s width
+    /// and does not write it — so the gate never found the file, always answered "not finished", and
+    /// re-rendered all 149 placeholders on every startup. Nothing failed; it was just a few hundred
+    /// encodes of blocked startup that the class documentation said were not happening. The same shape as
+    /// the defect <c>ProducedFor</c> was introduced to fix: a gate asking a different question from the
+    /// thing it gates.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task A_second_run_skips_an_asset_the_first_run_finished()
+    {
+        await using var host = await StartWithoutFontsAsync();
+        await using var scope = host.Factory.Services.CreateAsyncScope();
+
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var generator = scope.ServiceProvider.GetRequiredService<DemoMediaPlaceholderGenerator>();
+
+        var asset = await dbContext.MediaAssets
+            .IgnoreQueryFilters()
+            .Where(candidate => EF.Functions.Like(candidate.StorageKey, DemoMediaPlaceholders.StorageKeyPrefix + "%"))
+            .OrderBy(candidate => candidate.Id)
+            .FirstAsync(TestContext.Current.CancellationToken);
+
+        var placeholder = DemoMediaPlaceholders.ByStorageKey[asset.StorageKey];
+
+        var files = await generator.GenerateAsync(
+            asset.PublicId,
+            asset.StorageKey,
+            placeholder.ProductName,
+            placeholder.ColourName,
+            placeholder.ColourHex,
+            TestContext.Current.CancellationToken);
+
+        DemoMediaPlaceholderGenerator.Apply(asset, files, placeholder.AltText);
+        await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var writtenAt = File.GetLastWriteTimeUtc(
+            Path.Combine(host.PublicRoot, asset.StorageKey.Replace('/', Path.DirectorySeparatorChar)));
+
+        // Only the codes the encoder writes for this width exist — the gate has to ask the same question.
+        var produced = MediaRenditions.ProducedFor(MediaRenditions.Current, asset.Width);
+        Assert.NotEmpty(produced);
+        Assert.True(
+            produced.Count < MediaRenditions.Current.Count,
+            "a 1200 px placeholder should produce fewer renditions than the full set, or this test proves nothing");
+
+        foreach (var rendition in MediaRenditions.Current)
+        {
+            var key = MediaStorageKey.ForRendition(asset.PublicId, rendition.Code);
+            var expected = produced.Any(candidate => candidate.Rendition.Code == rendition.Code);
+
+            Assert.True(
+                host.PublicFileExists(key) == expected,
+                $"'{rendition.Code}' should {(expected ? "exist" : "not exist")} for a {asset.Width} px source");
+        }
+
+        var again = await generator.RunAsync(TestContext.Current.CancellationToken);
+
+        Assert.True(again.AlreadyPresent > 0, "the finished asset should have been counted as already present");
+        Assert.Equal(
+            writtenAt,
+            File.GetLastWriteTimeUtc(
+                Path.Combine(host.PublicRoot, asset.StorageKey.Replace('/', Path.DirectorySeparatorChar))));
+    }
+
     private async Task<MediaTestHost> StartWithoutFontsAsync()
     {
         sqlServer.SkipIfUnavailable();

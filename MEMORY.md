@@ -270,8 +270,18 @@ volume with a Ready row in the database refused by **ten** spellings of its key 
 while a public key answered 200 on the same endpoint. The storefront shows labelled placeholders,
 not grey boxes.
 
-**Numbers:** backend 690 unit (was 680) + 343 integration (341), 0 skipped; frontend 19 / 451 / 131;
-Playwright 186. Lint clean, all builds clean, no new dependency.
+**And one more gate that asked the wrong question.** The generator's "is this asset already finished?"
+check looked for every code in `MediaRenditions.Current`, but a 1200 px placeholder has no
+`zoom.webp` — `ProducedFor` clamps it to `large`'s width and does not write it. So the check never
+found the file, always answered "not finished", and re-rendered all 149 placeholders on **every
+startup**. Nothing failed and nothing logged; it was simply a few hundred encodes of blocked boot
+that the class documentation said were not happening. The same shape as the defect `ProducedFor`
+was introduced to fix, one layer up. Now gated on the produced set, with an integration test that
+runs the generator twice and checks the file's write time did not move — proven red on the old gate
+first (`the finished asset should have been counted as already present`).
+
+**Numbers:** backend 690 unit (was 680) + 344 integration (341), 0 skipped; frontend 19 / 451 / 131;
+Playwright 186. Lint clean, all builds clean, no new dependency. CI green on Linux.
 
 ### 2026-10-01 — W1-04 media library: PASSED after two fix rounds
 

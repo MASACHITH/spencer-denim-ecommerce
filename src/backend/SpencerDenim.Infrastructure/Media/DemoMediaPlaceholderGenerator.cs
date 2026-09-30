@@ -23,12 +23,13 @@ namespace SpencerDenim.Infrastructure.Media;
 /// <para>
 /// <b>When it runs.</b> Only behind <c>Seed__IncludeDemoCatalogue</c> (doc 08 §9: development and staging
 /// only), and only when media storage is configured; with no volumes there is nowhere to put the files and
-/// the seeder says so once. It is idempotent per file: an asset whose original and four renditions are all
-/// present is skipped, so a restart costs a few hundred existence checks rather than a few hundred
-/// encodes, and a half-finished run finishes on the next start.
+/// the seeder says so once. It is idempotent per asset: one that is already <c>Ready</c> with its original
+/// and every rendition the encoder writes for its width already on the volume is skipped, so a restart
+/// costs a few hundred existence checks rather than a few hundred encodes, and a half-finished run
+/// finishes on the next start.
 /// </para>
 /// <para>
-/// <b>Why it is parallel.</b> Drawing and encoding five images is about a quarter of a second per asset,
+/// <b>Why it is parallel.</b> Drawing and encoding an asset's files is about a quarter of a second each,
 /// and the demo catalogue has well over a hundred of them, which would be most of a minute of blocked
 /// startup on the first boot of a fresh database. The rendering and the file writes fan out over up to
 /// four workers; the <c>DbContext</c> is not thread-safe, so every row change is applied afterwards, on
@@ -199,6 +200,19 @@ public sealed class DemoMediaPlaceholderGenerator(
         asset.Status = MediaAssetStatus.Ready;
     }
 
+    /// <summary>
+    /// Whether this asset is already finished: the row published and every file the encoder would write
+    /// present on the volume.
+    /// <para>
+    /// <b>The set has to be the one the encoder produces</b>, not the whole of
+    /// <see cref="MediaRenditions.Current"/>. A placeholder is 1200 px wide, so <c>zoom</c> clamps to the
+    /// same width as <c>large</c> and <see cref="MediaRenditions.ProducedFor"/> does not write it — a
+    /// check that looked for <c>zoom.webp</c> therefore never found it, always answered "not finished",
+    /// and re-rendered all 149 placeholders on every single startup. The same mistake as the one
+    /// <see cref="MediaRenditions.ProducedFor"/> exists to prevent, one layer up: a gate that asks a
+    /// different question from the thing it is gating.
+    /// </para>
+    /// </summary>
     private async Task<bool> HasEveryFileAsync(MediaAsset asset, CancellationToken cancellationToken)
     {
         if (asset.Status != MediaAssetStatus.Ready
@@ -207,9 +221,15 @@ public sealed class DemoMediaPlaceholderGenerator(
             return false;
         }
 
-        foreach (var rendition in MediaRenditions.Current)
+        var produced = MediaRenditions.ProducedFor(MediaRenditions.Current, asset.Width);
+        if (produced.Count == 0)
         {
-            var key = MediaStorageKey.ForRendition(asset.PublicId, rendition.Code);
+            return false;
+        }
+
+        foreach (var rendition in produced)
+        {
+            var key = MediaStorageKey.ForRendition(asset.PublicId, rendition.Rendition.Code);
             if (await storage.GetInfoAsync(key, cancellationToken) is null)
             {
                 return false;
