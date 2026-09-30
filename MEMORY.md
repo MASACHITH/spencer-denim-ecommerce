@@ -207,6 +207,82 @@ clean, no new runtime dependency.
 
 **Next:** back to the tester.
 
+### 2026-10-01 — W1-04 media library: PASSED after two fix rounds
+
+The media pipeline is done and the tester passed it. Branch `feature/W1-04-media-library`
+(worktree `worktrees/sd-media`), pushed, awaiting a PR. **Not Done until merged and the client
+progress page is updated** — and `client-progress/progress-data.js` lives outside this repo, so it
+is not in this branch.
+
+**The find that mattered.** The renditions had been generated, stored and served with a year's
+cache since the first commit of this task, and *nothing linked them*. Every card, every home row
+and every gallery served the full-size original. The pipeline was half a feature that looked
+finished, and no test could see it: the integration fixture never configured a media root, so the
+demo placeholder generator was a silent no-op, every seeded asset had a null `RenditionSetVersion`,
+and the payloads legitimately fell back to originals. The suite could not tell a reader that picks
+the right rendition from one that ignores renditions entirely. Giving the fixture a real throwaway
+volume is what made the gap visible — and the reason to prefer a fixture that runs the real thing
+over one that is merely fast.
+
+**Measured, not estimated:** a 32-image listing went from 2,101 KB to 383 KB (82%); the card
+rendition a card now links is 10,432 bytes against the original's 56,976.
+
+**Decisions worth keeping:**
+
+- **`src` *and* `srcset`, with `sizes` from the client.** `srcset` alone buys nothing: with no
+  `sizes` the browser assumes the image fills the viewport and fetches the widest candidate. Proved
+  it — the control run fetched `large.webp` where `card.webp` was wanted. `sizes` describes the grid
+  an image sits in, and only the component drawing that grid knows it, so the server ships
+  candidates and their true widths and the client ships layout. The DTO cost is one nullable string
+  per image slot.
+- **One rule for which renditions exist** (`MediaRenditions.ProducedFor`), read by both the encoder
+  and the URL builder. Renditions clamp to the source and never upscale, so a 1200 px photograph
+  rendered `large` and then `zoom` byte for byte — a quarter of the seeded renditions were pure
+  copies. When the two sides disagreed, one wrote a file the other would not link, or worse linked
+  one that was never written. Seeding dropped 745 files to 596. An unknown source width is treated
+  like an unknown set version: claim nothing and fall back to the original, because a heavier
+  picture beats a broken one.
+- **A guarantee in the doc needs a constraint in the database.** Doc 08 §3.3 promises deduplication
+  by checksum; it was a read followed much later by a write, and eight simultaneous identical
+  uploads produced eight assets and forty files. Now a filtered unique index
+  `(Checksum, MediaType, Visibility) WHERE IsDeleted = 0 AND Status = 1` settles the race and the
+  loser withdraws and answers `Duplicate`, so a caller cannot tell which path served it. Filtered on
+  `Ready` so the index bites at publication, when the loser has real files to roll back, and so a
+  `Failed` row never blocks a retry.
+- **Soft delete is a save, so it rewrites the rows the asset owns.** Deleting a video used to leave
+  the usage row naming it as the poster's owner, which bricked the poster for ever: 409 blocked by a
+  video the query filter hides, with a null label because the label lookup reads through that same
+  filter. Two assets ruined by one delete.
+- **`Status` is not covered by the soft-delete filter.** The new projections guarded `IsDeleted` by
+  inheritance and `Status` not at all, so a `Failed` asset produced a perfectly formed URL for a
+  file that was never written, where the same asset soft-deleted produced a clean empty frame. Two
+  ways to have no file, two different answers. `HomeContentReader` had the guard from the start,
+  which is what made the asymmetry visible.
+- **The doubled `<PublicRoot>/public/...` path segment is deliberate.** The key is the asset's
+  address (doc 08 §3.3), so key and path stay identical: the mapping is reversible and the planned
+  Azure Blob adapter can use the key verbatim as the blob name. Stripping the prefix would also mean
+  the containment guard validated a different string than the grammar approved. Only the dev root
+  was renamed, to `.local-media/uploads`, so the repetition stops reading as a mistake.
+
+**Two hazards found and written down rather than fixed here:**
+
+- **`/media` is a shared namespace in production.** The Angular browser build emits its own webfonts
+  under `/media` (`dist/storefront/browser/media/inter-*.woff2`), so a Caddy rule that serves
+  `/media` from the uploads volume and stops there will shadow them. Noted in doc 03's deployment
+  topology; it needs a fall-through to SSR on a miss, or a different `resourcesOutputPath`.
+- **`proxy.conf.json` does not proxy `/media`,** so under `ng serve` every card image 404s and
+  silently falls back to its placeholder. One line, unrelated to this branch, no test covers it.
+
+**Not in scope, filed separately by the coordinator:** media uploads and deletes write no
+`ops.AuditLogs` row. `IAuditLogWriter` is injected only by the auth handlers, and doc 08 requires
+"every write is audited" for Settings and RBAC but never for media — a cross-cutting gap, not a
+media bug.
+
+**Numbers at hand-off:** backend 680 unit + 341 integration, 0 skipped, 0 warnings. Frontend 19 /
+451 / 131 unit, lint clean, both builds clean, Playwright 186 across two consecutive clean runs.
+
+**Next:** the coordinator opens the PR.
+
 ### 2026-09-24 (4) — W2-01 homepage, developer pass
 
 The placeholder home page is gone. `/` is a real, server-rendered page on

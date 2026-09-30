@@ -802,8 +802,20 @@ public sealed class MediaService(
     /// </para>
     /// </summary>
     private static bool IsDuplicateChecksum(DbUpdateException exception) =>
-        exception.InnerException is SqlException { Number: DuplicateKeyError or DuplicateUniqueIndexError } sql
-        && sql.Message.Contains(ChecksumIndexName, StringComparison.Ordinal);
+        exception.InnerException is SqlException sql
+        && IsChecksumIndexViolation(sql.Number, sql.Message);
+
+    /// <summary>
+    /// The decision itself, split out from the exception so it can be tested: <see cref="SqlException"/>
+    /// cannot be constructed, and the one behaviour worth pinning here is a negative — that a collision
+    /// on a <i>different</i> unique index is not mistaken for a duplicate upload.
+    /// </summary>
+    /// <param name="errorNumber">The SQL Server error number.</param>
+    /// <param name="message">The error message, which names the index that refused the row.</param>
+    internal static bool IsChecksumIndexViolation(int errorNumber, string? message) =>
+        errorNumber is DuplicateKeyError or DuplicateUniqueIndexError
+        && message is not null
+        && message.Contains(ChecksumIndexName, StringComparison.Ordinal);
 
     private async Task FailAsync(
         MediaAsset asset,

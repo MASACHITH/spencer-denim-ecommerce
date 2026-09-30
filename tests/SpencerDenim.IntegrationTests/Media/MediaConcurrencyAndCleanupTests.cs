@@ -1,9 +1,11 @@
 using System.Globalization;
+using System.Security.Cryptography;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using SpencerDenim.Application.Media.Abstractions;
 using SpencerDenim.Application.Media.Contracts;
 using SpencerDenim.Domain.Media;
+using SpencerDenim.Infrastructure.Media;
 using SpencerDenim.Infrastructure.Persistence;
 using SpencerDenim.IntegrationTests.Infrastructure;
 using SpencerDenim.Tests.MediaFixtures;
@@ -22,6 +24,12 @@ namespace SpencerDenim.IntegrationTests.Media;
 /// </summary>
 public sealed class MediaConcurrencyAndCleanupTests(SqlServerDatabaseFixture sqlServer)
 {
+    // Index names as SQL Server quotes them in the message, which is what the predicate reads.
+    private const string Table = "'media.MediaAssets'";
+    private const string ChecksumIndex = "'UX_MediaAssets_Checksum_Ready'";
+    private const string PublicIdIndex = "'UX_MediaAssets_PublicId'";
+    private const string StorageKeyIndex = "'UX_MediaAssets_StorageKey'";
+
     /// <summary>
     /// Doc 08 §3.3: "An owner's save rewrites its usage rows in the same transaction." A soft delete is
     /// such a save.
@@ -184,6 +192,155 @@ public sealed class MediaConcurrencyAndCleanupTests(SqlServerDatabaseFixture sql
         }
     }
 
+    /// <summary>
+    /// What <c>UX_MediaAssets_Checksum_Ready</c> must <b>not</b> refuse. The index is what makes doc 08
+    /// §3.3&apos;s deduplication a guarantee, and every column and clause in it is load-bearing: narrow it
+    /// by accident and an upload that should be allowed starts coming back as somebody else&apos;s asset.
+    /// <para>
+    /// A deleted asset is the case a shop actually hits — an image is removed, then re-uploaded, and it
+    /// has to become a real asset again rather than resurrect a soft-deleted row the library no longer
+    /// shows.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task The_same_bytes_may_be_uploaded_again_once_the_first_asset_is_deleted()
+    {
+        await using var host = await StartAsync();
+        var bytes = TestImages.UniqueJpeg(600, 800);
+
+        var first = Assert.IsType<MediaUploadOutcome.Created>(
+            await UploadImageAsync(host, bytes, "first.jpg"));
+
+        // While it is there, the same bytes are a duplicate.
+        Assert.IsType<MediaUploadOutcome.Duplicate>(await UploadImageAsync(host, bytes, "again.jpg"));
+
+        await using var scope = host.Factory.Services.CreateAsyncScope();
+        var media = scope.ServiceProvider.GetRequiredService<IMediaService>();
+        Assert.IsType<MediaDeleteOutcome.Deleted>(
+            await media.DeleteAsync(first.Asset.PublicId, null, TestContext.Current.CancellationToken));
+
+        // The index is filtered on IsDeleted = 0, so the soft-deleted row does not stand in the way.
+        var second = Assert.IsType<MediaUploadOutcome.Created>(
+            await UploadImageAsync(host, bytes, "after-delete.jpg"));
+
+        Assert.NotEqual(first.Asset.PublicId, second.Asset.PublicId);
+    }
+
+    /// <summary>
+    /// A row left <c>Failed</c> by a processing error must not block the retry. The index is filtered on
+    /// <c>Status = 1</c> for exactly this: the failed row keeps its checksum for diagnosis, and the next
+    /// attempt at the same bytes still gets to become an asset.
+    /// </summary>
+    [Fact]
+    public async Task A_failed_row_with_the_same_checksum_does_not_block_the_retry()
+    {
+        await using var host = await StartAsync();
+        var bytes = TestImages.UniqueJpeg(600, 800);
+
+        var created = Assert.IsType<MediaUploadOutcome.Created>(
+            await UploadImageAsync(host, bytes, "will-fail.jpg"));
+
+        await using var scope = host.Factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        // Exactly what a part-way failure leaves behind: the row still Ready-shaped but marked Failed.
+        await dbContext.MediaAssets
+            .Where(asset => asset.PublicId == created.Asset.PublicId)
+            .ExecuteUpdateAsync(
+                setters => setters.SetProperty(asset => asset.Status, MediaAssetStatus.Failed),
+                TestContext.Current.CancellationToken);
+
+        var retry = Assert.IsType<MediaUploadOutcome.Created>(
+            await UploadImageAsync(host, bytes, "retry.jpg"));
+
+        Assert.NotEqual(created.Asset.PublicId, retry.Asset.PublicId);
+        Assert.Equal(MediaAssetStatus.Ready, retry.Asset.Status);
+    }
+
+    /// <summary>
+    /// The index keys on media type as well as checksum and visibility.
+    /// <para>
+    /// No upload can reach this — the type comes from the file signature, so one byte sequence is either
+    /// a JPEG or an MP4 and never both. The rows are written directly for that reason: the point is to
+    /// pin the index&apos;s <i>definition</i>, which is the thing a later migration could quietly narrow,
+    /// and doing it through the pipeline would be impossible rather than merely artificial.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task The_index_keys_on_media_type_so_a_video_and_an_image_may_share_a_checksum()
+    {
+        await using var host = await StartAsync();
+
+        // A real image first, so the video below has a poster to point at (CK_MediaAssets_Poster).
+        var poster = Assert.IsType<MediaUploadOutcome.Created>(
+            await UploadImageAsync(host, TestImages.UniqueJpeg(400, 300), "poster.jpg"));
+
+        await using var scope = host.Factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        var posterRowId = await dbContext.MediaAssets
+            .Where(asset => asset.PublicId == poster.Asset.PublicId)
+            .Select(asset => asset.Id)
+            .SingleAsync(TestContext.Current.CancellationToken);
+
+        var shared = SHA256.HashData(Guid.NewGuid().ToByteArray());
+
+        dbContext.MediaAssets.Add(NewRow(MediaAssetType.Image, shared, posterAssetId: null));
+        dbContext.MediaAssets.Add(NewRow(MediaAssetType.Video, shared, posterAssetId: posterRowId));
+
+        // One statement, both rows: if the index keyed on checksum and visibility alone this throws.
+        await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var count = await dbContext.MediaAssets
+            .CountAsync(asset => asset.Checksum == shared, TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, count);
+    }
+
+    /// <summary>
+    /// The negative behind <c>PublishAsync</c>: a unique-index violation is answered as a duplicate
+    /// upload only when it came from the checksum index.
+    /// <para>
+    /// <c>UX_MediaAssets_PublicId</c> and <c>UX_MediaAssets_StorageKey</c> are unique on the same table.
+    /// A collision on either is a generated GUID repeating itself — something that must surface as the
+    /// error it is, not be quietly answered with somebody else&apos;s asset. Matching "any unique
+    /// violation" would be the easy mistake here, and nothing else would notice it.
+    /// </para>
+    /// </summary>
+    [Theory]
+    // The real SQL Server texts for 2601 (unique index) and 2627 (unique constraint).
+    [InlineData(2601, "Cannot insert duplicate key row in object " + Table + " with unique index " + ChecksumIndex + ".", true)]
+    [InlineData(2627, "Violation of UNIQUE KEY constraint " + ChecksumIndex + ". Cannot insert duplicate key.", true)]
+    [InlineData(2601, "Cannot insert duplicate key row in object " + Table + " with unique index " + PublicIdIndex + ".", false)]
+    [InlineData(2601, "Cannot insert duplicate key row in object " + Table + " with unique index " + StorageKeyIndex + ".", false)]
+    // A deadlock and a timeout are not duplicate keys at all.
+    [InlineData(1205, "Transaction (Process ID 55) was deadlocked on lock resources.", false)]
+    [InlineData(-2, "Execution Timeout Expired.", false)]
+    public void Only_the_checksum_index_is_read_as_a_duplicate_upload(int errorNumber, string message, bool expected) =>
+        Assert.Equal(expected, MediaService.IsChecksumIndexViolation(errorNumber, message));
+
+    private static MediaAsset NewRow(MediaAssetType mediaType, byte[] checksum, int? posterAssetId)
+    {
+        var publicId = Guid.NewGuid();
+        var isVideo = mediaType == MediaAssetType.Video;
+
+        return new MediaAsset
+        {
+            PublicId = publicId,
+            MediaType = mediaType,
+            Visibility = MediaVisibility.Public,
+            Status = MediaAssetStatus.Ready,
+            OriginalFileName = isVideo ? "shared.mp4" : "shared.jpg",
+            StorageKey = MediaStorageKey.ForOriginal(MediaVisibility.Public, publicId, isVideo ? ".mp4" : ".jpg"),
+            ContentType = isVideo ? "video/mp4" : "image/jpeg",
+            SizeBytes = 1,
+            Width = 400,
+            Height = 300,
+            DurationSeconds = isVideo ? 1 : null,
+            PosterAssetId = posterAssetId,
+            Checksum = checksum,
+        };
+    }
     private async Task<MediaTestHost> StartAsync()
     {
         sqlServer.SkipIfUnavailable();

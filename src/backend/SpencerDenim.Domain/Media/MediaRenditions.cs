@@ -107,7 +107,14 @@ public static class MediaRenditions
         IReadOnlyList<MediaRendition>? set,
         int? sourceWidth)
     {
-        if (set is null)
+        // An unknown set and an unknown source width are the same kind of ignorance and get the same
+        // answer. Without a width there is nothing to clamp against, so every code would look like a
+        // file that was written — and for any source at or below the `large` target, `zoom.webp` is not
+        // there. Nothing in this build can reach that (the pipeline, the seeder and the placeholder
+        // generator all record Width), but an importer or a restore from a backup taken before the
+        // column was populated could, and the failure would be a broken image on a shopper's screen.
+        // Claiming nothing costs a heavier picture; claiming wrongly costs a 404.
+        if (set is null || sourceWidth is not > 0)
         {
             return [];
         }
@@ -117,7 +124,7 @@ public static class MediaRenditions
 
         foreach (var rendition in set.OrderBy(candidate => candidate.Width))
         {
-            var width = sourceWidth is > 0 ? Math.Min(rendition.Width, sourceWidth.Value) : rendition.Width;
+            var width = Math.Min(rendition.Width, sourceWidth.Value);
 
             // The set is walked smallest-first, so once one has matched the source width every larger
             // one can only repeat it.

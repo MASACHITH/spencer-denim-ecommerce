@@ -32,7 +32,7 @@ const PORT = Number(process.env.E2E_API_PORT ?? 4421);
  *
  * The bytes still have to arrive — several tests turn vacuous if a card quietly falls back to
  * its placeholder — and these tests have no reverse proxy. So the SSR server carries the proxy's
- * job for the length of a run: `MEDIA_INTERNAL_URL`, set per storefront in
+ * job for the length of a run: `E2E_MEDIA_PASSTHROUGH_URL`, set per storefront in
  * `playwright.config.ts` beside the `API_INTERNAL_URL` it mirrors, mounts a `/media` passthrough
  * back to this stub. Unset, which is every real deployment, that route does not exist.
  */

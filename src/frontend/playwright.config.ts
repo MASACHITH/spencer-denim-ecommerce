@@ -92,7 +92,7 @@ export default defineConfig({
     {
       command: 'npm run serve:ssr:storefront',
       url: `${baseURL}/healthz`,
-      env: { PORT: String(PORT), API_INTERNAL_URL: apiURL, MEDIA_INTERNAL_URL: apiURL },
+      env: { PORT: String(PORT), API_INTERNAL_URL: apiURL, E2E_MEDIA_PASSTHROUGH_URL: apiURL },
       reuseExistingServer: !process.env['CI'],
       timeout: 120_000,
     },
@@ -109,7 +109,7 @@ export default defineConfig({
       env: {
         PORT: String(EMPTY_PORT),
         API_INTERNAL_URL: `http://localhost:${EMPTY_API_PORT}`,
-        MEDIA_INTERNAL_URL: `http://localhost:${EMPTY_API_PORT}`,
+        E2E_MEDIA_PASSTHROUGH_URL: `http://localhost:${EMPTY_API_PORT}`,
       },
       reuseExistingServer: !process.env['CI'],
       timeout: 120_000,
@@ -130,7 +130,7 @@ export default defineConfig({
       env: {
         PORT: String(DEEP_PORT),
         API_INTERNAL_URL: `http://localhost:${DEEP_API_PORT}`,
-        MEDIA_INTERNAL_URL: `http://localhost:${DEEP_API_PORT}`,
+        E2E_MEDIA_PASSTHROUGH_URL: `http://localhost:${DEEP_API_PORT}`,
       },
       reuseExistingServer: !process.env['CI'],
       timeout: 120_000,
@@ -148,7 +148,7 @@ export default defineConfig({
       env: {
         PORT: String(CONTENT_FAULT_PORT),
         API_INTERNAL_URL: faultyContentApiURL,
-        MEDIA_INTERNAL_URL: faultyContentApiURL,
+        E2E_MEDIA_PASSTHROUGH_URL: faultyContentApiURL,
       },
       reuseExistingServer: !process.env['CI'],
       timeout: 120_000,
@@ -166,7 +166,7 @@ export default defineConfig({
       env: {
         PORT: String(FAULTY_PORT),
         API_INTERNAL_URL: `http://localhost:${FAULTY_API_PORT}`,
-        MEDIA_INTERNAL_URL: `http://localhost:${FAULTY_API_PORT}`,
+        E2E_MEDIA_PASSTHROUGH_URL: `http://localhost:${FAULTY_API_PORT}`,
       },
       reuseExistingServer: !process.env['CI'],
       timeout: 120_000,

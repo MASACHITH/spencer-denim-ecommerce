@@ -493,7 +493,12 @@ internal sealed class ProductCatalogReader(
                     product.CardImageAsset.RenditionSetVersion,
                     product.CardImageAsset.Width)
                 : null,
-            product.CardImageAsset != null ? product.CardImageAsset.AltText : null,
+            // Gated with the image, not separately: alt text is a description of a picture, so a payload
+            // carrying it for an asset that has no file to serve is describing something that is not
+            // there.
+            product.CardImageAsset != null && product.CardImageAsset.Status == MediaAssetStatus.Ready
+                ? product.CardImageAsset.AltText
+                : null,
             product.HoverImageAsset != null && product.HoverImageAsset.Status == MediaAssetStatus.Ready
                 ? new MediaRef(
                     product.HoverImageAsset.StorageKey,

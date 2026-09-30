@@ -171,21 +171,36 @@ public sealed class MediaUrlBuilderTests
         Assert.Equal($"/media/public/renditions/{AssetId:D}/large.webp", url);
     }
 
+    /// <summary>
+    /// A row with no recorded width is treated exactly like a row with an unrecognised set version: the
+    /// original, and no candidates.
+    /// <para>
+    /// This used to claim the set targets, which reads as the reasonable guess and is the wrong one.
+    /// Without a width nothing can be clamped, so every code looks like a file that was written — and
+    /// for any source at or below the <c>large</c> target, <c>zoom.webp</c> is not there. The guess
+    /// bought a slightly smaller picture and risked a broken one. Nothing in this build leaves Width
+    /// null; an importer or a restore from an older backup could.
+    /// </para>
+    /// </summary>
     [Fact]
-    public void An_unknown_width_falls_back_to_the_set_targets()
+    public void An_unknown_width_falls_back_to_the_original()
     {
-        // Width is nullable on the asset row; without it the target widths are the best claim there is.
         var sources = MediaUrlBuilder.ToImageSources(
             BaseUrl,
             Rendered(width: null),
             MediaRenditions.Card,
             MediaRenditions.Large);
 
-        Assert.Equal(
-            $"/media/public/renditions/{AssetId:D}/thumb.webp 160w, "
-            + $"/media/public/renditions/{AssetId:D}/card.webp 600w, "
-            + $"/media/public/renditions/{AssetId:D}/large.webp 1200w",
-            sources.SrcSet);
+        Assert.Equal("/media/public/originals/demo/photo.jpg", sources.Url);
+        Assert.Null(sources.SrcSet);
+    }
+
+    [Fact]
+    public void An_unknown_width_names_no_rendition_even_when_one_is_asked_for_directly()
+    {
+        var url = MediaUrlBuilder.ToRenditionUrl(BaseUrl, Rendered(width: null), MediaRenditions.Zoom);
+
+        Assert.Equal("/media/public/originals/demo/photo.jpg", url);
     }
 
     [Fact]
