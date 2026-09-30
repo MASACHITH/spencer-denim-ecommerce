@@ -53,6 +53,7 @@ app.MapPingEndpoints();
 app.MapAdminAuthEndpoints();
 
 app.MapAdminTwoFactorEndpoints();
+app.MapAuditLogEndpoints();
 
 app.MapCatalogEndpoints();
 app.MapContentEndpoints();
