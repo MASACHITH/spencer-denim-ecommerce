@@ -43,6 +43,24 @@ public sealed class WhoAmIQueryHandlerTests
         Assert.True(response.MustChangePassword);
     }
 
+    [Theory]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, false)]
+    [InlineData(false, false, false)]
+    public async Task Reports_two_factor_enrolment_as_required_only_for_a_grants_all_holder_without_it(
+        bool grantsAll, bool twoFactorEnabled, bool expectedRequired)
+    {
+        // W1-10 / doc 08 §3.1 N14: the admin app sends such a user to the enrolment page at startup.
+        var summary = new AdminUserSummary(5, "admin@example.com", "Ada", null, true, false, "stamp", twoFactorEnabled);
+        var handler = new WhoAmIQueryHandler(new StubUserLookup(summary), new StubPermissionsProvider(new EffectivePermissions(grantsAll, [])));
+
+        var response = await handler.HandleAsync(new WhoAmIQuery(5), TestContext.Current.CancellationToken);
+
+        Assert.NotNull(response);
+        Assert.Equal(twoFactorEnabled, response.TwoFactorEnabled);
+        Assert.Equal(expectedRequired, response.TwoFactorEnrolmentRequired);
+    }
+
     [Fact]
     public async Task Returns_null_when_the_user_no_longer_exists()
     {
