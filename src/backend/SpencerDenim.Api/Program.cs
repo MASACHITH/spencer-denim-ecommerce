@@ -51,7 +51,9 @@ app.UseAuthorization();
 app.MapApiHealthChecks();
 app.MapPingEndpoints();
 app.MapAdminAuthEndpoints();
+
 app.MapAdminTwoFactorEndpoints();
+
 app.MapCatalogEndpoints();
 app.MapContentEndpoints();
 
