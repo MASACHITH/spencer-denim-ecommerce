@@ -68,6 +68,48 @@ describe('LoginPage', () => {
     expect(navigateSpy).not.toHaveBeenCalledWith('/');
   });
 
+  it('goes to the second sign-in step when the account uses two-factor authentication (W1-10)', async () => {
+    const fixture = TestBed.createComponent(LoginPage);
+    const navigateSpy = vi.spyOn(router, 'navigateByUrl').mockImplementation(() => Promise.resolve(true));
+    fixture.detectChanges();
+
+    fixture.componentInstance['email'] = 'admin@example.com';
+    fixture.componentInstance['password'] = 'correct-password';
+    fixture.componentInstance['submit']();
+
+    controller.expectOne(AdminAuthApi.loginUrl).flush({ twoFactorRequired: true });
+    await fixture.whenStable();
+
+    expect(navigateSpy).toHaveBeenCalledWith('/login/two-factor');
+    expect(navigateSpy).not.toHaveBeenCalledWith('/');
+  });
+
+  it('goes to two-factor enrolment when a Super Admin has not set it up yet', async () => {
+    const fixture = TestBed.createComponent(LoginPage);
+    const navigateSpy = vi.spyOn(router, 'navigateByUrl').mockImplementation(() => Promise.resolve(true));
+    fixture.detectChanges();
+
+    fixture.componentInstance['email'] = 'admin@example.com';
+    fixture.componentInstance['password'] = 'correct-password';
+    fixture.componentInstance['submit']();
+
+    controller.expectOne(AdminAuthApi.loginUrl).flush({
+      userId: 1,
+      email: 'admin@example.com',
+      firstName: 'Ada',
+      lastName: null,
+      grantsAllPermissions: true,
+      permissions: [],
+      mustChangePassword: false,
+      twoFactorEnabled: false,
+      twoFactorEnrolmentRequired: true,
+      twoFactorRequired: false,
+    });
+    await fixture.whenStable();
+
+    expect(navigateSpy).toHaveBeenCalledWith('/two-factor/setup');
+  });
+
   it('shows the server error message and does not navigate on failure', async () => {
     const fixture = TestBed.createComponent(LoginPage);
     const navigateSpy = vi.spyOn(router, 'navigateByUrl').mockImplementation(() => Promise.resolve(true));

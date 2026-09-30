@@ -4,12 +4,16 @@ import { provideRouter } from '@angular/router';
 
 import { routes } from './app.routes';
 import { passwordChangeRequiredInterceptor } from './core/auth/password-change-required.interceptor';
+import { twoFactorEnrolmentRequiredInterceptor } from './core/auth/two-factor-enrolment-required.interceptor';
 
 /** Admin is client-side only; API calls are same-origin through the reverse proxy (/api). */
 export const appConfig: ApplicationConfig = {
   providers: [
     provideBrowserGlobalErrorListeners(),
     provideRouter(routes),
-    provideHttpClient(withFetch(), withInterceptors([passwordChangeRequiredInterceptor])),
+    provideHttpClient(
+      withFetch(),
+      withInterceptors([passwordChangeRequiredInterceptor, twoFactorEnrolmentRequiredInterceptor]),
+    ),
   ],
 };

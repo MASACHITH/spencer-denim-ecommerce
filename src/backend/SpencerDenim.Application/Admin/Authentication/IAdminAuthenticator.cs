@@ -9,5 +9,25 @@ namespace SpencerDenim.Application.Admin.Authentication;
 /// </summary>
 public interface IAdminAuthenticator
 {
+    /// <summary>
+    /// The password step. For an account with 2FA on, a right password gives
+    /// <see cref="AdminAuthenticationStatus.TwoFactorRequired"/>, never <see cref="AdminAuthenticationStatus.Succeeded"/>,
+    /// and does not reset the failed-attempt count (so a known password cannot be used to keep guessing codes).
+    /// </summary>
     Task<AdminAuthenticationOutcome> AuthenticateAsync(string email, string password, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The second step (W1-10): checks an authenticator code, or redeems a recovery code (each works once), for
+    /// the user the password step was passed for. Wrong codes count towards the same time-boxed lockout as wrong
+    /// passwords (doc 08 §3.1 N14). An authenticator code is accepted once only.
+    /// </summary>
+    /// <param name="pendingSecurityStamp">The stamp at the password step; a different current stamp ends the attempt.</param>
+    /// <param name="pendingSignInId">The single-use id from the password step; unknown, spent or expired ends the attempt.</param>
+    Task<AdminAuthenticationOutcome> CompleteTwoFactorSignInAsync(
+        int userId,
+        string pendingSecurityStamp,
+        string pendingSignInId,
+        string code,
+        bool isRecoveryCode,
+        CancellationToken cancellationToken);
 }

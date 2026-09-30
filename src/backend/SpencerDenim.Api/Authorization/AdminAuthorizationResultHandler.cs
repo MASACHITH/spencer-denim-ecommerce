@@ -13,7 +13,10 @@ namespace SpencerDenim.Api.Authorization;
 /// password change made elsewhere) is signed out and answered 401 <c>session_ended</c>, the same outcome the
 /// periodic cookie revalidation reaches, only immediately;</description></item>
 /// <item><description>a pending forced password change is answered 403 <c>password_change_required</c>, so the
-/// app can send the user to the change-password page instead of showing a generic "not allowed".</description></item>
+/// app can send the user to the change-password page instead of showing a generic "not allowed";</description></item>
+/// <item><description>a GrantsAll holder who has not enrolled in 2FA is answered 403
+/// <c>two_factor_enrolment_required</c> (W1-10), so the app can send them to the enrolment page. When both gates
+/// refuse, the password change is reported: it has to be done first (doc 11 P14 step 3).</description></item>
 /// </list>
 /// Every other outcome is left to the framework's default handler, which already answers 401/403 through the
 /// cookie scheme's events.
@@ -54,6 +57,17 @@ internal sealed class AdminAuthorizationResultHandler : IAuthorizationMiddleware
                     title: "Password change required.",
                     detail: "Change your password before using the admin panel.",
                     extensions: new Dictionary<string, object?> { ["error"] = PasswordChangeRequiredFailureReason.Code })
+                .ExecuteAsync(context);
+            return;
+        }
+
+        if (reasons.OfType<TwoFactorEnrolmentRequiredFailureReason>().Any())
+        {
+            await TypedResults.Problem(
+                    statusCode: StatusCodes.Status403Forbidden,
+                    title: "Two-factor authentication required.",
+                    detail: "Set up two-factor authentication before using the admin panel.",
+                    extensions: new Dictionary<string, object?> { ["error"] = TwoFactorEnrolmentRequiredFailureReason.Code })
                 .ExecuteAsync(context);
             return;
         }

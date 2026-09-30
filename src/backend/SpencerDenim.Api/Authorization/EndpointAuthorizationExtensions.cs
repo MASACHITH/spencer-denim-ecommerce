@@ -31,4 +31,18 @@ public static class EndpointAuthorizationExtensions
 
         return builder.WithMetadata(AllowWhilePasswordChangeRequiredMetadata.Instance);
     }
+
+    /// <summary>
+    /// Lets a signed-in GrantsAll holder reach this endpoint before they have enrolled in 2FA (W1-10, doc 08 §3.1
+    /// N14). Every other authorized admin endpoint answers 403 <c>two_factor_enrolment_required</c> until they do.
+    /// Only for who-am-I, logout, change-password and the enrolment endpoints themselves. It does not lift the
+    /// forced password change, which has to be done first.
+    /// </summary>
+    public static TBuilder AllowWhileTwoFactorEnrolmentRequired<TBuilder>(this TBuilder builder)
+        where TBuilder : IEndpointConventionBuilder
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+
+        return builder.WithMetadata(AllowWhileTwoFactorEnrolmentRequiredMetadata.Instance);
+    }
 }

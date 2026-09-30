@@ -39,10 +39,19 @@ public static class DependencyInjection
             ICommandHandler<ChangeAdminPasswordCommand, ChangeAdminPasswordResult>,
             ChangeAdminPasswordCommandHandler>();
 
-        // Audit log viewer (ADM-03, W1-09). The read port is registered by Infrastructure.
+        // Staff two-factor authentication (W1-10): the second sign-in step and the user's own enrolment.
         services.AddScoped<
-            IQueryHandler<GetAuditLogsQuery, PagedResult<AuditLogEntryDto>>,
-            GetAuditLogsQueryHandler>();
+            ICommandHandler<CompleteAdminTwoFactorSignInCommand, AdminLoginResult>,
+            CompleteAdminTwoFactorSignInCommandHandler>();
+        services.AddScoped<
+            IQueryHandler<GetAdminTwoFactorStatusQuery, AdminTwoFactorStatusResponse?>,
+            GetAdminTwoFactorStatusQueryHandler>();
+        services.AddScoped<ICommandHandler<BeginAdminTwoFactorSetupCommand, AdminTwoFactorResult>, BeginAdminTwoFactorSetupCommandHandler>();
+        services.AddScoped<ICommandHandler<EnableAdminTwoFactorCommand, AdminTwoFactorResult>, EnableAdminTwoFactorCommandHandler>();
+        services.AddScoped<
+            ICommandHandler<RegenerateAdminRecoveryCodesCommand, AdminTwoFactorResult>,
+            RegenerateAdminRecoveryCodesCommandHandler>();
+        services.AddScoped<ICommandHandler<DisableAdminTwoFactorCommand, AdminTwoFactorResult>, DisableAdminTwoFactorCommandHandler>();
 
         // Catalogue read side (W1-02). The ports they depend on are registered by Infrastructure.
         services.AddScoped<

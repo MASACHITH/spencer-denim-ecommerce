@@ -1,4 +1,6 @@
+using System.Globalization;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.Extensions.Options;
 using SpencerDenim.Application.Admin.Authentication;
 using SpencerDenim.Domain.Identity;
 using SpencerDenim.Infrastructure.Persistence.Configurations.Identity;
@@ -6,15 +8,17 @@ using SpencerDenim.Infrastructure.Persistence.Configurations.Identity;
 namespace SpencerDenim.Infrastructure.Identity;
 
 /// <summary>
-/// Checks staff credentials (doc 08 §3.1 DB10 scoping rules). Uses <see cref="SignInManager{TUser}"/> purely to
-/// validate the password and manage Identity's lockout bookkeeping (doc 08 §3.1 N14, time-boxed) — it never
-/// signs a cookie in; that is the Api endpoint's job (see <see cref="IAdminAuthenticator"/>).
+/// Checks staff credentials (doc 08 §3.1 DB10 scoping rules) and, for an account with 2FA on, the second-step code
+/// (W1-10). Uses <see cref="SignInManager{TUser}"/> purely to validate the password and manage Identity's lockout
+/// bookkeeping (doc 08 §3.1 N14, time-boxed), and <see cref="UserManager{TUser}"/>'s own 2FA methods for the code —
+/// it never signs a cookie in; that is the Api endpoint's job (see <see cref="IAdminAuthenticator"/>).
 /// </summary>
 public sealed class AdminAuthenticator(
     UserManager<AppUser> userManager,
     SignInManager<AppUser> signInManager,
     RoleManager<AppRole> roleManager,
-    IPasswordHasher<AppUser> passwordHasher) : IAdminAuthenticator
+    IPasswordHasher<AppUser> passwordHasher,
+    IOptions<AdminSecurityOptions> securityOptions) : IAdminAuthenticator
 {
     // Doc 08 §3.1 DB10: "the response never reveals which" — an unknown email, a customer match, or an
     // inactive account must cost the same as a genuine wrong-password attempt against a real, active staff
@@ -59,13 +63,18 @@ public sealed class AdminAuthenticator(
 
         if (checkResult.Succeeded)
         {
-            user.LastLoginAtUtc = DateTime.UtcNow;
-            await userManager.UpdateAsync(user);
-
-            var (grantsAll, permissions) = await LoadPermissionsAsync(user);
             var securityStamp = await userManager.GetSecurityStampAsync(user);
-            return AdminAuthenticationOutcome.Succeeded(
-                user.Id, user.Email ?? email, user.FirstName, user.LastName, grantsAll, permissions, securityStamp, user.MustChangePassword);
+
+            // W1-10: with 2FA on, the right password alone opens no session. SignInManager deliberately leaves the
+            // failed-attempt count alone in this case, so a known password cannot be used to reset the counter
+            // between rounds of code guesses; the count is reset once the code is accepted.
+            if (await userManager.GetTwoFactorEnabledAsync(user))
+            {
+                var pendingSignInId = await OpenPendingSignInAsync(user);
+                return AdminAuthenticationOutcome.TwoFactorRequired(user.Id, user.Email ?? email, securityStamp, pendingSignInId);
+            }
+
+            return await SucceedAsync(user, securityStamp);
         }
 
         if (checkResult.IsLockedOut)
@@ -75,6 +84,163 @@ public sealed class AdminAuthenticator(
         }
 
         return AdminAuthenticationOutcome.InvalidCredentials(user.Id, user.Email);
+    }
+
+    public async Task<AdminAuthenticationOutcome> CompleteTwoFactorSignInAsync(
+        int userId,
+        string pendingSecurityStamp,
+        string pendingSignInId,
+        string code,
+        bool isRecoveryCode,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(pendingSecurityStamp);
+        ArgumentNullException.ThrowIfNull(pendingSignInId);
+        ArgumentNullException.ThrowIfNull(code);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var user = await userManager.FindByIdAsync(userId.ToString(CultureInfo.InvariantCulture));
+        if (user is null || user.UserType != UserType.Staff || !user.IsActive)
+        {
+            return AdminAuthenticationOutcome.TwoFactorSessionExpired(userId, user?.Email);
+        }
+
+        // The pending cookie is only a pointer: the sign-in it names must still be open on the server (not yet
+        // completed, not ended by a lockout, not expired). Without this, a copy of the cookie taken before a
+        // successful sign-in would open a second session with nothing but a code.
+        if (!await IsPendingSignInOpenAsync(user, pendingSignInId))
+        {
+            return AdminAuthenticationOutcome.TwoFactorSessionExpired(user.Id, user.Email);
+        }
+
+        // The pending sign-in belongs to the account as it was at the password step. A password change, a 2FA
+        // change or a reset in between rotates the stamp, and the user must start again with the new state.
+        var currentStamp = await userManager.GetSecurityStampAsync(user);
+        if (!string.Equals(currentStamp, pendingSecurityStamp, StringComparison.Ordinal)
+            || !await userManager.GetTwoFactorEnabledAsync(user))
+        {
+            await ClosePendingSignInAsync(user);
+            return AdminAuthenticationOutcome.TwoFactorSessionExpired(user.Id, user.Email);
+        }
+
+        if (await userManager.IsLockedOutAsync(user))
+        {
+            await ClosePendingSignInAsync(user);
+            return AdminAuthenticationOutcome.LockedOut(
+                user.Id, user.Email ?? string.Empty, user.LockoutEnd ?? DateTimeOffset.UtcNow, wasNewlyLockedOut: false, isRecoveryCode);
+        }
+
+        if (!await IsCodeValidAsync(user, code, isRecoveryCode))
+        {
+            // Wrong codes count towards the same time-boxed lockout as wrong passwords (doc 08 §3.1 N14).
+            await userManager.AccessFailedAsync(user);
+            if (await userManager.IsLockedOutAsync(user))
+            {
+                await ClosePendingSignInAsync(user);
+                return AdminAuthenticationOutcome.LockedOut(
+                    user.Id, user.Email ?? string.Empty, user.LockoutEnd ?? DateTimeOffset.UtcNow, wasNewlyLockedOut: true, isRecoveryCode);
+            }
+
+            return AdminAuthenticationOutcome.InvalidTwoFactorCode(user.Id, user.Email, isRecoveryCode);
+        }
+
+        await ClosePendingSignInAsync(user);
+        await userManager.ResetAccessFailedCountAsync(user);
+        var recoveryCodesLeft = await userManager.CountRecoveryCodesAsync(user);
+        return await SucceedAsync(user, currentStamp, twoFactorEnabled: true, isRecoveryCode, recoveryCodesLeft);
+    }
+
+    /// <summary>
+    /// Opens the account's one pending 2FA sign-in and returns its random id, which goes into the pending cookie.
+    /// Only a hash and the expiry are stored. A new password step replaces any earlier pending sign-in, so only the
+    /// latest browser to pass the password can finish.
+    /// </summary>
+    private async Task<string> OpenPendingSignInAsync(AppUser user)
+    {
+        var id = PendingSignInIds.NewId();
+        var expiresUtc = DateTimeOffset.UtcNow.AddMinutes(securityOptions.Value.TwoFactorPendingSignInMinutes);
+        var value = string.Create(CultureInfo.InvariantCulture, $"{PendingSignInIds.Hash(id)}|{expiresUtc.ToUnixTimeSeconds()}");
+        EnsureSucceeded(await userManager.SetAuthenticationTokenAsync(user, AdminTokenNames.LoginProvider, AdminTokenNames.PendingTwoFactorSignIn, value));
+        return id;
+    }
+
+    /// <summary>True when <paramref name="id"/> names the open, unexpired pending sign-in. An expired one is removed.</summary>
+    private async Task<bool> IsPendingSignInOpenAsync(AppUser user, string id)
+    {
+        var stored = await userManager.GetAuthenticationTokenAsync(user, AdminTokenNames.LoginProvider, AdminTokenNames.PendingTwoFactorSignIn);
+        var parts = stored?.Split('|', 2);
+        if (parts is not { Length: 2 }
+            || !long.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var expiresUnix))
+        {
+            return false;
+        }
+
+        if (DateTimeOffset.UtcNow.ToUnixTimeSeconds() >= expiresUnix)
+        {
+            await ClosePendingSignInAsync(user);
+            return false;
+        }
+
+        return PendingSignInIds.HashesMatch(parts[0], id);
+    }
+
+    private async Task ClosePendingSignInAsync(AppUser user) =>
+        EnsureSucceeded(await userManager.RemoveAuthenticationTokenAsync(user, AdminTokenNames.LoginProvider, AdminTokenNames.PendingTwoFactorSignIn));
+
+    private static void EnsureSucceeded(IdentityResult result)
+    {
+        if (!result.Succeeded)
+        {
+            throw new InvalidOperationException(
+                $"Could not update the pending sign-in: {string.Join("; ", result.Errors.Select(e => e.Description))}");
+        }
+    }
+
+    /// <summary>
+    /// An authenticator code is checked against the current key by the replay-protected TOTP provider (a few
+    /// 30-second steps either side for clock drift, each step usable once); a recovery code is redeemed, which
+    /// removes it so it can never work again.
+    /// A blank code is refused before Identity sees it: its recovery-code store treats an empty string as a match
+    /// when no codes are stored.
+    /// </summary>
+    private async Task<bool> IsCodeValidAsync(AppUser user, string code, bool isRecoveryCode)
+    {
+        if (isRecoveryCode)
+        {
+            var recoveryCode = TwoFactorCodeFormat.NormaliseRecoveryCode(code);
+            return recoveryCode.Length > 0
+                && (await userManager.RedeemTwoFactorRecoveryCodeAsync(user, recoveryCode)).Succeeded;
+        }
+
+        var authenticatorCode = TwoFactorCodeFormat.NormaliseAuthenticatorCode(code);
+        return authenticatorCode.Length > 0
+            && await userManager.VerifyTwoFactorTokenAsync(user, userManager.Options.Tokens.AuthenticatorTokenProvider, authenticatorCode);
+    }
+
+    /// <summary>A completed sign-in: records it on the account and loads what the session principal is built from.</summary>
+    private async Task<AdminAuthenticationOutcome> SucceedAsync(
+        AppUser user,
+        string securityStamp,
+        bool twoFactorEnabled = false,
+        bool usedRecoveryCode = false,
+        int recoveryCodesLeft = 0)
+    {
+        user.LastLoginAtUtc = DateTime.UtcNow;
+        await userManager.UpdateAsync(user);
+
+        var (grantsAll, permissions) = await LoadPermissionsAsync(user);
+        return AdminAuthenticationOutcome.Succeeded(
+            user.Id,
+            user.Email ?? string.Empty,
+            user.FirstName,
+            user.LastName,
+            grantsAll,
+            permissions,
+            securityStamp,
+            user.MustChangePassword,
+            twoFactorEnabled,
+            usedRecoveryCode,
+            recoveryCodesLeft);
     }
 
     /// <summary>
