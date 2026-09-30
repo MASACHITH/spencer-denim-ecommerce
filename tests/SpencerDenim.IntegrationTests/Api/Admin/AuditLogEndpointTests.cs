@@ -83,7 +83,9 @@ public sealed class AuditLogEndpointTests(SqlServerDatabaseFixture sqlServer)
         Assert.Equal(HttpStatusCode.OK, login.StatusCode);
 
         using var response = await client.GetAsync(
-            new Uri($"{AuditLogsUrl}?entityType=&pageSize=50", UriKind.Relative),
+            new Uri(
+                $"{AuditLogsUrl}?entityType=&fromUtc=2026-09-01T00:00:00Z&toUtc=2026-09-04T00:00:00Z&pageSize=50",
+                UriKind.Relative),
             TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
@@ -224,7 +226,11 @@ public sealed class AuditLogEndpointTests(SqlServerDatabaseFixture sqlServer)
         Assert.Equal(HttpStatusCode.OK, login.StatusCode);
 
         using var response = await client.GetAsync(
-            new Uri($"{AuditLogsUrl}?userId=30&page=2&pageSize=2", UriKind.Relative),
+            new Uri(
+                // Bounded to the window this test seeded: user ids are assigned by Identity, so a staff
+                // account created by another test can legitimately be user 30 and write real audit rows.
+                $"{AuditLogsUrl}?userId=30&fromUtc=2026-09-01T00:00:00Z&toUtc=2026-09-02T00:00:00Z&page=2&pageSize=2",
+                UriKind.Relative),
             TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
@@ -328,6 +334,12 @@ public sealed class AuditLogEndpointTests(SqlServerDatabaseFixture sqlServer)
     {
         await using var scope = factory.Services.CreateAsyncScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        // The fixture database is shared and outlives a run, so rows this class seeded earlier are still
+        // here and would be counted again. Nothing in production writes an "itest-" correlation id.
+        await dbContext.AuditLogs
+            .Where(log => log.CorrelationId != null && log.CorrelationId.StartsWith("itest-"))
+            .ExecuteDeleteAsync(TestContext.Current.CancellationToken);
 
         foreach (var entry in entries)
         {

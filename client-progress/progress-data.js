@@ -15,7 +15,7 @@ const progressData = {
     endDate: "2026-10-15"
   },
 
-  lastUpdated: "2026-09-29",
+  lastUpdated: "2026-10-01",
 
   milestones: [
     { week: "Week 0", title: "Setup & design", start: "2026-09-15", end: "2026-09-18" },
@@ -96,7 +96,7 @@ const progressData = {
     {
       name: "Admin Panel",
       features: [
-        { name: "Admin login with user roles & permissions", status: "in-progress", progress: 60 },
+        { name: "Admin login with user roles & permissions", status: "in-progress", progress: 80 },
         { name: "Product management (images & video)", status: "in-progress", progress: 50 },
         { name: "Category management", status: "in-progress", progress: 35 },
         { name: "Inventory", status: "in-progress", progress: 25 },
@@ -124,6 +124,10 @@ const progressData = {
 
   // Newest first.
   updates: [
+    {
+      date: "2026-10-01",
+      text: "Staff sign-in is now protected by two-step verification using an authenticator app on the phone, and a forced password change on first sign-in. Every action an administrator takes is recorded, and there is a screen to browse and filter that history — useful if you ever need to see who changed a price or approved a payment. Work continues on the photo and video library."
+    },
     {
       date: "2026-09-29",
       text: "Admin sign-in security tightened: when a staff account is switched off it loses access immediately rather than staying signed in, and every change an administrator makes is now recorded against their name. The photo and video library is being built and tested — that is the part that lets you upload your own product pictures, the hero video and the campaign banners, and it is what the remaining picture-led home page sections are waiting for."

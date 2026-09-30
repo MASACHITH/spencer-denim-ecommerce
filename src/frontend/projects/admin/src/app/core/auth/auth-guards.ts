@@ -40,6 +40,25 @@ export const adminSessionGuard: CanActivateFn = (_route, state) => {
   const router = inject(Router);
 
   return authApi.whoAmI().pipe(
+    map((session) => {
+      const step = pendingAccountStep(session);
+      return step ? redirectWithReturnUrl(router, step, state) : true;
+    }),
+    catchError((error: unknown) =>
+      of(isUnauthorized(error) ? redirectWithReturnUrl(router, loginPath, state) : true),
+    ),
+  );
+};
+
+/**
+ * The two-factor setup page needs a session and a finished password change, but not finished enrolment —
+ * otherwise the page that exists to complete enrolment would redirect away from itself (W1-10).
+ */
+export const twoFactorSetupGuard: CanActivateFn = (_route, state) => {
+  const authApi = inject(AdminAuthApi);
+  const router = inject(Router);
+
+  return authApi.whoAmI().pipe(
     map((session) =>
       session.mustChangePassword ? redirectWithReturnUrl(router, changePasswordPath, state) : true,
     ),
