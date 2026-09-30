@@ -21,5 +21,11 @@ export const routes: Routes = [
     loadComponent: () =>
       import('./pages/change-password/change-password-page').then((m) => m.ChangePasswordPage),
   },
+  {
+    path: 'audit-log',
+    title: 'Audit log — Spencer Denim Admin',
+    canActivate: [adminSessionGuard],
+    loadComponent: () => import('./pages/audit-log/audit-log-page').then((m) => m.AuditLogPage),
+  },
   { path: '**', redirectTo: '' },
 ];

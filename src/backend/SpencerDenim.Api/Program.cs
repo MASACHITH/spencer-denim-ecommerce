@@ -51,6 +51,7 @@ app.UseAuthorization();
 app.MapApiHealthChecks();
 app.MapPingEndpoints();
 app.MapAdminAuthEndpoints();
+app.MapAuditLogEndpoints();
 app.MapCatalogEndpoints();
 app.MapContentEndpoints();
 

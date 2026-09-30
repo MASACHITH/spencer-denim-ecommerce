@@ -3,6 +3,8 @@ using SpencerDenim.Application.Abstractions.Messaging;
 using SpencerDenim.Application.Abstractions.Results;
 using SpencerDenim.Application.Admin.Account;
 using SpencerDenim.Application.Admin.Authentication;
+using SpencerDenim.Application.Admin.Auditing;
+using SpencerDenim.Application.Admin.Auditing.Contracts;
 using SpencerDenim.Application.Admin.CurrentUser;
 using SpencerDenim.Application.Catalog.Contracts;
 using SpencerDenim.Application.Catalog.Departments;
@@ -36,6 +38,11 @@ public static class DependencyInjection
         services.AddScoped<
             ICommandHandler<ChangeAdminPasswordCommand, ChangeAdminPasswordResult>,
             ChangeAdminPasswordCommandHandler>();
+
+        // Audit log viewer (ADM-03, W1-09). The read port is registered by Infrastructure.
+        services.AddScoped<
+            IQueryHandler<GetAuditLogsQuery, PagedResult<AuditLogEntryDto>>,
+            GetAuditLogsQueryHandler>();
 
         // Catalogue read side (W1-02). The ports they depend on are registered by Infrastructure.
         services.AddScoped<
