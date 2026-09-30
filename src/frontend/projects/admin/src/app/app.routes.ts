@@ -57,5 +57,29 @@ export const routes: Routes = [
     canActivate: [adminSessionGuard],
     loadComponent: () => import('./pages/security/security-page').then((m) => m.SecurityPage),
   },
+  {
+    path: 'users',
+    title: `Staff users — ${BRAND.adminName}`,
+    canActivate: [adminSessionGuard],
+    loadComponent: () => import('./pages/users/users-list-page').then((m) => m.UsersListPage),
+  },
+  {
+    path: 'users/new',
+    title: `New staff user — ${BRAND.adminName}`,
+    canActivate: [adminSessionGuard],
+    loadComponent: () => import('./pages/users/user-form-page').then((m) => m.UserFormPage),
+  },
+  {
+    path: 'users/:id',
+    title: `Edit staff user — ${BRAND.adminName}`,
+    canActivate: [adminSessionGuard],
+    loadComponent: () => import('./pages/users/user-form-page').then((m) => m.UserFormPage),
+  },
+  {
+    path: 'roles',
+    title: `Roles — ${BRAND.adminName}`,
+    canActivate: [adminSessionGuard],
+    loadComponent: () => import('./pages/roles/roles-list-page').then((m) => m.RolesListPage),
+  },
   { path: '**', redirectTo: '' },
 ];
