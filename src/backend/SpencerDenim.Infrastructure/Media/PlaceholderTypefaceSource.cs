@@ -151,7 +151,26 @@ public sealed class PlaceholderTypefaceSource : IPlaceholderLabelFont, IDisposab
         return typeface;
     }
 
+    /// <summary>
+    /// Asks the host's font manager, and treats it failing as "this host has no fonts" rather than as a
+    /// reason not to start. On a container with no fontconfig the managed call is expected to return null,
+    /// but it reaches a native library that is built differently on every platform, and the one platform
+    /// this cannot be tried on is the one it deploys to. A font is an enhancement; nothing about it is
+    /// worth a failed startup.
+    /// </summary>
     private static (SKTypeface? Regular, SKTypeface? Bold, string? Family) FromHostFontManager()
+    {
+        try
+        {
+            return QueryHostFontManager();
+        }
+        catch (Exception)
+        {
+            return (null, null, null);
+        }
+    }
+
+    private static (SKTypeface? Regular, SKTypeface? Bold, string? Family) QueryHostFontManager()
     {
         foreach (var family in FontCandidates)
         {
@@ -182,7 +201,16 @@ public sealed class PlaceholderTypefaceSource : IPlaceholderLabelFont, IDisposab
             return false;
         }
 
-        using var font = new SKFont(typeface, 40);
-        return font.MeasureText("PLACEHOLDER") > 0;
+        try
+        {
+            using var font = new SKFont(typeface, 40);
+            return font.MeasureText("PLACEHOLDER") > 0;
+        }
+        catch (Exception)
+        {
+            // Same reasoning as FromHostFontManager: a typeface that cannot even be measured is one this
+            // deployment does not have, not a reason to refuse to start.
+            return false;
+        }
     }
 }
