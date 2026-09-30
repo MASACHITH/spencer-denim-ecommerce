@@ -1,3 +1,5 @@
+using Microsoft.AspNetCore.Identity;
+
 namespace SpencerDenim.Infrastructure.Identity;
 
 /// <summary>
@@ -12,4 +14,21 @@ public static class AdminAuthenticationDefaults
 
     /// <summary>Custom claim carrying <see cref="Domain.Identity.UserType"/> so the scheme can reject customers.</summary>
     public const string UserTypeClaimType = "sd_user_type";
+
+    /// <summary>
+    /// Custom claim carrying the <c>AppUser.SecurityStamp</c> value at sign-in time, compared against the current
+    /// database value on each periodic revalidation (see <see cref="IdentityRegistration"/>'s
+    /// <c>OnValidatePrincipal</c>) so a stamp bump — a password reset, today; a deactivation once that also bumps
+    /// it — ends the session promptly instead of waiting out the sliding cookie lifetime (doc 08 §3.1 DB10).
+    /// </summary>
+    public const string SecurityStampClaimType = "sd_security_stamp";
+
+    /// <summary>
+    /// W1-10: the short-lived cookie scheme that holds "password accepted, code still needed" between the two
+    /// sign-in steps of a 2FA account. It is Identity's own two-factor user-id scheme name; this cookie is never
+    /// an admin session (the default scheme and every admin policy use <see cref="Scheme"/> only).
+    /// </summary>
+    public static readonly string TwoFactorPendingScheme = IdentityConstants.TwoFactorUserIdScheme;
+
+    public const string TwoFactorPendingCookieName = "sd_admin_2fa";
 }

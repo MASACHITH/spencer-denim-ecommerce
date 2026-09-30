@@ -1,7 +1,10 @@
 using Microsoft.Extensions.DependencyInjection;
 using SpencerDenim.Application.Abstractions.Messaging;
 using SpencerDenim.Application.Abstractions.Results;
+using SpencerDenim.Application.Admin.Account;
 using SpencerDenim.Application.Admin.Authentication;
+using SpencerDenim.Application.Admin.Auditing;
+using SpencerDenim.Application.Admin.Auditing.Contracts;
 using SpencerDenim.Application.Admin.CurrentUser;
 using SpencerDenim.Application.Catalog.Contracts;
 using SpencerDenim.Application.Catalog.Departments;
@@ -32,6 +35,23 @@ public static class DependencyInjection
         services.AddScoped<IQueryHandler<PingQuery, PingResponse>, PingQueryHandler>();
         services.AddScoped<ICommandHandler<AdminLoginCommand, AdminLoginResult>, AdminLoginCommandHandler>();
         services.AddScoped<IQueryHandler<WhoAmIQuery, WhoAmIResponse?>, WhoAmIQueryHandler>();
+        services.AddScoped<
+            ICommandHandler<ChangeAdminPasswordCommand, ChangeAdminPasswordResult>,
+            ChangeAdminPasswordCommandHandler>();
+
+        // Staff two-factor authentication (W1-10): the second sign-in step and the user's own enrolment.
+        services.AddScoped<
+            ICommandHandler<CompleteAdminTwoFactorSignInCommand, AdminLoginResult>,
+            CompleteAdminTwoFactorSignInCommandHandler>();
+        services.AddScoped<
+            IQueryHandler<GetAdminTwoFactorStatusQuery, AdminTwoFactorStatusResponse?>,
+            GetAdminTwoFactorStatusQueryHandler>();
+        services.AddScoped<ICommandHandler<BeginAdminTwoFactorSetupCommand, AdminTwoFactorResult>, BeginAdminTwoFactorSetupCommandHandler>();
+        services.AddScoped<ICommandHandler<EnableAdminTwoFactorCommand, AdminTwoFactorResult>, EnableAdminTwoFactorCommandHandler>();
+        services.AddScoped<
+            ICommandHandler<RegenerateAdminRecoveryCodesCommand, AdminTwoFactorResult>,
+            RegenerateAdminRecoveryCodesCommandHandler>();
+        services.AddScoped<ICommandHandler<DisableAdminTwoFactorCommand, AdminTwoFactorResult>, DisableAdminTwoFactorCommandHandler>();
 
         // Catalogue read side (W1-02). The ports they depend on are registered by Infrastructure.
         services.AddScoped<

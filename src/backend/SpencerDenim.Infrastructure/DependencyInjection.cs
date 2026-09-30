@@ -4,10 +4,12 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using SpencerDenim.Application.Abstractions.Time;
+using SpencerDenim.Application.Admin.Auditing;
 using SpencerDenim.Application.Catalog;
 using SpencerDenim.Application.Catalog.Abstractions;
 using SpencerDenim.Application.Content.Abstractions;
 using SpencerDenim.Application.Marketing.Newsletter;
+using SpencerDenim.Infrastructure.Admin.Auditing;
 using SpencerDenim.Infrastructure.Catalog;
 using SpencerDenim.Infrastructure.Content;
 using SpencerDenim.Infrastructure.Marketing;
@@ -89,6 +91,7 @@ public static class DependencyInjection
 
         services.AddScoped<IDepartmentCatalogReader, DepartmentCatalogReader>();
         services.AddScoped<IProductCatalogReader, ProductCatalogReader>();
+        services.AddScoped<IAuditLogReader, AuditLogReader>();
 
         // Content and newsletter (W2-01, HOME-01..10, GLB-03).
         services.AddScoped<IHomeContentReader, HomeContentReader>();

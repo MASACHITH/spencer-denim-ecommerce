@@ -50,6 +50,15 @@ public sealed class AdminSeedHostedService(
             return;
         }
 
+        // Doc 08 §9 / doc 11 P14: the bootstrap password comes from the server's .env, so it is known to whoever
+        // can read that file and must not stay valid. MustChangePassword makes the API refuse every admin
+        // endpoint except the change-password flow until it is replaced (PasswordChangeCompletedRequirement).
+        //
+        // EmailConfirmed stays true on purpose: the docs require only the forced password change (and 2FA,
+        // W1-10) for this account, staff never go through the customer confirm-email flow (doc 08 §3.1 DB10),
+        // and the address is typed in by the technical owner who also holds the server. Leaving it unconfirmed
+        // would change nothing today (SignIn.RequireConfirmedAccount is false), and no flow exists that could
+        // ever confirm a staff address afterwards.
         var admin = new AppUser
         {
             UserName = options.Email,
@@ -59,6 +68,7 @@ public sealed class AdminSeedHostedService(
             FirstName = options.FirstName,
             LastName = options.LastName,
             IsActive = true,
+            MustChangePassword = true,
             CreatedAtUtc = DateTime.UtcNow,
         };
 

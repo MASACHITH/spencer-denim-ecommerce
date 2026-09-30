@@ -21,6 +21,15 @@ public sealed class AdminLoginCommandHandlerTests
             ReceivedEmail = email;
             return Task.FromResult(outcome);
         }
+
+        public Task<AdminAuthenticationOutcome> CompleteTwoFactorSignInAsync(
+            int userId,
+            string pendingSecurityStamp,
+            string pendingSignInId,
+            string code,
+            bool isRecoveryCode,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException("The password step never calls the second step.");
     }
 
     private sealed class RecordingAuditLogWriter : IAuditLogWriter
@@ -39,7 +48,7 @@ public sealed class AdminLoginCommandHandlerTests
     [Fact]
     public async Task Successful_login_returns_success_result_and_writes_one_login_audit_row()
     {
-        var outcome = AdminAuthenticationOutcome.Succeeded(1, "admin@example.com", "Ada", "Lovelace", true, []);
+        var outcome = AdminAuthenticationOutcome.Succeeded(1, "admin@example.com", "Ada", "Lovelace", true, [], "stamp-1", mustChangePassword: false);
         var authenticator = new StubAuthenticator(outcome);
         var auditWriter = new RecordingAuditLogWriter();
         var handler = new AdminLoginCommandHandler(authenticator, auditWriter, Clock);
@@ -129,6 +138,52 @@ public sealed class AdminLoginCommandHandlerTests
 
         var entry = Assert.Single(auditWriter.Entries);
         Assert.Equal(AuditActions.LoginFailed, entry.Action);
+    }
+
+    [Fact]
+    public async Task Successful_login_passes_a_pending_forced_password_change_through_to_the_result()
+    {
+        // Issue #17: sign-in itself still succeeds, but the endpoint has to tell the client to change the password.
+        var outcome = AdminAuthenticationOutcome.Succeeded(1, "admin@example.com", "Ada", null, true, [], "stamp-1", mustChangePassword: true);
+        var handler = new AdminLoginCommandHandler(new StubAuthenticator(outcome), new RecordingAuditLogWriter(), Clock);
+
+        var result = await handler.HandleAsync(
+            new AdminLoginCommand("admin@example.com", "bootstrap-password", null, null),
+            TestContext.Current.CancellationToken);
+
+        var success = Assert.IsType<AdminLoginResult.Success>(result);
+        Assert.True(success.MustChangePassword);
+    }
+
+    [Fact]
+    public async Task A_right_password_on_a_two_factor_account_asks_for_the_code_and_audits_nothing_yet()
+    {
+        // W1-10: no session and no Login row until the second step; that step writes Login or TwoFactorFailed.
+        var outcome = AdminAuthenticationOutcome.TwoFactorRequired(7, "admin@example.com", "stamp-7", "pending-7");
+        var auditWriter = new RecordingAuditLogWriter();
+        var handler = new AdminLoginCommandHandler(new StubAuthenticator(outcome), auditWriter, Clock);
+
+        var result = await handler.HandleAsync(
+            new AdminLoginCommand("admin@example.com", "correct-password", null, null),
+            TestContext.Current.CancellationToken);
+
+        var challenge = Assert.IsType<AdminLoginResult.TwoFactorRequired>(result);
+        Assert.Equal(7, challenge.UserId);
+        Assert.Equal("stamp-7", challenge.SecurityStamp);
+        Assert.Equal("pending-7", challenge.PendingSignInId);
+        Assert.Empty(auditWriter.Entries);
+    }
+
+    [Theory]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, false)]
+    [InlineData(false, false, false)]
+    public void Success_reports_that_enrolment_is_required_only_for_a_grants_all_holder_without_two_factor(
+        bool grantsAll, bool twoFactorEnabled, bool expected)
+    {
+        var success = new AdminLoginResult.Success(1, "a@example.com", "Ada", null, grantsAll, [], "stamp", false, twoFactorEnabled);
+
+        Assert.Equal(expected, success.TwoFactorEnrolmentRequired);
     }
 
     [Fact]
