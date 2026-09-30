@@ -1,0 +1,47 @@
+using SpencerDenim.Application.Admin.Users.Contracts;
+using SpencerDenim.Domain.Identity;
+
+namespace SpencerDenim.Application.Admin.Users.Abstractions;
+
+/// <summary>
+/// Write port for staff user and role-assignment mutations (ADM-02, doc 08 §3.1 DB4). Every RBAC
+/// authorization decision (the subset rule, self-edit block, GrantsAll gating) is made by the command
+/// handler calling this port, using <see cref="RoleAssignmentPolicy"/> against snapshots this port also
+/// supplies — this port itself only ever enforces the one rule that needs real transactional machinery to be
+/// correct under concurrency: DB4 rule 4, the last-Super-Admin guard (see the remarks on
+/// <see cref="ReplaceRolesStoreResult.LastSuperAdminGuardTriggered"/>).
+/// </summary>
+public interface IStaffUserRoleManagementStore
+{
+    Task<StaffUserSnapshot?> GetStaffUserSnapshotAsync(int userId, CancellationToken cancellationToken);
+
+    Task<IReadOnlyDictionary<int, RoleGrantSnapshot>> GetRolesAsync(IReadOnlyCollection<int> roleIds, CancellationToken cancellationToken);
+
+    Task<bool> IsEmailInUseAsync(string email, int? excludingUserId, CancellationToken cancellationToken);
+
+    Task<CreateStaffUserStoreResult> CreateStaffUserAsync(NewStaffUserData data, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Replaces the target's entire role assignment with <paramref name="roleIds"/> and, on success, rotates
+    /// their <c>SecurityStamp</c> (doc 08 §3.1 DB4 rule 5) so the 1-minute revalidation loop (issue #16) picks
+    /// up the change. The caller must have already authorized this exact before/after transition.
+    /// </summary>
+    Task<ReplaceRolesStoreResult> ReplaceRolesAsync(int targetUserId, IReadOnlyList<int> roleIds, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Flips <c>IsActive</c>. Deactivating rejects under the same last-Super-Admin guard as unassigning the
+    /// GrantsAll role; reactivating never reduces the active GrantsAll count, so it never runs the guard.
+    /// </summary>
+    Task<SetActiveStoreResult> SetActiveAsync(int targetUserId, bool active, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Updates profile fields. <paramref name="newEmail"/> is null when the email is not changing; the caller
+    /// must have already checked <see cref="RoleAssignmentPolicy.CanChangeStaffEmail"/> before passing a value.
+    /// </summary>
+    Task<UpdateProfileStoreResult> UpdateProfileAsync(
+        int targetUserId,
+        string firstName,
+        string? lastName,
+        string? newEmail,
+        CancellationToken cancellationToken);
+}

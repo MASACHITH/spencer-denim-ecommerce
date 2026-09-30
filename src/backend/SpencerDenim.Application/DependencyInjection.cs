@@ -8,6 +8,8 @@ using SpencerDenim.Application.Admin.Auditing.Contracts;
 using SpencerDenim.Application.Admin.CurrentUser;
 using SpencerDenim.Application.Catalog.Admin;
 using SpencerDenim.Application.Catalog.Admin.Contracts;
+using SpencerDenim.Application.Admin.Users;
+using SpencerDenim.Application.Admin.Users.Contracts;
 using SpencerDenim.Application.Catalog.Contracts;
 using SpencerDenim.Application.Catalog.Departments;
 using SpencerDenim.Application.Catalog.Products;
@@ -59,6 +61,20 @@ public static class DependencyInjection
             ICommandHandler<RegenerateAdminRecoveryCodesCommand, AdminTwoFactorResult>,
             RegenerateAdminRecoveryCodesCommandHandler>();
         services.AddScoped<ICommandHandler<DisableAdminTwoFactorCommand, AdminTwoFactorResult>, DisableAdminTwoFactorCommandHandler>();
+        // Users & Roles management (W1-08, issue #8). The ports these depend on are registered by
+        // Infrastructure, exactly like the catalogue read side below.
+        services.AddScoped<
+            IQueryHandler<GetStaffUsersQuery, PagedResult<StaffUserSummaryDto>>,
+            GetStaffUsersQueryHandler>();
+        services.AddScoped<IQueryHandler<GetStaffUserByIdQuery, StaffUserDetailDto?>, GetStaffUserByIdQueryHandler>();
+        services.AddScoped<IQueryHandler<GetRolesQuery, IReadOnlyList<RoleSummaryDto>>, GetRolesQueryHandler>();
+        services.AddScoped<IQueryHandler<GetRoleByIdQuery, RoleDetailDto?>, GetRoleByIdQueryHandler>();
+        services.AddScoped<ICommandHandler<CreateStaffUserCommand, CreateStaffUserResult>, CreateStaffUserCommandHandler>();
+        services.AddScoped<ICommandHandler<AssignUserRolesCommand, AssignUserRolesResult>, AssignUserRolesCommandHandler>();
+        services.AddScoped<ICommandHandler<SetStaffUserActiveCommand, SetStaffUserActiveResult>, SetStaffUserActiveCommandHandler>();
+        services.AddScoped<
+            ICommandHandler<UpdateStaffUserProfileCommand, UpdateStaffUserProfileResult>,
+            UpdateStaffUserProfileCommandHandler>();
 
         // Catalogue read side (W1-02). The ports they depend on are registered by Infrastructure.
         services.AddScoped<

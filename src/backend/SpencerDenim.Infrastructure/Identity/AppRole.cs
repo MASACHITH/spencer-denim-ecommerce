@@ -3,9 +3,12 @@ using Microsoft.AspNetCore.Identity;
 namespace SpencerDenim.Infrastructure.Identity;
 
 /// <summary>
-/// <c>identity.Roles</c> (doc 08 §3.1, ADM-02). Only the Super Admin (GrantsAll) role is seeded by this slice
-/// (see <c>Seeding/AdminSeedHostedService</c>); the other three default roles (Store Manager, Order Staff,
-/// Content Editor) and their permission sets belong to the ADM-02 Users &amp; Roles management slice.
+/// <c>identity.Roles</c> (doc 08 §3.1, ADM-02). All four default roles are seeded by
+/// <c>Seeding/AdminSeedHostedService</c>: Super Admin (GrantsAll) plus, as of W1-08 (issue #8), Store Manager,
+/// Order Staff and Content Editor — see <c>Seeding/DefaultRoleDefinitions</c> for their permission sets (doc 08
+/// §9). Beyond the default four, roles are read-only in this slice (<c>Application/Admin/Users</c>): full role
+/// CRUD (create/edit/delete a role, change its permissions) is GrantsAll-only per doc 08 §3.1 DB4 rule 1 and was
+/// not asked for by this task — a future slice if the client needs custom roles beyond the four defaults.
 /// </summary>
 public sealed class AppRole : IdentityRole<int>
 {
