@@ -46,10 +46,28 @@ public sealed class BrandNameConventionTests
             "the admin application's static shell, for the same reason",
         ["Directory.Build.props"] =
             "the assemblies' Product metadata: MSBuild cannot read a C# constant",
+        ["client-progress/progress-data.js"] =
+            "the client progress page's own single place for the name. That page is four static files with "
+            + "no build step and no module system, so it cannot import anything; `app.js` writes this value "
+            + "into the document title and the heading at runtime",
+        ["client-progress/index.html"] =
+            "the client progress page's shell. Its <title> and <h1> are overwritten from progress-data.js "
+            + "on load, so they are fallbacks; the meta description is not, and has nowhere else to live",
     };
 
-    /// <summary>Source extensions worth sweeping: anything a visible string can be written in.</summary>
-    private static readonly string[] SourceExtensions = [".cs", ".ts", ".html", ".css", ".mjs", ".json", ".props"];
+    /// <summary>
+    /// Source extensions worth sweeping: anything a visible string can be written in.
+    /// <para>
+    /// <b><c>.svg</c> and <c>.webmanifest</c> are here deliberately.</b> An SVG <c>&lt;title&gt;</c> is the
+    /// accessible name of the thing it draws, and the client's logo artwork is sitting in the media library
+    /// waiting to be wired in (W1-13) — so a logo is the next place this name is likely to be written out by
+    /// hand. A web manifest's <c>name</c> / <c>short_name</c> is what a shopper sees when they install the
+    /// site. <c>.md</c> is deliberately <i>not</i> here: <c>src/frontend/README.md</c> spells the name out in
+    /// prose, correctly, and prose is not what this rule is about.
+    /// </para>
+    /// </summary>
+    private static readonly string[] SourceExtensions =
+        [".cs", ".ts", ".js", ".mjs", ".html", ".css", ".json", ".props", ".svg", ".webmanifest"];
 
     /// <summary>
     /// Every spelling of the name worth sweeping for, derived from the constant so a rename moves them all.
@@ -148,13 +166,30 @@ public sealed class BrandNameConventionTests
 
     private static IEnumerable<string> SourceFiles(string root)
     {
-        // The build properties carry the name in assembly metadata, so they are swept too.
-        yield return Path.Combine(root, "Directory.Build.props");
+        // The repository root itself, and not recursively: `Directory.Build.props` carries the name in the
+        // assemblies' metadata and `global.json` / `Directory.Packages.props` sit beside it. Recursing from
+        // here would drag in `docs/`, `design/` and `reference/`, which hold documents rather than source —
+        // including dated ones that must keep the old name because that is what the client was sent.
+        foreach (var file in Directory.EnumerateFiles(root))
+        {
+            if (IsSwept(root, file))
+            {
+                yield return file;
+            }
+        }
 
-        // Only the two source trees. `tests/` and `.github/` are excluded wholesale, for the reason in the
-        // class summary: a CI smoke check that greps the served HTML for the wordmark is an assertion, and
-        // writing the expected text out is what makes it one.
-        string[] trees = [Path.Combine(root, "src", "backend"), Path.Combine(root, "src", "frontend")];
+        // `tests/` and `.github/` are excluded wholesale, for the reason in the class summary: a CI smoke
+        // check that looks for the wordmark in the served HTML is an assertion, and writing the expected
+        // text out is what makes it one. `client-progress/` is in because it is published to a client-facing
+        // subdomain, and `tools/` because a script that prints or publishes the name would belong to the
+        // same rule — it holds nothing swept today, which is the point of adding it before it does.
+        string[] trees =
+        [
+            Path.Combine(root, "src", "backend"),
+            Path.Combine(root, "src", "frontend"),
+            Path.Combine(root, "tools"),
+            Path.Combine(root, "client-progress"),
+        ];
 
         foreach (var tree in trees)
         {
@@ -162,25 +197,36 @@ public sealed class BrandNameConventionTests
 
             foreach (var file in WalkSource(tree))
             {
-                if (!SourceExtensions.Contains(Path.GetExtension(file), StringComparer.OrdinalIgnoreCase))
+                if (IsSwept(root, file))
                 {
-                    continue;
+                    yield return file;
                 }
-
-                if (IsTest(Path.GetRelativePath(root, file).Replace('\\', '/')))
-                {
-                    continue;
-                }
-
-                yield return file;
             }
         }
     }
 
     /// <summary>
+    /// Whether this file is source the rule applies to. One place, because the first version asked the
+    /// question only on the tree walk and let the repository root through unfiltered — so the sweep read
+    /// <c>README.md</c>, <c>MEMORY.md</c> and <c>TASKS.md</c>, which spell the name out in prose on purpose,
+    /// and reported sixteen offenders. Loudly wrong rather than quietly wrong, but it is one question and
+    /// belongs in one place.
+    /// </summary>
+    private static bool IsSwept(string root, string file) =>
+        SourceExtensions.Contains(Path.GetExtension(file), StringComparer.OrdinalIgnoreCase)
+        && !IsTest(Path.GetRelativePath(root, file).Replace('\\', '/'));
+
+    /// <summary>
     /// Every file below <paramref name="directory"/>, refusing to descend into a generated directory.
     /// Pruning the walk rather than filtering its results is the point: it never reads a file another tool
     /// is in the middle of writing.
+    /// <para>
+    /// <b>The match is on the basename, at any depth, so the pruning is blunt.</b> A real source folder
+    /// named <c>dist</c>, <c>coverage</c> or <c>bin</c> anywhere under a swept tree would disappear from the
+    /// sweep with nothing said — the guard would go quietly green over it rather than red. Nothing in the
+    /// repository is named that today; if something ever is, narrow this to the specific paths rather than
+    /// trusting the names.
+    /// </para>
     /// </summary>
     private static IEnumerable<string> WalkSource(string directory)
     {

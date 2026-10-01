@@ -214,14 +214,26 @@ jobs:
           # Match in-shell rather than through a pipe: `grep -q` exits at the first match,
           # which gives `printf` a broken pipe once the page is larger than the pipe buffer,
           # and pipefail then fails the step even though the text was found.
-          # 'Colombo Wardrobe' is the header wordmark. Written out rather than read from BRAND
-          # because this is an assertion about the shipped bundle, like the specs.
-          for marker in 'Colombo Wardrobe' 'New Arrivals' 'Sale'; do
+          for marker in 'New Arrivals' 'Sale'; do
             if [[ "$html" != *"$marker"* ]]; then
               echo "::error::Server-rendered HTML does not contain '$marker'."
               echo "${html:0:2000}"
               exit 1
             fi
           done
+
+          # The wordmark, tied to its own element rather than looked for anywhere on the page.
+          # A bare 'Colombo Wardrobe' substring proves nothing: delete the whole <header> and 14
+          # occurrences survive in the footer, the nav and the inlined JSON, so the check passed
+          # with no wordmark at all. The closing quote after the class name is what keeps this off
+          # the inlined <style>, where the same string appears a dozen times as a selector. The
+          # name is written out rather than read from BRAND because this is an assertion about the
+          # shipped bundle, like the specs. `[[ =~ ]]` avoids a pipe, for the pipefail reason above.
+          wordmark='site-header__wordmark"[^>]*>[[:space:]]*Colombo Wardrobe'
+          if [[ ! "$html" =~ $wordmark ]]; then
+            echo "::error::Server-rendered HTML has no Colombo Wardrobe wordmark in the site header."
+            echo "${html:0:2000}"
+            exit 1
+          fi
 
           echo "Server-rendered HTML contains the expected markers (${#html} bytes)."

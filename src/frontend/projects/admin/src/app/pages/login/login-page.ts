@@ -3,7 +3,6 @@ import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 
 import { AdminAuthApi, type AdminLoginError } from '../../core/auth/admin-auth-api';
-import { BRAND } from '@spencer-denim/shared';
 import {
   pendingAccountStep,
   returnUrlParam,
@@ -25,8 +24,11 @@ import {
   template: `
     <section class="login">
       <form class="login__card" (ngSubmit)="submit()" novalidate>
-        <h1 class="login__title">{{ brand }}</h1>
-        <p class="login__lead">Sign in to manage the store.</p>
+        <!-- Not the application name: the header bar directly above this card already carries it, and it
+             wrapped to two lines inside the card at all eight breakpoints. A heading that says what the
+             page is for beats one that repeats the line above it. -->
+        <h1 class="login__title">Sign in</h1>
+        <p class="login__lead">Manage the store.</p>
 
         <label class="login__field">
           <span class="login__label">Email</span>
@@ -126,9 +128,6 @@ import {
   `,
 })
 export class LoginPage {
-  /** The admin application's name, from the one place it is written down (@spencer-denim/shared). */
-  protected readonly brand = BRAND.adminName;
-
   private readonly authApi = inject(AdminAuthApi);
   private readonly router = inject(Router);
   private readonly route = inject(ActivatedRoute);

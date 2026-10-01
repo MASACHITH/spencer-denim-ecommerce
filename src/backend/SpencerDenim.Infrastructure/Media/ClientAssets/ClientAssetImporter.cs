@@ -10,8 +10,8 @@ using SpencerDenim.Domain.Branding;
 using SpencerDenim.Domain.Catalog;
 using SpencerDenim.Domain.Content;
 using SpencerDenim.Domain.Media;
-using SpencerDenim.Infrastructure.Persistence.Seeding;
 using SpencerDenim.Infrastructure.Persistence;
+using SpencerDenim.Infrastructure.Persistence.Seeding;
 
 namespace SpencerDenim.Infrastructure.Media.ClientAssets;
 

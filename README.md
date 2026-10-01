@@ -146,16 +146,31 @@ tell a stale seed value from a title the client typed.
 That makes it a one-off operational step rather than a migration. A migration that rewrote `SeoTitle`
 would also rewrite whatever the client has since written there, which is exactly what the seeders are
 careful not to do. Run this by hand, once, per environment, and only on rows that still carry the old
-suffix:
+suffix.
+
+**`SET QUOTED_IDENTIFIER ON` is not optional, and leaving it out fails silently.** `catalog.Categories`
+carries a filtered index, and SQL Server refuses any `UPDATE` on such a table unless that option is on.
+`sqlcmd` defaults it **off** — which is the pattern this README documents everywhere else — so without the
+first line below the run stops at `Msg 1934`, applies nothing, and **still exits 0**. Use
+`sqlcmd -I -b` (`-I` sets the option for the session, `-b` makes a SQL error a non-zero exit code) or run
+the block in SSMS, which has it on already. The `BEGIN TRAN` means a failure part-way leaves nothing
+half-applied.
 
 ```sql
--- Check first: these are the rows that will change.
-SELECT 'Department' AS [Table], Id, SeoTitle FROM catalog.Departments WHERE SeoTitle LIKE '%| Spencer Denim'
-UNION ALL SELECT 'Category', Id, SeoTitle FROM catalog.Categories WHERE SeoTitle LIKE '%| Spencer Denim'
-UNION ALL SELECT 'Product',  Id, SeoTitle FROM catalog.Products   WHERE SeoTitle LIKE '%| Spencer Denim';
+SET QUOTED_IDENTIFIER ON;
 
--- Then, in a transaction. The LIKE is the whole safety: a title an admin has rewritten does not end
--- in the old suffix, so it is not touched.
+-- Check first. This LIKE is deliberately wider than the UPDATE's: it also shows a title with a
+-- trailing space ('... | Spencer Denim ') or the old name somewhere other than the suffix, neither of
+-- which the UPDATE below will touch. If this returns rows the UPDATE then leaves behind, they are
+-- somebody's own wording and want a human, not a wider UPDATE.
+SELECT 'Department' AS [Table], Id, SeoTitle FROM catalog.Departments WHERE SeoTitle LIKE '%Spencer Denim%'
+UNION ALL SELECT 'Category', Id, SeoTitle FROM catalog.Categories WHERE SeoTitle LIKE '%Spencer Denim%'
+UNION ALL SELECT 'Product',  Id, SeoTitle FROM catalog.Products   WHERE SeoTitle LIKE '%Spencer Denim%';
+
+-- Then, in a transaction. The suffix-only LIKE is the whole safety: a title whose brand *suffix* an
+-- admin has replaced is not touched. A title whose *subject* they rewrote still is: 'Ladies frocks |
+-- Spencer Denim' becomes 'Ladies frocks | Colombo Wardrobe', which keeps their words and fixes the
+-- brand, and is what you want.
 BEGIN TRAN;
 UPDATE catalog.Departments SET SeoTitle = LEFT(SeoTitle, LEN(SeoTitle) - LEN('| Spencer Denim')) + '| Colombo Wardrobe'
 WHERE SeoTitle LIKE '%| Spencer Denim';
@@ -176,8 +191,10 @@ so an existing environment keeps the old caption until those files are deleted a
 (it rewrites each row's checksum, size and dimensions from the new bytes). This matters on a development
 or staging machine and nowhere else: the demo placeholders are never seeded in production.
 
-**Nothing else needs touching.** No home-page copy, announcement or newsletter row carries the name; the
-alt text `ClientAssetImporter` writes already said "Colombo Wardrobe" before this rename.
+**Nothing else in the seeded data carries the name.** No home-page copy, announcement or newsletter row
+does, and the alt text `ClientAssetImporter` writes already said "Colombo Wardrobe" before this rename.
+That is a statement about what the seeders write, not a promise about what an admin has typed since —
+which is what the wider `SELECT` above is for.
 
 
 A seeded database holds 3 departments, 29 categories, 4 age groups, 19 attribute options,
