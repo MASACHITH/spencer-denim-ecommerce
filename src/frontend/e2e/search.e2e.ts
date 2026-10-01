@@ -289,11 +289,20 @@ test.describe('terms that are not words', () => {
   }) => {
     test.fail();
 
-    const response = await request.get('/search?q=%ED%A0%BD');
+    // A real term with one bad character in it, not the bad character alone: the storefront's own
+    // normaliseTerm drops the surrogate and keeps "linen", so a router that handed the query string
+    // over at all would produce a search for "linen" — which is what this asserts.
+    const response = await request.get('/search?q=linen%ED%A0%BD');
     const html = await response.text();
 
     expect(response.status()).toBe(200);
     expect(html).toContain('<sd-search-page');
+    // **Not merely "the search page".** A #79 fix that rendered /search with the bad q silently
+    // dropped — an empty box and "What are you looking for?" — would satisfy a 200 and the tag, and
+    // the marker above would come off on a materially different outcome from the one the companion
+    // test below documents as intended. A searched term is the outcome. The other direction is
+    // already safe: a fix to a 400 keeps this test failing and the marker on.
+    expect(html).toContain('Results for');
   });
 
   /** The same address with a real replacement character, which is what #79's fix has to produce. */
@@ -371,6 +380,40 @@ test.describe('a filter the catalogue cannot answer', () => {
     await expect(page.locator('.search__results .search__state')).toContainText(
       'We found nothing for',
     );
+    await expect(page.getByText('We could not run that search')).toHaveCount(0);
+  });
+
+  test('a size filter narrows rather than emptying the page', async ({ page }) => {
+    // The stub answered nothing for *every* size and called that parity with "a value it cannot
+    // resolve", so the search page showed "no products found" where production shows products — with
+    // the panel's own size checkboxes as the way in. A waist label, because this corpus is Women >
+    // Jeans and jeans are on the waist scale; the real API's behaviour is pinned in
+    // `ProductDetailAndSearchTests.A_size_filter_narrows_a_search_rather_than_emptying_it`.
+    await page.goto('/search?q=test&size=26');
+
+    await expect(page.locator('.product-grid > li').first()).toBeVisible();
+    await expect(page.getByText('We found nothing for')).toHaveCount(0);
+    await expect(page.locator('.search__count')).toContainText('40');
+  });
+
+  test('a size from another scale empties it, as it does in production', async ({ page }) => {
+    // Measured on the real API: `?q=jeans&size=M` is 0 and `?q=jeans&size=30` is 5. "No results for a
+    // size" is sometimes the right answer, which is exactly why a stub answering it *always* could
+    // look plausible for so long.
+    await page.goto('/search?q=test&size=M');
+
+    await expect(page.locator('.search__results .search__state')).toContainText(
+      'We found nothing for',
+    );
+  });
+
+  test('a price written with a bare decimal point is a filter, not an error', async ({ page }) => {
+    // `decimal.TryParse` with `AllowDecimalPoint` accepts "5.", measured against the real
+    // `ProductListQuery.Create`; the stub used to reject it, so the storefront's own error path was
+    // being exercised against a 400 production never sends.
+    await page.goto('/search?q=test&minPrice=5.');
+
+    await expect(page.locator('.product-grid > li').first()).toBeVisible();
     await expect(page.getByText('We could not run that search')).toHaveCount(0);
   });
 

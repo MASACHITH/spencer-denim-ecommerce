@@ -280,11 +280,19 @@ function productsFor(params) {
 // category — could not be reached from a browser at all. So the listing validation and the filter
 // resolution are mirrored here too.
 //
-// `productsFor` deliberately does **not** use them yet. It ignores `department` and resolves nothing,
-// and three other suites are written against that: `E2E_DEPARTMENTS=empty` serves `[]`, so a faithful
-// resolver would answer "no such department" and the empty-catalogue tests that expect a department
-// listing to render from the storefront's fallback would be measuring something else. Narrowing that
-// is its own change with its own regression run, not a line in this one.
+// `productsFor` deliberately does **not** use them yet, and the reason is about the fixture rather than
+// about the tests. The `E2E_DEPARTMENTS=empty` pair serves `[]` from the departments feed **while the
+// catalogue still holds products** — a state the real system cannot be in, and deliberately so, because
+// that pair exists to measure what the storefront does when the feed answers uselessly. A faithful
+// resolver in `productsFor` would answer "no such department" there, and the fixture would stop
+// modelling the thing it was built for. Making `productsFor` faithful therefore means fixing that
+// fixture in the same change; both halves are filed as **#82**.
+//
+// One consequence of the split, written down so nobody finds it by debugging: `searchFor` resolves
+// against `DEPARTMENTS_BODY`, so on the empty pair `/search?...&department=women` answers 200 with no
+// results where `/api/catalog/products?department=women` answers 120. No search test runs against that
+// pair today, so nothing is broken — but the two halves of this stub now answer the same question
+// differently, which is the divergence class this file was failed for one level up.
 
 const MIN_TERM_LENGTH = 2;
 const MAX_TERM_LENGTH = 100;
@@ -348,12 +356,41 @@ const MATERIALS = ['Cotton', 'Linen', 'Denim'];
 const FITS = ['Relaxed', 'Slim', 'Straight'];
 const OCCASIONS = ['Everyday', 'Workwear', 'Evening'];
 
+/**
+ * Size labels from the seeded scales (`CatalogReferenceData`), **one scale per category**, which is how
+ * a real product carries them.
+ *
+ * They exist because the search page's filter panel offers size checkboxes, and a stub where every size
+ * matched nothing showed a shopper "no products found" where production shows them products. The API
+ * matches on the **label**, case-insensitively, not on a slug or a scale.
+ *
+ * The scale follows the category because the alternative is a different wrong answer. Measured on the
+ * real API: `?q=jeans&size=M` is **0** and `?q=jeans&size=30` is **5**, because jeans are on the Women
+ * waist scale and `M` belongs to the Alpha scale; `?q=shirt&size=M` is 12 of 14. A stub that put alpha
+ * sizes on half its jeans would narrow where production does not, which is the same class of divergence
+ * as the one that put a department name in the search index.
+ */
+const WAIST_SIZES = [
+  ['26', '28'],
+  ['28', '30'],
+  ['30', '32'],
+];
+
+/** The one-size scale, for the saree — as `DemoCatalogueData` gives it (`CatalogReferenceData`). */
+const ONE_SIZE = ['One Size'];
+
 function attributesFor(card, index) {
+  // Every "Test Product" is in Women > Jeans, so every one of them is on the waist scale; the saree is
+  // in Traditional Wear and is one size, exactly as the seeded one is.
+  const sizes = card.categorySlug === 'jeans' ? WAIST_SIZES[index % 3] : ONE_SIZE;
+
   return {
     material: MATERIALS[index % MATERIALS.length],
     fit: FITS[index % FITS.length],
     occasion: OCCASIONS[index % OCCASIONS.length],
-    skus: [`${card.productCode}-M`, `${card.productCode}-L`],
+    sizes,
+    // The real SKU is per variant: the product code plus the size it is (`DemoCatalogueSeeder`).
+    skus: sizes.map((size) => `${card.productCode}-${size}`),
   };
 }
 
@@ -503,7 +540,12 @@ function readNumber(params, name, minimum, maximum, errors) {
   }
 
   const text = raw.trim();
-  if (!/^[+-]?(\d+(\.\d+)?|\.\d+)$/u.test(text)) {
+  // `5.` and `.5` are both accepted, because `decimal.TryParse` with `AllowDecimalPoint` accepts both.
+  // Measured against `ProductListQuery.Create`, which answers 200 for `minPrice=5.` and reads it as 5;
+  // the first version of this pattern required a digit after the point and rejected it. A bare `.`
+  // matches neither branch, and `1,000` still matches nothing, because a group separator means
+  // different things in different locales and the storefront never writes one.
+  if (!/^[+-]?(\d+\.?\d*|\.\d+)$/u.test(text)) {
     errors.push({
       field: name,
       message: `${name} must be a number between ${minimum} and ${maximum}.`,
@@ -527,7 +569,14 @@ function readWholeNumber(params, name, minimum, maximum, errors, fallback) {
   }
 
   const text = raw.trim();
-  if (!/^[+-]?\d+$/u.test(text)) {
+  const value = Number(text);
+
+  // Two messages, and which one you get depends on whether `int.TryParse` succeeded — not on whether
+  // the number is in range. `page=2147483648` and `page=99999999999999999999` overflow an `int`, so the
+  // real API never reaches its range check and says "must be a whole number"; `page=0` is a perfectly
+  // good `int` and gets "must be between". Both measured against `ProductListQuery.Create`.
+  const isInt32 = /^[+-]?\d+$/u.test(text) && value >= -2_147_483_648 && value <= 2_147_483_647;
+  if (!isInt32) {
     errors.push({
       field: name,
       message: `${name} must be a whole number between ${minimum} and ${maximum}.`,
@@ -535,13 +584,17 @@ function readWholeNumber(params, name, minimum, maximum, errors, fallback) {
     return fallback;
   }
 
-  const value = Number(text);
   if (value < minimum || value > maximum) {
     errors.push({ field: name, message: `${name} must be between ${minimum} and ${maximum}.` });
     return fallback;
   }
 
   return value;
+}
+
+/** Two decimals, as `NormaliseMoney` stores them. */
+function roundMoney(value) {
+  return value === null ? null : Math.round(value * 100) / 100;
 }
 
 /** The four spellings `ProductListQuery.ParseBoolean` accepts. Anything else is a typo worth naming. */
@@ -579,8 +632,11 @@ function readListQuery(params) {
     fits: readSlugList(params, 'fit', errors),
     occasions: readSlugList(params, 'occasion', errors),
     sizes: readLabelList(params, 'size', errors),
-    minPrice: readNumber(params, 'minPrice', 0, MAX_PRICE_VALUE, errors),
-    maxPrice: readNumber(params, 'maxPrice', 0, MAX_PRICE_VALUE, errors),
+    // `NormaliseMoney` rounds to two decimals away from zero; a negative price is rejected above, so
+    // half-up is the same thing here. Rating and discount are deliberately **not** rounded, because the
+    // real one does not round them either.
+    minPrice: roundMoney(readNumber(params, 'minPrice', 0, MAX_PRICE_VALUE, errors)),
+    maxPrice: roundMoney(readNumber(params, 'maxPrice', 0, MAX_PRICE_VALUE, errors)),
     minRating: readNumber(params, 'minRating', 0, 5, errors),
     minDiscountPercent: readNumber(params, 'minDiscountPercent', 0, 100, errors),
     inStock: readBoolean(params, 'inStock', errors) ?? false,
@@ -660,8 +716,8 @@ function resolveFilters(query) {
         field: 'category',
         message:
           departmentSlugs.length > 1
-            ? `The category '${query.category}' exists in more than one department. Add ` +
-              `department=${departmentSlugs.join(' or department=')}.`
+            ? `The category '${query.category}' exists in more than one department. ` +
+              `Add ${describeChoices(departmentSlugs)}.`
             : `The category '${query.category}' names ${matches.length} active categories in ` +
               `department=${departmentSlugs[0]}, so naming the department does not tell them apart. ` +
               'The duplicate slugs have to be corrected in the catalogue.',
@@ -670,6 +726,22 @@ function resolveFilters(query) {
   }
 
   return { department: department ?? { slug: matches[0].departmentSlug }, category: matches[0].node };
+}
+
+/**
+ * `ProductCatalogReader.DescribeChoices`: "department=a", then "department=a or department=b", then
+ * "department=a, department=b or department=c" from three upwards.
+ *
+ * Unreachable today — `jeans` is the only slug shared between departments and it is shared by two — but
+ * the version this replaces was `join(' or department=')`, which would have produced "a or b or c" for
+ * three and been wrong without anything going red.
+ */
+function describeChoices(departmentSlugs) {
+  const choices = departmentSlugs.map((slug) => `department=${slug}`);
+
+  return choices.length === 1
+    ? choices[0]
+    : `${choices.slice(0, -1).join(', ')} or ${choices[choices.length - 1]}`;
 }
 
 /** Walks a category tree, visiting every node at every depth. */
@@ -688,10 +760,16 @@ function slugify(value) {
 /**
  * Whether one corpus entry survives the filters.
  *
- * The stub holds no size or age-group data, so those two filters match nothing — which is also what
- * the real API answers for a slug or a label it cannot resolve (`MatchesNothing`). Said here rather
- * than left to be discovered, because a filter that silently does nothing is the thing this file was
- * failed for.
+ * **Size is a real predicate** over real labels (see {@link attributesFor}). The first version of this
+ * answered nothing for every size and justified it as "the same as the real API's answer for a value it
+ * cannot resolve" — which is true of an *unresolvable* label and false of `size=M`, which the real
+ * catalogue resolves and which 21 seeded products carry. The search page's panel offers size
+ * checkboxes, so that stub showed no results where production shows products.
+ *
+ * **Age group still excludes everything, and that one is genuine parity rather than a gap.** Every
+ * product in this corpus is in the Women department, and a Women product carries `AgeGroupSlug = null`
+ * in the real schema — only the Kids tree uses the four seeded groups. So an age-group filter matches
+ * none of them in production either.
  */
 function matchesFilters(entry, query, resolved) {
   const { card } = entry;
@@ -714,7 +792,16 @@ function matchesFilters(entry, query, resolved) {
   if (query.occasions.length > 0 && !query.occasions.includes(slugify(entry.attributes.occasion))) {
     return false;
   }
-  if (query.sizes.length > 0 || query.ageGroups.length > 0) {
+  if (
+    query.sizes.length > 0 &&
+    !query.sizes.some((label) =>
+      entry.attributes.sizes.some((size) => size.toLowerCase() === label.toLowerCase()),
+    )
+  ) {
+    return false;
+  }
+  // See the docblock: a Women product carries no age group in the real schema either.
+  if (query.ageGroups.length > 0) {
     return false;
   }
   if (query.minPrice !== null && card.price.current < query.minPrice) {

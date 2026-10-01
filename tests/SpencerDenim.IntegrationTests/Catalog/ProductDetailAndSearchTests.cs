@@ -503,6 +503,118 @@ public sealed class ProductDetailAndSearchTests(SqlServerDatabaseFixture sqlServ
         Assert.True(body.GetProperty("errors").TryGetProperty("page", out _));
     }
 
+    /// <summary>
+    /// The two different messages a rejected whole number gets, and which one depends on whether
+    /// <c>int.TryParse</c> succeeded rather than on whether the number was in range.
+    ///
+    /// <para>
+    /// Pinned here because the browser suite's stub mirrors these strings, and a mirror nobody checks
+    /// is a mirror that drifts: the stub answered "must be between 1 and 1000" for a value that
+    /// overflows an <c>int</c>, where this answers "must be a whole number". The pair of them is the
+    /// whole point — one message for "that is not an integer", another for "that integer is too big".
+    /// </para>
+    /// </summary>
+    [Theory]
+    [InlineData("page", "2147483648", "whole number")]
+    [InlineData("page", "99999999999999999999", "whole number")]
+    [InlineData("page", "1.5", "whole number")]
+    [InlineData("page", "0", "must be between")]
+    [InlineData("page", "-3", "must be between")]
+    [InlineData("pageSize", "2147483648", "whole number")]
+    [InlineData("pageSize", "100000", "must be between")]
+    public async Task A_rejected_whole_number_says_which_kind_of_wrong_it_was(
+        string field,
+        string value,
+        string expected)
+    {
+        var api = CreateApi();
+
+        var (status, body) = await api.GetRawAsync($"/api/catalog/search?q=linen&{field}={value}", Token);
+
+        Assert.Equal(HttpStatusCode.BadRequest, status);
+        var messages = body.GetProperty("errors").GetProperty(field).EnumerateArray()
+            .Select(message => message.GetString() ?? string.Empty)
+            .ToList();
+        Assert.Contains(messages, message => message.Contains(expected, StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// A trailing decimal point is a number.
+    ///
+    /// <para>
+    /// <c>decimal.TryParse</c> with <c>AllowDecimalPoint</c> accepts <c>"5."</c> and <c>".5"</c>, so a
+    /// shopper or a hand-built link writing either gets a filter rather than a 400. The browser stub
+    /// rejected <c>"5."</c>, which is the opposite of this, and this is the measurement that settled it.
+    /// A group separator is still refused, because it means different things in different locales.
+    /// </para>
+    /// </summary>
+    [Theory]
+    [InlineData("5.")]
+    [InlineData(".5")]
+    [InlineData("5.0")]
+    public async Task A_price_written_with_a_bare_decimal_point_is_accepted(string price)
+    {
+        var api = CreateApi();
+
+        var (status, _) = await api.GetStatusAsync($"/api/catalog/search?q=linen&minPrice={price}", Token);
+
+        Assert.Equal(HttpStatusCode.OK, status);
+    }
+
+    [Theory]
+    [InlineData("1,000")]
+    [InlineData(".")]
+    public async Task A_price_that_is_not_a_number_is_a_400_naming_it(string price)
+    {
+        var api = CreateApi();
+
+        var (status, body) = await api.GetRawAsync($"/api/catalog/search?q=linen&minPrice={price}", Token);
+
+        Assert.Equal(HttpStatusCode.BadRequest, status);
+        Assert.True(body.GetProperty("errors").TryGetProperty("minPrice", out _));
+    }
+
+    /// <summary>
+    /// A size label resolves and **narrows**, which is the measurement the browser stub was wrong about:
+    /// it answered nothing for every size and called that parity with "a value it cannot resolve".
+    ///
+    /// <para>
+    /// The pair matters more than either half. <c>size=M</c> narrows a shirt search and empties a jeans
+    /// search, because jeans are on the Women waist scale and <c>M</c> is on the Alpha scale — so "a
+    /// size filter returns nothing" is sometimes right, and a stub cannot be excused for returning
+    /// nothing *always* on the grounds that it is sometimes right.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task A_size_filter_narrows_a_search_rather_than_emptying_it()
+    {
+        var api = CreateApi();
+
+        var all = await api.SearchAsync("?q=shirt&pageSize=96", Token);
+        var medium = await api.SearchAsync("?q=shirt&size=M&pageSize=96", Token);
+
+        Assert.True(all.Results.TotalCount > 0, "the search itself has to match something");
+        Assert.True(
+            medium.Results.TotalCount > 0,
+            "size=M is a label the catalogue resolves for shirts, so it must not empty the results");
+        Assert.True(medium.Results.TotalCount < all.Results.TotalCount, "and it has to narrow them");
+    }
+
+    /// <summary>The other half: a label from a scale the matched products are not on empties the page.</summary>
+    [Fact]
+    public async Task A_size_from_another_scale_empties_the_search()
+    {
+        var api = CreateApi();
+
+        var jeans = await api.SearchAsync("?q=jeans&pageSize=96", Token);
+        var alpha = await api.SearchAsync("?q=jeans&size=M&pageSize=96", Token);
+        var waist = await api.SearchAsync("?q=jeans&size=30&pageSize=96", Token);
+
+        Assert.True(jeans.Results.TotalCount > 0);
+        Assert.Equal(0, alpha.Results.TotalCount);
+        Assert.True(waist.Results.TotalCount > 0, "jeans are on the waist scale");
+    }
+
     /// <summary>Two thousand characters, as a constant because an attribute argument must be one.</summary>
     private const string TwoThousandXs =
         "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" +
