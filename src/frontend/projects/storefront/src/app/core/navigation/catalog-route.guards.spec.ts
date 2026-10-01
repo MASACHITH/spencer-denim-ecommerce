@@ -107,11 +107,24 @@ describe('the catalogue verdict on a URL', () => {
       expect(categoryVerdict(FALLBACK_TREE, url('/women/coats'))).toBe('unconfirmed');
     });
 
-    it('cannot say a department it has never heard of is gone either (ADM-11 adds those too)', () => {
+    /**
+     * These two are about the verdict only, and the route table deliberately does **not** act on
+     * either of them: an unknown *department* goes to the home page during an outage exactly as it
+     * did before #30. A first pass did route them, and `:department` turned out to be the whole
+     * catch-all surface of the site — `/checkout`, `/login`, the locale prefixes, `/assets/...` and
+     * `/api/...` all answered 503 while the feed was unhealthy. `isUnconfirmedCatalogue` therefore
+     * requires a department the tree already holds, which overrides the second verdict below.
+     *
+     * The functions keep the honest answer because the question will be asked again: W1-12 (ADM-11)
+     * makes departments addable, and the case then wants an allow-list — a 503 only for a first
+     * segment the live tree would plausibly own — built beside the thing that creates departments.
+     * Until then, read `app.routes.ts` for what is actually served, not these two expectations.
+     */
+    it('will not call an unheard-of department gone, though nothing routes on that yet', () => {
       expect(departmentVerdict(FALLBACK_TREE, url('/accessories'))).toBe('unconfirmed');
     });
 
-    it('cannot say a category under an unknown department is gone', () => {
+    it('will not call a category under an unknown department gone (overridden by the guard)', () => {
       expect(categoryVerdict(FALLBACK_TREE, url('/accessories/belts'))).toBe('unconfirmed');
     });
 

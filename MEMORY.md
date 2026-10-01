@@ -122,8 +122,9 @@ Another session then started the **admin** application on 4430; its dev server a
 200, Playwright's `reuseExistingServer` reused it, and the suite ran against the admin panel — the
 touch-target test failed reporting "Try again" missing from a page that was never the storefront. The
 pair moved to **4432/4433** and is the only one in the config with `reuseExistingServer: false`, so a
-stranger on the port is a bind error naming it rather than a silent pass. **The other ten pairs still
-carry `reuseExistingServer: !process.env['CI']` and have the same hazard.** Doc 14 already says a port
+stranger on the port is a bind error naming it rather than a silent pass. **The other five pairs still
+carry `reuseExistingServer: !process.env['CI']` and have the same hazard** (the config holds twelve
+`webServer` entries, so six pairs; ten of the twelve entries keep `!CI`). Doc 14 already says a port
 that answers is not proof that it is yours; this is what it looks like.
 
 **Numbers:** frontend 21 / **502** (+42) / 131; Playwright **256** (+43); backend **772 unit**, 0
