@@ -655,9 +655,23 @@ public sealed class MediaService(
                         cancellationToken);
                     break;
 
+                case MediaUsageOwnerTypes.HomeSectionItem:
+                    // The tile's own heading is what an operator looks for on the homepage admin screen;
+                    // a department tile has no heading of its own, so it borrows the department's name.
+                    await AddLabelsAsync(
+                        labels,
+                        group.Key,
+                        dbContext.HomeSectionItems.AsNoTracking()
+                            .Where(item => ids.Contains(item.Id))
+                            .Select(item => new LabelRow(
+                                item.Id,
+                                item.Title ?? item.Department!.Name ?? "Homepage block")),
+                        cancellationToken);
+                    break;
+
                 default:
-                    // SizeGuide, HomeSectionItem, Setting, ContentPage … : their tables arrive with later
-                    // milestones, and a missing label is a display fallback, not a failure.
+                    // SizeGuide, Setting, ContentPage … : their tables arrive with later milestones, and
+                    // a missing label is a display fallback, not a failure.
                     break;
             }
         }

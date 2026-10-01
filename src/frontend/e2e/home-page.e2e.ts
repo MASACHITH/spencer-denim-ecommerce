@@ -247,6 +247,57 @@ test.describe('the hero (HOME-01)', () => {
   });
 });
 
+/**
+ * Every block that sizes itself with `aspect-ratio` fills the box it was given.
+ *
+ * <b>This is a measurement, not a reading of the stylesheet.</b> Three rules on this page set an
+ * `aspect-ratio` and a `max-height` and no width — the hero, the two feature banners and the
+ * department tiles' media frame — and for an auto-width box CSS transfers that max-height through
+ * the ratio and makes it a **max-width**: 880 x 16/9 = 1564 px for the hero, 720 x 21/9 = 1680 px
+ * for a banner, 420 x 4/5 = 336 px for a tile. So the hero stopped 333 px short of the right-hand
+ * edge at 1920 and each banner 217 px, and a department tile's photograph stopped short of its own
+ * tile at every width below 768 px — 336 of 343 at 375, 336 of 358 at 390.
+ *
+ * Nothing saw any of it. The five artwork sections were seeded switched off, so no page had ever
+ * drawn a hero or a banner, the department tiles had no photographs in them, and every test here
+ * asked whether an element existed rather than how wide it was. The selector lists all three rules
+ * and the count is asserted, so a fourth one added without a width, or one of these renamed, fails
+ * here rather than on a screen.
+ */
+test.describe('blocks sized by aspect-ratio (HOME-01, HOME-02, HOME-05, HOME-06)', () => {
+  /** The three rules a codebase sweep found, and nothing else sets both properties. */
+  const SIZED_BY_RATIO = '.hero, .banner, .tile__media';
+
+  for (const width of BREAKPOINTS) {
+    test(`${width}px: each one fills the box it was given`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto('/');
+      await hydrated(page);
+
+      const measured = await page.evaluate((selector) => {
+        return [...document.querySelectorAll(selector)].map((element) => ({
+          name: element.className,
+          width: Math.round(element.getBoundingClientRect().width),
+          // The parent's *content* box, not its border box: the department tile has a 1 px border,
+          // so its border box is 2 px wider than the space its media frame is actually given.
+          available: element.parentElement!.clientWidth,
+        }));
+      }, SIZED_BY_RATIO);
+
+      // The hero, two banners and three department tiles: six on **the stub's** homepage, which
+      // enables every block. The real page after the W1-13 import has four, because the hero and the
+      // activewear banner are held back by their artwork — so this number tracks the stub, and has to
+      // move if the stub is ever made to mirror that. A rule that disappears must fail here rather
+      // than leave the suite measuring nothing.
+      expect(measured).toHaveLength(6);
+
+      for (const block of measured) {
+        expect(block.width, `${block.name} at ${width}px`).toBe(block.available);
+      }
+    });
+  }
+});
+
 test.describe('the trending tiles (HOME-04)', () => {
   test('each card opens the matching filtered listing', async ({ page }) => {
     await page.goto('/');

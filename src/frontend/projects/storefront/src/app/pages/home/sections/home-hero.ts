@@ -132,7 +132,14 @@ import { Viewport } from '../../../core/platform/viewport';
       position: relative;
       /* docs/04 §4: 4:5 on phones, 16:9 from 768 px, capped at 880 px on very wide screens. The
          box is fixed either way, so swapping the still for the video after hydration moves
-         nothing. */
+         nothing.
+
+         The explicit width below is load-bearing, not decoration. With an *auto* width, a
+         definite max-height transfers through aspect-ratio and becomes a max-width — 880 x 16/9 =
+         1564.44 px — so a full-bleed hero stopped 333 px short of the right-hand edge at 1920 and
+         left a white band down the side of the page. An explicit width makes the width definite,
+         and max-height then does only the job it was written for: capping the height. */
+      width: 100%;
       aspect-ratio: 4 / 5;
       max-height: 880px;
       background: var(--color-bg-alt);

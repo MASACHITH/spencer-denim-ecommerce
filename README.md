@@ -141,6 +141,74 @@ A seeded database holds 3 departments, 29 categories, 4 age groups, 19 attribute
 149 media assets and 135 related-product links. Prices are LKR placeholders until the client sends
 the real price list; images are placeholder storage keys (the upload pipeline is W1-04).
 
+### 2b. The client's photographs, video and logo
+
+The delivered assets are imported by a verb on the API, which never starts Kestrel and so binds no
+port. It reuses the API's own composition root — the configured media volumes and their startup
+validation, the real `IMediaService`, the database — and **every byte goes through the media
+pipeline**, so each file gets the same signature check, EXIF stripping, WebP rendition set, checksum
+deduplication and usage tracking as an admin upload.
+
+```powershell
+# What would happen, without storing anything: resolves every filename against the real catalogue
+dotnet run --project src/backend/SpencerDenim.Api --no-launch-profile -- `
+  import-client-assets --from <path-to-the-drop> --dry-run
+
+# Do it
+dotnet run --project src/backend/SpencerDenim.Api --no-launch-profile -- `
+  import-client-assets --from <path-to-the-drop>
+
+# The client sent a corrected photograph: overwrite the slot it belongs in
+dotnet run --project src/backend/SpencerDenim.Api --no-launch-profile -- `
+  import-client-assets --from <path-to-the-drop> --replace
+```
+
+The drop holds `logo/`, `products/`, `departments/`, `home/` and `social/`, named as the client
+checklist describes (`<product-slug>-1.jpg` is the card image and `-2.jpg` the hover image;
+`women|men|kids.jpg`; `hero.mp4` + `hero-poster.jpg`, `campaign.jpg`, `activewear.jpg`,
+`trending-N.jpg`; `social-N.jpg`).
+
+It is **safe to run again** — the second run stores nothing and writes no row — and it **fails
+loudly**: the whole run is one transaction, so a refusal anywhere — or a Ctrl+C — rolls back every
+row before it and deletes the files it had written, and the report says what to fix. Every filename
+the importer had to repair is printed.
+
+| Exit | Meaning |
+|---|---|
+| 0 | the drop landed |
+| 1 | the command line was wrong |
+| 2 | the import failed and was rolled back |
+| 3 | it completed, but files were deliberately not applied (see below) |
+| 4 | the operator interrupted it; everything was rolled back |
+
+A slot that already holds **a picture somebody chose** is not overwritten: those files are listed
+under *NOT APPLIED*, the command exits **3**, and `--replace` is what applies them. A slot holding
+one of the demo placeholders is filled either way, because a placeholder was never a choice.
+
+Two files carrying **the same photograph** deduplicate to one asset in the library, and
+`catalog.ProductMedia` holds one photograph per product once — so the second is reported under *ONE
+PICTURE, TWO FILES* and shares the first one's gallery row. Both slots still point at it.
+
+`--dry-run` resolves identity the same way the real run does (by SHA-256), so a plan and a run agree
+about where every file lands. It cannot say whether a file would be *refused* — signature, size and
+codec are only known by decoding it.
+
+The five media-dependent homepage sections are switched on only once they have media to show — and
+a picture that does not fit the slot its filename claims keeps its section off until a different
+one is delivered (`ClientAssetHolds`).
+
+> **An interrupted run leaves one file set behind.** Ctrl+C rolls every row back and deletes the files
+> of every upload that had finished, but the one that was still running when the interrupt arrived
+> cannot be identified without sweeping the asset table — and an admin upload on another connection
+> would be swept up with it, so it is left alone. At most one asset's worth, with no row pointing at
+> it. The report says so.
+
+> **Re-running repairs rows, not files.** The library deduplicates by checksum, so an import run
+> against a database that still has its rows reports `[AlreadyPresent]` and writes nothing —
+> including when the media volume underneath has been lost or wiped, in which case the storefront
+> shows broken images and the import will not put them back. A lost volume needs a restore from
+> backup, or the asset rows deleting first so the files are written again.
+
 ### 3. Run the API
 
 ```powershell

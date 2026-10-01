@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using SpencerDenim.Application.Media;
 using SpencerDenim.Application.Media.Abstractions;
+using SpencerDenim.Application.Media.ClientAssets;
 using SpencerDenim.Domain.Media;
 
 namespace SpencerDenim.Infrastructure.Media;
@@ -62,6 +63,11 @@ public static class MediaRegistration
         services.AddScoped<IPublicMediaFiles, PublicMediaFiles>();
 
         services.AddScoped<DemoMediaPlaceholderGenerator>();
+
+        // W1-13: the client's delivered photographs, video and logo. Scoped, like everything else that
+        // writes through the pipeline, and resolved once per run of the import verb.
+        services.AddSingleton(ClientAssets.ClientAssetHolds.Default);
+        services.AddScoped<IClientAssetImporter, ClientAssets.ClientAssetImporter>();
 
         return services;
     }

@@ -110,7 +110,13 @@ const TILE_SIZES =
     .tile__media {
       display: block;
       /* The same 4:5 frame whether or not there is a photograph, so nothing moves the day the
-         client uploads one (W1-04). */
+         client uploads one (W1-04).
+
+         The explicit width is load-bearing, exactly as it is on the hero and the banners: with an
+         auto width a definite max-height transfers through aspect-ratio and becomes a max-width
+         (420 x 4/5 = 336 px), so the photograph stopped short of its own tile — 336 of 343 at
+         375 px, 336 of 358 at 390 px, and further still between 422 and 767 px. */
+      width: 100%;
       aspect-ratio: 4 / 5;
       max-height: 420px;
       overflow: hidden;

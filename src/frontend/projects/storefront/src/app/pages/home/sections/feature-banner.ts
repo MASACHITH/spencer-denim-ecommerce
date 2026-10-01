@@ -74,6 +74,10 @@ import { toLink } from '../../../core/content/home-sections';
     }
     .banner {
       position: relative;
+      /* An explicit width, for the reason the hero carries one: with an auto width a definite
+         max-height transfers through aspect-ratio into a max-width (720 x 21/9 = 1680 px), and
+         both banners stopped 217 px short of the right-hand edge at 1920. */
+      width: 100%;
       aspect-ratio: 4 / 5;
       max-height: 720px;
       overflow: hidden;
