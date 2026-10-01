@@ -137,6 +137,65 @@ public sealed class SizeGuideTableTests
     }
 
     /// <summary>
+    /// An unpaired surrogate — the one input that does not fail inside the reader at all.
+    /// <para>
+    /// <c>JsonDocument.Parse(string)</c> transcodes UTF-16 to UTF-8 <b>before</b> it parses, and
+    /// transcoding a lone surrogate throws <see cref="ArgumentException"/>, not
+    /// <see cref="JsonException"/> — so a catch written for malformed JSON never saw it. Every other
+    /// case in this class fails after the text has been decoded, which is exactly why none of them
+    /// could find this one.
+    /// </para>
+    /// <para>
+    /// <b>And <c>ISJSON</c> accepts it</b>, both as a raw <c>NCHAR(0xD800)</c> and as the
+    /// <c>\uD800</c> escape, so the check constraint is not the guard it looks like. One character
+    /// pasted out of a word processor was an HTTP 500 on <i>every</i> product page inheriting that
+    /// guide, while the listings carried on answering 200 — the shop looking healthy with its product
+    /// pages gone.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void An_unpaired_surrogate_is_no_table_rather_than_an_exception()
+    {
+        const char loneHigh = '\uD800';
+        const char loneLow = '\uDC00';
+
+        // Raw lone surrogates: inside a header, inside a cell, trailing the document, and alone.
+        string[] raw =
+        [
+            $"{{\"columns\":[\"Si{loneHigh}ze\"],\"rows\":[[\"S\"]]}}",
+            $"{{\"columns\":[\"Size\"],\"rows\":[[\"S{loneLow}\"]]}}",
+            $"{{\"columns\":[\"Size\"],\"rows\":[[\"S\"]]}}{loneHigh}",
+            loneLow.ToString(),
+            $"{loneHigh}{loneHigh}",
+        ];
+
+        foreach (var tableJson in raw)
+        {
+            Assert.Null(SizeGuideTable.Parse(tableJson));
+        }
+
+        // The escaped form is six ordinary characters in the column, so it transcodes and parses
+        // perfectly and then throws when the string is *unescaped* — an InvalidOperationException from
+        // inside the walk, not from Parse. A different place, a different exception type, and the same
+        // HTTP 500, so it needs its own cases.
+        //
+        // A bad header takes the table, because a column cannot be left unnamed.
+        Assert.Null(SizeGuideTable.Parse("""{"columns":["\uD800"],"rows":[["S"]]}"""));
+
+        // A bad property name must not throw either, whatever it resolves to.
+        Assert.Null(SizeGuideTable.Parse("""{"col\uD800umns":["Size"],"rows":[["S"]]}"""));
+
+        // A bad *cell* costs only that cell: the measurements either side of it still reach the shopper.
+        var survivor = SizeGuideTable.Parse(
+            """{"columns":["Size","Chest","Waist"],"rows":[["S","\uDC00","74-79"],["M","94-99","80-85"]]}""");
+
+        Assert.NotNull(survivor);
+        Assert.Equal(["Size", "Chest", "Waist"], survivor.Columns);
+        Assert.Equal(["S", "", "74-79"], survivor.Rows[0]);
+        Assert.Equal(["M", "94-99", "80-85"], survivor.Rows[1]);
+    }
+
+    /// <summary>
     /// The real seeded value, read from <c>CatalogReferenceData</c> rather than copied, so editing a
     /// seeded guide into a shape this cannot read fails here and not on a shopper's screen.
     /// </summary>

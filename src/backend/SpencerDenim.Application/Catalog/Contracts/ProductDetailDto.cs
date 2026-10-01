@@ -103,17 +103,20 @@ public sealed record SizeGuideTableDto(
 /// It is <see langword="null"/> on <see cref="SizeGuideRefDto"/> when the guide holds nothing a
 /// shopper could read — every field empty, or a <c>TableJson</c> that is <c>{}</c> or unparseable.
 /// A guide with a name and no measurements is not worth a button, and the storefront's
-/// <c>hasSizeGuideContent</c> is the single condition that decides it, so "nothing to show" has to
-/// arrive as an absence rather than as four empty fields.
+/// <c>hasSizeGuideContent</c> is the single condition that decides it, so "nothing to show" has to be
+/// sayable in one check rather than inferred from four empty fields. (It is serialised as
+/// <c>"content": null</c>, a present key with a null value, which is what <c>hasSizeGuideContent</c>
+/// tests.)
 /// </para>
 /// </summary>
 /// <param name="IntroHtml">
-/// <b>Sanitised HTML</b>, exactly like <c>Products.Description</c> (doc 08 §3.2): the client renders
-/// it as markup. This API neither escapes nor sanitises it on the way out — see the type remarks on
-/// <see cref="SizeGuideRefDto"/> for what actually guarantees it is safe.
+/// <b>Rendered as markup by the client, and not sanitised by anything on the way out.</b> The
+/// intention is the same contract <c>Products.Description</c> carries, but doc 08 §3.2 does not
+/// actually mark this column sanitised — see the type remarks on <see cref="SizeGuideRefDto"/> for
+/// what holds today and what is owed before ADM-11.
 /// </param>
 /// <param name="Table">The measurement grid, or <see langword="null"/> when there is no usable one.</param>
-/// <param name="MeasuringTipsHtml">Sanitised HTML, on the same terms as <paramref name="IntroHtml"/>.</param>
+/// <param name="MeasuringTipsHtml">Markup, on exactly the same terms as <paramref name="IntroHtml"/>.</param>
 /// <param name="ImageUrl">
 /// A measuring diagram, or <see langword="null"/>. Only ever set for an asset that is
 /// <c>Ready</c> — a row still processing, or one whose processing failed, has no file behind it, so
@@ -141,17 +144,35 @@ public sealed record SizeGuideContentDto(
 /// HTML, and is cached and invalidated by whatever caches the product payload.
 /// </para>
 /// <para>
-/// <b>What makes <paramref name="Content"/>'s HTML safe, stated plainly because two of its fields are
-/// rendered as markup.</b> Three things hold and one is owed. (1) The columns are specified as
-/// sanitised HTML (doc 08 §3.2), the same contract <c>Products.Description</c> has carried since
-/// W1-02. (2) The only writer today is <c>CatalogReferenceData</c>, whose three guides are plain
-/// sentences with no markup at all, so nothing unsanitised can be in the table. (3) The storefront
-/// binds both fields through <c>[innerHTML]</c>, which puts them through Angular's
-/// <c>SecurityContext.HTML</c> sanitiser — scripts, event handlers and <c>javascript:</c> URLs are
-/// stripped whatever reaches it. What is owed is inbound sanitisation on the admin write path, which
-/// does not exist yet (ADM-11): the day an admin can type into these fields, that path has to
-/// sanitise, because (2) stops being true and (3) protects only the one client that happens to use
-/// Angular.
+/// <b>What makes <paramref name="Content"/>'s HTML safe, and what does not — stated plainly because
+/// two of its fields are meant to be rendered as markup, and because a safety argument whose premises
+/// are checkable and wrong is worse than no argument at all.</b>
+/// </para>
+/// <para>
+/// <b>Exactly one thing holds today: the only writer is the seeder.</b>
+/// <c>CatalogReferenceData</c>'s three guides are plain sentences the seeder wraps in
+/// <c>&lt;p&gt;</c>, there is no admin write path for a size guide yet (ADM-11), and no other code
+/// writes these columns. Nothing unsanitised can be in the table on any database this code has run
+/// against.
+/// </para>
+/// <para>
+/// <b>Two things that sound like guarantees and are not.</b> First, <i>doc 08 does not document these
+/// columns as sanitised.</i> §3.2's <c>catalog.SizeGuides</c> table leaves the Notes blank for
+/// <c>IntroHtml</c> and <c>MeasuringTipsHtml</c>; "Sanitised HTML" appears against
+/// <c>Products.Description</c> and not here, so citing the document for these two fields would be
+/// citing something it does not say. Second, <i>no client sanitises them yet</i>: nothing in the
+/// storefront renders either field today, so the <c>[innerHTML]</c> defence
+/// (Angular's <c>SecurityContext.HTML</c>, which strips scripts, event handlers and
+/// <c>javascript:</c> URLs) is a defence that will exist when the PDP-04 modal body is built, not one
+/// that exists now. It is also second-line by nature: it protects the one client that happens to be
+/// Angular and says nothing about an admin preview, a native app or an export.
+/// </para>
+/// <para>
+/// <b>So inbound sanitisation is owed before ADM-11 ships, not after.</b> The moment an admin can type
+/// into these two columns the single premise above stops being true, and there is nothing behind it:
+/// there is no HTML sanitiser anywhere in this backend today. ADM-11 has to add one on the write path,
+/// and doc 08 §3.2 should mark both columns "Sanitised HTML" so the contract is written where the next
+/// person looks for it. Tracked, with the measurements, in <b>issue #70</b>.
 /// </para>
 /// </summary>
 /// <param name="Content">

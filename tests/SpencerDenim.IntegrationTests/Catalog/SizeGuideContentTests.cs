@@ -181,6 +181,64 @@ public sealed class SizeGuideContentTests(SqlServerDatabaseFixture sqlServer) : 
     }
 
     /// <summary>
+    /// An unpaired surrogate, written <b>through a live <c>ISJSON</c></b> — which is the finding. The
+    /// constraint accepts it, so this is not a corrupted-backup scenario: it is one character an admin
+    /// can paste out of a word processor, and it used to be HTTP 500 on every product page inheriting
+    /// the guide while the listings carried on answering 200.
+    /// <para>
+    /// Both forms, because they break in different places: the raw <c>NCHAR(0xD800)</c> fails
+    /// transcoding inside <c>JsonDocument.Parse</c>, and the <c>\uD800</c> escape parses and then fails
+    /// when the string is unescaped, further down. Each one is a different exception type from a
+    /// different call.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task An_unpaired_surrogate_in_the_table_is_not_a_500_on_every_product_page()
+    {
+        var api = CreateApi();
+        var original = await ReadGuideAsync(WomensGuide);
+        var guideId = original.Id;
+
+        try
+        {
+            // `where` is built separately on purpose: the C# compiler folds "literal" + $"interpolated"
+            // into a single interpolated string, which would make every `{` in the JSON below a format
+            // placeholder.
+            var where = " WHERE Id = " + guideId.ToString(CultureInfo.InvariantCulture) + ";";
+
+            // The UPDATE itself is half the finding: it runs with CK_SizeGuides_TableJson in force, so
+            // ISJSON is no guard here. It would throw if the constraint rejected the value.
+            await ExecuteAsync(
+                "UPDATE catalog.SizeGuides SET IntroHtml = N'<p>Still useful.</p>', MeasuringTipsHtml = NULL, "
+                + "TableJson = N'{\"columns\":[\"Si' + NCHAR(0xD800) + N'ze\"],\"rows\":[[\"S\"]]}'"
+                + where);
+
+            var product = await api.GetProductAsync(Shirt, Token);
+
+            Assert.Null(product.SizeGuide?.Content?.Table);
+            Assert.Equal("<p>Still useful.</p>", product.SizeGuide?.Content?.IntroHtml);
+
+            // The escaped form, in a cell: it costs that cell and nothing else.
+            await ExecuteAsync(
+                "UPDATE catalog.SizeGuides SET TableJson = "
+                + "N'{\"columns\":[\"Size\",\"Bust\"],\"rows\":[[\"S\",\"\\uDC00\"],[\"M\",\"88-93\"]]}'"
+                + where);
+
+            var escaped = await api.GetProductAsync(Shirt, Token);
+            var table = escaped.SizeGuide?.Content?.Table;
+
+            Assert.NotNull(table);
+            Assert.Equal(["Size", "Bust"], table.Columns);
+            Assert.Equal(["S", ""], table.Rows[0]);
+            Assert.Equal(["M", "88-93"], table.Rows[1]);
+        }
+        finally
+        {
+            await RestoreGuideAsync(original);
+        }
+    }
+
+    /// <summary>
     /// Text that is not JSON at all cannot be written through <c>ISJSON</c>, so the constraint is
     /// switched off for the length of the test — which is the only way to prove the reader survives a
     /// database somebody has restored or edited around the check.
@@ -513,13 +571,30 @@ public sealed class SizeGuideContentTests(SqlServerDatabaseFixture sqlServer) : 
         await dbContext.SaveChangesAsync(Token);
     }
 
+    /// <summary>
+    /// One statement, on a plain <see cref="System.Data.Common.DbCommand"/> rather than through
+    /// <c>ExecuteSqlRawAsync</c>.
+    /// <para>
+    /// <c>ExecuteSqlRaw</c> runs the SQL through positional-placeholder substitution, so every
+    /// <c>{</c> in a statement that writes JSON is read as a format placeholder: the surrogate test
+    /// failed with <i>"Failure to parse near offset 108. Expected an ASCII digit"</i> before the
+    /// database was ever reached. Doubling the braces would have worked and would have made every
+    /// statement here a transcription puzzle.
+    /// </para>
+    /// </summary>
     private async Task ExecuteAsync(string sql)
     {
         using var scope = SqlServer.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var connection = dbContext.Database.GetDbConnection();
 
-#pragma warning disable EF1002 // Every value interpolated into these statements is an int or a literal.
-        await dbContext.Database.ExecuteSqlRawAsync(sql, Token);
-#pragma warning restore EF1002
+        if (connection.State != System.Data.ConnectionState.Open)
+        {
+            await connection.OpenAsync(Token);
+        }
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        await command.ExecuteNonQueryAsync(Token);
     }
 }

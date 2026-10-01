@@ -662,8 +662,8 @@ internal sealed class ProductCatalogReader(
     /// when the guide holds nothing a shopper could read. That is the shape the storefront's
     /// <c>hasSizeGuideContent</c> was written against — it is the one condition that unhides the
     /// trigger, and a guide with a name and no measurements is deliberately not worth a button — so
-    /// "there is nothing to show" has to be expressible, and an absence says it in fewer bytes than
-    /// four nulls do.
+    /// "there is nothing to show" has to be one check rather than four. It goes on the wire as
+    /// <c>"content": null</c>: a present key with a null value, not an omitted one.
     /// </para>
     /// </summary>
     private SizeGuideRefDto? ToSizeGuide(SizeGuideRow? guide)
