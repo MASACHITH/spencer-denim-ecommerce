@@ -9,11 +9,27 @@ namespace SpencerDenim.Domain.Catalog;
 /// </summary>
 public sealed class Department : IAuditable
 {
+    private string _slug = string.Empty;
+
     public int Id { get; set; }
 
     public string Name { get; set; } = string.Empty;
 
-    public string Slug { get; set; } = string.Empty;
+    /// <summary>
+    /// Storefront URL is <c>/{slug}</c>.
+    /// <para>
+    /// Guarded by <see cref="CatalogSlug"/> for the same reason <see cref="Product.Slug"/> is: the
+    /// department page refuses a URL that is not a slug, so a row that is not one is a department the
+    /// mega menu links to and nobody can open. EF reads and writes the backing field, so existing rows
+    /// still materialise; only a write goes through the check. W1-12 added the guard because W1-12 added
+    /// the write path — before it, only the seeder could set this column.
+    /// </para>
+    /// </summary>
+    public string Slug
+    {
+        get => _slug;
+        set => _slug = CatalogSlug.Require(value, nameof(Slug));
+    }
 
     public string? Description { get; set; }
 

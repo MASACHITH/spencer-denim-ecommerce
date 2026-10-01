@@ -11,7 +11,14 @@ internal sealed class DepartmentConfiguration : IEntityTypeConfiguration<Departm
     {
         ArgumentNullException.ThrowIfNull(builder);
 
-        builder.ToTable("Departments", AppDbContext.CatalogSchema);
+        builder.ToTable(
+            "Departments",
+            AppDbContext.CatalogSchema,
+
+            // W1-12: see CategoryConfiguration and CatalogSlugConstraint. A department slug is the first
+            // segment of every listing URL in its department, so an unspellable one takes a third of the
+            // shop with it.
+            table => table.HasCheckConstraint("CK_Departments_Slug", CatalogSlugConstraint.For("Slug")));
 
         builder.HasKey(department => department.Id);
 

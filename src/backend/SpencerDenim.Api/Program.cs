@@ -80,6 +80,7 @@ app.MapAdminTwoFactorEndpoints();
 app.MapAuditLogEndpoints();
 
 app.MapCatalogEndpoints();
+app.MapAdminCatalogEndpoints();
 app.MapContentEndpoints();
 app.MapAdminMediaEndpoints();
 app.MapMediaFileEndpoints();

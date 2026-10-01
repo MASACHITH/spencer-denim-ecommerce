@@ -59,6 +59,14 @@ public sealed class AdminTwoFactorCommandHandlerTests
             Entries.Add(entry);
             return Task.CompletedTask;
         }
+
+        /// <summary>
+        /// W1-12 added this to the port for use cases that have their own save to commit (issue #59). These
+        /// sign-in and account use cases have nothing else to write, so they still call
+        /// <see cref="WriteAsync"/>; recording into the same list keeps that fact visible rather than
+        /// hiding an accidental switch behind a second collection nobody asserts on.
+        /// </summary>
+        public void Enlist(AuditLog entry) => Entries.Add(entry);
     }
 
     private static readonly IClock Clock = new FixedClock(new DateTimeOffset(2026, 9, 29, 12, 0, 0, TimeSpan.Zero));

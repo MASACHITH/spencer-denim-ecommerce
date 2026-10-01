@@ -463,6 +463,8 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                             t.HasCheckConstraint("CK_Categories_MegaMenuColumn", "[MegaMenuColumn] IS NULL OR [MegaMenuColumn] BETWEEN 1 AND 4");
 
                             t.HasCheckConstraint("CK_Categories_NotOwnParent", "[ParentCategoryId] IS NULL OR [ParentCategoryId] <> [Id]");
+
+                            t.HasCheckConstraint("CK_Categories_Slug", "[Slug] COLLATE Latin1_General_100_BIN2 NOT LIKE '%[^a-z0-9-]%' AND [Slug] NOT LIKE '-%' AND [Slug] NOT LIKE '%-' AND [Slug] NOT LIKE '%--%' AND DATALENGTH([Slug]) > 0");
                         });
                 });
 
@@ -578,7 +580,10 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                         .IsUnique()
                         .HasDatabaseName("UX_Departments_Slug");
 
-                    b.ToTable("Departments", "catalog");
+                    b.ToTable("Departments", "catalog", t =>
+                        {
+                            t.HasCheckConstraint("CK_Departments_Slug", "[Slug] COLLATE Latin1_General_100_BIN2 NOT LIKE '%[^a-z0-9-]%' AND [Slug] NOT LIKE '-%' AND [Slug] NOT LIKE '%-' AND [Slug] NOT LIKE '%--%' AND DATALENGTH([Slug]) > 0");
+                        });
                 });
 
             modelBuilder.Entity("SpencerDenim.Domain.Catalog.Product", b =>

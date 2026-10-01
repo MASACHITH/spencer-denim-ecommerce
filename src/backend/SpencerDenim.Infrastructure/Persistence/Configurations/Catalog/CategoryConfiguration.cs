@@ -21,6 +21,10 @@ internal sealed class CategoryConfiguration : IEntityTypeConfiguration<Category>
                     "CK_Categories_MegaMenuColumn",
                     "[MegaMenuColumn] IS NULL OR [MegaMenuColumn] BETWEEN 1 AND 4");
                 table.HasCheckConstraint("CK_Categories_NotOwnParent", "[ParentCategoryId] IS NULL OR [ParentCategoryId] <> [Id]");
+
+                // W1-12: the category tree got a write path, so the slug rule gets a constraint — see
+                // CatalogSlugConstraint, and W1-03's CK_Products_Slug for the same argument about products.
+                table.HasCheckConstraint("CK_Categories_Slug", CatalogSlugConstraint.For("Slug"));
             });
 
         builder.HasKey(category => category.Id);

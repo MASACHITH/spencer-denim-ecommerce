@@ -55,4 +55,32 @@ public sealed class CatalogSlugTests
         // The rejected write leaves the product as it was, rather than half-applied.
         Assert.Equal("poplin-formal-shirt", product.Slug);
     }
+
+    /// <summary>
+    /// W1-12's half of the W1-02 follow-up. Until ADM-11 these two columns had no write path, so the guard
+    /// was only ever on <see cref="Product.Slug"/>; a category or department whose slug is not a slug is the
+    /// same defect one level up — the mega menu links to a listing whose own URL answers 400.
+    /// </summary>
+    [Fact]
+    public void A_category_cannot_be_given_a_slug_its_own_listing_would_refuse()
+    {
+        var category = new Category { Slug = "denim-jackets" };
+
+        var exception = Assert.Throws<ArgumentException>(() => category.Slug = "Denim Jackets");
+
+        Assert.Equal("Slug", exception.ParamName);
+        Assert.Equal("denim-jackets", category.Slug);
+    }
+
+    /// <inheritdoc cref="A_category_cannot_be_given_a_slug_its_own_listing_would_refuse"/>
+    [Fact]
+    public void A_department_cannot_be_given_a_slug_its_own_page_would_refuse()
+    {
+        var department = new Department { Slug = "women" };
+
+        var exception = Assert.Throws<ArgumentException>(() => department.Slug = "women/clothing");
+
+        Assert.Equal("Slug", exception.ParamName);
+        Assert.Equal("women", department.Slug);
+    }
 }
