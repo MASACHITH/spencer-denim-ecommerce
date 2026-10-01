@@ -1,3 +1,6 @@
+import { createHash } from 'node:crypto';
+import { resolve } from 'node:path';
+
 import { defineConfig, devices } from '@playwright/test';
 
 /**
@@ -100,7 +103,28 @@ export const LIVE_ONLY_LISTING = '/women/coats';
  * same-origin, so one process serves `dist/admin` and answers `/api/admin/*`. See
  * `e2e/support/admin-catalog-stub.mjs` for why it is a stub and what it refuses.
  */
-const ADMIN_PORT = Number(process.env['E2E_ADMIN_PORT'] ?? 4430);
+/**
+ * A port of its own per worktree, derived from the worktree's path.
+ *
+ * **Why, concretely.** `reuseExistingServer` is on outside CI, so a fixed port means a server another
+ * worktree started answers this run's requests — serving that worktree's `dist/admin` against this one's
+ * tests. It cost this branch a run of 113 failures before it was understood, and the size-guide branch
+ * learned the same lesson on this same port number. A derived port cannot collide by accident, and
+ * `E2E_ADMIN_PORT` still overrides it for anyone who wants a fixed one.
+ *
+ * The band starts at 4500 so it cannot drift into 4420–4429, which the storefront servers above hold.
+ * Those are fixed and shared, and this is not the task that changes them — but they have the same hazard,
+ * and whoever hits it next should move them the same way rather than re-deriving the diagnosis.
+ */
+function portForThisWorktree(base: number): number {
+  // `__dirname` rather than `import.meta.dirname`: Playwright loads this config as CommonJS, where
+  // `import.meta` is a syntax error. The worktree root is two levels above `src/frontend`.
+  const digest = createHash('sha256').update(resolve(__dirname, '..', '..')).digest();
+
+  return base + ((digest[0] << 8) | digest[1]) % 60;
+}
+
+const ADMIN_PORT = Number(process.env['E2E_ADMIN_PORT'] ?? portForThisWorktree(4500));
 
 export const adminURL = `http://localhost:${ADMIN_PORT}`;
 

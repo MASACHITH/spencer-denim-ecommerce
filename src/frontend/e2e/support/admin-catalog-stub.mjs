@@ -12,11 +12,22 @@
  * predictable shape; the endpoint behaviour itself is proved against a real SQL Server in
  * `AdminCatalogEndpointTests` and `AdminDeactivationEffectTests`.
  *
- * **It is deliberately not more polite than the real API.** It answers the same field names
- * (`SpencerDenim.Application.Catalog.Admin.Contracts`), the same statuses, and the same RFC 9457 bodies with
- * a `code` beside the sentence — including the two refusals that matter: a stale sibling list is a 409
- * `stale_order` and a category something points at is a 409 `category_in_use`. A stub that said 200 to
- * everything would let a screen that ignores failures pass.
+ * **It is deliberately not more polite than the real API**, and fix round 1 made that true rather than
+ * merely claimed. It answers the same field names (`SpencerDenim.Application.Catalog.Admin.Contracts`), the
+ * same statuses and the same RFC 9457 bodies with a `code` beside the sentence, and it enforces the four
+ * refusals a screen can actually get wrong:
+ *
+ * - no `X-XSRF-TOKEN` on a mutating request is a 400, as all eight real write routes answer;
+ * - a missing or stale row version is a 409 `stale_row_version` on the five routes that take one, and a
+ *   successful write moves the row version, so a screen that re-sent a stale token would be caught;
+ * - a sibling list that is not the set the server holds is a 409 `stale_order`;
+ * - a category something still points at is a 409 `category_in_use`.
+ *
+ * The first two were missing, and the consequence was precise: if the screen had stopped sending the
+ * antiforgery header or the row version, all 246 browser tests would still have passed.
+ *
+ * `PUT /categories/{id}` also honours `parentCategoryId` and re-paths the subtree, so re-parenting — the
+ * largest thing this screen does — has browser coverage at all.
  */
 import { readFileSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
@@ -51,9 +62,33 @@ const SESSION = {
   twoFactorRequired: false,
 };
 
+/** The token this stub issues; a mutating request has to carry it, as the real API requires. */
+const ANTIFORGERY_TOKEN = 'e2e-antiforgery-token';
+
 /** `rowversion` is eight bytes; the shape matters because the screen round-trips it untouched. */
 function rowVersion(seed) {
   return Buffer.from([0, 0, 0, 0, 0, 0, 0, seed]).toString('base64');
+}
+
+/** Moves a row version on, so a token a screen cached before a write is genuinely stale afterwards. */
+let rowVersionTick = 200;
+
+function nextRowVersion() {
+  rowVersionTick += 1;
+  return rowVersion(rowVersionTick);
+}
+
+/**
+ * The row version the caller is working from: `If-Match` if it sent one, otherwise the body's own field —
+ * the same order `AdminWriteRequest.RowVersion` reads them in, quotes and all.
+ */
+function suppliedRowVersion(request, body) {
+  const header = request.headers['if-match'];
+  if (typeof header === 'string' && header.trim().length > 0) {
+    return header.trim().replace(/^W\//i, '').replace(/^"|"$/g, '');
+  }
+
+  return body && typeof body.rowVersion === 'string' ? body.rowVersion : null;
 }
 
 function department(id, name, slug, sortOrder, isActive, categoryCount, productCount) {
@@ -62,7 +97,10 @@ function department(id, name, slug, sortOrder, isActive, categoryCount, productC
     name,
     slug,
     description: `${name} description.`,
-    heroImageAssetId: null,
+
+    // Not null, so a save that drops the field cannot round-trip null to null unnoticed — the shape of the
+    // fix-round-1 blocker.
+    heroImageAssetId: 41,
     sortOrder,
     isActive,
     seoTitle: `${name} | Colombo Wardrobe`,
@@ -225,6 +263,31 @@ function findSiblings(state, departmentId, parentCategoryId) {
   return parent ? parent.children : null;
 }
 
+/**
+ * The real API's optimistic-concurrency check: the caller's token has to be the row's current one, and a
+ * missing one is refused too (a client that sent none cannot have seen the row). Returns true when the
+ * request may go ahead; otherwise it has already answered.
+ */
+function rowVersionOk(response, request, body, row) {
+  const supplied = suppliedRowVersion(request, body);
+
+  if (supplied === row.rowVersion) {
+    return true;
+  }
+
+  problem(
+    response,
+    409,
+    'This change cannot be applied',
+    supplied === null
+      ? 'This request did not carry the current version of the row, so it cannot be applied safely.'
+      : 'Somebody else changed this while you were editing it. Reload the page to see their change.',
+    'stale_row_version',
+  );
+
+  return false;
+}
+
 /** The server's own guard: the list sent must be exactly the sibling set, or nothing is applied. */
 function applyOrder(response, siblings, requested) {
   const actual = siblings.map((node) => node.id);
@@ -266,13 +329,28 @@ const server = createServer(async (request, response) => {
 
   const state = stateFor(request);
 
+  // Every mutating route on the real API validates the antiforgery token by hand and answers a readable
+  // 400 when it is missing. Without this the screen could stop sending the header and every browser test
+  // would still pass.
+  if (request.method !== 'GET' && path.startsWith('/api/')) {
+    if (request.headers['x-xsrf-token'] !== ANTIFORGERY_TOKEN) {
+      return problem(
+        response,
+        400,
+        'Missing antiforgery token',
+        'Send the antiforgery token in the X-XSRF-TOKEN header.',
+        'invalid_antiforgery_token',
+      );
+    }
+  }
+
   // ---- auth ---------------------------------------------------------------------------------
   if (path === '/api/admin/auth/whoami') {
     return json(response, 200, SESSION);
   }
 
   if (path === '/api/admin/auth/antiforgery-token') {
-    return json(response, 200, { token: 'e2e-antiforgery-token' });
+    return json(response, 200, { token: ANTIFORGERY_TOKEN });
   }
 
   if (path === '/api/admin/auth/logout') {
@@ -327,6 +405,20 @@ const server = createServer(async (request, response) => {
         .filter((child) => child.isActive)
         .reduce((total, child) => total + child.primaryProductCount, 0),
       examples: node.primaryProductCount > 0 ? ['Linen shift dress', 'Cotton midi dress'] : [],
+    });
+  }
+
+  if (path === '/api/admin/catalog/category-form-options' && request.method === 'GET') {
+    return json(response, 200, {
+      ageGroups: [
+        { id: 1, name: 'Baby' },
+        { id: 2, name: 'Toddler' },
+        { id: 3, name: 'Kids' },
+      ],
+      sizeGuides: [
+        { id: 2, name: "Women's clothing" },
+        { id: 5, name: "Kids' clothing" },
+      ],
     });
   }
 
@@ -415,7 +507,12 @@ const server = createServer(async (request, response) => {
       return problem(response, 404, 'Not found', 'No such category.', 'not_found');
     }
 
+    if (!rowVersionOk(response, request, body, node)) {
+      return undefined;
+    }
+
     node.isActive = body.isActive;
+    node.rowVersion = nextRowVersion();
     return noContent(response);
   }
 
@@ -428,7 +525,12 @@ const server = createServer(async (request, response) => {
       return problem(response, 404, 'Not found', 'No such department.', 'not_found');
     }
 
+    if (!rowVersionOk(response, request, body, found)) {
+      return undefined;
+    }
+
     found.isActive = body.isActive;
+    found.rowVersion = nextRowVersion();
     return noContent(response);
   }
 
@@ -443,6 +545,10 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === 'DELETE') {
+      if (!rowVersionOk(response, request, null, node)) {
+        return undefined;
+      }
+
       // Doc 08 §3.2's guard, not a cascade — the refusal the screen has to be able to show.
       if (node.children.length > 0 || node.productCount > 0) {
         return problem(
@@ -485,8 +591,74 @@ const server = createServer(async (request, response) => {
       });
     }
 
+    if (!rowVersionOk(response, request, body, node)) {
+      return undefined;
+    }
+
+    const newParentId = body.parentCategoryId ?? null;
+    if (newParentId !== node.parentCategoryId) {
+      // The move: the subtree is re-pathed and re-levelled, as the real use case does in one transaction.
+      // Without this the largest thing the screen does had no browser coverage at all.
+      const newParent =
+        newParentId === null ? null : all.find((candidate) => candidate.id === newParentId);
+
+      if (newParentId !== null && !newParent) {
+        return json(response, 400, {
+          type: 'about:blank',
+          title: 'One or more fields are invalid.',
+          status: 400,
+          errors: { parentCategoryId: [`No category has the id ${newParentId}.`] },
+        });
+      }
+
+      if (newParent && newParent.path.startsWith(node.path)) {
+        return json(response, 400, {
+          type: 'about:blank',
+          title: 'One or more fields are invalid.',
+          status: 400,
+          errors: {
+            parentCategoryId: [
+              `'${newParent.name}' is inside '${node.name}', so moving it there would make the tree a loop.`,
+            ],
+          },
+        });
+      }
+
+      const oldSiblings = findSiblings(state, node.departmentId, node.parentCategoryId);
+      oldSiblings.splice(
+        oldSiblings.findIndex((candidate) => candidate.id === id),
+        1,
+      );
+
+      const oldPath = node.path;
+      const newPath = newParent ? `${newParent.path}${id}/` : `/${id}/`;
+
+      for (const descendant of [node, ...flatten(node.children)]) {
+        descendant.path = newPath + descendant.path.slice(oldPath.length);
+        descendant.depth = descendant.path.split('/').filter(Boolean).length;
+      }
+
+      node.parentCategoryId = newParentId;
+
+      const newSiblings = newParent ? newParent.children : (state.categories[node.departmentId] ??= []);
+      node.sortOrder = newSiblings.length;
+      newSiblings.push(node);
+    }
+
     node.name = body.name;
     node.slug = body.slug;
+    node.description = body.description ?? null;
+    node.imageAssetId = body.imageAssetId ?? null;
+    node.bannerAssetId = body.bannerAssetId ?? null;
+    node.bannerLinkUrl = body.bannerLinkUrl ?? null;
+    node.ageGroupId = body.ageGroupId ?? null;
+    node.sizeGuideId = body.sizeGuideId ?? null;
+    node.showInMegaMenu = body.showInMegaMenu ?? true;
+    node.megaMenuColumn = body.megaMenuColumn ?? null;
+    node.seoTitle = body.seoTitle ?? null;
+    node.seoDescription = body.seoDescription ?? null;
+    node.rowVersion = nextRowVersion();
+
     return noContent(response);
   }
 
@@ -503,8 +675,17 @@ const server = createServer(async (request, response) => {
       return problem(response, 400, 'Malformed JSON', 'The request body is not valid JSON.', 'malformed_json');
     }
 
-    found.name = body.name;
+    if (!rowVersionOk(response, request, body, found)) {
+      return undefined;
+    }
+
+    // The name and the slug are not editable at all (owner, 2026-10-02), so the stub ignores them exactly
+    // as the real request DTO does — it has no field for either.
     found.description = body.description ?? null;
+    found.heroImageAssetId = body.heroImageAssetId ?? null;
+    found.seoTitle = body.seoTitle ?? null;
+    found.seoDescription = body.seoDescription ?? null;
+    found.rowVersion = nextRowVersion();
     return noContent(response);
   }
 

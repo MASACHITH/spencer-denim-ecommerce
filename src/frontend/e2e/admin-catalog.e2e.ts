@@ -238,6 +238,52 @@ test.describe('reordering', () => {
   });
 });
 
+test.describe('editing a department', () => {
+  /**
+   * The owner made the name and the URL read-only (2026-10-02, confirming doc 11 P1 step 1): a department
+   * slug is the first segment of every listing URL in its department and redirects are deferred.
+   */
+  test('offers no name and no URL to type into', async ({ page }) => {
+    await page.getByTestId('dept-edit-1').click();
+    await expect(page.getByTestId('dept-field-description')).toBeVisible();
+
+    await expect(page.getByTestId('dept-field-name')).toHaveCount(0);
+    await expect(page.getByTestId('dept-field-slug')).toHaveCount(0);
+    await expect(page.getByRole('form').or(page.locator('.depts__form'))).toContainText(
+      'The name and the URL of a department are fixed',
+    );
+  });
+
+  /**
+   * The fix-round-1 blocker, in a browser: the form has no hero-image picker, so it has to carry the value
+   * it loaded. A `PUT` replaces the row, so a body that omits the field tells the API to clear it — and the
+   * audit row would record a member of staff wiping an image they never touched.
+   */
+  test('a save carries the hero image it has no picker for', async ({ page }) => {
+    await page.getByTestId('dept-edit-1').click();
+    await page.getByTestId('dept-field-description').fill('Edited by the browser suite.');
+
+    const [saved] = await Promise.all([
+      page.waitForResponse(
+        (response) =>
+          response.url().endsWith('/api/admin/catalog/departments/1') &&
+          response.request().method() === 'PUT',
+      ),
+      page.getByTestId('dept-save').click(),
+    ]);
+
+    expect(saved.status()).toBe(204);
+
+    const body = saved.request().postDataJSON();
+    expect(body.heroImageAssetId).toBe(41);
+    expect(body.description).toBe('Edited by the browser suite.');
+
+    // And nothing in the body can move the two read-only columns.
+    expect(body).not.toHaveProperty('name');
+    expect(body).not.toHaveProperty('slug');
+  });
+});
+
 test.describe('hiding and removing', () => {
   /**
    * Doc 08 §7.1: `IsActive` is the one switch that takes a section off the shop, so the numbers appear
@@ -328,6 +374,93 @@ test.describe('creating and editing', () => {
     await expect(page.getByTestId('field-slug')).toHaveAttribute('aria-invalid', 'true');
   });
 
+  /**
+   * The largest thing this screen does, and until fix round 1 it had no browser coverage at all: the stub's
+   * `PUT /categories/{id}` wrote only the name and the slug and ignored `parentCategoryId`.
+   */
+  test('moves a category to another parent and re-paths its subtree', async ({ page }) => {
+    const levels = () =>
+      page
+        .locator('li.tree__item')
+        .evaluateAll((items) =>
+          items.map((item) => `${item.getAttribute('data-testid')}@${item.getAttribute('aria-level')}`),
+        );
+
+    expect(await levels()).toEqual([
+      'category-10@1',
+      'category-11@2',
+      'category-12@2',
+      'category-20@1',
+      'category-30@1',
+      'category-40@1',
+    ]);
+
+    await page.getByTestId('edit-11').click();
+    await page.getByTestId('field-parent').selectOption({ label: 'Jeans' });
+
+    const [saved] = await Promise.all([
+      page.waitForResponse(
+        (response) =>
+          response.url().endsWith('/api/admin/catalog/categories/11') &&
+          response.request().method() === 'PUT',
+      ),
+      page.getByTestId('save-category').click(),
+    ]);
+
+    expect(saved.status()).toBe(204);
+    expect(saved.request().postDataJSON().parentCategoryId).toBe(20);
+
+    // Midi dresses is now under Jeans, at level 2, and Dresses has one child left.
+    await expect(page.getByTestId('category-11')).toContainText('under Jeans');
+    expect(await levels()).toEqual([
+      'category-10@1',
+      'category-12@2',
+      'category-20@1',
+      'category-11@2',
+      'category-30@1',
+      'category-40@1',
+    ]);
+  });
+
+  /**
+   * The screen's own writes carry the antiforgery header and the row version. The stub refuses a request
+   * without either, exactly as the real API does, so these two prove the screen really sends them — before
+   * fix round 1 the stub ignored both and the screen could have stopped sending them unnoticed.
+   */
+  test('a write that reached the server without the antiforgery header would be refused', async ({
+    page,
+  }) => {
+    const refused = await page.evaluate(async () => {
+      const response = await fetch('/api/admin/catalog/departments/order', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderedDepartmentIds: [1, 2, 3] }),
+      });
+
+      return { status: response.status, body: await response.json() };
+    });
+
+    expect(refused.status).toBe(400);
+    expect(refused.body.code).toBe('invalid_antiforgery_token');
+  });
+
+  test('a write that reached the server with a stale row version would be refused', async ({ page }) => {
+    const refused = await page.evaluate(async () => {
+      const token = await (await fetch('/api/admin/auth/antiforgery-token')).json();
+
+      const response = await fetch('/api/admin/catalog/categories/10/active', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'X-XSRF-TOKEN': token.token },
+        body: JSON.stringify({ isActive: false, rowVersion: 'AAAAAAAAAAA=' }),
+      });
+
+      return { status: response.status, body: await response.json() };
+    });
+
+    expect(refused.status).toBe(409);
+    expect(refused.body.code).toBe('stale_row_version');
+  });
+
   test('the parent list never offers a category its own descendant', async ({ page }) => {
     await page.getByTestId('edit-10').click();
 
@@ -357,20 +490,35 @@ test.describe('layout', () => {
   }
 
   /**
-   * And it still does not when every panel on the page is open at once — the row of action buttons, an edit
-   * form, a confirmation panel and the staged-order warning together are the widest the screen ever gets,
-   * and the narrow widths are where a six-button row stops fitting.
+   * And it still does not with the widest arrangement the screen can actually reach.
+   *
+   * The first version of this claimed "every panel open at once", which is not reachable: opening a
+   * confirmation closes the edit form and opening the edit form closes the confirmation — `startEdit` and
+   * `startToggle` each clear the other. So there are two reachable worst cases, and both are measured: the
+   * staged-order warning with the edit form open (the widest form row plus the warning), and the
+   * staged-order warning with a deactivation panel open (the longest prose on the page).
    */
   for (const width of [320, 375, 390, 768]) {
-    test(`${width}px: it does not scroll sideways with a form and a confirmation open`, async ({
+    test(`${width}px: it does not scroll sideways with the staged warning and the edit form open`, async ({
       page,
     }) => {
       await page.setViewportSize({ width, height: 900 });
 
       await page.getByTestId('move-down-10').click();
       await page.getByTestId('edit-20').click();
-      await page.getByTestId('toggle-30').click();
-      await expect(page.getByTestId('confirm-panel')).toBeVisible();
+      await expect(page.getByTestId('field-slug')).toBeVisible();
+
+      expect(await horizontalOverflow(page)).toBe(0);
+    });
+
+    test(`${width}px: it does not scroll sideways with the staged warning and a deactivation panel open`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width, height: 900 });
+
+      await page.getByTestId('move-down-10').click();
+      await page.getByTestId('toggle-10').click();
+      await expect(page.getByTestId('confirm-panel')).toContainText('will disappear from listings');
 
       expect(await horizontalOverflow(page)).toBe(0);
     });
@@ -431,9 +579,13 @@ test.describe('layout', () => {
     await page.setViewportSize({ width: 1280, height: 900 });
     await expect(page.getByTestId('category-10')).toBeVisible();
 
-    // Walk forward until a reorder button has focus, so "Tab gets you there" is measured, not assumed.
-    const reached = await page.evaluate(() => document.body.contains(document.activeElement));
-    expect(reached).toBe(true);
+    // Start from the top of the document, so what is measured is a walk from the beginning of the page and
+    // not from wherever a previous action happened to leave focus.
+    //
+    // There was an assertion here that `document.body.contains(document.activeElement)` — which is true on
+    // any page, including a blank one, because `document.body` contains `document.body`. It is gone; the
+    // loop below is the measurement, and the throw at the end is what makes it able to fail.
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
 
     for (let step = 0; step < 60; step++) {
       await page.keyboard.press('Tab');
