@@ -3,7 +3,16 @@ using SpencerDenim.Domain.Content;
 namespace SpencerDenim.Infrastructure.Media.ClientAssets;
 
 /// <summary>A picture that does not fit the slot its filename claims, and the section it keeps off.</summary>
-/// <param name="Section">The homepage block the import will not switch on while this picture fills it.</param>
+/// <param name="Section">
+/// The homepage block the import will not switch on while this picture fills it.
+/// <para>
+/// <b>The hold is about this picture in this slot, not about these bytes everywhere.</b> The same file
+/// delivered under a different contract name would fill that other slot and would not be held — which is
+/// the intended reading, because the judgement recorded here is "this is not an activewear photograph
+/// and the activewear slot says it is", not "nobody may ever use this picture". A reader looking for a
+/// quarantine will not find one.
+/// </para>
+/// </param>
 /// <param name="Reason">
 /// What is wrong with it, in words the operator and the client can both act on. It is printed in the
 /// import report and nowhere else, so it has to say what would have to change.

@@ -284,8 +284,11 @@ test.describe('blocks sized by aspect-ratio (HOME-01, HOME-02, HOME-05, HOME-06)
         }));
       }, SIZED_BY_RATIO);
 
-      // The hero, two banners and three department tiles: six on the stub's homepage. A rule that
-      // disappears must fail here rather than leave the suite measuring nothing.
+      // The hero, two banners and three department tiles: six on **the stub's** homepage, which
+      // enables every block. The real page after the W1-13 import has four, because the hero and the
+      // activewear banner are held back by their artwork — so this number tracks the stub, and has to
+      // move if the stub is ever made to mirror that. A rule that disappears must fail here rather
+      // than leave the suite measuring nothing.
       expect(measured).toHaveLength(6);
 
       for (const block of measured) {

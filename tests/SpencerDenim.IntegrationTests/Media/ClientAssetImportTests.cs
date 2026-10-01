@@ -655,6 +655,291 @@ public sealed class ClientAssetImportTests(SqlServerDatabaseFixture sqlServer)
         Assert.Equal(slugs.Count, slugs.ToHashSet(StringComparer.OrdinalIgnoreCase).Count);
     }
 
+
+    /// <summary>
+    /// Two files carrying the same photograph do not crash the import.
+    /// <para>
+    /// <c>catalog.ProductMedia</c>'s unique index is <c>(ProductId, MediaAssetId, ProductColourId)</c>.
+    /// The library deduplicates by checksum, so two byte-identical files are <b>one</b> asset — and a
+    /// slot key of (product, role, sort order) happily asked for it to be inserted twice. SQL Server
+    /// refused the second row and the import died: <c>Cannot insert duplicate key row … The duplicate
+    /// key value is (37, 198, &lt;NULL&gt;)</c>, on the plain documented command with no flags.
+    /// </para>
+    /// <para>
+    /// One photograph fills one gallery row, both pointers name it, and the report says which file it
+    /// is the same as — because a drop that sends one picture twice is usually a mistake somebody wants
+    /// to know about.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task Two_files_carrying_the_same_photograph_fill_one_gallery_row_and_say_so()
+    {
+        await using var world = await CreateAsync();
+
+        var picture = TestImages.UniqueJpeg(1024, 1024);
+        await world.Drop("products", "chino-shorts-1.jpg.jpg", picture, Token);
+        await world.Drop("products", "chino-shorts-2.jpg.jpg", picture, Token);
+        await world.DropTheHomeAsync(Token);
+
+        var report = await world.ImportAsync(Token);
+
+        Assert.True(report.Succeeded, string.Join("; ", report.Failures));
+
+        var same = Assert.Single(report.SamePictures);
+        Assert.Equal("chino-shorts-2.jpg.jpg", same.FileName);
+        Assert.Contains("chino-shorts-1.jpg.jpg", same.Detail, StringComparison.Ordinal);
+
+        await using var scope = world.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var product = await ProductAsync(dbContext, "chino-shorts");
+
+        // One row, and the card and hover both name the one asset the two files became.
+        var rows = await dbContext.ProductMedia
+            .Where(row => row.ProductId == product.Id && row.SortOrder < 0)
+            .ToListAsync(Token);
+
+        var row = Assert.Single(rows);
+        Assert.Equal(product.CardImageAssetId, row.MediaAssetId);
+        Assert.Equal(product.CardImageAssetId, product.HoverImageAssetId);
+
+        // And a second run still writes nothing: the outcome is stable, not alternating.
+        var again = await world.ImportAsync(Token);
+        Assert.True(again.Succeeded, string.Join("; ", again.Failures));
+        Assert.Equal(0, again.Count(ClientAssetOutcome.Imported));
+        Assert.Single(again.SamePictures);
+    }
+
+    /// <summary>
+    /// The same input under <c>--replace</c>, where a drop sends one photograph for two roles. It used
+    /// to hit the same index from the replace branch instead of the insert branch.
+    /// </summary>
+    [Fact]
+    public async Task One_photograph_for_two_roles_survives_replace_as_well()
+    {
+        await using var world = await CreateAsync();
+
+        await world.Drop("products", "chino-shorts-1.jpg.jpg", TestImages.UniqueJpeg(1024, 1024), Token);
+        await world.Drop("products", "chino-shorts-2.jpg.jpg", TestImages.UniqueJpeg(1024, 1024), Token);
+        await world.DropTheHomeAsync(Token);
+        Assert.True((await world.ImportAsync(Token)).Succeeded);
+
+        // Now the client re-sends one picture under both names.
+        var corrected = TestImages.UniqueJpeg(1024, 1024);
+        await world.Drop("products", "chino-shorts-1.jpg.jpg", corrected, Token);
+        await world.Drop("products", "chino-shorts-2.jpg.jpg", corrected, Token);
+
+        var report = await world.ImportAsync(Token, replace: true);
+
+        Assert.True(report.Succeeded, string.Join("; ", report.Failures));
+        Assert.Single(report.SamePictures);
+
+        await using var scope = world.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var product = await ProductAsync(dbContext, "chino-shorts");
+
+        var rows = await dbContext.ProductMedia
+            .Where(row => row.ProductId == product.Id && row.SortOrder < 0)
+            .ToListAsync(Token);
+
+        Assert.Single(rows);
+    }
+
+    /// <summary>
+    /// A dry run tells the operator what the real run will do.
+    /// <para>
+    /// It used to report the duplicate-photograph drop above as a clean green plan, exit 0, and then the
+    /// real run crashed on it — so somebody who checked first was told it was fine. The plan resolves
+    /// identity the same way the pipeline does, by SHA-256 over the same bytes, so the two agree by
+    /// construction rather than by coincidence.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task A_dry_run_predicts_what_the_real_run_does()
+    {
+        await using var world = await CreateAsync();
+
+        var picture = TestImages.UniqueJpeg(1024, 1024);
+        await world.Drop("products", "chino-shorts-1.jpg.jpg", picture, Token);
+        await world.Drop("products", "chino-shorts-2.jpg.jpg", picture, Token);
+        await world.DropTheHomeAsync(Token);
+
+        var planned = await world.ImportAsync(Token, dryRun: true);
+        var real = await world.ImportAsync(Token);
+
+        Assert.True(planned.Succeeded, string.Join("; ", planned.Failures));
+        Assert.True(real.Succeeded, string.Join("; ", real.Failures));
+
+        // The plan named the same file as the duplicate, not just the same count.
+        Assert.Equal(
+            planned.SamePictures.Select(entry => entry.FileName).Order(StringComparer.Ordinal),
+            real.SamePictures.Select(entry => entry.FileName).Order(StringComparer.Ordinal));
+
+        Assert.Equal(
+            planned.Count(ClientAssetOutcome.SamePicture),
+            real.Count(ClientAssetOutcome.SamePicture));
+    }
+
+    /// <summary>
+    /// A dry run that finds a slot already taken says so, instead of promising the file will land.
+    /// </summary>
+    [Fact]
+    public async Task A_dry_run_predicts_a_conflict_the_real_run_would_report()
+    {
+        await using var world = await CreateAsync();
+        await world.DropTheUsualAsync(TheDeliveredShapes, Token);
+        Assert.True((await world.ImportAsync(Token)).Succeeded);
+
+        await world.Drop("products", "washed-linen-camp-shirt-1.jpg.jpg", TestImages.UniqueJpeg(1024, 1024), Token);
+
+        var planned = await world.ImportAsync(Token, dryRun: true);
+        var real = await world.ImportAsync(Token);
+
+        Assert.Contains(planned.Conflicts, entry => entry.FileName == "washed-linen-camp-shirt-1.jpg.jpg");
+        Assert.Equal(
+            planned.Conflicts.Select(entry => entry.FileName).Order(StringComparer.Ordinal),
+            real.Conflicts.Select(entry => entry.FileName).Order(StringComparer.Ordinal));
+    }
+
+    /// <summary>
+    /// A dry run writes nothing at all — not a row, not a file — even now that it walks the same
+    /// placement logic as the real run against the same tracked entities.
+    /// </summary>
+    [Fact]
+    public async Task A_dry_run_against_the_real_rows_still_writes_nothing()
+    {
+        await using var world = await CreateAsync();
+        await world.DropTheUsualAsync(TheDeliveredShapes, Token);
+
+        var before = await CountsAsync(world);
+        var filesBefore = world.PublicFiles();
+
+        var report = await world.ImportAsync(Token, dryRun: true);
+
+        Assert.True(report.Succeeded, string.Join("; ", report.Failures));
+        Assert.Equal(before, await CountsAsync(world));
+        Assert.Equal(filesBefore, world.PublicFiles());
+
+        Assert.All(
+            await EnabledAsync(world, ArtworkSections),
+            state => Assert.False(state.IsEnabled, state.Type.ToString()));
+    }
+
+    /// <summary>
+    /// A rolled-back run leaves the <b>hero poster's</b> files behind too.
+    /// <para>
+    /// <c>UploadVideoAsync</c> stores the poster as a second asset that never surfaces as its own
+    /// outcome, so a discard list built from the outcomes could not see it: a failing run left the
+    /// database perfect and the volume five files heavier — one original and four renditions, with no
+    /// row anywhere. The list is a diff of the asset table now, which cannot miss an asset however it
+    /// came to exist.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task A_rollback_removes_the_hero_posters_files_as_well_as_the_videos()
+    {
+        await using var world = await CreateAsync();
+        await world.DropTheUsualAsync(TheDeliveredShapes, Token);
+
+        // The hero itself must SUCCEED — a refused video has its poster rolled back by the pipeline, so
+        // it never reaches the state this is about. The run fails afterwards instead, on a social tile
+        // the pipeline will not take, leaving the video and its poster both created and both orphaned.
+        await world.Drop("social", "social-1.jpg.jpg", "#!/bin/sh echo not an image"u8.ToArray(), Token);
+
+        var filesBefore = world.PublicFiles();
+        var report = await world.ImportAsync(Token);
+
+        Assert.False(report.Succeeded);
+        Assert.Contains(report.Failures, failure => failure.Contains("social-1", StringComparison.Ordinal));
+
+        // The hero really was stored before the failure, so this is not a vacuous assertion.
+        Assert.Contains(
+            report.Entries,
+            entry => entry.FileName == "hero.mp4" && entry.Outcome == ClientAssetOutcome.Imported);
+
+        Assert.Equal(filesBefore, world.PublicFiles());
+    }
+
+
+    /// <summary>
+    /// Ctrl+C rolls the run back and takes its files with it.
+    /// <para>
+    /// The catch filter used to exclude <see cref="OperationCanceledException"/>, so the rows went (the
+    /// transaction disposes) and every file written before the interrupt stayed — a few hundred of them
+    /// — and the exception then left the command as a stack trace with an exit code outside the
+    /// documented set.
+    /// </para>
+    /// <para>
+    /// The interrupt is fired by the storage adapter at a known file rather than on a timer: a test that
+    /// races the clock passes or fails on how fast the machine is, which is not a property of the code.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task An_interrupted_run_rolls_back_and_removes_the_files_it_had_written()
+    {
+        using var interrupt = new CancellationTokenSource();
+
+        await using var world = await ClientAssetWorld.CreateAsync(
+            sqlServer.ConnectionString,
+            withPlaceholderFiles: false,
+            Token,
+            holds: null,
+            decorateStorage: inner => new InterruptAfter(inner, writes: 12, interrupt));
+
+        await world.DropTheUsualAsync(TheDeliveredShapes, Token);
+
+        var before = await CountsAsync(world);
+        var filesBefore = world.PublicFiles();
+
+        var report = await world.ImportAsync(interrupt.Token);
+
+        Assert.True(report.Cancelled);
+        Assert.False(report.Succeeded);
+        Assert.Contains(report.Failures, failure => failure.Contains("cancelled", StringComparison.OrdinalIgnoreCase));
+
+        // Files really had been written before the interrupt, so this is not a vacuous assertion.
+        Assert.Equal(before, await CountsAsync(world));
+        Assert.Equal(filesBefore, world.PublicFiles());
+
+        var sections = await EnabledAsync(world, ArtworkSections);
+        Assert.All(sections, state => Assert.False(state.IsEnabled, state.Type.ToString()));
+    }
+
+    /// <summary>Storage that pulls the plug once a given number of files have been written.</summary>
+    private sealed class InterruptAfter(IFileStorage inner, int writes, CancellationTokenSource interrupt)
+        : IFileStorage
+    {
+        private int _written;
+
+        public bool IsConfigured => inner.IsConfigured;
+
+        public async Task<StoredFileInfo> WriteAsync(
+            string storageKey,
+            Stream content,
+            CancellationToken cancellationToken)
+        {
+            var result = await inner.WriteAsync(storageKey, content, cancellationToken);
+
+            if (Interlocked.Increment(ref _written) == writes)
+            {
+                await interrupt.CancelAsync();
+            }
+
+            return result;
+        }
+
+        public Task<Stream?> OpenReadAsync(string storageKey, CancellationToken cancellationToken) =>
+            inner.OpenReadAsync(storageKey, cancellationToken);
+
+        public Task<StoredFileInfo?> GetInfoAsync(string storageKey, CancellationToken cancellationToken) =>
+            inner.GetInfoAsync(storageKey, cancellationToken);
+
+        public Task<bool> DeleteAsync(string storageKey, CancellationToken cancellationToken) =>
+            inner.DeleteAsync(storageKey, cancellationToken);
+
+        public Task<int> DeletePrefixAsync(string keyPrefix, CancellationToken cancellationToken) =>
+            inner.DeletePrefixAsync(keyPrefix, cancellationToken);
+    }
+
     private static CancellationToken Token => TestContext.Current.CancellationToken;
 
     private async Task<ClientAssetWorld> CreateAsync()

@@ -38,6 +38,15 @@ public enum ClientAssetOutcome
 
     /// <summary>The slot held a different picture and <c>--replace</c> was given, so this one took over.</summary>
     Replaced,
+
+    /// <summary>
+    /// Byte for byte the same photograph as another file in the drop, so the library deduplicated the
+    /// two into one asset — and <c>catalog.ProductMedia</c>'s unique index (product, asset, colour) lets
+    /// one photograph sit in a product's gallery once. The file is imported and the slot it was meant
+    /// for still points at it; it simply does not get a second gallery row. Reported, never silent: a
+    /// drop that sends one picture twice is usually a mistake somebody wants to know about.
+    /// </summary>
+    SamePicture,
 }
 
 /// <summary>One line of the import report.</summary>
@@ -69,16 +78,25 @@ public sealed record ClientAssetEntry(
 /// Things worth saying out loud that are not failures — a section left switched off because its media
 /// is still missing, a product that got a card and no hover.
 /// </param>
+/// <param name="Cancelled">
+/// Whether the operator interrupted the run. The rows are rolled back and the files removed either way;
+/// this is what lets the command say so and exit with a code that is not confused with a defect.
+/// </param>
 public sealed record ClientAssetImportReport(
     IReadOnlyList<ClientAssetEntry> Entries,
     IReadOnlyList<string> Failures,
-    IReadOnlyList<string> Notes)
+    IReadOnlyList<string> Notes,
+    bool Cancelled = false)
 {
     /// <summary>Whether the run may be called a success.</summary>
     public bool Succeeded => Failures.Count == 0;
 
     /// <summary>How many files in a given state.</summary>
     public int Count(ClientAssetOutcome outcome) => Entries.Count(entry => entry.Outcome == outcome);
+
+    /// <summary>Files that are byte for byte another file in the drop, for the report.</summary>
+    public IReadOnlyList<ClientAssetEntry> SamePictures =>
+        Entries.Where(entry => entry.Outcome == ClientAssetOutcome.SamePicture).ToList();
 
     /// <summary>Files whose slot already held a different picture, for the report.</summary>
     public IReadOnlyList<ClientAssetEntry> Conflicts =>

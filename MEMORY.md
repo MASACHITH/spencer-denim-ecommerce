@@ -19,7 +19,7 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 - **Next:** **W2-01 (homepage, HOME-01..10) PASSED the tester** and is pushed to `origin feature/W2-01-homepage` awaiting a PR: content schema, seeder, read-only content API, newsletter signup endpoint and the page itself. ADM-17's admin screens are **not** in it. Issue #37 (the homepage cache rounds schedule boundaries to its five-minute TTL) is filed, not built.
 - **Next:** **W1-02 (catalogue foundation — schema + demo seeder + the read-only storefront catalogue API) is in the developer↔tester loop** on `feature/W1-02-catalogue-foundation` (worktree `worktrees/sd-catalog`): tester round 1 failed it on 3 major + 5 minor, round 2 on 2 major + 4 minor, all fixed; not pushed, not merged, not Done. Its ADM-11 admin screens are a separate task, **W1-12 (TODO)** — W1-02 no longer means "categories (create/edit/reorder)". W1-08 (Users & Roles CRUD), W1-09 (audit log viewer), W1-10 (2FA enrollment), W1-11 (route guard, SecurityStamp revalidation, forwarded-headers regression test) are the W1-01 follow-ups, tracked but not started; the user/architect should decide priority between those and W1-03 once W1-02 passes.
 - **Client progress page:** `client-progress/` is tracked in this repository (moved 2026-09-22, W0-18) and publishes from whichever machine holds the DPAPI-encrypted FTP credential — the `SCIENTER\sachithi` PC, where it was published on 23 and 24 Sep. An earlier note here said it could not be done from "this machine"; that was written from the second machine and is not a property of the repository.
-- **Next:** **W1-13 (the client's real photographs, video and logo) is back with the tester after fix round 1** on `feature/W1-13-client-assets` (worktree `worktrees/sd-assets`): a repeatable import verb on the API, three of the five media-dependent homepage sections switched on, and a HOME-01/02/05/06 fix for blocks sized by `aspect-ratio`. **The hero and the activewear feature are held off by their artwork's checksum** — the delivered video is portrait in a 16:9 frame and the delivered activewear picture is a linen flat-lay — and each releases itself when the owner delivers a replacement. Not pushed, not merged, not Done. **The logo is imported but not wired in** — the three delivered files are opaque JPEGs named `.png`, the "light" wordmark is the same mockup as the dark one, and the mark reads COLOMBO WARDROBE rather than Spencer Denim. That needs a decision from the owner and flat artwork, not code.
+- **Next:** **W1-13 (the client's real photographs, video and logo) is back with the tester after fix round 2** on `feature/W1-13-client-assets` (worktree `worktrees/sd-assets`): a repeatable import verb on the API, three of the five media-dependent homepage sections switched on, and a HOME-01/02/05/06 fix for blocks sized by `aspect-ratio`. **The hero and the activewear feature are held off by their artwork's checksum** — the delivered video is portrait in a 16:9 frame and the delivered activewear picture is a linen flat-lay — and each releases itself when the owner delivers a replacement. Not pushed, not merged, not Done. **The logo is imported but not wired in** — the three delivered files are opaque JPEGs named `.png`, the "light" wordmark is the same mockup as the dark one, and the mark reads COLOMBO WARDROBE rather than Spencer Denim. That needs a decision from the owner and flat artwork, not code.
 - **Open assumptions:** A1 (Trending Categories / Best Sellers homepage blocks stay removed per signed proposal), A2 (video MP4 ≤ 50 MB, no server conversion).
 
 ---
@@ -44,6 +44,85 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 ---
 
 ## Session log
+
+### 2026-10-01 (5) — W1-13 fix round 2: the refactor dropped an invariant the old key had by accident
+
+The tester reproduced the rollback with the database byte-identical to baseline and the volume back to
+596 files, confirmed 0 `HomeSection` / 17 `HomeSectionItem` usages all resolving to readable labels, and
+proved the `clientWidth` correction is the border rather than a cover-up — the offset is exactly 2 px at
+**every** breakpoint, including ones where no clamp can apply. He failed the branch on one blocker that
+round 1 introduced, plus two minors and an exit-code argument. All fixed.
+
+**BLOCKER, and the lesson of the round: round 1's key agreed with the database's unique index by
+accident, and the refactor dropped that without noticing.** `catalog.ProductMedia` is unique on
+`UX_ProductMedia_Product_Asset_Colour` = `(ProductId, MediaAssetId, ProductColourId)`. Round 1 keyed the
+slot lookup on the asset, which *is* that index; round 2 re-keyed it on `(product, role, sort order)` —
+the right fix for the replacement defect, and a key the database knows nothing about. Two byte-identical
+files for one product deduplicate to **one** asset, both slots asked for it, and SQL Server refused the
+second row: `Cannot insert duplicate key row ... The duplicate key value is (37, 198, <NULL>)`, on the
+plain documented command with no flags. **The worst part was that `--dry-run` called that same input a
+clean green plan, exit 0** — somebody who checked first was told it was fine.
+
+The slot lookup asks both questions now, in the order that matters: is this slot taken by someone's
+choice (conflict), is this photograph already in this product's gallery (one row, reported as *ONE
+PICTURE, TWO FILES*, with both pointers still naming it), and only then insert or replace. Proven red
+first, with the tester's exact SQL error.
+
+**And the new test found a second case I had not: under `--replace`, the slot the duplicate was meant
+for kept its superseded row.** One asset is one row, so that slot has to be emptied rather than left
+pointing at a photograph the drop no longer sends. Fixed before the round closed, by the test written to
+prove the first half.
+
+**A dry run that disagrees with the run is worse than no dry run.** It resolves identity exactly as the
+pipeline does — SHA-256 over the same bytes — with a negative stand-in id per distinct new checksum, so
+two identical files are one planned asset and the plan walks the *same* placement logic against the
+*same* rows. It now predicts duplicates and conflicts, and an explicit test asserts that a plan and a
+run name the same files. It still cannot say whether a file would be **refused**: signature, size and
+codec are only knowable by decoding, and claiming otherwise would be the same mistake in a new place.
+
+**Minor: a rolled-back run left the hero poster's five files behind.** `UploadVideoAsync` stores the
+poster as a second asset that never surfaces as its own outcome, so a discard list built from outcomes
+could not see it — the database was perfect and the volume five files heavier, under a report that said
+nothing was written. The list is a **diff of the asset table** now, taken while the transaction is still
+open, which cannot miss an asset however it came to exist and cannot delete one that was already there.
+*The test for this had to be rewritten once:* a refused video has its poster rolled back by the pipeline
+itself, so the obvious repro never reaches the state in question — the hero has to **succeed** and the
+run fail later.
+
+**Minor: Ctrl+C skipped the discard and threw.** (**And I could not press it either** — see below.) The catch filter excluded `OperationCanceledException`,
+so rows were safe (the transaction disposes) and every file written before the interrupt stayed —
+finding 2 at a few hundred files — and the exception left `Program.cs` as a stack trace with an
+undocumented exit code. Caught on its own now: roll back, discard, report "cancelled", **exit 4**.
+
+**Exit codes, on the tester's argument and the coordinator's agreement:** exit 0 means "the drop landed"
+to every script that will ever call this, and a run that deliberately did not apply files did not. **3 =
+completed with files not applied**, documented beside 0/1/2/4. A *same picture* file is not counted in
+it: its content did reach the library and its slot does point at it.
+
+**The Ctrl+C could not be pressed from here, and that is said rather than glossed.** The tester found
+`kill -INT` does not reach .NET's handler from Git Bash; this session's harness is worse — its process
+has no console at all and `AllocConsole` is refused with ERROR_ACCESS_DENIED, so
+`GenerateConsoleCtrlEvent` returns true and delivers to nothing. Measured three times against an import
+deliberately slowed to 61–84 s: the signal was sent at 2.5 s, 5 s and 8 s and the run finished normally
+every time. So the cancellation path is proven by a **deterministic** integration test instead — an
+`IFileStorage` decorator that cancels the token at the twelfth file, asserting the rollback, the file
+discard and the `Cancelled` report, and proven red on the old catch filter with the exception escaping
+as `System.OperationCanceledException`. What remains unverified end to end is only the three-line
+`Console.CancelKeyPress` wiring in `Program.cs`; the exit-code mapping it feeds now has its own tests.
+
+**Written down rather than fixed:** a hold matches by `HomeSectionType`, so the same bytes under a
+different contract name would fill that other slot unheld — correct, because the judgement is about that
+picture in that slot and not a quarantine, and the code now says so. And the e2e count of 6 describes
+the **stub's** homepage; the real page after this import has 4.
+
+**Numbers:** backend **736 unit + 368 integration** (was 730 + 361), 0 skipped; frontend 19 / 451 / 131;
+Playwright 194, two consecutive clean runs. Lint clean, Release build clean with 0 warnings.
+
+**Worth saying before a client demo:** with the hero withheld the front page opens on "Shop by
+department" rather than on artwork. That is the right call against a headless crop, and it is an
+argument for getting the re-exported hero soon rather than for shipping the crop.
+
+**Next:** back to the tester.
 
 ### 2026-10-01 (4) — W1-13 fix round 1: a failed run that had already committed everything
 

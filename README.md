@@ -169,13 +169,29 @@ checklist describes (`<product-slug>-1.jpg` is the card image and `-2.jpg` the h
 `trending-N.jpg`; `social-N.jpg`).
 
 It is **safe to run again** — the second run stores nothing and writes no row — and it **fails
-loudly**: the whole run is one transaction, so a refusal anywhere rolls back every row before it and
-deletes the files it had written, and the report says what to fix. Every filename the importer had
-to repair is printed. Exit code 0 good, 1 bad usage, 2 the import failed.
+loudly**: the whole run is one transaction, so a refusal anywhere — or a Ctrl+C — rolls back every
+row before it and deletes the files it had written, and the report says what to fix. Every filename
+the importer had to repair is printed.
+
+| Exit | Meaning |
+|---|---|
+| 0 | the drop landed |
+| 1 | the command line was wrong |
+| 2 | the import failed and was rolled back |
+| 3 | it completed, but files were deliberately not applied (see below) |
+| 4 | the operator interrupted it; everything was rolled back |
 
 A slot that already holds **a picture somebody chose** is not overwritten: those files are listed
-under *NOT APPLIED* and `--replace` is what applies them. A slot holding one of the demo
-placeholders is filled either way, because a placeholder was never a choice.
+under *NOT APPLIED*, the command exits **3**, and `--replace` is what applies them. A slot holding
+one of the demo placeholders is filled either way, because a placeholder was never a choice.
+
+Two files carrying **the same photograph** deduplicate to one asset in the library, and
+`catalog.ProductMedia` holds one photograph per product once — so the second is reported under *ONE
+PICTURE, TWO FILES* and shares the first one's gallery row. Both slots still point at it.
+
+`--dry-run` resolves identity the same way the real run does (by SHA-256), so a plan and a run agree
+about where every file lands. It cannot say whether a file would be *refused* — signature, size and
+codec are only known by decoding it.
 
 The five media-dependent homepage sections are switched on only once they have media to show — and
 a picture that does not fit the slot its filename claims keeps its section off until a different

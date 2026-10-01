@@ -6,6 +6,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using SpencerDenim.Application.Media.ClientAssets;
 using SpencerDenim.Infrastructure;
+using SpencerDenim.Application.Media.Abstractions;
+using SpencerDenim.Infrastructure.Media;
 using SpencerDenim.Infrastructure.Media.ClientAssets;
 using SpencerDenim.Infrastructure.Persistence;
 using SpencerDenim.Infrastructure.Persistence.Seeding;
@@ -82,11 +84,16 @@ public sealed class ClientAssetWorld : IAsyncDisposable
     /// the one test that is about holds supplies a checksum it controls — the shipped list is keyed on
     /// the bytes of two real client files, which no test can conjure.
     /// </param>
+    /// <param name="decorateStorage">
+    /// Wraps the real storage adapter. A test uses it to make something happen part way through a run —
+    /// an interrupt, a failure — at a known file rather than at a moment on the clock.
+    /// </param>
     public static async Task<ClientAssetWorld> CreateAsync(
         string fixtureConnectionString,
         bool withPlaceholderFiles,
         CancellationToken cancellationToken,
-        ClientAssetHolds? holds = null)
+        ClientAssetHolds? holds = null,
+        Func<IFileStorage, IFileStorage>? decorateStorage = null)
     {
         var server = new SqlConnectionStringBuilder(fixtureConnectionString) { InitialCatalog = "master" }
             .ConnectionString;
@@ -126,6 +133,7 @@ public sealed class ClientAssetWorld : IAsyncDisposable
         services.AddLogging(logging => logging.SetMinimumLevel(LogLevel.Warning));
         services.AddInfrastructure();
         services.AddSingleton(holds ?? NoHolds);
+        Decorate(services, decorateStorage);
 
         var provider = services.BuildServiceProvider();
         var world = new ClientAssetWorld(server, databaseName, connectionString, root, provider)
@@ -147,7 +155,7 @@ public sealed class ClientAssetWorld : IAsyncDisposable
             // them, so they are switched on now, on a second provider over the same database.
             await provider.DisposeAsync();
             return await ReopenWithVolumesAsync(
-                server, databaseName, connectionString, root, world.SeedCounts, holds);
+                server, databaseName, connectionString, root, world.SeedCounts, holds, decorateStorage);
         }
 
         return world;
@@ -171,6 +179,15 @@ public sealed class ClientAssetWorld : IAsyncDisposable
             await Drop("products", fileName, TestImages.UniqueJpeg(1024, 1024), cancellationToken);
         }
 
+        await DropTheHomeAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Everything but the product photographs, for a test that wants to supply those itself. The import
+    /// fails on a missing folder, so a drop is never half a drop.
+    /// </summary>
+    public async Task DropTheHomeAsync(CancellationToken cancellationToken)
+    {
         foreach (var department in new[] { "women.jpg", "men.jpg", "kids.jpg" })
         {
             await Drop("departments", department, TestImages.UniqueJpeg(896, 1200), cancellationToken);
@@ -266,7 +283,8 @@ public sealed class ClientAssetWorld : IAsyncDisposable
         string connectionString,
         string root,
         SeedCounts counts,
-        ClientAssetHolds? holds)
+        ClientAssetHolds? holds,
+        Func<IFileStorage, IFileStorage>? decorateStorage)
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -282,6 +300,7 @@ public sealed class ClientAssetWorld : IAsyncDisposable
         services.AddLogging(logging => logging.SetMinimumLevel(LogLevel.Warning));
         services.AddInfrastructure();
         services.AddSingleton(holds ?? NoHolds);
+        Decorate(services, decorateStorage);
 
         return Task.FromResult(new ClientAssetWorld(
             server,
@@ -293,6 +312,20 @@ public sealed class ClientAssetWorld : IAsyncDisposable
             SeedCounts = counts,
             Holds = holds,
         });
+    }
+
+    /// <summary>Replaces the registered storage adapter with the real one wrapped.</summary>
+    private static void Decorate(IServiceCollection services, Func<IFileStorage, IFileStorage>? decorate)
+    {
+        if (decorate is null)
+        {
+            return;
+        }
+
+        services.AddScoped<IFileStorage>(provider => decorate(
+            new LocalFileStorage(
+                provider.GetRequiredService<MediaStorageRoots>(),
+                provider.GetRequiredService<ILogger<LocalFileStorage>>())));
     }
 
     private static async Task ExecuteAsync(string connectionString, string sql, CancellationToken cancellationToken)
