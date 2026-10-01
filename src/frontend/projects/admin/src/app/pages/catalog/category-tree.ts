@@ -462,8 +462,13 @@ interface TreeRow {
             @if (fieldError('ageGroupId'); as message) {
               <span class="adm-field-error">{{ message }}</span>
             } @else {
+              <!-- Nothing reads Category.AgeGroupId yet: the listing's age-group filter is on the
+                   product (ProductCatalogReader), and unlike SizeGuideId the seeder does not copy
+                   this one onto the products it creates. So the honest hint says what the field is
+                   for rather than what it does, until W1-03's product form consumes it. -->
               <span class="adm-panel__hint">
-                Used by the Kids listing filters. Nothing refuses a save without one.
+                The Kids grouping doc 11 P1 step 2 asks for. The shop does not read it yet, and
+                nothing refuses a save without one.
               </span>
             }
           </label>
