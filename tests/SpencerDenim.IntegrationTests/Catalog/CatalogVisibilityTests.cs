@@ -1,7 +1,9 @@
 using System.Net;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using SpencerDenim.Application.Catalog.Contracts;
 using SpencerDenim.Domain.Catalog;
+using SpencerDenim.Domain.Inventory;
 using SpencerDenim.Infrastructure.Persistence;
 using SpencerDenim.IntegrationTests.Infrastructure;
 
@@ -141,6 +143,102 @@ public sealed class CatalogVisibilityTests(SqlServerDatabaseFixture sqlServer) :
 
         var restored = await api.ListAsync("?category=girls-bottoms&pageSize=96", Token);
         Assert.NotEmpty(restored.Items);
+    }
+
+    /// <summary>
+    /// Issue #25: <c>LoadBestSellerThresholdsAsync</c> queried <c>dbContext.Products</c> directly rather
+    /// than through <c>BaseQuery()</c>, so a product in a deactivated category still counted towards its
+    /// department's top N by <c>SoldQty30d</c>. The threshold then came out too high and the Best Seller
+    /// badge was withheld from a product that had earned it.
+    /// <para>
+    /// The arithmetic, with the seeded women's department and <c>Catalog:BestSellerTopN</c> at its default
+    /// of 10. Sold in 30 days, descending: 88, 71, 64, 63, 57, 52, 45, 40, 34, <b>31</b>, 27, 22, … so the
+    /// threshold is 31 and <c>belted-shirt-dress</c> at 27 shows no badge. Deactivating women's
+    /// <c>jeans</c> withdraws the 88 and the 45; the tenth is then 22, the dress clears it, and because
+    /// the dress has no discount, no override, healthy stock and was published 175 days ago, Best Seller
+    /// is the badge the resolver reaches (doc 08 §3.2 orders them Sale → Low Stock → Best Seller → New).
+    /// </para>
+    /// <para>
+    /// <b>This test is red without the fix</b>, with the dress still carrying no badge: the two withdrawn
+    /// products keep counting and the threshold stays at 31.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task Deactivating_a_category_stops_its_products_setting_the_best_seller_threshold()
+    {
+        var api = CreateApi();
+
+        var before = await FindAsync(api, "belted-shirt-dress");
+        Assert.Null(before.Badge);
+        Assert.False(before.Price.HasDiscount);
+        Assert.Equal(StockStatus.InStock, before.StockStatus);
+
+        // The two products that are about to leave are in the top ten today, which is what makes the
+        // threshold move at all.
+        var jeans = await api.ListAsync("?department=women&category=jeans&pageSize=96", Token);
+        Assert.Equal(2, jeans.Items.Count);
+
+        await SetCategoryActiveAsync("jeans", isActive: false, departmentSlug: "women");
+        try
+        {
+            var after = await FindAsync(api, "belted-shirt-dress");
+
+            Assert.Equal(ProductBadge.BestSeller, after.Badge);
+        }
+        finally
+        {
+            await SetCategoryActiveAsync("jeans", isActive: true, departmentSlug: "women");
+        }
+
+        var restored = await FindAsync(api, "belted-shirt-dress");
+        Assert.Null(restored.Badge);
+    }
+
+    /// <summary>
+    /// The same correction at the boundary rather than inside it, on a different top N so it does not
+    /// rest on where the tenth place happens to fall.
+    /// <para>
+    /// Women's three best sellers are 88 (<c>jeans</c>), 71 and 64, so at <c>BestSellerTopN</c> 3 the
+    /// threshold is 64 and <c>seamless-studio-leggings</c> misses it by one at 63. Withdrawing
+    /// <c>jeans</c> leaves 71, 64, 63 — the threshold becomes 63, which the leggings <i>equal</i>, and
+    /// the comparison is <c>&gt;=</c>. Red without <c>BaseQuery()</c>: the withdrawn 88 keeps third place
+    /// at 64 and the badge never appears.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task A_products_badge_turns_on_the_moment_a_deactivated_category_stops_counting()
+    {
+        SqlServer.SkipIfUnavailable();
+
+        await using var factory = new ApiFactory(
+            SqlServer.ConnectionString,
+            additionalConfiguration: new Dictionary<string, string?> { ["Catalog:BestSellerTopN"] = "3" });
+        using var client = factory.CreateClient();
+        var api = new CatalogApiClient(client);
+
+        Assert.Null((await FindAsync(api, "seamless-studio-leggings")).Badge);
+
+        await SetCategoryActiveAsync("jeans", isActive: false, departmentSlug: "women");
+        try
+        {
+            Assert.Equal(ProductBadge.BestSeller, (await FindAsync(api, "seamless-studio-leggings")).Badge);
+        }
+        finally
+        {
+            await SetCategoryActiveAsync("jeans", isActive: true, departmentSlug: "women");
+        }
+
+        Assert.Null((await FindAsync(api, "seamless-studio-leggings")).Badge);
+    }
+
+    /// <summary>One card off the women's listing, by slug.</summary>
+    private static async Task<ProductCardDto> FindAsync(CatalogApiClient api, string slug)
+    {
+        var listing = await api.ListAsync("?department=women&pageSize=96", Token);
+        var card = listing.Items.SingleOrDefault(candidate => candidate.Slug == slug);
+
+        Assert.NotNull(card);
+        return card;
     }
 
     private async Task SetCategoryActiveAsync(string slug, bool isActive, string? departmentSlug = null)

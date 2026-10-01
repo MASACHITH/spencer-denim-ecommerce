@@ -147,12 +147,57 @@ internal sealed class ProductCatalogReader(
                 product.AgeGroup != null ? product.AgeGroup.Slug : null,
                 product.SeoTitle,
                 product.SeoDescription,
-                product.SizeGuideId ?? product.PrimaryCategory.SizeGuideId,
+                // PDP-04, twice over because the product may override its category's guide. Written out
+                // rather than factored into a helper: a method call in an expression tree is not
+                // something EF can translate, and an `Expression<Func<SizeGuide, SizeGuideRow>>` cannot
+                // be invoked from inside another one without a visitor, which would cost more clarity
+                // than the duplication does.
+                //
+                // Each branch takes id, name and content from the *same* row. The pair they replaced
+                // took the id from `Products.SizeGuideId` and the name from the navigation, so a product
+                // whose own guide had been soft-deleted while its category still had one answered with
+                // the deleted guide's id beside the live guide's name — and would now have answered with
+                // a third thing's content.
                 product.SizeGuide != null
-                    ? product.SizeGuide.Name
-                    : product.PrimaryCategory.SizeGuide != null
-                        ? product.PrimaryCategory.SizeGuide.Name
-                        : null,
+                    ? new SizeGuideRow(
+                        product.SizeGuide.Id,
+                        product.SizeGuide.Name,
+                        product.SizeGuide.IntroHtml,
+                        product.SizeGuide.TableJson,
+                        product.SizeGuide.MeasuringTipsHtml,
+                        product.SizeGuide.ImageAsset != null
+                            && product.SizeGuide.ImageAsset.Status == MediaAssetStatus.Ready
+                            ? new MediaRef(
+                                product.SizeGuide.ImageAsset.StorageKey,
+                                product.SizeGuide.ImageAsset.PublicId,
+                                product.SizeGuide.ImageAsset.RenditionSetVersion,
+                                product.SizeGuide.ImageAsset.Width)
+                            : null,
+                        product.SizeGuide.ImageAsset != null
+                            && product.SizeGuide.ImageAsset.Status == MediaAssetStatus.Ready
+                            ? product.SizeGuide.ImageAsset.AltText
+                            : null)
+                    : null,
+                product.PrimaryCategory.SizeGuide != null
+                    ? new SizeGuideRow(
+                        product.PrimaryCategory.SizeGuide.Id,
+                        product.PrimaryCategory.SizeGuide.Name,
+                        product.PrimaryCategory.SizeGuide.IntroHtml,
+                        product.PrimaryCategory.SizeGuide.TableJson,
+                        product.PrimaryCategory.SizeGuide.MeasuringTipsHtml,
+                        product.PrimaryCategory.SizeGuide.ImageAsset != null
+                            && product.PrimaryCategory.SizeGuide.ImageAsset.Status == MediaAssetStatus.Ready
+                            ? new MediaRef(
+                                product.PrimaryCategory.SizeGuide.ImageAsset.StorageKey,
+                                product.PrimaryCategory.SizeGuide.ImageAsset.PublicId,
+                                product.PrimaryCategory.SizeGuide.ImageAsset.RenditionSetVersion,
+                                product.PrimaryCategory.SizeGuide.ImageAsset.Width)
+                            : null,
+                        product.PrimaryCategory.SizeGuide.ImageAsset != null
+                            && product.PrimaryCategory.SizeGuide.ImageAsset.Status == MediaAssetStatus.Ready
+                            ? product.PrimaryCategory.SizeGuide.ImageAsset.AltText
+                            : null)
+                    : null,
                 product.BadgeOverride,
                 product.NewUntilUtc,
                 product.Stats!.MinSalePrice,
@@ -618,6 +663,49 @@ internal sealed class ProductCatalogReader(
             row.Colours.Select(ToSwatch).ToList().AsReadOnly());
     }
 
+    /// <summary>
+    /// PDP-04: the guide, with its measurements, or <see langword="null"/> when the product has none.
+    /// <para>
+    /// <see cref="SizeGuideRefDto.Content"/> is <see langword="null"/> rather than four empty fields
+    /// when the guide holds nothing a shopper could read. That is the shape the storefront's
+    /// <c>hasSizeGuideContent</c> was written against — it is the one condition that unhides the
+    /// trigger, and a guide with a name and no measurements is deliberately not worth a button — so
+    /// "there is nothing to show" has to be one check rather than four. It goes on the wire as
+    /// <c>"content": null</c>: a present key with a null value, not an omitted one.
+    /// </para>
+    /// </summary>
+    private SizeGuideRefDto? ToSizeGuide(SizeGuideRow? guide)
+    {
+        if (guide is null)
+        {
+            return null;
+        }
+
+        var intro = Trimmed(guide.IntroHtml);
+        var table = SizeGuideTable.Parse(guide.TableJson);
+        var tips = Trimmed(guide.MeasuringTipsHtml);
+
+        // `large` rather than `zoom`: a measuring diagram is drawn inside a dialog that is narrower than
+        // the page, never full-screen, so zoom would only spend a shopper's bytes. The row is already
+        // guarded on `Ready` in the projection, so there is a file behind whatever this names.
+        var imageUrl = MediaUrlBuilder.ToRenditionUrl(_options.MediaBaseUrl, guide.Image, MediaRenditions.Large);
+
+        // Alt text is not content in its own right: a guide whose only field is a description of a
+        // diagram that is not there has nothing to show, so it is not in this test.
+        var content = intro is null && table is null && tips is null && imageUrl is null
+            ? null
+            : new SizeGuideContentDto(intro, table, tips, imageUrl, Trimmed(guide.ImageAltText));
+
+        return new SizeGuideRefDto(guide.Id, guide.Name, content);
+    }
+
+    /// <summary>
+    /// The value, or <see langword="null"/> when it is blank. Whitespace-only rich text is an empty
+    /// field an admin has saved over, not content, and sending it would make
+    /// <c>hasSizeGuideContent</c> answer on a string with nothing in it.
+    /// </summary>
+    private static string? Trimmed(string? value) => string.IsNullOrWhiteSpace(value) ? null : value;
+
     private ColourSwatchDto ToSwatch(ColourRow colour) => new(
         colour.Id,
         colour.Name,
@@ -749,9 +837,7 @@ internal sealed class ProductCatalogReader(
             stockStatus,
             StockAvailability.IsInStock(totalAvailable),
             new SeoDto(row.SeoTitle ?? row.Name, row.SeoDescription ?? row.ShortDescription),
-            row.SizeGuideId is { } guideId && row.SizeGuideName is { } guideName
-                ? new SizeGuideRefDto(guideId, guideName)
-                : null,
+            ToSizeGuide(row.OwnSizeGuide ?? row.CategorySizeGuide),
             row.NewUntilUtc,
             images.AsReadOnly(),
             row.Colours.Select(ToSwatch).ToList().AsReadOnly(),
@@ -939,6 +1025,15 @@ internal sealed class ProductCatalogReader(
     /// <summary>
     /// Doc 08 §3.2: the Best Seller badge compares <c>SoldQty30d</c> with the department's top-N
     /// threshold. One small query per department on the page (at most three), never per row.
+    /// <para>
+    /// It counts over <see cref="BaseQuery"/> and not over <c>dbContext.Products</c>, which is the
+    /// correction in issue #25. Spelling the published and stats predicates out here left out the one
+    /// <see cref="BaseQuery"/> adds on top of them — a product leaves the storefront with its department
+    /// or its primary category — so a product in a deactivated category still counted towards its
+    /// department's top N. The threshold then came out too high and the badge was withheld from a
+    /// product that had earned it. Cosmetic, and the same invariant the rest of this class exists to
+    /// enforce, so it is enforced in one place rather than restated in two.
+    /// </para>
     /// </summary>
     private async Task<Dictionary<int, int>> LoadBestSellerThresholdsAsync(
         List<int> departmentIds,
@@ -949,9 +1044,7 @@ internal sealed class ProductCatalogReader(
 
         foreach (var departmentId in departmentIds)
         {
-            var threshold = await dbContext.Products
-                .AsNoTracking()
-                .Where(product => product.IsPublished && product.Stats != null)
+            var threshold = await BaseQuery()
                 .Where(product => product.DepartmentId == departmentId)
                 .Select(product => product.Stats!.SoldQty30d)
                 .OrderByDescending(soldQty => soldQty)
