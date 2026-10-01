@@ -22,16 +22,19 @@ namespace SpencerDenim.Application.Catalog.Contracts;
 /// </para>
 /// <para>
 /// <b>And <c>ISJSON</c> guarantees less than it appears to even about parsing.</b> It accepts an
-/// unpaired surrogate, which <c>JsonDocument.Parse(string)</c> cannot transcode — so the first version
-/// of this caught <see cref="JsonException"/> only and 500'd every product page in a department on one
-/// bad character. See the catch in <see cref="Parse"/>; that is why it names two exception types.
+/// unpaired surrogate, in both the raw and the escaped form, and the two break in different places —
+/// one cannot be transcoded before parsing, the other parses and then cannot be unescaped. The first
+/// version of this caught <see cref="JsonException"/> alone and so 500'd every product page in a
+/// department on one bad character. That is why there are <b>three</b> guards and not one: the catch in
+/// <see cref="Parse"/>, the backstop around the walk, and <see cref="ToCell"/>.
 /// </para>
 /// <para>
 /// Every unusable input therefore resolves to <see langword="null"/>, which <c>hasSizeGuideContent</c>
 /// on the storefront already treats as "no table": not an object at the root, no <c>columns</c> array,
-/// an empty <c>columns</c>, a column header that is not a scalar, no readable row, or text that is not
-/// JSON at all (which <c>ISJSON</c> should prevent and a restored or hand-edited database can still
-/// hold).
+/// an empty <c>columns</c>, a column header that is not a scalar or cannot be unescaped, no readable
+/// row, or text that is not JSON at all (which <c>ISJSON</c> should prevent and a restored or
+/// hand-edited database can still hold). A single unreadable <i>cell</i> is the one case that costs
+/// less than the whole table: it goes blank and its neighbours survive.
 /// </para>
 /// </summary>
 public static class SizeGuideTable
