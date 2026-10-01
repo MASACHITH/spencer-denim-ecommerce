@@ -145,6 +145,66 @@ describe('RecentSearches (SRCH-01)', () => {
     expect(service.recent()).toEqual([]);
   });
 
+  /**
+   * **The rule has to be unanchored.** The first version tested
+   * `/^[^@\s]+@[^@\s]+\.[^@\s]+$/`, which only matched a term that *was* an address — so every
+   * one of these was stored and rendered back in the overlay, measured in a real browser out of
+   * `localStorage`. A shopper does not type a bare address into a search box; they type a sentence
+   * with one in it.
+   *
+   * It matters more than a browser's own storage, too: the same rule decides what reaches
+   * `analytics.SearchQueriesDaily`, which keeps rows for **13 months** (doc 08 DB25, issue #78).
+   */
+  it.each([
+    'my email is bob@example.com',
+    'contact someone@example.com',
+    'someone@example.com please',
+    'sachith.m+shop@gmail.com',
+  ])('never remembers %p, an address inside a sentence', (term) => {
+    const { service, storage } = setUp();
+
+    service.remember(term);
+
+    expect(service.recent()).toEqual([]);
+    expect(storage.entries.has(RECENT_SEARCHES_KEY)).toBe(false);
+  });
+
+  it('catches the fullwidth at-sign a CJK keyboard produces, spaces and all', () => {
+    const { service } = setUp();
+
+    service.remember('john ＠ example.com');
+    service.remember('john ﹫ example.com');
+
+    expect(service.recent()).toEqual([]);
+  });
+
+  /**
+   * `\d` and `\D` are ASCII-only even under the `u` flag, so a telephone number typed on an Arabic
+   * or a Japanese keyboard counted as **zero** digits and was stored.
+   */
+  it.each([
+    ['Arabic-Indic', '٠٧٧١٢٣٤٥٦٧'],
+    ['fullwidth', '０７７１２３４５６７'],
+  ])('never remembers a telephone number in %s digits', (_script, term) => {
+    const { service } = setUp();
+
+    service.remember(term);
+
+    expect(service.recent()).toEqual([]);
+  });
+
+  /** The rule must not eat the feature: these are product searches and they are kept. */
+  it.each(['32 waist jeans', 'size 10 dress', 'order 123456', 'linen shirt'])(
+    'still remembers %p',
+    (term) => {
+      const { service } = setUp();
+
+      service.remember(term);
+
+      expect(service.recent()).toEqual([term]);
+    },
+  );
+
   it('still remembers a term with a few digits, which is a real product search', () => {
     const { service } = setUp();
 
@@ -211,14 +271,33 @@ describe('RecentSearches (SRCH-01)', () => {
 });
 
 describe('isPrivate', () => {
-  it.each(['someone@example.com', '0771234567', '077-123-4567', 'ORD 2026 0115 001'])(
-    '%p is not kept',
+  it.each([
+    'someone@example.com',
+    'my email is bob@example.com',
+    'contact someone@example.com',
+    'someone@example.com please',
+    'sachith.m+shop@gmail.com',
+    'john ＠ example.com',
+    '0771234567',
+    '+94 77 123 4567',
+    '077-123-4567',
+    'SD-1234-5678',
+    '4111 1111 1111 1111',
+    'ORD 2026 0115 001',
+    '٠٧٧١٢٣٤٥٦٧',
+    '０７７１２３４５６７',
+  ])('%p is not kept', (term) => {
+    expect(isPrivate(term)).toBe(true);
+  });
+
+  /**
+   * The other direction, and it is the half that keeps the rule honest: widening it until it eats
+   * ordinary product searches would be a worse answer than the anchored version it replaced.
+   */
+  it.each(['linen shirt', '32 waist', 'size 10 dress', 'order 123456', 'size 8', 'jeans 2026'])(
+    '%p is kept',
     (term) => {
-      expect(isPrivate(term)).toBe(true);
+      expect(isPrivate(term)).toBe(false);
     },
   );
-
-  it.each(['linen shirt', '32 waist', 'size 10 dress'])('%p is kept', (term) => {
-    expect(isPrivate(term)).toBe(false);
-  });
 });

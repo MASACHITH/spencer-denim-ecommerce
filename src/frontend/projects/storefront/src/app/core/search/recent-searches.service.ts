@@ -11,16 +11,27 @@ export const RECENT_SEARCHES_KEY = 'sd.recent-searches';
 export const RECENT_SEARCHES_LIMIT = 6;
 
 /**
- * An address the shopper may have been looking up rather than shopping for.
+ * The at-sign, in every spelling a search box can receive.
  *
- * Deliberately the same pattern the API uses to decide what never reaches
- * `analytics.SearchQueriesDaily` (doc 08 §3, `SearchQueriesDaily` rules, DB25), so the two sides of
- * the same privacy rule cannot drift apart.
+ * ASCII, the fullwidth form a Japanese or Chinese keyboard produces, and the small form. Written as
+ * escapes rather than as the characters themselves so the set is readable in a diff and cannot be
+ * mistaken for the ASCII one by an editor or a reviewer.
  */
-const EMAIL_LIKE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/u;
+const AT_SIGNS = /[@\uFF20\uFE6B]/u;
 
 /** Doc 08 DB25: seven or more digits once separators are gone is a telephone number. */
 const MAX_DIGITS = 6;
+
+/**
+ * Everything that is **not** a decimal digit, in any script.
+ *
+ * `\d` and `\D` are ASCII-only even under the `u` flag, so a telephone number typed on an Arabic or
+ * a Japanese keyboard counted as zero digits and was stored: Arabic-Indic
+ * `\u0660\u0667\u0667\u0661\u0662\u0663\u0664\u0665\u0666\u0667` and fullwidth
+ * `\uFF10\uFF17\uFF17\uFF11\uFF12\uFF13\uFF14\uFF15\uFF16\uFF17` are both ten digits to a reader
+ * and none to `\d`. `\p{Nd}` is the Unicode decimal-number category and counts all of them.
+ */
+const NOT_A_DIGIT = /\P{Nd}/gu;
 
 /**
  * The searches this browser has run (SRCH-01).
@@ -36,8 +47,9 @@ const MAX_DIGITS = 6;
  * hydration refuses. The list is read in `afterNextRender`, the same shape `RecentlyViewed` and
  * `Viewport` use, so it appears one frame after the page is live.
  *
- * **What is deliberately not kept.** A term that looks like an email address, or that carries seven
- * or more digits — an order number, a telephone number. This is a clothing shop on a shared family
+ * **What is deliberately not kept.** A term carrying an at-sign anywhere in it, or seven or more
+ * digits in any script — an email address in the middle of a sentence, an order number, a telephone
+ * number. This is a clothing shop on a shared family
  * laptop and an internet café machine as often as it is a private phone, and a search box is where
  * people type the thing they were trying to look up. The same rule keeps those terms out of the
  * server-side aggregate (doc 08 DB25), so neither side of the site remembers them.
@@ -148,12 +160,32 @@ export class RecentSearches {
   }
 }
 
-/** Whether a term is something this browser should not remember having been asked. */
+/**
+ * Whether a term is something this browser should not remember having been asked.
+ *
+ * **Two rules, both deliberately unanchored.** The first version tested
+ * `/^[^@\s]+@[^@\s]+\.[^@\s]+$/`, which only matched a term that *was* an email address and
+ * nothing else — so "contact someone@example.com", "my email is bob@example.com" and
+ * "someone@example.com please" were all stored and all rendered back in the overlay. A shopper does
+ * not type a bare address into a search box; they type a sentence with one in it.
+ *
+ * **Why any at-sign at all, rather than an email pattern.** An unanchored pattern still has to
+ * decide what an address looks like, and every answer loses to a space: "john &#64; example.com" is
+ * an address to a human and not to a regular expression. Nothing a shopper searches a clothing shop
+ * for contains an at-sign, so the at-sign alone is the rule. That is the one widening that costs the
+ * feature nothing — and the cases that must keep working do: "32 waist jeans", "size 10 dress" and
+ * "order 123456" are all remembered.
+ *
+ * **This rule is shared with the server by design, and the server's copy has not been written yet.**
+ * The same test decides what reaches `analytics.SearchQueriesDaily` (doc 08 §3, DB25), which has
+ * **13-month retention** — so the anchored version would have kept a shopper's email address on the
+ * server for over a year rather than only on their own device. Issue **#78** carries the obligation
+ * that the server side inherits this corrected rule, not the one it was first written as.
+ */
 export function isPrivate(term: string): boolean {
-  if (EMAIL_LIKE.test(term)) {
+  if (AT_SIGNS.test(term)) {
     return true;
   }
 
-  const digits = term.replace(/\D/gu, '');
-  return digits.length > MAX_DIGITS;
+  return term.replace(NOT_A_DIGIT, '').length > MAX_DIGITS;
 }
