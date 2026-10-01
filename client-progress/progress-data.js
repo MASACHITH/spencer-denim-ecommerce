@@ -97,7 +97,7 @@ const progressData = {
       name: "Admin Panel",
       features: [
         { name: "Admin login with user roles & permissions", status: "in-progress", progress: 80 },
-        { name: "Product management (images & video)", status: "in-progress", progress: 50 },
+        { name: "Product management (images & video)", status: "in-progress", progress: 65 },
         { name: "Category management", status: "in-progress", progress: 35 },
         { name: "Inventory", status: "in-progress", progress: 25 },
         { name: "Order management & payment approval", status: "planned", progress: 0 },
@@ -126,7 +126,7 @@ const progressData = {
   updates: [
     {
       date: "2026-10-01",
-      text: "Staff sign-in is now protected by two-step verification using an authenticator app on the phone, and a forced password change on first sign-in. Every action an administrator takes is recorded, and there is a screen to browse and filter that history — useful if you ever need to see who changed a price or approved a payment. Work continues on the photo and video library."
+      text: "Staff sign-in is now protected by two-step verification using an authenticator app on the phone, and a forced password change on first sign-in. Every action an administrator takes is recorded, and there is a screen to browse and filter that history — useful if you ever need to see who changed a price or approved a payment. The photo and video library is finished and tested: it accepts your photographs and video, makes the smaller sizes each page needs automatically, and strips hidden camera data such as GPS location from every file before it is stored. Your pictures can now go in."
     },
     {
       date: "2026-09-29",
