@@ -264,6 +264,158 @@ function productsFor(params) {
   return { items, page, pageSize, totalCount: total };
 }
 
+// ------------------------------------------------------------------ GET /api/catalog/search
+//
+// `SearchTerms` and `ProductSearchQuery.Create`, mirrored rather than simplified.
+//
+// The temptation with a search box is to make the stub answer whatever the component hoped for.
+// That is the shape of bug that survived three rounds of green tests on the listing (see `answer`
+// in `listing-page.spec.ts`), and it is worse here: the interesting cases are all the ones where
+// the API says **no** — a term of one character, a term of two thousand, a term that tokenises to
+// nothing. So the validation below is the API's own, error keys and all, and the corpus is matched
+// by the same "every token must be a substring of the denormalised text" rule as doc 08 §7.6.
+
+const MIN_TERM_LENGTH = 2;
+const MAX_TERM_LENGTH = 100;
+const MAX_TOKENS = 5;
+
+/** `SearchTerms.Tokenise`. */
+function tokenise(raw) {
+  const trimmed = (raw ?? '').trim().slice(0, MAX_TERM_LENGTH);
+  const tokens = [];
+
+  for (const part of trimmed.split(/\s+/u)) {
+    const token = part.toLowerCase();
+    if (token.length < MIN_TERM_LENGTH || tokens.includes(token)) {
+      continue;
+    }
+
+    tokens.push(token);
+    if (tokens.length === MAX_TOKENS) {
+      break;
+    }
+  }
+
+  return tokens;
+}
+
+/**
+ * `catalog.ProductSearchIndex.SearchText`: name, category path, colour names and families, and the
+ * product code (doc 08 §3). The product code is what makes one row reachable on its own.
+ */
+function searchTextFor(card) {
+  return [
+    card.name,
+    card.departmentName,
+    card.categorySlug,
+    card.categoryName,
+    card.productCode,
+    ...card.colours.flatMap((colour) => [colour.name, colour.familyName]),
+  ]
+    .join(' ')
+    .toLowerCase();
+}
+
+/**
+ * The longest product name the demo catalogue actually seeds (`DemoCatalogueData`), 27 characters.
+ *
+ * It exists so the suggestions overlay is measured at 320 px against a real worst case rather than
+ * against "Test Product 7". It is **only** in the search corpus, not in the listing's 120 products,
+ * so nothing that counts cards or reads the grid changes.
+ */
+const LONG_NAME_PRODUCT = {
+  ...product(9001),
+  productCode: 'SD-9001',
+  name: 'Tailored Wool-Look Trousers',
+  slug: 'tailored-wool-look-trousers',
+  categoryName: 'Trousers',
+  categorySlug: 'trousers',
+};
+
+/** The relevance bands of doc 08 §7.6, collapsed to an order: name prefix, name, anything else. */
+function relevance(card, token) {
+  const name = card.name.toLowerCase();
+  if (name.startsWith(token)) {
+    return 0;
+  }
+
+  return name.includes(token) ? 1 : 2;
+}
+
+function searchFor(params) {
+  const term = (params.get('q') ?? '').trim();
+  const errors = [];
+
+  if (term.length < MIN_TERM_LENGTH) {
+    errors.push(`q must be at least ${MIN_TERM_LENGTH} characters.`);
+  } else if (term.length > MAX_TERM_LENGTH) {
+    errors.push(`q must be ${MAX_TERM_LENGTH} characters or fewer.`);
+  }
+
+  const tokens = tokenise(term);
+  if (errors.length === 0 && tokens.length === 0) {
+    errors.push(`q must contain a word of at least ${MIN_TERM_LENGTH} characters.`);
+  }
+
+  if (errors.length > 0) {
+    return {
+      status: 400,
+      body: { title: 'One or more query parameters are invalid.', status: 400, errors: { q: errors } },
+    };
+  }
+
+  const department = params.get('department');
+  const colour = params.getAll('colour')[0];
+  const sort = params.get('sort') ?? 'recommended';
+
+  const corpus = [
+    ...Array.from({ length: TOTAL_PRODUCTS }, (_, index) => product(index + 1)),
+    LONG_NAME_PRODUCT,
+  ];
+
+  let matched = [];
+  for (const card of corpus) {
+    const text = searchTextFor(card);
+    if (!tokens.every((token) => text.includes(token))) {
+      continue;
+    }
+    if (department && card.departmentSlug !== department) {
+      continue;
+    }
+    if (colour && !card.colours.some((entry) => entry.familySlug === colour)) {
+      continue;
+    }
+
+    matched.push(card);
+  }
+
+  if (sort === 'price-asc') {
+    matched = matched.sort((left, right) => left.price.current - right.price.current);
+  } else if (sort === 'price-desc') {
+    matched = matched.sort((left, right) => right.price.current - left.price.current);
+  } else {
+    matched = matched.sort((left, right) => relevance(left, tokens[0]) - relevance(right, tokens[0]));
+  }
+
+  const page = Number(params.get('page') ?? '1');
+  const pageSize = Number(params.get('pageSize') ?? '24');
+  const skip = (page - 1) * pageSize;
+
+  return {
+    status: 200,
+    body: {
+      term,
+      tokens,
+      results: {
+        items: matched.slice(skip, skip + pageSize),
+        page,
+        pageSize,
+        totalCount: matched.length,
+      },
+    },
+  };
+}
+
 /**
  * A 1x1 transparent GIF, used as every gallery image and every video poster.
  *
@@ -973,6 +1125,19 @@ const server = createServer((request, response) => {
 
       response.end(JSON.stringify({ message: 'Thank you. Your email address is on the list.' }));
     });
+    return;
+  }
+
+  // Ahead of `/api/catalog/products`, because the prefix match below would otherwise never see it.
+  if (url.pathname === '/api/catalog/search') {
+    const answer = searchFor(url.searchParams);
+    response.statusCode = answer.status;
+    if (answer.status >= 400) {
+      // The media type the API really sends for a rejected query string, so the storefront parses
+      // what it will parse in production.
+      response.setHeader('Content-Type', 'application/problem+json; charset=utf-8');
+    }
+    response.end(JSON.stringify(answer.body));
     return;
   }
 
