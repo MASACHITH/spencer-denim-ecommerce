@@ -193,6 +193,33 @@ describe('RecentSearches (SRCH-01)', () => {
     expect(service.recent()).toEqual([]);
   });
 
+  /**
+   * The digit count is a count of **digits**, not of UTF-16 code units.
+   *
+   * An Osmanya digit (U+104A0..U+104A9) is a surrogate pair, so `.length` counted each one twice and
+   * the threshold silently became "three digits" for every script outside the basic plane. The case
+   * that catches it is the one that must be **kept**: four digits is under the limit however they
+   * happen to be encoded.
+   */
+  it('counts a digit outside the basic plane once, not twice', () => {
+    const { service } = setUp();
+    const fourDigits = '𐒠𐒡𐒢𐒣';
+
+    // Four digits, eight code units: the whole bug in one assertion.
+    expect(fourDigits).toHaveLength(8);
+    service.remember(fourDigits);
+
+    expect(service.recent()).toEqual([fourDigits]);
+  });
+
+  it('still drops seven of those digits, which is what the limit says', () => {
+    const { service } = setUp();
+
+    service.remember('𐒠𐒡𐒢𐒣𐒤𐒥𐒦');
+
+    expect(service.recent()).toEqual([]);
+  });
+
   /** The rule must not eat the feature: these are product searches and they are kept. */
   it.each(['32 waist jeans', 'size 10 dress', 'order 123456', 'linen shirt'])(
     'still remembers %p',
@@ -286,6 +313,8 @@ describe('isPrivate', () => {
     'ORD 2026 0115 001',
     '٠٧٧١٢٣٤٥٦٧',
     '０７７１２３４５６７',
+    // Seven Osmanya digits: fourteen UTF-16 code units, and seven digits.
+    '𐒠𐒡𐒢𐒣𐒤𐒥𐒦',
   ])('%p is not kept', (term) => {
     expect(isPrivate(term)).toBe(true);
   });
@@ -294,10 +323,16 @@ describe('isPrivate', () => {
    * The other direction, and it is the half that keeps the rule honest: widening it until it eats
    * ordinary product searches would be a worse answer than the anchored version it replaced.
    */
-  it.each(['linen shirt', '32 waist', 'size 10 dress', 'order 123456', 'size 8', 'jeans 2026'])(
-    '%p is kept',
-    (term) => {
-      expect(isPrivate(term)).toBe(false);
-    },
-  );
+  it.each([
+    'linen shirt',
+    '32 waist',
+    'size 10 dress',
+    'order 123456',
+    'size 8',
+    'jeans 2026',
+    // Four digits outside the basic plane: eight code units, and four digits.
+    '𐒠𐒡𐒢𐒣',
+  ])('%p is kept', (term) => {
+    expect(isPrivate(term)).toBe(false);
+  });
 });

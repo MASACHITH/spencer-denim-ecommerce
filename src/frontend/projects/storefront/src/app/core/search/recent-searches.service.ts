@@ -187,5 +187,10 @@ export function isPrivate(term: string): boolean {
     return true;
   }
 
-  return term.replace(NOT_A_DIGIT, '').length > MAX_DIGITS;
+  // Spread, not `.length`: a string's length is in UTF-16 code units, so a decimal digit outside the
+  // basic plane counts twice and `MAX_DIGITS` quietly becomes "three digits" for those scripts.
+  // Measured on Osmanya (U+104A0..U+104A9): four digits read as eight and were dropped, while three
+  // read as six and were kept. Conservative rather than a hole, and not a script used in Sri Lanka —
+  // but the comment above says "seven or more digits", so it should be seven or more digits.
+  return [...term.replace(NOT_A_DIGIT, '')].length > MAX_DIGITS;
 }
