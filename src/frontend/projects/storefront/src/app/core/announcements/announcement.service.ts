@@ -20,12 +20,14 @@ export interface AnnouncementMessage {
  * These are the two lines doc 08 §9 seeds, plus the campaign line the style tile used, and all
  * three are placeholders the client replaces before go-live (docs/04 §4 decision 8). The strip is
  * on every page of the site, so it is the last thing that may break: a shopper should never meet a
- * blank band where the delivery promise lives.
+ * blank band where the strip lives.
  */
 export const PLACEHOLDER_ANNOUNCEMENTS: readonly AnnouncementMessage[] = [
-  { id: 'delivery', text: 'Free island-wide delivery on orders over Rs. 10,000', linkUrl: null },
-  { id: 'returns', text: 'Easy 14-day returns and exchanges on every order', linkUrl: null },
-  { id: 'new-collection', text: 'New season linen has arrived. Shop the edit', linkUrl: null },
+  // Must stay in step with HomeContentData.Announcements, and for the same reason: no free-delivery
+  // threshold and no returns window until a setting and a published policy exist to back them (#34).
+  { id: 'delivery', text: 'Island-wide delivery across Sri Lanka', linkUrl: null },
+  { id: 'new-collection', text: 'New season linen has arrived', linkUrl: null },
+  { id: 'whatsapp', text: 'Questions? Message us on WhatsApp', linkUrl: null },
 ];
 
 /**

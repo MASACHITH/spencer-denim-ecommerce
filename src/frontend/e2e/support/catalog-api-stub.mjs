@@ -700,8 +700,10 @@ const SECTIONS = [
  * constants, because that sentence is in both — which is no test at all.
  */
 const ANNOUNCEMENTS = [
-  { id: 1, message: 'Free island-wide delivery on orders over Rs. 10,000', linkUrl: null },
-  { id: 2, message: 'Easy 14-day returns and exchanges on every order', linkUrl: '/sale' },
+  // Deliberately not the fallback's wording, so a test can tell a live strip from a fallback one,
+  // and deliberately promising nothing — see #34.
+  { id: 1, message: 'Stitched in Sri Lanka', linkUrl: null },
+  { id: 2, message: 'Shop the season sale', linkUrl: '/sale' },
   { id: 3, message: 'Stitched in Sri Lanka since 2011', linkUrl: null },
 ];
 

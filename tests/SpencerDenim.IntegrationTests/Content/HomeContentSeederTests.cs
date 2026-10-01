@@ -105,7 +105,7 @@ public sealed class HomeContentSeederTests(SqlServerDatabaseFixture sqlServer)
     }
 
     [Fact]
-    public async Task Two_announcement_lines_are_seeded_and_active()
+    public async Task The_seeded_announcement_lines_are_active()
     {
         sqlServer.SkipIfUnavailable();
 
@@ -116,7 +116,7 @@ public sealed class HomeContentSeederTests(SqlServerDatabaseFixture sqlServer)
             .OrderBy(message => message.SortOrder)
             .ToListAsync(Token);
 
-        Assert.Equal(2, messages.Count);
+        Assert.Equal(HomeContentData.Announcements.Count, messages.Count);
         Assert.All(messages, message => Assert.True(message.IsActive));
         Assert.All(messages, message => Assert.False(string.IsNullOrWhiteSpace(message.Message)));
     }
@@ -325,7 +325,7 @@ public sealed class HomeContentSeederTests(SqlServerDatabaseFixture sqlServer)
             Assert.False(
                 await dbContext.AnnouncementMessages.AnyAsync(message => message.Message == text, Token),
                 "a deleted announcement came back");
-            Assert.Equal(1, await dbContext.AnnouncementMessages.CountAsync(Token));
+            Assert.Equal(HomeContentData.Announcements.Count - 1, await dbContext.AnnouncementMessages.CountAsync(Token));
         }
         finally
         {
@@ -359,7 +359,7 @@ public sealed class HomeContentSeederTests(SqlServerDatabaseFixture sqlServer)
         {
             await seeder.SeedAsync(Token);
 
-            Assert.Equal(2, await dbContext.AnnouncementMessages.CountAsync(Token));
+            Assert.Equal(HomeContentData.Announcements.Count, await dbContext.AnnouncementMessages.CountAsync(Token));
             Assert.False(
                 await dbContext.AnnouncementMessages.AnyAsync(row => row.Message == original, Token),
                 "the original line came back beside the client's own");
@@ -392,8 +392,8 @@ public sealed class HomeContentSeederTests(SqlServerDatabaseFixture sqlServer)
         {
             var counts = await seeder.SeedAsync(Token);
 
-            Assert.Equal(2, counts.Announcements);
-            Assert.Equal(2, await dbContext.AnnouncementMessages.CountAsync(Token));
+            Assert.Equal(HomeContentData.Announcements.Count, counts.Announcements);
+            Assert.Equal(HomeContentData.Announcements.Count, await dbContext.AnnouncementMessages.CountAsync(Token));
         }
         finally
         {

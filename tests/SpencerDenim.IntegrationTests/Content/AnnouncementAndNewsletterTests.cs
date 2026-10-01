@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using SpencerDenim.Domain.Marketing;
 using SpencerDenim.Infrastructure.Persistence;
+using SpencerDenim.Infrastructure.Persistence.Seeding;
 using SpencerDenim.IntegrationTests.Infrastructure;
 
 namespace SpencerDenim.IntegrationTests.Content;
@@ -17,7 +18,7 @@ public sealed class AnnouncementAndNewsletterTests(SqlServerDatabaseFixture sqlS
     {
         var messages = await CreateApi().GetAnnouncementsAsync(Token);
 
-        Assert.Equal(2, messages.Count);
+        Assert.Equal(HomeContentData.Announcements.Count, messages.Count);
         Assert.All(messages, message => Assert.False(string.IsNullOrWhiteSpace(message.Message)));
     }
 
@@ -32,7 +33,7 @@ public sealed class AnnouncementAndNewsletterTests(SqlServerDatabaseFixture sqlS
         {
             var messages = await api.GetAnnouncementsAsync(Token);
 
-            Assert.Single(messages);
+            Assert.Equal(HomeContentData.Announcements.Count - 1, messages.Count);
             Assert.DoesNotContain(messages, message => message.Id == first.Id);
         }
         finally
@@ -40,7 +41,7 @@ public sealed class AnnouncementAndNewsletterTests(SqlServerDatabaseFixture sqlS
             await SetActiveAsync(first.Id, true);
         }
 
-        Assert.Equal(2, (await api.GetAnnouncementsAsync(Token)).Count);
+        Assert.Equal(HomeContentData.Announcements.Count, (await api.GetAnnouncementsAsync(Token)).Count);
     }
 
     /// <summary>
