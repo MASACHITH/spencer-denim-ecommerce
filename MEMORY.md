@@ -115,7 +115,13 @@ the top level rather than vanishing, and the stale path on a soft-deleted descen
 restore task's problem rather than left silent.
 
 **Numbers:** backend **887 unit** (was 875) **+ 456 integration** (447), 0 skipped; frontend 21 / 460 / **209** admin;
-**Playwright 253**. Lint clean, Release build clean with 0 warnings.
+**Playwright 255** (was 246). Lint clean, Release build clean with 0 warnings.
+
+**One flake of my own, found rather than tolerated.** The admin "nothing is logged to the console" test
+navigated a second time while the page `beforeEach` had opened was still loading, so its own cancelled
+requests arrived as failures — about one full-suite run in five, passing every time in isolation. It waits
+for the first load to settle and ignores `net::ERR_ABORTED` now, with the reason written down; three
+consecutive full runs are clean.
 
 **Next:** back to the tester.
 

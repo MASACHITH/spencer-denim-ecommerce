@@ -599,6 +599,12 @@ test.describe('layout', () => {
   });
 
   test('nothing is logged to the console and no request fails', async ({ page }) => {
+    // The page `beforeEach` opened has to be finished with before this one navigates again, or its own
+    // in-flight requests are cancelled by the navigation and arrive here as failures. That is what made
+    // this test fail about one full-suite run in five while passing every time on its own.
+    await expect(page.getByTestId('category-10')).toBeVisible();
+    await page.waitForLoadState('networkidle');
+
     const problems: string[] = [];
 
     page.on('console', (message) => {
@@ -606,7 +612,16 @@ test.describe('layout', () => {
         problems.push(`${message.type()}: ${message.text()}`);
       }
     });
-    page.on('requestfailed', (request) => problems.push(`failed: ${request.url()}`));
+
+    page.on('requestfailed', (request) => {
+      // A request a navigation cancelled is not a defect, and it is the one failure this test can provoke
+      // itself. Anything else — a refused connection, a DNS failure, a reset — still counts.
+      const reason = request.failure()?.errorText ?? 'unknown';
+      if (reason !== 'net::ERR_ABORTED') {
+        problems.push(`failed: ${request.url()} — ${reason}`);
+      }
+    });
+
     page.on('response', (response) => {
       if (response.status() >= 400) {
         problems.push(`${response.status()}: ${response.url()}`);
