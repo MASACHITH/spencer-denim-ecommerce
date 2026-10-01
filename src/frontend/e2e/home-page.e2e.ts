@@ -247,6 +247,41 @@ test.describe('the hero (HOME-01)', () => {
   });
 });
 
+/**
+ * The full-bleed blocks really do reach both edges of the screen.
+ *
+ * <b>This is a measurement, not a reading of the stylesheet.</b> The hero and the two banners each
+ * carry `aspect-ratio` and a `max-height`, and with an *auto* width CSS transfers that max-height
+ * through the ratio and makes it a **max-width** — 880 x 16/9 = 1564 px for the hero, 720 x 21/9 =
+ * 1680 px for a banner. At 1920 the hero stopped 333 px short of the right-hand edge and each
+ * banner 217 px short, leaving a white band down the side of the front page. Nothing saw it: the
+ * five artwork sections were seeded switched off, so no page had ever drawn one, and every hero
+ * test asked whether the element existed rather than how wide it was.
+ */
+test.describe('the full-bleed blocks (HOME-01, HOME-05, HOME-06)', () => {
+  for (const width of BREAKPOINTS) {
+    test(`${width}px: the hero and both banners span the whole page`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto('/');
+      await hydrated(page);
+
+      const measured = await page.evaluate(() =>
+        [...document.querySelectorAll('.hero, .banner')].map((element) => ({
+          name: element.className,
+          width: Math.round(element.getBoundingClientRect().width),
+          available: Math.round(element.parentElement!.getBoundingClientRect().width),
+        })),
+      );
+
+      expect(measured.length).toBeGreaterThan(0);
+
+      for (const block of measured) {
+        expect(block.width, `${block.name} at ${width}px`).toBe(block.available);
+      }
+    });
+  }
+});
+
 test.describe('the trending tiles (HOME-04)', () => {
   test('each card opens the matching filtered listing', async ({ page }) => {
     await page.goto('/');
