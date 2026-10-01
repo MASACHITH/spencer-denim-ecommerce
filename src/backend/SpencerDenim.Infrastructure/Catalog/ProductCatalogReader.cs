@@ -939,6 +939,15 @@ internal sealed class ProductCatalogReader(
     /// <summary>
     /// Doc 08 §3.2: the Best Seller badge compares <c>SoldQty30d</c> with the department's top-N
     /// threshold. One small query per department on the page (at most three), never per row.
+    /// <para>
+    /// It counts over <see cref="BaseQuery"/> and not over <c>dbContext.Products</c>, which is the
+    /// correction in issue #25. Spelling the published and stats predicates out here left out the one
+    /// <see cref="BaseQuery"/> adds on top of them — a product leaves the storefront with its department
+    /// or its primary category — so a product in a deactivated category still counted towards its
+    /// department's top N. The threshold then came out too high and the badge was withheld from a
+    /// product that had earned it. Cosmetic, and the same invariant the rest of this class exists to
+    /// enforce, so it is enforced in one place rather than restated in two.
+    /// </para>
     /// </summary>
     private async Task<Dictionary<int, int>> LoadBestSellerThresholdsAsync(
         List<int> departmentIds,
@@ -949,9 +958,7 @@ internal sealed class ProductCatalogReader(
 
         foreach (var departmentId in departmentIds)
         {
-            var threshold = await dbContext.Products
-                .AsNoTracking()
-                .Where(product => product.IsPublished && product.Stats != null)
+            var threshold = await BaseQuery()
                 .Where(product => product.DepartmentId == departmentId)
                 .Select(product => product.Stats!.SoldQty30d)
                 .OrderByDescending(soldQty => soldQty)
