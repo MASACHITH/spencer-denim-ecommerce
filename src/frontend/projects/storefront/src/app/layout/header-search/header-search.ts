@@ -16,6 +16,7 @@ import { Router } from '@angular/router';
 import { Icon } from '@spencer-denim/shared';
 
 import { NavigationService } from '../../core/navigation/navigation.service';
+import { UniqueId } from '../../core/platform/unique-id';
 import { RecentSearches } from '../../core/search/recent-searches.service';
 import {
   Suggestion,
@@ -30,8 +31,6 @@ import {
 } from '../../core/search/search-suggestions';
 import { isSearchable, normaliseTerm, tokenise } from '../../core/search/search-term';
 import { SuggestionStore } from '../../core/search/suggestion-store';
-
-let nextId = 0;
 
 /**
  * The search box and its suggestions overlay (GLB-04, SRCH-01).
@@ -72,7 +71,7 @@ let nextId = 0;
     <form
       class="header-search"
       role="search"
-      [attr.aria-label]="formLabel()"
+      [attr.aria-label]="landmarkName()"
       (submit)="onSubmit($event)"
     >
       <label class="sr-only" [attr.for]="inputId">{{ formLabel() }}</label>
@@ -356,7 +355,18 @@ export class HeaderSearch {
    */
   readonly initialTerm = input('');
 
-  protected readonly inputId = `sd-search-${nextId++}`;
+  /**
+   * The name of the `role="search"` landmark, when it has to differ from the field's own label.
+   *
+   * `SiteHeader` renders this component **twice** — the inline box from 1280 px and the one in the
+   * panel below it — and the results page renders a third. Exactly one of the header's two is ever
+   * visible, so in effect a screen reader never meets two landmarks with one name; but that is true
+   * by stylesheet rather than by naming, and a landmark list is the wrong place to depend on a media
+   * query. The field label stays "Search products" either way, because that is what the field is.
+   */
+  readonly landmarkLabel = input('');
+
+  protected readonly inputId = inject(UniqueId).for('sd-search');
   protected readonly listboxId = `${this.inputId}-listbox`;
 
   private readonly field = viewChild.required<ElementRef<HTMLInputElement>>('field');
@@ -377,6 +387,9 @@ export class HeaderSearch {
   private seeded: string | null = null;
 
   protected readonly term = computed(() => normaliseTerm(this.raw()));
+
+  /** The landmark's name: its own, or the field's when nothing more specific was given. */
+  protected readonly landmarkName = computed(() => this.landmarkLabel() || this.formLabel());
 
   /**
    * The blocks in the popup.
@@ -521,10 +534,20 @@ export class HeaderSearch {
         return;
       }
       case 'Escape':
+        // **Always prevented, open or not**, and that is the whole of the fix for the bug this
+        // component's own docblock claimed to be the opposite of.
+        //
+        // Chrome gives `input[type=search]` a native Escape-clear as the keydown's default action.
+        // Preventing it only while the popup was open meant the *second* Escape — the one whose only
+        // job is to dismiss the panel — emptied the field, and the clear dispatches an `input` event,
+        // which `onInput` answers by opening the popup again. So a shopper who dismissed the
+        // suggestions and then dismissed the panel lost their typing and got the suggestions back:
+        // #20's shape, here. The keystroke is ours either way, so it is prevented either way.
+        event.preventDefault();
+
         if (this.isOpen()) {
-          // Closes the popup and stops there, so the header's own Escape handler does not tear the
-          // search panel down in the same keystroke.
-          event.preventDefault();
+          // Stops here, so the header's own Escape handler does not tear the search panel down in
+          // the same keystroke. A second Escape finds the popup closed and is allowed through.
           event.stopPropagation();
           this.close();
         }

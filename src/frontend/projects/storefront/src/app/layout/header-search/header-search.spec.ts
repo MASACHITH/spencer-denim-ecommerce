@@ -117,11 +117,12 @@ function response(cards: readonly ProductCardDto[], term: string): ProductSearch
   // with a key handler is a control that cannot be reached by keyboard, which the template rules
   // rightly refuse.
   host: { '(keydown.escape)': 'escapes.set(escapes() + 1)' },
-  template: `<sd-header-search [initialTerm]="seed()" />`,
+  template: `<sd-header-search [initialTerm]="seed()" [landmarkLabel]="landmark()" />`,
 })
 class Host {
   readonly escapes = signal(0);
   readonly seed = signal('');
+  readonly landmark = signal('');
 }
 
 describe('HeaderSearch (SRCH-01)', () => {
@@ -250,12 +251,44 @@ describe('HeaderSearch (SRCH-01)', () => {
     expect(root().querySelector(`#${controls}`)?.getAttribute('role')).toBe('listbox');
   });
 
-  it('labels its own search landmark, so two boxes on one page are distinguishable', () => {
+  it('labels its own search landmark, and labels the field with the same words by default', () => {
     setUp();
 
     expect(root().querySelector('[role="search"]')?.getAttribute('aria-label')).toBe(
       'Search products',
     );
+    expect(root().querySelector('label')?.textContent?.trim()).toBe('Search products');
+  });
+
+  /**
+   * `SiteHeader` renders this component twice and the results page a third time. Naming the landmark
+   * separately from the field is what makes three distinct landmark names possible without three
+   * strange field labels.
+   */
+  it('names the landmark separately from the field when asked', () => {
+    setUp();
+    fixture.componentInstance.landmark.set('Search products, header panel');
+    fixture.detectChanges();
+
+    expect(root().querySelector('[role="search"]')?.getAttribute('aria-label')).toBe(
+      'Search products, header panel',
+    );
+    expect(root().querySelector('label')?.textContent?.trim()).toBe('Search products');
+  });
+
+  /**
+   * Generated ids are counted per application instance, not per module: a module-level counter lives
+   * for the life of a Node process, so ids climbed across server renders while every browser started
+   * again at 0. See `UniqueId`.
+   */
+  it('starts its generated ids from the beginning in each application instance', () => {
+    setUp();
+    const first = input().id;
+
+    setUp();
+
+    expect(input().id).toBe(first);
+    expect(first).toMatch(/^sd-search-\d+$/);
   });
 
   // ------------------------------------------------------------------ debounced suggestions
@@ -495,6 +528,72 @@ describe('HeaderSearch (SRCH-01)', () => {
     expect(input().value).toBe('linen');
     // SiteHeader would have closed the whole search panel.
     expect(fixture.componentInstance.escapes()).toBe(0);
+  });
+
+  /**
+   * **The second Escape must be prevented too.**
+   *
+   * Chrome's native `input[type=search]` clear is the keydown's default action, so the only thing
+   * standing between a dismissing keystroke and an emptied field is `preventDefault()`. jsdom has no
+   * such native behaviour, which is exactly why the first version of this suite could not see the
+   * bug: it pressed a synthetic Escape and asserted the popup closed. What a unit test *can* assert
+   * is the mechanism — that the keystroke is ours on both presses — and the browser suite then
+   * measures the field itself (`search.e2e.ts`, "a second Escape leaves the field and the popup
+   * alone").
+   */
+  it('prevents the browser default on every Escape, not only the one that closes the popup', async () => {
+    setUp();
+
+    type('linen');
+    await settle();
+    searchRequest().flush(response([card(1, 'Linen Shirt')], 'linen'));
+    fixture.detectChanges();
+
+    const first = press('Escape');
+    expect(first.defaultPrevented).toBe(true);
+
+    const second = press('Escape');
+    expect(second.defaultPrevented).toBe(true);
+  });
+
+  it('keeps the term and the closed popup across repeated Escapes', async () => {
+    setUp();
+
+    type('linen');
+    await settle();
+    searchRequest().flush(response([card(1, 'Linen Shirt')], 'linen'));
+    fixture.detectChanges();
+
+    press('Escape');
+    press('Escape');
+    press('Escape');
+
+    expect(input().value).toBe('linen');
+    expect(input().getAttribute('aria-expanded')).toBe('false');
+  });
+
+  /**
+   * The other half of the same bug: if a clear does get through from anywhere, `onInput` must not be
+   * the thing that re-opens the popup behind it. This drives the input event a native clear would
+   * dispatch, which is what jsdom cannot do on its own.
+   */
+  it('re-opens on a real edit, which is what tells an edit from a dismissal', async () => {
+    setUp();
+
+    type('linen');
+    await settle();
+    searchRequest().flush(response([card(1, 'Linen Shirt')], 'linen'));
+    fixture.detectChanges();
+    press('Escape');
+    expect(input().getAttribute('aria-expanded')).toBe('false');
+
+    // A deliberate edit by the shopper, not a side effect of Escape.
+    type('linen s');
+    await settle();
+    searchRequest().flush(response([], 'linen s'));
+    fixture.detectChanges();
+
+    expect(input().getAttribute('aria-expanded')).toBe('true');
   });
 
   it('lets a second Escape through, so the header can close the panel', async () => {
