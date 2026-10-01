@@ -887,7 +887,7 @@ public sealed partial class ClientAssetImporter(
         if (kept.Count > 0)
         {
             run.Note(
-                $"{type}: the {string.Join(", ", kept)} on that banner "
+                $"{type}: the {Listed(kept)} on that banner "
                 + $"{(kept.Count == 1 ? "was" : "were")} left as "
                 + $"{(kept.Count == 1 ? "it is" : "they are")} — somebody wrote "
                 + $"{(kept.Count == 1 ? "it" : "them")} in ADM-17. Check that the picture, the words and "
@@ -915,6 +915,14 @@ public sealed partial class ClientAssetImporter(
             return current;
         }
     }
+
+    /// <summary>Names in a sentence: "the heading", "the heading and the link", "a, b and c".</summary>
+    private static string Listed(List<string> names) => names.Count switch
+    {
+        0 => string.Empty,
+        1 => names[0],
+        _ => $"{string.Join(", ", names.Take(names.Count - 1))} and {names[^1]}",
+    };
 
     private async Task ImportTrendingAsync(
         IReadOnlyList<string> files,

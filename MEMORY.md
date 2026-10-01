@@ -72,7 +72,11 @@ checked the thing next to the thing".** Verified in both directions now — 20% 
 height, 940 raises the guard rather than passing, 33% passes and 34% fails.
 
 **The comment was wrong twice over, and both corrections are facts the next person needs.** The upper
-bound is 33.69%, not "34%" — 34% fails the test. And "no garment is visible above 1024 px" is false:
+bound is 33.69%, not "34%" — 34% fails the test. **And in round 2 the same trap turned up mirrored at
+the other end:** 22% fails too, because the e2e marker is rows 160–269 of 640 = 25.00%–42.19%, a shade
+taller than the 25%–42% her face occupies, so the test is stricter at the bottom than the arithmetic.
+Both numbers are written down now — **21.8%–33.7% on paper, 23%–33% as the test measures it** — because
+"21.8%" plus a developer rounding outward is a red build with no explanation in the comment. And "no garment is visible above 1024 px" is false:
 the crop is identical in source terms from 768 to 1440 because `max-height` does not bite until
 1564 px, and the collar and shoulders are in frame at all of them. Only **1920** is garment-free. The
 sentence contradicted my own two lines earlier, which is how it got past me. Corrected in the

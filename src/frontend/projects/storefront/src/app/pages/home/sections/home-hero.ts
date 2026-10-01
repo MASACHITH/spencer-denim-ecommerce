@@ -174,10 +174,16 @@ import { Viewport } from '../../../core/platform/viewport';
        to start above 25% and end below 42% at EVERY width. It is widest where the box is a true
        16:9 (768-1564 px: 31.64% of the source) and narrowest at 1920, where max-height 880px makes
        the box 2.18:1 and only 25.78% of the source survives — so 1920 is what pins the value.
-       Solving both gives 21.8%-33.7%; 30% sits inside it with headroom at 1920. Do not round the
-       upper bound up: 34% fails the e2e test. Verified by screenshot at 768/1024/1280/1440/1920,
-       and the e2e suite photographs the hero at each of them and asserts the band that must stay in
-       frame is whole inside the picture.
+       Solving both gives 21.8%-33.7% on paper, and 30% sits inside it with headroom at 1920.
+
+       THE TEST'S OWN WINDOW IS NARROWER: 23%-33%. The e2e sample's marker band is rows 160-269 of
+       640, which is 25.00%-42.19% — a shade taller than the 25%-42% her face actually occupies — so
+       the test is stricter at the bottom than the arithmetic is. Reproduced: 22% fails at 1920
+       (runs off the bottom, last row 879) and 23% passes; 34% fails at the top and 33% passes. The
+       direction is safe, but DO NOT ROUND EITHER BOUND OUTWARD from the paper figures or the build
+       goes red for a reason the arithmetic does not explain. Verified by screenshot at
+       768/1024/1280/1440/1920, and the e2e suite photographs the hero at each of them and asserts
+       the band that must stay in frame is whole inside the picture.
 
        AND IT RUNS OUT. The clamped box keeps growing wider than 16:9 past 1564 px, so the surviving
        band keeps shrinking. Measured: at 2560 px of hero the band is 19.3% of the source and 30%

@@ -175,6 +175,14 @@ export interface VisibleBand {
  * that constrains the lower edge: `object-position: center 20%` cut the chin off at 1920 and all
  * five widths passed. So the check is the same one `edgesWithoutRing` makes — is the thing we are
  * about to photograph actually on the screen?
+ *
+ * **Its limit, stated rather than left to be discovered.** The check is purely geometric: it says
+ * the element is on the screen, not that it is *unobscured*. Anything painted over the element —
+ * a `position: fixed` overlay, a modal, a cookie bar — is photographed as element content and
+ * measured as if it were. Forcing the storefront header to `fixed` moves the marker's first row to
+ * 260 and would pass over a cut face. Not reachable today (the header is sticky, and the hero sits
+ * at y=118 with no scroll at the framing test's 1100 px viewport), which is why it is written down
+ * here instead of guarded against.
  */
 export async function markerBand(page: Page, element: Locator): Promise<VisibleBand> {
   await element.scrollIntoViewIfNeeded();
