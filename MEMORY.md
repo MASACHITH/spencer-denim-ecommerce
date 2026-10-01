@@ -19,6 +19,7 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 - **Next:** **W2-01 (homepage, HOME-01..10) PASSED the tester** and is pushed to `origin feature/W2-01-homepage` awaiting a PR: content schema, seeder, read-only content API, newsletter signup endpoint and the page itself. ADM-17's admin screens are **not** in it. Issue #37 (the homepage cache rounds schedule boundaries to its five-minute TTL) is filed, not built.
 - **Next:** **W1-02 (catalogue foundation — schema + demo seeder + the read-only storefront catalogue API) is in the developer↔tester loop** on `feature/W1-02-catalogue-foundation` (worktree `worktrees/sd-catalog`): tester round 1 failed it on 3 major + 5 minor, round 2 on 2 major + 4 minor, all fixed; not pushed, not merged, not Done. Its ADM-11 admin screens are a separate task, **W1-12 (TODO)** — W1-02 no longer means "categories (create/edit/reorder)". W1-08 (Users & Roles CRUD), W1-09 (audit log viewer), W1-10 (2FA enrollment), W1-11 (route guard, SecurityStamp revalidation, forwarded-headers regression test) are the W1-01 follow-ups, tracked but not started; the user/architect should decide priority between those and W1-03 once W1-02 passes.
 - **Client progress page:** `client-progress/` is tracked in this repository (moved 2026-09-22, W0-18) and publishes from whichever machine holds the DPAPI-encrypted FTP credential — the `SCIENTER\sachithi` PC, where it was published on 23 and 24 Sep. An earlier note here said it could not be done from "this machine"; that was written from the second machine and is not a property of the repository.
+- **Next:** **W1-12 (ADM-11: the departments and categories admin screens) is a developer pass awaiting a tester** on `feature/W1-12-category-admin` (worktree `worktrees/sd-rename`): the admin read model, eight write endpoints with RBAC and audit rows, the Angular screens with a keyboard- and touch-first reorder, and one migration adding the slug CHECK constraints. Not pushed, not merged, not Done.
 - **Next:** **W1-14 (hero framing, the activewear relabel, the poplin re-import) is a developer pass awaiting a tester** on `feature/W1-14-hero-and-activewear` (worktree `worktrees/sd-hero`): both W1-13 holds are released — the hero ships with a measured `object-position` and HOME-06 is relabelled "Linen and denim" over a listing that holds linen and denim — and a drop that withdraws a photograph now withdraws it from the product. Not pushed, not merged, not Done. **The hero video still wants re-exporting at 16:9 and ≥1920 px, with a poster cut from the same take**; what shipped is the best the 360x640 file can do.
 - **Next:** **W1-13 (the client's real photographs, video and logo) is back with the tester after fix round 3** on `feature/W1-13-client-assets` (worktree `worktrees/sd-assets`): a repeatable import verb on the API, three of the five media-dependent homepage sections switched on, and a HOME-01/02/05/06 fix for blocks sized by `aspect-ratio`. **The hero and the activewear feature are held off by their artwork's checksum** — the delivered video is portrait in a 16:9 frame and the delivered activewear picture is a linen flat-lay — and each releases itself when the owner delivers a replacement. Not pushed, not merged, not Done. **The logo is imported but not wired in** — the three delivered files are opaque JPEGs named `.png`, the "light" wordmark is the same mockup as the dark one, and the mark reads COLOMBO WARDROBE rather than Spencer Denim. That needs a decision from the owner and flat artwork, not code.
 - **Open assumptions:** A1 (Trending Categories / Best Sellers homepage blocks stay removed per signed proposal), A2 (video MP4 ≤ 50 MB, no server conversion).
@@ -45,6 +46,91 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 ---
 
 ## Session log
+
+### 2026-10-02 (10) — W1-12 (ADM-11): the admin owns the catalogue structure, and the switch says what it will cost
+
+`feature/W1-12-category-admin` (worktree `worktrees/sd-rename`). Developer pass only: not pushed, not
+merged, **not Done**, and `client-progress/progress-data.js` is untouched until the tester passes it.
+
+**The read side had to be a second reader, not a flag.** `ProductCatalogReader` and
+`DepartmentCatalogReader` drop every row an admin has switched off — that *is* doc 08 §7.1's switch — so a
+screen built on them could show only the rows already live and could never switch one back on.
+`IAdminCatalogReader` answers the other question about the same tables, with the counts the screens need
+and a base64 `rowVersion` per row.
+
+**The deactivation warning is three numbers, and the third is the one nobody predicts.** `IsActive` is per
+row and the listing checks only a product's **own primary category**, so hiding a *parent* does not take
+its children's products out of the shop — it takes every menu route to them away and leaves them on sale
+with no way to reach them. The impact payload says all three (leaving, descendant categories, stranded
+products) and names up to five products; the screen fetches it **before** offering the button. Proved end
+to end against a real database and the real storefront API, not by asserting a flag was set.
+
+**Reorder is a whole list, and that is what makes two admins safe.** `PUT …/categories/order` takes every
+sibling id in order and refuses a list that is not exactly the sibling set (`stale_order`, 409) — a subset
+would silently leave out a sibling somebody else had just created. Every row carries `RowVersion`, so the
+second of two concurrent saves loses with `stale_row_version` rather than interleaving. The integration
+test fires both at once and asserts the result is **exactly one of the two requested orders, never a mix**.
+
+**On screen it is buttons, not drag-and-drop**: Move up / Move down, 44 px, usable by tap, click,
+Tab + Enter and Alt + arrow from either move button; moves are staged and one Save order sends each changed
+sibling list as its own request and its own audit row. Dragging needs a pointer and would have to be built
+twice to be usable at all.
+
+**Moving to another parent is the edit form's parent field**, and it re-paths the whole subtree in one unit
+of work (doc 11 P1 step 4, doc 08 §10.1). Refused for a loop, for another department, and for a move that
+would push the deepest descendant past three levels — the guard measures the *subtree*, not the category,
+which is the case a naive check gets wrong.
+
+**Issue #59 is answered for this module.** `IAuditLogWriter.Enlist` adds the row to the caller's own unit of
+work, so the trail and the change commit together: a refused write leaves no row, and a save of an unedited
+form writes neither a row nor a statement (the row version does not even move). Create / Update /
+StatusChange / SoftDelete, changed properties only; a reorder is **one** row naming the list
+(`EntityType = CategoryOrder`, `EntityId = "{department}/{parent|root}"`) rather than one per category.
+
+**Issue #24's answer for two more columns.** `CatalogSlug` is now checked in the command — a bad slug is a
+400 naming the field, not an `ArgumentException` out of a property setter — *and* the setter guard was added
+to `Category.Slug` and `Department.Slug`, which had none because neither had a write path before.
+
+**One migration, `CatalogSlugWriteGuards`:** `CK_Categories_Slug` and `CK_Departments_Slug`, the slug rule in
+SQL. **It needs a binary collation and that is the whole trick** — the database is `CI_AS`, so
+`LIKE '%[^a-z0-9-]%'` accepts `DENIM`, and a case-sensitive collation is not enough either because `CS_AS`
+interleaves the cases so `A`–`Z` still fall inside the range `a-z`. Only `Latin1_General_100_BIN2` gives the
+ranges their ASCII meaning. Verified on 21 inputs, and applied to a database migrated to the previous
+migration and then seeded: 3 departments and 29 categories pass, no `WITH NOCHECK`.
+
+**Two defects the browser found that jsdom could not.** The six-button row was `flex: 0 0 auto`, so its own
+`flex-wrap` never applied and it ran **489 px wide inside a 320 px page** at 320/375/390. And focus
+restoration after a move ran on a microtask: `@for` tracks by id, so a move *relocates* the row's DOM node,
+and re-inserting a focused element blurs it in Chromium — the unit test passed because it calls
+`detectChanges()` synchronously first. It is an `afterEveryRender` hook now, preferring the control the
+admin actually pressed.
+
+**And one the test found by being written:** the staged order survived a fresh tree arriving from the
+server, so after a create or a removal the screen would draw nodes that no longer existed and then send a
+list the API would rightly refuse. It is a `linkedSignal` on the tree input now.
+
+**A flake that was mine and was not the code.** Three admin e2e runs failed on random tests until I noticed
+a **stale stub process from earlier in the session** that `reuseExistingServer` was happily reusing —
+docs/14's "never run a server you did not start this session" in a new shape. The stub now keys its state on
+a per-worker cookie, and three consecutive parallel runs are clean.
+
+**Numbers:** backend **875 unit** (was 772) **+ 447 integration** (401), 0 skipped; frontend 21 shared /
+451 storefront / **203 admin** (131); **Playwright 246** (213). Lint clean, Release build clean.
+
+**Checked against the real stack**, not only the stub: the real API on LocalDB with the demo catalogue, the
+built admin app behind a session proxy, signed in as a catalogue-only staff user. Create → the category is
+in the storefront navigation; reorder → the mega menu follows; hide Skirts → the listing goes from 2 to 0
+and the category leaves the menu; show → back to 2; remove with products → refused with the count; remove
+empty → gone; audit rows name the user and the address; no console errors, no 5xx, no horizontal scroll at
+any of the eight widths.
+
+**For the owner, not fixed here:** doc 11 P1 step 1 says staff may edit "their description, hero image, sort
+order and SEO" of a department, but W1-12 was asked to put `CatalogSlug` on `Department.Slug`'s **write
+path**, which means there has to be one. The edit therefore includes the name and the slug, with a warning
+on the slug field that old links stop working. If the owner wants departments' names and slugs locked, say
+so and the two fields come out.
+
+**Next:** the tester.
 
 ### 2026-10-01 (9) — issue #30: the storefront stops calling a page gone when it could not find out
 
