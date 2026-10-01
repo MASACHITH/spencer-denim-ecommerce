@@ -27,11 +27,10 @@ public interface ICatalogStructureStore
     /// <summary>Every department for update, in sort order then id.</summary>
     Task<IReadOnlyList<Department>> ListDepartmentsAsync(CancellationToken cancellationToken);
 
-    /// <summary><c>UX_Departments_Slug</c>, asked before the insert so the answer can name the field.</summary>
-    Task<bool> DepartmentSlugTakenAsync(string slug, int exceptDepartmentId, CancellationToken cancellationToken);
-
-    /// <summary><c>UX_Departments_Name</c>.</summary>
-    Task<bool> DepartmentNameTakenAsync(string name, int exceptDepartmentId, CancellationToken cancellationToken);
+    // There is no DepartmentNameTakenAsync or DepartmentSlugTakenAsync, and their absence is the point:
+    // nothing on the admin write path may change either column (owner, 2026-10-02), so a port member to
+    // check them would be a method with no caller claiming a capability the API does not have.
+    // UX_Departments_Name and UX_Departments_Slug stay on the table — they are the seeder's guard.
 
     /// <summary>One live category for update, or <c>null</c> when it does not exist or is soft-deleted.</summary>
     Task<Category?> FindCategoryAsync(int categoryId, CancellationToken cancellationToken);
@@ -48,6 +47,15 @@ public interface ICatalogStructureStore
     /// <summary>
     /// Every live category whose <see cref="Category.Path"/> starts with <paramref name="path"/>, for
     /// update — the category itself included. This is the subtree a move has to re-path.
+    /// <para>
+    /// <b>Live only, and the consequence is written down rather than guarded.</b> A soft-deleted descendant
+    /// keeps the path it had, so moving its ancestor leaves that row's <c>Path</c> pointing at where the
+    /// subtree used to be. Nothing reads it — every query filters <c>IsDeleted</c>, and ADM-11 has no
+    /// restore — so today it is a stale column on a row nobody can see. It would matter the day a restore
+    /// is built, and that task has to re-path what it restores rather than trust the column; re-pathing
+    /// deleted rows here instead would be writing to rows the caller did not ask about and did not check a
+    /// row version for.
+    /// </para>
     /// </summary>
     Task<IReadOnlyList<Category>> ListSubtreeAsync(string path, CancellationToken cancellationToken);
 

@@ -122,3 +122,21 @@ public sealed record CategoryDeactivationImpactDto(
     int DescendantCategories,
     int DescendantProductsLosingTheirMenuRoute,
     IReadOnlyList<string> Examples);
+
+/// <summary>
+/// The lists a category form has to choose from (ADM-11, doc 11 P1 step 2): the age groups and the size
+/// guides.
+/// <para>
+/// They are here rather than deferred with the image pickers because the argument for deferring those does
+/// not reach them. A tile image needs ADM-18's media library — a browser, renditions, an upload path — and
+/// none of that exists. An age group is four seeded rows and a size guide is three; what was missing was a
+/// <c>SELECT</c>. Without it a Kids category created from these screens could never be given either, and a
+/// category with no size guide breaks PDP-04 for every product in it that has no override of its own.
+/// </para>
+/// </summary>
+public sealed record CategoryFormOptionsDto(
+    IReadOnlyList<CatalogOptionDto> AgeGroups,
+    IReadOnlyList<CatalogOptionDto> SizeGuides);
+
+/// <summary>One choice in a picker: the id to send back and the name to show.</summary>
+public sealed record CatalogOptionDto(int Id, string Name);

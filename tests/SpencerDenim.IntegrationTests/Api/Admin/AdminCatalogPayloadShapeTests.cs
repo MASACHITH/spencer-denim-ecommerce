@@ -90,6 +90,10 @@ public sealed class AdminCatalogPayloadShapeTests(SqlServerDatabaseFixture sqlSe
         "examples",
     ];
 
+    private static readonly string[] FormOptionProperties = ["ageGroups", "sizeGuides"];
+
+    private static readonly string[] OptionProperties = ["id", "name"];
+
     private static readonly string[] CatalogueRights =
     [
         Permissions.Categories.View,
@@ -163,6 +167,22 @@ public sealed class AdminCatalogPayloadShapeTests(SqlServerDatabaseFixture sqlSe
 
         var bytes = Convert.FromBase64String(token.GetString()!);
         Assert.Equal(8, bytes.Length);
+    }
+
+    [Fact]
+    public async Task The_category_form_options_carry_exactly_the_fields_the_admin_model_declares()
+    {
+        var client = await SignInAsync("shape-options");
+
+        var (status, body) = await client.GetAsync("/api/admin/catalog/category-form-options", Token);
+
+        Assert.Equal(HttpStatusCode.OK, status);
+        Assert.Equal(FormOptionProperties.Order(StringComparer.Ordinal), Names(body));
+
+        // Both lists are seeded, so an empty one is a defect rather than an empty database.
+        var ageGroup = body.GetProperty("ageGroups").EnumerateArray().First();
+        Assert.Equal(OptionProperties.Order(StringComparer.Ordinal), Names(ageGroup));
+        Assert.NotEmpty(body.GetProperty("sizeGuides").EnumerateArray());
     }
 
     private async Task<AdminCatalogApiClient> SignInAsync(string label)

@@ -183,44 +183,12 @@ import { CategoryTree } from './category-tree';
 
                 @if (editing()?.id === row.department.id) {
                   <form class="depts__form adm-fields" (ngSubmit)="saveDepartment()" novalidate>
-                    <label class="adm-field">
-                      <span class="adm-label">Name</span>
-                      <input
-                        class="adm-input"
-                        type="text"
-                        name="name"
-                        required
-                        [attr.aria-invalid]="fieldError('name') ? 'true' : null"
-                        [ngModel]="form().name"
-                        (ngModelChange)="patch('name', $event)"
-                        data-testid="dept-field-name"
-                      />
-                      @if (fieldError('name'); as message) {
-                        <span class="adm-field-error">{{ message }}</span>
-                      }
-                    </label>
-
-                    <label class="adm-field">
-                      <span class="adm-label">URL slug</span>
-                      <input
-                        class="adm-input"
-                        type="text"
-                        name="slug"
-                        required
-                        [attr.aria-invalid]="fieldError('slug') ? 'true' : null"
-                        [ngModel]="form().slug"
-                        (ngModelChange)="patch('slug', $event)"
-                        data-testid="dept-field-slug"
-                      />
-                      @if (fieldError('slug'); as message) {
-                        <span class="adm-field-error" data-testid="dept-slug-error">{{ message }}</span>
-                      } @else {
-                        <span class="adm-panel__hint">
-                          Changing this changes every listing URL in the department, and old links stop
-                          working.
-                        </span>
-                      }
-                    </label>
+                    <p class="adm-panel__hint adm-field--wide">
+                      The name and the URL of a department are fixed: every listing link in
+                      {{ row.department.name }} is built from
+                      <code>/{{ row.department.slug }}</code>, and renaming one would break those links
+                      with nothing to redirect them.
+                    </p>
 
                     <label class="adm-field adm-field--wide">
                       <span class="adm-label">Description</span>
@@ -228,9 +196,14 @@ import { CategoryTree } from './category-tree';
                         class="adm-input"
                         name="description"
                         rows="2"
+                        [attr.aria-invalid]="fieldError('description') ? 'true' : null"
                         [ngModel]="form().description"
                         (ngModelChange)="patch('description', $event)"
+                        data-testid="dept-field-description"
                       ></textarea>
+                      @if (fieldError('description'); as message) {
+                        <span class="adm-field-error" data-testid="dept-description-error">{{ message }}</span>
+                      }
                     </label>
 
                     <label class="adm-field">
@@ -316,16 +289,24 @@ export class CatalogPage {
   /** The departments as the server sent them. */
   private readonly loaded = signal<readonly AdminDepartment[]>([]);
 
-  /** The order the admin has staged, before Save order. */
-  private readonly staged = signal<readonly AdminDepartment[] | null>(null);
+  /**
+   * The order the admin has staged, before Save order — as a list of **ids**, not of rows.
+   *
+   * Ids because a reload has to be able to do both things at once: keep the arrangement the admin is in the
+   * middle of making, and still show the fresh rows. Holding the rows did neither — `load()` threw the
+   * staged arrangement away without a word (press Hide while a move was staged and the order silently
+   * reverted), and had it not, the staged copy would have gone on drawing stale counts and a stale
+   * Live/Hidden pill. This is the same defect the category tree had and was fixed for; the department list
+   * did not get the fix.
+   */
+  private readonly staged = signal<readonly number[] | null>(null);
 
   protected readonly tree = signal<AdminCategoryTree | null>(null);
   protected readonly selectedId = signal<number | null>(null);
   protected readonly editing = signal<AdminDepartment | null>(null);
   protected readonly form = signal<DepartmentFormValues>({
-    name: '',
-    slug: '',
     description: '',
+    heroImageAssetId: null,
     seoTitle: '',
     seoDescription: '',
   });
@@ -338,7 +319,27 @@ export class CatalogPage {
   /** The controls to focus once the re-ordered list has been drawn, best first; see `restoreFocus`. */
   private readonly focusAfterRender = signal<readonly string[] | null>(null);
 
-  protected readonly departments = computed(() => this.staged() ?? this.loaded());
+  /**
+   * The rows in the order they should be shown: the staged order over the freshly loaded rows.
+   *
+   * A staged order that no longer matches the set of departments is dropped rather than patched — for three
+   * fixed rows that can only mean the page is looking at a different database, and a partial arrangement is
+   * worse than none.
+   */
+  protected readonly departments = computed(() => {
+    const loaded = this.loaded();
+    const order = this.staged();
+    if (order === null) {
+      return loaded;
+    }
+
+    const byId = new Map(loaded.map((department) => [department.id, department]));
+    if (order.length !== loaded.length || order.some((id) => !byId.has(id))) {
+      return loaded;
+    }
+
+    return order.map((id) => byId.get(id)!);
+  });
 
   protected readonly departmentRows = computed(() =>
     this.departments().map((department, index, all) => ({
@@ -349,13 +350,15 @@ export class CatalogPage {
   );
 
   protected readonly orderChanged = computed(() => {
-    const staged = this.staged();
-    if (!staged) {
+    const order = this.staged();
+    if (order === null) {
       return false;
     }
 
-    const original = this.loaded();
-    return staged.some((department, index) => department.id !== original[index]?.id);
+    const loaded = this.loaded();
+    return (
+      order.length === loaded.length && order.some((id, index) => id !== loaded[index]?.id)
+    );
   });
 
   constructor() {
@@ -388,7 +391,11 @@ export class CatalogPage {
       next: (departments) => {
         this.loading.set(false);
         this.loaded.set(departments);
-        this.staged.set(null);
+
+        // The staged order is deliberately NOT cleared here. `load()` runs after a department edit, a
+        // hide/show and a saved reorder, and throwing away an arrangement the admin is in the middle of
+        // making — with no message and no announcement — is a change they did not ask for. `saveDepartmentOrder`
+        // clears it itself once the server has it.
 
         // Keep the department in hand across a reload, and open the first one on the first load, so the
         // page is never a list with nothing under it.
@@ -436,12 +443,9 @@ export class CatalogPage {
   }
 
   private refreshDepartmentCounts(): void {
-    // Not while an order is staged: overwriting the list would throw away moves the admin has made and not
-    // yet saved.
-    if (this.staged() !== null) {
-      return;
-    }
-
+    // Safe while an order is staged: the staged value is a list of ids, so refreshing the rows underneath it
+    // keeps the arrangement and updates the counts. It was a guard here, and only here, which is how the
+    // same hazard went unnoticed in `load()`.
     this.api.departments().subscribe({
       next: (departments) => this.loaded.set(departments),
       error: () => {
@@ -485,7 +489,7 @@ export class CatalogPage {
       next: () => {
         this.busy.set(false);
         this.editing.set(null);
-        this.announcement.set(`${this.form().name} was saved.`);
+        this.announcement.set(`${department.name} was saved.`);
         this.load();
       },
       error: (error: unknown) => {
@@ -527,7 +531,12 @@ export class CatalogPage {
 
     const current = this.departments();
     const index = current.findIndex((candidate) => candidate.id === department.id);
-    const moved = moveInArray(current, index, delta);
+    const moved = moveInArray(
+      current.map((candidate) => candidate.id),
+      index,
+      delta,
+    );
+
     if (!moved) {
       return;
     }
@@ -555,7 +564,7 @@ export class CatalogPage {
     this.busy.set(true);
     this.failure.set(null);
 
-    this.api.reorderDepartments(staged.map((department) => department.id)).subscribe({
+    this.api.reorderDepartments(staged).subscribe({
       next: () => {
         this.busy.set(false);
         this.announcement.set('The navigation order is saved.');

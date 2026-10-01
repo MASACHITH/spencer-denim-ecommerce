@@ -26,8 +26,11 @@ describe('CatalogPage', () => {
       id: 1,
       name: 'Women',
       slug: 'women',
-      description: null,
-      heroImageAssetId: null,
+      description: 'Everyday essentials.',
+
+      // Not null, and that is the point of the fixture: with every image column null a save that silently
+      // drops the field round-trips null to null and the test cannot see it (W1-12 fix round 1 blocker).
+      heroImageAssetId: 41,
       sortOrder: 0,
       isActive: true,
       seoTitle: null,
@@ -74,9 +77,18 @@ describe('CatalogPage', () => {
         .expectOne(`${AdminCatalogApi.departmentsUrl}/${rows[0].id}/categories`)
         .flush(emptyTree);
       fixture.detectChanges();
+
+      settle(fixture, rows);
     }
 
     return fixture;
+  }
+
+  /** The department ids in the order they are drawn. */
+  function order(fixture: ComponentFixture<CatalogPage>): number[] {
+    return [
+      ...(fixture.nativeElement as HTMLElement).querySelectorAll<HTMLElement>('li[data-testid^="department-"]'),
+    ].map((item) => Number(item.getAttribute('data-testid')!.replace('department-', '')));
   }
 
   function text(fixture: ComponentFixture<CatalogPage>): string {
@@ -114,6 +126,9 @@ describe('CatalogPage', () => {
       for (const request of pending) {
         if (request.request.url === AdminCatalogApi.departmentsUrl) {
           request.flush(rows);
+        } else if (request.request.url === AdminCatalogApi.formOptionsUrl) {
+          // The hosted category tree loads the age-group and size-guide lists once with itself.
+          request.flush({ ageGroups: [], sizeGuides: [] });
         } else if (request.request.url.endsWith('/categories')) {
           request.flush(emptyTree);
         } else {
@@ -203,6 +218,39 @@ describe('CatalogPage', () => {
     expect(button(fixture, 'dept-up-2').disabled).toBe(true);
   });
 
+  /**
+   * `load()` runs after a department edit, a hide/show and a saved reorder. Before fix round 1 it cleared
+   * the staged arrangement outright, so pressing Hide while a move was staged reverted the order with no
+   * message and no announcement — a change the admin did not ask for and was not told about.
+   */
+  it('keeps a staged order across a hide, and shows the refreshed counts under it', () => {
+    const fixture = create();
+
+    button(fixture, 'dept-down-1').click();
+    fixture.detectChanges();
+    expect(order(fixture)).toEqual([2, 1, 3]);
+
+    button(fixture, 'dept-toggle-3').click();
+    fixture.detectChanges();
+    grantToken();
+    controller.expectOne(`${AdminCatalogApi.departmentsUrl}/3/active`).flush(null);
+    fixture.detectChanges();
+
+    // The reload answers with Kids switched on and a different count.
+    settle(fixture, [
+      departments[0],
+      departments[1],
+      { ...departments[2], isActive: true, storefrontProductCount: 11 },
+    ]);
+
+    expect(order(fixture)).toEqual([2, 1, 3]);
+    expect(text(fixture)).toContain('The navigation order is not saved yet');
+    expect(button(fixture, 'save-dept-order')).not.toBeNull();
+
+    // And the rows under the staged order are the fresh ones, not the copies that were staged.
+    expect(text(fixture)).toContain('11 published products');
+  });
+
   it('discards a staged order without sending anything', () => {
     const fixture = create();
 
@@ -279,10 +327,20 @@ describe('CatalogPage', () => {
     await Promise.resolve();
     fixture.detectChanges();
 
-    const slug = (fixture.nativeElement as HTMLElement).querySelector<HTMLInputElement>(
-      '[data-testid="dept-field-slug"]',
+    const description = (fixture.nativeElement as HTMLElement).querySelector<HTMLTextAreaElement>(
+      '[data-testid="dept-field-description"]',
     )!;
-    expect(slug.value).toBe('women');
+    expect(description.value).toBe('Everyday essentials.');
+
+    // The name and the URL are not editable at all (owner, 2026-10-02, confirming doc 11 P1 step 1): a
+    // department slug is the first segment of every listing URL in its department and redirects are
+    // deferred, so there is no control to type one.
+    expect(
+      (fixture.nativeElement as HTMLElement).querySelector('[data-testid="dept-field-slug"]'),
+    ).toBeNull();
+    expect(
+      (fixture.nativeElement as HTMLElement).querySelector('[data-testid="dept-field-name"]'),
+    ).toBeNull();
 
     button(fixture, 'dept-save').click();
     fixture.detectChanges();
@@ -296,7 +354,34 @@ describe('CatalogPage', () => {
     settle(fixture);
   });
 
-  it('shows a rejected slug against the slug box rather than as a page error', () => {
+  /**
+   * The screen has no hero-image picker yet (ADM-18's library listing does not exist), so the form must
+   * carry the value it loaded straight back. It does not get to lose a column because it cannot draw one:
+   * `PUT` replaces the row, so a field the body omits is a field the API is told to clear — and the audit
+   * row would then record a member of staff wiping an image they never touched.
+   */
+  it('a department save keeps the hero image it cannot yet show a picker for', () => {
+    const fixture = create();
+
+    button(fixture, 'dept-edit-1').click();
+    fixture.detectChanges();
+    button(fixture, 'dept-save').click();
+    fixture.detectChanges();
+    grantToken();
+
+    const request = controller.expectOne(`${AdminCatalogApi.departmentsUrl}/1`);
+    expect(request.request.body.heroImageAssetId).toBe(41);
+    request.flush(null);
+    fixture.detectChanges();
+    settle(fixture);
+  });
+
+  /**
+   * This was the slug box until the owner made the name and the URL read-only (2026-10-02); it is re-pointed
+   * at the description rather than deleted, because it is the department form's only test that a field
+   * error lands on its own control instead of in a page-wide banner.
+   */
+  it('shows a rejected field against its own control rather than as a page error', () => {
     const fixture = create();
 
     button(fixture, 'dept-edit-1').click();
@@ -309,19 +394,19 @@ describe('CatalogPage', () => {
     controller.expectOne(`${AdminCatalogApi.departmentsUrl}/1`).flush(
       {
         title: 'One or more fields are invalid.',
-        errors: { slug: ['The URL slug may contain only lower-case letters, digits and single hyphens.'] },
+        errors: { description: ['The description cannot be longer than 1000 characters.'] },
       },
       { status: 400, statusText: 'Bad Request' },
     );
     fixture.detectChanges();
 
     const message = (fixture.nativeElement as HTMLElement).querySelector(
-      '[data-testid="dept-slug-error"]',
+      '[data-testid="dept-description-error"]',
     );
-    expect(message?.textContent).toContain('lower-case');
+    expect(message?.textContent).toContain('1000 characters');
     expect(
       (fixture.nativeElement as HTMLElement)
-        .querySelector('[data-testid="dept-field-slug"]')
+        .querySelector('[data-testid="dept-field-description"]')
         ?.getAttribute('aria-invalid'),
     ).toBe('true');
   });
@@ -349,7 +434,7 @@ describe('CatalogPage', () => {
       (fixture.nativeElement as HTMLElement).querySelector('[data-testid="page-error"]')?.textContent,
     ).toContain('Somebody else changed this');
     expect(
-      (fixture.nativeElement as HTMLElement).querySelector('[data-testid="dept-slug-error"]'),
+      (fixture.nativeElement as HTMLElement).querySelector('[data-testid="dept-description-error"]'),
     ).toBeNull();
   });
 

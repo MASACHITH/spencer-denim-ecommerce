@@ -32,11 +32,14 @@ function node(
     name,
     slug: name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
     description: null,
-    imageAssetId: null,
-    bannerAssetId: null,
-    bannerLinkUrl: null,
-    ageGroupId: null,
-    sizeGuideId: null,
+
+    // Not null, and that is the point: with every image column null a save that silently drops the field
+    // round-trips null to null and no assertion can see it (W1-12 fix round 1 blocker).
+    imageAssetId: 41,
+    bannerAssetId: 42,
+    bannerLinkUrl: '/women/jeans',
+    ageGroupId: 3,
+    sizeGuideId: 2,
     sortOrder: 0,
     showInMegaMenu: true,
     megaMenuColumn: null,
@@ -101,6 +104,20 @@ describe('CategoryTree', () => {
     const fixture = TestBed.createComponent(Host);
     fixture.componentInstance.tree.set(tree);
     fixture.detectChanges();
+
+    // The pickers' lists are loaded once with the component (doc 11 P1 step 2).
+    controller.expectOne(AdminCatalogApi.formOptionsUrl).flush({
+      ageGroups: [
+        { id: 1, name: 'Baby' },
+        { id: 3, name: 'Kids' },
+      ],
+      sizeGuides: [
+        { id: 2, name: "Women's clothing" },
+        { id: 5, name: "Kids' clothing" },
+      ],
+    });
+    fixture.detectChanges();
+
     return fixture;
   }
 
@@ -403,6 +420,81 @@ describe('CategoryTree', () => {
 
   // ---- create, edit and move to another parent -------------------------------------------------
 
+  /**
+   * m10: these two were deferred with the image pickers and should not have been. The images need ADM-18's
+   * media library; an age group is four seeded rows. Without them a Kids category made here could never be
+   * given an age group, and a new category would silently get no size guide — breaking PDP-04 for every
+   * product in it with no override of its own.
+   */
+  it('offers the age groups and size guides the API listed', async () => {
+    const fixture = create();
+
+    button(fixture, 'edit-10').click();
+    fixture.detectChanges();
+    await Promise.resolve();
+    fixture.detectChanges();
+
+    const ageGroups = [
+      ...(fixture.nativeElement as HTMLElement).querySelectorAll<HTMLOptionElement>(
+        '[data-testid="field-age-group"] option',
+      ),
+    ].map((option) => option.textContent?.trim());
+
+    expect(ageGroups).toEqual(['None', 'Baby', 'Kids']);
+
+    const sizeGuides = [
+      ...(fixture.nativeElement as HTMLElement).querySelectorAll<HTMLOptionElement>(
+        '[data-testid="field-size-guide"] option',
+      ),
+    ].map((option) => option.textContent?.trim());
+
+    expect(sizeGuides).toEqual(['Inherit from the nearest parent', "Women's clothing", "Kids' clothing"]);
+  });
+
+  it('sends the age group and size guide the admin picked', async () => {
+    const fixture = create();
+
+    button(fixture, 'edit-10').click();
+    fixture.detectChanges();
+    await Promise.resolve();
+    fixture.detectChanges();
+
+    const select = (fixture.nativeElement as HTMLElement).querySelector<HTMLSelectElement>(
+      '[data-testid="field-age-group"]',
+    )!;
+    select.selectedIndex = 2;
+    select.dispatchEvent(new Event('change'));
+    fixture.detectChanges();
+
+    button(fixture, 'save-category').click();
+    fixture.detectChanges();
+    grantToken();
+
+    const request = controller.expectOne(`${AdminCatalogApi.categoriesUrl}/10`);
+    expect(request.request.body.ageGroupId).toBe(3);
+    request.flush(null);
+    fixture.detectChanges();
+  });
+
+  it('still opens the form when the picker lists cannot be loaded', () => {
+    const fixture = TestBed.createComponent(Host);
+    fixture.componentInstance.tree.set(seededTree());
+    fixture.detectChanges();
+
+    controller
+      .expectOne(AdminCatalogApi.formOptionsUrl)
+      .flush({ detail: 'nope' }, { status: 500, statusText: 'Server Error' });
+    fixture.detectChanges();
+
+    button(fixture, 'add-top-level').click();
+    fixture.detectChanges();
+
+    expect(text(fixture)).toContain('New category');
+    expect(
+      (fixture.nativeElement as HTMLElement).querySelector('[data-testid="field-age-group"]'),
+    ).not.toBeNull();
+  });
+
   it('creates a category under the parent the button named', () => {
     const fixture = create();
 
@@ -491,6 +583,33 @@ describe('CategoryTree', () => {
     expect(options).toContain('Jeans');
     expect(options).not.toContain('— Midi');
     expect(options).not.toContain('— — Pleated');
+  });
+
+  /**
+   * The same hazard as the department form, on three columns at once. The tile image and the banner have no
+   * picker yet (ADM-18's library listing does not exist), so the form carries what it loaded; a `PUT` body
+   * that omits them tells the API to clear them.
+   */
+  it('a category save keeps every field it cannot yet show a control for', async () => {
+    const fixture = create();
+
+    button(fixture, 'edit-10').click();
+    fixture.detectChanges();
+    await Promise.resolve();
+    fixture.detectChanges();
+
+    button(fixture, 'save-category').click();
+    fixture.detectChanges();
+    grantToken();
+
+    const request = controller.expectOne(`${AdminCatalogApi.categoriesUrl}/10`);
+    expect(request.request.body.imageAssetId).toBe(41);
+    expect(request.request.body.bannerAssetId).toBe(42);
+    expect(request.request.body.ageGroupId).toBe(3);
+    expect(request.request.body.sizeGuideId).toBe(2);
+    expect(request.request.body.bannerLinkUrl).toBe('/women/jeans');
+    request.flush(null);
+    fixture.detectChanges();
   });
 
   it('sends a parent change as part of the edit, with the row version', async () => {

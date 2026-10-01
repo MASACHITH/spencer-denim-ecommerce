@@ -7,6 +7,7 @@ import {
   AdminCategoryTree,
   AdminDepartment,
   CategoryDeactivationImpact,
+  CategoryFormOptions,
   CategoryFormValues,
   DepartmentFormValues,
   ValidationProblemDetails,
@@ -27,6 +28,7 @@ interface CreatedCategory {
 export class AdminCatalogApi {
   static readonly departmentsUrl = '/api/admin/catalog/departments';
   static readonly categoriesUrl = '/api/admin/catalog/categories';
+  static readonly formOptionsUrl = '/api/admin/catalog/category-form-options';
 
   private readonly http = inject(HttpClient);
   private readonly auth = inject(AdminAuthApi);
@@ -39,6 +41,11 @@ export class AdminCatalogApi {
     return this.http.get<AdminCategoryTree>(
       `${AdminCatalogApi.departmentsUrl}/${departmentId}/categories`,
     );
+  }
+
+  /** The age groups and size guides a category form may choose from (doc 11 P1 step 2). */
+  categoryFormOptions(): Observable<CategoryFormOptions> {
+    return this.http.get<CategoryFormOptions>(AdminCatalogApi.formOptionsUrl);
   }
 
   deactivationImpact(categoryId: number): Observable<CategoryDeactivationImpact> {

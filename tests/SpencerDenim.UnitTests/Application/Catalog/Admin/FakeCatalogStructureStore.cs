@@ -54,16 +54,6 @@ internal sealed class FakeCatalogStructureStore : ICatalogStructureStore
         Task.FromResult<IReadOnlyList<Department>>(
             Departments.OrderBy(department => department.SortOrder).ThenBy(department => department.Id).ToList());
 
-    public Task<bool> DepartmentSlugTakenAsync(string slug, int exceptDepartmentId, CancellationToken cancellationToken) =>
-        Task.FromResult(Departments.Any(department =>
-            department.Id != exceptDepartmentId
-            && string.Equals(department.Slug, slug, StringComparison.OrdinalIgnoreCase)));
-
-    public Task<bool> DepartmentNameTakenAsync(string name, int exceptDepartmentId, CancellationToken cancellationToken) =>
-        Task.FromResult(Departments.Any(department =>
-            department.Id != exceptDepartmentId
-            && string.Equals(department.Name, name, StringComparison.OrdinalIgnoreCase)));
-
     public Task<Category?> FindCategoryAsync(int categoryId, CancellationToken cancellationToken) =>
         Task.FromResult(Categories.FirstOrDefault(category => category.Id == categoryId));
 

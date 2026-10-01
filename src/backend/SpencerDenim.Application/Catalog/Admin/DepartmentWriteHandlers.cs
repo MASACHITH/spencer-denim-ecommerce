@@ -24,9 +24,6 @@ public sealed class UpdateDepartmentCommandHandler(
         ArgumentNullException.ThrowIfNull(command);
 
         var errors = new List<ValidationError>();
-        CatalogFieldRules.RequireText(
-            errors, "name", command.Name, CatalogFieldRules.DepartmentNameMaxLength, "The name");
-        CatalogFieldRules.RequireSlug(errors, "slug", command.Slug, CatalogFieldRules.DepartmentSlugMaxLength);
         CatalogFieldRules.LimitText(
             errors, "description", command.Description, CatalogFieldRules.DepartmentDescriptionMaxLength, "The description");
         CatalogFieldRules.LimitText(
@@ -51,19 +48,6 @@ public sealed class UpdateDepartmentCommandHandler(
             return stale;
         }
 
-        var name = CatalogFieldRules.Clean(command.Name)!;
-        var slug = CatalogFieldRules.Clean(command.Slug)!;
-
-        if (await store.DepartmentNameTakenAsync(name, department.Id, cancellationToken))
-        {
-            errors.Add(new ValidationError("name", "Another department already has that name."));
-        }
-
-        if (await store.DepartmentSlugTakenAsync(slug, department.Id, cancellationToken))
-        {
-            errors.Add(new ValidationError("slug", "Another department already uses that URL slug."));
-        }
-
         if (command.HeroImageAssetId is { } heroId
             && !await store.ReadyImageAssetExistsAsync(heroId, cancellationToken))
         {
@@ -79,8 +63,6 @@ public sealed class UpdateDepartmentCommandHandler(
 
         var before = Snapshot(department);
 
-        department.Name = name;
-        department.Slug = slug;
         department.Description = CatalogFieldRules.Clean(command.Description);
         department.HeroImageAssetId = command.HeroImageAssetId;
         department.SeoTitle = CatalogFieldRules.Clean(command.SeoTitle);
@@ -109,12 +91,11 @@ public sealed class UpdateDepartmentCommandHandler(
     /// <summary>
     /// The fields this use case may change, and only those. <c>IsActive</c> and <c>SortOrder</c> are not
     /// here because they are not this command's to move — a diff that listed them would report "no change"
-    /// on every save and quietly hide the day one of them did move.
+    /// on every save and quietly hide the day one of them did move. <c>Name</c> and <c>Slug</c> are not here
+    /// because nothing on this path may change them at all (owner, 2026-10-02).
     /// </summary>
     private static Dictionary<string, object?> Snapshot(Department department) => new(StringComparer.Ordinal)
     {
-        ["name"] = department.Name,
-        ["slug"] = department.Slug,
         ["description"] = department.Description,
         ["heroImageAssetId"] = department.HeroImageAssetId,
         ["seoTitle"] = department.SeoTitle,

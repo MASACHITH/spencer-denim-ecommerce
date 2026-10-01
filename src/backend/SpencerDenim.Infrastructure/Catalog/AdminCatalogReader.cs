@@ -16,11 +16,17 @@ namespace SpencerDenim.Infrastructure.Catalog;
 /// removed is not the same as hidden and ADM-11 offers no restore.
 /// </para>
 /// <para>
-/// The counts are correlated sub-selects inside the one projection, so a department's whole tree — about
-/// 200 rows (doc 08 §3.2) — is <b>one</b> round trip with the counting done by SQL Server, not one query
-/// per node. Asking per node would be the N+1 the listing reader was already corrected for once. The tree
-/// itself is assembled from the flat result in memory, as <c>DepartmentCatalogReader</c> does, because a
-/// recursive query to shape 200 rows costs more than the shaping.
+/// <b>The cost is bounded by the shape of the tree, not by its size.</b> The counts are correlated
+/// sub-selects inside the projection, so the tree costs <b>two</b> queries — the department, then its
+/// categories with their counts computed by SQL Server — however many categories there are. Measured on a
+/// 190-category department: 2 queries from the reader, 5 SQL commands end to end once the session and
+/// permission reads are counted, a median of about 10 ms for an 85 KB payload. Asking per node would be the
+/// N+1 the listing reader was already corrected for once, and
+/// <c>AdminCatalogQueryPlanTests</c> is what stops it creeping back.
+/// </para>
+/// <para>
+/// The tree itself is assembled from the flat result in memory, as <c>DepartmentCatalogReader</c> does,
+/// because a recursive query to shape 200 rows costs more than the shaping.
 /// </para>
 /// </summary>
 internal sealed class AdminCatalogReader(AppDbContext dbContext) : IAdminCatalogReader
@@ -136,8 +142,16 @@ internal sealed class AdminCatalogReader(AppDbContext dbContext) : IAdminCatalog
             .GroupBy(category => category.ParentCategoryId!.Value)
             .ToDictionary(group => group.Key, group => group.ToList());
 
+        // A row whose parent is not in this list has no place in the tree, and the only way that can happen
+        // is a parent that was soft-deleted while a child survived — which the remove guard makes
+        // unreachable (it refuses while any child exists). Unreachable is not the same as impossible: a
+        // support script or a restore could do it, and the failure mode is the worst kind, a category that
+        // exists, blocks its own slug and appears on no screen. So it is drawn at the top level with a note
+        // rather than silently dropped.
+        var present = categories.Select(category => category.Id).ToHashSet();
         var roots = categories
-            .Where(category => category.ParentCategoryId is null)
+            .Where(category =>
+                category.ParentCategoryId is null || !present.Contains(category.ParentCategoryId.Value))
             .Select(category => ToNode(category, childrenByParent))
             .ToList();
 
@@ -208,6 +222,28 @@ internal sealed class AdminCatalogReader(AppDbContext dbContext) : IAdminCatalog
             descendantCount,
             strandedProducts,
             examples.AsReadOnly());
+    }
+
+    public async Task<CategoryFormOptionsDto> GetFormOptionsAsync(CancellationToken cancellationToken)
+    {
+        // Active age groups only: an inactive one is one nobody should be filing new categories under.
+        // Size guides have no IsActive of their own, only the soft-delete filter the DbSet already applies.
+        var ageGroups = await dbContext.AgeGroups
+            .AsNoTracking()
+            .Where(ageGroup => ageGroup.IsActive)
+            .OrderBy(ageGroup => ageGroup.SortOrder)
+            .ThenBy(ageGroup => ageGroup.Id)
+            .Select(ageGroup => new CatalogOptionDto(ageGroup.Id, ageGroup.Name))
+            .ToListAsync(cancellationToken);
+
+        var sizeGuides = await dbContext.SizeGuides
+            .AsNoTracking()
+            .OrderBy(sizeGuide => sizeGuide.Name)
+            .ThenBy(sizeGuide => sizeGuide.Id)
+            .Select(sizeGuide => new CatalogOptionDto(sizeGuide.Id, sizeGuide.Name))
+            .ToListAsync(cancellationToken);
+
+        return new CategoryFormOptionsDto(ageGroups.AsReadOnly(), sizeGuides.AsReadOnly());
     }
 
     private static AdminCategoryNodeDto ToNode(

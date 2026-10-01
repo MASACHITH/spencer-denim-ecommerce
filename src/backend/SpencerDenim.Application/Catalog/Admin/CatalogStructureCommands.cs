@@ -3,18 +3,29 @@ using SpencerDenim.Application.Abstractions.Auditing;
 namespace SpencerDenim.Application.Catalog.Admin;
 
 /// <summary>
-/// Edit a department's text, hero image and SEO fields (ADM-11).
+/// Edit a department's description, hero image and SEO fields (ADM-11, doc 11 P1 step 1).
 /// <para>
 /// There is no create and no delete, and that is doc 08 §3.2's rule rather than an omission: "the nav is
 /// fixed (Q5): there is no admin create or delete; admins edit only". <see cref="SetDepartmentActiveCommand"/>
 /// is how a department leaves the shop.
 /// </para>
+/// <para>
+/// <b>And no name and no slug</b> — the owner's decision of 2026-10-02, confirming doc 11 P1 step 1's list
+/// of what staff may edit: "their description, hero image, sort order and SEO". A department slug is the
+/// first segment of every listing URL in its department and redirects are deferred (doc 08 Appendix A), so
+/// an editable one is a third of the shop's links waiting to break for a rename nobody can undo.
+/// </para>
+/// <para>
+/// This does <b>not</b> leave W1-12's W1-02 follow-up unserved, and that was the error in the reading this
+/// was first built from: <c>Department.Slug</c> has had a write path since W1-02 — the seeder — so
+/// <see cref="SpencerDenim.Domain.Catalog.CatalogSlug"/> in the property setter and
+/// <c>CK_Departments_Slug</c> behind it guard the path that exists, which is the argument
+/// <c>CatalogSlugConstraint</c> itself already makes.
+/// </para>
 /// </summary>
 /// <param name="RowVersion">Base64, from the admin read model (doc 08 §1.5 [RV]).</param>
 public sealed record UpdateDepartmentCommand(
     int DepartmentId,
-    string? Name,
-    string? Slug,
     string? Description,
     int? HeroImageAssetId,
     string? SeoTitle,
@@ -104,10 +115,18 @@ public sealed record UpdateCategoryCommand(
 /// <b>A whole-list operation, and the command's shape is the reason.</b> It takes every sibling id in the
 /// order they should end up in, so "move Jeans above Dresses" is expressed as the list both admins would
 /// agree on rather than as an increment to one row. Two admins reordering the same list at the same time
-/// therefore cannot interleave into an order neither of them chose: the handler refuses a list that is not
-/// exactly the sibling set it finds (<see cref="CatalogConflictCodes.StaleOrder"/>), and every row carries
-/// a <c>RowVersion</c>, so the second save of two concurrent ones fails with
-/// <see cref="CatalogConflictCodes.StaleRowVersion"/> instead of writing half an order.
+/// therefore cannot interleave into an order neither of them chose.
+/// </para>
+/// <para>
+/// <b>Its concurrency story is not the single-row one, and the difference is worth stating.</b> This command
+/// carries no row version and the handler makes no
+/// <c>CatalogWriteSupport.CheckRowVersion</c> call — a reorder is a claim about a list, and a token per row
+/// would be thirteen tokens for one decision. What protects it is the set check
+/// (<see cref="CatalogConflictCodes.StaleOrder"/>: the list must be exactly the siblings the server holds,
+/// so a list built before somebody else's create or move is refused rather than partly applied) and then
+/// EF's own <c>WHERE RowVersion = @original</c> on each row it updates, which the loser of a genuine race
+/// fails on — surfacing as <see cref="CatalogConflictCodes.StaleRowVersion"/> from the save rather than from
+/// a check before it.
 /// </para>
 /// </summary>
 /// <param name="ParentCategoryId">The parent whose children these are; <c>null</c> for a department's top level.</param>

@@ -99,6 +99,57 @@ public sealed class CatalogFieldRulesTests
         Assert.Equal("bannerLinkUrl", Assert.Single(errors).Field);
     }
 
+    /// <summary>
+    /// The values that got past the first version of the rule. Every one of them starts with a single
+    /// <c>/</c> and no second one, so "a path on this site" let them through — and resolved against a real
+    /// page every one lands on <c>https://evil.example/</c>. Two facts make that possible: the URL standard
+    /// treats <c>REVERSE_SOLIDUS</c> as a solidus for special schemes, and a browser strips TAB, CR and LF
+    /// out of a URL before it parses it at all. <see cref="CatalogFieldRules.Clean"/> only trims the ends,
+    /// so a control character in the middle survives.
+    /// </summary>
+    [Theory]
+    [InlineData("/BACKSLASHevil.example")]
+    [InlineData("/TABevil.example")]
+    [InlineData("/TAB/evil.example")]
+    [InlineData("/CRLF//evil.example")]
+    [InlineData("/LF/evil.example")]
+    [InlineData("/pathBACKSLASHBACKSLASHevil.example")]
+    [InlineData("/NUL/evil.example")]
+    public void A_banner_link_that_leaves_the_site_through_a_backslash_or_a_control_character_is_refused(
+        string template)
+    {
+        var url = template
+            .Replace("BACKSLASH", "\\", StringComparison.Ordinal)
+            .Replace("CRLF", "\u000d\u000a", StringComparison.Ordinal)
+            .Replace("TAB", "\u0009", StringComparison.Ordinal)
+            .Replace("LF", "\u000a", StringComparison.Ordinal)
+            .Replace("NUL", "\u0000", StringComparison.Ordinal);
+
+        var errors = new List<ValidationError>();
+
+        CatalogFieldRules.CheckBannerLink(errors, "bannerLinkUrl", url);
+
+        Assert.Equal("bannerLinkUrl", Assert.Single(errors).Field);
+    }
+
+    /// <summary>
+    /// The rule is answered the way a browser would answer it — the value is resolved against a base on
+    /// this site and the origin has to come back unchanged — not by reading the first two characters.
+    /// </summary>
+    [Theory]
+    [InlineData("/women/jeans")]
+    [InlineData("/women?material=denim&material=linen")]
+    [InlineData("/women/jeans#fit")]
+    [InlineData("/")]
+    public void A_path_that_really_stays_on_this_site_is_still_accepted(string url)
+    {
+        var errors = new List<ValidationError>();
+
+        CatalogFieldRules.CheckBannerLink(errors, "bannerLinkUrl", url);
+
+        Assert.Empty(errors);
+    }
+
     [Fact]
     public void A_blank_banner_link_is_simply_absent()
     {

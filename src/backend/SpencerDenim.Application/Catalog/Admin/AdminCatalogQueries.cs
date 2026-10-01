@@ -13,6 +13,9 @@ public sealed record GetAdminCategoryTreeQuery(int DepartmentId);
 /// <summary>What deactivating one category would do to the storefront (ADM-11, doc 08 §7.1).</summary>
 public sealed record GetCategoryDeactivationImpactQuery(int CategoryId);
 
+/// <summary>The age groups and size guides a category form may choose from (ADM-11, doc 11 P1 step 2).</summary>
+public sealed record GetCategoryFormOptionsQuery;
+
 /// <summary>
 /// Hands the admin department list straight to the read port.
 /// <para>
@@ -56,4 +59,14 @@ public sealed class GetCategoryDeactivationImpactQueryHandler(IAdminCatalogReade
 
         return reader.GetDeactivationImpactAsync(query.CategoryId, cancellationToken);
     }
+}
+
+/// <inheritdoc cref="GetAdminDepartmentsQueryHandler"/>
+public sealed class GetCategoryFormOptionsQueryHandler(IAdminCatalogReader reader)
+    : IQueryHandler<GetCategoryFormOptionsQuery, CategoryFormOptionsDto>
+{
+    public Task<CategoryFormOptionsDto> HandleAsync(
+        GetCategoryFormOptionsQuery query,
+        CancellationToken cancellationToken) =>
+        reader.GetFormOptionsAsync(cancellationToken);
 }

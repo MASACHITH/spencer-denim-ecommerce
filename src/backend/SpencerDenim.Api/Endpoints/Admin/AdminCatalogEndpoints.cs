@@ -76,6 +76,17 @@ internal static class AdminCatalogEndpoints
             .Produces<CategoryDeactivationImpactDto>()
             .ProducesProblem(StatusCodes.Status404NotFound);
 
+        api.MapGet("/category-form-options", GetCategoryFormOptionsAsync)
+            .RequirePermission(Permissions.Categories.View)
+            .WithName("AdminGetCategoryFormOptions")
+            .WithSummary("The age groups and size guides a category form may choose from.")
+            .WithDescription(
+                "ADM-11, doc 11 P1 step 2. Both are small seeded lists with no screen of their own, and " +
+                "without them a Kids category created here could never be given an age group, and a new " +
+                "category would silently get no size guide — which breaks PDP-04 for every product in it " +
+                "that has no override of its own.")
+            .Produces<CategoryFormOptionsDto>();
+
         api.MapPut("/departments/order", ReorderDepartmentsAsync)
             .RequirePermission(Permissions.Categories.Edit)
             .WithName("AdminReorderDepartments")
@@ -90,11 +101,13 @@ internal static class AdminCatalogEndpoints
         api.MapPut("/departments/{departmentId:int}", UpdateDepartmentAsync)
             .RequirePermission(Permissions.Categories.Edit)
             .WithName("AdminUpdateDepartment")
-            .WithSummary("Edit a department's text, hero image and SEO fields.")
+            .WithSummary("Edit a department's description, hero image and SEO fields.")
             .WithDescription(
-                "There is no create and no delete: the nav is fixed (Q5, doc 08 §3.2). The slug is checked " +
-                "against the catalogue slug rule here, not only by the entity's setter, so a typo is a 400 " +
-                "naming the field rather than a 500 (issue #24).")
+                "There is no create and no delete: the nav is fixed (Q5, doc 08 §3.2). There is also no name " +
+                "and no slug (owner, 2026-10-02, confirming doc 11 P1 step 1): a department slug is the first " +
+                "segment of every listing URL in its department and redirects are deferred, so an editable " +
+                "one is a third of the shop's links waiting to break. PUT replaces the row, so send every " +
+                "field — one the body omits is one the API is told to clear.")
             .Produces(StatusCodes.Status204NoContent)
             .ProducesValidationProblem()
             .ProducesProblem(StatusCodes.Status404NotFound)
@@ -209,6 +222,11 @@ internal static class AdminCatalogEndpoints
             : TypedResults.Ok(impact);
     }
 
+    private static async Task<IResult> GetCategoryFormOptionsAsync(
+        IQueryHandler<GetCategoryFormOptionsQuery, CategoryFormOptionsDto> handler,
+        CancellationToken cancellationToken) =>
+        TypedResults.Ok(await handler.HandleAsync(new GetCategoryFormOptionsQuery(), cancellationToken));
+
     private static async Task<IResult> UpdateDepartmentAsync(
         int departmentId,
         HttpContext httpContext,
@@ -231,9 +249,7 @@ internal static class AdminCatalogEndpoints
         var result = await handler.HandleAsync(
             new UpdateDepartmentCommand(
                 departmentId,
-                body!.Name,
-                body.Slug,
-                body.Description,
+                body!.Description,
                 body.HeroImageAssetId,
                 body.SeoTitle,
                 body.SeoDescription,

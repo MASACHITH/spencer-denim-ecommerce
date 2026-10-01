@@ -79,12 +79,24 @@ export interface CategoryDeactivationImpact {
   readonly examples: readonly string[];
 }
 
-/** The body of a create, and — with `rowVersion` — of an edit. */
+/**
+ * The body of a create, and — with `rowVersion` — of an edit.
+ *
+ * **It carries every writable column, including the ones the screen has no control for.** `PUT` replaces
+ * the row, so a field the body leaves out is a field the API is told to clear. The tile image and the
+ * banner have no picker yet (ADM-18's media library has no listing endpoint), and leaving them out of this
+ * type is how a save silently wiped them — with an audit row recording a member of staff doing it. A
+ * missing control is a reason to round-trip a value, never a reason to drop it.
+ */
 export interface CategoryFormValues {
   parentCategoryId: number | null;
   name: string;
   slug: string;
   description: string;
+  /** No picker yet (ADM-18). Carried through so a save cannot clear it. */
+  imageAssetId: number | null;
+  /** No picker yet (ADM-18). Carried through so a save cannot clear it. */
+  bannerAssetId: number | null;
   bannerLinkUrl: string;
   ageGroupId: number | null;
   sizeGuideId: number | null;
@@ -100,6 +112,8 @@ export function emptyCategoryForm(parentCategoryId: number | null = null): Categ
     name: '',
     slug: '',
     description: '',
+    imageAssetId: null,
+    bannerAssetId: null,
     bannerLinkUrl: '',
     ageGroupId: null,
     sizeGuideId: null,
@@ -117,6 +131,8 @@ export function categoryFormFrom(node: AdminCategoryNode): CategoryFormValues {
     name: node.name,
     slug: node.slug,
     description: node.description ?? '',
+    imageAssetId: node.imageAssetId,
+    bannerAssetId: node.bannerAssetId,
     bannerLinkUrl: node.bannerLinkUrl ?? '',
     ageGroupId: node.ageGroupId,
     sizeGuideId: node.sizeGuideId,
@@ -127,23 +143,53 @@ export function categoryFormFrom(node: AdminCategoryNode): CategoryFormValues {
   };
 }
 
-/** The department edit form. Doc 08 §3.2: there is no create and no delete — the nav is fixed. */
+/**
+ * The department edit form.
+ *
+ * Doc 08 §3.2: there is no create and no delete — the nav is fixed. **And no name and no slug**, by the
+ * owner's decision of 2026-10-02 confirming doc 11 P1 step 1: staff edit "their description, hero image,
+ * sort order and SEO" and nothing else. A department slug is the first segment of every listing URL in its
+ * department and redirects are deferred, so an editable one is a third of the shop's links waiting to
+ * break. The W1-02 follow-up it appeared to serve needs no editable field: `Department.Slug` has had a
+ * write path since W1-02 — the seeder — and `CatalogSlug` now guards it in the property setter with
+ * `CK_Departments_Slug` behind that.
+ *
+ * `heroImageAssetId` is here with no control to set it, for the reason {@link CategoryFormValues} gives.
+ */
 export interface DepartmentFormValues {
-  name: string;
-  slug: string;
   description: string;
+  /** No picker yet (ADM-18). Carried through so a save cannot clear it. */
+  heroImageAssetId: number | null;
   seoTitle: string;
   seoDescription: string;
 }
 
 export function departmentFormFrom(department: AdminDepartment): DepartmentFormValues {
   return {
-    name: department.name,
-    slug: department.slug,
     description: department.description ?? '',
+    heroImageAssetId: department.heroImageAssetId,
     seoTitle: department.seoTitle ?? '',
     seoDescription: department.seoDescription ?? '',
   };
+}
+
+/** One choice in a picker: the id to send back and the name to show. */
+export interface CatalogOption {
+  readonly id: number;
+  readonly name: string;
+}
+
+/**
+ * The lists a category form chooses from (doc 11 P1 step 2).
+ *
+ * Not deferred with the image pickers, because the argument for deferring those does not reach these: a
+ * tile image needs ADM-18's media library, while an age group is four seeded rows and a size guide is
+ * three. Without them a Kids category made here could never be given an age group, and a new category
+ * would silently get no size guide — which breaks PDP-04 for every product in it with no override.
+ */
+export interface CategoryFormOptions {
+  readonly ageGroups: readonly CatalogOption[];
+  readonly sizeGuides: readonly CatalogOption[];
 }
 
 /** The RFC 9457 validation body the API returns for a rejected field, keyed by the field's own name. */

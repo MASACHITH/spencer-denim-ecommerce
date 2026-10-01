@@ -28,4 +28,10 @@ public interface IAdminCatalogReader
     /// that id.
     /// </summary>
     Task<CategoryDeactivationImpactDto?> GetDeactivationImpactAsync(int categoryId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The age groups and size guides a category form may choose from (doc 11 P1 step 2). Both are small,
+    /// seeded, admin-visible lists; neither is paged and neither needs a filter.
+    /// </summary>
+    Task<CategoryFormOptionsDto> GetFormOptionsAsync(CancellationToken cancellationToken);
 }

@@ -49,6 +49,14 @@ public static class CatalogFieldRules
     /// <summary><c>SeoDescription</c> is <c>nvarchar(320)</c> on both tables.</summary>
     public const int SeoDescriptionMaxLength = 320;
 
+    /// <summary>
+    /// The origin a site-relative banner link has to resolve to. Any host would do — what is compared is
+    /// whether resolving the value changed the origin, not what the origin is — so a reserved example
+    /// domain is used rather than a real one (RFC 2606), which also keeps a configured host out of a pure
+    /// validation rule.
+    /// </summary>
+    private static readonly Uri SameSiteBase = new("https://this-site.invalid/", UriKind.Absolute);
+
     /// <summary>Doc 08 §3.2: <c>CK_Categories_MegaMenuColumn</c> allows 1–4.</summary>
     public const byte MinMegaMenuColumn = 1;
 
@@ -153,6 +161,20 @@ public static class CatalogFieldRules
     /// only field on these two tables that a browser could ever be asked to follow; the text fields are
     /// interpolated, never bound to <c>innerHTML</c> (see the report's note on issue #70).
     /// </para>
+    /// <para>
+    /// <b>"Starts with one slash" is not the same question as "stays on this site", and that gap was
+    /// exploitable.</b> Three values got past the first version of this rule — <c>/\evil.example</c>,
+    /// <c>/&lt;TAB&gt;/evil.example</c> and <c>/&lt;CR&gt;&lt;LF&gt;//evil.example</c> — all beginning with a
+    /// single solidus, all landing on <c>https://evil.example/</c> when a browser resolves them. Two facts
+    /// make that work: the URL standard treats a reverse solidus as a solidus for special schemes, and a
+    /// browser strips TAB, CR and LF out of a URL <i>before</i> parsing it. <see cref="Clean"/> only trims
+    /// the ends, so a control character in the middle survives to do its work.
+    /// </para>
+    /// <para>
+    /// So the rule now asks the question a browser would: the dangerous characters are refused outright,
+    /// and then the value is <b>resolved against a base on this site and the origin has to come back
+    /// unchanged</b>. Reading the first two characters was never going to be enough.
+    /// </para>
     /// </summary>
     public static void CheckBannerLink(ICollection<ValidationError> errors, string field, string? value)
     {
@@ -174,16 +196,24 @@ public static class CatalogFieldRules
             return;
         }
 
-        // A path on this site. "//host" is not one: a protocol-relative URL leaves the site.
-        if (cleaned.StartsWith('/') && !cleaned.StartsWith("//", StringComparison.Ordinal))
+        // Refused outright, before anything is parsed: a reverse solidus is a solidus to a browser, and a
+        // C0 control is removed by one. Neither has any business in a link somebody typed into a form.
+        if (!cleaned.Any(character => character == '\\' || char.IsControl(character)))
         {
-            return;
-        }
+            // A path on this site. "//host" is not one: a protocol-relative URL leaves the site — and
+            // resolving it proves that rather than assuming it, so a shape nobody thought of fails here too.
+            if (cleaned.StartsWith('/')
+                && Uri.TryCreate(SameSiteBase, cleaned, out var resolved)
+                && resolved.GetLeftPart(UriPartial.Authority) == SameSiteBase.GetLeftPart(UriPartial.Authority))
+            {
+                return;
+            }
 
-        if (Uri.TryCreate(cleaned, UriKind.Absolute, out var absolute)
-            && (absolute.Scheme == Uri.UriSchemeHttp || absolute.Scheme == Uri.UriSchemeHttps))
-        {
-            return;
+            if (Uri.TryCreate(cleaned, UriKind.Absolute, out var absolute)
+                && (absolute.Scheme == Uri.UriSchemeHttp || absolute.Scheme == Uri.UriSchemeHttps))
+            {
+                return;
+            }
         }
 
         errors.Add(new ValidationError(

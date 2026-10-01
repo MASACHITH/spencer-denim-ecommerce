@@ -85,6 +85,9 @@ public static class DependencyInjection
             IQueryHandler<GetCategoryDeactivationImpactQuery, CategoryDeactivationImpactDto?>,
             GetCategoryDeactivationImpactQueryHandler>();
         services.AddScoped<
+            IQueryHandler<GetCategoryFormOptionsQuery, CategoryFormOptionsDto>,
+            GetCategoryFormOptionsQueryHandler>();
+        services.AddScoped<
             ICommandHandler<UpdateDepartmentCommand, CatalogWriteResult>,
             UpdateDepartmentCommandHandler>();
         services.AddScoped<

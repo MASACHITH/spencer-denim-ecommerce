@@ -137,19 +137,79 @@ public sealed class AdminCatalogEndpointTests(SqlServerDatabaseFixture sqlServer
         }
     }
 
+    /// <summary>
+    /// All eight write routes, not one of them. The first version covered a single route and the matrix is
+    /// exactly the thing that catches the route somebody adds later and forgets to guard — a check that
+    /// samples one row of it is a check that will miss that.
+    /// </summary>
     [Fact]
-    public async Task A_mutating_request_without_the_antiforgery_token_is_refused()
+    public async Task No_write_route_accepts_a_request_without_the_antiforgery_token()
     {
         var factory = await HostAsync();
         var client = await AdminCatalogApiClient.SignInAsync(factory, "noxsrf", FullCatalogueRights, Token);
 
-        var status = await client.SendWithoutAntiforgeryAsync(
-            HttpMethod.Put,
-            $"{DepartmentsUrl}/order",
-            new { orderedDepartmentIds = SeededDepartmentIds },
-            Token);
+        var checked_ = 0;
 
-        Assert.Equal(HttpStatusCode.BadRequest, status);
+        foreach (var (method, path) in Routes().Where(route => route.Method != HttpMethod.Get))
+        {
+            var status = await client.SendWithoutAntiforgeryAsync(method, path, BodyFor(method), Token);
+
+            Assert.True(
+                status == HttpStatusCode.BadRequest,
+                $"{method} {path} answered {(int)status} without an antiforgery token.");
+            checked_++;
+        }
+
+        Assert.Equal(8, checked_);
+    }
+
+    /// <summary>
+    /// The other half of the matrix: a user who may edit must not thereby be able to create or to remove.
+    /// Those are separate permissions in doc 11 P1's own table, and nothing tested the pair in that
+    /// direction.
+    /// </summary>
+    [Fact]
+    public async Task An_edit_only_user_can_neither_create_nor_remove()
+    {
+        var factory = await HostAsync();
+        var client = await AdminCatalogApiClient.SignInAsync(
+            factory, "editor", [Permissions.Categories.View, Permissions.Categories.Edit], Token);
+
+        // The thing they may do, so the refusals below are about the permission and not about the request.
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync(DepartmentsUrl, Token)).Status);
+
+        Assert.Equal(
+            HttpStatusCode.Forbidden,
+            (await client.PostAsync(
+                CategoriesUrl, new { departmentId = 1, name = "X", slug = "x" }, Token)).Status);
+
+        Assert.Equal(
+            HttpStatusCode.Forbidden,
+            (await client.DeleteAsync($"{CategoriesUrl}/1", "AAAAAAAAAAA=", Token)).Status);
+    }
+
+    /// <summary>
+    /// And a user holding only Create may not edit, reorder, hide or remove — the same question from the
+    /// other side, so neither permission can be quietly standing in for the other.
+    /// </summary>
+    [Fact]
+    public async Task A_create_only_user_can_neither_edit_nor_reorder_nor_remove()
+    {
+        var factory = await HostAsync();
+        var client = await AdminCatalogApiClient.SignInAsync(
+            factory, "creator-only", [Permissions.Categories.View, Permissions.Categories.Create], Token);
+
+        foreach (var (method, path) in Routes().Where(route =>
+            route.Method != HttpMethod.Get && route.Path != CategoriesUrl))
+        {
+            var status = method == HttpMethod.Delete
+                ? (await client.DeleteAsync(path, "AAAAAAAAAAA=", Token)).Status
+                : (await client.PutAsync(path, BodyFor(method)!, Token)).Status;
+
+            Assert.True(
+                status == HttpStatusCode.Forbidden,
+                $"{method} {path} answered {(int)status} for a user holding only Categories.Create.");
+        }
     }
 
     // ---- the read model -------------------------------------------------------------------------
@@ -849,6 +909,59 @@ public sealed class AdminCatalogEndpointTests(SqlServerDatabaseFixture sqlServer
         Assert.Equal("not_found", body.GetProperty("code").GetString());
     }
 
+    /// <summary>
+    /// m13: a category whose parent has been soft-deleted under it. The remove guard makes that unreachable
+    /// through the API — it refuses while any child exists — but a support script or a restore could do it,
+    /// and the old behaviour was the worst available: the row existed, held its slug against a new one, and
+    /// appeared on no screen at all.
+    /// </summary>
+    [Fact]
+    public async Task A_category_whose_parent_was_deleted_under_it_is_still_shown_rather_than_vanishing()
+    {
+        var factory = await HostAsync();
+        var client = await AdminCatalogApiClient.SignInAsync(factory, "orphan", FullCatalogueRights, Token);
+        var women = await DepartmentIdAsync(factory, "women");
+
+        var parentId = (await client.PostAsync(
+            CategoriesUrl,
+            new { departmentId = women, name = "W1-12 Orphan parent", slug = "w112-orphan-parent" },
+            Token)).Body.GetProperty("id").GetInt32();
+
+        var childId = (await client.PostAsync(
+            CategoriesUrl,
+            new { departmentId = women, parentCategoryId = parentId, name = "W1-12 Orphan child", slug = "w112-orphan-child" },
+            Token)).Body.GetProperty("id").GetInt32();
+
+        try
+        {
+            // Straight to the database, because the API deliberately refuses this.
+            await using (var scope = factory.Services.CreateAsyncScope())
+            {
+                var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                await dbContext.Categories
+                    .Where(category => category.Id == parentId)
+                    .ExecuteUpdateAsync(
+                        setters => setters.SetProperty(category => category.IsDeleted, true),
+                        Token);
+            }
+
+            var (_, tree) = await client.GetAsync($"{DepartmentsUrl}/{women}/categories", Token);
+
+            var ids = tree.GetProperty("categories")
+                .EnumerateArray()
+                .Select(node => node.GetProperty("id").GetInt32())
+                .ToList();
+
+            Assert.DoesNotContain(parentId, ids);
+            Assert.Contains(childId, ids);
+        }
+        finally
+        {
+            await HardDeleteAsync(factory, childId);
+            await HardDeleteAsync(factory, parentId);
+        }
+    }
+
     // ---- the audit trail (issue #59) ------------------------------------------------------------
 
     /// <summary>
@@ -1073,6 +1186,7 @@ public sealed class AdminCatalogEndpointTests(SqlServerDatabaseFixture sqlServer
         yield return (HttpMethod.Get, DepartmentsUrl);
         yield return (HttpMethod.Get, $"{DepartmentsUrl}/1/categories");
         yield return (HttpMethod.Get, $"{CategoriesUrl}/1/deactivation-impact");
+        yield return (HttpMethod.Get, "/api/admin/catalog/category-form-options");
         yield return (HttpMethod.Put, $"{DepartmentsUrl}/order");
         yield return (HttpMethod.Put, $"{DepartmentsUrl}/1");
         yield return (HttpMethod.Put, $"{DepartmentsUrl}/1/active");
@@ -1082,6 +1196,19 @@ public sealed class AdminCatalogEndpointTests(SqlServerDatabaseFixture sqlServer
         yield return (HttpMethod.Put, $"{CategoriesUrl}/1/active");
         yield return (HttpMethod.Delete, $"{CategoriesUrl}/1");
     }
+
+    /// <summary>A body shaped for the route, so a refusal is about the guard rather than about the JSON.</summary>
+    private static object? BodyFor(HttpMethod method) => method == HttpMethod.Delete
+        ? null
+        : new
+        {
+            departmentId = 1,
+            name = "X",
+            slug = "x",
+            isActive = true,
+            orderedDepartmentIds = SeededDepartmentIds,
+            orderedCategoryIds = SeededDepartmentIds,
+        };
 
     private static Task<(HttpStatusCode Status, JsonElement Body)> Send(
         AdminCatalogApiClient client,

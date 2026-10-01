@@ -16,8 +16,6 @@ namespace SpencerDenim.Api.Endpoints.Admin;
 /// header instead; see <c>AdminWriteRequest.RowVersion</c>.
 /// </param>
 public sealed record UpdateDepartmentRequest(
-    string? Name,
-    string? Slug,
     string? Description,
     int? HeroImageAssetId,
     string? SeoTitle,

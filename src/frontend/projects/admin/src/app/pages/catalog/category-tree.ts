@@ -24,6 +24,7 @@ import {
   AdminCategoryNode,
   AdminCategoryTree,
   CategoryDeactivationImpact,
+  CategoryFormOptions,
   CategoryFormValues,
   categoryFormFrom,
   emptyCategoryForm,
@@ -385,6 +386,48 @@ interface TreeRow {
           </label>
 
           <label class="adm-field">
+            <span class="adm-label">Age group</span>
+            <select
+              class="adm-input"
+              name="ageGroupId"
+              [attr.aria-invalid]="fieldError('ageGroupId') ? 'true' : null"
+              [ngModel]="form().ageGroupId"
+              (ngModelChange)="patch('ageGroupId', $event)"
+              data-testid="field-age-group"
+            >
+              <option [ngValue]="null">None</option>
+              @for (option of options()?.ageGroups ?? []; track option.id) {
+                <option [ngValue]="option.id">{{ option.name }}</option>
+              }
+            </select>
+            @if (fieldError('ageGroupId'); as message) {
+              <span class="adm-field-error">{{ message }}</span>
+            } @else {
+              <span class="adm-panel__hint">Required for Kids categories (doc 11 P1).</span>
+            }
+          </label>
+
+          <label class="adm-field">
+            <span class="adm-label">Size guide</span>
+            <select
+              class="adm-input"
+              name="sizeGuideId"
+              [attr.aria-invalid]="fieldError('sizeGuideId') ? 'true' : null"
+              [ngModel]="form().sizeGuideId"
+              (ngModelChange)="patch('sizeGuideId', $event)"
+              data-testid="field-size-guide"
+            >
+              <option [ngValue]="null">Inherit from the nearest parent</option>
+              @for (option of options()?.sizeGuides ?? []; track option.id) {
+                <option [ngValue]="option.id">{{ option.name }}</option>
+              }
+            </select>
+            @if (fieldError('sizeGuideId'); as message) {
+              <span class="adm-field-error">{{ message }}</span>
+            }
+          </label>
+
+          <label class="adm-field">
             <span class="adm-label">Mega-menu column (1–4)</span>
             <input
               class="adm-input"
@@ -544,6 +587,15 @@ export class CategoryTree {
   protected readonly confirming = signal<AdminCategoryNode | null>(null);
   protected readonly impact = signal<CategoryDeactivationImpact | null>(null);
   protected readonly form = signal<CategoryFormValues>(emptyCategoryForm());
+
+  /**
+   * The age groups and size guides the two pickers offer, loaded once with the component.
+   *
+   * A failure here is deliberately not an error banner: the rest of the screen works without it, and the
+   * pickers fall back to showing only the value the category already has, which is still better than
+   * refusing to open the form.
+   */
+  protected readonly options = signal<CategoryFormOptions | null>(null);
   protected readonly busy = signal(false);
   protected readonly failure = signal<CatalogFailure | null>(null);
   protected readonly announcement = signal('');
@@ -555,6 +607,13 @@ export class CategoryTree {
   private readonly focusAfterRender = signal<readonly string[] | null>(null);
 
   constructor() {
+    this.api.categoryFormOptions().subscribe({
+      next: (options) => this.options.set(options),
+      error: () => {
+        // See `options`: a missing list is a narrower form, not a broken screen.
+      },
+    });
+
     afterEveryRender(() => {
       const candidates = this.focusAfterRender();
       const host = this.treeList()?.nativeElement;

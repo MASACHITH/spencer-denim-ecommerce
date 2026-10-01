@@ -31,18 +31,6 @@ internal sealed class CatalogStructureStore(AppDbContext dbContext, AuditAndSoft
             .ThenBy(department => department.Id)
             .ToListAsync(cancellationToken);
 
-    public Task<bool> DepartmentSlugTakenAsync(string slug, int exceptDepartmentId, CancellationToken cancellationToken) =>
-        dbContext.Departments
-            .AnyAsync(
-                department => department.Id != exceptDepartmentId && department.Slug == slug,
-                cancellationToken);
-
-    public Task<bool> DepartmentNameTakenAsync(string name, int exceptDepartmentId, CancellationToken cancellationToken) =>
-        dbContext.Departments
-            .AnyAsync(
-                department => department.Id != exceptDepartmentId && department.Name == name,
-                cancellationToken);
-
     public Task<Category?> FindCategoryAsync(int categoryId, CancellationToken cancellationToken) =>
         dbContext.Categories.FirstOrDefaultAsync(category => category.Id == categoryId, cancellationToken);
 

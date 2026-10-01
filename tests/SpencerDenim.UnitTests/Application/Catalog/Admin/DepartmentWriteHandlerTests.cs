@@ -41,35 +41,61 @@ public sealed class DepartmentWriteHandlerTests
         Assert.Equal("Department", row.EntityType);
         Assert.Equal("1", row.EntityId);
         Assert.Contains("description", row.AfterJson!, StringComparison.Ordinal);
-        Assert.DoesNotContain("name", row.AfterJson!, StringComparison.Ordinal);
+        Assert.DoesNotContain("seoTitle", row.AfterJson!, StringComparison.Ordinal);
     }
 
     /// <summary>
-    /// The second half of the W1-02 follow-up: a department slug now has a write path, so it now has the
-    /// same command-level check a product slug is owed in issue #24.
+    /// The owner's decision of 2026-10-02, confirming doc 11 P1 step 1: the name and the slug are not this
+    /// command's to change, so there is nowhere to put one — the command does not carry them and the handler
+    /// could not apply them if it did.
+    /// <para>
+    /// The W1-02 follow-up is still served, and this says where: <c>Department.Slug</c>'s write path is the
+    /// seeder, the setter guard refuses a bad value there (<c>CatalogSlugTests</c>), and
+    /// <c>CK_Departments_Slug</c> stands behind it.
+    /// </para>
     /// </summary>
     [Fact]
-    public async Task A_bad_department_slug_is_a_field_error_rather_than_an_exception()
+    public void The_update_command_cannot_carry_a_name_or_a_slug_at_all()
     {
-        var women = _store.Departments.Single(department => department.Id == 1);
+        var fields = typeof(UpdateDepartmentCommand).GetProperties().Select(property => property.Name).ToList();
 
-        var result = await Update(Edit(women) with { Slug = "Women's Clothing" });
-
-        Assert.Equal("slug", Assert.Single(Assert.IsType<CatalogWriteResult.Invalid>(result).Errors).Field);
-        Assert.Equal("women", women.Slug);
-        Assert.Empty(_audit.Enlisted);
+        Assert.DoesNotContain("Name", fields);
+        Assert.DoesNotContain("Slug", fields);
+        Assert.Contains("Description", fields);
+        Assert.Contains("HeroImageAssetId", fields);
     }
 
     [Fact]
-    public async Task A_name_or_slug_another_department_holds_is_refused_by_the_field_that_holds_it()
+    public async Task Editing_a_department_leaves_its_name_and_slug_exactly_as_they_were()
     {
         var women = _store.Departments.Single(department => department.Id == 1);
 
-        var bySlug = Assert.IsType<CatalogWriteResult.Invalid>(await Update(Edit(women) with { Slug = "men" }));
-        Assert.Equal("slug", Assert.Single(bySlug.Errors).Field);
+        Assert.IsType<CatalogWriteResult.Succeeded>(await Update(Edit(women) with { Description = "New copy" }));
 
-        var byName = Assert.IsType<CatalogWriteResult.Invalid>(await Update(Edit(women) with { Name = "Men" }));
-        Assert.Equal("name", Assert.Single(byName.Errors).Field);
+        Assert.Equal("Women", women.Name);
+        Assert.Equal("women", women.Slug);
+
+        // And the trail cannot claim otherwise: the diff is taken over the editable fields only.
+        var row = Assert.Single(_audit.Enlisted);
+        Assert.DoesNotContain("\"name\"", row.AfterJson!, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"slug\"", row.AfterJson!, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The server half of the fix-round-1 blocker. <c>PUT</c> replaces the row, so a body that omits the hero
+    /// image really does clear it — correct HTTP, and exactly why the client has to send what it loaded.
+    /// Pinning it here means the day somebody argues the API should quietly ignore a missing field, the
+    /// argument happens against a test rather than against a column full of nulls.
+    /// </summary>
+    [Fact]
+    public async Task An_omitted_hero_image_clears_it_because_a_PUT_replaces_the_row()
+    {
+        var women = _store.Departments.Single(department => department.Id == 1);
+        women.HeroImageAssetId = 41;
+
+        Assert.IsType<CatalogWriteResult.Succeeded>(await Update(Edit(women) with { HeroImageAssetId = null }));
+
+        Assert.Null(women.HeroImageAssetId);
     }
 
     [Fact]
@@ -100,7 +126,7 @@ public sealed class DepartmentWriteHandlerTests
     [Fact]
     public async Task Editing_a_department_that_does_not_exist_is_a_not_found() =>
         Assert.IsType<CatalogWriteResult.NotFound>(await Update(new UpdateDepartmentCommand(
-            404, "Ghost", "ghost", null, null, null, null, "AAAA", Actor)));
+            404, null, null, null, null, "AAAA", Actor)));
 
     [Fact]
     public async Task Saving_an_unedited_department_form_writes_nothing()
@@ -123,7 +149,7 @@ public sealed class DepartmentWriteHandlerTests
         women.IsActive = true;
         women.SortOrder = 0;
 
-        Assert.IsType<CatalogWriteResult.Succeeded>(await Update(Edit(women) with { Name = "Womenswear" }));
+        Assert.IsType<CatalogWriteResult.Succeeded>(await Update(Edit(women) with { Description = "Womenswear." }));
 
         Assert.True(women.IsActive);
         Assert.Equal((short)0, women.SortOrder);
@@ -188,8 +214,6 @@ public sealed class DepartmentWriteHandlerTests
     /// <summary>An edit that changes nothing, built from the row's own values.</summary>
     private static UpdateDepartmentCommand Edit(Department department) => new(
         department.Id,
-        department.Name,
-        department.Slug,
         department.Description,
         department.HeroImageAssetId,
         department.SeoTitle,
