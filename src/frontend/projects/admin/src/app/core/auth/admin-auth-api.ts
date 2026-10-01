@@ -152,7 +152,14 @@ export class AdminAuthApi {
     return this.withAntiforgeryToken((token) => this.http.post<T>(url, body, { headers: { 'X-XSRF-TOKEN': token } }));
   }
 
-  private withAntiforgeryToken<T>(send: (token: string) => Observable<T>): Observable<T> {
+  /**
+   * Runs a request with a freshly fetched antiforgery token.
+   *
+   * Public since W1-12: every mutating admin call needs the token, and ADM-11's writes are PUTs and a
+   * DELETE rather than POSTs, so `postWithAntiforgeryToken` does not cover them. A second service fetching
+   * its own token would be a second place for the header name and the token endpoint to drift.
+   */
+  withAntiforgeryToken<T>(send: (token: string) => Observable<T>): Observable<T> {
     return this.http
       .get<AntiforgeryTokenResponse>(AdminAuthApi.antiforgeryUrl)
       .pipe(switchMap((tokenResponse) => send(tokenResponse.token)));

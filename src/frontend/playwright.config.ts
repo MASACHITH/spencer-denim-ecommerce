@@ -93,6 +93,17 @@ export const liveOnlyApiURL = `http://localhost:${DEPT_FAULT_API_PORT}`;
  */
 export const LIVE_ONLY_LISTING = '/women/coats';
 
+/**
+ * The admin application and a stand-in for its API, on one origin (ADM-11, W1-12).
+ *
+ * The admin app is a plain SPA with no server of its own, and its session and antiforgery cookies are both
+ * same-origin, so one process serves `dist/admin` and answers `/api/admin/*`. See
+ * `e2e/support/admin-catalog-stub.mjs` for why it is a stub and what it refuses.
+ */
+const ADMIN_PORT = Number(process.env['E2E_ADMIN_PORT'] ?? 4430);
+
+export const adminURL = `http://localhost:${ADMIN_PORT}`;
+
 export default defineConfig({
   testDir: './e2e',
   testMatch: '**/*.e2e.ts',
@@ -108,6 +119,13 @@ export default defineConfig({
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   webServer: [
+    {
+      command: 'node e2e/support/admin-catalog-stub.mjs',
+      url: `${adminURL}/api/admin/catalog/departments`,
+      env: { E2E_ADMIN_PORT: String(ADMIN_PORT) },
+      reuseExistingServer: !process.env['CI'],
+      timeout: 30_000,
+    },
     {
       command: 'node e2e/support/catalog-api-stub.mjs',
       url: `${apiURL}/api/catalog/departments`,
