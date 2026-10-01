@@ -9,14 +9,21 @@ using SpencerDenim.IntegrationTests.Infrastructure;
 namespace SpencerDenim.IntegrationTests.Api.Admin;
 
 /// <summary>
-/// The <b>write</b> side of the ADM-11 contract, and the test that would have caught fix round 1's blocker.
+/// The <b>write</b> side of the ADM-11 contract: every field the admin screens send survives the round trip.
 /// <para>
-/// <c>AdminCatalogPayloadShapeTests</c> pins the read payloads, because the admin screens' TypeScript
-/// interfaces are a separate hand-written copy of them. The write side has exactly the same hazard and had
-/// no test at all — so a field the screen stopped sending was invisible on every layer: <c>PUT</c> replaces
-/// the row, the request DTO binds an absent field to <c>null</c>, and the handler assigns it. The screen's
-/// <c>CategoryFormValues</c> had dropped the three image columns, so every save silently cleared them, and
-/// the audit row recorded a member of staff doing it.
+/// <b>This is not the test that catches fix round 1's blocker, and an earlier version of this comment
+/// claimed it was.</b> It cannot be: the blocker was a field the <i>TypeScript</i> form model had dropped,
+/// and no C# test can see TypeScript. The key-set assertion below compares the request body against a list
+/// written out in this same file — useful as a statement of the contract, worthless as a detector of the
+/// client drifting from it. The two tests that do catch it are
+/// <c>catalog-page.spec.ts</c> → "a department save keeps the hero image it cannot yet show a picker for"
+/// and <c>category-tree.spec.ts</c> → "a category save keeps every field it cannot yet show a control for",
+/// which assert the outgoing request body and were watched failing first.
+/// </para>
+/// <para>
+/// What this suite is worth is the other half: it proves the <b>API</b> stores every field it is handed and
+/// clears nothing it was not asked to, which is what makes "send what you loaded" a sufficient fix on the
+/// client. <c>AdminCatalogPayloadShapeTests</c> does the same for the read payloads.
 /// </para>
 /// <para>
 /// <b>The fixtures set every nullable column to something, and that is the other half of why nothing caught

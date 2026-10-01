@@ -82,9 +82,12 @@ internal static class AdminCatalogEndpoints
             .WithSummary("The age groups and size guides a category form may choose from.")
             .WithDescription(
                 "ADM-11, doc 11 P1 step 2. Both are small seeded lists with no screen of their own, and " +
-                "without them a Kids category created here could never be given an age group, and a new " +
-                "category would silently get no size guide — which breaks PDP-04 for every product in it " +
-                "that has no override of its own.")
+                "without them a Kids category created here could never be given an age group at all. " +
+                "What catalog.Categories.SizeGuideId actually does today: nothing reads it on the " +
+                "storefront — ProductCatalogReader reads Products.SizeGuideId and only that, and no code " +
+                "anywhere walks a category's ancestors for a guide. The one consumer is " +
+                "DemoCatalogueSeeder, which copies it onto a product at creation time, so the value is the " +
+                "default ADM-10's product form will inherit in W1-03.")
             .Produces<CategoryFormOptionsDto>();
 
         api.MapPut("/departments/order", ReorderDepartmentsAsync)

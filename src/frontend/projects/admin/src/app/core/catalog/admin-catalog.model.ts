@@ -184,8 +184,12 @@ export interface CatalogOption {
  *
  * Not deferred with the image pickers, because the argument for deferring those does not reach these: a
  * tile image needs ADM-18's media library, while an age group is four seeded rows and a size guide is
- * three. Without them a Kids category made here could never be given an age group, and a new category
- * would silently get no size guide — which breaks PDP-04 for every product in it with no override.
+ * three, and doc 11 P1 step 2 lists both as part of creating a category.
+ *
+ * What the size guide does today, said plainly because an earlier version of this comment claimed more:
+ * nothing on the storefront reads `Category.SizeGuideId`. The product page reads the product's own guide,
+ * and no code walks a category's ancestors for one. Its only consumer copies it onto a product as it is
+ * created, so it is the default W1-03's product form will inherit — not something a shopper sees.
  */
 export interface CategoryFormOptions {
   readonly ageGroups: readonly CatalogOption[];

@@ -1197,7 +1197,20 @@ public sealed class AdminCatalogEndpointTests(SqlServerDatabaseFixture sqlServer
         yield return (HttpMethod.Delete, $"{CategoriesUrl}/1");
     }
 
-    /// <summary>A body shaped for the route, so a refusal is about the guard rather than about the JSON.</summary>
+    /// <summary>
+    /// A body shaped for the route, so a refusal is about the guard rather than about the JSON.
+    /// <para>
+    /// It is the union of what the eight write routes take, built once so the sweep has a single body to
+    /// keep current. <c>name</c> and <c>slug</c> belong to the category routes; the department edit dropped
+    /// both when the owner made them read-only (2026-10-02), and it simply ignores fields it has no
+    /// property for.
+    /// </para>
+    /// <para>
+    /// Nothing here depends on the body at all — the 403 comes from the authorization filter before the
+    /// body is read, and nothing sets <c>UnmappedMemberHandling.Disallow</c> — which is exactly why a
+    /// stale field could sit in it unnoticed, and why there is now one body rather than three.
+    /// </para>
+    /// </summary>
     private static object? BodyFor(HttpMethod method) => method == HttpMethod.Delete
         ? null
         : new
@@ -1205,27 +1218,30 @@ public sealed class AdminCatalogEndpointTests(SqlServerDatabaseFixture sqlServer
             departmentId = 1,
             name = "X",
             slug = "x",
+            description = "X",
             isActive = true,
+            rowVersion = "AAAAAAAAAAA=",
             orderedDepartmentIds = SeededDepartmentIds,
             orderedCategoryIds = SeededDepartmentIds,
         };
 
+    /// <summary>
+    /// Sends a request shaped for the route. It goes through <see cref="BodyFor"/> like the rest of the
+    /// sweep, rather than carrying a body of its own that nobody updates when the contract moves.
+    /// </summary>
     private static Task<(HttpStatusCode Status, JsonElement Body)> Send(
         AdminCatalogApiClient client,
         HttpMethod method,
         string path)
     {
-        if (method == HttpMethod.Post)
-        {
-            return client.PostAsync(path, new { departmentId = 1, name = "X", slug = "x" }, Token);
-        }
-
         if (method == HttpMethod.Delete)
         {
             return client.DeleteAsync(path, "AAAAAAAAAAA=", Token);
         }
 
-        return client.PutAsync(path, new { name = "X", slug = "x", isActive = true }, Token);
+        return method == HttpMethod.Post
+            ? client.PostAsync(path, BodyFor(method)!, Token)
+            : client.PutAsync(path, BodyFor(method)!, Token);
     }
 
     private async Task<ApiFactory> HostAsync(string environment = "Testing")

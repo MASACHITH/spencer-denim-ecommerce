@@ -130,8 +130,17 @@ public sealed record CategoryDeactivationImpactDto(
 /// They are here rather than deferred with the image pickers because the argument for deferring those does
 /// not reach them. A tile image needs ADM-18's media library — a browser, renditions, an upload path — and
 /// none of that exists. An age group is four seeded rows and a size guide is three; what was missing was a
-/// <c>SELECT</c>. Without it a Kids category created from these screens could never be given either, and a
-/// category with no size guide breaks PDP-04 for every product in it that has no override of its own.
+/// <c>SELECT</c>, and without it a category created from these screens could never be given either, which
+/// doc 11 P1 step 2 lists as part of creating one.
+/// </para>
+/// <para>
+/// <b>What <c>Category.SizeGuideId</c> does today, stated because an earlier version of this comment got it
+/// wrong.</b> Nothing on the storefront reads it: <c>ProductCatalogReader</c> reads
+/// <c>Products.SizeGuideId</c> and only that, and nothing anywhere walks a category's ancestors for a
+/// guide — doc 08 §3.2's "inherited from the nearest ancestor when NULL" is a design note, not built
+/// behaviour. Its one consumer is <c>DemoCatalogueSeeder</c>, which copies it onto a product as it creates
+/// it. So the value is the default a product picks up, and the field is worth setting for W1-03's product
+/// form rather than for any page a shopper can open today.
 /// </para>
 /// </summary>
 public sealed record CategoryFormOptionsDto(
