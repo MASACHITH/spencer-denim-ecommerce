@@ -233,6 +233,11 @@ public sealed class ClientAssetWorld : IAsyncDisposable
         try
         {
             Directory.Delete(Root, recursive: true);
+
+            // And the shared parent, which is this run's only trace once its own directory is gone.
+            // Non-recursive on purpose: it throws when a concurrent run still has a directory in
+            // there, which is precisely when it must be left alone. Same rule as SqlServerDatabaseFixture.
+            Directory.Delete(Path.GetDirectoryName(Root)!);
         }
         catch (IOException)
         {
