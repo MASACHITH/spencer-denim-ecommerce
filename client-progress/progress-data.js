@@ -60,7 +60,7 @@ const progressData = {
         { name: "Department pages", status: "done", progress: 100 },
         { name: "Category listings with filters & sorting", status: "done", progress: 100 },
         { name: "Product cards with quick view", status: "in-progress", progress: 90 },
-        { name: "Search", status: "in-progress", progress: 40 },
+        { name: "Search", status: "in-progress", progress: 55 },
         { name: "Store pages: About, Contact, Returns, Shipping, Privacy & Terms", status: "planned", progress: 0 }
       ]
     },
@@ -68,7 +68,7 @@ const progressData = {
       name: "Product Page",
       features: [
         { name: "Image gallery, zoom & video", status: "done", progress: 100 },
-        { name: "Colour & size selection with size guide", status: "in-progress", progress: 80 },
+        { name: "Colour & size selection with size guide", status: "done", progress: 100 },
         { name: "Product details & delivery information", status: "in-progress", progress: 60 },
         { name: "Related & recently viewed products", status: "done", progress: 100 },
         { name: "Reviews & ratings", status: "planned", progress: 0 }
@@ -126,6 +126,10 @@ const progressData = {
 
   // Newest first.
   updates: [
+    {
+      date: "2026-10-02",
+      text: "The site is now Colombo Wardrobe throughout — every page title, heading and email will carry that name. Size guides are working: choosing a size on a product page opens the measurement chart for that kind of garment, and it reads properly on a phone. The product page is now complete apart from customer reviews."
+    },
     {
       date: "2026-10-02",
       text: "Your photographs are on the site. Every product in Women and Men now shows your own pictures, with a second view when you hover over the card, and the three department tiles, the campaign banner, the trending row and the social wall are all live with your images. The home page video is running too. Kids products still show marked placeholder images until those photographs are supplied. Two things would improve what is there: a wide (16:9) version of the home page video, because the one supplied is a tall phone-shaped video that has to be cropped to fit, and a photograph of activewear for the section that now reads Linen and denim to match the picture we have."
