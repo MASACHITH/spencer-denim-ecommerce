@@ -47,7 +47,79 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 
 ## Session log
 
-### 2026-10-02 (10) — W1-12 (ADM-11): the admin owns the catalogue structure, and the switch says what it will cost
+### 2026-10-02 (2) — W1-12 fix round 1: every save was quietly clearing the images it could not show
+
+The tester failed it on 1 blocker, 3 majors and 9 minors, and confirmed the backend use cases and the
+migration — 45 inputs against the CHECK constraints including an emoji surrogate pair, 60/60 across 15 runs
+of the concurrency tests, the `kids/girls` stranding exactly as described. All fixed on
+`feature/W1-12-category-admin`.
+
+**BLOCKER, and the lesson is about which side of a contract gets a test.** `CategoryFormValues` and
+`DepartmentFormValues` simply did not list the image columns, the services spread those objects into the
+body, the request DTOs bind an absent field to `null`, and the handlers assign it. So every category save
+cleared its tile and banner images and every department save cleared its hero image — **and the audit row
+recorded the staff member doing it**, which is the part that would have been unexplainable months later.
+
+**Four suites and 1,571 tests missed it for one reason: every fixture set all three columns to `null`.** A
+dropped field then round-trips null to null and no assertion can see it. The fix is two lines in a model;
+the finding is the missing test. I had built `AdminCatalogPayloadShapeTests` for the **read** payloads
+precisely because the screen's TypeScript interfaces are a separate hand-written copy — and then left the
+write side, which has exactly the same hazard, unpinned. There is now
+`AdminCatalogWriteShapeTests`, whose fixtures are deliberately non-null on every nullable column, plus two
+frontend tests that assert the outgoing `PUT` body. **Watched red first**: `expected undefined to be 41`.
+
+**The owner settled the department question, and the tester demolished the reading we were both working
+from.** Name and slug are **not** editable (doc 11 P1 step 1 wins). The W1-02 follow-up it appeared to serve
+needs no editable field: **`Department.Slug` has had a write path since W1-02 — the seeder** — so the setter
+guard and `CK_Departments_Slug` already guard the path that exists, which is the argument
+`CatalogSlugConstraint`'s own comment was already making. Both fields are gone from the command, the
+request DTO, the handler, the form and the screen; the two now-dead store members are gone rather than left
+as a port promising a capability the API does not have. `UX_Departments_Name` and `UX_Departments_Slug`
+stay: they are the seeder's guard.
+
+**MAJOR: `load()` threw away a staged department reorder without a word.** Stage a move, press any
+Hide/Show, and the order reverted with no message. `refreshDepartmentCounts()` already guarded that exact
+hazard, with a comment explaining why — the guard was in one of the two places that needed it. It is the
+sibling of the defect I found and fixed for the category tree; the department list did not get the fix. The
+staged value is now a list of **ids**, not of rows, so a reload both keeps the arrangement and refreshes the
+counts under it — holding rows did neither.
+
+**MAJOR: the banner-link rule was defeated three ways, all starting with a single slash.** `/\evil.example`,
+`/<TAB>/evil.example` and `/<CR><LF>//evil.example` all resolve to `https://evil.example/`: the URL standard
+treats a reverse solidus as a solidus for special schemes, and a browser strips TAB, CR and LF before
+parsing. `Clean()` only trims the ends. The rule now refuses backslashes and C0 controls outright and then
+**resolves the value against a base and requires the origin to be unchanged** — the question a browser
+would ask, rather than reading the first two characters. The `javascript:`/`data:` half held up under
+attack and its tests are kept.
+
+**MAJOR: the e2e stub was more polite than the real API in the two ways that mattered**, under a header
+claiming it was not. It never checked `X-XSRF-TOKEN` and ignored row versions entirely, so if the screen had
+stopped sending either, all 246 browser tests would still have passed. It enforces both now, moves a row
+version on every successful write, and — the real gap — **implements `parentCategoryId` on
+`PUT /categories/{id}`, so re-parenting, the largest thing this screen does, has browser coverage at all.**
+
+**m10: the age-group and size-guide pickers are built**, and the deferral was wrong. The image pickers wait
+on ADM-18's media library; an age group is four seeded rows and a size guide is three, and what was missing
+was a `SELECT`. Without them a Kids category made here could never be given either — and a new category
+silently got no size guide, breaking PDP-04 for every product in it with no override.
+
+**The rest:** a keyboard-reachability assertion that was true on a blank page is gone (`document.body`
+contains `document.body`); "one round trip" was wrong and is now the measured two queries and five commands,
+with `AdminCatalogQueryPlanTests` to catch an N+1 creeping back — **proven able to see one**, 135 commands
+for 130 categories; the reorder routes' concurrency story is said accurately (the set check plus EF's own
+predicate, no `CheckRowVersion`); the "every panel open at once" worst case was unreachable and is replaced
+by the two that are; the antiforgery check covers all 8 write routes and the permission matrix now runs both
+directions; the admin e2e port is derived from the worktree path, which is the mechanism behind this
+branch's own 113-failure incident; and both defensive cases have answers — an orphaned category is drawn at
+the top level rather than vanishing, and the stale path on a soft-deleted descendant is written down as the
+restore task's problem rather than left silent.
+
+**Numbers:** backend **887 unit** (was 875) **+ 456 integration** (447), 0 skipped; frontend 21 / 460 / **209** admin;
+**Playwright 253**. Lint clean, Release build clean with 0 warnings.
+
+**Next:** back to the tester.
+
+### 2026-10-02 (1) — W1-12 (ADM-11): the admin owns the catalogue structure, and the switch says what it will cost
 
 `feature/W1-12-category-admin` (worktree `worktrees/sd-rename`). Developer pass only: not pushed, not
 merged, **not Done**, and `client-progress/progress-data.js` is untouched until the tester passes it.
