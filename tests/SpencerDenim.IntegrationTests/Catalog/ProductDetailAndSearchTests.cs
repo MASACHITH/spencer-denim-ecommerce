@@ -365,4 +365,164 @@ public sealed class ProductDetailAndSearchTests(SqlServerDatabaseFixture sqlServ
         Assert.Equal(HttpStatusCode.BadRequest, status);
         Assert.True(body.GetProperty("errors").TryGetProperty("q", out _));
     }
+
+    /// <summary>
+    /// Every value a search box can be made to send, and none of them may be a 500.
+    ///
+    /// <para>
+    /// This is not a theoretical list. Unparseable query parameters answered 500 on this very API
+    /// until a tester found it (that is why <c>ProductListCriteria</c> binds every number as a
+    /// string), and one unpaired surrogate in a size chart once 500'd every product page in a
+    /// department. A public search box is the easiest place on a shop to send any of these.
+    /// </para>
+    /// <para>
+    /// The assertion is deliberately "400 or 200, never 500" rather than one exact status: whether a
+    /// given value is rejected or simply matches nothing is a design decision that may reasonably
+    /// change, while answering a server error to a shopper's typing is never right. The cases that
+    /// have one correct answer are asserted individually below.
+    /// </para>
+    /// </summary>
+    [Theory]
+    // No value, and a value of one character: too short to search for.
+    [InlineData("?q=")]
+    [InlineData("?q=a")]
+    [InlineData("?q=%20%20")]
+    // Long enough, but with no word long enough to be a token.
+    [InlineData("?q=a%20b")]
+    // Two thousand characters, which is past the term limit and past the indexed column.
+    [InlineData("?q=" + TwoThousandXs)]
+    // A NUL, on its own and inside a word.
+    [InlineData("?q=%00")]
+    [InlineData("?q=te%00st")]
+    [InlineData("?q=%00%00%00%00")]
+    // An unpaired surrogate: invalid UTF-8 in the query string.
+    [InlineData("?q=%ED%A0%BD")]
+    [InlineData("?q=linen%ED%A0%BD")]
+    // A whole emoji, which is a legitimate thing to type into a search box.
+    [InlineData("?q=%F0%9F%91%97")]
+    // Punctuation only, and the LIKE wildcards.
+    [InlineData("?q=%21%21%21")]
+    [InlineData("?q=%25")]
+    [InlineData("?q=_")]
+    [InlineData("?q=%5B")]
+    [InlineData("?q=%5C")]
+    // More tokens than the five doc 08 §7.6 keeps.
+    [InlineData("?q=linen%20shirt%20women%20blue%20relaxed%20cotton%20more")]
+    // A term with a filter that is itself unparseable: both have to be answered at once.
+    [InlineData("?q=linen&page=abc")]
+    [InlineData("?q=linen&pageSize=-1")]
+    [InlineData("?q=linen&minPrice=NaN")]
+    [InlineData("?q=linen&sort=nope")]
+    public async Task A_hostile_term_is_never_a_500(string query)
+    {
+        var api = CreateApi();
+
+        var (status, body) = await api.GetStatusAsync("/api/catalog/search" + query, Token);
+
+        Assert.True(
+            status is HttpStatusCode.OK or HttpStatusCode.BadRequest,
+            $"GET /api/catalog/search{query} returned {(int)status}: {body}");
+    }
+
+    [Fact]
+    public async Task A_term_of_only_short_words_is_a_400_naming_the_term()
+    {
+        var api = CreateApi();
+
+        var (status, body) = await api.GetRawAsync("/api/catalog/search?q=a%20b", Token);
+
+        Assert.Equal(HttpStatusCode.BadRequest, status);
+        Assert.True(body.GetProperty("errors").TryGetProperty("q", out _));
+    }
+
+    [Fact]
+    public async Task A_term_past_the_length_limit_is_a_400_naming_the_term()
+    {
+        var api = CreateApi();
+
+        var (status, body) = await api.GetRawAsync("/api/catalog/search?q=" + TwoThousandXs, Token);
+
+        Assert.Equal(HttpStatusCode.BadRequest, status);
+        Assert.True(body.GetProperty("errors").TryGetProperty("q", out _));
+    }
+
+    /// <summary>
+    /// Punctuation is a term, not an error: it is long enough, it tokenises, and it matches nothing.
+    /// The empty page is the honest answer, and the storefront has a state for it.
+    /// </summary>
+    [Theory]
+    [InlineData("?q=%21%21%21")]
+    [InlineData("?q=%2D%2D%2D")]
+    public async Task A_term_of_punctuation_matches_nothing_rather_than_failing(string query)
+    {
+        var api = CreateApi();
+
+        var response = await api.SearchAsync(query, Token);
+
+        Assert.Empty(response.Results.Items);
+        Assert.Equal(0, response.Results.TotalCount);
+    }
+
+    [Fact]
+    public async Task An_emoji_matches_nothing_rather_than_failing()
+    {
+        var api = CreateApi();
+
+        var response = await api.SearchAsync("?q=%F0%9F%91%97", Token);
+
+        Assert.Equal(0, response.Results.TotalCount);
+    }
+
+    /// <summary>Doc 08 §7.6: at most five tokens, and the response says which five it used.</summary>
+    [Fact]
+    public async Task Only_five_tokens_are_matched_and_the_response_says_so()
+    {
+        var api = CreateApi();
+
+        var response = await api.SearchAsync(
+            "?q=linen%20shirt%20women%20blue%20relaxed%20cotton%20more",
+            Token);
+
+        Assert.Equal(5, response.Tokens.Count);
+        Assert.DoesNotContain("cotton", response.Tokens);
+        Assert.DoesNotContain("more", response.Tokens);
+    }
+
+    /// <summary>
+    /// A term the API accepts and a filter it does not: one response names the filter, and the term is
+    /// not quietly dropped or quietly honoured.
+    /// </summary>
+    [Fact]
+    public async Task A_bad_filter_beside_a_good_term_is_a_400_naming_the_filter()
+    {
+        var api = CreateApi();
+
+        var (status, body) = await api.GetRawAsync("/api/catalog/search?q=linen&page=abc", Token);
+
+        Assert.Equal(HttpStatusCode.BadRequest, status);
+        Assert.True(body.GetProperty("errors").TryGetProperty("page", out _));
+    }
+
+    /// <summary>Two thousand characters, as a constant because an attribute argument must be one.</summary>
+    private const string TwoThousandXs =
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" +
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" +
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" +
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" +
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" +
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" +
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" +
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" +
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" +
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" +
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" +
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" +
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" +
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" +
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" +
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" +
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" +
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" +
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" +
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
 }
