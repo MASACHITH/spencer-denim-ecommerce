@@ -16,9 +16,11 @@ namespace SpencerDenim.Infrastructure.Catalog;
 /// removed is not the same as hidden and ADM-11 offers no restore.
 /// </para>
 /// <para>
-/// Counts are gathered as grouped queries over the whole department and joined in memory, not asked per
-/// node. A tree of about 200 rows (doc 08 §3.2) asked one count at a time is 200 round trips for one
-/// screen, which is the N+1 the listing reader was already corrected for once.
+/// The counts are correlated sub-selects inside the one projection, so a department's whole tree — about
+/// 200 rows (doc 08 §3.2) — is <b>one</b> round trip with the counting done by SQL Server, not one query
+/// per node. Asking per node would be the N+1 the listing reader was already corrected for once. The tree
+/// itself is assembled from the flat result in memory, as <c>DepartmentCatalogReader</c> does, because a
+/// recursive query to shape 200 rows costs more than the shaping.
 /// </para>
 /// </summary>
 internal sealed class AdminCatalogReader(AppDbContext dbContext) : IAdminCatalogReader
