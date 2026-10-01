@@ -12,15 +12,31 @@ import { edgesWithoutRing, horizontalOverflow, undersized } from './support/meas
  * and the status code and HTML on the wire.
  *
  * The catalogue comes from `support/catalog-api-stub.mjs`, whose `/api/catalog/search` mirrors the
- * real endpoint's validation rather than being shaped to suit the page: "test" matches all 120
- * products, "sd-0007" matches exactly one, "tailored" matches the one product carrying the longest
- * name the demo catalogue really seeds, and "linen" matches none.
+ * real endpoint's validation, its filter resolution and the **shape of its search index** rather than
+ * being shaped to suit the page. What that buys these tests: "test" and "jeans" match all 120
+ * products, "sd-0007" matches exactly one by product code, "cotton" and "linen" match by material,
+ * "kanjivaram" matches the one product carrying the longest name the demo catalogue really seeds, and
+ * "zzzznothing" matches none.
+ *
+ * "women" matches **none**, and that is the point of the index shape: the real
+ * `ProductSearchIndex.SearchText` is built from category *path names* and carries no department name
+ * and no slugs, so a stub that joined those in would have made this suite agree with a production
+ * API that behaves differently.
  */
 
 const RESULTS = '/search?q=test';
 
 /** docs/04 §4. */
 const BREAKPOINTS = [320, 375, 390, 768, 1024, 1280, 1440, 1920] as const;
+
+/**
+ * The longest product name `DemoCatalogueData` seeds (41 characters, `SD-W-0016`).
+ *
+ * Written out once here rather than at each use, because it carries Tamil combining marks and two
+ * copies of it in one file is two chances for them to differ invisibly — which is exactly how the
+ * first version of the unit suite's Sinhala/Tamil test compared one virama with another.
+ */
+const LONGEST_SEEDED_NAME = 'Kanjivaram (காஞ்சிபுரம்) Silk-Blend Saree';
 
 /** The page's own search box, which is visible at every width (the header's is not, below 1280). */
 function pageBox(page: Page): Locator {
@@ -152,6 +168,43 @@ test.describe('server-side rendering (GLB-11, SRCH-02)', () => {
     expect(calls).toEqual([]);
   });
 
+  /**
+   * Three `role="search"` landmarks are in this page's DOM at 1280 px — the header's inline box, the
+   * header's panel box, and the page's own — and exactly one of the header's two is ever visible. The
+   * names have to differ anyway: "only one is visible" is a fact about the stylesheet, and a screen
+   * reader's landmark list is not reading the stylesheet.
+   */
+  test('every search landmark on the page has its own name', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.goto(RESULTS);
+
+    const names = await page
+      .locator('[role="search"]')
+      .evaluateAll((nodes) => nodes.map((node) => node.getAttribute('aria-label') ?? ''));
+
+    expect(names).toHaveLength(3);
+    expect(new Set(names).size).toBe(3);
+    expect(names.every((name) => name.length > 0)).toBe(true);
+  });
+
+  /**
+   * The generated ids restart with every render, which is what a per-request counter means. A
+   * module-level `let nextId = 0` lives for the life of the Node process, so two renders of the same
+   * page served different ids and every browser that hydrated one started again at 0.
+   */
+  test('two renders of the same page generate the same ids', async ({ request }) => {
+    const ids = async () => {
+      const html = await (await request.get(RESULTS)).text();
+      return [...html.matchAll(/id="(sd-search-\d+)"/g)].map((match) => match[1]);
+    };
+
+    const first = await ids();
+    const second = await ids();
+
+    expect(first.length).toBeGreaterThan(0);
+    expect(second).toEqual(first);
+  });
+
   test('a single result is rendered as one card, not as a listing of one', async ({ request }) => {
     const html = await (await request.get('/search?q=sd-0007')).text();
 
@@ -187,6 +240,8 @@ test.describe('terms that are not words', () => {
     { label: 'two thousand characters', query: `?q=${'x'.repeat(2_000)}` },
     { label: 'a NUL', query: '?q=%00' },
     { label: 'a NUL inside a word', query: '?q=te%00st' },
+    // The two unpaired-surrogate cases are not in this loop: they never reach the application, so
+    // they cannot assert which page the application rendered. They have their own tests below.
     { label: 'an emoji', query: '?q=%F0%9F%91%97' },
     { label: 'punctuation only', query: '?q=%21%21%21' },
     { label: 'nothing but short words', query: '?q=a%20an%20the' },
@@ -196,28 +251,58 @@ test.describe('terms that are not words', () => {
   ];
 
   for (const { label, query } of cases) {
-    test(`${label} answers a page, not a fault`, async ({ request }) => {
+    test(`${label} answers the search page, not a fault`, async ({ request }) => {
       const response = await request.get(`/search${query}`);
       const html = await response.text();
 
       expect(response.status()).toBe(200);
-      expect(html).toContain('</html>');
-      // Never an unhandled error, and never the listing's not-found or unavailable pages.
+      // **Which page**, not merely which status. The first version of this asserted only a 200 and
+      // the absence of the not-found copy — and the home page satisfies both, so the whole loop was
+      // blind to a query string that fell through the router to `{path:'**', redirectTo:''}`. That is
+      // precisely what one of these cases does (see the surrogate test below).
+      expect(html).toContain('<sd-search-page');
+      expect(html).not.toContain('<sd-home-page');
+      expect(html).not.toContain('<sd-listing-page');
       expect(html).not.toContain('We could not find that page');
       expect(html).not.toContain('sd-catalog-unavailable-page');
     });
   }
 
   /**
-   * An unpaired surrogate is the one case that is not ours to normalise: it is rejected while the URL
-   * is being parsed, before any application code sees it. Measured rather than assumed — if the
-   * storefront ever starts answering a 500 here it is a site-wide problem with query strings, not a
-   * search problem, and this test is where it will be noticed.
+   * An unpaired surrogate in the query string, which **does not reach the application at all**.
+   *
+   * My first report of this task said the storefront "answers < 500, so there is no site-wide
+   * query-string hazard". That was wrong, and wrong in the way a status-code-only assertion makes
+   * easy: it is a 200 **rendering the home page**. Angular's `DefaultUrlSerializer` calls
+   * `decodeURIComponent`, which throws `URIError` on half a surrogate pair; the router logs NG04018
+   * twice and falls through to `{path:'**', redirectTo:''}`. A genuine U+FFFD (`%EF%BF%BD`) renders
+   * the search page perfectly, which is what proves U+FFFD is not what arrives.
+   *
+   * It is **site-wide and pre-existing** — `/?q=`, `/women?colour=` and `/product/x?y=` all do the
+   * same — and it is filed as **#79**, not this branch's to fix. What is this branch's is that the
+   * suite can see it: the assertion below is the behaviour the storefront **must** have, and
+   * `test.fail()` records that it does not have it yet. When #79 lands this test reports "passed
+   * unexpectedly" and the marker comes off, rather than quietly locking the wrong answer in.
    */
-  test('an unpaired surrogate in the query string does not answer a 500', async ({ request }) => {
-    const response = await request.get('/search?q=%ED%A0%BD');
+  test('an unpaired surrogate in the query string still renders the search page', async ({
+    request,
+  }) => {
+    test.fail();
 
-    expect(response.status()).toBeLessThan(500);
+    const response = await request.get('/search?q=%ED%A0%BD');
+    const html = await response.text();
+
+    expect(response.status()).toBe(200);
+    expect(html).toContain('<sd-search-page');
+  });
+
+  /** The same address with a real replacement character, which is what #79's fix has to produce. */
+  test('a replacement character is an ordinary term the search page renders', async ({ request }) => {
+    const response = await request.get('/search?q=%EF%BF%BD%EF%BF%BD');
+    const html = await response.text();
+
+    expect(response.status()).toBe(200);
+    expect(html).toContain('<sd-search-page');
   });
 
   test('a term of only short words shows the prompt rather than an error', async ({ page }) => {
@@ -228,7 +313,10 @@ test.describe('terms that are not words', () => {
   });
 
   test('a term that matches nothing shows the no-results state at a 200', async ({ page }) => {
-    const response = await page.goto('/search?q=linen');
+    // Not "linen": the corpus carries materials now, exactly as the real index does, so "linen"
+    // matches forty products here and in production. A term that matches nothing has to be a term
+    // that matches nothing.
+    const response = await page.goto('/search?q=zzzznothing');
 
     expect(response?.status()).toBe(200);
     await expect(page.getByText('We found nothing for')).toBeVisible();
@@ -241,6 +329,66 @@ test.describe('terms that are not words', () => {
  * `/search` is a new single-segment route, and `/:department` matches any single segment. The last
  * time a single-segment route was added it swallowed eleven site-wide links.
  */
+/**
+ * The filter-rejection path, end to end.
+ *
+ * `searchFailure`'s `'query'` branch and `searchErrorMessage`'s pass-through of the API's own wording
+ * existed from the first commit and **could not be reached in a browser**, because the stub answered
+ * 200 to every filter the real API rejects. That is the whole reason the stub now mirrors
+ * `ProductListQuery.Create` and `ResolveFiltersAsync`: a failure path with no way to reach it is a
+ * failure path nobody has seen.
+ */
+test.describe('a filter the catalogue cannot answer', () => {
+  test('shows the API’s own message, not a generic apology', async ({ page }) => {
+    // "jeans" is a category under Women *and* under Men, and a category slug is unique only per
+    // department and parent, so the API refuses to guess (doc 08 §3.2).
+    await page.goto('/search?q=test&category=jeans');
+
+    // Scoped to the error block: the page also announces the message in its `role="status"` live
+    // region, which is correct and which makes an unscoped text locator ambiguous.
+    const state = page.locator('.search__results .search__state');
+    await expect(state).toContainText('We could not run that search');
+    await expect(state).toContainText('exists in more than one department');
+    // Not a 400 page and not an empty grid: the search page, saying what to do.
+    await expect(page.locator('sd-search-page')).toHaveCount(1);
+    await expect(page.locator('.product-grid')).toHaveCount(0);
+  });
+
+  test('the same filter with a department is answered normally', async ({ page }) => {
+    await page.goto('/search?q=test&category=jeans&department=women');
+
+    await expect(page.locator('.product-grid > li').first()).toBeVisible();
+    await expect(page.getByText('We could not run that search')).toHaveCount(0);
+  });
+
+  test('a filter that narrows to nothing is the no-results state, not an error', async ({ page }) => {
+    // Green, not cream: every third product in this corpus carries the cream swatch, so "cream"
+    // narrows to forty rather than to none. The colour that matches nothing has to be one the corpus
+    // genuinely does not have — which is the same mistake, one level smaller, as the corpus shape
+    // this round was failed for.
+    await page.goto('/search?q=test&colour=green');
+
+    await expect(page.locator('.search__results .search__state')).toContainText(
+      'We found nothing for',
+    );
+    await expect(page.getByText('We could not run that search')).toHaveCount(0);
+  });
+
+  test('a material filter really narrows, which is what the no-results copy promises', async ({
+    page,
+  }) => {
+    const all = await (await page.request.get('/search?q=test')).text();
+    // Angular's own attributes sit between the tag and the number.
+    expect(all).toMatch(/<strong[^>]*>120<\/strong>/);
+
+    await page.goto('/search?q=test&material=linen');
+
+    // Forty of the hundred and twenty, by material — the field the first stub's corpus did not carry
+    // at all, while the no-results copy was promising a shopper they could search by it.
+    await expect(page.locator('.search__count')).toContainText('40');
+  });
+});
+
 test.describe('the rest of the site still resolves', () => {
   const addresses: readonly { readonly path: string; readonly component: string }[] = [
     { path: '/', component: 'sd-home-page' },
@@ -378,6 +526,37 @@ test.describe('the suggestions overlay (SRCH-01)', () => {
   });
 
   /**
+   * **A second Escape must not empty the field, and must not bring the popup back.**
+   *
+   * Chrome gives `input[type=search]` a native Escape-clear as the keydown's default action. While
+   * `preventDefault()` was called only when the popup was open, the second Escape — the one whose
+   * only job is to dismiss — cleared the field, and the clear dispatches an `input` event, which
+   * `onInput` answered by re-opening the popup. Measured before the fix: `{expanded:"true",
+   * value:"", caret:0}`. That is #20's shape in the component whose docblock says it is the opposite
+   * of #20.
+   *
+   * The results page is where this has to be tested: it has no search panel, so nothing else absorbs
+   * the second keystroke, and the earlier two-Escape test (in the header panel) asserted only that
+   * the panel closed.
+   */
+  test('a second Escape leaves the field and the popup alone', async ({ page }) => {
+    await page.goto(RESULTS);
+    const box = await search(page, 'jeans', 'Test Product 1');
+
+    await box.press('Escape');
+    await box.press('Escape');
+    await box.press('Escape');
+
+    await expect(box).toHaveValue('jeans');
+    await expect(box).toHaveAttribute('aria-expanded', 'false');
+    await expect(page.locator('.search__field .suggestions')).toBeHidden();
+    await expect(page).toHaveURL(RESULTS);
+    // The caret is where the shopper left it, not reset to the start by a clear.
+    expect(await box.evaluate((element: HTMLInputElement) => element.selectionStart)).toBe(5);
+    expect(await box.evaluate((element) => element === document.activeElement)).toBe(true);
+  });
+
+  /**
    * #20 one component over: the mega menu re-opened as soon as focus came back to its trigger after
    * Escape. The popup here opens from typing, from ArrowDown and from a click — never from focus.
    */
@@ -417,6 +596,15 @@ test.describe('the suggestions overlay (SRCH-01)', () => {
 
     await box.press('Escape');
     await expect(panel).toBeHidden();
+    // The two assertions this test was missing. The second Escape closes the panel; it must not also
+    // empty the field, or a shopper who dismissed the suggestions and then dismissed the panel loses
+    // their typing — and re-opening the panel would show them an empty box and the browse list.
+    await expect(box).toHaveValue('jeans');
+    await expect(box).toHaveAttribute('aria-expanded', 'false');
+
+    await page.getByTestId('search-toggle').click();
+    await expect(panel).toBeVisible();
+    await expect(box).toHaveValue('jeans');
   });
 
   test('Tab closes the popup without choosing anything', async ({ page }) => {
@@ -459,7 +647,10 @@ test.describe('the suggestions overlay (SRCH-01)', () => {
   });
 
   test('a term the API would refuse never costs a request', async ({ page }) => {
-    await page.goto(RESULTS);
+    // From a page with no term in the box, for the same reason as the test above: opening the popup
+    // on a page that already has one asks for suggestions for *that* term, and whether the debounce
+    // beats `fill('')` depends on how busy the machine is.
+    await page.goto('/search');
 
     const calls: string[] = [];
     page.on('request', (request) => {
@@ -533,9 +724,11 @@ test.describe('responsive and accessible', () => {
 
       expect(await horizontalOverflow(page)).toBe(0);
 
-      // "Tailored Wool-Look Trousers" is the longest product name the demo catalogue really seeds,
-      // at 27 characters — the worst case the overlay has to wrap at 320 px.
-      await search(page, 'tailored', 'Tailored Wool-Look Trousers');
+      // The longest product name the demo catalogue really seeds: 41 characters, Tamil script with
+      // combining marks. The first version of this measured against "Tailored Wool-Look Trousers",
+      // which is only the third longest — and the two above it are both Indic, where a combining
+      // mark adds no break opportunity and `overflow-wrap: anywhere` is what has to save the layout.
+      await search(page, 'kanjivaram', LONGEST_SEEDED_NAME);
 
       expect(await horizontalOverflow(page)).toBe(0);
     });
@@ -545,7 +738,7 @@ test.describe('responsive and accessible', () => {
     test(`every suggestion is a 44 px target at ${width} px`, async ({ page }) => {
       await page.setViewportSize({ width, height: 900 });
       await page.goto(RESULTS);
-      await search(page, 'tailored', 'Tailored Wool-Look Trousers');
+      await search(page, 'kanjivaram', LONGEST_SEEDED_NAME);
 
       // `undersized` reports an empty array both when everything passes and when its selector
       // matched nothing, so what it matched is counted first. Without this the assertion below
@@ -577,11 +770,21 @@ test.describe('responsive and accessible', () => {
       await page.setViewportSize({ width, height: 900 });
       await page.goto('/search?q=test&department=women');
 
-      const selector =
-        '.search__bar button, .search__bar select, .search__chips button, .search__more button';
-      expect(await page.locator(selector).count()).toBeGreaterThan(0);
+      // Each clause guarded on its own. `count()` over the compound selector passes on the first
+      // clause alone, so a later one could silently match nothing and the measurement over it would
+      // be vacuous — the same hole as `undersized` returning [] for a selector that matched nothing,
+      // one level up.
+      const clauses = [
+        '.search__bar button',
+        '.search__bar select',
+        '.search__chips button',
+        '.search__more button',
+      ];
 
-      expect(await undersized(page, selector)).toEqual([]);
+      for (const clause of clauses) {
+        expect(await page.locator(clause).count(), clause).toBeGreaterThan(0);
+        expect(await undersized(page, clause), clause).toEqual([]);
+      }
     });
   }
 

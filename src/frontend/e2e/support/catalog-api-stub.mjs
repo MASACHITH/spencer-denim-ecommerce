@@ -266,18 +266,55 @@ function productsFor(params) {
 
 // ------------------------------------------------------------------ GET /api/catalog/search
 //
-// `SearchTerms` and `ProductSearchQuery.Create`, mirrored rather than simplified.
+// `SearchTerms`, `ProductSearchQuery.Create`, `ProductListQuery.Create` and
+// `ProductCatalogReader.ResolveFiltersAsync`, mirrored rather than simplified.
 //
 // The temptation with a search box is to make the stub answer whatever the component hoped for.
 // That is the shape of bug that survived three rounds of green tests on the listing (see `answer`
-// in `listing-page.spec.ts`), and it is worse here: the interesting cases are all the ones where
-// the API says **no** — a term of one character, a term of two thousand, a term that tokenises to
-// nothing. So the validation below is the API's own, error keys and all, and the corpus is matched
-// by the same "every token must be a substring of the denormalised text" rule as doc 08 §7.6.
+// in `listing-page.spec.ts`), and it is worse here, because the interesting cases are all the ones
+// where the API says **no**.
+//
+// The first version of this mirrored the `q` rules and nothing else, and the gap was not academic:
+// it answered 200 to all thirteen query strings the real API rejects with a 400, which meant the
+// `'query'` branch of `searchFailure` — the one that shows the API's own message about an ambiguous
+// category — could not be reached from a browser at all. So the listing validation and the filter
+// resolution are mirrored here too.
+//
+// `productsFor` deliberately does **not** use them yet. It ignores `department` and resolves nothing,
+// and three other suites are written against that: `E2E_DEPARTMENTS=empty` serves `[]`, so a faithful
+// resolver would answer "no such department" and the empty-catalogue tests that expect a department
+// listing to render from the storefront's fallback would be measuring something else. Narrowing that
+// is its own change with its own regression run, not a line in this one.
 
 const MIN_TERM_LENGTH = 2;
 const MAX_TERM_LENGTH = 100;
 const MAX_TOKENS = 5;
+
+/**
+ * The bounds of `ProductListQuery`, named as it names them.
+ *
+ * The slug pattern itself is `SLUG_PATTERN` further down, which `productBySlug` already declares:
+ * it is the one `CatalogSlug` rule, and a second copy of the same regular expression in one file is
+ * a thing to keep in step by hand. Only the maximum length differs by column, so that is a parameter.
+ */
+const MAX_SLUG_LENGTH = 100;
+const MAX_SIZE_LABEL_LENGTH = 20;
+const MAX_FILTER_VALUES = 25;
+const MAX_PRICE_VALUE = 10_000_000;
+const MAX_PAGE = 1_000;
+const MAX_PAGE_SIZE = 96;
+const DEFAULT_PAGE_SIZE = 24;
+
+/** `ProductSortOptions.All`. */
+const SORTS = [
+  'recommended',
+  'newest',
+  'best-selling',
+  'price-asc',
+  'price-desc',
+  'rating',
+  'discount',
+];
 
 /** `SearchTerms.Tokenise`. */
 function tokenise(raw) {
@@ -300,37 +337,410 @@ function tokenise(raw) {
 }
 
 /**
- * `catalog.ProductSearchIndex.SearchText`: name, category path, colour names and families, and the
- * product code (doc 08 §3). The product code is what makes one row reachable on its own.
+ * The attributes `catalog.ProductSearchIndex.SearchText` carries and `ProductCardDto` does not:
+ * material, fit, occasion and the variant SKUs.
+ *
+ * Held beside the card rather than on it, deliberately. The card DTO has no such fields, so putting
+ * them there to make the search corpus richer would have made the stub's listing payload a shape the
+ * real API never sends — and five other suites read that payload.
  */
-function searchTextFor(card) {
-  return [
-    card.name,
-    card.departmentName,
-    card.categorySlug,
-    card.categoryName,
-    card.productCode,
-    ...card.colours.flatMap((colour) => [colour.name, colour.familyName]),
-  ]
-    .join(' ')
-    .toLowerCase();
+const MATERIALS = ['Cotton', 'Linen', 'Denim'];
+const FITS = ['Relaxed', 'Slim', 'Straight'];
+const OCCASIONS = ['Everyday', 'Workwear', 'Evening'];
+
+function attributesFor(card, index) {
+  return {
+    material: MATERIALS[index % MATERIALS.length],
+    fit: FITS[index % FITS.length],
+    occasion: OCCASIONS[index % OCCASIONS.length],
+    skus: [`${card.productCode}-M`, `${card.productCode}-L`],
+  };
 }
 
 /**
- * The longest product name the demo catalogue actually seeds (`DemoCatalogueData`), 27 characters.
+ * The longest product name the demo catalogue actually seeds — 41 characters, with Tamil script and
+ * combining marks (`DemoCatalogueData`, `SD-W-0016`).
  *
- * It exists so the suggestions overlay is measured at 320 px against a real worst case rather than
- * against "Test Product 7". It is **only** in the search corpus, not in the listing's 120 products,
- * so nothing that counts cards or reads the grid changes.
+ * The first version of this used "Tailored Wool-Look Trousers" and called it the longest; it is the
+ * third longest, and the two above it are both Indic. That matters for a 320 px measurement: a
+ * combining mark does not add a break opportunity, and `overflow-wrap: anywhere` is what has to save
+ * the layout rather than a space. It is in the **search** corpus only, never in the listing's 120
+ * products, so nothing that counts cards or reads the grid changes.
  */
 const LONG_NAME_PRODUCT = {
   ...product(9001),
-  productCode: 'SD-9001',
-  name: 'Tailored Wool-Look Trousers',
-  slug: 'tailored-wool-look-trousers',
-  categoryName: 'Trousers',
-  categorySlug: 'trousers',
+  productCode: 'SD-W-0016',
+  name: 'Kanjivaram (காஞ்சிபுரம்) Silk-Blend Saree',
+  slug: 'kanjivaram-silk-blend-saree',
+  categoryName: 'Traditional Wear',
+  categorySlug: 'traditional-wear',
 };
+
+/**
+ * One row of `catalog.ProductSearchIndex`, built the way `DemoCatalogueSeeder.BuildSearchIndex`
+ * builds it: name, **category path names**, colour names, colour family names, material, fit,
+ * occasion, product code, SKUs — de-duplicated case-insensitively and lower-cased.
+ *
+ * **What is deliberately absent, because it is absent in production:** the department name and every
+ * slug. `PathNames` walks `ParentCategoryId` only, so it never reaches a department, and nothing in
+ * that builder adds a slug. The first version of this stub joined `departmentName` and
+ * `categorySlug` into the text, which made `q=women` match all 120 products here and none in
+ * production — and made `q=linen`, which this suite used to mean "matches nothing", match every
+ * linen product in production. The meaning of those tests inverted on the real API.
+ *
+ * Every product in this corpus sits in a depth-1 category, so its path names are just its own
+ * category's name. A deeper category would contribute its ancestors too.
+ */
+function searchEntry(card, index) {
+  const attributes = attributesFor(card, index);
+  const parts = [
+    card.name,
+    card.categoryName,
+    ...card.colours.flatMap((colour) => [colour.name, colour.familyName]),
+    attributes.material,
+    attributes.fit,
+    attributes.occasion,
+    card.productCode,
+    ...attributes.skus,
+  ];
+
+  const seen = new Set();
+  const kept = [];
+  for (const part of parts) {
+    const folded = part.toLowerCase();
+    if (!seen.has(folded)) {
+      seen.add(folded);
+      kept.push(part);
+    }
+  }
+
+  return { card, attributes, text: kept.join(' ').toLowerCase() };
+}
+
+/** The whole corpus, built once: the listing's 120 products plus the long-name one. */
+const SEARCH_CORPUS = [
+  ...Array.from({ length: TOTAL_PRODUCTS }, (_, index) => searchEntry(product(index + 1), index + 1)),
+  searchEntry(LONG_NAME_PRODUCT, 9001),
+];
+
+/** A slug as `ProductListQuery.NormaliseSlug` would read it, or an error. */
+function readSlug(raw, field, errors, maxLength = MAX_SLUG_LENGTH) {
+  if (raw === null || raw === undefined || raw.trim() === '') {
+    return null;
+  }
+
+  const slug = raw.trim().toLowerCase();
+  if (slug.length > maxLength) {
+    errors.push({ field, message: `${field} must be ${maxLength} characters or fewer.` });
+    return null;
+  }
+  if (!SLUG_PATTERN.test(slug)) {
+    errors.push({
+      field,
+      message: `${field} must be a slug: lower-case letters, digits and single hyphens.`,
+    });
+    return null;
+  }
+
+  return slug;
+}
+
+function readSlugList(params, name, errors) {
+  const values = [];
+  for (const raw of params.getAll(name)) {
+    const slug = readSlug(raw, name, errors);
+    if (slug !== null && !values.includes(slug)) {
+      values.push(slug);
+    }
+  }
+
+  if (values.length > MAX_FILTER_VALUES) {
+    errors.push({ field: name, message: `${name} accepts at most ${MAX_FILTER_VALUES} values.` });
+    return [];
+  }
+
+  return values;
+}
+
+function readLabelList(params, name, errors) {
+  const values = [];
+  for (const raw of params.getAll(name)) {
+    const label = raw.trim();
+    if (label === '') {
+      continue;
+    }
+    if (label.length > MAX_SIZE_LABEL_LENGTH) {
+      errors.push({
+        field: name,
+        message: `${name} values must be ${MAX_SIZE_LABEL_LENGTH} characters or fewer.`,
+      });
+      continue;
+    }
+    if (!values.some((value) => value.toLowerCase() === label.toLowerCase())) {
+      values.push(label);
+    }
+  }
+
+  if (values.length > MAX_FILTER_VALUES) {
+    errors.push({ field: name, message: `${name} accepts at most ${MAX_FILTER_VALUES} values.` });
+    return [];
+  }
+
+  return values;
+}
+
+/**
+ * A decimal parameter inside its bounds.
+ *
+ * The pattern is the invariant `-1234.56` of `ProductListQuery.QueryNumberStyles`: a leading sign and
+ * a decimal point, and **no group separators**, because they mean different things in different
+ * locales. `Number('')` is 0 and `Number('NaN')` is NaN, so neither is left to `Number` alone.
+ */
+function readNumber(params, name, minimum, maximum, errors) {
+  const raw = params.get(name);
+  if (raw === null || raw.trim() === '') {
+    return null;
+  }
+
+  const text = raw.trim();
+  if (!/^[+-]?(\d+(\.\d+)?|\.\d+)$/u.test(text)) {
+    errors.push({
+      field: name,
+      message: `${name} must be a number between ${minimum} and ${maximum}.`,
+    });
+    return null;
+  }
+
+  const value = Number(text);
+  if (value < minimum || value > maximum) {
+    errors.push({ field: name, message: `${name} must be between ${minimum} and ${maximum}.` });
+    return null;
+  }
+
+  return value;
+}
+
+function readWholeNumber(params, name, minimum, maximum, errors, fallback) {
+  const raw = params.get(name);
+  if (raw === null || raw.trim() === '') {
+    return fallback;
+  }
+
+  const text = raw.trim();
+  if (!/^[+-]?\d+$/u.test(text)) {
+    errors.push({
+      field: name,
+      message: `${name} must be a whole number between ${minimum} and ${maximum}.`,
+    });
+    return fallback;
+  }
+
+  const value = Number(text);
+  if (value < minimum || value > maximum) {
+    errors.push({ field: name, message: `${name} must be between ${minimum} and ${maximum}.` });
+    return fallback;
+  }
+
+  return value;
+}
+
+/** The four spellings `ProductListQuery.ParseBoolean` accepts. Anything else is a typo worth naming. */
+function readBoolean(params, name, errors) {
+  const raw = params.get(name);
+  if (raw === null || raw.trim() === '') {
+    return null;
+  }
+
+  const value = raw.trim().toLowerCase();
+  if (value === 'true' || value === '1') {
+    return true;
+  }
+  if (value === 'false' || value === '0') {
+    return false;
+  }
+
+  errors.push({ field: name, message: `${name} must be true or false (1 and 0 are also accepted).` });
+  return null;
+}
+
+/**
+ * `ProductListQuery.Create`: every problem collected, so one 400 answers the whole request rather
+ * than only the first mistake.
+ */
+function readListQuery(params) {
+  const errors = [];
+
+  const query = {
+    department: readSlug(params.get('department'), 'department', errors),
+    category: readSlug(params.get('category'), 'category', errors),
+    ageGroups: readSlugList(params, 'ageGroup', errors),
+    colours: readSlugList(params, 'colour', errors),
+    materials: readSlugList(params, 'material', errors),
+    fits: readSlugList(params, 'fit', errors),
+    occasions: readSlugList(params, 'occasion', errors),
+    sizes: readLabelList(params, 'size', errors),
+    minPrice: readNumber(params, 'minPrice', 0, MAX_PRICE_VALUE, errors),
+    maxPrice: readNumber(params, 'maxPrice', 0, MAX_PRICE_VALUE, errors),
+    minRating: readNumber(params, 'minRating', 0, 5, errors),
+    minDiscountPercent: readNumber(params, 'minDiscountPercent', 0, 100, errors),
+    inStock: readBoolean(params, 'inStock', errors) ?? false,
+    onSale: readBoolean(params, 'onSale', errors) ?? false,
+    newArrivals: readBoolean(params, 'newArrivals', errors) ?? false,
+    sort: params.get('sort'),
+    page: readWholeNumber(params, 'page', 1, MAX_PAGE, errors, 1),
+    pageSize: readWholeNumber(params, 'pageSize', 1, MAX_PAGE_SIZE, errors, DEFAULT_PAGE_SIZE),
+  };
+
+  if (query.minPrice !== null && query.maxPrice !== null && query.minPrice > query.maxPrice) {
+    errors.push({ field: 'minPrice', message: 'minPrice must not be greater than maxPrice.' });
+  }
+
+  if (query.sort === null || query.sort.trim() === '') {
+    query.sort = 'recommended';
+  } else if (!SORTS.includes(query.sort.trim().toLowerCase())) {
+    errors.push({ field: 'sort', message: `sort must be one of: ${SORTS.join(', ')}.` });
+  } else {
+    query.sort = query.sort.trim().toLowerCase();
+  }
+
+  // Asking for a discount is asking for the sale, which is how the API reads it too.
+  if ((query.minDiscountPercent ?? 0) > 0) {
+    query.onSale = true;
+  }
+
+  return { query, errors };
+}
+
+/**
+ * `ProductCatalogReader.ResolveFiltersAsync`, for the two slugs that need the catalogue to resolve
+ * them.
+ *
+ * It reads the **configured** tree rather than whatever the `/__test__/departments-fault` switch is
+ * currently doing to the feed: those faults are about the feed being unreachable, not about the
+ * catalogue having changed, and a search that started answering "no such department" during a feed
+ * outage would be modelling something the real API does not do.
+ *
+ * Three outcomes, as the real one has: a rejection, "matches nothing", or resolved ids.
+ */
+function resolveFilters(query) {
+  const departments = Array.isArray(DEPARTMENTS_BODY) ? DEPARTMENTS_BODY : [];
+
+  let department = null;
+  if (query.department !== null) {
+    department = departments.find((candidate) => candidate.slug === query.department) ?? null;
+    if (department === null) {
+      return { matchesNothing: true };
+    }
+  }
+
+  if (query.category === null) {
+    return { department, category: null };
+  }
+
+  const matches = [];
+  for (const candidate of department ? [department] : departments) {
+    walkCategories(candidate.categories ?? [], (node) => {
+      if (node.slug === query.category) {
+        matches.push({ node, departmentSlug: candidate.slug });
+      }
+    });
+  }
+
+  if (matches.length === 0) {
+    return { matchesNothing: true };
+  }
+
+  // Doc 08 §3.2 makes a category slug unique per (department, parent), not globally, so "jeans"
+  // names one category in each department. Serving whichever sorts first would quietly hide the
+  // rest, so an ambiguous slug is refused however it came about.
+  if (matches.length > 1) {
+    const departmentSlugs = [...new Set(matches.map((match) => match.departmentSlug))];
+    return {
+      rejection: {
+        field: 'category',
+        message:
+          departmentSlugs.length > 1
+            ? `The category '${query.category}' exists in more than one department. Add ` +
+              `department=${departmentSlugs.join(' or department=')}.`
+            : `The category '${query.category}' names ${matches.length} active categories in ` +
+              `department=${departmentSlugs[0]}, so naming the department does not tell them apart. ` +
+              'The duplicate slugs have to be corrected in the catalogue.',
+      },
+    };
+  }
+
+  return { department: department ?? { slug: matches[0].departmentSlug }, category: matches[0].node };
+}
+
+/** Walks a category tree, visiting every node at every depth. */
+function walkCategories(categories, visit) {
+  for (const category of categories) {
+    visit(category);
+    walkCategories(category.children ?? [], visit);
+  }
+}
+
+/** A name as a slug, for comparing a card's attributes against a slug filter. */
+function slugify(value) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/gu, '-').replace(/^-|-$/gu, '');
+}
+
+/**
+ * Whether one corpus entry survives the filters.
+ *
+ * The stub holds no size or age-group data, so those two filters match nothing — which is also what
+ * the real API answers for a slug or a label it cannot resolve (`MatchesNothing`). Said here rather
+ * than left to be discovered, because a filter that silently does nothing is the thing this file was
+ * failed for.
+ */
+function matchesFilters(entry, query, resolved) {
+  const { card } = entry;
+
+  if (resolved.department && card.departmentSlug !== resolved.department.slug) {
+    return false;
+  }
+  if (resolved.category && card.categorySlug !== resolved.category.slug) {
+    return false;
+  }
+  if (query.colours.length > 0 && !card.colours.some((colour) => query.colours.includes(colour.familySlug))) {
+    return false;
+  }
+  if (query.materials.length > 0 && !query.materials.includes(slugify(entry.attributes.material))) {
+    return false;
+  }
+  if (query.fits.length > 0 && !query.fits.includes(slugify(entry.attributes.fit))) {
+    return false;
+  }
+  if (query.occasions.length > 0 && !query.occasions.includes(slugify(entry.attributes.occasion))) {
+    return false;
+  }
+  if (query.sizes.length > 0 || query.ageGroups.length > 0) {
+    return false;
+  }
+  if (query.minPrice !== null && card.price.current < query.minPrice) {
+    return false;
+  }
+  if (query.maxPrice !== null && card.price.current > query.maxPrice) {
+    return false;
+  }
+  if (query.minRating !== null && (card.rating.average ?? 0) < query.minRating) {
+    return false;
+  }
+  if (query.inStock && !card.isInStock) {
+    return false;
+  }
+  if (query.onSale && !card.price.hasDiscount) {
+    return false;
+  }
+  if (query.minDiscountPercent !== null && card.price.discountPercent < query.minDiscountPercent) {
+    return false;
+  }
+  if (query.newArrivals && card.badge !== 'New') {
+    return false;
+  }
+
+  return true;
+}
 
 /** The relevance bands of doc 08 §7.6, collapsed to an order: name prefix, name, anything else. */
 function relevance(card, token) {
@@ -342,64 +752,93 @@ function relevance(card, token) {
   return name.includes(token) ? 1 : 2;
 }
 
+/**
+ * The sorts of PLP-04.
+ *
+ * "Best Selling" has no sales data here and falls back to the catalogue order, which is stated
+ * rather than hidden: a test that wanted to prove best-seller ordering would have to prove it
+ * against the real API, and `ProductDetailAndSearchTests` is where that belongs.
+ */
+function applySort(matched, sort, firstToken) {
+  switch (sort) {
+    case 'price-asc':
+      return matched.sort((left, right) => left.price.current - right.price.current);
+    case 'price-desc':
+      return matched.sort((left, right) => right.price.current - left.price.current);
+    case 'newest':
+      return matched.sort((left, right) => right.id - left.id);
+    case 'rating':
+      return matched.sort((left, right) => (right.rating.average ?? 0) - (left.rating.average ?? 0));
+    case 'discount':
+      return matched.sort((left, right) => right.price.discountPercent - left.price.discountPercent);
+    case 'best-selling':
+      return matched;
+    default:
+      return matched.sort((left, right) => relevance(left, firstToken) - relevance(right, firstToken));
+  }
+}
+
+function problem(errors) {
+  const grouped = {};
+  for (const { field, message } of errors) {
+    grouped[field] ??= [];
+    if (!grouped[field].includes(message)) {
+      grouped[field].push(message);
+    }
+  }
+
+  return {
+    status: 400,
+    body: { title: 'One or more query parameters are invalid.', status: 400, errors: grouped },
+  };
+}
+
 function searchFor(params) {
   const term = (params.get('q') ?? '').trim();
-  const errors = [];
+  const { query, errors } = readListQuery(params);
 
   if (term.length < MIN_TERM_LENGTH) {
-    errors.push(`q must be at least ${MIN_TERM_LENGTH} characters.`);
+    errors.push({ field: 'q', message: `q must be at least ${MIN_TERM_LENGTH} characters.` });
   } else if (term.length > MAX_TERM_LENGTH) {
-    errors.push(`q must be ${MAX_TERM_LENGTH} characters or fewer.`);
+    errors.push({ field: 'q', message: `q must be ${MAX_TERM_LENGTH} characters or fewer.` });
   }
 
   const tokens = tokenise(term);
-  if (errors.length === 0 && tokens.length === 0) {
-    errors.push(`q must contain a word of at least ${MIN_TERM_LENGTH} characters.`);
+  if (!errors.some((error) => error.field === 'q') && tokens.length === 0) {
+    errors.push({
+      field: 'q',
+      message: `q must contain a word of at least ${MIN_TERM_LENGTH} characters.`,
+    });
   }
 
   if (errors.length > 0) {
-    return {
-      status: 400,
-      body: { title: 'One or more query parameters are invalid.', status: 400, errors: { q: errors } },
-    };
+    return problem(errors);
   }
 
-  const department = params.get('department');
-  const colour = params.getAll('colour')[0];
-  const sort = params.get('sort') ?? 'recommended';
-
-  const corpus = [
-    ...Array.from({ length: TOTAL_PRODUCTS }, (_, index) => product(index + 1)),
-    LONG_NAME_PRODUCT,
-  ];
-
-  let matched = [];
-  for (const card of corpus) {
-    const text = searchTextFor(card);
-    if (!tokens.every((token) => text.includes(token))) {
-      continue;
-    }
-    if (department && card.departmentSlug !== department) {
-      continue;
-    }
-    if (colour && !card.colours.some((entry) => entry.familySlug === colour)) {
-      continue;
-    }
-
-    matched.push(card);
+  const resolved = resolveFilters(query);
+  if (resolved.rejection) {
+    return problem([resolved.rejection]);
   }
 
-  if (sort === 'price-asc') {
-    matched = matched.sort((left, right) => left.price.current - right.price.current);
-  } else if (sort === 'price-desc') {
-    matched = matched.sort((left, right) => right.price.current - left.price.current);
-  } else {
-    matched = matched.sort((left, right) => relevance(left, tokens[0]) - relevance(right, tokens[0]));
+  const empty = {
+    status: 200,
+    body: {
+      term,
+      tokens,
+      results: { items: [], page: query.page, pageSize: query.pageSize, totalCount: 0 },
+    },
+  };
+
+  if (resolved.matchesNothing) {
+    return empty;
   }
 
-  const page = Number(params.get('page') ?? '1');
-  const pageSize = Number(params.get('pageSize') ?? '24');
-  const skip = (page - 1) * pageSize;
+  const matched = SEARCH_CORPUS.filter(
+    (entry) => tokens.every((token) => entry.text.includes(token)) && matchesFilters(entry, query, resolved),
+  ).map((entry) => entry.card);
+
+  const ordered = applySort(matched, query.sort, tokens[0]);
+  const skip = (query.page - 1) * query.pageSize;
 
   return {
     status: 200,
@@ -407,10 +846,10 @@ function searchFor(params) {
       term,
       tokens,
       results: {
-        items: matched.slice(skip, skip + pageSize),
-        page,
-        pageSize,
-        totalCount: matched.length,
+        items: ordered.slice(skip, skip + query.pageSize),
+        page: query.page,
+        pageSize: query.pageSize,
+        totalCount: ordered.length,
       },
     },
   };
