@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using SpencerDenim.Api.Authorization;
+using SpencerDenim.Api.Cli;
 using SpencerDenim.Api.Endpoints;
 using SpencerDenim.Api.Endpoints.Admin;
 using SpencerDenim.Api.Endpoints.Catalog;
@@ -37,6 +38,15 @@ builder.Services.AddAdminAuthorizationResponses();
 
 var app = builder.Build();
 
+// A command-line verb runs instead of the web host: it reuses this exact composition root — the
+// configured media volumes, the real IMediaService, the database — and never starts Kestrel, so it
+// binds no port. See ImportClientAssetsCommand for why the import lives here rather than in a tool
+// project or behind a seeding flag.
+if (ImportClientAssetsCommand.Matches(args))
+{
+    return await ImportClientAssetsCommand.RunAsync(app.Services, args, CancellationToken.None);
+}
+
 // Before anything that reads the request scheme/remote IP (cookie auth, antiforgery): restores the client's
 // real scheme/address behind Caddy (doc 03 §4).
 app.UseApiForwardedHeaders();
@@ -66,3 +76,4 @@ app.MapAdminMediaEndpoints();
 app.MapMediaFileEndpoints();
 
 await app.RunAsync();
+return 0;

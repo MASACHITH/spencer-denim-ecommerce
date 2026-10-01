@@ -36,6 +36,9 @@ public static class MediaUsageOwnerTypes
     public const string Department = "Department";
     public const string SizeGuide = "SizeGuide";
     public const string MediaAsset = "MediaAsset";
+
+    /// <summary>A block of the homepage (<c>content.HomeSections</c>) — the hero, a banner, a tile.</summary>
+    public const string HomeSection = "HomeSection";
 }
 
 /// <summary>The <see cref="MediaUsage.UsageRole"/> values this milestone writes.</summary>

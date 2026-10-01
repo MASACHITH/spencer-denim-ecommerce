@@ -1,0 +1,150 @@
+using System.Globalization;
+using Microsoft.Extensions.DependencyInjection;
+using SpencerDenim.Application.Media.ClientAssets;
+
+namespace SpencerDenim.Api.Cli;
+
+/// <summary>
+/// <c>dotnet run --project src/backend/SpencerDenim.Api --no-launch-profile -- import-client-assets --from &lt;dir&gt; [--dry-run]</c>
+/// <para>
+/// <b>Why a verb on the API and not a seeder or a tool project.</b> The import needs the whole
+/// composition root: the configured media volumes with their startup validation, the real
+/// <c>IMediaService</c>, the database connection, the logging. A seeding flag would tie it to
+/// <c>Seed__*</c>, whose meaning is "the shape a development database starts in" — the opposite of the
+/// client's own photographs, which have to be importable against a production database that is never
+/// seeded. A separate tool project would have to rebuild that composition root and would then be a
+/// second place where media settings are wired, free to drift from the one the API uses. A verb on the
+/// API reuses the exact process the shop runs on and adds no project, no package and no second wiring.
+/// </para>
+/// <para>
+/// It never starts Kestrel, so it binds no port and collides with nothing.
+/// </para>
+/// </summary>
+internal static class ImportClientAssetsCommand
+{
+    public const string Verb = "import-client-assets";
+
+    /// <summary>Whether these process arguments ask for the import rather than for the web host.</summary>
+    public static bool Matches(string[] args) =>
+        args.Length > 0 && string.Equals(args[0], Verb, StringComparison.Ordinal);
+
+    /// <summary>Runs the import and returns the process exit code: 0 good, 1 bad usage, 2 the import failed.</summary>
+    public static async Task<int> RunAsync(IServiceProvider services, string[] args, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(args);
+
+        string? source = null;
+        var dryRun = false;
+
+        for (var index = 1; index < args.Length; index++)
+        {
+            switch (args[index])
+            {
+                case "--from" when index + 1 < args.Length:
+                    source = args[++index];
+                    break;
+                case "--dry-run":
+                    dryRun = true;
+                    break;
+                default:
+                    Console.Error.WriteLine($"Unknown argument '{args[index]}'.");
+                    Usage();
+                    return 1;
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(source))
+        {
+            Console.Error.WriteLine("--from is required.");
+            Usage();
+            return 1;
+        }
+
+        await using var scope = services.CreateAsyncScope();
+        var importer = scope.ServiceProvider.GetRequiredService<IClientAssetImporter>();
+
+        var report = await importer.ImportAsync(
+            new ClientAssetImportRequest(Path.GetFullPath(source), dryRun),
+            cancellationToken);
+
+        Print(report, dryRun);
+        return report.Succeeded ? 0 : 2;
+    }
+
+    private static void Print(ClientAssetImportReport report, bool dryRun)
+    {
+        Console.WriteLine();
+        Console.WriteLine(dryRun ? "Client asset import — DRY RUN, nothing was stored" : "Client asset import");
+        Console.WriteLine(new string('=', 72));
+
+        foreach (var group in report.Entries.GroupBy(entry => entry.Folder).OrderBy(group => group.Key))
+        {
+            Console.WriteLine();
+            Console.WriteLine(group.Key.ToString().ToUpperInvariant());
+
+            foreach (var entry in group.OrderBy(entry => entry.FileName, StringComparer.OrdinalIgnoreCase))
+            {
+                Console.WriteLine(
+                    string.Create(
+                        CultureInfo.InvariantCulture,
+                        $"  [{entry.Outcome,-14}] {entry.FileName}  ->  {entry.Detail}"));
+            }
+        }
+
+        var renames = report.InferredRenames;
+        if (renames.Count > 0)
+        {
+            Console.WriteLine();
+            Console.WriteLine("INFERRED RENAMES (every one of them, so they can be checked)");
+            foreach (var entry in renames)
+            {
+                Console.WriteLine($"  {entry.FileName}");
+                Console.WriteLine($"      the name says '{entry.RepairedFrom}'  ->  read as '{entry.Detail}'");
+            }
+        }
+
+        if (report.Notes.Count > 0)
+        {
+            Console.WriteLine();
+            Console.WriteLine("NOTES");
+            foreach (var note in report.Notes)
+            {
+                Console.WriteLine($"  - {note}");
+            }
+        }
+
+        Console.WriteLine();
+        Console.WriteLine(
+            string.Create(
+                CultureInfo.InvariantCulture,
+                $"{report.Count(ClientAssetOutcome.Imported)} imported, "
+                + $"{report.Count(ClientAssetOutcome.AlreadyPresent)} already present, "
+                + $"{report.Count(ClientAssetOutcome.NotInContract)} not in the contract, "
+                + $"{report.Count(ClientAssetOutcome.Refused)} refused, "
+                + $"{report.Count(ClientAssetOutcome.Unmappable)} unmappable."));
+
+        if (report.Succeeded)
+        {
+            return;
+        }
+
+        Console.Error.WriteLine();
+        Console.Error.WriteLine("FAILED");
+        foreach (var failure in report.Failures)
+        {
+            Console.Error.WriteLine($"  - {failure}");
+        }
+    }
+
+    private static void Usage()
+    {
+        Console.Error.WriteLine();
+        Console.Error.WriteLine($"usage: {Verb} --from <directory> [--dry-run]");
+        Console.Error.WriteLine();
+        Console.Error.WriteLine(
+            "  <directory> holds the client's drop: logo/, products/, departments/, home/, social/.");
+        Console.Error.WriteLine(
+            "  --dry-run resolves every filename and reports what would happen, storing nothing.");
+    }
+}
