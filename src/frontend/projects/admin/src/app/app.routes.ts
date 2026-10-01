@@ -30,6 +30,15 @@ export const routes: Routes = [
       import('./pages/change-password/change-password-page').then((m) => m.ChangePasswordPage),
   },
   {
+    // ADM-11 (W1-12). Like every other admin route the guard only asks for a session: the API is the
+    // security boundary (doc 03 §3a), and a user without Categories.View is shown the refusal rather than
+    // bounced from a page that then cannot explain itself.
+    path: 'catalog',
+    title: `Departments and categories — ${BRAND.adminName}`,
+    canActivate: [adminSessionGuard],
+    loadComponent: () => import('./pages/catalog/catalog-page').then((m) => m.CatalogPage),
+  },
+  {
     path: 'audit-log',
     title: `Audit log — ${BRAND.adminName}`,
     canActivate: [adminSessionGuard],

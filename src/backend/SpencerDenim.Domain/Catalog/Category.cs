@@ -13,6 +13,8 @@ public sealed class Category : IAuditable, ISoftDeletable
     /// <summary>Doc 08 §3.2: <c>CK_Categories_Depth</c> allows at most three levels.</summary>
     public const byte MaxDepth = 3;
 
+    private string _slug = string.Empty;
+
     public int Id { get; set; }
 
     public int DepartmentId { get; set; }
@@ -31,7 +33,21 @@ public sealed class Category : IAuditable, ISoftDeletable
 
     public string Name { get; set; } = string.Empty;
 
-    public string Slug { get; set; } = string.Empty;
+    /// <summary>
+    /// URL segment, unique among live siblings (<c>UX_Categories_Dept_Parent_Slug</c>).
+    /// <para>
+    /// Guarded by <see cref="CatalogSlug"/> for the same reason <see cref="Product.Slug"/> is: the
+    /// listing refuses a <c>?category=</c> value that is not a slug, so a row that is not one is a
+    /// category the mega menu links to and nobody can open. EF reads and writes the backing field, so
+    /// existing rows still materialise; only a write goes through the check. W1-12 added the guard
+    /// because W1-12 added the write path — before it, only the seeder could set this column.
+    /// </para>
+    /// </summary>
+    public string Slug
+    {
+        get => _slug;
+        set => _slug = CatalogSlug.Require(value, nameof(Slug));
+    }
 
     public string? Description { get; set; }
 
@@ -115,5 +131,5 @@ public sealed class Category : IAuditable, ISoftDeletable
     /// selects exactly the subtree.
     /// </summary>
     public static string BuildPath(string? parentPath, int categoryId) =>
-        string.IsNullOrEmpty(parentPath) ? $"/{categoryId}/" : $"{parentPath}{categoryId}/";
+        CategoryPath.Build(parentPath, categoryId);
 }

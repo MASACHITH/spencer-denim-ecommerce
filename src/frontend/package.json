@@ -16,7 +16,7 @@
     "build:admin": "ng build admin",
     "build:all": "ng build shared && ng build storefront && ng build admin",
     "test:ci": "ng test shared --watch=false && ng test storefront --watch=false && ng test admin --watch=false",
-    "test:e2e": "npm run build:storefront && playwright test"
+    "test:e2e": "npm run build:storefront && npm run build:admin && playwright test"
   },
   "prettier": {
     "printWidth": 100,

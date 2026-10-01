@@ -19,6 +19,7 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 - **Next:** **W2-01 (homepage, HOME-01..10) PASSED the tester** and is pushed to `origin feature/W2-01-homepage` awaiting a PR: content schema, seeder, read-only content API, newsletter signup endpoint and the page itself. ADM-17's admin screens are **not** in it. Issue #37 (the homepage cache rounds schedule boundaries to its five-minute TTL) is filed, not built.
 - **Next:** **W1-02 (catalogue foundation — schema + demo seeder + the read-only storefront catalogue API) is in the developer↔tester loop** on `feature/W1-02-catalogue-foundation` (worktree `worktrees/sd-catalog`): tester round 1 failed it on 3 major + 5 minor, round 2 on 2 major + 4 minor, all fixed; not pushed, not merged, not Done. Its ADM-11 admin screens are a separate task, **W1-12 (TODO)** — W1-02 no longer means "categories (create/edit/reorder)". W1-08 (Users & Roles CRUD), W1-09 (audit log viewer), W1-10 (2FA enrollment), W1-11 (route guard, SecurityStamp revalidation, forwarded-headers regression test) are the W1-01 follow-ups, tracked but not started; the user/architect should decide priority between those and W1-03 once W1-02 passes.
 - **Client progress page:** `client-progress/` is tracked in this repository (moved 2026-09-22, W0-18) and publishes from whichever machine holds the DPAPI-encrypted FTP credential — the `SCIENTER\sachithi` PC, where it was published on 23 and 24 Sep. An earlier note here said it could not be done from "this machine"; that was written from the second machine and is not a property of the repository.
+- **Next:** **W1-12 (ADM-11: the departments and categories admin screens) is a developer pass awaiting a tester** on `feature/W1-12-category-admin` (worktree `worktrees/sd-rename`): the admin read model, eight write endpoints with RBAC and audit rows, the Angular screens with a keyboard- and touch-first reorder, and one migration adding the slug CHECK constraints. Not pushed, not merged, not Done.
 - **Next:** **W1-14 (hero framing, the activewear relabel, the poplin re-import) is a developer pass awaiting a tester** on `feature/W1-14-hero-and-activewear` (worktree `worktrees/sd-hero`): both W1-13 holds are released — the hero ships with a measured `object-position` and HOME-06 is relabelled "Linen and denim" over a listing that holds linen and denim — and a drop that withdraws a photograph now withdraws it from the product. Not pushed, not merged, not Done. **The hero video still wants re-exporting at 16:9 and ≥1920 px, with a poster cut from the same take**; what shipped is the best the 360x640 file can do.
 - **Next:** **W1-13 (the client's real photographs, video and logo) is back with the tester after fix round 3** on `feature/W1-13-client-assets` (worktree `worktrees/sd-assets`): a repeatable import verb on the API, three of the five media-dependent homepage sections switched on, and a HOME-01/02/05/06 fix for blocks sized by `aspect-ratio`. **The hero and the activewear feature are held off by their artwork's checksum** — the delivered video is portrait in a 16:9 frame and the delivered activewear picture is a linen flat-lay — and each releases itself when the owner delivers a replacement. Not pushed, not merged, not Done. **The logo is imported but not wired in** — the three delivered files are opaque JPEGs named `.png`, the "light" wordmark is the same mockup as the dark one, and the mark reads COLOMBO WARDROBE rather than Spencer Denim. That needs a decision from the owner and flat artwork, not code.
 - **Open assumptions:** A1 (Trending Categories / Best Sellers homepage blocks stay removed per signed proposal), A2 (video MP4 ≤ 50 MB, no server conversion).
@@ -45,6 +46,237 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 ---
 
 ## Session log
+
+### 2026-10-02 (3) — W1-12 fix round 2: the discard was right, the silence was not
+
+The tester passed everything except one major, having re-introduced the blocker itself to watch the two
+frontend tests fail, enumerated both request DTOs against the rendered controls, failed to defeat
+`CheckBannerLink` v2 with 60 inputs, and reproduced the N+1 figure character for character. Eight of the
+nine remaining items were corrections to comments and claims rather than code.
+
+**MAJOR: the category tree threw away a staged reorder in silence, and round 1 had made the two halves of
+the screen contradict each other.** Stage a move, hide an unrelated category, and the banner and the Save
+order button vanished while the live region said only "Traditional wear was updated". The round-1 report
+said the tree had already been fixed and only the department list had missed out; that was wrong, and the
+tester owned it - the tree had always discarded deliberately, and nobody had looked at that half.
+
+**The owner's decision, and it is the right one: keep the discard, make it visible.** The department list
+can reapply by id because three fixed rows cannot gain or lose a member; a category reload genuinely can,
+so reapplying a stale arrangement would send a list the server refuses with `stale_order`. The defect was
+only the silence.
+
+**So "discarded" is now a value the screen can read rather than an absence.** The staged order is stored
+with the tree it was made from (`StagedOrder { madeFrom, nodes }`), so "nothing is staged" and "something
+was staged and no longer applies" are different states. A `role="status"` notice says what happened, why,
+that nothing else was lost and what to do, with a Dismiss button; the live region says the same words,
+because the announcement is a **computed** that prefers the discard message over the last action - the
+admin already knows about the change they asked for. One string feeds both, so they cannot drift.
+
+**m3: two pieces of copy promised behaviour that does not exist.** The size-guide null option read "Inherit
+from the nearest parent" and nothing in the codebase walks ancestors; the age-group hint read "Required for
+Kids categories" and nothing requires it. Both now say what is true.
+
+**m4, and this one was the coordinator's error rather than mine, which is worth recording because the wrong
+claim had already reached three files.** A category without a size guide does **not** break PDP-04.
+`ProductCatalogReader` reads `Products.SizeGuideId` and only that; the single place `Category.SizeGuideId`
+reaches a product is `DemoCatalogueSeeder`, which copies it at creation. Doc 08 3.2's "inherited from the
+nearest ancestor" is a design note, not built behaviour. So the field is the default W1-03's product form
+will inherit, and it reaches no storefront page today. Building the pickers was still right (doc 11 P1
+step 2); the description was not.
+
+**m1: the credit for catching the blocker was in the wrong file.** `AdminCatalogWriteShapeTests` cannot
+catch it - its key-set assertion compares two hand-written C# lists and no C# test can see TypeScript. The
+two frontend tests catch it. The integration suite keeps its real value, which is proving the API stores
+everything it is handed, and now says so.
+
+**m2: "a derived port cannot collide by accident" was false** - 60 slots is about 1 in 60 per pair and
+roughly 1 in 5 that some pair of seven worktrees collides, at which point `reuseExistingServer` reproduces
+the 113-failure bug silently. The wording is corrected, and the suite no longer relies on the arithmetic: a
+`beforeAll` asks the server which worktree's build it is serving and refuses to trust it otherwise.
+
+**m5: the documented picker fallback did not exist.** A failed options request left a select showing nothing
+for a category that does have an age group - misreporting the row, and the next save would write what it
+showed. The row's own value is now kept in the list, labelled as a stand-in.
+
+**m6: the two "strictness" e2e tests proved only that the stub refuses**, because they issued a raw `fetch`
+and bypassed the client entirely - exactly what their own comment claimed they prevented. They now
+intercept the screen's own request and take the header or the row version away from it, so the client
+building it, the server refusing it and the screen saying so are all in the test. **Proven by mutation**:
+sending the token under the wrong header name fails them with `Received: undefined`.
+
+**m7** is a note rather than a fix (the stub and `AdminWriteRequest` read a doubly quoted `If-Match`
+differently, and nothing sends one), and **m8** folds the permission sweep's ad-hoc bodies into the one
+`BodyFor`, so the sweep has a single body to keep current.
+
+**Numbers:** backend **887 unit + 456 integration** (unchanged), 0 skipped; frontend 21 / 460 / **212**
+admin; **Playwright 256**. Lint clean, Release build clean with 0 warnings. Six full Playwright runs: five
+clean, one failure of `storefront-shell`'s reduced-motion drawer - **issue #66**, on a file this branch does
+not touch.
+
+**Next:** back to the tester.
+
+### 2026-10-02 (2) — W1-12 fix round 1: every save was quietly clearing the images it could not show
+
+The tester failed it on 1 blocker, 3 majors and 9 minors, and confirmed the backend use cases and the
+migration — 45 inputs against the CHECK constraints including an emoji surrogate pair, 60/60 across 15 runs
+of the concurrency tests, the `kids/girls` stranding exactly as described. All fixed on
+`feature/W1-12-category-admin`.
+
+**BLOCKER, and the lesson is about which side of a contract gets a test.** `CategoryFormValues` and
+`DepartmentFormValues` simply did not list the image columns, the services spread those objects into the
+body, the request DTOs bind an absent field to `null`, and the handlers assign it. So every category save
+cleared its tile and banner images and every department save cleared its hero image — **and the audit row
+recorded the staff member doing it**, which is the part that would have been unexplainable months later.
+
+**Four suites and 1,571 tests missed it for one reason: every fixture set all three columns to `null`.** A
+dropped field then round-trips null to null and no assertion can see it. The fix is two lines in a model;
+the finding is the missing test. I had built `AdminCatalogPayloadShapeTests` for the **read** payloads
+precisely because the screen's TypeScript interfaces are a separate hand-written copy — and then left the
+write side, which has exactly the same hazard, unpinned. There is now
+`AdminCatalogWriteShapeTests`, whose fixtures are deliberately non-null on every nullable column, plus two
+frontend tests that assert the outgoing `PUT` body. **Watched red first**: `expected undefined to be 41`.
+
+**The owner settled the department question, and the tester demolished the reading we were both working
+from.** Name and slug are **not** editable (doc 11 P1 step 1 wins). The W1-02 follow-up it appeared to serve
+needs no editable field: **`Department.Slug` has had a write path since W1-02 — the seeder** — so the setter
+guard and `CK_Departments_Slug` already guard the path that exists, which is the argument
+`CatalogSlugConstraint`'s own comment was already making. Both fields are gone from the command, the
+request DTO, the handler, the form and the screen; the two now-dead store members are gone rather than left
+as a port promising a capability the API does not have. `UX_Departments_Name` and `UX_Departments_Slug`
+stay: they are the seeder's guard.
+
+**MAJOR: `load()` threw away a staged department reorder without a word.** Stage a move, press any
+Hide/Show, and the order reverted with no message. `refreshDepartmentCounts()` already guarded that exact
+hazard, with a comment explaining why — the guard was in one of the two places that needed it. It is the
+sibling of the defect I found and fixed for the category tree; the department list did not get the fix. The
+staged value is now a list of **ids**, not of rows, so a reload both keeps the arrangement and refreshes the
+counts under it — holding rows did neither.
+
+**MAJOR: the banner-link rule was defeated three ways, all starting with a single slash.** `/\evil.example`,
+`/<TAB>/evil.example` and `/<CR><LF>//evil.example` all resolve to `https://evil.example/`: the URL standard
+treats a reverse solidus as a solidus for special schemes, and a browser strips TAB, CR and LF before
+parsing. `Clean()` only trims the ends. The rule now refuses backslashes and C0 controls outright and then
+**resolves the value against a base and requires the origin to be unchanged** — the question a browser
+would ask, rather than reading the first two characters. The `javascript:`/`data:` half held up under
+attack and its tests are kept.
+
+**MAJOR: the e2e stub was more polite than the real API in the two ways that mattered**, under a header
+claiming it was not. It never checked `X-XSRF-TOKEN` and ignored row versions entirely, so if the screen had
+stopped sending either, all 246 browser tests would still have passed. It enforces both now, moves a row
+version on every successful write, and — the real gap — **implements `parentCategoryId` on
+`PUT /categories/{id}`, so re-parenting, the largest thing this screen does, has browser coverage at all.**
+
+**m10: the age-group and size-guide pickers are built**, and the deferral was wrong. The image pickers wait
+on ADM-18's media library; an age group is four seeded rows and a size guide is three, and what was missing
+was a `SELECT`. Without them a Kids category made here could never be given either — and a new category
+silently got no size guide, breaking PDP-04 for every product in it with no override.
+
+**The rest:** a keyboard-reachability assertion that was true on a blank page is gone (`document.body`
+contains `document.body`); "one round trip" was wrong and is now the measured two queries and five commands,
+with `AdminCatalogQueryPlanTests` to catch an N+1 creeping back — **proven able to see one**, 135 commands
+for 130 categories; the reorder routes' concurrency story is said accurately (the set check plus EF's own
+predicate, no `CheckRowVersion`); the "every panel open at once" worst case was unreachable and is replaced
+by the two that are; the antiforgery check covers all 8 write routes and the permission matrix now runs both
+directions; the admin e2e port is derived from the worktree path, which is the mechanism behind this
+branch's own 113-failure incident; and both defensive cases have answers — an orphaned category is drawn at
+the top level rather than vanishing, and the stale path on a soft-deleted descendant is written down as the
+restore task's problem rather than left silent.
+
+**Numbers:** backend **887 unit** (was 875) **+ 456 integration** (447), 0 skipped; frontend 21 / 460 / **209** admin;
+**Playwright 255** (was 246). Lint clean, Release build clean with 0 warnings.
+
+**One flake of my own, found rather than tolerated.** The admin "nothing is logged to the console" test
+navigated a second time while the page `beforeEach` had opened was still loading, so its own cancelled
+requests arrived as failures — about one full-suite run in five, passing every time in isolation. It waits
+for the first load to settle and ignores `net::ERR_ABORTED` now, with the reason written down; three
+consecutive full runs are clean.
+
+**Next:** back to the tester.
+
+### 2026-10-02 (1) — W1-12 (ADM-11): the admin owns the catalogue structure, and the switch says what it will cost
+
+`feature/W1-12-category-admin` (worktree `worktrees/sd-rename`). Developer pass only: not pushed, not
+merged, **not Done**, and `client-progress/progress-data.js` is untouched until the tester passes it.
+
+**The read side had to be a second reader, not a flag.** `ProductCatalogReader` and
+`DepartmentCatalogReader` drop every row an admin has switched off — that *is* doc 08 §7.1's switch — so a
+screen built on them could show only the rows already live and could never switch one back on.
+`IAdminCatalogReader` answers the other question about the same tables, with the counts the screens need
+and a base64 `rowVersion` per row.
+
+**The deactivation warning is three numbers, and the third is the one nobody predicts.** `IsActive` is per
+row and the listing checks only a product's **own primary category**, so hiding a *parent* does not take
+its children's products out of the shop — it takes every menu route to them away and leaves them on sale
+with no way to reach them. The impact payload says all three (leaving, descendant categories, stranded
+products) and names up to five products; the screen fetches it **before** offering the button. Proved end
+to end against a real database and the real storefront API, not by asserting a flag was set.
+
+**Reorder is a whole list, and that is what makes two admins safe.** `PUT …/categories/order` takes every
+sibling id in order and refuses a list that is not exactly the sibling set (`stale_order`, 409) — a subset
+would silently leave out a sibling somebody else had just created. Every row carries `RowVersion`, so the
+second of two concurrent saves loses with `stale_row_version` rather than interleaving. The integration
+test fires both at once and asserts the result is **exactly one of the two requested orders, never a mix**.
+
+**On screen it is buttons, not drag-and-drop**: Move up / Move down, 44 px, usable by tap, click,
+Tab + Enter and Alt + arrow from either move button; moves are staged and one Save order sends each changed
+sibling list as its own request and its own audit row. Dragging needs a pointer and would have to be built
+twice to be usable at all.
+
+**Moving to another parent is the edit form's parent field**, and it re-paths the whole subtree in one unit
+of work (doc 11 P1 step 4, doc 08 §10.1). Refused for a loop, for another department, and for a move that
+would push the deepest descendant past three levels — the guard measures the *subtree*, not the category,
+which is the case a naive check gets wrong.
+
+**Issue #59 is answered for this module.** `IAuditLogWriter.Enlist` adds the row to the caller's own unit of
+work, so the trail and the change commit together: a refused write leaves no row, and a save of an unedited
+form writes neither a row nor a statement (the row version does not even move). Create / Update /
+StatusChange / SoftDelete, changed properties only; a reorder is **one** row naming the list
+(`EntityType = CategoryOrder`, `EntityId = "{department}/{parent|root}"`) rather than one per category.
+
+**Issue #24's answer for two more columns.** `CatalogSlug` is now checked in the command — a bad slug is a
+400 naming the field, not an `ArgumentException` out of a property setter — *and* the setter guard was added
+to `Category.Slug` and `Department.Slug`, which had none because neither had a write path before.
+
+**One migration, `CatalogSlugWriteGuards`:** `CK_Categories_Slug` and `CK_Departments_Slug`, the slug rule in
+SQL. **It needs a binary collation and that is the whole trick** — the database is `CI_AS`, so
+`LIKE '%[^a-z0-9-]%'` accepts `DENIM`, and a case-sensitive collation is not enough either because `CS_AS`
+interleaves the cases so `A`–`Z` still fall inside the range `a-z`. Only `Latin1_General_100_BIN2` gives the
+ranges their ASCII meaning. Verified on 21 inputs, and applied to a database migrated to the previous
+migration and then seeded: 3 departments and 29 categories pass, no `WITH NOCHECK`.
+
+**Two defects the browser found that jsdom could not.** The six-button row was `flex: 0 0 auto`, so its own
+`flex-wrap` never applied and it ran **489 px wide inside a 320 px page** at 320/375/390. And focus
+restoration after a move ran on a microtask: `@for` tracks by id, so a move *relocates* the row's DOM node,
+and re-inserting a focused element blurs it in Chromium — the unit test passed because it calls
+`detectChanges()` synchronously first. It is an `afterEveryRender` hook now, preferring the control the
+admin actually pressed.
+
+**And one the test found by being written:** the staged order survived a fresh tree arriving from the
+server, so after a create or a removal the screen would draw nodes that no longer existed and then send a
+list the API would rightly refuse. It is a `linkedSignal` on the tree input now.
+
+**A flake that was mine and was not the code.** Three admin e2e runs failed on random tests until I noticed
+a **stale stub process from earlier in the session** that `reuseExistingServer` was happily reusing —
+docs/14's "never run a server you did not start this session" in a new shape. The stub now keys its state on
+a per-worker cookie, and three consecutive parallel runs are clean.
+
+**Numbers:** backend **875 unit** (was 772) **+ 447 integration** (401), 0 skipped; frontend 21 shared /
+451 storefront / **203 admin** (131); **Playwright 246** (213). Lint clean, Release build clean.
+
+**Checked against the real stack**, not only the stub: the real API on LocalDB with the demo catalogue, the
+built admin app behind a session proxy, signed in as a catalogue-only staff user. Create → the category is
+in the storefront navigation; reorder → the mega menu follows; hide Skirts → the listing goes from 2 to 0
+and the category leaves the menu; show → back to 2; remove with products → refused with the count; remove
+empty → gone; audit rows name the user and the address; no console errors, no 5xx, no horizontal scroll at
+any of the eight widths.
+
+**For the owner, not fixed here:** doc 11 P1 step 1 says staff may edit "their description, hero image, sort
+order and SEO" of a department, but W1-12 was asked to put `CatalogSlug` on `Department.Slug`'s **write
+path**, which means there has to be one. The edit therefore includes the name and the slug, with a warning
+on the slug field that old links stop working. If the owner wants departments' names and slugs locked, say
+so and the two fields come out.
+
+**Next:** the tester.
 
 ### 2026-10-01 (9) — issue #30: the storefront stops calling a page gone when it could not find out
 

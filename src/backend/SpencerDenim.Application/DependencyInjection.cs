@@ -6,6 +6,8 @@ using SpencerDenim.Application.Admin.Authentication;
 using SpencerDenim.Application.Admin.Auditing;
 using SpencerDenim.Application.Admin.Auditing.Contracts;
 using SpencerDenim.Application.Admin.CurrentUser;
+using SpencerDenim.Application.Catalog.Admin;
+using SpencerDenim.Application.Catalog.Admin.Contracts;
 using SpencerDenim.Application.Catalog.Contracts;
 using SpencerDenim.Application.Catalog.Departments;
 using SpencerDenim.Application.Catalog.Products;
@@ -69,6 +71,46 @@ public static class DependencyInjection
         services.AddScoped<
             IQueryHandler<ProductSearchQuery, Result<PagedResult<ProductCardDto>>>,
             SearchProductsQueryHandler>();
+
+        // Admin catalogue structure (ADM-11, W1-12): departments and the category tree.
+        // The read side is its own port because the storefront's drops every deactivated row, which is
+        // exactly what these screens exist to show and switch back on (see IAdminCatalogReader).
+        services.AddScoped<
+            IQueryHandler<GetAdminDepartmentsQuery, IReadOnlyList<AdminDepartmentDto>>,
+            GetAdminDepartmentsQueryHandler>();
+        services.AddScoped<
+            IQueryHandler<GetAdminCategoryTreeQuery, AdminCategoryTreeDto?>,
+            GetAdminCategoryTreeQueryHandler>();
+        services.AddScoped<
+            IQueryHandler<GetCategoryDeactivationImpactQuery, CategoryDeactivationImpactDto?>,
+            GetCategoryDeactivationImpactQueryHandler>();
+        services.AddScoped<
+            IQueryHandler<GetCategoryFormOptionsQuery, CategoryFormOptionsDto>,
+            GetCategoryFormOptionsQueryHandler>();
+        services.AddScoped<
+            ICommandHandler<UpdateDepartmentCommand, CatalogWriteResult>,
+            UpdateDepartmentCommandHandler>();
+        services.AddScoped<
+            ICommandHandler<SetDepartmentActiveCommand, CatalogWriteResult>,
+            SetDepartmentActiveCommandHandler>();
+        services.AddScoped<
+            ICommandHandler<ReorderDepartmentsCommand, CatalogWriteResult>,
+            ReorderDepartmentsCommandHandler>();
+        services.AddScoped<
+            ICommandHandler<CreateCategoryCommand, CatalogWriteResult>,
+            CreateCategoryCommandHandler>();
+        services.AddScoped<
+            ICommandHandler<UpdateCategoryCommand, CatalogWriteResult>,
+            UpdateCategoryCommandHandler>();
+        services.AddScoped<
+            ICommandHandler<ReorderCategoriesCommand, CatalogWriteResult>,
+            ReorderCategoriesCommandHandler>();
+        services.AddScoped<
+            ICommandHandler<SetCategoryActiveCommand, CatalogWriteResult>,
+            SetCategoryActiveCommandHandler>();
+        services.AddScoped<
+            ICommandHandler<RemoveCategoryCommand, CatalogWriteResult>,
+            RemoveCategoryCommandHandler>();
 
         // Storefront content (W2-01). The homepage handler also depends on the catalogue read port,
         // because a product row is the head of the listing it links to, and it is wrapped in doc 08

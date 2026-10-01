@@ -9,9 +9,19 @@ public sealed class AuditLogWriter(AppDbContext dbContext) : IAuditLogWriter
 {
     public async Task WriteAsync(AuditLog entry, CancellationToken cancellationToken)
     {
+        Enlist(entry);
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Adds the row to the same scoped <see cref="AppDbContext"/> every use case in this request writes
+    /// through, so the caller's own <c>SaveChangesAsync</c> commits it in the same transaction as the
+    /// change it describes (issue #59).
+    /// </summary>
+    public void Enlist(AuditLog entry)
+    {
         ArgumentNullException.ThrowIfNull(entry);
 
         dbContext.AuditLogs.Add(entry);
-        await dbContext.SaveChangesAsync(cancellationToken);
     }
 }
