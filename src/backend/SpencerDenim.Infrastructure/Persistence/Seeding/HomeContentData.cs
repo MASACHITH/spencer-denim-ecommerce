@@ -164,8 +164,13 @@ internal static class HomeContentData
     /// </summary>
     public static IReadOnlyList<AnnouncementSeed> Announcements { get; } =
     [
-        new("Free island-wide delivery on orders over Rs. 10,000", SortOrder: 1),
-        new("Easy 14-day returns and exchanges on every order", SortOrder: 2),
+        // Deliberately no figure and no window. A delivery threshold is an ADM-22/CHK-02 setting that
+        // does not exist yet, and a returns window is a GLB-10 policy page the client has not written —
+        // so seeding either would put a promise on every page of the site that nothing in the system
+        // can honour, and that nobody has agreed (#34). These three are true the day the shop opens.
+        new("Island-wide delivery across Sri Lanka", SortOrder: 1),
+        new("New season linen has arrived", SortOrder: 2),
+        new("Questions? Message us on WhatsApp", SortOrder: 3),
     ];
 
     internal sealed record HomeSectionSeed(
