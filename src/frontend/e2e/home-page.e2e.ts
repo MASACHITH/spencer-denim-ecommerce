@@ -1,7 +1,7 @@
 import { Page, expect, test } from '@playwright/test';
 
 import { apiURL, faultyContentApiURL, faultyContentURL } from '../playwright.config';
-import { edgesWithoutRing, horizontalOverflow, undersized } from './support/measure';
+import { edgesWithoutRing, horizontalOverflow, markerBand, undersized } from './support/measure';
 
 /**
  * Browser checks for the storefront homepage (HOME-01..10).
@@ -235,6 +235,55 @@ test.describe('the hero (HOME-01)', () => {
       await expect(page.locator('[data-testid="hero-image"]')).toHaveCount(1);
 
       await context.close();
+    });
+  }
+
+  /**
+   * **The framing of a portrait video in a 16:9 frame — the thing W1-13 held the hero back for.**
+   *
+   * The delivered `hero.mp4` is 360 x 640 and this frame is 16:9 from 768 px, so `cover` scales it
+   * on the width and throws between 68% and 74% of its height away. With `object-position: center`
+   * the surviving band is 34%–66% of the source: the model's chest, with her face cut off above
+   * the mouth. `.hero__video` moves the focal point up to `30%` so her face lands inside it.
+   *
+   * The sample is 360 x 640 for that reason and carries a magenta band at exactly 25%–42% of its
+   * height, which is where her face sits in the real file. So the assertion is not "the stylesheet
+   * says 30%" — it is **a photograph of the hero with the marker whole inside it**, at every width
+   * the video plays at. The band is narrowest at 1920, where `max-height: 880px` makes the box
+   * 2.18:1 and only 25.8% of the source survives, so that is the width that pins the value; it is
+   * in the list for that reason and not for symmetry.
+   *
+   * Red without the `object-position`: at every width the marker runs off the top of the frame.
+   */
+  for (const width of VIDEO_WIDTHS) {
+    test(`${width}px: the part of the video that must stay in frame is on the screen`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width, height: 940 });
+      await useStubApi(page);
+      await page.goto('/');
+      await hydrated(page);
+
+      const video = page.locator('[data-testid="hero-video"]');
+      await expect(video).toHaveCount(1);
+
+      // A frame has to have been decoded before there is anything to photograph.
+      await expect
+        .poll(() => video.evaluate((element: HTMLVideoElement) => element.readyState))
+        .toBeGreaterThanOrEqual(2);
+
+      const band = await markerBand(page, page.locator('.hero'));
+
+      expect(
+        band.first,
+        'the marker band is not on the screen at all — the crop has lost it entirely',
+      ).toBeGreaterThan(-1);
+
+      // Strictly inside, top and bottom: touching an edge is a face that is cut off.
+      expect(band.first, 'the marker band runs off the top of the hero').toBeGreaterThan(0);
+      expect(band.last, 'the marker band runs off the bottom of the hero').toBeLessThan(
+        band.height - 1,
+      );
     });
   }
 

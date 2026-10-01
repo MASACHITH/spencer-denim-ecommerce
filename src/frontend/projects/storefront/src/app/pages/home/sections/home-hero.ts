@@ -160,6 +160,36 @@ import { Viewport } from '../../../core/platform/viewport';
       height: 100%;
       object-fit: cover;
     }
+    /* W1-14: the focal point of the video, measured rather than guessed.
+
+       The delivered hero.mp4 is 360 x 640 — portrait — and this frame is 16:9 from 768 px, so
+       object-fit: cover scales it on the width and the overflow is entirely vertical: between 68%
+       and 74% of the source height is thrown away, depending on whether max-height has clamped the
+       box. A centred object-position discards that equally top and bottom, which lands the visible
+       band on the model's chest and cuts her face off above the mouth. That is why HOME-01 was held
+       back in W1-13.
+
+       Moving the focal point up distributes the overflow instead of hiding it. Her face occupies
+       roughly 25%-42% of the source height and barely moves across the ten seconds, so the band has
+       to start above 25% and end below 42% at EVERY width. It is widest where the box is a true
+       16:9 (768-1564 px: 31.6% of the source) and narrowest at 1920, where max-height 880px makes
+       the box 2.18:1 and only 25.8% of the source survives — so 1920 is what pins the value.
+       Solving both gives 22%-34%; 30% sits inside it with headroom at 1920 and still leaves the
+       shirt collar in frame at 768. Verified by screenshot at 768/1024/1280/1440/1920, and the e2e
+       suite photographs the hero at each of them and asserts the band that must stay in frame is
+       whole inside the picture.
+
+       THIS IS MAKING THE BEST OF A FILE THAT IS WRONG FOR THE SLOT, NOT A FIX. 1920 px of frame
+       from 360 px of source is a 5.3x upscale: the result is soft and shows no garment at all. A
+       16:9 export at least 1920 px wide is still the right answer.
+
+       On .hero__video alone and not on the shared rule above: the still (.hero__image) is a
+       separate, correctly-shaped photograph and stays centred. The video element paints its own
+       poster attribute, so that shifts too — it is 16:9, so below 1565 px there is no overflow for
+       it to shift. */
+    .hero__video {
+      object-position: center 30%;
+    }
     /* docs/04 decision 7: light text over the photograph with a soft dark fade under it. The fade
        is on the media, never over the copy, so it can never paint across a focus ring (lesson L4). */
     .hero__media--scrim::after {

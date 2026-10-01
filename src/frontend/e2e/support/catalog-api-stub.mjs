@@ -574,8 +574,17 @@ function contentSection(id, type, overrides) {
  * It used to be a `data:` URI carrying an MP4 header and nothing else, which was enough to prove a
  * `<video>` element existed and nothing more — so the test could not tell autoplay working from
  * autoplay refused, and it passed while the hero was a frozen poster (the `muted` property was
- * never set on the element Angular creates). `support/hero-sample.webm` is three seconds of VP8
- * recorded with this same Chromium, so "it plays" is now a thing a test can watch happen.
+ * never set on the element Angular creates). `support/hero-sample.webm` is two and a half seconds
+ * of VP8 recorded with this same Chromium, so "it plays" is now a thing a test can watch happen —
+ * a dot crosses the bottom of the frame for that reason alone.
+ *
+ * **It is 360 x 640, like the file the client delivered, and it carries a marker band.** The hero
+ * frame is 16:9 from 768 px, so a portrait source overflows vertically and `object-fit: cover`
+ * throws most of its height away — which is why HOME-01 was held off the front page in W1-13 and
+ * why `.hero__video` carries an `object-position` now (W1-14). A magenta band fills exactly
+ * 25%–42% of this file's height, which is where the model's face sits in the real one, so a test
+ * can photograph the hero and say whether the part that must stay in frame is on the screen. A
+ * video whose content did not matter could not answer that question at all.
  *
  * It has no audio track, which is the honest limit of what this can show: Playwright's Chromium
  * runs with the autoplay policy disabled, so an unmuted video plays here whether or not it should.

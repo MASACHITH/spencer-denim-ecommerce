@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Globalization;
 using System.Security.Cryptography;
 using Microsoft.EntityFrameworkCore;
@@ -68,6 +69,45 @@ public sealed partial class ClientAssetImporter(
     private const short CardSortOrder = -2;
 
     private const short HoverSortOrder = -1;
+
+    /// <summary>The campaign banner's words (HOME-05). Nothing before them to supersede.</summary>
+    private static readonly BannerCopy CampaignCopy = new(
+        "The new season",
+        "Linen, denim and everything in between.",
+        "/new-arrivals",
+        "Shop new arrivals",
+        FrozenSet<string>.Empty);
+
+    /// <summary>
+    /// The HOME-06 banner's words (W1-14), written to match the photograph the client actually sent.
+    /// <para>
+    /// <b>The picture, the words and the link have to agree, and this is where all three are decided.</b>
+    /// The delivered <c>activewear.jpg</c> is a flat-lay of a white linen co-ord and a mid-blue denim
+    /// co-ord with a straw basket — nothing athletic — so the slot said "Activewear … Pieces that move
+    /// with you" over linen and pointed at <c>/women/activewear</c>, which holds leggings and a sports
+    /// bra. That contradiction is issue #63 and is why W1-13 held the section off the front page.
+    /// </para>
+    /// <para>
+    /// The destination is a <b>listing that genuinely contains what the picture shows</b> rather than a
+    /// department that happens to include it: <c>/women?material=linen&amp;material=linen-blend&amp;material=denim</c>
+    /// returns the relaxed linen-blend shirt, the linen drawstring trousers, both jeans and the denim
+    /// wrap skirt — a linen shirt and wide linen trousers and wide-leg denim, which is the flat-lay.
+    /// The copy says fabrics, not sets, because the catalogue sells separates and promising a co-ord
+    /// would be the same mistake one step further on.
+    /// </para>
+    /// </summary>
+    private static readonly BannerCopy ActivewearCopy = new(
+        "Linen and denim",
+        "Breathable linen for the heat, washed indigo for everything else.",
+        "/women?material=linen&material=linen-blend&material=denim",
+        "Shop linen and denim",
+        new[]
+        {
+            "Activewear",
+            "Pieces that move with you.",
+            "/women/activewear",
+            "Shop activewear",
+        }.ToFrozenSet(StringComparer.Ordinal));
 
     /// <summary>
     /// The social gallery's six tiles and the dummy destinations they carry until the client sends the
@@ -433,7 +473,7 @@ public sealed partial class ClientAssetImporter(
                     outcome,
                     stored,
                     outcome == SlotOutcome.AlreadyPlaced
-                        ? $"{product.Slug} — byte for byte the same picture as {sameAs ?? "another file in this drop"}, "
+                        ? $"{product.Slug} — byte for byte the same picture as {sameAs ?? "a photograph already in this product's gallery"}, "
                             + $"so it is one asset in the library and fills one gallery slot. It is still {role}."
                         : $"{product.Slug} — {role}, alt text \"{alt}\"",
                     file.RepairedFrom));
@@ -453,12 +493,9 @@ public sealed partial class ClientAssetImporter(
                 {
                     SetProductPointer(entity, isCard: false, hover, run);
                 }
-                else if (entity.HoverImageAssetId is { } current && _placeholders.Contains(current))
+                else
                 {
-                    SetProductPointer(entity, isCard: false, null, run);
-                    run.Note(
-                        $"{product.Slug}: one photograph was supplied, so the card is the client's and the "
-                        + "hover image was cleared rather than left pointing at a placeholder.");
+                    ClearWithdrawnHover(entity, run);
                 }
             }
 
@@ -561,20 +598,14 @@ public sealed partial class ClientAssetImporter(
         await ImportBannerAsync(
             HomeSectionType.CampaignBanner,
             ClientAssetNaming.CampaignFile,
-            "The new season",
-            "Linen, denim and everything in between.",
-            "/new-arrivals",
-            "Shop new arrivals",
+            CampaignCopy,
             files,
             run,
             cancellationToken);
         await ImportBannerAsync(
             HomeSectionType.ActivewearFeature,
             ClientAssetNaming.ActivewearFile,
-            "Activewear",
-            "Pieces that move with you.",
-            "/women/activewear",
-            "Shop activewear",
+            ActivewearCopy,
             files,
             run,
             cancellationToken);
@@ -777,14 +808,13 @@ public sealed partial class ClientAssetImporter(
     private async Task ImportBannerAsync(
         HomeSectionType type,
         string contractFile,
-        string title,
-        string subtitle,
-        string linkUrl,
-        string buttonLabel,
+        BannerCopy copy,
         IReadOnlyList<string> files,
         Run run,
         CancellationToken cancellationToken)
     {
+        var (title, subtitle, linkUrl, buttonLabel, _) = copy;
+
         var path = files.FirstOrDefault(candidate => ClientAssetNaming.IsNamed(Path.GetFileName(candidate), contractFile));
         if (path is null)
         {
@@ -818,15 +848,66 @@ public sealed partial class ClientAssetImporter(
             var item = await ItemAtAsync(section, sortOrder: 1, cancellationToken);
             outcome = await PlaceItemImageAsync(item, assetId, MediaUsageRoles.Banner, run, cancellationToken);
 
-            item.Title ??= title;
-            item.Subtitle ??= subtitle;
-            item.LinkUrl ??= linkUrl;
-            item.ButtonLabel ??= buttonLabel;
+            Reword(item, copy, type, run);
 
             run.WhenDone(section, type.ToString());
         }
 
         run.Add(Describe(ClientAssetFolder.Home, Path.GetFileName(path), outcome, stored, $"the {type} banner"));
+    }
+
+    /// <summary>
+    /// Puts the banner's words in the item, honouring the same "never overwrite a person" rule the
+    /// picture slots use.
+    /// <para>
+    /// <b>Why this is not just <c>??=</c> any more.</b> A re-run is how a corrected delivery reaches the
+    /// site, and in W1-14 what was corrected was the <i>copy</i>: the heading, standfirst, button and
+    /// link the previous version of this importer wrote for HOME-06 described activewear and the
+    /// photograph does not. With <c>??=</c> those fields are already non-null, so a re-import would have
+    /// switched the section on and left the contradiction on the front page — the exact failure the hold
+    /// existed for (issue #63). A picture, its words and its destination arrive together or not at all.
+    /// </para>
+    /// <para>
+    /// <b>And it is not an unconditional write either.</b> The only values it may overwrite are the ones
+    /// it put there itself and has now retracted (<see cref="BannerCopy.Supersedes"/>) — the same
+    /// reasoning as "a placeholder was never a choice". Anything else is somebody's editorial decision
+    /// in ADM-17 and survives, with a note saying it did, because an import that silently rewrote the
+    /// client's own headline would be far worse than one that leaves a stale one.
+    /// </para>
+    /// </summary>
+    private static void Reword(HomeSectionItem item, BannerCopy copy, HomeSectionType type, Run run)
+    {
+        var kept = new List<string>();
+
+        item.Title = Pick(item.Title, copy.Title, "heading");
+        item.Subtitle = Pick(item.Subtitle, copy.Subtitle, "standfirst");
+        item.LinkUrl = Pick(item.LinkUrl, copy.LinkUrl, "link");
+        item.ButtonLabel = Pick(item.ButtonLabel, copy.ButtonLabel, "button label");
+
+        if (kept.Count > 0)
+        {
+            run.Note(
+                $"{type}: the {string.Join(", ", kept)} on that banner "
+                + $"{(kept.Count == 1 ? "was" : "were")} left as "
+                + $"{(kept.Count == 1 ? "it is" : "they are")} — somebody wrote "
+                + $"{(kept.Count == 1 ? "it" : "them")} in ADM-17. Check that the picture, the words and "
+                + "the link still agree.");
+        }
+
+        string Pick(string? current, string replacement, string field)
+        {
+            if (string.IsNullOrWhiteSpace(current) || copy.Supersedes.Contains(current))
+            {
+                return replacement;
+            }
+
+            if (current != replacement)
+            {
+                kept.Add(field);
+            }
+
+            return current;
+        }
     }
 
     private async Task ImportTrendingAsync(
@@ -1365,6 +1446,90 @@ public sealed partial class ClientAssetImporter(
         return SlotOutcome.Replaced;
     }
 
+    /// <summary>
+    /// Empties the hover slot of a product whose drop sent a card and no second photograph.
+    /// <para>
+    /// <b>A drop that stops sending a file must not leave the site showing it.</b> The client replaced
+    /// <c>poplin-formal-shirt-1</c> with the right garment and withdrew the wrong one, so the product has
+    /// one photograph now — and the hover slot still held the withdrawn picture, pointer and gallery row
+    /// both, because nothing in the import ever visits a slot the drop has no file for. The card showed
+    /// the poplin shirt and flipped, on hover, to the cream tee the client had just rejected. Reading the
+    /// code it looks handled; it only ever handled the <i>placeholder</i> case.
+    /// </para>
+    /// <para>
+    /// <b>It is still not an unconditional delete.</b> A hover image that is not a placeholder may be an
+    /// admin's own upload (ADM-11) and the importer cannot tell that from its own earlier work — the same
+    /// wall every slot in this class runs into. So the rule is the same one: a placeholder goes without
+    /// asking, anything else needs <c>--replace</c>, and until then it is a <b>conflict</b> rather than a
+    /// note. A note would be read by nobody and the run would exit 0 over a product showing a garment the
+    /// client has withdrawn; a conflict names the file the drop no longer contains and exits 3.
+    /// </para>
+    /// </summary>
+    private void ClearWithdrawnHover(Product product, Run run)
+    {
+        var row = _productMedia.FirstOrDefault(
+            candidate => candidate.ProductId == product.Id
+                && candidate.MediaRole == ProductMediaRole.Hover
+                && candidate.SortOrder == HoverSortOrder
+                && candidate.ProductColourId is null);
+
+        if (product.HoverImageAssetId is null && row is null)
+        {
+            return;
+        }
+
+        var placeholder = product.HoverImageAssetId is { } held && _placeholders.Contains(held);
+
+        if (!placeholder && !run.Replace)
+        {
+            run.Add(new ClientAssetEntry(
+                ClientAssetFolder.Products,
+                $"{product.Slug}-2",
+                ClientAssetOutcome.Conflict,
+                $"{product.Slug} — the drop sends one photograph now, and the hover slot still holds the "
+                + "one it used to send. The card is the new picture and hovering it still shows the old "
+                + "one. It is not a placeholder, so somebody may have chosen it: re-run with --replace to "
+                + "clear the slot."));
+            return;
+        }
+
+        product.HoverImageAssetId = null;
+
+        if (row is not null)
+        {
+            // **The row may be holding the card's own photograph, and then it must not be deleted.**
+            // This is exactly what the poplin correction does: the client promoted the picture that was
+            // `-2` to `-1`, so the asset the card now points at is the one already sitting in the hover
+            // slot. `PlaceProductMedia` saw it there, left it there (one asset is one row, by
+            // UX_ProductMedia_Product_Asset_Colour) and emptied the card slot — so deleting this row
+            // deletes the client's only photograph out of the product's gallery, leaving a card with a
+            // real garment on it above three demo placeholders. Measured: card 191, gallery 73/74/75.
+            // It moves into the card slot the same call has just vacated instead.
+            var cardSlotTaken = _productMedia.Any(
+                candidate => candidate.ProductId == product.Id
+                    && candidate.MediaRole == ProductMediaRole.Gallery
+                    && candidate.SortOrder == CardSortOrder
+                    && candidate.ProductColourId is null);
+
+            if (row.MediaAssetId != product.CardImageAssetId)
+            {
+                Remove(row);
+            }
+            else if (!cardSlotTaken)
+            {
+                row.MediaRole = ProductMediaRole.Gallery;
+                row.SortOrder = CardSortOrder;
+            }
+        }
+
+        run.Note(
+            placeholder
+                ? $"{product.Slug}: one photograph was supplied, so the card is the client's and the "
+                    + "hover image was cleared rather than left pointing at a placeholder."
+                : $"{product.Slug}: one photograph was supplied, so the hover image the drop no longer "
+                    + "sends was cleared. The card does not flip.");
+    }
+
     /// <summary>Drops a gallery row, from the context and from this attempt's picture of the table.</summary>
     private void Remove(ProductMedia row)
     {
@@ -1689,6 +1854,24 @@ public sealed partial class ClientAssetImporter(
     private sealed record CreatedFile(Guid PublicId, string StorageKey);
 
     private sealed record StoredAsset(int? AssetId, bool WasExisting, string? Refusal);
+
+    /// <summary>
+    /// The words one banner carries, and the words this import is allowed to take back.
+    /// </summary>
+    /// <param name="Supersedes">
+    /// Exact values an <b>earlier version of this importer</b> wrote into the slot and that are now
+    /// wrong. They are the only stored copy <see cref="Reword"/> may overwrite: everything else is
+    /// treated as somebody's editorial decision. Keyed on the literal strings rather than on a flag or a
+    /// version number for the reason <see cref="ClientAssetHolds"/> is keyed on a checksum — it expires
+    /// by itself. Once the client edits the heading in ADM-17 the old string is gone, and so is this
+    /// entry's power over it.
+    /// </param>
+    private sealed record BannerCopy(
+        string Title,
+        string Subtitle,
+        string LinkUrl,
+        string ButtonLabel,
+        IReadOnlySet<string> Supersedes);
 
     /// <summary>Everything one attempt accumulates, so the methods above stay about the import.</summary>
     private sealed class Run(ClientAssetImportRequest request)
