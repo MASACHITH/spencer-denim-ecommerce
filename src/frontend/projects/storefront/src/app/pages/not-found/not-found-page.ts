@@ -1,8 +1,9 @@
-import { ChangeDetectionStrategy, Component, RESPONSE_INIT, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, RESPONSE_INIT, inject } from '@angular/core';
 import { Meta, Title } from '@angular/platform-browser';
 import { RouterLink } from '@angular/router';
 
 import { NavigationService } from '../../core/navigation/navigation.service';
+import { RobotsMeta } from '../../core/platform/robots-meta';
 import { BRAND, brandPageTitle } from '@spencer-denim/shared';
 
 /** What a page that is not there should answer, so a crawler does not index it as a real page. */
@@ -83,8 +84,13 @@ export class NotFoundPage {
       name: 'description',
       content: `The page you asked for is not part of the ${BRAND.name} store.`,
     });
-    // A 404 must never be indexed, whatever a crawler makes of the status code.
-    meta.updateTag({ name: 'robots', content: 'noindex' });
+    // A 404 must never be indexed, whatever a crawler makes of the status code. Cleared on the way
+    // out, like the canonical address: the next page is not missing, and on a client-side
+    // navigation nothing else would remove it — "Back to the home page" from here left the home
+    // page carrying `noindex`.
+    const robots = inject(RobotsMeta);
+    robots.noindex();
+    inject(DestroyRef).onDestroy(() => robots.clear());
 
     const response = inject(RESPONSE_INIT, { optional: true });
     if (response) {

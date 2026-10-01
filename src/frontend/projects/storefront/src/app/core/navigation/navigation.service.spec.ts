@@ -1,12 +1,22 @@
 import { provideHttpClient } from '@angular/common/http';
-import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
+import {
+  HttpTestingController,
+  TestRequest,
+  provideHttpClientTesting,
+} from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
 import { firstValueFrom } from 'rxjs';
 
+import { ServerHandover } from '../platform/server-handover';
 import { DepartmentDto } from './catalog-departments.model';
 import { MEGA_MENU_COLUMN_COUNT, toNavigation } from './navigation.mapper';
 import { NavItem, hasMenu } from './navigation.model';
-import { DEPARTMENTS_TIMEOUT_MS, NavigationService } from './navigation.service';
+import {
+  CatalogTree,
+  DEPARTMENTS_TIMEOUT_MS,
+  FALLBACK_TREE,
+  NavigationService,
+} from './navigation.service';
 import { PLACEHOLDER_DEPARTMENTS } from './navigation.data';
 
 function department(overrides: Partial<DepartmentDto> = {}): DepartmentDto {
@@ -297,14 +307,18 @@ describe('NavigationService and the catalogue API', () => {
 
   /**
    * Every shape that leaves the storefront without a usable tree, checked on `tree$` as well as on
-   * the signal. They have to agree: `usable` was applied only to the signal, so the route guards
+   * the signal. They have to agree: the vetting was applied only to the signal, so the route guards
    * read the raw response and a `200 []` — which the API legitimately answers for a freshly
    * migrated database before anyone runs the seeder — sent every listing URL to the home page
    * while the mega menu still listed all three departments. `catchError` cannot see either of
    * these: a useless body is still a successful response.
+   *
+   * Each case also pins `source`. A reader that cannot tell the fallback from a live answer cannot
+   * tell "this page is gone" from "I could not find out", which is #30: every one of these is a
+   * `fallback`, and no route guard may answer 404 on the strength of one.
    */
   describe('an answer it cannot use', () => {
-    async function treeOf(): Promise<readonly DepartmentDto[]> {
+    async function treeOf(): Promise<CatalogTree> {
       return firstValueFrom(service.tree$);
     }
 
@@ -312,14 +326,14 @@ describe('NavigationService and the catalogue API', () => {
       http.expectOne('/api/catalog/departments').flush([]);
 
       expect(service.departments()).toEqual(PLACEHOLDER_DEPARTMENTS);
-      expect(await treeOf()).toEqual(PLACEHOLDER_DEPARTMENTS);
+      expect(await treeOf()).toEqual(FALLBACK_TREE);
     });
 
     it('falls back on a body that is not an array, rather than throwing in a route guard', async () => {
       http.expectOne('/api/catalog/departments').flush({ oops: true });
 
       expect(service.departments()).toEqual(PLACEHOLDER_DEPARTMENTS);
-      expect(await treeOf()).toEqual(PLACEHOLDER_DEPARTMENTS);
+      expect(await treeOf()).toEqual(FALLBACK_TREE);
     });
 
     it('falls back on entries no route could ever match', async () => {
@@ -331,14 +345,14 @@ describe('NavigationService and the catalogue API', () => {
         .flush([{ nope: 1 }, { Slug: 'women' }] as unknown as readonly DepartmentDto[]);
 
       expect(service.departments()).toEqual(PLACEHOLDER_DEPARTMENTS);
-      expect(await treeOf()).toEqual(PLACEHOLDER_DEPARTMENTS);
+      expect(await treeOf()).toEqual(FALLBACK_TREE);
     });
 
-    it('keeps a payload where at least one department can be routed to', async () => {
+    it('keeps a payload where at least one department can be routed to, and calls it live', async () => {
       const live = [department({ id: 7, name: 'Womenswear', slug: 'womenswear' })];
       http.expectOne('/api/catalog/departments').flush(live);
 
-      expect(await treeOf()).toEqual(live);
+      expect(await treeOf()).toEqual({ departments: live, source: 'live' });
     });
 
     it('falls back on a failure', async () => {
@@ -347,14 +361,34 @@ describe('NavigationService and the catalogue API', () => {
         .flush('boom', { status: 500, statusText: 'Server Error' });
 
       expect(service.departments()).toEqual(PLACEHOLDER_DEPARTMENTS);
-      expect(await treeOf()).toEqual(PLACEHOLDER_DEPARTMENTS);
+      expect(await treeOf()).toEqual(FALLBACK_TREE);
     });
 
     it('gives the guards a department to match in every one of those cases', async () => {
       http.expectOne('/api/catalog/departments').flush([]);
 
       const tree = await treeOf();
-      expect(tree.map((department) => department.slug)).toEqual(['women', 'men', 'kids']);
+      expect(tree.departments.map((candidate) => candidate.slug)).toEqual(['women', 'men', 'kids']);
+    });
+
+    /**
+     * The one thing the fallback must never claim. Everything downstream of `source` is an SEO
+     * decision — a 404 with `noindex`, or a 503 a crawler comes back to — so a fallback labelled
+     * `live` would drop real listings out of the index silently (#30).
+     */
+    it('never labels the seeded tree live, whatever went wrong', async () => {
+      http.expectOne('/api/catalog/departments').error(new ProgressEvent('offline'));
+
+      expect((await treeOf()).source).toBe('fallback');
+      expect(service.tree().source).toBe('fallback');
+    });
+
+    it('starts on the fallback, so nothing reads a live tree it was never given', () => {
+      // Before any answer at all: what SSR renders the header from, and what a guard would read if
+      // it took the signal instead of waiting for the observable.
+      expect(service.tree().source).toBe('fallback');
+
+      http.expectOne('/api/catalog/departments').flush([]);
     });
   });
 });
@@ -389,7 +423,79 @@ describe('NavigationService and a catalogue that never answers', () => {
     expect(service.items()).toHaveLength(5);
     expect(request.cancelled).toBe(true);
 
-    // And the guards get the same tree, not a pending observable.
-    expect(await firstValueFrom(service.tree$)).toEqual(PLACEHOLDER_DEPARTMENTS);
+    // And the guards get the same tree, not a pending observable — labelled the fallback, so a
+    // slug it has never heard of is not reported as gone (#30).
+    expect(await firstValueFrom(service.tree$)).toEqual(FALLBACK_TREE);
+  });
+});
+
+/**
+ * What the render leaves for the browser, and the one thing it must not leave.
+ *
+ * `tap(give)` used to sit above `timeout` and above the vetting, so whatever the API said was
+ * handed over before anything judged it — and a `200 []` is a successful response. The browser then
+ * took `[]` out of `TransferState`, found it non-null and made **no request at all**, so a page the
+ * server had already answered 503 stayed on the 503 for the rest of the session. A 500, a destroyed
+ * connection and a timeout all recovered on hydration, because those hand over nothing; a transient
+ * empty catalogue was the one failure that stranded the shopper, and it is one of #30's four modes.
+ *
+ * `give` is a no-op in the browser, which jsdom is, so the spec watches the call rather than
+ * `TransferState`. The behaviour on the wire is in `e2e/catalog-availability.e2e.ts`.
+ */
+describe('NavigationService and what it hands to the browser', () => {
+  const handover = { take: vi.fn(() => null), give: vi.fn() };
+
+  beforeEach(() => {
+    handover.take.mockClear();
+    handover.give.mockClear();
+    TestBed.configureTestingModule({
+      providers: [
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        { provide: ServerHandover, useValue: handover },
+      ],
+    });
+  });
+
+  it('hands over a tree it is willing to route on', async () => {
+    const service = TestBed.inject(NavigationService);
+    const live = [department({ id: 7, name: 'Womenswear', slug: 'womenswear' })];
+    TestBed.inject(HttpTestingController).expectOne('/api/catalog/departments').flush(live);
+
+    expect((await firstValueFrom(service.tree$)).source).toBe('live');
+    expect(handover.give).toHaveBeenCalledWith('catalog:departments', live);
+  });
+
+  for (const [label, answer] of [
+    ['an empty catalogue', (request: TestRequest) => request.flush([])],
+    ['a body that is not a tree', (request: TestRequest) => request.flush({ oops: true })],
+    [
+      'entries no route could match',
+      (request: TestRequest) => request.flush([{ nope: 1 }] as unknown as readonly DepartmentDto[]),
+    ],
+    [
+      'a failure',
+      (request: TestRequest) => request.flush('boom', { status: 500, statusText: 'x' }),
+    ],
+    ['an unreachable API', (request: TestRequest) => request.error(new ProgressEvent('offline'))],
+  ] as const) {
+    it(`hands over nothing after ${label}, so the browser asks for itself`, async () => {
+      const service = TestBed.inject(NavigationService);
+      answer(TestBed.inject(HttpTestingController).expectOne('/api/catalog/departments'));
+
+      expect((await firstValueFrom(service.tree$)).source).toBe('fallback');
+      expect(handover.give).not.toHaveBeenCalled();
+    });
+  }
+
+  it('vets what the server handed over rather than trusting it', async () => {
+    // The server cannot hand over `[]` any more, but the browser is on the other side of a process
+    // boundary and a stale or tampered payload costs one `toTree` call to refuse.
+    handover.take.mockReturnValue([] as never);
+
+    const service = TestBed.inject(NavigationService);
+
+    expect(await firstValueFrom(service.tree$)).toEqual(FALLBACK_TREE);
+    TestBed.inject(HttpTestingController).verify();
   });
 });

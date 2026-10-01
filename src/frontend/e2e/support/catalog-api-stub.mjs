@@ -127,6 +127,24 @@ const DEPARTMENTS = [
   },
 ];
 
+/**
+ * A category the live catalogue has and the storefront's frozen fallback
+ * (`core/navigation/navigation.data.ts`) does not.
+ *
+ * It stands in for the first category ADM-11 lets an admin add. Everything else in
+ * {@link DEPARTMENTS} is also in that fallback, so without it the two trees can never disagree and
+ * the storefront's answer for "a real page the fallback has never heard of" cannot be measured at
+ * all — which is exactly how #30 stayed invisible.
+ */
+const LIVE_ONLY_CATEGORY = category(14, 'Coats', 'coats', 'Trench, wool and rain coats.', 3);
+
+/** {@link DEPARTMENTS} with that category under Women. Served when `E2E_DEPARTMENTS=live-only`. */
+const LIVE_ONLY_DEPARTMENTS = DEPARTMENTS.map((department) =>
+  department.slug === 'women'
+    ? { ...department, categories: [...department.categories, LIVE_ONLY_CATEGORY] }
+    : department,
+);
+
 const COLOURS = [
   { id: 1, name: 'Indigo', familyName: 'Blue', familySlug: 'blue', hexCode: '#2E6DB4', swatchImageUrl: null },
   { id: 2, name: 'Black', familyName: 'Black', familySlug: 'black', hexCode: '#101010', swatchImageUrl: null },
@@ -797,6 +815,42 @@ const DELAY_MS = Number(process.env.E2E_API_DELAY_MS ?? 0);
  */
 const DEPARTMENTS_MODE = process.env.E2E_DEPARTMENTS ?? 'tree';
 
+/** The tree this stub serves when nothing is wrong with it. */
+const DEPARTMENTS_BODY =
+  DEPARTMENTS_MODE === 'empty'
+    ? []
+    : DEPARTMENTS_MODE === 'garbage'
+      ? { oops: true }
+      : DEPARTMENTS_MODE === 'live-only'
+        ? LIVE_ONLY_DEPARTMENTS
+        : DEPARTMENTS;
+
+/**
+ * How the departments feed is unhealthy *right now* — switched by a test through
+ * `/__test__/departments-fault?mode=...` rather than fixed by an environment variable.
+ *
+ * #30 lists four unhealthy modes and every one of them has to be measured on the wire, which
+ * means a server-side render, which means an SSR server. One switchable stub is one SSR server
+ * for all four; an environment variable would have been four more of each, and this suite already
+ * starts five pairs.
+ *
+ * - `none`     — healthy.
+ * - `status`   — 500 as RFC 9457, which is what the API's own problem middleware sends.
+ * - `destroy`  — the connection goes away with nothing sent.
+ * - `slow`     — an answer that arrives long after the storefront's own timeout.
+ * - `empty`    — `200 []`, a migrated database nobody has seeded, or every department deactivated.
+ * - `garbage`  — `200 {"oops":true}`, a proxy or a bad deploy answering with something else
+ *                entirely. The same shape `E2E_DEPARTMENTS=garbage` fixes for a whole server, but
+ *                until now it was only ever measured in a unit test and never on the wire.
+ */
+let departmentsFault = 'none';
+
+/**
+ * Long enough past `DEPARTMENTS_TIMEOUT_MS` (2 s) to be the same thing as never, and the figure
+ * #30 was measured with.
+ */
+const SLOW_DEPARTMENTS_MS = 12_000;
+
 const server = createServer((request, response) => {
   const url = new URL(request.url ?? '/', `http://localhost:${PORT}`);
 
@@ -806,11 +860,56 @@ const server = createServer((request, response) => {
   response.setHeader('Content-Type', 'application/json; charset=utf-8');
   response.setHeader('Cache-Control', 'no-store');
 
-  if (url.pathname === '/api/catalog/departments') {
-    const body =
-      DEPARTMENTS_MODE === 'empty' ? [] : DEPARTMENTS_MODE === 'garbage' ? { oops: true } : DEPARTMENTS;
+  // Test-only, and deliberately named so: it is a switch on a fixture, not an API the storefront
+  // knows about. Nothing in `src/` ever asks for this path.
+  //
+  // It is also what `playwright.config.ts` waits on to decide this stub is up, which is not an
+  // accident: `reuseExistingServer` means a run that ended mid-fault would otherwise hand the next
+  // run a stub that is still broken — and a readiness probe on `/departments` could not even tell,
+  // because under `destroy` it never answers. Probing this resets the fault on the way in.
+  if (url.pathname === '/__test__/departments-fault') {
+    departmentsFault = url.searchParams.get('mode') ?? 'none';
+    response.end(JSON.stringify({ fault: departmentsFault }));
+    return;
+  }
 
-    setTimeout(() => response.end(JSON.stringify(body)), DELAY_MS);
+  if (url.pathname === '/api/catalog/departments') {
+    if (departmentsFault === 'destroy') {
+      // Nothing written first: the storefront sees a connection that went away, not a short body.
+      request.socket.destroy();
+      return;
+    }
+
+    if (departmentsFault === 'status') {
+      response.statusCode = 500;
+      // The media type the API really sends for a failure (`AddProblemDetails`), so the storefront
+      // is parsing what it will parse in production rather than a convenient `application/json`.
+      response.setHeader('Content-Type', 'application/problem+json; charset=utf-8');
+      response.end(
+        JSON.stringify({
+          type: 'https://tools.ietf.org/html/rfc9110#section-15.6.1',
+          title: 'Forced failure',
+          status: 500,
+        }),
+      );
+      return;
+    }
+
+    const body =
+      departmentsFault === 'empty'
+        ? []
+        : departmentsFault === 'garbage'
+          ? { oops: true }
+          : DEPARTMENTS_BODY;
+    const delay = departmentsFault === 'slow' ? SLOW_DEPARTMENTS_MS : DELAY_MS;
+
+    setTimeout(() => {
+      // The storefront cancels at its own timeout, so by now the socket is usually gone. Writing
+      // to it would raise an error nobody is listening for and take the stub down mid-run.
+      if (!response.writableEnded && !response.destroyed) {
+        response.end(JSON.stringify(body));
+      }
+    }, delay).unref();
     return;
   }
 

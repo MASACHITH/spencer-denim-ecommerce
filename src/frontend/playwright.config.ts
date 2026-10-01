@@ -67,6 +67,32 @@ export const faultyContentURL = `http://localhost:${CONTENT_FAULT_PORT}`;
 /** Exported so a browser-side route can send the page's own calls to the same failing stub. */
 export const faultyContentApiURL = `http://localhost:${CONTENT_FAULT_API_PORT}`;
 
+/**
+ * A sixth pair whose catalogue holds a category the storefront's frozen fallback has never heard
+ * of, and whose **departments** feed can be made unhealthy while the server runs (#30).
+ *
+ * The other pairs fix their fault with an environment variable. This one cannot: #30 lists four
+ * unhealthy modes and each has to be measured on the wire, so an environment variable would mean
+ * four more SSR servers on top of the five this file already starts. The stub takes the mode from
+ * `/__test__/departments-fault?mode=...` instead, which is why `catalog-availability.e2e.ts` runs
+ * serially.
+ */
+const DEPT_FAULT_PORT = Number(process.env['E2E_DEPT_FAULT_PORT'] ?? 4432);
+const DEPT_FAULT_API_PORT = Number(process.env['E2E_DEPT_FAULT_API_PORT'] ?? 4433);
+
+export const liveOnlyCatalogueURL = `http://localhost:${DEPT_FAULT_PORT}`;
+
+/** Exported so a test can switch the fault, and send the browser's own calls to the same stub. */
+export const liveOnlyApiURL = `http://localhost:${DEPT_FAULT_API_PORT}`;
+
+/**
+ * The listing that exists live and not in `core/navigation/navigation.data.ts`.
+ *
+ * Every other listing URL is in both trees, so only this one can tell "the catalogue does not have
+ * it" from "I could not find out".
+ */
+export const LIVE_ONLY_LISTING = '/women/coats';
+
 export default defineConfig({
   testDir: './e2e',
   testMatch: '**/*.e2e.ts',
@@ -151,6 +177,36 @@ export default defineConfig({
         E2E_MEDIA_PASSTHROUGH_URL: faultyContentApiURL,
       },
       reuseExistingServer: !process.env['CI'],
+      timeout: 120_000,
+    },
+    {
+      // Waiting on the fault switch rather than on `/departments`, which is the one endpoint this
+      // stub is asked to break: `reuseExistingServer` would otherwise hand a run a stub left
+      // mid-fault by a failed one, and under `destroy` a readiness probe on `/departments` never
+      // answers at all. Probing this resets the fault, so every run starts healthy.
+      command: 'node e2e/support/catalog-api-stub.mjs',
+      url: `${liveOnlyApiURL}/__test__/departments-fault?mode=none`,
+      env: { E2E_API_PORT: String(DEPT_FAULT_API_PORT), E2E_DEPARTMENTS: 'live-only' },
+      reuseExistingServer: false,
+      timeout: 30_000,
+    },
+    {
+      command: 'npm run serve:ssr:storefront',
+      url: `${liveOnlyCatalogueURL}/healthz`,
+      env: {
+        PORT: String(DEPT_FAULT_PORT),
+        API_INTERNAL_URL: liveOnlyApiURL,
+        E2E_MEDIA_PASSTHROUGH_URL: liveOnlyApiURL,
+      },
+      // `reuseExistingServer: false`, unlike every pair above, and it is not a preference.
+      // Measured: this pair was first written on 4430, another session on this machine then started
+      // the **admin** application there, its dev server answered `/healthz` with 200, and Playwright
+      // reused it — so the whole suite ran against the admin panel and the touch-target test failed
+      // reporting "Try again" missing from a page that was never the storefront. A port that
+      // answers is not proof that it is yours (doc 14). Refusing to reuse turns that into a bind
+      // error naming the port instead of a silent pass against a stranger's process; it costs
+      // nothing, because Playwright stops the servers it starts at the end of a run anyway.
+      reuseExistingServer: false,
       timeout: 120_000,
     },
     {

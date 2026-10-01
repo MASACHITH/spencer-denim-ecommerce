@@ -46,6 +46,100 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 
 ## Session log
 
+### 2026-10-01 (9) — issue #30: the storefront stops calling a page gone when it could not find out
+
+**The defect, as the W2-03 tester measured it.** The route guards accept only slugs the catalogue tree
+knows. When `GET /api/catalog/departments` is unhealthy that tree is `core/navigation/navigation.data.ts`,
+a frozen copy of the seed, and a category that exists live and not in that copy answered **404 with
+`<meta name="robots" content="noindex">`** — under a 500, a destroyed connection, a 12 s answer past the
+2 s timeout, and a `200 []`. Harmless only because nothing can add a category yet; W1-12 (ADM-11) is in
+flight in `worktrees/sd-rename` right now, and it makes every admin-added category one API blip away from
+being dropped from Google.
+
+**The fix is a third answer, named in the code.** `tree$` now carries `CatalogTree { departments, source }`
+and the guards answer `known` / `missing` / `unconfirmed`:
+
+- `known` — the tree in hand has the slugs. Listing, as before.
+- `missing` — the **live** tree was in hand and does not have them. A real 404 with `noindex`
+  (`isMissingCategory`, which replaces `isKnownDepartment` on the not-found routes — that is the actual
+  bug: the old guard was allowed to say "gone" having read the frozen copy).
+- `unconfirmed` — the tree was the fallback, so the catalogue was never asked. A new
+  `CatalogUnavailablePage` answers **503 with `Retry-After: 120`** and **no `noindex`**
+  (`isUnconfirmedCatalogue`). A crawler retries a 503 and keeps the URL; it drops a 404.
+
+`unknown(tree)` is one line and it is the whole fix: a live tree that lacks a slug has settled the
+question, the fallback was never asked it. The two 503s in the storefront (this and the product page's)
+now share one `serviceUnavailable()` and one `RETRY_AFTER_SECONDS`, and **both remove a `robots` tag
+rather than setting one** — the product page used to set `noindex` on its 503, which is the same mistake
+one page over. `RobotsMeta` is the one place that knows the word, shaped like `CanonicalLink`, and
+`NotFoundPage` now clears on destroy: it was the only setter without a matching clear, so "Back to the
+home page" from a 404 left the home page carrying `noindex`.
+
+**`Retry-After: 120`, and what it is based on.** Nothing in the storefront caches a failure — a root
+injector is per SSR request, so the next render re-asks the feed, and each attempt is bounded by its own
+timeout — so there is no backoff or TTL to read a figure off. It says how long it is worth *not* asking:
+an API container restart, or a loaded VPS. Same figure as the product page, so a crawler meets one value
+across an outage. The tester examined this and agreed, including that it is correctly absent on a 404.
+
+**Browser half.** A 503 exists only during SSR. On a client-side navigation the page itself carries it:
+it says what happened, keeps the header and footer, lists the seeded departments and offers "Try again",
+which re-requests the address (`PageReload`) rather than repainting over a response that still says 503.
+
+**Only a tree the render would route on is handed to the browser, and the operator order is the point.**
+`tap(give)` sat above `timeout` and above the vetting, so a `200 []` was handed over before anything
+judged it; the browser found a non-null value in `TransferState` and **made no request at all**, so the
+page stayed on the 503 for the rest of the session. A 500, a destroyed connection and a timeout all
+recovered on hydration, because those hand over nothing. Measured both ways per mode: with `tap` above,
+`empty` and `garbage` keep `"catalog:departments"` in `#ng-state` and never reach "Coats" while `status`
+passes; with it below and guarded on `source === 'live'`, all five recover.
+
+**Tester round 1 — three Majors, six Minors, and the two design corrections worth remembering.**
+
+1. **The single-segment 503 route is gone, and with it a deny-list that could never be right.** The first
+   version also answered 503 for `/:department`, guarded by a hand-written `NON_CATALOGUE_PATHS` plus a
+   slug-shape rule to keep `/robots.txt` out of it (a 5xx on `robots.txt` disallows the whole site). The
+   tester measured 25+ addresses that 503'd where `main` answers 302 — `/checkout`, `/login`, `/en`,
+   `/wp-admin`, `/assets/x` — and the decisive point: a deny-list protects what exists today and nothing
+   added tomorrow. **A department-level 503 wants an allow-list and belongs in W1-12**, where the thing
+   that creates departments lives. Recorded, not built.
+2. **The 503 route now requires a department the tree already holds** — the same allow-list shape, one
+   level down, derived from the catalogue so there is nothing to maintain. Dropping the single-segment
+   route alone was *not* sufficient, and that is worth stating: `canMatch` on `:department/:category`
+   matches any two segments, so measured on the unguarded build `/api/catalog/departments`,
+   `/api/catalog/products`, `/en/women`, `/si/women`, `/assets/x`, `/static/x`, `/account/orders`,
+   `/bag/checkout` and `/wp-admin/setup-config.php` **all answered 503**. `/api/...` is the sharp one:
+   `server.ts` does not proxy `/api` (Caddy does), so a direct container hit or an uptime monitor would
+   have been handed a 503 HTML page by the storefront. Nine of those are now regression tests.
+3. **The new page's own links were 20 px tap targets and the assertion was scoped so it could not see
+   them.** `undersized(page, '.unavailable__actions .btn')` measured the two buttons; the five department
+   links were `A.link` at 57x20, 33x20, 33x20, 96x20 and 32x20. The selector is now
+   `.unavailable a, .unavailable button` and the links take the footer's shape
+   (`min-height: var(--tap)` on a flex box). Exactly MEMORY's own lesson: an assertion that asserts what
+   the component does cannot report what the component got wrong.
+
+**A shared-machine hazard, measured rather than theorised.** This file's pair was first written on 4430.
+Another session then started the **admin** application on 4430; its dev server answered `/healthz` with
+200, Playwright's `reuseExistingServer` reused it, and the suite ran against the admin panel — the
+touch-target test failed reporting "Try again" missing from a page that was never the storefront. The
+pair moved to **4432/4433** and is the only one in the config with `reuseExistingServer: false`, so a
+stranger on the port is a bind error naming it rather than a silent pass. **The other five pairs still
+carry `reuseExistingServer: !process.env['CI']` and have the same hazard** (the config holds twelve
+`webServer` entries, so six pairs; ten of the twelve entries keep `!CI`). Doc 14 already says a port
+that answers is not proof that it is yours; this is what it looks like.
+
+**Numbers:** frontend 21 / **502** (+42) / 131; Playwright **256** (+43); backend **772 unit**, 0
+warnings. Lint clean. Backend untouched. Rebased onto `origin/main` (`de78aaf`).
+
+**Pre-existing, not mine, and it fails `dotnet test`** (filed as #74): three `ClientAssetImportTests`
+never call `sqlServer.SkipIfUnavailable()`, so without `TEST_SQL_CONNECTION` they open
+`new SqlConnection("")` — the machine's **default** SQL Server instance, which doc 06 explicitly forbids
+pointing tests at. One line each; left alone because it is W1-13's test file.
+
+**Also found, deliberately unchanged:** there is no `robots.txt` and no `sitemap.xml` in the storefront at
+all (GLB-11 territory); `**` still redirects an unknown single segment home on a *live* tree, which is
+#28; the homepage hero-muted flake is #75; and the storefront's heading order (`H3 H3 H3 H2 H1`, from the
+mega-menu markup, identical on the home and 404 pages) is #76.
+
 ### 2026-10-01 (8) — W1-14 fix round 1: the guard the whole hero decision rests on could not fail
 
 The tester re-derived the arithmetic independently and matched it (31.64% at 768–1440, **25.78%** at
