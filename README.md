@@ -197,6 +197,12 @@ The five media-dependent homepage sections are switched on only once they have m
 a picture that does not fit the slot its filename claims keeps its section off until a different
 one is delivered (`ClientAssetHolds`).
 
+> **An interrupted run leaves one file set behind.** Ctrl+C rolls every row back and deletes the files
+> of every upload that had finished, but the one that was still running when the interrupt arrived
+> cannot be identified without sweeping the asset table — and an admin upload on another connection
+> would be swept up with it, so it is left alone. At most one asset's worth, with no row pointing at
+> it. The report says so.
+
 > **Re-running repairs rows, not files.** The library deduplicates by checksum, so an import run
 > against a database that still has its rows reports `[AlreadyPresent]` and writes nothing —
 > including when the media volume underneath has been lost or wiped, in which case the storefront

@@ -19,7 +19,7 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 - **Next:** **W2-01 (homepage, HOME-01..10) PASSED the tester** and is pushed to `origin feature/W2-01-homepage` awaiting a PR: content schema, seeder, read-only content API, newsletter signup endpoint and the page itself. ADM-17's admin screens are **not** in it. Issue #37 (the homepage cache rounds schedule boundaries to its five-minute TTL) is filed, not built.
 - **Next:** **W1-02 (catalogue foundation — schema + demo seeder + the read-only storefront catalogue API) is in the developer↔tester loop** on `feature/W1-02-catalogue-foundation` (worktree `worktrees/sd-catalog`): tester round 1 failed it on 3 major + 5 minor, round 2 on 2 major + 4 minor, all fixed; not pushed, not merged, not Done. Its ADM-11 admin screens are a separate task, **W1-12 (TODO)** — W1-02 no longer means "categories (create/edit/reorder)". W1-08 (Users & Roles CRUD), W1-09 (audit log viewer), W1-10 (2FA enrollment), W1-11 (route guard, SecurityStamp revalidation, forwarded-headers regression test) are the W1-01 follow-ups, tracked but not started; the user/architect should decide priority between those and W1-03 once W1-02 passes.
 - **Client progress page:** `client-progress/` is tracked in this repository (moved 2026-09-22, W0-18) and publishes from whichever machine holds the DPAPI-encrypted FTP credential — the `SCIENTER\sachithi` PC, where it was published on 23 and 24 Sep. An earlier note here said it could not be done from "this machine"; that was written from the second machine and is not a property of the repository.
-- **Next:** **W1-13 (the client's real photographs, video and logo) is back with the tester after fix round 2** on `feature/W1-13-client-assets` (worktree `worktrees/sd-assets`): a repeatable import verb on the API, three of the five media-dependent homepage sections switched on, and a HOME-01/02/05/06 fix for blocks sized by `aspect-ratio`. **The hero and the activewear feature are held off by their artwork's checksum** — the delivered video is portrait in a 16:9 frame and the delivered activewear picture is a linen flat-lay — and each releases itself when the owner delivers a replacement. Not pushed, not merged, not Done. **The logo is imported but not wired in** — the three delivered files are opaque JPEGs named `.png`, the "light" wordmark is the same mockup as the dark one, and the mark reads COLOMBO WARDROBE rather than Spencer Denim. That needs a decision from the owner and flat artwork, not code.
+- **Next:** **W1-13 (the client's real photographs, video and logo) is back with the tester after fix round 3** on `feature/W1-13-client-assets` (worktree `worktrees/sd-assets`): a repeatable import verb on the API, three of the five media-dependent homepage sections switched on, and a HOME-01/02/05/06 fix for blocks sized by `aspect-ratio`. **The hero and the activewear feature are held off by their artwork's checksum** — the delivered video is portrait in a 16:9 frame and the delivered activewear picture is a linen flat-lay — and each releases itself when the owner delivers a replacement. Not pushed, not merged, not Done. **The logo is imported but not wired in** — the three delivered files are opaque JPEGs named `.png`, the "light" wordmark is the same mockup as the dark one, and the mark reads COLOMBO WARDROBE rather than Spencer Denim. That needs a decision from the owner and flat artwork, not code.
 - **Open assumptions:** A1 (Trending Categories / Best Sellers homepage blocks stay removed per signed proposal), A2 (video MP4 ≤ 50 MB, no server conversion).
 
 ---
@@ -44,6 +44,59 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 ---
 
 ## Session log
+
+### 2026-10-01 (6) — W1-13 fix round 3: the rollback was deleting somebody else's files
+
+Round 2 is verified — the blocker is gone, all four duplicate corners hold, the `--replace` corner my
+own regression test found is properly fixed, plan and run agree line for line, the poster repro is back
+to exactly 596 files and all five exit codes behave. One new major, introduced by round 2's own fix.
+
+**MAJOR: the discard list was "every asset row now, minus a snapshot from the start of the attempt",
+and that is a sentence about the whole table, not about this run.** It is right about this attempt's
+uncommitted inserts and wrong about everybody else's: a row another connection commits mid-run is
+committed and was not in the snapshot, so a failing import deleted a stranger's file. The tester
+measured it — an ADM-18-shaped upload 16 s into a failing run, file deleted, row intact, and the note
+saying **90** assets where the run had created 89. **The end state is the worst one available**: the
+row survives, the bytes do not, there is nothing to restore from and nothing reports it — an admin
+finds a broken image days later beside an import that said FAILED for an unrelated reason.
+
+My reason for leaving the outcome list was sound (the poster genuinely never surfaces as a DTO, which
+was round 2's finding) and the replacement was not: it bought "cannot miss an asset" at the price of
+"can delete someone else's". **A missed file is litter; a deleted file is data loss**, so the trade is
+never worth making. The list is built from outcomes again — nothing the pipeline did not hand *this
+attempt* can enter it — and the one asset outcomes cannot see is added at the single call site that
+creates one, after asking whether the library already holds those bytes. That question has to be asked
+**before** the upload: afterwards the two cases are indistinguishable, and deleting a deduplicated
+poster would be deleting the file somebody else's row points at. Proven red with the tester's own
+sentence: *the other connection's file was deleted by this import's rollback*.
+
+**And the honest consequence, which the new test pins rather than hides.** An outcome list cannot know
+about an upload that was still running when a Ctrl+C arrived, so an interrupted run leaves that one
+asset's files behind. It is left there on purpose: the only way to find them is to sweep the asset
+table for `Processing` rows, and the admin upload path has **no transaction** — it commits a
+`Processing` row and flips it to `Ready` afterwards — so a concurrent upload would be swept up with
+it. The report says so in its own note, and the test asserts the bound (**at most one** asset's worth,
+with no row pointing at it) instead of asserting a round number that was never true.
+
+**MINOR: a dry run said `0 refused` and exited 0 for a drop whose real run fails.** The boundary was
+drawn honestly in the code and nowhere the operator reads. A 12-byte `wordmark-light.png` planned green
+and then failed the real run at exit 2 — and the documented workflow is dry-run first, so a green plan
+followed by a hard FAILED is the one thing `--dry-run` exists to prevent. Outcomes are labelled
+**`Planned`** in a dry run, the summary says "90 planned", and a footer says the plan does not open the
+files, so `0 refused` means **not checked**, not none. Verified on his exact scenario.
+
+**Ctrl+C is still unverified, and is staying that way until somebody presses it.** He got further than
+I did — `AttachConsole`, `SetConsoleCtrlHandler` and `GenerateConsoleCtrlEvent` all returned success
+against the import's own console and the run still finished normally. Neither of us will guess whether
+`cmd /c` swallowed it, the harness is wrong, or the wiring does not fire. The downstream path is
+covered by the decorator test; the three lines in `Program.cs` are not. **The owner should press it
+once at a real terminal before merge** — and finding 1 is the argument for doing so rather than taking
+it on trust, because it showed the discard step is exactly where an over-delete hides.
+
+**Numbers:** backend **736 unit + 369 integration** (was 736 + 368), 0 skipped; frontend 19 / 451 /
+131; Playwright 194. Lint clean, Release build clean with 0 warnings.
+
+**Next:** back to the tester.
 
 ### 2026-10-01 (5) — W1-13 fix round 2: the refactor dropped an invariant the old key had by accident
 

@@ -883,7 +883,7 @@ public sealed class ClientAssetImportTests(SqlServerDatabaseFixture sqlServer)
             withPlaceholderFiles: false,
             Token,
             holds: null,
-            decorateStorage: inner => new InterruptAfter(inner, writes: 12, interrupt));
+            decorateStorage: inner => new OnNthWrite(inner, writes: 12, () => interrupt.CancelAsync()));
 
         await world.DropTheUsualAsync(TheDeliveredShapes, Token);
 
@@ -896,17 +896,124 @@ public sealed class ClientAssetImportTests(SqlServerDatabaseFixture sqlServer)
         Assert.False(report.Succeeded);
         Assert.Contains(report.Failures, failure => failure.Contains("cancelled", StringComparison.OrdinalIgnoreCase));
 
-        // Files really had been written before the interrupt, so this is not a vacuous assertion.
+        // Not one row survives.
         Assert.Equal(before, await CountsAsync(world));
-        Assert.Equal(filesBefore, world.PublicFiles());
+
+        // Every *completed* upload's files are gone. The one that was still in flight when the token
+        // was cancelled may leave its own behind, and deliberately does: the only way to find it would
+        // be to sweep the asset table for Processing rows, and the admin upload path has no transaction
+        // — it commits a Processing row and flips it to Ready afterwards — so a concurrent upload would
+        // be swept up with it. A missed file is litter with no row pointing at it; a deleted file is
+        // somebody else's data. At most one asset's worth, and this asserts that bound rather than
+        // waving at it.
+        var leftover = world.PublicFiles().Except(filesBefore, StringComparer.Ordinal).ToList();
+        // public/originals/<id>.jpg and public/renditions/<id>/card.webp are the same asset.
+        var strandedAssets = leftover
+            .Select(key => Path.GetFileNameWithoutExtension(key.Split('/')[2]))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        Assert.True(
+            strandedAssets.Count <= 1,
+            $"an interrupt should strand at most the one upload in flight, not {strandedAssets.Count}: "
+                + string.Join(", ", leftover));
+
+        Assert.Contains(
+            report.Notes,
+            note => note.Contains("part way through", StringComparison.Ordinal));
 
         var sections = await EnabledAsync(world, ArtworkSections);
         Assert.All(sections, state => Assert.False(state.IsEnabled, state.Type.ToString()));
     }
 
-    /// <summary>Storage that pulls the plug once a given number of files have been written.</summary>
-    private sealed class InterruptAfter(IFileStorage inner, int writes, CancellationTokenSource interrupt)
-        : IFileStorage
+
+    /// <summary>
+    /// A rolled-back run does not touch a file somebody else wrote while it was running.
+    /// <para>
+    /// The discard list used to be "every asset row now, minus a snapshot from the start of the
+    /// attempt". That is right about this attempt's own uncommitted inserts and wrong about everybody
+    /// else's: a row another connection commits mid-run is committed and was not in the snapshot, so a
+    /// failing import deleted a stranger's file. <b>The end state was the worst available</b> — the row
+    /// survives, the bytes do not, there is nothing to restore from and nothing reports it; an admin
+    /// finds a broken image days later next to an import that said FAILED for an unrelated reason.
+    /// </para>
+    /// <para>
+    /// A missed file is litter. A deleted file is data loss. The list is built from what the pipeline
+    /// told this attempt it created, so nothing else can enter it.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task A_rollback_leaves_alone_a_file_another_connection_wrote_while_it_ran()
+    {
+        var strangerId = Guid.NewGuid();
+        var strangerKey = MediaStorageKey.ForOriginal(MediaVisibility.Public, strangerId, ".jpg");
+        var strangerBytes = TestImages.UniqueJpeg(64, 64);
+
+        ClientAssetWorld? world = null;
+
+        // Exactly what an ADM-18 upload does from another connection: the bytes on the volume, then a
+        // committed row naming them. Fired part way through the import rather than on a timer.
+        async Task Stranger()
+        {
+            var path = Path.Combine(world!.PublicRoot, strangerKey.Replace('/', Path.DirectorySeparatorChar));
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            await File.WriteAllBytesAsync(path, strangerBytes, Token);
+
+            await world.OnAnotherConnectionAsync(async dbContext =>
+            {
+                dbContext.MediaAssets.Add(new MediaAsset
+                {
+                    PublicId = strangerId,
+                    MediaType = MediaAssetType.Image,
+                    Visibility = MediaVisibility.Public,
+                    Status = MediaAssetStatus.Ready,
+                    OriginalFileName = "somebody-elses-upload.jpg",
+                    StorageKey = strangerKey,
+                    ContentType = "image/jpeg",
+                    SizeBytes = strangerBytes.LongLength,
+                    Checksum = SHA256.HashData(strangerBytes),
+                    AltText = "An upload that has nothing to do with this import",
+                });
+
+                await dbContext.SaveChangesAsync(Token);
+            });
+        }
+
+        world = await ClientAssetWorld.CreateAsync(
+            sqlServer.ConnectionString,
+            withPlaceholderFiles: false,
+            Token,
+            holds: null,
+            decorateStorage: inner => new OnNthWrite(inner, writes: 12, Stranger));
+
+        await using (world)
+        {
+            await world.DropTheUsualAsync(TheDeliveredShapes, Token);
+
+            // The run fails late, after the stranger has arrived.
+            await world.Drop("social", "social-1.jpg.jpg", "#!/bin/sh echo not an image"u8.ToArray(), Token);
+
+            var report = await world.ImportAsync(Token);
+            Assert.False(report.Succeeded);
+
+            var path = Path.Combine(world.PublicRoot, strangerKey.Replace('/', Path.DirectorySeparatorChar));
+
+            // Their bytes and their row both survive, and they still agree with each other.
+            Assert.True(File.Exists(path), "the other connection's file was deleted by this import's rollback");
+            Assert.Equal(strangerBytes, await File.ReadAllBytesAsync(path, Token));
+
+            await using var scope = world.CreateScope();
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            Assert.True(await dbContext.MediaAssets.AnyAsync(asset => asset.PublicId == strangerId, Token));
+
+            // And the import still cleaned up after itself: nothing of its own is left behind.
+            var mine = world.PublicFiles().Where(key => !key.Equals(strangerKey, StringComparison.Ordinal)).ToList();
+            Assert.Empty(mine);
+        }
+    }
+
+    /// <summary>Storage that runs something once a given number of files have been written.</summary>
+    private sealed class OnNthWrite(IFileStorage inner, int writes, Func<Task> action) : IFileStorage
     {
         private int _written;
 
@@ -921,7 +1028,7 @@ public sealed class ClientAssetImportTests(SqlServerDatabaseFixture sqlServer)
 
             if (Interlocked.Increment(ref _written) == writes)
             {
-                await interrupt.CancelAsync();
+                await action();
             }
 
             return result;

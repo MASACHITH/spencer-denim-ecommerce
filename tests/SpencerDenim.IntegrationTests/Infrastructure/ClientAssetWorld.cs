@@ -233,6 +233,18 @@ public sealed class ClientAssetWorld : IAsyncDisposable
     /// <summary>A scope for reading the result back out of the database.</summary>
     public AsyncServiceScope CreateScope() => _services.CreateAsyncScope();
 
+    /// <summary>
+    /// Runs something on a <b>second connection</b>, outside whatever transaction the import has open —
+    /// which is what another admin uploading at the same moment looks like from the import's side.
+    /// </summary>
+    public async Task OnAnotherConnectionAsync(Func<AppDbContext, Task> work)
+    {
+        ArgumentNullException.ThrowIfNull(work);
+
+        await using var scope = _services.CreateAsyncScope();
+        await work(scope.ServiceProvider.GetRequiredService<AppDbContext>());
+    }
+
     /// <summary>Every file on the public volume, as storage keys.</summary>
     public IReadOnlyList<string> PublicFiles() =>
         Directory.Exists(PublicRoot)

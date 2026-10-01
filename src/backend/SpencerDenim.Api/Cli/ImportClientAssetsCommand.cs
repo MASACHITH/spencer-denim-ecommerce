@@ -129,7 +129,7 @@ internal static class ImportClientAssetsCommand
                 Console.WriteLine(
                     string.Create(
                         CultureInfo.InvariantCulture,
-                        $"  [{entry.Outcome,-14}] {entry.FileName}  ->  {entry.Detail}"));
+                        $"  [{Label(entry.Outcome, dryRun),-14}] {entry.FileName}  ->  {entry.Detail}"));
             }
         }
 
@@ -189,7 +189,7 @@ internal static class ImportClientAssetsCommand
         Console.WriteLine(
             string.Create(
                 CultureInfo.InvariantCulture,
-                $"{report.Count(ClientAssetOutcome.Imported)} imported, "
+                $"{report.Count(ClientAssetOutcome.Imported)} {(dryRun ? "planned" : "imported")}, "
                 + $"{report.Count(ClientAssetOutcome.Replaced)} replaced, "
                 + $"{report.Count(ClientAssetOutcome.AlreadyPresent)} already present, "
                 + $"{report.Count(ClientAssetOutcome.SamePicture)} the same picture as another file, "
@@ -197,6 +197,23 @@ internal static class ImportClientAssetsCommand
                 + $"{report.Count(ClientAssetOutcome.NotInContract)} not in the contract, "
                 + $"{report.Count(ClientAssetOutcome.Refused)} refused, "
                 + $"{report.Count(ClientAssetOutcome.Unmappable)} unmappable."));
+
+        if (dryRun)
+        {
+            // Said here and not only in the code: the operator reads this and nothing else, and
+            // "0 refused" above is a count of refusals *seen*, which on this path is none because none
+            // were looked for. A plan resolves where every file would go; deciding whether a file is
+            // acceptable means opening and decoding it, which a plan does not do.
+            Console.WriteLine();
+            Console.WriteLine(
+                "A dry run does not open the files. It resolves names and identity (by checksum) and");
+            Console.WriteLine(
+                "says where each one would land — it does NOT check signatures, sizes or video codecs,");
+            Console.WriteLine(
+                "so '0 refused' above means NOT CHECKED, not none. The real run can still refuse a file");
+            Console.WriteLine(
+                "and roll the whole import back.");
+        }
 
         if (report.Succeeded)
         {
@@ -213,6 +230,15 @@ internal static class ImportClientAssetsCommand
             Console.Error.WriteLine($"  - {failure}");
         }
     }
+
+    /// <summary>
+    /// What to call an outcome on screen. A dry run has not imported anything, so saying "Imported"
+    /// next to ninety files it never opened is a promise it is in no position to make.
+    /// </summary>
+    private static string Label(ClientAssetOutcome outcome, bool dryRun) =>
+        dryRun && outcome == ClientAssetOutcome.Imported
+            ? "Planned"
+            : outcome.ToString();
 
     private static void Usage()
     {

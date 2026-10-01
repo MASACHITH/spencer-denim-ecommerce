@@ -128,19 +128,6 @@ public sealed partial class ClientAssetImporter(
     private readonly HashSet<int> _placeholders = [];
 
     /// <summary>
-    /// Every <c>media.MediaAssets</c> id that existed when the attempt began.
-    /// <para>
-    /// A rollback has to take the attempt's files back out, and the only sound way to know which files
-    /// those are is to ask which rows are new — not to remember what the importer thinks it uploaded.
-    /// <c>UploadVideoAsync</c> stores the poster as a second asset that never surfaces as its own
-    /// outcome, so a list built from the outcomes missed it and left five orphan files behind a run the
-    /// report called clean. The diff cannot miss anything, and it cannot delete the files of an asset
-    /// that was already there, which a checksum-based guess could.
-    /// </para>
-    /// </summary>
-    private readonly HashSet<int> _assetsBefore = [];
-
-    /// <summary>
     /// Stand-in ids for files a dry run would store, one per distinct checksum.
     /// <para>
     /// Negative, so they can never collide with a real identity column. They exist so a dry run runs the
@@ -195,7 +182,6 @@ public sealed partial class ClientAssetImporter(
         _productMedia.Clear();
         _usages.Clear();
         _placeholders.Clear();
-        _assetsBefore.Clear();
         _plannedAssets.Clear();
         _dryRun = request.DryRun;
 
@@ -211,8 +197,6 @@ public sealed partial class ClientAssetImporter(
 
         await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
 
-        IReadOnlyList<CreatedFile> created;
-
         try
         {
             await WalkAsync(request, run, cancellationToken);
@@ -226,9 +210,6 @@ public sealed partial class ClientAssetImporter(
                 return run.ToReport();
             }
 
-            // Read the new rows *before* rolling them away: after the rollback there is nothing left to
-            // ask which files this attempt wrote.
-            created = await CreatedFilesAsync(cancellationToken);
             await transaction.RollbackAsync(cancellationToken);
         }
         catch (OperationCanceledException)
@@ -236,26 +217,30 @@ public sealed partial class ClientAssetImporter(
             // Ctrl+C. The rows would go anyway when the transaction is disposed, but the files would
             // not: every byte written before the interrupt would stay with no row to find it by. None
             // of this may use the cancelled token.
-            var interrupted = await CreatedFilesAsync(CancellationToken.None);
             await transaction.RollbackAsync(CancellationToken.None);
-            await DiscardAsync(interrupted, run, CancellationToken.None);
+            await DiscardAsync(run, CancellationToken.None);
 
             run.Cancel();
+            run.Note(
+                "One upload may have been part way through when the interrupt arrived; its files are "
+                + "left on the volume, with no row anywhere pointing at them. They are not cleaned up "
+                + "because the only way to find them is to sweep the asset table, and an upload running "
+                + "on another connection at the same moment would be swept up with it — a file nobody "
+                + "references is litter, a file somebody else references is data loss.");
             LogFinished(logger, run.Entries.Count, run.Failures.Count, request.DryRun);
             return run.ToReport();
         }
         catch (Exception)
         {
-            var thrown = await CreatedFilesAsync(CancellationToken.None);
             await transaction.RollbackAsync(CancellationToken.None);
-            await DiscardAsync(thrown, run, CancellationToken.None);
+            await DiscardAsync(run, CancellationToken.None);
             throw;
         }
 
         // Rolled back, so not one row survives. The files do, because storage is not transactional —
         // they are taken back out here, which is the same compensating delete the upload pipeline makes
         // when a rendition fails half way through a set.
-        await DiscardAsync(created, run, cancellationToken);
+        await DiscardAsync(run, cancellationToken);
 
         LogFinished(logger, run.Entries.Count, run.Failures.Count, request.DryRun);
         return run.ToReport();
@@ -644,6 +629,12 @@ public sealed partial class ClientAssetImporter(
             return;
         }
 
+        // Asked *before* the upload, because afterwards the two cases are indistinguishable: the poster
+        // is stored inside UploadVideoAsync and never surfaces as its own outcome, so if it turns out to
+        // be a duplicate of something already in the library there is no later signal saying so — and
+        // deleting that file on a rollback would be deleting somebody else's.
+        var posterExisted = await IsAlreadyStoredAsync(posterPath, MediaAssetType.Image, cancellationToken);
+
         await using var video = File.OpenRead(videoPath);
         await using var poster = File.OpenRead(posterPath);
 
@@ -676,6 +667,23 @@ public sealed partial class ClientAssetImporter(
         };
 
         run.NoteHold(holds.For(dto.Checksum));
+
+        if (outcome is MediaUploadOutcome.Created)
+        {
+            run.Created(dto.PublicId, dto.StorageKey);
+
+            // The only asset an outcome-derived list cannot see. Its key is read now, while the row is
+            // still there, so the rollback needs no query at all.
+            if (!posterExisted && dto.PosterPublicId is { } createdPosterId)
+            {
+                var posterKey = await dbContext.MediaAssets
+                    .Where(asset => asset.PublicId == createdPosterId)
+                    .Select(asset => asset.StorageKey)
+                    .FirstAsync(cancellationToken);
+
+                run.Created(createdPosterId, posterKey);
+            }
+        }
 
         var videoAssetId = await AssetIdAsync(dto.PublicId, cancellationToken);
         var posterAssetId = dto.PosterPublicId is { } posterPublicId
@@ -1430,16 +1438,6 @@ public sealed partial class ClientAssetImporter(
         _productMedia.AddRange(await dbContext.ProductMedia.ToListAsync(cancellationToken));
         _usages.AddRange(await dbContext.MediaUsages.ToListAsync(cancellationToken));
 
-        // Soft-deleted rows included: an asset this attempt did not create must never have its files
-        // deleted, and the filtered query would have hidden one.
-        foreach (var id in await dbContext.MediaAssets
-            .IgnoreQueryFilters()
-            .Select(asset => asset.Id)
-            .ToListAsync(cancellationToken))
-        {
-            _assetsBefore.Add(id);
-        }
-
         var placeholders = await dbContext.MediaAssets
             .Where(asset => asset.StorageKey.StartsWith(DemoMediaPlaceholders.StorageKeyPrefix))
             .Select(asset => asset.Id)
@@ -1478,6 +1476,7 @@ public sealed partial class ClientAssetImporter(
         {
             case MediaUploadOutcome.Created created:
                 run.NoteHold(holds.For(created.Asset.Checksum));
+                run.Created(created.Asset.PublicId, created.Asset.StorageKey);
                 return new StoredAsset(await AssetIdAsync(created.Asset.PublicId, cancellationToken), false, null);
 
             case MediaUploadOutcome.Duplicate duplicate:
@@ -1491,6 +1490,37 @@ public sealed partial class ClientAssetImporter(
                 throw new InvalidOperationException("Unknown upload outcome.");
         }
     }
+
+    /// <summary>
+    /// Whether the library already holds these exact bytes as a live, published asset — which is the
+    /// same question <c>IMediaService</c>'s deduplication asks, over the same SHA-256 of the same file.
+    /// </summary>
+    private async Task<bool> IsAlreadyStoredAsync(
+        string path,
+        MediaAssetType mediaType,
+        CancellationToken cancellationToken) =>
+        await FindByChecksumAsync(await ChecksumAsync(path, cancellationToken), mediaType, cancellationToken)
+            is not null;
+
+    private static async Task<byte[]> ChecksumAsync(string path, CancellationToken cancellationToken)
+    {
+        await using var content = File.OpenRead(path);
+        return await SHA256.HashDataAsync(content, cancellationToken);
+    }
+
+    private async Task<int?> FindByChecksumAsync(
+        byte[] checksum,
+        MediaAssetType mediaType,
+        CancellationToken cancellationToken) =>
+        await dbContext.MediaAssets
+            .AsNoTracking()
+            .Where(asset => asset.Checksum == checksum
+                && asset.MediaType == mediaType
+                && asset.Visibility == MediaVisibility.Public
+                && asset.Status == MediaAssetStatus.Ready)
+            .OrderBy(asset => asset.Id)
+            .Select(asset => (int?)asset.Id)
+            .FirstOrDefaultAsync(cancellationToken);
 
     /// <summary>
     /// What a dry run would end up with for one file: the asset already in the library that carries
@@ -1514,24 +1544,11 @@ public sealed partial class ClientAssetImporter(
         Run run,
         CancellationToken cancellationToken)
     {
-        byte[] checksum;
-
-        await using (var content = File.OpenRead(path))
-        {
-            checksum = await SHA256.HashDataAsync(content, cancellationToken);
-        }
+        var checksum = await ChecksumAsync(path, cancellationToken);
 
         run.NoteHold(holds.For(Convert.ToHexStringLower(checksum)));
 
-        var existing = await dbContext.MediaAssets
-            .AsNoTracking()
-            .Where(asset => asset.Checksum == checksum
-                && asset.MediaType == mediaType
-                && asset.Visibility == MediaVisibility.Public
-                && asset.Status == MediaAssetStatus.Ready)
-            .OrderBy(asset => asset.Id)
-            .Select(asset => (int?)asset.Id)
-            .FirstOrDefaultAsync(cancellationToken);
+        var existing = await FindByChecksumAsync(checksum, mediaType, cancellationToken);
 
         if (existing is { } assetId)
         {
@@ -1551,47 +1568,32 @@ public sealed partial class ClientAssetImporter(
     }
 
     /// <summary>
-    /// The assets this attempt added, as the files they own. Read while the transaction is still open,
-    /// because after the rollback there is nothing left to ask.
+    /// Records a file this attempt's upload created, so a rollback can take it back out.
+    /// <para>
+    /// <b>Only what the pipeline told <i>this attempt</i> it created ever goes in here.</b> The
+    /// previous version asked the database instead — every asset row now, minus a snapshot taken at the
+    /// start — which is correct about this attempt's own uncommitted inserts and wrong about everybody
+    /// else's: a row another connection committed while the run was in flight is committed and was not
+    /// in the snapshot, so a failed import deleted a stranger's file and left their row pointing at
+    /// nothing. That end state is the worst one available — the row survives, the bytes do not, there
+    /// is nothing to restore from and nothing reports it.
+    /// </para>
+    /// <para>
+    /// A missed file is litter; a deleted file is data loss. So the set is built from outcomes, which
+    /// cannot name anything this attempt did not create, and the one asset the outcomes genuinely
+    /// cannot see — a video's poster, stored inside <c>UploadVideoAsync</c> — is added deliberately at
+    /// the one call site that makes one, and only after checking that it was not already in the library.
+    /// </para>
     /// </summary>
-    private async Task<IReadOnlyList<CreatedFile>> CreatedFilesAsync(CancellationToken cancellationToken)
-    {
-        if (_dryRun)
-        {
-            return [];
-        }
-
-        try
-        {
-            var all = await dbContext.MediaAssets
-                .IgnoreQueryFilters()
-                .AsNoTracking()
-                .Select(asset => new { asset.Id, asset.PublicId, asset.StorageKey })
-                .ToListAsync(cancellationToken);
-
-            return all
-                .Where(asset => !_assetsBefore.Contains(asset.Id))
-                .Select(asset => new CreatedFile(asset.PublicId, asset.StorageKey))
-                .ToList();
-        }
-        catch (Exception exception) when (exception is DbUpdateException or InvalidOperationException)
-        {
-            // The connection is already in a state where this cannot be asked. Losing the list means
-            // leaving files behind, which is litter; failing here would lose the real failure instead.
-            return [];
-        }
-    }
-
     /// <summary>
     /// Takes back out the files of every asset this attempt created, after the transaction rolled its
     /// rows away. Storage is not transactional, so without this a failed run leaves a few hundred files
     /// nothing will ever reference and nothing will ever purge.
     /// </summary>
-    private async Task DiscardAsync(
-        IReadOnlyList<CreatedFile> created,
-        Run run,
-        CancellationToken cancellationToken)
+    private async Task DiscardAsync(Run run, CancellationToken cancellationToken)
     {
+        var created = run.CreatedFiles;
+
         if (created.Count == 0)
         {
             return;
@@ -1694,6 +1696,7 @@ public sealed partial class ClientAssetImporter(
         private readonly HashSet<string> _touched = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<HomeSectionType, string> _holds = [];
         private readonly List<(HomeSection Section, string Label)> _pending = [];
+        private readonly List<CreatedFile> _created = [];
         public bool DryRun { get; } = request.DryRun;
 
         public bool Replace { get; } = request.Replace;
@@ -1703,6 +1706,12 @@ public sealed partial class ClientAssetImporter(
         public List<string> Failures { get; } = [];
 
         public List<string> Notes { get; } = [];
+
+        /// <summary>
+        /// The files this attempt's own uploads created. Nothing another connection wrote can reach this
+        /// list, which is the whole point of building it from outcomes rather than from the table.
+        /// </summary>
+        public List<CreatedFile> CreatedFiles => _created;
 
         /// <summary>Sections to consider switching on, once the run is known to have succeeded.</summary>
         public List<(HomeSection Section, string Label)> Pending => _pending;
@@ -1723,6 +1732,8 @@ public sealed partial class ClientAssetImporter(
         public void Fail(string reason) => Failures.Add(reason);
 
         public void Note(string note) => Notes.Add(note);
+
+        public void Created(Guid publicId, string storageKey) => _created.Add(new CreatedFile(publicId, storageKey));
 
         public void Touch(string fileName) => _touched.Add(fileName);
 
