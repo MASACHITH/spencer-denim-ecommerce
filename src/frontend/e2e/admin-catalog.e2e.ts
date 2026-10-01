@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-import { adminURL } from '../playwright.config';
+import { adminURL, adminWorktreeRoot } from '../playwright.config';
 import { edgesWithoutRing, horizontalOverflow, undersized } from './support/measure';
 
 /**
@@ -27,6 +27,25 @@ const WIDTHS = [320, 375, 390, 768, 1024, 1280, 1440, 1920];
  * set through `page.request`, which shares the page's cookie jar, so the reset reaches the same state the
  * page will.
  */
+/**
+ * Before anything else: is this our own server?
+ *
+ * The port is derived from the worktree path, which makes a collision unlikely rather than impossible —
+ * and with `reuseExistingServer` a collision means another worktree's server answering, serving another
+ * worktree's `dist/admin` against these tests. Every assertion below would then be about somebody else's
+ * build, which is how this branch's run of 113 failures looked before it was understood. One request makes
+ * that impossible to mistake for a test failure.
+ */
+test.beforeAll(async ({ request }) => {
+  const identity = await (await request.get(`${adminURL}/__worktree`)).json();
+
+  expect(
+    identity.root,
+    `the server on ${adminURL} is serving ${identity.root}, not this worktree — another worktree's ` +
+      'Playwright server is holding the port',
+  ).toBe(adminWorktreeRoot);
+});
+
 test.beforeEach(async ({ page }, testInfo) => {
   await page.context().addCookies([
     { name: 'e2e_state', value: `w${testInfo.workerIndex}`, url: adminURL },
@@ -192,6 +211,53 @@ test.describe('reordering', () => {
     // Siblings only: "up" from the first child must not promote it a level.
     await expect(page.getByTestId('move-up-11')).toBeDisabled();
     await expect(page.getByTestId('move-down-12')).toBeDisabled();
+  });
+
+  /**
+   * Discarding is right — a category reload can add or remove nodes, so reapplying a stale arrangement
+   * would send a list the server refuses. Doing it in silence was not: the banner and the Save order button
+   * vanished with no word, and the live region spoke only about the other change.
+   */
+  test('says so, visibly and in the live region, when a reload discards a staged order', async ({
+    page,
+  }) => {
+    await page.getByTestId('move-down-10').click();
+    await expect(page.getByTestId('order-pending')).toBeVisible();
+
+    // An unrelated change, which reloads the tree underneath the staged arrangement.
+    await page.getByTestId('toggle-30').click();
+    await page.getByTestId('confirm-yes').click();
+
+    const notice = page.getByTestId('order-discarded');
+    await expect(notice).toBeVisible();
+    await expect(notice).toHaveAttribute('role', 'status');
+    await expect(notice).toContainText('order you had arranged was discarded');
+    await expect(notice).toContainText('Nothing else was lost');
+
+    // The staged banner and its Save order button are gone, which is what used to happen in silence.
+    await expect(page.getByTestId('order-pending')).toHaveCount(0);
+
+    // And the live region says the same thing rather than only naming the other change.
+    await expect(page.getByTestId('tree-announcement')).toContainText(
+      'order you had arranged was discarded',
+    );
+
+    // The tree is the server's, not the arrangement that was thrown away.
+    expect(
+      await page
+        .locator('li.tree__item')
+        .evaluateAll((items) => items.map((item) => item.getAttribute('data-testid'))),
+    ).toEqual([
+      'category-10',
+      'category-11',
+      'category-12',
+      'category-20',
+      'category-30',
+      'category-40',
+    ]);
+
+    await page.getByTestId('dismiss-discarded').click();
+    await expect(notice).toHaveCount(0);
   });
 
   test('discards a staged order without sending anything', async ({ page }) => {
@@ -423,42 +489,50 @@ test.describe('creating and editing', () => {
   });
 
   /**
-   * The screen's own writes carry the antiforgery header and the row version. The stub refuses a request
-   * without either, exactly as the real API does, so these two prove the screen really sends them — before
-   * fix round 1 the stub ignored both and the screen could have stopped sending them unnoticed.
+   * The screen's own writes carry the antiforgery header and the row version, and these two prove it by
+   * taking one away from the request the screen really makes.
+   *
+   * An earlier version issued a raw `fetch` from inside the page, which proved only that the stub refuses —
+   * it would have passed unchanged if the client had stopped sending either header, which is exactly what
+   * its own comment claimed it prevented. Intercepting the screen's request instead keeps the whole chain
+   * in the test: the client builds it, the server refuses it, and the screen has to say so.
    */
-  test('a write that reached the server without the antiforgery header would be refused', async ({
-    page,
-  }) => {
-    const refused = await page.evaluate(async () => {
-      const response = await fetch('/api/admin/catalog/departments/order', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ orderedDepartmentIds: [1, 2, 3] }),
-      });
+  test('the screen surfaces the refusal when its own antiforgery header is stripped', async ({ page }) => {
+    await page.route('**/api/admin/catalog/categories/order', async (route) => {
+      const headers = { ...route.request().headers() };
+      expect(headers['x-xsrf-token']).toBeTruthy();
+      delete headers['x-xsrf-token'];
 
-      return { status: response.status, body: await response.json() };
+      await route.continue({ headers });
     });
 
-    expect(refused.status).toBe(400);
-    expect(refused.body.code).toBe('invalid_antiforgery_token');
+    await page.getByTestId('move-down-10').click();
+    await page.getByTestId('save-order').click();
+
+    await expect(page.getByTestId('tree-error')).toContainText('antiforgery token');
+
+    // And nothing was applied: the staged warning is still there to try again from.
+    await expect(page.getByTestId('order-pending')).toBeVisible();
   });
 
-  test('a write that reached the server with a stale row version would be refused', async ({ page }) => {
-    const refused = await page.evaluate(async () => {
-      const token = await (await fetch('/api/admin/auth/antiforgery-token')).json();
+  test('the screen surfaces the refusal when its own row version is stale', async ({ page }) => {
+    await page.route('**/api/admin/catalog/categories/10/active', async (route) => {
+      const body = route.request().postDataJSON();
+      expect(body.rowVersion).toBeTruthy();
 
-      const response = await fetch('/api/admin/catalog/categories/10/active', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', 'X-XSRF-TOKEN': token.token },
-        body: JSON.stringify({ isActive: false, rowVersion: 'AAAAAAAAAAA=' }),
-      });
-
-      return { status: response.status, body: await response.json() };
+      await route.continue({ postData: JSON.stringify({ ...body, rowVersion: 'AAAAAAAAAAA=' }) });
     });
 
-    expect(refused.status).toBe(409);
-    expect(refused.body.code).toBe('stale_row_version');
+    await page.getByTestId('toggle-10').click();
+    await expect(page.getByTestId('confirm-panel')).toContainText('will disappear from listings');
+    await page.getByTestId('confirm-yes').click();
+
+    const error = page.getByTestId('tree-error');
+    await expect(error).toContainText('Somebody else changed this');
+    await expect(error.getByRole('button', { name: /reload/i })).toBeVisible();
+
+    // The category is still live: a refused write changed nothing.
+    await expect(page.getByTestId('category-10')).toContainText('Live');
   });
 
   test('the parent list never offers a category its own descendant', async ({ page }) => {

@@ -376,6 +376,54 @@ describe('CategoryTree', () => {
   });
 
   /**
+   * The round-2 Major. Discarding is the right behaviour — a category reload can genuinely add or remove
+   * nodes, so reapplying a stale arrangement would send a list the server refuses with `stale_order`, which
+   * is why the department list's id-based reapply is not copied here. Doing it **silently** was the defect:
+   * the banner and the Save order button vanished with no word, and the live region said only that some
+   * other category had been updated.
+   */
+  it('says so, on screen and out loud, when a reload discards a staged order', () => {
+    const fixture = create();
+
+    button(fixture, 'move-down-10').click();
+    fixture.detectChanges();
+    expect(text(fixture)).toContain('new order');
+
+    // What the parent does after any write: hand the child the tree the server now holds.
+    fixture.componentInstance.tree.set(seededTree());
+    fixture.detectChanges();
+
+    const notice = (fixture.nativeElement as HTMLElement).querySelector(
+      '[data-testid="order-discarded"]',
+    );
+
+    expect(notice).not.toBeNull();
+    expect(notice?.getAttribute('role')).toBe('status');
+    expect(notice?.textContent).toContain('order you had arranged was discarded');
+
+    const announcement = (fixture.nativeElement as HTMLElement).querySelector(
+      '[data-testid="tree-announcement"]',
+    );
+    expect(announcement?.textContent).toContain('order you had arranged was discarded');
+  });
+
+  it('lets the discard notice be dismissed, and does not show it again', () => {
+    const fixture = create();
+
+    button(fixture, 'move-down-10').click();
+    fixture.detectChanges();
+    fixture.componentInstance.tree.set(seededTree());
+    fixture.detectChanges();
+
+    button(fixture, 'dismiss-discarded').click();
+    fixture.detectChanges();
+
+    expect(
+      (fixture.nativeElement as HTMLElement).querySelector('[data-testid="order-discarded"]'),
+    ).toBeNull();
+  });
+
+  /**
    * Found by writing the test, not by reading the code: the staged arrangement is a list of the nodes that
    * were on screen, and after a reload some of them may not exist. Keeping it would draw a tree the server
    * does not have and then send a list it would rightly refuse.
@@ -448,7 +496,7 @@ describe('CategoryTree', () => {
       ),
     ].map((option) => option.textContent?.trim());
 
-    expect(sizeGuides).toEqual(['Inherit from the nearest parent', "Women's clothing", "Kids' clothing"]);
+    expect(sizeGuides).toEqual(['None', "Women's clothing", "Kids' clothing"]);
   });
 
   it('sends the age group and size guide the admin picked', async () => {
@@ -476,7 +524,11 @@ describe('CategoryTree', () => {
     fixture.detectChanges();
   });
 
-  it('still opens the form when the picker lists cannot be loaded', () => {
+  /**
+   * A select that silently loses the row's value is worse than a short one: it misreports the row, and the
+   * next save writes what it shows. The fallback keeps the value visible and says why the list is short.
+   */
+  it('keeps the row’s own age group and size guide visible when the lists cannot be loaded', async () => {
     const fixture = TestBed.createComponent(Host);
     fixture.componentInstance.tree.set(seededTree());
     fixture.detectChanges();
@@ -486,13 +538,53 @@ describe('CategoryTree', () => {
       .flush({ detail: 'nope' }, { status: 500, statusText: 'Server Error' });
     fixture.detectChanges();
 
-    button(fixture, 'add-top-level').click();
+    // The form still opens at all.
+    button(fixture, 'edit-10').click();
+    fixture.detectChanges();
+    await Promise.resolve();
     fixture.detectChanges();
 
-    expect(text(fixture)).toContain('New category');
-    expect(
-      (fixture.nativeElement as HTMLElement).querySelector('[data-testid="field-age-group"]'),
-    ).not.toBeNull();
+    const ageGroup = (fixture.nativeElement as HTMLElement).querySelector<HTMLSelectElement>(
+      '[data-testid="field-age-group"]',
+    )!;
+    const options = [...ageGroup.options].map((option) => option.textContent?.trim());
+
+    expect(options).toEqual(['None', 'Current age group (#3) — the list could not be loaded']);
+
+    // And it is the one the row actually holds that is selected, not "None".
+    expect(ageGroup.selectedIndex).toBe(1);
+
+    const sizeGuide = (fixture.nativeElement as HTMLElement).querySelector<HTMLSelectElement>(
+      '[data-testid="field-size-guide"]',
+    )!;
+    expect([...sizeGuide.options].map((option) => option.textContent?.trim())).toEqual([
+      'None',
+      'Current size guide (#2) — the list could not be loaded',
+    ]);
+  });
+
+  it('offers only the real choices for a category that has neither', async () => {
+    const fixture = TestBed.createComponent(Host);
+    fixture.componentInstance.tree.set(
+      emptyTree([node(90, 'Blank', { ageGroupId: null, sizeGuideId: null })]),
+    );
+    fixture.detectChanges();
+
+    controller
+      .expectOne(AdminCatalogApi.formOptionsUrl)
+      .flush({ detail: 'nope' }, { status: 500, statusText: 'Server Error' });
+    fixture.detectChanges();
+
+    button(fixture, 'edit-90').click();
+    fixture.detectChanges();
+    await Promise.resolve();
+    fixture.detectChanges();
+
+    const ageGroup = (fixture.nativeElement as HTMLElement).querySelector<HTMLSelectElement>(
+      '[data-testid="field-age-group"]',
+    )!;
+
+    expect([...ageGroup.options].map((option) => option.textContent?.trim())).toEqual(['None']);
   });
 
   it('creates a category under the parent the button named', () => {

@@ -6,7 +6,6 @@ import {
   computed,
   inject,
   input,
-  linkedSignal,
   output,
   signal,
   viewChild,
@@ -23,6 +22,7 @@ import {
 import {
   AdminCategoryNode,
   AdminCategoryTree,
+  CatalogOption,
   CategoryDeactivationImpact,
   CategoryFormOptions,
   CategoryFormValues,
@@ -36,6 +36,49 @@ import {
   changedSiblingOrders,
   moveWithinSiblings,
 } from '../../core/catalog/reorder';
+
+/**
+ * What the admin is shown and told when a reload drops the order they were arranging.
+ *
+ * One string, used by both the visible notice and the live region, so the two can never say different
+ * things. It says what happened, why, and what to do — "the list changed" on its own leaves somebody
+ * wondering whether their work was saved.
+ */
+const DISCARDED_ORDER_MESSAGE =
+  'The order you had arranged was discarded: the category list was reloaded after your last change, so ' +
+  'it may no longer be the list you arranged. Nothing else was lost. Put them in order again if you still ' +
+  'want to.';
+
+/**
+ * A staged arrangement and the tree it was made from.
+ *
+ * The pairing is what lets the screen tell "nothing is staged" apart from "something was staged and is no
+ * longer applicable" — two states that used to be the same absence.
+ */
+interface StagedOrder {
+  readonly madeFrom: AdminCategoryTree;
+  readonly nodes: readonly AdminCategoryNode[];
+}
+
+/**
+ * A picker's options, with the row's own value kept in the list when the list is missing it.
+ *
+ * The case is a failed options request on a category that does have a value: the select would otherwise
+ * show nothing selected, misreporting the row, and the next save would write what it showed.
+ */
+function withCurrentValue(
+  options: readonly CatalogOption[] | undefined,
+  current: number | null,
+  noun: string,
+): readonly CatalogOption[] {
+  const listed = options ?? [];
+
+  if (current === null || listed.some((option) => option.id === current)) {
+    return listed;
+  }
+
+  return [{ id: current, name: `Current ${noun} (#${current}) — the list could not be loaded` }, ...listed];
+}
 
 /** A row of the flattened tree, with everything the template needs precomputed. */
 interface TreeRow {
@@ -120,6 +163,22 @@ interface TreeRow {
         </div>
       }
 
+      @if (orderWasDiscarded()) {
+        <div class="adm-state adm-state--warning" role="status" data-testid="order-discarded">
+          <p>{{ discardedMessage }}</p>
+          <div class="adm-actions">
+            <button
+              class="adm-btn"
+              type="button"
+              (click)="dismissDiscardNotice()"
+              data-testid="dismiss-discarded"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      }
+
       @if (failure(); as problem) {
         <div class="adm-state adm-state--error" role="alert" data-testid="tree-error">
           <p>{{ problem.message }}</p>
@@ -131,7 +190,7 @@ interface TreeRow {
         </div>
       }
 
-      <p class="sr-only" role="status">{{ announcement() }}</p>
+      <p class="sr-only" role="status" data-testid="tree-announcement">{{ announcement() }}</p>
 
       @if (rows().length === 0) {
         <p class="adm-panel__hint">
@@ -396,14 +455,16 @@ interface TreeRow {
               data-testid="field-age-group"
             >
               <option [ngValue]="null">None</option>
-              @for (option of options()?.ageGroups ?? []; track option.id) {
+              @for (option of ageGroupOptions(); track option.id) {
                 <option [ngValue]="option.id">{{ option.name }}</option>
               }
             </select>
             @if (fieldError('ageGroupId'); as message) {
               <span class="adm-field-error">{{ message }}</span>
             } @else {
-              <span class="adm-panel__hint">Required for Kids categories (doc 11 P1).</span>
+              <span class="adm-panel__hint">
+                Used by the Kids listing filters. Nothing refuses a save without one.
+              </span>
             }
           </label>
 
@@ -417,13 +478,18 @@ interface TreeRow {
               (ngModelChange)="patch('sizeGuideId', $event)"
               data-testid="field-size-guide"
             >
-              <option [ngValue]="null">Inherit from the nearest parent</option>
-              @for (option of options()?.sizeGuides ?? []; track option.id) {
+              <option [ngValue]="null">None</option>
+              @for (option of sizeGuideOptions(); track option.id) {
                 <option [ngValue]="option.id">{{ option.name }}</option>
               }
             </select>
             @if (fieldError('sizeGuideId'); as message) {
               <span class="adm-field-error">{{ message }}</span>
+            } @else {
+              <span class="adm-panel__hint">
+                Products made in this category start with this guide. Changing it does not change products
+                that already exist, and it does not reach the shop on its own.
+              </span>
             }
           </label>
 
@@ -565,21 +631,44 @@ export class CategoryTree {
   /** Doc 08 §3.2's `CK_Categories_Depth`. */
   protected readonly maxDepth = 3;
 
+  /** Shown in the notice and announced in the live region; one string, so they cannot drift apart. */
+  protected readonly discardedMessage = DISCARDED_ORDER_MESSAGE;
+
   private readonly api = inject(AdminCatalogApi);
   private readonly treeList = viewChild<ElementRef<HTMLElement>>('treeList');
 
   /**
-   * The categories as the admin has arranged them, before Save order.
+   * The categories as the admin has arranged them, <b>together with the tree that arrangement was made
+   * from</b>.
    *
-   * It resets whenever a new tree arrives from the server, and that is deliberate rather than incidental:
-   * a staged arrangement is a list of the nodes that were on screen, and once the tree has been reloaded —
-   * after a create, a removal or somebody else's change — some of those nodes may not exist any more.
-   * Keeping the staged copy would draw a tree the server does not have and then send a list it would
-   * rightly refuse.
+   * <para>Why the tree is part of it.</para> A staged arrangement is a list of the nodes that were on
+   * screen. Once the tree has been reloaded — after a create, a removal, or somebody else's change — some
+   * of those nodes may not exist any more, so the arrangement is dropped rather than reapplied: reapplying
+   * it would draw a tree the server does not have and then send a list the server would rightly refuse
+   * with <c>stale_order</c>. (The department list <i>does</i> reapply, by id, and the difference is the
+   * reason: three fixed rows cannot gain or lose a member.)
+   *
+   * <para>What was wrong was doing it silently.</para> The banner and the Save order button simply
+   * vanished, and the live region said only that some other category had been updated — an arrangement the
+   * admin was in the middle of making, thrown away with no word. Pairing the nodes with their tree makes
+   * "this was discarded" a value the screen can read and say out loud, instead of an absence.
    */
-  private readonly staged = linkedSignal<AdminCategoryTree, readonly AdminCategoryNode[] | null>({
-    source: this.tree,
-    computation: () => null,
+  private readonly staged = signal<StagedOrder | null>(null);
+
+  /** The staged arrangement, but only while it still describes the tree on screen. */
+  private readonly stagedForThisTree = computed(() => {
+    const staged = this.staged();
+    return staged !== null && staged.madeFrom === this.tree() ? staged.nodes : null;
+  });
+
+  /**
+   * True while an arrangement that was staged against an older tree is waiting to be acknowledged. It is a
+   * derived value rather than a flag somebody has to remember to set, so the notice cannot fall out of step
+   * with the thing it is about.
+   */
+  protected readonly orderWasDiscarded = computed(() => {
+    const staged = this.staged();
+    return staged !== null && staged.madeFrom !== this.tree();
   });
 
   protected readonly mode = signal<'none' | 'create' | 'edit' | 'toggle' | 'remove'>('none');
@@ -592,13 +681,29 @@ export class CategoryTree {
    * The age groups and size guides the two pickers offer, loaded once with the component.
    *
    * A failure here is deliberately not an error banner: the rest of the screen works without it, and the
-   * pickers fall back to showing only the value the category already has, which is still better than
-   * refusing to open the form.
+   * form still opens. What the pickers then show is {@link ageGroupOptions} and {@link sizeGuideOptions},
+   * which keep the row's own value visible rather than letting the select fall back to "None" — a select
+   * that misreports the row is worse than one that is short, because the next save would write what it
+   * displays.
    */
   protected readonly options = signal<CategoryFormOptions | null>(null);
   protected readonly busy = signal(false);
   protected readonly failure = signal<CatalogFailure | null>(null);
-  protected readonly announcement = signal('');
+
+  /** What the last thing the admin did was, for the live region. */
+  private readonly lastAction = signal('');
+
+  /**
+   * The live region's text.
+   *
+   * A discarded arrangement takes precedence over whatever the admin's last action announced, and
+   * deliberately so: "Traditional wear was updated" is the thing they asked for and already know about,
+   * while losing the order they were halfway through arranging is the thing they did not. It is a computed
+   * rather than an effect writing a signal, so there is no way for the message and the state it describes
+   * to disagree.
+   */
+  protected readonly announcement = computed(() =>
+    this.orderWasDiscarded() ? DISCARDED_ORDER_MESSAGE : this.lastAction());
 
   /**
    * The controls to focus once the re-ordered list has actually been drawn, best first; see
@@ -633,8 +738,8 @@ export class CategoryTree {
     });
   }
 
-  /** What is on screen: the staged arrangement when there is one, otherwise the server's. */
-  private readonly nodes = computed(() => this.staged() ?? this.tree().categories);
+  /** What is on screen: the staged arrangement when it still fits the tree, otherwise the server's. */
+  private readonly nodes = computed(() => this.stagedForThisTree() ?? this.tree().categories);
 
   protected readonly rows = computed<TreeRow[]>(() => {
     const nodes = this.nodes();
@@ -665,7 +770,7 @@ export class CategoryTree {
 
   /** The sibling lists whose order is staged and unsaved. */
   protected readonly pendingOrders = computed(() => {
-    const staged = this.staged();
+    const staged = this.stagedForThisTree();
     return staged ? changedSiblingOrders(this.tree().categories, staged) : [];
   });
 
@@ -694,6 +799,21 @@ export class CategoryTree {
         label: `${'— '.repeat(node.depth - 1)}${node.name}`,
       }));
   });
+
+  /**
+   * The age groups to offer, with the row's current one kept visible even when the list could not be
+   * loaded.
+   *
+   * Without this the select would show nothing selected for a category that does have an age group, and
+   * touching it would overwrite a value the admin could not see. The stand-in says plainly that the list is
+   * missing rather than inventing a name for an id.
+   */
+  protected readonly ageGroupOptions = computed(() =>
+    withCurrentValue(this.options()?.ageGroups, this.form().ageGroupId, 'age group'));
+
+  /** @see ageGroupOptions */
+  protected readonly sizeGuideOptions = computed(() =>
+    withCurrentValue(this.options()?.sizeGuides, this.form().sizeGuideId, 'size guide'));
 
   protected parentNameOf(parentCategoryId: number | null): string {
     return parentCategoryId === null
@@ -726,11 +846,11 @@ export class CategoryTree {
       return;
     }
 
-    this.staged.set(moved);
+    this.staged.set({ madeFrom: this.tree(), nodes: moved });
     this.failure.set(null);
 
     const position = this.siblingPosition(moved, node.id);
-    this.announcement.set(
+    this.lastAction.set(
       `${node.name} moved to position ${position.index} of ${position.total}. ` +
         'Press Save order to apply it.',
     );
@@ -757,7 +877,7 @@ export class CategoryTree {
       if (index >= pending.length) {
         this.busy.set(false);
         this.staged.set(null);
-        this.announcement.set('The new order is saved.');
+        this.lastAction.set('The new order is saved.');
         this.reloadRequested.emit();
         return;
       }
@@ -770,7 +890,7 @@ export class CategoryTree {
           error: (error: unknown) => {
             this.busy.set(false);
             this.failure.set(toCatalogFailure(error));
-            this.announcement.set('The new order could not be saved.');
+            this.lastAction.set('The new order could not be saved.');
           },
         });
     };
@@ -780,7 +900,16 @@ export class CategoryTree {
 
   protected discardOrder(): void {
     this.staged.set(null);
-    this.announcement.set('The staged order was discarded.');
+    this.lastAction.set('The staged order was discarded.');
+  }
+
+  /**
+   * Acknowledges a discard. The notice goes, and the live region is emptied rather than reverting to
+   * whatever it said before — re-announcing a message the admin has already heard is noise.
+   */
+  protected dismissDiscardNotice(): void {
+    this.staged.set(null);
+    this.lastAction.set('');
   }
 
   protected startCreate(parentCategoryId: number | null): void {
@@ -812,7 +941,7 @@ export class CategoryTree {
       this.api.deactivationImpact(node.id).subscribe({
         next: (impact) => {
           this.impact.set(impact);
-          this.announcement.set(
+          this.lastAction.set(
             `Hiding ${node.name} would take ${impact.productsLeavingTheStorefront} products off the shop.`,
           );
         },
@@ -855,7 +984,7 @@ export class CategoryTree {
       next: () => {
         this.busy.set(false);
         this.cancel();
-        this.announcement.set(done);
+        this.lastAction.set(done);
         this.reloadRequested.emit();
       },
       error: (error: unknown) => {
@@ -883,7 +1012,7 @@ export class CategoryTree {
     request.subscribe({
       next: () => {
         this.busy.set(false);
-        this.announcement.set(editingNode ? 'The category was saved.' : 'The category was created.');
+        this.lastAction.set(editingNode ? 'The category was saved.' : 'The category was created.');
         this.cancel();
         this.reloadRequested.emit();
       },
