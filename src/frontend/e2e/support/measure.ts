@@ -163,11 +163,39 @@ export interface VisibleBand {
  * file, the video is lossily encoded and the hero paints a dark gradient over the top of it, so
  * what comes back is anywhere between magenta and about a third of it. Red and blue together with
  * green far below them survives all of that; `#ff00ff` exactly survives none of it.
+ *
+ * **It refuses to measure an element that does not fit on the screen**, and the reason is worth
+ * stating precisely because the obvious guard does not work. Part of an element hanging below the
+ * viewport is not left out of the picture: the capture comes back the element's **full height**
+ * with those rows **blank**, so comparing the capture's height against the box's can never fail.
+ * Measured on the hero at 1920: viewport 940, box 1920x880 at y=118, capture 880 px tall, and the
+ * marker's last row **821** instead of 879 — the 58 px that were off-screen read as "not the
+ * marker", which is indistinguishable from "the band stops before the bottom edge". The first
+ * version of the framing test ran at 940 and its lower assertion could not fail at the one width
+ * that constrains the lower edge: `object-position: center 20%` cut the chin off at 1920 and all
+ * five widths passed. So the check is the same one `edgesWithoutRing` makes — is the thing we are
+ * about to photograph actually on the screen?
  */
 export async function markerBand(page: Page, element: Locator): Promise<VisibleBand> {
+  await element.scrollIntoViewIfNeeded();
+
+  const box = await element.boundingBox();
+  const viewport = page.viewportSize();
+  if (!box || !viewport) {
+    throw new Error('the element has no box to photograph');
+  }
+
+  if (box.y < 0 || box.y + box.height > viewport.height) {
+    throw new Error(
+      `the element is ${Math.round(box.height)} px tall at y=${Math.round(box.y)} in a ` +
+        `${viewport.height} px viewport, so part of it cannot be photographed — the rows outside ` +
+        'come back blank at the element\'s full height, which no size check can catch',
+    );
+  }
+
   const shot = (await element.screenshot()).toString('base64');
 
-  return page.evaluate(async (data) => {
+  const band = await page.evaluate(async (data) => {
     const bitmap = await createImageBitmap(
       await (await fetch(`data:image/png;base64,${data}`)).blob(),
     );
@@ -196,4 +224,6 @@ export async function markerBand(page: Page, element: Locator): Promise<VisibleB
 
     return { height: bitmap.height, first, last };
   }, shot);
+
+  return band;
 }

@@ -659,15 +659,21 @@ const SECTIONS = [
       }),
     ],
   }),
+  // HOME-06 carries the copy and the destination the importer really writes (W1-14). It used to
+  // carry the old activewear wording over a linen flat-lay pointing at `/women/activewear`, which
+  // meant the one suite that renders this block in a browser rendered precisely the picture /
+  // words / destination contradiction issue #63 exists about. The link is deliberately the real
+  // one, repeated parameters and all, so `toLink` → `routerLink` → the listing is exercised rather
+  // than assumed.
   contentSection(6, 'ActivewearFeature', {
-    title: 'Activewear',
+    title: 'Linen and denim',
     overlay: 'dark',
     items: [
       contentItem(61, {
-        title: 'Move in it',
-        body: 'Breathable pieces for the gym and the walk home.',
-        buttonLabel: 'Shop activewear',
-        linkUrl: '/women/dresses?occasion=active',
+        title: 'Linen and denim',
+        subtitle: 'Breathable linen for the heat, washed indigo for everything else.',
+        buttonLabel: 'Shop linen and denim',
+        linkUrl: '/women?material=linen&material=linen-blend&material=denim',
         imageUrl: PIXEL,
       }),
     ],

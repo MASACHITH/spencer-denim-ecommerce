@@ -46,6 +46,89 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 
 ## Session log
 
+### 2026-10-01 (8) — W1-14 fix round 1: the guard the whole hero decision rests on could not fail
+
+The tester re-derived the arithmetic independently and matched it (31.64% at 768–1440, **25.78%** at
+1920, safe interval **21.83%–33.69%**), confirmed all three defect fixes end to end on a real database
+with the real client files, and checked the destination really returns the five products. One major,
+six smaller findings, all fixed.
+
+**MAJOR, and it is the W1-13 lesson landing on me: the framing test ran at a 940 px viewport, and at
+1920 the hero is 880 px tall starting 118 px down the page.** 58 px of it were off the screen, so the
+*lower* assertion could not fail at the one width that constrains the lower edge. He proved it:
+`object-position: center 20%` cuts her chin off at 1920 and **all five tests passed**. The suite was
+pinning 15.2%–33.7%, not the 21.8%–33.7% my own comment claimed.
+
+**And the obvious guard for it is itself dead, which is the part worth writing down.** Asserting that
+the capture is as tall as the element — the first fix I wrote, and what I was asked for — can never
+fail: Playwright does **not** return a short image for an element hanging below the viewport, it
+returns the element's full height with the off-screen rows **blank**. Measured at 1920: box 1920x880 at
+y=118, viewport 940, capture **880 px**, marker's last row **821** instead of 879. A blank row reads
+exactly like "not the marker", which reads exactly like "the band stops before the bottom edge". So I
+wrote the assertion, watched it pass at 940 where the bug lives, and only then replaced it with the one
+that works: `markerBand` refuses to measure an element that does not fit on the screen, which is the
+same question `edgesWithoutRing` asks. **Two dead assertions in two rounds, both of the shape "I
+checked the thing next to the thing".** Verified in both directions now — 20% fails at 1920 at the new
+height, 940 raises the guard rather than passing, 33% passes and 34% fails.
+
+**The comment was wrong twice over, and both corrections are facts the next person needs.** The upper
+bound is 33.69%, not "34%" — 34% fails the test. And "no garment is visible above 1024 px" is false:
+the crop is identical in source terms from 768 to 1440 because `max-height` does not bite until
+1564 px, and the collar and shoulders are in frame at all of them. Only **1920** is garment-free. The
+sentence contradicted my own two lines earlier, which is how it got past me. Corrected in the
+stylesheet, MEMORY, TASKS and the journal.
+
+**The value also runs out, and nothing said so.** The clamped box keeps widening past 1564 px and the
+surviving band keeps shrinking: measured, 30% holds to about **2,560 px** of hero width, has failed by
+2,890, and past about **2,900 px** the band (17.1% and falling) is narrower than her face (17.0%), so
+**no** value of `object-position` fits — 3440 x 1440 is an ordinary desktop. One more line on the
+re-export bill.
+
+**`BannerCopy.Supersedes` leaked across fields.** The four retracted strings were one flat set tested
+against every field, so an admin who typed "Activewear" as the *button label* — an ordinary thing to do
+in the activewear slot — had it silently overwritten by a retraction that was only ever about the
+heading. Silently, because the write looked like a retraction and so did not even earn the "somebody
+wrote this" note. The field is part of the key now (`"ButtonLabel\0Shop activewear"`), with a test that
+is red on the flat set.
+
+**The e2e stub still carried the old HOME-06 copy**, so the only suite that draws this block in a
+browser was drawing the exact picture/words/destination contradiction issue #63 is about — and the
+repeated-`material` link had never been through `toLink` → `routerLink` → a listing anywhere. The stub
+carries the real copy and the real link now, and a new test clicks the banner and asserts all three
+material chips arrive, which is the thing `toLink`'s query handling exists for.
+
+**A possible orphan gallery row, found by reading rather than by running.** When the hover row holds the
+card's own asset *and* the card slot is taken by another picture, the row can neither move nor go —
+`galleryFor` draws every non-Video row, so deleting it would take the card's photograph out of the
+gallery, which is the defect this round already fixed in a third shape. It is left in place and a note
+says so; an `else Remove` would have been the quick answer and the wrong one.
+
+**The relabel is in the scope baseline now**, as a dated decision in a new *Decisions after baselining*
+section referencing issue #63, so doc 02 does not read as if HOME-06 drifted by accident.
+
+**Numbers:** backend **736 unit + 374 integration** (was 736 + 373), 0 skipped; frontend 19 / 451 / 131;
+**Playwright 200** (was 199). Lint clean, Release build clean with 0 warnings. Re-verified in the
+browser against a rebuilt database and the real drop: no console errors, no failed requests, no
+horizontal scroll, still-not-video on phones and under reduced motion.
+
+**A pre-existing Playwright flake, measured rather than blamed on this branch.** `storefront-shell`'s
+*reduced motion → mobile navigation drawer* tests fail about **one full run in five**, on
+`#storefront-menu` resolving but staying `hidden` past the 5 s timeout. Because the suspect was my own
+change — the hero sample is a different video now, and a looping video in a neighbouring worker is
+exactly what the stub's own comment warns about — I measured it instead of assuming: 1 failure in 5
+full runs here, and **1 in 6 on a worktree built from `f78663d` with none of this branch's changes**,
+the same test with the same message. In isolation it passes 10 of 10, so it is contention under four
+workers. Not mine, not fixed here, and worth filing beside the missing `axe-core` run.
+
+**Two things that are the owner's, not mine, and deliberately not "fixed":** the tester would serve the
+still at every width and hold the video until the 16:9 export arrives — same facts, opposite conclusion,
+and it touches docs/04 §4 so it is the client's call. And the denim half of the HOME-06 photograph is a
+denim **jacket**, which the catalogue has no women's equivalent of; three of the five products behind
+the link are denim, so a shopper arriving from a linen-led picture meets a mostly-denim list. Honest,
+and thin. Worth a line to the client.
+
+**Next:** back to the tester.
+
 ### 2026-10-01 (7) — W1-14: the two held-back sections go live, by decision rather than by new files
 
 Three owner decisions on top of W1-13, on `feature/W1-14-hero-and-activewear` (worktree
@@ -63,9 +146,12 @@ she barely moves across the clip, which is what makes a single value possible at
 
 **And it is soft.** 1920 px of frame from 360 px of source is a 5.3x upscale — the skin and hair carry
 no texture at 1440 or 1920, though the source's own haze hides it better than a sharp file would. More
-to the point, **no garment is visible at any width above 1024**: the hero reads "Linen, denim and
-everyday pieces" over a face. I would ship this and keep asking for the 16:9 export; it is better than
-a headless chest and worse than a hero.
+to the point, **at 1920 no garment is in frame at all**: the clamp takes the collar and shoulders that
+are there at 768 through 1440, and the hero reads "Linen, denim and everyday pieces" over a face. And
+the value runs out above this site's breakpoints: 30% holds to about 2,560 px of hero width, has failed
+by 2,890, and past about 2,900 the surviving band is narrower than her face, so **no** value fits —
+3440 x 1440 is an ordinary desktop. I would ship this and keep asking for the 16:9 export; it is
+better than a headless chest and worse than a hero.
 
 **The poster stays as delivered, and it is not a frame of the video.** `hero-poster.jpg` is 1376x768,
 the same model in a different take and a *different outfit*, and it is the better picture — correctly

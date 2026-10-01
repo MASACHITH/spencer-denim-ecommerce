@@ -34,7 +34,7 @@ Legend: ✅ In scope · ⏭ Future phase · ❌ Removed
 | HOME-03 | New Arrivals | ✅ |
 | HOME-04 | Trending Items: each card opens the matching filtered listing (replaces demo "Campaign Split") | ✅ |
 | HOME-05 | Full-width campaign banner | ✅ |
-| HOME-06 | Activewear campaign feature | ✅ |
+| HOME-06 | Full-width campaign feature below HOME-05. **Relabelled "Linen and denim" on 2026-10-01** — see *Decisions after baselining* below | ✅ |
 | HOME-07 | Sale section | ✅ |
 | HOME-08 | Social media gallery (admin-uploaded images linking to social profiles) | ✅ |
 | HOME-09 | Customer benefits (delivery / returns / quality) | ✅ |
@@ -167,6 +167,18 @@ Security rules (from DB design review):
 | Hard-coded promo codes `TUASL10` / `FREESHIP` | Admin-managed promo codes |
 | "Demo: quick admin access" button | Security |
 | Dummy catalogue, fake dashboard numbers, browser-only orders | Real database |
+
+## I2. Decisions after baselining
+
+Changes agreed with the owner after this document was baselined on 2026-09-15. Each one is recorded
+here so that a feature that reads differently from the proposal is visibly a decision and not drift.
+
+| Date | Decision | Why | By |
+|---|---|---|---|
+| 2026-10-01 | **HOME-06 is "Linen and denim", not "Activewear".** The heading, standfirst, button and link describe linen and denim separates, and the block opens `/women?material=linen&material=linen-blend&material=denim`. The feature ID, its position and its behaviour are unchanged; only the copy and the destination are. | The photograph the client delivered for this slot is a flat-lay of a white linen co-ord and a denim co-ord — nothing athletic. A block whose picture, words and destination disagree is worse than no block (issue #63), and the owner chose to retitle the slot rather than wait for an activewear photograph. The link is a listing that genuinely holds linen and denim rather than a department that happens to include them. | Owner |
+
+> Activewear itself is unaffected: it remains a category under Women and under Men (DEPT-01), and it
+> is reachable from the navigation. What changed is which of them this one homepage block is about.
 
 ## J. Future phases (not in this 1-month build)
 

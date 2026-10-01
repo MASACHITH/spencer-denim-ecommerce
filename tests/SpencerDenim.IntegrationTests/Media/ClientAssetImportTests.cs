@@ -433,6 +433,52 @@ public sealed class ClientAssetImportTests(SqlServerDatabaseFixture sqlServer)
     }
 
     /// <summary>
+    /// A retraction is about <b>one field</b>, and must not reach across to another that happens to
+    /// hold the same words.
+    /// <para>
+    /// The four strings the importer took back for HOME-06 were kept in one flat set and tested against
+    /// every field, so an admin who typed "Activewear" as the <i>button label</i> — a perfectly ordinary
+    /// thing to do, the section is still the activewear slot — had it silently rewritten by a retraction
+    /// that was only ever about the heading. Silently, because the write looked like a retraction rather
+    /// than like a value being kept, so it did not even earn the note. The field is part of the key now.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task A_retraction_of_one_field_does_not_reach_across_to_another()
+    {
+        await using var world = await CreateAsync();
+        await world.DropTheUsualAsync(TheDeliveredShapes, Token);
+
+        Assert.True((await world.ImportAsync(Token)).Succeeded);
+
+        await using (var scope = world.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var item = Assert.Single(await ItemsAsync(dbContext, HomeSectionType.ActivewearFeature));
+
+            // The heading's retracted value, typed by a person into a different field.
+            item.ButtonLabel = "Activewear";
+            await dbContext.SaveChangesAsync(Token);
+        }
+
+        var report = await world.ImportAsync(Token);
+        Assert.True(report.Succeeded, string.Join("; ", report.Failures));
+
+        await using (var scope = world.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var item = Assert.Single(await ItemsAsync(dbContext, HomeSectionType.ActivewearFeature));
+
+            Assert.Equal("Activewear", item.ButtonLabel);
+        }
+
+        Assert.Contains(
+            report.Notes,
+            note => note.Contains("button label", StringComparison.Ordinal)
+                && note.Contains("ADM-17", StringComparison.Ordinal));
+    }
+
+    /// <summary>
     /// The ten kids' products keep their placeholders. No photograph of an adult is put in front of a
     /// children's garment to fill a gap, however convincing the gap looks.
     /// </summary>

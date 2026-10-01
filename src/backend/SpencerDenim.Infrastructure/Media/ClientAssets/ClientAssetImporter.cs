@@ -103,10 +103,10 @@ public sealed partial class ClientAssetImporter(
         "Shop linen and denim",
         new[]
         {
-            "Activewear",
-            "Pieces that move with you.",
-            "/women/activewear",
-            "Shop activewear",
+            BannerCopy.Retracted(nameof(HomeSectionItem.Title), "Activewear"),
+            BannerCopy.Retracted(nameof(HomeSectionItem.Subtitle), "Pieces that move with you."),
+            BannerCopy.Retracted(nameof(HomeSectionItem.LinkUrl), "/women/activewear"),
+            BannerCopy.Retracted(nameof(HomeSectionItem.ButtonLabel), "Shop activewear"),
         }.ToFrozenSet(StringComparer.Ordinal));
 
     /// <summary>
@@ -879,10 +879,10 @@ public sealed partial class ClientAssetImporter(
     {
         var kept = new List<string>();
 
-        item.Title = Pick(item.Title, copy.Title, "heading");
-        item.Subtitle = Pick(item.Subtitle, copy.Subtitle, "standfirst");
-        item.LinkUrl = Pick(item.LinkUrl, copy.LinkUrl, "link");
-        item.ButtonLabel = Pick(item.ButtonLabel, copy.ButtonLabel, "button label");
+        item.Title = Pick(item.Title, copy.Title, nameof(item.Title), "heading");
+        item.Subtitle = Pick(item.Subtitle, copy.Subtitle, nameof(item.Subtitle), "standfirst");
+        item.LinkUrl = Pick(item.LinkUrl, copy.LinkUrl, nameof(item.LinkUrl), "link");
+        item.ButtonLabel = Pick(item.ButtonLabel, copy.ButtonLabel, nameof(item.ButtonLabel), "button label");
 
         if (kept.Count > 0)
         {
@@ -894,9 +894,15 @@ public sealed partial class ClientAssetImporter(
                 + "the link still agree.");
         }
 
-        string Pick(string? current, string replacement, string field)
+        // The field is part of the key, not just part of the message. A flat set of the four
+        // retracted strings was tested against every field, so an admin who typed "Activewear" as
+        // the *button label* had it silently overwritten by a retraction that was only ever about
+        // the heading — the exact thing the summary above says must never happen, and with no note
+        // either, because the write looked like a retraction rather than a kept value.
+        string Pick(string? current, string replacement, string key, string field)
         {
-            if (string.IsNullOrWhiteSpace(current) || copy.Supersedes.Contains(current))
+            if (string.IsNullOrWhiteSpace(current)
+                || copy.Supersedes.Contains(BannerCopy.Retracted(key, current)))
             {
                 return replacement;
             }
@@ -1520,6 +1526,19 @@ public sealed partial class ClientAssetImporter(
                 row.MediaRole = ProductMediaRole.Gallery;
                 row.SortOrder = CardSortOrder;
             }
+            else
+            {
+                // The card slot is occupied by a different photograph and this row holds the one the
+                // card pointer names, so it can neither move nor go: `galleryFor` draws every row
+                // whose role is not Video, so deleting it would take the card's own picture out of
+                // the gallery — the defect above in a third shape. It is left where it is and said
+                // out loud instead, because a Hover row under a null hover pointer is a state only a
+                // person can resolve.
+                run.Note(
+                    $"{product.Slug}: the hover image was cleared, but the gallery row at that slot "
+                    + "holds the card's own photograph and the card slot is taken by another, so the "
+                    + "row was left where it is rather than deleted. Tidy the gallery in ADM-11.");
+            }
         }
 
         run.Note(
@@ -1859,19 +1878,34 @@ public sealed partial class ClientAssetImporter(
     /// The words one banner carries, and the words this import is allowed to take back.
     /// </summary>
     /// <param name="Supersedes">
-    /// Exact values an <b>earlier version of this importer</b> wrote into the slot and that are now
-    /// wrong. They are the only stored copy <see cref="Reword"/> may overwrite: everything else is
-    /// treated as somebody's editorial decision. Keyed on the literal strings rather than on a flag or a
-    /// version number for the reason <see cref="ClientAssetHolds"/> is keyed on a checksum — it expires
-    /// by itself. Once the client edits the heading in ADM-17 the old string is gone, and so is this
-    /// entry's power over it.
+    /// Exact <b>(field, value)</b> pairs an <b>earlier version of this importer</b> wrote into the slot
+    /// and that are now wrong, built with <see cref="Retracted"/>. They are the only stored copy
+    /// <see cref="Reword"/> may overwrite: everything else is treated as somebody's editorial decision.
+    /// Keyed on the literal strings rather than on a flag or a version number for the reason
+    /// <see cref="ClientAssetHolds"/> is keyed on a checksum — it expires by itself. Once the client
+    /// edits the heading in ADM-17 the old string is gone, and so is this entry's power over it.
+    /// <para>
+    /// <b>The field belongs in the key.</b> A flat set of values was tested against every field, so a
+    /// retraction of one field reached across to another that happened to hold the same words — an admin
+    /// button label of "Activewear" was overwritten by the heading's retraction, silently, because the
+    /// write looked like a retraction and not like a value being kept.
+    /// </para>
     /// </param>
     private sealed record BannerCopy(
         string Title,
         string Subtitle,
         string LinkUrl,
         string ButtonLabel,
-        IReadOnlySet<string> Supersedes);
+        IReadOnlySet<string> Supersedes)
+    {
+        /// <summary>One retracted value, scoped to the field it was written into.</summary>
+        /// <remarks>
+        /// <c>\0</c> cannot appear in either half: <c>HomeSectionItem</c>'s names are C# identifiers and
+        /// the stored copy comes from a form, so there is no pair of different (field, value) inputs that
+        /// can collide on one key.
+        /// </remarks>
+        public static string Retracted(string field, string value) => $"{field}\0{value}";
+    }
 
     /// <summary>Everything one attempt accumulates, so the methods above stay about the import.</summary>
     private sealed class Run(ClientAssetImportRequest request)

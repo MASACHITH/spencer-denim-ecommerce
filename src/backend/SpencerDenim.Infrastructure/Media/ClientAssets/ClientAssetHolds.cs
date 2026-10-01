@@ -51,8 +51,9 @@ public sealed class ClientAssetHolds(IReadOnlyDictionary<string, HeldBackArtwork
     /// the model's chest. Released because <c>object-position: center 30%</c> on <c>.hero__video</c>
     /// brings her face into the band at every width from 768 to 1920 — measured by screenshot, pinned by
     /// an e2e test. It is the best this file can do and not a fix: 1920 px of frame from 360 px of source
-    /// is a 5.3x upscale and no garment is visible. A 16:9 export at least 1920 px wide, with a poster
-    /// cut from the same take, is still owed.
+    /// is a 5.3x upscale, at 1920 no garment is in frame at all, and past about 2,900 px of hero width no
+    /// value of <c>object-position</c> fits her face. A 16:9 export at least 1920 px wide, with a poster cut from the same take, is
+    /// still owed.
     /// </para>
     /// <para>
     /// <b>The activewear feature (HOME-06).</b> Held because the picture is a flat-lay of a white linen

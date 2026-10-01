@@ -172,16 +172,25 @@ import { Viewport } from '../../../core/platform/viewport';
        Moving the focal point up distributes the overflow instead of hiding it. Her face occupies
        roughly 25%-42% of the source height and barely moves across the ten seconds, so the band has
        to start above 25% and end below 42% at EVERY width. It is widest where the box is a true
-       16:9 (768-1564 px: 31.6% of the source) and narrowest at 1920, where max-height 880px makes
-       the box 2.18:1 and only 25.8% of the source survives — so 1920 is what pins the value.
-       Solving both gives 22%-34%; 30% sits inside it with headroom at 1920 and still leaves the
-       shirt collar in frame at 768. Verified by screenshot at 768/1024/1280/1440/1920, and the e2e
-       suite photographs the hero at each of them and asserts the band that must stay in frame is
-       whole inside the picture.
+       16:9 (768-1564 px: 31.64% of the source) and narrowest at 1920, where max-height 880px makes
+       the box 2.18:1 and only 25.78% of the source survives — so 1920 is what pins the value.
+       Solving both gives 21.8%-33.7%; 30% sits inside it with headroom at 1920. Do not round the
+       upper bound up: 34% fails the e2e test. Verified by screenshot at 768/1024/1280/1440/1920,
+       and the e2e suite photographs the hero at each of them and asserts the band that must stay in
+       frame is whole inside the picture.
+
+       AND IT RUNS OUT. The clamped box keeps growing wider than 16:9 past 1564 px, so the surviving
+       band keeps shrinking. Measured: at 2560 px of hero the band is 19.3% of the source and 30%
+       still holds, with about one point to spare; by 2890 px it is 17.1% and 30% has failed; past
+       about 2900 px the band is narrower than her face (17.0%) and NO value of object-position fits
+       it at all — 3440 x 1440 is an ordinary desktop. 30% is right for the widths this site is
+       built and tested for, not universally.
 
        THIS IS MAKING THE BEST OF A FILE THAT IS WRONG FOR THE SLOT, NOT A FIX. 1920 px of frame
-       from 360 px of source is a 5.3x upscale: the result is soft and shows no garment at all. A
-       16:9 export at least 1920 px wide is still the right answer.
+       from 360 px of source is a 5.3x upscale and the result is soft. At 768-1440 the crop is
+       identical in source terms and her collar and shoulders are in frame; at 1920 the clamp takes
+       those too and the hero is a face with no garment in it. A 16:9 export at least 1920 px wide
+       is still the right answer, and the 3440 px case above is a second reason for it.
 
        On .hero__video alone and not on the shared rule above: the still (.hero__image) is a
        separate, correctly-shaped photograph and stays centred. The video element paints its own

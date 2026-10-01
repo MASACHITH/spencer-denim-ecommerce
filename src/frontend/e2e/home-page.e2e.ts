@@ -75,7 +75,7 @@ test.describe('the page the server sends (HOME-01..10)', () => {
     expect(html).toContain('New arrivals'); // HOME-03
     expect(html).toContain('Trending now'); // HOME-04
     expect(html).toContain('Mid-season sale'); // HOME-05
-    expect(html).toContain('Activewear'); // HOME-06
+    expect(html).toContain('Linen and denim'); // HOME-06
     expect(html).toContain('Follow us'); // HOME-08
     expect(html).toContain('Island-wide delivery'); // HOME-09
     expect(html).toContain('Newsletter'); // HOME-10
@@ -119,6 +119,36 @@ test.describe('the page the server sends (HOME-01..10)', () => {
 
     await expect(page.getByText('Nothing to see')).toHaveCount(0);
     await expect(page.locator('sd-feature-banner')).toHaveCount(2);
+  });
+
+  /**
+   * **HOME-06's picture, words and destination have to agree, and the destination is the half
+   * nothing else checks.**
+   *
+   * The slot's link carries the same parameter three times
+   * (`?material=linen&material=linen-blend&material=denim`) because the listing it promises is of
+   * *fabrics*, not of a department that happens to include them. A repeated parameter is the shape
+   * `toLink` exists to get right — handed to `routerLink` whole it would percent-encode the `?` and
+   * land on a path called "women?material=linen", a 404 dressed as a filter — and until now nothing
+   * in a browser followed one. Issue #63 is what a tile that lies about where it goes looks like.
+   */
+  test('the linen and denim feature opens a listing filtered to those fabrics', async ({ page }) => {
+    await useStubApi(page);
+    await page.goto('/');
+    await hydrated(page);
+
+    const banner = page.locator('sd-feature-banner').nth(1);
+    await expect(banner.locator('.banner__title')).toHaveText('Linen and denim');
+    await banner.locator('.banner__cta').click();
+
+    await expect(page).toHaveURL(/\/women\?material=linen&material=linen-blend&material=denim$/);
+
+    // The listing really read all three, rather than keeping the last one.
+    await expect(page.locator('.chips .chip')).toContainText([
+      'Material: Linen',
+      'Material: Linen blend',
+      'Material: Denim',
+    ]);
   });
 
   test('a tile whose stored link is not safe never reaches an href', async ({ page }) => {
@@ -259,11 +289,19 @@ test.describe('the hero (HOME-01)', () => {
     test(`${width}px: the part of the video that must stay in frame is on the screen`, async ({
       page,
     }) => {
-      await page.setViewportSize({ width, height: 940 });
+      // **1100, not 940.** At 1920 the hero is 880 px tall and starts 118 px down the page, so a
+      // 940 px viewport left 58 px of it off the screen — and those rows come back *blank inside a
+      // full-height capture*, which reads exactly like "the band stops before the bottom edge".
+      // The lower assertion could therefore not fail at the one width that constrains the lower
+      // edge: `object-position: center 20%` cuts her chin off at 1920 and all five of these passed.
+      // `markerBand` now refuses to measure an element that does not fit on the screen, so shrinking
+      // this number fails loudly rather than quietly.
+      await page.setViewportSize({ width, height: 1100 });
       await useStubApi(page);
       await page.goto('/');
       await hydrated(page);
 
+      const hero = page.locator('.hero');
       const video = page.locator('[data-testid="hero-video"]');
       await expect(video).toHaveCount(1);
 
@@ -272,7 +310,7 @@ test.describe('the hero (HOME-01)', () => {
         .poll(() => video.evaluate((element: HTMLVideoElement) => element.readyState))
         .toBeGreaterThanOrEqual(2);
 
-      const band = await markerBand(page, page.locator('.hero'));
+      const band = await markerBand(page, hero);
 
       expect(
         band.first,
