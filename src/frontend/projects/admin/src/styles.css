@@ -79,11 +79,24 @@ textarea.adm-input {
   color: var(--color-sale);
 }
 
+/* The label is the touch target, not the box: it wraps the control, so a tap anywhere along it toggles it.
+   That is why it carries the 44 px minimum (doc 04 §4) and the box itself does not — a 44 px checkbox in a
+   dense admin form (doc 04 §5) would be the wrong answer to the right rule. The box is still enlarged from
+   the 13 px browser default, which is small to hit deliberately. */
 .adm-check {
   display: flex;
   align-items: center;
   gap: var(--space-1);
   min-height: var(--tap);
+  cursor: pointer;
+}
+
+.adm-check input[type='checkbox'] {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  margin: 0;
+  cursor: pointer;
 }
 
 /* Buttons ------------------------------------------------------------------------------------ */

@@ -376,13 +376,40 @@ test.describe('layout', () => {
     });
   }
 
-  /** Doc 04 §4: touch targets of at least 44 px. The reorder buttons are the smallest on the page. */
+  /**
+   * Doc 04 §4: touch targets of at least 44 px. The reorder buttons are the smallest on the page.
+   *
+   * The counts are asserted first, and that is not padding: `undersized` returns an empty list both when
+   * every control passes and when the selector matched nothing at all, so without them a renamed class
+   * would turn this into a test that cannot fail — the project's own lesson L4.
+   */
   test('every control meets the 44 px touch minimum on a phone', async ({ page }) => {
     await page.setViewportSize({ width: 320, height: 900 });
     await expect(page.getByTestId('category-10')).toBeVisible();
 
+    // Open a form as well, so the inputs are on the page at all.
+    await page.getByTestId('edit-10').click();
+    await expect(page.getByTestId('field-slug')).toBeVisible();
+
+    const buttons = await page.locator('.catalog button').count();
+    const fields = await page
+      .locator('.catalog input:not([type="checkbox"]), .catalog select, .catalog textarea')
+      .count();
+    const checkboxLabels = await page.locator('.catalog .adm-check').count();
+
+    expect(buttons).toBeGreaterThan(30);
+    expect(fields).toBeGreaterThan(5);
+    expect(checkboxLabels).toBeGreaterThan(0);
+
     expect(await undersized(page, '.catalog button')).toEqual([]);
-    expect(await undersized(page, '.catalog input, .catalog select, .catalog textarea')).toEqual([]);
+    expect(
+      await undersized(page, '.catalog input:not([type="checkbox"]), .catalog select, .catalog textarea'),
+    ).toEqual([]);
+
+    // A checkbox is measured through the label that wraps it, because that is what a tap lands on: the box
+    // itself is 20 px and the label carrying it is the target. Measuring the bare input would report a
+    // failure the screen does not have; leaving checkboxes out silently would hide one it might.
+    expect(await undersized(page, '.catalog .adm-check')).toEqual([]);
   });
 
   /**
