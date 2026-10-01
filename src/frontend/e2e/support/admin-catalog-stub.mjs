@@ -81,6 +81,12 @@ function nextRowVersion() {
 /**
  * The row version the caller is working from: `If-Match` if it sent one, otherwise the body's own field —
  * the same order `AdminWriteRequest.RowVersion` reads them in, quotes and all.
+ *
+ * One input is read differently, and it is written down rather than chased: for `If-Match: ""abc""` the
+ * real reader's `Trim('"')` strips every quote and gives `abc`, while this strips one from each end and
+ * gives `"abc"`. Nothing sends a doubly quoted ETag — the screen builds the header itself from a base64
+ * token — so the divergence is unreachable, and making the stub match exactly would mean reimplementing
+ * `Trim` rather than reading a header.
  */
 function suppliedRowVersion(request, body) {
   const header = request.headers['if-match'];
@@ -322,6 +328,17 @@ const server = createServer(async (request, response) => {
   const path = url.pathname;
 
   // ---- test control -------------------------------------------------------------------------
+
+  // Which worktree's build this process is serving. A derived port makes a collision unlikely, not
+  // impossible, and `reuseExistingServer` means a collision is answered by another worktree's server
+  // serving another worktree's `dist/admin` against these tests — which is how a run of 113 failures
+  // looked the first time. The suite asks before it trusts a single answer.
+  if (path === '/__worktree') {
+    // Derived from the working directory, which is `src/frontend`, so it is the same two levels the
+    // Playwright config computes the port from — the two values have to agree or the check means nothing.
+    return json(response, 200, { root: resolve(process.cwd(), '..', '..') });
+  }
+
   if (path === '/__reset') {
     states.set(stateKey(request), freshState());
     return json(response, 200, { ok: true });
