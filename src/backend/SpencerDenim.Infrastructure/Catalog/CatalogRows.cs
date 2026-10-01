@@ -75,6 +75,23 @@ internal sealed record VariantRow(
     int Available,
     int? LowStockThreshold);
 
+/// <summary>
+/// One size guide as the projection returns it, with <c>TableJson</c> still raw.
+/// <para>
+/// Projected from the navigation and never from the foreign key, which is what makes the soft-delete
+/// filter apply: a guide an admin has deleted resolves the navigation to <see langword="null"/>, so the
+/// whole row is absent and the product simply has no guide. Reading <c>Products.SizeGuideId</c> instead
+/// would hand back an id with no name and no content behind it.
+/// </para>
+/// </summary>
+internal sealed record SizeGuideRow(
+    int Id,
+    string Name,
+    string? IntroHtml,
+    string? TableJson,
+    string? MeasuringTipsHtml,
+    MediaRef? Image);
+
 /// <summary>The product page as the projection returns it, before mapping to the public DTO.</summary>
 internal sealed record ProductDetailRow(
     int Id,
@@ -101,8 +118,8 @@ internal sealed record ProductDetailRow(
     string? AgeGroupSlug,
     string? SeoTitle,
     string? SeoDescription,
-    int? SizeGuideId,
-    string? SizeGuideName,
+    SizeGuideRow? OwnSizeGuide,
+    SizeGuideRow? CategorySizeGuide,
     ProductBadge? BadgeOverride,
     DateTime? NewUntilUtc,
     decimal MinSalePrice,
