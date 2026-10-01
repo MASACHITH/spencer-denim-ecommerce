@@ -15,7 +15,7 @@ const progressData = {
     endDate: "2026-10-15"
   },
 
-  lastUpdated: "2026-10-01",
+  lastUpdated: "2026-10-02",
 
   milestones: [
     { week: "Week 0", title: "Setup & design", start: "2026-09-15", end: "2026-09-18" },
@@ -38,14 +38,14 @@ const progressData = {
     {
       name: "Homepage",
       features: [
-        { name: "Hero video banner", status: "in-progress", progress: 70 },
+        { name: "Hero video banner", status: "in-progress", progress: 90 },
         { name: "Shop by department (Women, Men, Kids)", status: "done", progress: 100 },
         { name: "New arrivals", status: "done", progress: 100 },
-        { name: "Trending items", status: "in-progress", progress: 70 },
-        { name: "Campaign banner", status: "in-progress", progress: 70 },
-        { name: "Activewear feature", status: "in-progress", progress: 70 },
+        { name: "Trending items", status: "done", progress: 100 },
+        { name: "Campaign banner", status: "done", progress: 100 },
+        { name: "Activewear feature", status: "done", progress: 100 },
         { name: "Sale section", status: "done", progress: 100 },
-        { name: "Social media gallery", status: "in-progress", progress: 70 },
+        { name: "Social media gallery", status: "in-progress", progress: 85 },
         { name: "Customer benefits", status: "done", progress: 100 },
         { name: "Newsletter signup", status: "done", progress: 100 }
       ]
@@ -57,7 +57,7 @@ const progressData = {
         { name: "Main menu (Women · Men · Kids · New Arrivals · Sale) with mega menu & mobile menu", status: "done", progress: 100 },
         { name: "Department pages", status: "done", progress: 100 },
         { name: "Category listings with filters & sorting", status: "done", progress: 100 },
-        { name: "Product cards with quick view", status: "in-progress", progress: 80 },
+        { name: "Product cards with quick view", status: "in-progress", progress: 90 },
         { name: "Search", status: "in-progress", progress: 40 },
         { name: "Store pages: About, Contact, Returns, Shipping, Privacy & Terms", status: "planned", progress: 0 }
       ]
@@ -97,7 +97,7 @@ const progressData = {
       name: "Admin Panel",
       features: [
         { name: "Admin login with user roles & permissions", status: "in-progress", progress: 80 },
-        { name: "Product management (images & video)", status: "in-progress", progress: 65 },
+        { name: "Product management (images & video)", status: "in-progress", progress: 75 },
         { name: "Category management", status: "in-progress", progress: 35 },
         { name: "Inventory", status: "in-progress", progress: 25 },
         { name: "Order management & payment approval", status: "planned", progress: 0 },
@@ -124,6 +124,10 @@ const progressData = {
 
   // Newest first.
   updates: [
+    {
+      date: "2026-10-02",
+      text: "Your photographs are on the site. Every product in Women and Men now shows your own pictures, with a second view when you hover over the card, and the three department tiles, the campaign banner, the trending row and the social wall are all live with your images. The home page video is running too. Kids products still show marked placeholder images until those photographs are supplied. Two things would improve what is there: a wide (16:9) version of the home page video, because the one supplied is a tall phone-shaped video that has to be cropped to fit, and a photograph of activewear for the section that now reads Linen and denim to match the picture we have."
+    },
     {
       date: "2026-10-01",
       text: "Staff sign-in is now protected by two-step verification using an authenticator app on the phone, and a forced password change on first sign-in. Every action an administrator takes is recorded, and there is a screen to browse and filter that history — useful if you ever need to see who changed a price or approved a payment. The photo and video library is finished and tested: it accepts your photographs and video, makes the smaller sizes each page needs automatically, and strips hidden camera data such as GPS location from every file before it is stored. Your pictures can now go in."
