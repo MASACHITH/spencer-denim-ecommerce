@@ -2,7 +2,7 @@ import { DestroyRef, Injectable, Signal, computed, inject, signal } from '@angul
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { forkJoin, map } from 'rxjs';
 
-import { CatalogApi, SearchFailure, searchErrorMessage, searchFailure } from '../catalog/catalog-api';
+import { CatalogApi, searchErrorMessage, searchFailure } from '../catalog/catalog-api';
 import { PagedResult, ProductCardDto } from '../catalog/catalog.model';
 import { PAGE_SIZE, toRequestParams } from '../catalog/listing-state';
 import { ServerHandover } from '../platform/server-handover';
@@ -43,7 +43,6 @@ export class ProductSearchStore {
   private readonly total = signal(0);
   private readonly phase = signal<SearchPhase>('idle');
   private readonly error = signal<string | null>(null);
-  private readonly failure = signal<SearchFailure | null>(null);
 
   private ticket = 0;
 
@@ -56,12 +55,6 @@ export class ProductSearchStore {
 
   /** A sentence for the shopper, never a status code. Null when the term itself was refused. */
   readonly errorMessage: Signal<string | null> = this.error.asReadonly();
-
-  /** Why the last request failed, so the page can tell a refused term from a broken store. */
-  readonly failureKind: Signal<SearchFailure | null> = this.failure.asReadonly();
-
-  /** True before any term has been searched for: the page shows a prompt, not "no results". */
-  readonly isIdle = computed(() => this.phase() === 'idle');
 
   /** True only when there is nothing on screen yet, which is the one case worth a placeholder. */
   readonly isLoading = computed(() => this.phase() === 'loading');
@@ -83,7 +76,6 @@ export class ProductSearchStore {
     this.products.set([]);
     this.total.set(0);
     this.error.set(null);
-    this.failure.set(null);
     this.phase.set('idle');
   }
 
@@ -91,7 +83,6 @@ export class ProductSearchStore {
   load(state: SearchState): void {
     const ticket = ++this.ticket;
     this.error.set(null);
-    this.failure.set(null);
 
     const handedOver = this.takeFromServer(state);
     if (handedOver) {
@@ -132,7 +123,6 @@ export class ProductSearchStore {
     const ticket = ++this.ticket;
     this.phase.set('appending');
     this.error.set(null);
-    this.failure.set(null);
 
     this.api
       .search({ ...toRequestParams(state.listing, state.listing.loadedPages, PAGE_SIZE), q: state.term })
@@ -175,7 +165,6 @@ export class ProductSearchStore {
 
     this.products.set([]);
     this.total.set(0);
-    this.failure.set(kind);
     // A refused term is a prompt the page already knows how to draw, not a sentence about a fault.
     this.error.set(kind === 'term' ? null : searchErrorMessage(failure));
     this.phase.set('error');

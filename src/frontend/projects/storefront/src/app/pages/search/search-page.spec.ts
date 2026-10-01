@@ -383,13 +383,30 @@ describe('SearchPage (SRCH-02)', () => {
     expect(TestBed.inject(Router).url).toContain('q=linen');
   });
 
-  it('stops offering Load More at the ceiling and says why', async () => {
-    await goTo(`/search?q=linen&pages=${MAX_LOADED_PAGES}`);
-    flushAll(searchRequests(), 10_000);
+  /**
+   * A stated budget for the one test here that renders hundreds of product cards.
+   *
+   * The same figure and the same reason as `listing-page.spec.ts`: a ceiling search is 480 cards,
+   * which is real work the assertion needs — proving the button is gone *while more exists* requires
+   * a page that really is at the ceiling — and vitest's 5 s default left a margin that a machine
+   * running the backend suite alongside ate twice in thirty-two runs over there. This test was copied
+   * from that one and the budget was not; it took 9,426 ms on a busy machine and went red, which also
+   * stopped `ng test admin` from running at all, because `test:ci` chains the three projects with
+   * `&&`. The honest cost of the test, declared.
+   */
+  const HEAVY_RENDER_TIMEOUT_MS = 20_000;
 
-    expect(query('.search__more button')).toBeNull();
-    expect(text()).toContain('That is as many as one page shows');
-  });
+  it(
+    'stops offering Load More at the ceiling and says why',
+    async () => {
+      await goTo(`/search?q=linen&pages=${MAX_LOADED_PAGES}`);
+      flushAll(searchRequests(), 10_000);
+
+      expect(query('.search__more button')).toBeNull();
+      expect(text()).toContain('That is as many as one page shows');
+    },
+    HEAVY_RENDER_TIMEOUT_MS,
+  );
 
   // ------------------------------------------------------------------ filters and sort
 

@@ -32,11 +32,6 @@ export interface SearchState {
   readonly listing: ListingState;
 }
 
-export const EMPTY_SEARCH_STATE: SearchState = {
-  term: '',
-  listing: EMPTY_LISTING_STATE,
-};
-
 /** Reads `/search?...` into state, keeping whatever is usable and dropping whatever is not. */
 export function readSearchState(query: RawParams): SearchState {
   return {
