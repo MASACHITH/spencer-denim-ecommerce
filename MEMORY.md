@@ -47,6 +47,74 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 
 ## Session log
 
+### 2026-10-02 (3) — W1-12 fix round 2: the discard was right, the silence was not
+
+The tester passed everything except one major, having re-introduced the blocker itself to watch the two
+frontend tests fail, enumerated both request DTOs against the rendered controls, failed to defeat
+`CheckBannerLink` v2 with 60 inputs, and reproduced the N+1 figure character for character. Eight of the
+nine remaining items were corrections to comments and claims rather than code.
+
+**MAJOR: the category tree threw away a staged reorder in silence, and round 1 had made the two halves of
+the screen contradict each other.** Stage a move, hide an unrelated category, and the banner and the Save
+order button vanished while the live region said only "Traditional wear was updated". The round-1 report
+said the tree had already been fixed and only the department list had missed out; that was wrong, and the
+tester owned it - the tree had always discarded deliberately, and nobody had looked at that half.
+
+**The owner's decision, and it is the right one: keep the discard, make it visible.** The department list
+can reapply by id because three fixed rows cannot gain or lose a member; a category reload genuinely can,
+so reapplying a stale arrangement would send a list the server refuses with `stale_order`. The defect was
+only the silence.
+
+**So "discarded" is now a value the screen can read rather than an absence.** The staged order is stored
+with the tree it was made from (`StagedOrder { madeFrom, nodes }`), so "nothing is staged" and "something
+was staged and no longer applies" are different states. A `role="status"` notice says what happened, why,
+that nothing else was lost and what to do, with a Dismiss button; the live region says the same words,
+because the announcement is a **computed** that prefers the discard message over the last action - the
+admin already knows about the change they asked for. One string feeds both, so they cannot drift.
+
+**m3: two pieces of copy promised behaviour that does not exist.** The size-guide null option read "Inherit
+from the nearest parent" and nothing in the codebase walks ancestors; the age-group hint read "Required for
+Kids categories" and nothing requires it. Both now say what is true.
+
+**m4, and this one was the coordinator's error rather than mine, which is worth recording because the wrong
+claim had already reached three files.** A category without a size guide does **not** break PDP-04.
+`ProductCatalogReader` reads `Products.SizeGuideId` and only that; the single place `Category.SizeGuideId`
+reaches a product is `DemoCatalogueSeeder`, which copies it at creation. Doc 08 3.2's "inherited from the
+nearest ancestor" is a design note, not built behaviour. So the field is the default W1-03's product form
+will inherit, and it reaches no storefront page today. Building the pickers was still right (doc 11 P1
+step 2); the description was not.
+
+**m1: the credit for catching the blocker was in the wrong file.** `AdminCatalogWriteShapeTests` cannot
+catch it - its key-set assertion compares two hand-written C# lists and no C# test can see TypeScript. The
+two frontend tests catch it. The integration suite keeps its real value, which is proving the API stores
+everything it is handed, and now says so.
+
+**m2: "a derived port cannot collide by accident" was false** - 60 slots is about 1 in 60 per pair and
+roughly 1 in 5 that some pair of seven worktrees collides, at which point `reuseExistingServer` reproduces
+the 113-failure bug silently. The wording is corrected, and the suite no longer relies on the arithmetic: a
+`beforeAll` asks the server which worktree's build it is serving and refuses to trust it otherwise.
+
+**m5: the documented picker fallback did not exist.** A failed options request left a select showing nothing
+for a category that does have an age group - misreporting the row, and the next save would write what it
+showed. The row's own value is now kept in the list, labelled as a stand-in.
+
+**m6: the two "strictness" e2e tests proved only that the stub refuses**, because they issued a raw `fetch`
+and bypassed the client entirely - exactly what their own comment claimed they prevented. They now
+intercept the screen's own request and take the header or the row version away from it, so the client
+building it, the server refusing it and the screen saying so are all in the test. **Proven by mutation**:
+sending the token under the wrong header name fails them with `Received: undefined`.
+
+**m7** is a note rather than a fix (the stub and `AdminWriteRequest` read a doubly quoted `If-Match`
+differently, and nothing sends one), and **m8** folds the permission sweep's ad-hoc bodies into the one
+`BodyFor`, so the sweep has a single body to keep current.
+
+**Numbers:** backend **887 unit + 456 integration** (unchanged), 0 skipped; frontend 21 / 460 / **212**
+admin; **Playwright 256**. Lint clean, Release build clean with 0 warnings. Six full Playwright runs: five
+clean, one failure of `storefront-shell`'s reduced-motion drawer - **issue #66**, on a file this branch does
+not touch.
+
+**Next:** back to the tester.
+
 ### 2026-10-02 (2) — W1-12 fix round 1: every save was quietly clearing the images it could not show
 
 The tester failed it on 1 blocker, 3 majors and 9 minors, and confirmed the backend use cases and the
