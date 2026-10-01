@@ -68,6 +68,22 @@ let nextPanelId = 0;
           <summary class="filters__summary">Department</summary>
           <fieldset class="filters__set">
             <legend class="sr-only">Department</legend>
+            <!-- Only the search page offers this, and it needs it: on a listing the department is
+                 the address and "no department" is not a page, but on /search?q=linen it is the
+                 whole catalogue, and without the option a shopper who narrows to Women can never
+                 widen again from this panel. -->
+            @if (allowAnyDepartment()) {
+              <label class="opt">
+                <input
+                  type="radio"
+                  [name]="id + '-department'"
+                  value=""
+                  [checked]="state().department === null"
+                  (change)="chooseDepartment(null)"
+                />
+                <span>All departments</span>
+              </label>
+            }
             @for (department of departments(); track department.slug) {
               <label class="opt">
                 <input
@@ -377,6 +393,13 @@ export class ListingFilters {
    */
   readonly fixedFilter = input<'newArrivals' | 'discount' | null>(null);
 
+  /**
+   * Whether "All departments" is one of the choices. False on a listing, where the department is
+   * the page's own address and there is no route without one; true on the search results page,
+   * where it is an ordinary filter (SRCH-02).
+   */
+  readonly allowAnyDepartment = input(false);
+
   /** The state the shopper's last change would produce. The page decides what to do with it. */
   readonly changed = output<ListingState>();
 
@@ -469,7 +492,7 @@ export class ListingFilters {
   }
 
   /** A different department has different categories, so the category cannot come along. */
-  protected chooseDepartment(slug: string): void {
+  protected chooseDepartment(slug: string | null): void {
     this.changed.emit(withFilter(this.state(), { department: slug, category: null }));
   }
 

@@ -29,8 +29,21 @@ import { formatLkr } from './money';
  * is narrowing it and take it off.
  */
 
-/** What a chip removes. `list` chips also carry the value; the others are whole-filter chips. */
-export type ChipKind = ListFilterKey | 'price' | 'rating' | 'inStock' | 'discount' | 'newArrivals';
+/**
+ * What a chip removes. `list` chips also carry the value; the others are whole-filter chips.
+ *
+ * `department` and `category` are only ever produced for the search results page — see
+ * {@link ChipOptions.placement}.
+ */
+export type ChipKind =
+  | ListFilterKey
+  | 'price'
+  | 'rating'
+  | 'inStock'
+  | 'discount'
+  | 'newArrivals'
+  | 'department'
+  | 'category';
 
 export interface FilterChip {
   /** Stable across renders, so `@for` can track it. */
@@ -53,9 +66,39 @@ const LIST_OPTIONS: Readonly<Record<ListFilterKey, readonly FilterOption[]>> = {
   occasions: OCCASION_OPTIONS,
 };
 
+/** How the caller wants the chips built. */
+export interface ChipOptions {
+  /**
+   * Whether the department and the category are filters that can be taken off.
+   *
+   * On a listing they are not: they are the page's own address, they are already in the
+   * breadcrumb, and removing them has nowhere to go. On the search results page they are, because
+   * `/search?q=linen` is the page and `&department=women` narrows it — so this defaults to the
+   * listing's answer and the search page is the one caller that asks for the other.
+   */
+  readonly placement?: boolean;
+  /**
+   * Labels for the two placement chips, which only the caller can resolve: a slug is not a name,
+   * and the department tree lives outside this module.
+   */
+  readonly departmentName?: string | null;
+  readonly categoryName?: string | null;
+}
+
 /** Every chip the current state should show, in the order the filter panel lists the groups. */
-export function activeChips(state: ListingState): readonly FilterChip[] {
+export function activeChips(state: ListingState, options: ChipOptions = {}): readonly FilterChip[] {
   const chips: FilterChip[] = [];
+
+  // The two labels are written out rather than taken from FILTER_GROUP_LABEL, which is keyed by
+  // the repeatable filters alone; the filter panel spells its own Department and Category
+  // headings the same way.
+  if (options.placement && state.department !== null) {
+    chips.push(chip('department', '', `Department: ${options.departmentName ?? state.department}`));
+  }
+
+  if (options.placement && state.category !== null) {
+    chips.push(chip('category', '', `Category: ${options.categoryName ?? state.category}`));
+  }
 
   for (const key of LIST_FILTER_KEYS) {
     for (const value of state[key]) {
@@ -102,6 +145,14 @@ export function removeChip(state: ListingState, target: FilterChip): ListingStat
       return withFilter(state, { onSale: false, minDiscountPercent: null });
     case 'newArrivals':
       return withFilter(state, { newArrivals: false });
+    // Taking the department off takes the category with it: a category slug is unique per
+    // department and parent, so "jeans" on its own names two categories and the API refuses to
+    // guess (it answers 400 naming `category`). Leaving one behind would turn "show me everything"
+    // into an error page.
+    case 'department':
+      return withFilter(state, { department: null, category: null });
+    case 'category':
+      return withFilter(state, { category: null });
     default:
       return toggleListValue(state, target.kind, target.value);
   }
