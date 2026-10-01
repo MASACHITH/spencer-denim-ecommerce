@@ -43,4 +43,17 @@ public sealed class CatalogOptions
 
     /// <summary>How many related products the product page returns (PDP-06).</summary>
     public int RelatedProductCount { get; set; } = 4;
+
+    /// <summary>
+    /// How many products one <c>sitemap.xml</c> may list (GLB-11).
+    /// <para>
+    /// 45,000 rather than a round 50,000 because 50,000 is the sitemap protocol's own hard limit for a
+    /// single file, and a limit a document is allowed to reach exactly is a limit it will one day be
+    /// one row past. The margin is the room to notice: the reader reports when the cap is reached, and
+    /// the answer is then a sitemap index with several files, which is a change to make deliberately
+    /// rather than discover from a crawler's error report. The figure also bounds the one public
+    /// endpoint that enumerates the catalogue, which is the other reason it exists.
+    /// </para>
+    /// </summary>
+    public int SitemapMaxProducts { get; set; } = 45_000;
 }

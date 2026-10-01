@@ -8,6 +8,9 @@ import express from 'express';
 import { join } from 'node:path';
 import { BRAND } from '@spencer-denim/shared';
 
+import { ROBOTS_MAX_AGE_SECONDS, robotsTxt } from './server/robots-txt';
+import { SitemapDocument } from './server/sitemap-xml';
+
 const browserDistFolder = join(import.meta.dirname, '../browser');
 
 const app = express();
@@ -23,6 +26,47 @@ const angularApp = new AngularNodeAppEngine();
 app.get('/healthz', (_req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   res.json({ status: 'ok' });
+});
+
+/**
+ * `robots.txt` and `sitemap.xml` (GLB-11), answered here and **not** by the Angular router.
+ *
+ * **Why the position in this file matters.** Before this existed there was no such file anywhere in
+ * the build, so a request for `/robots.txt` fell all the way through to the router — and a route that
+ * matched it would have rendered a page or failed. **A crawler answered 5xx for `robots.txt` treats
+ * the entire site as disallowed** until it can read one, so the one place that answer must not be able
+ * to come from is a route table. These two routes are mounted ahead of the static middleware as well,
+ * so neither can be shadowed by a file that lands in `public/` later: both have to be generated,
+ * because both carry this deployment's own public origin and nothing checked into the repository can
+ * know what that is (doc 03 §5).
+ *
+ * Express answers HEAD from a GET route with the body dropped, which is what a link checker and most
+ * uptime monitors lead with.
+ */
+app.get('/robots.txt', (req, res) => {
+  res.type('text/plain; charset=utf-8');
+  res.setHeader('Cache-Control', `public, max-age=${ROBOTS_MAX_AGE_SECONDS}`);
+  res.send(robotsTxt(req.headers));
+});
+
+/** One document per process, so the cache inside it is shared by every request (see the class). */
+const sitemap = new SitemapDocument();
+
+app.get('/sitemap.xml', (req, res, next) => {
+  void sitemap
+    .answer(req.headers)
+    .then((answer) => {
+      res.status(answer.status);
+      res.type(answer.contentType);
+      res.setHeader('Cache-Control', answer.cacheControl);
+      if (answer.retryAfter !== undefined) {
+        res.setHeader('Retry-After', String(answer.retryAfter));
+      }
+      res.send(answer.body);
+    })
+    // `answer` is documented never to reject; this is here so that if it ever does, the failure is
+    // Express's problem rather than an unhandled rejection that takes the process with it.
+    .catch(next);
 });
 
 /**

@@ -8,6 +8,7 @@ using SpencerDenim.Application.Catalog.Contracts;
 using SpencerDenim.Application.Catalog.Departments;
 using SpencerDenim.Application.Catalog.Products;
 using SpencerDenim.Application.Catalog.Search;
+using SpencerDenim.Application.Catalog.Sitemap;
 
 namespace SpencerDenim.Api.Endpoints.Catalog;
 
@@ -51,6 +52,15 @@ internal static class CatalogEndpoints
             .Produces<ProductDetailDto>()
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesValidationProblem();
+
+        catalog.MapMethods("/sitemap", ReadMethods, GetSitemapAsync)
+            .WithName("GetCatalogSitemap")
+            .WithSummary("Every department, category and product a crawler may be told about.")
+            .WithDescription(
+                "GLB-11. Slugs and last-modified timestamps only: the storefront turns them into addresses, because it owns its route table. " +
+                "Deactivated departments and categories, soft-deleted categories and unpublished products are absent, by the same predicates the listing uses. " +
+                "The product list is capped by Catalog:SitemapMaxProducts and the response says when the cap was reached.")
+            .Produces<CatalogSitemapDto>();
 
         catalog.MapMethods("/search", ReadMethods, SearchProductsAsync)
             .WithName("SearchProducts")
@@ -111,6 +121,18 @@ internal static class CatalogEndpoints
         }
 
         return TypedResults.Ok(product);
+    }
+
+    /// <summary>
+    /// The sitemap snapshot. No parameters: there is one answer, and a parameter would be one more way
+    /// for a crawler to ask for work.
+    /// </summary>
+    private static async Task<Ok<CatalogSitemapDto>> GetSitemapAsync(
+        IQueryHandler<GetCatalogSitemapQuery, CatalogSitemapDto> handler,
+        CancellationToken cancellationToken)
+    {
+        var sitemap = await handler.HandleAsync(new GetCatalogSitemapQuery(), cancellationToken);
+        return TypedResults.Ok(sitemap);
     }
 
     private static async Task<Results<Ok<ProductSearchResponse>, ValidationProblem>> SearchProductsAsync(

@@ -300,18 +300,12 @@ internal sealed class ProductCatalogReader(
     /// soft-delete query filter is a constant too, so both render as literals and
     /// <c>IX_Products_Listing</c> (filtered on exactly those two columns) can be matched (DB28).
     /// </summary>
+    // The predicate itself lives in CatalogVisibility, because the sitemap (GLB-11) enumerates exactly
+    // the products this serves and a copy of the rule there would be a second definition of "visible".
     private IQueryable<Product> BaseQuery() =>
         dbContext.Products
             .AsNoTracking()
-            .Where(product => product.IsPublished)
-            // ProductStats is 1:1 with a product and is written in the same transaction, so this is
-            // never false in practice; it keeps the join an inner one and the projection total.
-            .Where(product => product.Stats != null)
-            // Doc 08 §7.1: IsActive is the only switch an admin has for taking a section off the
-            // storefront, so a product leaves with its department or its primary category. Its other
-            // category links do not keep it visible — a product whose primary category is gone has a
-            // breadcrumb into nothing, which is a dead end reachable from a live page.
-            .Where(product => product.Department!.IsActive && product.PrimaryCategory!.IsActive);
+            .Where(CatalogVisibility.VisibleProduct);
 
     private static IQueryable<Product> ApplyFilters(
         IQueryable<Product> rows,

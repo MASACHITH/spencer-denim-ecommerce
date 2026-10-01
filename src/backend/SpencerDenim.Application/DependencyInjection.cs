@@ -12,6 +12,7 @@ using SpencerDenim.Application.Catalog.Contracts;
 using SpencerDenim.Application.Catalog.Departments;
 using SpencerDenim.Application.Catalog.Products;
 using SpencerDenim.Application.Catalog.Search;
+using SpencerDenim.Application.Catalog.Sitemap;
 using SpencerDenim.Application.Content.Abstractions;
 using SpencerDenim.Application.Content.Announcements;
 using SpencerDenim.Application.Content.Contracts;
@@ -71,6 +72,9 @@ public static class DependencyInjection
         services.AddScoped<
             IQueryHandler<ProductSearchQuery, Result<PagedResult<ProductCardDto>>>,
             SearchProductsQueryHandler>();
+        services.AddScoped<
+            IQueryHandler<GetCatalogSitemapQuery, CatalogSitemapDto>,
+            GetCatalogSitemapQueryHandler>();
 
         // Admin catalogue structure (ADM-11, W1-12): departments and the category tree.
         // The read side is its own port because the storefront's drops every deactivated row, which is

@@ -237,3 +237,31 @@ jobs:
           fi
 
           echo "Server-rendered HTML contains the expected markers (${#html} bytes)."
+
+          # robots.txt, against a server with **no catalogue API behind it at all** (GLB-11). It is
+          # answered by Express from the request alone, which is what has to stay true: a crawler
+          # answered 5xx for robots.txt treats the whole site as disallowed until it can read one, so
+          # this must not depend on anything that can be down. The Playwright suite measures the rest;
+          # this is the one assertion worth making with nothing else running.
+          robots="$(curl -sf http://127.0.0.1:4000/robots.txt)" || {
+            echo "::error::robots.txt was not served. A crawler reads a 5xx here as 'the whole site is disallowed'."
+            exit 1
+          }
+
+          for marker in 'User-agent: *' 'Sitemap: '; do
+            if [[ "$robots" != *"$marker"* ]]; then
+              echo "::error::robots.txt does not contain '$marker'."
+              echo "$robots"
+              exit 1
+            fi
+          done
+
+          # And sitemap.xml with no catalogue: 503 with Retry-After, never a 500 and never an empty
+          # urlset, which is a valid document that says this shop has no pages.
+          sitemap_status="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:4000/sitemap.xml)"
+          if [ "$sitemap_status" != "503" ]; then
+            echo "::error::sitemap.xml answered $sitemap_status with no catalogue behind it; expected 503."
+            exit 1
+          fi
+
+          echo "robots.txt is served without a catalogue, and sitemap.xml answers 503."

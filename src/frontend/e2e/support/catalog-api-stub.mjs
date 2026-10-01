@@ -249,6 +249,40 @@ function product(index) {
   };
 }
 
+/**
+ * The sitemap feed's body: every department with its category trails, and every product.
+ *
+ * Built from the same {@link DEPARTMENTS} tree the menu is served from, so a test can assert that a
+ * listing the menu links to is also a listing the sitemap offers. `E2E_SITEMAP_TRUNCATED` reports the
+ * cap as reached without having to invent 45,000 products.
+ */
+function sitemapPayload() {
+  const tree = Array.isArray(DEPARTMENTS_BODY) && DEPARTMENTS_BODY.length > 0 ? DEPARTMENTS_BODY : DEPARTMENTS;
+
+  const trails = (nodes, ancestors) =>
+    nodes.flatMap((node) => {
+      const trail = [...ancestors, node.slug];
+      return [
+        { slugTrail: trail, lastModifiedUtc: `2026-09-${String(10 + (node.id % 18)).padStart(2, '0')}T08:00:00Z` },
+        ...trails(node.children ?? [], trail),
+      ];
+    });
+
+  return {
+    generatedAtUtc: '2026-10-02T00:00:00Z',
+    departments: tree.map((department) => ({
+      slug: department.slug,
+      lastModifiedUtc: '2026-09-01T08:00:00Z',
+      categories: trails(department.categories ?? [], []),
+    })),
+    products: Array.from({ length: TOTAL_PRODUCTS }, (_, index) => ({
+      slug: `test-product-${index + 1}`,
+      lastModifiedUtc: `2026-09-${String(1 + (index % 28)).padStart(2, '0')}T08:00:00Z`,
+    })),
+    productsTruncated: process.env.E2E_SITEMAP_TRUNCATED === '1',
+  };
+}
+
 function productsFor(params) {
   const colour = params.getAll('colour')[0];
   const total = colour === undefined ? TOTAL_PRODUCTS : (COLOUR_TOTALS[colour] ?? 0);
@@ -1664,6 +1698,26 @@ const server = createServer((request, response) => {
       response.setHeader('Content-Type', 'application/problem+json; charset=utf-8');
     }
     response.end(JSON.stringify(answer.body));
+    return;
+  }
+
+  // The sitemap feed (GLB-11). It mirrors `/api/catalog/sitemap`: slugs and timestamps only, with the
+  // storefront turning them into addresses.
+  //
+  // It honours `E2E_PRODUCT_STATUS` rather than the switchable `departmentsFault`, and deliberately so.
+  // The sitemap is a catalogue read, so "the catalogue is unhappy" is the fault that matters to it, and
+  // the faulty pair already has that fault fixed for the whole server — which means the sitemap's
+  // unhealthy behaviour can be measured in a parallel test rather than inside the serial file that owns
+  // the fault switch.
+  if (url.pathname === '/api/catalog/sitemap') {
+    const forced = Number(process.env.E2E_PRODUCT_STATUS ?? 0);
+    if (forced >= 400) {
+      response.statusCode = forced;
+      response.end(JSON.stringify({ title: 'Forced failure', status: forced }));
+      return;
+    }
+
+    response.end(JSON.stringify(sitemapPayload()));
     return;
   }
 
