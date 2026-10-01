@@ -107,7 +107,15 @@ import { StorefrontCounts } from '../../core/storefront-counts.service';
         [hidden]="!searchOpen()"
       >
         <div class="container">
-          <sd-header-search placeholder="Search for products" #panelSearch />
+          <!-- The second instance of the same box: the inline one above is display:none below
+               1280 px and this panel is display:none above it, so a shopper only ever sees one. They
+               still need distinct landmark names, because "exactly one is visible" is a fact about
+               the stylesheet and a landmark list is not. -->
+          <sd-header-search
+            placeholder="Search for products"
+            landmarkLabel="Search products, header panel"
+            #panelSearch
+          />
         </div>
       </div>
 

@@ -86,6 +86,21 @@ export interface PagedResult<TItem> {
 }
 
 /**
+ * The body of `GET /api/catalog/search` (`ProductSearchResponse` in `CatalogEndpoints`).
+ *
+ * `term` and `tokens` are what the API actually searched for, not what was asked: the term is
+ * trimmed and the tokens are lower-cased, de-duplicated and capped at five (doc 08 §7.6). The page
+ * shows the shopper the term **it** normalised rather than this one — the two agree, because
+ * `normaliseTerm` runs before the request — but `tokens` is the honest answer to "what did you
+ * actually match on", which is what makes a five-word search explainable.
+ */
+export interface ProductSearchResponse {
+  readonly term: string;
+  readonly tokens: readonly string[];
+  readonly results: PagedResult<ProductCardDto>;
+}
+
+/**
  * The RFC 9457 body the listing endpoint returns for a rejected query string, keyed by the
  * query-string parameter name (`ToValidationProblem` in `CatalogEndpoints`).
  */

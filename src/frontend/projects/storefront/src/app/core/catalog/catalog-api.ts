@@ -7,6 +7,7 @@ import {
   PagedResult,
   ProductCardDto,
   ProductDetailDto,
+  ProductSearchResponse,
   ValidationProblemDetails,
 } from './catalog.model';
 import { DepartmentDto } from '../navigation/catalog-departments.model';
@@ -42,6 +43,19 @@ export class CatalogApi {
    */
   product(slug: string): Observable<ProductDetailDto> {
     return this.http.get<ProductDetailDto>(`/api/catalog/products/${encodeURIComponent(slug)}`);
+  }
+
+  /**
+   * One page of search results (SRCH-01 suggestions, SRCH-02 the page). `params` carries `q` plus
+   * whatever `toRequestParams` built, because the listing's filters and sorts apply on top of the
+   * term (doc 08 §7.6).
+   *
+   * The term must already have been through `normaliseTerm`: `HttpParams` encodes values with
+   * `encodeURIComponent`, which **throws** on an unpaired surrogate rather than returning
+   * something the API can reject.
+   */
+  search(params: Params): Observable<ProductSearchResponse> {
+    return this.http.get<ProductSearchResponse>('/api/catalog/search', { params });
   }
 }
 
@@ -111,6 +125,56 @@ export function listingErrorMessage(error: unknown): string {
 
 const GENERIC_ERROR =
   'We could not load these products just now. Please refresh the page or try again in a moment.';
+
+/**
+ * How a failed `GET /api/catalog/search` has to be treated, which is not the same as a listing.
+ *
+ * - `term`: the API rejected `q` itself. `normaliseTerm` applies the same rules before the request,
+ *   so this should be unreachable — but a hand-built link, a future rule only the server knows
+ *   about or a proxy that mangles the query string would all land here, and "type a little more" is
+ *   the truthful thing to say rather than "something went wrong".
+ * - `query`: some other parameter was rejected. The API's own message names it and says what shape
+ *   it should have, so it is shown as written.
+ * - `offline` / `failed`: as on a listing.
+ */
+export type SearchFailure = 'term' | 'query' | 'offline' | 'failed';
+
+/** Classifies a failed search request. */
+export function searchFailure(error: unknown): SearchFailure {
+  if (!(error instanceof HttpErrorResponse)) {
+    return 'failed';
+  }
+
+  if (error.status === 400) {
+    return hasValidationField(error.error, 'q') ? 'term' : 'query';
+  }
+
+  return error.status === 0 ? 'offline' : 'failed';
+}
+
+/** A sentence for the shopper. `term` has none: it is a prompt on the page, not an error banner. */
+export function searchErrorMessage(error: unknown): string {
+  switch (searchFailure(error)) {
+    case 'query':
+      return (
+        firstValidationMessage((error as HttpErrorResponse).error) ??
+        'That link asks for something this catalogue cannot show. Clear the filters to start again.'
+      );
+    case 'offline':
+      return 'We could not reach the store. Check your connection and try again.';
+    default:
+      return 'We could not run that search just now. Please try again in a moment.';
+  }
+}
+
+function hasValidationField(body: unknown, field: string): boolean {
+  if (typeof body !== 'object' || body === null) {
+    return false;
+  }
+
+  const errors = (body as ValidationProblemDetails).errors;
+  return errors !== undefined && Object.hasOwn(errors, field);
+}
 
 function firstValidationMessage(body: unknown): string | null {
   if (typeof body !== 'object' || body === null) {

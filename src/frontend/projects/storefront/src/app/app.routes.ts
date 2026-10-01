@@ -14,6 +14,9 @@ const listingPage = () => import('./pages/listing/listing-page').then((m) => m.L
 /** The product detail page (PDP-01..07). */
 const productPage = () => import('./pages/product/product-page').then((m) => m.ProductPage);
 
+/** The search results page (SRCH-02). */
+const searchPage = () => import('./pages/search/search-page').then((m) => m.SearchPage);
+
 /** An address the catalogue does not have. Answers a real 404 (see the component). */
 const notFoundPage = () => import('./pages/not-found/not-found-page').then((m) => m.NotFoundPage);
 
@@ -36,6 +39,15 @@ export const routes: Routes = [
   // knows whether a slug is a product, and the page answers a real 404 when it is not — which is
   // also what a malformed slug gets, because the API refuses to look one up.
   { path: 'product/:slug', loadComponent: productPage },
+
+  // The search results page (W2-07, SRCH-02). A single-segment route, so it is listed **ahead of
+  // `:department`**, which matches any single segment: a department called "search" is not what the
+  // address means, and a `canMatch` verdict on it is not something to leave to the catalogue.
+  //
+  // It takes neither of the behaviours the listing routes grew in #30. There is no `canMatch` guard
+  // because there is nothing to confirm — the page is valid for every term, including one that
+  // matches nothing — and so there is no path by which it can answer 404 or 503. See the component.
+  { path: 'search', loadComponent: searchPage },
 
   // Two of the five permanent navigation entries (GLB-05). They are the same listing with one
   // filter fixed and no department, so neither points at a not-found page while DEPT-02 and

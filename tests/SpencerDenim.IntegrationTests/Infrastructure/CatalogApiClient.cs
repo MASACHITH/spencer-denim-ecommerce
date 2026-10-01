@@ -45,6 +45,21 @@ public sealed class CatalogApiClient(HttpClient client)
         return (response.StatusCode, body);
     }
 
+    /// <summary>
+    /// Sends a request and returns the status and the raw body, parsing nothing.
+    /// <para>
+    /// <see cref="GetRawAsync"/> reads the body as JSON, which is fine for a 400 the API wrote and
+    /// useless for the failure these tests exist to catch: an unhandled exception comes back as a
+    /// 500 whose body may be a problem document, an empty string, or the developer exception page's
+    /// HTML, and a test that cannot read it reports a JSON error instead of the status code.
+    /// </para>
+    /// </summary>
+    public async Task<(HttpStatusCode Status, string Body)> GetStatusAsync(string path, CancellationToken cancellationToken)
+    {
+        using var response = await client.GetAsync(new Uri(path, UriKind.Relative), cancellationToken);
+        return (response.StatusCode, await response.Content.ReadAsStringAsync(cancellationToken));
+    }
+
     private async Task<TResult> GetAsync<TResult>(string path, CancellationToken cancellationToken)
     {
         using var response = await client.GetAsync(new Uri(path, UriKind.Relative), cancellationToken);

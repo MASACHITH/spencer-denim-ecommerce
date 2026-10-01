@@ -365,4 +365,276 @@ public sealed class ProductDetailAndSearchTests(SqlServerDatabaseFixture sqlServ
         Assert.Equal(HttpStatusCode.BadRequest, status);
         Assert.True(body.GetProperty("errors").TryGetProperty("q", out _));
     }
+
+    /// <summary>
+    /// Every value a search box can be made to send, and none of them may be a 500.
+    ///
+    /// <para>
+    /// This is not a theoretical list. Unparseable query parameters answered 500 on this very API
+    /// until a tester found it (that is why <c>ProductListCriteria</c> binds every number as a
+    /// string), and one unpaired surrogate in a size chart once 500'd every product page in a
+    /// department. A public search box is the easiest place on a shop to send any of these.
+    /// </para>
+    /// <para>
+    /// The assertion is deliberately "400 or 200, never 500" rather than one exact status: whether a
+    /// given value is rejected or simply matches nothing is a design decision that may reasonably
+    /// change, while answering a server error to a shopper's typing is never right. The cases that
+    /// have one correct answer are asserted individually below.
+    /// </para>
+    /// </summary>
+    [Theory]
+    // No value, and a value of one character: too short to search for.
+    [InlineData("?q=")]
+    [InlineData("?q=a")]
+    [InlineData("?q=%20%20")]
+    // Long enough, but with no word long enough to be a token.
+    [InlineData("?q=a%20b")]
+    // Two thousand characters, which is past the term limit and past the indexed column.
+    [InlineData("?q=" + TwoThousandXs)]
+    // A NUL, on its own and inside a word.
+    [InlineData("?q=%00")]
+    [InlineData("?q=te%00st")]
+    [InlineData("?q=%00%00%00%00")]
+    // An unpaired surrogate: invalid UTF-8 in the query string.
+    [InlineData("?q=%ED%A0%BD")]
+    [InlineData("?q=linen%ED%A0%BD")]
+    // A whole emoji, which is a legitimate thing to type into a search box.
+    [InlineData("?q=%F0%9F%91%97")]
+    // Punctuation only, and the LIKE wildcards.
+    [InlineData("?q=%21%21%21")]
+    [InlineData("?q=%25")]
+    [InlineData("?q=_")]
+    [InlineData("?q=%5B")]
+    [InlineData("?q=%5C")]
+    // More tokens than the five doc 08 §7.6 keeps.
+    [InlineData("?q=linen%20shirt%20women%20blue%20relaxed%20cotton%20more")]
+    // A term with a filter that is itself unparseable: both have to be answered at once.
+    [InlineData("?q=linen&page=abc")]
+    [InlineData("?q=linen&pageSize=-1")]
+    [InlineData("?q=linen&minPrice=NaN")]
+    [InlineData("?q=linen&sort=nope")]
+    public async Task A_hostile_term_is_never_a_500(string query)
+    {
+        var api = CreateApi();
+
+        var (status, body) = await api.GetStatusAsync("/api/catalog/search" + query, Token);
+
+        Assert.True(
+            status is HttpStatusCode.OK or HttpStatusCode.BadRequest,
+            $"GET /api/catalog/search{query} returned {(int)status}: {body}");
+    }
+
+    [Fact]
+    public async Task A_term_of_only_short_words_is_a_400_naming_the_term()
+    {
+        var api = CreateApi();
+
+        var (status, body) = await api.GetRawAsync("/api/catalog/search?q=a%20b", Token);
+
+        Assert.Equal(HttpStatusCode.BadRequest, status);
+        Assert.True(body.GetProperty("errors").TryGetProperty("q", out _));
+    }
+
+    [Fact]
+    public async Task A_term_past_the_length_limit_is_a_400_naming_the_term()
+    {
+        var api = CreateApi();
+
+        var (status, body) = await api.GetRawAsync("/api/catalog/search?q=" + TwoThousandXs, Token);
+
+        Assert.Equal(HttpStatusCode.BadRequest, status);
+        Assert.True(body.GetProperty("errors").TryGetProperty("q", out _));
+    }
+
+    /// <summary>
+    /// Punctuation is a term, not an error: it is long enough, it tokenises, and it matches nothing.
+    /// The empty page is the honest answer, and the storefront has a state for it.
+    /// </summary>
+    [Theory]
+    [InlineData("?q=%21%21%21")]
+    [InlineData("?q=%2D%2D%2D")]
+    public async Task A_term_of_punctuation_matches_nothing_rather_than_failing(string query)
+    {
+        var api = CreateApi();
+
+        var response = await api.SearchAsync(query, Token);
+
+        Assert.Empty(response.Results.Items);
+        Assert.Equal(0, response.Results.TotalCount);
+    }
+
+    [Fact]
+    public async Task An_emoji_matches_nothing_rather_than_failing()
+    {
+        var api = CreateApi();
+
+        var response = await api.SearchAsync("?q=%F0%9F%91%97", Token);
+
+        Assert.Equal(0, response.Results.TotalCount);
+    }
+
+    /// <summary>Doc 08 §7.6: at most five tokens, and the response says which five it used.</summary>
+    [Fact]
+    public async Task Only_five_tokens_are_matched_and_the_response_says_so()
+    {
+        var api = CreateApi();
+
+        var response = await api.SearchAsync(
+            "?q=linen%20shirt%20women%20blue%20relaxed%20cotton%20more",
+            Token);
+
+        Assert.Equal(5, response.Tokens.Count);
+        Assert.DoesNotContain("cotton", response.Tokens);
+        Assert.DoesNotContain("more", response.Tokens);
+    }
+
+    /// <summary>
+    /// A term the API accepts and a filter it does not: one response names the filter, and the term is
+    /// not quietly dropped or quietly honoured.
+    /// </summary>
+    [Fact]
+    public async Task A_bad_filter_beside_a_good_term_is_a_400_naming_the_filter()
+    {
+        var api = CreateApi();
+
+        var (status, body) = await api.GetRawAsync("/api/catalog/search?q=linen&page=abc", Token);
+
+        Assert.Equal(HttpStatusCode.BadRequest, status);
+        Assert.True(body.GetProperty("errors").TryGetProperty("page", out _));
+    }
+
+    /// <summary>
+    /// The two different messages a rejected whole number gets, and which one depends on whether
+    /// <c>int.TryParse</c> succeeded rather than on whether the number was in range.
+    ///
+    /// <para>
+    /// Pinned here because the browser suite's stub mirrors these strings, and a mirror nobody checks
+    /// is a mirror that drifts: the stub answered "must be between 1 and 1000" for a value that
+    /// overflows an <c>int</c>, where this answers "must be a whole number". The pair of them is the
+    /// whole point — one message for "that is not an integer", another for "that integer is too big".
+    /// </para>
+    /// </summary>
+    [Theory]
+    [InlineData("page", "2147483648", "whole number")]
+    [InlineData("page", "99999999999999999999", "whole number")]
+    [InlineData("page", "1.5", "whole number")]
+    [InlineData("page", "0", "must be between")]
+    [InlineData("page", "-3", "must be between")]
+    [InlineData("pageSize", "2147483648", "whole number")]
+    [InlineData("pageSize", "100000", "must be between")]
+    public async Task A_rejected_whole_number_says_which_kind_of_wrong_it_was(
+        string field,
+        string value,
+        string expected)
+    {
+        var api = CreateApi();
+
+        var (status, body) = await api.GetRawAsync($"/api/catalog/search?q=linen&{field}={value}", Token);
+
+        Assert.Equal(HttpStatusCode.BadRequest, status);
+        var messages = body.GetProperty("errors").GetProperty(field).EnumerateArray()
+            .Select(message => message.GetString() ?? string.Empty)
+            .ToList();
+        Assert.Contains(messages, message => message.Contains(expected, StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// A trailing decimal point is a number.
+    ///
+    /// <para>
+    /// <c>decimal.TryParse</c> with <c>AllowDecimalPoint</c> accepts <c>"5."</c> and <c>".5"</c>, so a
+    /// shopper or a hand-built link writing either gets a filter rather than a 400. The browser stub
+    /// rejected <c>"5."</c>, which is the opposite of this, and this is the measurement that settled it.
+    /// A group separator is still refused, because it means different things in different locales.
+    /// </para>
+    /// </summary>
+    [Theory]
+    [InlineData("5.")]
+    [InlineData(".5")]
+    [InlineData("5.0")]
+    public async Task A_price_written_with_a_bare_decimal_point_is_accepted(string price)
+    {
+        var api = CreateApi();
+
+        var (status, _) = await api.GetStatusAsync($"/api/catalog/search?q=linen&minPrice={price}", Token);
+
+        Assert.Equal(HttpStatusCode.OK, status);
+    }
+
+    [Theory]
+    [InlineData("1,000")]
+    [InlineData(".")]
+    public async Task A_price_that_is_not_a_number_is_a_400_naming_it(string price)
+    {
+        var api = CreateApi();
+
+        var (status, body) = await api.GetRawAsync($"/api/catalog/search?q=linen&minPrice={price}", Token);
+
+        Assert.Equal(HttpStatusCode.BadRequest, status);
+        Assert.True(body.GetProperty("errors").TryGetProperty("minPrice", out _));
+    }
+
+    /// <summary>
+    /// A size label resolves and **narrows**, which is the measurement the browser stub was wrong about:
+    /// it answered nothing for every size and called that parity with "a value it cannot resolve".
+    ///
+    /// <para>
+    /// The pair matters more than either half. <c>size=M</c> narrows a shirt search and empties a jeans
+    /// search, because jeans are on the Women waist scale and <c>M</c> is on the Alpha scale — so "a
+    /// size filter returns nothing" is sometimes right, and a stub cannot be excused for returning
+    /// nothing *always* on the grounds that it is sometimes right.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task A_size_filter_narrows_a_search_rather_than_emptying_it()
+    {
+        var api = CreateApi();
+
+        var all = await api.SearchAsync("?q=shirt&pageSize=96", Token);
+        var medium = await api.SearchAsync("?q=shirt&size=M&pageSize=96", Token);
+
+        Assert.True(all.Results.TotalCount > 0, "the search itself has to match something");
+        Assert.True(
+            medium.Results.TotalCount > 0,
+            "size=M is a label the catalogue resolves for shirts, so it must not empty the results");
+        Assert.True(medium.Results.TotalCount < all.Results.TotalCount, "and it has to narrow them");
+    }
+
+    /// <summary>The other half: a label from a scale the matched products are not on empties the page.</summary>
+    [Fact]
+    public async Task A_size_from_another_scale_empties_the_search()
+    {
+        var api = CreateApi();
+
+        var jeans = await api.SearchAsync("?q=jeans&pageSize=96", Token);
+        var alpha = await api.SearchAsync("?q=jeans&size=M&pageSize=96", Token);
+        var waist = await api.SearchAsync("?q=jeans&size=30&pageSize=96", Token);
+
+        Assert.True(jeans.Results.TotalCount > 0);
+        Assert.Equal(0, alpha.Results.TotalCount);
+        Assert.True(waist.Results.TotalCount > 0, "jeans are on the waist scale");
+    }
+
+    /// <summary>Two thousand characters, as a constant because an attribute argument must be one.</summary>
+    private const string TwoThousandXs =
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" +
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" +
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" +
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" +
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" +
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" +
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" +
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" +
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" +
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" +
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" +
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" +
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" +
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" +
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" +
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" +
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" +
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" +
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" +
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
 }
