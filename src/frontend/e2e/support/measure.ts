@@ -134,3 +134,104 @@ function round(clip: Clip): Clip {
     height: Math.max(1, Math.round(clip.height)),
   };
 }
+
+/** Where a colour starts and stops down one column of an element, in device pixels. */
+export interface VisibleBand {
+  /** Height of the element as photographed, so a caller can say how close to an edge it got. */
+  readonly height: number;
+  /** First and last matching row, or -1 when the colour is not on screen at all. */
+  readonly first: number;
+  readonly last: number;
+}
+
+/**
+ * Where the hero sample's magenta marker band appears down the middle of an element,
+ * <b>read back from a picture of it</b>.
+ *
+ * **Why a picture.** The thing under test is which part of an over-sized video survives
+ * `object-fit: cover` — and the obvious assertion, reading `object-position` off the computed
+ * style, is exactly the kind of test MEMORY's lesson is about: it restates the stylesheet and is
+ * blind to everything that actually decides the answer. The `aspect-ratio`, the `max-height` that
+ * clamps the box past 1564 px and the intrinsic size of the file all move the visible band, and a
+ * declaration of `center 30%` would read as correct with any of them changed underneath it.
+ *
+ * So this screenshots the element and looks at it. The screenshot is decoded in the page rather
+ * than in Node, because nothing in this workspace decodes a PNG and a `data:` URL does not taint a
+ * canvas.
+ *
+ * **The match is a relationship between channels, not a colour.** The marker is `#ff00ff` in the
+ * file, the video is lossily encoded and the hero paints a dark gradient over the top of it, so
+ * what comes back is anywhere between magenta and about a third of it. Red and blue together with
+ * green far below them survives all of that; `#ff00ff` exactly survives none of it.
+ *
+ * **It refuses to measure an element that does not fit on the screen**, and the reason is worth
+ * stating precisely because the obvious guard does not work. Part of an element hanging below the
+ * viewport is not left out of the picture: the capture comes back the element's **full height**
+ * with those rows **blank**, so comparing the capture's height against the box's can never fail.
+ * Measured on the hero at 1920: viewport 940, box 1920x880 at y=118, capture 880 px tall, and the
+ * marker's last row **821** instead of 879 — the 58 px that were off-screen read as "not the
+ * marker", which is indistinguishable from "the band stops before the bottom edge". The first
+ * version of the framing test ran at 940 and its lower assertion could not fail at the one width
+ * that constrains the lower edge: `object-position: center 20%` cut the chin off at 1920 and all
+ * five widths passed. So the check is the same one `edgesWithoutRing` makes — is the thing we are
+ * about to photograph actually on the screen?
+ *
+ * **Its limit, stated rather than left to be discovered.** The check is purely geometric: it says
+ * the element is on the screen, not that it is *unobscured*. Anything painted over the element —
+ * a `position: fixed` overlay, a modal, a cookie bar — is photographed as element content and
+ * measured as if it were. Forcing the storefront header to `fixed` moves the marker's first row to
+ * 260 and would pass over a cut face. Not reachable today (the header is sticky, and the hero sits
+ * at y=118 with no scroll at the framing test's 1100 px viewport), which is why it is written down
+ * here instead of guarded against.
+ */
+export async function markerBand(page: Page, element: Locator): Promise<VisibleBand> {
+  await element.scrollIntoViewIfNeeded();
+
+  const box = await element.boundingBox();
+  const viewport = page.viewportSize();
+  if (!box || !viewport) {
+    throw new Error('the element has no box to photograph');
+  }
+
+  if (box.y < 0 || box.y + box.height > viewport.height) {
+    throw new Error(
+      `the element is ${Math.round(box.height)} px tall at y=${Math.round(box.y)} in a ` +
+        `${viewport.height} px viewport, so part of it cannot be photographed — the rows outside ` +
+        'come back blank at the element\'s full height, which no size check can catch',
+    );
+  }
+
+  const shot = (await element.screenshot()).toString('base64');
+
+  const band = await page.evaluate(async (data) => {
+    const bitmap = await createImageBitmap(
+      await (await fetch(`data:image/png;base64,${data}`)).blob(),
+    );
+    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+    const context = canvas.getContext('2d');
+    if (!context) {
+      throw new Error('no 2d context to read the screenshot back from');
+    }
+
+    context.drawImage(bitmap, 0, 0);
+    const column = context.getImageData(Math.floor(bitmap.width / 2), 0, 1, bitmap.height).data;
+
+    let first = -1;
+    let last = -1;
+    for (let y = 0; y < bitmap.height; y++) {
+      const red = column[y * 4];
+      const green = column[y * 4 + 1];
+      const blue = column[y * 4 + 2];
+      if (Math.abs(red - blue) < 60 && red - green > 30) {
+        if (first < 0) {
+          first = y;
+        }
+        last = y;
+      }
+    }
+
+    return { height: bitmap.height, first, last };
+  }, shot);
+
+  return band;
+}

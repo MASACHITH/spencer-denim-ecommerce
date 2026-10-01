@@ -78,7 +78,13 @@ internal static class HomeContentData
         new(
             HomeSectionType.ActivewearFeature,
             SortOrder: 6,
-            Title: "Activewear",
+
+            // The type is still ActivewearFeature — it is HOME-06's slot in the signed proposal and
+            // renaming an enum member would rewrite history in the database. What the slot *says* is
+            // content, and the client's picture for it is a linen and denim flat-lay, so it says that
+            // (W1-14). Picture, words and destination have to agree; issue #63 is what happens when
+            // they do not.
+            Title: "Linen and denim",
             Subtitle: null,
             SettingsJson: """{"overlay":"dark"}""",
             IsEnabled: false),

@@ -185,6 +185,14 @@ A slot that already holds **a picture somebody chose** is not overwritten: those
 under *NOT APPLIED*, the command exits **3**, and `--replace` is what applies them. A slot holding
 one of the demo placeholders is filled either way, because a placeholder was never a choice.
 
+A drop that **stops sending** a file is a decision too. When a product's `-1` arrives without its
+`-2`, the hover slot is emptied rather than left showing the photograph the client has withdrawn —
+immediately if it holds a demo placeholder, and otherwise under *NOT APPLIED* as `<slug>-2` until
+`--replace` is given, because the importer cannot tell its own earlier work from an upload somebody
+made in ADM-11. If the withdrawn `-1` was itself a picture somebody chose, the whole correction
+needs `--replace`: the run reports the card as a conflict and changes nothing, rather than moving
+the card and leaving the hover behind.
+
 Two files carrying **the same photograph** deduplicate to one asset in the library, and
 `catalog.ProductMedia` holds one photograph per product once — so the second is reported under *ONE
 PICTURE, TWO FILES* and shares the first one's gallery row. Both slots still point at it.
@@ -195,7 +203,15 @@ codec are only known by decoding it.
 
 The five media-dependent homepage sections are switched on only once they have media to show — and
 a picture that does not fit the slot its filename claims keeps its section off until a different
-one is delivered (`ClientAssetHolds`).
+one is delivered (`ClientAssetHolds`). **Both holds from the first delivery were released in W1-14**
+by decisions rather than by new files — the hero now carries a measured `object-position` and the
+HOME-06 slot is relabelled "Linen and denim" to match the photograph — so that list is empty and
+the mechanism is waiting for the next one.
+
+A banner's **words** travel with its picture. The importer writes a heading, standfirst, button and
+link for HOME-05 and HOME-06, and it may take back exactly the wording it wrote before and nothing
+else: a line somebody typed in ADM-17 survives and the report says it did. That is what stops a
+re-import switching a section on over copy that contradicts the picture, which is issue #63.
 
 > **An interrupted run leaves one file set behind.** Ctrl+C rolls every row back and deletes the files
 > of every upload that had finished, but the one that was still running when the interrupt arrived

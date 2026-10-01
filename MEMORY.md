@@ -19,6 +19,7 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 - **Next:** **W2-01 (homepage, HOME-01..10) PASSED the tester** and is pushed to `origin feature/W2-01-homepage` awaiting a PR: content schema, seeder, read-only content API, newsletter signup endpoint and the page itself. ADM-17's admin screens are **not** in it. Issue #37 (the homepage cache rounds schedule boundaries to its five-minute TTL) is filed, not built.
 - **Next:** **W1-02 (catalogue foundation — schema + demo seeder + the read-only storefront catalogue API) is in the developer↔tester loop** on `feature/W1-02-catalogue-foundation` (worktree `worktrees/sd-catalog`): tester round 1 failed it on 3 major + 5 minor, round 2 on 2 major + 4 minor, all fixed; not pushed, not merged, not Done. Its ADM-11 admin screens are a separate task, **W1-12 (TODO)** — W1-02 no longer means "categories (create/edit/reorder)". W1-08 (Users & Roles CRUD), W1-09 (audit log viewer), W1-10 (2FA enrollment), W1-11 (route guard, SecurityStamp revalidation, forwarded-headers regression test) are the W1-01 follow-ups, tracked but not started; the user/architect should decide priority between those and W1-03 once W1-02 passes.
 - **Client progress page:** `client-progress/` is tracked in this repository (moved 2026-09-22, W0-18) and publishes from whichever machine holds the DPAPI-encrypted FTP credential — the `SCIENTER\sachithi` PC, where it was published on 23 and 24 Sep. An earlier note here said it could not be done from "this machine"; that was written from the second machine and is not a property of the repository.
+- **Next:** **W1-14 (hero framing, the activewear relabel, the poplin re-import) is a developer pass awaiting a tester** on `feature/W1-14-hero-and-activewear` (worktree `worktrees/sd-hero`): both W1-13 holds are released — the hero ships with a measured `object-position` and HOME-06 is relabelled "Linen and denim" over a listing that holds linen and denim — and a drop that withdraws a photograph now withdraws it from the product. Not pushed, not merged, not Done. **The hero video still wants re-exporting at 16:9 and ≥1920 px, with a poster cut from the same take**; what shipped is the best the 360x640 file can do.
 - **Next:** **W1-13 (the client's real photographs, video and logo) is back with the tester after fix round 3** on `feature/W1-13-client-assets` (worktree `worktrees/sd-assets`): a repeatable import verb on the API, three of the five media-dependent homepage sections switched on, and a HOME-01/02/05/06 fix for blocks sized by `aspect-ratio`. **The hero and the activewear feature are held off by their artwork's checksum** — the delivered video is portrait in a 16:9 frame and the delivered activewear picture is a linen flat-lay — and each releases itself when the owner delivers a replacement. Not pushed, not merged, not Done. **The logo is imported but not wired in** — the three delivered files are opaque JPEGs named `.png`, the "light" wordmark is the same mockup as the dark one, and the mark reads COLOMBO WARDROBE rather than Spencer Denim. That needs a decision from the owner and flat artwork, not code.
 - **Open assumptions:** A1 (Trending Categories / Best Sellers homepage blocks stay removed per signed proposal), A2 (video MP4 ≤ 50 MB, no server conversion).
 
@@ -44,6 +45,175 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 ---
 
 ## Session log
+
+### 2026-10-01 (8) — W1-14 fix round 1: the guard the whole hero decision rests on could not fail
+
+The tester re-derived the arithmetic independently and matched it (31.64% at 768–1440, **25.78%** at
+1920, safe interval **21.83%–33.69%**), confirmed all three defect fixes end to end on a real database
+with the real client files, and checked the destination really returns the five products. One major,
+six smaller findings, all fixed.
+
+**MAJOR, and it is the W1-13 lesson landing on me: the framing test ran at a 940 px viewport, and at
+1920 the hero is 880 px tall starting 118 px down the page.** 58 px of it were off the screen, so the
+*lower* assertion could not fail at the one width that constrains the lower edge. He proved it:
+`object-position: center 20%` cuts her chin off at 1920 and **all five tests passed**. The suite was
+pinning 15.2%–33.7%, not the 21.8%–33.7% my own comment claimed.
+
+**And the obvious guard for it is itself dead, which is the part worth writing down.** Asserting that
+the capture is as tall as the element — the first fix I wrote, and what I was asked for — can never
+fail: Playwright does **not** return a short image for an element hanging below the viewport, it
+returns the element's full height with the off-screen rows **blank**. Measured at 1920: box 1920x880 at
+y=118, viewport 940, capture **880 px**, marker's last row **821** instead of 879. A blank row reads
+exactly like "not the marker", which reads exactly like "the band stops before the bottom edge". So I
+wrote the assertion, watched it pass at 940 where the bug lives, and only then replaced it with the one
+that works: `markerBand` refuses to measure an element that does not fit on the screen, which is the
+same question `edgesWithoutRing` asks. **Two dead assertions in two rounds, both of the shape "I
+checked the thing next to the thing".** Verified in both directions now — 20% fails at 1920 at the new
+height, 940 raises the guard rather than passing, 33% passes and 34% fails.
+
+**The comment was wrong twice over, and both corrections are facts the next person needs.** The upper
+bound is 33.69%, not "34%" — 34% fails the test. **And in round 2 the same trap turned up mirrored at
+the other end:** 22% fails too, because the e2e marker is rows 160–269 of 640 = 25.00%–42.19%, a shade
+taller than the 25%–42% her face occupies, so the test is stricter at the bottom than the arithmetic.
+Both numbers are written down now — **21.8%–33.7% on paper, 23%–33% as the test measures it** — because
+"21.8%" plus a developer rounding outward is a red build with no explanation in the comment. And "no garment is visible above 1024 px" is false:
+the crop is identical in source terms from 768 to 1440 because `max-height` does not bite until
+1564 px, and the collar and shoulders are in frame at all of them. Only **1920** is garment-free. The
+sentence contradicted my own two lines earlier, which is how it got past me. Corrected in the
+stylesheet, MEMORY, TASKS and the journal.
+
+**The value also runs out, and nothing said so.** The clamped box keeps widening past 1564 px and the
+surviving band keeps shrinking: measured, 30% holds to about **2,560 px** of hero width, has failed by
+2,890, and past about **2,900 px** the band (17.1% and falling) is narrower than her face (17.0%), so
+**no** value of `object-position` fits — 3440 x 1440 is an ordinary desktop. One more line on the
+re-export bill.
+
+**`BannerCopy.Supersedes` leaked across fields.** The four retracted strings were one flat set tested
+against every field, so an admin who typed "Activewear" as the *button label* — an ordinary thing to do
+in the activewear slot — had it silently overwritten by a retraction that was only ever about the
+heading. Silently, because the write looked like a retraction and so did not even earn the "somebody
+wrote this" note. The field is part of the key now (`"ButtonLabel\0Shop activewear"`), with a test that
+is red on the flat set.
+
+**The e2e stub still carried the old HOME-06 copy**, so the only suite that draws this block in a
+browser was drawing the exact picture/words/destination contradiction issue #63 is about — and the
+repeated-`material` link had never been through `toLink` → `routerLink` → a listing anywhere. The stub
+carries the real copy and the real link now, and a new test clicks the banner and asserts all three
+material chips arrive, which is the thing `toLink`'s query handling exists for.
+
+**A possible orphan gallery row, found by reading rather than by running.** When the hover row holds the
+card's own asset *and* the card slot is taken by another picture, the row can neither move nor go —
+`galleryFor` draws every non-Video row, so deleting it would take the card's photograph out of the
+gallery, which is the defect this round already fixed in a third shape. It is left in place and a note
+says so; an `else Remove` would have been the quick answer and the wrong one.
+
+**The relabel is in the scope baseline now**, as a dated decision in a new *Decisions after baselining*
+section referencing issue #63, so doc 02 does not read as if HOME-06 drifted by accident.
+
+**Numbers:** backend **736 unit + 374 integration** (was 736 + 373), 0 skipped; frontend 19 / 451 / 131;
+**Playwright 200** (was 199). Lint clean, Release build clean with 0 warnings. Re-verified in the
+browser against a rebuilt database and the real drop: no console errors, no failed requests, no
+horizontal scroll, still-not-video on phones and under reduced motion.
+
+**A pre-existing Playwright flake, measured rather than blamed on this branch.** `storefront-shell`'s
+*reduced motion → mobile navigation drawer* tests fail about **one full run in five**, on
+`#storefront-menu` resolving but staying `hidden` past the 5 s timeout. Because the suspect was my own
+change — the hero sample is a different video now, and a looping video in a neighbouring worker is
+exactly what the stub's own comment warns about — I measured it instead of assuming: 1 failure in 5
+full runs here, and **1 in 6 on a worktree built from `f78663d` with none of this branch's changes**,
+the same test with the same message. In isolation it passes 10 of 10, so it is contention under four
+workers. Not mine, not fixed here, and worth filing beside the missing `axe-core` run.
+
+**Two things that are the owner's, not mine, and deliberately not "fixed":** the tester would serve the
+still at every width and hold the video until the 16:9 export arrives — same facts, opposite conclusion,
+and it touches docs/04 §4 so it is the client's call. And the denim half of the HOME-06 photograph is a
+denim **jacket**, which the catalogue has no women's equivalent of; three of the five products behind
+the link are denim, so a shopper arriving from a linen-led picture meets a mostly-denim list. Honest,
+and thin. Worth a line to the client.
+
+**Next:** back to the tester.
+
+### 2026-10-01 (7) — W1-14: the two held-back sections go live, by decision rather than by new files
+
+Three owner decisions on top of W1-13, on `feature/W1-14-hero-and-activewear` (worktree
+`worktrees/sd-hero`). Not pushed, no PR.
+
+**The hero is usable from the file we have, and the honest part is how much that is worth.**
+`object-position: center 30%` on `.hero__video`. The arithmetic is worth writing down because the
+value is not a taste judgement: a 360x640 source in a 16:9 frame overflows only vertically, and the
+band that survives `cover` is 31.6% of the source height below 1565 px and **25.8% at 1920**, where
+`max-height: 880px` makes the box 2.18:1. Her face runs from 25% to 42% of the source height — 17
+points against a 25.8-point band — so 1920 is the width that pins the value and the safe interval is
+22%–34% at every breakpoint at once. 30% is inside it with headroom above her hair at 1920 and still
+leaves the shirt collar in frame at 768. Checked by eye at all five widths and at t = 0, 5 and 9.8 s;
+she barely moves across the clip, which is what makes a single value possible at all.
+
+**And it is soft.** 1920 px of frame from 360 px of source is a 5.3x upscale — the skin and hair carry
+no texture at 1440 or 1920, though the source's own haze hides it better than a sharp file would. More
+to the point, **at 1920 no garment is in frame at all**: the clamp takes the collar and shoulders that
+are there at 768 through 1440, and the hero reads "Linen, denim and everyday pieces" over a face. And
+the value runs out above this site's breakpoints: 30% holds to about 2,560 px of hero width, has failed
+by 2,890, and past about 2,900 the surviving band is narrower than her face, so **no** value fits —
+3440 x 1440 is an ordinary desktop. I would ship this and keep asking for the 16:9 export; it is
+better than a headless chest and worse than a hero.
+
+**The poster stays as delivered, and it is not a frame of the video.** `hero-poster.jpg` is 1376x768,
+the same model in a different take and a *different outfit*, and it is the better picture — correctly
+shaped for the 16:9 frame and good at 4:5 on a phone. Inventing a frame from the portrait video would
+be worse at every width. The cost is real and should be said to the owner: the `poster` attribute
+paints first, so a desktop visitor sees the beige co-ord and then watches it become the cream shirt,
+and a phone or a reduced-motion visitor never sees the video's outfit at all. One take, two garments.
+
+**HOME-06 is relabelled rather than waiting for an activewear photograph** — "Linen and denim",
+"Breathable linen for the heat, washed indigo for everything else", *Shop linen and denim*, opening
+`/women?material=linen&material=linen-blend&material=denim`. Five products: the relaxed linen-blend
+shirt and the linen drawstring trousers (which is the white co-ord in the picture), both jeans and the
+denim wrap skirt. A department page would have "included" linen; this is a listing *of* it. The copy
+names **fabrics, not co-ords**, because the catalogue sells separates and a flat-lay of two matching
+sets would otherwise promise something nothing in the shop can honour — issue #63 one step further on.
+
+**The trap had a second half that `??=` was hiding.** The old wording is already in the database on any
+machine that ran W1-13's import, and the importer wrote banner copy with `??=`, so a re-import would
+have switched the section **on** over "Activewear … Pieces that move with you" pointing at
+`/women/activewear`. Copy now travels with its picture: the importer may take back exactly the four
+strings it wrote before (`BannerCopy.Supersedes`, keyed on the literal values for the same
+self-expiring reason the holds are keyed on a checksum) and nothing else — a headline somebody typed in
+ADM-17 survives and the report says so.
+
+**Both holds are released; `ClientAssetHolds` is empty and intact.** The record, the injection and the
+tests stay, and the shipped list is now a comment explaining why each entry went.
+
+**A drop that stops sending a file now stops the site showing it.** The poplin correction found it: the
+client moved the right photograph to `-1` and withdrew the wrong one, and the hover slot kept the
+withdrawn picture — pointer and gallery row — because the import only ever visits slots a file arrives
+for. The code *looked* handled; it only handled the placeholder case. It is cleared under `--replace`
+and reported as a conflict named `<slug>-2` until then, because an admin's own upload cannot be told
+apart from the import's earlier work. **And the first attempt at that fix deleted the client's only
+photograph out of the gallery**: the promoted picture was sitting in the hover row (one asset is one
+row), so emptying that row removed it — card 191 above three demo placeholders, measured on the real
+drop. It moves into the card slot the same run has just vacated instead.
+
+**What the re-import actually did to the poplin shirt**, against a database rebuilt to the pre-
+correction state: the plain run reported the card as *NOT APPLIED* and changed nothing — right, because
+a card that moved while the hover did not is the same contradiction in a new place. `--replace`: card =
+the shirt, hover = none, one gallery row at the card slot, the withdrawn picture with no product usage
+left. The product renders with a single image.
+
+**The test that mattered.** A test asserting `object-position: center 30%` would have been worthless,
+so the e2e sample video is now 360x640 like the delivered one, with a magenta band at exactly 25%–42%
+of its height standing in for her face. The suite **photographs the hero** at 768/1024/1280/1440/1920
+and asserts the band is whole inside the picture, decoding the screenshot in the page. Red at all five
+widths with `object-position: center`, with the message "the marker band runs off the top of the hero".
+
+**Numbers:** backend **736 unit + 373 integration** (was 736 + 369), 0 skipped; frontend 19 / 451 /
+131 unchanged; **Playwright 199** (was 194). Lint clean, Release build clean with 0 warnings.
+
+**Checked in a browser** — API, built SSR storefront, reverse proxy — at 320 / 768 / 1280 / 1920 plus
+375 / 390, reduced motion at 1280, the poplin product page and the linen-and-denim listing: no console
+errors, no failed requests, no horizontal scroll, the still (not the video) on phones and under reduced
+motion, and the hero box clamping to 1920x880 as expected.
+
+**Next:** the tester. Then the owner, for the hero re-export and the poster cut from the same take.
 
 ### 2026-10-01 (6) — W1-13 fix round 3: the rollback was deleting somebody else's files
 

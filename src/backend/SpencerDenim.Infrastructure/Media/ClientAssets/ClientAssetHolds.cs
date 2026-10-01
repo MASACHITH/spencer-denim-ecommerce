@@ -24,9 +24,9 @@ public sealed record HeldBackArtwork(HomeSectionType Section, string Reason);
 /// bytes.
 /// <para>
 /// <b>Why this exists at all.</b> <c>EnableIfReady</c> can tell whether a section has artwork; it cannot
-/// tell whether the artwork is of the right thing. Two of the files in the first delivery are not: the
+/// tell whether the artwork is of the right thing. Two of the files in the first delivery were not: the
 /// hero video is portrait where the frame is 16:9, and the activewear banner is a flat-lay of linen and
-/// denim. Switching either on would put a cropped face or a mislabelled tile on the front page.
+/// denim. Switching either on would have put a cropped face or a mislabelled tile on the front page.
 /// </para>
 /// <para>
 /// <b>Why it is keyed on the bytes.</b> A judgement about a particular photograph has to expire by
@@ -43,28 +43,28 @@ public sealed record HeldBackArtwork(HomeSectionType Section, string Reason);
 /// </summary>
 public sealed class ClientAssetHolds(IReadOnlyDictionary<string, HeldBackArtwork> byChecksum)
 {
-    /// <summary>The holds that apply to the delivery of 30 September 2026.</summary>
+    /// <summary>
+    /// The holds in force. <b>Empty as of W1-14</b> — both holds from the 30 September 2026 delivery
+    /// were released by a decision, not by a new file, and the mechanism is kept for the next one.
+    /// <para>
+    /// <b>The hero (HOME-01).</b> Held because a 360x640 portrait video in a 16:9 frame centre-crops to
+    /// the model's chest. Released because <c>object-position: center 30%</c> on <c>.hero__video</c>
+    /// brings her face into the band at every width from 768 to 1920 — measured by screenshot, pinned by
+    /// an e2e test. It is the best this file can do and not a fix: 1920 px of frame from 360 px of source
+    /// is a 5.3x upscale, at 1920 no garment is in frame at all, and past about 2,900 px of hero width no
+    /// value of <c>object-position</c> fits her face. A 16:9 export at least 1920 px wide, with a poster cut from the same take, is
+    /// still owed.
+    /// </para>
+    /// <para>
+    /// <b>The activewear feature (HOME-06).</b> Held because the picture is a flat-lay of a white linen
+    /// co-ord and a denim co-ord while the heading, standfirst, button and link all said activewear —
+    /// and relabelling the slot was the client's editorial decision, not the import's. The client made
+    /// it: the slot is "Linen and denim" now and opens the women's linen and denim listing, so the
+    /// picture, the words and the destination agree and there is nothing left to hold (issue #63).
+    /// </para>
+    /// </summary>
     public static ClientAssetHolds Default { get; } = new(
-        new Dictionary<string, HeldBackArtwork>(StringComparer.OrdinalIgnoreCase)
-        {
-            ["159e9dd19ecfba45849fa8bdcc745eed6d87e6f911ed2efd18124f80f737c534"] = new(
-                HomeSectionType.HeroVideo,
-                "the delivered hero.mp4 is 360x640 portrait and the hero frame is 16:9 from 768 px, so "
-                + "object-fit: cover crops it to a band — at 1920 the visible strip is the model's chin, "
-                + "neck and chest, with her face cut off above the mouth and the headline over a neck. "
-                + "The video and its poster are in the library; the section switches itself on once a "
-                + "16:9 export at least 1920 px wide, with a poster cut from that same take, is "
-                + "imported."),
-
-            ["35b95fa722740429bcf824372297efdb27d284f6940f13c2f7f63136736c99a1"] = new(
-                HomeSectionType.ActivewearFeature,
-                "the delivered activewear.jpg is a flat-lay of a white linen co-ord and a denim co-ord — "
-                + "nothing athletic — and the slot's heading, standfirst, button and link all say "
-                + "activewear. A tile whose picture and its link disagree is worse than no tile, and "
-                + "re-labelling the slot is the client's editorial decision, not this import's. The "
-                + "picture is in the library; the section switches itself on once an activewear "
-                + "photograph is imported under this name."),
-        });
+        new Dictionary<string, HeldBackArtwork>(StringComparer.OrdinalIgnoreCase));
 
     /// <summary>The hold for a stored file's checksum, or <see langword="null"/> when there is none.</summary>
     public HeldBackArtwork? For(string? checksum) =>

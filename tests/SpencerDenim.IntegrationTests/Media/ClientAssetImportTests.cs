@@ -192,6 +192,293 @@ public sealed class ClientAssetImportTests(SqlServerDatabaseFixture sqlServer)
     }
 
     /// <summary>
+    /// <b>A drop that stops sending a photograph must not leave the site showing it.</b>
+    /// <para>
+    /// The real case: the client's <c>poplin-formal-shirt-1</c> was the wrong garment, so they moved the
+    /// right one into <c>-1</c> and withdrew the other. The product has one photograph now — and the
+    /// hover slot still held the withdrawn one, pointer and gallery row both, because the import only
+    /// ever visited slots a file was delivered for. The card showed the shirt and flipped, on hover, to
+    /// the picture the client had just rejected.
+    /// </para>
+    /// <para>
+    /// <b>The whole correction needs <c>--replace</c>, and the plain run says nothing has changed rather
+    /// than half-changing it.</b> The card slot holds a picture somebody chose, so the first run reports
+    /// a conflict and leaves the product exactly as it was — which is the right answer, because a card
+    /// that moved while the hover did not would be the same contradiction in a new place.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task A_photograph_the_drop_withdraws_stops_being_the_hover_image()
+    {
+        await using var world = await CreateAsync();
+
+        var wrong = TestImages.UniqueJpeg(1024, 1024);
+        var right = TestImages.UniqueJpeg(1024, 1024);
+
+        // The first delivery: the wrong garment on the card, the right one as the hover.
+        await world.DropTheHomeAsync(Token);
+        await world.Drop("products", "chino-shorts-1.jpg.jpg", wrong, Token);
+        await world.Drop("products", "chino-shorts-2.jpg.jpg", right, Token);
+
+        Assert.True((await world.ImportAsync(Token)).Succeeded);
+        var withdrawn = await CardStateAsync(world, "chino-shorts");
+
+        // The correction: the right photograph is -1 now and there is no -2 at all.
+        File.Delete(Path.Combine(world.DropRoot, "products", "chino-shorts-2.jpg.jpg"));
+        await world.Drop("products", "chino-shorts-1.jpg.jpg", right, Token);
+
+        var reported = await world.ImportAsync(Token);
+        Assert.True(reported.Succeeded, string.Join("; ", reported.Failures));
+
+        Assert.Contains(
+            reported.Entries,
+            entry => entry.Outcome == ClientAssetOutcome.Conflict
+                && entry.FileName == "chino-shorts-1.jpg.jpg");
+
+        await using (var scope = world.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var untouched = await ProductAsync(dbContext, "chino-shorts");
+
+            Assert.Equal(withdrawn.CardAssetId, untouched.CardImageAssetId);
+            Assert.NotNull(untouched.HoverImageAssetId);
+        }
+
+        var applied = await world.ImportAsync(Token, replace: true);
+        Assert.True(applied.Succeeded, string.Join("; ", applied.Failures));
+
+        Assert.Contains(
+            applied.Notes,
+            note => note.Contains("chino-shorts", StringComparison.Ordinal)
+                && note.Contains("no longer sends", StringComparison.Ordinal));
+
+        await using (var scope = world.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var product = await ProductAsync(dbContext, "chino-shorts");
+
+            var checksum = SHA256.HashData(right);
+            var correct = await dbContext.MediaAssets.SingleAsync(asset => asset.Checksum == checksum, Token);
+
+            Assert.Equal(correct.Id, product.CardImageAssetId);
+            Assert.Null(product.HoverImageAssetId);
+
+            // **And the photograph is still in the gallery.** It was sitting in the hover slot — one
+            // asset is one row — so emptying that slot without moving it first deleted the client's
+            // only picture out of the product's gallery and left a card above three placeholders.
+            var rows = await dbContext.ProductMedia
+                .Where(row => row.ProductId == product.Id && row.SortOrder < 0)
+                .ToListAsync(Token);
+
+            var kept = Assert.Single(rows);
+            Assert.Equal(correct.Id, kept.MediaAssetId);
+            Assert.Equal(-2, kept.SortOrder);
+
+            Assert.Contains(
+                await dbContext.MediaUsages
+                    .Where(usage => usage.MediaAssetId == correct.Id)
+                    .Select(usage => usage.UsageRole)
+                    .ToListAsync(Token),
+                role => role == MediaUsageRoles.Gallery);
+        }
+    }
+
+    /// <summary>
+    /// And the rule that keeps that from becoming a silent delete: a hover image the drop no longer
+    /// sends is <b>reported</b>, not removed, while it might be somebody's own choice.
+    /// <para>
+    /// The importer cannot tell its own earlier work from an upload an admin made in ADM-11, which is
+    /// the wall every slot in this class runs into. A note would be the wrong answer — the command would
+    /// exit 0 over a product still showing a withdrawn garment — so it is a conflict, named after the
+    /// file the drop does not contain, and <c>--replace</c> is what applies it.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task A_hover_image_the_drop_no_longer_sends_is_reported_before_it_is_cleared()
+    {
+        await using var world = await CreateAsync();
+        await world.DropTheHomeAsync(Token);
+        await world.Drop("products", "chino-shorts-1.jpg.jpg", TestImages.UniqueJpeg(1024, 1024), Token);
+        await world.Drop("products", "washed-linen-camp-shirt-1.jpg.jpg", TestImages.UniqueJpeg(1024, 1024), Token);
+
+        Assert.True((await world.ImportAsync(Token)).Succeeded);
+
+        // Somebody puts a picture in the hover slot that is not a placeholder and not from this drop.
+        int chosen;
+        await using (var scope = world.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var shirt = await ProductAsync(dbContext, "washed-linen-camp-shirt");
+            var shorts = await ProductAsync(dbContext, "chino-shorts");
+
+            chosen = shirt.CardImageAssetId!.Value;
+            shorts.HoverImageAssetId = chosen;
+            await dbContext.SaveChangesAsync(Token);
+        }
+
+        var reported = await world.ImportAsync(Token);
+        Assert.True(reported.Succeeded, string.Join("; ", reported.Failures));
+
+        var conflict = Assert.Single(
+            reported.Entries,
+            entry => entry.Outcome == ClientAssetOutcome.Conflict && entry.FileName == "chino-shorts-2");
+
+        Assert.Contains("--replace", conflict.Detail, StringComparison.Ordinal);
+
+        await using (var scope = world.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            Assert.Equal(chosen, (await ProductAsync(dbContext, "chino-shorts")).HoverImageAssetId);
+        }
+
+        Assert.True((await world.ImportAsync(Token, replace: true)).Succeeded);
+
+        await using (var scope = world.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            Assert.Null((await ProductAsync(dbContext, "chino-shorts")).HoverImageAssetId);
+        }
+    }
+
+    /// <summary>
+    /// The HOME-06 slot says what its photograph shows, and opens a listing that holds it (W1-14).
+    /// <para>
+    /// <b>The picture, the words and the link have to arrive together.</b> The delivered
+    /// <c>activewear.jpg</c> is a linen and denim flat-lay and the slot said "Activewear … Pieces that
+    /// move with you", pointing at <c>/women/activewear</c>; that contradiction is issue #63 and is what
+    /// kept the section off the front page. The copy is decided now, so the words and the destination
+    /// move with the picture — and a database that already carries the old wording from an earlier
+    /// import is rewritten rather than switched on over it, which plain <c>??=</c> would have done.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task The_activewear_slot_is_relabelled_to_match_the_picture_it_was_given()
+    {
+        await using var world = await CreateAsync();
+        await world.DropTheUsualAsync(TheDeliveredShapes, Token);
+
+        Assert.True((await world.ImportAsync(Token)).Succeeded);
+
+        // Exactly what an earlier version of this importer left behind on the live database.
+        await using (var scope = world.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var stale = Assert.Single(await ItemsAsync(dbContext, HomeSectionType.ActivewearFeature));
+
+            stale.Title = "Activewear";
+            stale.Subtitle = "Pieces that move with you.";
+            stale.LinkUrl = "/women/activewear";
+            stale.ButtonLabel = "Shop activewear";
+            await dbContext.SaveChangesAsync(Token);
+        }
+
+        var report = await world.ImportAsync(Token);
+        Assert.True(report.Succeeded, string.Join("; ", report.Failures));
+
+        await using (var scope = world.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var item = Assert.Single(await ItemsAsync(dbContext, HomeSectionType.ActivewearFeature));
+
+            Assert.Equal("Linen and denim", item.Title);
+            Assert.Equal("Breathable linen for the heat, washed indigo for everything else.", item.Subtitle);
+            Assert.Equal("Shop linen and denim", item.ButtonLabel);
+
+            // Not a department page that happens to include them: a listing of the fabrics themselves.
+            Assert.Equal("/women?material=linen&material=linen-blend&material=denim", item.LinkUrl);
+        }
+
+        Assert.True(Assert.Single(await EnabledAsync(world, [HomeSectionType.ActivewearFeature])).IsEnabled);
+    }
+
+    /// <summary>
+    /// And the other half of it: an import may take back its own words, never somebody else's. A
+    /// headline written in ADM-17 survives, and the report says it did so nobody has to notice.
+    /// </summary>
+    [Fact]
+    public async Task A_headline_somebody_wrote_in_the_admin_screens_survives_the_import()
+    {
+        await using var world = await CreateAsync();
+        await world.DropTheUsualAsync(TheDeliveredShapes, Token);
+
+        Assert.True((await world.ImportAsync(Token)).Succeeded);
+
+        await using (var scope = world.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var item = Assert.Single(await ItemsAsync(dbContext, HomeSectionType.ActivewearFeature));
+
+            item.Title = "The hot-weather edit";
+            await dbContext.SaveChangesAsync(Token);
+        }
+
+        var report = await world.ImportAsync(Token);
+        Assert.True(report.Succeeded, string.Join("; ", report.Failures));
+
+        Assert.Contains(
+            report.Notes,
+            note => note.Contains("heading", StringComparison.Ordinal)
+                && note.Contains("ADM-17", StringComparison.Ordinal));
+
+        await using (var scope = world.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var item = Assert.Single(await ItemsAsync(dbContext, HomeSectionType.ActivewearFeature));
+
+            Assert.Equal("The hot-weather edit", item.Title);
+
+            // The rest is still the import's own, so the one edit does not freeze the whole block.
+            Assert.Equal("Shop linen and denim", item.ButtonLabel);
+        }
+    }
+
+    /// <summary>
+    /// A retraction is about <b>one field</b>, and must not reach across to another that happens to
+    /// hold the same words.
+    /// <para>
+    /// The four strings the importer took back for HOME-06 were kept in one flat set and tested against
+    /// every field, so an admin who typed "Activewear" as the <i>button label</i> — a perfectly ordinary
+    /// thing to do, the section is still the activewear slot — had it silently rewritten by a retraction
+    /// that was only ever about the heading. Silently, because the write looked like a retraction rather
+    /// than like a value being kept, so it did not even earn the note. The field is part of the key now.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task A_retraction_of_one_field_does_not_reach_across_to_another()
+    {
+        await using var world = await CreateAsync();
+        await world.DropTheUsualAsync(TheDeliveredShapes, Token);
+
+        Assert.True((await world.ImportAsync(Token)).Succeeded);
+
+        await using (var scope = world.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var item = Assert.Single(await ItemsAsync(dbContext, HomeSectionType.ActivewearFeature));
+
+            // The heading's retracted value, typed by a person into a different field.
+            item.ButtonLabel = "Activewear";
+            await dbContext.SaveChangesAsync(Token);
+        }
+
+        var report = await world.ImportAsync(Token);
+        Assert.True(report.Succeeded, string.Join("; ", report.Failures));
+
+        await using (var scope = world.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var item = Assert.Single(await ItemsAsync(dbContext, HomeSectionType.ActivewearFeature));
+
+            Assert.Equal("Activewear", item.ButtonLabel);
+        }
+
+        Assert.Contains(
+            report.Notes,
+            note => note.Contains("button label", StringComparison.Ordinal)
+                && note.Contains("ADM-17", StringComparison.Ordinal));
+    }
+
+    /// <summary>
     /// The ten kids' products keep their placeholders. No photograph of an adult is put in front of a
     /// children's garment to fill a gap, however convincing the gap looks.
     /// </summary>
