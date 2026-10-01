@@ -13,12 +13,19 @@ namespace SpencerDenim.Application.Catalog.Contracts;
 /// to fail the product page, which is the only page the shopper actually came for.
 /// </para>
 /// <para>
-/// <b>There is deliberately no size limit here.</b> The parser handles an enormous table perfectly
-/// well — 20,000 columns, 10,000 rows and a 9.5 MiB value were all measured — but the content is
-/// embedded on the product payload, so a 10 MB table makes a 10.2 MB product page taking 9–19 s, for
-/// every product inheriting that guide, on every request. That is a question about what an admin may
-/// save, not about what this may read, so it is bounded on the write path: <b>issue #70</b>, owed
-/// before ADM-11 ships. Capping it here would silently truncate a measurement instead.
+/// <b>The grid is bounded — see <see cref="MaxColumns"/> — because the bound that matters is not the
+/// one that is obvious.</b> Memory here grows as columns × rows while the JSON grows as columns +
+/// rows, so 146 KiB of text allocates 306.5 MiB and a byte cap would not have caught it. An earlier
+/// version of this comment said there was deliberately no limit, on the grounds that capping would
+/// truncate a measurement; that was wrong twice over — over the cap the whole table goes, which is a
+/// loss this type already takes elsewhere, and the thing being avoided was an
+/// <see cref="OutOfMemoryException"/> rather than a wide table.
+/// </para>
+/// <para>
+/// A cap here does not retire the write-path bound (<b>issue #70</b>): a table under the cap can still
+/// be large enough to matter, because the content is embedded on the product payload and is paid for
+/// by every product inheriting that guide, on every request. That is a question about what an admin
+/// may save; this is only the guard that stops a bad row count costing the process.
 /// </para>
 /// <para>
 /// <b>And <c>ISJSON</c> guarantees less than it appears to even about parsing.</b> It accepts an
@@ -41,6 +48,35 @@ public static class SizeGuideTable
 {
     private const string ColumnsProperty = "columns";
     private const string RowsProperty = "rows";
+
+    /// <summary>
+    /// The widest and longest grid this will build. Beyond either, the table goes.
+    /// <para>
+    /// <b>The bound is the cell count, not the byte count, and that is the whole point.</b> Every row
+    /// allocates <c>columns.Count</c> strings whether the JSON held that many cells or not, so memory
+    /// grows as columns × rows while the text grows as columns + rows. Measured: 2,000 columns by
+    /// 20,000 <i>empty</i> rows is <b>146 KiB</b> of JSON and <b>306.5 MiB</b> allocated — a factor of
+    /// 2,145. A byte cap of a megabyte would still have admitted several gigabytes, and the failure is
+    /// an <see cref="OutOfMemoryException"/>, which none of the three guards above catches and which
+    /// costs the whole process rather than one department's pages.
+    /// </para>
+    /// <para>
+    /// 40 and 200 because they are far outside any garment chart and nowhere near the allocation that
+    /// hurts: the seeded guides are 4 columns by 5–6 rows, and a generous real one — body measurements
+    /// plus UK/EU/US equivalents — reaches perhaps a dozen columns. The ceiling is 8,000 cells, which
+    /// is a table no shopper could read and a few hundred kilobytes at worst.
+    /// </para>
+    /// <para>
+    /// Over the cap the whole table goes, rather than being truncated to fit. Truncating would publish
+    /// a measurement chart that silently disagrees with the one the admin saved, which is worse than no
+    /// chart; losing it is the same loss this type already takes for a table it cannot read, and the
+    /// bound belongs on the write path regardless (issue #70).
+    /// </para>
+    /// </summary>
+    private const int MaxColumns = 40;
+
+    /// <inheritdoc cref="MaxColumns"/>
+    private const int MaxRows = 200;
 
     /// <summary>
     /// The grid, or <see langword="null"/> when the stored text holds no table a shopper could read.
@@ -127,6 +163,13 @@ public static class SizeGuideTable
             return null;
         }
 
+        // Checked before the list is sized, because `GetArrayLength` is the attacker's number: sizing a
+        // list from it is itself the allocation being guarded against.
+        if (element.GetArrayLength() > MaxColumns)
+        {
+            return null;
+        }
+
         var columns = new List<string>(element.GetArrayLength());
         foreach (var column in element.EnumerateArray())
         {
@@ -155,6 +198,14 @@ public static class SizeGuideTable
     private static List<IReadOnlyList<string>> ReadRows(JsonElement root, int columnCount)
     {
         if (!root.TryGetProperty(RowsProperty, out var element) || element.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+
+        // Same reason as the column check, and this is the one that matters: every row below allocates
+        // `columnCount` strings whether the JSON held that many cells or not, so the memory is the
+        // product while the text is the sum.
+        if (element.GetArrayLength() > MaxRows)
         {
             return [];
         }

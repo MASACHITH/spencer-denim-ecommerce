@@ -158,35 +158,30 @@ public sealed record SizeGuideContentDto(
 /// HTML, and is cached and invalidated by whatever caches the product payload.
 /// </para>
 /// <para>
-/// <b>What makes <paramref name="Content"/>'s HTML safe, and what does not — stated plainly because
-/// two of its fields are meant to be rendered as markup, and because a safety argument whose premises
-/// are checkable and wrong is worse than no argument at all.</b>
+/// <b>What makes <paramref name="IntroHtml"/> and <paramref name="MeasuringTipsHtml"/> safe.</b> Four
+/// facts, kept short because this paragraph has now been wrong three times and every correction was a
+/// claim that read well and did not hold.
 /// </para>
+/// <list type="number">
+/// <item>The only writer is <c>CatalogReferenceData</c>. There is no admin write path yet (ADM-11).</item>
+/// <item>
+/// Nothing sanitises these fields on the way in. There is no HTML sanitiser in this backend at all.
+/// </item>
+/// <item>
+/// Doc 08 §3.2 does <b>not</b> mark these columns sanitised — the Notes are blank for both, and
+/// "Sanitised HTML" appears against <c>Products.Description</c> only.
+/// </item>
+/// <item>
+/// The storefront binds both through <c>[innerHTML]</c> (<c>SizeGuideModal</c>), so Angular's
+/// <c>SecurityContext.HTML</c> strips scripts, event handlers and <c>javascript:</c> URLs. That is a
+/// real defence for that client and second-line by nature: it says nothing about an admin preview, a
+/// native client or an export.
+/// </item>
+/// </list>
 /// <para>
-/// <b>Exactly one thing holds today: the only writer is the seeder.</b>
-/// <c>CatalogReferenceData</c>'s three guides are plain sentences the seeder wraps in
-/// <c>&lt;p&gt;</c>, there is no admin write path for a size guide yet (ADM-11), and no other code
-/// writes these columns. Nothing unsanitised can be in the table on any database this code has run
-/// against.
-/// </para>
-/// <para>
-/// <b>Two things that sound like guarantees and are not.</b> First, <i>doc 08 does not document these
-/// columns as sanitised.</i> §3.2's <c>catalog.SizeGuides</c> table leaves the Notes blank for
-/// <c>IntroHtml</c> and <c>MeasuringTipsHtml</c>; "Sanitised HTML" appears against
-/// <c>Products.Description</c> and not here, so citing the document for these two fields would be
-/// citing something it does not say. Second, <i>no client sanitises them yet</i>: nothing in the
-/// storefront renders either field today, so the <c>[innerHTML]</c> defence
-/// (Angular's <c>SecurityContext.HTML</c>, which strips scripts, event handlers and
-/// <c>javascript:</c> URLs) is a defence that will exist when the PDP-04 modal body is built, not one
-/// that exists now. It is also second-line by nature: it protects the one client that happens to be
-/// Angular and says nothing about an admin preview, a native app or an export.
-/// </para>
-/// <para>
-/// <b>So inbound sanitisation is owed before ADM-11 ships, not after.</b> The moment an admin can type
-/// into these two columns the single premise above stops being true, and there is nothing behind it:
-/// there is no HTML sanitiser anywhere in this backend today. ADM-11 has to add one on the write path,
-/// and doc 08 §3.2 should mark both columns "Sanitised HTML" so the contract is written where the next
-/// person looks for it. Tracked, with the measurements, in <b>issue #70</b>.
+/// So the safety rests on (1). The moment an admin can type into these columns it stops holding, and
+/// there is nothing behind it. Inbound sanitisation is owed before ADM-11 ships, with doc 08 §3.2
+/// updated to match: <b>issue #70</b>.
 /// </para>
 /// </summary>
 /// <param name="Content">

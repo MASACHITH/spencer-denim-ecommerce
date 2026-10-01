@@ -462,10 +462,16 @@ test.describe('the size guide (PDP-04)', () => {
       await page.keyboard.press('ArrowRight');
     }
 
-    expect(
-      await scroller.evaluate((element: HTMLElement) => element.scrollLeft),
-      'the keyboard cannot reach the columns a pointer can drag to',
-    ).toBeGreaterThan(0);
+    // Polled, not read in the same tick. Chromium's arrow scrolling is compositor-driven, so the
+    // immediate read is whatever has been committed so far: measured at 3 on one run and 0 on
+    // another, both settling to 214 about 600 ms later — and 0 fails. It passed 55 times out of 55,
+    // which makes it latent rather than flaky, and latent is the kind that surfaces in CI.
+    await expect(async () => {
+      expect(
+        await scroller.evaluate((element: HTMLElement) => element.scrollLeft),
+        'the keyboard cannot reach the columns a pointer can drag to',
+      ).toBeGreaterThan(0);
+    }).toPass();
   });
 
   /**

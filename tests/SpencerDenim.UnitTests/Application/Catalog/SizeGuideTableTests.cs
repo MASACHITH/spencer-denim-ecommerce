@@ -196,6 +196,55 @@ public sealed class SizeGuideTableTests
     }
 
     /// <summary>
+    /// The grid is bounded by its <b>cell count</b>, which is the bound a byte cap misses.
+    /// <para>
+    /// Every row allocates one string per column whether the JSON held that many cells or not, so
+    /// memory grows as columns × rows while the text grows as columns + rows. The case below is 2,000
+    /// columns by 20,000 empty rows: about 146 KiB of JSON that allocated <b>306.5 MiB</b> before the
+    /// cap, a factor of 2,145 — and the failure is an <c>OutOfMemoryException</c>, which none of the
+    /// three exception guards catches.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void A_grid_with_more_cells_than_the_cap_is_no_table_rather_than_an_allocation()
+    {
+        var wide = Grid(columns: 41, rows: 1);
+        var tall = Grid(columns: 2, rows: 201);
+
+        Assert.Null(SizeGuideTable.Parse(wide));
+        Assert.Null(SizeGuideTable.Parse(tall));
+
+        // The measured case: small text, enormous allocation. It has to come back as "no table"
+        // quickly rather than as 306.5 MiB, so the test is also a guard against the guard being
+        // moved below the allocation it exists to prevent.
+        Assert.Null(SizeGuideTable.Parse(Grid(columns: 2_000, rows: 20_000)));
+    }
+
+    [Fact]
+    public void A_grid_at_the_cap_still_parses()
+    {
+        var table = SizeGuideTable.Parse(Grid(columns: 40, rows: 200));
+
+        Assert.NotNull(table);
+        Assert.Equal(40, table.Columns.Count);
+        Assert.Equal(200, table.Rows.Count);
+        Assert.All(table.Rows, row => Assert.Equal(40, row.Count));
+    }
+
+    /// <summary>
+    /// A grid of the given shape with <b>empty</b> rows, which is what makes the text small and the
+    /// allocation large: the rows carry no cells at all and every one of them is still padded to the
+    /// column count.
+    /// </summary>
+    private static string Grid(int columns, int rows)
+    {
+        var headers = string.Join(',', Enumerable.Range(0, columns).Select(index => $"\"c{index}\""));
+        var body = string.Join(',', Enumerable.Repeat("[]", rows));
+
+        return $"{{\"columns\":[{headers}],\"rows\":[{body}]}}";
+    }
+
+    /// <summary>
     /// The real seeded value, read from <c>CatalogReferenceData</c> rather than copied, so editing a
     /// seeded guide into a shape this cannot read fails here and not on a shopper's screen.
     /// </summary>
