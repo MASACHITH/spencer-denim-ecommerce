@@ -684,6 +684,23 @@ describe('ProductPage (PDP-01..07)', () => {
       expect(text()).not.toContain('We could not find that page');
     });
 
+    /**
+     * The server answers this 503 with `Retry-After`, and a 503 must not carry `noindex`: the whole
+     * point of the status code is that the URL keeps its place, and a crawler that reads the body of
+     * an error page would take the meta tag at its word (#30). The tag used to be set here, and
+     * nothing asserted either way.
+     */
+    it('asks no crawler to drop a product the store merely failed to serve', async () => {
+      // As the not-found page would have left it, on the way in from a product that really is gone.
+      // Exactly one, whatever an earlier test left behind, or `removeTag` could take the wrong one.
+      document.querySelectorAll('meta[name="robots"]').forEach((tag) => tag.remove());
+      document.head.insertAdjacentHTML('beforeend', '<meta name="robots" content="noindex">');
+
+      await fail(500);
+
+      expect(document.querySelector('meta[name="robots"]')).toBeNull();
+    });
+
     it('says something different when the browser could not reach the store', async () => {
       harness = await RouterTestingHarness.create('/product/gone');
       await activated();

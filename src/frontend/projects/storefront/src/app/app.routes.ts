@@ -1,6 +1,11 @@
 import { Routes } from '@angular/router';
 
-import { isKnownCategory, isKnownDepartment } from './core/navigation/catalog-route.guards';
+import {
+  isKnownCategory,
+  isKnownDepartment,
+  isMissingCategory,
+  isUnconfirmedCatalogue,
+} from './core/navigation/catalog-route.guards';
 import { ListingMode } from './pages/listing/listing-mode';
 
 /** The listing serves a department, its category tree, New Arrivals and Sale (DEPT-01..03, PLP-01..07). */
@@ -11,6 +16,12 @@ const productPage = () => import('./pages/product/product-page').then((m) => m.P
 
 /** An address the catalogue does not have. Answers a real 404 (see the component). */
 const notFoundPage = () => import('./pages/not-found/not-found-page').then((m) => m.NotFoundPage);
+
+/** An address the catalogue could not be asked about. Answers 503 with `Retry-After` (#30). */
+const catalogUnavailablePage = () =>
+  import('./pages/catalog-unavailable/catalog-unavailable-page').then(
+    (m) => m.CatalogUnavailablePage,
+  );
 
 export const routes: Routes = [
   {
@@ -49,13 +60,31 @@ export const routes: Routes = [
     loadComponent: listingPage,
   },
 
-  // A department we know with a category we do not — /women/shirts names a Men's category — is a
-  // page that is missing, not the department page and not the home page.
-  { path: ':department/:category', canMatch: [isKnownDepartment], loadComponent: notFoundPage },
+  // A department we know with a category the **live** catalogue does not have — /women/shirts names
+  // a Men's category — is a page that is missing, not the department page and not the home page.
+  //
+  // `isMissingCategory` and not `isKnownDepartment`: the guard has to have read a live tree before
+  // it may say a page is gone. Read against the frozen fallback it said so about every category
+  // added since the fallback was written, and a 404 with `noindex` drops a live listing out of the
+  // index for the length of an API wobble (#30).
+  { path: ':department/:category', canMatch: [isMissingCategory], loadComponent: notFoundPage },
   {
     path: ':department/:category/:subcategory',
-    canMatch: [isKnownDepartment],
+    canMatch: [isMissingCategory],
     loadComponent: notFoundPage,
+  },
+
+  // The catalogue could not be asked, so neither the listing nor the 404 above can be right. These
+  // answer 503 with `Retry-After`, which a crawler retries and which keeps the URL.
+  {
+    path: ':department/:category',
+    canMatch: [isUnconfirmedCatalogue],
+    loadComponent: catalogUnavailablePage,
+  },
+  {
+    path: ':department/:category/:subcategory',
+    canMatch: [isUnconfirmedCatalogue],
+    loadComponent: catalogUnavailablePage,
   },
 
   { path: '**', redirectTo: '' },

@@ -46,10 +46,9 @@ import {
 } from '../../core/catalog/product-variants';
 import { CanonicalLink } from '../../core/platform/canonical-link';
 import { readableInk } from '../../core/platform/contrast';
+import { RobotsMeta } from '../../core/platform/robots-meta';
+import { serviceUnavailable } from '../../core/platform/service-unavailable';
 import { LocalWishlist } from '../../core/wishlist/local-wishlist.service';
-
-/** How long a crawler is asked to wait before retrying a product the store could not serve. */
-const RETRY_AFTER_SECONDS = '120';
 
 /** What the API answers for `StockStatus`, in the shopper's words. */
 const STOCK_LABEL: Readonly<Record<StockStatus, string>> = {
@@ -584,6 +583,7 @@ export class ProductPage {
   private readonly title = inject(Title);
   private readonly meta = inject(Meta);
   private readonly canonical = inject(CanonicalLink);
+  private readonly robots = inject(RobotsMeta);
   private readonly wishlist = inject(LocalWishlist);
   private readonly recent = inject(RecentlyViewed);
   private readonly response = inject(RESPONSE_INIT, { optional: true });
@@ -833,9 +833,9 @@ export class ProductPage {
           this.title.setTitle(documentTitle(item));
           this.meta.updateTag({ name: 'description', content: metaDescription(item) });
           this.canonical.set(`/product/${item.slug}`);
-          // A page that is fine must not inherit the noindex a 404 or a 503 left behind on a
-          // client-side navigation.
-          this.meta.removeTag('name="robots"');
+          // A page that is fine must not inherit the noindex a 404 left behind on a client-side
+          // navigation.
+          this.robots.clear();
           this.recent.remember(toRecentCard(item));
         }
       });
@@ -851,16 +851,12 @@ export class ProductPage {
         }
 
         this.title.setTitle(brandPageTitle('Product unavailable'));
-        this.meta.updateTag({ name: 'robots', content: 'noindex' });
+        // Deliberately no `noindex`, and none inherited from a 404 the shopper arrived through:
+        // the point of a 503 is that the URL keeps its place, and a crawler that reads the body of
+        // an error page would take the meta tag at its word (#30).
+        this.robots.clear();
 
-        if (this.response) {
-          this.response.status = 503;
-          // `headers` may already be a Headers, an array of pairs or a plain object; the
-          // constructor normalises all three, so nothing is dropped by setting one more.
-          const headers = new Headers(this.response.headers ?? {});
-          headers.set('Retry-After', RETRY_AFTER_SECONDS);
-          this.response.headers = headers;
-        }
+        serviceUnavailable(this.response);
       });
     });
 
