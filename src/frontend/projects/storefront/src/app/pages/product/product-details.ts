@@ -125,9 +125,14 @@ export class ProductDetails {
    * HTML", and the demo seeder writes real markup into it (`<p>…</p><p>…</p>`). Interpolating it
    * printed the tags at the shopper, which is what clicking through the real API showed.
    *
-   * `[innerHTML]` puts it through Angular's own sanitiser as well (`SecurityContext.HTML`), which
-   * strips scripts, event handlers and `javascript:` URLs whatever an admin pasted in. That is a
-   * second line of defence, not the first: the field is sanitised on the way in.
+   * **`[innerHTML]` is the only sanitiser in the chain, not the second line of defence.** It puts
+   * the value through Angular's own `SecurityContext.HTML`, which strips scripts, event handlers
+   * and `javascript:` URLs whatever an admin pasted in. This comment used to end "the field is
+   * sanitised on the way in", and that was true of no code path: there is no HTML sanitiser
+   * anywhere in the backend — the only `Sanitise*` in `src/backend` is `MediaService
+   * .SanitiseFileName`. What makes the field safe today is that nothing but the seeder can write
+   * it, because there is no admin write path yet. Inbound sanitisation is owed before ADM-11
+   * ships (issue #70), and until it exists everything rendered here rests on this one binding.
    */
   protected readonly descriptionHtml = computed(() => trimmed(this.product().description));
 

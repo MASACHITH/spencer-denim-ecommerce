@@ -298,23 +298,196 @@ test.describe('the full-screen view (PDP-01)', () => {
 });
 
 test.describe('the size guide (PDP-04)', () => {
+  /** The real seeded guide's last row, which is also the furthest cell from the left edge. */
+  const LAST_ROW = ['XXL', '107-113', '89-95', '115-121'];
+
   /**
-   * The API sends a guide's id and name and none of its measurements (issue #32), so there is
-   * nothing to open. A trigger that opened a dialog saying "nothing to show here" is a dead
-   * control wearing a coat, and the one condition it hangs on is `hasSizeGuideContent`.
+   * The trigger, by its exact name.
+   *
+   * `/size guide/i` matches two controls the moment the dialog is open — the trigger and the
+   * dialog's own "Close size guide" button — and Playwright's strict mode rightly refuses to guess.
    */
-  test('offers no trigger while the API carries no measurements', async ({ page }) => {
+  const TRIGGER = { name: 'Women apparel size guide', exact: true } as const;
+
+  /** The stub serves a seven-column guide here, which no phone can fit. */
+  const WIDE_PRODUCT = '/product/test-product-2';
+
+  test('opens on the measurements the API sent', async ({ page }) => {
     await page.goto(PRODUCT);
+
+    const trigger = page.getByRole('button', TRIGGER);
+    await expect(trigger).toBeVisible();
+    await expect(trigger).toHaveAttribute('aria-expanded', 'false');
+
+    await trigger.click();
+
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toBeVisible();
+    await expect(trigger).toHaveAttribute('aria-expanded', 'true');
+
+    // The prose, which arrives as markup and must be rendered as markup: a `<p>` element, not the
+    // characters `<p>` on the screen.
+    await expect(dialog.locator('.guide__intro p')).toHaveText(/Measurements are in centimetres/);
+    await expect(dialog.getByRole('heading', { name: 'How to measure' })).toBeVisible();
+
+    // The table, as a table: headers that are headers, and every row the API sent.
+    const table = dialog.getByRole('table');
+    await expect(table).toHaveAccessibleName(/measurements/i);
+    await expect(table.getByRole('columnheader')).toHaveText(['Size', 'Bust', 'Waist', 'Hip']);
+    await expect(table.locator('tbody tr')).toHaveCount(6);
+    await expect(table.locator('tbody tr').last().locator('th, td')).toHaveText(LAST_ROW);
+
+    // Each size is the row's header, not an ordinary cell, so a screen reader can say which row a
+    // measurement belongs to.
+    await expect(table.getByRole('rowheader')).toHaveText(['XS', 'S', 'M', 'L', 'XL', 'XXL']);
+  });
+
+  /**
+   * **The hard part, and the reason this is not one line.** Four columns of measurements cannot fit
+   * 320 px, so something has to give: either the dialog scrolls inside itself or the page scrolls
+   * sideways, and only the first is acceptable.
+   *
+   * **The reach assertion is the one doing the work, and that is worth saying so nobody trusts the
+   * other one.** Deleting `overflow-x: auto` from the scroller was measured: the page overflow stayed
+   * `0` at all eight widths and only the reach assertion went red. It cannot be otherwise here —
+   * the dialog panel is `width: min(100%, 720px)` so it never exceeds the viewport, and
+   * `.sd-modal__body` already has `overflow-y: auto`, which makes CSS compute its `overflow-x` to
+   * `auto` as well. Content inside this dialog therefore has nowhere to push the page to.
+   *
+   * So the page check is kept as the cheap guard it is — it would catch a future change that let the
+   * dialog escape its panel — and the real question is answered by scrolling the container to its
+   * end and asking where the furthest cell actually landed. That is measured off the screen rather
+   * than read back off a declaration, which is the only version of this that can fail.
+   */
+  for (const width of BREAKPOINTS) {
+    test(`${width}px: the table scrolls inside the dialog and the page does not`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto(PRODUCT);
+      await page.getByRole('button', TRIGGER).click();
+      await expect(page.getByRole('dialog')).toBeVisible();
+
+      // The cheap guard. See the note above: it cannot fail on this content alone.
+      expect(await horizontalOverflow(page), `the page scrolls sideways at ${width}px`).toBe(0);
+
+      // Scroll the container to its right-hand end, then ask where the last cell actually is.
+      const reach = await page.locator('.guide__scroll').evaluate((scroller: HTMLElement) => {
+        scroller.scrollLeft = scroller.scrollWidth;
+
+        const rows = scroller.querySelectorAll('tbody tr');
+        const cells = rows[rows.length - 1].querySelectorAll('th, td');
+        const last = cells[cells.length - 1].getBoundingClientRect();
+        const box = scroller.getBoundingClientRect();
+
+        return {
+          text: cells[cells.length - 1].textContent?.trim() ?? '',
+          scrollable: scroller.scrollWidth > scroller.clientWidth,
+          // Half a pixel of slack for sub-pixel layout, and no more.
+          inside: last.right <= box.right + 0.5 && last.left >= box.left - 0.5,
+        };
+      });
+
+      expect(reach.text).toBe('115-121');
+      expect(reach.inside, `the last measurement is unreachable at ${width}px`).toBe(true);
+
+      // Deliberately no "and it must be scrollable" here. Whether this table overflows is a fact
+      // about the content, not about the breakpoint: four columns of short measurements fit from
+      // 375 px up, and at 320 the real table is 246 px against about 254 px of dialog — it fits by
+      // eight pixels, which moves with font loading. `the scroller carries a table no phone can
+      // fit` below proves the mechanism with content that cannot fit under any metrics.
+    });
+  }
+
+  /**
+   * The scroller doing its actual job, on a seven-column guide the stub serves for product 2.
+   *
+   * Content that cannot fit any phone under any font, rather than the seeded table that fits 320 px
+   * by eight pixels — see `WIDE_GUIDE` in the stub. This is the test that would fail if the table
+   * were clipped, crushed into three-line headings, or allowed to push the page sideways.
+   *
+   * Phone widths only, and measured rather than assumed: seven columns **do** fit the 720 px dialog
+   * panel from 768 px up, and an earlier version of this asserted 768 and failed there with
+   * "nothing to scroll". A test that demands a scrollbar where the content fits is demanding a
+   * worse layout.
+   */
+  for (const width of [320, 375, 390] as const) {
+    test(`${width}px: the scroller carries a table no phone can fit`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto(WIDE_PRODUCT);
+      await page.getByRole('button', { name: 'Wide size guide', exact: true }).click();
+      await expect(page.getByRole('dialog')).toBeVisible();
+
+      expect(await horizontalOverflow(page), `the page scrolls sideways at ${width}px`).toBe(0);
+
+      const reach = await page.locator('.guide__scroll').evaluate((scroller: HTMLElement) => {
+        const before = scroller.scrollWidth > scroller.clientWidth;
+        scroller.scrollLeft = scroller.scrollWidth;
+
+        const cells = scroller.querySelectorAll('tbody tr:last-child th, tbody tr:last-child td');
+        const last = cells[cells.length - 1].getBoundingClientRect();
+        const box = scroller.getBoundingClientRect();
+
+        return {
+          scrollable: before,
+          moved: scroller.scrollLeft > 0,
+          text: cells[cells.length - 1].textContent?.trim() ?? '',
+          inside: last.right <= box.right + 0.5 && last.left >= box.left - 0.5,
+        };
+      });
+
+      expect(reach.scrollable, `nothing to scroll at ${width}px, so a column was lost`).toBe(true);
+      expect(reach.moved).toBe(true);
+      expect(reach.text).toBe('38');
+      expect(reach.inside, `the last measurement is unreachable at ${width}px`).toBe(true);
+    });
+  }
+
+  /** A pointer user drags the table; a keyboard user has to be given the same reach. */
+  test('the table scroller is reachable by keyboard', async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 900 });
+    await page.goto(WIDE_PRODUCT);
+    await page.getByRole('button', { name: 'Wide size guide', exact: true }).click();
+
+    const scroller = page.locator('.guide__scroll');
+    await expect(scroller).toBeVisible();
+    await expect(scroller).toHaveAttribute('tabindex', '0');
+
+    await scroller.focus();
+    await expect(scroller).toBeFocused();
+
+    // ArrowRight, not End: End scrolls a container to its *bottom*, so it moved nothing here and
+    // the assertion failed for a reason that had nothing to do with reach.
+    for (let press = 0; press < 10; press++) {
+      await page.keyboard.press('ArrowRight');
+    }
+
+    expect(
+      await scroller.evaluate((element: HTMLElement) => element.scrollLeft),
+      'the keyboard cannot reach the columns a pointer can drag to',
+    ).toBeGreaterThan(0);
+  });
+
+  /**
+   * Server-rendered, so the guide works before any script has run — which is the other half of why
+   * the content travels with the product payload rather than being fetched when the dialog opens.
+   */
+  test('the measurements are in the server-rendered HTML', async ({ request }) => {
+    const html = await (await request.get(PRODUCT)).text();
+
+    expect(html).toContain('size guide');
+    expect(html).toContain('107-113');
+  });
+
+  /** A category with no guide set: the trigger is not there at all (stub sends null on every 4th). */
+  test('offers no trigger for a product whose category has no guide', async ({ page }) => {
+    await page.goto('/product/test-product-4');
     await expect(page.locator('h1')).toBeVisible();
 
     await expect(page.locator('.pdp__guide')).toHaveCount(0);
+    // Loose on purpose here: no dialog is open, so nothing else can match, and this would catch a
+    // trigger that had been renamed as well as one that had been removed.
     await expect(page.getByRole('button', { name: /size guide/i })).toHaveCount(0);
-  });
-
-  test('says nothing about a size guide in the server-rendered HTML either', async ({
-    request,
-  }) => {
-    expect(await (await request.get(PRODUCT)).text()).not.toContain('size guide');
   });
 });
 

@@ -191,35 +191,49 @@ export interface SizeGuideTableDto {
 }
 
 /**
- * What a size guide would have to carry for the product page to be able to show one.
+ * What a size guide carries for the product page to show one.
  *
- * It mirrors `catalog.SizeGuides` column for column, and **the API projects none of it today**
- * (issue #32). The shape is written down rather than guessed at later so that serving it is the
- * only change needed here.
+ * It mirrors `catalog.SizeGuides` column for column. This shape was written down here *before* the
+ * API served any of it, and issue #32 then matched it rather than inventing a second one — which is
+ * the whole reason the content is embedded on the product payload instead of coming from a route of
+ * its own: {@link hasSizeGuideContent} has to answer before the trigger exists, so there is nothing
+ * to click that could trigger a fetch.
  */
 export interface SizeGuideContentDto {
+  /**
+   * Rendered as markup through `[innerHTML]`, which is the only thing that sanitises it: there is
+   * no HTML sanitiser in the backend, and `catalog.SizeGuides.IntroHtml` is not documented as
+   * sanitised in doc 08 §3.2 either. Safe today only because the seeder is its sole writer; see
+   * issue #70, owed before ADM-11.
+   */
   readonly introHtml: string | null;
   readonly table: SizeGuideTableDto | null;
+  /** Markup, on exactly the same terms as {@link introHtml}. */
   readonly measuringTipsHtml: string | null;
   readonly imageUrl: string | null;
+  /**
+   * The diagram's alt text, from the media asset. Null when the asset carries none, in which case
+   * the dialog names the guide rather than leaving an informative image unlabelled or claiming to
+   * describe a picture it cannot see.
+   */
+  readonly imageAltText: string | null;
 }
 
 /**
  * The size guide the product page opens (PDP-04).
  *
- * `id` and `name` are the whole of what the API sends. The measurements exist in the database —
- * `catalog.SizeGuides` has `IntroHtml`, `TableJson`, `MeasuringTipsHtml` and an image, and
- * `CatalogReferenceDataSeeder` fills all four — but `SizeGuideRefDto` does not project them and
- * no endpoint serves them, which is **issue #32**.
+ * The API sends `id`, `name` and the measurements, projected from `catalog.SizeGuides` in the same
+ * query as the product (issue #32, closed).
  *
- * `content` is therefore optional and, today, always absent. {@link hasSizeGuideContent} is the
- * one condition the trigger and the modal hang on, so the day the API projects it the guide
- * appears with no other change.
+ * `content` stays optional on the type rather than required, because it is genuinely absent for a
+ * guide an admin has created and not filled in: `TableJson`'s own default is `{}`, and the API
+ * answers `"content": null` rather than four empty fields. {@link hasSizeGuideContent} is the one
+ * condition the trigger and the modal hang on.
  */
 export interface SizeGuideRefDto {
   readonly id: number;
   readonly name: string;
-  /** TODO(#32): the API does not send this yet, so a guide never has measurements to show. */
+  /** Absent, or null, when the guide holds nothing a shopper could read. */
   readonly content?: SizeGuideContentDto | null;
 }
 
@@ -227,8 +241,8 @@ export interface SizeGuideRefDto {
  * Whether a size guide has anything a shopper could read.
  *
  * A guide with a name and no measurements is not worth a button: opening it would say only that
- * there is nothing to see, which is worse than the control not being there. Until issue #32 lands
- * this is false for every product, and the trigger and the dialog do not render at all.
+ * there is nothing to see, which is worse than the control not being there. When this is false the
+ * trigger and the dialog do not render at all.
  */
 export function hasSizeGuideContent(
   guide: SizeGuideRefDto | null | undefined,

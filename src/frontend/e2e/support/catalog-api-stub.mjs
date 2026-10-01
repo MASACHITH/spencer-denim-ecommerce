@@ -290,6 +290,63 @@ const SIZES = [
   { id: 12, label: 'L', scaleName: 'Apparel alpha', sortOrder: 3 },
 ];
 
+/**
+ * The seeded women's guide (PDP-04), as `SizeGuideContentDto`.
+ *
+ * Four columns and six rows, copied from `CatalogReferenceData` cell for cell rather than
+ * simplified, because the only genuinely hard part of this dialog is what a table this wide does on
+ * a 320 px screen. A two-column stand-in would have drawn a table that fits and proved nothing.
+ *
+ * It is kept faithful on purpose, so the markup-in-a-cell case (cells are interpolated as text and
+ * never bound to `innerHTML`) is proven in `size-guide-modal.spec.ts` instead of by bending one of
+ * these measurements into a tag.
+ */
+const WOMENS_GUIDE = {
+  introHtml: '<p>Measurements are in centimetres and describe the body, not the garment.</p>',
+  table: {
+    columns: ['Size', 'Bust', 'Waist', 'Hip'],
+    rows: [
+      ['XS', '78-82', '60-64', '86-90'],
+      ['S', '83-87', '65-69', '91-95'],
+      ['M', '88-93', '70-75', '96-101'],
+      ['L', '94-99', '76-81', '102-107'],
+      ['XL', '100-106', '82-88', '108-114'],
+      ['XXL', '107-113', '89-95', '115-121'],
+    ],
+  },
+  measuringTipsHtml:
+    '<p>Measure over light clothing, keeping the tape level and snug but not tight.</p>',
+  imageUrl: null,
+  imageAltText: null,
+};
+
+/**
+ * A deliberately wide guide, for the one thing the seeded tables cannot test reliably.
+ *
+ * The real women's table is 246 px wide, which *fits* a 320 px dialog with about 8 px to spare — so
+ * "the container must be scrollable at 320 px" is an assertion riding a margin that moves with font
+ * loading and platform metrics. Measured in a browser: it overflows under one set of metrics and
+ * fits under another, which is a flake waiting to be blamed on something else.
+ *
+ * Seven columns cannot fit any phone under any font, so the scroller is exercised by content that
+ * is certain rather than by a breakpoint that happens to be tight. A real guide could be this wide:
+ * ADM-11 lets an admin add columns.
+ */
+const WIDE_GUIDE = {
+  introHtml: '<p>Seven columns, which no phone can fit.</p>',
+  table: {
+    columns: ['Size', 'Bust', 'Waist', 'Hip', 'Inseam', 'Sleeve', 'Shoulder'],
+    rows: [
+      ['XS', '78-82', '60-64', '86-90', '74', '58', '36'],
+      ['S', '83-87', '65-69', '91-95', '75', '59', '37'],
+      ['M', '88-93', '70-75', '96-101', '76', '60', '38'],
+    ],
+  },
+  measuringTipsHtml: null,
+  imageUrl: null,
+  imageAltText: null,
+};
+
 /** Roughly what `NewsletterEmail.TryNormalise` accepts: enough to tell the two branches apart. */
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@.]+\.[^\s@.]{2,}$/;
 
@@ -455,10 +512,18 @@ function productDetail(index, slug) {
     stockStatus: inStock === 0 ? 'OutOfStock' : lowStock ? 'LowStock' : 'InStock',
     isInStock: inStock > 0,
     seo: { title: card.name, description: `${card.name} at Colombo Wardrobe.` },
-    // The real API sends null for 6 of its 45 products — a category with no guide set. It also
-    // sends no measurements with the ones it does fill in, which is issue #32 and why the
-    // storefront shows no size-guide trigger at all today.
-    sizeGuide: index % 4 === 0 ? null : { id: 1, name: 'Women apparel' },
+    // The real API sends null for 6 of its 45 products — a category with no guide set — and the
+    // seeded women's guide, with its measurements, for the rest.
+    //
+    // The copy is the real seeded guide's, cell for cell, because the whole hard part of PDP-04 is
+    // what four columns and six rows do at 320 px. A stub with two columns would have drawn a
+    // table that fits and proved nothing.
+    sizeGuide:
+      index % 4 === 0
+        ? null
+        : index % 4 === 2
+          ? { id: 2, name: 'Wide', content: WIDE_GUIDE }
+          : { id: 1, name: 'Women apparel', content: WOMENS_GUIDE },
     newUntilUtc: null,
     images,
     colours,

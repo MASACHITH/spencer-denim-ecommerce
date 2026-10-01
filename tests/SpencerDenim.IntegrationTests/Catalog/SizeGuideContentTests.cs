@@ -375,11 +375,50 @@ public sealed class SizeGuideContentTests(SqlServerDatabaseFixture sqlServer) : 
                 // `large`, not `zoom`: the diagram is drawn inside a dialog narrower than the page.
                 Assert.StartsWith("/media/public/renditions/", imageUrl, StringComparison.Ordinal);
                 Assert.EndsWith("/large.webp", imageUrl, StringComparison.Ordinal);
+
+                // The asset's alt text travels with it. A diagram is informative, so a client given
+                // only a URL would have to choose between hiding it from a screen reader and
+                // inventing a description of a picture it cannot see.
+                Assert.Equal(
+                    "How to measure the bust, waist and hip.",
+                    product.SizeGuide?.Content?.ImageAltText);
             }
             else
             {
                 Assert.Null(imageUrl);
+
+                // No file, so nothing to describe either: alt text for an image that is not linked
+                // would be a label with nothing under it.
+                Assert.Null(product.SizeGuide?.Content?.ImageAltText);
             }
+        }
+        finally
+        {
+            await SetGuideImageAsync(women.Id, null);
+            await DeleteAssetAsync(assetId);
+        }
+    }
+
+    /// <summary>
+    /// An asset an admin uploaded without alt text. The API says so rather than inventing one; the
+    /// client then names the guide, which is honest chrome instead of a description of a picture
+    /// nothing in the chain has seen. ADM-11 should require it (issue #70).
+    /// </summary>
+    [Fact]
+    public async Task A_diagram_with_no_alt_text_arrives_with_none_rather_than_an_invented_one()
+    {
+        var api = CreateApi();
+        var women = await ReadGuideAsync(WomensGuide);
+        var assetId = await CreateImageAssetAsync(MediaAssetStatus.Ready, altText: null);
+
+        try
+        {
+            await SetGuideImageAsync(women.Id, assetId);
+
+            var product = await api.GetProductAsync(Shirt, Token);
+
+            Assert.NotNull(product.SizeGuide?.Content?.ImageUrl);
+            Assert.Null(product.SizeGuide?.Content?.ImageAltText);
         }
         finally
         {
@@ -523,7 +562,9 @@ public sealed class SizeGuideContentTests(SqlServerDatabaseFixture sqlServer) : 
     /// builds comes provably from <c>PublicId</c> and <c>RenditionSetVersion</c> rather than from
     /// anything on disk.
     /// </summary>
-    private async Task<int> CreateImageAssetAsync(MediaAssetStatus status)
+    private async Task<int> CreateImageAssetAsync(
+        MediaAssetStatus status,
+        string? altText = "How to measure the bust, waist and hip.")
     {
         using var scope = SqlServer.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -543,7 +584,7 @@ public sealed class SizeGuideContentTests(SqlServerDatabaseFixture sqlServer) : 
 
             // Unique index on Checksum (20260925072043_MediaChecksumUniqueIndex), so it has to be new.
             Checksum = [.. Guid.NewGuid().ToByteArray(), .. Guid.NewGuid().ToByteArray()],
-            AltText = "How to measure the bust, waist and hip.",
+            AltText = altText,
         };
 
         dbContext.Set<MediaAsset>().Add(asset);

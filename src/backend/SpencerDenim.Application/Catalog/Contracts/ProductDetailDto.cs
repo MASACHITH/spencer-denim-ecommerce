@@ -122,11 +122,25 @@ public sealed record SizeGuideTableDto(
 /// <c>Ready</c> — a row still processing, or one whose processing failed, has no file behind it, so
 /// linking it would put a 404 where a diagram should have been.
 /// </param>
+/// <param name="ImageAltText">
+/// The diagram's alt text, from <c>media.MediaAssets.AltText</c>, or <see langword="null"/> when the
+/// asset has none.
+/// <para>
+/// <b>Added to the shape the storefront wrote down</b>, which had <c>imageUrl</c> and nothing to
+/// describe it. A measuring diagram is informative, not decorative, so a client given only a URL has
+/// to choose between <c>alt=""</c> — which hides a measurement chart from a screen reader
+/// outright — and inventing a sentence about a picture it cannot see. Neither is acceptable, and the
+/// fix was one more projected column. <b>ADM-11 should require alt text when a diagram is
+/// attached</b>; until then the client falls back to naming the guide, which is honest chrome rather
+/// than a description of the image.
+/// </para>
+/// </param>
 public sealed record SizeGuideContentDto(
     string? IntroHtml,
     SizeGuideTableDto? Table,
     string? MeasuringTipsHtml,
-    string? ImageUrl);
+    string? ImageUrl,
+    string? ImageAltText);
 
 /// <summary>
 /// The size guide the product page opens (PDP-04), inherited from the primary category when the

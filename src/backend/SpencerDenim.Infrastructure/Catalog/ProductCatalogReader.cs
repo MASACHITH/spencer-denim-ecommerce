@@ -172,6 +172,10 @@ internal sealed class ProductCatalogReader(
                                 product.SizeGuide.ImageAsset.PublicId,
                                 product.SizeGuide.ImageAsset.RenditionSetVersion,
                                 product.SizeGuide.ImageAsset.Width)
+                            : null,
+                        product.SizeGuide.ImageAsset != null
+                            && product.SizeGuide.ImageAsset.Status == MediaAssetStatus.Ready
+                            ? product.SizeGuide.ImageAsset.AltText
                             : null)
                     : null,
                 product.PrimaryCategory.SizeGuide != null
@@ -188,6 +192,10 @@ internal sealed class ProductCatalogReader(
                                 product.PrimaryCategory.SizeGuide.ImageAsset.PublicId,
                                 product.PrimaryCategory.SizeGuide.ImageAsset.RenditionSetVersion,
                                 product.PrimaryCategory.SizeGuide.ImageAsset.Width)
+                            : null,
+                        product.PrimaryCategory.SizeGuide.ImageAsset != null
+                            && product.PrimaryCategory.SizeGuide.ImageAsset.Status == MediaAssetStatus.Ready
+                            ? product.PrimaryCategory.SizeGuide.ImageAsset.AltText
                             : null)
                     : null,
                 product.BadgeOverride,
@@ -682,9 +690,11 @@ internal sealed class ProductCatalogReader(
         // guarded on `Ready` in the projection, so there is a file behind whatever this names.
         var imageUrl = MediaUrlBuilder.ToRenditionUrl(_options.MediaBaseUrl, guide.Image, MediaRenditions.Large);
 
+        // Alt text is not content in its own right: a guide whose only field is a description of a
+        // diagram that is not there has nothing to show, so it is not in this test.
         var content = intro is null && table is null && tips is null && imageUrl is null
             ? null
-            : new SizeGuideContentDto(intro, table, tips, imageUrl);
+            : new SizeGuideContentDto(intro, table, tips, imageUrl, Trimmed(guide.ImageAltText));
 
         return new SizeGuideRefDto(guide.Id, guide.Name, content);
     }

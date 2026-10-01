@@ -90,7 +90,8 @@ internal sealed record SizeGuideRow(
     string? IntroHtml,
     string? TableJson,
     string? MeasuringTipsHtml,
-    MediaRef? Image);
+    MediaRef? Image,
+    string? ImageAltText);
 
 /// <summary>The product page as the projection returns it, before mapping to the public DTO.</summary>
 internal sealed record ProductDetailRow(

@@ -524,16 +524,15 @@ describe('ProductPage (PDP-01..07)', () => {
   });
 
   /**
-   * PDP-04. `SizeGuideRefDto` is `(id, name)` and the API projects none of the measurements that
-   * sit in `catalog.SizeGuides` — issue #32 — so there is nothing a trigger could open. The one
-   * condition the trigger hangs on is `hasSizeGuideContent`, which is false for every product
-   * until the API sends the content.
+   * PDP-04. The one condition the trigger hangs on is `hasSizeGuideContent`: a guide the API sends
+   * with no measurements is still not enough to earn a button. What the dialog then *draws* is
+   * pinned in `size-guide-modal.spec.ts`; this block is only about whether the trigger exists.
    */
   describe('the size guide (PDP-04)', () => {
     it('offers no trigger for a guide that carries no measurements', async () => {
       await open('/product/high-rise-straight-jean');
 
-      // The API does send a guide here — an id and a name — and it is still not enough.
+      // The fixture sends a guide here — an id and a name — and it is still not enough.
       expect(query('.pdp__guide')).toBeNull();
       expect(text()).not.toContain('size guide');
     });
@@ -544,8 +543,8 @@ describe('ProductPage (PDP-01..07)', () => {
       expect(query('.pdp__guide')).toBeNull();
     });
 
-    it('offers the trigger the moment the API does send measurements', async () => {
-      // The whole of what issue #32 has to change, expressed as a test: nothing else here moves.
+    it('offers the trigger when the API sends measurements', async () => {
+      // Issue #32, expressed as a test: content arrives and nothing else on the page moves.
       await open('/product/with-a-guide', {
         sizeGuide: {
           id: 1,
@@ -555,6 +554,7 @@ describe('ProductPage (PDP-01..07)', () => {
             table: { columns: ['Size', 'Bust'], rows: [['S', '83-87']] },
             measuringTipsHtml: null,
             imageUrl: null,
+            imageAltText: null,
           },
         },
       });

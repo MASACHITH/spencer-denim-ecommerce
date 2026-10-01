@@ -26,8 +26,8 @@ class Host {
 
 /**
  * The modal is the one piece of this page that a keyboard user is trapped inside, so its own
- * behaviour is pinned here rather than only through whatever happens to use it. It used to be
- * covered by the size-guide tests alone, and the size guide is hidden until issue #32.
+ * behaviour is pinned here rather than only through whatever happens to use it — it used to be
+ * covered by the size-guide tests alone, and the size guide spent a while hidden behind issue #32.
  *
  * What jsdom cannot see — a ring clipped by an ancestor, reduced motion, a real scrim click —
  * stays in `e2e/product-page.e2e.ts` against the full-screen viewer.

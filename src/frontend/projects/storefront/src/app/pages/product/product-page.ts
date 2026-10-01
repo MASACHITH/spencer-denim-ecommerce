@@ -687,12 +687,11 @@ export class ProductPage {
   /**
    * The size guide, **only when there is one worth opening** (PDP-04).
    *
-   * The API sends a guide's id and name and none of its measurements (issue #32), so this is null
-   * for every product today and neither the trigger nor the dialog renders. A button that opened
-   * a dialog to say "nothing to show here" is a dead control wearing a coat.
-   *
-   * `SizeGuideModal` stays in the template on purpose: when the API projects the content, this
-   * one condition starts answering true and the guide appears with no other change.
+   * Null for a product with no guide at all — six of the catalogue's forty-five — and also for a
+   * guide an admin has created and left empty, because a button that opened a dialog to say
+   * "nothing to show here" is a dead control wearing a coat. `hasSizeGuideContent` is the one
+   * condition both the trigger and the dialog hang on, which is also why the measurements have to
+   * arrive with the product payload: there is nothing to click that a fetch could hang off.
    */
   protected readonly sizeGuide = computed(() => {
     const guide = this.product()?.sizeGuide ?? null;
