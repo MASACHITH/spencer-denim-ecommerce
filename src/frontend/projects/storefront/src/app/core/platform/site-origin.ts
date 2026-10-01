@@ -32,17 +32,35 @@ export const SITE_ORIGIN = new InjectionToken<string>('SITE_ORIGIN', {
   },
 });
 
-/**
- * `path` as an absolute URL on this origin, leaving a URL that is already absolute alone.
- *
- * Media addresses arrive from the catalogue as site-relative keys (`/media/public/...`,
- * `CatalogOptions.MediaBaseUrl`), and will arrive as a CDN's absolute URLs the day that option points
- * at one — so both have to work, and neither may be concatenated blindly onto the other.
- */
-export function absoluteUrl(origin: string, path: string): string {
-  if (/^https?:\/\//i.test(path)) {
-    return path;
+/** An http(s) URL, or a site-relative path, and nothing else. See {@link absoluteUrl}. */
+export function isFetchableUrl(value: string | null | undefined): value is string {
+  if (!value) {
+    return false;
   }
 
-  return `${origin}${path.startsWith('/') ? '' : '/'}${path}`;
+  // A single leading slash: `//cdn.example/x` is protocol-relative, not a path on this site, and
+  // prefixing an origin to it produces `https://shop.test//cdn.example/x`.
+  return /^https?:\/\//i.test(value) || /^\/(?!\/)/.test(value);
+}
+
+/**
+ * `value` as an absolute URL on this origin, or `null` when it is not something a crawler could
+ * fetch.
+ *
+ * **Why it can refuse.** Media addresses arrive from the catalogue as site-relative keys
+ * (`/media/public/...`, `CatalogOptions.MediaBaseUrl`) and will arrive as a CDN's absolute URLs the
+ * day that option points at one, so both have to work and neither may be concatenated onto the other.
+ * But a third case exists and the first version of this concatenated it blindly: the browser test
+ * stub's hero carries a `data:` URI, and the home page published
+ * `og:image="http://localhost:4960/data:image/gif;base64,..."`. A `data:` URI is not a valid
+ * `og:image` in any case — the Open Graph consumers fetch the URL — so the honest answer is to decline
+ * it and let the caller shrink the card, rather than to publish something malformed. The same applies
+ * to a protocol-relative URL and to any non-HTTP scheme an admin might one day paste in.
+ */
+export function absoluteUrl(origin: string, value: string): string | null {
+  if (!isFetchableUrl(value)) {
+    return null;
+  }
+
+  return /^https?:\/\//i.test(value) ? value : `${origin}${value}`;
 }

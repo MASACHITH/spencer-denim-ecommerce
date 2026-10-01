@@ -73,13 +73,22 @@ export class PageMeta {
     this.meta.updateTag({ property: 'og:type', content: page.kind ?? 'website' });
     this.meta.updateTag({ property: 'og:title', content: page.title });
     this.meta.updateTag({ property: 'og:description', content: page.description });
-    this.meta.updateTag({ property: 'og:url', content: absoluteUrl(this.origin, page.path) });
+    const url = absoluteUrl(this.origin, page.path);
+    if (url) {
+      this.meta.updateTag({ property: 'og:url', content: url });
+    } else {
+      // Unreachable from a route path, which always starts with a single slash — but a tag that is
+      // present and wrong is worse than one that is absent, so it is handled rather than assumed.
+      this.meta.removeTag('property="og:url"');
+    }
     // The shop is in Sri Lanka and writes British English (docs/06 §5). `en_LK` is not a locale the
     // Open Graph consumers recognise, and an unrecognised one is worse than the nearest real one.
     this.meta.updateTag({ property: 'og:locale', content: 'en_GB' });
 
-    if (page.imageUrl) {
-      this.meta.updateTag({ property: 'og:image', content: absoluteUrl(this.origin, page.imageUrl) });
+    const image = page.imageUrl ? absoluteUrl(this.origin, page.imageUrl) : null;
+
+    if (image) {
+      this.meta.updateTag({ property: 'og:image', content: image });
       // Only when there is something to say. An empty `og:image:alt` is a worse answer than none.
       if (page.imageAlt) {
         this.meta.updateTag({ property: 'og:image:alt', content: page.imageAlt });

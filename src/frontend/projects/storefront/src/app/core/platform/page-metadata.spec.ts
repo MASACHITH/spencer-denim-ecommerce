@@ -98,6 +98,30 @@ describe('PageMeta', () => {
       expect(tag('property="og:image"')).toBe('https://cdn.example.net/a.webp');
     });
 
+    /**
+     * **Refused rather than mangled.** The first version prefixed the origin onto anything that did
+     * not start with `http`, so a `data:` URI became
+     * `https://shop.example.com/data:image/gif;base64,…` and a protocol-relative URL became
+     * `https://shop.example.com//cdn.example/x.webp`. Neither is fetchable, and the Open Graph
+     * consumers fetch the URL — so a tag that is absent is strictly better than one that is present
+     * and wrong.
+     */
+    for (const unusable of [
+      'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7',
+      '//cdn.example.net/a.webp',
+      'javascript:alert(1)',
+      'media/public/a.webp',
+      'ftp://example.com/a.webp',
+    ]) {
+      it(`refuses ${unusable.slice(0, 28)}… rather than publishing it mangled`, () => {
+        subject().set({ title: 'T', description: 'D', path: '/', imageUrl: unusable, imageAlt: 'A' });
+
+        expect(tag('property="og:image"')).toBeNull();
+        expect(tag('property="og:image:alt"')).toBeNull();
+        expect(tag('name="twitter:card"')).toBe('summary');
+      });
+    }
+
     it('shrinks the card instead of publishing an empty image tag', () => {
       subject().set({ title: 'T', description: 'D', path: '/', imageUrl: null });
 

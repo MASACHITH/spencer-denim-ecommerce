@@ -11,6 +11,7 @@ import { NewsletterSignup } from './sections/newsletter-signup';
 import { ProductRow } from './sections/product-row';
 import { SocialGallery } from './sections/social-gallery';
 import { PageMeta } from '../../core/platform/page-metadata';
+import { isFetchableUrl } from '../../core/platform/site-origin';
 import { BRAND } from '@spencer-denim/shared';
 
 /**
@@ -212,7 +213,11 @@ export class HomePage {
   private readonly shareImage = computed(() => {
     for (const section of this.sections()) {
       for (const item of section.items) {
-        const url = item.videoPosterUrl ?? item.imageUrl ?? item.mobileImageUrl;
+        // `isFetchableUrl` rather than the first non-null: an item's artwork may be something a
+        // crawler could not fetch, and skipping it finds the next real picture instead of
+        // publishing nothing. The browser-test stub's hero is exactly that case, with `data:` URIs
+        // for all three of its images.
+        const url = [item.videoPosterUrl, item.imageUrl, item.mobileImageUrl].find(isFetchableUrl);
         if (url) {
           return { url, alt: item.imageAltText ?? item.mobileImageAltText ?? null };
         }

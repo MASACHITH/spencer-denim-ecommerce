@@ -168,6 +168,96 @@ describe('HomePage', () => {
       .filter((name) => name.startsWith('sd-'));
   }
 
+  /**
+   * The picture a shared link to the home page shows (GLB-11).
+   *
+   * The home page has no artwork of its own — everything on it is ADM-17 content — so the card's
+   * picture is chosen from the sections the client manages, which makes *which* one it chooses the
+   * whole of the behaviour. It is tested here rather than in the browser suite because it is a
+   * selection rule over a payload, and here the payload can be shaped; `seo.e2e.ts` covers the
+   * product page's picture on the wire, where the shape is the stub's.
+   */
+  describe('the share card’s picture (GLB-11)', () => {
+    function ogImage(): string | null {
+      return document.head.querySelector('meta[property="og:image"]')?.getAttribute('content') ?? null;
+    }
+
+    function ogImageAlt(): string | null {
+      return document.head.querySelector('meta[property="og:image:alt"]')?.getAttribute('content') ?? null;
+    }
+
+    function twitterCard(): string | null {
+      return document.head.querySelector('meta[name="twitter:card"]')?.getAttribute('content') ?? null;
+    }
+
+    it('takes the hero’s still, not its video, because a card cannot play one', async () => {
+      await open([
+        section('HeroVideo', {
+          items: [
+            item({
+              videoUrl: '/media/public/originals/hero.webm',
+              videoPosterUrl: '/media/public/originals/hero-poster.webp',
+              imageUrl: '/media/public/renditions/a/large.webp',
+              imageAltText: 'A linen shirt on a balcony',
+            }),
+          ],
+        }),
+      ]);
+
+      // Absolute, because the Open Graph consumers do not resolve a relative URL.
+      expect(ogImage()).toBe(`${location.origin}/media/public/originals/hero-poster.webp`);
+      expect(ogImageAlt()).toBe('A linen shirt on a balcony');
+      expect(twitterCard()).toBe('summary_large_image');
+    });
+
+    /**
+     * **The defect this test exists for.** The first version took the first non-null candidate and
+     * concatenated the origin onto it, so the browser-test stub's hero — whose three images are all
+     * `data:` URIs — published
+     * `og:image="http://localhost:4960/data:image/gif;base64,R0lGOD…"`. A `data:` URI is not a valid
+     * `og:image` in any case, because the consumers fetch the URL. So a candidate a crawler could not
+     * fetch is skipped, and the next real picture on the page is used instead of nothing.
+     */
+    it('skips a picture a crawler could not fetch and finds the next real one', async () => {
+      const dataUri = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+
+      await open([
+        section('HeroVideo', {
+          items: [item({ videoPosterUrl: dataUri, imageUrl: dataUri, mobileImageUrl: dataUri })],
+        }),
+        section('ShopByDepartment', {
+          items: [
+            item({
+              id: 2,
+              departmentSlug: 'women',
+              departmentName: 'Women',
+              linkUrl: '/women',
+              imageUrl: '/media/public/renditions/b/card.webp',
+            }),
+          ],
+        }),
+      ]);
+
+      expect(ogImage()).toBe(`${location.origin}/media/public/renditions/b/card.webp`);
+      expect(ogImage()).not.toContain('data:');
+    });
+
+    it('leaves a URL the catalogue already published absolute alone', async () => {
+      await open([
+        section('HeroVideo', { items: [item({ imageUrl: 'https://cdn.example.net/hero.webp' })] }),
+      ]);
+
+      expect(ogImage()).toBe('https://cdn.example.net/hero.webp');
+    });
+
+    it('shrinks the card rather than publishing an empty picture when there is none', async () => {
+      await open([section('Benefits', { items: [item({ iconKey: 'truck', title: 'Delivery' })] })]);
+
+      expect(ogImage()).toBeNull();
+      expect(twitterCard()).toBe('summary');
+    });
+  });
+
   describe('order and identity (HOME-01..10)', () => {
     it('renders the sections in the order the API sent them, not in type order', () => {
       // Deliberately out of the seeded order: the client may reorder the page in admin, and the
