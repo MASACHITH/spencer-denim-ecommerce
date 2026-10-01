@@ -66,6 +66,7 @@ public static class MediaRegistration
 
         // W1-13: the client's delivered photographs, video and logo. Scoped, like everything else that
         // writes through the pipeline, and resolved once per run of the import verb.
+        services.AddSingleton(ClientAssets.ClientAssetHolds.Default);
         services.AddScoped<IClientAssetImporter, ClientAssets.ClientAssetImporter>();
 
         return services;

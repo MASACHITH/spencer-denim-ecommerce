@@ -161,7 +161,11 @@ public static class ClientAssetNaming
     /// <param name="fileName">The file as it is on disk.</param>
     /// <param name="knownSlugs">
     /// Every published product slug. The repairs are bounded by this list, which is why none of them can
-    /// produce a product that does not exist.
+    /// produce a product that does not exist. <b>Matching ignores case</b>: a filename's capitalisation
+    /// is not a fact about the product, and on Windows <c>Chino-Shorts-1.jpg</c> and
+    /// <c>chino-shorts-1.jpg</c> are the same file — matching ordinally meant one capital letter aborted
+    /// the whole run under a message saying the product did not exist. The slug that comes back is
+    /// always the <b>catalogue's</b> spelling, never the filename's.
     /// </param>
     public static ProductAssetNameResult ParseProductFile(string fileName, IReadOnlySet<string> knownSlugs)
     {
@@ -183,31 +187,25 @@ public static class ClientAssetNaming
                 + "('<slug>-1.jpg' is the card image, '<slug>-2.jpg' the hover image).");
         }
 
-        if (knownSlugs.Contains(spelled))
+        // The catalogue's spelling, not the filename's — so a row is never written with a slug that only
+        // this one file happened to capitalise that way.
+        if (Canonical(spelled, knownSlugs) is { } exact)
         {
-            return new ProductAssetNameResult.Resolved(new ProductAssetName(fileName, spelled, index, RepairedFrom: null));
+            return new ProductAssetNameResult.Resolved(
+                new ProductAssetName(fileName, exact, index, Repair(spelled, exact)));
         }
 
         // Repair 1: the folder name run into the slug.
         if (spelled.StartsWith(ProductsFolderPrefix, StringComparison.OrdinalIgnoreCase)
-            && spelled.Length > ProductsFolderPrefix.Length)
+            && spelled.Length > ProductsFolderPrefix.Length
+            && Canonical(spelled[ProductsFolderPrefix.Length..], knownSlugs) is { } trimmed)
         {
-            var trimmed = spelled[ProductsFolderPrefix.Length..];
-            if (knownSlugs.Contains(trimmed))
-            {
-                return new ProductAssetNameResult.Resolved(
-                    new ProductAssetName(fileName, trimmed, index, spelled));
-            }
+            return new ProductAssetNameResult.Resolved(
+                new ProductAssetName(fileName, trimmed, index, spelled));
         }
 
         // Repair 2: a character or three lost off the front, and exactly one slug it can be.
-        var candidates = knownSlugs
-            .Where(slug =>
-                slug.Length > spelled.Length
-                && slug.Length - spelled.Length <= MaxMissingPrefix
-                && slug.EndsWith(spelled, StringComparison.Ordinal))
-            .Order(StringComparer.Ordinal)
-            .ToList();
+        var candidates = SlugsEndingWith(spelled, knownSlugs);
 
         if (candidates.Count == 1)
         {
@@ -228,6 +226,53 @@ public static class ClientAssetNaming
             $"'{spelled}' is not a product slug, and no slug differs from it only by a missing prefix "
             + $"of up to {MaxMissingPrefix} characters.");
     }
+
+    /// <summary>
+    /// Pairs of slugs that differ only by a prefix short enough for <see cref="ParseProductFile"/>'s
+    /// second repair to reach across — that is, pairs the repair could not tell apart if a filename lost
+    /// its first few characters.
+    /// <para>
+    /// The repair is safe against today's catalogue, and nothing re-checks that when the client adds a
+    /// product. This is the predicate the repair itself uses, exposed so a test can hold the real
+    /// catalogue against it: an empty result is the guarantee that no truncated filename has two
+    /// answers.
+    /// </para>
+    /// </summary>
+    public static IReadOnlyList<(string Shorter, string Longer)> AmbiguousPrefixPairs(IEnumerable<string> slugs)
+    {
+        ArgumentNullException.ThrowIfNull(slugs);
+
+        var all = slugs.ToList();
+
+        return all
+            .SelectMany(
+                shorter => all.Where(longer => IsPrefixedForm(shorter, longer)),
+                (shorter, longer) => (Shorter: shorter, Longer: longer))
+            .ToList();
+    }
+
+    /// <summary>Whether <paramref name="longer"/> is <paramref name="shorter"/> with a short prefix added.</summary>
+    private static bool IsPrefixedForm(string shorter, string longer) =>
+        longer.Length > shorter.Length
+        && longer.Length - shorter.Length <= MaxMissingPrefix
+        && longer.EndsWith(shorter, StringComparison.OrdinalIgnoreCase);
+
+    private static List<string> SlugsEndingWith(string spelled, IEnumerable<string> knownSlugs) =>
+        knownSlugs
+            .Where(slug => IsPrefixedForm(spelled, slug))
+            .Order(StringComparer.Ordinal)
+            .ToList();
+
+    /// <summary>The catalogue's spelling of a slug, or null when it has none.</summary>
+    private static string? Canonical(string spelled, IEnumerable<string> knownSlugs) =>
+        knownSlugs.FirstOrDefault(slug => string.Equals(slug, spelled, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// What to report as the name the file actually carried, or null when it carried the right one.
+    /// A difference of case counts: the operator should see every interpretation the importer made.
+    /// </summary>
+    private static string? Repair(string spelled, string resolved) =>
+        string.Equals(spelled, resolved, StringComparison.Ordinal) ? null : spelled;
 
     /// <summary>
     /// The alt text a real photograph gets. It describes the garment, because that is what is in the

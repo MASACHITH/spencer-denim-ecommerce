@@ -1,9 +1,13 @@
+using SpencerDenim.Application.Media.Abstractions;
+using System.Security.Cryptography;
+using System.Globalization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using SpencerDenim.Application.Media.ClientAssets;
 using SpencerDenim.Domain.Catalog;
 using SpencerDenim.Domain.Content;
 using SpencerDenim.Domain.Media;
+using SpencerDenim.Infrastructure.Media.ClientAssets;
 using SpencerDenim.Infrastructure.Persistence;
 using SpencerDenim.IntegrationTests.Infrastructure;
 using SpencerDenim.Tests.MediaFixtures;
@@ -28,6 +32,16 @@ public sealed class ClientAssetImportTests(SqlServerDatabaseFixture sqlServer)
     /// clean pair, a name with a character lost off the front, a name with the folder run into it, and a
     /// garment with only one photograph.
     /// </summary>
+    /// <summary>The five blocks W2-01 seeded switched off, because each one is nothing but artwork.</summary>
+    private static readonly HomeSectionType[] ArtworkSections =
+    [
+        HomeSectionType.HeroVideo,
+        HomeSectionType.TrendingItems,
+        HomeSectionType.CampaignBanner,
+        HomeSectionType.ActivewearFeature,
+        HomeSectionType.SocialGallery,
+    ];
+
     private static readonly string[] TheDeliveredShapes =
     [
         "washed-linen-camp-shirt-1.jpg.jpg",
@@ -243,22 +257,15 @@ public sealed class ClientAssetImportTests(SqlServerDatabaseFixture sqlServer)
     {
         await using var world = await CreateAsync();
 
-        HomeSectionType[] artwork =
-        [
-            HomeSectionType.HeroVideo,
-            HomeSectionType.TrendingItems,
-            HomeSectionType.CampaignBanner,
-            HomeSectionType.ActivewearFeature,
-            HomeSectionType.SocialGallery,
-        ];
-
-        Assert.All(await EnabledAsync(world, artwork), state => Assert.False(state.IsEnabled, state.Type.ToString()));
+        Assert.All(
+            await EnabledAsync(world, ArtworkSections),
+            state => Assert.False(state.IsEnabled, state.Type.ToString()));
 
         await world.DropTheUsualAsync(TheDeliveredShapes, Token);
         var report = await world.ImportAsync(Token);
         Assert.True(report.Succeeded, string.Join("; ", report.Failures));
 
-        var after = await EnabledAsync(world, artwork);
+        var after = await EnabledAsync(world, ArtworkSections);
         Assert.All(after, state => Assert.True(state.IsEnabled, state.Type.ToString()));
 
         // Switched on, and each one really does carry the picture that justifies it.
@@ -394,6 +401,260 @@ public sealed class ClientAssetImportTests(SqlServerDatabaseFixture sqlServer)
         Assert.All(sections, state => Assert.False(state.IsEnabled, state.Type.ToString()));
     }
 
+
+    /// <summary>
+    /// A run that fails leaves <b>nothing</b> behind — not a row, not a file, not a section switched on.
+    /// <para>
+    /// <see cref="IMediaService"/> saves on the same scoped context for every upload, so before the run
+    /// became one transaction a failure in the hero left everything before it committed: measured once
+    /// at 88 assets, 358 files, 70 gallery rows and four homepage sections live, under a report that
+    /// said FAILED. The failure is put at the end on purpose — the hero is imported after every
+    /// product — because a failure at the start proves nothing about rolling back.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task A_run_that_fails_at_the_end_rolls_back_everything_before_it()
+    {
+        await using var world = await CreateAsync();
+        await world.DropTheUsualAsync(TheDeliveredShapes, Token);
+
+        // Everything is fine except the hero, which is HEVC and which the pipeline will refuse.
+        await world.Drop("home", "hero.mp4", TestVideos.Mp4(codec: "hvc1", payloadBytes: 2048), Token);
+
+        var before = await CountsAsync(world);
+        var filesBefore = world.PublicFiles();
+
+        var report = await world.ImportAsync(Token);
+
+        Assert.False(report.Succeeded);
+        Assert.Contains(report.Failures, failure => failure.Contains("hvc1", StringComparison.Ordinal));
+
+        // Nothing survived it.
+        Assert.Equal(before, await CountsAsync(world));
+        Assert.Equal(filesBefore, world.PublicFiles());
+
+        var sections = await EnabledAsync(world, ArtworkSections);
+        Assert.All(sections, state => Assert.False(state.IsEnabled, state.Type.ToString()));
+
+        // And the catalogue still points where it did: no product kept a card from the rolled-back run.
+        await using var scope = world.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var shirt = await ProductAsync(dbContext, "washed-linen-camp-shirt");
+        var card = await dbContext.MediaAssets.SingleAsync(asset => asset.Id == shirt.CardImageAssetId!.Value, Token);
+        Assert.StartsWith("Placeholder image", card.AltText!, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A corrected photograph <b>replaces</b> the one it supersedes; it is not added beside it.
+    /// <para>
+    /// Keying the gallery row on the asset meant a re-encoded file was a different asset and therefore
+    /// a new row: two rows at sort order -2 both claiming to be the card, the superseded photograph
+    /// still in the gallery, and its usage row keeping the delete guard shut for ever. The slot —
+    /// product, role, sort order — is the key now.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task A_corrected_photograph_replaces_the_one_it_supersedes_rather_than_joining_it()
+    {
+        await using var world = await CreateAsync();
+        await world.DropTheUsualAsync(TheDeliveredShapes, Token);
+        Assert.True((await world.ImportAsync(Token)).Succeeded);
+
+        var (originalCardId, rowsBefore) = await CardStateAsync(world, "washed-linen-camp-shirt");
+
+        // The client sends a corrected card image under the same name: same slot, different bytes.
+        await world.Drop("products", "washed-linen-camp-shirt-1.jpg.jpg", TestImages.UniqueJpeg(1024, 1024), Token);
+
+        // Without --replace it is reported and left alone, because the importer cannot tell a corrected
+        // photograph from an admin's own upload.
+        var refused = await world.ImportAsync(Token);
+        Assert.True(refused.Succeeded, string.Join("; ", refused.Failures));
+        Assert.Contains(refused.Conflicts, entry => entry.FileName == "washed-linen-camp-shirt-1.jpg.jpg");
+
+        var (unchangedCardId, rowsUnchanged) = await CardStateAsync(world, "washed-linen-camp-shirt");
+        Assert.Equal(originalCardId, unchangedCardId);
+        Assert.Equal(rowsBefore, rowsUnchanged);
+
+        // With it, the slot takes the new picture and the old one leaves the gallery.
+        var replaced = await world.ImportAsync(Token, replace: true);
+        Assert.True(replaced.Succeeded, string.Join("; ", replaced.Failures));
+
+        var (newCardId, rowsAfter) = await CardStateAsync(world, "washed-linen-camp-shirt");
+
+        Assert.NotEqual(originalCardId, newCardId);
+        Assert.Equal(1, rowsAfter);
+        Assert.Equal(rowsBefore, rowsAfter);
+
+        await using var scope = world.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        // The superseded photograph keeps no claim on the product, so the library can let go of it.
+        var stale = await dbContext.MediaUsages
+            .Where(usage => usage.MediaAssetId == originalCardId
+                && usage.OwnerType == MediaUsageOwnerTypes.Product)
+            .ToListAsync(Token);
+
+        Assert.Empty(stale);
+    }
+
+    /// <summary>
+    /// A picture an admin chose survives the import. A placeholder does not, because it was never a
+    /// choice — it is what the seeder put there while there was nothing better.
+    /// </summary>
+    [Fact]
+    public async Task An_admin_s_own_card_image_is_not_reverted_by_a_re_run()
+    {
+        await using var world = await CreateAsync();
+        await world.DropTheUsualAsync(TheDeliveredShapes, Token);
+        Assert.True((await world.ImportAsync(Token)).Succeeded);
+
+        int chosenId;
+
+        await using (var scope = world.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+            // Something a person picked in ADM-18: another product's photograph, deliberately.
+            var other = await ProductAsync(dbContext, "chino-shorts");
+            chosenId = other.CardImageAssetId!.Value;
+
+            var shirt = await ProductAsync(dbContext, "washed-linen-camp-shirt");
+            shirt.CardImageAssetId = chosenId;
+            await dbContext.SaveChangesAsync(Token);
+        }
+
+        Assert.True((await world.ImportAsync(Token)).Succeeded);
+
+        await using (var scope = world.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var shirt = await ProductAsync(dbContext, "washed-linen-camp-shirt");
+
+            Assert.Equal(chosenId, shirt.CardImageAssetId);
+        }
+    }
+
+    /// <summary>
+    /// A homepage asset is recorded against the <b>item</b> it fills, which is what doc 08 section 3.3
+    /// enumerates — a section id would name "the homepage" for thirteen pictures, and the "used in…"
+    /// panel could not tell an operator which tile to go and change.
+    /// </summary>
+    [Fact]
+    public async Task Homepage_media_is_recorded_against_the_item_it_fills_with_a_label_a_person_reads()
+    {
+        await using var world = await CreateAsync();
+        await world.DropTheUsualAsync(TheDeliveredShapes, Token);
+        Assert.True((await world.ImportAsync(Token)).Succeeded);
+
+        await using var scope = world.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var mediaService = scope.ServiceProvider.GetRequiredService<IMediaService>();
+
+        var tiles = await ItemsAsync(dbContext, HomeSectionType.SocialGallery);
+        var ids = tiles
+            .Select(tile => tile.Id.ToString(CultureInfo.InvariantCulture))
+            .ToHashSet(StringComparer.Ordinal);
+
+        var usages = await dbContext.MediaUsages
+            .Where(usage => usage.OwnerType == MediaUsageOwnerTypes.HomeSectionItem)
+            .ToListAsync(Token);
+
+        Assert.NotEmpty(usages);
+        Assert.Equal(6, usages.Count(usage => ids.Contains(usage.OwnerId)));
+
+        // Nothing is filed under the section any more.
+        var ownerTypes = await dbContext.MediaUsages
+            .Select(usage => usage.OwnerType)
+            .Distinct()
+            .ToListAsync(Token);
+
+        Assert.DoesNotContain("HomeSection", ownerTypes);
+
+        // And the library's "used in…" panel names the tile rather than printing an id.
+        var tile = tiles[0];
+        var asset = await dbContext.MediaAssets.SingleAsync(candidate => candidate.Id == tile.ImageAssetId!.Value, Token);
+        var detail = await mediaService.GetAsync(asset.PublicId, Token);
+
+        var usage = Assert.Single(
+            detail!.Usages,
+            candidate => candidate.OwnerType == MediaUsageOwnerTypes.HomeSectionItem);
+
+        Assert.Equal(tile.Title, usage.OwnerLabel);
+    }
+
+    /// <summary>
+    /// A picture that does not fit the slot its filename claims keeps the section switched off, and the
+    /// hold is keyed on the bytes so it releases itself when a replacement arrives.
+    /// </summary>
+    [Fact]
+    public async Task A_held_back_picture_keeps_its_section_off_until_different_bytes_arrive()
+    {
+        var banner = TestImages.UniqueJpeg(1376, 768);
+        var checksum = Convert.ToHexStringLower(SHA256.HashData(banner));
+
+        var holds = new ClientAssetHolds(new Dictionary<string, HeldBackArtwork>(StringComparer.OrdinalIgnoreCase)
+        {
+            [checksum] = new(HomeSectionType.CampaignBanner, "this one is a flat-lay of the wrong thing"),
+        });
+
+        await using var world = await ClientAssetWorld.CreateAsync(
+            sqlServer.ConnectionString, withPlaceholderFiles: false, Token, holds);
+
+        await world.DropTheUsualAsync(TheDeliveredShapes, Token);
+        await world.Drop("home", "campaign.jpg", banner, Token);
+
+        var first = await world.ImportAsync(Token);
+        Assert.True(first.Succeeded, string.Join("; ", first.Failures));
+
+        // Imported and attached, so the client can look at it — and not switched on.
+        var held = Assert.Single(await EnabledAsync(world, [HomeSectionType.CampaignBanner]));
+        Assert.False(held.IsEnabled);
+        Assert.Contains(first.Notes, note => note.Contains("flat-lay of the wrong thing", StringComparison.Ordinal));
+
+        await using (var scope = world.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var item = Assert.Single(await ItemsAsync(dbContext, HomeSectionType.CampaignBanner));
+            Assert.NotNull(item.ImageAssetId);
+        }
+
+        // The others were not held, so they are on: a hold is about one picture, not a blanket off.
+        var others = await EnabledAsync(
+            world,
+            [HomeSectionType.HeroVideo, HomeSectionType.TrendingItems, HomeSectionType.SocialGallery]);
+        Assert.All(others, state => Assert.True(state.IsEnabled, state.Type.ToString()));
+
+        // A replacement has different bytes, so the hold simply does not apply to it.
+        await world.Drop("home", "campaign.jpg", TestImages.UniqueJpeg(1376, 768), Token);
+        var second = await world.ImportAsync(Token, replace: true);
+
+        Assert.True(second.Succeeded, string.Join("; ", second.Failures));
+        Assert.True(Assert.Single(await EnabledAsync(world, [HomeSectionType.CampaignBanner])).IsEnabled);
+    }
+
+    /// <summary>
+    /// The repair that fixes a truncated filename is only safe while no two slugs differ by a short
+    /// prefix. Nothing re-checks that when the client adds a product, so this does — against the real
+    /// catalogue, not against a list written down beside it.
+    /// </summary>
+    [Fact]
+    public async Task No_two_product_slugs_differ_only_by_a_prefix_the_repair_could_reach_across()
+    {
+        sqlServer.SkipIfUnavailable();
+
+        using var scope = sqlServer.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        var slugs = await dbContext.Products.Select(product => product.Slug).ToListAsync(Token);
+
+        Assert.NotEmpty(slugs);
+        Assert.Empty(ClientAssetNaming.AmbiguousPrefixPairs(slugs));
+
+        // And they are unique ignoring case, which is what lets the importer match a filename's
+        // capitalisation without creating an ambiguity.
+        Assert.Equal(slugs.Count, slugs.ToHashSet(StringComparer.OrdinalIgnoreCase).Count);
+    }
+
     private static CancellationToken Token => TestContext.Current.CancellationToken;
 
     private async Task<ClientAssetWorld> CreateAsync()
@@ -424,6 +685,19 @@ public sealed class ClientAssetImportTests(SqlServerDatabaseFixture sqlServer)
             .ToListAsync(Token);
 
         return rows.Select(row => (row.SectionType, row.IsEnabled)).ToList();
+    }
+
+    /// <summary>The product's card asset, and how many rows sit in the card slot.</summary>
+    private static async Task<(int CardAssetId, int Rows)> CardStateAsync(ClientAssetWorld world, string slug)
+    {
+        await using var scope = world.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        var product = await ProductAsync(dbContext, slug);
+        var rows = await dbContext.ProductMedia
+            .CountAsync(row => row.ProductId == product.Id && row.SortOrder == -2, Token);
+
+        return (product.CardImageAssetId!.Value, rows);
     }
 
     private static async Task<(int Assets, int Media, int Usages, int Items)> CountsAsync(ClientAssetWorld world)

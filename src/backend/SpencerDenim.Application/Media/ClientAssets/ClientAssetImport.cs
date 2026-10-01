@@ -26,6 +26,18 @@ public enum ClientAssetOutcome
 
     /// <summary>In <c>products/</c> and not mappable to a product. The run fails.</summary>
     Unmappable,
+
+    /// <summary>
+    /// The slot this file belongs in already holds a different picture, and nobody asked for it to be
+    /// overwritten. Reported rather than applied: on a seeded database a slot holds a demo placeholder,
+    /// which counts as empty, so anything else in there is a choice somebody made — a corrected
+    /// photograph from the client, or an admin's own upload, and the importer cannot tell those apart.
+    /// The operator decides, with <c>--replace</c>.
+    /// </summary>
+    Conflict,
+
+    /// <summary>The slot held a different picture and <c>--replace</c> was given, so this one took over.</summary>
+    Replaced,
 }
 
 /// <summary>One line of the import report.</summary>
@@ -68,6 +80,10 @@ public sealed record ClientAssetImportReport(
     /// <summary>How many files in a given state.</summary>
     public int Count(ClientAssetOutcome outcome) => Entries.Count(entry => entry.Outcome == outcome);
 
+    /// <summary>Files whose slot already held a different picture, for the report.</summary>
+    public IReadOnlyList<ClientAssetEntry> Conflicts =>
+        Entries.Where(entry => entry.Outcome == ClientAssetOutcome.Conflict).ToList();
+
     /// <summary>Every rename the importer had to infer, for the report.</summary>
     public IReadOnlyList<ClientAssetEntry> InferredRenames =>
         Entries.Where(entry => entry.RepairedFrom is not null).ToList();
@@ -84,7 +100,19 @@ public sealed record ClientAssetImportReport(
 /// Resolve every filename and report what would happen, without storing a byte. This is how the
 /// naming can be checked against a real catalogue before anything touches the library.
 /// </param>
-public sealed record ClientAssetImportRequest(string SourceDirectory, bool DryRun = false);
+/// <param name="Replace">
+/// Overwrite a slot that already holds a different picture, instead of reporting a conflict.
+/// <para>
+/// This is the "the client sent a corrected photograph" switch, and it is deliberately not the default.
+/// A slot holding a demo placeholder is filled either way, because a placeholder is not a choice; a slot
+/// holding anything else was chosen by somebody, and an import that silently reverted an admin's upload
+/// every time it ran would be a worse bug than the one it fixed.
+/// </para>
+/// </param>
+public sealed record ClientAssetImportRequest(
+    string SourceDirectory,
+    bool DryRun = false,
+    bool Replace = false);
 
 /// <summary>
 /// Imports the client's delivered photographs, video and logo (W1-13).

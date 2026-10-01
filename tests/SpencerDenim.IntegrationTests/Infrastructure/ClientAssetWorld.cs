@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using SpencerDenim.Application.Media.ClientAssets;
 using SpencerDenim.Infrastructure;
+using SpencerDenim.Infrastructure.Media.ClientAssets;
 using SpencerDenim.Infrastructure.Persistence;
 using SpencerDenim.Infrastructure.Persistence.Seeding;
 using SpencerDenim.Tests.MediaFixtures;
@@ -63,6 +64,12 @@ public sealed class ClientAssetWorld : IAsyncDisposable
     /// <summary>What the seeders inserted.</summary>
     public SeedCounts SeedCounts { get; private set; } = new();
 
+    /// <summary>The held-back list this world runs with, or null for none.</summary>
+    public ClientAssetHolds? Holds { get; private init; }
+
+    /// <summary>No picture is held back, which is the behaviour every test but one wants.</summary>
+    public static ClientAssetHolds NoHolds { get; } = new(new Dictionary<string, HeldBackArtwork>(StringComparer.Ordinal));
+
     /// <summary>
     /// Builds the world: a database, both volumes, the migrations and the seeded demo catalogue.
     /// </summary>
@@ -70,10 +77,16 @@ public sealed class ClientAssetWorld : IAsyncDisposable
     /// Whether to draw the demo placeholder images. True is what a developer's database looks like; it
     /// costs a few hundred encodes, so a test that does not look at a placeholder's pixels passes false.
     /// </param>
+    /// <param name="holds">
+    /// The held-back-artwork list to run with. Defaults to none, so a test gets the plain behaviour and
+    /// the one test that is about holds supplies a checksum it controls — the shipped list is keyed on
+    /// the bytes of two real client files, which no test can conjure.
+    /// </param>
     public static async Task<ClientAssetWorld> CreateAsync(
         string fixtureConnectionString,
         bool withPlaceholderFiles,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        ClientAssetHolds? holds = null)
     {
         var server = new SqlConnectionStringBuilder(fixtureConnectionString) { InitialCatalog = "master" }
             .ConnectionString;
@@ -112,9 +125,13 @@ public sealed class ClientAssetWorld : IAsyncDisposable
         services.AddSingleton<IConfiguration>(configuration);
         services.AddLogging(logging => logging.SetMinimumLevel(LogLevel.Warning));
         services.AddInfrastructure();
+        services.AddSingleton(holds ?? NoHolds);
 
         var provider = services.BuildServiceProvider();
-        var world = new ClientAssetWorld(server, databaseName, connectionString, root, provider);
+        var world = new ClientAssetWorld(server, databaseName, connectionString, root, provider)
+        {
+            Holds = holds,
+        };
 
         using (var scope = provider.CreateScope())
         {
@@ -129,7 +146,8 @@ public sealed class ClientAssetWorld : IAsyncDisposable
             // The volumes were held back so the placeholders would not be drawn; the import itself needs
             // them, so they are switched on now, on a second provider over the same database.
             await provider.DisposeAsync();
-            return await ReopenWithVolumesAsync(server, databaseName, connectionString, root, world.SeedCounts);
+            return await ReopenWithVolumesAsync(
+                server, databaseName, connectionString, root, world.SeedCounts, holds);
         }
 
         return world;
@@ -183,11 +201,16 @@ public sealed class ClientAssetWorld : IAsyncDisposable
     }
 
     /// <summary>Runs the importer the way the command does, in its own scope.</summary>
-    public async Task<ClientAssetImportReport> ImportAsync(CancellationToken cancellationToken, bool dryRun = false)
+    public async Task<ClientAssetImportReport> ImportAsync(
+        CancellationToken cancellationToken,
+        bool dryRun = false,
+        bool replace = false)
     {
         await using var scope = _services.CreateAsyncScope();
         var importer = scope.ServiceProvider.GetRequiredService<IClientAssetImporter>();
-        return await importer.ImportAsync(new ClientAssetImportRequest(DropRoot, dryRun), cancellationToken);
+        return await importer.ImportAsync(
+            new ClientAssetImportRequest(DropRoot, dryRun, replace),
+            cancellationToken);
     }
 
     /// <summary>A scope for reading the result back out of the database.</summary>
@@ -237,7 +260,8 @@ public sealed class ClientAssetWorld : IAsyncDisposable
         string databaseName,
         string connectionString,
         string root,
-        SeedCounts counts)
+        SeedCounts counts,
+        ClientAssetHolds? holds)
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -252,6 +276,7 @@ public sealed class ClientAssetWorld : IAsyncDisposable
         services.AddSingleton<IConfiguration>(configuration);
         services.AddLogging(logging => logging.SetMinimumLevel(LogLevel.Warning));
         services.AddInfrastructure();
+        services.AddSingleton(holds ?? NoHolds);
 
         return Task.FromResult(new ClientAssetWorld(
             server,
@@ -261,6 +286,7 @@ public sealed class ClientAssetWorld : IAsyncDisposable
             services.BuildServiceProvider())
         {
             SeedCounts = counts,
+            Holds = holds,
         });
     }
 

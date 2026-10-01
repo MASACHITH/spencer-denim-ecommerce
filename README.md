@@ -157,6 +157,10 @@ dotnet run --project src/backend/SpencerDenim.Api --no-launch-profile -- `
 # Do it
 dotnet run --project src/backend/SpencerDenim.Api --no-launch-profile -- `
   import-client-assets --from <path-to-the-drop>
+
+# The client sent a corrected photograph: overwrite the slot it belongs in
+dotnet run --project src/backend/SpencerDenim.Api --no-launch-profile -- `
+  import-client-assets --from <path-to-the-drop> --replace
 ```
 
 The drop holds `logo/`, `products/`, `departments/`, `home/` and `social/`, named as the client
@@ -165,10 +169,23 @@ checklist describes (`<product-slug>-1.jpg` is the card image and `-2.jpg` the h
 `trending-N.jpg`; `social-N.jpg`).
 
 It is **safe to run again** — the second run stores nothing and writes no row — and it **fails
-loudly**: a photograph in `products/` that names no product stops the whole run before a byte is
-stored, and every filename the importer had to repair is printed. Exit code 0 good, 1 bad usage,
-2 the import failed. The five media-dependent homepage sections are switched on only once they have
-media to show.
+loudly**: the whole run is one transaction, so a refusal anywhere rolls back every row before it and
+deletes the files it had written, and the report says what to fix. Every filename the importer had
+to repair is printed. Exit code 0 good, 1 bad usage, 2 the import failed.
+
+A slot that already holds **a picture somebody chose** is not overwritten: those files are listed
+under *NOT APPLIED* and `--replace` is what applies them. A slot holding one of the demo
+placeholders is filled either way, because a placeholder was never a choice.
+
+The five media-dependent homepage sections are switched on only once they have media to show — and
+a picture that does not fit the slot its filename claims keeps its section off until a different
+one is delivered (`ClientAssetHolds`).
+
+> **Re-running repairs rows, not files.** The library deduplicates by checksum, so an import run
+> against a database that still has its rows reports `[AlreadyPresent]` and writes nothing —
+> including when the media volume underneath has been lost or wiped, in which case the storefront
+> shows broken images and the import will not put them back. A lost volume needs a restore from
+> backup, or the asset rows deleting first so the files are written again.
 
 ### 3. Run the API
 

@@ -8,6 +8,7 @@ using SpencerDenim.Domain.Catalog;
 using SpencerDenim.Domain.Content;
 using SpencerDenim.Domain.Media;
 using SpencerDenim.Infrastructure.Persistence;
+using SpencerDenim.Infrastructure.Persistence.Seeding;
 
 namespace SpencerDenim.Infrastructure.Media.ClientAssets;
 
@@ -24,15 +25,27 @@ namespace SpencerDenim.Infrastructure.Media.ClientAssets;
 /// say which photograph belongs to which garment.
 /// </para>
 /// <para>
-/// <b>Re-running it is a no-op.</b> The pipeline deduplicates by checksum, so the second run gets the
-/// same asset back and writes no file. Every reference row here is written only when it is not already
-/// there, and a picture somebody has since changed in the admin is left exactly as they left it.
+/// <b>A run is all or nothing.</b> <see cref="IMediaService"/> saves on this same scoped
+/// <c>AppDbContext</c> for every upload, so without a transaction a run that failed half way through
+/// had already committed everything before the failure — measured once at 88 assets, 358 files, 70
+/// gallery rows and four homepage sections switched live, under a report that said FAILED. The whole
+/// run is now one transaction, committed only when nothing has failed, and the files written by assets
+/// this run created are deleted when it rolls back.
+/// </para>
+/// <para>
+/// <b>Running it again changes nothing, and never overwrites a person.</b> The pipeline deduplicates by
+/// checksum, so a second run of the same drop gets the same assets back and writes no file. A slot that
+/// already holds a picture somebody chose is <b>not</b> overwritten: the file is reported as a conflict
+/// and the operator re-runs with <c>--replace</c>, which is the "the client sent a corrected
+/// photograph" case said out loud. A slot holding one of the demo placeholders counts as empty, because
+/// a placeholder is not a choice.
 /// </para>
 /// </summary>
 public sealed partial class ClientAssetImporter(
     AppDbContext dbContext,
     IMediaService media,
     IFileStorage storage,
+    ClientAssetHolds holds,
     ILogger<ClientAssetImporter> logger) : IClientAssetImporter
 {
     /// <summary>
@@ -42,6 +55,13 @@ public sealed partial class ClientAssetImporter(
     /// rows are not this importer's to renumber — a real photograph has to come <i>before</i> a frame
     /// that says no photograph was supplied, and the only way to do that without rewriting rows somebody
     /// else owns is to sort ahead of them.
+    /// </para>
+    /// <para>
+    /// These two numbers are also the importer's <b>slot keys</b>: a gallery row is identified by
+    /// (product, role, sort order), not by the asset in it, so a corrected photograph <i>replaces</i>
+    /// the one it supersedes instead of being added beside it. Keying on the asset meant two rows at
+    /// −2 both claiming to be the card, the superseded photograph still in the gallery, and a delete
+    /// guard that would never let go of it.
     /// </para>
     /// </summary>
     private const short CardSortOrder = -2;
@@ -86,17 +106,25 @@ public sealed partial class ClientAssetImporter(
     ];
 
     /// <summary>
-    /// The reference rows that already exist, read once at the start of a run.
+    /// The reference rows that already exist, read once per attempt as <b>tracked</b> entities.
     /// <para>
-    /// Held rather than queried per file because "is this photograph already on this product?" is asked
-    /// seventy-odd times, and because the answer has to count rows this run has added but not yet saved.
-    /// The importer is a one-shot object resolved per command, so this state lives exactly as long as the
-    /// run does.
+    /// Tracked rather than projected because the import edits them — replacing the asset in a slot is an
+    /// update of the row that holds it, not an insert — and because "an owner's save rewrites its usage
+    /// rows" (doc 08 §3.3) needs the rows in hand to rewrite. There are a few hundred of each on a
+    /// seeded catalogue, and the importer is a one-shot object resolved per command, so this state lives
+    /// exactly as long as one attempt does.
     /// </para>
     /// </summary>
-    private readonly HashSet<(int ProductId, int AssetId)> _productMedia = [];
+    private readonly List<ProductMedia> _productMedia = [];
 
-    private readonly HashSet<(int AssetId, string OwnerType, string OwnerId, string Role)> _usages = [];
+    private readonly List<MediaUsage> _usages = [];
+
+    /// <summary>
+    /// The demo placeholder assets, by id. A slot pointing at one of these counts as <b>empty</b>: a
+    /// placeholder is what the seeder put there because nothing better existed, not a choice anyone made,
+    /// so filling it needs no <c>--replace</c>.
+    /// </summary>
+    private readonly HashSet<int> _placeholders = [];
 
     public async Task<ClientAssetImportReport> ImportAsync(
         ClientAssetImportRequest request,
@@ -104,47 +132,107 @@ public sealed partial class ClientAssetImporter(
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        var run = new Run(request.DryRun);
-
         if (!storage.IsConfigured)
         {
-            run.Fail(
+            var refused = new Run(request);
+            refused.Fail(
                 "Media storage is not configured on this deployment (Media__PublicRoot is empty), so "
                 + "nothing can be stored. Set it and run the import again.");
-            return run.ToReport();
+            return refused.ToReport();
         }
 
         if (!Directory.Exists(request.SourceDirectory))
         {
-            run.Fail($"The asset drop '{request.SourceDirectory}' does not exist.");
+            var missing = new Run(request);
+            missing.Fail($"The asset drop '{request.SourceDirectory}' does not exist.");
+            return missing.ToReport();
+        }
+
+        // The connection is configured with EnableRetryOnFailure, and that execution strategy refuses a
+        // user-initiated transaction unless the whole unit of work is inside it — so the attempt, not
+        // the transaction, is the thing that gets retried. Every attempt starts from a clean change
+        // tracker and a fresh Run, because a retry on a context still holding the rolled-back attempt's
+        // edits would be worse than no retry at all.
+        var strategy = dbContext.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(
+            async token => await AttemptAsync(request, token),
+            cancellationToken);
+    }
+
+    private async Task<ClientAssetImportReport> AttemptAsync(
+        ClientAssetImportRequest request,
+        CancellationToken cancellationToken)
+    {
+        dbContext.ChangeTracker.Clear();
+        _productMedia.Clear();
+        _usages.Clear();
+        _placeholders.Clear();
+
+        var run = new Run(request);
+
+        // A dry run reads and reports; there is nothing to wrap.
+        if (request.DryRun)
+        {
+            await WalkAsync(request, run, cancellationToken);
+            LogFinished(logger, run.Entries.Count, run.Failures.Count, request.DryRun);
             return run.ToReport();
         }
 
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+
+        try
+        {
+            await WalkAsync(request, run, cancellationToken);
+
+            if (run.Succeeded)
+            {
+                ApplySectionSwitches(run);
+                await dbContext.SaveChangesAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+                LogFinished(logger, run.Entries.Count, run.Failures.Count, request.DryRun);
+                return run.ToReport();
+            }
+
+            await transaction.RollbackAsync(cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            await DiscardCreatedFilesAsync(run, CancellationToken.None);
+            throw;
+        }
+
+        // Rolled back, so not one row survives. The files do, because storage is not transactional —
+        // they are taken back out here, which is the same compensating delete the upload pipeline makes
+        // when a rendition fails half way through a set.
+        await DiscardCreatedFilesAsync(run, cancellationToken);
+
+        LogFinished(logger, run.Entries.Count, run.Failures.Count, request.DryRun);
+        return run.ToReport();
+    }
+
+    /// <summary>Everything the import looks at, in dependency order. Writes nothing on its own.</summary>
+    private async Task WalkAsync(
+        ClientAssetImportRequest request,
+        Run run,
+        CancellationToken cancellationToken)
+    {
         await LoadExistingReferencesAsync(cancellationToken);
 
         await ImportProductsAsync(request.SourceDirectory, run, cancellationToken);
 
-        // A photograph nobody can place stops the whole run, before anything else is stored. Half an
-        // import is the worst outcome available: the failure is reported, somebody fixes the name, and
-        // the next run is still the first run.
+        // A photograph nobody can place stops the run before anything else is even read. The transaction
+        // would undo the rest anyway; stopping here means the report is about the one thing that needs
+        // fixing rather than about ninety files that were fine.
         if (!run.Succeeded)
         {
-            LogFinished(logger, run.Entries.Count, run.Failures.Count, request.DryRun);
-            return run.ToReport();
+            return;
         }
 
         await ImportDepartmentsAsync(request.SourceDirectory, run, cancellationToken);
         await ImportHomeAsync(request.SourceDirectory, run, cancellationToken);
         await ImportSocialAsync(request.SourceDirectory, run, cancellationToken);
         await ImportLogoAsync(request.SourceDirectory, run, cancellationToken);
-
-        if (!request.DryRun)
-        {
-            await dbContext.SaveChangesAsync(cancellationToken);
-        }
-
-        LogFinished(logger, run.Entries.Count, run.Failures.Count, request.DryRun);
-        return run.ToReport();
     }
 
     // ------------------------------------------------------------------ products
@@ -170,12 +258,16 @@ public sealed partial class ClientAssetImporter(
             return;
         }
 
-        var slugs = products.Select(product => product.Slug).ToHashSet(StringComparer.Ordinal);
-        var byslug = products.ToDictionary(product => product.Slug, StringComparer.Ordinal);
+        // Case-insensitive, because a filename's case is not a fact about the product. On Windows
+        // `Chino-Shorts-1.jpg` and `chino-shorts-1.jpg` are the same file; matching it ordinally made a
+        // capital letter abort the entire run under a message about an unknown product. Slugs are
+        // unique under this comparer too (an integration test asserts it), so nothing becomes ambiguous.
+        var slugs = products.Select(product => product.Slug).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var byslug = products.ToDictionary(product => product.Slug, StringComparer.OrdinalIgnoreCase);
 
         // Resolve every name before a single byte is stored, so a batch with an unplaceable photograph
-        // in it fails before it has half-imported the rest.
-        var resolved = new Dictionary<string, List<ProductAssetName>>(StringComparer.Ordinal);
+        // in it fails before it has stored the rest.
+        var resolved = new Dictionary<string, List<ProductAssetName>>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var path in Files(folder))
         {
@@ -225,6 +317,7 @@ public sealed partial class ClientAssetImporter(
 
             int? cardAssetId = null;
             int? hoverAssetId = null;
+            var sawCard = false;
 
             foreach (var file in files.OrderBy(file => file.Index))
             {
@@ -255,41 +348,41 @@ public sealed partial class ClientAssetImporter(
                     _ => string.Create(CultureInfo.InvariantCulture, $"gallery frame {file.Index}"),
                 };
 
-                var wrote = false;
+                var outcome = SlotOutcome.Unchanged;
 
                 if (entity is not null && stored.AssetId is { } assetId)
                 {
-                    switch (file.Index)
+                    var (mediaRole, sortOrder) = file.Index switch
                     {
-                        case 1:
-                            cardAssetId = assetId;
-                            wrote = EnsureProductMedia(product.Id, assetId, ProductMediaRole.Gallery, CardSortOrder);
-                            break;
-                        case 2:
-                            hoverAssetId = assetId;
-                            wrote = EnsureProductMedia(product.Id, assetId, ProductMediaRole.Hover, HoverSortOrder);
-                            break;
-                        default:
-                            wrote = EnsureProductMedia(
-                                product.Id,
-                                assetId,
-                                ProductMediaRole.Gallery,
-                                (short)(file.Index - 2));
-                            break;
-                    }
+                        1 => (ProductMediaRole.Gallery, CardSortOrder),
+                        2 => (ProductMediaRole.Hover, HoverSortOrder),
+                        _ => (ProductMediaRole.Gallery, (short)(file.Index - 2)),
+                    };
 
-                    EnsureUsage(assetId, MediaUsageOwnerTypes.Product, product.Id, file.Index switch
+                    outcome = PlaceProductMedia(product.Id, assetId, mediaRole, sortOrder, run.Replace);
+
+                    if (outcome != SlotOutcome.Conflict)
                     {
-                        1 => MediaUsageRoles.Card,
-                        2 => MediaUsageRoles.Hover,
-                        _ => MediaUsageRoles.Gallery,
-                    });
+                        switch (file.Index)
+                        {
+                            case 1:
+                                cardAssetId = assetId;
+                                sawCard = true;
+                                break;
+                            case 2:
+                                hoverAssetId = assetId;
+                                break;
+                            default:
+                                break;
+                        }
+                    }
                 }
 
-                run.Add(new ClientAssetEntry(
+                run.Add(Describe(
                     ClientAssetFolder.Products,
                     file.FileName,
-                    stored.WasExisting && !wrote ? ClientAssetOutcome.AlreadyPresent : ClientAssetOutcome.Imported,
+                    outcome,
+                    stored,
                     $"{product.Slug} — {role}, alt text \"{alt}\"",
                     file.RepairedFrom));
             }
@@ -301,26 +394,28 @@ public sealed partial class ClientAssetImporter(
 
             if (cardAssetId is { } card)
             {
-                entity.CardImageAssetId = card;
+                SetProductPointer(entity, isCard: true, card, run);
             }
 
             // A product with one photograph gets a card and **no hover**. Leaving the seeded placeholder
             // in the hover slot would mean a real garment on the card flipping to a grey frame that says
             // no photograph was supplied — which is worse than a card that simply does not flip.
-            if (cardAssetId is not null)
+            if (sawCard)
             {
                 if (hoverAssetId is { } hover)
                 {
-                    entity.HoverImageAssetId = hover;
+                    SetProductPointer(entity, isCard: false, hover, run);
                 }
-                else if (entity.HoverImageAssetId is not null)
+                else if (entity.HoverImageAssetId is { } current && _placeholders.Contains(current))
                 {
-                    entity.HoverImageAssetId = null;
+                    SetProductPointer(entity, isCard: false, null, run);
                     run.Note(
                         $"{product.Slug}: one photograph was supplied, so the card is the client's and the "
                         + "hover image was cleared rather than left pointing at a placeholder.");
                 }
             }
+
+            RewriteProductUsages(entity);
         }
     }
 
@@ -367,32 +462,37 @@ public sealed partial class ClientAssetImporter(
                 continue;
             }
 
-            var wrote = false;
+            var outcome = SlotOutcome.Unchanged;
 
             if (stored.AssetId is { } assetId)
             {
-                if (department.HeroImageAssetId is null)
+                outcome = Fill(
+                    department.HeroImageAssetId,
+                    assetId,
+                    run.Replace,
+                    value => department.HeroImageAssetId = value,
+                    old => RemoveUsage(old, MediaUsageOwnerTypes.Department, department.Id, MediaUsageRoles.Hero));
+
+                if (outcome != SlotOutcome.Conflict)
                 {
-                    department.HeroImageAssetId = assetId;
-                    wrote = true;
+                    AddUsage(assetId, MediaUsageOwnerTypes.Department, department.Id, MediaUsageRoles.Hero);
                 }
 
-                EnsureUsage(assetId, MediaUsageOwnerTypes.Department, department.Id, MediaUsageRoles.Hero);
-
                 // HOME-02's tile is a different row from the department itself, and it is the one the
-                // homepage draws. Both get the picture; neither is overwritten if it already has one.
+                // homepage draws. Both get the picture.
                 var tile = tiles.FirstOrDefault(item => item.DepartmentId == department.Id);
-                if (tile is not null && tile.ImageAssetId is null)
+                if (tile is not null)
                 {
-                    tile.ImageAssetId = assetId;
-                    wrote = true;
+                    var tileOutcome = await PlaceItemImageAsync(tile, assetId, MediaUsageRoles.Image, run, cancellationToken);
+                    outcome = Worse(outcome, tileOutcome);
                 }
             }
 
-            run.Add(new ClientAssetEntry(
+            run.Add(Describe(
                 ClientAssetFolder.Departments,
                 fileName,
-                stored.WasExisting && !wrote ? ClientAssetOutcome.AlreadyPresent : ClientAssetOutcome.Imported,
+                outcome,
+                stored,
                 $"the {department.Name} department and its homepage tile"));
         }
     }
@@ -410,7 +510,7 @@ public sealed partial class ClientAssetImporter(
 
         var files = Files(folder).ToList();
 
-        await ImportHeroAsync(folder, files, run, cancellationToken);
+        await ImportHeroAsync(files, run, cancellationToken);
         await ImportBannerAsync(
             HomeSectionType.CampaignBanner,
             ClientAssetNaming.CampaignFile,
@@ -431,7 +531,7 @@ public sealed partial class ClientAssetImporter(
             files,
             run,
             cancellationToken);
-        await ImportTrendingAsync(folder, files, run, cancellationToken);
+        await ImportTrendingAsync(files, run, cancellationToken);
 
         foreach (var path in files.Where(path => !run.Touched(Path.GetFileName(path))))
         {
@@ -445,13 +545,13 @@ public sealed partial class ClientAssetImporter(
     }
 
     private async Task ImportHeroAsync(
-        string folder,
         IReadOnlyList<string> files,
         Run run,
         CancellationToken cancellationToken)
     {
         var videoPath = files.FirstOrDefault(
-            path => string.Equals(Path.GetFileName(path), ClientAssetNaming.HeroVideoFile, StringComparison.OrdinalIgnoreCase));
+            path => ClientAssetNaming.IsNamed(Path.GetFileName(path), ClientAssetNaming.HeroVideoFile)
+                && Path.GetExtension(path).Equals(".mp4", StringComparison.OrdinalIgnoreCase));
 
         var posterPath = files.FirstOrDefault(
             path => ClientAssetNaming.IsNamed(Path.GetFileName(path), ClientAssetNaming.HeroPosterFile));
@@ -517,28 +617,44 @@ public sealed partial class ClientAssetImporter(
             _ => throw new InvalidOperationException("Unknown upload outcome."),
         };
 
+        if (outcome is MediaUploadOutcome.Created)
+        {
+            run.Created(dto);
+        }
+
+        run.NoteHold(holds.For(dto.Checksum));
+
         var videoAssetId = await AssetIdAsync(dto.PublicId, cancellationToken);
         var posterAssetId = dto.PosterPublicId is { } posterPublicId
             ? await AssetIdAsync(posterPublicId, cancellationToken)
             : throw new InvalidOperationException("A stored video has no poster, which the schema forbids.");
 
-        var item = section.Items.FirstOrDefault(candidate => candidate.SortOrder == 1)
-            ?? AddItem(section, sortOrder: 1);
+        var item = await ItemAtAsync(section, sortOrder: 1, cancellationToken);
 
-        var wrote = false;
+        var videoSlot = Fill(
+            item.VideoAssetId,
+            videoAssetId,
+            run.Replace,
+            value => item.VideoAssetId = value,
+            old => RemoveUsage(old, MediaUsageOwnerTypes.HomeSectionItem, item.Id, MediaUsageRoles.Video));
 
-        if (item.VideoAssetId is null)
+        if (videoSlot != SlotOutcome.Conflict)
         {
-            item.VideoAssetId = videoAssetId;
-            wrote = true;
+            AddUsage(videoAssetId, MediaUsageOwnerTypes.HomeSectionItem, item.Id, MediaUsageRoles.Video);
         }
 
         // Doc 08 §3.7's CK: a video item must carry a still. The poster is that still — it is the frame
         // the phone, the data saver and prefers-reduced-motion all get, which is exactly what it is for.
-        if (item.ImageAssetId is null)
+        var posterSlot = Fill(
+            item.ImageAssetId,
+            posterAssetId,
+            run.Replace,
+            value => item.ImageAssetId = value,
+            old => RemoveUsage(old, MediaUsageOwnerTypes.HomeSectionItem, item.Id, MediaUsageRoles.Image));
+
+        if (posterSlot != SlotOutcome.Conflict)
         {
-            item.ImageAssetId = posterAssetId;
-            wrote = true;
+            AddUsage(posterAssetId, MediaUsageOwnerTypes.HomeSectionItem, item.Id, MediaUsageRoles.Image);
         }
 
         item.Title ??= "Dressed for Colombo";
@@ -546,23 +662,23 @@ public sealed partial class ClientAssetImporter(
         item.ButtonLabel ??= "Shop new arrivals";
         item.LinkUrl ??= "/new-arrivals";
 
-        EnsureUsage(videoAssetId, MediaUsageOwnerTypes.HomeSection, section.Id, MediaUsageRoles.Hero);
-
-        run.Add(new ClientAssetEntry(
+        run.Add(Describe(
             ClientAssetFolder.Home,
             Path.GetFileName(videoPath),
-            wrote ? ClientAssetOutcome.Imported : ClientAssetOutcome.AlreadyPresent,
+            videoSlot,
+            new StoredAsset(videoAssetId, outcome is MediaUploadOutcome.Duplicate, null),
             string.Create(
                 CultureInfo.InvariantCulture,
-                $"the hero video (HOME-01), {dto.Width}×{dto.Height}, {dto.DurationSeconds}s")));
+                $"the hero video (HOME-01), {dto.Width}x{dto.Height}, {dto.DurationSeconds}s")));
 
-        run.Add(new ClientAssetEntry(
+        run.Add(Describe(
             ClientAssetFolder.Home,
             Path.GetFileName(posterPath),
-            wrote ? ClientAssetOutcome.Imported : ClientAssetOutcome.AlreadyPresent,
+            posterSlot,
+            new StoredAsset(posterAssetId, outcome is MediaUploadOutcome.Duplicate, null),
             "the hero's poster and its still for phones and reduced motion"));
 
-        EnableIfReady(section, run, "HOME-01 hero");
+        run.WhenDone(section, "HOME-01 hero");
     }
 
     private async Task ImportBannerAsync(
@@ -602,37 +718,25 @@ public sealed partial class ClientAssetImporter(
             return;
         }
 
-        var wrote = false;
+        var outcome = SlotOutcome.Unchanged;
 
         if (stored.AssetId is { } assetId)
         {
-            var item = section.Items.FirstOrDefault(candidate => candidate.SortOrder == 1)
-                ?? AddItem(section, sortOrder: 1);
-
-            if (item.ImageAssetId is null)
-            {
-                item.ImageAssetId = assetId;
-                wrote = true;
-            }
+            var item = await ItemAtAsync(section, sortOrder: 1, cancellationToken);
+            outcome = await PlaceItemImageAsync(item, assetId, MediaUsageRoles.Banner, run, cancellationToken);
 
             item.Title ??= title;
             item.Subtitle ??= subtitle;
             item.LinkUrl ??= linkUrl;
             item.ButtonLabel ??= buttonLabel;
 
-            EnsureUsage(assetId, MediaUsageOwnerTypes.HomeSection, section.Id, MediaUsageRoles.Banner);
-            EnableIfReady(section, run, type.ToString());
+            run.WhenDone(section, type.ToString());
         }
 
-        run.Add(new ClientAssetEntry(
-            ClientAssetFolder.Home,
-            Path.GetFileName(path),
-            stored.WasExisting && !wrote ? ClientAssetOutcome.AlreadyPresent : ClientAssetOutcome.Imported,
-            $"the {type} banner"));
+        run.Add(Describe(ClientAssetFolder.Home, Path.GetFileName(path), outcome, stored, $"the {type} banner"));
     }
 
     private async Task ImportTrendingAsync(
-        string folder,
         IReadOnlyList<string> files,
         Run run,
         CancellationToken cancellationToken)
@@ -682,34 +786,26 @@ public sealed partial class ClientAssetImporter(
                 continue;
             }
 
-            var wrote = false;
+            var outcome = SlotOutcome.Unchanged;
 
             if (stored.AssetId is { } assetId)
             {
-                var sortOrder = (short)index.Value;
-                var item = section.Items.FirstOrDefault(candidate => candidate.SortOrder == sortOrder)
-                    ?? AddItem(section, sortOrder);
-
-                if (item.ImageAssetId is null)
-                {
-                    item.ImageAssetId = assetId;
-                    wrote = true;
-                }
+                var item = await ItemAtAsync(section, (short)index.Value, cancellationToken);
+                outcome = await PlaceItemImageAsync(item, assetId, MediaUsageRoles.Image, run, cancellationToken);
 
                 item.Title ??= title;
                 item.LinkUrl ??= url;
-
-                EnsureUsage(assetId, MediaUsageOwnerTypes.HomeSection, section.Id, MediaUsageRoles.Image);
             }
 
-            run.Add(new ClientAssetEntry(
+            run.Add(Describe(
                 ClientAssetFolder.Home,
                 fileName,
-                stored.WasExisting && !wrote ? ClientAssetOutcome.AlreadyPresent : ClientAssetOutcome.Imported,
+                outcome,
+                stored,
                 $"trending tile {index.Value} — \"{title}\", opening {url}"));
         }
 
-        EnableIfReady(section, run, "HOME-04 trending");
+        run.WhenDone(section, "HOME-04 trending");
     }
 
     // -------------------------------------------------------------------- social
@@ -763,36 +859,28 @@ public sealed partial class ClientAssetImporter(
                 continue;
             }
 
-            var wrote = false;
+            var outcome = SlotOutcome.Unchanged;
 
             if (stored.AssetId is { } assetId)
             {
-                var sortOrder = (short)index.Value;
-                var item = section.Items.FirstOrDefault(candidate => candidate.SortOrder == sortOrder)
-                    ?? AddItem(section, sortOrder);
-
-                if (item.ImageAssetId is null)
-                {
-                    item.ImageAssetId = assetId;
-                    wrote = true;
-                }
+                var item = await ItemAtAsync(section, (short)index.Value, cancellationToken);
+                outcome = await PlaceItemImageAsync(item, assetId, MediaUsageRoles.Image, run, cancellationToken);
 
                 // Ordinary admin-editable content: a row in content.HomeSectionItems that ADM-17 will
                 // rewrite the moment the client sends the real account URLs.
                 item.Title ??= label;
                 item.LinkUrl ??= url;
-
-                EnsureUsage(assetId, MediaUsageOwnerTypes.HomeSection, section.Id, MediaUsageRoles.Image);
             }
 
-            run.Add(new ClientAssetEntry(
+            run.Add(Describe(
                 ClientAssetFolder.Social,
                 fileName,
-                stored.WasExisting && !wrote ? ClientAssetOutcome.AlreadyPresent : ClientAssetOutcome.Imported,
+                outcome,
+                stored,
                 $"social tile {index.Value} — {network}, linked to the dummy {url}"));
         }
 
-        EnableIfReady(section, run, "HOME-08 social gallery");
+        run.WhenDone(section, "HOME-08 social gallery");
 
         run.Note(
             "The six social tiles carry dummy destinations on example.invalid (RFC 2606: a domain that "
@@ -831,6 +919,18 @@ public sealed partial class ClientAssetImporter(
                 continue;
             }
 
+            // A wordmark has to sit on whatever is behind it, so client-assets/README.md asks for a PNG
+            // with a transparent background. The operator reads this report and nothing else, so a file
+            // that cannot meet that is said here rather than discovered later by a designer.
+            if (!run.DryRun && ImageTransparency.Of(path) is false)
+            {
+                run.Note(
+                    $"logo/{fileName} has no transparent background — it is {ImageTransparency.Describe(path)}, "
+                    + "whatever its extension says, and the media pipeline stored it by its signature. A "
+                    + "wordmark on an opaque rectangle cannot be drawn over a photograph or a dark "
+                    + "section, so this one cannot be wired into the header as delivered.");
+            }
+
             run.Add(new ClientAssetEntry(
                 ClientAssetFolder.Logo,
                 fileName,
@@ -842,37 +942,62 @@ public sealed partial class ClientAssetImporter(
     // ------------------------------------------------------------------- plumbing
 
     /// <summary>
-    /// Switches a section on, but only once what it holds would actually draw.
+    /// Switches on every section whose media arrived, now that the run is known to have succeeded.
     /// <para>
-    /// The condition is the storefront's own <c>hasContent</c> rule restated: a hero, a banner or a
-    /// gallery <i>is</i> its artwork, so a section whose items carry no asset is left off. That is the
-    /// whole reason these five were seeded disabled — a bare heading over a gap is worse than nothing.
+    /// Deferred to the very end for the reason the transaction exists: a run that fails after the
+    /// campaign banner has been wired up must not leave the campaign banner live. The condition is the
+    /// storefront's own <c>hasContent</c> rule restated — a hero, a banner or a gallery <i>is</i> its
+    /// artwork — plus the held-back list, which keeps a section off when the picture it was given does
+    /// not fit the slot its filename claims.
     /// </para>
     /// </summary>
-    private static void EnableIfReady(HomeSection section, Run run, string label)
+    private static void ApplySectionSwitches(Run run)
     {
-        var hasArtwork = section.Items.Any(
-            item => item.ImageAssetId is not null
-                || item.MobileImageAssetId is not null
-                || item.VideoAssetId is not null);
-
-        if (!hasArtwork)
+        foreach (var (section, label) in run.Pending)
         {
-            run.Note($"{label} stayed switched off: none of its items has a picture yet.");
-            return;
-        }
+            if (run.HoldFor(section.SectionType) is { } reason)
+            {
+                run.Note($"{label} left switched off: {reason}");
+                continue;
+            }
 
-        if (section.IsEnabled)
-        {
-            return;
-        }
+            var hasArtwork = section.Items.Any(
+                item => item.ImageAssetId is not null
+                    || item.MobileImageAssetId is not null
+                    || item.VideoAssetId is not null);
 
-        section.IsEnabled = true;
-        run.Note($"{label} switched on: it now has media to show.");
+            if (!hasArtwork)
+            {
+                run.Note($"{label} stayed switched off: none of its items has a picture yet.");
+                continue;
+            }
+
+            if (section.IsEnabled)
+            {
+                continue;
+            }
+
+            section.IsEnabled = true;
+            run.Note($"{label} switched on: it now has media to show.");
+        }
     }
 
-    private HomeSectionItem AddItem(HomeSection section, short sortOrder)
+    /// <summary>
+    /// The item at a section's sort order, created when there is none. Saved immediately, because a
+    /// <c>MediaUsages</c> row names the item by id (doc 08 §3.3) and a new item has none until it is.
+    /// The save is inside this run's transaction, so it is still all or nothing.
+    /// </summary>
+    private async Task<HomeSectionItem> ItemAtAsync(
+        HomeSection section,
+        short sortOrder,
+        CancellationToken cancellationToken)
     {
+        var existing = section.Items.FirstOrDefault(candidate => candidate.SortOrder == sortOrder);
+        if (existing is not null)
+        {
+            return existing;
+        }
+
         var item = new HomeSectionItem
         {
             HomeSectionId = section.Id,
@@ -882,7 +1007,36 @@ public sealed partial class ClientAssetImporter(
 
         section.Items.Add(item);
         dbContext.HomeSectionItems.Add(item);
+        await dbContext.SaveChangesAsync(cancellationToken);
         return item;
+    }
+
+    /// <summary>Puts an asset in a homepage item's image slot, with the usage row that names the item.</summary>
+    private async Task<SlotOutcome> PlaceItemImageAsync(
+        HomeSectionItem item,
+        int assetId,
+        string usageRole,
+        Run run,
+        CancellationToken cancellationToken)
+    {
+        if (item.Id == 0)
+        {
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
+
+        var outcome = Fill(
+            item.ImageAssetId,
+            assetId,
+            run.Replace,
+            value => item.ImageAssetId = value,
+            old => RemoveUsage(old, MediaUsageOwnerTypes.HomeSectionItem, item.Id, usageRole));
+
+        if (outcome != SlotOutcome.Conflict)
+        {
+            AddUsage(assetId, MediaUsageOwnerTypes.HomeSectionItem, item.Id, usageRole);
+        }
+
+        return outcome;
     }
 
     private async Task<HomeSection?> SectionAsync(HomeSectionType type, CancellationToken cancellationToken) =>
@@ -899,81 +1053,242 @@ public sealed partial class ClientAssetImporter(
     }
 
     /// <summary>
-    /// Adds the reference row that puts a photograph in a product's gallery, unless it is already there.
-    /// The unique index is (product, asset, colour), so that is what "already there" means.
+    /// Puts a photograph in one gallery slot, where a slot is <b>(product, role, sort order)</b>.
+    /// <para>
+    /// Keying on the slot rather than on the asset is what makes a corrected photograph a replacement.
+    /// With the asset as the key a re-encoded file was a different asset, so it was <i>added</i>: two
+    /// rows at sort order −2, both claiming to be the card, the superseded photograph still in the
+    /// gallery, and its usage row keeping the delete guard shut for ever.
+    /// </para>
     /// </summary>
-    private bool EnsureProductMedia(int productId, int assetId, ProductMediaRole role, short sortOrder)
+    private SlotOutcome PlaceProductMedia(
+        int productId,
+        int assetId,
+        ProductMediaRole role,
+        short sortOrder,
+        bool replace)
     {
-        if (!_productMedia.Add((productId, assetId)))
+        var existing = _productMedia.FirstOrDefault(
+            row => row.ProductId == productId
+                && row.MediaRole == role
+                && row.SortOrder == sortOrder
+                && row.ProductColourId is null);
+
+        if (existing is null)
         {
-            return false;
+            var row = new ProductMedia
+            {
+                ProductId = productId,
+                MediaAssetId = assetId,
+
+                // Null, not a colourway: the client sent two photographs per garment, not one per
+                // colour, so claiming either belongs to a particular colourway would be inventing
+                // information. A null row shows for every colour, which is what galleryFor does with it.
+                ProductColourId = null,
+                MediaRole = role,
+                SortOrder = sortOrder,
+
+                // No override: the alt text lives on the asset, where the card and the listing read it
+                // from too, so there is one sentence per photograph rather than two that can drift.
+                AltTextOverride = null,
+            };
+
+            dbContext.ProductMedia.Add(row);
+            _productMedia.Add(row);
+            return SlotOutcome.Filled;
         }
 
-        dbContext.ProductMedia.Add(new ProductMedia
+        if (existing.MediaAssetId == assetId)
         {
-            ProductId = productId,
-            MediaAssetId = assetId,
+            return SlotOutcome.Unchanged;
+        }
 
-            // Null, not a colourway: the client sent two photographs per garment, not one per colour, so
-            // claiming either belongs to a particular colourway would be inventing information. A null
-            // row shows for every colour, which is what galleryFor already does with it.
-            ProductColourId = null,
-            MediaRole = role,
-            SortOrder = sortOrder,
+        if (!replace)
+        {
+            return SlotOutcome.Conflict;
+        }
 
-            // No override: the alt text lives on the asset, where the card and the listing read it from
-            // too, so there is one sentence per photograph rather than two that can drift.
-            AltTextOverride = null,
-        });
-
-        return true;
+        existing.MediaAssetId = assetId;
+        return SlotOutcome.Replaced;
     }
 
     /// <summary>
-    /// Mirrors a reference in <c>media.MediaUsages</c> (doc 08 §3.3) — the "used in…" panel and the
-    /// delete guard. The unique key is (asset, owner type, owner id, role), so a re-run adds nothing.
+    /// Moves a product's denormalised card or hover pointer (doc 08 §7.4).
+    /// <para>
+    /// A pointer at one of the demo placeholders counts as empty — that is what the seeder puts there
+    /// when there is no photograph, not a choice. A pointer at anything else is somebody's decision and
+    /// survives unless the operator asked for <c>--replace</c>.
+    /// </para>
     /// </summary>
-    private void EnsureUsage(int assetId, string ownerType, int ownerId, string role)
+    private void SetProductPointer(Product product, bool isCard, int? assetId, Run run)
     {
-        var id = ownerId.ToString(CultureInfo.InvariantCulture);
+        var current = isCard ? product.CardImageAssetId : product.HoverImageAssetId;
 
-        if (!_usages.Add((assetId, ownerType, id, role)))
+        if (current == assetId)
         {
             return;
         }
 
-        dbContext.MediaUsages.Add(new MediaUsage
+        if (current is { } held && !_placeholders.Contains(held) && !run.Replace)
+        {
+            run.Note(
+                $"{product.Slug}: the {(isCard ? "card" : "hover")} image was left as it is — it already "
+                + "points at a picture that is not a placeholder, so somebody chose it. Re-run with "
+                + "--replace to overwrite it.");
+            return;
+        }
+
+        if (isCard)
+        {
+            product.CardImageAssetId = assetId;
+        }
+        else
+        {
+            product.HoverImageAssetId = assetId;
+        }
+    }
+
+    /// <summary>
+    /// Rewrites one product's usage rows from what the product now actually references — doc 08 §3.3's
+    /// "an owner's save rewrites its usage rows in the same transaction", literally.
+    /// <para>
+    /// Recomputed rather than patched because the same asset can legitimately fill two slots (two
+    /// identical files in a drop deduplicate to one asset), so "the slot changed, therefore drop the old
+    /// usage" is not sound. The desired set is derived from the rows and pointers themselves, which
+    /// cannot disagree with them.
+    /// </para>
+    /// </summary>
+    private void RewriteProductUsages(Product product)
+    {
+        var ownerId = product.Id.ToString(CultureInfo.InvariantCulture);
+
+        var desired = new HashSet<(int AssetId, string Role)>();
+
+        if (product.CardImageAssetId is { } card)
+        {
+            desired.Add((card, MediaUsageRoles.Card));
+        }
+
+        if (product.HoverImageAssetId is { } hover)
+        {
+            desired.Add((hover, MediaUsageRoles.Hover));
+        }
+
+        foreach (var row in _productMedia.Where(row => row.ProductId == product.Id))
+        {
+            desired.Add((row.MediaAssetId, MediaUsageRoles.Gallery));
+        }
+
+        var existing = _usages
+            .Where(usage => usage.OwnerType == MediaUsageOwnerTypes.Product && usage.OwnerId == ownerId)
+            .ToList();
+
+        foreach (var stale in existing.Where(usage => !desired.Contains((usage.MediaAssetId, usage.UsageRole))))
+        {
+            dbContext.MediaUsages.Remove(stale);
+            _usages.Remove(stale);
+        }
+
+        foreach (var (assetId, role) in desired)
+        {
+            AddUsage(assetId, MediaUsageOwnerTypes.Product, product.Id, role);
+        }
+    }
+
+    /// <summary>
+    /// Fills a nullable asset reference, honouring the "never overwrite a person" rule.
+    /// </summary>
+    /// <param name="onReplace">Called with the superseded asset id so its usage row can go.</param>
+    private static SlotOutcome Fill(
+        int? current,
+        int assetId,
+        bool replace,
+        Action<int?> set,
+        Action<int> onReplace)
+    {
+        if (current == assetId)
+        {
+            return SlotOutcome.Unchanged;
+        }
+
+        if (current is null)
+        {
+            set(assetId);
+            return SlotOutcome.Filled;
+        }
+
+        if (!replace)
+        {
+            return SlotOutcome.Conflict;
+        }
+
+        onReplace(current.Value);
+        set(assetId);
+        return SlotOutcome.Replaced;
+    }
+
+    private void AddUsage(int assetId, string ownerType, int ownerId, string role)
+    {
+        var id = ownerId.ToString(CultureInfo.InvariantCulture);
+
+        var present = _usages.Any(
+            usage => usage.MediaAssetId == assetId
+                && usage.OwnerType == ownerType
+                && usage.OwnerId == id
+                && usage.UsageRole == role);
+
+        if (present)
+        {
+            return;
+        }
+
+        var row = new MediaUsage
         {
             MediaAssetId = assetId,
             OwnerType = ownerType,
             OwnerId = id,
             UsageRole = role,
-        });
+        };
+
+        dbContext.MediaUsages.Add(row);
+        _usages.Add(row);
+    }
+
+    private void RemoveUsage(int assetId, string ownerType, int ownerId, string role)
+    {
+        var id = ownerId.ToString(CultureInfo.InvariantCulture);
+
+        var row = _usages.FirstOrDefault(
+            usage => usage.MediaAssetId == assetId
+                && usage.OwnerType == ownerType
+                && usage.OwnerId == id
+                && usage.UsageRole == role);
+
+        if (row is null)
+        {
+            return;
+        }
+
+        dbContext.MediaUsages.Remove(row);
+        _usages.Remove(row);
     }
 
     /// <summary>
-    /// Reads the reference rows that are already in the database, so the "unless it is already there"
-    /// tests above are answered from memory and a second run of the same drop writes nothing.
+    /// Reads the rows the import edits, as tracked entities, plus the ids of the demo placeholders.
     /// </summary>
     private async Task LoadExistingReferencesAsync(CancellationToken cancellationToken)
     {
-        var media = await dbContext.ProductMedia
-            .Where(row => row.ProductColourId == null)
-            .Select(row => new { row.ProductId, row.MediaAssetId })
+        _productMedia.AddRange(await dbContext.ProductMedia.ToListAsync(cancellationToken));
+        _usages.AddRange(await dbContext.MediaUsages.ToListAsync(cancellationToken));
+
+        var placeholders = await dbContext.MediaAssets
+            .Where(asset => asset.StorageKey.StartsWith(DemoMediaPlaceholders.StorageKeyPrefix))
+            .Select(asset => asset.Id)
             .ToListAsync(cancellationToken);
 
-        foreach (var row in media)
+        foreach (var id in placeholders)
         {
-            _productMedia.Add((row.ProductId, row.MediaAssetId));
-        }
-
-        var usages = await dbContext.MediaUsages
-            .Select(usage => new { usage.MediaAssetId, usage.OwnerType, usage.OwnerId, usage.UsageRole })
-            .ToListAsync(cancellationToken);
-
-        foreach (var usage in usages)
-        {
-            _usages.Add((usage.MediaAssetId, usage.OwnerType, usage.OwnerId, usage.UsageRole));
+            _placeholders.Add(id);
         }
     }
 
@@ -1000,16 +1315,63 @@ public sealed partial class ClientAssetImporter(
                 UploadedByUserId: null),
             cancellationToken);
 
-        return outcome switch
+        switch (outcome)
         {
-            MediaUploadOutcome.Created created =>
-                new StoredAsset(await AssetIdAsync(created.Asset.PublicId, cancellationToken), false, null),
-            MediaUploadOutcome.Duplicate duplicate =>
-                new StoredAsset(await AssetIdAsync(duplicate.Asset.PublicId, cancellationToken), true, null),
-            MediaUploadOutcome.Rejected rejected =>
-                new StoredAsset(null, false, $"{rejected.Reason}: {rejected.Message}"),
-            _ => throw new InvalidOperationException("Unknown upload outcome."),
-        };
+            case MediaUploadOutcome.Created created:
+                run.Created(created.Asset);
+                run.NoteHold(holds.For(created.Asset.Checksum));
+                return new StoredAsset(await AssetIdAsync(created.Asset.PublicId, cancellationToken), false, null);
+
+            case MediaUploadOutcome.Duplicate duplicate:
+                run.NoteHold(holds.For(duplicate.Asset.Checksum));
+                return new StoredAsset(await AssetIdAsync(duplicate.Asset.PublicId, cancellationToken), true, null);
+
+            case MediaUploadOutcome.Rejected rejected:
+                return new StoredAsset(null, false, $"{rejected.Reason}: {rejected.Message}");
+
+            default:
+                throw new InvalidOperationException("Unknown upload outcome.");
+        }
+    }
+
+    /// <summary>
+    /// Takes back out the files of every asset this attempt created, after the transaction rolled its
+    /// rows away. Storage is not transactional, so without this a failed run leaves a few hundred files
+    /// nothing will ever reference and nothing will ever purge.
+    /// </summary>
+    private async Task DiscardCreatedFilesAsync(Run run, CancellationToken cancellationToken)
+    {
+        var removed = 0;
+
+        foreach (var asset in run.CreatedAssets)
+        {
+            try
+            {
+                if (await storage.DeleteAsync(asset.StorageKey, cancellationToken))
+                {
+                    removed++;
+                }
+
+                removed += await storage.DeletePrefixAsync(
+                    MediaStorageKey.RenditionFolderFor(asset.PublicId),
+                    cancellationToken);
+            }
+            catch (IOException exception)
+            {
+                // Best effort, and said out loud: a file left behind is litter, not corruption, and a
+                // second failure here must not hide the first one.
+                run.Note($"Could not remove '{asset.StorageKey}' after the rollback: {exception.Message}");
+            }
+        }
+
+        if (run.CreatedAssets.Count > 0)
+        {
+            run.Note(
+                string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"The run was rolled back: no row survives it, and {removed} file(s) written by the "
+                    + $"{run.CreatedAssets.Count} asset(s) it had created were removed again."));
+        }
     }
 
     private async Task<int> AssetIdAsync(Guid publicId, CancellationToken cancellationToken) =>
@@ -1022,20 +1384,69 @@ public sealed partial class ClientAssetImporter(
     private static IEnumerable<string> Files(string folder) =>
         Directory.EnumerateFiles(folder).Order(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>One report line, from what the pipeline did and what the slot did.</summary>
+    private static ClientAssetEntry Describe(
+        ClientAssetFolder folder,
+        string fileName,
+        SlotOutcome slot,
+        StoredAsset stored,
+        string detail,
+        string? repairedFrom = null)
+    {
+        var outcome = slot switch
+        {
+            SlotOutcome.Conflict => ClientAssetOutcome.Conflict,
+            SlotOutcome.Replaced => ClientAssetOutcome.Replaced,
+            SlotOutcome.Filled => ClientAssetOutcome.Imported,
+            _ => stored.WasExisting ? ClientAssetOutcome.AlreadyPresent : ClientAssetOutcome.Imported,
+        };
+
+        var text = slot == SlotOutcome.Conflict
+            ? detail + " — the slot already holds a different picture that somebody chose. "
+                + "Re-run with --replace to overwrite it."
+            : detail;
+
+        return new ClientAssetEntry(folder, fileName, outcome, text, repairedFrom);
+    }
+
+    /// <summary>The worse of two slot outcomes, for a file that fills more than one slot.</summary>
+    private static SlotOutcome Worse(SlotOutcome left, SlotOutcome right) =>
+        (SlotOutcome)Math.Max((int)left, (int)right);
+
+    /// <summary>What happened to one reference slot. Ordered worst last, for <see cref="Worse"/>.</summary>
+    private enum SlotOutcome
+    {
+        Unchanged = 0,
+        Filled = 1,
+        Replaced = 2,
+        Conflict = 3,
+    }
+
     private sealed record StoredAsset(int? AssetId, bool WasExisting, string? Refusal);
 
-    /// <summary>Everything one run accumulates, so the methods above stay about the import.</summary>
-    private sealed class Run(bool dryRun)
+    /// <summary>Everything one attempt accumulates, so the methods above stay about the import.</summary>
+    private sealed class Run(ClientAssetImportRequest request)
     {
         private readonly HashSet<string> _touched = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<HomeSectionType, string> _holds = [];
+        private readonly List<(HomeSection Section, string Label)> _pending = [];
+        private readonly List<MediaAssetDto> _created = [];
 
-        public bool DryRun { get; } = dryRun;
+        public bool DryRun { get; } = request.DryRun;
+
+        public bool Replace { get; } = request.Replace;
 
         public List<ClientAssetEntry> Entries { get; } = [];
 
         public List<string> Failures { get; } = [];
 
         public List<string> Notes { get; } = [];
+
+        /// <summary>Assets this attempt created, so their files can be taken back out on a rollback.</summary>
+        public List<MediaAssetDto> CreatedAssets => _created;
+
+        /// <summary>Sections to consider switching on, once the run is known to have succeeded.</summary>
+        public List<(HomeSection Section, string Label)> Pending => _pending;
 
         public bool Succeeded => Failures.Count == 0;
 
@@ -1045,9 +1456,24 @@ public sealed partial class ClientAssetImporter(
 
         public void Note(string note) => Notes.Add(note);
 
+        public void Created(MediaAssetDto asset) => _created.Add(asset);
+
         public void Touch(string fileName) => _touched.Add(fileName);
 
         public bool Touched(string fileName) => _touched.Contains(fileName);
+
+        public void WhenDone(HomeSection section, string label) => _pending.Add((section, label));
+
+        /// <summary>Records that a stored file is one of the held-back pictures.</summary>
+        public void NoteHold(HeldBackArtwork? held)
+        {
+            if (held is not null)
+            {
+                _holds[held.Section] = held.Reason;
+            }
+        }
+
+        public string? HoldFor(HomeSectionType type) => _holds.GetValueOrDefault(type);
 
         public ClientAssetImportReport ToReport() => new(Entries, Failures, Notes);
     }

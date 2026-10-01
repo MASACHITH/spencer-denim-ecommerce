@@ -44,7 +44,16 @@ var app = builder.Build();
 // project or behind a seeding flag.
 if (ImportClientAssetsCommand.Matches(args))
 {
-    return await ImportClientAssetsCommand.RunAsync(app.Services, args, CancellationToken.None);
+    // Ctrl+C asks the import to stop rather than killing it: the run is one transaction, so a
+    // cancellation rolls it back instead of leaving the catalogue half rewired.
+    using var cancellation = new CancellationTokenSource();
+    Console.CancelKeyPress += (_, eventArgs) =>
+    {
+        eventArgs.Cancel = true;
+        cancellation.Cancel();
+    };
+
+    return await ImportClientAssetsCommand.RunAsync(app.Services, args, cancellation.Token);
 }
 
 // Before anything that reads the request scheme/remote IP (cookie auth, antiforgery): restores the client's

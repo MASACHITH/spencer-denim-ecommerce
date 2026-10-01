@@ -36,6 +36,7 @@ internal static class ImportClientAssetsCommand
 
         string? source = null;
         var dryRun = false;
+        var replace = false;
 
         for (var index = 1; index < args.Length; index++)
         {
@@ -46,6 +47,9 @@ internal static class ImportClientAssetsCommand
                     break;
                 case "--dry-run":
                     dryRun = true;
+                    break;
+                case "--replace":
+                    replace = true;
                     break;
                 default:
                     Console.Error.WriteLine($"Unknown argument '{args[index]}'.");
@@ -65,7 +69,7 @@ internal static class ImportClientAssetsCommand
         var importer = scope.ServiceProvider.GetRequiredService<IClientAssetImporter>();
 
         var report = await importer.ImportAsync(
-            new ClientAssetImportRequest(Path.GetFullPath(source), dryRun),
+            new ClientAssetImportRequest(Path.GetFullPath(source), dryRun, replace),
             cancellationToken);
 
         Print(report, dryRun);
@@ -90,6 +94,24 @@ internal static class ImportClientAssetsCommand
                         CultureInfo.InvariantCulture,
                         $"  [{entry.Outcome,-14}] {entry.FileName}  ->  {entry.Detail}"));
             }
+        }
+
+        var conflicts = report.Conflicts;
+        if (conflicts.Count > 0)
+        {
+            Console.WriteLine();
+            Console.WriteLine("NOT APPLIED — the slot already holds a picture somebody chose");
+            foreach (var entry in conflicts)
+            {
+                Console.WriteLine($"  {entry.FileName}");
+                Console.WriteLine($"      {entry.Detail}");
+            }
+
+            Console.WriteLine();
+            Console.WriteLine(
+                "  Re-run with --replace to overwrite them. A slot holding one of the demo placeholders");
+            Console.WriteLine(
+                "  is filled without it; this list is only slots holding a real picture.");
         }
 
         var renames = report.InferredRenames;
@@ -119,7 +141,9 @@ internal static class ImportClientAssetsCommand
             string.Create(
                 CultureInfo.InvariantCulture,
                 $"{report.Count(ClientAssetOutcome.Imported)} imported, "
+                + $"{report.Count(ClientAssetOutcome.Replaced)} replaced, "
                 + $"{report.Count(ClientAssetOutcome.AlreadyPresent)} already present, "
+                + $"{report.Count(ClientAssetOutcome.Conflict)} not applied, "
                 + $"{report.Count(ClientAssetOutcome.NotInContract)} not in the contract, "
                 + $"{report.Count(ClientAssetOutcome.Refused)} refused, "
                 + $"{report.Count(ClientAssetOutcome.Unmappable)} unmappable."));
@@ -130,7 +154,7 @@ internal static class ImportClientAssetsCommand
         }
 
         Console.Error.WriteLine();
-        Console.Error.WriteLine("FAILED");
+        Console.Error.WriteLine("FAILED — the whole run was rolled back and nothing was written");
         foreach (var failure in report.Failures)
         {
             Console.Error.WriteLine($"  - {failure}");
@@ -140,11 +164,17 @@ internal static class ImportClientAssetsCommand
     private static void Usage()
     {
         Console.Error.WriteLine();
-        Console.Error.WriteLine($"usage: {Verb} --from <directory> [--dry-run]");
+        Console.Error.WriteLine($"usage: {Verb} --from <directory> [--dry-run] [--replace]");
         Console.Error.WriteLine();
         Console.Error.WriteLine(
             "  <directory> holds the client's drop: logo/, products/, departments/, home/, social/.");
         Console.Error.WriteLine(
             "  --dry-run resolves every filename and reports what would happen, storing nothing.");
+        Console.Error.WriteLine(
+            "  --replace overwrites a slot that already holds a picture somebody chose, which is what");
+        Console.Error.WriteLine(
+            "            a corrected photograph from the client needs. Without it those files are");
+        Console.Error.WriteLine(
+            "            listed and left alone; a slot holding a demo placeholder is filled either way.");
     }
 }

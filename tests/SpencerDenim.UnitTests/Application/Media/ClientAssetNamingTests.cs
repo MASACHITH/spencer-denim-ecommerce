@@ -164,6 +164,52 @@ public sealed class ClientAssetNamingTests
         Assert.DoesNotContain("laceholder", alt, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// A filename's capitalisation is not a fact about the product. Matching it ordinally meant one
+    /// capital letter aborted the entire run under a message saying the product did not exist — and on
+    /// Windows <c>Chino-Shorts-1.jpg</c> and <c>chino-shorts-1.jpg</c> are the same file.
+    /// </summary>
+    [Theory]
+    [InlineData("Chino-Shorts-1.jpg", "chino-shorts", 1)]
+    [InlineData("WASHED-LINEN-CAMP-SHIRT-2.JPG.JPG", "washed-linen-camp-shirt", 2)]
+    [InlineData("Ourt-Canvas-Sneakers-2.jpg.jpg", "court-canvas-sneakers", 2)]
+    [InlineData("ProductsPique-Polo-Shirt-2.jpg.jpg", "pique-polo-shirt", 2)]
+    public void A_filename_in_another_case_still_reaches_its_product(
+        string fileName,
+        string expectedSlug,
+        int expectedIndex)
+    {
+        var result = Assert.IsType<ProductAssetNameResult.Resolved>(
+            ClientAssetNaming.ParseProductFile(fileName, Catalogue));
+
+        // The catalogue's spelling, never the filename's: a row written from this must not be the only
+        // one in the database that capitalises the slug that way.
+        Assert.Equal(expectedSlug, result.Name.Slug);
+        Assert.Equal(expectedIndex, result.Name.Index);
+
+        // And the operator is still told the importer interpreted the name.
+        Assert.NotNull(result.Name.RepairedFrom);
+    }
+
+    /// <summary>
+    /// The repair that fixes a truncated filename is only safe while no two slugs differ by a prefix
+    /// short enough for it to reach across. This is the predicate the repair itself uses, so a guard
+    /// written with it cannot drift from the rule it is guarding.
+    /// </summary>
+    [Fact]
+    public void The_prefix_guard_finds_exactly_the_pairs_the_repair_could_confuse()
+    {
+        Assert.Empty(ClientAssetNaming.AmbiguousPrefixPairs(Catalogue));
+
+        var pair = Assert.Single(
+            ClientAssetNaming.AmbiguousPrefixPairs(["linen-shirt", "red-linen-shirt"]));
+
+        Assert.Equal(("linen-shirt", "red-linen-shirt"), pair);
+
+        // Five characters is past the repair's reach, so those two can never be confused by it.
+        Assert.Empty(ClientAssetNaming.AmbiguousPrefixPairs(["linen-shirt", "scarlet-linen-shirt"]));
+    }
+
     [Theory]
     [InlineData("trending-1.jpg", 1)]
     [InlineData("trending-4.jpg.jpg", 4)]

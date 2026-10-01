@@ -37,8 +37,15 @@ public static class MediaUsageOwnerTypes
     public const string SizeGuide = "SizeGuide";
     public const string MediaAsset = "MediaAsset";
 
-    /// <summary>A block of the homepage (<c>content.HomeSections</c>) — the hero, a banner, a tile.</summary>
-    public const string HomeSection = "HomeSection";
+    /// <summary>
+    /// One tile, banner or hero of the homepage (<c>content.HomeSectionItems</c>).
+    /// <para>
+    /// The <b>item</b>, which is what doc 08 §3.3 enumerates, not the section it sits in. A section id
+    /// would name "the trending row" for all four of its pictures and "the homepage" for thirteen, so
+    /// the "used in…" panel could not tell an operator which tile to go and change.
+    /// </para>
+    /// </summary>
+    public const string HomeSectionItem = "HomeSectionItem";
 }
 
 /// <summary>The <see cref="MediaUsage.UsageRole"/> values this milestone writes.</summary>

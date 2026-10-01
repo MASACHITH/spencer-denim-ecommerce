@@ -19,7 +19,7 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 - **Next:** **W2-01 (homepage, HOME-01..10) PASSED the tester** and is pushed to `origin feature/W2-01-homepage` awaiting a PR: content schema, seeder, read-only content API, newsletter signup endpoint and the page itself. ADM-17's admin screens are **not** in it. Issue #37 (the homepage cache rounds schedule boundaries to its five-minute TTL) is filed, not built.
 - **Next:** **W1-02 (catalogue foundation — schema + demo seeder + the read-only storefront catalogue API) is in the developer↔tester loop** on `feature/W1-02-catalogue-foundation` (worktree `worktrees/sd-catalog`): tester round 1 failed it on 3 major + 5 minor, round 2 on 2 major + 4 minor, all fixed; not pushed, not merged, not Done. Its ADM-11 admin screens are a separate task, **W1-12 (TODO)** — W1-02 no longer means "categories (create/edit/reorder)". W1-08 (Users & Roles CRUD), W1-09 (audit log viewer), W1-10 (2FA enrollment), W1-11 (route guard, SecurityStamp revalidation, forwarded-headers regression test) are the W1-01 follow-ups, tracked but not started; the user/architect should decide priority between those and W1-03 once W1-02 passes.
 - **Client progress page:** `client-progress/` is tracked in this repository (moved 2026-09-22, W0-18) and publishes from whichever machine holds the DPAPI-encrypted FTP credential — the `SCIENTER\sachithi` PC, where it was published on 23 and 24 Sep. An earlier note here said it could not be done from "this machine"; that was written from the second machine and is not a property of the repository.
-- **Next:** **W1-13 (the client's real photographs, video and logo) is with the tester** on `feature/W1-13-client-assets` (worktree `worktrees/sd-assets`): a repeatable import verb on the API, the five media-dependent homepage sections switched on, and a HOME-01/05/06 full-bleed fix. Not pushed, not merged, not Done. **The logo is imported but not wired in** — the three delivered files are opaque JPEGs named `.png`, the "light" wordmark is the same mockup as the dark one, and the mark reads COLOMBO WARDROBE rather than Spencer Denim. That needs a decision from the owner and flat artwork, not code.
+- **Next:** **W1-13 (the client's real photographs, video and logo) is back with the tester after fix round 1** on `feature/W1-13-client-assets` (worktree `worktrees/sd-assets`): a repeatable import verb on the API, three of the five media-dependent homepage sections switched on, and a HOME-01/02/05/06 fix for blocks sized by `aspect-ratio`. **The hero and the activewear feature are held off by their artwork's checksum** — the delivered video is portrait in a 16:9 frame and the delivered activewear picture is a linen flat-lay — and each releases itself when the owner delivers a replacement. Not pushed, not merged, not Done. **The logo is imported but not wired in** — the three delivered files are opaque JPEGs named `.png`, the "light" wordmark is the same mockup as the dark one, and the mark reads COLOMBO WARDROBE rather than Spencer Denim. That needs a decision from the owner and flat artwork, not code.
 - **Open assumptions:** A1 (Trending Categories / Best Sellers homepage blocks stay removed per signed proposal), A2 (video MP4 ≤ 50 MB, no server conversion).
 
 ---
@@ -44,6 +44,92 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 ---
 
 ## Session log
+
+### 2026-10-01 (4) — W1-13 fix round 1: a failed run that had already committed everything
+
+The tester verified every number, confirmed the three inferred renames by looking at the pictures, and
+brute-forced every 1–4 character truncation of all 45 slugs against the repair rule — 0 misattributions.
+He failed the branch on four majors and two asset problems. All fixed on `feature/W1-13-client-assets`.
+
+**Major, and the shape of the round: "all or nothing" was only true of the one failure I had thought
+about.** The name-resolution check stops before a byte is stored, so I had written that half an import
+is the worst outcome available — and then left every *other* failure free to produce one.
+`IMediaService` saves on the same scoped `AppDbContext` for every upload, so everything was committed as
+it went. Measured with a patched HEVC hero: the run reported **FAILED, exit 2**, and permanently stored
+88 assets, 358 files, 70 gallery rows and switched **four homepage sections live**. The whole run is one
+transaction now, committed only when nothing has failed, and because storage is not transactional the
+files of assets the attempt created are deleted on the way out. **The lesson is about where a guarantee
+is written down:** a sentence in a class comment that only one code path honours is worse than no
+sentence, because it stops the next reader looking. Proven red first — the old shape leaves 22 assets,
+7 gallery rows, 24 usages and 12 section items behind.
+
+The transaction needed the execution strategy rather than a bare `BeginTransactionAsync`:
+`EnableRetryOnFailure` is on (there is a unit test asserting `RetriesOnFailure`), and that strategy
+refuses a user-initiated transaction unless the whole unit of work is inside it. So the *attempt* is
+what gets retried, and each attempt starts with `ChangeTracker.Clear()` and fresh caches — a retry on a
+context still holding the rolled-back attempt's edits would be worse than no retry.
+
+**Major: a corrected photograph was added beside the one it superseded, not in place of it.** The
+gallery row was keyed on `(product, asset)`, so a re-encoded file — a different asset — was an
+insert: two rows at sort order −2 both claiming to be the card, the superseded photograph still in the
+gallery, and its usage row keeping the delete guard shut for ever. Two drops would fight over the card
+and the gallery would grow on every run. **A slot is `(product, role, sort order)` now**, so the same
+slot takes the new picture and the old one leaves. Verified on the real data: one row before and after,
+the pointer moved, and the superseded asset left with **0** product usages.
+
+**And the other half of that defect was the opposite mistake.** The card pointer was written
+unconditionally, so an import reverted an admin's own choice every time it ran. It cannot be both — the
+database cannot tell a corrected photograph from somebody's deliberate upload — so the operator says
+which: `--replace`. A slot holding one of the demo placeholders is filled either way, because **a
+placeholder was never a choice**; anything else is reported under *NOT APPLIED* and left alone. That
+distinction is what makes "never overwrite a person" implementable on a seeded database at all.
+
+**Major: the same `aspect-ratio` + `max-height` defect was still live in a third place.** The
+department tiles' media frame — `aspect-ratio: 4/5; max-height: 420px`, no width — so the transferred
+max-height became a 336 px max-width and the photograph stopped short of its own tile: 336 of 343 at
+375 px, 336 of 358 at 390 px, worse between 422 and 767. Invisible until this import put photographs in
+those tiles. The tester swept the codebase: exactly three rules set both properties, and the e2e test
+now names all three and **asserts the count**, so a fourth added without a width fails there rather than
+on a screen. Proven red on the tile at 375 and 390.
+
+**Major: `MediaUsages` named the section, not the item.** Doc 08 §3.3 enumerates `HomeSectionItem`, and
+a section id names "the homepage" for thirteen pictures — the "used in…" panel could not tell an
+operator which tile to go and change, and `LoadOwnerLabelsAsync` had no case for it so it showed
+`HomeSection 4` with no label. Now the item id, with a label that falls back from the tile's own heading
+to its department's name.
+
+**The two asset problems are decided, not coded around.** The hero video and the activewear flat-lay
+are held back **by the SHA-256 of the delivered bytes** (`ClientAssetHolds`), with the reason printed in
+the report. Keyed on the bytes because a judgement about a particular photograph has to expire by
+itself: a hold keyed on the section type, or an operator flag somebody has to remember, outlives the
+problem and quietly keeps a finished block off the front page — the same class of mistake in the other
+direction. Both files are still imported and still attached to their items, so the client can see them
+in ADM-17; what is withheld is only the automatic switch-on. The list is injected rather than baked in,
+so the rule is testable with a checksum a test controls — the shipped entries are keyed on two real
+files no test can conjure.
+
+**Minors:** a case-variant filename (`Chino-Shorts-1.jpg`) killed the whole run under a message saying
+the product did not exist, and on Windows that is the same file — matching ignores case now and always
+resolves to the catalogue's spelling; the logo files' lack of an alpha channel is said in the report
+rather than left for a design review (`ImageTransparency`, a header read, no decode); the CLI takes
+Ctrl+C and rolls back; and the README says that re-running repairs **rows, not files**, so a lost media
+volume needs a restore rather than another import.
+
+**The guard the tester asked for:** no two product slugs may differ only by a prefix short enough for
+the repair to reach across. It is checked against the **real catalogue** with the predicate the repair
+itself uses, so a product the client adds later cannot quietly make a truncated filename ambiguous.
+
+**Numbers:** backend **730 unit** (was 721) **+ 361 integration** (355), 0 skipped; frontend 19 / 451 /
+131 unchanged; **Playwright 194**. Lint clean, Release build clean with 0 warnings, no new dependency.
+
+**Checked by hand again, on the real assets:** 90 imported, 0 refused, 0 unmappable; a second run 0
+imported / 90 already present and 960 files before and after; a corrected photograph reported under *NOT
+APPLIED* and then applied with `--replace`, leaving one row in the slot and the superseded asset with no
+usages; hero and activewear **off**, campaign, trending and social **on**; department tile photographs
+filling their tiles at 375 and 390; 0 broken images, 0 console errors, 0 4xx/5xx over five widths, and
+no horizontal scroll at 320 / 375 / 390 / 768 / 1920.
+
+**Next:** back to the tester.
 
 ### 2026-10-01 (3) — W1-13: the client's pictures are in, and the logo is not a logo yet
 
