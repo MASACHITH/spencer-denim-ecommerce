@@ -19,6 +19,7 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 - **Next:** **W2-01 (homepage, HOME-01..10) PASSED the tester** and is pushed to `origin feature/W2-01-homepage` awaiting a PR: content schema, seeder, read-only content API, newsletter signup endpoint and the page itself. ADM-17's admin screens are **not** in it. Issue #37 (the homepage cache rounds schedule boundaries to its five-minute TTL) is filed, not built.
 - **Next:** **W1-02 (catalogue foundation — schema + demo seeder + the read-only storefront catalogue API) is in the developer↔tester loop** on `feature/W1-02-catalogue-foundation` (worktree `worktrees/sd-catalog`): tester round 1 failed it on 3 major + 5 minor, round 2 on 2 major + 4 minor, all fixed; not pushed, not merged, not Done. Its ADM-11 admin screens are a separate task, **W1-12 (TODO)** — W1-02 no longer means "categories (create/edit/reorder)". W1-08 (Users & Roles CRUD), W1-09 (audit log viewer), W1-10 (2FA enrollment), W1-11 (route guard, SecurityStamp revalidation, forwarded-headers regression test) are the W1-01 follow-ups, tracked but not started; the user/architect should decide priority between those and W1-03 once W1-02 passes.
 - **Client progress page:** `client-progress/` is tracked in this repository (moved 2026-09-22, W0-18) and publishes from whichever machine holds the DPAPI-encrypted FTP credential — the `SCIENTER\sachithi` PC, where it was published on 23 and 24 Sep. An earlier note here said it could not be done from "this machine"; that was written from the second machine and is not a property of the repository.
+- **Next:** **W1-13 (the client's real photographs, video and logo) is with the tester** on `feature/W1-13-client-assets` (worktree `worktrees/sd-assets`): a repeatable import verb on the API, the five media-dependent homepage sections switched on, and a HOME-01/05/06 full-bleed fix. Not pushed, not merged, not Done. **The logo is imported but not wired in** — the three delivered files are opaque JPEGs named `.png`, the "light" wordmark is the same mockup as the dark one, and the mark reads COLOMBO WARDROBE rather than Spencer Denim. That needs a decision from the owner and flat artwork, not code.
 - **Open assumptions:** A1 (Trending Categories / Best Sellers homepage blocks stay removed per signed proposal), A2 (video MP4 ≤ 50 MB, no server conversion).
 
 ---
@@ -43,6 +44,102 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 ---
 
 ## Session log
+
+### 2026-10-01 (3) — W1-13: the client's pictures are in, and the logo is not a logo yet
+
+The grey boxes are gone. `feature/W1-13-client-assets` (worktree `worktrees/sd-assets`) imports the
+owner's delivered photographs, video and logo and switches on the five homepage sections W2-01 seeded
+off. Developer pass only: not pushed, not merged, **not Done** — it goes to the tester next, and
+`client-progress/progress-data.js` is untouched until it passes.
+
+**It is a verb on the API, not a seeder and not a tool project.**
+`import-client-assets --from <dir> [--dry-run]` reuses the whole composition root — the configured
+volumes with their startup validation, the real `IMediaService`, the database — and never starts
+Kestrel. A seeding flag would have tied the client's own photographs to `Seed__*`, which means "the
+shape a development database starts in"; a tool project would have rebuilt the media wiring and been
+free to drift from the one the API runs on. **Every byte goes through `IMediaService`**: nothing in
+the importer composes a `MediaAssets` row or writes a file, so each photograph gets the same
+signature check, EXIF stripping, rendition set, checksum deduplication and usage tracking as an admin
+upload.
+
+**The decision worth keeping: the naming contract is a pure function, in the Application layer,
+separate from the thing that reads the disk.** `ClientAssetNaming` takes a filename and the
+catalogue's slug list and answers with a product and a role. That rule — *which garment is this a
+photograph of* — is the one thing here that can go wrong silently and expensively, so it is tested
+exhaustively and without a database (31 cases). Three kinds of damage in the delivered batch are
+undone: a doubled extension (`...-1.jpg.jpg`), the folder name run into the slug, and a character
+lost off the front. **Every repair is bounded by the real slug list, so none of them can invent a
+product**; a near miss with two answers is refused rather than guessed; and anything unplaceable
+stops the whole run before a byte is stored, because half an import is the worst outcome available.
+
+**Three filenames had to be inferred, and that is the whole of the "several products have only one
+image" problem.** `ourt-canvas-sneakers-2` → `court-canvas-sneakers`, `productsleather-look-belt-1` →
+`leather-look-belt`, `productspique-polo-shirt-2` → `pique-polo-shirt`. All three confirmed against
+the pictures themselves. Resolved, coverage is **35 of 35 adult products with both photographs** and
+**0 of 10 kids**, which keep their placeholders — no adult photograph is put in front of a children's
+garment to fill a gap.
+
+**90 files imported, 0 refused, 0 unmappable, and a second run imports nothing** (960 files on the
+volume before and after; 0 imported, 90 already present).
+
+**The video: `hero.mp4` is H.264 and the pipeline took it.** `avcC` says profile 0x64 (High), level
+0x1e (3.0); the row is `video/mp4`, 360 × 640, 10.01 s, 1,140,963 bytes, `Ready`. **But it is
+portrait**, and the hero frame is 16:9 from 768 px with `object-fit: cover` — so it is cropped to
+about a sixth of its height and upscaled roughly 5×. It plays; it is soft. The owner should re-export
+at 1920 × 1080. The second `.mp4` in that folder is reported as "not in the contract" rather than
+quietly skipped.
+
+**The logo is imported and deliberately not wired in, and the reason is the files.** All three are
+**JPEGs** (2048 × 2048, `mode=RGB`, no alpha) carrying a `.png` name — the pipeline stored them as
+`image/jpeg`, which is the proof, since it reads the signature and ignores the name.
+`wordmark-dark.png` and `wordmark-light.png` are the *same mockup*: the mark embossed on a
+photographic concrete wall with a drop shadow, mean luminance 165.4 against 167.3, so there is no
+white version for a dark background. `monogram.png` sits on a cream paper texture, so a favicon cut
+from it is a cream square. And the mark reads **COLOMBO WARDROBE**, where this codebase and the
+signed proposal say Spencer Denim. Per the brief, the work stopped at the import rather than
+half-rebuilding the header. **What is needed is a decision and flat SVG/transparent-PNG artwork, not
+code.**
+
+**The social gallery is wired as ordinary admin content.** Six `HomeSectionItems.LinkUrl` rows on
+`https://example.invalid/PLACEHOLDER/<network>` — RFC 2606 reserves `.invalid` so it can never be
+registered or resolve — and each tile's accessible name reads "<Network> — PLACEHOLDER LINK, the real
+account URL has not been supplied yet (opens in a new tab)". A plausible `instagram.com/...` would
+have tested just as well and could have shipped by accident. The existing external-link rules hold:
+`target="_blank"`, `rel="noopener noreferrer"`, and the new-tab warning in the accessible name, all
+confirmed in the browser.
+
+**A defect nothing could see until these sections had something to show: the hero and both banners
+stopped short of the right-hand edge at 1920** — the hero 1564 px of 1898, each banner 1680 px,
+leaving a white band down the side of the front page. CSS transfers a definite `max-height` through
+`aspect-ratio` into a **max-width** on an auto-width box: 880 × 16/9 = 1564.44 and 720 × 21/9 = 1680,
+exactly the measurements. Fixed with an explicit `width: 100%`. **The lesson is the project's own, in
+a new place:** the five sections were seeded off, so no page had ever drawn one of these blocks, and
+every hero test asked whether the element existed rather than how wide it was. The new test measures
+the rendered width against the width available at all eight breakpoints and is proven red on the old
+CSS at 1920 (expected 1920, received 1564).
+
+**Checked by hand, in a browser** — API + built SSR storefront behind this session's own reverse
+proxy, private scratch directory, per-session ports, a throwaway database, all torn down: the hero
+video plays muted on the desktop and is replaced by its poster at 320 px and under
+`prefers-reduced-motion` (no pause control either); the campaign and activewear banners, the four
+trending tiles and their filtered listings, and the six-tile social wall all render; real photographs
+on the listing and the product page, with the hover image proven to be the same garment's second
+frame (`relaxed-linen-blend-shirt-1` → `-2`); the kids listing still shows ten labelled placeholders.
+**0 broken images, 0 console errors, 0 failed requests over nine pages, no horizontal scroll at 320 /
+768 / 1920, and 0 original files fetched** — the browser takes `card.webp`/`thumb.webp`.
+
+**One small thing not fixed, and named rather than worked around:** the hero's still inherits the
+poster's alt text, which `MediaService` prefixes with "Poster image: ". That is a W1-04 convention
+with its own tests, not an import bug, so it is reported rather than special-cased here.
+
+**Numbers:** backend **721 unit** (was 690) **+ 355 integration** (344), 0 skipped; frontend 19 / 451
+/ 131 (unchanged); **Playwright 194** (186), two consecutive clean runs. Lint clean, Release build
+clean with 0 warnings, no new dependency. The integration suite is about a minute longer: the import
+tests build a database of their own rather than mutating the assembly's, because the import rewrites
+card images and switches sections on — the exact state a dozen catalogue and content tests assert
+against.
+
+**Next:** the tester.
 
 ### 2026-09-24 (6) — W2-01 PASSED, and three things found on the way out
 

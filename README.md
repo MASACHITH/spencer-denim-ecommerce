@@ -141,6 +141,35 @@ A seeded database holds 3 departments, 29 categories, 4 age groups, 19 attribute
 149 media assets and 135 related-product links. Prices are LKR placeholders until the client sends
 the real price list; images are placeholder storage keys (the upload pipeline is W1-04).
 
+### 2b. The client's photographs, video and logo
+
+The delivered assets are imported by a verb on the API, which never starts Kestrel and so binds no
+port. It reuses the API's own composition root — the configured media volumes and their startup
+validation, the real `IMediaService`, the database — and **every byte goes through the media
+pipeline**, so each file gets the same signature check, EXIF stripping, WebP rendition set, checksum
+deduplication and usage tracking as an admin upload.
+
+```powershell
+# What would happen, without storing anything: resolves every filename against the real catalogue
+dotnet run --project src/backend/SpencerDenim.Api --no-launch-profile -- `
+  import-client-assets --from <path-to-the-drop> --dry-run
+
+# Do it
+dotnet run --project src/backend/SpencerDenim.Api --no-launch-profile -- `
+  import-client-assets --from <path-to-the-drop>
+```
+
+The drop holds `logo/`, `products/`, `departments/`, `home/` and `social/`, named as the client
+checklist describes (`<product-slug>-1.jpg` is the card image and `-2.jpg` the hover image;
+`women|men|kids.jpg`; `hero.mp4` + `hero-poster.jpg`, `campaign.jpg`, `activewear.jpg`,
+`trending-N.jpg`; `social-N.jpg`).
+
+It is **safe to run again** — the second run stores nothing and writes no row — and it **fails
+loudly**: a photograph in `products/` that names no product stops the whole run before a byte is
+stored, and every filename the importer had to repair is printed. Exit code 0 good, 1 bad usage,
+2 the import failed. The five media-dependent homepage sections are switched on only once they have
+media to show.
+
 ### 3. Run the API
 
 ```powershell
