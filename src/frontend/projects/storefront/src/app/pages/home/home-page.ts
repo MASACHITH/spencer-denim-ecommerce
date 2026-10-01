@@ -12,6 +12,7 @@ import { NewsletterSignup } from './sections/newsletter-signup';
 import { ProductRow } from './sections/product-row';
 import { SocialGallery } from './sections/social-gallery';
 import { CanonicalLink } from '../../core/platform/canonical-link';
+import { BRAND } from '@spencer-denim/shared';
 
 /**
  * The storefront homepage (HOME-01..10).
@@ -45,7 +46,7 @@ import { CanonicalLink } from '../../core/platform/canonical-link';
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <h1 class="sr-only">Spencer Denim</h1>
+    <h1 class="sr-only">{{ brand }}</h1>
 
     @for (section of sections(); track section.id) {
       @switch (section.type) {
@@ -89,7 +90,7 @@ import { CanonicalLink } from '../../core/platform/canonical-link';
          own, so this block has something to offer even when both feeds are down. -->
     @if (store.isEmpty()) {
       <section class="fallback container" aria-labelledby="home-fallback-title">
-        <h2 class="fallback__title" id="home-fallback-title">Shop Spencer Denim</h2>
+        <h2 class="fallback__title" id="home-fallback-title">Shop {{ brand }}</h2>
 
         @if (store.hasError()) {
           <p class="fallback__note">
@@ -160,6 +161,9 @@ import { CanonicalLink } from '../../core/platform/canonical-link';
   `,
 })
 export class HomePage {
+  /** The shop's name, from the one place it is written down (@spencer-denim/shared). */
+  protected readonly brand = BRAND.name;
+
   protected readonly store = inject(HomeContentStore);
   private readonly navigation = inject(NavigationService);
   private readonly canonical = inject(CanonicalLink);
@@ -177,11 +181,11 @@ export class HomePage {
 
     effect(() => {
       untracked(() => {
-        this.title.setTitle('Spencer Denim | Clothing for women, men and kids');
+        this.title.setTitle(`${BRAND.name} | Clothing for women, men and kids`);
         this.meta.updateTag({
           name: 'description',
           content:
-            'Shop denim and everyday clothing for women, men and kids at Spencer Denim, with delivery across Sri Lanka.',
+            `Shop denim and everyday clothing for women, men and kids at ${BRAND.name}, with delivery across Sri Lanka.`,
         });
         this.canonical.set('/');
       });

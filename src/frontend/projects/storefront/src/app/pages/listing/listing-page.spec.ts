@@ -554,7 +554,7 @@ describe('ListingPage', () => {
 
       expect(query('h1')?.textContent?.trim()).toBe('New Arrivals');
       expect(harness.fixture.nativeElement.ownerDocument.title).toBe(
-        'New Arrivals | Spencer Denim',
+        'New Arrivals | Colombo Wardrobe',
       );
     });
 

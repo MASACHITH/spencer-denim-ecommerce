@@ -235,7 +235,7 @@ describe('HomePage', () => {
 
       const h1s = queryAll('h1');
       expect(h1s).toHaveLength(1);
-      expect(h1s[0].textContent?.trim()).toBe('Spencer Denim');
+      expect(h1s[0].textContent?.trim()).toBe('Colombo Wardrobe');
     });
   });
 
@@ -273,7 +273,7 @@ describe('HomePage', () => {
             item({ id: 21, departmentSlug: 'women', departmentName: 'Women', linkUrl: '/women' }),
             item({ id: 24, title: 'Nowhere' }),
             item({ id: 25, title: 'Unsafe', linkUrl: 'javascript:alert(1)' }),
-            item({ id: 26, title: 'Absolute', linkUrl: 'https://spencerdenim.lk/men' }),
+            item({ id: 26, title: 'Absolute', linkUrl: 'https://colombowardrobecompany.com/men' }),
           ],
         }),
       ]);
@@ -297,8 +297,8 @@ describe('HomePage', () => {
         section(type, {
           title: 'Would be a bare heading',
           items: [
-            item({ id: 31, title: 'Women', linkUrl: 'https://spencerdenim.lk/women' }),
-            item({ id: 32, title: 'Men', linkUrl: 'https://spencerdenim.lk/men' }),
+            item({ id: 31, title: 'Women', linkUrl: 'https://colombowardrobecompany.com/women' }),
+            item({ id: 32, title: 'Men', linkUrl: 'https://colombowardrobecompany.com/men' }),
           ],
         }),
         BENEFITS,
@@ -455,8 +455,8 @@ describe('HomePage', () => {
             item({
               id: 81,
               imageUrl: '/media/social-1.webp',
-              linkUrl: 'https://instagram.com/spencerdenim',
-              title: 'Spencer Denim on Instagram',
+              linkUrl: 'https://instagram.com/colombowardrobe',
+              title: 'Colombo Wardrobe on Instagram',
             }),
           ],
         }),
@@ -464,7 +464,7 @@ describe('HomePage', () => {
 
       const link = queryAll<HTMLAnchorElement>('[data-testid="social-link"]')[0];
 
-      expect(link.getAttribute('href')).toBe('https://instagram.com/spencerdenim');
+      expect(link.getAttribute('href')).toBe('https://instagram.com/colombowardrobe');
       expect(link.getAttribute('target')).toBe('_blank');
       expect(link.getAttribute('rel')).toBe('noopener noreferrer');
       expect(link.textContent).toContain('opens in a new tab');
@@ -512,7 +512,7 @@ describe('HomePage', () => {
     it('still renders the shell heading and a way into the shop', async () => {
       await open(null, { status: 500, statusText: 'Server Error' });
 
-      expect(root().querySelector('h1')?.textContent?.trim()).toBe('Spencer Denim');
+      expect(root().querySelector('h1')?.textContent?.trim()).toBe('Colombo Wardrobe');
       expect(text()).toContain('We could not load the rest of the home page');
       expect(text()).not.toContain('500');
       expect(text()).not.toContain('Server Error');
@@ -559,7 +559,7 @@ describe('HomePage', () => {
     it('does not apologise when the client has simply switched every section off', async () => {
       await open([]);
 
-      expect(text()).toContain('Shop Spencer Denim');
+      expect(text()).toContain('Shop Colombo Wardrobe');
       expect(text()).not.toContain('We could not load');
       expect(queryAll('.fallback__links a')).toHaveLength(5);
       expect(root().querySelector('.fallback button')).toBeNull();

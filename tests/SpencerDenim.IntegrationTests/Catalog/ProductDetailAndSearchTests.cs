@@ -1,4 +1,5 @@
 using System.Net;
+using SpencerDenim.Domain.Branding;
 using SpencerDenim.Domain.Catalog;
 using SpencerDenim.Domain.Inventory;
 using SpencerDenim.IntegrationTests.Infrastructure;
@@ -61,7 +62,7 @@ public sealed class ProductDetailAndSearchTests(SqlServerDatabaseFixture sqlServ
         Assert.StartsWith("<p>", product.Description, StringComparison.Ordinal);
 
         // GLB-11.
-        Assert.Equal("Relaxed Linen Blend Shirt | Spencer Denim", product.Seo.Title);
+        Assert.Equal(StoreBrand.PageTitle("Relaxed Linen Blend Shirt"), product.Seo.Title);
         Assert.False(string.IsNullOrWhiteSpace(product.Seo.Description));
 
         // PDP-06.

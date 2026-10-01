@@ -6,6 +6,7 @@ import {
 } from '@angular/ssr/node';
 import express from 'express';
 import { join } from 'node:path';
+import { BRAND } from '@spencer-denim/shared';
 
 const browserDistFolder = join(import.meta.dirname, '../browser');
 
@@ -122,7 +123,7 @@ if (isMainModule(import.meta.url) || process.env['pm_id']) {
       throw error;
     }
 
-    console.log(`Spencer Denim storefront (SSR) listening on http://localhost:${port}`);
+    console.log(`${BRAND.name} storefront (SSR) listening on http://localhost:${port}`);
   });
 
   // Stop cleanly on SIGTERM/SIGINT so in-flight requests finish.

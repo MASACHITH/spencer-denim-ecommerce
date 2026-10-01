@@ -1,3 +1,5 @@
+using SpencerDenim.Domain.Branding;
+
 namespace SpencerDenim.Infrastructure.Identity;
 
 /// <summary>
@@ -39,7 +41,7 @@ public sealed class AdminSecurityOptions
     /// W1-10: the issuer name authenticator apps show next to the account (the <c>otpauth://</c> URI's label and
     /// <c>issuer</c> parameter). Staff-facing, so the store's own name rather than the vendor's.
     /// </summary>
-    public string TwoFactorIssuer { get; set; } = "Spencer Denim Admin";
+    public string TwoFactorIssuer { get; set; } = StoreBrand.AdminName;
 
     /// <summary>W1-10: how many single-use recovery codes are issued at enrolment and on each regeneration.</summary>
     public int TwoFactorRecoveryCodeCount { get; set; } = 10;

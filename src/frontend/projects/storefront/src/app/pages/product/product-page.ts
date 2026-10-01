@@ -12,7 +12,7 @@ import {
 import { toSignal } from '@angular/core/rxjs-interop';
 import { Meta, Title } from '@angular/platform-browser';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
-import { Icon } from '@spencer-denim/shared';
+import { BRAND, Icon, brandPageTitle } from '@spencer-denim/shared';
 
 import { ProductDetails } from './product-details';
 import { ProductGallery } from './product-gallery';
@@ -851,7 +851,7 @@ export class ProductPage {
           return;
         }
 
-        this.title.setTitle('Product unavailable | Spencer Denim');
+        this.title.setTitle(brandPageTitle('Product unavailable'));
         this.meta.updateTag({ name: 'robots', content: 'noindex' });
 
         if (this.response) {
@@ -994,11 +994,11 @@ export class ProductPage {
 /**
  * The document title. `seo.title` is whatever an admin wrote, falling back to the product name in
  * the API, so the brand is appended only when it is not already there — the seeded departments
- * showed what happens otherwise ("Women's clothing | Spencer Denim | Spencer Denim").
+ * showed what happens otherwise: their SEO titles carry the brand, and appending it said it twice.
  */
 function documentTitle(product: ProductDetailDto): string {
   const title = product.seo.title.trim() || product.name;
-  return title.includes('Spencer Denim') ? title : `${title} | Spencer Denim`;
+  return title.includes(BRAND.name) ? title : brandPageTitle(title);
 }
 
 /**
@@ -1012,7 +1012,7 @@ function metaDescription(product: ProductDetailDto): string {
     product.shortDescription?.trim() ||
     stripTags(product.description ?? '');
 
-  return text ? text.slice(0, 300) : `${product.name} at Spencer Denim.`;
+  return text ? text.slice(0, 300) : `${product.name} at ${BRAND.name}.`;
 }
 
 function stripTags(html: string): string {

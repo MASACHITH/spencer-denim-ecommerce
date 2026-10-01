@@ -167,11 +167,11 @@ describe('hasContent', () => {
    * The `https://` case is the one that bit: both tile components render with `routerLink` and
    * drop anything that is not a path on this site, so an absolute URL passed the gate and then
    * rendered nothing — a bare heading over an empty list. Pasting a full
-   * `https://spencerdenim.lk/women` into a department tile is an ordinary ADM-17 mistake.
+   * `https://colombowardrobecompany.com/women` into a department tile is an ordinary ADM-17 mistake.
    */
   it.each([
     ['a javascript: URL', 'javascript:alert(1)'],
-    ['an absolute URL to this very site', 'https://spencerdenim.lk/women'],
+    ['an absolute URL to this very site', 'https://colombowardrobecompany.com/women'],
     ['an absolute URL somewhere else', 'https://example.com/women'],
     ['a protocol-relative URL', '//evil.example/women'],
     ['a relative path with no leading slash', 'women'],
@@ -311,9 +311,9 @@ describe('toLink', () => {
   });
 
   it('allows an absolute http(s) address, which is what a social profile is', () => {
-    expect(toLink('https://instagram.com/spencerdenim')).toEqual({
+    expect(toLink('https://instagram.com/colombowardrobe')).toEqual({
       kind: 'external',
-      href: 'https://instagram.com/spencerdenim',
+      href: 'https://instagram.com/colombowardrobe',
     });
     expect(toLink('http://example.com')).toEqual({ kind: 'external', href: 'http://example.com' });
   });

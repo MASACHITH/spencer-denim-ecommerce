@@ -86,7 +86,7 @@ function isUsable(section: HomeSectionDto | null | undefined): section is HomeSe
  * **Internal only.** A tile is rendered with `routerLink`, and both tile components drop anything
  * that is not a path on this site — so counting an external link as content made the has-content
  * gate and the rendering disagree: the section passed the gate and then drew an empty list under
- * its heading. Pasting a full `https://spencerdenim.lk/women` into a department tile is an
+ * its heading. Pasting a full `https://colombowardrobecompany.com/women` into a department tile is an
  * ordinary thing to do in ADM-17, and it took the whole block down to a bare heading over a gap.
  *
  * The social gallery (HOME-08) is the one block whose links may leave the site, and it does not

@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using SpencerDenim.Domain.Branding;
 using SpencerDenim.Domain.Catalog;
 
 namespace SpencerDenim.Infrastructure.Persistence.Seeding;
@@ -277,7 +278,7 @@ public sealed class CatalogReferenceDataSeeder(AppDbContext dbContext)
                 SizeGuideId = seed.SizeGuideName is { } guideName && sizeGuides.TryGetValue(guideName, out var guideId)
                     ? guideId
                     : null,
-                SeoTitle = $"{seed.Name} | Spencer Denim",
+                SeoTitle = StoreBrand.PageTitle(seed.Name),
                 SeoDescription = seed.Description,
                 Path = string.Empty,
             };

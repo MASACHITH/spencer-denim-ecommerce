@@ -8,7 +8,7 @@ import { TwoFactorApi } from '../../core/two-factor/two-factor-api';
 import { TwoFactorSetupPage } from './two-factor-setup-page';
 
 const uri =
-  'otpauth://totp/Spencer%20Denim%20Admin:admin%40example.com?secret=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP&issuer=Spencer%20Denim%20Admin&digits=6';
+  'otpauth://totp/Colombo%20Wardrobe%20Admin:admin%40example.com?secret=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP&issuer=Colombo%20Wardrobe%20Admin&digits=6';
 
 describe('TwoFactorSetupPage', () => {
   let controller: HttpTestingController;

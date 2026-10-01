@@ -8,7 +8,9 @@
  */
 const progressData = {
   project: {
-    title: "Spencer Denim — Website Build Progress",
+    title: "Colombo Wardrobe — Website Build Progress",
+    // The site is Colombo Wardrobe; the company that commissioned it is unchanged. This field
+    // renders as "Prepared by TU2SL for ...", which is about the company, not the shop.
     client: "Spencer Denim Industries Pvt Ltd",
     agency: "TU2SL",
     startDate: "2026-09-15",

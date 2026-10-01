@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Spencer Denim global base / reset. Load after tokens.css.
+   Global base / reset. Load after tokens.css.
    ========================================================================== */
 
 *, *::before, *::after { box-sizing: border-box; }

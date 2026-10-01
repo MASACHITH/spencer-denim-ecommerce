@@ -126,7 +126,7 @@ function product(overrides: Partial<ProductDetailDto> = {}): ProductDetailDto {
     badge: 'Sale',
     stockStatus: 'InStock',
     isInStock: true,
-    seo: { title: 'High-Rise Straight Jean | Spencer Denim', description: 'Shop it.' },
+    seo: { title: 'High-Rise Straight Jean | Colombo Wardrobe', description: 'Shop it.' },
     sizeGuide: { id: 1, name: "Women's apparel" },
     newUntilUtc: null,
     images: [

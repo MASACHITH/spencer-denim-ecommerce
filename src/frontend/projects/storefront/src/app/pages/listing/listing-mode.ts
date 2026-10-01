@@ -1,4 +1,5 @@
 import { ListingState } from '../../core/catalog/listing-state';
+import { BRAND, brandPageTitle } from '@spencer-denim/shared';
 
 /**
  * A listing whose filter is the page itself.
@@ -26,9 +27,9 @@ export const LISTING_MODES: Readonly<Record<ListingMode, ModeDefinition>> = {
     path: '/new-arrivals',
     heading: 'New Arrivals',
     description: 'The latest pieces across Women, Men and Kids.',
-    title: 'New Arrivals | Spencer Denim',
+    title: brandPageTitle('New Arrivals'),
     metaDescription:
-      'The newest Spencer Denim pieces across Women, Men and Kids, updated as they land.',
+      `The newest ${BRAND.name} pieces across Women, Men and Kids, updated as they land.`,
     fixedFilter: 'newArrivals',
     apply: (state) => ({ ...state, department: null, category: null, newArrivals: true }),
   },
@@ -36,9 +37,9 @@ export const LISTING_MODES: Readonly<Record<ListingMode, ModeDefinition>> = {
     path: '/sale',
     heading: 'Sale',
     description: 'Reduced pieces across Women, Men and Kids, while stocks last.',
-    title: 'Sale | Spencer Denim',
+    title: brandPageTitle('Sale'),
     metaDescription:
-      'Reduced Spencer Denim pieces across Women, Men and Kids. Shop the sale while stocks last.',
+      `Reduced ${BRAND.name} pieces across Women, Men and Kids. Shop the sale while stocks last.`,
     fixedFilter: 'discount',
     apply: (state) => ({ ...state, department: null, category: null, onSale: true }),
   },

@@ -454,7 +454,7 @@ function productDetail(index, slug) {
     // that says InStock over a grid of zeroes is a payload the API cannot produce.
     stockStatus: inStock === 0 ? 'OutOfStock' : lowStock ? 'LowStock' : 'InStock',
     isInStock: inStock > 0,
-    seo: { title: card.name, description: `${card.name} at Spencer Denim.` },
+    seo: { title: card.name, description: `${card.name} at Colombo Wardrobe.` },
     // The real API sends null for 6 of its 45 products — a category with no guide set. It also
     // sends no measurements with the ones it does fill in, which is issue #32 and why the
     // storefront shows no size-guide trigger at all today.
@@ -687,9 +687,9 @@ const SECTIONS = [
   contentSection(8, 'SocialGallery', {
     title: 'Follow us',
     items: [
-      contentItem(81, { imageUrl: PIXEL, imageAltText: 'A denim jacket', linkUrl: 'https://instagram.com/example', title: 'Spencer Denim on Instagram', sortOrder: 1 }),
+      contentItem(81, { imageUrl: PIXEL, imageAltText: 'A denim jacket', linkUrl: 'https://instagram.com/example', title: 'Colombo Wardrobe on Instagram', sortOrder: 1 }),
       contentItem(82, { imageUrl: PIXEL, imageAltText: 'A summer dress', sortOrder: 2 }),
-      contentItem(83, { imageUrl: PIXEL, imageAltText: 'A pair of jeans', linkUrl: 'https://facebook.com/example', title: 'Spencer Denim on Facebook', sortOrder: 3 }),
+      contentItem(83, { imageUrl: PIXEL, imageAltText: 'A pair of jeans', linkUrl: 'https://facebook.com/example', title: 'Colombo Wardrobe on Facebook', sortOrder: 3 }),
     ],
   }),
   contentSection(9, 'Benefits', {

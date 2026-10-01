@@ -95,7 +95,7 @@ test.describe('server-side rendering (GLB-11)', () => {
   test('the title and the meta description describe the category', async ({ request }) => {
     const html = await (await request.get(LISTING)).text();
 
-    expect(html).toContain('<title>Jeans | Women | Spencer Denim</title>');
+    expect(html).toContain('<title>Jeans | Women | Colombo Wardrobe</title>');
     expect(html).toContain('Denim in high-rise, straight and wide-leg cuts.');
   });
 
@@ -256,8 +256,8 @@ test.describe('a catalogue with no active departments', () => {
 
 test.describe('New Arrivals and Sale (DEPT-02, DEPT-03)', () => {
   for (const entry of [
-    { path: '/new-arrivals', heading: 'New Arrivals', title: 'New Arrivals | Spencer Denim' },
-    { path: '/sale', heading: 'Sale', title: 'Sale | Spencer Denim' },
+    { path: '/new-arrivals', heading: 'New Arrivals', title: 'New Arrivals | Colombo Wardrobe' },
+    { path: '/sale', heading: 'Sale', title: 'Sale | Colombo Wardrobe' },
   ]) {
     test(`${entry.path} is a listing, not a missing page`, async ({ page, request }) => {
       const response = await request.get(entry.path);

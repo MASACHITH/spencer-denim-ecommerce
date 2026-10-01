@@ -24,8 +24,11 @@ import {
   template: `
     <section class="login">
       <form class="login__card" (ngSubmit)="submit()" novalidate>
-        <h1 class="login__title">Spencer Denim Admin</h1>
-        <p class="login__lead">Sign in to manage the store.</p>
+        <!-- Not the application name: the header bar directly above this card already carries it, and it
+             wrapped to two lines inside the card at all eight breakpoints. A heading that says what the
+             page is for beats one that repeats the line above it. -->
+        <h1 class="login__title">Sign in</h1>
+        <p class="login__lead">Manage the store.</p>
 
         <label class="login__field">
           <span class="login__label">Email</span>

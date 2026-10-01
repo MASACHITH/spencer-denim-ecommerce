@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using SpencerDenim.Application.Abstractions.Time;
 using SpencerDenim.Application.Catalog;
+using SpencerDenim.Domain.Branding;
 using SpencerDenim.Domain.Catalog;
 using SpencerDenim.Domain.Inventory;
 using SpencerDenim.Domain.Media;
@@ -99,7 +100,7 @@ public sealed class DemoCatalogueSeeder(AppDbContext dbContext, IClock clock, IO
             CardImageAssetId = assets[0].Id,
             HoverImageAssetId = assets[^1].Id,
             FirstPublishedAtUtc = firstPublished,
-            SeoTitle = $"{seed.Name} | Spencer Denim",
+            SeoTitle = StoreBrand.PageTitle(seed.Name),
             SeoDescription = seed.ShortDescription,
         };
 

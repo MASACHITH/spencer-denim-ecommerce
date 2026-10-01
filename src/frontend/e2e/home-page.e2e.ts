@@ -106,7 +106,7 @@ test.describe('the page the server sends (HOME-01..10)', () => {
     await page.goto('/');
 
     await expect(page.locator('h1')).toHaveCount(1);
-    await expect(page.locator('h1')).toHaveText('Spencer Denim');
+    await expect(page.locator('h1')).toHaveText('Colombo Wardrobe');
   });
 
   /**
@@ -484,7 +484,7 @@ test.describe('when the content service is down', () => {
     const response = await page.goto('/');
     expect(response?.status()).toBe(200);
 
-    await expect(page.locator('h1')).toHaveText('Spencer Denim');
+    await expect(page.locator('h1')).toHaveText('Colombo Wardrobe');
     await expect(page.getByText('We could not load the rest of the home page')).toBeVisible();
 
     const body = (await page.locator('body').textContent()) ?? '';

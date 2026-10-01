@@ -1,4 +1,5 @@
--- Spencer Denim — database provisioning (doc 08 §1.4 / §10.1, decision N12).
+-- Database provisioning (doc 08 §1.4 / §10.1, decision N12). The database keeps the name
+-- SpencerDenim_Dev deliberately: it is an identifier in every connection string, not brand.
 --
 -- Creates the named database with the project's mandated collation. Run this ONCE per environment
 -- (local dev DB, staging, production) against the target SQL Server instance, BEFORE the first

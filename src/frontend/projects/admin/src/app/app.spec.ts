@@ -22,7 +22,7 @@ describe('Admin App', () => {
     fixture.detectChanges();
 
     const brand = (fixture.nativeElement as HTMLElement).querySelector('.admin-header__brand');
-    expect(brand?.textContent?.trim()).toBe('Spencer Denim Admin');
+    expect(brand?.textContent?.trim()).toBe('Colombo Wardrobe Admin');
   });
 
   it('dashboard shows the heading and a neutral message when the API is down', async () => {
@@ -35,7 +35,7 @@ describe('Admin App', () => {
     controller.expectOne(AdminAuthApi.whoAmIUrl).error(new ProgressEvent('error'));
     await navigation;
 
-    expect(harness.routeNativeElement?.querySelector('h1')?.textContent).toContain('Spencer Denim Admin');
+    expect(harness.routeNativeElement?.querySelector('h1')?.textContent).toContain('Colombo Wardrobe Admin');
 
     controller.expectOne(PingApi.url).error(new ProgressEvent('error'));
     await harness.fixture.whenStable();

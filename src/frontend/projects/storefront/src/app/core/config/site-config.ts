@@ -1,5 +1,5 @@
 import { InjectionToken } from '@angular/core';
-import { IconName } from '@spencer-denim/shared';
+import { BRAND, IconName } from '@spencer-denim/shared';
 
 export interface SocialLink {
   readonly label: string;
@@ -31,21 +31,27 @@ export interface SiteConfig {
  *
  * TODO(ADM-19): these become admin settings so the client can change them without a deploy.
  * Every value here is a placeholder awaiting the client's real details (docs/04 §4 decision 8).
+ *
+ * The address block names the **shop**, not the registered company (W1-15, docs/02 §I2): this is the
+ * footer a shopper reads, and it is shown beside the shop's own email and phone number. The registered
+ * name, the registered address and the VAT number are a separate value the client has not supplied, and
+ * the first thing that will need them is invoices (W3, issue #53) — where they belong in admin settings
+ * the client fills in, captured per invoice, rather than in a constant here.
  */
 export const DEFAULT_SITE_CONFIG: SiteConfig = {
   whatsAppNumber: '94770000000',
-  whatsAppMessage: 'Hello Spencer Denim, I have a question about',
+  whatsAppMessage: `Hello ${BRAND.name}, I have a question about`,
   contact: {
-    email: 'hello@spencerdenim.lk',
+    email: `hello@${BRAND.domain}`,
     phone: '+94 77 000 0000',
     phoneHref: '+94770000000',
-    addressLines: ['Spencer Denim Industries (Pvt) Ltd', 'Colombo', 'Sri Lanka'],
+    addressLines: [BRAND.name, 'Colombo', 'Sri Lanka'],
     openingHours: ['Monday to Friday, 9am – 6pm', 'Saturday, 9am – 1pm'],
   },
   social: [
-    { label: 'Spencer Denim on Facebook', url: 'https://www.facebook.com/', icon: 'facebook' },
-    { label: 'Spencer Denim on Instagram', url: 'https://www.instagram.com/', icon: 'instagram' },
-    { label: 'Spencer Denim on TikTok', url: 'https://www.tiktok.com/', icon: 'tiktok' },
+    { label: `${BRAND.name} on Facebook`, url: 'https://www.facebook.com/', icon: 'facebook' },
+    { label: `${BRAND.name} on Instagram`, url: 'https://www.instagram.com/', icon: 'instagram' },
+    { label: `${BRAND.name} on TikTok`, url: 'https://www.tiktok.com/', icon: 'tiktok' },
   ],
 };
 

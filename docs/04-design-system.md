@@ -86,7 +86,7 @@ These answer the style tile's "For your review" list. They are **build defaults*
 
 | # | Question | Decision |
 |---|---|---|
-| 1 | Logo | Text wordmark "Spencer Denim" until the client sends the logo (SVG preferred). The logo is an admin setting (GLB-02), so swapping it needs no code change. **Client to supply.** |
+| 1 | Logo | Text wordmark "Colombo Wardrobe" until the client sends usable logo artwork (SVG or transparent PNG preferred — what was delivered in W1-13 is opaque JPEGs on a mockup background, so the wordmark still draws as text). The logo is an admin setting (GLB-02), so swapping it needs no code change. **Client to supply.** |
 | 2 | Typeface | **Inter throughout.** No separate headline typeface. |
 | 3 | Round elements | **Keep** round colour swatches and radio buttons; everything else square. |
 | 4 | Labels | **Uppercase**, letter-spaced small labels for buttons and navigation. |
