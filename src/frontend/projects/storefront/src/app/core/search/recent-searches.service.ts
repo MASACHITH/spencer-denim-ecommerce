@@ -93,20 +93,6 @@ export class RecentSearches {
     this.storage.write(RECENT_SEARCHES_KEY, JSON.stringify(next));
   }
 
-  /** Removes one term, for a shopper who wants a single search gone rather than all of them. */
-  forget(raw: string): void {
-    const folded = normaliseTerm(raw).toLowerCase();
-    const next = this.read().filter((entry) => entry.toLowerCase() !== folded);
-
-    this.terms.set(next);
-    if (next.length === 0) {
-      this.storage.remove(RECENT_SEARCHES_KEY);
-      return;
-    }
-
-    this.storage.write(RECENT_SEARCHES_KEY, JSON.stringify(next));
-  }
-
   /** Forgets everything, key and all. The shopper's own control over their history. */
   clear(): void {
     this.terms.set([]);

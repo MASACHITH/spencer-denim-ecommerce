@@ -175,25 +175,7 @@ describe('RecentSearches (SRCH-01)', () => {
     expect(storage.entries.has(RECENT_SEARCHES_KEY)).toBe(false);
   });
 
-  it('forgets one term and keeps the rest', () => {
-    const { service, storage } = setUp();
-    service.remember('linen');
-    service.remember('denim');
 
-    service.forget('LINEN');
-
-    expect(service.recent()).toEqual(['denim']);
-    expect(stored(storage)).toEqual(['denim']);
-  });
-
-  it('removes the key when forgetting the last term, so nothing is left to inspect', () => {
-    const { service, storage } = setUp();
-    service.remember('linen');
-
-    service.forget('linen');
-
-    expect(storage.entries.has(RECENT_SEARCHES_KEY)).toBe(false);
-  });
 
   // ------------------------------------------------------------------ lesson L1: junk in storage
 
