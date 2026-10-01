@@ -44,7 +44,7 @@ import {
   variantFor,
   videosFor,
 } from '../../core/catalog/product-variants';
-import { CanonicalLink } from '../../core/platform/canonical-link';
+import { PageMeta } from '../../core/platform/page-metadata';
 import { readableInk } from '../../core/platform/contrast';
 import { RobotsMeta } from '../../core/platform/robots-meta';
 import { serviceUnavailable } from '../../core/platform/service-unavailable';
@@ -582,7 +582,7 @@ export class ProductPage {
   private readonly router = inject(Router);
   private readonly title = inject(Title);
   private readonly meta = inject(Meta);
-  private readonly canonical = inject(CanonicalLink);
+  private readonly pageMeta = inject(PageMeta);
   private readonly robots = inject(RobotsMeta);
   private readonly wishlist = inject(LocalWishlist);
   private readonly recent = inject(RecentlyViewed);
@@ -828,11 +828,21 @@ export class ProductPage {
 
     effect(() => {
       const item = this.product();
+      const shareImage = item ? galleryFor(item, null)[0] : undefined;
       untracked(() => {
         if (item) {
-          this.title.setTitle(documentTitle(item));
-          this.meta.updateTag({ name: 'description', content: metaDescription(item) });
-          this.canonical.set(`/product/${item.slug}`);
+          this.pageMeta.set({
+            title: documentTitle(item),
+            description: metaDescription(item),
+            // The product, never the colourway: one page, not one per colour (see the class docblock).
+            path: `/product/${item.slug}`,
+            kind: 'product',
+            // The product's own first photograph, and `null` for the colourway on purpose: the
+            // canonical address above is the product rather than the colourway, so a card showing
+            // whichever colour happened to be selected would illustrate a different URL.
+            imageUrl: shareImage?.url ?? null,
+            imageAlt: shareImage?.altText ?? item.name,
+          });
           // A page that is fine must not inherit the noindex a 404 left behind on a client-side
           // navigation.
           this.robots.clear();
@@ -860,8 +870,8 @@ export class ProductPage {
       });
     });
 
-    // The next page owns its own canonical address, or has none.
-    inject(DestroyRef).onDestroy(() => this.canonical.clear());
+    // The next page owns its own canonical address and card, or has none.
+    inject(DestroyRef).onDestroy(() => this.pageMeta.clear());
   }
 
   protected retry(): void {

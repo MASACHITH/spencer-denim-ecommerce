@@ -1,21 +1,25 @@
-import { ApplicationConfig, mergeApplicationConfig } from '@angular/core';
+import { ApplicationConfig, REQUEST, inject, mergeApplicationConfig } from '@angular/core';
 import { provideServerRendering, withRoutes } from '@angular/ssr';
 import { API_BASE_URL } from '@spencer-denim/shared';
 
 import { appConfig } from './app.config';
 import { serverRoutes } from './app.routes.server';
-
-/** Default for `ng serve` with the API running under `dotnet watch`. */
-const DEFAULT_API_INTERNAL_URL = 'http://localhost:5080';
+import { apiInternalUrl, publicOriginFor } from '../server/origins';
+import { SITE_ORIGIN } from './core/platform/site-origin';
 
 const serverConfig: ApplicationConfig = {
   providers: [
     provideServerRendering(withRoutes(serverRoutes)),
     // On the server, relative /api calls go straight to the API (API_INTERNAL_URL), not through the browser proxy.
-    {
-      provide: API_BASE_URL,
-      useFactory: () => process.env['API_INTERNAL_URL'] || DEFAULT_API_INTERNAL_URL,
-    },
+    // One definition of "where the API is", shared with the server's own robots.txt/sitemap.xml
+    // routes, so a render and a sitemap can never be built against two different catalogues.
+    { provide: API_BASE_URL, useFactory: () => apiInternalUrl() },
+
+    // The absolute origin the Open Graph tags publish (GLB-11). In the browser the token's own factory
+    // reads `location.origin`; here there is no such thing, so it comes from the deployment's
+    // PUBLIC_SITE_ORIGIN or, failing that, from a request host we recognise. `src/server/origins.ts`
+    // holds the decision and the reason it refuses to echo a host it does not know.
+    { provide: SITE_ORIGIN, useFactory: () => publicOriginFor(inject(REQUEST)) },
   ],
 };
 
