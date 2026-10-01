@@ -1,3 +1,4 @@
+using SpencerDenim.Domain.Branding;
 using SpencerDenim.Domain.Catalog;
 
 namespace SpencerDenim.Infrastructure.Persistence.Seeding;
@@ -10,9 +11,9 @@ internal static class CatalogReferenceData
 {
     public static IReadOnlyList<DepartmentSeed> Departments { get; } =
     [
-        new("Women", "women", "Everyday essentials and occasion pieces, cut for Sri Lankan weather.", 1, "Women's clothing | Spencer Denim"),
-        new("Men", "men", "Workwear, weekend shirts and denim built to last.", 2, "Men's clothing | Spencer Denim"),
-        new("Kids", "kids", "Girls, boys and baby — soft fabrics and room to grow.", 3, "Kids' clothing | Spencer Denim"),
+        new("Women", "women", "Everyday essentials and occasion pieces, cut for Sri Lankan weather.", 1, StoreBrand.PageTitle("Women's clothing")),
+        new("Men", "men", "Workwear, weekend shirts and denim built to last.", 2, StoreBrand.PageTitle("Men's clothing")),
+        new("Kids", "kids", "Girls, boys and baby — soft fabrics and room to grow.", 3, StoreBrand.PageTitle("Kids' clothing")),
     ];
 
     public static IReadOnlyList<AgeGroupSeed> AgeGroups { get; } =

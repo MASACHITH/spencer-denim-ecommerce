@@ -12,7 +12,7 @@ namespace SpencerDenim.Infrastructure.Persistence.Seeding;
 /// re-running this after a heading has been rewritten, the page reordered, a section switched on or
 /// a benefit's wording replaced leaves all of it alone. Re-running it after one of those rows has
 /// been <b>deleted</b> does put it back, which is the same trade-off the catalogue seeder makes for
-/// a deleted department: the seeder is the definition of the shape a Spencer Denim store starts in,
+/// a deleted department: the seeder is the definition of the shape a new store starts in,
 /// and those rows are structure.
 /// </para>
 /// <para>

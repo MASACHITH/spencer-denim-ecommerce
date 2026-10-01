@@ -4,6 +4,7 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 
 import { ContentApi, newsletterErrorMessage } from '../../../core/content/content-api';
 import { HomeSectionDto } from '../../../core/content/content.model';
+import { BRAND } from '@spencer-denim/shared';
 
 /** What the form is doing, which is what it renders around. */
 type SignupPhase = 'idle' | 'sending' | 'done' | 'error';
@@ -73,7 +74,7 @@ type SignupPhase = 'idle' | 'sending' | 'done' | 'error';
 
             <!-- TODO(GLB-10): link "privacy policy" to the content page once it is published. -->
             <p class="signup__hint" [id]="hintId()">
-              We use your address for Spencer Denim emails only, and record your IP address as
+              We use your address for {{ brand }} emails only, and record your IP address as
               proof of consent. Unsubscribe from any of them.
             </p>
 
@@ -181,6 +182,9 @@ type SignupPhase = 'idle' | 'sending' | 'done' | 'error';
   `,
 })
 export class NewsletterSignup {
+  /** The shop's name, from the one place it is written down (@spencer-denim/shared). */
+  protected readonly brand = BRAND.name;
+
   private readonly api = inject(ContentApi);
   private readonly destroyRef = inject(DestroyRef);
 

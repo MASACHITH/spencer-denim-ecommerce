@@ -34,10 +34,13 @@ public sealed class TwoFactorCodeFormatTests
     [Fact]
     public void The_authenticator_uri_escapes_the_label_and_repeats_the_issuer()
     {
-        var uri = TwoFactorCodeFormat.BuildAuthenticatorUri("Spencer Denim Admin", "ada+ops@example.com", "KEY234");
+        // A synthetic issuer, deliberately not the configured one: what is under test is that a space is
+        // escaped and that the issuer is repeated, and both expectations are clearer written out in full
+        // than assembled from the same constant the subject reads.
+        var uri = TwoFactorCodeFormat.BuildAuthenticatorUri("Example Store Admin", "ada+ops@example.com", "KEY234");
 
         Assert.Equal(
-            "otpauth://totp/Spencer%20Denim%20Admin:ada%2Bops%40example.com?secret=KEY234&issuer=Spencer%20Denim%20Admin&digits=6",
+            "otpauth://totp/Example%20Store%20Admin:ada%2Bops%40example.com?secret=KEY234&issuer=Example%20Store%20Admin&digits=6",
             uri);
     }
 }

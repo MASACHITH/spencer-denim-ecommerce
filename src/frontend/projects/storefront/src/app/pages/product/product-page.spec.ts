@@ -721,7 +721,7 @@ describe('ProductPage (PDP-01..07)', () => {
     it('sets the title, the description and a canonical address', async () => {
       await open('/product/high-rise-straight-jean?colour=2&size=11');
 
-      expect(document.title).toBe('High-Rise Straight Jean | Spencer Denim');
+      expect(document.title).toBe('High-Rise Straight Jean | Colombo Wardrobe');
       expect(document.querySelector('meta[name="description"]')?.getAttribute('content')).toBe(
         'The straight leg, done properly.',
       );
@@ -733,10 +733,10 @@ describe('ProductPage (PDP-01..07)', () => {
 
     it('does not say the brand twice when an admin already wrote it', async () => {
       await open('/product/x', {
-        seo: { title: 'The Jean | Spencer Denim', description: null },
+        seo: { title: 'The Jean | Colombo Wardrobe', description: null },
       });
 
-      expect(document.title).toBe('The Jean | Spencer Denim');
+      expect(document.title).toBe('The Jean | Colombo Wardrobe');
     });
 
     it('takes the canonical slug from the API, not from the address bar', async () => {

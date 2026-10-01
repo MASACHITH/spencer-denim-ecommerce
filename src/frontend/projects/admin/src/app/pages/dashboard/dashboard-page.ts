@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import { Router, RouterLink } from '@angular/router';
-import { ApiStatus } from '@spencer-denim/shared';
+import { ApiStatus, BRAND } from '@spencer-denim/shared';
 
 import { AdminAuthApi } from '../../core/auth/admin-auth-api';
 
@@ -11,7 +11,7 @@ import { AdminAuthApi } from '../../core/auth/admin-auth-api';
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <section class="panel">
-      <h1 class="panel__title">Spencer Denim Admin</h1>
+      <h1 class="panel__title">{{ brand }}</h1>
       <p class="panel__lead">The admin panel is being built. More dashboards arrive in the next milestones.</p>
       <sd-api-status />
       <nav class="panel__nav" aria-label="Admin sections">
@@ -59,6 +59,9 @@ import { AdminAuthApi } from '../../core/auth/admin-auth-api';
   `,
 })
 export class DashboardPage {
+  /** The admin application's name, from the one place it is written down (@spencer-denim/shared). */
+  protected readonly brand = BRAND.adminName;
+
   private readonly authApi = inject(AdminAuthApi);
   private readonly router = inject(Router);
 

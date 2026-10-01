@@ -21,8 +21,8 @@ internal sealed record DemoMediaPlaceholder(
 /// The demo catalogue's media, in one place, because two things have to agree about it: the seeder that
 /// writes the <c>MediaAssets</c> rows and the generator that draws the files those rows point at.
 /// <para>
-/// Everything here is a <b>placeholder</b> and says so, on the image and in its alt text. Spencer Denim
-/// has supplied no photography, and inventing something that looks like a product shot would put an
+/// Everything here is a <b>placeholder</b> and says so, on the image and in its alt text. No
+/// photography was supplied for the demo catalogue, and inventing something that looks like a product shot would put an
 /// imaginary garment in front of the client in a review and, worse, could reach staging where somebody
 /// might take it for the real thing. A neutral block with the words on it cannot be mistaken for either.
 /// </para>

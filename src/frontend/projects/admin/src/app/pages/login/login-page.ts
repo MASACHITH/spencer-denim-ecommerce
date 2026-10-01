@@ -3,6 +3,7 @@ import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 
 import { AdminAuthApi, type AdminLoginError } from '../../core/auth/admin-auth-api';
+import { BRAND } from '@spencer-denim/shared';
 import {
   pendingAccountStep,
   returnUrlParam,
@@ -24,7 +25,7 @@ import {
   template: `
     <section class="login">
       <form class="login__card" (ngSubmit)="submit()" novalidate>
-        <h1 class="login__title">Spencer Denim Admin</h1>
+        <h1 class="login__title">{{ brand }}</h1>
         <p class="login__lead">Sign in to manage the store.</p>
 
         <label class="login__field">
@@ -125,6 +126,9 @@ import {
   `,
 })
 export class LoginPage {
+  /** The admin application's name, from the one place it is written down (@spencer-denim/shared). */
+  protected readonly brand = BRAND.adminName;
+
   private readonly authApi = inject(AdminAuthApi);
   private readonly router = inject(Router);
   private readonly route = inject(ActivatedRoute);

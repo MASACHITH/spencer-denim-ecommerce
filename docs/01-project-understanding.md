@@ -10,7 +10,7 @@ Last updated: 2026-09-15 · Status: **All kickoff questions answered.** New gaps
 - **Contract:** proposal TU2SL-2026-0823 (23 Aug 2026), LKR 80,000, paid 50/50. Hosting, domain and support are billed separately.
 - **Demo:** the static prototype (`../tuasl-fashion/`) is the feature reference. **Every feature on the demo pages is kept**, plus the proposal's additions. Only the theme changes.
 - **Theme:** Banana Republic (`bananarepublic.gap.com`) replaces Denim × Linen completely, across the whole project.
-- **Brand on storefront:** Spencer Denim.
+- **Brand on storefront:** Colombo Wardrobe (owner’s decision, 2026-10-02 — see `docs/02` §I2). The company is still Spencer Denim Industries Pvt Ltd; the shop a customer sees is Colombo Wardrobe at `colombowardrobecompany.com`.
 
 ### Hosting
 Hostinger VPS KVM 2 (2 vCPU / 8 GB / 100 GB NVMe / 8 TB). Portable to Azure next year: Docker, config through environment variables, no host-specific code.

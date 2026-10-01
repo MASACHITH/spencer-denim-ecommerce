@@ -1,5 +1,15 @@
 import { encodeQr, qrSvgPath, type QrMatrix } from './qr-code';
 
+/**
+ * Deliberately **not** the configured issuer, and deliberately not renamed with the shop (W1-15).
+ *
+ * The fingerprint below was recorded from zxing-cpp reading this exact string back. The subject here is
+ * `encodeQr`, not the brand: changing the input invalidates the golden matrix, and the only honest ways
+ * out are to re-run an independent decoder or to let the encoder under test produce its own expectation —
+ * which would make the assertion circular and worthless. So the fixture stays as it was recorded. Nothing
+ * ships this string; the real issuer comes from `AdminSecurity:TwoFactorIssuer`, whose default is
+ * `StoreBrand.AdminName`, and `AdminTwoFactorEndpointTests` asserts that end to end.
+ */
 const uri =
   'otpauth://totp/Spencer%20Denim%20Admin:admin%40example.com?secret=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP&issuer=Spencer%20Denim%20Admin&digits=6';
 

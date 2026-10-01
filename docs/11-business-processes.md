@@ -2,7 +2,7 @@
 
 Last updated: 2026-09-23 · Status: **Review round 1 applied** · Inputs: [01](01-project-understanding.md), [02](02-scope-baseline.md) (scope baseline v1.0), [03](03-architecture-and-tech-stack.md) §3a–§3c, [05](05-delivery-plan.md), [08](08-database-design.md) (revision 5, baselined).
 
-This document describes **how the Spencer Denim store operates**: what customers, staff and the system do, in what order, under which rules. It is written for two audiences:
+This document describes **how the Colombo Wardrobe store operates**: what customers, staff and the system do, in what order, under which rules. It is written for two audiences:
 
 - **Developers and testers:** precise rules, status changes, stock effects and permissions, with references to doc 08 (written as "08 §4.1").
 - **Store staff:** plain numbered steps and the daily checklist (§6).

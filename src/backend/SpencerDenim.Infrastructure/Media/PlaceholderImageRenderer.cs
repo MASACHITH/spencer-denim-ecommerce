@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using SkiaSharp;
+using SpencerDenim.Domain.Branding;
 
 namespace SpencerDenim.Infrastructure.Media;
 
@@ -27,7 +28,7 @@ public sealed record PlaceholderLabelFont(SKTypeface Regular, SKTypeface Bold);
 /// it: a dot filled with the colourway's swatch colour, and, when the deployment has a font, the word
 /// <b>PLACEHOLDER</b>, the line <i>NO PRODUCT PHOTOGRAPH</i>, the product's name and the colourway's name.
 /// Across the lower third, a grid of small neutral squares — an identity block, described below. Along the
-/// bottom: <i>Spencer Denim — demo data, not a real product image</i>. There is no garment, no model, no
+/// bottom: <i>&lt;the store's name&gt; — demo data, not a real product image</i>. There is no garment, no model, no
 /// texture and no photographic content of any kind, because none has been supplied and inventing some
 /// would be worse than a grey box.
 /// </para>
@@ -253,7 +254,7 @@ public static class PlaceholderImageRenderer
             normal);
         Write(
             canvas,
-            "Spencer Denim — demo data, not a real product image",
+            $"{StoreBrand.Name} — demo data, not a real product image",
             DesignWidth / 2f,
             DesignHeight - 70,
             new SKFont(font.Regular, 22),

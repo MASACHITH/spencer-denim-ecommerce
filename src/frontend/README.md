@@ -1,4 +1,9 @@
-# Spencer Denim frontend (Angular 21 workspace)
+# Colombo Wardrobe frontend (Angular 21 workspace)
+
+The npm package is still `spencer-denim-frontend` and the shared library is still
+`@spencer-denim/shared`: those are identifiers, not brand, and renaming them would rewrite every
+import in the workspace for nothing a shopper sees. The *name* the applications display lives in
+`projects/shared/src/lib/branding/brand.ts` and is read from there everywhere.
 
 | Project | Type | Notes |
 |---|---|---|

@@ -6,11 +6,12 @@ using Microsoft.Extensions.Logging;
 using SpencerDenim.Application.Media.Abstractions;
 using SpencerDenim.Application.Media.ClientAssets;
 using SpencerDenim.Application.Media.Contracts;
+using SpencerDenim.Domain.Branding;
 using SpencerDenim.Domain.Catalog;
 using SpencerDenim.Domain.Content;
 using SpencerDenim.Domain.Media;
-using SpencerDenim.Infrastructure.Persistence;
 using SpencerDenim.Infrastructure.Persistence.Seeding;
+using SpencerDenim.Infrastructure.Persistence;
 
 namespace SpencerDenim.Infrastructure.Media.ClientAssets;
 
@@ -535,7 +536,7 @@ public sealed partial class ClientAssetImporter(
                 continue;
             }
 
-            var alt = $"{department.Name} at Colombo Wardrobe";
+            var alt = $"{department.Name} at {StoreBrand.Name}";
             var stored = await StoreImageAsync(path, alt, department.Name, run, cancellationToken);
 
             if (stored.Refusal is { } refusal)
@@ -1034,7 +1035,7 @@ public sealed partial class ClientAssetImporter(
 
             var stored = await StoreImageAsync(
                 path,
-                "Colombo Wardrobe clothes, photographed for social media",
+                $"{StoreBrand.Name} clothes, photographed for social media",
                 label,
                 run,
                 cancellationToken);
@@ -1094,7 +1095,7 @@ public sealed partial class ClientAssetImporter(
 
             var stored = await StoreImageAsync(
                 path,
-                $"Colombo Wardrobe {stem.Replace('-', ' ')}",
+                $"{StoreBrand.Name} {stem.Replace('-', ' ')}",
                 $"Logo — {stem}",
                 run,
                 cancellationToken);

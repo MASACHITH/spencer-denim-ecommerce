@@ -15,12 +15,12 @@ describe('Storefront App', () => {
     });
   });
 
-  it('renders the Spencer Denim wordmark', () => {
+  it('renders the Colombo Wardrobe wordmark', () => {
     const fixture = TestBed.createComponent(App);
     fixture.detectChanges();
 
     const wordmark = (fixture.nativeElement as HTMLElement).querySelector('.wordmark');
-    expect(wordmark?.textContent?.trim()).toBe('Spencer Denim');
+    expect(wordmark?.textContent?.trim()).toBe('Colombo Wardrobe');
   });
 
   /**
@@ -32,7 +32,7 @@ describe('Storefront App', () => {
     const harness = await RouterTestingHarness.create('/');
     const controller = TestBed.inject(HttpTestingController);
 
-    expect(harness.routeNativeElement?.querySelector('h1')?.textContent).toContain('Spencer Denim');
+    expect(harness.routeNativeElement?.querySelector('h1')?.textContent).toContain('Colombo Wardrobe');
 
     controller.expectOne('/api/content/home').flush({
       sections: [

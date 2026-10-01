@@ -1,3 +1,5 @@
+using SpencerDenim.Domain.Branding;
+
 namespace SpencerDenim.Api.OpenApi;
 
 internal static class OpenApiSetup
@@ -12,7 +14,7 @@ internal static class OpenApiSetup
         {
             options.AddDocumentTransformer((document, _, _) =>
             {
-                document.Info.Title = "Spencer Denim API";
+                document.Info.Title = $"{StoreBrand.Name} API";
                 document.Info.Version = DocumentName;
                 return Task.CompletedTask;
             });
@@ -28,8 +30,8 @@ internal static class OpenApiSetup
         app.UseSwaggerUI(options =>
         {
             options.RoutePrefix = SwaggerUiRoutePrefix;
-            options.DocumentTitle = "Spencer Denim API";
-            options.SwaggerEndpoint($"/api/openapi/{DocumentName}.json", $"Spencer Denim API {DocumentName}");
+            options.DocumentTitle = $"{StoreBrand.Name} API";
+            options.SwaggerEndpoint($"/api/openapi/{DocumentName}.json", $"{StoreBrand.Name} API {DocumentName}");
         });
 
         return app;

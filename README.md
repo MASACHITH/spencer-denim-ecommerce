@@ -1,6 +1,6 @@
-# Spencer Denim — Fashion E-Commerce Platform
+# Colombo Wardrobe — Fashion E-Commerce Platform
 
-Production build of the fashion e-commerce website for **Spencer Denim Industries Pvt Ltd** (client: Manusha Weerawardene), delivered by **TU2SL**.
+Production build of the fashion e-commerce website for **Spencer Denim Industries Pvt Ltd** (client: Manusha Weerawardene), delivered by **TU2SL**. The shop trades as **Colombo Wardrobe** at `colombowardrobecompany.com` — that is the name on every page. The company name is the client's; `SpencerDenim.*`, `SpencerDenim.sln`, this repository and the `SpencerDenim_Dev` database keep their names as identifiers (owner's decision, 2026-10-02, `docs/02` §I2).
 
 > Status: **Build phase.** The scope baseline ([docs/02](docs/02-scope-baseline.md)) is signed off and the project scaffold (W0-09) runs locally: .NET 10 API on LocalDB plus the Angular 21 storefront (SSR) and admin — see [Getting started](#getting-started). Features are built from [TASKS.md](TASKS.md), and nothing outside the scope baseline is built. Docker packaging is deferred to W0-15.
 
@@ -135,6 +135,50 @@ Remove-Item Env:Seed__RunOnStartup, Env:Seed__IncludeDemoCatalogue
 | `Catalog__DefaultPageSize` / `Catalog__MaxPageSize` | `24` / `96` | Listing page size and its upper bound |
 | `Catalog__MediaBaseUrl` | `/media` | Public URL prefix a stored media key is appended to |
 | `Catalog__RelatedProductCount` | `4` | Related products on the product page (PDP-06) |
+
+#### Renaming the shop on a database that is already seeded (W1-15)
+
+The seeders insert only missing rows and **never** overwrite an edit an admin may have made, so changing
+seed data reaches **fresh databases only**. A database seeded before 2026-10-02 still holds SEO titles
+ending `| Spencer Denim`, and re-running the seeder will not touch them — correctly, because it cannot
+tell a stale seed value from a title the client typed.
+
+That makes it a one-off operational step rather than a migration. A migration that rewrote `SeoTitle`
+would also rewrite whatever the client has since written there, which is exactly what the seeders are
+careful not to do. Run this by hand, once, per environment, and only on rows that still carry the old
+suffix:
+
+```sql
+-- Check first: these are the rows that will change.
+SELECT 'Department' AS [Table], Id, SeoTitle FROM catalog.Departments WHERE SeoTitle LIKE '%| Spencer Denim'
+UNION ALL SELECT 'Category', Id, SeoTitle FROM catalog.Categories WHERE SeoTitle LIKE '%| Spencer Denim'
+UNION ALL SELECT 'Product',  Id, SeoTitle FROM catalog.Products   WHERE SeoTitle LIKE '%| Spencer Denim';
+
+-- Then, in a transaction. The LIKE is the whole safety: a title an admin has rewritten does not end
+-- in the old suffix, so it is not touched.
+BEGIN TRAN;
+UPDATE catalog.Departments SET SeoTitle = LEFT(SeoTitle, LEN(SeoTitle) - LEN('| Spencer Denim')) + '| Colombo Wardrobe'
+WHERE SeoTitle LIKE '%| Spencer Denim';
+UPDATE catalog.Categories  SET SeoTitle = LEFT(SeoTitle, LEN(SeoTitle) - LEN('| Spencer Denim')) + '| Colombo Wardrobe'
+WHERE SeoTitle LIKE '%| Spencer Denim';
+UPDATE catalog.Products    SET SeoTitle = LEFT(SeoTitle, LEN(SeoTitle) - LEN('| Spencer Denim')) + '| Colombo Wardrobe'
+WHERE SeoTitle LIKE '%| Spencer Denim';
+-- COMMIT; (or ROLLBACK)
+```
+
+A fresh database (3 departments, 29 categories and, with the demo catalogue, 45 products) gets the new
+titles from the seeder and needs none of this.
+
+**The demo placeholder images are a separate matter, and are files rather than rows.** Their caption
+(`Colombo Wardrobe — demo data, not a real product image`) is drawn into the JPEG, and
+`DemoMediaPlaceholderGenerator` skips any asset whose original and renditions are already on the volume,
+so an existing environment keeps the old caption until those files are deleted and the generator re-runs
+(it rewrites each row's checksum, size and dimensions from the new bytes). This matters on a development
+or staging machine and nowhere else: the demo placeholders are never seeded in production.
+
+**Nothing else needs touching.** No home-page copy, announcement or newsletter row carries the name; the
+alt text `ClientAssetImporter` writes already said "Colombo Wardrobe" before this rename.
+
 
 A seeded database holds 3 departments, 29 categories, 4 age groups, 19 attribute options,
 14 colour families, 52 sizes, 3 size guides, 45 products, 104 colourways, 480 variants with stock,
@@ -305,7 +349,7 @@ $env:PORT = "4000"; $env:API_INTERNAL_URL = "http://localhost:5080"
 node dist/storefront/server/server.mjs              # http://localhost:4000 (GET /healthz for liveness)
 ```
 
-The server renders the page on each request, so the initial HTML already contains the "Spencer Denim" heading and the API status. For a public host name, add it to `NG_ALLOWED_HOSTS` (comma-separated).
+The server renders the page on each request, so the initial HTML already contains the "Colombo Wardrobe" heading and the API status. For a public host name, add it to `NG_ALLOWED_HOSTS` (comma-separated).
 
 ### CI
 

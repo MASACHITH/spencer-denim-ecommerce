@@ -214,7 +214,9 @@ jobs:
           # Match in-shell rather than through a pipe: `grep -q` exits at the first match,
           # which gives `printf` a broken pipe once the page is larger than the pipe buffer,
           # and pipefail then fails the step even though the text was found.
-          for marker in 'Spencer Denim' 'New Arrivals' 'Sale'; do
+          # 'Colombo Wardrobe' is the header wordmark. Written out rather than read from BRAND
+          # because this is an assertion about the shipped bundle, like the specs.
+          for marker in 'Colombo Wardrobe' 'New Arrivals' 'Sale'; do
             if [[ "$html" != *"$marker"* ]]; then
               echo "::error::Server-rendered HTML does not contain '$marker'."
               echo "${html:0:2000}"

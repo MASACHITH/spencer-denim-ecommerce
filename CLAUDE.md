@@ -3,7 +3,18 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project
-Spencer Denim fashion e-commerce platform (client: Spencer Denim Industries Pvt Ltd; vendor: TU2SL). Deadline **15 Oct 2026**.
+**Colombo Wardrobe** fashion e-commerce platform (client: Spencer Denim Industries Pvt Ltd; vendor: TU2SL). Deadline **15 Oct 2026**.
+
+**Two names, and they are not interchangeable.** *Colombo Wardrobe* is the shop: every string a shopper or
+a staff user reads, the domain `colombowardrobecompany.com`, the header wordmark. *Spencer Denim Industries
+Pvt Ltd* is the company that commissioned the work. *SpencerDenim* is an **identifier**: the C# namespaces
+and assemblies, `SpencerDenim.sln`, this `spencer-denim-ecommerce` repository, the `@spencer-denim/shared`
+Angular library and the `SpencerDenim_Dev` database all keep those names deliberately — do not rename them
+(owner’s decision, 2026-10-02, `docs/02` §I2).
+
+**Never write the shop’s name out in code.** It lives in exactly one place per application —
+`StoreBrand` (`SpencerDenim.Domain.Branding`) and `BRAND` (`@spencer-denim/shared`) — and
+`BrandNameConventionTests` sweeps all three source trees and fails the build if it appears anywhere else.
 
 Read first, in this order: `MEMORY.md` → `TASKS.md` → `docs/02-scope-baseline.md`. Read other docs in `docs/` as needed.
 

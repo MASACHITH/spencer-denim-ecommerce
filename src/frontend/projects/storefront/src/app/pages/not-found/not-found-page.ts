@@ -3,6 +3,7 @@ import { Meta, Title } from '@angular/platform-browser';
 import { RouterLink } from '@angular/router';
 
 import { NavigationService } from '../../core/navigation/navigation.service';
+import { BRAND, brandPageTitle } from '@spencer-denim/shared';
 
 /** What a page that is not there should answer, so a crawler does not index it as a real page. */
 const NOT_FOUND_STATUS = 404;
@@ -75,12 +76,12 @@ export class NotFoundPage {
   protected readonly departments = inject(NavigationService).departments;
 
   constructor() {
-    inject(Title).setTitle('Page not found | Spencer Denim');
+    inject(Title).setTitle(brandPageTitle('Page not found'));
 
     const meta = inject(Meta);
     meta.updateTag({
       name: 'description',
-      content: 'The page you asked for is not part of the Spencer Denim store.',
+      content: `The page you asked for is not part of the ${BRAND.name} store.`,
     });
     // A 404 must never be indexed, whatever a crawler makes of the status code.
     meta.updateTag({ name: 'robots', content: 'noindex' });

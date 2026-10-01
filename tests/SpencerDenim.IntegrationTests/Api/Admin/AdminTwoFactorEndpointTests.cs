@@ -96,8 +96,8 @@ public sealed class AdminTwoFactorEndpointTests(SqlServerDatabaseFixture sqlServ
         var uri = setupBody.GetProperty("authenticatorUri").GetString()!;
         var sharedKey = setupBody.GetProperty("sharedKey").GetString()!;
         var key = TotpTestCodes.SecretFromUri(uri);
-        Assert.StartsWith("otpauth://totp/Spencer%20Denim%20Admin:", uri, StringComparison.Ordinal);
-        Assert.Contains("issuer=Spencer%20Denim%20Admin", uri, StringComparison.Ordinal);
+        Assert.StartsWith("otpauth://totp/Colombo%20Wardrobe%20Admin:", uri, StringComparison.Ordinal);
+        Assert.Contains("issuer=Colombo%20Wardrobe%20Admin", uri, StringComparison.Ordinal);
         Assert.Equal(key.ToLowerInvariant(), sharedKey.Replace(" ", string.Empty, StringComparison.Ordinal));
 
         using var wrong = await PostWithTokenAsync(client, EnableUrl, new { code = TotpTestCodes.Wrong(key) });

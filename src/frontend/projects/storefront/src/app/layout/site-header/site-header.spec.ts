@@ -33,7 +33,7 @@ describe('SiteHeader shell (GLB-04, GLB-05)', () => {
 
   it('renders one banner landmark with the wordmark', () => {
     expect(element.querySelectorAll('header')).toHaveLength(1);
-    expect(element.querySelector('.wordmark')?.textContent?.trim()).toBe('Spencer Denim');
+    expect(element.querySelector('.wordmark')?.textContent?.trim()).toBe('Colombo Wardrobe');
   });
 
   it('shows the five main navigation entries', () => {

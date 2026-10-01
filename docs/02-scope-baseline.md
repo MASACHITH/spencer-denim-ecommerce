@@ -13,7 +13,7 @@ Legend: ✅ In scope · ⏭ Future phase · ❌ Removed
 | ID | Feature | Scope |
 |---|---|---|
 | GLB-01 | Banana Republic–inspired theme, site-wide (full replacement, no Denim × Linen) | ✅ |
-| GLB-02 | Spencer Denim branding (name, logo) | ✅ |
+| GLB-02 | Colombo Wardrobe branding (name, logo) | ✅ |
 | GLB-03 | Rotating announcement bar (admin-editable messages) | ✅ |
 | GLB-04 | Sticky header: logo, search, sign in/account, wishlist count, bag count | ✅ |
 | GLB-05 | Navigation **Women · Men · Kids · New Arrivals · Sale**. Desktop mega menu (categories from admin + promo image card), mobile slide-out accordion. | ✅ |
@@ -158,7 +158,7 @@ Security rules (from DB design review):
 | Demo item | Why |
 |---|---|
 | Template switcher + alternative templates/themes | One theme only (Banana Republic) |
-| TU@SL Fashion branding, maroon palette, tagline | Storefront is Spencer Denim |
+| TU@SL Fashion branding, maroon palette, tagline | Storefront is Colombo Wardrobe |
 | Max Fashion and Denim × Linen references | Replaced by Banana Republic |
 | Homepage "Campaign Split" | Replaced by Trending Items (signed proposal) |
 | Homepage "Trending Categories" and "Best Sellers" blocks | Removed in the signed proposal. Re-adding is chargeable. *(Assumption. Confirm if you meant to keep them.)* |
@@ -175,6 +175,7 @@ here so that a feature that reads differently from the proposal is visibly a dec
 
 | Date | Decision | Why | By |
 |---|---|---|---|
+| 2026-10-02 | **The shop is called Colombo Wardrobe.** Everything a shopper or a staff user reads is Colombo Wardrobe: the header wordmark, page titles and meta descriptions, the footer and its copyright line, seeded department SEO titles, placeholder alt text, the demo placeholder caption, the admin application’s titles and headings, the authenticator issuer and the OpenAPI document. The domain is `colombowardrobecompany.com`. The name is written down once per application — `StoreBrand` in `SpencerDenim.Domain.Branding` and `BRAND` in `@spencer-denim/shared` — and read everywhere else, with a convention test that fails if it is ever written out again. **The C# namespaces, the assemblies, `SpencerDenim.sln`, the `spencer-denim-ecommerce` repository and the `SpencerDenim_Dev` database keep their names**; they are identifiers, not brand. | The client’s delivered logo artwork reads COLOMBO WARDROBE and the domain they registered is `colombowardrobecompany.com`, so the codebase and the shop disagreed about the shop’s own name (W1-13). The owner decided the shopper-facing name rather than leaving the wordmark to be settled with the artwork. Renaming identifiers as well would touch connection strings, CI, every developer’s local database and the remote, for nothing a shopper sees. The registered company name, address and VAT number are a separate question, deliberately left open until invoices are designed (W3, issue #53), when they belong in admin settings the client fills in rather than in code. | Owner |
 | 2026-10-01 | **HOME-06 is "Linen and denim", not "Activewear".** The heading, standfirst, button and link describe linen and denim separates, and the block opens `/women?material=linen&material=linen-blend&material=denim`. The feature ID, its position and its behaviour are unchanged; only the copy and the destination are. | The photograph the client delivered for this slot is a flat-lay of a white linen co-ord and a denim co-ord — nothing athletic. A block whose picture, words and destination disagree is worse than no block (issue #63), and the owner chose to retitle the slot rather than wait for an activewear photograph. The link is a listing that genuinely holds linen and denim rather than a department that happens to include them. | Owner |
 
 > Activewear itself is unaffected: it remains a category under Women and under Men (DEPT-01), and it

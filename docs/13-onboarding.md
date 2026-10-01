@@ -81,7 +81,7 @@ Working means: `/api/ping` returns JSON, `/health/ready` is healthy, and both pa
 | 10 | [docs/11 Business processes](11-business-processes.md) | How the shop actually works: orders, stock, payments, refunds |
 | 11 | [docs/08 Database design](08-database-design.md) | Reference while coding. Long; read the parts you need. |
 
-**Project background in one paragraph:** Spencer Denim is a Sri Lankan fashion retailer (Women, Men, Kids). TU2SL is building their online shop and admin panel for a fixed fee, to a fixed scope, due **15 Oct 2026**. Prices are in LKR. Payment is by bank transfer (staff approve it) and PayPal (charged in USD). The look follows a Banana Republic–style reference: white, black, lots of space, big photos. A demo was shown to the client and approved; the old demo lives in `reference/` as a **feature reference only**, and none of its code is reused.
+**Project background in one paragraph:** Spencer Denim Industries Pvt Ltd is a Sri Lankan fashion retailer (Women, Men, Kids) whose shop trades online as **Colombo Wardrobe** — the company name is the client, the brand name is everything a shopper reads (`docs/02` §I2). TU2SL is building their online shop and admin panel for a fixed fee, to a fixed scope, due **15 Oct 2026**. Prices are in LKR. Payment is by bank transfer (staff approve it) and PayPal (charged in USD). The look follows a Banana Republic–style reference: white, black, lots of space, big photos. A demo was shown to the client and approved; the old demo lives in `reference/` as a **feature reference only**, and none of its code is reused.
 
 ## 6. Your first pull request
 

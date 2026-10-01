@@ -11,7 +11,7 @@ import {
 import { toSignal } from '@angular/core/rxjs-interop';
 import { Meta, Title } from '@angular/platform-browser';
 import { ActivatedRoute, Params, Router, RouterLink } from '@angular/router';
-import { Drawer, Icon } from '@spencer-denim/shared';
+import { BRAND, Drawer, Icon, brandPageTitle } from '@spencer-denim/shared';
 
 import { LISTING_MODES, ListingMode, readListingMode } from './listing-mode';
 import { ListingFilters } from './listing-filters';
@@ -715,17 +715,17 @@ export class ListingPage {
 
     const department = this.department();
     if (!department) {
-      return 'Products | Spencer Denim';
+      return brandPageTitle('Products');
     }
 
     const category = this.category();
     if (category) {
-      return `${category.name} | ${department.name} | Spencer Denim`;
+      return brandPageTitle(`${category.name} | ${department.name}`);
     }
 
-    // An admin-written SEO title is the whole title, brand included — the seeded Women department
-    // is literally "Women's clothing | Spencer Denim" — so appending the brand would say it twice.
-    return department.seoTitle ?? `${department.name} | Spencer Denim`;
+    // An admin-written SEO title is the whole title, brand included — the seeded Women department's is
+    // brandPageTitle("Women's clothing") already — so appending the brand would say it twice.
+    return department.seoTitle ?? brandPageTitle(department.name);
   });
 
   private readonly metaDescription = computed(() => {
@@ -736,7 +736,7 @@ export class ListingPage {
 
     const department = this.department();
     if (!department) {
-      return 'Shop Spencer Denim.';
+      return `Shop ${BRAND.name}.`;
     }
 
     const category = this.category();
@@ -744,7 +744,7 @@ export class ListingPage {
       category?.description ??
       department.seoDescription ??
       department.description ??
-      `Shop ${this.heading()} at Spencer Denim.`
+      `Shop ${this.heading()} at ${BRAND.name}.`
     );
   });
 

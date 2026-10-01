@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { RouterLink } from '@angular/router';
-import { Icon } from '@spencer-denim/shared';
+import { BRAND, Icon } from '@spencer-denim/shared';
 
 import { ContentApi, newsletterErrorMessage } from '../../core/content/content-api';
 import { NavigationService } from '../../core/navigation/navigation.service';
@@ -28,7 +28,7 @@ export type NewsletterState = 'idle' | 'sending' | 'done' | 'error';
       <div class="container">
         <section class="newsletter" aria-labelledby="newsletter-title">
           <div class="newsletter__intro">
-            <h2 class="newsletter__title" id="newsletter-title">Join the Spencer Denim list</h2>
+            <h2 class="newsletter__title" id="newsletter-title">Join the {{ brand }} list</h2>
             <p class="t-small muted">New arrivals, restocks and sale previews. No more than twice a month.</p>
           </div>
           @if (newsletterState() === 'done') {
@@ -104,7 +104,7 @@ export type NewsletterState = 'idle' | 'sending' | 'done' | 'error';
           <nav class="site-footer__col" aria-labelledby="footer-about">
             <h2 class="site-footer__heading label" id="footer-about">About</h2>
             <ul>
-              <li><a routerLink="/about">About Spencer Denim</a></li>
+              <li><a routerLink="/about">About {{ brand }}</a></li>
               <li><a routerLink="/privacy">Privacy policy</a></li>
               <li><a routerLink="/terms">Terms &amp; conditions</a></li>
             </ul>
@@ -142,7 +142,7 @@ export type NewsletterState = 'idle' | 'sending' | 'done' | 'error';
         </div>
 
         <div class="site-footer__legal t-small muted">
-          <p>&copy; {{ year }} Spencer Denim Industries (Pvt) Ltd. All rights reserved.</p>
+          <p>&copy; {{ year }} {{ brand }}. All rights reserved.</p>
           <p>Prices in Sri Lankan rupees. Delivery island-wide.</p>
         </div>
       </div>
@@ -289,6 +289,9 @@ export type NewsletterState = 'idle' | 'sending' | 'done' | 'error';
   `,
 })
 export class SiteFooter {
+  /** The shop's name, from the one place it is written down (@spencer-denim/shared). */
+  protected readonly brand = BRAND.name;
+
   private readonly navigation = inject(NavigationService);
   private readonly config = inject(SITE_CONFIG);
 

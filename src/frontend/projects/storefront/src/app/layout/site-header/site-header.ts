@@ -11,7 +11,7 @@ import {
 import { NavigationEnd, Router, RouterLink } from '@angular/router';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { filter } from 'rxjs';
-import { Icon } from '@spencer-denim/shared';
+import { BRAND, Icon } from '@spencer-denim/shared';
 
 import { AnnouncementBar } from '../announcement-bar/announcement-bar';
 import { DistrictSelector } from '../district-selector/district-selector';
@@ -53,7 +53,7 @@ import { StorefrontCounts } from '../../core/storefront-counts.service';
             <sd-icon name="menu" />
           </button>
 
-          <a class="wordmark site-header__wordmark" routerLink="/">Spencer Denim</a>
+          <a class="wordmark site-header__wordmark" routerLink="/">{{ brand }}</a>
 
           <sd-main-nav />
 
@@ -248,6 +248,9 @@ import { StorefrontCounts } from '../../core/storefront-counts.service';
   `,
 })
 export class SiteHeader {
+  /** The shop's name, from the one place it is written down (@spencer-denim/shared). */
+  protected readonly brand = BRAND.name;
+
   private readonly counts = inject(StorefrontCounts);
   private readonly router = inject(Router);
   private readonly panelSearch = viewChild<HeaderSearch>('panelSearch');

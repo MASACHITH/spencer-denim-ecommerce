@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component } from '@angular/core';
 import { RouterLink, RouterOutlet } from '@angular/router';
+import { BRAND } from '@spencer-denim/shared';
 
 @Component({
   selector: 'sda-root',
@@ -7,7 +8,7 @@ import { RouterLink, RouterOutlet } from '@angular/router';
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <header class="admin-header">
-      <a class="admin-header__brand" routerLink="/">Spencer Denim Admin</a>
+      <a class="admin-header__brand" routerLink="/">{{ brand }}</a>
     </header>
     <main id="main">
       <router-outlet />
@@ -33,4 +34,7 @@ import { RouterLink, RouterOutlet } from '@angular/router';
     .admin-header__brand:focus-visible { outline-color: var(--color-on-primary); }
   `,
 })
-export class App {}
+export class App {
+  /** The admin application's name, from the one place it is written down (@spencer-denim/shared). */
+  protected readonly brand = BRAND.adminName;
+}

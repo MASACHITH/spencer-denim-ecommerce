@@ -11,7 +11,10 @@
     <Deterministic>true</Deterministic>
     <InvariantGlobalization>false</InvariantGlobalization>
     <Company>TU2SL</Company>
-    <Product>Spencer Denim E-Commerce Platform</Product>
+    <!-- The shop's name, for the assemblies' file metadata. MSBuild cannot read
+         SpencerDenim.Domain.Branding.StoreBrand.Name, so this is one of the three files
+         BrandNameConventionTests allows to spell it out. The assembly *names* stay SpencerDenim.*. -->
+    <Product>Colombo Wardrobe E-Commerce Platform</Product>
     <Copyright>TU2SL</Copyright>
     <IsPackable>false</IsPackable>
   </PropertyGroup>

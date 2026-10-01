@@ -1,4 +1,5 @@
 import { ChangeDetectionStrategy, Component, DOCUMENT, ElementRef, inject, input, signal, viewChild } from '@angular/core';
+import { BRAND } from '@spencer-denim/shared';
 
 /**
  * W1-10: shows a freshly issued set of recovery codes, once, with copy and download. The codes live only in this
@@ -100,16 +101,29 @@ export class RecoveryCodesPanel {
       return;
     }
 
-    const heading = this.account() ? `Spencer Denim Admin recovery codes for ${this.account()}` : 'Spencer Denim Admin recovery codes';
+    const heading = this.account()
+      ? `${BRAND.adminName} recovery codes for ${this.account()}`
+      : `${BRAND.adminName} recovery codes`;
     const text = [heading, 'Each code works once.', '', ...this.codes(), ''].join('\n');
     const url = view.URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
 
     const link = this.document.createElement('a');
     link.href = url;
-    link.download = 'spencer-denim-admin-recovery-codes.txt';
+    link.download = `${fileNameSlug(BRAND.adminName)}-recovery-codes.txt`;
     link.click();
     // Revoked on the next tick: some browsers start the download only after the click handler returns.
     view.setTimeout(() => view.URL.revokeObjectURL(url));
     this.status.set('Codes downloaded.');
   }
+}
+
+/**
+ * The downloaded file's name, derived from the application's name rather than written out beside it,
+ * so a rename reaches the file a staff user saves as well as the heading inside it.
+ */
+function fileNameSlug(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
 }
