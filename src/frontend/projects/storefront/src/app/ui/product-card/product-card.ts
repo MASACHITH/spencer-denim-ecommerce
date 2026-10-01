@@ -278,18 +278,21 @@ interface ColourDot {
     .card__wish:hover::before {
       background: var(--color-bg-alt);
     }
-    /* Lesson L4: the ::before fill above would paint over an inset outline, so the ring is drawn
-       on ::after, on top of it, with a white inner line so it reads on a dark photo too. */
+    /* #38: the ring is drawn **outside** the control.
+
+       It used to be a ::after with inset: 2px — inside the button's own border box — because of
+       lesson L4: the ::before fill above would paint over an inset outline. That reasoning was
+       right about ::before and wrong about the outline, which is not inset at all: the global rule
+       in base.css draws it at outline-offset: 2px, clear of the border box, where ::before (inset
+       6px) cannot reach it. Drawn inside, the ring was invisible from outside the control, which is
+       what #38 measured: a focused-versus-blurred comparison of the strip outside each of the four
+       edges came back byte for byte identical on all four.
+       So the global ring is used, as every other control on the site uses it, and the white band is
+       kept — it is what makes a dark ring legible over a dark photograph — as a box-shadow filling
+       the 2 px the outline offset leaves. Both are outside the border box, so neither can be
+       painted over. */
     .card__wish:focus-visible {
-      outline: none;
-    }
-    .card__wish:focus-visible::after {
-      content: '';
-      position: absolute;
-      inset: 2px;
-      border: var(--focus-width) solid var(--color-primary);
-      box-shadow: inset 0 0 0 var(--focus-width) var(--color-on-primary);
-      pointer-events: none;
+      box-shadow: 0 0 0 2px var(--color-on-primary);
     }
 
     .card__body {

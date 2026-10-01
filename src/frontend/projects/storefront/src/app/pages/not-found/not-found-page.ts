@@ -43,7 +43,7 @@ const NOT_FOUND_STATUS = 404;
         <li><a class="btn btn--secondary" routerLink="/new-arrivals">New Arrivals</a></li>
         <li><a class="btn btn--secondary" routerLink="/sale">Sale</a></li>
       </ul>
-      <p><a class="link" routerLink="/">Back to the home page</a></p>
+      <p><a class="link missing__home" routerLink="/">Back to the home page</a></p>
     </div>
   `,
   styles: `
@@ -70,6 +70,19 @@ const NOT_FOUND_STATUS = 404;
       gap: var(--space-1-5);
       list-style: none;
       padding-top: var(--space-1);
+    }
+    /* The 44 px floor applies to a plain link as much as to a button, and this one was 175 x 20 at
+       every one of the eight breakpoints — WCAG 2.2's 2.5.8 is 24 px, and this project's own floor
+       is 44. It went unnoticed because nothing measured the links on this page: the five department
+       links beside it are .btn btn--secondary and pass, so a selector scoped to the buttons could
+       not fail. Fixed the same way the sibling 503 page fixes its own (unavailable__links a), and
+       width: fit-content so the row the link sits on is not a 175 px-wide 44 px-tall target with
+       most of it empty. */
+    .missing__home {
+      display: inline-flex;
+      align-items: center;
+      width: fit-content;
+      min-height: var(--tap);
     }
   `,
 })

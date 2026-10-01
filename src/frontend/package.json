@@ -16,7 +16,7 @@
     "build:admin": "ng build admin",
     "build:all": "ng build shared && ng build storefront && ng build admin",
     "test:ci": "ng test shared --watch=false && ng test storefront --watch=false && ng test admin --watch=false",
-    "test:e2e": "npm run build:storefront && npm run build:admin && playwright test"
+    "test:e2e": "npm run build:storefront && npm run build:admin && playwright install chromium && playwright test"
   },
   "prettier": {
     "printWidth": 100,
@@ -50,11 +50,13 @@
     "@angular/build": "^21.2.24",
     "@angular/cli": "^21.1.4",
     "@angular/compiler-cli": "^21.2.25",
+    "@axe-core/playwright": "4.13.0",
     "@eslint/js": "^10.0.1",
     "@playwright/test": "1.62.0",
     "@types/express": "^5.0.1",
     "@types/node": "^24.13.5",
     "angular-eslint": "21.4.0",
+    "axe-core": "4.13.0",
     "eslint": "^10.3.0",
     "jsdom": "^28.0.0",
     "ng-packagr": "^21.2.0",

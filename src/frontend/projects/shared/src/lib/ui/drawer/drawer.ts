@@ -68,7 +68,12 @@ let nextDrawerId = 0;
       #panel
     >
       <div class="sd-drawer__head">
-        <h2 class="sd-drawer__title" [id]="headingId">{{ heading() }}</h2>
+        <!-- A paragraph, not a heading, and the reason is #76. The drawer's markup sits ahead of
+             the page's own h1 in the DOM, so an h2 here meant every storefront page announced
+             "Menu" before it said what the page was, to anyone navigating by headings. The dialog
+             already takes its name from this text through aria-labelledby above, and a name is what
+             this text is for, so leaving the heading outline costs nothing and fixes the order. -->
+        <p class="sd-drawer__title" [id]="headingId">{{ heading() }}</p>
         <button
           class="icon-btn"
           type="button"
@@ -140,6 +145,9 @@ let nextDrawerId = 0;
     .sd-drawer__title {
       font-size: var(--text-h4);
       font-weight: var(--weight-semibold);
+      /* The reset gives h1-h4 a tighter line-height than body text; this keeps the look it had as
+         an h2 now that it is a paragraph. */
+      line-height: 1.2;
     }
     /* scroll-padding keeps focus rings clear of the scroll edge when focus scrolls an item in */
     .sd-drawer__body {

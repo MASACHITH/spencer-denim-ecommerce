@@ -3,7 +3,7 @@ import { RouterLink, RouterLinkActive } from '@angular/router';
 import { Icon } from '@spencer-denim/shared';
 
 import { NavigationService } from '../../core/navigation/navigation.service';
-import { NavItem, hasMenu } from '../../core/navigation/navigation.model';
+import { MegaMenuGroup, NavItem, hasMenu } from '../../core/navigation/navigation.model';
 
 /**
  * The promo card's column in `.mega__grid` below — `repeat(4, 1fr) minmax(200px, 1.1fr)` with a
@@ -71,9 +71,21 @@ const PROMO_SIZES =
                         @for (group of column.groups; track group.link.path) {
                           <li>
                             @if (group.children.length > 0) {
-                              <!-- A category with children heads its group; a leaf category is
-                                   just a link, so no empty heading is drawn for it. -->
-                              <h3 class="mega__title">
+                              <!-- A category with children titles its group; a leaf category is
+                                   just a link, so nothing is drawn for it.
+
+                                   A paragraph rather than an h3, which is #76 and #20's SH11 - one
+                                   defect seen from two distances. The mega menu is in the DOM ahead
+                                   of the page's own h1, so these titles made every storefront page
+                                   read "H3 Girls, H3 Boys, H3 Baby, H2 Menu, H1 the-page" to
+                                   someone navigating by headings: three department headings and a
+                                   "Menu" before the page says what it is. axe reports nothing,
+                                   because nested heading order is a best-practice rule rather than
+                                   a WCAG failure, which is exactly why it survived this long. The
+                                   group is still labelled - the list below is aria-labelledby this
+                                   paragraph - so the relationship the h3 carried is kept and only
+                                   its place in the heading outline is given up. -->
+                              <p class="mega__title" [id]="groupId(item, group)">
                                 <a
                                   class="mega__link mega__link--group"
                                   [routerLink]="group.link.path"
@@ -81,8 +93,8 @@ const PROMO_SIZES =
                                 >
                                   {{ group.link.label }}
                                 </a>
-                              </h3>
-                              <ul>
+                              </p>
+                              <ul [attr.aria-labelledby]="groupId(item, group)">
                                 @for (child of group.children; track child.path) {
                                   <li>
                                     <a
@@ -228,6 +240,9 @@ const PROMO_SIZES =
     .mega__title {
       font-size: var(--text-small);
       font-weight: var(--weight-semibold);
+      /* The reset gives h1-h4 a tighter line-height than body text; this keeps the look these
+         titles had as h3s now that they are paragraphs. */
+      line-height: 1.2;
     }
     .mega__link {
       display: flex;
@@ -313,6 +328,17 @@ export class MainNav {
     return `mega-${item.id}`;
   }
 
+  /**
+   * The id of a group's title, so the list of child categories under it can be `aria-labelledby` it.
+   *
+   * Built from the category's own path, which is unique within a menu, and reduced to the characters an
+   * id is comfortable in — a path carries slashes, and an id with a slash in it is valid HTML but a
+   * nuisance in every selector that ever looks for it.
+   */
+  protected groupId(item: NavItem, group: MegaMenuGroup): string {
+    return `mega-${item.id}-${group.link.path.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '')}`;
+  }
+
   /** Hovering always opens: a pointer arriving is a fresh request, even after Escape. */
   openFromPointer(item: NavItem): void {
     this.dismissed = null;
@@ -354,7 +380,16 @@ export class MainNav {
       return;
     }
 
-    this.dismissed = null;
+    // The dismissed guard belongs to the **navigation**, not to one list item, and clearing it here
+    // per item was #20's SH8 (reproduced 6/6). Focus Women, press Escape — the menu closes and
+    // `dismissed` is 'women'. Tab to Men: Women's list item loses focus, this ran, and the guard was
+    // wiped. Shift+Tab back to Women and focus reopened the menu Escape had just closed, which is the
+    // one thing Escape is supposed to be able to do. So it is cleared only once focus has left the
+    // nav altogether, which is a fresh arrival; moving between departments inside it is not.
+    if (!(nextFocus instanceof Node && this.host.nativeElement.contains(nextFocus))) {
+      this.dismissed = null;
+    }
+
     this.close(id);
   }
 
