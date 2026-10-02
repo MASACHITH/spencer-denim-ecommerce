@@ -472,22 +472,49 @@ public sealed partial class ClientAssetImporter(
                 // file offered. They differ whenever the bytes were already in the library under
                 // another product's name, and reporting the offered one then is simply untrue: the
                 // kids stand-ins (2026-10-02) make that the normal case rather than a curiosity.
-                var storedAlt = stored.AltText ?? alt;
-                var altNote = string.Equals(storedAlt, alt, StringComparison.Ordinal)
-                    ? $"alt text \"{storedAlt}\""
-                    : $"alt text \"{storedAlt}\" — the sentence already on this photograph, kept rather "
-                        + $"than overwritten with \"{alt}\", because it is one asset and one sentence, "
-                        + "shared with every product that shows it";
+                //
+                // A dry run cannot know. It reads the library as it stands, so for bytes that are not in
+                // it yet there is no sentence to report and the offered one is a guess — and on a freshly
+                // seeded database, which is exactly where the documented two-step order starts, that
+                // guess is the kids product's own name on an adult garment's photograph: the one
+                // statement this whole arrangement exists to avoid making. So it is marked provisional
+                // rather than printed as fact, in the same spirit as this command's standing warning
+                // that a plan's "0 refused" means NOT CHECKED.
+                var altNote = stored.AltText is { } libraryAlt
+                    ? string.Equals(libraryAlt, alt, StringComparison.Ordinal)
+                        ? $"alt text \"{libraryAlt}\""
+                        : $"alt text \"{libraryAlt}\" — the sentence already on this photograph, kept rather "
+                            + $"than overwritten with \"{alt}\", because it is one asset and one sentence, "
+                            + "shared with every product that shows it"
+                    : _dryRun
+                        ? $"alt text \"{alt}\" — PROVISIONAL. These bytes are not in the library yet, so this "
+                            + "is what would be written only if they are still absent when the run happens. If "
+                            + "another product's photograph turns out to carry them — which is what borrowing a "
+                            + "photograph means — that product's sentence is kept and this one is never written."
+                        : $"no alt text — the photograph already in the library carries none, and a repeat "
+                            + $"upload does not add one. \"{alt}\" was offered and not written.";
+
+                var detail = outcome switch
+                {
+                    SlotOutcome.AlreadyPlaced =>
+                        $"{product.Slug} — byte for byte the same picture as {sameAs ?? "a photograph already in this product's gallery"}, "
+                        + $"so it is one asset in the library and fills one gallery slot. It is still {role}.",
+
+                    // Nothing was applied, so nothing was kept and nothing was written: what the alt
+                    // text would have been is not this line's business, and saying a sentence was
+                    // "kept rather than overwritten" about a file that was refused is simply wrong.
+                    // Describe() adds the "the slot already holds a different picture" sentence.
+                    SlotOutcome.Conflict => $"{product.Slug} — {role}",
+
+                    _ => $"{product.Slug} — {role}, {altNote}",
+                };
 
                 run.Add(Describe(
                     ClientAssetFolder.Products,
                     file.FileName,
                     outcome,
                     stored,
-                    outcome == SlotOutcome.AlreadyPlaced
-                        ? $"{product.Slug} — byte for byte the same picture as {sameAs ?? "a photograph already in this product's gallery"}, "
-                            + $"so it is one asset in the library and fills one gallery slot. It is still {role}."
-                        : $"{product.Slug} — {role}, {altNote}",
+                    detail,
                     file.RepairedFrom));
             }
 

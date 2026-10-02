@@ -195,11 +195,27 @@ public sealed class KidsStandInPhotoTests(SqlServerDatabaseFixture sqlServer)
         await world.Drop("products", $"{Kid}-1.jpg", TestImages.UniqueJpeg(1024, 1024), Token);
         await world.Drop("products", $"{Kid}-2.jpg", TestImages.UniqueJpeg(1024, 1024), Token);
 
+        var beforeRefusal = await CountsAsync(world);
+        var filesBeforeRefusal = world.PublicFiles().Count;
+
         var refused = await world.ImportAsync(Token);
 
         Assert.True(refused.Succeeded, string.Join("; ", refused.Failures));
         Assert.NotEmpty(refused.Conflicts);
         Assert.Equal(borrowed, await CardAndHoverAsync(world, Kid));
+
+        // **A conflict is not a no-op for the library, only for the slots.** The bytes went through the
+        // pipeline before the slot was consulted, so the photographs and their renditions are stored and
+        // referenced by nothing. Litter rather than loss, and nothing purges it on its own — asserted
+        // here because the README used to say the run "changes nothing", which was true of what a
+        // shopper sees and false of the library.
+        var afterRefusal = await CountsAsync(world);
+
+        Assert.True(
+            afterRefusal.Assets > beforeRefusal.Assets,
+            "A refused run was expected to have stored the photographs it could not apply.");
+        Assert.Equal(beforeRefusal.Media, afterRefusal.Media);
+        Assert.True(world.PublicFiles().Count > filesBeforeRefusal);
 
         var applied = await world.ImportAsync(Token, replace: true);
 
@@ -227,6 +243,103 @@ public sealed class KidsStandInPhotoTests(SqlServerDatabaseFixture sqlServer)
             .ToListAsync(Token);
 
         Assert.DoesNotContain(borrowed.Card, galleryAssets);
+    }
+
+    /// <summary>
+    /// <b>The first dry run cannot name the sentence, and must not pretend to.</b>
+    /// <para>
+    /// The documented order is "the delivery, then the stand-ins", and <c>-DryRun</c> passes
+    /// <c>--dry-run</c> to both — so step 1 commits nothing, the donor's bytes are still absent when
+    /// step 2 plans, and the only sentence available is the one the kids file offered. On a freshly
+    /// seeded database, which is precisely where an operator checking before writing starts, every line
+    /// used to read <c>alt text "Girls Cotton Sundress, front view"</c> as a statement of fact: the one
+    /// false sentence this whole arrangement exists to avoid.
+    /// </para>
+    /// <para>
+    /// A plan that cannot know has to say it cannot know. This is the same rule the command already
+    /// states about refusals — a dry run's "0 refused" means NOT CHECKED, not none.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task A_dry_run_against_a_library_without_the_bytes_marks_the_alt_text_provisional()
+    {
+        await using var world = await CreateAsync();
+
+        // No delivery imported: exactly what a first `-DryRun` leaves behind, because step 1 is a dry
+        // run too and commits nothing.
+        await StandInFromFreshBytesAsync(world);
+
+        var plan = await world.ImportAsync(Token, dryRun: true, root: world.StandInRoot);
+        Assert.True(plan.Succeeded, string.Join("; ", plan.Failures));
+
+        var entry = plan.Entries.Single(line => line.FileName == $"{Kid}-1.jpg");
+
+        Assert.Contains("PROVISIONAL", entry.Detail, StringComparison.Ordinal);
+        Assert.Contains("not in the library yet", entry.Detail, StringComparison.Ordinal);
+
+        // It may quote the sentence it would write, but never as the sentence the shop will carry.
+        Assert.DoesNotContain(
+            "Kids Canvas Sneakers, front view\" — the sentence already",
+            entry.Detail,
+            StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// And once the delivery really is in, the same plan names the donor's sentence with no hedge — so
+    /// the warning is specific to the case that cannot be known, not noise on every line.
+    /// </summary>
+    [Fact]
+    public async Task A_dry_run_after_the_delivery_names_the_donors_sentence_without_hedging()
+    {
+        await using var world = await CreateAsync();
+        await ImportTheDeliveryAsync(world);
+        await StandInAsync(world);
+
+        var plan = await world.ImportAsync(Token, dryRun: true, root: world.StandInRoot);
+        Assert.True(plan.Succeeded, string.Join("; ", plan.Failures));
+
+        var entry = plan.Entries.Single(line => line.FileName == $"{Kid}-1.jpg");
+
+        Assert.Contains("Court Canvas Sneakers, front view", entry.Detail, StringComparison.Ordinal);
+        Assert.DoesNotContain("PROVISIONAL", entry.Detail, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A refused file is not a file whose alt text was "kept rather than overwritten" — nothing was
+    /// kept, because nothing was applied. The sharing clause was built before the outcome was consulted
+    /// and appended to conflicts too, so the operator was told a sentence had been preserved on a slot
+    /// the run had just declined to touch.
+    /// <para>
+    /// The scenario is the one the README warns about and the likeliest way anybody meets it: the real
+    /// kids photographs have landed, and somebody runs the stand-in script again out of habit. The
+    /// stand-in's bytes are already in the library under the donor's name, so the sentence differs from
+    /// the one offered — which is what used to trigger the clause — while the slot now holds the
+    /// client's own photograph and is rightly refused.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task A_conflict_does_not_claim_a_sentence_was_kept()
+    {
+        await using var world = await CreateAsync();
+        await ImportTheDeliveryAsync(world);
+        await StandInAsync(world);
+        Assert.True((await world.ImportAsync(Token, root: world.StandInRoot)).Succeeded);
+
+        // The real photographs land and take the slots.
+        await world.Drop("products", $"{Kid}-1.jpg", TestImages.UniqueJpeg(1024, 1024), Token);
+        await world.Drop("products", $"{Kid}-2.jpg", TestImages.UniqueJpeg(1024, 1024), Token);
+        Assert.True((await world.ImportAsync(Token, replace: true)).Succeeded);
+
+        // And now the stand-in drop is run again by mistake.
+        var refused = await world.ImportAsync(Token, root: world.StandInRoot);
+
+        Assert.True(refused.Succeeded, string.Join("; ", refused.Failures));
+
+        var conflict = refused.Conflicts.Single(line => line.FileName == $"{Kid}-1.jpg");
+
+        Assert.Contains("already holds a different picture", conflict.Detail, StringComparison.Ordinal);
+        Assert.DoesNotContain("kept rather than overwritten", conflict.Detail, StringComparison.Ordinal);
+        Assert.DoesNotContain("Court Canvas Sneakers", conflict.Detail, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -283,6 +396,25 @@ public sealed class KidsStandInPhotoTests(SqlServerDatabaseFixture sqlServer)
 
         await using var scope = world.CreateScope();
         return await scope.ServiceProvider.GetRequiredService<AppDbContext>().MediaAssets.CountAsync(Token);
+    }
+
+    /// <summary>
+    /// A stand-in drop whose bytes are in no library yet, which is what a first <c>-DryRun</c> plans
+    /// against: both of the script's steps are dry runs, so step 1 stores nothing for step 2 to find.
+    /// </summary>
+    private static async Task StandInFromFreshBytesAsync(ClientAssetWorld world)
+    {
+        ClientAssetWorld.MakeTheEmptyFolders(world.StandInRoot);
+
+        for (var index = 1; index <= 2; index++)
+        {
+            await ClientAssetWorld.DropInto(
+                world.StandInRoot,
+                "products",
+                $"{Kid}-{index}.jpg",
+                TestImages.UniqueJpeg(1024, 1024),
+                Token);
+        }
     }
 
     /// <summary>
