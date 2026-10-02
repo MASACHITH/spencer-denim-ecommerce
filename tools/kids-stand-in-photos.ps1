@@ -71,18 +71,6 @@ $mappingFile = Join-Path $PSScriptRoot 'kids-stand-in-photos.csv'
 
 if (-not $Out) { $Out = Join-Path $repoRoot '.local-kids-stand-ins' }
 
-if ($Remove) {
-    if (Test-Path -LiteralPath $Out) {
-        Remove-Item -LiteralPath $Out -Recurse -Force
-        Write-Host "Removed $Out" -ForegroundColor Yellow
-    }
-    else {
-        Write-Host "Nothing to remove at $Out"
-    }
-    Write-Host 'The import is not undone. To put the real photographs in, see README section 2b.'
-    return
-}
-
 # ---------------------------------------------------------------- the mapping
 
 if (-not (Test-Path -LiteralPath $mappingFile)) {
@@ -107,11 +95,144 @@ if (-not $ClientAssets) {
     }
 }
 
-if (-not $ClientAssets -or -not (Test-Path -LiteralPath (Join-Path $ClientAssets 'products'))) {
+# -Remove deletes a generated drop and reads no photograph, so it does not need the delivery. It is
+# still probed for, because the guard below has to know where the delivery is in order to refuse to
+# delete it -- which is the whole point.
+if ($ClientAssets -and (Test-Path -LiteralPath $ClientAssets)) {
+    $ClientAssets = (Resolve-Path -LiteralPath $ClientAssets).Path
+}
+
+if (-not $Remove -and (-not $ClientAssets -or -not (Test-Path -LiteralPath (Join-Path $ClientAssets 'products')))) {
     throw "Could not find the client's drop. Pass -ClientAssets <folder holding products/, home/, …>."
 }
 
-$ClientAssets = (Resolve-Path -LiteralPath $ClientAssets).Path
+# ---------------------------------------------------------------- guard the destructive path
+
+<#
+    `-Out` is deleted recursively before the drop is rebuilt, and `-Remove` deletes it outright. That is
+    the only destructive operation in this tool, and it takes an operator-supplied path.
+
+    **Why it is guarded rather than trusted.** `client-assets/` is untracked in every repository here,
+    so it is the project's ONLY copy of the photographs the client delivered. `-ClientAssets` and `-Out`
+    are adjacent parameters, both take a path, and `-ClientAssets` is the one an operator always types.
+    One transposition would have deleted the delivery with no prompt and exited 0 -- reproduced against
+    a decoy folder before this existed. The file next door refuses to overwrite "a picture somebody
+    chose" and exits 3 rather than guess, under its own comment that "a missed file is litter; a deleted
+    file is data loss"; this had no guard at all.
+
+    The rule is "everything here is mine", not "something here is mine": a folder somebody else has put
+    a single file into is a folder somebody else is using. Refusing costs an operator one retyped
+    argument; the alternative is unrecoverable.
+#>
+
+$contractFolders = @('products', 'departments', 'home', 'social')
+
+# Every file name this mapping can produce. Both indexes for every row, because a donor without a
+# second photograph yields only `-1` and that drop is still one of ours.
+$mineFileNames = @(
+    foreach ($row in $rows) { "$($row.KidsSlug)-1.jpg"; "$($row.KidsSlug)-2.jpg" }
+)
+
+function Get-ComparablePath {
+    param([string] $Path)
+
+    return [System.IO.Path]::GetFullPath($Path).TrimEnd(
+        [System.IO.Path]::DirectorySeparatorChar,
+        [System.IO.Path]::AltDirectorySeparatorChar)
+}
+
+<#
+    Whether $Inner is $Outer or sits beneath it. Case-insensitively even on Linux, which can only ever
+    refuse a delete it might have allowed -- the safe direction for this particular question.
+#>
+function Test-PathWithin {
+    param([string] $Outer, [string] $Inner)
+
+    $o = Get-ComparablePath $Outer
+    $i = Get-ComparablePath $Inner
+
+    if ($i -eq $o) { return $true }
+    return $i.StartsWith($o + [System.IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)
+}
+
+function Assert-SafeOutputFolder {
+    param([string] $Path, [string] $Delivery, [string[]] $Mine)
+
+    $full = Get-ComparablePath $Path
+    $refusal = "Refusing to delete '$full'"
+
+    if ([string]::IsNullOrEmpty($full) -or $full -eq (Get-ComparablePath ([System.IO.Path]::GetPathRoot($full)))) {
+        throw "$refusal`: it is a filesystem root."
+    }
+
+    if (Test-PathWithin -Outer $full -Inner $repoRoot) {
+        throw "$refusal`: it is the repository, or contains it. Pass an -Out inside the repository, not over it."
+    }
+
+    if ($Delivery) {
+        if (Test-PathWithin -Outer $full -Inner $Delivery) {
+            throw "$refusal`: the client's delivery ('$Delivery') is inside it. That delivery is the only copy of the client's photographs and it is in no repository. Were -Out and -ClientAssets transposed?"
+        }
+
+        if (Test-PathWithin -Outer $Delivery -Inner $full) {
+            throw "$refusal`: it is inside the client's delivery ('$Delivery'), the only copy of the client's photographs. Were -Out and -ClientAssets transposed?"
+        }
+    }
+
+    if (-not (Test-Path -LiteralPath $full)) { return }
+
+    if (-not (Test-Path -LiteralPath $full -PathType Container)) {
+        throw "$refusal`: it is a file, not a folder."
+    }
+
+    # Everything directly inside must be one of the four folders the importer's contract names.
+    foreach ($entry in Get-ChildItem -LiteralPath $full -Force) {
+        if (-not $entry.PSIsContainer) {
+            throw "$refusal`: it holds a file this tool never writes there ('$($entry.Name)'), so it is not a generated drop. Nothing was deleted."
+        }
+
+        if ($contractFolders -notcontains $entry.Name) {
+            throw "$refusal`: it holds a folder this tool never creates ('$($entry.Name)'), so it is not a generated drop. Nothing was deleted."
+        }
+    }
+
+    # `products/` may hold only the stand-ins this mapping names, and nothing nested.
+    $products = Join-Path $full 'products'
+    if (Test-Path -LiteralPath $products) {
+        foreach ($entry in Get-ChildItem -LiteralPath $products -Force) {
+            if ($entry.PSIsContainer) {
+                throw "$refusal`: 'products/' holds a folder ('$($entry.Name)'), which no generated drop has. Nothing was deleted."
+            }
+
+            if ($Mine -notcontains $entry.Name) {
+                throw "$refusal`: 'products/$($entry.Name)' is not a file this mapping produces, so this folder is not mine to delete. Nothing was deleted."
+            }
+        }
+    }
+
+    # The other three are created empty and stay empty.
+    foreach ($folder in 'departments', 'home', 'social') {
+        $path = Join-Path $full $folder
+        if ((Test-Path -LiteralPath $path) -and (Get-ChildItem -LiteralPath $path -Force)) {
+            throw "$refusal`: '$folder/' is not empty, and a generated drop leaves it empty. Nothing was deleted."
+        }
+    }
+}
+
+Assert-SafeOutputFolder -Path $Out -Delivery $ClientAssets -Mine $mineFileNames
+
+if ($Remove) {
+    if (Test-Path -LiteralPath $Out) {
+        Remove-Item -LiteralPath $Out -Recurse -Force
+        Write-Host "Removed $Out" -ForegroundColor Yellow
+    }
+    else {
+        Write-Host "Nothing to remove at $Out"
+    }
+    Write-Host 'The import is not undone. To put the real photographs in, see README section 2b.'
+    return
+}
+
 $deliveredProducts = Join-Path $ClientAssets 'products'
 
 # Every delivered product file, with its media extensions stripped — the same stem the importer
@@ -162,6 +283,8 @@ function Resolve-DonorFile {
 
 # ---------------------------------------------------------------- build the drop
 
+# Guarded by Assert-SafeOutputFolder above, which has already refused anything that is not either
+# absent or a generated drop of this mapping's own files.
 if (Test-Path -LiteralPath $Out) { Remove-Item -LiteralPath $Out -Recurse -Force }
 
 # The importer fails on a missing folder rather than importing half a drop, so all four exist. The
@@ -221,9 +344,11 @@ Write-Host $line
 Write-Host ''
 Write-Host 'Why each one, and which ones are a poor match: tools/kids-stand-in-photos.csv.'
 Write-Host 'Alt text is NOT rewritten. The photograph is one asset shared by both products, and the'
-Write-Host 'one sentence on it describes the garment that is actually in the picture — so a kids card'
-Write-Host 'reads out the adult garment''s name. That is true of the image, it is the same sentence in'
-Write-Host 'the listing and on the product page, and the mismatch is the disclosure. See README §2b.'
+Write-Host 'one sentence on it describes the garment that is actually in the picture — so a kids'
+Write-Host 'PRODUCT PAGE reads out the adult garment''s name. That is true of the image, and the'
+Write-Host 'mismatch with the heading is the disclosure. The LISTING says nothing either way: a'
+Write-Host 'product card''s image is decorative (alt="" under aria-hidden, because it repeats the link'
+Write-Host 'on the product name), so no alt text of any kind reaches it. See README §2b.'
 
 $worst = @($plan | Where-Object { $_.Row.Quality -in @('poor', 'none') })
 if ($worst) {
@@ -297,6 +422,12 @@ elseif ($DryRun) {
     # Said separately, because a dry run has changed nothing and must not claim a page now shows
     # anything. "0 planned" above is also a count of refusals NOT looked for, as the importer says.
     Write-Host 'DRY RUN: nothing was stored. The report above says where each file would land.' -ForegroundColor Yellow
+    Write-Host ''
+    Write-Host 'Both steps were dry runs, so step 1 committed nothing for step 2 to find. Step 2 read the' -ForegroundColor Yellow
+    Write-Host 'library as it stands today: where the donor photograph is not in it yet, the alt text is' -ForegroundColor Yellow
+    Write-Host 'marked PROVISIONAL, because which sentence the shared asset ends up carrying is decided by' -ForegroundColor Yellow
+    Write-Host 'whichever run creates it. A real step 1 changes that answer. Run this again afterwards to' -ForegroundColor Yellow
+    Write-Host 'see the sentences the shop would actually carry.' -ForegroundColor Yellow
 }
 else {
     Write-Host 'Done. The Kids listing and the ten kids product pages now show borrowed photographs.' -ForegroundColor Green
