@@ -39,8 +39,31 @@ public sealed record MergeGuestCartCommand(Guid? GuestToken, int CustomerUserId)
 /// request can arrive with a customer principal and <c>Carts.CustomerUserId</c> is never written over
 /// HTTP today. The logic and its tests live here because the merge is where a bag is silently lost if it
 /// is written in a hurry at the end of ACC-01, and because <c>UX_Carts_Customer</c> is in the migration
-/// to stop exactly the double-cart this produces when it is wrong. ACC-01 calls it after
-/// <c>SignInAsync</c>; see the task report.
+/// to stop exactly the double-cart this produces when it is wrong.
+/// </para>
+/// <para>
+/// <b>What ACC-01 has to do, which is two lines — written here rather than only in a task report,
+/// because this is where whoever builds it will be looking.</b>
+/// </para>
+/// <list type="number">
+/// <item><description>
+/// After its <c>SignInAsync</c> succeeds, resolve this handler and call it with the guest token from the
+/// request — <c>CartCookie.Read(httpContext.Request)</c> — and the customer's user id. Then apply the
+/// returned <see cref="CartView.Cookie"/> with <c>CartCookie.Apply</c>, which is what clears the guest
+/// token the browser is still carrying. Do it <i>after</i> the sign-in, not before: a merge that ran
+/// first would move the bag into an account the credentials had not yet been accepted for.
+/// </description></item>
+/// <item><description>
+/// In <c>CartEndpoints.ReadLookup</c>, return <c>CartLookup.ForCustomer(id, token)</c> when the request
+/// carries a customer principal, instead of the unconditional <c>ForGuest</c> it returns today. That one
+/// line is the whole of what makes the account branch reachable; <c>CartStore</c>,
+/// <c>GetCartQueryHandler</c> and this handler already implement both branches and are tested on both
+/// (<c>CartAccountAndMergeTests</c>).
+/// </description></item>
+/// </list>
+/// <para>
+/// Nothing else changes, and in particular the schema does not: <c>Carts.CustomerUserId</c> and
+/// <c>UX_Carts_Customer</c> are already there.
 /// </para>
 /// </summary>
 public sealed class MergeGuestCartCommandHandler(ICartStore store, ICartReader reader)
