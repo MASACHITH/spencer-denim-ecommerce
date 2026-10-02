@@ -20,6 +20,23 @@ function contentType(response: APIResponse): string {
   return response.headers()['content-type'] ?? '';
 }
 
+/**
+ * **Why a dependency advisory is this file's business.**
+ *
+ * `robots.txt` is answered by Express before the Angular router is reached, which is the whole point
+ * of where it is mounted — a crawler answered 5xx for it treats the entire site as disallowed. That
+ * guarantee holds only while the process is answering at all, and the storefront's exposed surface is
+ * the SSR router: GHSA-ff3f-86qr-9cv3 was a denial of service in `@angular/router`'s server-side
+ * rendering, reachable from a URL, and it sat in this project's `package-lock.json` through this whole
+ * task. **Nothing was watching for it.** It was found by reading `npm audit` while adding `axe-core`
+ * for #65 — the same shape of gap #65 itself recorded: a check the process document assumes and no job
+ * performs. Fixed in `main` by the 21.2.25 bump, and the measurements in this file were re-taken on it.
+ *
+ * It is **not** a missing one-line CI step, and #84 has the analysis: the two remaining criticals
+ * (`@angular/build`, `piscina`) have no forward fix today — npm's own remedy is a downgrade across two
+ * majors — so an `npm audit --audit-level=high` gate would red every pull request from the day it
+ * landed. Read #84 before adding one.
+ */
 test.describe('robots.txt', () => {
   /**
    * **The one that matters most, and the reason it is answered by Express.**
