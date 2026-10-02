@@ -263,6 +263,63 @@ public sealed class CartStaleItemTests(SqlServerDatabaseFixture sqlServer) : Car
         });
     }
 
+    /// <summary>
+    /// <b>A deactivated variant.</b> Claimed by the reader's docblock and by the task report, and until now
+    /// not tested: the three switches that make a line <c>Unavailable</c> were only exercised through the
+    /// product and the category.
+    /// </summary>
+    [Fact]
+    public async Task A_deactivated_variant_is_unavailable_rather_than_missing()
+    {
+        var api = NewVisitor();
+        var variantId = (await InStockVariantIdsAsync(1))[0];
+
+        await api.AddAsync(variantId, 1, Token);
+
+        await WithVariantActiveAsync(variantId, active: false, async () =>
+        {
+            var (_, cart) = await api.GetAsync(Token);
+            Assert.NotNull(cart);
+
+            var line = Assert.Single(cart.Lines);
+            Assert.Equal(CartLineStatus.Unavailable, line.Status);
+            Assert.Null(line.Price);
+            Assert.Equal(0m, cart.Totals.ItemsSubtotal);
+
+            // And it cannot be added again while it is off.
+            var (response, _) = await api.AddAsync(variantId, 1, Token);
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        });
+    }
+
+    /// <summary>
+    /// <b>A deactivated department.</b> Doc 08 §7.1: a product leaves the storefront with its department,
+    /// so the bag has to stop selling it for the same reason it does for a category — the client believes
+    /// they have taken that whole section down.
+    /// </summary>
+    [Fact]
+    public async Task A_deactivated_department_is_unavailable_rather_than_missing()
+    {
+        var api = NewVisitor();
+        var variantId = (await InStockVariantIdsAsync(1))[0];
+
+        await api.AddAsync(variantId, 1, Token);
+
+        await WithDepartmentActiveAsync(variantId, active: false, async () =>
+        {
+            var (_, cart) = await api.GetAsync(Token);
+            Assert.NotNull(cart);
+
+            var line = Assert.Single(cart.Lines);
+            Assert.Equal(CartLineStatus.Unavailable, line.Status);
+            Assert.Null(line.Price);
+            Assert.Equal(0m, cart.Totals.ItemsSubtotal);
+
+            var (response, _) = await api.AddAsync(variantId, 1, Token);
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        });
+    }
+
     /// <summary>An unavailable line can still be taken out, which is the only thing a shopper can do with it.</summary>
     [Fact]
     public async Task An_unavailable_line_can_still_be_removed()
@@ -394,6 +451,48 @@ public sealed class CartStaleItemTests(SqlServerDatabaseFixture sqlServer) : Car
             await ExecuteAsync(db => db.Categories
                 .Where(category => category.Id == categoryId)
                 .ExecuteUpdateAsync(category => category.SetProperty(row => row.IsActive, !active), Token));
+        }
+    }
+
+    private async Task WithVariantActiveAsync(int variantId, bool active, Func<Task> body)
+    {
+        await ExecuteAsync(db => db.ProductVariants
+            .Where(variant => variant.Id == variantId)
+            .ExecuteUpdateAsync(variant => variant.SetProperty(row => row.IsActive, active), Token));
+
+        try
+        {
+            await body();
+        }
+        finally
+        {
+            await ExecuteAsync(db => db.ProductVariants
+                .Where(variant => variant.Id == variantId)
+                .ExecuteUpdateAsync(variant => variant.SetProperty(row => row.IsActive, !active), Token));
+        }
+    }
+
+    private async Task WithDepartmentActiveAsync(int variantId, bool active, Func<Task> body)
+    {
+        var departmentId = await ReadAsync(db => db.ProductVariants
+            .AsNoTracking()
+            .Where(variant => variant.Id == variantId)
+            .Select(variant => variant.Product!.DepartmentId)
+            .SingleAsync(Token));
+
+        await ExecuteAsync(db => db.Departments
+            .Where(department => department.Id == departmentId)
+            .ExecuteUpdateAsync(department => department.SetProperty(row => row.IsActive, active), Token));
+
+        try
+        {
+            await body();
+        }
+        finally
+        {
+            await ExecuteAsync(db => db.Departments
+                .Where(department => department.Id == departmentId)
+                .ExecuteUpdateAsync(department => department.SetProperty(row => row.IsActive, !active), Token));
         }
     }
 

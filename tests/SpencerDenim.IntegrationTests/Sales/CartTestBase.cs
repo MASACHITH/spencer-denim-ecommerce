@@ -1,3 +1,4 @@
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
@@ -31,6 +32,13 @@ public abstract class CartTestBase(SqlServerDatabaseFixture sqlServer) : IAsyncD
     private readonly List<HttpClient> _clients = [];
     private ApiFactory? _factory;
 
+    /// <summary>
+    /// Counts the SQL commands the API runs, so a test can prove a bag read is a bounded number of round
+    /// trips rather than one per line. Same interceptor and the same two precedents as the catalogue's
+    /// query-plan tests.
+    /// </summary>
+    protected CommandCountingInterceptor CommandCounter { get; } = new();
+
     protected SqlServerDatabaseFixture SqlServer { get; } = sqlServer;
 
     protected static CancellationToken Token => TestContext.Current.CancellationToken;
@@ -43,7 +51,7 @@ public abstract class CartTestBase(SqlServerDatabaseFixture sqlServer) : IAsyncD
     {
         SqlServer.SkipIfUnavailable();
 
-        _factory ??= new ApiFactory(SqlServer.ConnectionString);
+        _factory ??= new ApiFactory(SqlServer.ConnectionString, commandInterceptor: CommandCounter);
         var client = _factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             BaseAddress = BaseAddress,
@@ -63,7 +71,7 @@ public abstract class CartTestBase(SqlServerDatabaseFixture sqlServer) : IAsyncD
     {
         SqlServer.SkipIfUnavailable();
 
-        _factory ??= new ApiFactory(SqlServer.ConnectionString);
+        _factory ??= new ApiFactory(SqlServer.ConnectionString, commandInterceptor: CommandCounter);
         var client = _factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             BaseAddress = BaseAddress,
@@ -97,7 +105,7 @@ public abstract class CartTestBase(SqlServerDatabaseFixture sqlServer) : IAsyncD
     protected IServiceScope CreateApplicationScope()
     {
         SqlServer.SkipIfUnavailable();
-        _factory ??= new ApiFactory(SqlServer.ConnectionString);
+        _factory ??= new ApiFactory(SqlServer.ConnectionString, commandInterceptor: CommandCounter);
         return _factory.Services.CreateScope();
     }
 
@@ -183,7 +191,16 @@ public sealed class CartApiClient(HttpClient client)
         return (response, await ReadCartAsync(response, cancellationToken));
     }
 
-    /// <summary>Sends exactly these bytes with exactly this media type. Nothing is serialised for you.</summary>
+    /// <summary>
+    /// Sends exactly these bytes with exactly this media type. Nothing is serialised for you.
+    /// <para>
+    /// <b>The media type is parsed, not passed to <c>StringContent</c>'s three-argument constructor</b>,
+    /// which takes a bare media-type *name* and throws on anything carrying a parameter. That made
+    /// <c>application/json; charset=utf-8</c> — the type an ordinary browser sends — **structurally
+    /// unsendable** from this client, so the CSRF evidence for these endpoints had never actually
+    /// exercised it. It passes; it was untested, which is not the same thing.
+    /// </para>
+    /// </summary>
     public async Task<HttpResponseMessage> PostRawAsync(
         string path,
         string body,
@@ -191,14 +208,12 @@ public sealed class CartApiClient(HttpClient client)
         CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(path, UriKind.Relative));
-        request.Content = contentType is null
-            ? new StringContent(body)
-            : new StringContent(body, Encoding.UTF8, contentType);
+        request.Content = new StringContent(body, Encoding.UTF8);
 
-        if (contentType is null)
-        {
-            request.Content.Headers.ContentType = null;
-        }
+        // Set explicitly so a type with parameters survives, and so "no type at all" is expressible.
+        request.Content.Headers.ContentType = contentType is null
+            ? null
+            : MediaTypeHeaderValue.Parse(contentType);
 
         return await client.SendAsync(request, cancellationToken);
     }

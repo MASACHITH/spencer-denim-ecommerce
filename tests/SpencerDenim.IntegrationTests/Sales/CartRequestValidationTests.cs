@@ -52,6 +52,7 @@ public sealed class CartRequestValidationTests(SqlServerDatabaseFixture sqlServe
     [Theory]
     [InlineData("variantId=1&quantity=1", "application/x-www-form-urlencoded")]
     [InlineData("{\"variantId\":1,\"quantity\":1}", "text/plain")]
+    [InlineData("{\"variantId\":1,\"quantity\":1}", "multipart/form-data; boundary=x")]
     [InlineData("{\"variantId\":1,\"quantity\":1}", null)]
     public async Task A_body_that_is_not_json_is_refused_on_its_media_type(string body, string? contentType)
     {
@@ -60,6 +61,68 @@ public sealed class CartRequestValidationTests(SqlServerDatabaseFixture sqlServe
         using var response = await api.PostRawAsync("/api/cart/items", body, contentType, Token);
 
         Assert.Equal(HttpStatusCode.UnsupportedMediaType, response.StatusCode);
+    }
+
+    /// <summary>
+    /// <b>The media type an ordinary browser actually sends.</b>
+    /// <para>
+    /// The 415 above is what stops a cross-site HTML form reaching a bag, so the other half of that
+    /// argument — that the *real* content type is accepted — has to hold too. It had never been
+    /// exercised: <c>CartApiClient.PostRawAsync</c> used <c>StringContent</c>'s three-argument
+    /// constructor, which throws on a media type carrying a parameter, so
+    /// <c>application/json; charset=utf-8</c> was structurally unsendable from this suite. It is sendable
+    /// now, and it is accepted.
+    /// </para>
+    /// </summary>
+    [Theory]
+    [InlineData("application/json")]
+    [InlineData("application/json; charset=utf-8")]
+    [InlineData("application/json;charset=UTF-8")]
+    public async Task The_media_type_a_browser_sends_is_accepted(string contentType)
+    {
+        var api = NewVisitor();
+        var variantId = (await InStockVariantIdsAsync(1))[0];
+        var body = string.Create(
+            CultureInfo.InvariantCulture,
+            $"{{\"variantId\":{variantId},\"quantity\":1}}");
+
+        using var response = await api.PostRawAsync("/api/cart/items", body, contentType, Token);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    /// <summary>
+    /// <b>The API configures no CORS policy, and that is load-bearing rather than incidental.</b>
+    /// <para>
+    /// The CSRF argument for these endpoints is: a cross-site HTML form can only send urlencoded,
+    /// multipart or <c>text/plain</c>, all of which are a 415; and a cross-origin <c>fetch</c> sending
+    /// <c>application/json</c> needs a CORS preflight that nothing here answers. The second half is a
+    /// fact about the composition root, not about this file — so the day somebody adds a permissive
+    /// policy, the whole argument collapses to the 415 alone and nothing says so. This asserts the
+    /// premise instead of re-deriving it.
+    /// </para>
+    /// <para>
+    /// Measured on the wire rather than by inspecting the service collection: a preflight that is not
+    /// handled gets no <c>Access-Control-Allow-Origin</c> back, which is precisely what makes a browser
+    /// refuse the real request.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task The_api_answers_no_cors_preflight_for_the_bag()
+    {
+        var api = NewVisitor();
+
+        using var request = new HttpRequestMessage(HttpMethod.Options, new Uri("/api/cart/items", UriKind.Relative));
+        request.Headers.Add("Origin", "https://evil.example");
+        request.Headers.Add("Access-Control-Request-Method", "POST");
+        request.Headers.Add("Access-Control-Request-Headers", "content-type");
+
+        using var response = await api.Http.SendAsync(request, Token);
+
+        Assert.False(
+            response.Headers.Contains("Access-Control-Allow-Origin"),
+            "the API answered a cross-origin preflight, so the CSRF argument for the bag no longer holds");
+        Assert.False(response.Headers.Contains("Access-Control-Allow-Credentials"));
     }
 
     /// <summary>
