@@ -238,8 +238,18 @@ public sealed class CatalogVisibilityConventionTests
     /// the composition in <c>FindSellableVariantAsync</c> was then replaced with a fourth inline copy to
     /// see the guard bite — and all 921 tests passed, because the comment above that query names
     /// <c>CatalogVisibility.VisibleProduct</c> and the regex was counting prose. A rule that a docblock
-    /// can satisfy is not a rule. The other three entries were only safe from this by having counts high
-    /// enough that prose could not reach them, which is luck rather than design.
+    /// can satisfy is not a rule. The other three were safe only because their docblocks happen never to name
+    /// the rule — which is luck and not design; see <see cref="WithoutComments"/>, where that is measured.
+    /// </para>
+    /// <para>
+    /// <b>Why only the bag's reader went vacuous.</b> Measured, because the first explanation written here
+    /// was wrong: the other three files contain <c>CatalogVisibility.Visible</c> <b>four, two and three
+    /// times and in a comment not once</b>. They were not safe because their counts were too high for
+    /// prose to reach — they were safe because their docblocks never name the rule. <c>CartReader</c> was
+    /// the only file that names it, which is exactly why it was the only one that could satisfy its own
+    /// count from a comment. That makes the conclusion stronger rather than weaker: the other three are
+    /// safe only until somebody writes a docblock that mentions the rule, which is luck and not design,
+    /// and stripping comments is what turns it into design.
     /// </para>
     /// <para>
     /// Block comments first, then line comments (<c>///</c> is covered by <c>//</c>). A <c>//</c> inside a

@@ -240,11 +240,16 @@ describe('BagPage (CART-01)', () => {
      * already net of the markdown while `savedTotal` is the markdown. Every string the old assertions
      * looked for was present.
      *
-     * So the numbers are read back off the screen and checked **as a sum**. The exact figures are
-     * pinned beside the identity, and that is not belt-and-braces: with the row still labelled
-     * `Discount` this helper reads Savings as 0 and `8,784 − 0 === 8,784` holds, so the identity alone
-     * would have passed over the broken ladder. The sum catches a wrong *figure*; the figures catch a
-     * wrong *row*.
+     * So the numbers are read back off the screen and checked **as a sum**, with the exact figures pinned
+     * beside the identity.
+     *
+     * **Of the two, the figures are the stronger guard and the identity is the weakest.** Under the old ladder
+     * this helper reads Subtotal as 8,784 and Savings as 0 — because the row was labelled `Discount` — so
+     * `8,784 - 0 === 8,784` holds and the identity alone would have sailed straight past the bug, while the
+     * pinned `subtotal: 13_980` catches it on the very first figure. The identity is here because it is the
+     * property a future change can break *without* changing any of these three numbers; it is not the thing
+     * standing between us and this bug. The label test below is a third independent guard, and it is valuable
+     * as the third, not as the first.
      */
     it('adds up: Subtotal − Savings = Total', async () => {
       await open({ lines: [line()], totals: totals() });

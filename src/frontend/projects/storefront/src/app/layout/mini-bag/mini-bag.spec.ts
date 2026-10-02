@@ -225,11 +225,14 @@ describe('MiniBag (CART-02)', () => {
      * page, with the drawer shut, has to be announced from outside, because the drawer's contents are not
      * in the accessibility tree at all. Both holding the sentence would announce it twice.
      *
-     * **"Two" is about this component, not about the page**, and the earlier wording said it about the
-     * page and was wrong. On `/bag` with the drawer open the document has **three** `role="status"`
-     * regions — these two plus the bag page's own loading status — and **two** `role="alert"` regions
-     * bound to the same error, because the drawer renders every line a second time. `aria-modal` is what
-     * makes that harmless, and `accessibility.e2e.ts` scans that exact state rather than assuming it.
+     * **"Two" is about this component, not about the page**, and the earlier wording said it about the page and
+     * was wrong. On `/bag` with the drawer open the document has **three** `role="status"` regions — these two
+     * plus the bag page's own loading status — and **three** `role="alert"`: the bag page's, the mini bag's,
+     * and the **site footer's** permanently present newsletter status, which is the very element that broke a
+     * `toHaveCount(0)` assertion of mine and forced it to be narrowed to `.bag__error`. The alert count was
+     * then written here as two, undercounting the same set a third time, so this one is counted rather than
+     * recalled: 1 + 1 + 1. `aria-modal` is what makes the duplication harmless, and `accessibility.e2e.ts`
+     * scans that exact state rather than assuming it.
      */
     it('announces from outside the drawer while it is shut', async () => {
       await withBag({ lines: [line()], totals: totals() });

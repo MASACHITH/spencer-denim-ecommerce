@@ -89,13 +89,19 @@ async function addToBag(page: Page, product = 1): Promise<void> {
   const slug = `test-product-${product}`;
   await page.goto(`/product/${slug}?colour=1&size=10`);
 
-  // **Hydration, and `toBeEnabled()` is not it.** `goto` resolves on `load`, before Angular has claimed
-  // the server's DOM, and Add to Bag is *server-rendered enabled* when the URL settles a variant — so an
-  // actionability check passes on a button whose handler does not exist yet, the click goes nowhere, and
-  // the wait below times out. Worse here than in `bag.e2e.ts`: five axe scans reach their bag state
-  // through this helper, and a scan of an unhydrated DOM is a zero-violations result about the wrong
-  // document. The signal is the one the product page's own suite uses and documents — recording the
-  // visit (PDP-07) is the last thing that page does.
+  // **Hydration, and `toBeEnabled()` is not it.** `goto` resolves on `load`, before Angular has claimed the
+  // server's DOM, and Add to Bag is *server-rendered enabled* when the URL settles a variant — so an
+  // actionability check passes on a button whose handler does not exist yet, the click goes nowhere, and the
+  // wait below times out. The signal is the one the product page's own suite uses and documents — recording
+  // the visit (PDP-07) is the last thing that page does.
+  //
+  // **This gates the add, and nothing more.** The callers that then navigate to `/bag` do so with a bare
+  // `page.goto` and no gate of their own, so an axe scan can still read a document the browser has not
+  // finished claiming. `bag.e2e.ts`'s `openBagPage` — which arms `waitForResponse` for the page's own `GET
+  // /api/cart` before navigating — is what those five navigations and the click below want. That is **filed
+  // rather than fixed here**, and this comment now says so instead of implying otherwise: the version of it
+  // that stood here claimed the unhydrated-scan problem was dealt with, and was contradicted by the very next
+  // line of every caller.
   await expect
     .poll(() => page.evaluate(() => localStorage.getItem('sd.recently-viewed') ?? ''))
     .toContain(slug);
