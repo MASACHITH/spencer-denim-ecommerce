@@ -750,21 +750,52 @@ test.describe('the announcement bar at 320px (#20 SH12)', () => {
    * The reason Previous and not both: with the rotation off, the pause button is not rendered, and
    * Next is then the only way to the other messages.
    */
+  /**
+   * **Why this cycles rather than clicking twice and reading.** The first version clicked and then
+   * read `textContent()` straight away, twice. It passed on Windows and failed on Linux CI in roughly
+   * three runs of five, always `Expected: 3, Received: 2` — because the bar is **server-rendered**, so
+   * Playwright finds the button and considers it actionable before Angular has hydrated. A click that
+   * lands on inert markup does nothing, and a read taken immediately after a click that *did* land can
+   * still return the previous message. Either way two of the three reads are the same string.
+   *
+   * That is #89's family: acting on markup the server already sent, with no gate on the page's own
+   * state having been applied. The fix is to wait for the message to **change** after each click, and
+   * to tolerate a click that was lost — which is what makes this honest about the property being
+   * tested. The property is *"all three are reachable with Next alone"*, not *"exactly two clicks
+   * visit all three"*; the bar cycles, so revisiting one costs nothing.
+   */
   test('every message is still reachable under reduced motion', async ({ page }) => {
     await page.emulateMedia({ reducedMotion: 'reduce' });
     await page.goto('/');
 
     const message = page.locator('[data-testid="announcement"]');
-    const first = (await message.textContent())?.trim();
+    const next = page.getByRole('button', { name: 'Next announcement' });
+    const read = async () => (await message.textContent())?.trim() ?? '';
 
-    await page.getByRole('button', { name: 'Next announcement' }).click();
-    const second = (await message.textContent())?.trim();
-    await page.getByRole('button', { name: 'Next announcement' }).click();
-    const third = (await message.textContent())?.trim();
+    const seen = new Set<string>([await read()]);
+    let last = '';
 
-    expect(new Set([first, second, third]).size).toBe(3);
+    // Three messages cycling, so three effective clicks reach all of them; the spare attempts absorb
+    // clicks lost to hydration. A bound rather than a while-true, so a bar that stops advancing fails
+    // on the assertion below instead of timing the suite out with no diagnosis.
+    for (let attempt = 0; attempt < 8 && seen.size < 3; attempt += 1) {
+      const before = await read();
+      await next.click();
+
+      try {
+        await expect(message).not.toHaveText(before, { timeout: 2_000 });
+      } catch {
+        // The click did not take — almost always hydration on a loaded runner. Try again.
+        continue;
+      }
+
+      last = await read();
+      seen.add(last);
+    }
+
+    expect(seen.size).toBe(3);
     // And the visually hidden status says what changed, which is the only thing that announces.
-    await expect(page.locator('[data-testid="announcement-status"]')).toHaveText(third ?? '');
+    await expect(page.locator('[data-testid="announcement-status"]')).toHaveText(last);
   });
 
   test('the controls that remain still meet the 44px touch minimum', async ({ page }) => {
