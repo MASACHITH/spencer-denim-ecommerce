@@ -227,6 +227,47 @@ public sealed class SettingCatalogTests
     {
         Assert.Null(SettingCatalog.Find("Bank.AccountNumber"));
         Assert.Null(SettingCatalog.Find(null));
-        Assert.Null(SettingCatalog.Find("store.logoassetid"));
+        Assert.Null(SettingCatalog.Find("Store.Logo"));
+    }
+
+    /// <summary>
+    /// <b>And a key found case-insensitively, because the database is.</b>
+    /// <para>
+    /// The collation is <c>Latin1_General_100_CI_AS_SC</c>, so <c>social.facebookurl</c> and
+    /// <c>Social.FacebookUrl</c> are one row to SQL Server. This test used to assert the opposite — that
+    /// <c>store.logoassetid</c> was unknown — which pinned an <c>Ordinal</c> lookup whose consequence was
+    /// permanent: a row scripted in with different casing is found by SQL and realigned by the seeder, which
+    /// reports success, and then missed by every ordinal dictionary, so the box disappears from the screen and
+    /// every save answers <c>NotSeeded</c> (a 500) for ever.
+    /// </para>
+    /// </summary>
+    [Theory]
+    [InlineData("store.logoassetid")]
+    [InlineData("STORE.LOGOASSETID")]
+    [InlineData("Store.LogoAssetId")]
+    public void Find_matches_a_key_however_it_is_cased(string key)
+    {
+        Assert.Equal(SettingKeys.Store.LogoAssetId, SettingCatalog.Find(key)?.Key);
+    }
+
+    /// <summary>
+    /// <see cref="SettingDefinition.Label"/> is "a name a person recognises" (doc 08 §3.3), which is what the
+    /// media library's "used in…" panel shows. The first version used <c>Description</c> there, so a
+    /// 185-character paragraph arrived beside entries like "Wide-Leg Rinse Jeans".
+    /// </summary>
+    [Fact]
+    public void Every_key_has_a_short_label_that_reads_as_a_name()
+    {
+        foreach (var definition in SettingCatalog.All)
+        {
+            Assert.False(string.IsNullOrWhiteSpace(definition.Label), definition.Key);
+            Assert.InRange(definition.Label.Length, 1, SettingDefinition.LabelMaxLength);
+
+            // A name, not a sentence: no full stop, and distinctly shorter than the description beside it.
+            Assert.DoesNotContain(".", definition.Label, StringComparison.Ordinal);
+            Assert.True(
+                definition.Label.Length < (definition.Description?.Length ?? int.MaxValue),
+                $"{definition.Key}'s label is not shorter than its description.");
+        }
     }
 }

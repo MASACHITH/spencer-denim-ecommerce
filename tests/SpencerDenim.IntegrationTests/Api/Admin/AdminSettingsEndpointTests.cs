@@ -764,6 +764,14 @@ public sealed class AdminSettingsEndpointTests(SqlServerDatabaseFixture sqlServe
                 ("""{"whatsApp":123}""", "application/json"),
                 ("""{"instagramUrl":{"nested":true}}""", "application/json"),
                 ("""{"whatsApp":"94771234567"}""", "text/plain"),
+
+                // Valid JSON that is not an object. Since round 1 the endpoints read a JsonObject, so these
+                // reach a different path from "{bad" — and each one has to be a 400 rather than an unhandled
+                // cast or a null-reference deeper in.
+                ("[1,2,3]", "application/json"),
+                (""""just a string"""", "application/json"),
+                ("42", "application/json"),
+                ("true", "application/json"),
             ];
 
             foreach (var path in new[] { StoreLogoUrl, ContactSocialUrl })
@@ -1136,6 +1144,350 @@ public sealed class AdminSettingsEndpointTests(SqlServerDatabaseFixture sqlServe
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
+
+    // ---- round 1: normalisation on the wire ------------------------------------------------------
+
+    /// <summary>
+    /// <b>The stored value tells the truth about where the link goes.</b>
+    /// <para>
+    /// U+3002 (IDEOGRAPHIC FULL STOP) is the case that made normalisation necessary: both .NET's
+    /// <c>IdnHost</c> and Chromium map it to an ordinary dot, so storing the raw text left a row that
+    /// <i>read</i> <c>instagram.com</c> and <i>went</i> to <c>evil.example</c>. A staff user reviewing the
+    /// settings screen would have had no way to tell.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task A_homograph_host_is_stored_as_the_address_it_actually_resolves_to()
+    {
+        await using var host = await StartAsync();
+        using var client = await host.SignInAsync(Permissions.Settings.Edit);
+
+        try
+        {
+            var (status, _) = await PutAsync(client, ContactSocialUrl, new
+            {
+                whatsApp = (string?)null,
+                facebookUrl = (string?)null,
+                instagramUrl = "https://instagram.com\u3002evil.example/shop",
+                tikTokUrl = (string?)null,
+                rowVersion = await ContactVersionAsync(client),
+            });
+
+            Assert.Equal(HttpStatusCode.NoContent, status);
+
+            var stored = await ValueAsync(host, SettingKeys.Social.InstagramUrl);
+
+            Assert.Equal("https://instagram.com.evil.example/shop", stored);
+            Assert.DoesNotContain("\u3002", stored!, StringComparison.Ordinal);
+        }
+        finally
+        {
+            await RestoreAsync(host);
+        }
+    }
+
+    /// <summary>
+    /// Case, a default port and an empty path are normalised too, so two staff users typing the same profile
+    /// two ways do not produce two different rows — and the screen shows them what the link will do.
+    /// </summary>
+    [Fact]
+    public async Task An_accepted_address_is_stored_in_its_canonical_form()
+    {
+        await using var host = await StartAsync();
+        using var client = await host.SignInAsync(Permissions.Settings.Edit);
+
+        try
+        {
+            await PutAsync(client, ContactSocialUrl, new
+            {
+                whatsApp = (string?)null,
+                facebookUrl = "https://WWW.Facebook.com:443",
+                instagramUrl = (string?)null,
+                tikTokUrl = (string?)null,
+                rowVersion = await ContactVersionAsync(client),
+            });
+
+            Assert.Equal("https://www.facebook.com/", await ValueAsync(host, SettingKeys.Social.FacebookUrl));
+        }
+        finally
+        {
+            await RestoreAsync(host);
+        }
+    }
+
+    /// <summary>
+    /// <b>The two silent-drop rows.</b> U+FF20 (FULLWIDTH COMMERCIAL AT) and U+FF0F (FULLWIDTH SOLIDUS) used
+    /// to be accepted server-side and then <i>throw</i> in the browser — so a client got a 204, no error
+    /// anywhere, and an icon that never appeared. <c>Uri.IdnHost</c> throws for both, which is what refuses
+    /// them now.
+    /// </summary>
+    [Theory]
+    [InlineData("https://instagram.com\uFF20evil.example/")]
+    [InlineData("https://instagram.com\uFF0Fevil.example/")]
+    public async Task An_address_the_browser_cannot_parse_is_refused_rather_than_silently_dropped(string url)
+    {
+        await using var host = await StartAsync();
+        using var client = await host.SignInAsync(Permissions.Settings.Edit);
+
+        var (status, body) = await PutAsync(client, ContactSocialUrl, new
+        {
+            whatsApp = (string?)null,
+            facebookUrl = (string?)null,
+            instagramUrl = url,
+            tikTokUrl = (string?)null,
+            rowVersion = await ContactVersionAsync(client),
+        });
+
+        Assert.Equal(HttpStatusCode.BadRequest, status);
+        Assert.True(body.GetProperty("errors").TryGetProperty("instagramUrl", out _));
+        Assert.Null(await ValueAsync(host, SettingKeys.Social.InstagramUrl));
+    }
+
+    // ---- round 1: the per-row permission check ----------------------------------------------------
+
+    /// <summary>
+    /// Doc 08 §3.8 DB2 on the write path. The row's <c>RequiredPermission</c> is changed to one the caller
+    /// does not hold — which is exactly the shape #53 introduces when <c>Bank.*</c> arrives — and the write
+    /// is refused with 403 naming the key.
+    /// </summary>
+    [Fact]
+    public async Task A_key_whose_permission_the_caller_lacks_cannot_be_written()
+    {
+        await using var host = await StartAsync();
+        using var client = await host.SignInAsync(Permissions.Settings.Edit);
+
+        await RequirePermissionAsync(host, SettingKeys.Social.FacebookUrl, Permissions.Settings.Payments);
+
+        try
+        {
+            // The token is read *after* the permission change, and that ordering is the point: changing
+            // RequiredPermission is an UPDATE, so it moves the row's rowversion. Reading the token first made
+            // this test see a 409 rather than the 403 — the concurrency check runs before the permission
+            // check, which is the right order (tell a stale form to reload before telling it about
+            // permissions) and was worth finding out rather than assuming.
+            var (status, body) = await PutAsync(client, ContactSocialUrl, new
+            {
+                whatsApp = "94771234567",
+                facebookUrl = "https://www.facebook.com/shop",
+                instagramUrl = (string?)null,
+                tikTokUrl = (string?)null,
+                rowVersion = await ContactVersionAsync(client),
+            });
+
+            Assert.Equal(HttpStatusCode.Forbidden, status);
+            Assert.Equal("setting_forbidden", body.GetProperty("code").GetString());
+            Assert.Contains(SettingKeys.Social.FacebookUrl, body.GetProperty("detail").GetString()!, StringComparison.Ordinal);
+
+            // Nothing was written, including the key they could have changed: a partly applied save is worse
+            // than a refused one, because nobody can tell which half landed.
+            Assert.Null(await ValueAsync(host, SettingKeys.Contact.WhatsApp));
+            Assert.Null(await ValueAsync(host, SettingKeys.Social.FacebookUrl));
+        }
+        finally
+        {
+            await RequirePermissionAsync(host, SettingKeys.Social.FacebookUrl, Permissions.Settings.Edit);
+            await RestoreAsync(host);
+        }
+    }
+
+    /// <summary>
+    /// And a field the request <b>omits</b> is not written, so a caller whose screen cannot read a group does
+    /// not clear it. This is the server-side half of W1-12's shape, which the first version had backwards:
+    /// absent read as null and cleared the key.
+    /// </summary>
+    [Fact]
+    public async Task A_field_the_request_omits_is_left_alone_rather_than_cleared()
+    {
+        await using var host = await StartAsync();
+        using var client = await host.SignInAsync(Permissions.Settings.Edit);
+
+        try
+        {
+            await PutAsync(client, ContactSocialUrl, new
+            {
+                whatsApp = "94771234567",
+                facebookUrl = "https://www.facebook.com/kept",
+                instagramUrl = "https://www.instagram.com/kept",
+                tikTokUrl = "https://www.tiktok.com/@kept",
+                rowVersion = await ContactVersionAsync(client),
+            });
+
+            // A body carrying only the WhatsApp number — what a screen that could not read Social sends.
+            var (status, _) = await PutRawAsync(
+                client,
+                ContactSocialUrl,
+                $"{{\"whatsApp\":\"94779999999\",\"rowVersion\":\"{await ContactVersionAsync(client)}\"}}");
+
+            Assert.Equal(HttpStatusCode.NoContent, status);
+
+            Assert.Equal("94779999999", await ValueAsync(host, SettingKeys.Contact.WhatsApp));
+            Assert.Equal("https://www.facebook.com/kept", await ValueAsync(host, SettingKeys.Social.FacebookUrl));
+            Assert.Equal("https://www.instagram.com/kept", await ValueAsync(host, SettingKeys.Social.InstagramUrl));
+            Assert.Equal("https://www.tiktok.com/@kept", await ValueAsync(host, SettingKeys.Social.TikTokUrl));
+        }
+        finally
+        {
+            await RestoreAsync(host);
+        }
+    }
+
+    /// <summary>
+    /// The logo route insists on an explicit decision: an absent field is a 400, not a removal. A screen that
+    /// stopped sending it must not silently delete the shop's logo.
+    /// </summary>
+    [Fact]
+    public async Task A_logo_request_that_omits_the_asset_field_is_refused()
+    {
+        await using var host = await StartAsync();
+        using var client = await host.SignInAsync(Permissions.Settings.Edit, Permissions.Media.Create);
+
+        try
+        {
+            var asset = await UploadImageAsync(client, TestImages.UniquePng(600, 150), "kept-logo.png");
+            Assert.Equal(HttpStatusCode.NoContent, await SetLogoAsync(client, asset));
+
+            var (status, body) = await PutRawAsync(
+                client,
+                StoreLogoUrl,
+                $"{{\"rowVersion\":\"{await StoreVersionAsync(client)}\"}}");
+
+            Assert.Equal(HttpStatusCode.BadRequest, status);
+            Assert.True(body.GetProperty("errors").TryGetProperty("logoAssetPublicId", out _));
+
+            // Still set: a refused request removes nothing.
+            Assert.NotNull(await ValueAsync(host, SettingKeys.Store.LogoAssetId));
+            Assert.Single(await UsagesAsync(host));
+        }
+        finally
+        {
+            await RestoreAsync(host);
+        }
+    }
+
+    /// <summary>
+    /// A field of the wrong JSON type is a named field error rather than "malformed JSON" — the improvement
+    /// reading the body by hand buys, and the right side of issue #47's family.
+    /// </summary>
+    [Fact]
+    public async Task A_field_of_the_wrong_json_type_names_the_field()
+    {
+        await using var host = await StartAsync();
+        using var client = await host.SignInAsync(Permissions.Settings.Edit);
+
+        var (status, body) = await PutRawAsync(client, ContactSocialUrl, "{\"whatsApp\":123}");
+
+        Assert.Equal(HttpStatusCode.BadRequest, status);
+        Assert.True(body.GetProperty("errors").TryGetProperty("whatsApp", out _));
+    }
+
+    // ---- round 1: the third secret floor ----------------------------------------------------------
+
+    /// <summary>
+    /// <b>The storefront reader now refuses a secret row outright.</b>
+    /// <para>
+    /// Before round 1 it never read <c>IsSecret</c>: the protection was the key allow-list plus the contract's
+    /// shape, so a catalogued key flipped to Secret would have had its value published subject only to format
+    /// validation. The tester's correction to the brief was right — it was two floors and a shape, not three.
+    /// This is the third, and the value used here is one that <i>passes</i> format validation, so the test
+    /// cannot pass for the old reason.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task A_secret_row_is_not_published_even_when_its_value_looks_valid()
+    {
+        await using var host = await StartAsync();
+        using var client = host.CreateAnonymousClient();
+
+        // A real WhatsApp number, so IsAcceptableWhatsAppNumber would happily publish it.
+        await MakeSecretAsync(host, SettingKeys.Contact.WhatsApp, "94771234567");
+
+        try
+        {
+            var body = await GetJsonAsync(client, SiteSettingsUrl);
+
+            Assert.Equal(JsonValueKind.Null, body.GetProperty("whatsAppNumber").ValueKind);
+            Assert.DoesNotContain("94771234567", body.GetRawText(), StringComparison.Ordinal);
+        }
+        finally
+        {
+            await UnmakeSecretAsync(host, SettingKeys.Contact.WhatsApp);
+            await RestoreAsync(host);
+        }
+    }
+
+    // ---- round 1: case-insensitive keys -----------------------------------------------------------
+
+    /// <summary>
+    /// The collation is case-insensitive, so a row scripted in with different casing is one row to SQL Server.
+    /// The first version's <c>Ordinal</c> dictionaries missed it, which made the box vanish from the screen and
+    /// every save answer <c>NotSeeded</c> — a 500 — for ever, while the seeder reported nothing wrong.
+    /// </summary>
+    [Fact]
+    public async Task A_row_whose_key_is_cased_differently_is_still_readable_and_writable()
+    {
+        await using var host = await StartAsync();
+        using var client = await host.SignInAsync(Permissions.Settings.Edit);
+
+        await RecaseAsync(host, SettingKeys.Social.FacebookUrl, "social.facebookurl");
+
+        try
+        {
+            var byKey = await ReadSettingsAsync(client);
+            Assert.Contains("social.facebookurl", byKey.Keys);
+
+            var (status, _) = await PutAsync(client, ContactSocialUrl, new
+            {
+                whatsApp = (string?)null,
+                facebookUrl = "https://www.facebook.com/recased",
+                instagramUrl = (string?)null,
+                tikTokUrl = (string?)null,
+                rowVersion = await ContactVersionAsync(client),
+            });
+
+            Assert.Equal(HttpStatusCode.NoContent, status);
+            Assert.Equal("https://www.facebook.com/recased", await ValueAsync(host, "social.facebookurl"));
+        }
+        finally
+        {
+            await RecaseAsync(host, "social.facebookurl", SettingKeys.Social.FacebookUrl);
+            await RestoreAsync(host);
+        }
+    }
+
+    // ---- round 1: the media library label ---------------------------------------------------------
+
+    /// <summary>
+    /// Doc 08 §3.3 documents <c>OwnerLabel</c> as "a name a person recognises". The first version put the
+    /// setting's 185-character <c>Description</c> there, beside entries like "Wide-Leg Rinse Jeans".
+    /// </summary>
+    [Fact]
+    public async Task The_usage_label_for_a_setting_is_a_name_rather_than_a_paragraph()
+    {
+        await using var host = await StartAsync();
+        using var client = await host.SignInAsync(
+            Permissions.Settings.Edit, Permissions.Media.Create, Permissions.Media.Delete, Permissions.Media.View);
+
+        try
+        {
+            var asset = await UploadImageAsync(client, TestImages.UniquePng(600, 150), "labelled-logo.png");
+            Assert.Equal(HttpStatusCode.NoContent, await SetLogoAsync(client, asset));
+
+            using var refused = await client.DeleteAsync(new Uri($"/api/admin/media/{asset}", UriKind.Relative), Token);
+            Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode);
+
+            var problem = await refused.Content.ReadFromJsonAsync<JsonElement>(JsonOptions, Token);
+            var label = problem.GetProperty("usages").EnumerateArray().Single()
+                .GetProperty("ownerLabel").GetString();
+
+            Assert.Equal(SettingCatalog.Find(SettingKeys.Store.LogoAssetId)!.Label, label);
+            Assert.InRange(label!.Length, 1, SettingDefinition.LabelMaxLength);
+        }
+        finally
+        {
+            await RestoreAsync(host);
+        }
+    }
+
     // ---- helpers ---------------------------------------------------------------------------------
 
     private static IEnumerable<(HttpMethod Method, string Path)> Routes()
@@ -1350,6 +1702,38 @@ public sealed class AdminSettingsEndpointTests(SqlServerDatabaseFixture sqlServe
                     .SetProperty(setting => setting.IsSecret, definition.IsSecret)
                     .SetProperty(setting => setting.Value, (string?)null),
                 Token);
+    }
+
+    /// <summary>Changes one row's <c>RequiredPermission</c>, which no code path can do.</summary>
+    private static async Task RequirePermissionAsync(MediaTestHost host, string key, string permission)
+    {
+        await using var scope = host.Factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        await dbContext.Settings
+            .Where(setting => setting.Key == key)
+            .ExecuteUpdateAsync(
+                update => update.SetProperty(setting => setting.RequiredPermission, permission),
+                Token);
+    }
+
+    /// <summary>
+    /// Re-cases a row's primary key, standing in for a row scripted into the database by hand. The collation is
+    /// case-insensitive, so this is one row to SQL Server either way — which is the whole point.
+    /// </summary>
+    private static async Task RecaseAsync(MediaTestHost host, string from, string to)
+    {
+        await using var scope = host.Factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var cache = scope.ServiceProvider.GetRequiredService<ISiteSettingsCache>();
+
+        // A key change is a primary-key change, so it goes through raw SQL rather than the change tracker.
+        await dbContext.Database.ExecuteSqlRawAsync(
+            "UPDATE ops.Settings SET [Key] = {0} WHERE [Key] = {1}",
+            [to, from],
+            Token);
+
+        cache.Evict();
     }
 
     private static async Task InsertRowAsync(MediaTestHost host, Setting row)

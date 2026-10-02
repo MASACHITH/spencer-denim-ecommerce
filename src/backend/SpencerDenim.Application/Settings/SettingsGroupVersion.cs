@@ -43,7 +43,10 @@ public static class SettingsGroupVersion
 
         var builder = new StringBuilder();
 
-        foreach (var row in rows.OrderBy(row => row.Key, StringComparer.Ordinal))
+        // Ordered case-insensitively so the token does not depend on how a row's key happens to be cased in
+        // the database — both sides read the same rows, but an Ordinal sort would put `social.x` and
+        // `Social.Y` in a different order than a reader that had normalised them.
+        foreach (var row in rows.OrderBy(row => row.Key, StringComparer.OrdinalIgnoreCase))
         {
             builder.Append(row.Key).Append('\u0000');
 

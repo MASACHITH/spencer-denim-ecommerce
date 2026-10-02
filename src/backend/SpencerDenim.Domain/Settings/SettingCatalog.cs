@@ -12,14 +12,27 @@ namespace SpencerDenim.Domain.Settings;
 /// What a caller must hold to read or write it. Taken from here and never from a request, which is the
 /// whole reason the catalogue exists in the Domain rather than in a request DTO.
 /// </param>
-/// <param name="Description">What a staff user is told the key is for.</param>
+/// <param name="Label">
+/// A short name a person recognises, for a list that has room for a name and not a sentence — the media
+/// library's "used in…" panel (doc 08 §3.3 calls that field "a name a person recognises").
+/// <para>
+/// Separate from <paramref name="Description"/> because they are different jobs and the first version used
+/// the description for both: a 185-character paragraph arrived as a <c>MediaUsageDto.OwnerLabel</c> beside
+/// "Wide-Leg Rinse Jeans". <see cref="LabelMaxLength"/> is asserted by a test.
+/// </para>
+/// </param>
+/// <param name="Description">What a staff user is told the key is for, in full, on the settings screen.</param>
 public sealed record SettingDefinition(
     string Key,
     string GroupKey,
     SettingValueType ValueType,
     string RequiredPermission,
+    string Label,
     string? Description)
 {
+    /// <summary>How long a <see cref="Label"/> may be to still read as a name rather than a sentence.</summary>
+    public const int LabelMaxLength = 60;
+
     /// <summary>
     /// <c>CK_Settings_IsSecret</c>, as a property rather than a second field anybody could get wrong:
     /// a key is secret if and only if its type is <see cref="SettingValueType.Secret"/>.
@@ -47,6 +60,7 @@ public static class SettingCatalog
             SettingKeys.Store.Group,
             SettingValueType.MediaAssetRef,
             Permissions.Settings.Edit,
+            "The shop's logo",
             "The shop's logo, shown in the header instead of the text wordmark. Leave it empty to show "
             + "the wordmark. Replacing it releases the previous image so the media library will let you "
             + "delete it."),
@@ -56,6 +70,7 @@ public static class SettingCatalog
             SettingKeys.Contact.Group,
             SettingValueType.String,
             Permissions.Settings.Edit,
+            "WhatsApp number",
             "The WhatsApp number the floating button opens, in international form — for example "
             + "94771234567. No plus sign, no spaces."),
 
@@ -64,6 +79,7 @@ public static class SettingCatalog
             SettingKeys.Social.Group,
             SettingValueType.String,
             Permissions.Settings.Edit,
+            "Facebook page",
             "The full address of the shop's Facebook page. Leave it empty and the footer shows no "
             + "Facebook icon."),
 
@@ -72,6 +88,7 @@ public static class SettingCatalog
             SettingKeys.Social.Group,
             SettingValueType.String,
             Permissions.Settings.Edit,
+            "Instagram profile",
             "The full address of the shop's Instagram profile. Leave it empty and the footer shows no "
             + "Instagram icon."),
 
@@ -80,12 +97,24 @@ public static class SettingCatalog
             SettingKeys.Social.Group,
             SettingValueType.String,
             Permissions.Settings.Edit,
+            "TikTok profile",
             "The full address of the shop's TikTok profile. Leave it empty and the footer shows no "
             + "TikTok icon."),
     ];
 
+    /// <summary>
+    /// Keyed <b>case-insensitively</b>, to match the database.
+    /// <para>
+    /// The collation is <c>Latin1_General_100_CI_AS_SC</c>, so SQL Server treats <c>social.facebookurl</c> and
+    /// <c>Social.FacebookUrl</c> as one row — and an <c>Ordinal</c> dictionary here would not. The
+    /// consequence was specific and permanent: a row scripted in with different casing is found by SQL and
+    /// "realigned" by the seeder, which reports success, and then <i>missed</i> by every ordinal lookup — so
+    /// the box disappears from the screen and every save answers <c>NotSeeded</c>, which is a 500, for ever,
+    /// while the advertised repair path reports nothing wrong.
+    /// </para>
+    /// </summary>
     private static readonly Dictionary<string, SettingDefinition> ByKey =
-        All.ToDictionary(definition => definition.Key, StringComparer.Ordinal);
+        All.ToDictionary(definition => definition.Key, StringComparer.OrdinalIgnoreCase);
 
     /// <summary>The definition of <paramref name="key"/>, or <see langword="null"/> when this build has none.</summary>
     public static SettingDefinition? Find(string? key) =>
@@ -93,7 +122,7 @@ public static class SettingCatalog
 
     /// <summary>Every group this build populates, in display order, without repeats.</summary>
     public static IReadOnlyList<string> Groups { get; } =
-        All.Select(definition => definition.GroupKey).Distinct(StringComparer.Ordinal).ToList();
+        All.Select(definition => definition.GroupKey).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
     /// <summary>
     /// Which groups are saved <b>in one request</b> — the forms a staff user sees, each with one Save button.
@@ -131,11 +160,11 @@ public static class SettingCatalog
     /// </summary>
     public static IReadOnlyList<string> KeysInSaveUnitFor(string groupKey)
     {
-        var unit = SaveUnits.FirstOrDefault(candidate => candidate.Contains(groupKey, StringComparer.Ordinal))
+        var unit = SaveUnits.FirstOrDefault(candidate => candidate.Contains(groupKey, StringComparer.OrdinalIgnoreCase))
             ?? [groupKey];
 
         return All
-            .Where(definition => unit.Contains(definition.GroupKey, StringComparer.Ordinal))
+            .Where(definition => unit.Contains(definition.GroupKey, StringComparer.OrdinalIgnoreCase))
             .Select(definition => definition.Key)
             .ToList();
     }
@@ -145,7 +174,7 @@ public static class SettingCatalog
     /// command may touch, so a handler cannot be pointed at a key from another group.
     /// </summary>
     public static IReadOnlyList<string> KeysIn(string groupKey) =>
-        All.Where(definition => string.Equals(definition.GroupKey, groupKey, StringComparison.Ordinal))
+        All.Where(definition => string.Equals(definition.GroupKey, groupKey, StringComparison.OrdinalIgnoreCase))
             .Select(definition => definition.Key)
             .ToList();
 }

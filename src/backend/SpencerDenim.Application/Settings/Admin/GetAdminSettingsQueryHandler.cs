@@ -54,7 +54,10 @@ public sealed class GetAdminSettingsQueryHandler(
             SettingCatalog.All.Select(definition => definition.Key).ToList(),
             cancellationToken);
 
-        var byKey = rows.ToDictionary(row => row.Key, StringComparer.Ordinal);
+        // Case-insensitively, to match the database collation (Latin1_General_100_CI_AS_SC). An Ordinal
+        // dictionary here is how a row scripted in as `social.facebookurl` becomes invisible to the screen
+        // while every save answers NotSeeded -> 500, for ever. See SettingCatalog.ByKey.
+        var byKey = rows.ToDictionary(row => row.Key, StringComparer.OrdinalIgnoreCase);
 
         var groups = new List<AdminSettingGroupDto>();
 

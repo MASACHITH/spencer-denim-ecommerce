@@ -10,6 +10,7 @@ using SpencerDenim.Application.Media;
 using SpencerDenim.Application.Media.Abstractions;
 using SpencerDenim.Application.Media.Contracts;
 using SpencerDenim.Domain.Media;
+using SpencerDenim.Domain.Settings;
 using SpencerDenim.Infrastructure.Catalog;
 using SpencerDenim.Infrastructure.Persistence;
 
@@ -599,7 +600,7 @@ public sealed class MediaService(
             // label at all — on the exact screen the owner asked for so they could remove an old logo.
             if (string.Equals(group.Key, MediaUsageOwnerTypes.Setting, StringComparison.Ordinal))
             {
-                await AddSettingLabelsAsync(labels, group.Select(owner => owner.OwnerId), cancellationToken);
+                AddSettingLabels(labels, group.Select(owner => owner.OwnerId));
                 continue;
             }
 
@@ -694,34 +695,28 @@ public sealed class MediaService(
     /// Labels for <c>ops.Settings</c> owners (ADM-22). Keyed by the setting key rather than by an id, which
     /// is why it cannot share <see cref="AddLabelsAsync"/>.
     /// <para>
-    /// The label is the setting's <c>Description</c> where it has one, because that is the sentence a staff
-    /// user has already read on the settings screen ("The shop's logo, shown in the header…"), and the key
-    /// otherwise. A row that no longer exists in <c>ops.Settings</c> gets no label and the client falls back
-    /// to the type and id, as it does for every other unlabelled owner.
+    /// <b>No query, because the label is not data.</b> A key's short name is a property of the key, declared
+    /// in <see cref="SettingCatalog"/> — so it is read from source rather than from the row, which also means
+    /// the "used in…" panel labels a setting correctly on a database whose row was scripted in with different
+    /// casing. A key this build does not know gets no label, and the client falls back to the type and id as
+    /// it does for every other unlabelled owner.
+    /// </para>
+    /// <para>
+    /// It is the <i>short</i> label and not <c>Description</c>: the first version used the description, so a
+    /// 185-character paragraph arrived in a field doc 08 §3.3 documents as "a name a person recognises",
+    /// beside entries like "Wide-Leg Rinse Jeans".
     /// </para>
     /// </summary>
-    private async Task AddSettingLabelsAsync(
+    private static void AddSettingLabels(
         Dictionary<(string, string), string> labels,
-        IEnumerable<string> settingKeys,
-        CancellationToken cancellationToken)
+        IEnumerable<string> settingKeys)
     {
-        var keys = settingKeys.Distinct(StringComparer.Ordinal).ToList();
-
-        if (keys.Count == 0)
+        foreach (var key in settingKeys.Distinct(StringComparer.OrdinalIgnoreCase))
         {
-            return;
-        }
-
-        var rows = await dbContext.Settings
-            .AsNoTracking()
-            .Where(setting => keys.Contains(setting.Key))
-            .Select(setting => new { setting.Key, setting.Description })
-            .ToListAsync(cancellationToken);
-
-        foreach (var row in rows)
-        {
-            labels[(MediaUsageOwnerTypes.Setting, row.Key)] =
-                string.IsNullOrWhiteSpace(row.Description) ? row.Key : row.Description;
+            if (SettingCatalog.Find(key) is { } definition)
+            {
+                labels[(MediaUsageOwnerTypes.Setting, key)] = definition.Label;
+            }
         }
     }
 

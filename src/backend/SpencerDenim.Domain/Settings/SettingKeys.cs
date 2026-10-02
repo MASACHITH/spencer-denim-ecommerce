@@ -15,8 +15,9 @@ namespace SpencerDenim.Domain.Settings;
 /// </para>
 /// <para>
 /// <b><c>Store.Name</c> is absent on purpose, and this is the one place it could plausibly belong.</b>
-/// Doc 08 §3.8 lists <c>Name</c> in the <c>Store</c> group and doc 11 P14 step 11 lists "Store name"
-/// under <c>Settings.Edit</c> — both predate the owner's decision of 2026-10-02 (docs/02 §I2, W1-15),
+/// Doc 08 §3.8 lists <c>Name</c> in the <c>Store</c> group, doc 11 P13 step 13 (line 1419) says store name is
+/// edited in Settings, and P14's permission table (line 1494) lists it under <c>Settings.Edit</c> — all of
+/// which predate the owner's decision of 2026-10-02 (docs/02 §I2, W1-15),
 /// which put the shop's name in exactly one constant per application
 /// (<c>SpencerDenim.Domain.Branding.StoreBrand</c> and <c>BRAND</c> in <c>@spencer-denim/shared</c>) with
 /// a convention test that fails if it is written out anywhere else. Seeding it here would give the name
