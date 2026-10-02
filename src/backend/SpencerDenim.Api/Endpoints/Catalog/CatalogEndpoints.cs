@@ -82,9 +82,11 @@ internal static class CatalogEndpoints
     /// the endpoint is also safe to publish: all three of its queries are bounded
     /// (<c>Catalog:SitemapMaxDepartments</c>, <c>SitemapMaxCategories</c>, <c>SitemapMaxProducts</c>) and
     /// a short output-cache policy means a repeated request is answered from memory rather than from
-    /// three fresh projections. The prefix removes the surface; the bounds and the cache mean losing the
-    /// prefix is not a defect. <b>Whoever writes the Caddyfile (W0-15) must not add a blanket rule that
-    /// forwards this.</b>
+    /// three fresh projections. The prefix removes the surface; the bounds and the cache make losing the
+    /// prefix <b>much cheaper to abuse</b> rather than harmless — a single uncached first request on a
+    /// large catalogue is still the heaviest read in the system for anyone who can reach it.
+    /// <b>Whoever writes the Caddyfile (W0-15) must not add a blanket rule that forwards this</b>, which
+    /// is why the rule is written down in doc 03 §4 as well as here: that is the document they will read.
     /// </para>
     /// <para>
     /// There is no rate limiting anywhere in this solution except <c>NewsletterSignupThrottle</c>, and
