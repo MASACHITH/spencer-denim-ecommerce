@@ -100,15 +100,49 @@ async function resetStock(page: Page, variantId: number): Promise<void> {
   await page.request.get(`${apiURL}/__test__/cart-variant?reset=variant&variantId=${variantId}`);
 }
 
-/** Adds one Indigo/S from a product page, the way a shopper does. */
+/**
+ * Adds one Indigo/S from a product page, the way a shopper does.
+ *
+ * **Hydration first, and `toBeEnabled()` is not it.** `page.goto` resolves on `load`, which is before
+ * Angular has claimed the server's DOM, and the Add to Bag button is *server-rendered enabled* when the
+ * URL settles a variant — so an actionability check passes on a button whose click handler does not
+ * exist yet, the click goes nowhere, and the wait below times out. The product page's own suite solves
+ * this the same way and says why: recording the visit (PDP-07) is the last thing the page does, so the
+ * `localStorage` entry appearing is hydration having happened.
+ */
 async function addFromProductPage(page: Page, index = 1, size = 10): Promise<void> {
+  const slug = `test-product-${index}`;
   await page.goto(sizedProduct(index, size));
+  await expect
+    .poll(() => page.evaluate(() => localStorage.getItem('sd.recently-viewed') ?? ''))
+    .toContain(slug);
+
   const add = page.locator('[data-testid="add-to-bag"]');
   await expect(add).toBeEnabled();
   await add.click();
 
   // The mini bag opening is the page's own confirmation that the add landed.
   await expect(page.locator('sd-mini-bag [role="dialog"] .mini-bag__line')).toHaveCount(1);
+}
+
+/**
+ * Opens `/bag` and waits until it is **hydrated**, which the lines themselves cannot tell you.
+ *
+ * The bag page is server-rendered (that is the point of it), so `.bag__line` is in the document before a
+ * line of JavaScript has run — waiting for it proves the server answered, not that the page is alive.
+ * Under a full-suite load that gap is wide enough to lose an event: the typed-quantity test filled the
+ * box, the `change` listener was not attached yet, and the box kept `99`. One failure in a 603-test run,
+ * never reproducible on its own.
+ *
+ * The header's bag badge is the signal, because it is the one thing on this page that **cannot** be
+ * server-rendered: `StorefrontCounts` takes the count up inside `afterNextRender`, which never runs on
+ * the server (deliberately — a count in the markup would make every page per-visitor). So a badge with a
+ * number in it is hydration, observed rather than assumed.
+ */
+async function openBagPage(page: Page, items: number): Promise<void> {
+  await page.goto('/bag');
+  await expect(page.locator('.bag__line')).toHaveCount(items);
+  await expect(page.locator('[data-testid="bag-toggle"] .count')).toHaveText(String(items));
 }
 
 /**
@@ -176,8 +210,7 @@ test.describe('the bag (CART-01, CART-02)', () => {
     test('the bag survives a reload, which is the whole point of the cookie', async ({ page }) => {
       await addFromProductPage(page);
 
-      await page.goto('/bag');
-      await expect(page.locator('.bag__line')).toHaveCount(1);
+      await openBagPage(page, 1);
       await expect(page.locator('.bag__line')).toContainText('Test Product 1');
 
       const cookies = await page.context().cookies();
@@ -225,8 +258,7 @@ test.describe('the bag (CART-01, CART-02)', () => {
     test.beforeEach(async ({ page }) => {
       await useStubApi(page);
       await addFromProductPage(page);
-      await page.goto('/bag');
-      await expect(page.locator('.bag__line')).toHaveCount(1);
+      await openBagPage(page, 1);
     });
 
     test('shows the line, its colour and size, and a total that is the items only', async ({
@@ -315,7 +347,7 @@ test.describe('the bag (CART-01, CART-02)', () => {
 
       try {
         await setStock(page, indigoSmall(product), { available: 0 });
-        await page.goto('/bag');
+        await openBagPage(page, 1);
 
         const row = page.locator('.bag__line');
         await expect(row).toHaveCount(1);
@@ -343,7 +375,7 @@ test.describe('the bag (CART-01, CART-02)', () => {
 
       try {
         await setStock(page, indigoSmall(product), { sellable: false });
-        await page.goto('/bag');
+        await openBagPage(page, 1);
 
         const row = page.locator('.bag__line');
         await expect(row).toHaveCount(1);
@@ -366,7 +398,7 @@ test.describe('the bag (CART-01, CART-02)', () => {
 
       try {
         // Two in the bag, then only one left.
-        await page.goto('/bag');
+        await openBagPage(page, 1);
         await page.getByRole('button', { name: /^Increase quantity/ }).click();
         await expect(page.locator('.qty__input')).toHaveValue('2');
 
@@ -596,8 +628,7 @@ test.describe('the bag (CART-01, CART-02)', () => {
     test('the bag page can be driven from the keyboard, and announces what changed', async ({
       page,
     }) => {
-      await page.goto('/bag');
-      await expect(page.locator('.bag__line')).toHaveCount(1);
+      await openBagPage(page, 1);
 
       const increase = page.getByRole('button', { name: /^Increase quantity/ });
       await increase.focus();
@@ -636,8 +667,7 @@ test.describe('the bag (CART-01, CART-02)', () => {
      */
     test('every control on the bag page shows a focus ring on all four edges', async ({ page }) => {
       await page.setViewportSize({ width: 1280, height: 900 });
-      await page.goto('/bag');
-      await expect(page.locator('.bag__line')).toHaveCount(1);
+      await openBagPage(page, 1);
 
       // **One press of Tab**: Chromium only matches
       // `:focus-visible` on a button when the last interaction was a keyboard one, so a bare
@@ -687,8 +717,7 @@ test.describe('the bag (CART-01, CART-02)', () => {
         await addFromProductPage(page);
 
         await page.setViewportSize({ width, height: 900 });
-        await page.goto('/bag');
-        await expect(page.locator('.bag__line')).toHaveCount(1);
+        await openBagPage(page, 1);
 
         expect(await horizontalOverflow(page)).toBeLessThanOrEqual(0);
       });
@@ -698,8 +727,7 @@ test.describe('the bag (CART-01, CART-02)', () => {
         await addFromProductPage(page);
 
         await page.setViewportSize({ width, height: 900 });
-        await page.goto('/bag');
-        await expect(page.locator('.bag__line')).toHaveCount(1);
+        await openBagPage(page, 1);
 
         // Each clause counted separately — see `everyClauseIsBigEnough` and issue #80.
         await everyClauseIsBigEnough(page, [
