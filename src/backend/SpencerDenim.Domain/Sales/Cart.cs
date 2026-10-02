@@ -43,9 +43,14 @@ public sealed class Cart
     public DateTime CreatedAtUtc { get; set; }
 
     /// <summary>
-    /// Last read or write. Doc 08 §3.5 and §8.4: the purge drops guest carts after 30 days of
-    /// inactivity and customer carts after 180, and the guest cookie's sliding window is the same 30
-    /// days. The purge job itself is W4 housekeeping and is not in this task.
+    /// When this cart was last read or written.
+    /// <para>
+    /// Doc 08 §8.4 purges a guest cart after 30 days "inactive" and a customer cart after 180, and §3.5
+    /// keeps this column for it. <b>Counting a read as activity is this task's reading of "inactive",
+    /// not a quotation</b> — neither section says "last read or write". It is the reading that matches
+    /// the cookie, whose own 30-day window slides on every answer, and it errs towards keeping a bag a
+    /// shopper is still looking at. The purge job itself is W4 housekeeping and is not in this task.
+    /// </para>
     /// </summary>
     public DateTime LastActivityAtUtc { get; set; }
 

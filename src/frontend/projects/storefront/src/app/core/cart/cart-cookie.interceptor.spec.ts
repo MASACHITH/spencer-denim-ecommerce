@@ -118,6 +118,33 @@ describe('cartCookieInterceptor (CART-01, SSR)', () => {
    * a request is inspected the URL may be absolute. Matching only a leading `/api/cart` would have
    * silently stopped forwarding the cookie in exactly the configuration that needs it.
    */
+  /**
+   * It decides on the **path**, not on a substring. This is the one place in the application that
+   * attaches the bag token to an outbound request, so a URL that merely mentions `/api/cart` must not
+   * collect it — `/api/cartoons` is the shape that would have, and a `returnTo` query carrying the path
+   * is the shape somebody would add next.
+   */
+  it.each([
+    ['a longer path that starts the same way', '/api/cartoons'],
+    ['a sibling under a similar prefix', '/api/cart-summary'],
+    ['the path in a query string', '/api/catalog/products?returnTo=/api/cart'],
+    ['the path in a fragment', '/api/catalog/products#/api/cart'],
+  ])('sends no cookie for %s', (_name, url) => {
+    const { http, controller } = setUp('sd_cart=8e29b4c6-c0f9-4f0e-9b7e-2d1a5c3f6a7b');
+
+    http.get(url).subscribe();
+
+    expect(controller.expectOne(url).request.headers.has('Cookie')).toBe(false);
+  });
+
+  it('recognises a path below the bag, which is where the item routes live', () => {
+    const { http, controller } = setUp('sd_cart=8e29b4c6-c0f9-4f0e-9b7e-2d1a5c3f6a7b');
+
+    http.get('/api/cart/items/1').subscribe();
+
+    expect(controller.expectOne('/api/cart/items/1').request.headers.has('Cookie')).toBe(true);
+  });
+
   it('still recognises a cart call once the URL has been made absolute', () => {
     const { http, controller } = setUp('sd_cart=8e29b4c6-c0f9-4f0e-9b7e-2d1a5c3f6a7b');
 

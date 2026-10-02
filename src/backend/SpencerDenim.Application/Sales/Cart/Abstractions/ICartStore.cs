@@ -1,10 +1,5 @@
 namespace SpencerDenim.Application.Sales.Cart.Abstractions;
 
-/// <summary>What one add did, so the caller can tell "already there" from "just created".</summary>
-/// <param name="Quantity">What the row holds now, after the clamp at 10.</param>
-/// <param name="Inserted">True when the row did not exist before this call.</param>
-public readonly record struct CartItemUpsert(short Quantity, bool Inserted);
-
 /// <summary>What a sign-in merge moved.</summary>
 /// <param name="LinesMoved">Guest lines that became, or were added to, customer lines.</param>
 /// <param name="GuestCartDeleted">True when a guest cart was found and removed.</param>
@@ -39,8 +34,15 @@ public interface ICartStore
     /// Doc 08 §3.5 (DB22), verbatim: <c>UPDATE … SET Quantity = IIF(Quantity + @q &gt; 10, 10, Quantity +
     /// @q) WHERE CartId = @c AND VariantId = @v</c>; if no row was updated, INSERT; on a unique
     /// violation (2627/2601) retry the UPDATE.
+    /// <para>
+    /// <b>It returns nothing, deliberately.</b> It used to report the quantity the row ended up holding,
+    /// which it had to read back in a second statement — so a concurrent remove between the two made the
+    /// reported figure <c>0</c>, and a caller that trusted it would have been wrong about a bag that was
+    /// perfectly consistent. Nothing needed the value (every endpoint re-reads the whole bag to answer),
+    /// so the trap is removed rather than documented.
+    /// </para>
     /// </summary>
-    Task<CartItemUpsert> AddItemAsync(
+    Task AddItemAsync(
         int cartId,
         int variantId,
         short quantity,
@@ -54,7 +56,9 @@ public interface ICartStore
     Task<bool> RemoveItemAsync(int cartId, int variantId, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Moves the 30-day / 180-day inactivity clock (doc 08 §3.5). A one-column last-writer-wins UPDATE.
+    /// Moves the inactivity clock doc 08 §8.4's purge reads (30 days guest, 180 customer). A one-column
+    /// last-writer-wins UPDATE. That a <i>read</i> moves it is this task's reading of "inactive" rather
+    /// than a quotation — see <c>Cart.LastActivityAtUtc</c>.
     /// </summary>
     Task TouchAsync(int cartId, CancellationToken cancellationToken);
 

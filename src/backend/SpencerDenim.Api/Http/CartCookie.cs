@@ -44,9 +44,13 @@ internal static class CartCookie
             return null;
         }
 
-        // Exact "D" form only: the one shape this application ever writes. TryParse would also accept
-        // braces, parentheses and the 32-digit form, which would mean four different cookie values
-        // naming the same bag and nothing gained.
+        // The hyphenated "D" form only. `TryParse` would also accept braces, parentheses and the
+        // 32-digit form, which would mean four shapes of cookie value naming one bag and nothing gained.
+        //
+        // **"D" is case-insensitive about the hex digits**, so an upper-case value is accepted too. That
+        // is correct — it parses to the same `Guid` and resolves the same cart — but it does mean this is
+        // *not* "the one shape this application ever writes", which is what this comment used to claim.
+        // What is written is always `ToString("D")`, which is lower case.
         return Guid.TryParseExact(raw, "D", out var token) && token != Guid.Empty ? token : null;
     }
 

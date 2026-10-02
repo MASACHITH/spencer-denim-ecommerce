@@ -34,11 +34,19 @@ public sealed class GetCartQueryHandler(ICartStore store, ICartReader reader)
                 : CartView.Empty;
         }
 
-        var dto = await reader.ReadAsync(cart.Value.Id, cancellationToken);
-
-        // Doc 08 §3.5: the inactivity clock is "last read or write", so a read moves it. It is a
-        // single-column update and the row is not locked for the read.
+        // Touch, then read — the same order as every write path (see `AddToCartCommandHandler.ViewAsync`),
+        // which is the only reason to prefer one: two paths differing for no stated reason is the thing
+        // worth removing. It does make one small difference in the right direction: the activity is
+        // recorded even if the read then fails, so a visitor whose reads are erroring does not have their
+        // bag purged for inactivity.
+        //
+        // Doc 08 §8.4 purges a cart after 30 days (guest) or 180 (customer) "inactive", and §3.5 keeps
+        // `LastActivityAtUtc` for it. Reading "inactive" to include a read, not only a write, is this
+        // task's interpretation rather than a quotation — a shopper who looks at their bag every week has
+        // not abandoned it.
         await store.TouchAsync(cart.Value.Id, cancellationToken);
+
+        var dto = await reader.ReadAsync(cart.Value.Id, cancellationToken);
 
         return cart.Value.IsCustomerCart
             ? CartView.ForCustomer(dto, lookup.GuestToken is not null)

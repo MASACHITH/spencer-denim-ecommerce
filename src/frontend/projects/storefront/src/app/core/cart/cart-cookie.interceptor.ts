@@ -43,12 +43,27 @@ export const cartCookieInterceptor: HttpInterceptorFn = (request, next) => {
 };
 
 /**
- * Whether this is a bag call. The URL may already be absolute — `apiBaseUrlInterceptor` runs in the
- * same chain and rewrites `/api/...` to the internal address during SSR — so the path is matched
- * wherever it sits in the string rather than only at the start.
+ * Whether this is a bag call, decided on the **path** rather than on a substring.
+ *
+ * The URL may already be absolute — `apiBaseUrlInterceptor` runs in the same chain and rewrites
+ * `/api/...` to the internal address during SSR — so it is parsed rather than prefix-matched. It used to
+ * ask whether the string *contained* `/api/cart`, which is the wrong question in the one place in this
+ * application that attaches a bearer token to an outbound request: `/api/cartoons` would have matched,
+ * and so would any URL carrying `?returnTo=/api/cart`. Nothing leaks today because no such URL exists,
+ * which is exactly why it is worth fixing before one does.
+ *
+ * A URL that cannot be parsed is not a cart call. `URL` needs a base for a relative path, and the base
+ * is never used for anything else.
  */
 function isCartRequest(url: string): boolean {
-  return url.startsWith(CartApi.url) || url.includes(`${CartApi.url}`);
+  let path: string;
+  try {
+    path = new URL(url, 'http://cart.invalid').pathname;
+  } catch {
+    return false;
+  }
+
+  return path === CartApi.url || path.startsWith(`${CartApi.url}/`);
 }
 
 /**

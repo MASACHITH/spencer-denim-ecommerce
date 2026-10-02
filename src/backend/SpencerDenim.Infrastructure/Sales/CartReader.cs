@@ -189,9 +189,15 @@ internal sealed class CartReader(AppDbContext dbContext, IOptions<CatalogOptions
                     ? CartLineStatus.NotEnoughStock
                     : CartLineStatus.Buyable;
 
-        // An unavailable line is shown without a price. There is no price to show: the shop has withdrawn
-        // the product, so quoting what it used to cost would be quoting an offer that no longer stands —
-        // which is the same mistake as pricing from UnitPriceAtAdd, one line further down the page.
+        // An unavailable line carries no *current* price: the shop has withdrawn the product, so quoting
+        // what it used to cost would be quoting an offer that no longer stands — the same mistake as
+        // pricing from UnitPriceAtAdd, one line further down the page.
+        //
+        // **Narrowly: "no price at all" is true of what is rendered and announced, not of the payload.**
+        // `UnitPriceAtAdd` still travels on every line, this one included, because the storefront needs it
+        // for "the price has changed" — so the historical figure is on the wire and in the bag page's
+        // transfer state. That is not a leak (it is the shopper's own bag, on a `no-store` page) but it is
+        // narrower than "the price is gone", and the earlier wording overstated it.
         var price = sellable
             ? new PriceDto(
                 sale,
