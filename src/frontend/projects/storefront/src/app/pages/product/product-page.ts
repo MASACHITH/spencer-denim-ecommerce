@@ -48,6 +48,7 @@ import { PageMeta } from '../../core/platform/page-metadata';
 import { readableInk } from '../../core/platform/contrast';
 import { RobotsMeta } from '../../core/platform/robots-meta';
 import { serviceUnavailable } from '../../core/platform/service-unavailable';
+import { CartStore } from '../../core/cart/cart.store';
 import { LocalWishlist } from '../../core/wishlist/local-wishlist.service';
 
 /** What the API answers for `StockStatus`, in the shopper's words. */
@@ -89,10 +90,12 @@ const RECENT_SHOWN = 6;
  * exists, so the page says so, offers "Try again", and the server answers **503 with
  * `Retry-After`**, which a crawler retries instead of dropping the URL.
  *
- * **Deliberately not here.** Add to Bag and Buy Now need the bag API (W2-09) and the real
- * wishlist needs W2-08; a button that looked like it worked and did nothing would be worse than
- * no button, so the page has neither. The heart is the same local, per-browser wishlist the
- * product card already uses. Reviews are PDP-08 (W2-06) and Quick View is QV-01 (W2-04).
+ * **Add to Bag arrived with W2-09** (CART-01/02): it is disabled until a colour and size are settled,
+ * as PDP-03 asks, and a successful add opens the mini bag. **Buy Now is still not here**: it is Add to
+ * Bag followed by checkout, and checkout is W3-02 — a button that looked like it worked and did
+ * nothing would be worse than no button, which is the same judgement that kept Add to Bag off this page
+ * until the bag API existed. The real wishlist still needs W2-08, so the heart remains the local,
+ * per-browser list the product card uses. Reviews are PDP-08 (W2-06) and Quick View is QV-01 (W2-04).
  */
 @Component({
   selector: 'sd-product-page',
@@ -277,9 +280,32 @@ const RECENT_SHOWN = 6;
               <p class="pdp__qty-note" role="status">{{ quantityNote() }}</p>
             </div>
 
+            <!-- PDP-03: disabled until there is exactly one thing to add. aria-describedby points at
+                 the note below, so a screen reader is told *why* it is disabled rather than only that it
+                 is — a disabled control with no reason is the accessible version of a dead button. -->
+            <button
+              class="btn btn--primary btn--block pdp__add"
+              type="button"
+              data-testid="add-to-bag"
+              [disabled]="!canAddToBag() || adding()"
+              [attr.aria-describedby]="addToBagReason() ? 'pdp-add-reason' : null"
+              (click)="addToBag()"
+            >
+              <sd-icon name="bag" size="sm" />
+              {{ adding() ? 'Adding…' : 'Add to bag' }}
+            </button>
+
+            @if (addToBagReason(); as reason) {
+              <p class="pdp__qty-note" id="pdp-add-reason">{{ reason }}</p>
+            }
+
+            @if (bagError(); as message) {
+              <p class="pdp__add-error" role="alert">{{ message }}</p>
+            }
+
             <!-- The wishlist heart, exactly as the product card works it: the same per-browser
-                 LocalWishlist, the same aria-pressed, the same labels. Add to Bag and Buy Now
-                 wait for W2-09; nothing dead or disabled stands in for them. -->
+                 LocalWishlist, the same aria-pressed, the same labels. Buy Now waits for W3-02;
+                 nothing dead or disabled stands in for it. -->
             <button
               class="btn btn--secondary btn--block pdp__wish"
               type="button"
@@ -546,8 +572,17 @@ const RECENT_SHOWN = 6;
       color: var(--color-text-muted);
       min-height: 1.4em;
     }
+    /* .btn already supplies the icon gap; the reason line reuses .pdp__qty-note, which is the same
+       muted label. Both to keep this component's stylesheet inside the 4 kB budget. */
+    .pdp__add,
     .pdp__wish {
       margin-top: var(--space-1);
+    }
+    .pdp__add-error {
+      padding: var(--space-1);
+      border: 1px solid var(--color-sale);
+      color: var(--color-sale);
+      font-size: var(--text-label);
     }
 
     .pdp__row {
@@ -585,6 +620,7 @@ export class ProductPage {
   private readonly pageMeta = inject(PageMeta);
   private readonly robots = inject(RobotsMeta);
   private readonly wishlist = inject(LocalWishlist);
+  private readonly cart = inject(CartStore);
   private readonly recent = inject(RecentlyViewed);
   private readonly response = inject(RESPONSE_INIT, { optional: true });
 
@@ -806,6 +842,48 @@ export class ProductPage {
     )}`;
   });
 
+  /** True when exactly one variant is settled and there is stock for it (PDP-03). */
+  protected readonly canAddToBag = computed(() => {
+    const variant = this.chosenVariant();
+    if (variant) {
+      return variant.availableQuantity > 0;
+    }
+
+    // A product with no sizes has nothing outstanding — but it still needs a variant to add, and a
+    // product with no variants at all is not something that can be put in a bag.
+    return false;
+  });
+
+  /**
+   * Why Add to Bag is disabled, in a sentence, or null when it is not.
+   *
+   * It doubles as the button's `aria-describedby`, so the reason is announced rather than left to be
+   * inferred from a greyed-out control.
+   */
+  protected readonly addToBagReason = computed(() => {
+    if (this.canAddToBag()) {
+      return null;
+    }
+
+    if (this.stock().status === 'OutOfStock') {
+      return 'This product is out of stock.';
+    }
+
+    const variant = this.chosenVariant();
+    if (variant && variant.availableQuantity <= 0) {
+      return 'That size is out of stock. Choose another size.';
+    }
+
+    if (this.sizes().length > 0 && !variant) {
+      return 'Choose a size to add this to your bag.';
+    }
+
+    return 'This product cannot be added to a bag at the moment.';
+  });
+
+  protected readonly adding = this.cart.isAdding;
+  protected readonly bagError = this.cart.error;
+
   private readonly guideOpen = signal(false);
   protected readonly sizeGuideOpen = this.guideOpen.asReadonly();
 
@@ -917,6 +995,27 @@ export class ProductPage {
 
     this.quantityWanted.set(Number.isFinite(raw) && raw >= 1 ? Math.floor(raw) : 1);
     input.value = String(this.quantity());
+  }
+
+  /**
+   * Add to Bag (PDP-03, CART-01).
+   *
+   * The quantity sent is `quantity()`, which is already clamped to the variant's stock — so the server
+   * is never asked for more than the page is showing. It can still refuse (the stock moved, the product
+   * was unpublished a second ago), and `bagError()` shows what it said.
+   */
+  protected addToBag(): void {
+    const variant = this.chosenVariant();
+    const item = this.product();
+    if (!variant || !item || !this.canAddToBag()) {
+      return;
+    }
+
+    this.cart.add(
+      variant.id,
+      this.quantity(),
+      `${item.name}, ${variant.colourName}, size ${variant.sizeLabel}`,
+    );
   }
 
   protected toggleWishlist(): void {

@@ -500,13 +500,122 @@ describe('ProductPage (PDP-01..07)', () => {
     });
   });
 
-  describe('the buttons that are not there', () => {
-    it('offers no Add to Bag or Buy Now while the bag API does not exist (W2-09)', async () => {
+  /**
+   * PDP-03's Add to Bag, which arrived with the bag API (W2-09, CART-01/02). Everything about *what the
+   * bag then holds* is pinned in `core/cart/cart.store.spec.ts`; this block is about the button.
+   */
+  describe('Add to Bag (PDP-03)', () => {
+    function addButton(): HTMLButtonElement {
+      return query<HTMLButtonElement>('[data-testid="add-to-bag"]')!;
+    }
+
+    it('is disabled until a size is chosen, and says why', async () => {
       await open('/product/high-rise-straight-jean');
 
-      expect(text()).not.toContain('Add to Bag');
+
+      expect(addButton().disabled).toBe(true);
+      expect(query('#pdp-add-reason')?.textContent).toContain('Choose a size');
+
+      // aria-describedby, so the reason is announced rather than inferred from a greyed-out control.
+      expect(addButton().getAttribute('aria-describedby')).toBe('pdp-add-reason');
+    });
+
+    it('posts the chosen variant and quantity once a size is settled', async () => {
+      // Indigo / S is variant 1 with five in stock (see the fixture).
+      await open('/product/high-rise-straight-jean?colour=1&size=10');
+
+      expect(addButton().disabled).toBe(false);
+      expect(query('#pdp-add-reason')).toBeNull();
+
+      addButton().click();
+      await settle();
+
+      const request = http.expectOne(
+        (candidate) => candidate.url === '/api/cart/items' && candidate.method === 'POST',
+      );
+      expect(request.request.body).toEqual({ variantId: 1, quantity: 1 });
+      request.flush({
+        lines: [],
+        totals: {
+          itemCount: 1,
+          buyableItemCount: 1,
+          lineCount: 1,
+          itemsOriginalTotal: 0,
+          itemsSubtotal: 0,
+          savedTotal: 0,
+          currency: 'LKR',
+        },
+      });
+      await settle();
+    });
+
+    it('sends the quantity the page is showing, never more than the variant has', async () => {
+      await open('/product/high-rise-straight-jean?colour=1&size=10');
+
+      queryAll<HTMLButtonElement>('.qty__step')[1].click();
+      harness.detectChanges();
+
+      addButton().click();
+      await settle();
+
+      const request = http.expectOne((candidate) => candidate.url === '/api/cart/items');
+      expect(request.request.body).toEqual({ variantId: 1, quantity: 2 });
+      request.flush({
+        lines: [],
+        totals: {
+          itemCount: 2,
+          buyableItemCount: 2,
+          lineCount: 1,
+          itemsOriginalTotal: 0,
+          itemsSubtotal: 0,
+          savedTotal: 0,
+          currency: 'LKR',
+        },
+      });
+      await settle();
+    });
+
+    it('shows what the API said when it refuses the add', async () => {
+      await open('/product/high-rise-straight-jean?colour=1&size=10');
+
+      addButton().click();
+      await settle();
+
+      http
+        .expectOne((candidate) => candidate.url === '/api/cart/items')
+        .flush({ title: 'Out of stock', status: 409 }, { status: 409, statusText: 'Conflict' });
+      await settle();
+
+      expect(query('[role="alert"]')?.textContent).toContain('sold out');
+
+      // A sold-out add re-reads the bag, because the stock the page is showing has just been
+      // contradicted.
+      http.expectOne((candidate) => candidate.url === '/api/cart').flush({
+        lines: [],
+        totals: {
+          itemCount: 0,
+          buyableItemCount: 0,
+          lineCount: 0,
+          itemsOriginalTotal: 0,
+          itemsSubtotal: 0,
+          savedTotal: 0,
+          currency: 'LKR',
+        },
+      });
+      await settle();
+    });
+  });
+
+  describe('the buttons that are not there', () => {
+    /**
+     * Buy Now is Add to Bag followed by checkout, and checkout is W3-02. The same judgement that kept
+     * Add to Bag off this page until the bag API existed: nothing dead or disabled stands in for it.
+     */
+    it('offers no Buy Now while checkout does not exist (W3-02)', async () => {
+      await open('/product/high-rise-straight-jean');
+
       expect(text()).not.toContain('Buy Now');
-      expect(queryAll('button').filter((button) => button.hasAttribute('disabled') && button.textContent?.includes('Bag'))).toEqual([]);
+      expect(text()).not.toContain('Buy now');
     });
 
     it('saves to the same per-browser wishlist the card uses (W2-08)', async () => {

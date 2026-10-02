@@ -8,6 +8,7 @@ import {
   signal,
 } from '@angular/core';
 
+import { CartStore } from './cart/cart.store';
 import { LocalWishlist } from './wishlist/local-wishlist.service';
 
 /**
@@ -21,7 +22,11 @@ import { LocalWishlist } from './wishlist/local-wishlist.service';
  * cannot know it, so reading it any earlier would grow the header during hydration — a badge the
  * server never sent — which is exactly what hydration refuses.
  *
- * TODO(BAG-01): the bag still has no source and stays at zero, which is also its empty state.
+ * The bag number comes from {@link CartStore} (W2-09, CART-01/02). It is **not** read during a server
+ * render on an ordinary page: the bag is per-visitor, so a count in the markup would make every page
+ * personal and uncacheable for the sake of one number. The store is asked for it after the first render
+ * instead, exactly as the wishlist is, so the badge appears a moment after the shell. The one page that
+ * does render bag contents on the server is `/bag` itself, which answers `no-store` and `noindex`.
  */
 @Injectable({ providedIn: 'root' })
 export class StorefrontCounts {
@@ -30,10 +35,17 @@ export class StorefrontCounts {
 
   constructor() {
     const wishlist = inject(LocalWishlist);
+    const cart = inject(CartStore);
     const injector = inject(Injector);
 
     afterNextRender(() => {
       effect(() => this.setWishlist(wishlist.count()), { injector });
+
+      // The read is started here rather than in the store, so nothing fetches the bag during a server
+      // render of a page that is not the bag page. `ensureLoaded` is a no-op when the bag page has
+      // already read it.
+      cart.ensureLoaded();
+      effect(() => this.setBag(cart.itemCount()), { injector });
     });
   }
 

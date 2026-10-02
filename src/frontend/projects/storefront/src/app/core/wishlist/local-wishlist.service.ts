@@ -29,6 +29,23 @@ export class LocalWishlist {
     return this.slugs().has(slug);
   }
 
+  /**
+   * Saves a product, whether or not it was already saved.
+   *
+   * Separate from {@link toggle} because "move to wishlist" (CART-01) is not a toggle: a shopper moving
+   * a bag line to the wishlist must end with it saved, and `toggle` on something already saved would
+   * remove it — so the bag line would be deleted and the wishlist entry with it.
+   */
+  save(slug: string): void {
+    if (this.slugs().has(slug)) {
+      return;
+    }
+
+    const next = new Set(this.slugs()).add(slug);
+    this.slugs.set(next);
+    this.storage.write(STORAGE_KEY, JSON.stringify([...next]));
+  }
+
   /** Saves or unsaves a product, and returns its new state. */
   toggle(slug: string): boolean {
     const next = new Set(this.slugs());

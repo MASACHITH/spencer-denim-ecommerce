@@ -17,6 +17,9 @@ const productPage = () => import('./pages/product/product-page').then((m) => m.P
 /** The search results page (SRCH-02). */
 const searchPage = () => import('./pages/search/search-page').then((m) => m.SearchPage);
 
+/** The bag page (CART-01). */
+const bagPage = () => import('./pages/bag/bag-page').then((m) => m.BagPage);
+
 /** An address the catalogue does not have. Answers a real 404 (see the component). */
 const notFoundPage = () => import('./pages/not-found/not-found-page').then((m) => m.NotFoundPage);
 
@@ -37,21 +40,25 @@ const catalogUnavailablePage = () =>
  * **If you are building one of these pages, delete its entry in the same change.** That is the whole
  * maintenance rule, and it is here rather than only in a journal because this is where someone adding
  * a route will be looking. Each entry is owed by a known task: GLB-10 for `about`, `contact`,
- * `returns`, `shipping`, `privacy` and `terms`; W2-08 for `wishlist`; W2-09 for `bag`; W3-01 for
- * `account`; W3-02 for `checkout`. A leftover entry cannot take effect — the real route is declared
- * above this list and wins — but it says the site has no such page, so the spec fails on one.
+ * `returns`, `shipping`, `privacy` and `terms`; W2-08 for `wishlist`; W3-01 for `account`; W3-02 for
+ * `checkout`. A leftover entry cannot take effect — the real route is declared above this list and
+ * wins — but it says the site has no such page, so the spec fails on one.
  *
- * **`/search` was in this list and has been taken out**, because W2-07 built the page (SRCH-02) and an
- * entry for an address that has a real route is dead: it cannot take effect, since the real route is
- * declared above it, and it tells the next reader that `/search` has no page. It was added here when
- * the page did not exist and the header's form already navigated to it. `app.routes.spec.ts` now
- * asserts that no path in this list has a route of its own, so the next one to be built cannot be left
- * behind the same way.
+ * **`/search` and `/bag` were in this list and have been taken out**, because W2-07 built the search
+ * page (SRCH-02) and W2-09 built the bag page (CART-01), and an entry for an address that has a real
+ * route is dead: it cannot take effect, since the real route is declared above it, and it tells the
+ * next reader that the address has no page. Both were added here when the page did not exist and the
+ * shell already linked to it. `app.routes.spec.ts` asserts that no path in this list has a route of
+ * its own, so the next one to be built cannot be left behind the same way.
+ *
+ * `/bag` is worth one more line, because the rebase very nearly got it wrong: git **auto-merged**
+ * W2-09's route declaration in above this list and left `'bag'` in the list, with no conflict to look
+ * at — exactly how `/search` survived here through W2-07. The route wins at runtime, so every
+ * behavioural test still passed; only the spec below could see it.
  */
 export const UNBUILT_PATHS = [
   'about',
   'account',
-  'bag',
   'checkout',
   'contact',
   'privacy',
@@ -84,6 +91,14 @@ export const routes: Routes = [
   // matches nothing — and so there is no path by which it can answer 404 or 503. See the component.
   { path: 'search', loadComponent: searchPage },
 
+  // The bag (W2-09, CART-01). Like `search`, a single-segment route listed **ahead of `:department`**,
+  // which matches any single segment, and ahead of `UNBUILT_PATHS` below, whose `bag` entry this
+  // change removes — before this page existed the header's bag link redirected to the home page.
+  //
+  // It takes no `canMatch` guard — the page is valid for every visitor, including one with an empty
+  // bag — and so it can never answer 404 or 503.
+  { path: 'bag', loadComponent: bagPage },
+
   // Two of the five permanent navigation entries (GLB-05). They are the same listing with one
   // filter fixed and no department, so neither points at a not-found page while DEPT-02 and
   // DEPT-03 are outstanding; their banners and editorial copy arrive with those tasks.
@@ -101,12 +116,12 @@ export const routes: Routes = [
   // **Why they have to be listed, rather than left to the catch-all.** The header and the footer link
   // to every one of these on every page of the site. Answering 404 on an address the shop's own footer
   // offers would hand a crawler a site-wide broken link, which is worse than the soft 404 #28 is
-  // about. So the list is the price of fixing #28 before GLB-10, W2-08 and W2-09 land; #28 itself says
-  // the catch-all may become the 404 once they have. **Each of these is deleted by the task that gives
-  // the page a real route** — GLB-10 for the six content pages, W2-08 for /wishlist, W2-09 for /bag,
-  // W3-01 for /account, W3-02 for /checkout — and W2-07 already deleted /search's, which is the
-  // pattern. A leftover entry cannot take effect, because a real route declared above it wins, but it
-  // is a lie about what the site has, so `app.routes.spec.ts` fails on one.
+  // about. So the list is the price of fixing #28 before GLB-10 and W2-08 land; #28 itself says the
+  // catch-all may become the 404 once they have. **Each of these is deleted by the task that gives the
+  // page a real route** — GLB-10 for the six content pages, W2-08 for /wishlist, W3-01 for /account,
+  // W3-02 for /checkout — and W2-07 (/search) and W2-09 (/bag) have already deleted theirs, which is
+  // the pattern. A leftover entry cannot take effect, because a real route declared above it wins, but
+  // it is a lie about what the site has, so `app.routes.spec.ts` fails on one.
   //
   // Ahead of `:department` on purpose: these are known answers and should not wait on the catalogue
   // feed to be given. Behind `search` on purpose too, which is the same point from the other side:
@@ -121,8 +136,9 @@ export const routes: Routes = [
   ...UNBUILT_PATHS.map((path) => ({ path, pathMatch: 'full' as const, redirectTo: '' })),
 
   // `:department` matches any single segment, so without the guard it swallowed every header and
-  // footer link that is not built yet — /bag, /account, /contact, /privacy and the rest. A guard
-  // that answers "no" lets the router carry on to `**`, which is where those went before.
+  // footer link that is not built yet — /account, /contact, /privacy and the rest, and /bag until
+  // W2-09. A guard that answers "no" lets the router carry on to `**`, which is where those went
+  // before.
   { path: ':department', canMatch: [isKnownDepartment], loadComponent: listingPage },
   { path: ':department/:category', canMatch: [isKnownCategory], loadComponent: listingPage },
   // The Kids tree is three levels deep (docs/08 §9), and the mega menu links to all of it, e.g.

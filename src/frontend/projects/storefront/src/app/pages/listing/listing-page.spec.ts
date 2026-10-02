@@ -697,7 +697,10 @@ describe('ListingPage', () => {
      * the shell links to all of them on every page and a 404 on a link in the footer is worse than
      * the redirect (#28, and `app.routes.ts` on `UNBUILT_PATHS`).
      */
-    for (const path of ['/bag', '/wishlist', '/account', '/privacy', '/contact']) {
+    // `/not-a-department` left this list in W2-10 (#28 — it is a real 404 now, see below) and `/bag`
+    // left it in W2-09 (it is a real page now, see below). The four that remain are still in
+    // `UNBUILT_PATHS`, so they still redirect to the home page.
+    for (const path of ['/wishlist', '/account', '/privacy', '/contact']) {
       it(`${path} goes back to the home page, not to the listing`, async () => {
         await goTo(path);
 
@@ -734,6 +737,42 @@ describe('ListingPage', () => {
 
       expect(TestBed.inject(Router).url).toBe('/bogus/thing');
       expect(text()).toContain('could not find that page');
+    });
+
+    /**
+     * `/bag` was in the list above until W2-09. It is a real route (CART-01) now, so what keeps it off
+     * the listing is the **route order** — `bag` is declared ahead of `:department` *and* ahead of the
+     * `UNBUILT_PATHS` redirects, whose `bag` entry W2-09 removed. Worth its own test rather than a
+     * deletion: swap the routes, or leave the list entry in front, and `/bag` renders the department
+     * listing's not-found state or the home page at HTTP 200 again, which is the bug both deleted
+     * cases were written for.
+     */
+    it('/bag is the bag page now, not a department that does not exist', async () => {
+      await goTo('/bag');
+
+      // The bag page reads the cart from its constructor, so the request is already in flight.
+      http
+        .match((request) => request.url === '/api/cart')
+        .forEach((request) =>
+          request.flush({
+            lines: [],
+            totals: {
+              itemCount: 0,
+              buyableItemCount: 0,
+              lineCount: 0,
+              itemsOriginalTotal: 0,
+              itemsSubtotal: 0,
+              savedTotal: 0,
+              currency: 'LKR',
+            },
+          }),
+        );
+      harness.detectChanges();
+
+      expect(TestBed.inject(Router).url).toBe('/bag');
+      expect(query('h1')?.textContent?.trim()).toBe('Your bag');
+      expect(text()).not.toContain('No products found');
+      expect(text()).not.toContain('could not find that page');
     });
 
     it('shows the missing page for a category that belongs to another department', async () => {
