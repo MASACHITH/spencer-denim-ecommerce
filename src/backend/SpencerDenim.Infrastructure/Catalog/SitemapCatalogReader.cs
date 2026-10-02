@@ -24,9 +24,17 @@ namespace SpencerDenim.Infrastructure.Catalog;
 /// sitemap built from its own rule would keep offering a crawler listings that answer 404.
 /// </para>
 /// <para>
-/// **Freshness is not cached here.** One read per call, and the caller decides how often to call: the
-/// storefront's <c>sitemap.xml</c> route holds the rendered document for a few minutes and keeps the
-/// last good one through an outage. Caching in both places would mean two ages for one answer.
+/// **Every one of the three reads is bounded**, which it was not at first: only the products had a
+/// <c>Take</c>, so the one list an admin can grow without limit — W1-12 gives unlimited category
+/// creation (ADM-11) — was the one with no ceiling, while this docblock claimed the read was bounded.
+/// Each bound is reported in the answer rather than silently applied.
+/// </para>
+/// <para>
+/// **Caching is the endpoint's, not this class's.** One read per call here; the endpoint carries a short
+/// output-cache policy (<c>Catalog:SitemapCacheSeconds</c>) so a repeated request is answered from
+/// memory rather than from three queries, and the storefront holds the rendered document for fifteen
+/// minutes on top of that. The window here is deliberately a minute rather than matching the
+/// storefront's, so the two do not stack into half an hour of staleness.
 /// </para>
 /// </summary>
 internal sealed class SitemapCatalogReader(
@@ -39,22 +47,34 @@ internal sealed class SitemapCatalogReader(
 
     public async Task<CatalogSitemapDto> GetSitemapAsync(CancellationToken cancellationToken)
     {
+        // One more than each cap, so "there are more than we will publish" is a fact read off the
+        // database rather than inferred from a full page.
+        var departmentLimit = _options.SitemapMaxDepartments;
         var departments = await dbContext.Departments
             .AsNoTracking()
             .Where(CatalogVisibility.VisibleDepartment)
             .OrderBy(department => department.SortOrder)
             .ThenBy(department => department.Id)
+            .Take(departmentLimit + 1)
             .Select(department => new SitemapDepartmentRow(
                 department.Id,
                 department.Slug,
                 department.UpdatedAtUtc ?? department.CreatedAtUtc))
             .ToListAsync(cancellationToken);
 
+        var departmentsTruncated = departments.Count > departmentLimit;
+        if (departmentsTruncated)
+        {
+            departments.RemoveAt(departments.Count - 1);
+        }
+
+        var categoryLimit = _options.SitemapMaxCategories;
         var categories = await dbContext.Categories
             .AsNoTracking()
             .Where(CatalogVisibility.VisibleCategory)
             .OrderBy(category => category.SortOrder)
             .ThenBy(category => category.Id)
+            .Take(categoryLimit + 1)
             .Select(category => new SitemapCategoryRow(
                 category.Id,
                 category.DepartmentId,
@@ -63,8 +83,12 @@ internal sealed class SitemapCatalogReader(
                 category.UpdatedAtUtc ?? category.CreatedAtUtc))
             .ToListAsync(cancellationToken);
 
-        // One more than the cap, so "there are more than we will publish" is a fact read off the
-        // database rather than a guess from a full page.
+        var categoriesTruncated = categories.Count > categoryLimit;
+        if (categoriesTruncated)
+        {
+            categories.RemoveAt(categories.Count - 1);
+        }
+
         var limit = _options.SitemapMaxProducts;
         var products = await dbContext.Products
             .AsNoTracking()
@@ -90,7 +114,9 @@ internal sealed class SitemapCatalogReader(
             clock.UtcNow.UtcDateTime,
             BuildDepartments(departments, categories),
             products,
-            truncated);
+            truncated,
+            departmentsTruncated,
+            categoriesTruncated);
     }
 
     /// <summary>

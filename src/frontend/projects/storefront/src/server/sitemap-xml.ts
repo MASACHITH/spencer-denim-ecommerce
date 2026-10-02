@@ -33,11 +33,20 @@ import { RequestHeaders, apiInternalUrl, publicOrigin } from './origins';
 export const CACHE_SECONDS = 900;
 
 /**
- * How long a stale document may still be served once the catalogue has stopped answering. A day: a
- * sitemap that is hours out of date is overwhelmingly better than no sitemap, and past a day the
- * outage is not a blip and a `503` is the more honest answer.
+ * How long a stale document may still be served once the feed has stopped answering.
+ *
+ * **Six hours, reduced from a day, and the reason is a narrower case than "an outage".** During a
+ * whole-catalogue outage a stale `<loc>` costs nothing: the product pages answer 503 too, so a crawler
+ * retries and keeps the URL. The case that bites is this feed failing **while the rest of the catalogue
+ * is healthy** - it is the heaviest read in the system and so the first thing to time out - because a URL
+ * an admin deactivated this morning is then still being offered while its page answers a real 404. Six
+ * hours bounds that to a quarter of a day and still covers any plausible deploy, restart or load spike,
+ * since a crawler re-reads a sitemap on a scale of hours.
+ *
+ * The other half of the answer is {@link SitemapDocument}, which logs once when it starts serving a
+ * stale document: a shorter window reduces the exposure, and the log is what stops it being silent.
  */
-export const STALE_SECONDS = 86_400;
+export const STALE_SECONDS = 21_600;
 
 /**
  * How long to wait for the API. Longer than the 2 s the departments feed is given, because this is one
@@ -52,6 +61,17 @@ export const FETCH_TIMEOUT_MS = 10_000;
  * sitemap index pointing at several files, which is a change to make on purpose.
  */
 export const MAX_URLS = 50_000;
+
+/**
+ * How long to leave a failing feed alone before asking it again.
+ *
+ * Every cache miss used to block for the whole of {@link FETCH_TIMEOUT_MS} before answering 503, so a
+ * sequence of requests to a public route each paid ten seconds of a server thread - a cheap way to hold
+ * request slots. Concurrent misses already shared one rebuild; sequential ones are what this covers. Ten
+ * seconds of backoff turns one timeout per request into one per twenty, and costs nothing in recovery:
+ * no crawler is waiting on the next ten seconds.
+ */
+export const FAILURE_BACKOFF_SECONDS = 10;
 
 /**
  * The addresses that are pages in their own right and are not in the catalogue feed.
@@ -75,6 +95,15 @@ interface ApiSitemap {
   readonly departments: readonly ApiSitemapDepartment[];
   readonly products: readonly ApiSitemapProduct[];
   readonly productsTruncated?: boolean;
+  readonly departmentsTruncated?: boolean;
+  readonly categoriesTruncated?: boolean;
+}
+
+/** Which of the API's three caps were reached. All three are reported; see the DTO for why. */
+export interface SitemapCaps {
+  readonly departments: boolean;
+  readonly categories: boolean;
+  readonly products: boolean;
 }
 
 interface ApiSitemapDepartment {
@@ -150,13 +179,19 @@ export function sitemapEntries(payload: ApiSitemap): SitemapEntry[] {
 export function renderSitemapXml(
   entries: readonly SitemapEntry[],
   origin: string,
-  productsTruncated: boolean,
+  caps: SitemapCaps,
 ): string {
   const published = entries.slice(0, MAX_URLS);
   const notes: string[] = [];
 
-  if (productsTruncated) {
-    notes.push('The catalogue holds more published products than one sitemap may list (Catalog:SitemapMaxProducts).');
+  for (const [list, option] of [
+    ['departments', 'Catalog:SitemapMaxDepartments'],
+    ['categories', 'Catalog:SitemapMaxCategories'],
+    ['products', 'Catalog:SitemapMaxProducts'],
+  ] as const) {
+    if (caps[list]) {
+      notes.push(`The catalogue holds more visible ${list} than one sitemap may list (${option}).`);
+    }
   }
   if (entries.length > published.length) {
     notes.push(`${entries.length - published.length} further addresses were dropped at the ${MAX_URLS}-URL limit.`);
@@ -190,10 +225,10 @@ export function renderSitemapXml(
  */
 export class SitemapDocument {
   /** The catalogue's own answer, which does not depend on who asked for it. */
-  private snapshot: { sitemap: ApiSitemap; truncated: boolean; builtAt: number } | null = null;
+  private snapshot: { sitemap: ApiSitemap; caps: SitemapCaps; builtAt: number } | null = null;
 
   /**
-   * The last rendered document, so the common case — one origin, many crawlers — renders once per
+   * The last rendered document, so the common case - one origin, many crawlers - renders once per
    * snapshot rather than once per request. Keyed by the snapshot it was built from as well as by the
    * origin, so it can never outlive either.
    */
@@ -201,9 +236,17 @@ export class SitemapDocument {
 
   private inFlight: Promise<void> | null = null;
 
+  /** When the last rebuild failed, so a failing feed is not re-asked on every request. */
+  private lastFailureAt: number | null = null;
+
+  /** Which conditions have been reported already, so each is logged once rather than per request. */
+  private reported = { truncatedAt: -1, staleAt: -1 };
+
   constructor(
     private readonly fetchJson: (url: string, timeoutMs: number) => Promise<unknown> = fetchJsonOverHttp,
     private readonly now: () => number = () => Date.now(),
+    private readonly log: (level: 'warn' | 'error', message: string) => void = (level, message) =>
+      level === 'warn' ? console.warn(message) : console.error(message),
   ) {}
 
   /** The answer for one request. Never throws, and never answers 500. */
@@ -211,7 +254,7 @@ export class SitemapDocument {
     const origin = publicOrigin(headers);
 
     const cachedAge = this.ageSeconds();
-    if (cachedAge === null || cachedAge >= CACHE_SECONDS) {
+    if ((cachedAge === null || cachedAge >= CACHE_SECONDS) && !this.failedRecently()) {
       await this.rebuild();
     }
 
@@ -221,9 +264,11 @@ export class SitemapDocument {
       return this.served(this.bodyFor(origin), CACHE_SECONDS - age);
     }
 
-    // The rebuild failed and we still hold something. It is better than nothing, up to a point — and
-    // a short max-age rather than the full one, so the next crawler gives the catalogue another go.
+    // The rebuild failed and we still hold something. It is better than nothing, up to a point - and a
+    // short max-age rather than the full one, so the next crawler gives the catalogue another go.
     if (age !== null && age < STALE_SECONDS) {
+      this.reportStale(age);
+
       return this.served(this.bodyFor(origin), 60);
     }
 
@@ -249,20 +294,89 @@ export class SitemapDocument {
 
   private async build(): Promise<void> {
     try {
-      const payload = await this.fetchJson(`${apiInternalUrl()}/api/catalog/sitemap`, FETCH_TIMEOUT_MS);
+      const payload = await this.fetchJson(
+        `${apiInternalUrl()}/internal/catalog/sitemap`,
+        FETCH_TIMEOUT_MS,
+      );
       const sitemap = asSitemap(payload);
 
-      this.snapshot = {
-        sitemap,
-        truncated: sitemap.productsTruncated === true,
-        builtAt: this.now(),
-      };
+      this.snapshot = { sitemap, caps: capsOf(sitemap), builtAt: this.now() };
+      this.lastFailureAt = null;
+      // A fresh document ends the staleness episode, so the next one is reported again.
+      this.reported.staleAt = -1;
+      this.reportTruncation();
     } catch (error) {
-      // Logged at warning rather than error, and the API's own words never travel further than this:
-      // a crawler retrying through a long outage must not fill the disk, and the answer above already
-      // tells the caller what happened.
-      console.warn(`sitemap.xml could not be rebuilt: ${describe(error)}`);
+      this.lastFailureAt = this.now();
+      // At warning, and the API's own words never travel further than this: a crawler retrying through
+      // a long outage must not fill the disk, and the answer above already tells the caller what
+      // happened.
+      this.log('warn', `sitemap.xml could not be rebuilt: ${describe(error)}`);
     }
+  }
+
+  /**
+   * True while a failure is recent enough that asking again would only cost another timeout.
+   *
+   * This is what stops a sequential run of requests each blocking for FETCH_TIMEOUT_MS on a public
+   * route. It deliberately does not suppress the answer, only the attempt: a caller still gets a 503
+   * with `Retry-After`, it just gets it immediately.
+   */
+  private failedRecently(): boolean {
+    return (
+      this.lastFailureAt !== null &&
+      (this.now() - this.lastFailureAt) / 1000 < FAILURE_BACKOFF_SECONDS
+    );
+  }
+
+  /**
+   * Says once, in the log, that the published document is short.
+   *
+   * **Why a log and not only the XML comment.** Truncation used to be "reported" in a comment inside the
+   * document - addressed to a crawler, which cannot act on it, and to nobody who can. The one party who
+   * needs to know that the catalogue has outgrown a single sitemap file is whoever runs the site.
+   */
+  private reportTruncation(): void {
+    const snapshot = this.snapshot;
+    if (!snapshot || snapshot.builtAt === this.reported.truncatedAt) {
+      return;
+    }
+
+    const reached = (['departments', 'categories', 'products'] as const).filter(
+      (list) => snapshot.caps[list],
+    );
+    if (reached.length === 0) {
+      return;
+    }
+
+    this.reported.truncatedAt = snapshot.builtAt;
+    this.log(
+      'error',
+      `sitemap.xml is incomplete: the catalogue has more visible ${reached.join(' and ')} than one ` +
+        'sitemap may list. Raise the matching Catalog:SitemapMax* limit, or split the document into a ' +
+        'sitemap index.',
+    );
+  }
+
+  /**
+   * Says once, in the log, that the document being served is out of date.
+   *
+   * The expensive case is not a whole-catalogue outage - then the pages answer 503 as well and a stale
+   * `<loc>` costs nothing, because a crawler retries and keeps the URL. It is **this feed alone** failing
+   * while the catalogue is healthy, because a URL an admin deactivated is then still being offered while
+   * its page answers a real 404, for as long as STALE_SECONDS. Without this line that happens in silence.
+   */
+  private reportStale(ageSeconds: number): void {
+    const snapshot = this.snapshot;
+    if (!snapshot || snapshot.builtAt === this.reported.staleAt) {
+      return;
+    }
+
+    this.reported.staleAt = snapshot.builtAt;
+    this.log(
+      'error',
+      `sitemap.xml is being served from a copy ${Math.round(ageSeconds / 60)} minutes old because the ` +
+        'catalogue feed is not answering. Addresses an admin has hidden since then are still being offered.',
+    );
   }
 
   private bodyFor(origin: string): string {
@@ -275,7 +389,7 @@ export class SitemapDocument {
       return this.memo.body;
     }
 
-    const body = renderSitemapXml(sitemapEntries(snapshot.sitemap), origin, snapshot.truncated);
+    const body = renderSitemapXml(sitemapEntries(snapshot.sitemap), origin, snapshot.caps);
     this.memo = { origin, builtAt: snapshot.builtAt, body };
 
     return body;
@@ -295,13 +409,15 @@ export class SitemapDocument {
   }
 }
 
-/**
- * The API's answer, vetted before it is believed.
- *
- * #30's `garbage` mode is why: a proxy or a bad deploy answers 200 with something else entirely, and a
- * reader that trusted the body turned that into a page-wide failure. Here the stakes are a published
- * sitemap, so a body that is not the shape we asked for is a failure and the last good document stands.
- */
+/** Which caps the API reported, as the renderer and the log both want them. */
+export function capsOf(sitemap: ApiSitemap): SitemapCaps {
+  return {
+    departments: sitemap.departmentsTruncated === true,
+    categories: sitemap.categoriesTruncated === true,
+    products: sitemap.productsTruncated === true,
+  };
+}
+
 function asSitemap(payload: unknown): ApiSitemap {
   if (typeof payload !== 'object' || payload === null) {
     throw new Error('the catalogue answered with something that is not an object');
@@ -316,6 +432,8 @@ function asSitemap(payload: unknown): ApiSitemap {
     departments: candidate.departments as readonly ApiSitemapDepartment[],
     products: candidate.products as readonly ApiSitemapProduct[],
     productsTruncated: candidate.productsTruncated === true,
+    departmentsTruncated: candidate.departmentsTruncated === true,
+    categoriesTruncated: candidate.categoriesTruncated === true,
   };
 }
 

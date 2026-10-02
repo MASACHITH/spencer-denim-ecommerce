@@ -53,15 +53,6 @@ internal static class CatalogEndpoints
             .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesValidationProblem();
 
-        catalog.MapMethods("/sitemap", ReadMethods, GetSitemapAsync)
-            .WithName("GetCatalogSitemap")
-            .WithSummary("Every department, category and product a crawler may be told about.")
-            .WithDescription(
-                "GLB-11. Slugs and last-modified timestamps only: the storefront turns them into addresses, because it owns its route table. " +
-                "Deactivated departments and categories, soft-deleted categories and unpublished products are absent, by the same predicates the listing uses. " +
-                "The product list is capped by Catalog:SitemapMaxProducts and the response says when the cap was reached.")
-            .Produces<CatalogSitemapDto>();
-
         catalog.MapMethods("/search", ReadMethods, SearchProductsAsync)
             .WithName("SearchProducts")
             .WithSummary("Search products by name, category, colour and attributes.")
@@ -69,7 +60,53 @@ internal static class CatalogEndpoints
             .Produces<ProductSearchResponse>()
             .ProducesValidationProblem();
 
+        MapInternalCatalogEndpoints(endpoints);
+
         return endpoints;
+    }
+
+    /// <summary>
+    /// Catalogue reads the storefront's own <b>server</b> makes, on a prefix the public origin does not
+    /// route (GLB-11).
+    /// <para>
+    /// <b>Why this is not under <c>/api</c>.</b> Doc 03 §4 has Caddy routing <c>/admin</c>, <c>/api</c>
+    /// and <c>/media</c> to their targets and <b>everything else to the SSR server</b> — which proxies
+    /// neither, so an address under <c>/internal</c> on the public origin reaches the Angular router and
+    /// answers 404. The health-check paths already rely on exactly this, so it is the codebase's own
+    /// convention rather than a new one. The SSR process asks over <c>API_INTERNAL_URL</c> on the
+    /// container network, where it is reachable.
+    /// </para>
+    /// <para>
+    /// <b>It is surface reduction, not authentication, and the difference matters.</b> Nothing here
+    /// checks who is asking; a reverse proxy configured to forward <c>/internal</c> would publish it. So
+    /// the endpoint is also safe to publish: all three of its queries are bounded
+    /// (<c>Catalog:SitemapMaxDepartments</c>, <c>SitemapMaxCategories</c>, <c>SitemapMaxProducts</c>) and
+    /// a short output-cache policy means a repeated request is answered from memory rather than from
+    /// three fresh projections. The prefix removes the surface; the bounds and the cache mean losing the
+    /// prefix is not a defect. <b>Whoever writes the Caddyfile (W0-15) must not add a blanket rule that
+    /// forwards this.</b>
+    /// </para>
+    /// <para>
+    /// There is no rate limiting anywhere in this solution except <c>NewsletterSignupThrottle</c>, and
+    /// adding a general one is an architectural decision rather than this endpoint's to make — which is
+    /// the other reason the cheap local answers (do not publish it, bound it, cache it) are the ones
+    /// taken here.
+    /// </para>
+    /// </summary>
+    private static void MapInternalCatalogEndpoints(IEndpointRouteBuilder endpoints)
+    {
+        var internalCatalog = endpoints.MapGroup("/internal/catalog").WithTags("Catalog (internal)");
+
+        internalCatalog.MapMethods("/sitemap", ReadMethods, GetSitemapAsync)
+            .WithName("GetCatalogSitemap")
+            .WithSummary("Every department, category and product a crawler may be told about. Internal.")
+            .WithDescription(
+                "GLB-11, read by the storefront's SSR process to render /sitemap.xml. Not under /api, so the public origin does not route it. " +
+                "Slugs and last-modified timestamps only: the storefront turns them into addresses, because it owns its route table. " +
+                "Deactivated departments and categories, soft-deleted categories and unpublished products are absent, by the same predicates the listing uses. " +
+                "All three lists are capped and the response says which caps were reached.")
+            .CacheOutput(SitemapOutputCache.PolicyName)
+            .Produces<CatalogSitemapDto>();
     }
 
     private static async Task<Ok<IReadOnlyList<DepartmentDto>>> GetDepartmentsAsync(

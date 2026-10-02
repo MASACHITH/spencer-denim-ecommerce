@@ -26,6 +26,22 @@ namespace SpencerDenim.IntegrationTests.Catalog;
 /// </summary>
 public sealed class CatalogSitemapTests(SqlServerDatabaseFixture sqlServer) : CatalogTestBase(sqlServer)
 {
+    /// <summary>
+    /// The output cache is off for this class's shared host.
+    /// <para>
+    /// Every test here that changes the catalogue and reads the sitemap back needs the read to be a read;
+    /// with the policy's default window the second call is answered from memory and the assertion passes
+    /// or fails on a document from before the change. Four of them failed exactly that way when the policy
+    /// was added, which is the behaviour working rather than a defect — an admin's change reaches the feed
+    /// a window later, and the window is a minute for that reason.
+    /// </para>
+    /// <para>
+    /// The two tests that are *about* the cache build their own host with it switched on.
+    /// </para>
+    /// </summary>
+    protected override IReadOnlyDictionary<string, string?>? ExtraConfiguration { get; } =
+        new Dictionary<string, string?> { ["Catalog:SitemapCacheSeconds"] = "0" };
+
     [Fact]
     public async Task It_offers_every_department_category_and_product_the_storefront_serves()
     {
@@ -175,30 +191,110 @@ public sealed class CatalogSitemapTests(SqlServerDatabaseFixture sqlServer) : Ca
     }
 
     /// <summary>
-    /// A public endpoint that enumerates the catalogue must be bounded, and it must say when the bound
-    /// was reached rather than answering a quietly short document. One is used as the cap so that the
-    /// seeded catalogue is comfortably past it.
+    /// An endpoint that enumerates the catalogue must be bounded, and it must say when a bound was
+    /// reached rather than answering a quietly short document.
+    /// <para>
+    /// <b>All three lists, which it was not at first.</b> Only the products had a <c>Take</c>, so the one
+    /// list an admin can grow without limit — W1-12 gives unlimited category creation (ADM-11) — was the
+    /// one with no ceiling, while the design note claimed the read was "bounded in SQL". Each cap is set
+    /// to one here so the seeded catalogue is comfortably past all three.
+    /// </para>
     /// </summary>
-    [Fact]
-    public async Task It_caps_the_product_list_and_reports_that_it_did()
+    [Theory]
+    [InlineData("Catalog:SitemapMaxProducts")]
+    [InlineData("Catalog:SitemapMaxCategories")]
+    [InlineData("Catalog:SitemapMaxDepartments")]
+    public async Task It_caps_each_list_and_reports_that_it_did(string option)
     {
         SqlServer.SkipIfUnavailable();
 
         await using var factory = new ApiFactory(
             SqlServer.ConnectionString,
-            additionalConfiguration: new Dictionary<string, string?> { ["Catalog:SitemapMaxProducts"] = "1" });
+            additionalConfiguration: new Dictionary<string, string?> { [option] = "1" });
         using var client = factory.CreateClient();
 
         var sitemap = await client.GetFromJsonAsync<CatalogSitemapDto>(
-            "/api/catalog/sitemap",
+            "/internal/catalog/sitemap",
             CatalogApiClient.JsonOptions,
             Token);
 
         Assert.NotNull(sitemap);
-        Assert.Single(sitemap.Products);
-        Assert.True(sitemap.ProductsTruncated);
-        // The departments are not capped: the tree is about 200 rows whole (doc 08 §3.2).
-        Assert.NotEmpty(sitemap.Departments);
+
+        switch (option)
+        {
+            case "Catalog:SitemapMaxProducts":
+                Assert.Single(sitemap.Products);
+                Assert.True(sitemap.ProductsTruncated);
+                Assert.False(sitemap.CategoriesTruncated);
+                Assert.False(sitemap.DepartmentsTruncated);
+                break;
+
+            case "Catalog:SitemapMaxCategories":
+                // One category survives, and it is a root, so exactly one department carries a trail.
+                Assert.Equal(1, sitemap.Departments.Sum(department => department.Categories.Count));
+                Assert.True(sitemap.CategoriesTruncated);
+                Assert.False(sitemap.ProductsTruncated);
+                break;
+
+            default:
+                Assert.Single(sitemap.Departments);
+                Assert.True(sitemap.DepartmentsTruncated);
+                Assert.False(sitemap.ProductsTruncated);
+                break;
+        }
+    }
+
+    /// <summary>
+    /// <b>The feed is not under <c>/api</c>, and that is the point rather than a detail.</b>
+    /// <para>
+    /// Doc 03 §4 has Caddy routing <c>/admin</c>, <c>/api</c> and <c>/media</c> to their targets and
+    /// everything else to the SSR server, which proxies none of them — so an address under
+    /// <c>/internal</c> is not reachable from the public origin, while <c>/api/catalog/sitemap</c> would
+    /// have been. This is the assertion that stops somebody moving it back for symmetry: the endpoint is
+    /// the heaviest read in the system and its only consumer is the storefront's own server process.
+    /// </para>
+    /// <para>
+    /// It is surface reduction and not authentication — nothing here checks who is asking — which is why
+    /// the caps above and the output-cache policy matter even so.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task It_is_not_reachable_under_the_public_api_prefix()
+    {
+        var api = CreateApi();
+
+        var (status, _) = await api.GetRawAsync("/api/catalog/sitemap", Token);
+
+        Assert.Equal(HttpStatusCode.NotFound, status);
+    }
+
+    /// <summary>
+    /// The output-cache policy: a second request inside the window is answered without touching the
+    /// database. It is what turns "free to ask repeatedly" into "one read per window", and it is checked
+    /// by counting commands rather than by timing anything.
+    /// </summary>
+    [Fact]
+    public async Task A_repeated_request_inside_the_cache_window_runs_no_queries()
+    {
+        SqlServer.SkipIfUnavailable();
+
+        // Its own host, with the policy's window left at the default: this class's shared host has the
+        // cache off so that the rest of its tests read what they changed.
+        await using var factory = new ApiFactory(SqlServer.ConnectionString, commandInterceptor: CommandCounter);
+        using var client = factory.CreateClient();
+
+        var first = await client.GetAsync(new Uri("/internal/catalog/sitemap", UriKind.Relative), Token);
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+
+        CommandCounter.Reset();
+
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            var again = await client.GetAsync(new Uri("/internal/catalog/sitemap", UriKind.Relative), Token);
+            Assert.Equal(HttpStatusCode.OK, again.StatusCode);
+        }
+
+        Assert.Equal(0, CommandCounter.Count);
     }
 
     /// <summary>
@@ -209,10 +305,21 @@ public sealed class CatalogSitemapTests(SqlServerDatabaseFixture sqlServer) : Ca
     [Fact]
     public async Task It_reads_the_whole_catalogue_in_three_queries()
     {
-        CreateApi();
+        SqlServer.SkipIfUnavailable();
+
+        // Its own host with caching off, because the point of this test is the shape of the **read**:
+        // against the shared host the output-cache policy would answer the second call from memory and
+        // the count would be zero, which would look like a pass for the wrong reason.
+        await using var factory = new ApiFactory(
+            SqlServer.ConnectionString,
+            additionalConfiguration: new Dictionary<string, string?> { ["Catalog:SitemapCacheSeconds"] = "0" },
+            commandInterceptor: CommandCounter);
+        using var client = factory.CreateClient();
+
         CommandCounter.Reset();
 
-        await GetSitemapAsync();
+        var response = await client.GetAsync(new Uri("/internal/catalog/sitemap", UriKind.Relative), Token);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
         Assert.Equal(3, CommandCounter.Count);
     }
@@ -222,7 +329,7 @@ public sealed class CatalogSitemapTests(SqlServerDatabaseFixture sqlServer) : Ca
     {
         var api = CreateApi();
 
-        using var response = await api.HeadAsync("/api/catalog/sitemap", Token);
+        using var response = await api.HeadAsync("/internal/catalog/sitemap", Token);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
@@ -253,7 +360,7 @@ public sealed class CatalogSitemapTests(SqlServerDatabaseFixture sqlServer) : Ca
     private async Task<CatalogSitemapDto> GetSitemapAsync()
     {
         var api = CreateApi();
-        var (status, body) = await api.GetRawAsync("/api/catalog/sitemap", Token);
+        var (status, body) = await api.GetRawAsync("/internal/catalog/sitemap", Token);
 
         Assert.Equal(HttpStatusCode.OK, status);
 

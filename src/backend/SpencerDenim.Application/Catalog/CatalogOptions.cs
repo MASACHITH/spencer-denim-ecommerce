@@ -56,4 +56,39 @@ public sealed class CatalogOptions
     /// </para>
     /// </summary>
     public int SitemapMaxProducts { get; set; } = 45_000;
+
+    /// <summary>
+    /// How many departments one <c>sitemap.xml</c> may list (GLB-11).
+    /// <para>
+    /// There are three, and nothing creates one at runtime — the admin API has no create-department
+    /// endpoint. The bound exists anyway, because "another module cannot grow this table" is an
+    /// assumption about somebody else's code and the sitemap's own guarantee should not rest on it. It
+    /// will not bind in practice, and the response says so if it ever does.
+    /// </para>
+    /// </summary>
+    public int SitemapMaxDepartments { get; set; } = 50;
+
+    /// <summary>
+    /// How many categories one <c>sitemap.xml</c> may list (GLB-11).
+    /// <para>
+    /// This is the bound that matters. Doc 08 §3.2 sizes the whole tree at about 200 rows, but W1-12
+    /// gives the client unlimited category creation (ADM-11) — so of the three lists this endpoint
+    /// reads, the one an admin can grow without limit was the one with no cap. 5,000 is ample headroom
+    /// over any plausible tree and still a ceiling on a single read.
+    /// </para>
+    /// </summary>
+    public int SitemapMaxCategories { get; set; } = 5_000;
+
+    /// <summary>
+    /// How long the API may serve a cached copy of the sitemap feed (GLB-11), in seconds.
+    /// <para>
+    /// **Short on purpose, and the number is the point.** The storefront already caches the rendered
+    /// document for fifteen minutes, so in normal operation this is never consulted twice. It exists so
+    /// that a caller who asks repeatedly is answered from memory rather than from three queries — cheap
+    /// rather than free to abuse. A matching fifteen minutes here would stack with the storefront's and
+    /// make the worst-case staleness thirty; a minute stacks to sixteen, which is no change worth
+    /// measuring, and still turns an unbounded request rate into one read a minute.
+    /// </para>
+    /// </summary>
+    public int SitemapCacheSeconds { get; set; } = 60;
 }

@@ -20,16 +20,25 @@ namespace SpencerDenim.Application.Catalog.Contracts;
 /// <param name="GeneratedAtUtc">When the snapshot was read, so a cache downstream can age it.</param>
 /// <param name="Departments">Active departments, each with its active category tree.</param>
 /// <param name="Products">Published products, newest change first, capped (see <paramref name="ProductsTruncated"/>).</param>
-/// <param name="ProductsTruncated">
-/// True when the catalogue holds more published products than <c>Catalog:SitemapMaxProducts</c>
-/// allows one answer to carry. It is reported rather than hidden: a silently short sitemap is the
-/// kind of defect nobody notices for a year.
-/// </param>
+/// <param name="DepartmentsTruncated">True when the department list hit <c>Catalog:SitemapMaxDepartments</c>.</param>
+/// <param name="CategoriesTruncated">True when the category list hit <c>Catalog:SitemapMaxCategories</c>.</param>
+/// <param name="ProductsTruncated">True when the product list hit <c>Catalog:SitemapMaxProducts</c>.</param>
+/// <remarks>
+/// <para>
+/// **All three bounds are reported, and there are three of them because there were not always.** The
+/// first version bounded only the products — so the one list an admin can grow without limit (W1-12
+/// gives unlimited category creation) was the one with no cap, while the docblock claimed the read was
+/// "bounded in SQL". A silently short sitemap is the kind of defect nobody notices for a year, and a
+/// claim of boundedness that holds for one query out of three is worse than none.
+/// </para>
+/// </remarks>
 public sealed record CatalogSitemapDto(
     DateTime GeneratedAtUtc,
     IReadOnlyList<SitemapDepartmentDto> Departments,
     IReadOnlyList<SitemapProductDto> Products,
-    bool ProductsTruncated);
+    bool ProductsTruncated,
+    bool DepartmentsTruncated = false,
+    bool CategoriesTruncated = false);
 
 /// <summary>One active department and the active categories under it.</summary>
 /// <param name="Slug">The department's own slug, the first segment of a listing address.</param>
