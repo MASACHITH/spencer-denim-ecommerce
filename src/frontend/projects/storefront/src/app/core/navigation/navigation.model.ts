@@ -7,9 +7,10 @@ export interface NavLink {
 /**
  * One category in a mega-menu column.
  *
- * A category that has children of its own heads the group as a heading, with the children listed
- * under it. A category with no children is simply a link in the column, and no empty heading is
- * drawn for it.
+ * A category that has children of its own titles the group, with the children listed under it. The
+ * title is a paragraph and the child list is `aria-labelledby` it, **not** a heading: the mega menu
+ * sits ahead of the page's own `h1` in the DOM, so headings here were read out before the page said
+ * what it was (#76, #20 SH11). A category with no children is simply a link in the column.
  */
 export interface MegaMenuGroup {
   readonly link: NavLink;

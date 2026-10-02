@@ -693,9 +693,11 @@ describe('ListingPage', () => {
     /**
      * `/:department` matches any single segment. Before the route guard, every header and footer
      * link that is not built yet rendered this listing's not-found state at HTTP 200 and told the
-     * shopper a *department* was missing when they had clicked "Bag".
+     * shopper a *department* was missing when they had clicked "Bag". They still go home, because
+     * the shell links to all of them on every page and a 404 on a link in the footer is worse than
+     * the redirect (#28, and `app.routes.ts` on `UNBUILT_PATHS`).
      */
-    for (const path of ['/bag', '/wishlist', '/account', '/privacy', '/contact', '/not-a-department']) {
+    for (const path of ['/bag', '/wishlist', '/account', '/privacy', '/contact']) {
       it(`${path} goes back to the home page, not to the listing`, async () => {
         await goTo(path);
 
@@ -707,6 +709,32 @@ describe('ListingPage', () => {
         expect(text()).not.toContain('could not find that page');
       });
     }
+
+    /**
+     * **#28, and the reason this test changed rather than was deleted.**
+     *
+     * It used to assert that `/not-a-department` reached the home page, alongside the unbuilt links
+     * above. That answer was the defect: the home page served at an address that is not the home
+     * page, at HTTP 200, so a crawler following a typo or a stale link indexes the wrong URL and
+     * nothing reports it. The thing the test was protecting — that a mistyped department does not
+     * render this listing's empty state and claim a department is gone — is unchanged, and the
+     * correct answer for an address that is not there is the not-found page.
+     */
+    it('/not-a-department shows the missing page rather than the home page (#28)', async () => {
+      await goTo('/not-a-department');
+
+      expect(TestBed.inject(Router).url).toBe('/not-a-department');
+      expect(text()).toContain('could not find that page');
+      expect(text()).not.toContain('No products found');
+    });
+
+    /** Two segments, neither of them a department: the same soft 404, the same fix. */
+    it('/bogus/thing shows the missing page rather than the home page (#28)', async () => {
+      await goTo('/bogus/thing');
+
+      expect(TestBed.inject(Router).url).toBe('/bogus/thing');
+      expect(text()).toContain('could not find that page');
+    });
 
     it('shows the missing page for a category that belongs to another department', async () => {
       // /women/shirts names a Men's category. It used to render as the Women department page:

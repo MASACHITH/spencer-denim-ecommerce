@@ -22,7 +22,7 @@ internal sealed class DepartmentCatalogReader(AppDbContext dbContext, IOptions<C
     {
         var departments = await dbContext.Departments
             .AsNoTracking()
-            .Where(department => department.IsActive)
+            .Where(CatalogVisibility.VisibleDepartment)
             .OrderBy(department => department.SortOrder)
             .ThenBy(department => department.Id)
             .Select(department => new DepartmentRow(
@@ -44,7 +44,7 @@ internal sealed class DepartmentCatalogReader(AppDbContext dbContext, IOptions<C
 
         var categories = await dbContext.Categories
             .AsNoTracking()
-            .Where(category => category.IsActive)
+            .Where(CatalogVisibility.VisibleCategory)
             .OrderBy(category => category.SortOrder)
             .ThenBy(category => category.Id)
             .Select(category => new CategoryRow(

@@ -8,6 +8,11 @@ import express from 'express';
 import { join } from 'node:path';
 import { BRAND } from '@spencer-denim/shared';
 
+import { canonicalTarget, redirectStatusFor } from './server/canonical-path';
+import { answerRenderFailure } from './server/render-failure';
+import { ROBOTS_MAX_AGE_SECONDS, robotsTxt } from './server/robots-txt';
+import { SitemapDocument } from './server/sitemap-xml';
+
 const browserDistFolder = join(import.meta.dirname, '../browser');
 
 const app = express();
@@ -19,10 +24,78 @@ app.disable('x-powered-by');
  */
 const angularApp = new AngularNodeAppEngine();
 
+/**
+ * **First, before anything that can route or render: one leading slash, not several.**
+ *
+ * `//robots.txt` answered **HTTP 500** — and a 5xx on `robots.txt` tells a crawler the whole site is
+ * disallowed, which is the one outcome everything below exists to prevent. `src/server/canonical-path.ts`
+ * has the full account; the short version is that `@angular/platform-server` throws NG05702 for a
+ * protocol-relative URL, but only once a component is about to render, so the throw was unreachable
+ * while the catch-all was a redirect and became reachable the moment it became a page (#28).
+ *
+ * Mounted at the top on purpose, and it tests the **effective** path — the one a URL parser produces
+ * after resolving dot segments — not the raw request target. Testing the raw target is how F1's fix was
+ * narrowed rather than complete: `/.//robots.txt` arrives with one leading slash and ends up with two, so
+ * nine shapes went on answering 500 for a round (F9).
+ *
+ * Nothing below may assume it has been given a canonical path, and nothing below is where this belongs: a
+ * route is exactly the thing that proved unreliable.
+ */
+app.use((req, res, next) => {
+  const canonical = canonicalTarget(req.url);
+  if (canonical === null) {
+    next();
+    return;
+  }
+
+  res.redirect(redirectStatusFor(req.method), canonical);
+});
+
 /** Liveness probe for process managers and the reverse proxy. Does not render Angular. */
 app.get('/healthz', (_req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   res.json({ status: 'ok' });
+});
+
+/**
+ * `robots.txt` and `sitemap.xml` (GLB-11), answered here and **not** by the Angular router.
+ *
+ * **Why the position in this file matters.** Before this existed there was no such file anywhere in
+ * the build, so a request for `/robots.txt` fell all the way through to the router — and a route that
+ * matched it would have rendered a page or failed. **A crawler answered 5xx for `robots.txt` treats
+ * the entire site as disallowed** until it can read one, so the one place that answer must not be able
+ * to come from is a route table. These two routes are mounted ahead of the static middleware as well,
+ * so neither can be shadowed by a file that lands in `public/` later: both have to be generated,
+ * because both carry this deployment's own public origin and nothing checked into the repository can
+ * know what that is (doc 03 §5).
+ *
+ * Express answers HEAD from a GET route with the body dropped, which is what a link checker and most
+ * uptime monitors lead with.
+ */
+app.get('/robots.txt', (req, res) => {
+  res.type('text/plain; charset=utf-8');
+  res.setHeader('Cache-Control', `public, max-age=${ROBOTS_MAX_AGE_SECONDS}`);
+  res.send(robotsTxt(req.headers));
+});
+
+/** One document per process, so the cache inside it is shared by every request (see the class). */
+const sitemap = new SitemapDocument();
+
+app.get('/sitemap.xml', (req, res, next) => {
+  void sitemap
+    .answer(req.headers)
+    .then((answer) => {
+      res.status(answer.status);
+      res.type(answer.contentType);
+      res.setHeader('Cache-Control', answer.cacheControl);
+      if (answer.retryAfter !== undefined) {
+        res.setHeader('Retry-After', String(answer.retryAfter));
+      }
+      res.send(answer.body);
+    })
+    // `answer` is documented never to reject; this is here so that if it ever does, the failure is
+    // Express's problem rather than an unhandled rejection that takes the process with it.
+    .catch(next);
 });
 
 /**
@@ -111,6 +184,22 @@ app.use((req, res, next) => {
     .then((response) => (response ? writeResponseToNodeResponse(response, res) : next()))
     .catch(next);
 });
+
+/**
+ * **The last line of defence, and the reason there is a second one at all.**
+ *
+ * The canonicalising redirect at the top closes the way NG05702 was reached, but a render can fail for
+ * reasons nobody has thought of yet and the first defence should not be the only one. What it answers,
+ * and why `robots.txt` is answered rather than failed, is in `src/server/render-failure.ts`, which is a
+ * module so that it has a test rather than only a comment.
+ */
+app.use(
+  (error: unknown, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (answerRenderFailure(error, req, res) === 'already-answered') {
+      next(error);
+    }
+  },
+);
 
 /**
  * Start the server if this module is the main entry point, or it is run via PM2.

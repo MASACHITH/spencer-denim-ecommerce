@@ -27,6 +27,9 @@ builder.Services.AddApiOpenApi();
 builder.Services.AddApiHealthChecks();
 builder.Services.AddApiForwardedHeaders();
 builder.Services.AddNewsletterSignupThrottle();
+// Output caching, with no base policy: only the sitemap feed opts in (see SitemapOutputCache for the
+// window and why it is a minute rather than matching the storefront's fifteen).
+builder.Services.AddSitemapOutputCache();
 
 // Where a media upload is spooled while it streams in (doc 03 §7: not the host's temp directory by
 // assumption). Api is the composition root, and this needs IHostEnvironment.
@@ -71,6 +74,9 @@ if (app.Environment.IsDevelopment())
 
 app.UseAuthentication();
 app.UseAuthorization();
+
+// After authentication and authorization, so a policy can see them, and before the endpoints it serves.
+app.UseOutputCache();
 
 app.MapApiHealthChecks();
 app.MapPingEndpoints();

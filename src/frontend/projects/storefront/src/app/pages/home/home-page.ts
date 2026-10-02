@@ -1,5 +1,4 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, computed, effect, inject, untracked } from '@angular/core';
-import { Meta, Title } from '@angular/platform-browser';
 import { RouterLink } from '@angular/router';
 
 import { BenefitsRow } from './sections/benefits-row';
@@ -11,7 +10,8 @@ import { NavigationService } from '../../core/navigation/navigation.service';
 import { NewsletterSignup } from './sections/newsletter-signup';
 import { ProductRow } from './sections/product-row';
 import { SocialGallery } from './sections/social-gallery';
-import { CanonicalLink } from '../../core/platform/canonical-link';
+import { PageMeta } from '../../core/platform/page-metadata';
+import { isFetchableUrl } from '../../core/platform/site-origin';
 import { BRAND } from '@spencer-denim/shared';
 
 /**
@@ -166,9 +166,7 @@ export class HomePage {
 
   protected readonly store = inject(HomeContentStore);
   private readonly navigation = inject(NavigationService);
-  private readonly canonical = inject(CanonicalLink);
-  private readonly title = inject(Title);
-  private readonly meta = inject(Meta);
+  private readonly pageMeta = inject(PageMeta);
 
   protected readonly sections = this.store.sections;
 
@@ -179,23 +177,53 @@ export class HomePage {
     // renders and the HTML a crawler receives has the real sections in it.
     this.store.load();
 
+    // Reads `shareImage`, so the card gains the hero the moment the content API answers rather than
+    // being fixed at the first render.
     effect(() => {
+      const image = this.shareImage();
       untracked(() => {
-        this.title.setTitle(`${BRAND.name} | Clothing for women, men and kids`);
-        this.meta.updateTag({
-          name: 'description',
-          content:
+        this.pageMeta.set({
+          title: `${BRAND.name} | Clothing for women, men and kids`,
+          description:
             `Shop denim and everyday clothing for women, men and kids at ${BRAND.name}, with delivery across Sri Lanka.`,
+          path: '/',
+          imageUrl: image?.url ?? null,
+          imageAlt: image?.alt ?? null,
         });
-        this.canonical.set('/');
       });
     });
 
-    // The next page owns its own canonical address, or has none.
-    inject(DestroyRef).onDestroy(() => this.canonical.clear());
+    // The next page owns its own canonical address and card, or has none.
+    inject(DestroyRef).onDestroy(() => this.pageMeta.clear());
   }
 
   protected retry(): void {
     this.store.retry();
   }
+
+  /**
+   * The picture a shared link to the home page shows: the hero's own artwork.
+   *
+   * Taken from the content the client manages rather than from a constant, because the home page has
+   * no picture of its own — everything on it is ADM-17 content — and a hard-coded one would be stale
+   * the first time the client changes the hero. The still, not the video: a share card cannot play one,
+   * and `videoPosterUrl` is the frame the client chose for exactly that purpose. Null until the content
+   * API answers, which `PageMeta` handles by shrinking the card rather than publishing an empty tag.
+   */
+  private readonly shareImage = computed(() => {
+    for (const section of this.sections()) {
+      for (const item of section.items) {
+        // `isFetchableUrl` rather than the first non-null: an item's artwork may be something a
+        // crawler could not fetch, and skipping it finds the next real picture instead of
+        // publishing nothing. The browser-test stub's hero is exactly that case, with `data:` URIs
+        // for all three of its images.
+        const url = [item.videoPosterUrl, item.imageUrl, item.mobileImageUrl].find(isFetchableUrl);
+        if (url) {
+          return { url, alt: item.imageAltText ?? item.mobileImageAltText ?? null };
+        }
+      }
+    }
+
+    return null;
+  });
 }

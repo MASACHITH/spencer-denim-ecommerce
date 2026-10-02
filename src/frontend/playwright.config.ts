@@ -197,6 +197,11 @@ export default defineConfig({
       env: {
         E2E_API_PORT: String(DEEP_API_PORT),
         E2E_PRODUCT_TOTAL: String(DEEP_CATALOGUE_TOTAL),
+        // This pair also reports two of the sitemap's three caps as reached (GLB-11). It belongs here
+        // rather than on a seventh pair: the deep catalogue is the one that exists because the shop is
+        // big, and "big enough that one sitemap cannot list it" is the same idea. Nothing else reads
+        // this pair's sitemap.
+        E2E_SITEMAP_TRUNCATED: 'categories,products',
       },
       reuseExistingServer: !process.env['CI'],
       timeout: 30_000,

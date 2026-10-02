@@ -188,13 +188,22 @@ describe('a listing the storefront could not look up (#30)', () => {
       );
     });
 
-    it('still sends a first segment that is not a department to the home page', async () => {
+    /**
+     * A first segment that is not a department is a 404, not a 503 and not the home page.
+     *
+     * It used to reach the home page, which #28 is about; what matters to **this** file is the half
+     * that has not changed — it is not swept into the 503 route. Nothing creates a department at
+     * runtime (there is no create-department endpoint, and W1-12 settled that a department's name and
+     * slug are not editable), so the seeded list is closed and the frozen fallback mirrors it: a
+     * single segment the tree in hand does not have is not a department whichever tree that was, and
+     * the ambiguity #30 exists for does not arise.
+     */
+    it('answers 404 for a first segment that is not a department, never 503', async () => {
       await goTo('/not-a-department', (request) => request.flush(LIVE));
 
-      expect(TestBed.inject(Router).url).toBe('/');
-      http
-        .match((request) => request.url.startsWith('/api/content/'))
-        .forEach((request) => request.flush({ sections: [] }));
+      expect(TestBed.inject(Router).url).toBe('/not-a-department');
+      expect(text()).toContain('We could not find that page');
+      expect(text()).not.toContain('We could not load this page just now');
     });
 
     /**

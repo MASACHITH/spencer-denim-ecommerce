@@ -31,6 +31,16 @@ export const ANNOUNCEMENT_ROTATION_MS = 6000;
  * The message itself is not a live region: it changes on a timer, and a screen reader reading a
  * marketing line aloud every six seconds interrupts whatever the visitor is doing. Only a
  * previous/next press announces, through the visually hidden status below.
+ *
+ * Below 375 px the Previous control is hidden and Next is not (#20's SH12): three 44 px controls left
+ * the message wrapping to three lines at 320 px, and Next alone still reaches every line because it
+ * cycles.
+ *
+ * **Do not hide Next as well.** #20 suggests hiding both, and that is the one change to refuse: under
+ * `prefers-reduced-motion` the bar does not rotate, so `canRotate()` is false and the pause button is
+ * not rendered at all — with both arrows gone, the second and third messages would be unreachable on a
+ * 320 px phone. That is content a visitor cannot get to, not a layout nicety. There is a test for it
+ * (`accessibility.e2e.ts`, "every message is still reachable under reduced motion").
  */
 @Component({
   selector: 'sd-announcement-bar',
@@ -47,7 +57,7 @@ export const ANNOUNCEMENT_ROTATION_MS = 6000;
       <div class="container announce">
         @if (hasMany()) {
           <button
-            class="icon-btn announce__control"
+            class="icon-btn announce__control announce__control--previous"
             type="button"
             aria-label="Previous announcement"
             (click)="previous()"
@@ -145,6 +155,21 @@ export const ANNOUNCEMENT_ROTATION_MS = 6000;
       .announce {
         gap: 0;
         font-size: 0.8125rem;
+      }
+      /* #20's SH12: at 320 px three 44 px controls left the message about 180 px and it wrapped to
+         three lines. Previous goes, and only Previous.
+
+         The issue suggested hiding prev *and* next, and that is the thing not to do. Under
+         prefers-reduced-motion the bar does not rotate, so the pause button is not drawn at all
+         (canRotate) - with both arrows gone as well, the second and third messages would be
+         unreachable on a 320 px phone, which is content a visitor cannot get to rather than a
+         layout nicety. Next on its own still reaches every message, because it cycles. So the one
+         control whose job another control already does is the one that goes, the WCAG 2.2.2 pause
+         stays, and the 44 px floor is untouched for everything still on the row.
+
+         If you are here to "finish" #20 by hiding Next too: don't. Read the paragraph above. */
+      .announce__control--previous {
+        display: none;
       }
     }
   `,

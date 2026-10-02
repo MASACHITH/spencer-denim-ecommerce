@@ -1,0 +1,788 @@
+import { request as httpRequest } from 'node:http';
+
+import { APIResponse, expect, test } from '@playwright/test';
+
+import { deepCatalogueURL, faultyCatalogueURL } from '../playwright.config';
+
+/**
+ * What the storefront puts on the wire for a crawler (GLB-11).
+ *
+ * **Only a real server can show any of this.** `robots.txt` and `sitemap.xml` are answered by Express
+ * ahead of the Angular router, so a unit test cannot see them at all; a 404's value is its **status
+ * code**, which a component test cannot produce; and the Open Graph tags matter precisely because they
+ * are in the HTML before a line of script has run. So everything here is measured with
+ * `request.get`, by address, with no browser in the way.
+ *
+ * `sitemap-xml.spec.ts`, `robots-txt.spec.ts`, `origins.spec.ts` and `app.routes.spec.ts` hold the
+ * parts that are decisions rather than answers.
+ */
+
+/** The media type a crawler is given, with the parameters it is given. */
+function contentType(response: APIResponse): string {
+  return response.headers()['content-type'] ?? '';
+}
+
+/** What a raw request answered: the status, the `Location` if any, and the body. */
+interface RawAnswer {
+  readonly status: number;
+  readonly location: string;
+  readonly body: string;
+}
+
+/**
+ * **One GET with the path sent byte for byte, because every other client in reach rewrites it.**
+ *
+ * Playwright's request client, `fetch` and undici all build the request through WHATWG `URL`, which
+ * resolves dot segments **client-side** — so `request.get(`${baseURL}/.//robots.txt`)` arrives at the
+ * server as `//robots.txt` and measures the already-fixed case while looking like it measures the
+ * unfixed one. That blind spot was identified for backslashes in round 1 and the insight did not
+ * generalise: dot segments have exactly the same property, and F9 lived in it for a round.
+ *
+ * `node:http`'s `path` option is passed through to the request line unchanged, so this is the only
+ * client here that can put `/.//robots.txt` on the wire. Backslashes stay hand-measured — Node rejects
+ * them in `path` as an invalid character — and that limit is recorded where it applies below.
+ */
+async function raw(baseURL: string | undefined, path: string): Promise<RawAnswer> {
+  const url = new URL(baseURL ?? '');
+
+  return new Promise<RawAnswer>((resolve, reject) => {
+    const call = httpRequest(
+      { host: url.hostname, port: url.port, path, method: 'GET' },
+      (response) => {
+        let body = '';
+        response.setEncoding('utf8');
+        response.on('data', (chunk: string) => (body += chunk));
+        response.on('end', () =>
+          resolve({
+            status: response.statusCode ?? 0,
+            location: response.headers.location ?? '',
+            body,
+          }),
+        );
+      },
+    );
+
+    call.on('error', reject);
+    call.end();
+  });
+}
+
+/**
+ * **Why a dependency advisory is this file's business.**
+ *
+ * `robots.txt` is answered by Express before the Angular router is reached, which is the whole point
+ * of where it is mounted — a crawler answered 5xx for it treats the entire site as disallowed. That
+ * guarantee holds only while the process is answering at all, and the storefront's exposed surface is
+ * the SSR router: GHSA-ff3f-86qr-9cv3 was a denial of service in `@angular/router`'s server-side
+ * rendering, reachable from a URL, and it sat in this project's `package-lock.json` through this whole
+ * task. **Nothing was watching for it.** It was found by reading `npm audit` while adding `axe-core`
+ * for #65 — the same shape of gap #65 itself recorded: a check the process document assumes and no job
+ * performs. Fixed in `main` by the 21.2.25 bump, and the measurements in this file were re-taken on it.
+ *
+ * It is **not** a missing one-line CI step, and #84 has the analysis: the two remaining criticals
+ * (`@angular/build`, `piscina`) have no forward fix today — npm's own remedy is a downgrade across two
+ * majors — so an `npm audit --audit-level=high` gate would red every pull request from the day it
+ * landed. Read #84 before adding one.
+ */
+/**
+ * **F1: `//robots.txt` answered HTTP 500, and this branch caused it.**
+ *
+ * `@angular/platform-server` throws NG05702 for a protocol-relative URL, but from a provider factory
+ * during injector hydration — so only once a component is about to render. While the catch-all route
+ * was `redirectTo: ''` that throw was unreachable, because a redirect short-circuits before any
+ * component is built. Pointing the catch-all at a real page (#28) made every `//`-prefixed address the
+ * route table does not otherwise claim throw instead, and the render handler's `catch(next)` turned it
+ * into a 500. The control at the time: `//about`, `//bag` and `//terms` still answered 302, because
+ * those are redirect routes and short-circuited.
+ *
+ * **A 5xx on `robots.txt` tells a crawler the entire site is disallowed** — the single outcome this
+ * whole design exists to prevent, and which `server.ts`, `robots-txt.ts` and this file all claim is
+ * impossible because a route table is not where that answer can come from. It still is not. It was one
+ * character away from being false.
+ *
+ * Every address class is checked in its `//` form rather than `robots.txt` alone, because the defect was
+ * never about `robots.txt`: it was about every address a route does not claim.
+ */
+test.describe('a leading run of slashes (F1)', () => {
+  const ADDRESSES = [
+    '//robots.txt',
+    '///robots.txt',
+    '//sitemap.xml',
+    '//',
+    '////',
+    '//healthz',
+    '//women',
+    '//women/jeans',
+    '//kids/girls/girls-dresses',
+    '//product/test-product-1',
+    '//search?q=test',
+    '//new-arrivals',
+    '//not-a-dept',
+    '//bogus/thing',
+    '//favicon.ico',
+    // The three that were *not* broken, because a redirect route short-circuited the throw. They are
+    // in the list so the fix is shown to cover the whole class rather than the half that failed.
+    '//about',
+    '//bag',
+    '//terms',
+  ] as const;
+
+  for (const path of ADDRESSES) {
+    test(`${path} is a 301 to the single-slash form, never a 5xx`, async ({ request, baseURL }) => {
+      // `${baseURL}${path}` rather than `path`, and this is not a style choice. A request client
+      // resolves a bare `//host` as a **protocol-relative URL**, so `request.get('//robots.txt')` goes
+      // to `http://robots.txt/` and never touches this server. The first version of this test failed
+      // against the broken build with `ENOTFOUND robots.txt` — a failure that proves nothing, and
+      // exactly the shape of green-for-the-wrong-reason this project keeps finding. An explicit scheme
+      // is what makes the leading double slash a path instead of a host.
+      const response = await request.get(`${baseURL}${path}`, { maxRedirects: 0 });
+
+      expect(response.status()).toBe(301);
+      // A **relative** Location, which RFC 7231 permits and which is the safer of the two: an absolute
+      // one would have to be built from the request's own Host, and that is the forgery hazard
+      // `src/server/origins.ts` exists to refuse. Nothing here needs an origin, so nothing here invents
+      // one.
+      expect(response.headers()['location']).toBe(path.replace(/^\/+/, '/'));
+    });
+  }
+
+  /**
+   * **The backslash shapes are in `canonical-path.spec.ts` and not here, and that is a limit of the
+   * client rather than a gap in the fix.** A leading slash followed by a backslash threw the same
+   * NG05702, and that shape is also read as protocol-relative by some user agents — but every
+   * URL-parsing client, Playwright's included, rewrites a backslash in a path to a slash before the
+   * request leaves, so this suite cannot put one on the wire at all. It was measured by hand with
+   * `curl`, which does not rewrite it: **500** before the fix, **301 `Location: /robots.txt`** after.
+   * The unit spec holds the logic, including the property that the redirect can never leave this
+   * origin.
+   */
+  test('the query string survives the redirect', async ({ request, baseURL }) => {
+    const response = await request.get(`${baseURL}//women?colour=navy`, { maxRedirects: 0 });
+
+    expect(response.status()).toBe(301);
+    expect(response.headers()['location']).toBe('/women?colour=navy');
+  });
+
+  /**
+   * **The redirect must not be able to leave this origin.** `//evil.example.com/x` is the address a
+   * naive fix turns into an open redirect, so the `Location` is checked to be a path on this host with
+   * the hostile host demoted to a path segment.
+   */
+  for (const path of ['//evil.example.com/x', '///evil.example.com', '////evil.example.com/x']) {
+    test(`${path} redirects inside this origin, not to it`, async ({ request, baseURL }) => {
+      const response = await request.get(`${baseURL}${path}`, { maxRedirects: 0 });
+
+      expect(response.status()).toBe(301);
+
+      const location = new URL(response.headers()['location'], baseURL);
+      expect(location.origin).toBe(new URL(baseURL ?? '').origin);
+      expect(location.pathname.startsWith('//')).toBe(false);
+    });
+  }
+
+  /** And following the redirect reaches the thing itself, with the right media type. */
+  test('following it reaches the real answer', async ({ request, baseURL }) => {
+    const robots = await request.get(`${baseURL}//robots.txt`);
+    expect(robots.status()).toBe(200);
+    expect(robots.headers()['content-type']).toContain('text/plain');
+    expect(await robots.text()).toContain('User-agent: *');
+
+    const sitemap = await request.get(`${baseURL}//sitemap.xml`);
+    expect(sitemap.status()).toBe(200);
+    expect(await sitemap.text()).toContain('<urlset');
+
+    const listing = await request.get(`${baseURL}//women`);
+    expect(listing.status()).toBe(200);
+    expect(await listing.text()).toContain('<sd-listing-page');
+
+    // Still a 404 rather than a redirect's 200: canonicalising a path does not make the page exist.
+    expect((await request.get(`${baseURL}//not-a-dept`)).status()).toBe(404);
+  });
+
+  /**
+   * The second line of defence, on the wire. `render-failure.spec.ts` covers what it answers; this is
+   * the property that matters site-wide — **no address class answers 5xx** — checked across the shapes
+   * that reach the renderer rather than a route.
+   */
+  test('no address shape answers a 5xx', async ({ request, baseURL }) => {
+    const shapes = [
+      '/robots.txt',
+      '//robots.txt',
+      '/robots.txt/',
+      '/./robots.txt',
+      '/sitemap.xml',
+      '//sitemap.xml',
+      '/women//jeans',
+      '/%2F%2Frobots.txt',
+      // Matrix parameters: the subject of GHSA-ff3f-86qr-9cv3, on the catch-all this branch changed.
+      '/;1=1',
+      '//;1=1',
+      '/women;1=1',
+      '/not-a-dept;1=1',
+      '/not-a-dept',
+      '//not-a-dept',
+    ];
+
+    const answers: Record<string, number> = {};
+    for (const shape of shapes) {
+      answers[shape] = (await request.get(`${baseURL}${shape}`, { maxRedirects: 0 })).status();
+    }
+
+    const serverErrors = Object.entries(answers).filter(([, status]) => status >= 500);
+    expect(serverErrors, JSON.stringify(answers, null, 2)).toEqual([]);
+  });
+});
+
+/**
+ * **F9: a path that *normalises* to a leading `//` still answered 500. F1 was narrowed, not fixed.**
+ *
+ * The first fix tested the **raw** request target for a leading run. The URL parser removes dot segments
+ * first, so a path can arrive with one leading slash and end up with two —
+ * `new URL('/.//robots.txt', 'http://h').pathname` is `//robots.txt` — and nine shapes went on answering
+ * 500 on a build whose whole point was that they could not. The same control proved the cause as in round
+ * one: `/.//about`, `/..//bag` and `/.//terms` kept answering 302, because a redirect route
+ * short-circuits before a component is built.
+ *
+ * **These tests could not be written with the suite's own client, and that is the reason they are here
+ * in this shape.** Playwright's request client resolves dot segments before the request leaves, so it
+ * reports the already-fixed `//robots.txt` case no matter which spelling it is given. `raw` above uses
+ * `node:http`, which sends the path verbatim. Without that the guarantee would rest on somebody
+ * remembering to run `curl`, which is how F9 survived round one.
+ */
+test.describe('a path that normalises to a leading slash run (F9)', () => {
+  /** Every address class, in the spellings that only a non-normalising client can send. */
+  const DOT_SEGMENT_SHAPES = [
+    '/.//robots.txt',
+    '/..//robots.txt',
+    '/a/..//robots.txt',
+    '/%2e//robots.txt',
+    '/%2E//robots.txt',
+    '/.%2e//robots.txt',
+    '/.//sitemap.xml',
+    '/..//sitemap.xml',
+    '/.//healthz',
+    '/.//',
+    '/.//women',
+    '/.//women/jeans',
+    '/a/../..//women',
+    '/.//kids/girls/girls-dresses',
+    '/.//product/test-product-1',
+    '/.//search?q=test',
+    '/.//new-arrivals',
+    '/.//not-a-dept',
+    '/.//bogus/thing',
+    '/.//favicon.ico',
+    // The four that were *not* broken, because a redirect route short-circuited the throw. They are here
+    // so the fix is shown to cover the whole class rather than the part that failed.
+    '/.//about',
+    '/..//bag',
+    '/.//terms',
+    '/a/..//wishlist',
+  ] as const;
+
+  for (const path of DOT_SEGMENT_SHAPES) {
+    test(`${path} is a 301 to the single-slash form, never a 5xx`, async ({ baseURL }) => {
+      const answer = await raw(baseURL, path);
+
+      expect(answer.status, `body was: ${answer.body.slice(0, 200)}`).toBe(301);
+      expect(answer.location.startsWith('//')).toBe(false);
+      expect(answer.location.startsWith('/')).toBe(true);
+    });
+  }
+
+  /** The redirect resolves the dot segments as well, so one hop reaches the address. */
+  test('the Location is the fully resolved path', async ({ baseURL }) => {
+    expect((await raw(baseURL, '/.//robots.txt')).location).toBe('/robots.txt');
+    expect((await raw(baseURL, '/..//sitemap.xml')).location).toBe('/sitemap.xml');
+    expect((await raw(baseURL, '/a/..//women')).location).toBe('/women');
+    expect((await raw(baseURL, '/a/../..//women')).location).toBe('/women');
+    expect((await raw(baseURL, '/.//')).location).toBe('/');
+    expect((await raw(baseURL, '/.//women?colour=navy')).location).toBe('/women?colour=navy');
+  });
+
+  /**
+   * **The redirect must not be able to leave this origin, through this route either.** The hostile host
+   * has to end up as a path segment, exactly as for the raw `//` forms.
+   */
+  for (const path of [
+    '/.//evil.example.com/x',
+    '/..//evil.example.com/x',
+    '/a/..//evil.example.com',
+    '/%2e//evil.example.com',
+  ]) {
+    test(`${path} redirects inside this origin, not to it`, async ({ baseURL }) => {
+      const answer = await raw(baseURL, path);
+
+      expect(answer.status).toBe(301);
+
+      const location = new URL(answer.location, baseURL);
+      expect(location.origin).toBe(new URL(baseURL ?? '').origin);
+      expect(location.pathname.startsWith('//')).toBe(false);
+      expect(location.hostname).toBe(new URL(baseURL ?? '').hostname);
+    });
+  }
+
+  /** And following the redirect reaches the thing itself. */
+  test('following it reaches the real answer', async ({ baseURL }) => {
+    const first = await raw(baseURL, '/.//robots.txt');
+    expect(first.status).toBe(301);
+
+    const robots = await raw(baseURL, first.location);
+    expect(robots.status).toBe(200);
+    expect(robots.body).toContain('User-agent: *');
+  });
+
+  /**
+   * **Shapes that must keep answering as they do.** A dot segment that does not produce a leading run is
+   * deliberately left alone — it is safe, and redirecting it would be a crawl-canonicalisation change
+   * rather than a fix. `/./robots.txt` answers **404**, which for `robots.txt` means "crawl freely" and
+   * is never the dangerous answer; it reads 200 under `curl` only because `curl` normalises it first.
+   */
+  test('a dot segment that does not reach the front is left alone', async ({ baseURL }) => {
+    const untouched: Record<string, number> = {};
+    for (const path of ['/./robots.txt', '/a/../robots.txt', '/women//jeans', '/robots.txt', '/women']) {
+      untouched[path] = (await raw(baseURL, path)).status;
+    }
+
+    expect(untouched).toEqual({
+      '/./robots.txt': 404,
+      '/a/../robots.txt': 404,
+      '/women//jeans': 200,
+      '/robots.txt': 200,
+      '/women': 200,
+    });
+  });
+
+  /**
+   * The property that matters site-wide, over both families at once: **no address shape answers a 5xx**.
+   * Sent raw, so every entry means what it says.
+   */
+  test('no address shape answers a 5xx', async ({ baseURL }) => {
+    const shapes = [
+      '/robots.txt',
+      '//robots.txt',
+      '///robots.txt',
+      '/.//robots.txt',
+      '/..//robots.txt',
+      '/%2e//robots.txt',
+      '/./robots.txt',
+      '/robots.txt/',
+      '/sitemap.xml',
+      '//sitemap.xml',
+      '/.//sitemap.xml',
+      '/women//jeans',
+      '/%2F%2Frobots.txt',
+      '/.//',
+      '////',
+      // Matrix parameters: the subject of GHSA-ff3f-86qr-9cv3, on the catch-all this branch changed.
+      '/;1=1',
+      '//;1=1',
+      '/.//;1=1',
+      '/women;1=1',
+      '/not-a-dept;1=1',
+      '/not-a-dept',
+      '//not-a-dept',
+      '/.//not-a-dept',
+    ];
+
+    const answers: Record<string, number> = {};
+    for (const shape of shapes) {
+      answers[shape] = (await raw(baseURL, shape)).status;
+    }
+
+    const serverErrors = Object.entries(answers).filter(([, status]) => status >= 500);
+    expect(serverErrors, JSON.stringify(answers, null, 2)).toEqual([]);
+  });
+});
+
+test.describe('robots.txt', () => {
+  /**
+   * **The one that matters most, and the reason it is answered by Express.**
+   *
+   * Before this there was no such file in the build, so the request fell through to the Angular
+   * router. A crawler answered 5xx for `robots.txt` treats the **whole site** as disallowed until it
+   * can read one, so a route table is the last place that answer should be able to come from.
+   */
+  test('is a real text file, not a rendered page', async ({ request }) => {
+    const response = await request.get('/robots.txt');
+
+    expect(response.status()).toBe(200);
+    expect(contentType(response)).toContain('text/plain');
+
+    const body = await response.text();
+    // If the router had answered, this would be a document.
+    expect(body).not.toContain('<!DOCTYPE');
+    expect(body).not.toContain('<sd-root');
+    expect(body.startsWith('# Colombo Wardrobe')).toBe(true);
+  });
+
+  test('lets a crawler into the shop and names the sitemap absolutely', async ({ request, baseURL }) => {
+    const body = await (await request.get('/robots.txt')).text();
+
+    expect(body).toContain('User-agent: *');
+    expect(body).toContain('Allow: /');
+    // Absolute, on the origin the request arrived at, which is the only form the line accepts.
+    expect(body).toContain(`Sitemap: ${baseURL}/sitemap.xml`);
+  });
+
+  test('keeps a shopper’s own session and the API out', async ({ request }) => {
+    const body = await (await request.get('/robots.txt')).text();
+
+    for (const path of ['/account', '/bag', '/checkout', '/api/']) {
+      expect(body).toContain(`Disallow: ${path}`);
+    }
+  });
+
+  /**
+   * `/search` answers `noindex` (SRCH-02, W2-07). A `Disallow` would read as the same wish and do the
+   * opposite: a crawler that may not fetch the page never reads the `noindex`, and the bare URL stays
+   * indexable. Allowing the fetch is what makes the `noindex` effective.
+   */
+  test('does not disallow /search, which would undo its noindex', async ({ request }) => {
+    expect(await (await request.get('/robots.txt')).text()).not.toContain('Disallow: /search');
+  });
+
+  /**
+   * The other half of that argument, measured rather than asserted in prose: `/search` really does
+   * carry `noindex` (SRCH-02, W2-07). The two tests only mean something together — a `Disallow` with
+   * no `noindex` behind it would leave the page indexable, and a `noindex` behind a `Disallow` would
+   * never be read. This branch does not set that tag and must not contradict it.
+   */
+  test('/search carries the noindex that makes allowing the crawl the right answer', async ({
+    request,
+  }) => {
+    const html = await (await request.get('/search?q=test')).text();
+
+    expect(html).toContain('<sd-search-page');
+    expect(html).toMatch(/<meta[^>]*name="robots"[^>]*content="[^"]*noindex/);
+  });
+
+  test('answers HEAD, which link checkers and monitors lead with', async ({ request }) => {
+    const response = await request.head('/robots.txt');
+
+    expect(response.status()).toBe(200);
+    expect(contentType(response)).toContain('text/plain');
+  });
+
+  /**
+   * **The whole point of serving it from Express.** This server's catalogue API answers 500 to every
+   * product query, which is the state in which `sitemap.xml` cannot be built — and `robots.txt` still
+   * has to be a 200, because the alternative is a crawler deciding the entire site is off limits.
+   */
+  test('is still a 200 when the catalogue API is unhealthy', async ({ request }) => {
+    const response = await request.get(`${faultyCatalogueURL}/robots.txt`);
+
+    expect(response.status()).toBe(200);
+    expect(await response.text()).toContain('User-agent: *');
+  });
+});
+
+test.describe('sitemap.xml', () => {
+  test('is a valid urlset of absolute addresses', async ({ request }) => {
+    const response = await request.get('/sitemap.xml');
+
+    expect(response.status()).toBe(200);
+    expect(contentType(response)).toContain('application/xml');
+
+    const body = await response.text();
+    expect(body.startsWith('<?xml version="1.0" encoding="UTF-8"?>')).toBe(true);
+    expect(body).toContain('<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">');
+    expect(body.trimEnd().endsWith('</urlset>')).toBe(true);
+
+    for (const loc of body.matchAll(/<loc>([^<]*)<\/loc>/g)) {
+      expect(loc[1]).toMatch(/^https?:\/\//);
+    }
+  });
+
+  /**
+   * It comes from the live catalogue, not from a list in a file: W1-12 lets the client add and hide
+   * categories, so a hand-written sitemap would be wrong within a day. The stub's tree is what the
+   * mega menu is drawn from, so a listing the menu links to is a listing the sitemap offers.
+   */
+  test('offers the departments, categories and products the catalogue has', async ({
+    request,
+    baseURL,
+  }) => {
+    const body = await (await request.get('/sitemap.xml')).text();
+    const origin = baseURL;
+
+    for (const path of [
+      '/',
+      '/new-arrivals',
+      '/sale',
+      '/women',
+      '/women/jeans',
+      // Three levels deep, which is the shape the Kids tree has (docs/08 §9).
+      '/kids/girls/girls-dresses',
+      '/product/test-product-1',
+    ]) {
+      expect(body, `${path} is missing from the sitemap`).toContain(`<loc>${origin}${path}</loc>`);
+    }
+  });
+
+  test('dates what it can, as a date rather than a timestamp', async ({ request }) => {
+    const body = await (await request.get('/sitemap.xml')).text();
+
+    expect(body).toMatch(/<lastmod>\d{4}-\d{2}-\d{2}<\/lastmod>/);
+    expect(body).not.toMatch(/<lastmod>[^<]*T/);
+  });
+
+  /** `/search` is `noindex`, so offering it here would be arguing with ourselves. */
+  test('never offers /search, /bag or /account', async ({ request }) => {
+    const body = await (await request.get('/sitemap.xml')).text();
+
+    for (const path of ['/search', '/bag', '/account', '/checkout', '/wishlist']) {
+      expect(body).not.toContain(`${path}</loc>`);
+    }
+  });
+
+  /**
+   * The storefront's own `API_INTERNAL_URL` is a container address. It must not travel: the sitemap is
+   * the one document whose whole job is to be read by somebody else.
+   */
+  test('never carries the internal API address', async ({ request }) => {
+    const body = await (await request.get('/sitemap.xml')).text();
+
+    expect(body).not.toContain('localhost:4421');
+    expect(body).not.toContain('/api/');
+  });
+
+  test('is cacheable, because it is a public endpoint that enumerates the catalogue', async ({
+    request,
+  }) => {
+    const cacheControl = (await request.get('/sitemap.xml')).headers()['cache-control'] ?? '';
+
+    expect(cacheControl).toContain('public');
+    expect(Number(/max-age=(\d+)/.exec(cacheControl)?.[1] ?? 0)).toBeGreaterThan(0);
+  });
+
+  test('answers HEAD', async ({ request }) => {
+    expect((await request.head('/sitemap.xml')).status()).toBe(200);
+  });
+
+  /**
+   * **Truncation, on the wire, which it was not before.** It was reported only in an XML comment and the
+   * switch that would have produced one was set by nothing — so the whole chain from the API's flags
+   * through `asSitemap` and the snapshot to the rendered note shipped unexercised. The deep pair reports
+   * two of the three caps as reached, which is why it is the pair used: it exists because the catalogue
+   * is big, and "big enough that one sitemap cannot list it" is the same idea.
+   */
+  test('says in the document which caps the catalogue has outgrown', async ({ request }) => {
+    const body = await (await request.get(`${deepCatalogueURL}/sitemap.xml`)).text();
+
+    expect(body).toContain('more visible categories than one sitemap may list (Catalog:SitemapMaxCategories)');
+    expect(body).toContain('more visible products than one sitemap may list (Catalog:SitemapMaxProducts)');
+    // Only the two that were asked for: a note for a cap that was not reached would be worse than none.
+    expect(body).not.toContain('more visible departments');
+    // And it is still a valid document with real addresses in it.
+    expect(body).toContain('<urlset');
+    expect(body).toContain('<loc>');
+  });
+
+  /**
+   * #30's lesson, applied to a document. An empty `<urlset>` is a **valid** sitemap that says this
+   * shop has no pages, and a crawler has no way to tell it from the truth; a 500 would be the
+   * storefront reporting its own internals. 503 with `Retry-After` keeps every URL a crawler already
+   * holds, which is the whole difference between an outage and a deletion.
+   */
+  test.describe('when the catalogue API is unhealthy', () => {
+    test('answers 503 with Retry-After, never 500 and never an empty urlset', async ({ request }) => {
+      const response = await request.get(`${faultyCatalogueURL}/sitemap.xml`);
+
+      expect(response.status()).toBe(503);
+      expect(Number(response.headers()['retry-after'])).toBeGreaterThan(0);
+
+      const body = await response.text();
+      expect(body).not.toContain('<urlset');
+      // Never a status code, a stack or the API's own words in front of a caller.
+      expect(body).not.toContain('Forced failure');
+      expect(body).not.toContain('500');
+    });
+  });
+});
+
+test.describe('the metadata a page puts on the wire', () => {
+  const PAGES = [
+    { label: 'the home page', path: '/', kind: 'website', canonical: '/' },
+    { label: 'a department listing', path: '/women', kind: 'website', canonical: '/women' },
+    { label: 'a category listing', path: '/women/jeans', kind: 'website', canonical: '/women/jeans' },
+    {
+      label: 'a product page',
+      path: '/product/test-product-1',
+      kind: 'product',
+      canonical: '/product/test-product-1',
+    },
+  ] as const;
+
+  for (const page of PAGES) {
+    test(`${page.label} describes itself to a crawler and a share card`, async ({
+      request,
+      baseURL,
+    }) => {
+      const html = await (await request.get(page.path)).text();
+      const origin = baseURL;
+
+      const tag = (selector: string): string | null => {
+        const pattern = new RegExp(`<meta[^>]*${selector}[^>]*content="([^"]*)"`, 'i');
+        const reversed = new RegExp(`<meta[^>]*content="([^"]*)"[^>]*${selector}`, 'i');
+        return pattern.exec(html)?.[1] ?? reversed.exec(html)?.[1] ?? null;
+      };
+
+      expect(html).toMatch(/<title>[^<]*Colombo Wardrobe[^<]*<\/title>/);
+      expect(tag('name="description"')).toBeTruthy();
+
+      expect(tag('property="og:site_name"')).toBe('Colombo Wardrobe');
+      expect(tag('property="og:type"')).toBe(page.kind);
+      expect(tag('property="og:title"')).toBeTruthy();
+      expect(tag('property="og:description"')).toBeTruthy();
+      // Absolute, because the Open Graph consumers do not resolve a relative URL — they drop the tag.
+      expect(tag('property="og:url"')).toBe(`${origin}${page.canonical}`);
+
+      // The canonical stays relative on purpose; see `CanonicalLink`.
+      expect(/<link[^>]*rel="canonical"[^>]*href="([^"]*)"/.exec(html)?.[1]).toBe(page.canonical);
+    });
+  }
+
+  test('a product page carries an absolute picture for the share card', async ({ request }) => {
+    const html = await (await request.get('/product/test-product-1')).text();
+
+    const image = /<meta[^>]*property="og:image"[^>]*content="([^"]*)"/.exec(html)?.[1];
+    expect(image).toBeTruthy();
+    expect(image).toMatch(/^https?:\/\//);
+    expect(/<meta[^>]*name="twitter:card"[^>]*content="([^"]*)"/.exec(html)?.[1]).toBe(
+      'summary_large_image',
+    );
+  });
+
+  /**
+   * "Friendly URLs" (GLB-11) was already satisfied by the existing slug routing, so this confirms it
+   * rather than rebuilding it: a department, a category, a three-level category and a product are all
+   * addressed by the catalogue's own slugs, answer 200, and say that address is the canonical one.
+   * `app.routes.spec.ts` holds the same property as a shape check on the route table.
+   */
+  test('every page is addressed by its slug, and says so', async ({ request }) => {
+    for (const path of ['/women', '/women/jeans', '/kids/girls/girls-dresses', '/product/test-product-1']) {
+      const response = await request.get(path);
+
+      expect(response.status(), `${path} should be a page`).toBe(200);
+      expect(/<link[^>]*rel="canonical"[^>]*href="([^"]*)"/.exec(await response.text())?.[1]).toBe(path);
+    }
+  });
+});
+
+/**
+ * **#28: a mistyped department answered 200 with the home page.**
+ *
+ * That is a soft 404 — the wrong page under the wrong URL, at a status code that tells a crawler it is
+ * the right one, with nothing anywhere reporting it. The status on the wire is the whole of the
+ * defect, so it is measured here and nowhere else.
+ */
+test.describe('an address this site does not have (#28)', () => {
+  for (const path of ['/not-a-dept', '/bogus/thing', '/women/jeans/extra/segments', '/wp-admin/setup-config.php']) {
+    test(`${path} answers 404, with noindex`, async ({ request }) => {
+      const response = await request.get(path);
+
+      expect(response.status()).toBe(404);
+
+      const html = await response.text();
+      expect(html).toContain('We could not find that page');
+      expect(html).toContain('noindex');
+      // A 404 is a deletion, not an outage: it must not also claim to be retryable.
+      expect(response.headers()['retry-after']).toBeUndefined();
+    });
+  }
+
+  /**
+   * The other half of the fix, and the reason it is not simply "point the catch-all at the 404 page".
+   * The header, the footer and the search form link to these on every page of the site, and their
+   * pages belong to GLB-10, W2-07, W2-08, W2-09, W3-01 and W3-02. A 404 on a link the shop's own
+   * footer offers would be a worse answer than the redirect.
+   */
+  // `/search` is deliberately absent: W2-07 built its page while this branch was in flight, so it has
+  // a route of its own and must **not** redirect home. `app.routes.spec.ts` holds the same property on
+  // the list itself.
+  for (const path of ['/bag', '/wishlist', '/account', '/about', '/contact', '/privacy', '/terms', '/returns', '/shipping']) {
+    test(`${path} still reaches the home page while its page is unbuilt`, async ({ request }) => {
+      const response = await request.get(path);
+
+      expect(response.status()).toBe(200);
+      expect(new URL(response.url()).pathname).toBe('/');
+    });
+  }
+
+  /**
+   * **An address *under* an unbuilt page is a 404 with a page in it, not an empty one.**
+   *
+   * A route's `pathMatch` defaults to `'prefix'`, so the redirects above first claimed everything
+   * beneath them too: `/account/orders` matched `account`, the redirect kept the remaining segment,
+   * and the answer was a 404 with a **zero-byte body** — a blank screen for a shopper and nothing for
+   * a crawler, which is worse than the soft 404 this change exists to remove. Measured on all three.
+   */
+  for (const path of ['/account/orders', '/bag/checkout', '/about/x']) {
+    test(`${path} is a 404 with the not-found page in it, not an empty body`, async ({ request }) => {
+      const response = await request.get(path);
+
+      expect(response.status()).toBe(404);
+
+      const html = await response.text();
+      expect(html.length).toBeGreaterThan(0);
+      expect(html).toContain('We could not find that page');
+      expect(html).toContain('noindex');
+    });
+  }
+
+  /**
+   * **The search address, now that W2-07 has built the page, measured rather than reasoned about.**
+   *
+   * These four shapes were verified by hand on W2-07's branch and asserted nowhere, which is why they
+   * are here: two of them **change answer** because of the `**` fix above, and a hand check does not
+   * notice that. Angular's router matches paths case-sensitively, so `/SEARCH` never matched the
+   * `search` route and fell through to the catch-all; it used to be answered with the home page at 200
+   * and is now a 404.
+   *
+   * 404 is the intended answer and not an oversight. `/SEARCH` is not an address this site has, and
+   * the home page served under it was exactly the soft 404 #28 is about — the same thing `/WOMEN` did,
+   * and does, so nothing here is special-cased. A case-normalising redirect would be a new behaviour
+   * for every route rather than for this one, and it is not in GLB-11's scope; it is written down here
+   * so the next person reads a decision rather than guesses at a bug.
+   */
+  for (const path of ['/SEARCH?q=test', '/Search?q=test']) {
+    test(`${path} is a 404, because routes are matched case-sensitively`, async ({ request }) => {
+      const response = await request.get(path);
+
+      expect(response.status()).toBe(404);
+      expect(await response.text()).toContain('We could not find that page');
+    });
+  }
+
+  /** Deeper than the search page goes. Its route has no children, so it cannot claim these. */
+  for (const path of ['/search/foo', '/search/foo/bar']) {
+    test(`${path} is a 404, not the search page and not the home page`, async ({ request }) => {
+      const response = await request.get(path);
+
+      expect(response.status()).toBe(404);
+
+      const html = await response.text();
+      expect(html).toContain('We could not find that page');
+      expect(html).not.toContain('<sd-search-page');
+    });
+  }
+
+  /** And the two shapes that must keep working: a trailing slash, and a differently-cased parameter. */
+  for (const path of ['/search/', '/search?Q=test', '/search?q=test']) {
+    test(`${path} still reaches the search page`, async ({ request }) => {
+      const response = await request.get(path);
+
+      expect(response.status()).toBe(200);
+      expect(await response.text()).toContain('<sd-search-page');
+    });
+  }
+
+  /** A category the live catalogue does not have was already a 404, and must have stayed one. */
+  test('a category that belongs to another department is still a 404', async ({ request }) => {
+    const response = await request.get('/women/shirts');
+
+    expect(response.status()).toBe(404);
+    expect(await response.text()).toContain('noindex');
+  });
+});

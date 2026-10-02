@@ -61,6 +61,7 @@ public static class DependencyInjection
             .Validate(options => options.DefaultPageSize > 0, "Catalog:DefaultPageSize must be greater than zero.")
             .Validate(options => options.MaxPageSize >= options.DefaultPageSize, "Catalog:MaxPageSize must be at least Catalog:DefaultPageSize.")
             .Validate(options => options.RelatedProductCount >= 0, "Catalog:RelatedProductCount must be zero or more.")
+            .Validate(options => options.SitemapMaxProducts > 0, "Catalog:SitemapMaxProducts must be greater than zero.")
             .ValidateOnStart();
 
         // The bound value, for use cases in the Application layer: that project deliberately takes
@@ -92,6 +93,7 @@ public static class DependencyInjection
 
         services.AddScoped<IDepartmentCatalogReader, DepartmentCatalogReader>();
         services.AddScoped<IProductCatalogReader, ProductCatalogReader>();
+        services.AddScoped<ISitemapCatalogReader, SitemapCatalogReader>();
         services.AddScoped<IAuditLogReader, AuditLogReader>();
 
         // Admin catalogue structure (ADM-11, W1-12).

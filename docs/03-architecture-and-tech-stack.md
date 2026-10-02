@@ -110,13 +110,29 @@ spencer-denim-ecommerce/
 Internet ──► Caddy (443, TLS) ─┬─► storefront-ssr (Node, Angular SSR)   ~300–500 MB
                                ├─► /admin  static files (served by Caddy)
                                ├─► /api    api (.NET 10)              ~300–500 MB
-                               └─► /media  public uploads volume (static, cached)
+                               ├─► /media  public uploads volume (static, cached)
+                               └─► /internal  ***NOT ROUTED.*** See the note below.
                                           │   private uploads volume (bank slips) → NOT mounted in Caddy, served only via API
                                    sqlserver (Express, max server memory ≈ 2 GB, prod + staging DBs)
                                    backup job (full + 15-min log backups + uploads → off-server storage)
 ```
 
 - **`/media` is a shared namespace, and the proxy rule has to fall through.** The Angular browser build emits its own webfonts under `/media` (`dist/storefront/browser/media/inter-*.woff2`), so a Caddy rule that serves `/media` from the public uploads volume and stops there will shadow them and the storefront loads with fallback type. The rule must try the uploads volume and then fall through to the SSR server on a miss (`try_files`-style), or the build must be given a different `resourcesOutputPath`. Whichever is chosen, `/media` must still serve the uploads volume with the year-long immutable cache, the strong `ETag` and byte-range support that [08](08-database-design.md) §3.3 relies on — the `E2E_MEDIA_PASSTHROUGH_URL` route in the SSR server is a browser-test fixture with none of those and must never be used for this. The Angular dev proxy (`src/frontend/proxy.conf.json`) solves the same problem the narrow way: it forwards **`/media/public`** rather than `/media`, because `public/` is the only prefix the media endpoint will serve and nothing the build emits starts with it — a rule on the whole of `/media` swallows the webfonts under `ng serve` exactly as it would in Caddy.
+- **`/internal` is not routed from the public origin, and that is a rule the Caddyfile has to keep.**
+  Everything the diagram does not name goes to the SSR server, which proxies neither `/api` nor
+  `/internal` — so an address under `/internal` on the public origin reaches the Angular router and
+  answers 404, which is the point. **Never add a rule that forwards `/internal` to the API**, and be
+  careful that a rule written as a prefix for something else does not pick it up. What lives there today
+  is `GET /internal/catalog/sitemap` (GLB-11), the feed the storefront's own server reads to render
+  `/sitemap.xml`: three projections over the whole visible catalogue and the heaviest read in the
+  system, whose only consumer is that process, reaching it over `API_INTERNAL_URL` on the container
+  network. The API's health-check paths rely on the same rule, which is why the convention existed
+  before this did.
+  It is **surface reduction and not authentication** — nothing under `/internal` checks who is asking —
+  so the endpoint is bounded (`Catalog:SitemapMaxDepartments`, `…MaxCategories`, `…MaxProducts`) and
+  output-cached as well, which makes publishing it much cheaper to abuse rather than harmless. The code
+  comment in `CatalogEndpoints.MapInternalCatalogEndpoints` says the same thing; this is the copy a
+  person writing the proxy configuration will actually read.
 - **RAM budget (8 GB):** SQL ~2 GB (`max server memory`; Express caps the buffer pool at 1,410 MB, so more is wasted; **one SQL instance is shared by the production and staging databases**) · API 0.5 GB · SSR 0.5 GB · Caddy 0.1 GB · OS/Docker ~1 GB · staging API + SSR ~1 GB · headroom ~3 GB.
 - OS: Ubuntu 24.04 LTS. Firewall: only 22 (key-only SSH), 80, 443. SQL port **never** exposed. Fail2ban enabled.
 - **Backups:** full SQL backups plus transaction-log backups every 15 minutes, and the uploads volumes. All are shipped off the server (e.g. Backblaze B2 / Azure Blob, a few $/month, to confirm with client) and kept 35 days; retention details are in [08](08-database-design.md) §8.5. Staging uses SIMPLE recovery. Hostinger snapshots are extra, not the only copy. A restore rehearsal happens before go-live (target RPO 15 min, ≤ 1 h if the host is lost; RTO 4 h).

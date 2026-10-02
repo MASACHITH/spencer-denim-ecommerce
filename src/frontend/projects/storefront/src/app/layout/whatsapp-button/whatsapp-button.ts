@@ -6,6 +6,8 @@ import { SITE_CONFIG, whatsAppUrl } from '../../core/config/site-config';
 /**
  * The floating WhatsApp button, on every storefront page (GLB-08).
  *
+ * It is its own `complementary` landmark; see the `host` block for why that is not decoration.
+ *
  * The colour is WhatsApp's darker brand green (`--color-whatsapp`), the one exception to the
  * neutral palette that docs/04 §4 decision 6 allows. The bright `#25d366` was not usable: against
  * white it reaches only 1.9:1, so neither the button's edge nor the white glyph would meet WCAG
@@ -15,6 +17,17 @@ import { SITE_CONFIG, whatsAppUrl } from '../../core/config/site-config';
   selector: 'sd-whatsapp-button',
   imports: [Icon],
   changeDetection: ChangeDetectionStrategy.OnPush,
+  // A landmark of its own, which is the one moderate axe has reported on every storefront page
+  // since this button existed (#65: "region, on an sr-only node outside a landmark" — the sr-only
+  // node is this component's).
+  //
+  // `app.ts` renders it after the footer, so it sits outside banner, main and contentinfo alike,
+  // and content outside every landmark is content a screen-reader user navigating by region never
+  // arrives at. It cannot simply move: it is `position: fixed` and site-wide, so main is the wrong
+  // place (that is the page) and it cannot be nested inside the footer component's own `<footer>`
+  // from here. A named complementary landmark is the honest description — a site-wide way to get in
+  // touch, beside the page rather than part of it — and it costs one entry in a landmark list.
+  host: { role: 'complementary', 'aria-label': 'Chat with us' },
   template: `
     <a class="wa-float" [href]="url" target="_blank" rel="noopener">
       <sd-icon name="whatsapp" />

@@ -156,11 +156,22 @@ for (const [label, mode] of UNHEALTHY) {
  * tomorrow, a locale prefix, a scanner's probe and `/.well-known/...` are outside it by
  * construction.
  */
-test.describe('addresses that are not listings keep answering as they did', () => {
+test.describe('addresses that are not listings are never a 503', () => {
   test.beforeEach(async ({ request }) => {
     await fault(request, 'status');
   });
 
+  /**
+   * **These answered 200 at the home page when this suite was written, and now answer 404.** The
+   * change is #28's, not #30's, and the invariant this block exists for is untouched: none of them is
+   * a 503, and none of them carries `Retry-After`.
+   *
+   * Reaching the home page was itself the defect #28 records — a soft 404, the wrong page under the
+   * wrong URL at a status code that tells a crawler it is the right one. `/wp-admin/setup-config.php`
+   * is the clearest case: a scanner's probe was answered with the shop's front page. 404 is the honest
+   * answer and it is strictly better for every path in this list; what mattered here was only that the
+   * 503 route does not claim them, and it still does not.
+   */
   for (const path of [
     '/api/catalog/departments',
     '/api/catalog/products',
@@ -172,7 +183,39 @@ test.describe('addresses that are not listings keep answering as they did', () =
     '/bag/checkout',
     '/wp-admin/setup-config.php',
   ]) {
-    test(`${path} reaches the home page rather than a 503`, async ({ request }) => {
+    test(`${path} is a 404, not a 503`, async ({ request }) => {
+      const response = await request.get(`${liveOnlyCatalogueURL}${path}`);
+
+      expect(response.status()).toBe(404);
+      expect(response.headers()['retry-after']).toBeUndefined();
+      expect(await response.text()).toContain('We could not find that page');
+    });
+  }
+
+  /**
+   * **A mistyped department during an outage is a 404, and that is deliberate rather than an oversight
+   * of #30's reasoning.**
+   *
+   * #30's ambiguity is real for a **category**: the client can create one (ADM-11, W1-12), so a slug
+   * the frozen fallback has never heard of may be a live, indexed listing and a 404 would drop it.
+   * It does not arise for a **department**: nothing creates one at runtime — the admin API has no
+   * create-department endpoint, and W1-12 settled that a department's name and slug are not editable
+   * (docs/02 §I2) — so the seeded list is closed and `core/navigation/navigation.data.ts` mirrors it.
+   * A single segment the tree in hand does not have is not a department whichever tree that was.
+   *
+   * The assumption, written down because it is the one way this could become wrong: if a later
+   * migration seeds a sixth department, that fallback has to gain it in the same change.
+   */
+  test('a mistyped department is a 404 during an outage, not a 503', async ({ request }) => {
+    const response = await request.get(`${liveOnlyCatalogueURL}/not-a-dept`);
+
+    expect(response.status()).toBe(404);
+    expect(response.headers()['retry-after']).toBeUndefined();
+  });
+
+  /** And the unbuilt pages the shell links to still go home, outage or not (#28). */
+  for (const path of ['/bag', '/wishlist', '/account', '/about', '/privacy']) {
+    test(`${path} still reaches the home page during an outage`, async ({ request }) => {
       const response = await request.get(`${liveOnlyCatalogueURL}${path}`);
 
       expect(response.status()).toBe(200);
@@ -190,14 +233,44 @@ test.describe('addresses that are not listings keep answering as they did', () =
    * these that really exists (`projects/storefront/public/`), so it is served statically at 200 and
    * never reaches Angular at all; the other two fall through to `**`.
    */
-  test('a crawler’s well-known files are never a 503', async ({ request }) => {
+  test('a crawler’s well-known files are never swept into the 503 route', async ({ request }) => {
     const answers: Record<string, number> = {};
-    for (const path of ['/robots.txt', '/sitemap.xml', '/favicon.ico']) {
+    for (const path of ['/robots.txt', '/favicon.ico']) {
       answers[path] = (await request.get(`${liveOnlyCatalogueURL}${path}`)).status();
     }
 
-    expect(answers).toEqual({ '/robots.txt': 200, '/sitemap.xml': 200, '/favicon.ico': 200 });
+    expect(answers).toEqual({ '/robots.txt': 200, '/favicon.ico': 200 });
+
+    // `sitemap.xml` is the one of the three that legitimately may be a 503 — see the test below.
+    const sitemap = await request.get(`${liveOnlyCatalogueURL}/sitemap.xml`);
+    expect([200, 503]).toContain(sitemap.status());
+    if (sitemap.status() === 503) {
+      expect(Number(sitemap.headers()['retry-after'])).toBeGreaterThan(0);
+    }
   });
+
+  /**
+   * **The two files are not the same case, and the difference is worth stating.**
+   *
+   * `robots.txt` must be a 200 whatever is wrong, because a crawler answered 5xx for it treats the
+   * **whole site** as disallowed until it can read one. It is a generated constant — it needs nothing
+   * from the catalogue — so Express answers it from the request alone.
+   *
+   * `sitemap.xml` is a catalogue read, so it can fail, and when it does **503 with `Retry-After` is
+   * the correct answer**: an empty `urlset` is a valid document that says the shop has no pages and a
+   * crawler cannot tell it from the truth. This pair's fault is on `/departments` only, so the sitemap
+   * feed here is healthy; `seo.e2e.ts` measures the 503 on the pair whose product queries all fail.
+   */
+  test('robots.txt is a real file and still 200 while the departments feed is down', async ({
+    request,
+  }) => {
+    const response = await request.get(`${liveOnlyCatalogueURL}/robots.txt`);
+
+    expect(response.status()).toBe(200);
+    expect(response.headers()['content-type']).toContain('text/plain');
+    expect(await response.text()).toContain('User-agent: *');
+  });
+
 });
 
 /**

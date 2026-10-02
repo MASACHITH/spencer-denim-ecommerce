@@ -4,8 +4,12 @@
   "extends": "../../tsconfig.json",
   "compilerOptions": {
     "outDir": "../../out-tsc/spec",
+    /* "node" as well as the test globals: the SSR server's own modules under src/server are the
+       only code in this project that reads process.env, and their specs read it too. tsconfig.app
+       already lists it for the same reason. */
     "types": [
-      "vitest/globals"
+      "vitest/globals",
+      "node"
     ]
   },
   "include": [

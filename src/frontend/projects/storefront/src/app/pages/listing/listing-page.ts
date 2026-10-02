@@ -9,7 +9,6 @@ import {
   untracked,
 } from '@angular/core';
 import { toSignal } from '@angular/core/rxjs-interop';
-import { Meta, Title } from '@angular/platform-browser';
 import { ActivatedRoute, Params, Router, RouterLink } from '@angular/router';
 import { BRAND, Drawer, Icon, brandPageTitle } from '@spencer-denim/shared';
 
@@ -31,7 +30,7 @@ import {
 import { FilterChip, activeChips, removeChip } from '../../core/catalog/listing-chips';
 import { CategoryNodeDto, DepartmentDto } from '../../core/navigation/catalog-departments.model';
 import { NavigationService, findDepartment, trailTo } from '../../core/navigation/navigation.service';
-import { CanonicalLink } from '../../core/platform/canonical-link';
+import { PageMeta } from '../../core/platform/page-metadata';
 import { Viewport } from '../../core/platform/viewport';
 
 /**
@@ -532,9 +531,7 @@ export class ListingPage {
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
   private readonly navigation = inject(NavigationService);
-  private readonly title = inject(Title);
-  private readonly meta = inject(Meta);
-  private readonly canonical = inject(CanonicalLink);
+  private readonly pageMeta = inject(PageMeta);
 
   /** Which container the single filter panel goes in. See {@link Viewport}. */
   protected readonly isDesktop = inject(Viewport).isDesktop;
@@ -768,16 +765,23 @@ export class ListingPage {
       const title = this.documentTitle();
       const description = this.metaDescription();
       const canonical = this.canonicalUrl();
+      // The same picture the page draws at the top of itself — a category's own artwork, or its
+      // department's hero. A listing has no other image that is about the listing.
+      const image = this.promoImage();
       untracked(() => {
-        this.title.setTitle(title);
-        this.meta.updateTag({ name: 'description', content: description });
-        this.canonical.set(canonical);
+        this.pageMeta.set({
+          title,
+          description,
+          path: canonical,
+          imageUrl: image,
+          imageAlt: null,
+        });
       });
     });
 
-    // The next page owns its own canonical address, or has none. Leaving this one behind made the
-    // home page claim to be the listing the shopper had just come from.
-    inject(DestroyRef).onDestroy(() => this.canonical.clear());
+    // The next page owns its own canonical address and card, or has none. Leaving the canonical behind
+    // made the home page claim to be the listing the shopper had just come from.
+    inject(DestroyRef).onDestroy(() => this.pageMeta.clear());
   }
 
   protected apply(next: ListingState): void {

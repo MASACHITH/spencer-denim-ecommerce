@@ -34,3 +34,21 @@ public interface IProductCatalogReader
     /// <summary>Search results (SRCH-02), ordered by relevance unless another sort was asked for.</summary>
     Task<Result<PagedResult<ProductCardDto>>> SearchAsync(ProductSearchQuery query, CancellationToken cancellationToken);
 }
+
+/// <summary>
+/// Read port for the sitemap (GLB-11). Its own port rather than a method on
+/// <see cref="IProductCatalogReader"/>: the listing contract is about one page of cards, this is about
+/// every address in the shop, and a caller that wants one never wants the other (ISP, doc 03 §3).
+/// </summary>
+public interface ISitemapCatalogReader
+{
+    /// <summary>
+    /// Every address a crawler may be told about, in one bounded read.
+    /// <para>
+    /// "Bounded" is part of the contract, not an implementation detail: this is a public endpoint that
+    /// enumerates the catalogue, so the product list is capped by <c>Catalog:SitemapMaxProducts</c> and
+    /// the answer says when the cap was reached. Nothing here fetches media, variants or stock.
+    /// </para>
+    /// </summary>
+    Task<CatalogSitemapDto> GetSitemapAsync(CancellationToken cancellationToken);
+}
