@@ -592,6 +592,17 @@ public sealed class MediaService(
 
         foreach (var group in byType)
         {
+            // Settings first, and *before* the integer parse below, because this is the one owner type whose
+            // id is not a number: doc 08 §3.3 says OwnerId is "the owning entity's ID, **or the setting
+            // key**". Parsing first and bailing on `ids.Count == 0` would skip the group entirely, and the
+            // 409 that refuses to delete the shop's live logo would read "Setting Store.LogoAssetId" with no
+            // label at all — on the exact screen the owner asked for so they could remove an old logo.
+            if (string.Equals(group.Key, MediaUsageOwnerTypes.Setting, StringComparison.Ordinal))
+            {
+                await AddSettingLabelsAsync(labels, group.Select(owner => owner.OwnerId), cancellationToken);
+                continue;
+            }
+
             var ids = group
                 .Select(owner => int.TryParse(owner.OwnerId, CultureInfo.InvariantCulture, out var id) ? id : (int?)null)
                 .OfType<int>()
@@ -670,13 +681,48 @@ public sealed class MediaService(
                     break;
 
                 default:
-                    // SizeGuide, Setting, ContentPage … : their tables arrive with later milestones, and
-                    // a missing label is a display fallback, not a failure.
+                    // SizeGuide, ContentPage … : their tables arrive with later milestones, and a missing
+                    // label is a display fallback, not a failure.
                     break;
             }
         }
 
         return labels;
+    }
+
+    /// <summary>
+    /// Labels for <c>ops.Settings</c> owners (ADM-22). Keyed by the setting key rather than by an id, which
+    /// is why it cannot share <see cref="AddLabelsAsync"/>.
+    /// <para>
+    /// The label is the setting's <c>Description</c> where it has one, because that is the sentence a staff
+    /// user has already read on the settings screen ("The shop's logo, shown in the header…"), and the key
+    /// otherwise. A row that no longer exists in <c>ops.Settings</c> gets no label and the client falls back
+    /// to the type and id, as it does for every other unlabelled owner.
+    /// </para>
+    /// </summary>
+    private async Task AddSettingLabelsAsync(
+        Dictionary<(string, string), string> labels,
+        IEnumerable<string> settingKeys,
+        CancellationToken cancellationToken)
+    {
+        var keys = settingKeys.Distinct(StringComparer.Ordinal).ToList();
+
+        if (keys.Count == 0)
+        {
+            return;
+        }
+
+        var rows = await dbContext.Settings
+            .AsNoTracking()
+            .Where(setting => keys.Contains(setting.Key))
+            .Select(setting => new { setting.Key, setting.Description })
+            .ToListAsync(cancellationToken);
+
+        foreach (var row in rows)
+        {
+            labels[(MediaUsageOwnerTypes.Setting, row.Key)] =
+                string.IsNullOrWhiteSpace(row.Description) ? row.Key : row.Description;
+        }
     }
 
     private sealed record LabelRow(int Id, string Name);

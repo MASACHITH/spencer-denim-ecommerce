@@ -8,6 +8,7 @@ using SpencerDenim.Domain.Common;
 using SpencerDenim.Domain.Content;
 using SpencerDenim.Domain.Inventory;
 using SpencerDenim.Domain.Sales;
+using SpencerDenim.Domain.Settings;
 using SpencerDenim.Infrastructure;
 using SpencerDenim.Infrastructure.Persistence;
 
@@ -132,6 +133,15 @@ public sealed class CatalogModelTests
             // provider payload. Both nvarchar(max) with an ISJSON check, never the native json type.
             $"{nameof(Order)}.{nameof(Order.InvoiceSellerSnapshotJson)}",
             $"{nameof(PaymentEvent)}.{nameof(PaymentEvent.PayloadJson)}",
+
+            // ADM-22, doc 08 §3.8: ops.Settings.Value is nvarchar(max) because one column holds every value
+            // type — a Json options blob, a Text/HTML snippet sanitised on save (PdpReturnsInfoHtml), and a
+            // Data Protection ciphertext whose length depends on the key ring rather than on the plaintext.
+            // A sized column would have to be wide enough for the largest of those, which is nvarchar(max)
+            // by another name. The *inputs* are bounded instead, where a person can be told why:
+            // SettingFieldRules caps a profile URL at 2,048 characters and a WhatsApp number at 15 digits,
+            // so no endpoint in this build can write an unbounded value into it.
+            $"{nameof(Setting)}.{nameof(Setting.Value)}",
         ];
 
         var offenders = Model.GetEntityTypes()
