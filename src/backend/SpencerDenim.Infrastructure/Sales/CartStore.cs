@@ -1,3 +1,4 @@
+using System.Data;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using SpencerDenim.Application.Abstractions.Time;
@@ -85,7 +86,7 @@ internal sealed class CartStore(AppDbContext dbContext, IClock clock) : ICartSto
         }
     }
 
-    public async Task<CartItemUpsert> AddItemAsync(
+    public async Task AddItemAsync(
         int cartId,
         int variantId,
         short quantity,
@@ -111,7 +112,7 @@ internal sealed class CartStore(AppDbContext dbContext, IClock clock) : ICartSto
 
             if (updated > 0)
             {
-                return new CartItemUpsert(await ReadQuantityAsync(cartId, variantId, cancellationToken), false);
+                return;
             }
 
             try
@@ -123,7 +124,7 @@ internal sealed class CartStore(AppDbContext dbContext, IClock clock) : ICartSto
                     """,
                     cancellationToken);
 
-                return new CartItemUpsert(quantity, true);
+                return;
             }
             catch (SqlException exception)
                 when (IsUniqueViolation(exception) && attempt < UniqueViolationAttempts)
@@ -184,37 +185,60 @@ internal sealed class CartStore(AppDbContext dbContext, IClock clock) : ICartSto
             return new CartMergeOutcome(0, false);
         }
 
-        var guest = await FindAsync(CartLookup.ForGuest(guestToken), cancellationToken);
-        if (guest is null)
-        {
-            return new CartMergeOutcome(0, false);
-        }
-
-        var customer = await EnsureAsync(CartLookup.ForCustomer(customerUserId, null), cancellationToken);
-        if (customer.Id == guest.Value.Id)
-        {
-            // Unreachable with the lookup above (it refuses a cart that has a CustomerUserId), but a
-            // merge that moved a cart into itself would delete the shopper's bag, so it is checked
-            // rather than reasoned about.
-            return new CartMergeOutcome(0, false);
-        }
-
-        var lines = await dbContext.CartItems
-            .AsNoTracking()
-            .Where(item => item.CartId == guest.Value.Id)
-            .OrderBy(item => item.Id)
-            .Select(item => new { item.VariantId, item.Quantity, item.UnitPriceAtAdd })
-            .ToListAsync(cancellationToken);
-
-        // One transaction over the whole merge: a failure half way through must leave the guest cart
-        // untouched rather than half emptied, because the guest cookie is cleared straight afterwards and
-        // anything left in that cart would be unreachable for ever.
+        // **Everything is inside the retried lambda, and that is three fixes rather than a tidy-up.**
+        //
+        // 1. *The snapshot could go stale.* The guest lines used to be read before the transaction began,
+        //    and the guest cart is then deleted by id — which cascades to **all** its items, including any
+        //    added between the read and the delete. The transaction protected a partial failure and not
+        //    this, because nothing locked the rows the snapshot came from. The read is now inside a
+        //    **serialisable** transaction, so the range lock it takes on `UX_CartItems_Cart_Variant` for
+        //    this `CartId` blocks a concurrent insert until the merge commits: a line either arrives first
+        //    and is moved, or is refused outright. It can no longer arrive and be destroyed.
+        //
+        // 2. *A failure could leave a stray account cart.* `EnsureAsync` ran outside the transaction, so a
+        //    rollback left an empty cart for a customer who had never added anything — which doc 08 §3.5
+        //    says should not exist ("created on the first Add to Bag, never on a page view"). It is inside
+        //    now, so it is rolled back with everything else.
+        //
+        // 3. *A replay could double the quantities.* `AddItemAsync` is additive, so if the execution
+        //    strategy re-ran this after a lost commit acknowledgement, every moved line would be added a
+        //    second time. With the guest lookup inside, a replay after a commit that really landed finds no
+        //    guest cart and does nothing. The operation is idempotent instead of merely transactional.
+        //
+        // Serialisable is affordable here precisely because this is rare: one sign-in, two tiny tables.
         var strategy = dbContext.Database.CreateExecutionStrategy();
-        var moved = await strategy.ExecuteAsync(async () =>
+        return await strategy.ExecuteAsync(async () =>
         {
-            await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+            await using var transaction = await dbContext.Database.BeginTransactionAsync(
+                IsolationLevel.Serializable,
+                cancellationToken);
 
-            var count = 0;
+            var guest = await FindAsync(CartLookup.ForGuest(guestToken), cancellationToken);
+            if (guest is null)
+            {
+                // Nothing to merge — or a replay of a merge that already committed.
+                await transaction.RollbackAsync(cancellationToken);
+                return new CartMergeOutcome(0, false);
+            }
+
+            var customer = await EnsureAsync(CartLookup.ForCustomer(customerUserId, null), cancellationToken);
+            if (customer.Id == guest.Value.Id)
+            {
+                // Unreachable with the lookup above (it refuses a cart that has a CustomerUserId), but a
+                // merge that moved a cart into itself would delete the shopper's bag, so it is checked
+                // rather than reasoned about.
+                await transaction.RollbackAsync(cancellationToken);
+                return new CartMergeOutcome(0, false);
+            }
+
+            var lines = await dbContext.CartItems
+                .AsNoTracking()
+                .Where(item => item.CartId == guest.Value.Id)
+                .OrderBy(item => item.Id)
+                .Select(item => new { item.VariantId, item.Quantity, item.UnitPriceAtAdd })
+                .ToListAsync(cancellationToken);
+
+            var moved = 0;
             foreach (var line in lines)
             {
                 // The same upsert as Add to Bag, so a variant in both bags sums and clamps at 10. Doc 08
@@ -223,7 +247,7 @@ internal sealed class CartStore(AppDbContext dbContext, IClock clock) : ICartSto
                 // stock is shown as NotEnoughStock rather than silently trimmed, which is the rule the
                 // rest of the bag follows. Checkout (W3-02) is where stock is actually claimed.
                 await AddItemAsync(customer.Id, line.VariantId, line.Quantity, line.UnitPriceAtAdd, cancellationToken);
-                count++;
+                moved++;
             }
 
             await dbContext.Carts
@@ -231,10 +255,8 @@ internal sealed class CartStore(AppDbContext dbContext, IClock clock) : ICartSto
                 .ExecuteDeleteAsync(cancellationToken);
 
             await transaction.CommitAsync(cancellationToken);
-            return count;
+            return new CartMergeOutcome(moved, true);
         });
-
-        return new CartMergeOutcome(moved, true);
     }
 
     private async Task<CartIdentity> InsertCartAsync(int? customerUserId, CancellationToken cancellationToken)
@@ -267,13 +289,6 @@ internal sealed class CartStore(AppDbContext dbContext, IClock clock) : ICartSto
 
         return new CartIdentity(cart.Id, token, customerUserId);
     }
-
-    private async Task<short> ReadQuantityAsync(int cartId, int variantId, CancellationToken cancellationToken) =>
-        await dbContext.CartItems
-            .AsNoTracking()
-            .Where(item => item.CartId == cartId && item.VariantId == variantId)
-            .Select(item => item.Quantity)
-            .FirstOrDefaultAsync(cancellationToken);
 
     private static bool IsUniqueViolation(Exception exception) =>
         exception is SqlException sql

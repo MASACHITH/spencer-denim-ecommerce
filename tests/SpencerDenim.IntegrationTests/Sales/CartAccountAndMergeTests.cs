@@ -180,6 +180,149 @@ public sealed class CartAccountAndMergeTests(SqlServerDatabaseFixture sqlServer)
         Assert.NotNull(await FindCartByTokenAsync(guestToken));
     }
 
+    /**
+     * <b>A replay must not double the quantities.</b>
+     * <para>
+     * <c>AddItemAsync</c> is additive, and the merge runs under an execution strategy that may re-run its
+     * operation after a lost commit acknowledgement. The guest lookup is inside that operation for exactly
+     * this reason: a second pass finds no guest cart and does nothing.
+     * </para>
+     * <para>
+     * <b>What this test does and does not prove.</b> It pins the property ACC-01 can actually hit — a
+     * double sign-in, or a retried call, must not double the bag — and it passes against the old shape
+     * too, because a second <i>call</i> re-enters the method and re-reads. The <i>strategy replay</i> case
+     * is closed by construction (the lookup moved inside the lambda) and is not reachable from a test
+     * without faking a dropped connection, so it is not claimed here.
+     * </para>
+     */
+    [Fact]
+    public async Task Merging_twice_moves_the_lines_once()
+    {
+        var variantId = (await DistinctVariantIdsAsync(1))[0];
+        var customerUserId = await NewCustomerUserIdAsync();
+        var guestToken = await NewGuestCartAsync((variantId, 3));
+
+        var first = await MergeAsync(guestToken, customerUserId);
+        var second = await MergeAsync(guestToken, customerUserId);
+
+        Assert.Equal<short>(3, Assert.Single(first.Cart.Lines).Quantity);
+        Assert.Equal<short>(3, Assert.Single(second.Cart.Lines).Quantity);
+        Assert.Single(await CartItemRowsAsync(customerUserId, variantId));
+    }
+
+    /**
+     * <b>A merge that cannot proceed leaves no empty account cart behind.</b>
+     * <para>
+     * <c>EnsureAsync</c> used to run outside the transaction, so a merge that then failed left a cart for a
+     * customer who had never added anything — which doc 08 §3.5 says should not exist.
+     * </para>
+     * <para>
+     * <b>Narrowly:</b> this asserts the reachable half — a guest token that names nothing creates no
+     * destination — and it held before the fix too, because the old code also returned before
+     * <c>EnsureAsync</c> in that case. The case the fix closes needs a failure <i>after</i>
+     * <c>EnsureAsync</c>, which needs fault injection this suite has no seam for. Recorded rather than
+     * overclaimed.
+     * </para>
+     */
+    [Fact]
+    public async Task A_merge_with_nothing_to_move_creates_no_account_cart()
+    {
+        var customerUserId = await NewCustomerUserIdAsync();
+
+        var before = await CountCartsAsync();
+        var view = await MergeAsync(Guid.NewGuid(), customerUserId);
+        var after = await CountCartsAsync();
+
+        Assert.Empty(view.Cart.Lines);
+        Assert.Equal(before, after);
+        Assert.Null(await ReadAsync(db => db.Carts
+            .AsNoTracking()
+            .Where(cart => cart.CustomerUserId == customerUserId)
+            .Select(cart => (int?)cart.Id)
+            .FirstOrDefaultAsync(Token)));
+    }
+
+    /**
+     * <b>A line added to the guest bag while the merge runs is never silently lost.</b>
+     * <para>
+     * The race the tester identified: the guest lines were read <i>before</i> the transaction, and the
+     * guest cart is deleted by id, which cascades to <b>all</b> its items — so a line inserted after the
+     * read was destroyed without ever being moved. The read is now inside a <b>serialisable</b>
+     * transaction, whose range lock on <c>UX_CartItems_Cart_Variant</c> for that <c>CartId</c> leaves a
+     * concurrent insert two outcomes and no third.
+     * </para>
+     * <para>
+     * <b>The window is widened deliberately, because a fair race does not reach it.</b> Fired together, the
+     * add almost always lands before the read (and is moved) or long after the delete (and is refused);
+     * twenty such rounds found nothing against the broken code. So the guest cart is given eight lines —
+     * the upsert loop is then eight round trips, several milliseconds wide — and the add is fired a
+     * moment after the merge starts, which lands it squarely in the gap the old code left open.
+     * </para>
+     * <para>
+     * The invariant is <b>not</b> "the add succeeds": being refused is a correct answer, and the shopper's
+     * next read shows the account cart. It is <i>if the add reported success, the quantity is in the
+     * account cart afterwards</i> — nothing is lost silently.
+     * </para>
+     */
+    [Fact]
+    public async Task A_line_added_during_the_merge_is_either_moved_or_refused_but_never_lost()
+    {
+        const int rounds = 12;
+        const int anchorLines = 8;
+
+        var ids = await DistinctVariantIdsAsync(anchorLines + 1);
+        var contested = ids[anchorLines];
+        var anchors = ids.Take(anchorLines).Select(id => (id, (short)1)).ToArray();
+
+        var lost = new List<string>();
+
+        for (var round = 1; round <= rounds; round++)
+        {
+            var customerUserId = await NewCustomerUserIdAsync();
+            var guest = await NewGuestCartIdentityAsync(anchors);
+
+            var added = false;
+            var merge = MergeAsync(guest.Token, customerUserId);
+
+            var add = Task.Run(
+                async () =>
+                {
+                    // Into the gap: late enough that the old code has already taken its snapshot, early
+                    // enough that it has not yet deleted the cart.
+                    await Task.Delay(2, Token);
+
+                    using var scope = CreateScope();
+                    var store = scope.ServiceProvider.GetRequiredService<ICartStore>();
+                    try
+                    {
+                        await store.AddItemAsync(guest.Id, contested, 2, 1000m, Token);
+                        added = true;
+                    }
+                    catch (Exception)
+                    {
+                        // Refused — the guest cart was gone by the time the insert ran, so the foreign key
+                        // rejected it. Loudly, which is the point: that is not a lost item.
+                        added = false;
+                    }
+                },
+                Token);
+
+            await Task.WhenAll(merge, add);
+
+            if (!added)
+            {
+                continue;
+            }
+
+            if ((await CartItemRowsAsync(customerUserId, contested)).Count == 0)
+            {
+                lost.Add($"round {round}: the add reported success and the line is in neither cart");
+            }
+        }
+
+        Assert.Empty(lost);
+    }
+
     private async Task<CartView> MergeAsync(Guid? guestToken, int customerUserId)
     {
         using var scope = CreateApplicationScope();
@@ -187,7 +330,12 @@ public sealed class CartAccountAndMergeTests(SqlServerDatabaseFixture sqlServer)
         return await handler.HandleAsync(new MergeGuestCartCommand(guestToken, customerUserId), Token);
     }
 
-    private async Task<Guid> NewGuestCartAsync(params (int VariantId, short Quantity)[] lines)
+    private async Task<Guid> NewGuestCartAsync(params (int VariantId, short Quantity)[] lines) =>
+        (await NewGuestCartIdentityAsync(lines)).Token;
+
+    /// <summary>The same, but keeping the id too, for a test that has to write to the cart directly.</summary>
+    private async Task<CartIdentity> NewGuestCartIdentityAsync(
+        params (int VariantId, short Quantity)[] lines)
     {
         using var scope = CreateScope();
         var store = scope.ServiceProvider.GetRequiredService<ICartStore>();
@@ -198,7 +346,7 @@ public sealed class CartAccountAndMergeTests(SqlServerDatabaseFixture sqlServer)
             await store.AddItemAsync(cart.Id, variantId, quantity, 1000m, Token);
         }
 
-        return cart.Token;
+        return cart;
     }
 
     private async Task AddToCustomerCartAsync(int customerUserId, params (int VariantId, short Quantity)[] lines)
