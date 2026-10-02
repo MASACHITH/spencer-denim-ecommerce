@@ -306,6 +306,11 @@ rebuilt**, so the script refuses any path that is not either absent or a generat
 mapping's own files — and refuses outright anything holding, held by or equal to `-ClientAssets`, which
 is the only copy of the client's photographs and is in no repository.
 
+A **relative** `-Out` is resolved against your shell's current location, which is where the delete would
+land, and the guard is applied to that same resolved path. The two used to be resolved differently —
+`[System.IO.Path]::GetFullPath` reads `[Environment]::CurrentDirectory`, which `Set-Location` does not
+update — so after one `cd` the guard inspected a folder the delete was never going to touch.
+
 **A first `-DryRun` cannot tell you the alt text, and says so.** Both steps are dry runs, so step 1
 stores nothing for step 2 to find; with the donor's bytes still absent, the plan marks each line
 `PROVISIONAL` rather than printing the kids product's own name as the sentence that would be written.

@@ -196,6 +196,78 @@ alt-text decision (struck — see above), "exits 3 and changes nothing" (false o
 menswear count. The alt-text decision itself stands, and the tester verified its decisive argument
 directly rather than accepting it.
 
+## Tester round 2: FAIL on one blocker and two minors, all fixed
+
+The guard's *design* survived everything thrown at it — junctions, UNC paths, `..` traversal, three
+spellings of a drive root, 8.3 short names, case differences, trailing dot/space/backslash — without
+over-refusing. It just guarded a different path from the one it deleted.
+
+- **Blocker — a relative `-Out` walked straight past the guard.** `Get-ComparablePath` used
+  `[System.IO.Path]::GetFullPath`, which resolves a relative path against
+  `[Environment]::CurrentDirectory`. The delete used `Test-Path`/`Remove-Item -LiteralPath`, which
+  resolve against PowerShell's `$PWD`. **`Set-Location` does not update
+  `[Environment]::CurrentDirectory`**, so after a single `cd` those are two different folders — and
+  when the folder the guard was shown did not exist, `Assert-SafeOutputFolder` returned early at its
+  "nothing there yet" check, so **no content check ran at all** and the delete took the real folder.
+  Round 1's defect with round 1's guard bypassed, and in one way worse: the operator now has a
+  documented guard they are entitled to trust, and the output says `Removed decoy`.
+
+  Measured on this machine, which is the ordinary state of any shell after one `cd`:
+
+  ```
+  PWD                             = C:\Users\...\Temp
+  [Environment]::CurrentDirectory = D:\Projects\e com\worktrees\sd-rename
+  GetFullPath('decoy')            = D:\Projects\e com\worktrees\sd-rename\decoy
+  Provider('decoy')               = C:\Users\...\Temp\decoy
+  ```
+
+  Fixed by resolving every operator path **once**, at the top, with PowerShell's own resolver
+  (`GetUnresolvedProviderPathFromPSPath`, which unlike `Resolve-Path` works for a path that does not
+  exist yet) and letting the guard and both deletes use that single value. The second `Resolve-Path` on
+  `-ClientAssets` is gone too — a second resolver for the same string is the shape of the bug.
+  `Assert-SafeOutputFolder` now refuses outright to run on an unrooted path, so the two cannot drift
+  apart again silently.
+
+  **None of the eight round-1 tests could catch it**, and that is the lesson worth keeping: they passed
+  absolute paths for both parameters and set no `WorkingDirectory`, so `GetFullPath` was effectively
+  identity and the divergence could not appear. The ninth case has to be driven through
+  `pwsh -Command "Set-Location …; & script -Out <relative>"` with the process started somewhere else,
+  because `-File` cannot express "a shell that has moved". It failed first at exit **0**. A tenth case
+  pins which interpretation wins — `$PWD`, the one the delete always used — and that nothing is built
+  against the process's directory instead.
+
+- **Minor — the null-alt branch answered two questions with one bit.** `stored.AltText is null` means
+  both "the bytes are not in the library" and "they are, on an asset carrying no sentence", so a plan
+  against the second would have reported the first: bytes described as absent while present. Not
+  reachable today (nothing in the library has a null sentence) but live the moment ADM-11 allows an
+  upload without alt text, because `IMediaService` stores `Trim(altText)` and `Trim` yields null for
+  whitespace. `StoredAsset.WasExisting` was already set correctly by both `StoreImageAsync` and
+  `PlanAsync` and simply was not consulted; the decision now reads it first and the sentence second.
+  The regression test manufactures the case by uploading the same bytes with `"   "` as alt text.
+
+- **Minor — a third copy of the struck reason #3 survived** in
+  `KidsStandInPhotoTests.cs`, a file this branch had just added 132 lines to: a comment still said the
+  listing and the product page "read the same sentence" and that an override would make them disagree.
+  Comment rather than behaviour, but the journal and the test file disagreed, which is worse than
+  either being wrong alone. Corrected, and a repository-wide search confirms no fourth copy — the only
+  remaining hits are this entry's own struck-through record and an unrelated W1-13 line in `MEMORY.md`.
+
+**On the count: 92 versus the tester's 93 is not a discrepancy.** The `-DryRun` prose paragraph contains
+the word `PROVISIONAL` once and prints on every dry run, so 93 = 92 entry lines + 1 prose line, and the
+after-delivery run's 1 = 0 + 1. My figures were entry counts. The paragraph is conditionally worded so
+it is never false, only slightly noisy when nothing was marked — left as it is, because the script
+cannot tell without parsing the importer's own output.
+
+### Worth knowing: `dotnet run` leaves a child holding the port
+
+My seeding helper starts the API with `dotnet run` and stops it by PID when seeding is done — but
+`dotnet run` **spawns `SpencerDenim.Api.exe` as a child**, and stopping the parent leaves that child
+listening. The next run's port precheck caught it, named the owning PID and printed its full path, which
+is the only reason it was not mistaken for somebody else's server: the executable path pointed into this
+worktree, so it was safe to stop. Doc 14's rule earns its keep here — read the port owner's command line
+before doing anything about it. A helper that starts the API should stop the whole process tree, not the
+launcher.
+
 ### Worth knowing: a stale build made a test lie to me, twice
 
 Chasing the `Conflict` fix I "restored" the patched importer with `Copy-Item`, which **preserves the
