@@ -7,6 +7,7 @@ using SpencerDenim.Domain.Content;
 using SpencerDenim.Domain.Inventory;
 using SpencerDenim.Domain.Marketing;
 using SpencerDenim.Domain.Media;
+using SpencerDenim.Domain.Sales;
 using SpencerDenim.Infrastructure.Identity;
 
 namespace SpencerDenim.Infrastructure.Persistence;
@@ -54,6 +55,12 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public const string ContentSchema = "content";
 
     public const string MarketingSchema = "marketing";
+
+    /// <summary>
+    /// Doc 08 §1.2. <b>Created by W2-09's migration with <c>Carts</c> and <c>CartItems</c> only</b>; orders,
+    /// payments, delivery methods and the rest of §3.5 belong to #53, and <c>WishlistItems</c> to W2-08.
+    /// </summary>
+    public const string SalesSchema = "sales";
 
     /// <summary>Name of the EF Core 10 named query filter that hides soft-deleted rows (doc 08 §10.2).</summary>
     public const string SoftDeleteFilter = "SoftDelete";
@@ -117,6 +124,10 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<AnnouncementMessage> AnnouncementMessages => Set<AnnouncementMessage>();
 
     public DbSet<NewsletterSubscriber> NewsletterSubscribers => Set<NewsletterSubscriber>();
+
+    public DbSet<Cart> Carts => Set<Cart>();
+
+    public DbSet<CartItem> CartItems => Set<CartItem>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {

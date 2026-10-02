@@ -120,8 +120,11 @@ test.describe('a leading run of slashes (F1)', () => {
     '//not-a-dept',
     '//bogus/thing',
     '//favicon.ico',
-    // The three that were *not* broken, because a redirect route short-circuited the throw. They are
-    // in the list so the fix is shown to cover the whole class rather than the half that failed.
+    // The three that were *not* broken at the time, because each was then a redirect route and a
+    // redirect short-circuited the throw. They are in the list so the fix is shown to cover the whole
+    // class rather than the half that failed. (`/bag` has since become a real page — W2-09 — so it is
+    // now in the half that *would* have thrown, which is an argument for the list rather than against
+    // it: the shapes a route table claims change under you.)
     '//about',
     '//bag',
     '//terms',
@@ -428,7 +431,9 @@ test.describe('robots.txt', () => {
   test('keeps a shopper’s own session and the API out', async ({ request }) => {
     const body = await (await request.get('/robots.txt')).text();
 
-    for (const path of ['/account', '/bag', '/checkout', '/api/']) {
+    // `/bag` was in this list until W2-09 built the page; see the two tests below for why it had to
+    // come out rather than stay beside `/account` and `/checkout`.
+    for (const path of ['/account', '/checkout', '/api/']) {
       expect(body).toContain(`Disallow: ${path}`);
     }
   });
@@ -438,8 +443,11 @@ test.describe('robots.txt', () => {
    * opposite: a crawler that may not fetch the page never reads the `noindex`, and the bare URL stays
    * indexable. Allowing the fetch is what makes the `noindex` effective.
    */
-  test('does not disallow /search, which would undo its noindex', async ({ request }) => {
-    expect(await (await request.get('/robots.txt')).text()).not.toContain('Disallow: /search');
+  test('does not disallow /search or /bag, which would undo their noindex', async ({ request }) => {
+    const body = await (await request.get('/robots.txt')).text();
+
+    expect(body).not.toContain('Disallow: /search');
+    expect(body).not.toContain('Disallow: /bag');
   });
 
   /**
@@ -455,6 +463,27 @@ test.describe('robots.txt', () => {
 
     expect(html).toContain('<sd-search-page');
     expect(html).toMatch(/<meta[^>]*name="robots"[^>]*content="[^"]*noindex/);
+  });
+
+  /**
+   * And the same pair for `/bag` (W2-09, CART-01), which is the half this file could not assert before
+   * the page existed. The bag is **not** disallowed, so this tag is the only thing keeping it out of an
+   * index — and the header renders a real `<a href="/bag">` on every page, so a crawler will certainly
+   * find the address.
+   */
+  test('/bag carries the noindex that makes allowing the crawl the right answer', async ({
+    request,
+  }) => {
+    const response = await request.get('/bag');
+    const html = await response.text();
+
+    expect(response.status()).toBe(200);
+    expect(html).toContain('<sd-bag-page');
+    expect(html).toMatch(/<meta[^>]*name="robots"[^>]*content="[^"]*noindex/);
+
+    // A crawler fetching the bag must not leave anything behind: doc 08 §3.5 creates the cart row on
+    // the first Add to Bag and never on a page view, so no cookie comes back either.
+    expect(response.headers()['set-cookie']).toBeUndefined();
   });
 
   test('answers HEAD, which link checkers and monitors lead with', async ({ request }) => {
@@ -698,10 +727,11 @@ test.describe('an address this site does not have (#28)', () => {
    * pages belong to GLB-10, W2-07, W2-08, W2-09, W3-01 and W3-02. A 404 on a link the shop's own
    * footer offers would be a worse answer than the redirect.
    */
-  // `/search` is deliberately absent: W2-07 built its page while this branch was in flight, so it has
-  // a route of its own and must **not** redirect home. `app.routes.spec.ts` holds the same property on
-  // the list itself.
-  for (const path of ['/bag', '/wishlist', '/account', '/about', '/contact', '/privacy', '/terms', '/returns', '/shipping']) {
+  // `/search` and `/bag` are deliberately absent: W2-07 and W2-09 built their pages while this branch
+  // was in flight, so each has a route of its own and must **not** redirect home.
+  // `app.routes.spec.ts` holds the same property on the list itself, and the bag's own address is
+  // asserted directly above.
+  for (const path of ['/wishlist', '/account', '/about', '/contact', '/privacy', '/terms', '/returns', '/shipping']) {
     test(`${path} still reaches the home page while its page is unbuilt`, async ({ request }) => {
       const response = await request.get(path);
 

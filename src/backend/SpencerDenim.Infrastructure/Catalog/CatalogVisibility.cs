@@ -30,6 +30,18 @@ namespace SpencerDenim.Infrastructure.Catalog;
 /// nearly true is the kind that stops being checked.
 /// </para>
 /// <para>
+/// <b>One more place that decides for itself, named here rather than left to be discovered</b> — the
+/// same treatment <c>HomeContentReader</c> gets. <c>CartReader.ReadAsync</c> (W2-09, CART-01) projects
+/// <c>IsPublished</c>, <c>IsDeleted</c> and both <c>IsActive</c> columns and evaluates them in C#, and it
+/// cannot compose these predicates for a reason that is the opposite of the usual one: it must **not
+/// filter**. A bag line whose product has been withdrawn has to stay on the page, named, unpriced and
+/// removable — an item that silently vanishes from a shopper's bag is the worst available behaviour — so
+/// the rule is needed as *data about a row* rather than as a <c>WHERE</c>. Its <i>filtering</i> path,
+/// <c>CartReader.FindSellableVariantAsync</c>, does compose <see cref="VisibleProduct"/>. The convention
+/// test does not sweep that file, because it queries <c>CartItems</c> and <c>ProductVariants</c> rather
+/// than an address entity; that is why this paragraph exists.
+/// </para>
+/// <para>
 /// <b>What is deliberately not here.</b> <c>IsActive</c> on <c>ProductVariants</c>, <c>AgeGroups</c> and
 /// <c>AttributeOptions</c> is left where it is used. Those rows are not addresses: a deactivated variant
 /// changes a product page's size list and its stock, and a deactivated age group or attribute option

@@ -454,7 +454,7 @@ test.describe('the rest of the site still resolves', () => {
     });
   }
 
-  for (const path of ['/bag', '/wishlist', '/account', '/about', '/privacy']) {
+  for (const path of ['/wishlist', '/account', '/about', '/privacy']) {
     test(`${path} still goes to the home page`, async ({ page }) => {
       await page.goto(path);
 
@@ -462,6 +462,17 @@ test.describe('the rest of the site still resolves', () => {
       await expect(page.locator('sd-home-page')).toHaveCount(1);
     });
   }
+
+  // `/bag` left that list in W2-09: it is a real page now (CART-01), and `search` and `bag` are both
+  // single-segment routes listed ahead of `:department`, so this also says the two do not shadow each
+  // other.
+  test('/bag still resolves to the bag page', async ({ page }) => {
+    await page.goto('/bag');
+
+    await expect(page).toHaveURL('/bag');
+    await expect(page.locator('sd-bag-page')).toHaveCount(1);
+    await expect(page.locator('sd-search-page')).toHaveCount(0);
+  });
 
   test('a category from another department is still a real 404', async ({ request }) => {
     const response = await request.get('/women/shirts');

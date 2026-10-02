@@ -942,12 +942,25 @@ test.describe('sold out looks sold out (PDP-03)', () => {
 });
 
 test.describe('what is deliberately not here', () => {
-  test('there is no Add to Bag or Buy Now, dead or disabled (W2-09)', async ({ page }) => {
+  /**
+   * Add to Bag arrived with the bag API (W2-09, PDP-03) and is exercised in `bag.e2e.ts`. **Buy Now is
+   * still not here**: it is Add to Bag followed by checkout, and checkout is W3-02 — the same
+   * judgement that kept Add to Bag off this page until there was a bag to put things in.
+   */
+  test('there is no Buy Now, dead or disabled, while checkout does not exist (W3-02)', async ({
+    page,
+  }) => {
     await page.goto(PRODUCT);
     await expect(page.locator('h1')).toBeVisible();
 
-    await expect(page.getByRole('button', { name: /add to bag/i })).toHaveCount(0);
     await expect(page.getByRole('button', { name: /buy now/i })).toHaveCount(0);
+
+    // Add to Bag is here, and it is disabled until a size is chosen rather than absent — which is
+    // PDP-03's own wording, and is the one disabled control this page is allowed.
+    const add = page.getByRole('button', { name: /add to bag/i });
+    await expect(add).toHaveCount(1);
+    await expect(add).toBeDisabled();
+    await expect(page.locator('#pdp-add-reason')).toContainText('Choose a size');
   });
 
   test('the wishlist heart works, per browser, as it does on a card (W2-08)', async ({ page }) => {

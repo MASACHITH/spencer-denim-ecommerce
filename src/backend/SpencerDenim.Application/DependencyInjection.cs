@@ -19,6 +19,7 @@ using SpencerDenim.Application.Content.Contracts;
 using SpencerDenim.Application.Content.Home;
 using SpencerDenim.Application.Diagnostics.Ping;
 using SpencerDenim.Application.Marketing.Newsletter;
+using SpencerDenim.Application.Sales.Cart;
 
 namespace SpencerDenim.Application;
 
@@ -132,6 +133,19 @@ public static class DependencyInjection
         services.AddScoped<
             ICommandHandler<SubscribeToNewsletterCommand, NewsletterSubscriptionOutcome>,
             SubscribeToNewsletterCommandHandler>();
+
+        // The bag and the mini bag (W2-09, CART-01/02). The reads and the writes go through the same two
+        // ports, which Infrastructure registers; the merge handler has no caller until ACC-01 gives the
+        // API a customer principal (see MergeGuestCartCommandHandler).
+        services.AddScoped<IQueryHandler<GetCartQuery, CartView>, GetCartQueryHandler>();
+        services.AddScoped<ICommandHandler<AddToCartCommand, CartWriteResult>, AddToCartCommandHandler>();
+        services.AddScoped<
+            ICommandHandler<SetCartItemQuantityCommand, CartWriteResult>,
+            SetCartItemQuantityCommandHandler>();
+        services.AddScoped<
+            ICommandHandler<RemoveCartItemCommand, CartWriteResult>,
+            RemoveCartItemCommandHandler>();
+        services.AddScoped<ICommandHandler<MergeGuestCartCommand, CartView>, MergeGuestCartCommandHandler>();
 
         return services;
     }

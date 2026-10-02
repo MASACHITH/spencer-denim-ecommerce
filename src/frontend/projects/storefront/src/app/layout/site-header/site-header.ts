@@ -3,11 +3,13 @@ import {
   Component,
   ElementRef,
   afterRenderEffect,
+  effect,
   inject,
   signal,
   untracked,
   viewChild,
 } from '@angular/core';
+import { DOCUMENT } from '@angular/common';
 import { NavigationEnd, Router, RouterLink } from '@angular/router';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { filter } from 'rxjs';
@@ -17,7 +19,9 @@ import { AnnouncementBar } from '../announcement-bar/announcement-bar';
 import { DistrictSelector } from '../district-selector/district-selector';
 import { HeaderSearch } from '../header-search/header-search';
 import { MainNav } from '../main-nav/main-nav';
+import { MiniBag } from '../mini-bag/mini-bag';
 import { MobileNav } from '../mobile-nav/mobile-nav';
+import { CartStore } from '../../core/cart/cart.store';
 import { StorefrontCounts } from '../../core/storefront-counts.service';
 
 /**
@@ -30,7 +34,7 @@ import { StorefrontCounts } from '../../core/storefront-counts.service';
  */
 @Component({
   selector: 'sd-site-header',
-  imports: [AnnouncementBar, DistrictSelector, HeaderSearch, Icon, MainNav, MobileNav, RouterLink],
+  imports: [AnnouncementBar, DistrictSelector, HeaderSearch, Icon, MainNav, MiniBag, MobileNav, RouterLink],
   changeDetection: ChangeDetectionStrategy.OnPush,
   // Escape anywhere in the header closes the search panel; the field itself is not the only
   // place focus can be when a shopper wants out of it.
@@ -90,12 +94,35 @@ import { StorefrontCounts } from '../../core/storefront-counts.service';
               </span>
             </a>
 
-            <a class="icon-btn" routerLink="/bag">
+            <!-- An anchor, not a button, and the drawer is an enhancement on top of it.
+                 /bag is a real page (CART-01), so this link works before the application has
+                 hydrated, with scripting off, on a middle-click and on ctrl/cmd-click — all of which a
+                 button would break. Once hydrated, a plain left click opens the mini bag instead
+                 (CART-02) and the modified clicks are left alone, so "open in a new tab" still does.
+                 aria-expanded is permitted on role=link and says which of the two it is doing.
+
+                 A plain href rather than routerLink, and that is not a slip: RouterLink's own click
+                 handler navigates whether or not the event was default-prevented, so the drawer opened
+                 and the router then went to /bag, whose NavigationEnd closed it again. Measured — the
+                 drawer flashed and vanished. Without RouterLink, the anchor is inert until this handler
+                 runs, and before hydration it is an ordinary link to an ordinary page. -->
+            <a
+              class="icon-btn"
+              href="/bag"
+              aria-haspopup="dialog"
+              aria-controls="mini-bag"
+              [attr.aria-expanded]="bagOpen()"
+              data-testid="bag-toggle"
+              #bagToggle
+              (click)="onBagClick($event)"
+            >
               <sd-icon name="bag" />
               @if (bagCount() > 0) {
                 <span class="count" aria-hidden="true">{{ bagCount() }}</span>
               }
-              <span class="sr-only">Bag, {{ bagCount() }} items</span>
+              <span class="sr-only">
+                Bag, {{ bagCount() }} {{ bagCount() === 1 ? 'item' : 'items' }}
+              </span>
             </a>
           </div>
         </div>
@@ -120,6 +147,8 @@ import { StorefrontCounts } from '../../core/storefront-counts.service';
       </div>
 
       <sd-mobile-nav [open]="menuOpen()" (closed)="closeMenu()" />
+
+      <sd-mini-bag [open]="bagOpen()" (closed)="closeBag()" />
     </header>
   `,
   styles: `
@@ -260,18 +289,23 @@ export class SiteHeader {
   protected readonly brand = BRAND.name;
 
   private readonly counts = inject(StorefrontCounts);
+  private readonly cart = inject(CartStore);
   private readonly router = inject(Router);
+  private readonly document = inject(DOCUMENT);
   private readonly panelSearch = viewChild<HeaderSearch>('panelSearch');
   private readonly searchToggle = viewChild<ElementRef<HTMLButtonElement>>('searchToggle');
+  private readonly bagToggle = viewChild<ElementRef<HTMLAnchorElement>>('bagToggle');
 
   protected readonly wishlistCount = this.counts.wishlist;
   protected readonly bagCount = this.counts.bag;
 
   private readonly menu = signal(false);
   private readonly search = signal(false);
+  private readonly bag = signal(false);
 
   readonly menuOpen = this.menu.asReadonly();
   readonly searchOpen = this.search.asReadonly();
+  readonly bagOpen = this.bag.asReadonly();
 
   constructor() {
     // Navigating away always leaves the shell tidy, whichever link was used.
@@ -283,7 +317,22 @@ export class SiteHeader {
       .subscribe(() => {
         this.menu.set(false);
         this.search.set(false);
+        this.bag.set(false);
       });
+
+    // Adding something opens the bag, which is what a slide-out bag is for (CART-02): the shopper gets
+    // the confirmation and the way to checkout in one movement, and the Add to Bag button on the
+    // product page does not have to know that a drawer exists. `lastAdded` is reset to null and set
+    // again on each success, so adding the same variant twice opens it twice. It is never non-null
+    // during a server render — nothing can have been added yet — so this does not open on the server.
+    effect(() => {
+      const added = this.cart.lastAdded();
+      untracked(() => {
+        if (added !== null) {
+          this.bag.set(true);
+        }
+      });
+    });
 
     // The panel is hidden with the `hidden` attribute, so wait for the render that removes it
     // before putting the caret in the field.
@@ -316,6 +365,36 @@ export class SiteHeader {
 
     this.search.set(false);
     this.focusSearchToggle();
+  }
+
+  /**
+   * Opens the mini bag instead of navigating — but only for the kind of click that means "show me my
+   * bag here".
+   *
+   * A modified click (ctrl/cmd/shift/alt) or a middle click is the shopper asking the browser for a new
+   * tab or window, and swallowing those is one of the ways a single-page application quietly becomes
+   * worse than a document. `button !== 0` never actually reaches a click handler for the middle button
+   * in Chrome, but a stray `auxclick` mapping or a synthetic event would, and the check costs nothing.
+   */
+  onBagClick(event: MouseEvent): void {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+      return;
+    }
+
+    event.preventDefault();
+    this.bag.set(true);
+  }
+
+  closeBag(): void {
+    this.bag.set(false);
+
+    // sd-drawer returns focus to whatever opened it, which is this anchor when the shopper opened the
+    // drawer themselves. When it was opened by an Add to Bag on another part of the page, the element
+    // that had focus was that button — so focus is only steered here if the drawer did not manage it.
+    const toggle = this.bagToggle()?.nativeElement;
+    if (toggle && this.document.activeElement === this.document.body) {
+      toggle.focus();
+    }
   }
 
   private focusSearchToggle(): void {

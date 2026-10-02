@@ -165,7 +165,7 @@ test.describe('addresses that are not a department', () => {
    * used to render the listing's not-found state at HTTP 200 — the copy told a shopper that a
    * *department* no longer existed when they had clicked "Bag".
    */
-  for (const path of ['/bag', '/wishlist', '/account', '/about', '/privacy', '/terms', '/contact']) {
+  for (const path of ['/wishlist', '/account', '/about', '/privacy', '/terms', '/contact']) {
     test(`${path} goes to the home page`, async ({ page }) => {
       const response = await page.goto(path);
 
@@ -180,6 +180,22 @@ test.describe('addresses that are not a department', () => {
       await expect(page.getByText('could not find that page')).toHaveCount(0);
     });
   }
+
+  /**
+   * `/bag` was in the list above until W2-09. It is a real page now (CART-01), and what keeps it off
+   * the listing is the **route order** — `bag` is listed ahead of `:department` — rather than the
+   * department guard. Worth its own case rather than a deletion: swap the two routes and `/bag` renders
+   * the listing's not-found state at HTTP 200 again, which is the bug the deleted case was written for.
+   */
+  test('/bag is the bag page, not a department that does not exist', async ({ page }) => {
+    const response = await page.goto('/bag');
+
+    expect(response?.status()).toBe(200);
+    await expect(page).toHaveURL('/bag');
+    await expect(page.locator('sd-bag-page')).toHaveCount(1);
+    await expect(page.locator('sd-listing-page')).toHaveCount(0);
+    await expect(page.getByText('could not find that page')).toHaveCount(0);
+  });
 
   test('a category from another department is a real 404, not a 200 that says so', async ({
     request,

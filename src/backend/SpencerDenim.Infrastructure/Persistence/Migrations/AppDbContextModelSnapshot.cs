@@ -1724,6 +1724,95 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                     b.ToTable("MediaUsages", "media");
                 });
 
+            modelBuilder.Entity("SpencerDenim.Domain.Sales.Cart", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2(3)")
+                        .HasDefaultValueSql("sysutcdatetime()");
+
+                    b.Property<int?>("CustomerUserId")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("LastActivityAtUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2(3)")
+                        .HasDefaultValueSql("sysutcdatetime()");
+
+                    b.Property<Guid>("Token")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier")
+                        .HasDefaultValueSql("newid()");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CustomerUserId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_Carts_Customer")
+                        .HasFilter("[CustomerUserId] IS NOT NULL");
+
+                    b.HasIndex("LastActivityAtUtc")
+                        .HasDatabaseName("IX_Carts_LastActivity");
+
+                    SqlServerIndexBuilderExtensions.IncludeProperties(b.HasIndex("LastActivityAtUtc"), new[] { "CustomerUserId" });
+
+                    b.HasIndex("Token")
+                        .IsUnique()
+                        .HasDatabaseName("UX_Carts_Token");
+
+                    b.ToTable("Carts", "sales");
+                });
+
+            modelBuilder.Entity("SpencerDenim.Domain.Sales.CartItem", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime>("AddedAtUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2(3)")
+                        .HasDefaultValueSql("sysutcdatetime()");
+
+                    b.Property<int>("CartId")
+                        .HasColumnType("int");
+
+                    b.Property<short>("Quantity")
+                        .HasColumnType("smallint");
+
+                    b.Property<decimal>("UnitPriceAtAdd")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<int>("VariantId")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("VariantId")
+                        .HasDatabaseName("IX_CartItems_Variant");
+
+                    b.HasIndex("CartId", "VariantId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_CartItems_Cart_Variant");
+
+                    b.ToTable("CartItems", "sales", t =>
+                        {
+                            t.HasCheckConstraint("CK_CartItems_Quantity", "[Quantity] BETWEEN 1 AND 10");
+                        });
+                });
+
             modelBuilder.Entity("SpencerDenim.Infrastructure.Identity.AppRole", b =>
                 {
                     b.Property<int>("Id")
@@ -2311,6 +2400,33 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                     b.Navigation("MediaAsset");
                 });
 
+            modelBuilder.Entity("SpencerDenim.Domain.Sales.Cart", b =>
+                {
+                    b.HasOne("SpencerDenim.Infrastructure.Identity.AppUser", null)
+                        .WithMany()
+                        .HasForeignKey("CustomerUserId")
+                        .OnDelete(DeleteBehavior.NoAction);
+                });
+
+            modelBuilder.Entity("SpencerDenim.Domain.Sales.CartItem", b =>
+                {
+                    b.HasOne("SpencerDenim.Domain.Sales.Cart", "Cart")
+                        .WithMany("Items")
+                        .HasForeignKey("CartId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("SpencerDenim.Domain.Catalog.ProductVariant", "Variant")
+                        .WithMany()
+                        .HasForeignKey("VariantId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
+                    b.Navigation("Cart");
+
+                    b.Navigation("Variant");
+                });
+
             modelBuilder.Entity("SpencerDenim.Domain.Catalog.Category", b =>
                 {
                     b.Navigation("ChildCategories");
@@ -2355,6 +2471,11 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                 });
 
             modelBuilder.Entity("SpencerDenim.Domain.Content.HomeSection", b =>
+                {
+                    b.Navigation("Items");
+                });
+
+            modelBuilder.Entity("SpencerDenim.Domain.Sales.Cart", b =>
                 {
                     b.Navigation("Items");
                 });

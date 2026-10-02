@@ -60,6 +60,22 @@ public sealed class CatalogVisibilityConventionTests
         ["src/backend/SpencerDenim.Infrastructure/Catalog/CatalogStructureStore.cs"] =
             "the admin write path: it loads rows in order to change their IsActive, so it must see them "
             + "whatever their current value is.",
+        ["src/backend/SpencerDenim.Infrastructure/Sales/CartReader.cs"] =
+            "the bag (W2-09, CART-01). Two halves, and only one of them could be composed. Its "
+            + "*filtering* half, FindSellableVariantAsync, does compose VisibleProduct — it starts the "
+            + "query at Products for exactly that reason, since an Expression<Func<Product,bool>> cannot "
+            + "be invoked against variant.Product inside an EF predicate. What this rule then trips on "
+            + "in that same statement is the **variant's** own IsActive, which CatalogVisibility "
+            + "deliberately leaves local (a deactivated variant changes a size list, not whether a URL "
+            + "exists). Its reading half, ReadAsync, genuinely decides for itself and cannot be "
+            + "composed, for the opposite of the usual reason: it must not filter. A bag line whose "
+            + "product has been withdrawn has to stay on the page, named, unpriced and removable — an "
+            + "item that silently vanishes from a shopper's bag is the worst available behaviour — so it "
+            + "projects IsPublished, IsDeleted and both IsActive columns and reports a per-line status "
+            + "in C#. A bag is not an address, and nothing here can put a URL in the sitemap. **This "
+            + "entry is keyed on the file, so it would excuse the filtering half too — The_readers_"
+            + "compose_it lists CartReader.cs for exactly that reason. Do not remove one without the "
+            + "other.**",
     };
 
     /// <summary>
@@ -177,23 +193,35 @@ public sealed class CatalogVisibilityConventionTests
     }
 
     /// <summary>
-    /// The three predicates are actually composed, so the rule above cannot pass by there being nothing to
-    /// compose. The storefront's product reader, the navigation tree and the sitemap all use it.
+    /// The predicates are actually composed, so the rule above cannot pass by there being nothing to
+    /// compose. The storefront's product reader, the navigation tree, the sitemap and the bag all use it.
+    /// <para>
+    /// <b><c>CartReader</c> is in both lists, and that is the point.</b> It is in
+    /// <see cref="MayDecideForThemselves"/> because its <i>reading</i> half must not filter — a bag line
+    /// whose product has been withdrawn has to stay on the page — and that entry is keyed on the whole
+    /// file, so without a line here its <i>filtering</i> half would be guarded by nothing at all. The
+    /// tester proved exactly that: replacing <c>CatalogVisibility.VisibleProduct</c> in
+    /// <c>FindSellableVariantAsync</c> with a fourth inline copy left all 921 unit tests passing. An
+    /// exclusion that was added to record one half must not end up excusing the other.
+    /// </para>
     /// </summary>
     [Fact]
     public void The_readers_compose_it()
     {
         var root = FindRepositoryRoot();
 
-        foreach (var (file, expected) in new[]
+        // The folder travels with the file: the bag's reader does not live under Catalog, and a relative
+        // "../Sales/" in a path string would be the kind of thing nobody reads twice.
+        foreach (var (folder, file, expected) in new[]
         {
-            ("ProductCatalogReader.cs", 4),
-            ("DepartmentCatalogReader.cs", 2),
-            ("SitemapCatalogReader.cs", 3),
+            ("Catalog", "ProductCatalogReader.cs", 4),
+            ("Catalog", "DepartmentCatalogReader.cs", 2),
+            ("Catalog", "SitemapCatalogReader.cs", 3),
+            ("Sales", "CartReader.cs", 1),
         })
         {
-            var path = Path.Combine(root, "src", "backend", "SpencerDenim.Infrastructure", "Catalog", file);
-            var uses = Regex.Count(File.ReadAllText(path), @"CatalogVisibility\.Visible");
+            var path = Path.Combine(root, "src", "backend", "SpencerDenim.Infrastructure", folder, file);
+            var uses = Regex.Count(WithoutComments(File.ReadAllText(path)), @"CatalogVisibility\.Visible");
 
             Assert.True(
                 uses >= expected,
@@ -201,6 +229,38 @@ public sealed class CatalogVisibilityConventionTests
                 + "that is fine — lower this number. If one was replaced by an inline predicate, that is the "
                 + "drift this file exists to catch.");
         }
+    }
+
+    /// <summary>
+    /// The file with its comments taken out, because the count below is about <b>code</b>.
+    /// <para>
+    /// Without this the check is vacuous, and measurably so: the bag's reader was given its entry here,
+    /// the composition in <c>FindSellableVariantAsync</c> was then replaced with a fourth inline copy to
+    /// see the guard bite — and all 921 tests passed, because the comment above that query names
+    /// <c>CatalogVisibility.VisibleProduct</c> and the regex was counting prose. A rule that a docblock
+    /// can satisfy is not a rule. The other three were safe only because their docblocks happen never to name
+    /// the rule — which is luck and not design; see <see cref="WithoutComments"/>, where that is measured.
+    /// </para>
+    /// <para>
+    /// <b>Why only the bag's reader went vacuous.</b> Measured, because the first explanation written here
+    /// was wrong: the other three files contain <c>CatalogVisibility.Visible</c> <b>four, two and three
+    /// times and in a comment not once</b>. They were not safe because their counts were too high for
+    /// prose to reach — they were safe because their docblocks never name the rule. <c>CartReader</c> was
+    /// the only file that names it, which is exactly why it was the only one that could satisfy its own
+    /// count from a comment. That makes the conclusion stronger rather than weaker: the other three are
+    /// safe only until somebody writes a docblock that mentions the rule, which is luck and not design,
+    /// and stripping comments is what turns it into design.
+    /// </para>
+    /// <para>
+    /// Block comments first, then line comments (<c>///</c> is covered by <c>//</c>). A <c>//</c> inside a
+    /// string literal would be mangled; none of these four files has one, and the direction of that error
+    /// is a false positive — a missing use — which fails loudly rather than passing quietly.
+    /// </para>
+    /// </summary>
+    private static string WithoutComments(string source)
+    {
+        var withoutBlocks = Regex.Replace(source, @"/\*.*?\*/", string.Empty, RegexOptions.Singleline);
+        return Regex.Replace(withoutBlocks, @"//.*$", string.Empty, RegexOptions.Multiline);
     }
 
     private static string FindRepositoryRoot()

@@ -296,6 +296,10 @@ public sealed class CatalogModelTests
             // list; no cascade was added to that list for this task.
             "HomeSectionItem -> HomeSection",
 
+            // W2-09's bag. Doc 08 §1.6 names CartItems first in the permitted list — a cart item has no
+            // meaning apart from its cart — and nothing else in the sales schema is mapped yet.
+            "CartItem -> Cart",
+
             // W1-01's Identity model, the same doc 08 §1.6 list.
             "IdentityUserRole -> AppUser",
             "IdentityUserRole -> AppRole",

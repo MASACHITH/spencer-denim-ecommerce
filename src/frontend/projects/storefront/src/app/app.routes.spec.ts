@@ -54,12 +54,14 @@ describe('the storefront route table (#28)', () => {
    * declared above it, which `declared.indexOf` proves below.
    */
   it('lists every single-segment address the unbuilt pages are linked at, and nothing already built', () => {
-    // Read off the shell: site-header.ts, site-footer.ts and mobile-nav.ts. `/search` is not here
-    // any more — W2-07 built its page, so it has a route of its own (SRCH-02).
+    // Read off the shell: site-header.ts, site-footer.ts and mobile-nav.ts. `/search` and `/bag` are
+    // not here any more — W2-07 built the search page (SRCH-02) and W2-09 the bag page (CART-01), so
+    // each has a route of its own. They are both still linked from the shell; what changed is that the
+    // link now goes to a page, which is why the test below checks the list against the route table
+    // rather than against this list.
     const linkedFromTheShell = [
       'about',
       'account',
-      'bag',
       'contact',
       'privacy',
       'returns',

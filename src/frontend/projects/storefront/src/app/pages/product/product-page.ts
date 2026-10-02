@@ -48,6 +48,7 @@ import { PageMeta } from '../../core/platform/page-metadata';
 import { readableInk } from '../../core/platform/contrast';
 import { RobotsMeta } from '../../core/platform/robots-meta';
 import { serviceUnavailable } from '../../core/platform/service-unavailable';
+import { CartStore } from '../../core/cart/cart.store';
 import { LocalWishlist } from '../../core/wishlist/local-wishlist.service';
 
 /** What the API answers for `StockStatus`, in the shopper's words. */
@@ -65,6 +66,25 @@ const BADGE_LABEL: Readonly<Record<ProductBadge, string>> = {
   BestSeller: 'Best seller',
   LowStock: 'Low stock',
 };
+
+/**
+ * What a shopper is told when the wishlist cannot be written to.
+ *
+ * It says what happened and what to do about it, and it does not call it an error: in a private window
+ * this is the normal, permanent answer, not a fault to retry.
+ */
+const WISHLIST_SAVE_UNAVAILABLE =
+  'We could not save that to your wishlist. Your browser is blocking site data — private browsing ' +
+  'usually does.';
+
+/**
+ * The same cause, the opposite operation. A refusal leaves the signal untouched, so the heart stays
+ * filled and correctly still reads "Saved to wishlist" — which made one shared "could not save"
+ * sentence contradict the control it sat beside.
+ */
+const WISHLIST_REMOVE_UNAVAILABLE =
+  'We could not remove that from your wishlist. Your browser is blocking site data — private ' +
+  'browsing usually does.';
 
 /** How many recently viewed products the row shows, once this one is taken out. */
 const RECENT_SHOWN = 6;
@@ -89,10 +109,12 @@ const RECENT_SHOWN = 6;
  * exists, so the page says so, offers "Try again", and the server answers **503 with
  * `Retry-After`**, which a crawler retries instead of dropping the URL.
  *
- * **Deliberately not here.** Add to Bag and Buy Now need the bag API (W2-09) and the real
- * wishlist needs W2-08; a button that looked like it worked and did nothing would be worse than
- * no button, so the page has neither. The heart is the same local, per-browser wishlist the
- * product card already uses. Reviews are PDP-08 (W2-06) and Quick View is QV-01 (W2-04).
+ * **Add to Bag arrived with W2-09** (CART-01/02): it is disabled until a colour and size are settled,
+ * as PDP-03 asks, and a successful add opens the mini bag. **Buy Now is still not here**: it is Add to
+ * Bag followed by checkout, and checkout is W3-02 — a button that looked like it worked and did
+ * nothing would be worse than no button, which is the same judgement that kept Add to Bag off this page
+ * until the bag API existed. The real wishlist still needs W2-08, so the heart remains the local,
+ * per-browser list the product card uses. Reviews are PDP-08 (W2-06) and Quick View is QV-01 (W2-04).
  */
 @Component({
   selector: 'sd-product-page',
@@ -277,9 +299,37 @@ const RECENT_SHOWN = 6;
               <p class="pdp__qty-note" role="status">{{ quantityNote() }}</p>
             </div>
 
+            <!-- PDP-03: disabled until there is exactly one thing to add. aria-describedby points at
+                 the note below, so a screen reader is told *why* it is disabled rather than only that it
+                 is — a disabled control with no reason is the accessible version of a dead button. -->
+            <button
+              class="btn btn--primary btn--block pdp__add"
+              type="button"
+              data-testid="add-to-bag"
+              [disabled]="!canAddToBag() || adding()"
+              [attr.aria-describedby]="addToBagReason() ? 'pdp-add-reason' : null"
+              (click)="addToBag()"
+            >
+              <sd-icon name="bag" size="sm" />
+              {{ adding() ? 'Adding…' : 'Add to bag' }}
+            </button>
+
+            @if (addToBagReason(); as reason) {
+              <p class="pdp__qty-note" id="pdp-add-reason">{{ reason }}</p>
+            }
+
+            @if (bagError(); as message) {
+              <p class="pdp__add-error" role="alert">{{ message }}</p>
+            }
+
             <!-- The wishlist heart, exactly as the product card works it: the same per-browser
-                 LocalWishlist, the same aria-pressed, the same labels. Add to Bag and Buy Now
-                 wait for W2-09; nothing dead or disabled stands in for them. -->
+                 LocalWishlist, the same aria-pressed, the same labels. Buy Now waits for W3-02;
+                 nothing dead or disabled stands in for it.
+
+                 The heart can fail, and silently: storage is localStorage, which a private window, a
+                 blocked-site-data setting or a full quota all refuse without throwing. LocalWishlist
+                 reports that now instead of filling the heart over nothing, and this is where a shopper
+                 is told. -->
             <button
               class="btn btn--secondary btn--block pdp__wish"
               type="button"
@@ -289,6 +339,10 @@ const RECENT_SHOWN = 6;
               <sd-icon name="heart" size="sm" [filled]="saved()" />
               {{ saved() ? 'Saved to wishlist' : 'Save to wishlist' }}
             </button>
+
+            @if (wishError(); as message) {
+              <p class="pdp__add-error pdp__wish-error" role="alert">{{ message }}</p>
+            }
 
             <sd-product-details [product]="item" />
           </div>
@@ -546,8 +600,17 @@ const RECENT_SHOWN = 6;
       color: var(--color-text-muted);
       min-height: 1.4em;
     }
+    /* .btn already supplies the icon gap; the reason line reuses .pdp__qty-note, which is the same
+       muted label. Both to keep this component's stylesheet inside the 4 kB budget. */
+    .pdp__add,
     .pdp__wish {
       margin-top: var(--space-1);
+    }
+    .pdp__add-error {
+      padding: var(--space-1);
+      border: 1px solid var(--color-sale);
+      color: var(--color-sale);
+      font-size: var(--text-label);
     }
 
     .pdp__row {
@@ -585,6 +648,7 @@ export class ProductPage {
   private readonly pageMeta = inject(PageMeta);
   private readonly robots = inject(RobotsMeta);
   private readonly wishlist = inject(LocalWishlist);
+  private readonly cart = inject(CartStore);
   private readonly recent = inject(RecentlyViewed);
   private readonly response = inject(RESPONSE_INIT, { optional: true });
 
@@ -744,6 +808,11 @@ export class ProductPage {
 
   protected readonly saved = computed(() => this.wishlist.has(this.currentSlug()));
 
+  private readonly wishFailure = signal<string | null>(null);
+
+  /** What to say when the heart could not save. Null the rest of the time, which is almost always. */
+  protected readonly wishError = this.wishFailure.asReadonly();
+
   private readonly quantityWanted = signal(1);
 
   /** The exact colour × size the shopper has settled on, or null while a choice is outstanding. */
@@ -805,6 +874,48 @@ export class ProductPage {
       this.quantity() * this.price().current,
     )}`;
   });
+
+  /** True when exactly one variant is settled and there is stock for it (PDP-03). */
+  protected readonly canAddToBag = computed(() => {
+    const variant = this.chosenVariant();
+    if (variant) {
+      return variant.availableQuantity > 0;
+    }
+
+    // A product with no sizes has nothing outstanding — but it still needs a variant to add, and a
+    // product with no variants at all is not something that can be put in a bag.
+    return false;
+  });
+
+  /**
+   * Why Add to Bag is disabled, in a sentence, or null when it is not.
+   *
+   * It doubles as the button's `aria-describedby`, so the reason is announced rather than left to be
+   * inferred from a greyed-out control.
+   */
+  protected readonly addToBagReason = computed(() => {
+    if (this.canAddToBag()) {
+      return null;
+    }
+
+    if (this.stock().status === 'OutOfStock') {
+      return 'This product is out of stock.';
+    }
+
+    const variant = this.chosenVariant();
+    if (variant && variant.availableQuantity <= 0) {
+      return 'That size is out of stock. Choose another size.';
+    }
+
+    if (this.sizes().length > 0 && !variant) {
+      return 'Choose a size to add this to your bag.';
+    }
+
+    return 'This product cannot be added to a bag at the moment.';
+  });
+
+  protected readonly adding = this.cart.isAdding;
+  protected readonly bagError = this.cart.error;
 
   private readonly guideOpen = signal(false);
   protected readonly sizeGuideOpen = this.guideOpen.asReadonly();
@@ -919,8 +1030,41 @@ export class ProductPage {
     input.value = String(this.quantity());
   }
 
+  /**
+   * Add to Bag (PDP-03, CART-01).
+   *
+   * The quantity sent is `quantity()`, which is already clamped to the variant's stock — so the server
+   * is never asked for more than the page is showing. It can still refuse (the stock moved, the product
+   * was unpublished a second ago), and `bagError()` shows what it said.
+   */
+  protected addToBag(): void {
+    const variant = this.chosenVariant();
+    const item = this.product();
+    if (!variant || !item || !this.canAddToBag()) {
+      return;
+    }
+
+    this.cart.add(
+      variant.id,
+      this.quantity(),
+      `${item.name}, ${variant.colourName}, size ${variant.sizeLabel}`,
+    );
+  }
+
   protected toggleWishlist(): void {
-    this.wishlist.toggle(this.currentSlug());
+    // `'unavailable'` means nothing changed, in storage or in memory — so the heart stays as it was and
+    // the shopper is told why, rather than being shown a filled heart over a save that did not happen.
+    // Read `saved()` **before** the toggle: on a refusal the signal does not move, but reading it
+    // first says plainly that it is the attempted operation being named rather than the outcome.
+    const wasSaved = this.saved();
+    const outcome = this.wishlist.toggle(this.currentSlug());
+
+    if (outcome !== 'unavailable') {
+      this.wishFailure.set(null);
+      return;
+    }
+
+    this.wishFailure.set(wasSaved ? WISHLIST_REMOVE_UNAVAILABLE : WISHLIST_SAVE_UNAVAILABLE);
   }
 
   protected openSizeGuide(): void {

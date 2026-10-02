@@ -6,6 +6,7 @@ using SpencerDenim.Api.Endpoints.Admin;
 using SpencerDenim.Api.Endpoints.Catalog;
 using SpencerDenim.Api.Endpoints.Content;
 using SpencerDenim.Api.Endpoints.Media;
+using SpencerDenim.Api.Endpoints.Sales;
 using SpencerDenim.Api.Health;
 using SpencerDenim.Api.Http;
 using SpencerDenim.Api.Logging;
@@ -88,6 +89,7 @@ app.MapAuditLogEndpoints();
 app.MapCatalogEndpoints();
 app.MapAdminCatalogEndpoints();
 app.MapContentEndpoints();
+app.MapCartEndpoints();
 app.MapAdminMediaEndpoints();
 app.MapMediaFileEndpoints();
 
