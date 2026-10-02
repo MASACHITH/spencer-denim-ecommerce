@@ -77,6 +77,22 @@ async function tapTargets(page: Page, selector: string): Promise<unknown[]> {
   return undersized(page, selector);
 }
 
+/**
+ * Puts one thing in the bag the way a shopper does (W2-09): the product page, with a colourway and
+ * size settled so Add to Bag has a variant to send. Leaves the mini bag open, which is what the add
+ * does.
+ *
+ * A product of its own per caller, because the stub's stock switch is one shared map and this suite
+ * runs in parallel — `bag.e2e.ts` learned that the expensive way.
+ */
+async function addToBag(page: Page, product = 1): Promise<void> {
+  await page.goto(`/product/test-product-${product}?colour=1&size=10`);
+  const add = page.locator('[data-testid="add-to-bag"]');
+  await expect(add).toBeEnabled();
+  await add.click();
+  await expect(page.locator('sd-mini-bag .mini-bag__line')).toHaveCount(1);
+}
+
 /** Serious and critical only, which is the gate `docs/06` §3 states. */
 async function violations(page: Page, within?: string) {
   let builder = new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa']);
@@ -114,6 +130,10 @@ test.describe('axe over the storefront (#65)', () => {
     { label: 'a category listing', path: '/women/jeans' },
     { label: 'a product page', path: '/product/test-product-1' },
     { label: 'the not-found page', path: '/not-a-dept' },
+    // W2-09. An *empty* bag, which is a real state and the one a crawler and a first-time visitor both
+    // meet; a bag with something in it, the open mini bag, and a line the shop has withdrawn are
+    // scanned separately below, because none of them is reachable by navigating to an address.
+    { label: 'the bag page', path: '/bag' },
   ] as const;
 
   for (const subject of PAGES) {
@@ -176,6 +196,110 @@ test.describe('axe over the storefront (#65)', () => {
     await expect(page.locator('#storefront-menu')).toBeVisible();
 
     const found = await violations(page);
+    expect(found, JSON.stringify(found, null, 2)).toEqual([]);
+  });
+
+  /**
+   * The bag with something in it (W2-09, CART-01), which the loop above cannot reach: an address alone
+   * gives an empty bag, and every control that matters — the quantity stepper, Remove, Move to
+   * wishlist, the attribute list — only exists on a line.
+   */
+  test('the bag page with an item in it has no serious or critical violation', async ({ page }) => {
+    await useStubApi(page);
+    await addToBag(page);
+    await page.goto('/bag');
+    await expect(page.locator('.bag__line')).toHaveCount(1);
+
+    const found = await violations(page);
+    expect(found, JSON.stringify(found, null, 2)).toEqual([]);
+  });
+
+  /**
+   * A line the shop has withdrawn. Its row is a different shape — no quantity control, and a notice in
+   * `--color-sale` rather than the muted grey — so it is the one bag state with its own colours, which
+   * is a rule class (`color-contrast`) axe does gate at serious.
+   */
+  test('a bag holding a withdrawn line has no serious or critical violation', async ({ page }) => {
+    await useStubApi(page);
+    await addToBag(page, 5);
+
+    try {
+      await page.request.get(
+        `${apiURL}/__test__/cart-variant?variantId=${5 * 1000 + 1}&sellable=0`,
+      );
+      await page.goto('/bag');
+      await expect(page.locator('.bag__line.is-unavailable')).toHaveCount(1);
+
+      const found = await violations(page);
+      expect(found, JSON.stringify(found, null, 2)).toEqual([]);
+    } finally {
+      await page.request.get(`${apiURL}/__test__/cart-variant?reset=variant&variantId=${5 * 1000 + 1}`);
+    }
+  });
+
+  /**
+   * The mini bag (CART-02), scanned open for the same reason the mobile drawer is: it is a dialog, its
+   * panel is `hidden` until something opens it, and its contents are not even rendered until then.
+   */
+  test('the open mini bag has no serious or critical violation', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await useStubApi(page);
+    await addToBag(page);
+
+    await expect(page.locator('sd-mini-bag [role="dialog"]')).toBeVisible();
+    await expect(page.locator('sd-mini-bag .mini-bag__line')).toHaveCount(1);
+
+    const found = await violations(page);
+    expect(found, JSON.stringify(found, null, 2)).toEqual([]);
+  });
+
+  /**
+   * **The review axe asks for and will not do, done in code.**
+   *
+   * axe reports `aria-valid-attr-value` as **incomplete at critical impact** for the header's bag
+   * control on every page of the site — and `incomplete` is not a violation, so the gate above is
+   * silent about it and reading the exit code would miss it entirely. Measured cause: axe refuses to
+   * decide about `aria-controls` whenever the element also carries `aria-haspopup`, because a popup may
+   * legitimately be created on demand. The bag control has `aria-haspopup="dialog"`; the mobile menu
+   * toggle next to it does not and axe passes it, and `.pdp__guide` (PDP-04, shipped in W2-05) does and
+   * gets the same incomplete.
+   *
+   * Probed directly: `#mini-bag` is in the DOM on every page, it is the drawer's own `role="dialog"`
+   * panel, and it is `visibility: hidden` while closed — which is exactly what it should be. So the
+   * answer to axe's question is yes, and `aria-controls` stays, because dropping it to quieten a
+   * needs-review would throw away a real relationship. This test is the answer written down: every
+   * `aria-controls` on the page names an element that is really there.
+   */
+  test('every aria-controls on the bag page names an element that exists', async ({ page }) => {
+    await useStubApi(page);
+    await addToBag(page, 2);
+    await page.goto('/bag');
+    await expect(page.locator('.bag__line')).toHaveCount(1);
+
+    const dangling = await page.evaluate(() =>
+      [...document.querySelectorAll('[aria-controls]')]
+        .map((element) => ({
+          control: `${element.tagName}.${element.className}`.slice(0, 60),
+          id: element.getAttribute('aria-controls') ?? '',
+        }))
+        .filter((entry) => entry.id === '' || document.getElementById(entry.id) === null),
+    );
+
+    expect(dangling, JSON.stringify(dangling, null, 2)).toEqual([]);
+
+    // The guard that stops the assertion above passing on a page with no such attribute at all —
+    // the #80 lesson applied to a different measurement.
+    expect(await page.locator('[aria-controls]').count()).toBeGreaterThan(0);
+  });
+
+  /** And nothing in the bag's own markup sits outside a landmark, as the loop asserts for every page. */
+  test('the bag page with an item leaves nothing outside a landmark', async ({ page }) => {
+    await useStubApi(page);
+    await addToBag(page);
+    await page.goto('/bag');
+    await expect(page.locator('.bag__line')).toHaveCount(1);
+
+    const found = (await everything(page)).filter((violation) => violation.id === 'region');
     expect(found, JSON.stringify(found, null, 2)).toEqual([]);
   });
 
