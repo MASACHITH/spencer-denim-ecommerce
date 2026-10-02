@@ -429,6 +429,35 @@ describe('SitemapDocument', () => {
       expect((await subject.answer(headers)).status).toBe(503);
     });
 
+    /**
+     * **The most severe state change gets its own line.** Going from "serving a stale document" to
+     * "serving nothing at all" used to produce the same warning as the first failed minute, so the one
+     * transition anybody would want paged about read like the one nobody needs to see.
+     */
+    it('says, once, that it has given up serving a sitemap at all', async () => {
+      let healthy = true;
+      const subject = document(() =>
+        healthy ? Promise.resolve(payload()) : Promise.reject(new Error('down')),
+      );
+
+      await subject.answer(headers);
+      healthy = false;
+
+      clock += (CACHE_SECONDS + 60) * 1000;
+      expect((await subject.answer(headers)).status).toBe(200);
+      expect(said.filter(([, message]) => message.includes('no longer being served at all'))).toHaveLength(0);
+
+      clock += (STALE_SECONDS + 1) * 1000;
+      expect((await subject.answer(headers)).status).toBe(503);
+      clock += (FAILURE_BACKOFF_SECONDS + 1) * 1000;
+      expect((await subject.answer(headers)).status).toBe(503);
+
+      const gaveUp = said.filter(([, message]) => message.includes('no longer being served at all'));
+      expect(gaveUp).toHaveLength(1);
+      expect(gaveUp[0][0]).toBe('error');
+      expect(gaveUp[0][1]).toContain('withheld rather than offered out of date');
+    });
+
     /** Six hours rather than a day; `sitemap-xml.ts` says why, and this pins the figure. */
     it('serves a five-hour-old copy and refuses a seven-hour-old one', async () => {
       let healthy = true;

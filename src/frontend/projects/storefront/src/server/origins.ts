@@ -93,7 +93,12 @@ export function publicOrigin(headers: RequestHeaders): string {
 }
 
 /**
- * Says a thing once per process rather than once per request.
+ * Says a thing once per **module instance** rather than once per request.
+ *
+ * Measured rather than assumed, and the first version of this sentence said "once per process", which is
+ * wrong by one: this file is bundled into both `server.mjs` and `main.server.mjs`, so a running storefront
+ * holds two module instances and two of these sets. Nine mixed requests produce **two** lines. The
+ * behaviour this exists to prevent — a line per request until the disk fills — is prevented either way.
  *
  * A misconfiguration is a standing condition, and `sitemap.xml` plus every rendered page would otherwise
  * repeat it until the disk filled - which is how a real message becomes noise and then becomes filtered.
@@ -115,11 +120,14 @@ function warnOnce(key: string, message: string): void {
 }
 
 /**
- * The rejected value, described rather than echoed.
+ * The rejected value, described rather than echoed — **except for the path**, which is quoted on purpose.
  *
- * It comes from this deployment's own environment, so there is no attacker here - but a configured value
- * can carry a credential (`https://user:password@host` is one of the shapes this refuses), and a log line
- * is the wrong place for one.
+ * It comes from this deployment's own environment, so there is no attacker here, but a configured value
+ * can carry a credential (`https://user:password@host` is one of the shapes this refuses) and a log line
+ * is the wrong place for one. So the scheme, credential and query branches describe the shape and name
+ * nothing. The path branch does quote it, because a trailing path is by far the commonest way to get this
+ * variable wrong and seeing `"/shop"` is what makes the message actionable; a path is not a secret in the
+ * way the other three can be.
  */
 function describeRejected(raw: string): string {
   const trimmed = raw.trim();

@@ -240,7 +240,7 @@ export class SitemapDocument {
   private lastFailureAt: number | null = null;
 
   /** Which conditions have been reported already, so each is logged once rather than per request. */
-  private reported = { truncatedAt: -1, staleAt: -1 };
+  private reported = { truncatedAt: -1, staleAt: -1, gaveUp: false };
 
   constructor(
     private readonly fetchJson: (url: string, timeoutMs: number) => Promise<unknown> = fetchJsonOverHttp,
@@ -272,6 +272,10 @@ export class SitemapDocument {
       return this.served(this.bodyFor(origin), 60);
     }
 
+    // The most severe state change in this class, and it used to produce the same warning as the first
+    // failed minute: there is now no sitemap at all, where a moment ago there was a stale one.
+    this.reportGaveUp();
+
     return {
       status: 503,
       // Not an empty <urlset>: that is a valid document which says the shop has no pages, and a
@@ -302,8 +306,9 @@ export class SitemapDocument {
 
       this.snapshot = { sitemap, caps: capsOf(sitemap), builtAt: this.now() };
       this.lastFailureAt = null;
-      // A fresh document ends the staleness episode, so the next one is reported again.
+      // A fresh document ends the episode, so the next one is reported again.
       this.reported.staleAt = -1;
+      this.reported.gaveUp = false;
       this.reportTruncation();
     } catch (error) {
       this.lastFailureAt = this.now();
@@ -379,6 +384,24 @@ export class SitemapDocument {
     );
   }
 
+  /**
+   * Says once that there is no sitemap at all any more — the transition from serving a stale document to
+   * serving nothing, which is the most severe state this class has and which used to be reported with the
+   * same line as the first failed minute.
+   */
+  private reportGaveUp(): void {
+    if (this.reported.gaveUp) {
+      return;
+    }
+
+    this.reported.gaveUp = true;
+    this.log(
+      'error',
+      'sitemap.xml is no longer being served at all: the catalogue feed has not answered for longer ' +
+        'than the stale window, so every address is now withheld rather than offered out of date.',
+    );
+  }
+
   private bodyFor(origin: string): string {
     const snapshot = this.snapshot;
     if (!snapshot) {
@@ -418,6 +441,16 @@ export function capsOf(sitemap: ApiSitemap): SitemapCaps {
   };
 }
 
+/**
+ * The API's answer, vetted before it is believed.
+ *
+ * #30's `garbage` mode is why: a proxy or a bad deploy answers 200 with something else entirely, and a
+ * reader that trusted the body turned that into a page-wide failure. Here the stakes are a published
+ * sitemap, so a body that is not the shape we asked for is a failure and the last good document stands.
+ *
+ * (This docblock was deleted by accident when `capsOf` was inserted above it; the four tests that cover
+ * the behaviour never went away.)
+ */
 function asSitemap(payload: unknown): ApiSitemap {
   if (typeof payload !== 'object' || payload === null) {
     throw new Error('the catalogue answered with something that is not an object');
