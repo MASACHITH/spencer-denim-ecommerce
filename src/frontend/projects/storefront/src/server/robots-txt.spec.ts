@@ -27,7 +27,7 @@ describe('robots.txt', () => {
   });
 
   it('keeps a shopper’s own session out', () => {
-    for (const path of ['/account', '/bag', '/checkout']) {
+    for (const path of ['/account', '/checkout']) {
       expect(file()).toContain(`Disallow: ${path}`);
     }
   });
@@ -39,15 +39,24 @@ describe('robots.txt', () => {
   /**
    * **The one rule here that looks like a mistake and is not.**
    *
-   * `/search` carries `<meta name="robots" content="noindex">` (SRCH-02). `Disallow` and `noindex`
-   * read as the same wish and are opposites in effect: a crawler that is disallowed never fetches the
-   * page, so it never reads the `noindex`, and a link to the URL from anywhere else is enough for it
-   * to be listed. Allowing the fetch is what makes the `noindex` work. The assertion exists so that
-   * whoever "tidies up" this file later has to read the reason first.
+   * `/search` carries `<meta name="robots" content="noindex">` (SRCH-02), and `/bag` carries one too
+   * since W2-09 built it (CART-01). `Disallow` and `noindex` read as the same wish and are opposites in
+   * effect: a crawler that is disallowed never fetches the page, so it never reads the `noindex`, and a
+   * link to the URL from anywhere else is enough for it to be listed. Allowing the fetch is what makes
+   * the `noindex` work. The assertion exists so that whoever "tidies up" this file later has to read
+   * the reason first.
+   *
+   * `Disallow: /bag` really was in this file, added while `/bag` was still a redirect to the home page
+   * with no `noindex` of its own to protect. W2-09 removed it in the same change that gave the page the
+   * tag, because the header links to `/bag` from every page of the site and a disallowed-but-linked URL
+   * is the one that gets listed bare.
    */
-  it('does not disallow /search, because that would undo the noindex rather than reinforce it', () => {
-    expect(file()).not.toContain('Disallow: /search');
-  });
+  it.each([['/search'], ['/bag']])(
+    'does not disallow %s, because that would undo its noindex rather than reinforce it',
+    (path) => {
+      expect(file()).not.toContain(`Disallow: ${path}`);
+    },
+  );
 
   it('ends with a newline, as a line-oriented format should', () => {
     expect(file().endsWith('\n')).toBe(true);
