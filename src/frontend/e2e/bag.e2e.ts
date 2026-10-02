@@ -143,7 +143,14 @@ test.describe('the bag (CART-01, CART-02)', () => {
 
       const drawer = page.locator('sd-mini-bag [role="dialog"]');
       await expect(drawer).toBeVisible();
-      await expect(drawer.getByRole('heading', { name: 'Your bag' })).toBeVisible();
+
+      // The **dialog's accessible name**, not a heading element inside it. W2-10 turned the shared
+      // drawer's title from an `h2` into a `p` (#76: the drawer's markup precedes the page's own `h1`,
+      // so an `h2` there made every page announce "Menu" before it said what the page was), and a
+      // `getByRole('heading')` here went from passing to not finding anything. The name is what
+      // actually matters to a screen reader, it comes from the drawer's `aria-labelledby`, and
+      // asserting it is robust to which element carries the text.
+      await expect(page.getByRole('dialog', { name: 'Your bag' })).toBeVisible();
       await expect(drawer.locator('.mini-bag__line')).toContainText('Test Product 1');
       await expect(drawer.locator('.mini-bag__line')).toContainText('Indigo');
       await expect(drawer.locator('.mini-bag__foot')).toContainText('Subtotal');

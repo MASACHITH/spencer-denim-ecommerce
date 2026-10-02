@@ -214,7 +214,7 @@ test.describe('addresses that are not listings are never a 503', () => {
   });
 
   /** And the unbuilt pages the shell links to still go home, outage or not (#28). */
-  for (const path of ['/bag', '/wishlist', '/account', '/about', '/privacy']) {
+  for (const path of ['/wishlist', '/account', '/about', '/privacy']) {
     test(`${path} still reaches the home page during an outage`, async ({ request }) => {
       const response = await request.get(`${liveOnlyCatalogueURL}${path}`);
 
@@ -222,6 +222,25 @@ test.describe('addresses that are not listings are never a 503', () => {
       expect(new URL(response.url()).pathname).toBe('/');
     });
   }
+
+  /**
+   * `/bag` was in the list above until W2-09 built the page (CART-01). It belongs in this block more
+   * than it did before, not less: the whole point here is that an address which is **not a listing** is
+   * never answered 503, and the bag is now a real page that has to survive a catalogue outage **at its
+   * own URL** rather than by being redirected away from it.
+   *
+   * It does not read the catalogue at all — it reads `/api/cart`, which in this fixture is the same
+   * unhealthy stub — so this also says the bag page does not inherit the catalogue's failure. A bag
+   * cannot be loaded here, and the right answer to that is still a 200 with the page on it.
+   */
+  test('/bag is a 200 at its own address during an outage, never a 503', async ({ request }) => {
+    const response = await request.get(`${liveOnlyCatalogueURL}/bag`);
+
+    expect(response.status()).toBe(200);
+    expect(response.headers()['retry-after']).toBeUndefined();
+    expect(new URL(response.url()).pathname).toBe('/bag');
+    expect(await response.text()).toContain('<sd-bag-page');
+  });
 
   /**
    * A crawler's well-known files, kept as a canary rather than as protection.
