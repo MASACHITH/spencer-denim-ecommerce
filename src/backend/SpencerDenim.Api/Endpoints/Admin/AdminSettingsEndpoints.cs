@@ -23,6 +23,16 @@ namespace SpencerDenim.Api.Endpoints.Admin;
 /// the security boundary (doc 03 §3a); the admin UI's hiding is convenience.
 /// </para>
 /// <para>
+/// <b>The converse is a limitation #53 will meet, and it is written down rather than left to be found.</b>
+/// The route guard is a single permission, so a caller holding <i>only</i> <c>Settings.Payments</c> — a
+/// custom role somebody could build — could not reach this screen at all, not even to read the group that is
+/// theirs. No such role exists today: docs/02's Store Manager holds <c>Settings.Edit</c> and not
+/// <c>Settings.Payments</c>, and a Super Admin holds everything through GrantsAll. Inventing a "holds any
+/// settings permission" policy for a caller who does not exist would be a security-shaped abstraction with
+/// nothing able to test it, so this guard is what has to widen when the payments group lands — the per-row
+/// filter in the read model already does the rest.
+/// </para>
+/// <para>
 /// <b>Antiforgery</b> is validated by hand on every mutating route, as <c>AdminAuthEndpoints.Logout</c>,
 /// <c>AdminMediaEndpoints</c> and <c>AdminCatalogEndpoints</c> do, so the refusal is a problem document a
 /// client can read rather than an empty 400.
