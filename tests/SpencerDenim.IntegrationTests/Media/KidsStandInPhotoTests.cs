@@ -1,8 +1,11 @@
 using System.Globalization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using SpencerDenim.Application.Media.Abstractions;
 using SpencerDenim.Application.Media.ClientAssets;
+using SpencerDenim.Application.Media.Contracts;
 using SpencerDenim.Domain.Catalog;
+using SpencerDenim.Domain.Media;
 using SpencerDenim.Infrastructure.Persistence;
 using SpencerDenim.IntegrationTests.Infrastructure;
 using SpencerDenim.Tests.MediaFixtures;
@@ -132,9 +135,12 @@ public sealed class KidsStandInPhotoTests(SqlServerDatabaseFixture sqlServer)
         Assert.Equal("Court Canvas Sneakers, front view", card.AltText);
         Assert.Equal("Court Canvas Sneakers, alternate view", hover.AltText);
 
-        // No per-product override either, so the listing card and the product page read the same
-        // sentence. ProductCatalogReader takes the card's alt from the asset and has no override to
-        // consult, so an override would make the two disagree about one photograph.
+        // No per-product override either. **Not** because the listing would disagree — it cannot: a
+        // product card's image is decorative (`alt=""` under `aria-hidden="true"`, because it repeats
+        // the link on the product name), so no alt text of any kind reaches the listing. The reason is
+        // that `PlaceProductMedia` does not clear an override when a photograph replaces the one before
+        // it, so an override written for a stand-in would outlive it and go on describing the wrong
+        // garment after the real photographs had landed.
         var overrides = await dbContext.ProductMedia
             .Where(row => row.ProductId == kid.Id && row.SortOrder < 0)
             .Select(row => row.AltTextOverride)
@@ -275,7 +281,7 @@ public sealed class KidsStandInPhotoTests(SqlServerDatabaseFixture sqlServer)
         var entry = plan.Entries.Single(line => line.FileName == $"{Kid}-1.jpg");
 
         Assert.Contains("PROVISIONAL", entry.Detail, StringComparison.Ordinal);
-        Assert.Contains("not in the library yet", entry.Detail, StringComparison.Ordinal);
+        Assert.Contains("were not in the library", entry.Detail, StringComparison.Ordinal);
 
         // It may quote the sentence it would write, but never as the sentence the shop will carry.
         Assert.DoesNotContain(
@@ -301,6 +307,57 @@ public sealed class KidsStandInPhotoTests(SqlServerDatabaseFixture sqlServer)
         var entry = plan.Entries.Single(line => line.FileName == $"{Kid}-1.jpg");
 
         Assert.Contains("Court Canvas Sneakers, front view", entry.Detail, StringComparison.Ordinal);
+        Assert.DoesNotContain("PROVISIONAL", entry.Detail, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// <b>"The bytes are not in the library" and "they are, on an asset with no sentence" are different
+    /// facts, and a null <c>AltText</c> is both.</b> Deciding on the sentence alone made the second case
+    /// report the first one's message — telling the operator bytes were absent when they were present.
+    /// <para>
+    /// Unreachable on today's data: nothing in the library carries a null sentence. It becomes reachable
+    /// the first time an admin uploads without alt text, because <c>IMediaService</c> stores
+    /// <c>Trim(altText)</c> and <c>Trim</c> yields null for whitespace — which is how this test
+    /// manufactures the case.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task Bytes_in_the_library_with_no_sentence_are_not_reported_as_bytes_that_are_absent()
+    {
+        await using var world = await CreateAsync();
+        await StandInFromFreshBytesAsync(world);
+
+        var bytes = await File.ReadAllBytesAsync(
+            Path.Combine(world.StandInRoot, "products", $"{Kid}-1.jpg"),
+            Token);
+
+        // Put exactly those bytes in the library with no alt text at all, the way an admin upload with
+        // an empty field would.
+        await using (var scope = world.CreateScope())
+        {
+            var media = scope.ServiceProvider.GetRequiredService<IMediaService>();
+            using var content = new MemoryStream(bytes);
+
+            var outcome = await media.UploadImageAsync(
+                new UploadImageRequest(
+                    new MediaUploadFile(content, "an-admin-upload.jpg"),
+                    MediaVisibility.Public,
+                    "   ",
+                    "An admin upload",
+                    UploadedByUserId: null),
+                Token);
+
+            Assert.IsType<MediaUploadOutcome.Created>(outcome);
+        }
+
+        var plan = await world.ImportAsync(Token, dryRun: true, root: world.StandInRoot);
+        var entry = plan.Entries.Single(line => line.FileName == $"{Kid}-1.jpg");
+
+        Assert.Contains("already in the library", entry.Detail, StringComparison.Ordinal);
+        Assert.Contains("carries", entry.Detail, StringComparison.Ordinal);
+
+        // And emphatically not the other message, which would be a false statement about the library.
+        Assert.DoesNotContain("were not in the library", entry.Detail, StringComparison.Ordinal);
         Assert.DoesNotContain("PROVISIONAL", entry.Detail, StringComparison.Ordinal);
     }
 

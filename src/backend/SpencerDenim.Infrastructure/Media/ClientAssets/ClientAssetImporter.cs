@@ -480,19 +480,33 @@ public sealed partial class ClientAssetImporter(
                 // statement this whole arrangement exists to avoid making. So it is marked provisional
                 // rather than printed as fact, in the same spirit as this command's standing warning
                 // that a plan's "0 refused" means NOT CHECKED.
-                var altNote = stored.AltText is { } libraryAlt
-                    ? string.Equals(libraryAlt, alt, StringComparison.Ordinal)
-                        ? $"alt text \"{libraryAlt}\""
-                        : $"alt text \"{libraryAlt}\" — the sentence already on this photograph, kept rather "
-                            + $"than overwritten with \"{alt}\", because it is one asset and one sentence, "
-                            + "shared with every product that shows it"
-                    : _dryRun
-                        ? $"alt text \"{alt}\" — PROVISIONAL. These bytes are not in the library yet, so this "
-                            + "is what would be written only if they are still absent when the run happens. If "
-                            + "another product's photograph turns out to carry them — which is what borrowing a "
-                            + "photograph means — that product's sentence is kept and this one is never written."
-                        : $"no alt text — the photograph already in the library carries none, and a repeat "
-                            + $"upload does not add one. \"{alt}\" was offered and not written.";
+                //
+                // **`WasExisting` first, then the sentence — in that order, and not the other way round.**
+                // A null `AltText` answers two completely different questions with the same value: "these
+                // bytes are not in the library" and "they are, on an asset carrying no sentence". Deciding
+                // on the sentence alone made the second case report the first one's message, which is the
+                // same family of untruth this reporting was fixed to remove. It is unreachable on today's
+                // data — nothing in the library has a null sentence — but `IMediaService` stores
+                // `Trim(altText)` and `Trim` yields null for whitespace, so it goes live the first time
+                // ADM-11 lets an admin upload without one. `WasExisting` is set correctly by both
+                // `StoreImageAsync` and `PlanAsync`; it just was not being consulted.
+                var altNote = stored.WasExisting
+                    ? stored.AltText is { } libraryAlt
+                        ? string.Equals(libraryAlt, alt, StringComparison.Ordinal)
+                            ? $"alt text \"{libraryAlt}\""
+                            : $"alt text \"{libraryAlt}\" — the sentence already on this photograph, kept rather "
+                                + $"than overwritten with \"{alt}\", because it is one asset and one sentence, "
+                                + "shared with every product that shows it"
+                        : $"no alt text — these bytes are already in the library on an asset that carries "
+                            + $"no sentence, and a repeat upload does not add one. \"{alt}\" was offered and "
+                            + "not written."
+                    : stored.AltText is { } written
+                        ? $"alt text \"{written}\""
+                        : $"alt text \"{alt}\" — PROVISIONAL. These bytes were not in the library when this "
+                            + "run resolved them, so nothing carries a sentence for them yet: this is what "
+                            + "would be written only if they are still absent when the run happens. If another "
+                            + "product's photograph turns out to carry them — which is what borrowing a "
+                            + "photograph means — that product's sentence is kept and this one is never written.";
 
                 var detail = outcome switch
                 {
