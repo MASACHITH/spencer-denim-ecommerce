@@ -293,6 +293,11 @@ if ($code -eq 3) {
     Write-Host 'already applied, or the real photographs already in. Re-run with --replace only if you' -ForegroundColor Yellow
     Write-Host 'mean to overwrite what is there.' -ForegroundColor Yellow
 }
+elseif ($DryRun) {
+    # Said separately, because a dry run has changed nothing and must not claim a page now shows
+    # anything. "0 planned" above is also a count of refusals NOT looked for, as the importer says.
+    Write-Host 'DRY RUN: nothing was stored. The report above says where each file would land.' -ForegroundColor Yellow
+}
 else {
     Write-Host 'Done. The Kids listing and the ten kids product pages now show borrowed photographs.' -ForegroundColor Green
 }
