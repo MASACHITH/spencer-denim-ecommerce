@@ -1,6 +1,7 @@
 using System.Globalization;
 using SpencerDenim.Application.Abstractions.Auditing;
 using SpencerDenim.Application.Abstractions.Messaging;
+using SpencerDenim.Application.Admin.CurrentUser;
 using SpencerDenim.Application.Settings.Abstractions;
 using SpencerDenim.Domain.Media;
 using SpencerDenim.Domain.Settings;
@@ -10,6 +11,14 @@ namespace SpencerDenim.Application.Settings.Admin;
 /// <summary>
 /// Sets or removes the shop's logo (GLB-02, ADM-22).
 /// </summary>
+/// <param name="HasLogoAssetPublicId">
+/// Whether the request carried the field at all.
+/// <para>
+/// <b>Absent is refused, not read as "remove".</b> A request model whose missing field means "clear it" is
+/// W1-12's Blocker shape, and here it would mean a screen that stopped sending the field silently deleted the
+/// shop's logo. This route's whole job is an explicit decision, so it insists on one.
+/// </para>
+/// </param>
 /// <param name="LogoAssetPublicId">
 /// The media asset to use, or <see langword="null"/> to remove the logo and go back to the text wordmark.
 /// <para>
@@ -22,6 +31,7 @@ namespace SpencerDenim.Application.Settings.Admin;
 /// <param name="RowVersion">The <c>Store</c> group's token, as the screen read it.</param>
 /// <param name="Actor">Who is asking, for the audit row.</param>
 public sealed record SetStoreLogoCommand(
+    bool HasLogoAssetPublicId,
     Guid? LogoAssetPublicId,
     string? RowVersion,
     AdminActor Actor);
@@ -44,6 +54,7 @@ public sealed class SetStoreLogoCommandHandler(
     ISettingsStore store,
     IAuditLogWriter auditLog,
     ISiteSettingsCache cache,
+    IEffectivePermissionsProvider permissionsProvider,
     SpencerDenim.Application.Abstractions.Time.IClock clock)
     : ICommandHandler<SetStoreLogoCommand, SettingsWriteResult>
 {
@@ -57,11 +68,19 @@ public sealed class SetStoreLogoCommandHandler(
         // (SettingCatalog.SaveUnits), and reading a different set here is the mismatch that made every
         // contact-and-social save a 409. For Store the two happen to coincide today — which is precisely why
         // it is read from the shared declaration rather than assumed.
+        if (!command.HasLogoAssetPublicId)
+        {
+            return new SettingsWriteResult.Invalid(
+                "logoAssetPublicId",
+                "Say which image to use, or null to remove the logo. A request that leaves the field out is "
+                + "refused rather than read as 'remove'.");
+        }
+
         var keys = SettingCatalog.KeysInSaveUnitFor(SettingKeys.Store.Group);
         var rows = await store.ListAsync(keys, cancellationToken);
 
         var row = rows.FirstOrDefault(candidate =>
-            string.Equals(candidate.Key, SettingKeys.Store.LogoAssetId, StringComparison.Ordinal));
+            string.Equals(candidate.Key, SettingKeys.Store.LogoAssetId, StringComparison.OrdinalIgnoreCase));
 
         if (row is null)
         {
@@ -106,6 +125,20 @@ public sealed class SetStoreLogoCommandHandler(
             // The same asset, or null for null. Nothing to write — and in particular no usage rewrite,
             // which would otherwise delete and re-insert the identical row on every save.
             return new SettingsWriteResult.Unchanged();
+        }
+
+        // Doc 08 §3.8 DB2 on the write path: the row carries the permission needed to change it. Read after
+        // the diff, so an unchanged logo is never a refusal, and before any mutation, so a refusal leaves
+        // nothing half applied. Added in round 1 — the first version never read this column.
+        if (command.Actor.UserId is not { } userId)
+        {
+            return new SettingsWriteResult.Forbidden([row.Key]);
+        }
+
+        var permissions = await permissionsProvider.GetEffectivePermissionsAsync(userId, cancellationToken);
+        if (!permissions.Has(row.RequiredPermission))
+        {
+            return new SettingsWriteResult.Forbidden([row.Key]);
         }
 
         row.Value = after;

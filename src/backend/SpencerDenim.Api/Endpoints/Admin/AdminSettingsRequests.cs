@@ -1,5 +1,17 @@
 namespace SpencerDenim.Api.Endpoints.Admin;
 
+/*
+ * These two records are the declared contract for the bodies these routes accept: they are what the OpenAPI
+ * document shows a client (`.Accepts<T>` on each route) and what `AdminSettingsShapeTests` pins against the
+ * handlers' own key lists.
+ *
+ * **They are deliberately not what the endpoint binds.** Since round 1 the endpoint reads a `JsonObject`,
+ * because telling an *absent* field from a `null` one is the difference between "leave this key alone" and
+ * "clear it" — and collapsing the two is W1-12's Blocker shape. Binding a record cannot express that: a missing
+ * property and an explicit null both arrive as null. Reading the JSON by hand also turns a field of the wrong
+ * type into a named field error instead of "malformed JSON".
+ */
+
 /// <summary>
 /// Set or remove the shop's logo (GLB-02, ADM-22).
 /// </summary>
@@ -25,7 +37,7 @@ public sealed record SetStoreLogoRequest(Guid? LogoAssetPublicId, string? RowVer
 /// <b>Every field is nullable and every field is sent on every save.</b> PUT replaces, so a field the body
 /// omits is a field the API is told to clear — which is exactly how W1-12's blocker worked, where a request
 /// model that had never listed three image columns wiped them on every save while 1,571 tests round-tripped
-/// null to null. <c>AdminSettingsWriteShapeTests</c> pins this record against the handler's own list of keys
+/// null to null. <c>AdminSettingsShapeTests</c> pins this record against the handler's own list of keys
 /// so a sixth field cannot be added to one and forgotten on the other.
 /// </para>
 /// <para>

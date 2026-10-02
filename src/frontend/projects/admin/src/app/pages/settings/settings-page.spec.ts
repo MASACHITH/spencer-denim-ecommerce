@@ -138,6 +138,45 @@ describe('SettingsPage (ADM-22)', () => {
     expect(field('whatsApp')).not.toBeNull();
   });
 
+  /**
+   * The screen and `toForm` have to agree about what it is writing. A box for a group the server did not send
+   * is a box the admin can type into and never save — and, before the omission fix, one whose empty value would
+   * have cleared the client's value on the next save.
+   */
+  it('renders no social boxes when the API did not send the Social group', async () => {
+    const without = payload();
+    await open({ ...without, groups: without.groups.filter((group) => group.groupKey !== 'Social') });
+
+    expect(field('whatsApp')).not.toBeNull();
+    expect(element.querySelector('[data-testid="field-facebookUrl"]')).toBeNull();
+    expect(element.querySelector('[data-testid="field-instagramUrl"]')).toBeNull();
+    expect(element.querySelector('[data-testid="field-tikTokUrl"]')).toBeNull();
+  });
+
+  /**
+   * And the save body omits them, so the API leaves those keys alone. This is the end-to-end version of the
+   * `toForm` omission test: the W1-12 shape is about what reaches the wire.
+   */
+  it('omits the social fields from the save when the API did not send that group', async () => {
+    const without = payload();
+    await open({ ...without, groups: without.groups.filter((group) => group.groupKey !== 'Social') });
+
+    await type('whatsApp', '94771234567');
+    await save();
+
+    const body = writeTo(AdminSettingsApi.contactSocialUrl).request.body as Record<string, unknown>;
+
+    expect(Object.keys(body).sort()).toEqual(['rowVersion', 'whatsApp']);
+  });
+
+  it('renders no WhatsApp box when the API did not send the Contact group', async () => {
+    const without = payload();
+    await open({ ...without, groups: without.groups.filter((group) => group.groupKey !== 'Contact') });
+
+    expect(element.querySelector('[data-testid="field-whatsApp"]')).toBeNull();
+    expect(element.querySelector('[data-testid="field-facebookUrl"]')).not.toBeNull();
+  });
+
   it('says there is nothing to edit when no group came back at all', async () => {
     await open({ groups: [], logo: null });
 
@@ -481,20 +520,79 @@ describe('toForm (ADM-22)', () => {
       logo: null,
     });
 
-    expect(form).toEqual({
-      whatsApp: '94771234567',
-      facebookUrl: null,
-      instagramUrl: null,
-      tikTokUrl: null,
-    });
+    // Only the key the payload carried. See the omission test below for why the other three are absent
+    // rather than null.
+    expect(form).toEqual({ whatsApp: '94771234567' });
   });
 
-  it('leaves every field null for a payload with no groups', async () => {
-    expect(toForm({ groups: [], logo: null })).toEqual({
-      whatsApp: null,
-      facebookUrl: null,
-      instagramUrl: null,
-      tikTokUrl: null,
+  /**
+   * **A key the server did not send is OMITTED, not sent back as null.**
+   *
+   * `PUT` replaces, so a `null` in the body tells the API to clear the key. The first version of `toForm`
+   * returned `null` for a key the payload did not contain, and its comment claimed that was safe — the code
+   * did the opposite of what the comment said. The moment #53 adds a `Settings.Edit`-without-`Social` role,
+   * that caller's screen receives no social addresses, sends four nulls, and their first WhatsApp save wipes
+   * the client's social links. W1-12's Blocker, one feature over.
+   *
+   * The key *set* is what is asserted, because that is what reaches the wire: `JSON.stringify` drops an
+   * `undefined` property, so "absent" and "undefined" are the same thing to the API and a value of `null` is
+   * not.
+   */
+  it('omits a key the server did not send, rather than sending null for it', async () => {
+    const form = toForm({
+      groups: [
+        {
+          groupKey: 'Contact',
+          rowVersion: 'rv',
+          settings: [
+            {
+              key: SETTING_KEYS.whatsApp,
+              valueType: 'String',
+              value: '94771234567',
+              isSecret: false,
+              hasValue: true,
+              requiredPermission: 'Settings.Edit',
+              description: null,
+              updatedAtUtc: null,
+            },
+          ],
+        },
+      ],
+      logo: null,
     });
+
+    expect(Object.keys(form)).toEqual(['whatsApp']);
+    expect(JSON.parse(JSON.stringify(form))).toEqual({ whatsApp: '94771234567' });
+  });
+
+  it('keeps an explicit null, because that is how a client clears a key', async () => {
+    const form = toForm({
+      groups: [
+        {
+          groupKey: 'Social',
+          rowVersion: 'rv',
+          settings: [
+            {
+              key: SETTING_KEYS.tikTokUrl,
+              valueType: 'String',
+              value: null,
+              isSecret: false,
+              hasValue: false,
+              requiredPermission: 'Settings.Edit',
+              description: null,
+              updatedAtUtc: null,
+            },
+          ],
+        },
+      ],
+      logo: null,
+    });
+
+    expect(Object.keys(form)).toEqual(['tikTokUrl']);
+    expect(form.tikTokUrl).toBeNull();
+  });
+
+  it('omits every key for a payload with no groups', async () => {
+    expect(Object.keys(toForm({ groups: [], logo: null }))).toEqual([]);
   });
 });

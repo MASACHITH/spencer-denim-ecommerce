@@ -14,17 +14,19 @@ namespace SpencerDenim.UnitTests.Application.Settings;
 /// <summary>
 /// <b>The read model and the write path, against each other.</b>
 /// <para>
-/// This is the test that catches the defect the first version of ADM-22 shipped with: the read model
-/// published a concurrency token <i>per group</i>, and the contact-and-social save compared it against the
-/// rows of <i>both</i> groups, because one form saves both. Every valid save answered <b>409</b> — a screen
-/// that could not save anything at all. The two sides of the comparison lived in two files and nothing made
-/// them agree.
+/// This file catches the defect ADM-22 shipped with in its first draft: the read model published a
+/// concurrency token <i>per group</i>, and the contact-and-social save compared it against the rows of
+/// <i>both</i> groups, because one form saves both. Every valid save answered <b>409</b> — a screen that could
+/// not save anything at all. The two sides of the comparison lived in two files and nothing made them agree.
 /// </para>
 /// <para>
-/// The integration suite found it (seven failures, "Expected: NoContent / Actual: Conflict"), and this is the
-/// cheap version of the same assertion: <b>take the token the read model published, send it straight back,
-/// and require the save to accept it.</b> It is phrased over every group rather than over the one that broke,
-/// so a third group added to a form is caught here too.
+/// The assertion is: <b>take the token the read model published, send it straight back, and require the save
+/// to accept it.</b> It is phrased over every group rather than over the one that broke.
+/// </para>
+/// <para>
+/// Round 1 added the second half of the same idea — the write path now reads each row's
+/// <c>RequiredPermission</c>, which its own comment used to claim and the code did not do — and the
+/// absent-versus-null distinction that stops a caller clearing a group their screen never received.
 /// </para>
 /// </summary>
 public sealed class SettingsRoundTripTests
@@ -33,27 +35,38 @@ public sealed class SettingsRoundTripTests
 
     private static CancellationToken Token => TestContext.Current.CancellationToken;
 
-    /// <summary>
-    /// The round trip, for the contact and social form. Red before <see cref="SettingCatalog.SaveUnits"/>
-    /// existed; green after.
-    /// </summary>
+    /// <summary>Every field the contact-and-social form sends, which is what an ordinary save carries.</summary>
+    private static Dictionary<string, string?> AllFields(
+        string? whatsApp = null,
+        string? facebook = null,
+        string? instagram = null,
+        string? tiktok = null) =>
+        new(StringComparer.Ordinal)
+        {
+            ["whatsApp"] = whatsApp,
+            ["facebookUrl"] = facebook,
+            ["instagramUrl"] = instagram,
+            ["tikTokUrl"] = tiktok,
+        };
+
+    // ---- the token round trip ---------------------------------------------------------------------
+
     [Fact]
     public async Task A_token_the_read_model_published_is_accepted_by_the_contact_and_social_save()
     {
         var store = new FakeSettingsStore();
         var token = await PublishedTokenAsync(store, SettingKeys.Contact.Group);
 
-        var result = await new UpdateContactAndSocialCommandHandler(
-            store, new RecordingAuditLog(), new NoCache(), new FixedClock())
-            .HandleAsync(
-                new UpdateContactAndSocialCommand(
+        var result = await Contact(store).HandleAsync(
+            new UpdateContactAndSocialCommand(
+                AllFields(
                     "94771234567",
                     "https://www.facebook.com/shop",
                     "https://www.instagram.com/shop",
-                    "https://www.tiktok.com/@shop",
-                    token,
-                    Actor),
-                Token);
+                    "https://www.tiktok.com/@shop"),
+                token,
+                Actor),
+            Token);
 
         Assert.IsType<SettingsWriteResult.Succeeded>(result);
     }
@@ -63,7 +76,7 @@ public sealed class SettingsRoundTripTests
     /// either entry, so both must work — which is only true if the token covers the whole save unit.
     /// </summary>
     [Fact]
-    public async Task The_social_groups_token_is_the_same_token_and_is_also_accepted()
+    public async Task The_social_groups_token_is_the_same_token_as_the_contact_groups()
     {
         var store = new FakeSettingsStore();
 
@@ -72,20 +85,17 @@ public sealed class SettingsRoundTripTests
             await PublishedTokenAsync(store, SettingKeys.Social.Group));
     }
 
-    /// <summary>And for the logo form, which is one group on its own.</summary>
     [Fact]
     public async Task A_token_the_read_model_published_is_accepted_by_the_logo_save()
     {
         var store = new FakeSettingsStore();
-        store.Images[Guid.Parse("11111111-1111-1111-1111-111111111111")] = 41;
+        var asset = Guid.NewGuid();
+        store.Images[asset] = 41;
 
-        var token = await PublishedTokenAsync(store, SettingKeys.Store.Group);
-
-        var result = await new SetStoreLogoCommandHandler(
-            store, new RecordingAuditLog(), new NoCache(), new FixedClock())
-            .HandleAsync(
-                new SetStoreLogoCommand(Guid.Parse("11111111-1111-1111-1111-111111111111"), token, Actor),
-                Token);
+        var result = await Logo(store).HandleAsync(
+            new SetStoreLogoCommand(
+                true, asset, await PublishedTokenAsync(store, SettingKeys.Store.Group), Actor),
+            Token);
 
         Assert.IsType<SettingsWriteResult.Succeeded>(result);
     }
@@ -100,56 +110,254 @@ public sealed class SettingsRoundTripTests
         var store = new FakeSettingsStore();
         var token = await PublishedTokenAsync(store, SettingKeys.Contact.Group);
 
-        // Somebody else saves the Instagram address, which moves that row's version.
         store.Rows[SettingKeys.Social.InstagramUrl].RowVersion = [9, 9, 9, 9, 9, 9, 9, 9];
 
-        var result = await new UpdateContactAndSocialCommandHandler(
-            store, new RecordingAuditLog(), new NoCache(), new FixedClock())
-            .HandleAsync(
-                new UpdateContactAndSocialCommand("94771234567", null, null, null, token, Actor),
-                Token);
+        var result = await Contact(store).HandleAsync(
+            new UpdateContactAndSocialCommand(AllFields("94771234567"), token, Actor), Token);
 
         var conflict = Assert.IsType<SettingsWriteResult.Conflict>(result);
         Assert.Equal(SettingsConflictCodes.StaleRowVersion, conflict.Code);
     }
 
-    /// <summary>A save with no token at all is refused, rather than taken as "no opinion".</summary>
     [Fact]
     public async Task A_save_with_no_token_is_refused()
     {
         var store = new FakeSettingsStore();
 
-        var result = await new UpdateContactAndSocialCommandHandler(
-            store, new RecordingAuditLog(), new NoCache(), new FixedClock())
-            .HandleAsync(new UpdateContactAndSocialCommand("94771234567", null, null, null, null, Actor), Token);
+        var result = await Contact(store).HandleAsync(
+            new UpdateContactAndSocialCommand(AllFields("94771234567"), null, Actor), Token);
 
         Assert.IsType<SettingsWriteResult.Conflict>(result);
         Assert.Equal(0, store.Saves);
     }
 
-    /// <summary>
-    /// A missing seeded row is a server-side fault, not a bad field: the endpoint answers 500 naming the
-    /// seeder rather than telling a staff user to fix a box they cannot see.
-    /// </summary>
     [Fact]
     public async Task A_missing_seeded_row_is_reported_as_not_seeded()
     {
         var store = new FakeSettingsStore();
         store.Rows.Remove(SettingKeys.Social.TikTokUrl);
 
-        var result = await new UpdateContactAndSocialCommandHandler(
-            store, new RecordingAuditLog(), new NoCache(), new FixedClock())
-            .HandleAsync(new UpdateContactAndSocialCommand(null, null, null, null, "AAAA", Actor), Token);
+        var result = await Contact(store).HandleAsync(
+            new UpdateContactAndSocialCommand(AllFields(), "AAAA", Actor), Token);
 
         var notSeeded = Assert.IsType<SettingsWriteResult.NotSeeded>(result);
         Assert.Contains(SettingKeys.Social.TikTokUrl, notSeeded.Message, StringComparison.Ordinal);
     }
 
+    // ---- absent is not "clear" (round 1, Major 2's second half) -----------------------------------
+
     /// <summary>
-    /// A save that changes nothing writes nothing: no audit row, no statement, no cache eviction. Otherwise an
-    /// admin opening the screen and pressing Save would move every row version and invalidate their colleague's
-    /// open form.
+    /// <b>A field the request did not carry is not written.</b>
+    /// <para>
+    /// The first version read absent as <see langword="null"/> and cleared the key — W1-12's Blocker shape. It
+    /// could not bite while every caller could read every group, and it bites the moment #53 adds a role that
+    /// cannot: that caller's screen omits the social addresses it never received, and their first WhatsApp save
+    /// would wipe the client's social links.
+    /// </para>
     /// </summary>
+    [Fact]
+    public async Task A_field_the_request_did_not_carry_is_left_alone()
+    {
+        var store = new FakeSettingsStore();
+        store.Rows[SettingKeys.Social.FacebookUrl].Value = "https://www.facebook.com/the-clients-page";
+        store.Rows[SettingKeys.Social.InstagramUrl].Value = "https://www.instagram.com/the-clients-page";
+
+        // Only the WhatsApp number is sent — exactly what a screen that could not read the Social group does.
+        var fields = new Dictionary<string, string?>(StringComparer.Ordinal) { ["whatsApp"] = "94771234567" };
+
+        var result = await Contact(store).HandleAsync(
+            new UpdateContactAndSocialCommand(
+                fields, await PublishedTokenAsync(store, SettingKeys.Contact.Group), Actor),
+            Token);
+
+        var succeeded = Assert.IsType<SettingsWriteResult.Succeeded>(result);
+        Assert.Equal([SettingKeys.Contact.WhatsApp], succeeded.ChangedKeys);
+
+        Assert.Equal("https://www.facebook.com/the-clients-page", store.Rows[SettingKeys.Social.FacebookUrl].Value);
+        Assert.Equal("https://www.instagram.com/the-clients-page", store.Rows[SettingKeys.Social.InstagramUrl].Value);
+    }
+
+    /// <summary>
+    /// And an <i>explicit</i> null still clears, because that is how a client says "we have no TikTok". Absent
+    /// and null have to be different, not both ignored.
+    /// </summary>
+    [Fact]
+    public async Task An_explicit_null_still_clears_the_key()
+    {
+        var store = new FakeSettingsStore();
+        store.Rows[SettingKeys.Social.TikTokUrl].Value = "https://www.tiktok.com/@old";
+
+        var fields = new Dictionary<string, string?>(StringComparer.Ordinal) { ["tikTokUrl"] = null };
+
+        var result = await Contact(store).HandleAsync(
+            new UpdateContactAndSocialCommand(
+                fields, await PublishedTokenAsync(store, SettingKeys.Contact.Group), Actor),
+            Token);
+
+        Assert.IsType<SettingsWriteResult.Succeeded>(result);
+        Assert.Null(store.Rows[SettingKeys.Social.TikTokUrl].Value);
+    }
+
+    /// <summary>
+    /// The logo route insists on an explicit decision: an absent field is refused rather than read as
+    /// "remove", so a screen that stopped sending it cannot silently delete the shop's logo.
+    /// </summary>
+    [Fact]
+    public async Task A_logo_request_that_omits_the_asset_field_is_refused_rather_than_removing_it()
+    {
+        var store = new FakeSettingsStore();
+        store.Rows[SettingKeys.Store.LogoAssetId].Value = "41";
+        store.Images[Guid.NewGuid()] = 41;
+
+        var result = await Logo(store).HandleAsync(
+            new SetStoreLogoCommand(
+                false, null, await PublishedTokenAsync(store, SettingKeys.Store.Group), Actor),
+            Token);
+
+        var invalid = Assert.IsType<SettingsWriteResult.Invalid>(result);
+        Assert.Equal("logoAssetPublicId", Assert.Single(invalid.Errors).Field);
+
+        Assert.Equal("41", store.Rows[SettingKeys.Store.LogoAssetId].Value);
+    }
+
+    [Fact]
+    public async Task An_explicit_null_asset_removes_the_logo()
+    {
+        var store = new FakeSettingsStore();
+        store.Rows[SettingKeys.Store.LogoAssetId].Value = "41";
+
+        var result = await Logo(store).HandleAsync(
+            new SetStoreLogoCommand(
+                true, null, await PublishedTokenAsync(store, SettingKeys.Store.Group), Actor),
+            Token);
+
+        Assert.IsType<SettingsWriteResult.Succeeded>(result);
+        Assert.Null(store.Rows[SettingKeys.Store.LogoAssetId].Value);
+    }
+
+    // ---- the per-row permission check (round 1, Major 2's first half) -----------------------------
+
+    /// <summary>
+    /// <b>Doc 08 §3.8 DB2 on the write path.</b> The first version's own comment said "the permission is still
+    /// per row" and the handler never read the column: <c>grep RequiredPermission</c> found it only in the read
+    /// model. Nothing could exploit it while every settings key required <c>Settings.Edit</c> — and #53 adds
+    /// the keys that do not.
+    /// </summary>
+    [Fact]
+    public async Task A_key_whose_permission_the_caller_lacks_cannot_be_changed()
+    {
+        var store = new FakeSettingsStore();
+        var token = await PublishedTokenAsync(store, SettingKeys.Contact.Group);
+        store.Rows[SettingKeys.Social.FacebookUrl].RequiredPermission = Permissions.Settings.Payments;
+
+        var result = await Contact(store, Permissions.Settings.Edit).HandleAsync(
+            new UpdateContactAndSocialCommand(
+                AllFields("94771234567", "https://www.facebook.com/shop"), token, Actor),
+            Token);
+
+        var forbidden = Assert.IsType<SettingsWriteResult.Forbidden>(result);
+        Assert.Equal([SettingKeys.Social.FacebookUrl], forbidden.Keys);
+
+        // Nothing at all was written — not even the key they *could* have changed. A partly applied save is
+        // worse than a refused one, because nobody can tell which half landed.
+        Assert.Equal(0, store.Saves);
+        Assert.Null(store.Rows[SettingKeys.Contact.WhatsApp].Value);
+        Assert.Null(store.Rows[SettingKeys.Social.FacebookUrl].Value);
+    }
+
+    /// <summary>
+    /// And a key they may not write but are <i>not changing</i> is not a refusal — which is what lets a screen
+    /// that omits the group it cannot read save the group it can.
+    /// </summary>
+    [Fact]
+    public async Task A_key_the_caller_cannot_write_but_is_not_changing_is_not_a_refusal()
+    {
+        var store = new FakeSettingsStore();
+        store.Rows[SettingKeys.Social.FacebookUrl].Value = "https://www.facebook.com/unchanged";
+        var token = await PublishedTokenAsync(store, SettingKeys.Contact.Group);
+        store.Rows[SettingKeys.Social.FacebookUrl].RequiredPermission = Permissions.Settings.Payments;
+
+        var result = await Contact(store, Permissions.Settings.Edit).HandleAsync(
+            new UpdateContactAndSocialCommand(
+                AllFields("94771234567", "https://www.facebook.com/unchanged"), token, Actor),
+            Token);
+
+        var succeeded = Assert.IsType<SettingsWriteResult.Succeeded>(result);
+        Assert.Equal([SettingKeys.Contact.WhatsApp], succeeded.ChangedKeys);
+    }
+
+    [Fact]
+    public async Task The_logo_cannot_be_changed_without_its_rows_permission()
+    {
+        var store = new FakeSettingsStore();
+        var asset = Guid.NewGuid();
+        store.Images[asset] = 41;
+
+        // The token is read *before* the permission changes, because afterwards the Store group is filtered out
+        // of the read model and there is no token to read. (The integration test does the opposite, because
+        // there the UPDATE moves the real rowversion — see its own comment. Two stores, two orderings, and
+        // both are about the same ordering rule: concurrency is checked before permission.)
+        var token = await PublishedTokenAsync(store, SettingKeys.Store.Group);
+        store.Rows[SettingKeys.Store.LogoAssetId].RequiredPermission = Permissions.Settings.Security;
+
+        var result = await Logo(store, Permissions.Settings.Edit).HandleAsync(
+            new SetStoreLogoCommand(true, asset, token, Actor),
+            Token);
+
+        var forbidden = Assert.IsType<SettingsWriteResult.Forbidden>(result);
+        Assert.Equal([SettingKeys.Store.LogoAssetId], forbidden.Keys);
+
+        Assert.Null(store.Rows[SettingKeys.Store.LogoAssetId].Value);
+        Assert.Null(store.Usage);
+    }
+
+    /// <summary>
+    /// A caller nothing is known about writes nothing. Unreachable from the endpoint, which requires a
+    /// session; refusing rather than allowing is the only safe answer.
+    /// </summary>
+    [Fact]
+    public async Task A_command_with_no_user_is_refused()
+    {
+        var store = new FakeSettingsStore();
+
+        var result = await Contact(store).HandleAsync(
+            new UpdateContactAndSocialCommand(
+                AllFields("94771234567"),
+                await PublishedTokenAsync(store, SettingKeys.Contact.Group),
+                AdminActor.Unknown),
+            Token);
+
+        Assert.IsType<SettingsWriteResult.Forbidden>(result);
+        Assert.Equal(0, store.Saves);
+    }
+
+    // ---- normalisation on the write path ---------------------------------------------------------
+
+    /// <summary>
+    /// The stored value is the <b>normalised</b> address, so the text a client reads back tells them where
+    /// the link goes. U+3002 is the case that made this necessary: stored raw, it read <c>instagram.com</c>
+    /// and went to <c>evil.example</c>.
+    /// </summary>
+    [Fact]
+    public async Task The_stored_social_address_is_the_normalised_one()
+    {
+        var store = new FakeSettingsStore();
+
+        var result = await Contact(store).HandleAsync(
+            new UpdateContactAndSocialCommand(
+                AllFields(instagram: "https://INSTAGRAM.com。evil.example:443/Shop"),
+                await PublishedTokenAsync(store, SettingKeys.Contact.Group),
+                Actor),
+            Token);
+
+        Assert.IsType<SettingsWriteResult.Succeeded>(result);
+        Assert.Equal(
+            "https://instagram.com.evil.example/Shop",
+            store.Rows[SettingKeys.Social.InstagramUrl].Value);
+    }
+
+    // ---- the rest ---------------------------------------------------------------------------------
+
     [Fact]
     public async Task A_save_that_changes_nothing_writes_nothing()
     {
@@ -159,11 +367,12 @@ public sealed class SettingsRoundTripTests
         var audit = new RecordingAuditLog();
         var cache = new NoCache();
 
-        var result = await new UpdateContactAndSocialCommandHandler(store, audit, cache, new FixedClock())
-            .HandleAsync(
-                new UpdateContactAndSocialCommand(
-                    "94771234567", null, null, null, await PublishedTokenAsync(store, SettingKeys.Contact.Group), Actor),
-                Token);
+        var result = await Contact(store, audit: audit, cache: cache).HandleAsync(
+            new UpdateContactAndSocialCommand(
+                AllFields("94771234567"),
+                await PublishedTokenAsync(store, SettingKeys.Contact.Group),
+                Actor),
+            Token);
 
         Assert.IsType<SettingsWriteResult.Unchanged>(result);
         Assert.Empty(audit.Rows);
@@ -171,10 +380,6 @@ public sealed class SettingsRoundTripTests
         Assert.Equal(0, cache.Evictions);
     }
 
-    /// <summary>
-    /// The logo's usage row is rewritten in the same unit of work as the value, and the previous asset is
-    /// released — the half that is easy to forget, and the half the owner actually asked for.
-    /// </summary>
     [Fact]
     public async Task Replacing_the_logo_rewrites_the_usage_row()
     {
@@ -184,61 +389,57 @@ public sealed class SettingsRoundTripTests
         store.Images[first] = 41;
         store.Images[second] = 57;
 
-        var handler = new SetStoreLogoCommandHandler(store, new RecordingAuditLog(), new NoCache(), new FixedClock());
+        var handler = Logo(store);
 
         await handler.HandleAsync(
-            new SetStoreLogoCommand(first, await PublishedTokenAsync(store, SettingKeys.Store.Group), Actor), Token);
+            new SetStoreLogoCommand(true, first, await PublishedTokenAsync(store, SettingKeys.Store.Group), Actor),
+            Token);
         Assert.Equal(41, store.Usage);
 
         await handler.HandleAsync(
-            new SetStoreLogoCommand(second, await PublishedTokenAsync(store, SettingKeys.Store.Group), Actor), Token);
+            new SetStoreLogoCommand(true, second, await PublishedTokenAsync(store, SettingKeys.Store.Group), Actor),
+            Token);
         Assert.Equal(57, store.Usage);
 
         await handler.HandleAsync(
-            new SetStoreLogoCommand(null, await PublishedTokenAsync(store, SettingKeys.Store.Group), Actor), Token);
+            new SetStoreLogoCommand(true, null, await PublishedTokenAsync(store, SettingKeys.Store.Group), Actor),
+            Token);
         Assert.Null(store.Usage);
     }
 
-    /// <summary>A successful save evicts the storefront cache, so a logo change is visible at once.</summary>
     [Fact]
     public async Task A_successful_save_evicts_the_storefront_cache()
     {
         var store = new FakeSettingsStore();
         var cache = new NoCache();
 
-        await new UpdateContactAndSocialCommandHandler(store, new RecordingAuditLog(), cache, new FixedClock())
-            .HandleAsync(
-                new UpdateContactAndSocialCommand(
-                    "94771234567", null, null, null, await PublishedTokenAsync(store, SettingKeys.Contact.Group), Actor),
-                Token);
+        await Contact(store, cache: cache).HandleAsync(
+            new UpdateContactAndSocialCommand(
+                AllFields("94771234567"),
+                await PublishedTokenAsync(store, SettingKeys.Contact.Group),
+                Actor),
+            Token);
 
         Assert.Equal(1, cache.Evictions);
     }
 
-    /// <summary>
-    /// A save the database refuses leaves the cache alone: evicting before the commit would publish a change
-    /// that then failed, and the storefront would serve it for up to a minute with no row behind it.
-    /// </summary>
     [Fact]
     public async Task A_refused_save_does_not_evict_the_cache()
     {
         var store = new FakeSettingsStore { NextSaveOutcome = SettingsSaveOutcome.ConcurrencyConflict };
         var cache = new NoCache();
 
-        var result = await new UpdateContactAndSocialCommandHandler(store, new RecordingAuditLog(), cache, new FixedClock())
-            .HandleAsync(
-                new UpdateContactAndSocialCommand(
-                    "94771234567", null, null, null, await PublishedTokenAsync(store, SettingKeys.Contact.Group), Actor),
-                Token);
+        var result = await Contact(store, cache: cache).HandleAsync(
+            new UpdateContactAndSocialCommand(
+                AllFields("94771234567"),
+                await PublishedTokenAsync(store, SettingKeys.Contact.Group),
+                Actor),
+            Token);
 
         Assert.IsType<SettingsWriteResult.Conflict>(result);
         Assert.Equal(0, cache.Evictions);
     }
 
-    /// <summary>
-    /// The read model's own permission filter: a group whose <c>RequiredPermission</c> the caller lacks is
-    /// absent rather than empty, so the API does not confirm the group exists.
-    /// </summary>
     [Fact]
     public async Task A_group_the_caller_cannot_read_is_absent_from_the_read_model()
     {
@@ -261,17 +462,72 @@ public sealed class SettingsRoundTripTests
         Assert.Null(settings.Logo);
     }
 
+    /// <summary>
+    /// The database collation is case-insensitive, so a row scripted in with different casing is one row to
+    /// SQL Server — and the first version's <c>Ordinal</c> dictionaries missed it, which made the box vanish
+    /// from the screen and every save answer <c>NotSeeded</c> (a 500) for ever.
+    /// </summary>
+    [Fact]
+    public async Task A_row_whose_key_is_cased_differently_is_still_found()
+    {
+        var store = new FakeSettingsStore();
+        store.Recase(SettingKeys.Social.FacebookUrl, "social.facebookurl");
+
+        var settings = await ReadAsync(store, Permissions.Settings.Edit);
+
+        Assert.Contains(
+            settings.Groups.SelectMany(group => group.Settings),
+            setting => string.Equals(setting.Key, "social.facebookurl", StringComparison.Ordinal));
+
+        var result = await Contact(store).HandleAsync(
+            new UpdateContactAndSocialCommand(
+                AllFields(facebook: "https://www.facebook.com/shop"),
+                await PublishedTokenAsync(store, SettingKeys.Contact.Group),
+                Actor),
+            Token);
+
+        Assert.IsType<SettingsWriteResult.Succeeded>(result);
+        Assert.Equal("https://www.facebook.com/shop", store.Rows["social.facebookurl"].Value);
+    }
+
     // ---- helpers ---------------------------------------------------------------------------------
+
+    private static UpdateContactAndSocialCommandHandler Contact(
+        FakeSettingsStore store,
+        params string[] permissions) =>
+        Contact(store, new RecordingAuditLog(), new NoCache(), permissions);
+
+    private static UpdateContactAndSocialCommandHandler Contact(
+        FakeSettingsStore store,
+        RecordingAuditLog? audit = null,
+        NoCache? cache = null,
+        params string[] permissions) =>
+        new(
+            store,
+            audit ?? new RecordingAuditLog(),
+            cache ?? new NoCache(),
+            PermissionsFor(permissions),
+            new FixedClock());
+
+    private static SetStoreLogoCommandHandler Logo(FakeSettingsStore store, params string[] permissions) =>
+        new(store, new RecordingAuditLog(), new NoCache(), PermissionsFor(permissions), new FixedClock());
+
+    /// <summary>
+    /// A permissions provider. With no permissions named the caller is a GrantsAll holder, so permission is
+    /// never the thing a test fails on by accident; a test that is <i>about</i> permissions names them.
+    /// </summary>
+    private static FakePermissions PermissionsFor(string[] permissions) =>
+        permissions.Length == 0 ? new FakePermissions(true, []) : new FakePermissions(false, permissions);
 
     private static async Task<string> PublishedTokenAsync(FakeSettingsStore store, string groupKey)
     {
-        var settings = await ReadAsync(store, Permissions.Settings.Edit);
+        var settings = await ReadAsync(store, SpencerDenim.Domain.Identity.Permissions.Settings.Edit);
 
         return settings.Groups.Single(group => group.GroupKey == groupKey).RowVersion;
     }
 
     private static Task<AdminSettingsDto> ReadAsync(FakeSettingsStore store, params string[] permissions) =>
-        new GetAdminSettingsQueryHandler(store, new FakePermissions(false, permissions))
+        new GetAdminSettingsQueryHandler(store, PermissionsFor(permissions))
             .HandleAsync(new GetAdminSettingsQuery(7), TestContext.Current.CancellationToken);
 
     /// <summary>
@@ -280,8 +536,8 @@ public sealed class SettingsRoundTripTests
     /// <para>
     /// Deliberately not more forgiving than the real store (MEMORY's lesson about politely shaped stubs): it
     /// hands back the same instances the handler mutates, as EF's tracked entities do; it moves a row version
-    /// on save, as <c>rowversion</c> does; and it refuses an asset it has not been told about, as the real
-    /// "image, public, ready, not deleted" query does.
+    /// on save, as <c>rowversion</c> does; it matches keys case-insensitively, as the collation does; and it
+    /// refuses an asset it has not been told about, as the real "image, public, ready, not deleted" query does.
     /// </para>
     /// </summary>
     private sealed class FakeSettingsStore : ISettingsStore
@@ -305,23 +561,34 @@ public sealed class SettingsRoundTripTests
             }
         }
 
-        public Dictionary<string, Setting> Rows { get; } = new(StringComparer.Ordinal);
+        /// <summary>Keyed case-insensitively, as <c>Latin1_General_100_CI_AS_SC</c> is.</summary>
+        public Dictionary<string, Setting> Rows { get; } = new(StringComparer.OrdinalIgnoreCase);
 
-        /// <summary>Public id to internal id, for the assets this store will admit exist.</summary>
         public Dictionary<Guid, int> Images { get; } = [];
 
-        /// <summary>The asset the logo's usage row names, or null when there is none.</summary>
         public int? Usage { get; private set; }
 
         public int Saves { get; private set; }
 
         public SettingsSaveOutcome? NextSaveOutcome { get; set; }
 
+        /// <summary>Re-cases a row's key, standing in for a row scripted into the database by hand.</summary>
+        public void Recase(string key, string newCasing)
+        {
+            var row = Rows[key];
+            Rows.Remove(key);
+            row.Key = newCasing;
+            Rows[newCasing] = row;
+        }
+
         public Task<IReadOnlyList<Setting>> ListAsync(
             IReadOnlyCollection<string> keys,
             CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<Setting>>(
-                keys.Where(Rows.ContainsKey).Select(key => Rows[key]).OrderBy(row => row.Key, StringComparer.Ordinal).ToList());
+                keys.Where(Rows.ContainsKey)
+                    .Select(key => Rows[key])
+                    .OrderBy(row => row.Key, StringComparer.OrdinalIgnoreCase)
+                    .ToList());
 
         public Task<SettingImageAsset?> FindUsableImageAsync(Guid publicId, CancellationToken cancellationToken) =>
             Task.FromResult(Images.TryGetValue(publicId, out var id)

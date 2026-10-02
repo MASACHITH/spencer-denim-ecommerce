@@ -5,7 +5,7 @@
  * `SpencerDenim.Application.Settings.Contracts.AdminSettingsDto`. That copy is a hazard rather than a
  * convenience — W1-12's blocker was a form model that had never listed three columns, so every save
  * cleared them — so the backend pins the pairing with `AdminSettingsPayloadShapeTests` and
- * `AdminSettingsWriteShapeTests` rather than leaving it to review.
+ * `AdminSettingsShapeTests` rather than leaving it to review.
  */
 
 /** Doc 08 §3.8's `ValueType`, by name: the API serialises enums as their names. */
@@ -72,15 +72,25 @@ export interface UploadedMediaAsset {
 /**
  * The contact and social form's values.
  *
- * **Every field, every save.** `PUT` replaces, so a field this object omits is a field the API is told to
- * clear — which is exactly how W1-12's blocker worked. Keeping the keys here identical to
- * `UpdateContactAndSocialRequest`'s is what `AdminSettingsWriteShapeTests` asserts.
+ * **Every field the server sent, on every save — and nothing it did not.** `PUT` replaces, so a field the body
+ * carries as `null` is a field the API is told to *clear*, while a field the body omits is one it leaves alone.
+ * Those are two different instructions and this type has to be able to express both:
+ *
+ * - a key the server sent, holding `null` → the client is clearing it (what an empty box means);
+ * - a key the server did **not** send → absent here, so `JSON.stringify` drops it and the API leaves it alone.
+ *
+ * The second case is why these are optional. The first version made them required and `toForm` filled the gaps
+ * with `null`, so a caller who could not read `Social.*` would have cleared all three on their first save of
+ * the WhatsApp number — W1-12's Blocker, one feature over. No such caller exists until #53 adds one.
+ *
+ * The W1-12 guarantee itself is unchanged for the ordinary caller: the screen sends every field it was given,
+ * and `AdminSettingsShapeTests` pins these names against the request record and the handler's key list.
  */
 export interface ContactAndSocialValues {
-  readonly whatsApp: string | null;
-  readonly facebookUrl: string | null;
-  readonly instagramUrl: string | null;
-  readonly tikTokUrl: string | null;
+  readonly whatsApp?: string | null;
+  readonly facebookUrl?: string | null;
+  readonly instagramUrl?: string | null;
+  readonly tikTokUrl?: string | null;
 }
 
 /** The settings keys this screen edits, so the template and the mapping cannot disagree about a name. */

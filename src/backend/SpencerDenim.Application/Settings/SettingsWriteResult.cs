@@ -49,6 +49,24 @@ public abstract record SettingsWriteResult
     public sealed record NotSeeded(string Message) : SettingsWriteResult;
 
     /// <summary>
+    /// The caller does not hold the permission a key they are trying to change requires.
+    /// <para>
+    /// <b>Its own case rather than a 400 or a silent skip.</b> Doc 08 §3.8 gives every row its own
+    /// <c>RequiredPermission</c>, so "may this caller write this key" is a real question with a real answer,
+    /// and the first version of these handlers never asked it — the read model filtered per row and the write
+    /// model's own comment claimed to share the control. Silently skipping a refused key is worse than
+    /// refusing: it is a save that reports success and does not do what it was asked.
+    /// </para>
+    /// <para>
+    /// Only keys whose value would actually <i>change</i> can land here. A caller who may not write
+    /// <c>Social.*</c> and is not changing it is not refused, which is what lets a screen that omits the group
+    /// it cannot read save the group it can.
+    /// </para>
+    /// </summary>
+    /// <param name="Keys">The keys the caller may not change, in catalogue order.</param>
+    public sealed record Forbidden(IReadOnlyList<string> Keys) : SettingsWriteResult;
+
+    /// <summary>
     /// Well formed and still not applicable: somebody else saved the same group first.
     /// </summary>
     /// <param name="Code">
@@ -58,9 +76,14 @@ public abstract record SettingsWriteResult
     public sealed record Conflict(string Code, string Message) : SettingsWriteResult;
 }
 
-/// <summary>The <see cref="SettingsWriteResult.Conflict.Code"/> values these use cases produce.</summary>
+/// <summary>The machine-readable codes these use cases produce, beside the sentence.</summary>
 public static class SettingsConflictCodes
 {
     /// <summary>The caller's row version is not the row's current one; reload and re-apply (doc 08 §1.5).</summary>
     public const string StaleRowVersion = "stale_row_version";
+
+    /// <summary>
+    /// The caller lacks the <c>RequiredPermission</c> of a key they tried to change (doc 08 §3.8 DB2).
+    /// </summary>
+    public const string SettingForbidden = "setting_forbidden";
 }

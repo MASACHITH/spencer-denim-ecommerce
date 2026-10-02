@@ -171,6 +171,7 @@ const LOGO_ACCEPT = 'image/png,image/jpeg,image/webp';
             </p>
 
             <form class="adm-fields" (ngSubmit)="saveContactAndSocial()" novalidate>
+              @if (hasContact()) {
               <label class="adm-field">
                 <span class="adm-label">WhatsApp number</span>
                 <input
@@ -192,7 +193,13 @@ const LOGO_ACCEPT = 'image/png,image/jpeg,image/webp';
                   <span class="adm-field-error" data-testid="error-whatsApp">{{ message }}</span>
                 }
               </label>
+              }
 
+              <!-- Only the boxes whose group the server actually sent.
+                   A box for a group this user cannot read would be a box they can type into and never save,
+                   and — before the toForm fix — one whose empty value would have cleared the client's value on
+                   the next save. The screen asks the payload, which is the same question the server answers. -->
+              @if (hasSocial()) {
               @for (field of socialFields; track field.name) {
                 <label class="adm-field">
                   <span class="adm-label">{{ field.label }}</span>
@@ -213,6 +220,7 @@ const LOGO_ACCEPT = 'image/png,image/jpeg,image/webp';
                     </span>
                   }
                 </label>
+              }
               }
 
               <div class="adm-actions adm-field--wide">
@@ -334,6 +342,12 @@ export class SettingsPage {
   protected readonly canEditContact = computed(
     () => this.hasGroup(SETTING_GROUPS.contact) || this.hasGroup(SETTING_GROUPS.social),
   );
+
+  /** Whether the server sent the Contact group, and so whether the WhatsApp box belongs on screen. */
+  protected readonly hasContact = computed(() => this.hasGroup(SETTING_GROUPS.contact));
+
+  /** <inheritdoc cref="hasContact" /> — for the three social boxes. */
+  protected readonly hasSocial = computed(() => this.hasGroup(SETTING_GROUPS.social));
 
   constructor() {
     this.load();
@@ -492,32 +506,41 @@ export class SettingsPage {
   }
 }
 
-const EMPTY_FORM: ContactAndSocialValues = {
-  whatsApp: null,
-  facebookUrl: null,
-  instagramUrl: null,
-  tikTokUrl: null,
-};
+/** Before the payload arrives, the screen is writing nothing — so it carries no fields at all. */
+const EMPTY_FORM: ContactAndSocialValues = {};
 
 /**
- * The form's values, read out of the payload by key.
+ * The form's values, read out of the payload by key — **only the keys the payload contained**.
  *
- * A key the server did not send stays null, which is correct: a caller who cannot read `Social.*` would
- * otherwise have the three addresses cleared by their next save of the WhatsApp number. (No such caller
- * exists today — both groups are `Settings.Edit` — which is exactly why the mapping is written to survive
- * one arriving.)
+ * A key the server did not send is *absent* from the result, so `JSON.stringify` drops it from the request body
+ * and the API leaves that setting alone. A key the server sent as `null` is present and null, which is how a
+ * client clears one.
+ *
+ * **The first version returned `null` for an absent key and this comment claimed that was the safe choice.**
+ * It was the opposite: `PUT` replaces, so four nulls tell the API to clear four keys. A caller who cannot read
+ * `Social.*` — which is exactly what #53 adds — would have wiped the client's three social addresses with their
+ * first save of the WhatsApp number. W1-12's Blocker, one feature over, and the comment is what the next
+ * person would have trusted.
  */
 export function toForm(settings: AdminSettings): ContactAndSocialValues {
   const byKey = new Map(
     settings.groups.flatMap((group) => group.settings.map((setting) => [setting.key, setting.value] as const)),
   );
 
-  return {
-    whatsApp: byKey.get(SETTING_KEYS.whatsApp) ?? null,
-    facebookUrl: byKey.get(SETTING_KEYS.facebookUrl) ?? null,
-    instagramUrl: byKey.get(SETTING_KEYS.instagramUrl) ?? null,
-    tikTokUrl: byKey.get(SETTING_KEYS.tikTokUrl) ?? null,
-  };
+  const form: Record<string, string | null> = {};
+
+  for (const [field, key] of [
+    ['whatsApp', SETTING_KEYS.whatsApp],
+    ['facebookUrl', SETTING_KEYS.facebookUrl],
+    ['instagramUrl', SETTING_KEYS.instagramUrl],
+    ['tikTokUrl', SETTING_KEYS.tikTokUrl],
+  ] as const) {
+    if (byKey.has(key)) {
+      form[field] = byKey.get(key) ?? null;
+    }
+  }
+
+  return form as ContactAndSocialValues;
 }
 
 /** Re-exported for the spec, which asserts the preview is drawn from what the server sent. */

@@ -1,5 +1,7 @@
 using System.Globalization;
 using System.Security.Claims;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Http.HttpResults;
 using SpencerDenim.Api.Authorization;
@@ -80,6 +82,7 @@ internal static class AdminSettingsEndpoints
                 + "Send null to remove the logo, and the header goes back to the text wordmark. Replacing a "
                 + "logo releases the previous asset's MediaUsages row in the same transaction, so the media "
                 + "library will then let you delete it; the new one is guarded immediately.")
+            .Accepts<SetStoreLogoRequest>("application/json")
             .Produces(StatusCodes.Status204NoContent)
             .ProducesValidationProblem()
             .ProducesProblem(StatusCodes.Status409Conflict)
@@ -94,6 +97,7 @@ internal static class AdminSettingsEndpoints
                 + "empty or absent value clears the key, which hides that social icon on the storefront "
                 + "rather than linking it somewhere that is not the shop. Social addresses must be absolute "
                 + "http(s) URLs with a host and no credentials.")
+            .Accepts<UpdateContactAndSocialRequest>("application/json")
             .Produces(StatusCodes.Status204NoContent)
             .ProducesValidationProblem()
             .ProducesProblem(StatusCodes.Status409Conflict)
@@ -121,17 +125,28 @@ internal static class AdminSettingsEndpoints
             return forged;
         }
 
-        var (body, problem) = await AdminWriteRequest.ReadJsonAsync<SetStoreLogoRequest>(
+        var (body, problem) = await AdminWriteRequest.ReadJsonAsync<JsonObject>(
             httpContext.Request, cancellationToken);
         if (problem is not null)
         {
             return problem;
         }
 
+        if (ReadGuid(body!, "logoAssetPublicId", out var asset, out var present) is { } badField)
+        {
+            return badField;
+        }
+
+        if (ReadString(body!, "rowVersion", out var rowVersion, out _) is { } badVersion)
+        {
+            return badVersion;
+        }
+
         var result = await handler.HandleAsync(
             new SetStoreLogoCommand(
-                body!.LogoAssetPublicId,
-                AdminWriteRequest.RowVersion(httpContext.Request, body.RowVersion),
+                present,
+                asset,
+                AdminWriteRequest.RowVersion(httpContext.Request, rowVersion),
                 AdminWriteRequest.Actor(httpContext)),
             cancellationToken);
 
@@ -149,20 +164,40 @@ internal static class AdminSettingsEndpoints
             return forged;
         }
 
-        var (body, problem) = await AdminWriteRequest.ReadJsonAsync<UpdateContactAndSocialRequest>(
+        var (body, problem) = await AdminWriteRequest.ReadJsonAsync<JsonObject>(
             httpContext.Request, cancellationToken);
         if (problem is not null)
         {
             return problem;
         }
 
+        // Presence, not just value: absent means "I am not writing this key" and null means "clear it". The
+        // first version collapsed the two and would have cleared three social addresses for any caller whose
+        // screen could not read them (see UpdateContactAndSocialCommand).
+        var fields = new Dictionary<string, string?>(StringComparer.Ordinal);
+
+        foreach (var field in ContactAndSocialFields)
+        {
+            if (ReadString(body!, field, out var value, out var present) is { } badField)
+            {
+                return badField;
+            }
+
+            if (present)
+            {
+                fields[field] = value;
+            }
+        }
+
+        if (ReadString(body!, "rowVersion", out var rowVersion, out _) is { } badVersion)
+        {
+            return badVersion;
+        }
+
         var result = await handler.HandleAsync(
             new UpdateContactAndSocialCommand(
-                body!.WhatsApp,
-                body.FacebookUrl,
-                body.InstagramUrl,
-                body.TikTokUrl,
-                AdminWriteRequest.RowVersion(httpContext.Request, body.RowVersion),
+                fields,
+                AdminWriteRequest.RowVersion(httpContext.Request, rowVersion),
                 AdminWriteRequest.Actor(httpContext)),
             cancellationToken);
 
@@ -192,6 +227,18 @@ internal static class AdminSettingsEndpoints
             notSeeded.Message,
             "settings_not_seeded"),
 
+        // 403 rather than 400: nothing is wrong with the field, the caller may not change that key. Named, so
+        // the screen can say which box to leave alone rather than "something went wrong".
+        SettingsWriteResult.Forbidden forbidden => TypedResults.Problem(
+            title: "You cannot change these settings",
+            detail: "You do not have permission to change: " + string.Join(", ", forbidden.Keys),
+            statusCode: StatusCodes.Status403Forbidden,
+            extensions: new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["code"] = SettingsConflictCodes.SettingForbidden,
+                ["keys"] = forbidden.Keys,
+            }),
+
         SettingsWriteResult.Conflict conflict => TypedResults.Problem(
             title: "This change cannot be applied",
             detail: conflict.Message,
@@ -211,6 +258,78 @@ internal static class AdminSettingsEndpoints
                     group => group.Select(error => error.Message).Distinct(StringComparer.Ordinal).ToArray(),
                     StringComparer.Ordinal),
             title: "One or more fields are invalid.");
+
+    /// <summary>The fields the contact-and-social body may carry, in the order they are read.</summary>
+    private static readonly string[] ContactAndSocialFields =
+        ["whatsApp", "facebookUrl", "instagramUrl", "tikTokUrl"];
+
+    /// <summary>
+    /// Reads one optional string property, telling <i>absent</i> from <i>null</i>.
+    /// <para>
+    /// <b>And a value of the wrong JSON type is a named field error, not "malformed JSON".</b> That is the
+    /// improvement this hand-reading buys over binding a record: <c>{"whatsApp": 123}</c> parses perfectly
+    /// well, and the useful answer names the field rather than telling a staff user their request was not JSON
+    /// (issue #47's family — the status must never depend on the environment, and the message must point at
+    /// something a person can fix).
+    /// </para>
+    /// </summary>
+    private static ValidationProblem? ReadString(
+        JsonObject body,
+        string field,
+        out string? value,
+        out bool present)
+    {
+        value = null;
+        present = body.TryGetPropertyValue(field, out var node);
+
+        if (!present || node is null)
+        {
+            return null;
+        }
+
+        if (node.GetValueKind() != JsonValueKind.String)
+        {
+            return ValidationProblem([new ValidationError(field, "Send this field as text, or as null to clear it.")]);
+        }
+
+        value = node.GetValue<string>();
+
+        return null;
+    }
+
+    /// <inheritdoc cref="ReadString"/>
+    private static ValidationProblem? ReadGuid(
+        JsonObject body,
+        string field,
+        out Guid? value,
+        out bool present)
+    {
+        value = null;
+
+        if (ReadString(body, field, out var text, out present) is { } problem)
+        {
+            return problem;
+        }
+
+        if (text is null)
+        {
+            return null;
+        }
+
+        if (!Guid.TryParse(text, CultureInfo.InvariantCulture, out var parsed))
+        {
+            return ValidationProblem(
+            [
+                new ValidationError(
+                    field,
+                    "That is not a media asset id. Upload the image first and send the publicId it returns."),
+            ]);
+        }
+
+        value = parsed;
+
+        return null;
+    }
 
     private static int? CurrentUserId(ClaimsPrincipal user) =>
         int.TryParse(
