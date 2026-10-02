@@ -199,9 +199,12 @@ address, opening hours, map — which stay as `SITE_CONFIG` placeholders and are
 ## Things the next person should know
 
 - **`ops.DataProtectionKeys` and `ProtectKeysWithCertificate` (doc 08 DB30) do not exist**, so
-  `SettingSecretProtector` currently uses the framework's default filesystem key ring. That is honest for a
-  build with no secret in the table and **must be closed before the first one goes in**. Written in the class
-  as well as here.
+  `SettingSecretProtector` uses the framework's default filesystem key ring. **Corrected after round 1: this
+  was understated.** There is no Data Protection configuration anywhere in `src/backend`, and the default key
+  ring is *already load-bearing today* — it protects the admin auth cookie and the antiforgery tokens on these
+  very routes. In Docker without a mounted volume it is ephemeral, so every container restart invalidates every
+  admin session. "Before the first secret goes in" sets the bar a notch too low: it wants closing **before the
+  next deploy**. Filed by the coordinator; not this task's to fix.
 - The admin stub's derived port band starts at 4500, and **4502 is held by `charon-svc.exe` (a VPN service) on
   this machine** — a worktree whose hash lands there would collide with something that is not a Playwright
   server at all. Not hit today because this run overrode the port.
@@ -222,9 +225,11 @@ Reported rather than resolved:
    owner's record and doc 08 is Tharanga's working document.
 3. **The brief says the social links are placeholders on `https://example.invalid/PLACEHOLDER/<network>`.**
    Those are the *homepage social gallery tiles* (HOME-08), in `ClientAssetImporter` — sd-rename's territory,
-   untouched. The **footer** links were `https://www.facebook.com/` and friends: the networks' front pages,
-   which is the same defect in a milder form and what this slice actually replaced. The HOME-08 tiles still
-   carry `example.invalid` destinations and will want the same treatment.
+   untouched. The **footer** links were `https://www.facebook.com/` and friends, and that is what this slice
+   replaced. **Corrected after round 1: I had the severity the wrong way round.** The HOME-08 tiles are the
+   *milder* defect — `.invalid` is RFC 2606-reserved and cannot resolve, so those tiles are visibly dead —
+   where the old footer links went to a real page that is not this shop, which is the one a shopper cannot tell
+   from a working link. They still want the same treatment, just less urgently than I implied.
 
 ## Shared files touched
 
@@ -234,3 +239,153 @@ without it the 409 refusing to delete the live logo read "Setting Store.LogoAsse
 the exact screen the owner asked for so they could remove an old logo. `MediaUsage.cs` gained
 `OwnerTypes.Setting` and `Roles.Logo`. **The media importer and the seeded catalogue were not touched**
 (sd-rename). `catalog-api-stub.mjs` and `admin-catalog-stub.mjs` gained settings routes, additively.
+
+---
+
+# Round 1 — tester FAIL on 2 majors and 6 minors, all addressed
+
+Nothing in the shipped feature was broken: the tester could not defeat the secret guard, the media-usage
+guard, the concurrency fix, the schema, the anonymous endpoint, or the URL validator beyond three exotic rows.
+The FAIL was for **test integrity and two comments that promised a protection the code did not have** — the
+same standard I had applied three times to my own vacuous tests inside round 0, which is why it is the right
+call. Every count matched.
+
+## Major 1 — both logo-shape fixtures served a 1x1 pixel
+
+`buildSiteSettings` declared `wide` as 600x150 and `tall` as 200x600 while the stub answered every
+`/media/public/` path with one 34-byte 1x1 WebP. So **every logo drawn anywhere in the 643-test suite was one
+1x1 square**, and the two tests that exist to prove the header sizes the logo rather than the file could not
+fail for the reason they state: `max-width: 220px` was never reached, `height`/`object-fit` were never
+exercised, and `expect(drawn.height).toBeLessThanOrEqual(40)` passed trivially on a 32 px box. The stub's own
+comment — a real URL is served "so a broken one would show up as a broken one" — made the gap read as covered.
+That is the property the journal named as the whole safety argument for handing this screen to a client.
+
+**Fixed by generating real images in the stub.** A ~40-line PNG encoder (`solidPng`, IHDR + deflated IDAT +
+CRC) produces `wide` 2000x100 (899 B), `tall` 200x600 (1,591 B) and `square` 512x512 (1,882 B) — three
+distinct files, each the size its payload declares. They are served from `public/originals/logo-*.png` with
+`image/png`, which is a real production shape: `MediaUrlBuilder` returns the original's key for an asset with
+no renditions. PNG rather than WebP because a lossless WebP encoder is a few hundred lines and the property
+under test — intrinsic size — is format-independent.
+
+**And the `square` state is kept deliberately.** The tester proved the tap-target gate works by removing
+`min-width: var(--tap)` and watching the suite go red with my exact reported output — but it only worked
+*because* the 1x1 made every logo square. Fixing the fixtures naively would have un-gated my own fix. So
+`square` is now a named state, the loop that uses it says why, and the rationale comment in `site-header.ts`
+says it too.
+
+**Evidence, with the fixtures mutated back to 1x1:**
+
+| Test | Red output under the 1x1 mutation |
+|---|---|
+| `the wide logo fixture really is 2000x100` | `"width": 2000, "height": 100` expected, `1 / 1` received |
+| `a wide logo leaves the navigation in place…` | `the logo is not capped at 1024px — Expected: 220, Received: 32` |
+| `a tall logo does not grow the header` | `drawn 32px, expected ~10.67px` (21.33 off a tolerance of 2) |
+| `…with the logo square` | **still passes** — a 1x1 *is* square, which is the point |
+
+**And with the real fixtures, `min-width: var(--tap)` removed:**
+
+| Test | Result |
+|---|---|
+| `…with the logo square` | **red**: `width: 32, height: 44` — the original defect, still gated |
+| `…with the logo wide` | **passes** — a wide logo is capped at 220 px, so it cannot see this |
+
+Three new fixture-integrity tests assert `naturalWidth`/`naturalHeight` against the declared values, which is
+the browser's own answer about the decoded bytes and the one number a declared dimension cannot fake.
+
+## Major 2 — the write path had no per-row permission check, and two comments claimed it did
+
+`UpdateContactAndSocialCommandHandler`'s doc said *"the permission is still per row"*; `grep RequiredPermission`
+found it only in the read handler. The read model carefully implemented a control the write model claimed to
+share.
+
+And `toForm`'s comment said a key the server did not send *"stays null, which is correct"* — while the code
+did the opposite of what the comment described: the key stayed `null`, the save PUT all four fields, and
+PUT-replace means the API is told to **clear** them. The moment a `Settings.Edit`-without-`Social` role exists
+— which is what #53 adds — that caller's first WhatsApp save silently wipes the client's social links. W1-12's
+Blocker, one feature over.
+
+**Both halves fixed rather than the comments deleted.**
+
+*Server.* Both write handlers now read `Setting.RequiredPermission` through `IEffectivePermissionsProvider`
+(from roles, never from principal claims — doc 08 §3.1 R4), **after** the diff so an unchanged key is never a
+refusal, and **before** any mutation so a refusal leaves nothing half applied. A refused key is a new
+`SettingsWriteResult.Forbidden` → **403** with `code: setting_forbidden` and the keys named. Silently skipping
+was rejected: a save that reports success and does not do what it was asked is worse than a refusal.
+
+*Absent vs null.* The endpoint now reads the body as a `JsonObject` and tells **absent** ("I am not writing
+this key") from **null** ("clear it"). The command carries a dictionary of the fields the request actually
+sent. The logo route goes further and **refuses** an absent `logoAssetPublicId` with a 400, because that
+route's whole job is an explicit decision and a screen that stopped sending the field would otherwise delete
+the shop's logo. A side benefit: a field of the wrong JSON type is now a named field error instead of
+"malformed JSON" — the right side of issue #47's family.
+
+*Client.* `toForm` omits a key the payload did not contain, `ContactAndSocialValues` fields are optional, and
+the screen renders the WhatsApp box only when the `Contact` group came back and the three social boxes only
+when `Social` did — so the screen, `toForm` and the server all agree about what is being written.
+
+**Red before, green after:** `toForm`'s three omission tests failed with
+`expected [ 'whatsApp', 'facebookUrl', …(2) ] to deeply equal [ 'whatsApp' ]` (4 failed / 230 passed); after
+the fix, 237 passed. The ordering discovery on the way: the integration test for the 403 first came back
+`Expected: Forbidden / Actual: Conflict`, because changing `RequiredPermission` is an UPDATE that moves the
+rowversion — so **concurrency is checked before permission**, which is the right order (tell a stale form to
+reload before telling it about permissions) and is now written down in both tests.
+
+## The six minors
+
+1. **Store the normalised URL.** The old rule kept the raw text, reasoning that normalising "would show a
+   client something other than what they pasted" — which was backwards and created a homograph hole. U+3002
+   (`instagram.com。evil.example`) was accepted, and both .NET's `IdnHost` and Chromium map it to an ordinary
+   dot, so **the stored text read `instagram.com` while the link went to `evil.example`**. U+FF20 and U+FF0F
+   were accepted server-side and *throw* in the browser, so the client got a 204, no error anywhere, and an
+   icon that never appeared. `TryNormaliseProfileUrl` now substitutes `IdnHost` and stores
+   `UriBuilder(...).Uri.AbsoluteUri`. **Measured first, because the obvious fix is wrong:** `AbsoluteUri`
+   alone lower-cases the host, drops a default port and fills an empty path but **leaves the host's Unicode as
+   typed**, so the ASCII host has to be substituted deliberately. The reader re-normalises on the way out, and
+   the storefront's own `href` is now `URL.href` rather than the raw text, so the value checked and the value
+   followed cannot differ.
+2. **Comparers aligned to `OrdinalIgnoreCase`**, matching `Latin1_General_100_CI_AS_SC`. A row scripted in as
+   `social.facebookurl` was found by SQL, "realigned" by the seeder (which reported success), and then missed
+   by the ordinal dictionaries — so the box vanished from the screen and every save answered `NotSeeded`,
+   which is a **500, for ever**, with the advertised repair path reporting nothing wrong.
+3. **The handover moved below the vetting.** `tap(give)` sat upstream of `timeout`/`catchError`, so a failed or
+   slow read handed over nothing and the browser re-fetched — and if that succeeded the logo popped in after
+   hydration, the flash `site-header.ts` claims to prevent. W2-07's Major 3, one feature over. **Mutation-
+   checked:** putting the old order back fails the new test with `expected [] to deeply equal [ {…} ]`.
+4. **`SiteSettingsReader` now reads `IsSecret`.** The tester's correction to the brief was right: it was two
+   floors plus a shape, not three. One `.Where(s => !s.IsSecret)` makes the third real, and the new test uses
+   a value that *passes* format validation so it cannot pass for the old reason.
+5. **`OwnerLabel` is a name again.** It was a 185-character `Description` in a field doc 08 §3.3 documents as
+   "a name a person recognises". `SettingDefinition` gained a short `Label` (≤ 60 chars, asserted), read from
+   the catalogue rather than the row — so no query, no column and no second migration, and it labels correctly
+   even on a database whose row was scripted in with different casing.
+6. **Dead code and slips:** the unread `WhatsAppMaxLength` is gone (it promised a message that never happened);
+   the `min-width` rationale now sits above its own declaration; `AdminSettingsWriteShapeTests` →
+   `AdminSettingsShapeTests`; and the doc 11 reference is P13 step 13 (line 1419) plus P14's permission table
+   (line 1494).
+
+**A third over-promising comment, found by my own probe rather than reported:** both the backend rule and the
+storefront service claimed .NET gives `http:///profile` an *empty host*. It does not — `Uri.TryCreate` returns
+false for it outright. The outcome (refused) was always right; the stated reason was not, which is the kind of
+thing the next person builds on. Corrected in three places with a test that pins the real behaviour.
+
+## Counts after round 1
+
+| Suite | Round 0 | Round 1 | Failures |
+|---|---|---|---|
+| Backend unit | 1088 | **1126** | 0 |
+| Backend integration (real SQL Server) | 663 | **674** | 0 |
+| Frontend unit — shared / storefront / admin | 21 / 1033 / 232 | **21 / 1042 / 237** | 0 |
+| Playwright (full, `CI=1`) | 643 | **647** | 0 of mine (one `bag.e2e.ts` flake, retried green) |
+| Release build | clean | **clean** | 0 warnings |
+| `ng lint` | clean | **clean** | — |
+
+Ports: the same private verified-free block **5620–5632** with `CI=1`. No process, port or database left behind.
+
+## What I would still flag
+
+- The frontend's URL rule and the backend's are now two legible implementations of one rule, but they are
+  still two. A contract test driving both from one table of inputs would be better than two tables that agree
+  today.
+- `SettingsGroupVersion` embeds each row's key verbatim, so its token technically depends on the stored casing
+  of the keys. Both sides read the same rows so they cannot disagree, and the ordering is now
+  case-insensitive — but normalising the key inside the token would remove the thought entirely.
