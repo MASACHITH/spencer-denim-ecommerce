@@ -21,6 +21,15 @@ import { edgesWithoutRing, horizontalOverflow, undersized } from './support/meas
  * computes as present (#38, lesson L4). A tap target under 44 px is not an axe rule at this level. And
  * a menu that re-opens itself when focus returns to it (#20 SH8) is a behaviour, not a snapshot. Each
  * of those is measured, not inferred.
+ *
+ * **The gate's own limit, stated so that nobody relies on it by accident.** The gate is serious and
+ * critical, as `docs/06` §3 says. **Nothing here fails on the next *moderate* violation** except the
+ * one bespoke `region` assertion below - and `heading-order` is a moderate, which is the exact rule
+ * class of #76 and #20's SH11, the defects this task has just finished fixing by hand. So if you are
+ * changing headings: **axe will not catch you.** The heading-order block further down is what will, and
+ * the any-impact annotation test is where a new moderate shows up at all. Raising the gate to every
+ * impact was considered and not done, because an axe upgrade adds rules and a suite that goes red on
+ * `npm ci` teaches people to ignore it - the same reasoning as #84's warning about an `npm audit` gate.
  */
 
 /** docs/04 §4 and the project's non-negotiable list. */
@@ -266,6 +275,36 @@ test.describe('heading order (#76, #20 SH11)', () => {
     });
   }
 
+  /**
+   * **The 503 page, which the claim "every page type" did not actually cover.**
+   *
+   * #76's own table measured it - `H3 Girls, H3 Boys, H3 Baby, H2 Menu, H1 We could not load this page
+   * just now` - and the block above covers five pages, none of them this one. It needs the fault switch
+   * and a second server pair, which is why it was left out; left out is not the same as covered.
+   */
+  test('the catalogue-unavailable page says what it is before anything else', async ({
+    page,
+    request,
+  }) => {
+    await request.get(`${liveOnlyApiURL}/__test__/departments-fault?mode=status`);
+    try {
+      await page.route('**/api/catalog/**', async (route) => {
+        const url = new URL(route.request().url());
+        const response = await route.fetch({ url: `${liveOnlyApiURL}${url.pathname}${url.search}` });
+        await route.fulfill({ response });
+      });
+      await page.goto(`${liveOnlyCatalogueURL}/women/coats`);
+      await expect(page.getByRole('button', { name: 'Try again' })).toBeVisible();
+
+      const found = await headings(page);
+
+      expect(found.length).toBeGreaterThan(0);
+      expect(found[0], `headings were ${JSON.stringify(found)}`).toMatch(/^H1 /);
+    } finally {
+      await request.get(`${liveOnlyApiURL}/__test__/departments-fault?mode=none`);
+    }
+  });
+
   test('the h1 is still first with the mega menu open', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 900 });
     await useStubApi(page);
@@ -371,6 +410,52 @@ test.describe('the mega menu after Escape (#20 SH8)', () => {
 
     await expect(department(page, 'Women')).toBeFocused();
     await expect(page.locator('#mega-women')).toBeHidden();
+  });
+
+  /**
+   * **F3: a second Escape used to overwrite the first.**
+   *
+   * The guard was a single `string | null`, so dismissing a second department forgot the first and four
+   * keystrokes brought SH8's own symptom back: focus Women, Escape, Tab to Men, Escape, Shift+Tab to
+   * Women - and Women was open again, because the slot now held `men`. Every test above probes a single
+   * dismissal, which is why the single slot looked correct.
+   *
+   * Driven with real key presses, like the rest of this block: the defect was about what the component
+   * remembers between two browser events, and a test that called the handler twice would have agreed
+   * with the broken code.
+   */
+  test('a second Escape does not undo the first', async ({ page }) => {
+    await department(page, 'Women').focus();
+    await expect(page.locator('#mega-women')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#mega-women')).toBeHidden();
+
+    await page.keyboard.press('Tab');
+    await expect(department(page, 'Men')).toBeFocused();
+    await expect(page.locator('#mega-men')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#mega-men')).toBeHidden();
+
+    await page.keyboard.press('Shift+Tab');
+
+    await expect(department(page, 'Women')).toBeFocused();
+    expect(await page.locator('#mega-women').isVisible(), 'Women reopened after a second Escape').toBe(
+      false,
+    );
+  });
+
+  /** And a third, because "remembers more than one" should not mean "remembers exactly two". */
+  test('all three dismissals are remembered', async ({ page }) => {
+    for (const name of ['Women', 'Men', 'Kids'] as const) {
+      await department(page, name).focus();
+      await page.keyboard.press('Escape');
+    }
+
+    // Walk back along the nav; none of the three may reopen on the way.
+    for (const name of ['Kids', 'Men', 'Women'] as const) {
+      await department(page, name).focus();
+      expect(await page.locator(`#mega-${name.toLowerCase()}`).isVisible(), name).toBe(false);
+    }
   });
 
   /** Tabbing on must still open the next department: the guard is Women's, not the navigation's. */

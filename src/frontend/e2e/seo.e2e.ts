@@ -1,6 +1,6 @@
 import { APIResponse, expect, test } from '@playwright/test';
 
-import { faultyCatalogueURL } from '../playwright.config';
+import { deepCatalogueURL, faultyCatalogueURL } from '../playwright.config';
 
 /**
  * What the storefront puts on the wire for a crawler (GLB-11).
@@ -37,6 +37,155 @@ function contentType(response: APIResponse): string {
  * majors — so an `npm audit --audit-level=high` gate would red every pull request from the day it
  * landed. Read #84 before adding one.
  */
+/**
+ * **F1: `//robots.txt` answered HTTP 500, and this branch caused it.**
+ *
+ * `@angular/platform-server` throws NG05702 for a protocol-relative URL, but from a provider factory
+ * during injector hydration — so only once a component is about to render. While the catch-all route
+ * was `redirectTo: ''` that throw was unreachable, because a redirect short-circuits before any
+ * component is built. Pointing the catch-all at a real page (#28) made every `//`-prefixed address the
+ * route table does not otherwise claim throw instead, and the render handler's `catch(next)` turned it
+ * into a 500. The control at the time: `//about`, `//bag` and `//terms` still answered 302, because
+ * those are redirect routes and short-circuited.
+ *
+ * **A 5xx on `robots.txt` tells a crawler the entire site is disallowed** — the single outcome this
+ * whole design exists to prevent, and which `server.ts`, `robots-txt.ts` and this file all claim is
+ * impossible because a route table is not where that answer can come from. It still is not. It was one
+ * character away from being false.
+ *
+ * Every address class is checked in its `//` form rather than `robots.txt` alone, because the defect was
+ * never about `robots.txt`: it was about every address a route does not claim.
+ */
+test.describe('a leading run of slashes (F1)', () => {
+  const ADDRESSES = [
+    '//robots.txt',
+    '///robots.txt',
+    '//sitemap.xml',
+    '//',
+    '////',
+    '//healthz',
+    '//women',
+    '//women/jeans',
+    '//kids/girls/girls-dresses',
+    '//product/test-product-1',
+    '//search?q=test',
+    '//new-arrivals',
+    '//not-a-dept',
+    '//bogus/thing',
+    '//favicon.ico',
+    // The three that were *not* broken, because a redirect route short-circuited the throw. They are
+    // in the list so the fix is shown to cover the whole class rather than the half that failed.
+    '//about',
+    '//bag',
+    '//terms',
+  ] as const;
+
+  for (const path of ADDRESSES) {
+    test(`${path} is a 301 to the single-slash form, never a 5xx`, async ({ request, baseURL }) => {
+      // `${baseURL}${path}` rather than `path`, and this is not a style choice. A request client
+      // resolves a bare `//host` as a **protocol-relative URL**, so `request.get('//robots.txt')` goes
+      // to `http://robots.txt/` and never touches this server. The first version of this test failed
+      // against the broken build with `ENOTFOUND robots.txt` — a failure that proves nothing, and
+      // exactly the shape of green-for-the-wrong-reason this project keeps finding. An explicit scheme
+      // is what makes the leading double slash a path instead of a host.
+      const response = await request.get(`${baseURL}${path}`, { maxRedirects: 0 });
+
+      expect(response.status()).toBe(301);
+      // A **relative** Location, which RFC 7231 permits and which is the safer of the two: an absolute
+      // one would have to be built from the request's own Host, and that is the forgery hazard
+      // `src/server/origins.ts` exists to refuse. Nothing here needs an origin, so nothing here invents
+      // one.
+      expect(response.headers()['location']).toBe(path.replace(/^\/+/, '/'));
+    });
+  }
+
+  /**
+   * **The backslash shapes are in `canonical-path.spec.ts` and not here, and that is a limit of the
+   * client rather than a gap in the fix.** A leading slash followed by a backslash threw the same
+   * NG05702, and that shape is also read as protocol-relative by some user agents — but every
+   * URL-parsing client, Playwright's included, rewrites a backslash in a path to a slash before the
+   * request leaves, so this suite cannot put one on the wire at all. It was measured by hand with
+   * `curl`, which does not rewrite it: **500** before the fix, **301 `Location: /robots.txt`** after.
+   * The unit spec holds the logic, including the property that the redirect can never leave this
+   * origin.
+   */
+  test('the query string survives the redirect', async ({ request, baseURL }) => {
+    const response = await request.get(`${baseURL}//women?colour=navy`, { maxRedirects: 0 });
+
+    expect(response.status()).toBe(301);
+    expect(response.headers()['location']).toBe('/women?colour=navy');
+  });
+
+  /**
+   * **The redirect must not be able to leave this origin.** `//evil.example.com/x` is the address a
+   * naive fix turns into an open redirect, so the `Location` is checked to be a path on this host with
+   * the hostile host demoted to a path segment.
+   */
+  for (const path of ['//evil.example.com/x', '///evil.example.com', '////evil.example.com/x']) {
+    test(`${path} redirects inside this origin, not to it`, async ({ request, baseURL }) => {
+      const response = await request.get(`${baseURL}${path}`, { maxRedirects: 0 });
+
+      expect(response.status()).toBe(301);
+
+      const location = new URL(response.headers()['location'], baseURL);
+      expect(location.origin).toBe(new URL(baseURL ?? '').origin);
+      expect(location.pathname.startsWith('//')).toBe(false);
+    });
+  }
+
+  /** And following the redirect reaches the thing itself, with the right media type. */
+  test('following it reaches the real answer', async ({ request, baseURL }) => {
+    const robots = await request.get(`${baseURL}//robots.txt`);
+    expect(robots.status()).toBe(200);
+    expect(robots.headers()['content-type']).toContain('text/plain');
+    expect(await robots.text()).toContain('User-agent: *');
+
+    const sitemap = await request.get(`${baseURL}//sitemap.xml`);
+    expect(sitemap.status()).toBe(200);
+    expect(await sitemap.text()).toContain('<urlset');
+
+    const listing = await request.get(`${baseURL}//women`);
+    expect(listing.status()).toBe(200);
+    expect(await listing.text()).toContain('<sd-listing-page');
+
+    // Still a 404 rather than a redirect's 200: canonicalising a path does not make the page exist.
+    expect((await request.get(`${baseURL}//not-a-dept`)).status()).toBe(404);
+  });
+
+  /**
+   * The second line of defence, on the wire. `render-failure.spec.ts` covers what it answers; this is
+   * the property that matters site-wide — **no address class answers 5xx** — checked across the shapes
+   * that reach the renderer rather than a route.
+   */
+  test('no address shape answers a 5xx', async ({ request, baseURL }) => {
+    const shapes = [
+      '/robots.txt',
+      '//robots.txt',
+      '/robots.txt/',
+      '/./robots.txt',
+      '/sitemap.xml',
+      '//sitemap.xml',
+      '/women//jeans',
+      '/%2F%2Frobots.txt',
+      // Matrix parameters: the subject of GHSA-ff3f-86qr-9cv3, on the catch-all this branch changed.
+      '/;1=1',
+      '//;1=1',
+      '/women;1=1',
+      '/not-a-dept;1=1',
+      '/not-a-dept',
+      '//not-a-dept',
+    ];
+
+    const answers: Record<string, number> = {};
+    for (const shape of shapes) {
+      answers[shape] = (await request.get(`${baseURL}${shape}`, { maxRedirects: 0 })).status();
+    }
+
+    const serverErrors = Object.entries(answers).filter(([, status]) => status >= 500);
+    expect(serverErrors, JSON.stringify(answers, null, 2)).toEqual([]);
+  });
+});
+
 test.describe('robots.txt', () => {
   /**
    * **The one that matters most, and the reason it is answered by Express.**
@@ -200,6 +349,25 @@ test.describe('sitemap.xml', () => {
 
   test('answers HEAD', async ({ request }) => {
     expect((await request.head('/sitemap.xml')).status()).toBe(200);
+  });
+
+  /**
+   * **Truncation, on the wire, which it was not before.** It was reported only in an XML comment and the
+   * switch that would have produced one was set by nothing — so the whole chain from the API's flags
+   * through `asSitemap` and the snapshot to the rendered note shipped unexercised. The deep pair reports
+   * two of the three caps as reached, which is why it is the pair used: it exists because the catalogue
+   * is big, and "big enough that one sitemap cannot list it" is the same idea.
+   */
+  test('says in the document which caps the catalogue has outgrown', async ({ request }) => {
+    const body = await (await request.get(`${deepCatalogueURL}/sitemap.xml`)).text();
+
+    expect(body).toContain('more visible categories than one sitemap may list (Catalog:SitemapMaxCategories)');
+    expect(body).toContain('more visible products than one sitemap may list (Catalog:SitemapMaxProducts)');
+    // Only the two that were asked for: a note for a cap that was not reached would be worse than none.
+    expect(body).not.toContain('more visible departments');
+    // And it is still a valid document with real addresses in it.
+    expect(body).toContain('<urlset');
+    expect(body).toContain('<loc>');
   });
 
   /**
