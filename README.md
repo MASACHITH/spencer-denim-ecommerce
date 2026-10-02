@@ -286,6 +286,65 @@ re-import switching a section on over copy that contradicts the picture, which i
 > shows broken images and the import will not put them back. A lost volume needs a restore from
 > backup, or the asset rows deleting first so the files are written again.
 
+#### Kids stand-in photographs — TEST DATA, and still outstanding
+
+**The client has not supplied photographs for the ten kids products, and they are still owed.** So
+that the Kids section can be seen and tested, each kids product borrows the nearest delivered adult
+garment's photograph (owner decision, 2026-10-02). Nothing about this is finished work: the client
+progress page still says kids photographs are outstanding, and it is right.
+
+```powershell
+# Prints the mapping, builds the stand-in drop, and imports — the delivery first, then the stand-ins
+./tools/kids-stand-in-photos.ps1 -ClientAssets <path-to-the-drop>
+
+# What it would do, storing nothing
+./tools/kids-stand-in-photos.ps1 -ClientAssets <path-to-the-drop> -DryRun
+```
+
+**Which kids product borrowed which photograph, and how good each match is, is in one file:
+[`tools/kids-stand-in-photos.csv`](tools/kids-stand-in-photos.csv)**, with a reason per row. Two of
+the ten are recorded as a bad match rather than dressed up as a good one — the baby bodysuit set
+borrows a women's ribbed tee, and the muslin bib set has nothing close in the delivery at all and
+borrows a canvas tote. `KidsStandInMappingTests` holds every slug in that file against the real
+catalogue, so a renamed or an eleventh kids product fails the build instead of quietly keeping its
+placeholder.
+
+**It is one asset shared by two products, not a copy.** `UX_MediaAssets_Checksum_Ready` means the
+same bytes cannot become a second asset however many filenames carry them, which is correct: the
+outcome is one `media.MediaAssets` row with two `media.MediaUsages` rows, and the adult product keeps
+its own card and hover untouched. Nothing is duplicated, no migration is involved, and the catalogue
+is not changed.
+
+**The order of the two imports is not a courtesy.** Alt text lives on the asset, so whichever import
+creates it writes the sentence both products then read out. The script imports the client's delivery
+first for that reason alone; run the stand-ins against a library that does not hold the donor's bytes
+and the shared asset ends up carrying the *kids* product's name, which the women's or men's product
+then reads out as well. `Importing_the_stand_ins_first_puts_the_kids_name_on_the_donors_photograph`
+asserts that, so the day the importer stops depending on the order the test fails and the first step
+can go.
+
+**The alt text deliberately names the adult garment.** A girls' sundress card reads "Tiered Midi
+Dress, front view", because that is what is in the photograph. It is the only sentence available —
+one asset, one sentence, shared — and writing "Girls Cotton Sundress" would be both false and a
+regression on the women's product, which reads the same row. `ProductMedia.AltTextOverride` is left
+null on purpose: `ProductCatalogReader` takes a *card's* alt text straight from the asset and has no
+override to consult, so an override would make the listing and the product page disagree about one
+picture, and `PlaceProductMedia` does not clear an override when a photograph replaces another — so
+it would outlive the stand-in and describe the wrong garment for ever.
+
+**When the real photographs arrive**, put them in the client's own drop as `<kids-slug>-1.jpg` and
+`<kids-slug>-2.jpg` and re-import with `--replace`:
+
+```powershell
+dotnet run --project src/backend/SpencerDenim.Api --no-launch-profile -- `
+  import-client-assets --from <path-to-the-drop> --replace
+```
+
+`--replace` is required and is the whole reversal. A stand-in is a picture somebody chose, so without
+it the run lists the kids slots under *NOT APPLIED*, exits **3** and changes nothing. Afterwards,
+`./tools/kids-stand-in-photos.ps1 -Remove` deletes the generated drop, and the row for each product
+that now has its own photograph comes out of the CSV.
+
 ### 3. Run the API
 
 ```powershell
