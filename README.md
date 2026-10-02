@@ -301,6 +301,16 @@ progress page still says kids photographs are outstanding, and it is right.
 ./tools/kids-stand-in-photos.ps1 -ClientAssets <path-to-the-drop> -DryRun
 ```
 
+`-Out` defaults to the git-ignored `.local-kids-stand-ins/`. Whatever is at that path is **deleted and
+rebuilt**, so the script refuses any path that is not either absent or a generated drop of this
+mapping's own files — and refuses outright anything holding, held by or equal to `-ClientAssets`, which
+is the only copy of the client's photographs and is in no repository.
+
+**A first `-DryRun` cannot tell you the alt text, and says so.** Both steps are dry runs, so step 1
+stores nothing for step 2 to find; with the donor's bytes still absent, the plan marks each line
+`PROVISIONAL` rather than printing the kids product's own name as the sentence that would be written.
+Run it again after the delivery is really imported and every line names the donor's sentence.
+
 **Which kids product borrowed which photograph, and how good each match is, is in one file:
 [`tools/kids-stand-in-photos.csv`](tools/kids-stand-in-photos.csv)**, with a reason per row. Two of
 the ten are recorded as a bad match rather than dressed up as a good one — the baby bodysuit set
@@ -323,14 +333,22 @@ then reads out as well. `Importing_the_stand_ins_first_puts_the_kids_name_on_the
 asserts that, so the day the importer stops depending on the order the test fails and the first step
 can go.
 
-**The alt text deliberately names the adult garment.** A girls' sundress card reads "Tiered Midi
-Dress, front view", because that is what is in the photograph. It is the only sentence available —
-one asset, one sentence, shared — and writing "Girls Cotton Sundress" would be both false and a
-regression on the women's product, which reads the same row. `ProductMedia.AltTextOverride` is left
-null on purpose: `ProductCatalogReader` takes a *card's* alt text straight from the asset and has no
-override to consult, so an override would make the listing and the product page disagree about one
-picture, and `PlaceProductMedia` does not clear an override when a photograph replaces another — so
-it would outlive the stand-in and describe the wrong garment for ever.
+**The alt text deliberately names the adult garment.** On the product page a girls' sundress reads
+"Tiered Midi Dress, front view", because that is what is in the photograph. It is the only sentence
+available — one asset, one sentence, shared — and writing "Girls Cotton Sundress" would be both false
+and a regression on the women's product, which reads the same row.
+
+**Disclosed on the product page, silent on the listing.** A product card's `<img>` carries a hard-coded
+`alt=""` inside an `aria-hidden="true"` anchor (`product-card.ts`), because the photograph repeats the
+link on the product name — the correct decorative-image treatment, and nothing to do with this change.
+So the asset's sentence never reaches `/kids` at all: the borrowed garment is named on the product page
+and nowhere on the listing.
+
+`ProductMedia.AltTextOverride` is left null on purpose, and the reason is **not** that an override would
+make the listing disagree — the listing says nothing, so it cannot. It is that `PlaceProductMedia` does
+**not** clear an override when a photograph replaces the one before it, so an override written now would
+outlive the stand-in and go on describing the wrong garment after the real photographs had landed. That
+is exactly the archaeology this arrangement exists to avoid.
 
 **When the real photographs arrive**, put them in the client's own drop as `<kids-slug>-1.jpg` and
 `<kids-slug>-2.jpg` and re-import with `--replace`:
@@ -341,9 +359,17 @@ dotnet run --project src/backend/SpencerDenim.Api --no-launch-profile -- `
 ```
 
 `--replace` is required and is the whole reversal. A stand-in is a picture somebody chose, so without
-it the run lists the kids slots under *NOT APPLIED*, exits **3** and changes nothing. Afterwards,
-`./tools/kids-stand-in-photos.ps1 -Remove` deletes the generated drop, and the row for each product
-that now has its own photograph comes out of the CSV.
+it the run lists the kids slots under *NOT APPLIED*, exits **3** and changes nothing a shopper sees —
+**but the photographs themselves do enter the library.** The bytes go through the pipeline before the
+slot is consulted, so a refused run leaves their assets and renditions stored and referenced by nothing:
+measured at 2 assets and 8 files for the two kids photographs. Litter rather than loss, and nothing
+purges it on its own; re-running with `--replace` then attaches the assets that are already there.
+
+Afterwards, `./tools/kids-stand-in-photos.ps1 -Remove` deletes the generated drop, and the row for each
+product that now has its own photograph comes out of the CSV. **Leaving a row in is safe, not
+dangerous** — tidiness, not a guard. Re-run the script with the real photographs in place and the
+importer refuses the slots it would overwrite and exits 3; the protection is the importer's conflict
+rule, not the contents of the CSV.
 
 ### 3. Run the API
 

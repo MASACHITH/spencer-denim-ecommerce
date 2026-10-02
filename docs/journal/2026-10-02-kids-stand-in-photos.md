@@ -86,28 +86,42 @@ words to treat that row as a gap.
      be false.
   2. There is **only one sentence available**. Alt text is a column on the shared asset, so writing
      the kids name would put it on the *women's* product too.
-  3. `ProductMedia.AltTextOverride` cannot fix that. `ProductCatalogReader` takes a **card's** alt
-     text straight from `CardImageAsset.AltText` with no override to consult (line 538), so an
-     override would make the listing card and the product page disagree about one picture — which is
-     W1-13's stated reason for leaving it null.
-  4. Decisively: **`PlaceProductMedia` does not clear `AltTextOverride` when a photograph replaces
-     another.** An override written now would survive the real photographs arriving and describe the
-     wrong garment for ever — exactly the archaeology this task exists to prevent.
+  3. ~~An override would make the listing card and the product page disagree.~~ **Struck — this was
+     wrong, and the tester caught it.** `product-card.ts:91` and `:105` hard-code `alt=""` on both the
+     card and the hover image, inside an `aria-hidden="true"` anchor, because the photograph repeats
+     the link on the product name. That is the correct decorative-image treatment and has nothing to
+     do with this change — but it means the asset's sentence **never reaches the listing at all**
+     (measured: 0 distinct non-empty `alt` values on the whole `/kids` page), so the listing and the
+     product page cannot disagree. The honest summary is **disclosed on the product page, silent on
+     the listing**, not "the same sentence everywhere".
+  4. Decisively, and the only structural argument left: **`PlaceProductMedia` does not clear
+     `AltTextOverride` when a photograph replaces another.** An override written now would survive the
+     real photographs arriving and describe the wrong garment for ever — exactly the archaeology this
+     task exists to prevent. The tester verified this line by line rather than taking it.
 
   The mismatch between "Girls Cotton Sundress" in the heading and "Tiered Midi Dress" in the alt text
-  is therefore the **disclosure**, it costs nothing to remove, and it is the same sentence everywhere.
-  There is a second one on the page for free: the seeded placeholder frames behind the card and hover
-  (sort orders 1..4, colour-scoped, untouched by the import) still read "Placeholder image — no
-  photograph of Girls Cotton Sundress is supplied", exactly as every women's and men's product's do
-  since W1-13. The gallery says the photographs are outstanding in its own words.
+  is therefore the **disclosure on the product page**, and it costs nothing to remove. There is a
+  second one for free: the seeded placeholder frames behind the card and hover (sort orders 1..4,
+  colour-scoped, untouched by the import) still read "Placeholder image — no photograph of Girls
+  Cotton Sundress in Blush Pink has been supplied yet", exactly as every women's and men's product's
+  do since W1-13. The gallery says the photographs are outstanding in its own words.
 
 - **The reversal is `--replace`, which already existed.** Real kids photographs go into the client's
   own drop as `<kids-slug>-1.jpg` / `-2.jpg` and `import-client-assets --from <drop> --replace` puts
   them in. Without `--replace` the run lists the kids slots under *NOT APPLIED*, exits **3** and
-  changes nothing, because a stand-in is a picture somebody chose and the importer cannot tell it from
-  an admin's upload. `The_real_photographs_replace_a_stand_in_and_leave_the_donor_alone` asserts the
-  refusal *and* the replacement, and that the superseded stand-in leaves the kids gallery rather than
-  sitting beside the real photograph.
+  changes nothing **a shopper sees** — but the photographs do enter the library: the bytes go through
+  the pipeline before the slot is consulted, so a refused run leaves 2 assets and 8 files stored with
+  no usage row pointing at them (956 → 964, measured). Litter rather than loss, and nothing purges it
+  automatically. I had written "changes nothing", which was true of the slots and false of the library;
+  the test now asserts both halves.
+  `The_real_photographs_replace_a_stand_in_and_leave_the_donor_alone` asserts the refusal *and* the
+  replacement, and that the superseded stand-in leaves the kids gallery rather than sitting beside the
+  real photograph.
+
+- **Deleting a product's row from the CSV is tidiness, not a guard.** The tester checked what happens
+  if the row is left in and the script re-run with the real photographs already in place: exit 3 and a
+  Conflict on every kids slot. The protection is the importer's conflict rule, which is stronger than
+  my README implied, and the README now says so.
 
 ## Found: the import report asserted alt text it had not written
 
@@ -128,15 +142,69 @@ and the report says which sentence was kept and which was not written:
     sentence, shared with every product that shows it
 ```
 
-## One client-facing string to watch (not changed, reported)
+## One client-facing string to watch (not changed, and settled)
 
 `client-progress/progress-data.js` line 135: *"Kids products still show marked placeholder images
-until those photographs are supplied."* **True about the delivery and about any environment where the
-script has not been run; false about one where it has.** The stand-ins are applied only by a manual
-command, never by the seeder and never at startup, so a client looking at a staging site that has had
-the script run would see kids products with adult photographs under a page saying placeholders.
-Changing it is the owner's call and would mean telling the client their kids photographs are no longer
-needed, which is the opposite of true — so the line is left exactly as it is and flagged here.
+until those photographs are supplied."*
+
+**It stays exactly as it is, and the reason is better than the one I first gave.** I argued it was
+"false on an environment where the script has been run". The tester's reason is the right one: that
+line sits inside `updates: [` in a **dated entry** describing the delivery landing — it is **history,
+not status** — and editing a dated note because somebody later ran a local test-data script would
+falsify the log. The Kids rows in `features` claim nothing about photography, so nothing there is
+wrong either.
+
+Also established, and worth having written down: **no production code reads the mapping CSV at all**,
+the seeder never applies the stand-ins, and `import-client-assets` is a CLI verb that never starts the
+web host — so no environment the client is shown can carry stand-ins unless somebody deliberately ran
+the script there. If that ever happens the answer is a **new dated entry**, not an edit to this one.
+
+## Tester round 1: FAIL on 2 majors and 5 minors, all fixed
+
+Rebased onto `origin/main` (`f96f9b8`) by the owner first, so W2-09/CART-01/02 is underneath this now.
+
+- **Major — `-Out` deleted whatever was at that path, recursively, with no guard.** The one
+  destructive operation on the branch, on an operator-supplied path, and `-ClientAssets` is the
+  adjacent parameter an operator always types. The stakes are the part I had not thought through:
+  **`client-assets/` is untracked in every repository here**, so it is the project's only copy of the
+  delivered photographs, and one transposed argument destroyed it with no prompt and exit 0. It was
+  below the standard of the file it shipped beside — `ClientAssetImporter` refuses to overwrite "a
+  picture somebody chose" and exits 3 rather than guess, under its own comment that "a missed file is
+  litter; a deleted file is data loss". `Assert-SafeOutputFolder` now refuses a filesystem root, the
+  repository, anything containing or contained by `-ClientAssets`, and any existing folder that is not
+  wholly a generated drop of this mapping's own files — "everything here is mine", not "something here
+  is mine". `-Remove` goes through the same gate. Eight tests in
+  `KidsStandInDropGuardTests`, driving the real script through `pwsh` against decoy folders under the
+  test's own temp directory; **six of them failed before the guard existed**, including the delivery
+  being deleted outright.
+
+- **Major — the first dry run stated the exact false sentence this task's central decision exists to
+  prevent.** `-DryRun` passes `--dry-run` to *both* steps, so step 1 commits nothing, step 2's
+  `FindByChecksumAsync` cannot find the donor's bytes, and the old `stored.AltText ?? alt` fell back to
+  the offered kids sentence. On a freshly seeded database — exactly where the documented order starts
+  an operator — all 20 lines read `alt text "Girls Cotton Sundress, front view"` as fact. A plan that
+  cannot know has to say so, which is the rule this command already applies to refusals ("0 refused"
+  means NOT CHECKED). The line is now marked `PROVISIONAL` with the reason, and `-DryRun` says the same
+  thing in prose at the end.
+
+- **Minor — a `Conflict` still carried the "kept rather than overwritten" clause**, claiming a sentence
+  had been preserved on a slot the run had just declined to touch. `altNote` was built before the
+  outcome was consulted; the detail is now an outcome `switch` and `Conflict` reports the slot only.
+
+The other three minors are corrections to things I wrote, fixed where I wrote them: reason #3 of the
+alt-text decision (struck — see above), "exits 3 and changes nothing" (false of the library), and the
+menswear count. The alt-text decision itself stands, and the tester verified its decisive argument
+directly rather than accepting it.
+
+### Worth knowing: a stale build made a test lie to me, twice
+
+Chasing the `Conflict` fix I "restored" the patched importer with `Copy-Item`, which **preserves the
+source file's LastWriteTime** — so the restored file was older than the compiled DLL, `dotnet build`
+reported success without recompiling, and `dotnet test --no-build` ran the *old* code. I spent several
+minutes reading correct source that could not possibly produce the output I was seeing. Dumping the
+actual report entries settled it in one run. If you swap a file in or out to compare behaviour, `touch`
+it afterwards, or build with `--no-incremental`; and when source and behaviour disagree, print the
+behaviour before re-reading the source.
 
 ## Also found, not mine, not touched
 
@@ -148,8 +216,11 @@ needed, which is the opposite of true — so the line is left exactly as it is a
   one derives a port per worktree. `playwright.config.ts` says so itself and says it is not that
   task's job to move them; it is not this one's either.
 - **The brief for this task called the delivered photographs "the womenswear photographs".** The
-  delivery is men's and women's and accessories (`SD-M-*` and `SD-W-*`), and four of the ten
-  stand-ins are **menswear** — which is better, not worse: a boys' checked shirt matched to a men's
-  oxford and a boys' tee to a men's crew tee are closer matches than anything in womenswear.
+  delivery is men's and women's and accessories (`SD-M-*` and `SD-W-*`), and the split is **five
+  menswear and five womenswear**, not four and six as I first reported — men's are
+  `oversized-graphic-tee`, `oxford-button-down-shirt`, `heavyweight-crew-tee`,
+  `linen-drawstring-shorts` and `court-canvas-sneakers`. The substance of the correction stands and the
+  menswear matches are the better ones: a boys' checked shirt on a men's oxford and a boys' tee on a
+  men's crew tee are closer than anything in womenswear.
 
 **Next:** tester. Nothing here is Done until it passes.
