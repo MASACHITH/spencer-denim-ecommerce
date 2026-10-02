@@ -2,9 +2,13 @@ import {
   ChangeDetectionStrategy,
   Component,
   DestroyRef,
+  ElementRef,
   RESPONSE_INIT,
+  afterRenderEffect,
   computed,
   inject,
+  untracked,
+  viewChildren,
 } from '@angular/core';
 import { Meta, Title } from '@angular/platform-browser';
 import { RouterLink } from '@angular/router';
@@ -145,7 +149,9 @@ import { RobotsMeta } from '../../core/platform/robots-meta';
                           inputmode="numeric"
                           min="1"
                           step="1"
+                          #qtyBox
                           [id]="'bag-qty-' + line.variantId"
+                          [attr.data-variant-id]="line.variantId"
                           [max]="line.maxQuantity"
                           [value]="line.quantity"
                           [disabled]="busy(line)"
@@ -203,14 +209,27 @@ import { RobotsMeta } from '../../core/platform/robots-meta';
           <section class="bag__summary" aria-labelledby="bag-summary-title">
             <h2 class="bag__summary-title" id="bag-summary-title">Order summary</h2>
 
+            <!-- The ladder has to add up. It did not: Subtotal printed itemsSubtotal, which is already
+                 net of the markdown, then a deduction row of savedTotal, which *is* the markdown, then
+                 itemsSubtotal again as the Total — so a shopper read 8,784 − 5,196 and a total of
+                 8,784. Subtotal is now the "was" figure (itemsOriginalTotal) and Total is what they pay
+                 (itemsSubtotal), which makes the subtraction true and shows what they saved, which is
+                 worth showing on a shop that marks things down. bag-page.spec.ts checks the three
+                 figures as a sum, not as three string matches. -->
             <dl class="bag__sums">
               <div>
                 <dt>Subtotal ({{ buyableCount() }} {{ buyableCount() === 1 ? 'item' : 'items' }})</dt>
-                <dd>{{ money(totals().itemsSubtotal) }}</dd>
+                <dd>{{ money(totals().itemsOriginalTotal) }}</dd>
               </div>
               @if (totals().savedTotal > 0) {
+                <!-- Savings, not Discount, and that is a distinction rather than a synonym: nothing
+                     here was applied by a code. This is the markdown between a product's compare-at
+                     price and what it sells for today (doc 08 §6 steps 2 and 6). ADM-13's promo code
+                     adds a Discount row of its own *below* this one, and two rows both called Discount
+                     would be unreadable. Hidden entirely when there is nothing to show, so a bag of
+                     full-price items has Subtotal equal to Total and no deduction at all. -->
                 <div>
-                  <dt>Discount</dt>
+                  <dt>Savings</dt>
                   <dd class="text-sale">&minus;{{ money(totals().savedTotal) }}</dd>
                 </div>
               }
@@ -525,7 +544,44 @@ export class BagPage {
     // From the constructor, so the request is in flight before the first change detection and the server
     // renders the lines rather than a spinner.
     this.cart.load();
+
+    // **Puts every quantity box back in step with the bag.**
+    //
+    // `onQuantityInput` writes `input.value` by hand, which is right for immediate feedback and wrong on
+    // its own: it bypasses the `[value]` binding, so when a change is refused `line.quantity` never
+    // moves, Angular sees no change to the bound expression and never rewrites the element. The box then
+    // showed a number the bag did not hold, and the next step computed from the real quantity and jumped.
+    //
+    // It depends on `busyLines()` as well as on `lines()`, and that is the part that matters: a refused
+    // write changes **nothing** about the bag, so a re-sync keyed on the lines alone would never fire.
+    // Every mutation flips a line busy and back, so this runs at the end of every attempt either way.
+    afterRenderEffect(() => {
+      const lines = this.lines();
+      this.cart.busyLines();
+
+      untracked(() => {
+        for (const box of this.quantityBoxes()) {
+          const element = box.nativeElement;
+          const variantId = Number(element.dataset['variantId']);
+
+          // A line with a change in flight keeps the number that was asked for. Without this the
+          // effect fires on busy-*on* and immediately overwrites the shopper's own clamped value with
+          // the quantity the bag still holds — so the box flicked back the instant they typed.
+          if (this.cart.isBusy(variantId)) {
+            continue;
+          }
+
+          const line = lines.find((candidate) => candidate.variantId === variantId);
+          if (line && element.value !== String(line.quantity)) {
+            element.value = String(line.quantity);
+          }
+        }
+      });
+    });
   }
+
+  /** The quantity inputs, so the effect above can put each one back in step with its line. */
+  private readonly quantityBoxes = viewChildren<ElementRef<HTMLInputElement>>('qtyBox');
 
   protected busy(line: CartLineDto): boolean {
     return this.cart.isBusy(line.variantId);
@@ -578,13 +634,20 @@ export class BagPage {
    * `parseInt('1e9', 10)` is **1**, so typing `1e9` would have quietly set the quantity to one. `0` and
    * `-3` are rejected on the same principle — a shopper who meant to remove the line has a Remove
    * button, and guessing "they must have meant 1" changes a quantity they never asked to change.
+   *
+   * **Any digits-only value clamps, however long.** There used to be a `Number.isSafeInteger` guard, so
+   * a twenty-digit number was *reset* to the current quantity while `99` *clamped* to the ceiling — two
+   * different answers to the same keystroke intent, decided by how long the number was. `Math.min`
+   * handles the long ones correctly on its own, `Infinity` included.
+   *
+   * The box is written here for immediate feedback — a clamp the shopper cannot see is a clamp they will
+   * fight — and `syncQuantityBoxes` puts it right again if the server disagrees.
    */
   protected onQuantityInput(line: CartLineDto, event: Event): void {
     const input = event.target as HTMLInputElement;
     const raw = input.value.trim();
     const typed = /^\d+$/.test(raw) ? Number(raw) : Number.NaN;
-    const usable = Number.isSafeInteger(typed) && typed >= 1;
-    const next = usable ? Math.min(typed, line.maxQuantity) : line.quantity;
+    const next = typed >= 1 ? Math.min(typed, line.maxQuantity) : line.quantity;
 
     input.value = String(next);
 

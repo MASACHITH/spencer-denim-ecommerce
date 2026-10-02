@@ -113,6 +113,34 @@ describe('BagPage (CART-01)', () => {
     return element.textContent ?? '';
   }
 
+  /** The `<dt>` of every row in the summary, so a label can be asserted present *and* absent. */
+  function rowLabels(): string[] {
+    return Array.from(element.querySelectorAll('.bag__sums dt')).map(
+      (node) => node.textContent?.trim().replace(/\s*\(.*\)$/, '') ?? '',
+    );
+  }
+
+  /**
+   * The three money figures in the summary, **read back off the screen** rather than taken from the
+   * fixture, so the test is about what a shopper sees. A row that is not rendered reads as 0, which is
+   * what makes the no-savings case assertable with the same helper.
+   */
+  function sums(): { subtotal: number; savings: number; total: number } {
+    const amount = (label: string): number => {
+      const row = Array.from(element.querySelectorAll('.bag__sums > div')).find((node) =>
+        node.querySelector('dt')?.textContent?.trim().startsWith(label),
+      );
+      // `Rs. 8,784` — the currency prefix carries a full stop, so stripping "everything but digits and
+      // a dot" turns it into 0.8784. Match the number instead, and drop the group separators.
+      const raw = (row?.querySelector('dd')?.textContent ?? '').replace('Rs.', '');
+      const matched = /[\d,]+(?:\.\d+)?/.exec(raw);
+      // The magnitude, not the sign: the deduction row renders a U+2212 and this is subtracted below.
+      return matched ? Number(matched[0].replace(/,/g, '')) : 0;
+    };
+
+    return { subtotal: amount('Subtotal'), savings: amount('Savings'), total: amount('Total') };
+  }
+
   beforeEach(() => localStorage.clear());
 
   afterEach(() => TestBed.inject(HttpTestingController).verify());
@@ -203,17 +231,71 @@ describe('BagPage (CART-01)', () => {
     });
 
     /**
+     * **The ladder has to add up, and three `toContain`s cannot say that.**
+     *
+     * This test used to assert that the three figures appeared *somewhere* in the summary, which is
+     * exactly the too-weak shape that has missed shipped bugs on this project before — and it missed
+     * one here. The rendered rows said `Subtotal Rs. 8,784`, `Discount −Rs. 5,196`,
+     * `Total Rs. 8,784`: a deduction row between two identical numbers, because `itemsSubtotal` is
+     * already net of the markdown while `savedTotal` is the markdown. Every string the old assertions
+     * looked for was present.
+     *
+     * So the numbers are read back off the screen and checked **as a sum**. The exact figures are
+     * pinned beside the identity, and that is not belt-and-braces: with the row still labelled
+     * `Discount` this helper reads Savings as 0 and `8,784 − 0 === 8,784` holds, so the identity alone
+     * would have passed over the broken ladder. The sum catches a wrong *figure*; the figures catch a
+     * wrong *row*.
+     */
+    it('adds up: Subtotal − Savings = Total', async () => {
+      await open({ lines: [line()], totals: totals() });
+
+      const { subtotal, savings, total } = sums();
+
+      expect(subtotal - savings).toBe(total);
+      expect({ subtotal, savings, total }).toEqual({
+        subtotal: 13_980,
+        savings: 5_196,
+        total: 8_784,
+      });
+    });
+
+    /**
+     * The row is **Savings**, not Discount, and the distinction is not cosmetic: nothing here was
+     * applied by a code. ADM-13's promo will add a `Discount` row of its own below this one, and two
+     * rows both called Discount would be unreadable.
+     */
+    it('labels the deduction Savings, because no code was applied to earn it', async () => {
+      await open({ lines: [line()], totals: totals() });
+
+      const labels = rowLabels();
+      expect(labels).toContain('Savings');
+      expect(labels).not.toContain('Discount');
+    });
+
+    /** With nothing marked down there is nothing to deduct, so the simple case stays simple. */
+    it('hides the Savings row when there is nothing saved, and Subtotal equals Total', async () => {
+      await open({
+        lines: [line({ price: price(4392) })],
+        totals: totals({ itemsOriginalTotal: 8784, savedTotal: 0 }),
+      });
+
+      const { subtotal, savings, total } = sums();
+
+      expect(rowLabels()).not.toContain('Savings');
+      expect(savings).toBe(0);
+      expect(subtotal).toBe(total);
+    });
+
+    /**
      * The summary is the part that must not invent anything. There is no promo field (ADM-13 is not
      * built), no delivery figure (#33, and `sales.DeliveryMethodZoneRates` is #53's), and so the total
      * row says what it covers.
      */
-    it('shows subtotal, discount and a delivery row that does not pretend to know the fee', async () => {
+    it('shows a delivery row that does not pretend to know the fee', async () => {
       await open({ lines: [line()], totals: totals() });
 
       const summary = element.querySelector('.bag__summary') as HTMLElement;
       expect(summary.textContent).toContain('Subtotal (2 items)');
-      expect(summary.textContent).toContain('Rs. 8,784');
-      expect(summary.textContent).toContain('Rs. 5,196');
       expect(summary.textContent).toContain('Calculated at checkout');
       expect(summary.textContent).toContain('Total (items only)');
     });
@@ -321,6 +403,61 @@ describe('BagPage (CART-01)', () => {
 
         expect(input().value).toBe('2');
         // `verify()` in afterEach is the assertion: a PATCH here would be one nobody flushed.
+      },
+    );
+
+    /**
+     * **A rejected change must not leave the box showing a number the bag does not hold.**
+     *
+     * The handler writes `input.value` by hand, which bypasses the `[value]` binding — so when the PATCH
+     * fails, `line.quantity` never changes, Angular sees no change to the bound expression and never
+     * rewrites the element. The box kept `4` against a bag holding `2`, and the next `+` computed from
+     * the real quantity and jumped to `3`.
+     */
+    it('puts the box back to what the bag holds when the change is refused', async () => {
+      await open({ lines: [line({ quantity: 2, maxQuantity: 10 })], totals: totals() });
+
+      input().value = '4';
+      input().dispatchEvent(new Event('change'));
+      await settle();
+      expect(input().value).toBe('4');
+
+      http
+        .expectOne((candidate) => candidate.method === 'PATCH')
+        .flush('nope', { status: 500, statusText: 'Server Error' });
+      await settle();
+
+      expect(input().value).toBe('2');
+      expect(element.querySelector('[role="alert"]')).not.toBeNull();
+    });
+
+    /**
+     * Same keystroke intent, same outcome. An all-digit value past `MAX_SAFE_INTEGER` used to be *reset*
+     * while `99` *clamped* — two answers to "give me as many as you have", decided by how long the
+     * number was.
+     */
+    /**
+     * A 400-digit value is deliberately **not** in this list, and the reason is worth keeping: an
+     * `<input type="number">` runs the HTML value-sanitisation algorithm, which turns a number outside
+     * the float range into the empty string *before* any handler sees it. The box then reads `''`, which
+     * is the "no instruction" path above and resets — correctly. Asserting the clamp on it would be
+     * asserting what the element does, not what this component does. Twenty digits survives sanitisation
+     * and is the real boundary case.
+     */
+    it.each([['99'], ['1000'], ['99999999999999999999']])(
+      'clamps the all-digit value %p to the ceiling rather than resetting it',
+      async (typed) => {
+        await open({ lines: [line({ quantity: 2, maxQuantity: 4 })], totals: totals() });
+
+        input().value = typed;
+        input().dispatchEvent(new Event('change'));
+        await settle();
+
+        expect(input().value, `typed ${typed}`).toBe('4');
+        http
+          .expectOne((candidate) => candidate.method === 'PATCH')
+          .flush({ lines: [line({ quantity: 4, maxQuantity: 4 })], totals: totals({ itemCount: 4 }) });
+        await settle();
       },
     );
 
