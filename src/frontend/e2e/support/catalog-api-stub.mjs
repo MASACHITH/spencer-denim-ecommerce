@@ -12,6 +12,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
+import { deflateSync } from 'node:zlib';
 import { createServer } from 'node:http';
 
 const PORT = Number(process.env.E2E_API_PORT ?? 4421);
@@ -2063,6 +2064,117 @@ function handleCart(request, response, url) {
 }
 
 /**
+ * A solid-colour PNG of a given size, built here rather than checked in.
+ *
+ * **Why this exists at all.** The logo fixtures used to reuse the 1x1 {@link WEBP_PIXEL} while the settings
+ * payload declared them 600x150 and 200x600. So every logo drawn anywhere in the suite was one 1x1 square, and
+ * the two tests that exist to prove the header sizes the logo rather than the file could not fail for the
+ * reason they state: `max-width` was never reached, and `height`/`object-fit` were never exercised. That was
+ * round 1's Major 1, and the stub's own comment about serving a real URL "so a broken one would show up as a
+ * broken one" made the gap read as covered.
+ *
+ * PNG rather than WebP because a lossless WebP encoder is a few hundred lines and nothing here needs one: the
+ * property under test is the *intrinsic size*, which is format-independent. It is also a real production shape
+ * — `MediaUrlBuilder` returns the original file's key for an asset with no renditions, and an original may be a
+ * PNG — which is why these are served from `public/originals/` rather than `public/renditions/`.
+ *
+ * Solid colour, so deflate takes even 2000x100 to a few hundred bytes. Nothing measures the pixels.
+ */
+function solidPng(width, height, [red, green, blue]) {
+  const stride = width * 3 + 1;
+  const raw = Buffer.alloc(stride * height);
+
+  for (let y = 0; y < height; y++) {
+    const row = y * stride;
+
+    // Filter byte 0 (None), then the scanline.
+    raw[row] = 0;
+    for (let x = 0; x < width; x++) {
+      raw[row + 1 + x * 3] = red;
+      raw[row + 2 + x * 3] = green;
+      raw[row + 3 + x * 3] = blue;
+    }
+  }
+
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 2; // colour type: truecolour
+  ihdr[10] = 0; // deflate
+  ihdr[11] = 0; // adaptive filtering
+  ihdr[12] = 0; // no interlace
+
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk('IHDR', ihdr),
+    pngChunk('IDAT', deflateSync(raw)),
+    pngChunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
+function pngChunk(type, data) {
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(data.length, 0);
+
+  const body = Buffer.concat([Buffer.from(type, 'ascii'), data]);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(pngCrc(body), 0);
+
+  return Buffer.concat([length, body, crc]);
+}
+
+const PNG_CRC_TABLE = (() => {
+  const table = new Int32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) {
+      c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    }
+    table[n] = c;
+  }
+  return table;
+})();
+
+function pngCrc(buffer) {
+  let crc = -1;
+  for (const byte of buffer) {
+    crc = PNG_CRC_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  }
+  return (crc ^ -1) >>> 0;
+}
+
+/**
+ * The logo shapes a test can ask for, each served as a real image of the size its payload declares.
+ *
+ * - `wide` (2000x100) is the ordinary shape of a wordmark, and the one that reaches `max-width: 220px`: at the
+ *   header's 32 px height its natural width would be 640 px, so the cap is what keeps the navigation on the row.
+ * - `tall` (200x600) is portrait — the shape that would grow the header if the file could set its own height,
+ *   and the one that shows `object-fit: contain` letterboxing rather than stretching.
+ * - `square` (512x512) is **kept deliberately**: it is the state that gates the wordmark's
+ *   `min-width: var(--tap)`, because a square logo drawn 32 px high is 32 px wide, which is how the shop's
+ *   primary link fell below the 44 px touch minimum. The old 1x1 pixel made *every* logo square by accident, so
+ *   fixing the other two shapes without adding this one would have quietly un-gated that fix.
+ */
+const LOGO_SHAPES = {
+  wide: { width: 2000, height: 100, colour: [20, 20, 20] },
+  tall: { width: 200, height: 600, colour: [30, 60, 90] },
+  square: { width: 512, height: 512, colour: [90, 30, 60] },
+};
+
+const LOGO_FILES = Object.fromEntries(
+  Object.entries(LOGO_SHAPES).map(([name, shape]) => [name, solidPng(shape.width, shape.height, shape.colour)]),
+);
+
+function logoMark(shape, altText) {
+  const { width, height } = LOGO_SHAPES[shape];
+
+  // `public/originals/...` rather than `public/renditions/...`: MediaUrlBuilder returns the original's key for
+  // an asset with no renditions, so this is a shape the real API produces, and the extension matches the bytes.
+  return { url: `${MEDIA_BASE}/public/originals/logo-${shape}.png`, width, height, altText };
+}
+
+/**
  * The storefront shell's settings (GLB-02, GLB-07, GLB-08), as `GET /api/site/settings` returns them.
  *
  * `logo` is a real URL this stub also serves, so the browser genuinely fetches an image and a broken one
@@ -2079,15 +2191,16 @@ function buildSiteSettings(logo, social, whatsApp) {
     ],
   };
 
+  // The declared dimensions are the served bytes' real dimensions (see LOGO_SHAPES). They used to be a fiction
+  // over a 1x1 pixel, which is what made the two layout tests unable to fail — round 1, Major 1.
+  //
+  // `wide` has no altText on purpose: that is the ordinary case, because nothing makes a staff user type one,
+  // and it is what exercises the header's fallback to the shop's name.
   const marks = {
     none: null,
-
-    // A wide, short logo: the ordinary shape of a wordmark, and the one that can squeeze the navigation.
-    wide: { url: `${MEDIA_BASE}/public/renditions/${publicId(901)}/card.webp`, width: 600, height: 150, altText: null },
-
-    // A tall, narrow one, which is the shape that would grow the header and invalidate --header-height if
-    // the stylesheet let the file decide its own height.
-    tall: { url: `${MEDIA_BASE}/public/renditions/${publicId(902)}/card.webp`, width: 200, height: 600, altText: 'Our logo' },
+    wide: logoMark('wide', null),
+    tall: logoMark('tall', 'Our logo'),
+    square: logoMark('square', 'Our logo'),
   };
 
   return {
@@ -2227,6 +2340,16 @@ const server = createServer((request, response) => {
   // Stands in for `MediaFileEndpoints`: anything under the media base is a real file with a real
   // media type, so an `<img>` that asks for a rendition gets one instead of a 404 the card would
   // have to swap for its placeholder.
+  // Before the generic rendition handler below, which answers everything under /media/public/ with a 1x1 WebP.
+  // These are real images of the size their payload declares, served as PNG with the matching content type,
+  // which is what lets a test read `naturalWidth` and get an answer that means something.
+  const logoMatch = url.pathname.match(/^\/media\/public\/originals\/logo-([a-z]+)\.png$/);
+  if (logoMatch && LOGO_FILES[logoMatch[1]]) {
+    response.setHeader('Content-Type', 'image/png');
+    response.end(LOGO_FILES[logoMatch[1]]);
+    return;
+  }
+
   if (url.pathname.startsWith('/media/public/')) {
     response.setHeader('Content-Type', 'image/webp');
     response.end(WEBP_PIXEL);

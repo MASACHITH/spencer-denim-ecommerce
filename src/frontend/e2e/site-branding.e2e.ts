@@ -23,7 +23,27 @@ test.describe.configure({ mode: 'serial' });
 const BREAKPOINTS = [320, 375, 390, 768, 1024, 1280, 1440, 1920] as const;
 
 /** The states the stub can be put into, named rather than built here. */
-type LogoState = 'none' | 'wide' | 'tall';
+type LogoState = 'none' | 'wide' | 'tall' | 'square';
+
+/**
+ * What the stub actually serves for each logo state, so this file can assert the fixture is the shape it claims.
+ *
+ * **This table is the fix for round 1's Major 1.** Both layout tests below used to run against a 1x1 pixel while
+ * the payload declared 600x150 and 200x600 — so `max-width` was never reached, `object-fit` was never
+ * exercised, and `expect(drawn.height).toBeLessThanOrEqual(40)` passed trivially on a 32 px box. Keeping the
+ * expected dimensions here, and asserting them, is what stops that coming back silently.
+ */
+const LOGO_SHAPES = {
+  wide: { width: 2000, height: 100 },
+  tall: { width: 200, height: 600 },
+  square: { width: 512, height: 512 },
+} as const;
+
+/** The header's logo height per breakpoint band, from `site-header.ts`. */
+const LOGO_CSS_HEIGHT = { mobile: 24, desktop: 32 } as const;
+
+/** The desktop cap on the logo's width, from `site-header.ts`. */
+const LOGO_MAX_WIDTH = 220;
 type SocialState = 'none' | 'one' | 'all';
 
 /**
@@ -143,6 +163,42 @@ test.describe('the header wordmark and logo (GLB-02)', () => {
    * `tall` is a 200x600 portrait image — the shape that would grow the header and silently invalidate
    * `--header-height` in tokens.css, whose value anchor jumps and focused controls clear.
    */
+  /**
+   * **The fixture is the shape it claims to be.**
+   *
+   * Everything below depends on it, and the first version of this suite did not check it: the stub served one
+   * 1x1 pixel for every logo state while declaring 600x150 and 200x600, so the two layout tests could not fail
+   * for the reasons they state. `naturalWidth`/`naturalHeight` are the browser's own answer about the decoded
+   * bytes — the one number a declared dimension cannot fake.
+   */
+  for (const shape of ['wide', 'tall', 'square'] as const) {
+    test(`the ${shape} logo fixture really is ${LOGO_SHAPES[shape].width}x${LOGO_SHAPES[shape].height}`, async ({
+      page,
+    }) => {
+      await useSettings(page, shape, 'none');
+      await page.goto('/');
+
+      const logo = page.locator('[data-testid="logo"]');
+      await expect(logo).toBeVisible();
+
+      const natural = await logo.evaluate((img: HTMLImageElement) => ({
+        width: img.naturalWidth,
+        height: img.naturalHeight,
+        complete: img.complete,
+      }));
+
+      expect(natural.complete, 'the fixture did not decode').toBe(true);
+      expect(natural, `the ${shape} fixture is not the shape its payload declares`).toMatchObject({
+        width: LOGO_SHAPES[shape].width,
+        height: LOGO_SHAPES[shape].height,
+      });
+
+      // And the attributes agree with the bytes, so the pre-load reservation is honest too (CLS).
+      await expect(logo).toHaveAttribute('width', String(LOGO_SHAPES[shape].width));
+      await expect(logo).toHaveAttribute('height', String(LOGO_SHAPES[shape].height));
+    });
+  }
+
   test('a tall logo does not grow the header', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 900 });
 
@@ -160,9 +216,19 @@ test.describe('the header wordmark and logo (GLB-02)', () => {
         + 'the logo must be sized by the header, not by the file',
     ).toBeLessThanOrEqual(2);
 
-    // And the image is letterboxed rather than stretched: the drawn box keeps its own aspect ratio.
-    const drawn = await page.locator('[data-testid="logo"]').boundingBox();
-    expect(drawn!.height).toBeLessThanOrEqual(40);
+    const drawn = (await page.locator('[data-testid="logo"]').boundingBox())!;
+
+    // **The header's height wins, exactly.** A 600 px tall file is drawn 32 px tall, which is the assertion the
+    // 1x1 fixture made vacuous: a 1x1 produced a 32 px box too, whatever the stylesheet said.
+    expect(Math.round(drawn.height), 'the logo is not drawn at the header height').toBe(
+      LOGO_CSS_HEIGHT.desktop,
+    );
+
+    // And `width: auto` keeps the file's own ratio rather than stretching it: 200x600 at 32 px high is ~11 px
+    // wide. A stretched image would be 220 px (the cap) and a square one 32 px, so this distinguishes all three.
+    const expectedWidth = (LOGO_SHAPES.tall.width / LOGO_SHAPES.tall.height) * LOGO_CSS_HEIGHT.desktop;
+    expect(Math.abs(drawn.width - expectedWidth), `drawn ${drawn.width}px, expected ~${expectedWidth}px`)
+      .toBeLessThanOrEqual(2);
   });
 
   /**
@@ -175,6 +241,16 @@ test.describe('the header wordmark and logo (GLB-02)', () => {
     for (const width of [1024, 1280, 1440, 1920] as const) {
       await page.setViewportSize({ width, height: 900 });
       await page.goto('/');
+
+      // **`max-width` is actually reached**, which is the point of the test and what the 1x1 fixture could
+      // never show: 2000x100 at the header's 32 px height wants to be 640 px wide, so the cap is the only
+      // thing keeping the navigation on the row. A fixture whose natural width is under the cap would leave
+      // this assertion measuring nothing, so it asserts the cap value rather than "narrow enough".
+      const drawn = (await page.locator('[data-testid="logo"]').boundingBox())!;
+      const uncapped = (LOGO_SHAPES.wide.width / LOGO_SHAPES.wide.height) * LOGO_CSS_HEIGHT.desktop;
+
+      expect(uncapped, 'the wide fixture is not wide enough to reach the cap').toBeGreaterThan(LOGO_MAX_WIDTH);
+      expect(Math.round(drawn.width), `the logo is not capped at ${width}px`).toBe(LOGO_MAX_WIDTH);
 
       // `allInnerTexts` returns *rendered* text and the links are `text-transform: uppercase`, so the
       // comparison is case-insensitive: the question here is which entries are on the row, not how the
@@ -231,8 +307,19 @@ test.describe('the header wordmark and logo (GLB-02)', () => {
     });
   }
 
-  /** Every breakpoint, in both states, for overflow and the tap target. */
-  for (const logo of ['none', 'wide'] as const) {
+  /**
+   * Every breakpoint, in three states, for overflow and the tap target.
+   *
+   * **`square` is in this list deliberately, and it is what gates `min-width: var(--tap)`.** A square logo
+   * drawn at the header's height is exactly that many pixels wide — 32 — so without the minimum the shop's
+   * primary link falls below the 44 px touch target on every page. That is the defect this suite found, and
+   * the reason it found it was an accident: the old 1x1 fixture made *every* logo square. Giving the other two
+   * states their real shapes would have removed the only case that exercises the floor, so the square case is
+   * now named rather than relied upon.
+   *
+   * `wide` is kept because it is the opposite risk — the cap, and the navigation being pushed off the row.
+   */
+  for (const logo of ['none', 'wide', 'square'] as const) {
     test(`the header fits every breakpoint with the logo ${logo}`, async ({ page }) => {
       await useSettings(page, logo, 'none');
 
@@ -261,6 +348,19 @@ test.describe('the header wordmark and logo (GLB-02)', () => {
         }
 
         expect(await undersized(page, selector), `tap targets at ${width}px`).toEqual([]);
+
+        // The square case only gates the minimum while the drawn image really is square — otherwise this loop
+        // would go on passing for the wrong reason, which is exactly how the 1x1 fixture behaved.
+        if (logo === 'square') {
+          const drawn = (await page.locator('[data-testid="logo"]').boundingBox())!;
+          const expectedHeight = width >= 1024 ? LOGO_CSS_HEIGHT.desktop : LOGO_CSS_HEIGHT.mobile;
+
+          expect(Math.round(drawn.height), `logo height at ${width}px`).toBe(expectedHeight);
+          expect(
+            Math.abs(drawn.width - drawn.height),
+            `the square logo is drawn ${drawn.width}x${drawn.height} at ${width}px`,
+          ).toBeLessThanOrEqual(2);
+        }
       }
     });
   }

@@ -215,6 +215,22 @@ import { StorefrontCounts } from '../../core/storefront-counts.service';
     .site-header__menu {
       grid-area: 1 / 1;
     }
+    /* The wordmark anchor carries BOTH minimums, not just min-height — min-width: var(--tap) rather than the
+       min-width: 0 that was here before ADM-22.
+
+       **Found by a browser test, not predicted.** With a logo set, the anchor is only as wide as the drawn
+       image, and the drawn width comes from the file's *intrinsic* ratio once it loads: the width and height
+       attributes only supply a ratio beforehand. A square logo, or a small one the encoder clamped rather than
+       upscaled, therefore gave a 32x32 box — the shop's primary link, on every page, below the 44 px touch
+       minimum (WCAG 2.5.8 and this project's own rule). Measured at 1024 px as 32x44.
+
+       min-width: 0 was correct while the content was text that had to shrink inside the grid's minmax(0, 1fr)
+       column; it is wrong now that the content is an image whose size the client chooses. 44 px is far
+       narrower than any real wordmark, so it costs nothing in the ordinary case and is the floor in the one
+       nobody would have thought to try.
+
+       The browser suite's square logo state is what holds this: a square logo drawn at the header's height is
+       exactly that wide, so it is the only shape that reaches the floor. */
     .site-header__wordmark {
       grid-area: 1 / 2;
       display: inline-flex;
@@ -246,19 +262,6 @@ import { StorefrontCounts } from '../../core/storefront-counts.service';
       object-fit: contain;
       object-position: center;
     }
-    /* The wordmark anchor above carries BOTH minimums, not just min-height — and min-width: var(--tap)
-       rather than the min-width: 0 that was there before ADM-22.
-
-       **Found by a browser test, not predicted.** With a logo set, the anchor is only as wide as the drawn
-       image, and the drawn width comes from the file's *intrinsic* ratio once it loads: the width and height
-       attributes only supply a ratio beforehand. A square logo, or a small one the encoder clamped rather
-       than upscaled, therefore gave a 32x32 box — the shop's primary link, on every page, below the 44 px
-       touch minimum (WCAG 2.5.8 and this project's own rule). Measured at 1024 px as 32x44.
-
-       min-width: 0 was correct while the content was text that had to be allowed to shrink inside the
-       grid's minmax(0, 1fr) column; it is wrong now that the content is an image whose size the client
-       chooses. 44 px is far narrower than any real wordmark, so it costs nothing in the ordinary case and is
-       the floor in the one nobody would have thought to try. */
     .site-header__tools {
       grid-area: 1 / 3;
       display: flex;
