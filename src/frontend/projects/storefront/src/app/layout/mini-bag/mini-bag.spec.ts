@@ -219,11 +219,17 @@ describe('MiniBag (CART-02)', () => {
     }
 
     /**
-     * There are two regions on purpose, and **exactly one of them ever holds text**. A dialog with
-     * `aria-modal="true"` can hide everything outside it from a screen reader, so a change made inside
-     * the open drawer has to be announced from inside it (doc 04 §4); a change made on the bag page,
-     * with the drawer shut, has to be announced from outside, because the drawer's contents are not in
-     * the accessibility tree at all. Both holding the sentence would announce it twice.
+     * This component owns **two** regions on purpose, and exactly one of the two ever holds text. A dialog
+     * with `aria-modal="true"` can hide everything outside it from a screen reader, so a change made
+     * inside the open drawer has to be announced from inside it (doc 04 §4); a change made on the bag
+     * page, with the drawer shut, has to be announced from outside, because the drawer's contents are not
+     * in the accessibility tree at all. Both holding the sentence would announce it twice.
+     *
+     * **"Two" is about this component, not about the page**, and the earlier wording said it about the
+     * page and was wrong. On `/bag` with the drawer open the document has **three** `role="status"`
+     * regions — these two plus the bag page's own loading status — and **two** `role="alert"` regions
+     * bound to the same error, because the drawer renders every line a second time. `aria-modal` is what
+     * makes that harmless, and `accessibility.e2e.ts` scans that exact state rather than assuming it.
      */
     it('announces from outside the drawer while it is shut', async () => {
       await withBag({ lines: [line()], totals: totals() });
@@ -236,6 +242,35 @@ describe('MiniBag (CART-02)', () => {
       expect(spoken).toHaveLength(1);
       expect(spoken[0].closest('[role="dialog"]')).toBeNull();
       expect(spoken[0].textContent).toContain('removed from your bag');
+    });
+
+    /**
+     * **Toggling the drawer must not re-announce the last change.**
+     *
+     * The first version computed both regions from `open()`, and `lastChange` is app-lifetime state —
+     * so opening or closing the drawer moved the sentence from one region to the other, and a text
+     * change in a live region is an announcement. The commonest path hit it: add (announced inside),
+     * Escape (the identical sentence announced again from outside). "Exactly one region ever holds
+     * text" was true; "nothing is announced twice" was not.
+     */
+    it('does not move the sentence when the drawer opens or closes', async () => {
+      await withBag({ lines: [line()], totals: totals() });
+      await openDrawer();
+
+      store.remove(1, 'Linen shirt');
+      http.expectOne((request) => request.method === 'DELETE').flush(EMPTY);
+      await settle();
+
+      const before = regions().map((region) => region.textContent ?? '');
+      expect(before.filter((text) => text.trim().length > 0)).toHaveLength(1);
+
+      host.open.set(false);
+      await settle();
+      expect(regions().map((region) => region.textContent ?? '')).toEqual(before);
+
+      host.open.set(true);
+      await settle();
+      expect(regions().map((region) => region.textContent ?? '')).toEqual(before);
     });
 
     it('announces from inside the drawer while it is open', async () => {

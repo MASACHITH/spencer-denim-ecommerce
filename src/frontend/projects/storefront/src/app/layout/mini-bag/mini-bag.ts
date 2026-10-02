@@ -1,4 +1,14 @@
-import { ChangeDetectionStrategy, Component, computed, inject, input, output } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  computed,
+  effect,
+  inject,
+  input,
+  output,
+  signal,
+  untracked,
+} from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { Drawer } from '@spencer-denim/shared';
 
@@ -42,10 +52,15 @@ import { formatLkr } from '../../core/catalog/money';
       <div class="mini-bag">
         <!-- Inside the dialog, because a dialog with aria-modal="true" can hide everything outside it
              from a screen reader, and doc 04 §4 says to announce inside an open dialog for that reason.
-             The sibling region below covers the bag page and the product page, where the drawer is shut
-             and its contents are not in the accessibility tree at all. Exactly one of the two ever
-             holds text, so nothing is announced twice. -->
-        <p class="sr-only" role="status" aria-live="polite">{{ open() ? lastChange() : '' }}</p>
+             The sibling region at the bottom covers the bag page and the product page, where the drawer
+             is shut and its contents are not in the accessibility tree at all.
+
+             Which of the two receives a sentence is decided **when the sentence is produced**, in the
+             effect below — not computed from open() here. Computing it from open() meant the text moved
+             between the regions every time the drawer was toggled, and a text change in a live region is
+             an announcement: add (announced inside), Escape (the identical sentence announced again from
+             outside). Both are plain state now, so toggling moves nothing. -->
+        <p class="sr-only" role="status" aria-live="polite">{{ insideText() }}</p>
 
         @if (open()) {
           @if (error(); as message) {
@@ -124,8 +139,9 @@ import { formatLkr } from '../../core/catalog/money';
       </div>
     </sd-drawer>
 
-    <!-- The other half of the pair above: live while the drawer is shut. -->
-    <p class="sr-only" role="status" aria-live="polite">{{ open() ? '' : lastChange() }}</p>
+    <!-- The other half of the pair above: it receives the sentence when the drawer was shut at the
+         moment of the change. -->
+    <p class="sr-only" role="status" aria-live="polite">{{ outsideText() }}</p>
   `,
   styles: `
     :host {
@@ -232,7 +248,46 @@ export class MiniBag {
   protected readonly lines = this.cart.lines;
   protected readonly totals = this.cart.totals;
   protected readonly error = this.cart.error;
-  protected readonly lastChange = this.cart.lastChange;
+
+  /**
+   * The two live regions' text, as **state** rather than as a computation over `open()`.
+   *
+   * `CartStore.lastChange` is app-lifetime: it holds the last sentence for as long as the application
+   * runs. So a region whose contents are `open() ? lastChange() : ''` changes whenever the drawer is
+   * toggled, and a live region that changes speaks — which meant Escape re-announced whatever the add
+   * had just announced. Writing the sentence once, to whichever region is live at that moment, makes
+   * toggling a no-op for both.
+   */
+  private readonly inside = signal('');
+  private readonly outside = signal('');
+
+  protected readonly insideText = this.inside.asReadonly();
+  protected readonly outsideText = this.outside.asReadonly();
+
+  constructor() {
+    effect(() => {
+      const sentence = this.cart.lastChange();
+
+      // `untracked`, so the effect depends on the sentence alone. Reading `open()` tracked would make
+      // this re-run on every toggle, which is the behaviour it exists to remove.
+      untracked(() => {
+        if (sentence === '') {
+          return;
+        }
+
+        // The other region is cleared so that exactly one ever holds text, which keeps the invariant
+        // assertable. Clearing is safe: `aria-relevant` defaults to "additions text", so a region
+        // losing its contents announces nothing.
+        if (this.open()) {
+          this.inside.set(sentence);
+          this.outside.set('');
+        } else {
+          this.outside.set(sentence);
+          this.inside.set('');
+        }
+      });
+    });
+  }
 
   /** How many lines need attention, for the heading's own sake rather than only colour. */
   protected readonly warnings = computed(
