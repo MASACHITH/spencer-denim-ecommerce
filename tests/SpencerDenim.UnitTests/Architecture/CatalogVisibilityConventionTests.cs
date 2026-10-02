@@ -60,6 +60,19 @@ public sealed class CatalogVisibilityConventionTests
         ["src/backend/SpencerDenim.Infrastructure/Catalog/CatalogStructureStore.cs"] =
             "the admin write path: it loads rows in order to change their IsActive, so it must see them "
             + "whatever their current value is.",
+        ["src/backend/SpencerDenim.Infrastructure/Sales/CartReader.cs"] =
+            "the bag (W2-09, CART-01). Two halves, and only one of them could be composed. Its "
+            + "*filtering* half, FindSellableVariantAsync, does compose VisibleProduct — it starts the "
+            + "query at Products for exactly that reason, since an Expression<Func<Product,bool>> cannot "
+            + "be invoked against variant.Product inside an EF predicate. What this rule then trips on "
+            + "in that same statement is the **variant's** own IsActive, which CatalogVisibility "
+            + "deliberately leaves local (a deactivated variant changes a size list, not whether a URL "
+            + "exists). Its reading half, ReadAsync, genuinely decides for itself and cannot be "
+            + "composed, for the opposite of the usual reason: it must not filter. A bag line whose "
+            + "product has been withdrawn has to stay on the page, named, unpriced and removable — an "
+            + "item that silently vanishes from a shopper's bag is the worst available behaviour — so it "
+            + "projects IsPublished, IsDeleted and both IsActive columns and reports a per-line status "
+            + "in C#. A bag is not an address, and nothing here can put a URL in the sitemap.",
     };
 
     /// <summary>
