@@ -30,20 +30,39 @@ export class LocalWishlist {
   }
 
   /**
-   * Saves a product, whether or not it was already saved.
+   * Saves a product, whether or not it was already saved. **Returns whether it is really saved.**
    *
    * Separate from {@link toggle} because "move to wishlist" (CART-01) is not a toggle: a shopper moving
    * a bag line to the wishlist must end with it saved, and `toggle` on something already saved would
    * remove it — so the bag line would be deleted and the wishlist entry with it.
+   *
+   * **It returns a boolean because the caller destroys something on the strength of it.**
+   * `SafeLocalStorage.write` cannot throw — it catches everything and returns `false` — so the only
+   * failure available here is a silent one, and a `void` return made it invisible: a private window,
+   * blocked site data or a full quota meant the bag line was removed over a save that never happened,
+   * and the item was then in neither place. `CartStore.moveToWishlist` now keeps the line when this
+   * says `false`.
+   *
+   * The signal is only updated **after** a successful write, so a refused write leaves nothing claiming
+   * the product is saved — a badge that incremented over a write that failed is the same lie one step
+   * earlier.
+   *
+   * {@link toggle} is deliberately left as it is: the heart's in-session state is real, nothing is
+   * destroyed on the strength of it, and changing a W2-04 control is not this task's business. The
+   * asymmetry is written down so it reads as a decision.
    */
-  save(slug: string): void {
+  save(slug: string): boolean {
     if (this.slugs().has(slug)) {
-      return;
+      return true;
     }
 
     const next = new Set(this.slugs()).add(slug);
+    if (!this.storage.write(STORAGE_KEY, JSON.stringify([...next]))) {
+      return false;
+    }
+
     this.slugs.set(next);
-    this.storage.write(STORAGE_KEY, JSON.stringify([...next]));
+    return true;
   }
 
   /** Saves or unsaves a product, and returns its new state. */

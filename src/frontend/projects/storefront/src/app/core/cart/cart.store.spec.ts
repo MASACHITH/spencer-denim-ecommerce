@@ -11,6 +11,8 @@ import { CartApi } from './cart-api';
 import { CartDto, CartLineDto, CartTotalsDto } from './cart.model';
 import { CartStore } from './cart.store';
 import { PriceDto } from '../catalog/catalog.model';
+import { SafeLocalStorage } from '@spencer-denim/shared';
+
 import { LocalWishlist } from '../wishlist/local-wishlist.service';
 
 function price(current: number, original = current): PriceDto {
@@ -306,6 +308,46 @@ describe('CartStore (CART-01, CART-02, GLB-04)', () => {
       expect(wishlist.has('relaxed-linen-blend-shirt')).toBe(true);
       pending('DELETE', `${CartApi.url}/items/1`).flush(EMPTY);
       expect(store.isEmpty()).toBe(true);
+    });
+
+    /**
+     * **When the write fails, the line stays in the bag.**
+     *
+     * `SafeLocalStorage.write` cannot throw — it catches everything and returns `false` — so the only
+     * failure this path can have is a silent one, and ordering the save before the removal protects
+     * against nothing on its own. Before this test, a private window, blocked site data or a full
+     * quota meant: the badge incremented, every visible signal said "saved", nothing was persisted,
+     * and **the bag line was removed anyway**. On the next reload the item was in neither place.
+     * Safari private browsing and iOS quota make that common rather than exotic.
+     */
+    it('keeps the line in the bag when the wishlist write fails, and says so', () => {
+      TestBed.resetTestingModule();
+      TestBed.configureTestingModule({
+        providers: [
+          provideHttpClient(),
+          provideHttpClientTesting(),
+          // Storage that refuses every write, exactly as a private window does — silently.
+          {
+            provide: SafeLocalStorage,
+            useValue: { read: () => null, write: () => false, remove: () => false },
+          },
+        ],
+      });
+
+      http = TestBed.inject(HttpTestingController);
+      const blocked = TestBed.inject(CartStore);
+      const wishlist = TestBed.inject(LocalWishlist);
+
+      blocked.moveToWishlist(1, 'relaxed-linen-blend-shirt', 'Linen shirt');
+
+      // No DELETE at all — `verify()` in afterEach is the other half of this assertion.
+      expect(http.match(() => true)).toEqual([]);
+      expect(blocked.error()).toContain('still in your bag');
+
+      // And nothing claims to have saved it. A badge that incremented over a write that failed is the
+      // same lie one step earlier.
+      expect(wishlist.has('relaxed-linen-blend-shirt')).toBe(false);
+      expect(wishlist.count()).toBe(0);
     });
 
     /** `save`, not `toggle`: moving something already on the wishlist must not take it off. */

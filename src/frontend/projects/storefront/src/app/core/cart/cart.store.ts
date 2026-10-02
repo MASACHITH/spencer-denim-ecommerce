@@ -219,8 +219,10 @@ export class CartStore {
    * **It saves to this browser, not to an account, and that is a gap rather than a shortcut.** There is
    * no wishlist API: W2-08 is not built, and doc 08 §1.7 already specifies that a guest wishlist is
    * `localStorage` merged into `sales.WishlistItems` on login. So this writes to the same
-   * {@link LocalWishlist} the product card's heart has used since W2-04, and only then removes the line
-   * — in that order, so a storage failure cannot lose the item out of the bag as well.
+   * {@link LocalWishlist} the product card's heart has used since W2-04, and removes the line **only if
+   * that write succeeded**. The ordering alone was not the protection it was described as: storage here
+   * cannot throw, it returns `false`, so the check is what protects the item and the order is merely
+   * what makes the check possible.
    *
    * **What it cannot keep: the colour and the size.** `LocalWishlist` holds product slugs, as the heart
    * does, while `sales.WishlistItems` has a `ProductColourId`. Moving "Beige / M" saves the product and
@@ -228,7 +230,19 @@ export class CartStore {
    * alternative — inventing a table — is worse.
    */
   moveToWishlist(variantId: number, slug: string, label: string): void {
-    this.wishlist.save(slug);
+    // **Nothing is removed unless the save really happened.** The save coming first was never
+    // protection on its own: `SafeLocalStorage.write` cannot throw, so the only failure it has is a
+    // silent `false`, and discarding that meant the line was deleted over a save that did not occur —
+    // in a private window, with site data blocked, or on a full quota. The shopper is told, in an
+    // `role="alert"`, and the item is still where they left it.
+    if (!this.wishlist.save(slug)) {
+      this.failure.set(
+        'We could not save that to your wishlist, so it is still in your bag. ' +
+          'Your browser may be blocking site data — private browsing often does.',
+      );
+      return;
+    }
+
     this.mutate(variantId, this.api.remove(variantId), (cart) =>
       `${label} moved to your wishlist. ${this.bagSummary(cart)}`,
     );
