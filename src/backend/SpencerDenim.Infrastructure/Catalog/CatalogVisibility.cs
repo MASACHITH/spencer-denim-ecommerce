@@ -19,6 +19,24 @@ namespace SpencerDenim.Infrastructure.Catalog;
 /// filter on every <c>ISoftDeletable</c> entity, so a deleted row is already absent from any query
 /// these compose into. Repeating it would read as though the filter might not be there.
 /// </para>
+/// <para>
+/// <b>What this class claims, precisely.</b> It is the one definition of <i>whether a shopper can reach
+/// an address</i> - a department page, a category listing, a product page - and every query that decides
+/// that composes it: the listing's base query, the navigation tree, the sitemap, and the three slug
+/// resolutions in <see cref="ProductCatalogReader"/> that turn a URL segment into an id. Those last three
+/// were inline for a while, which left the class claiming to be the only definition while four existed.
+/// All four said <c>IsActive</c>, so there was no defect - but the drift direction is <i>the sitemap
+/// offers a URL that answers 404</i>, which is #30's expensive kind of wrong, and a claim that is only
+/// nearly true is the kind that stops being checked.
+/// </para>
+/// <para>
+/// <b>What is deliberately not here.</b> <c>IsActive</c> on <c>ProductVariants</c>, <c>AgeGroups</c> and
+/// <c>AttributeOptions</c> is left where it is used. Those rows are not addresses: a deactivated variant
+/// changes a product page's size list and its stock, and a deactivated age group or attribute option
+/// changes which filter values resolve, but none of them makes a URL appear or disappear. Pulling them in
+/// would widen this from "what is reachable" to "what is enabled anywhere", and then it really would be a
+/// class nobody could reason about. If a future list of <i>addresses</i> appears, it belongs here.
+/// </para>
 /// </summary>
 internal static class CatalogVisibility
 {

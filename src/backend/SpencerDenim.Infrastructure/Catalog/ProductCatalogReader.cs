@@ -855,7 +855,8 @@ internal sealed class ProductCatalogReader(
         {
             filters.DepartmentId = await dbContext.Departments
                 .AsNoTracking()
-                .Where(department => department.Slug == departmentSlug && department.IsActive)
+                .Where(CatalogVisibility.VisibleDepartment)
+                .Where(department => department.Slug == departmentSlug)
                 .Select(department => (int?)department.Id)
                 .FirstOrDefaultAsync(cancellationToken);
 
@@ -871,7 +872,8 @@ internal sealed class ProductCatalogReader(
             var departmentId = filters.DepartmentId;
             var matches = await dbContext.Categories
                 .AsNoTracking()
-                .Where(candidate => candidate.Slug == categorySlug && candidate.IsActive)
+                .Where(CatalogVisibility.VisibleCategory)
+                .Where(candidate => candidate.Slug == categorySlug)
                 .Where(candidate => departmentId == null || candidate.DepartmentId == departmentId)
                 .OrderBy(candidate => candidate.Depth)
                 .ThenBy(candidate => candidate.Id)
@@ -920,7 +922,8 @@ internal sealed class ProductCatalogReader(
             // range predicate instead of a recursive query.
             filters.CategorySubtreeIds = await dbContext.Categories
                 .AsNoTracking()
-                .Where(candidate => candidate.IsActive && candidate.Path.StartsWith(category.Path))
+                .Where(CatalogVisibility.VisibleCategory)
+                .Where(candidate => candidate.Path.StartsWith(category.Path))
                 .Select(candidate => candidate.Id)
                 .ToListAsync(cancellationToken);
         }
