@@ -138,11 +138,45 @@ async function addFromProductPage(page: Page, index = 1, size = 10): Promise<voi
  * server-rendered: `StorefrontCounts` takes the count up inside `afterNextRender`, which never runs on
  * the server (deliberately — a count in the markup would make every page per-visitor). So a badge with a
  * number in it is hydration, observed rather than assumed.
+ *
+ * That only works for a bag with something in it, because an empty bag draws no badge. `items === 0` is
+ * handled so the helper cannot hang, but it is explicitly **not** a hydration gate — see the branch.
  */
 async function openBagPage(page: Page, items: number): Promise<void> {
+  // **Armed before the navigation**, because the badge alone is not enough.
+  //
+  // The badge proves the shell hydrated, and it can go green from the *transfer state* — the bag the
+  // server rendered — while the page's own browser-side `GET /api/cart` is still in flight. When that
+  // response lands it re-renders the lines, and Angular's `[value]="line.quantity"` binding overwrites
+  // whatever is in the quantity box. Measured: the typed-quantity test filled `99`, that read landed, the
+  // box was rewritten to `1`, and the handler had never run. About one full-suite run in three.
+  //
+  // Waiting for the read to arrive means the page has applied its own data before a test touches it.
+  const read = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/cart' && response.request().method() === 'GET',
+  );
+
   await page.goto('/bag');
+  await read;
   await expect(page.locator('.bag__line')).toHaveCount(items);
-  await expect(page.locator('[data-testid="bag-toggle"] .count')).toHaveText(String(items));
+
+  const badge = page.locator('[data-testid="bag-toggle"] .count');
+  if (items === 0) {
+    // An empty bag renders no badge at all (`@if (bagCount() > 0)`), so waiting for it to read "0" would
+    // wait for ever — which is what this branch exists to prevent.
+    //
+    // **It is not a hydration gate, and it does not pretend to be one.** Nothing an empty bag puts on
+    // screen differs before and after hydration: the badge is absent either way, and the shell's
+    // screen-reader text says "Bag, 0 items" in the server's own markup. So a test that needs to
+    // *interact* with an empty bag has to find its own signal; this only asserts the state is on screen.
+    // No caller needs that today, and saying so is better than a gate that is not one.
+    await expect(badge).toHaveCount(0);
+    await expect(page.locator('.bag__empty')).toBeVisible();
+    return;
+  }
+
+  await expect(badge).toHaveText(String(items));
 }
 
 /**
@@ -239,7 +273,16 @@ test.describe('the bag (CART-01, CART-02)', () => {
      */
     test('a size that sells out between the page load and the click says so', async ({ page }) => {
       const product = 2;
+      const slug = `test-product-${product}`;
       await page.goto(sizedProduct(product));
+
+      // The same hydration gate `addFromProductPage` uses, and for the same reason — this test cannot
+      // call that helper, because the whole point is to click Add to Bag *after* the stock has gone, so
+      // the add must not be made for it. `toBeEnabled()` alone was the hole: the button is
+      // server-rendered enabled here, so the click could land before its handler existed.
+      await expect
+        .poll(() => page.evaluate(() => localStorage.getItem('sd.recently-viewed') ?? ''))
+        .toContain(slug);
       await expect(page.locator('[data-testid="add-to-bag"]')).toBeEnabled();
 
       try {
@@ -298,13 +341,25 @@ test.describe('the bag (CART-01, CART-02)', () => {
       page,
     }) => {
       const input = page.locator('.qty__input');
+      await expect(input).toHaveValue('1');
 
       await input.fill('99');
       await input.blur();
 
+      // **The change landing is asserted first, and the box second, deliberately.** The box is re-synced
+      // from the bag whenever a write settles — that is what stops a *refused* change leaving a number the
+      // bag does not hold — so "the box reads 1" is the correct answer to a PATCH that did not take
+      // effect. Asserting the box first turned any hiccup into a bare `expected "2", received "1"` with
+      // nothing to act on. Waiting on the subtotal says which step failed.
+      await expect(page.locator('.bag__summary')).toContainText('Subtotal (2 items)');
+
+      // `.bag__error`, not `[role="alert"]`: the site footer carries a permanently present, empty
+      // `role="alert"` for the newsletter form (GLB-07), so a page-wide count is 1 on every page and an
+      // assertion of 0 fails on a perfectly healthy bag. It did, twice, before this was narrowed.
+      await expect(page.locator('.bag__error')).toHaveCount(0);
+
       // Product 1's Indigo/S has two in stock, so the ceiling is 2.
       await expect(input).toHaveValue('2');
-      await expect(page.locator('.bag__summary')).toContainText('Subtotal (2 items)');
     });
 
     test('removes a line and shows the empty state', async ({ page }) => {

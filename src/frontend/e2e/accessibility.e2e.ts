@@ -86,7 +86,20 @@ async function tapTargets(page: Page, selector: string): Promise<unknown[]> {
  * runs in parallel — `bag.e2e.ts` learned that the expensive way.
  */
 async function addToBag(page: Page, product = 1): Promise<void> {
-  await page.goto(`/product/test-product-${product}?colour=1&size=10`);
+  const slug = `test-product-${product}`;
+  await page.goto(`/product/${slug}?colour=1&size=10`);
+
+  // **Hydration, and `toBeEnabled()` is not it.** `goto` resolves on `load`, before Angular has claimed
+  // the server's DOM, and Add to Bag is *server-rendered enabled* when the URL settles a variant — so an
+  // actionability check passes on a button whose handler does not exist yet, the click goes nowhere, and
+  // the wait below times out. Worse here than in `bag.e2e.ts`: five axe scans reach their bag state
+  // through this helper, and a scan of an unhydrated DOM is a zero-violations result about the wrong
+  // document. The signal is the one the product page's own suite uses and documents — recording the
+  // visit (PDP-07) is the last thing that page does.
+  await expect
+    .poll(() => page.evaluate(() => localStorage.getItem('sd.recently-viewed') ?? ''))
+    .toContain(slug);
+
   const add = page.locator('[data-testid="add-to-bag"]');
   await expect(add).toBeEnabled();
   await add.click();
@@ -290,6 +303,32 @@ test.describe('axe over the storefront (#65)', () => {
     // The guard that stops the assertion above passing on a page with no such attribute at all —
     // the #80 lesson applied to a different measurement.
     expect(await page.locator('[aria-controls]').count()).toBeGreaterThan(0);
+  });
+
+  /**
+   * **The bag page with the mini bag open over it** — the one bag state nothing had scanned, and the one
+   * with a reason to be suspicious: every line is then rendered twice, the two Remove controls carry
+   * byte-identical accessible names, and two `role="alert"` regions are bound to the same error. The
+   * dialog's `aria-modal` should hide the page's copy from a screen reader, which would make all three
+   * harmless — but "should" is what a scan is for.
+   */
+  test('the bag page with the mini bag open over it has no serious or critical violation', async ({
+    page,
+  }) => {
+    await useStubApi(page);
+    await addToBag(page, 6);
+    await page.goto('/bag');
+    await expect(page.locator('.bag__line')).toHaveCount(1);
+
+    await page.locator('[data-testid="bag-toggle"]').click();
+    await expect(page.locator('sd-mini-bag [role="dialog"]')).toBeVisible();
+
+    // Both copies really are present: without this the scan below could pass by there being only one.
+    await expect(page.locator('.bag__line')).toHaveCount(1);
+    await expect(page.locator('.mini-bag__line')).toHaveCount(1);
+
+    const found = await violations(page);
+    expect(found, JSON.stringify(found, null, 2)).toEqual([]);
   });
 
   /** And nothing in the bag's own markup sits outside a landmark, as the loop asserts for every page. */
