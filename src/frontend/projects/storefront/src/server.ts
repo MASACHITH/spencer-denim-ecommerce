@@ -8,6 +8,8 @@ import express from 'express';
 import { join } from 'node:path';
 import { BRAND } from '@spencer-denim/shared';
 
+import { canonicalTarget, redirectStatusFor } from './server/canonical-path';
+import { answerRenderFailure } from './server/render-failure';
 import { ROBOTS_MAX_AGE_SECONDS, robotsTxt } from './server/robots-txt';
 import { SitemapDocument } from './server/sitemap-xml';
 
@@ -21,6 +23,28 @@ app.disable('x-powered-by');
  * localhost is always allowed. Production must list the public domain(s).
  */
 const angularApp = new AngularNodeAppEngine();
+
+/**
+ * **First, before anything that can route or render: one leading slash, not several.**
+ *
+ * `//robots.txt` answered **HTTP 500** — and a 5xx on `robots.txt` tells a crawler the whole site is
+ * disallowed, which is the one outcome everything below exists to prevent. `src/server/canonical-path.ts`
+ * has the full account; the short version is that `@angular/platform-server` throws NG05702 for a
+ * protocol-relative URL, but only once a component is about to render, so the throw was unreachable
+ * while the catch-all was a redirect and became reachable the moment it became a page (#28).
+ *
+ * Mounted at the top on purpose. Nothing below may assume it has been given a canonical path, and
+ * nothing below is where this belongs: a route is exactly the thing that proved unreliable.
+ */
+app.use((req, res, next) => {
+  const canonical = canonicalTarget(req.url);
+  if (canonical === null) {
+    next();
+    return;
+  }
+
+  res.redirect(redirectStatusFor(req.method), canonical);
+});
 
 /** Liveness probe for process managers and the reverse proxy. Does not render Angular. */
 app.get('/healthz', (_req, res) => {
@@ -155,6 +179,22 @@ app.use((req, res, next) => {
     .then((response) => (response ? writeResponseToNodeResponse(response, res) : next()))
     .catch(next);
 });
+
+/**
+ * **The last line of defence, and the reason there is a second one at all.**
+ *
+ * The canonicalising redirect at the top closes the way NG05702 was reached, but a render can fail for
+ * reasons nobody has thought of yet and the first defence should not be the only one. What it answers,
+ * and why `robots.txt` is answered rather than failed, is in `src/server/render-failure.ts`, which is a
+ * module so that it has a test rather than only a comment.
+ */
+app.use(
+  (error: unknown, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (answerRenderFailure(error, req, res) === 'already-answered') {
+      next(error);
+    }
+  },
+);
 
 /**
  * Start the server if this module is the main entry point, or it is run via PM2.
