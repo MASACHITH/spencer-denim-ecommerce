@@ -116,6 +116,33 @@ describe('answerRenderFailure', () => {
 
       expect(res.statuses.some((status) => status >= 500)).toBe(false);
     });
+
+    /**
+     * The half of F9's fix that nothing else can reach, and the shapes are not the obvious ones.
+     *
+     * A path like `/.//robots.txt` resolves to `//robots.txt` — a leading run — so the canonicaliser
+     * in front redirects it and it never reaches a render at all. The shapes that matter here are the
+     * ones whose effective path **is** `/robots.txt` while the raw path is not: a dot segment that
+     * collapses without leaving a run. Those are left alone by the canonicaliser, by design, so they
+     * are the ones that can arrive at this branch — and `request.path` compared raw missed every one
+     * of them, on the one file where a 5xx tells a crawler the whole site is disallowed.
+     *
+     * No e2e test can gate this: such a path 404s cleanly without a render failure, so the branch is
+     * unreachable from the wire by construction. A unit test is the only possible gate, and this
+     * file's own opening says a second line of defence that has never been exercised is a comment
+     * rather than a defence.
+     */
+    it.each(['/./robots.txt', '/a/../robots.txt', '/%2e/robots.txt', '/a/b/../../robots.txt'])(
+      'recognises %s, whose effective path is /robots.txt though its raw path is not',
+      (path) => {
+        const res = response();
+
+        expect(answerRenderFailure(failure, request(path), res, () => undefined)).toBe('robots');
+
+        expect(res.statuses).toEqual([200]);
+        expect(res.bodies.join('')).toContain('User-agent: *');
+      },
+    );
   });
 
   /** Half a response is already on the wire; adding to it would corrupt the body. */

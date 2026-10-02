@@ -83,9 +83,17 @@ public sealed class CatalogVisibilityConventionTests
     /// by the lookahead above, and a statement with no predicate operator in it is excluded here — so
     /// writing a row, or projecting the column into a DTO, is not mistaken for a visibility rule and does
     /// not need an exclusion entry that would only clutter the list.
+    /// <para>
+    /// The <c>Async</c> suffix is not optional decoration: every reader in this codebase awaits
+    /// <c>FirstOrDefaultAsync</c>, <c>AnyAsync</c> and <c>CountAsync</c>, so without it this rule was
+    /// blind to the dominant idiom. The tester proved that by moving a real visibility predicate out of
+    /// a <c>.Where(</c> and into the <c>FirstOrDefaultAsync(</c> that followed it: the drift was caught
+    /// only by <see cref="The_readers_compose_it"/>'s count, whose own failure message invites the
+    /// reader to lower the number — which would have hidden it.
+    /// </para>
     /// </summary>
     private static readonly Regex TakesAPredicate = new(
-        @"\.(Where|Any|All|Count|First|FirstOrDefault|Single|SingleOrDefault)\s*\(",
+        @"\.(Where|Any|All|Count|First|FirstOrDefault|Single|SingleOrDefault)(?:Async)?\s*\(",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     /// <summary>Which of the address entities a line is querying, if any.</summary>
