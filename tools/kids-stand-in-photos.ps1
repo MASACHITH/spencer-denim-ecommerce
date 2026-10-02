@@ -69,7 +69,32 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $mappingFile = Join-Path $PSScriptRoot 'kids-stand-in-photos.csv'
 
+<#
+    **Every operator-supplied path is made absolute here, once, and nothing downstream sees the original.**
+
+    `[System.IO.Path]::GetFullPath` resolves a relative path against `[Environment]::CurrentDirectory`.
+    `Test-Path -LiteralPath` and `Remove-Item -LiteralPath` resolve it against PowerShell's `$PWD`. **
+    `Set-Location` does not update `[Environment]::CurrentDirectory`**, so after a single `cd` those are
+    two different folders — and a relative `-Out` then had the guard inspect one folder while the delete
+    took another. Worse, when the folder the guard was shown did not exist it returned early at its
+    "nothing there yet" check, so no content check ran at all and the delete took the real one. That is
+    the round-1 defect with the guard walked straight past, and the trigger is the ordinary state of any
+    interactive shell after one `cd`.
+
+    `GetUnresolvedProviderPathFromPSPath` is PowerShell's own resolver, so it agrees with `-LiteralPath`
+    by construction, and unlike `Resolve-Path` it works for a path that **does not exist yet** — which
+    `-Out` usually does not. One value, used by the guard and by both deletes.
+#>
+function Resolve-OperatorPath {
+    param([string] $Path)
+
+    return $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path)
+}
+
 if (-not $Out) { $Out = Join-Path $repoRoot '.local-kids-stand-ins' }
+
+$Out = Resolve-OperatorPath $Out
+if ($ClientAssets) { $ClientAssets = Resolve-OperatorPath $ClientAssets }
 
 # ---------------------------------------------------------------- the mapping
 
@@ -98,9 +123,8 @@ if (-not $ClientAssets) {
 # -Remove deletes a generated drop and reads no photograph, so it does not need the delivery. It is
 # still probed for, because the guard below has to know where the delivery is in order to refuse to
 # delete it -- which is the whole point.
-if ($ClientAssets -and (Test-Path -LiteralPath $ClientAssets)) {
-    $ClientAssets = (Resolve-Path -LiteralPath $ClientAssets).Path
-}
+# Already absolute (`Resolve-OperatorPath`, above). Resolving it a second time with `Resolve-Path`
+# would reintroduce a second resolver for the same string, which is the bug this file just had.
 
 if (-not $Remove -and (-not $ClientAssets -or -not (Test-Path -LiteralPath (Join-Path $ClientAssets 'products')))) {
     throw "Could not find the client's drop. Pass -ClientAssets <folder holding products/, home/, …>."
@@ -157,6 +181,13 @@ function Test-PathWithin {
 
 function Assert-SafeOutputFolder {
     param([string] $Path, [string] $Delivery, [string[]] $Mine)
+
+    # The invariant that keeps the guard and the delete looking at the same folder. It cannot fail while
+    # `Resolve-OperatorPath` runs first; it is asserted anyway, because the two drifting apart silently
+    # is exactly how a relative `-Out` got past this function once already.
+    if (-not [System.IO.Path]::IsPathRooted($Path)) {
+        throw "Internal: Assert-SafeOutputFolder was given the relative path '$Path'. It must be resolved with Resolve-OperatorPath first, or the guard and the delete can disagree about which folder they mean."
+    }
 
     $full = Get-ComparablePath $Path
     $refusal = "Refusing to delete '$full'"

@@ -177,6 +177,77 @@ public sealed class KidsStandInDropGuardTests : IDisposable
     }
 
     /// <summary>
+    /// <b>A relative <c>-Out</c>, from a shell whose location has moved.</b> The shape no other test
+    /// here could express, and the one that got past the guard.
+    /// <para>
+    /// <c>[System.IO.Path]::GetFullPath</c> resolves a relative path against
+    /// <c>[Environment]::CurrentDirectory</c>; <c>Test-Path -LiteralPath</c> and
+    /// <c>Remove-Item -LiteralPath</c> resolve it against PowerShell's <c>$PWD</c>. <b>`Set-Location`
+    /// does not update <c>[Environment]::CurrentDirectory</c></b>, so after one <c>cd</c> the guard
+    /// inspected one folder and the delete took another — and because the guard's folder did not exist,
+    /// <c>Assert-SafeOutputFolder</c> returned early at its "nothing there yet" check without running
+    /// the content check at all.
+    /// </para>
+    /// <para>
+    /// Every other test in this class passes absolute paths for both parameters and sets no working
+    /// directory, so <c>GetFullPath</c> is effectively identity and the divergence cannot appear. The
+    /// trigger is not exotic: it is the normal state of any interactive session after a single
+    /// <c>cd</c>, and a relative <c>-Out</c> is a natural thing to type.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void A_relative_out_is_guarded_as_the_folder_the_delete_will_really_take()
+    {
+        var delivery = GivenADelivery();
+
+        // Where the shell will be when the script runs. The process starts somewhere else.
+        var shellHere = Path.Combine(_root, "shell-moved-here");
+        var decoy = Path.Combine(shellHere, "decoy");
+
+        // A folder the content check would refuse three times over: a stray file at the top, a stray
+        // file inside products/, and a folder the tool never creates.
+        Directory.CreateDirectory(Path.Combine(decoy, "products"));
+        Directory.CreateDirectory(Path.Combine(decoy, "logo"));
+        File.WriteAllText(Path.Combine(decoy, "products", Decoy), "the only copy");
+        File.WriteAllText(Path.Combine(decoy, "SIGNED-PROPOSAL.txt"), "signed");
+        File.WriteAllText(Path.Combine(decoy, "logo", "monogram.png"), "artwork");
+
+        var run = RunFromMovedShell(delivery, relativeOut: "decoy", shellLocation: shellHere);
+
+        Assert.NotEqual(0, run.ExitCode);
+        Assert.True(File.Exists(Path.Combine(decoy, "products", Decoy)), "The decoy photograph was deleted.");
+        Assert.True(File.Exists(Path.Combine(decoy, "SIGNED-PROPOSAL.txt")), "The decoy document was deleted.");
+        Assert.True(File.Exists(Path.Combine(decoy, "logo", "monogram.png")), "The decoy artwork was deleted.");
+    }
+
+    /// <summary>
+    /// And the same shape must still <i>work</i> where it should, which also pins <b>which</b> of the two
+    /// interpretations wins: PowerShell's <c>$PWD</c>, the one the delete has always used. A relative
+    /// <c>-Out</c> naming a folder that does not exist yet builds the drop beside the shell, not beside
+    /// wherever the process happened to start.
+    /// </summary>
+    [Fact]
+    public void A_relative_out_builds_the_drop_beside_the_shell_not_the_process()
+    {
+        var delivery = GivenADelivery();
+        var shellHere = Path.Combine(_root, "shell-moved-for-a-build");
+        Directory.CreateDirectory(shellHere);
+
+        var run = RunFromMovedShell(delivery, relativeOut: "fresh", shellLocation: shellHere);
+
+        Assert.Equal(0, run.ExitCode);
+        Assert.Equal(
+            KidsStandInMappingFile.Rows().Count * 2,
+            Directory.GetFiles(Path.Combine(shellHere, "fresh", "products")).Length);
+
+        // And nothing was created against the process's own directory, which is where GetFullPath
+        // would have put it.
+        Assert.False(
+            Directory.Exists(Path.Combine(_root, "fresh")),
+            "The drop was built against the process directory rather than the shell's location.");
+    }
+
+    /// <summary>
     /// A fake delivery: a <c>products/</c> folder carrying every donor's two photographs, under the two
     /// damaged shapes the real batch arrived in, so the script's own filename repairs are exercised too.
     /// The bytes are irrelevant — these tests never import.
@@ -199,6 +270,46 @@ public sealed class KidsStandInDropGuardTests : IDisposable
         }
 
         return delivery;
+    }
+
+    /// <summary>
+    /// Runs the script from a shell that has moved: the process starts in the test's own root and the
+    /// command does <c>Set-Location</c> first, which is what makes <c>$PWD</c> and
+    /// <c>[Environment]::CurrentDirectory</c> disagree. <c>-File</c> cannot express this — it needs a
+    /// <c>-Command</c> with two statements in it.
+    /// </summary>
+    private ScriptRun RunFromMovedShell(string clientAssets, string relativeOut, string shellLocation)
+    {
+        // The relative path must still land inside the test's own temp tree, whichever resolver wins.
+        foreach (var path in new[] { clientAssets, shellLocation, Path.Combine(shellLocation, relativeOut) })
+        {
+            Assert.StartsWith(_root, Path.GetFullPath(path), StringComparison.OrdinalIgnoreCase);
+        }
+
+        Assert.False(Path.IsPathRooted(relativeOut), "The point of this test is a relative -Out.");
+
+        var script = KidsStandInMappingFile.ScriptPath();
+        var command =
+            $"Set-Location -LiteralPath '{shellLocation}'; "
+            + $"& '{script}' -ClientAssets '{clientAssets}' -Out '{relativeOut}' -NoImport";
+
+        var info = new ProcessStartInfo("pwsh")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+
+            // Deliberately NOT shellLocation: this is what leaves
+            // [Environment]::CurrentDirectory pointing somewhere the shell is not.
+            WorkingDirectory = _root,
+        };
+
+        foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-Command", command })
+        {
+            info.ArgumentList.Add(argument);
+        }
+
+        return Capture(info);
     }
 
     private sealed record ScriptRun(int ExitCode, string Output);
@@ -238,6 +349,11 @@ public sealed class KidsStandInDropGuardTests : IDisposable
             info.ArgumentList.Add(argument);
         }
 
+        return Capture(info);
+    }
+
+    private static ScriptRun Capture(ProcessStartInfo info)
+    {
         using var process = Start(info);
         var stdout = process.StandardOutput.ReadToEnd();
         var stderr = process.StandardError.ReadToEnd();
