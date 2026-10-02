@@ -657,6 +657,55 @@ describe('ProductPage (PDP-01..07)', () => {
       expect(alert?.textContent).toContain('blocking site data');
     });
 
+    /**
+     * The opposite operation, same cause — and the direction that shipped the wrong sentence.
+     *
+     * A refusal leaves the signal untouched, so an already-saved product keeps a **filled** heart that
+     * correctly still reads "Saved to wishlist". One shared message then said "could not **save**"
+     * beside it: a sentence describing the opposite of what was attempted, next to a control stating
+     * the opposite of what the sentence implied. Which operation was refused is readable from the
+     * state before the tap, because a refusal does not move it.
+     */
+    it('says it could not remove, when storage refuses and the product was already saved', async () => {
+      TestBed.resetTestingModule();
+      TestBed.configureTestingModule({
+        providers: [
+          provideRouter(routes),
+          provideHttpClient(),
+          provideHttpClientTesting(),
+          {
+            provide: SafeLocalStorage,
+            // Reads the slug back, so the heart starts filled; refuses every write from then on.
+            // Keyed, because other services share this port and must not be handed the wishlist's
+            // value — `read` returns the raw string the caller parses, not a parsed array.
+            useValue: {
+              read: (key: string) =>
+                key === 'sd.wishlist.local' ? '["high-rise-straight-jean"]' : null,
+              write: () => false,
+              remove: () => false,
+            },
+          },
+        ],
+      });
+      http = TestBed.inject(HttpTestingController);
+
+      await open('/product/high-rise-straight-jean');
+
+      expect(query('.pdp__wish')?.getAttribute('aria-pressed')).toBe('true');
+
+      query<HTMLButtonElement>('.pdp__wish')!.click();
+      await settle();
+
+      // Still saved, because nothing was removed — the heart is telling the truth.
+      expect(query('.pdp__wish')?.getAttribute('aria-pressed')).toBe('true');
+      expect(query('.pdp__wish')?.textContent).toContain('Saved to wishlist');
+
+      const alert = query('.pdp__wish-error');
+      expect(alert?.textContent).toContain('could not remove');
+      expect(alert?.textContent).not.toContain('could not save');
+      expect(alert?.textContent).toContain('blocking site data');
+    });
+
     it('saves to the same per-browser wishlist the card uses (W2-08)', async () => {
       await open('/product/high-rise-straight-jean');
 

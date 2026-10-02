@@ -467,13 +467,19 @@ export class ProductCard {
   protected readonly wishUnavailable = this.wishFailed.asReadonly();
 
   protected readonly wishLabel = computed(() => {
+    const name = this.product().name;
+
     if (this.wishUnavailable()) {
-      return `Could not save ${this.product().name} to wishlist — your browser is blocking site data`;
+      // Which operation was refused is readable from `saved()`, because a refusal leaves the signal
+      // exactly as it was: a heart that was filled was being emptied. Without this the control said
+      // "Could not save" while still reporting `aria-pressed="true"` — a sentence that contradicted
+      // the state beside it, which is the whole defect this round was about one layer down.
+      return this.saved()
+        ? `Could not remove ${name} from wishlist — your browser is blocking site data`
+        : `Could not save ${name} to wishlist — your browser is blocking site data`;
     }
 
-    return this.saved()
-      ? `Remove ${this.product().name} from wishlist`
-      : `Save ${this.product().name} to wishlist`;
+    return this.saved() ? `Remove ${name} from wishlist` : `Save ${name} to wishlist`;
   });
 
   protected toggleWishlist(): void {

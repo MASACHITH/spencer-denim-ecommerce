@@ -73,9 +73,18 @@ const BADGE_LABEL: Readonly<Record<ProductBadge, string>> = {
  * It says what happened and what to do about it, and it does not call it an error: in a private window
  * this is the normal, permanent answer, not a fault to retry.
  */
-const WISHLIST_UNAVAILABLE =
+const WISHLIST_SAVE_UNAVAILABLE =
   'We could not save that to your wishlist. Your browser is blocking site data — private browsing ' +
   'usually does.';
+
+/**
+ * The same cause, the opposite operation. A refusal leaves the signal untouched, so the heart stays
+ * filled and correctly still reads "Saved to wishlist" — which made one shared "could not save"
+ * sentence contradict the control it sat beside.
+ */
+const WISHLIST_REMOVE_UNAVAILABLE =
+  'We could not remove that from your wishlist. Your browser is blocking site data — private ' +
+  'browsing usually does.';
 
 /** How many recently viewed products the row shows, once this one is taken out. */
 const RECENT_SHOWN = 6;
@@ -332,7 +341,7 @@ const RECENT_SHOWN = 6;
             </button>
 
             @if (wishError(); as message) {
-              <p class="pdp__add-error" role="alert">{{ message }}</p>
+              <p class="pdp__add-error pdp__wish-error" role="alert">{{ message }}</p>
             }
 
             <sd-product-details [product]="item" />
@@ -1045,8 +1054,17 @@ export class ProductPage {
   protected toggleWishlist(): void {
     // `'unavailable'` means nothing changed, in storage or in memory — so the heart stays as it was and
     // the shopper is told why, rather than being shown a filled heart over a save that did not happen.
+    // Read `saved()` **before** the toggle: on a refusal the signal does not move, but reading it
+    // first says plainly that it is the attempted operation being named rather than the outcome.
+    const wasSaved = this.saved();
     const outcome = this.wishlist.toggle(this.currentSlug());
-    this.wishFailure.set(outcome === 'unavailable' ? WISHLIST_UNAVAILABLE : null);
+
+    if (outcome !== 'unavailable') {
+      this.wishFailure.set(null);
+      return;
+    }
+
+    this.wishFailure.set(wasSaved ? WISHLIST_REMOVE_UNAVAILABLE : WISHLIST_SAVE_UNAVAILABLE);
   }
 
   protected openSizeGuide(): void {
