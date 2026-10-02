@@ -468,6 +468,17 @@ public sealed partial class ClientAssetImporter(
                     }
                 }
 
+                // The sentence the library holds, which is the one a shopper hears — not the one this
+                // file offered. They differ whenever the bytes were already in the library under
+                // another product's name, and reporting the offered one then is simply untrue: the
+                // kids stand-ins (2026-10-02) make that the normal case rather than a curiosity.
+                var storedAlt = stored.AltText ?? alt;
+                var altNote = string.Equals(storedAlt, alt, StringComparison.Ordinal)
+                    ? $"alt text \"{storedAlt}\""
+                    : $"alt text \"{storedAlt}\" — the sentence already on this photograph, kept rather "
+                        + $"than overwritten with \"{alt}\", because it is one asset and one sentence, "
+                        + "shared with every product that shows it";
+
                 run.Add(Describe(
                     ClientAssetFolder.Products,
                     file.FileName,
@@ -476,7 +487,7 @@ public sealed partial class ClientAssetImporter(
                     outcome == SlotOutcome.AlreadyPlaced
                         ? $"{product.Slug} — byte for byte the same picture as {sameAs ?? "a photograph already in this product's gallery"}, "
                             + $"so it is one asset in the library and fills one gallery slot. It is still {role}."
-                        : $"{product.Slug} — {role}, alt text \"{alt}\"",
+                        : $"{product.Slug} — {role}, {altNote}",
                     file.RepairedFrom));
             }
 
@@ -1670,11 +1681,19 @@ public sealed partial class ClientAssetImporter(
             case MediaUploadOutcome.Created created:
                 run.NoteHold(holds.For(created.Asset.Checksum));
                 run.Created(created.Asset.PublicId, created.Asset.StorageKey);
-                return new StoredAsset(await AssetIdAsync(created.Asset.PublicId, cancellationToken), false, null);
+                return new StoredAsset(
+                    await AssetIdAsync(created.Asset.PublicId, cancellationToken),
+                    false,
+                    null,
+                    created.Asset.AltText);
 
             case MediaUploadOutcome.Duplicate duplicate:
                 run.NoteHold(holds.For(duplicate.Asset.Checksum));
-                return new StoredAsset(await AssetIdAsync(duplicate.Asset.PublicId, cancellationToken), true, null);
+                return new StoredAsset(
+                    await AssetIdAsync(duplicate.Asset.PublicId, cancellationToken),
+                    true,
+                    null,
+                    duplicate.Asset.AltText);
 
             case MediaUploadOutcome.Rejected rejected:
                 return new StoredAsset(null, false, $"{rejected.Reason}: {rejected.Message}");
@@ -1695,13 +1714,16 @@ public sealed partial class ClientAssetImporter(
         await FindByChecksumAsync(await ChecksumAsync(path, cancellationToken), mediaType, cancellationToken)
             is not null;
 
+    /// <summary>The sentence a dry run would find already on the asset these bytes resolve to.</summary>
+    private sealed record ExistingAsset(int Id, string? AltText);
+
     private static async Task<byte[]> ChecksumAsync(string path, CancellationToken cancellationToken)
     {
         await using var content = File.OpenRead(path);
         return await SHA256.HashDataAsync(content, cancellationToken);
     }
 
-    private async Task<int?> FindByChecksumAsync(
+    private async Task<ExistingAsset?> FindByChecksumAsync(
         byte[] checksum,
         MediaAssetType mediaType,
         CancellationToken cancellationToken) =>
@@ -1712,7 +1734,7 @@ public sealed partial class ClientAssetImporter(
                 && asset.Visibility == MediaVisibility.Public
                 && asset.Status == MediaAssetStatus.Ready)
             .OrderBy(asset => asset.Id)
-            .Select(asset => (int?)asset.Id)
+            .Select(asset => new ExistingAsset(asset.Id, asset.AltText))
             .FirstOrDefaultAsync(cancellationToken);
 
     /// <summary>
@@ -1743,9 +1765,9 @@ public sealed partial class ClientAssetImporter(
 
         var existing = await FindByChecksumAsync(checksum, mediaType, cancellationToken);
 
-        if (existing is { } assetId)
+        if (existing is { } already)
         {
-            return new StoredAsset(assetId, WasExisting: true, Refusal: null);
+            return new StoredAsset(already.Id, WasExisting: true, Refusal: null, AltText: already.AltText);
         }
 
         // One stand-in per distinct checksum, negative so it can never be mistaken for a real id. Two
@@ -1881,7 +1903,18 @@ public sealed partial class ClientAssetImporter(
     /// <summary>A file an attempt wrote, as the keys that address it.</summary>
     private sealed record CreatedFile(Guid PublicId, string StorageKey);
 
-    private sealed record StoredAsset(int? AssetId, bool WasExisting, string? Refusal);
+    /// <summary>
+    /// What the library did with one file.
+    /// </summary>
+    /// <param name="AltText">
+    /// The sentence the library <b>actually holds</b> for this asset, which is not always the one that
+    /// was offered. Alt text lives on the asset and the pipeline answers a repeat upload with the asset
+    /// it already has, so a file whose bytes are already in the library keeps the earlier sentence — and
+    /// the report has to say the one a shopper will hear rather than the one this run asked for. It
+    /// matters since the kids stand-ins (2026-10-02), where a photograph is deliberately shared by two
+    /// products and only one of them named it.
+    /// </param>
+    private sealed record StoredAsset(int? AssetId, bool WasExisting, string? Refusal, string? AltText = null);
 
     /// <summary>
     /// The words one banner carries, and the words this import is allowed to take back.
