@@ -2062,6 +2062,53 @@ function handleCart(request, response, url) {
   return false;
 }
 
+/**
+ * The storefront shell's settings (GLB-02, GLB-07, GLB-08), as `GET /api/site/settings` returns them.
+ *
+ * `logo` is a real URL this stub also serves, so the browser genuinely fetches an image and a broken one
+ * would show up as a broken one — a `data:` URL would prove the markup and nothing about the wiring.
+ */
+function buildSiteSettings(logo, social, whatsApp) {
+  const links = {
+    none: [],
+    one: [{ network: 'instagram', url: 'https://www.instagram.com/colombowardrobe' }],
+    all: [
+      { network: 'facebook', url: 'https://www.facebook.com/colombowardrobe' },
+      { network: 'instagram', url: 'https://www.instagram.com/colombowardrobe' },
+      { network: 'tiktok', url: 'https://www.tiktok.com/@colombowardrobe' },
+    ],
+  };
+
+  const marks = {
+    none: null,
+
+    // A wide, short logo: the ordinary shape of a wordmark, and the one that can squeeze the navigation.
+    wide: { url: `${MEDIA_BASE}/public/renditions/${publicId(901)}/card.webp`, width: 600, height: 150, altText: null },
+
+    // A tall, narrow one, which is the shape that would grow the header and invalidate --header-height if
+    // the stylesheet let the file decide its own height.
+    tall: { url: `${MEDIA_BASE}/public/renditions/${publicId(902)}/card.webp`, width: 200, height: 600, altText: 'Our logo' },
+  };
+
+  return {
+    logo: marks[logo] ?? null,
+    whatsAppNumber: whatsApp ?? null,
+    social: links[social] ?? [],
+  };
+}
+
+/** Forced status for `/api/site/settings`, set through the test switch. 0 means answer normally. */
+let siteSettingsStatus = Number(process.env.E2E_SITE_SETTINGS_STATUS ?? 0);
+
+/** How long `/api/site/settings` holds its answer, in ms. 0 means answer at once. */
+let siteSettingsDelayMs = 0;
+
+let siteSettings = buildSiteSettings(
+  process.env.E2E_SITE_LOGO ?? 'none',
+  process.env.E2E_SITE_SOCIAL ?? 'none',
+  process.env.E2E_SITE_WHATSAPP ?? null,
+);
+
 const server = createServer((request, response) => {
   const url = new URL(request.url ?? '/', `http://localhost:${PORT}`);
 
@@ -2078,6 +2125,30 @@ const server = createServer((request, response) => {
   // accident: `reuseExistingServer` means a run that ended mid-fault would otherwise hand the next
   // run a stub that is still broken — and a readiness probe on `/departments` could not even tell,
   // because under `destroy` it never answers. Probing this resets the fault on the way in.
+  // Test-only, like the departments fault below: sets what `/api/site/settings` answers next.
+  //
+  // `logo=none|wide|tall` and `social=none|all|one` rather than a free-form payload, so a test names a
+  // *state* and this file owns what that state's bytes are. A GET with no parameters resets it, which is
+  // what makes a run that ended mid-switch harmless.
+  if (url.pathname === '/__test__/site-settings') {
+    siteSettings = buildSiteSettings(
+      url.searchParams.get('logo') ?? 'none',
+      url.searchParams.get('social') ?? 'none',
+      url.searchParams.get('whatsApp'),
+    );
+
+    // The fault modes belong here rather than in a `page.route` handler, and that is the whole reason this
+    // switch exists. The storefront reads these settings during the **server** render, which Playwright's
+    // request interception cannot touch — a test that routed the browser's call would fault a request the
+    // browser never makes (the server hands its answer over with the page) and would quietly measure
+    // nothing. Faulting the stub is the only way to make the server's own read fail.
+    siteSettingsStatus = Number(url.searchParams.get('status') ?? 0);
+    siteSettingsDelayMs = Number(url.searchParams.get('delay') ?? 0);
+
+    response.end(JSON.stringify({ settings: siteSettings, status: siteSettingsStatus, delay: siteSettingsDelayMs }));
+    return;
+  }
+
   if (url.pathname === '/__test__/departments-fault') {
     departmentsFault = url.searchParams.get('mode') ?? 'none';
     response.end(JSON.stringify({ fault: departmentsFault }));
@@ -2178,6 +2249,32 @@ const server = createServer((request, response) => {
     }
 
     response.end(JSON.stringify(homePage()));
+    return;
+  }
+
+  // ADM-22 / GLB-02: the storefront shell's settings, which every page reads on the server.
+  //
+  // Mutable rather than fixed, because the thing under test is what the shell does when it *changes*: the
+  // header has to go from the text wordmark to the logo and back without a rebuild. A test switches it
+  // through `/__test__/site-settings`, so `site-branding.e2e.ts` runs serially — the same arrangement, and
+  // the same reason, as the departments fault switch above.
+  if (url.pathname === '/api/site/settings') {
+    const forced = siteSettingsStatus || Number(process.env.E2E_SITE_SETTINGS_STATUS ?? 0);
+    if (forced >= 400) {
+      response.statusCode = forced;
+      response.end(JSON.stringify({ title: 'Forced failure', status: forced }));
+      return;
+    }
+
+    // An answer that never comes, which `catchError` cannot see — the W2-03 lesson the storefront's timeout
+    // exists for. The socket is left open rather than destroyed, because a destroyed one is an *error* and
+    // the timeout is what has to be proved.
+    if (siteSettingsDelayMs > 0) {
+      setTimeout(() => response.end(JSON.stringify(siteSettings)), siteSettingsDelayMs);
+      return;
+    }
+
+    response.end(JSON.stringify(siteSettings));
     return;
   }
 

@@ -6,6 +6,7 @@ import { BRAND, Icon } from '@spencer-denim/shared';
 import { ContentApi, newsletterErrorMessage } from '../../core/content/content-api';
 import { NavigationService } from '../../core/navigation/navigation.service';
 import { SITE_CONFIG } from '../../core/config/site-config';
+import { SiteSettingsService } from '../../core/site-settings/site-settings.service';
 
 /** What the newsletter form is showing (GLB-07). */
 export type NewsletterState = 'idle' | 'sending' | 'done' | 'error';
@@ -128,16 +129,29 @@ export type NewsletterState = 'idle' | 'sending' | 'done' | 'error';
                 <li>{{ line }}</li>
               }
             </ul>
-            <ul class="site-footer__social">
-              @for (link of social; track link.url) {
-                <li>
-                  <a class="icon-btn" [href]="link.url" target="_blank" rel="noopener">
-                    <sd-icon [name]="link.icon" />
-                    <span class="sr-only">{{ link.label }}</span>
-                  </a>
-                </li>
-              }
-            </ul>
+            <!-- GLB-07, ADM-22. Only the profiles the client has actually given us.
+
+                 **The list is empty until then, and that is the correct state.** It used to hold three
+                 icons pointing at facebook.com, instagram.com and tiktok.com — the networks' own front
+                 pages, not this shop's profiles. A social icon on a live shop that does not go to the
+                 shop is worse than no icon: a shopper who clicks it concludes the shop is abandoned, and
+                 nothing on the page says otherwise. So an unset address hides its icon, and the whole
+                 list disappears rather than leaving an empty row in the contact column.
+
+                 The @if wraps the whole list rather than the @for wrapping nothing, because an empty
+                 ul still takes its margin-top and would leave a gap under the opening hours. -->
+            @if (social().length > 0) {
+              <ul class="site-footer__social" data-testid="social-links">
+                @for (link of social(); track link.network) {
+                  <li>
+                    <a class="icon-btn" [href]="link.url" target="_blank" rel="noopener">
+                      <sd-icon [name]="link.icon" />
+                      <span class="sr-only">{{ link.label }}</span>
+                    </a>
+                  </li>
+                }
+              </ul>
+            }
           </section>
         </div>
 
@@ -297,7 +311,16 @@ export class SiteFooter {
 
   protected readonly navItems = this.navigation.items;
   protected readonly contact = this.config.contact;
-  protected readonly social = this.config.social;
+
+  /**
+   * The shop's social profiles, from `ops.Settings` (ADM-22) rather than from `SITE_CONFIG`.
+   *
+   * A signal, not a constant, because the server renders this footer and the value arrives with the
+   * page; and empty whenever the settings cannot be read, which is the same rendering as "the client has
+   * not sent them" — so a failed read costs three icons rather than the page (W2-10's lesson).
+   */
+  protected readonly social = inject(SiteSettingsService).social;
+
   protected readonly year = new Date().getFullYear();
 
   private readonly api = inject(ContentApi);

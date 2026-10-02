@@ -5,6 +5,7 @@ import { Drawer, Icon } from '@spencer-denim/shared';
 import { NavigationService } from '../../core/navigation/navigation.service';
 import { NavItem, hasMenu } from '../../core/navigation/navigation.model';
 import { SITE_CONFIG, whatsAppUrl } from '../../core/config/site-config';
+import { SiteSettingsService } from '../../core/site-settings/site-settings.service';
 import { StorefrontCounts } from '../../core/storefront-counts.service';
 
 /**
@@ -85,7 +86,7 @@ import { StorefrontCounts } from '../../core/storefront-counts.service';
           </a>
         </li>
         <li>
-          <a class="m-nav__link" [href]="whatsApp" rel="noopener" target="_blank">
+          <a class="m-nav__link" [href]="whatsApp()" rel="noopener" target="_blank">
             <sd-icon name="whatsapp" size="sm" /> <span>Chat on WhatsApp</span>
           </a>
         </li>
@@ -169,7 +170,11 @@ export class MobileNav {
 
   readonly items = this.navigation.items;
   protected readonly wishlistCount = this.counts.wishlist;
-  protected readonly whatsApp = whatsAppUrl(inject(SITE_CONFIG));
+  private readonly siteConfig = inject(SITE_CONFIG);
+  private readonly whatsAppNumber = inject(SiteSettingsService).whatsAppNumber;
+
+  /** <inheritdoc cref="WhatsappButton.url" /> — the same setting, the same fallback (ADM-22). */
+  protected readonly whatsApp = computed(() => whatsAppUrl(this.siteConfig, this.whatsAppNumber()));
 
   private readonly expanded = signal<string | null>(null);
 
