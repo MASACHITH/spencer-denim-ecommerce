@@ -114,11 +114,18 @@ interface ColourDot {
           <span class="badge" [class]="badgeClass()">{{ label }}</span>
         }
 
+        <!-- The heart can fail silently — localStorage is refused outright by a private window, a
+             blocked-site-data setting or a full quota — and LocalWishlist reports that now rather than
+             filling the heart over nothing. A card has no room for a message and there may be
+             twenty-four of them on a page, so the **control says it itself**: the heart stays unfilled,
+             which is the truth, and the accessible name and the tooltip explain why. The product page
+             has room for a sentence and shows one. -->
         <button
           class="card__wish"
           type="button"
           [attr.aria-pressed]="saved()"
           [attr.aria-label]="wishLabel()"
+          [attr.title]="wishUnavailable() ? wishLabel() : null"
           (click)="toggleWishlist()"
         >
           <sd-icon name="heart" size="sm" [filled]="saved()" />
@@ -454,14 +461,25 @@ export class ProductCard {
     return names.length === 1 ? `Colour: ${names[0]}` : `Colours: ${names.join(', ')}`;
   });
 
-  protected readonly wishLabel = computed(() =>
-    this.saved()
+  private readonly wishFailed = signal(false);
+
+  /** True once this card's heart has been tapped and storage refused the write. */
+  protected readonly wishUnavailable = this.wishFailed.asReadonly();
+
+  protected readonly wishLabel = computed(() => {
+    if (this.wishUnavailable()) {
+      return `Could not save ${this.product().name} to wishlist — your browser is blocking site data`;
+    }
+
+    return this.saved()
       ? `Remove ${this.product().name} from wishlist`
-      : `Save ${this.product().name} to wishlist`,
-  );
+      : `Save ${this.product().name} to wishlist`;
+  });
 
   protected toggleWishlist(): void {
-    this.wishlist.toggle(this.product().slug);
+    // `'unavailable'` means nothing changed anywhere, so the heart stays as it was and the label says
+    // why. A filled heart over a refused write is the lie this replaced.
+    this.wishFailed.set(this.wishlist.toggle(this.product().slug) === 'unavailable');
   }
 
   protected onImageError(): void {

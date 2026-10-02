@@ -67,6 +67,16 @@ const BADGE_LABEL: Readonly<Record<ProductBadge, string>> = {
   LowStock: 'Low stock',
 };
 
+/**
+ * What a shopper is told when the wishlist cannot be written to.
+ *
+ * It says what happened and what to do about it, and it does not call it an error: in a private window
+ * this is the normal, permanent answer, not a fault to retry.
+ */
+const WISHLIST_UNAVAILABLE =
+  'We could not save that to your wishlist. Your browser is blocking site data — private browsing ' +
+  'usually does.';
+
 /** How many recently viewed products the row shows, once this one is taken out. */
 const RECENT_SHOWN = 6;
 
@@ -305,7 +315,12 @@ const RECENT_SHOWN = 6;
 
             <!-- The wishlist heart, exactly as the product card works it: the same per-browser
                  LocalWishlist, the same aria-pressed, the same labels. Buy Now waits for W3-02;
-                 nothing dead or disabled stands in for it. -->
+                 nothing dead or disabled stands in for it.
+
+                 The heart can fail, and silently: storage is localStorage, which a private window, a
+                 blocked-site-data setting or a full quota all refuse without throwing. LocalWishlist
+                 reports that now instead of filling the heart over nothing, and this is where a shopper
+                 is told. -->
             <button
               class="btn btn--secondary btn--block pdp__wish"
               type="button"
@@ -315,6 +330,10 @@ const RECENT_SHOWN = 6;
               <sd-icon name="heart" size="sm" [filled]="saved()" />
               {{ saved() ? 'Saved to wishlist' : 'Save to wishlist' }}
             </button>
+
+            @if (wishError(); as message) {
+              <p class="pdp__add-error" role="alert">{{ message }}</p>
+            }
 
             <sd-product-details [product]="item" />
           </div>
@@ -780,6 +799,11 @@ export class ProductPage {
 
   protected readonly saved = computed(() => this.wishlist.has(this.currentSlug()));
 
+  private readonly wishFailure = signal<string | null>(null);
+
+  /** What to say when the heart could not save. Null the rest of the time, which is almost always. */
+  protected readonly wishError = this.wishFailure.asReadonly();
+
   private readonly quantityWanted = signal(1);
 
   /** The exact colour × size the shopper has settled on, or null while a choice is outstanding. */
@@ -1019,7 +1043,10 @@ export class ProductPage {
   }
 
   protected toggleWishlist(): void {
-    this.wishlist.toggle(this.currentSlug());
+    // `'unavailable'` means nothing changed, in storage or in memory — so the heart stays as it was and
+    // the shopper is told why, rather than being shown a filled heart over a save that did not happen.
+    const outcome = this.wishlist.toggle(this.currentSlug());
+    this.wishFailure.set(outcome === 'unavailable' ? WISHLIST_UNAVAILABLE : null);
   }
 
   protected openSizeGuide(): void {

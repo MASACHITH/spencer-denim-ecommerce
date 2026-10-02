@@ -8,6 +8,8 @@ import {
   ProductCard,
 } from './product-card';
 import { ProductCardDto } from '../../core/catalog/catalog.model';
+import { SafeLocalStorage } from '@spencer-denim/shared';
+
 import { LocalWishlist } from '../../core/wishlist/local-wishlist.service';
 
 function product(overrides: Partial<ProductCardDto> = {}): ProductCardDto {
@@ -255,6 +257,54 @@ describe('ProductCard wishlist', () => {
     await settle();
 
     expect(heart.getAttribute('aria-pressed')).toBe('false');
+  });
+
+  /**
+   * **What a shopper sees when the heart cannot save.**
+   *
+   * `localStorage` is refused outright by a private window, a blocked-site-data setting and a full
+   * quota, and `SafeLocalStorage.write` reports that by returning `false` rather than throwing. The
+   * heart used to fill anyway and the badge used to increment, over nothing, with nothing to tell
+   * them — a real defect on this card with no bag involved, and the state that then let
+   * `CartStore.moveToWishlist` destroy a bag line.
+   *
+   * A card has no room for a sentence and a listing can hold twenty-four of them, so **the control says
+   * it itself**: the heart stays unfilled, which is the truth, and the accessible name and the tooltip
+   * explain why. The product page has room and shows a sentence instead.
+   */
+  it('leaves the heart unpressed and says why when storage refuses the write', async () => {
+    TestBed.resetTestingModule();
+    TestBed.configureTestingModule({
+      imports: [CardHost],
+      providers: [
+        provideRouter([]),
+        {
+          provide: SafeLocalStorage,
+          useValue: { read: () => null, write: () => false, remove: () => false },
+        },
+      ],
+    });
+
+    const fixture = TestBed.createComponent(CardHost);
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    const element = fixture.nativeElement as HTMLElement;
+    const heart = element.querySelector('.card__wish') as HTMLButtonElement;
+
+    heart.click();
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    expect(heart.getAttribute('aria-pressed')).toBe('false');
+    expect(heart.getAttribute('aria-label')).toBe(
+      'Could not save Linen Wrap Midi Dress to wishlist — your browser is blocking site data',
+    );
+    expect(heart.getAttribute('title')).toContain('blocking site data');
+
+    // And nothing anywhere claims it is saved — the header badge reads this count.
+    expect(TestBed.inject(LocalWishlist).has('linen-wrap-midi-dress')).toBe(false);
+    expect(TestBed.inject(LocalWishlist).count()).toBe(0);
   });
 });
 

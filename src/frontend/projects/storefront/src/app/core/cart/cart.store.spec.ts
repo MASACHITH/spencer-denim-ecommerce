@@ -350,6 +350,49 @@ describe('CartStore (CART-01, CART-02, GLB-04)', () => {
       expect(wishlist.count()).toBe(0);
     });
 
+    /**
+     * **The heart-then-move journey, which is how B2 survived round 2.**
+     *
+     * Hardening `save()` was not enough, because `save()` had an early return —
+     * `if (this.slugs().has(slug)) return true;` — and `toggle()` sets the signal whether or not the
+     * write landed. So: tap the heart (signal says saved, storage holds nothing), then Move to wishlist
+     * (`save()` returns `true` **without attempting a write**), and the `DELETE` goes out with
+     * `error()` null. No alert, no warning, and on reload the item is in neither place.
+     *
+     * Two things fix it and both are asserted here: `toggle()` is write-truthful, so the signal is never
+     * set over a failed write; and `save()` no longer treats the signal as evidence of persistence.
+     */
+    it('keeps the line when the heart was tapped first and storage was refusing all along', () => {
+      TestBed.resetTestingModule();
+      TestBed.configureTestingModule({
+        providers: [
+          provideHttpClient(),
+          provideHttpClientTesting(),
+          {
+            provide: SafeLocalStorage,
+            useValue: { read: () => null, write: () => false, remove: () => false },
+          },
+        ],
+      });
+
+      http = TestBed.inject(HttpTestingController);
+      const blocked = TestBed.inject(CartStore);
+      const wishlist = TestBed.inject(LocalWishlist);
+
+      // Step 1: the heart on a card or the PDP. It must not claim to have saved anything.
+      expect(wishlist.toggle('relaxed-linen-blend-shirt')).toBe('unavailable');
+      expect(wishlist.has('relaxed-linen-blend-shirt')).toBe(false);
+      expect(wishlist.count()).toBe(0);
+
+      // Step 2: Move to wishlist on that same product.
+      blocked.moveToWishlist(1, 'relaxed-linen-blend-shirt', 'Linen shirt');
+
+      // The line stays, and the shopper is told.
+      expect(http.match(() => true)).toEqual([]);
+      expect(blocked.error()).toContain('still in your bag');
+      expect(wishlist.has('relaxed-linen-blend-shirt')).toBe(false);
+    });
+
     /** `save`, not `toggle`: moving something already on the wishlist must not take it off. */
     it('leaves a product that is already on the wishlist on it', () => {
       const wishlist = TestBed.inject(LocalWishlist);

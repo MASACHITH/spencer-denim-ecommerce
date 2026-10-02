@@ -18,6 +18,8 @@ import {
   ProductImageDto,
   ProductVariantDto,
 } from '../../core/catalog/catalog.model';
+import { SafeLocalStorage } from '@spencer-denim/shared';
+
 import { RECENTLY_VIEWED_KEY } from '../../core/catalog/recently-viewed.service';
 import { DepartmentDto } from '../../core/navigation/catalog-departments.model';
 
@@ -616,6 +618,43 @@ describe('ProductPage (PDP-01..07)', () => {
 
       expect(text()).not.toContain('Buy Now');
       expect(text()).not.toContain('Buy now');
+    });
+
+    /**
+     * **What a shopper sees when the heart cannot save**, on the page that has room to say it.
+     *
+     * `SafeLocalStorage.write` returns `false` in a private window, with site data blocked, or on a full
+     * quota — it never throws. The heart used to fill over that and the badge used to increment, which
+     * was a defect here on its own and was also the state that let a bag line be destroyed by
+     * "Move to wishlist" with no warning at all.
+     */
+    it('says so, and leaves the heart unpressed, when storage refuses the write', async () => {
+      TestBed.resetTestingModule();
+      TestBed.configureTestingModule({
+        providers: [
+          provideRouter(routes),
+          provideHttpClient(),
+          provideHttpClientTesting(),
+          {
+            provide: SafeLocalStorage,
+            useValue: { read: () => null, write: () => false, remove: () => false },
+          },
+        ],
+      });
+      http = TestBed.inject(HttpTestingController);
+
+      await open('/product/high-rise-straight-jean');
+
+      const heart = query<HTMLButtonElement>('.pdp__wish')!;
+      heart.click();
+      await settle();
+
+      expect(query('.pdp__wish')?.getAttribute('aria-pressed')).toBe('false');
+      expect(query('.pdp__wish')?.textContent).toContain('Save to wishlist');
+
+      const alert = query('[role="alert"]');
+      expect(alert?.textContent).toContain('could not save');
+      expect(alert?.textContent).toContain('blocking site data');
     });
 
     it('saves to the same per-browser wishlist the card uses (W2-08)', async () => {
