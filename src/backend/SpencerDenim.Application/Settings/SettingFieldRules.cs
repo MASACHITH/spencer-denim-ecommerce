@@ -24,11 +24,10 @@ public static class SettingFieldRules
     /// </summary>
     public const int UrlMaxLength = 2_048;
 
-    /// <summary>
-    /// How long a WhatsApp number may be before it is refused for length rather than for shape. E.164
-    /// allows fifteen digits; the extra room exists so an over-long value gets the shape message.
-    /// </summary>
-    public const int WhatsAppMaxLength = 20;
+    // A `WhatsAppMaxLength = 20` stood here, documented as "extra room so an over-long value gets the shape
+    // message". Nothing ever read it, so that behaviour did not happen — a 20-character value is refused by
+    // the digit bounds below like any other. Removed rather than wired up: this field has one message, and a
+    // constant promising a second one is worse than no constant at all.
 
     /// <summary>E.164's own limit, which is what the digits are actually checked against.</summary>
     public const int WhatsAppMaxDigits = 15;
@@ -53,77 +52,59 @@ public static class SettingFieldRules
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     /// <summary>
-    /// An absolute external profile address, or nothing at all.
+    /// An absolute external profile address, <b>normalised</b>, or nothing at all.
     /// <para>
     /// <b>This is an allow-list, written as one.</b> W1-12's banner-link validator was defeated three
     /// times by values that <i>looked</i> like they started with a slash — <c>/\host</c>, a tab-split
     /// value and a newline-split one — because it decided what to <i>reject</i>. The lesson generalises
-    /// even though the rule does not: decide what you accept. What is accepted here is
+    /// even though the rule does not: decide what you accept.
     /// </para>
+    /// <para>
+    /// <b>And the accepted value is rewritten rather than stored as typed, which reverses this method's
+    /// first version.</b> That version kept the raw text, reasoning that round-tripping through
+    /// <see cref="Uri"/> "would show a client something other than what they pasted". The reasoning was
+    /// backwards and it left a homograph hole: <c>https://instagram.com</c>U+3002<c>evil.example/</c> parsed
+    /// fine, and both .NET's <see cref="Uri.IdnHost"/> and Chromium map U+3002 (IDEOGRAPHIC FULL STOP) to an
+    /// ordinary dot — so the <i>stored</i> text read <c>instagram.com</c> while the link went to
+    /// <c>evil.example</c>. Showing a client the normalised form is better: it shows them where the link
+    /// actually goes.
+    /// </para>
+    /// <para>
+    /// <b><see cref="Uri.AbsoluteUri"/> alone does not do it.</b> Measured, not assumed: it lower-cases the
+    /// host, drops a default port and fills an empty path, and it leaves the host's Unicode exactly as
+    /// typed. The ASCII host has to be substituted deliberately.
+    /// </para>
+    /// <para>What is accepted:</para>
     /// <list type="number">
-    /// <item>a value with no backslash, no control character and no whitespace anywhere in it — a browser
-    /// deletes TAB, CR and LF before it parses a URL, and reads <c>\</c> as <c>/</c> for a special
-    /// scheme, so a value containing either is not the value this method is looking at;</item>
-    /// <item>that <see cref="Uri.TryCreate(string?,UriKind,out Uri)"/> parses as <b>absolute</b>;</item>
-    /// <item>whose scheme is exactly <c>http</c> or <c>https</c> — which is what refuses
-    /// <c>javascript:</c>, <c>data:</c>, <c>vbscript:</c>, <c>file:</c> and every scheme nobody has
-    /// thought of yet, because they are simply not the two;</item>
-    /// <item>that has a host. <c>http:///profile</c> parses as an absolute http URL with an empty host,
-    /// and an <c>href</c> built from it resolves against the current page — so the footer's "Instagram"
-    /// icon would quietly link back into the shop;</item>
-    /// <item>and that carries no credentials. <c>https://instagram.com@evil.example/</c> is a valid URL
-    /// and a phishing shape: what a shopper reads is not where the link goes.</item>
+    /// <item>no backslash, control character or whitespace anywhere — a browser deletes TAB, CR and LF
+    /// before it parses a URL and reads <c>\</c> as <c>/</c> for a special scheme, so a value containing
+    /// either is not the value this method is looking at;</item>
+    /// <item>it parses as <b>absolute</b>;</item>
+    /// <item>the scheme is exactly <c>http</c> or <c>https</c> — which is what refuses <c>javascript:</c>,
+    /// <c>data:</c>, <c>vbscript:</c>, <c>file:</c> and every scheme nobody has thought of yet;</item>
+    /// <item>no credentials: <c>https://instagram.com@evil.example/</c> is a valid URL whose host is
+    /// <c>evil.example</c>, so it reads as one destination and goes to another;</item>
+    /// <item><see cref="Uri.IdnHost"/> can be computed. It <b>throws</b> for a host containing U+FF20
+    /// (FULLWIDTH COMMERCIAL AT) or U+FF0F (FULLWIDTH SOLIDUS) — both of which the raw-value version
+    /// accepted and stored, and both of which then threw in the browser, so the client got a 204, no error
+    /// anywhere, and an icon that never appeared;</item>
+    /// <item>and that ASCII host is a plausible hostname (see <see cref="IsPlausibleAsciiHost"/>).</item>
     /// </list>
     /// <para>
-    /// The value stored is the trimmed original rather than <see cref="Uri.AbsoluteUri"/>: round-tripping
-    /// through <see cref="Uri"/> normalises escaping and would show the client something other than what
-    /// they pasted. The parse is the check, not a rewrite.
+    /// <b>The empty-host case is handled by the parse itself.</b> An earlier comment here claimed .NET gives
+    /// <c>http:///profile</c> an empty host; it does not — <c>Uri.TryCreate</c> returns
+    /// <see langword="false"/> for it outright. Measured, after the same claim turned out to be wrong on the
+    /// front end as well.
     /// </para>
     /// </summary>
-    public static void CheckProfileUrl(ICollection<ValidationError> errors, string field, string? value, string label)
+    /// <param name="value">The value as a person typed it.</param>
+    /// <param name="normalised">
+    /// The form to store and to publish: ASCII host, lower-cased, default port dropped, path filled in.
+    /// </param>
+    public static bool TryNormaliseProfileUrl(string? value, out string normalised)
     {
-        ArgumentNullException.ThrowIfNull(errors);
+        normalised = string.Empty;
 
-        var cleaned = Clean(value);
-        if (cleaned is null)
-        {
-            return;
-        }
-
-        if (cleaned.Length > UrlMaxLength)
-        {
-            errors.Add(new ValidationError(
-                field,
-                string.Create(
-                    CultureInfo.InvariantCulture,
-                    $"The {label} address cannot be longer than {UrlMaxLength} characters.")));
-            return;
-        }
-
-        if (IsAcceptableProfileUrl(cleaned))
-        {
-            return;
-        }
-
-        errors.Add(new ValidationError(
-            field,
-            $"The {label} address must be a full web address starting with https:// — for example "
-            + "https://www.instagram.com/yourshop. Leave the box empty to hide the icon."));
-    }
-
-    /// <summary>
-    /// The predicate behind <see cref="CheckProfileUrl"/>, exposed so the storefront read model can apply
-    /// the <i>same</i> test to a value on its way out.
-    /// <para>
-    /// <b>Checking twice is the point.</b> A row can hold a value this rule would refuse today — written
-    /// by an earlier build, by a migration, by somebody editing the database, or by this rule being
-    /// loosened in a future change nobody connected to the footer. The read model is what a browser
-    /// actually follows, so it refuses there as well and the link disappears rather than going live. One
-    /// predicate, two call sites: they cannot drift.
-    /// </para>
-    /// </summary>
-    public static bool IsAcceptableProfileUrl(string? value)
-    {
         if (string.IsNullOrWhiteSpace(value))
         {
             return false;
@@ -154,14 +135,118 @@ public static class SettingFieldRules
             return false;
         }
 
-        // An empty host makes the address resolve against whatever page renders it.
-        if (string.IsNullOrEmpty(absolute.Host))
+        if (!string.IsNullOrEmpty(absolute.UserInfo))
         {
             return false;
         }
 
-        // Credentials in the authority read as one destination and go to another.
-        return string.IsNullOrEmpty(absolute.UserInfo);
+        string ascii;
+        try
+        {
+            ascii = absolute.IdnHost;
+        }
+        catch (UriFormatException)
+        {
+            // A host .NET cannot map to IDN. The browser cannot either, so the alternative to refusing it
+            // here is a stored value that silently never renders and never reports anything.
+            return false;
+        }
+
+        if (!IsPlausibleAsciiHost(ascii))
+        {
+            return false;
+        }
+
+        var builder = new UriBuilder(absolute) { Host = ascii };
+        if (absolute.IsDefaultPort)
+        {
+            // UriBuilder writes the default port back out explicitly unless it is cleared.
+            builder.Port = -1;
+        }
+
+        normalised = builder.Uri.AbsoluteUri;
+
+        return normalised.Length <= UrlMaxLength;
+    }
+
+    /// <summary>
+    /// At least two non-empty labels of <c>a-z</c>, <c>0-9</c> and <c>-</c>, none starting or ending with a
+    /// hyphen.
+    /// <para>
+    /// A single label with no dot is refused: <c>https://intranet/profile</c> is a valid URL and is not a
+    /// public social profile, and nothing a client pastes out of a browser looks like that. Empty labels are
+    /// refused for the same reason — <c>example..com</c> is not a host anybody meant to type.
+    /// </para>
+    /// </summary>
+    private static bool IsPlausibleAsciiHost(string ascii)
+    {
+        if (ascii.Length == 0 || !ascii.Contains('.', StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        foreach (var label in ascii.Split('.'))
+        {
+            if (label.Length == 0 || label[0] == '-' || label[^1] == '-')
+            {
+                return false;
+            }
+
+            foreach (var character in label)
+            {
+                var allowed = character is >= 'a' and <= 'z' or >= '0' and <= '9' or '-';
+                if (!allowed)
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="value"/> is an acceptable profile address, discarding the normalised form.
+    /// <para>
+    /// For callers that only have to <i>decide</i>: the tests, and the storefront read model's defensive
+    /// re-check. Everything that <b>stores</b> a value uses <see cref="TryNormaliseProfileUrl"/>, so one
+    /// implementation governs both and they cannot drift.
+    /// </para>
+    /// </summary>
+    public static bool IsAcceptableProfileUrl(string? value) => TryNormaliseProfileUrl(value, out _);
+
+    /// <summary>
+    /// Adds a named field error unless <paramref name="value"/> is blank or an acceptable profile address.
+    /// </summary>
+    public static void CheckProfileUrl(ICollection<ValidationError> errors, string field, string? value, string label)
+    {
+        ArgumentNullException.ThrowIfNull(errors);
+
+        var cleaned = Clean(value);
+        if (cleaned is null)
+        {
+            return;
+        }
+
+        if (cleaned.Length > UrlMaxLength)
+        {
+            errors.Add(new ValidationError(
+                field,
+                string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"The {label} address cannot be longer than {UrlMaxLength} characters.")));
+            return;
+        }
+
+        if (TryNormaliseProfileUrl(cleaned, out _))
+        {
+            return;
+        }
+
+        errors.Add(new ValidationError(
+            field,
+            $"The {label} address must be a full web address starting with https:// — for example "
+            + "https://www.instagram.com/yourshop. Leave the box empty to hide the icon."));
     }
 
     /// <summary>
@@ -200,7 +285,7 @@ public static class SettingFieldRules
         CultureInfo.InvariantCulture,
         $"The WhatsApp number must be {WhatsAppMinDigits} to {WhatsAppMaxDigits} digits in international form, with no plus sign, spaces or leading zero — for example 94771234567.");
 
-    /// <inheritdoc cref="IsAcceptableProfileUrl"/>
+    /// <summary>Whether <paramref name="value"/> is digits only, in international form.</summary>
     public static bool IsAcceptableWhatsAppNumber(string? value)
     {
         if (string.IsNullOrWhiteSpace(value))

@@ -77,11 +77,16 @@ export class SiteSettingsService {
       return of(handedOver);
     }
 
+    // **Order matters, and the first version had it wrong.** `tap(give)` sat *upstream* of `timeout` and
+    // `catchError`, so a read that was slow or failed handed over nothing at all — and the browser then
+    // re-fetched on hydration, which is the logo pop-in `site-header.ts` claims to prevent. This is W2-07's
+    // Major 3 one feature over: hand over only what has been vetted, and hand over *whatever the render
+    // actually used*, fallback included, so the browser never has to ask again.
     return this.http.get<SiteSettingsDto>('/api/site/settings').pipe(
       map(toSiteSettings),
-      tap((settings) => this.handover.give(SITE_SETTINGS_HANDOVER, settings)),
       timeout(SITE_SETTINGS_TIMEOUT_MS),
       catchError(() => of(EMPTY_SITE_SETTINGS)),
+      tap((settings) => this.handover.give(SITE_SETTINGS_HANDOVER, settings)),
     );
   }
 }
@@ -181,14 +186,16 @@ function toSocialLinks(rows: SiteSettingsDto['social']): readonly SiteSocialLink
     const network = typeof row?.network === 'string' ? row.network.trim().toLowerCase() : '';
     const known = SOCIAL_NETWORKS[network];
 
-    if (!known || seen.has(network) || !isExternalHttpUrl(row?.url)) {
+    const url = normaliseExternalHttpUrl(row?.url);
+
+    if (!known || seen.has(network) || url === null) {
       continue;
     }
 
     seen.add(network);
     links.push({
       network,
-      url: row.url.trim(),
+      url,
       icon: known.icon,
       label: `${BRAND.name} on ${known.name}`,
     });
@@ -197,10 +204,23 @@ function toSocialLinks(rows: SiteSettingsDto['social']): readonly SiteSocialLink
   return links;
 }
 
-/** Exported for the spec: the question an `href` will ask, asked before the `href` exists. */
+/**
+ * Exported for the spec: whether an `href` built from this would go somewhere external and safe.
+ *
+ * A thin wrapper over {@link normaliseExternalHttpUrl}, so the predicate and the value that actually gets
+ * rendered are one decision rather than two.
+ */
 export function isExternalHttpUrl(value: unknown): value is string {
+  return normaliseExternalHttpUrl(value) !== null;
+}
+
+/**
+ * The address to put in the `href` — normalised by the browser's own parser — or null if it should not be a
+ * link at all.
+ */
+export function normaliseExternalHttpUrl(value: unknown): string | null {
   if (typeof value !== 'string') {
-    return false;
+    return null;
   }
 
   const candidate = value.trim();
@@ -212,10 +232,10 @@ export function isExternalHttpUrl(value: unknown): value is string {
   // A character walk rather than a regular expression, and not to appease `no-control-regex`: the rule is
   // right that a control character inside a regex literal is nearly always a typo, and the same intent read
   // aloud here is a condition anybody can check. It also matches the backend's own loop in
-  // `SettingFieldRules.IsAcceptableProfileUrl` character for character, which is the point — two
+  // `SettingFieldRules.TryNormaliseProfileUrl` character for character, which is the point — two
   // implementations of one rule should be legible as the same rule.
   if (candidate.length === 0) {
-    return false;
+    return null;
   }
 
   for (const character of candidate) {
@@ -223,7 +243,7 @@ export function isExternalHttpUrl(value: unknown): value is string {
     const isControl = code <= 0x1f || (code >= 0x7f && code <= 0x9f);
 
     if (character === '\\' || isControl || /\s/.test(character)) {
-      return false;
+      return null;
     }
   }
 
@@ -231,17 +251,24 @@ export function isExternalHttpUrl(value: unknown): value is string {
   try {
     parsed = new URL(candidate);
   } catch {
-    return false;
+    return null;
   }
 
-  // `hostname` is checked although the WHATWG parser rarely leaves it empty — `http://` throws and
-  // `http:///profile` normalises to host `profile`, unlike .NET's RFC 3986 `Uri`, which gives that one an
-  // empty host and refuses it server-side. The check costs nothing and it is the condition that matters:
-  // an href with no host resolves against the current page, so a social icon would link into the shop.
-  return (
+  // `hostname` is checked although the WHATWG parser rarely leaves it empty: `http://` throws and
+  // `http:///profile` normalises to host `profile`. .NET refuses that second one — measured in round 1, and
+  // not for the reason an earlier comment here gave: `Uri.TryCreate` returns false for it outright rather
+  // than producing an empty host. The check costs nothing and it is the condition that matters: an href with
+  // no host resolves against the current page, so a social icon would link back into the shop.
+  const safe =
     (parsed.protocol === 'https:' || parsed.protocol === 'http:') &&
     parsed.hostname.length > 0 &&
     parsed.username.length === 0 &&
-    parsed.password.length === 0
-  );
+    parsed.password.length === 0;
+
+  // **The parsed form, not the text.** The API normalises on write and on read, so a homograph host cannot
+  // reach this payload from our own server — but this function is what chooses the `href`, and checking one
+  // string while rendering another is the gap W1-12's validator was defeated through twice. `URL.href` is what
+  // the browser would resolve anyway, so using it costs nothing and removes the last place where the value
+  // checked and the value followed could differ.
+  return safe ? parsed.href : null;
 }

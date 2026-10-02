@@ -17,12 +17,16 @@ namespace SpencerDenim.Infrastructure.Settings;
 /// <c>IsSecret</c> flag, and this cannot be got wrong at all.
 /// </para>
 /// <para>
-/// <b>Every value is re-validated on the way out.</b> A row can hold something this build would refuse
-/// today — written by an earlier build, by a database edit, or by a rule that gets loosened by somebody who
-/// never looked at the footer. The browser is what follows these addresses, so the last chance to refuse one
-/// is here, and the refusal is the same predicate the write path uses
-/// (<see cref="SettingFieldRules.IsAcceptableProfileUrl"/>). A value that fails simply does not appear,
-/// which renders as no icon.
+/// <b>Every value is re-validated on the way out, and re-normalised.</b> A row can hold something this build
+/// would refuse today — written by an earlier build, by a database edit, or by a rule that gets loosened by
+/// somebody who never looked at the footer. The browser is what follows these addresses, so the last chance
+/// to refuse one is here, and the refusal is the same function the write path uses
+/// (<see cref="SettingFieldRules.TryNormaliseProfileUrl"/>). A value that fails simply does not appear, which
+/// renders as no icon; one that passes is published in its normalised form, so a legacy row holding a
+/// homograph host is published as the ASCII host it actually resolves to rather than as the text it imitates.
+/// </para>
+/// <para>
+/// <b>And a row flagged <c>IsSecret</c> is not selected at all</b> — see the query.
 /// </para>
 /// </summary>
 internal sealed class SiteSettingsReader(AppDbContext dbContext, ISettingsStore store) : ISiteSettingsReader
@@ -46,9 +50,15 @@ internal sealed class SiteSettingsReader(AppDbContext dbContext, ISettingsStore 
             .AsNoTracking()
             .Where(setting => Keys.Contains(setting.Key))
 
-            // Projected to key and value only. The secret flag, the permission and the description have no
-            // business on an anonymous payload's read path, and a projection that does not select them
-            // cannot leak them.
+            // **The third floor, and it was missing until round 1.** The other two are the key allow-list
+            // above and the hand-written contract this returns — both real, and both about keys and shape
+            // rather than about the row. If one of these five keys were ever flipped to Secret, its value
+            // would have been published subject only to format validation. The tester's correction to the
+            // brief was right: it was two floors plus a shape, not three. This clause is the third.
+            .Where(setting => !setting.IsSecret)
+
+            // Projected to key and value only. The permission and the description have no business on an
+            // anonymous payload's read path, and a projection that does not select them cannot leak them.
             .Select(setting => new { setting.Key, setting.Value })
             .ToDictionaryAsync(row => row.Key, row => row.Value, StringComparer.OrdinalIgnoreCase, cancellationToken);
 
@@ -96,11 +106,9 @@ internal sealed class SiteSettingsReader(AppDbContext dbContext, ISettingsStore 
     /// <inheritdoc cref="SiteSettingsReader"/>
     private static void AddSocial(List<SiteSocialLinkDto> into, string network, string? value)
     {
-        var cleaned = SettingFieldRules.Clean(value);
-
-        if (SettingFieldRules.IsAcceptableProfileUrl(cleaned))
+        if (SettingFieldRules.TryNormaliseProfileUrl(value, out var normalised))
         {
-            into.Add(new SiteSocialLinkDto(network, cleaned!));
+            into.Add(new SiteSocialLinkDto(network, normalised));
         }
     }
 }

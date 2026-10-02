@@ -6,9 +6,11 @@ import {
   EMPTY_SITE_SETTINGS,
   SiteSettingsService,
   isExternalHttpUrl,
+  normaliseExternalHttpUrl,
   toSiteSettings,
 } from './site-settings.service';
 import { SiteSettingsDto } from './site-settings.model';
+import { ServerHandover } from '../platform/server-handover';
 
 /**
  * The shell's settings (GLB-02, GLB-07, GLB-08, ADM-22).
@@ -141,6 +143,15 @@ describe('toSiteSettings (ADM-22)', () => {
       expect(settings.social.map((link) => link.network)).toEqual(['instagram']);
     });
 
+    it('stores the normalised address, so the icon links where the text says', () => {
+      const settings = toSiteSettings({
+        ...NOTHING,
+        social: [{ network: 'instagram', url: 'https://INSTAGRAM.com。evil.example/shop' }],
+      });
+
+      expect(settings.social[0].url).toBe('https://instagram.com.evil.example/shop');
+    });
+
     it('keeps the first of two rows for the same network, not both icons', () => {
       const settings = toSiteSettings({
         ...NOTHING,
@@ -208,10 +219,9 @@ describe('isExternalHttpUrl (ADM-22)', () => {
    * **The two parsers disagree about this one, and the test records which is which rather than asserting
    * the version that reads better.**
    *
-   * `http:///profile` has no authority. .NET's `Uri` follows RFC 3986 and gives it an *empty* host, which
-   * is why `SettingFieldRules.IsAcceptableProfileUrl` refuses it on the way in — an `href` with an empty
-   * host resolves against the current page, so the footer's "Instagram" icon would link back into the
-   * shop. The WHATWG parser a browser and `new URL` use normalises it to `http://profile/` instead: host
+   * `http:///profile` has no authority. .NET refuses it — `Uri.TryCreate` returns false outright, which is
+   * what was measured in round 1 after an earlier version of this comment claimed .NET gave it an *empty
+   * host*. The WHATWG parser a browser and `new URL` use normalises it to `http://profile/` instead: host
    * `profile`, a perfectly ordinary absolute address to a host that does not exist.
    *
    * So on this side there is nothing to refuse — it is an absolute http URL with a host, and treating it
@@ -220,6 +230,29 @@ describe('isExternalHttpUrl (ADM-22)', () => {
    * same-page one. Written down because the first version of this test asserted `false` here, from the
    * server's reading, and was wrong.
    */
+  /**
+   * **The `href` is the parsed form, not the text.**
+   *
+   * The API normalises on write and on read, so a homograph host cannot reach the storefront from our own
+   * server — but this is the function that chooses the `href`, and checking one string while rendering another
+   * is the gap W1-12's validator was defeated through twice. Using `URL.href` costs nothing (it is what the
+   * browser would resolve anyway) and removes the last place the two could differ.
+   */
+  it.each([
+    ['https://INSTAGRAM.com/Shop', 'https://instagram.com/Shop'],
+    ['https://example.com:443/shop', 'https://example.com/shop'],
+    ['https://example.com', 'https://example.com/'],
+    ['https://instagram.com。evil.example/', 'https://instagram.com.evil.example/'],
+  ])('normalises %p to %p', (value, expected) => {
+    expect(normaliseExternalHttpUrl(value)).toBe(expected);
+  });
+
+  it('returns null rather than a half-built address for something it refuses', () => {
+    expect(normaliseExternalHttpUrl('javascript:alert(1)')).toBeNull();
+    expect(normaliseExternalHttpUrl('/women')).toBeNull();
+    expect(normaliseExternalHttpUrl(42)).toBeNull();
+  });
+
   it('reads an authority-less http URL the way a browser does, as an absolute address', () => {
     expect(new URL('http:///profile').hostname).toBe('profile');
     expect(isExternalHttpUrl('http:///profile')).toBe(true);
@@ -274,6 +307,80 @@ describe('SiteSettingsService (ADM-22)', () => {
     answer(http.expectOne('/api/site/settings'));
 
     expect(service.settings()).toEqual(EMPTY_SITE_SETTINGS);
+    http.verify();
+  });
+
+  /**
+   * **What the server renders is what it hands over — including the fallback.**
+   *
+   * The first version put `tap(give)` upstream of `timeout`/`catchError`, so a read that failed or was slow
+   * handed over nothing and the browser re-fetched on hydration. If that second attempt succeeded, the logo
+   * appeared *after* hydration — the pop-in `site-header.ts` says the handover prevents. W2-07's Major 3, one
+   * feature over: hand over only what has been vetted, and hand over whatever the render actually used.
+   *
+   * `ServerHandover.give` is a no-op in a browser, so the port is substituted to observe the call. The order of
+   * the pipe is the thing under test, and it is not observable any other way.
+   */
+  it.each([
+    ['a 500', (request: TestRequest) => request.flush('boom', { status: 500, statusText: 'Server Error' })],
+    ['a null body', (request: TestRequest) => request.flush(null)],
+  ])('hands over the fallback it rendered with after %s', (_why, answer) => {
+    const recorded: unknown[] = [];
+
+    TestBed.configureTestingModule({
+      providers: [
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        {
+          provide: ServerHandover,
+          useValue: {
+            take: () => null,
+            give: (_key: string, value: unknown) => recorded.push(value),
+          },
+        },
+      ],
+    });
+
+    const service = TestBed.inject(SiteSettingsService);
+    const http = TestBed.inject(HttpTestingController);
+
+    expect(service.logo()).toBeNull();
+    answer(http.expectOne('/api/site/settings'));
+
+    expect(recorded).toEqual([EMPTY_SITE_SETTINGS]);
+    http.verify();
+  });
+
+  it('hands over the mapped settings on success', () => {
+    const recorded: unknown[] = [];
+
+    TestBed.configureTestingModule({
+      providers: [
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        {
+          provide: ServerHandover,
+          useValue: {
+            take: () => null,
+            give: (_key: string, value: unknown) => recorded.push(value),
+          },
+        },
+      ],
+    });
+
+    const service = TestBed.inject(SiteSettingsService);
+    const http = TestBed.inject(HttpTestingController);
+
+    expect(service.logo()).toBeNull();
+    http.expectOne('/api/site/settings').flush({
+      logo: { url: '/media/logo.webp', width: 600, height: 150, altText: 'Logo' },
+      whatsAppNumber: null,
+      social: [],
+    });
+
+    // The mapped value, not the raw payload: the handover is what the browser adopts without re-checking.
+    expect(recorded).toHaveLength(1);
+    expect((recorded[0] as { logo: { alt: string } }).logo.alt).toBe('Logo');
     http.verify();
   });
 

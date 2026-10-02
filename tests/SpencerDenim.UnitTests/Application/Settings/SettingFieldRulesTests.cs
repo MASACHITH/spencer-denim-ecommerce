@@ -177,6 +177,11 @@ public sealed class SettingFieldRulesTests
 
         Assert.Equal(SettingFieldRules.UrlMaxLength, atLimit.Length);
         Assert.Empty(Check(atLimit));
+
+        // And the normalised form is bounded too: normalisation can lengthen a value (percent-encoding, or a
+        // punycode label), so the cap is applied to what actually gets stored as well as to what arrived.
+        Assert.True(SettingFieldRules.TryNormaliseProfileUrl(atLimit, out var normalised));
+        Assert.InRange(normalised.Length, 1, SettingFieldRules.UrlMaxLength);
     }
 
     /// <summary>
@@ -192,6 +197,138 @@ public sealed class SettingFieldRulesTests
         SettingFieldRules.CheckProfileUrl(errors, "x", "javascript:alert(1)", label);
 
         Assert.Contains(label, Assert.Single(errors).Message, StringComparison.Ordinal);
+    }
+
+
+    // ---- normalisation (round 1) -----------------------------------------------------------------
+
+    /// <summary>
+    /// <b>The homograph that made normalisation necessary.</b>
+    /// <para>
+    /// U+3002 is IDEOGRAPHIC FULL STOP. <c>Uri.TryCreate</c> accepts it, and both .NET's
+    /// <see cref="System.Uri.IdnHost"/> and Chromium map it to an ordinary dot — so storing the raw text left a
+    /// row that <i>read</i> <c>instagram.com</c> and <i>went</i> to <c>evil.example</c>, with nothing on any
+    /// screen able to tell a staff user. The value is now rewritten, so the text and the destination agree.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void A_homograph_separator_is_normalised_to_the_host_it_resolves_to()
+    {
+        Assert.True(SettingFieldRules.TryNormaliseProfileUrl(
+            "https://instagram.com\u3002evil.example/shop", out var normalised));
+
+        Assert.Equal("https://instagram.com.evil.example/shop", normalised);
+        Assert.DoesNotContain("\u3002", normalised, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A homoglyph label is stored as its punycode, which is how a client can see that it is not the brand it
+    /// imitates: Cyrillic es then "ompany" becomes <c>xn--ompany-hrf</c>.
+    /// </summary>
+    [Fact]
+    public void A_homoglyph_label_is_normalised_to_punycode()
+    {
+        Assert.True(SettingFieldRules.TryNormaliseProfileUrl("https://\u0441ompany.example/shop", out var normalised));
+
+        Assert.Equal("https://xn--ompany-hrf.example/shop", normalised);
+    }
+
+    /// <summary>
+    /// <b>The two rows that used to be stored and then never render.</b> U+FF20 (FULLWIDTH COMMERCIAL AT) and
+    /// U+FF0F (FULLWIDTH SOLIDUS) are accepted by <c>Uri.TryCreate</c> and make <see cref="System.Uri.IdnHost"/>
+    /// throw; the browser throws on them too. The old rule stored them, so a client got a 204, no error
+    /// anywhere, and an icon that never appeared. Computing the ASCII host is what refuses them.
+    /// </summary>
+    [Theory]
+    [InlineData("https://instagram.com\uFF20evil.example/")]
+    [InlineData("https://instagram.com\uFF0Fevil.example/")]
+    public void A_host_dotnet_cannot_map_to_idn_is_refused_rather_than_stored(string value)
+    {
+        Assert.False(SettingFieldRules.TryNormaliseProfileUrl(value, out var normalised));
+        Assert.Equal(string.Empty, normalised);
+
+        Assert.Single(Check(value));
+    }
+
+    /// <summary>
+    /// Canonical form: lower-cased host, default port dropped, empty path filled. Two staff users typing the
+    /// same profile two ways produce one row, and the screen shows them what the link will do.
+    /// </summary>
+    [Theory]
+    [InlineData("https://WWW.Facebook.com/Shop", "https://www.facebook.com/Shop")]
+    [InlineData("https://example.com:443/shop", "https://example.com/shop")]
+    [InlineData("http://example.com:80/shop", "http://example.com/shop")]
+    [InlineData("https://example.com", "https://example.com/")]
+    [InlineData("  https://example.com/shop  ", "https://example.com/shop")]
+    [InlineData("https://www.tiktok.com/@shop", "https://www.tiktok.com/@shop")]
+    public void An_accepted_address_is_normalised(string value, string expected)
+    {
+        Assert.True(SettingFieldRules.TryNormaliseProfileUrl(value, out var normalised));
+        Assert.Equal(expected, normalised);
+    }
+
+    /// <summary>A non-default port survives, because it is part of where the link goes.</summary>
+    [Fact]
+    public void A_non_default_port_is_kept()
+    {
+        Assert.True(SettingFieldRules.TryNormaliseProfileUrl("https://example.com:8443/shop", out var normalised));
+        Assert.Equal("https://example.com:8443/shop", normalised);
+    }
+
+    /// <summary>
+    /// Normalisation is idempotent — the stored value, fed back in, comes out unchanged. Without that, the read
+    /// model's re-check would rewrite every value on every page render and the two sides would never settle.
+    /// </summary>
+    [Theory]
+    [InlineData("https://www.instagram.com/colombowardrobe")]
+    [InlineData("https://instagram.com\u3002evil.example/shop")]
+    [InlineData("https://WWW.Facebook.com:443")]
+    public void Normalisation_is_idempotent(string value)
+    {
+        Assert.True(SettingFieldRules.TryNormaliseProfileUrl(value, out var once));
+        Assert.True(SettingFieldRules.TryNormaliseProfileUrl(once, out var twice));
+
+        Assert.Equal(once, twice);
+    }
+
+    /// <summary>
+    /// A host that is not a plausible hostname. A single label is refused because nothing a client pastes from a
+    /// browser looks like that and <c>https://intranet/profile</c> is not a public profile; empty labels and a
+    /// leading or trailing hyphen are refused because they are not hosts anybody meant to type.
+    /// </summary>
+    [Theory]
+    [InlineData("https://intranet/profile")]
+    [InlineData("https://example..com/shop")]
+    [InlineData("https://-bad.example/shop")]
+    [InlineData("https://bad-.example/shop")]
+    [InlineData("https://.example.com/shop")]
+    public void An_implausible_host_is_refused(string value)
+    {
+        Assert.False(SettingFieldRules.TryNormaliseProfileUrl(value, out _));
+    }
+
+    /// <summary>
+    /// <b>The empty-host claim, corrected.</b> An earlier comment said .NET gives <c>http:///profile</c> an
+    /// empty host. It does not: <c>Uri.TryCreate</c> returns false for it outright. The outcome — refused — was
+    /// always right; the stated reason was not, which is the kind of thing the next person builds on.
+    /// </summary>
+    [Fact]
+    public void An_authority_less_url_does_not_parse_in_dotnet_at_all()
+    {
+        Assert.False(Uri.TryCreate("http:///profile", UriKind.Absolute, out _));
+        Assert.False(SettingFieldRules.TryNormaliseProfileUrl("http:///profile", out _));
+    }
+
+    /// <summary>A refused value leaves the out parameter empty rather than half-built.</summary>
+    [Theory]
+    [InlineData("javascript:alert(1)")]
+    [InlineData("/women/jeans")]
+    [InlineData(null)]
+    [InlineData("")]
+    public void A_refused_value_yields_no_normalised_form(string? value)
+    {
+        Assert.False(SettingFieldRules.TryNormaliseProfileUrl(value, out var normalised));
+        Assert.Equal(string.Empty, normalised);
     }
 
     // ---- WhatsApp numbers ------------------------------------------------------------------------
