@@ -83,6 +83,12 @@ The same applies to databases: the integration fixture already generates a per-r
 3. Comment on your GitHub issue with where you got to, so the other session can see it without reading code.
 4. **`MEMORY.md` and `TASKS.md` are updated by the project owner at the end of the day**, from the journals. Don't edit them mid-day: two sessions editing the same lines is exactly what caused the merge conflict committed to `main` on 2026-09-22 ([12](12-team-collaboration.md) §5).
 
+> **Clarified 2026-10-02, because `CLAUDE.md` and this rule appeared to contradict each other.** `CLAUDE.md` says to update `MEMORY.md` and `TASKS.md` "at the end of every session", and a session reading both cannot satisfy them at once. **This rule wins, and here is how the two fit together:** the *orchestrating* session — the one the owner is talking to — does both updates **once, at the end, on a branch of its own**. A session or agent working a feature branch writes **only** its journal file and does not touch either shared file, whatever `CLAUDE.md` says. A feature branch that edits them is doing it wrong even when it is the only branch open at the time, because it will not be the only one by the time it merges.
+>
+> This is not theoretical. On 2026-10-02 the W1-12 branch carried three commits recording its progress in both files. When `main` moved underneath it the pull request conflicted — and **GitHub does not run CI on a conflicting pull request**, so the branch sat looking as though it were waiting on a slow build while nothing was running at all. Three of its four conflicted hunks were in `MEMORY.md` and `TASKS.md` and existed for no reason other than this rule being ignored; only the fourth, in `playwright.config.ts`, was a real one. A branch that had written just its journal would have had one conflict instead of four.
+>
+> The same day another session asked which rule won rather than guessing, and was right to: it wrote `docs/journal/2026-10-02-w207-search.md` and left both shared files alone. That is the pattern to copy.
+
 ## If two sessions collide anyway
 
 - **Merge conflict:** resolve it in the branch, never commit `<<<<<<<` markers. If markers reach `main`, fix them immediately in a `fix/` branch.

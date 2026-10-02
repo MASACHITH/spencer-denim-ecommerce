@@ -47,6 +47,62 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 
 ## Session log
 
+### 2026-10-02 (4) — five merges, and what the tester loop cost and bought
+
+`main`: `de78aaf` → `ac22dda` (#30) → `fd96260` (W1-12) → `9fd4486` (W2-07) → `5b5d3f8` (Angular security) → `d0624d0` (W2-10). Client page 45% → **47%**; search 55% → 90%, category management done.
+
+**Every one of the four features failed its first review, and in each case the finding was something a
+user would have met.** A live-only category 404'd with `noindex` whenever the departments feed was
+unhealthy (#30). Every category and department save silently wiped the client's images — and **1,571
+passing tests missed it**, because every fixture set those columns to `null`, so `null → null`
+round-tripped vacuously (W1-12). A second Escape emptied the search box and reopened the suggestions,
+and the search history stored email addresses because the privacy rule was anchored to a term that was
+*exactly* an address (W2-07). And `//robots.txt` — one extra slash — answered **500**, which tells a
+crawler the entire site is disallowed (W2-10).
+
+**The recurring defect is not in the code, it is in the instruments.** Three times this week a test
+could not have failed: a selector that matched nothing while the helper returned `[]` for both "all
+passed" and "nothing matched" (#80); a 5xx sweep that listed only the URL shapes its client was able to
+send; and a C# docstring claiming to be the test that caught a TypeScript bug. The `//robots.txt` fix
+then survived a whole round for the same reason — Playwright normalises dot segments client-side, so
+`/.//robots.txt` arrived as the already-fixed `//robots.txt`. The answer was **Node's
+`http.request({ path })`**, which puts the path on the wire byte for byte where `fetch` and undici will
+not. Lesson, for the next person: before trusting a red-before observation, check the *client* can
+express the thing being tested.
+
+**Found by reading `npm audit` while adding a dependency, not by anything watching:**
+`@angular/router` 21.0.0–21.2.23 carries an SSR denial of service via numeric URL matrix parameters
+([GHSA-ff3f-86qr-9cv3](https://github.com/advisories/GHSA-ff3f-86qr-9cv3)) and we were on 21.2.23
+exactly, on a server-rendered storefront with a public catch-all. Fixed to 21.2.25. **Nothing runs
+`npm audit` in CI** (#84) — the same gap #65 recorded for axe-core, which `docs/06` had listed for
+weeks without it being a dependency. Do not add `--audit-level=high` as a gate: the two remaining
+criticals are build-time only and npm's proposed remedy is `@angular/build@19.2.27`, a downgrade
+across two majors.
+
+**Owner decisions, 2026-10-02.** Department name and slug are **not** editable (doc 11 P1 step 1) —
+and the `CatalogSlug` follow-up W1-12 carried is satisfied without them, because `Department.Slug`'s
+write path has been *the seeder* since W1-02, which is what the setter guard and `CK_Departments_Slug`
+protect. Reordering is **buttons, not drag and drop** (doc 11 P1 step 4 now records it). And W2-09 goes
+first on the `sales` schema, creating `Carts`/`CartItems` only, with Tharanga's #53 stacking on top
+(coordination note on #53).
+
+**Three features landed deliberately incomplete rather than faked**, which is worth defending: "popular
+searches" has a specified source (`analytics.SearchQueriesDaily`, doc 08 §1.7) that is unbuilt, so the
+overlay offers the real catalogue's entrances instead and two tests assert the word "popular" appears
+nowhere (#78); GLB-10's content pages wait on the client's legal copy; and the bag's promo code and
+delivery charge wait on ADM-13 and #33.
+
+**Process:** this clarifies the `CLAUDE.md` vs doc 14 contradiction over `MEMORY.md`/`TASKS.md` — doc
+14 wins, the orchestrating session does both once at the end, feature branches write only a journal.
+W1-12's PR proved why: it edited both files, conflicted when `main` moved, and **GitHub does not run CI
+on a conflicting PR**, so it sat looking as if it were waiting on a slow build. Also: agents inherit the
+parent session's cwd rather than the worktree named in their brief, and must be given an absolute path.
+
+**Flakes are now a pattern, not five bugs:** #66, #75, #88 and #89 (×2) — every one a timeout or a
+state read under contention, **never a wrong value**. Worth settling before W4-04, when an unexplained
+rate stops being an annoyance and starts hiding things.
+
+
 ### 2026-10-02 (3) — W1-12 fix round 2: the discard was right, the silence was not
 
 The tester passed everything except one major, having re-introduced the blocker itself to watch the two
