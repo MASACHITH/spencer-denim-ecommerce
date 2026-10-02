@@ -34,9 +34,19 @@ const catalogUnavailablePage = () =>
  * `app.routes.spec.ts` can hold the two halves of the invariant together: every path in this list is
  * linked from the shell *and* has no page of its own, and every other address answers 404.
  *
- * `/search` is in the list because the header's search form navigates to it (`header-search.ts`), even
- * though nothing links to it. W2-07 builds the page; this keeps a submitted search off a 404 until it
- * does.
+ * **If you are building one of these pages, delete its entry in the same change.** That is the whole
+ * maintenance rule, and it is here rather than only in a journal because this is where someone adding
+ * a route will be looking. Each entry is owed by a known task: GLB-10 for `about`, `contact`,
+ * `returns`, `shipping`, `privacy` and `terms`; W2-08 for `wishlist`; W2-09 for `bag`; W3-01 for
+ * `account`; W3-02 for `checkout`. A leftover entry cannot take effect — the real route is declared
+ * above this list and wins — but it says the site has no such page, so the spec fails on one.
+ *
+ * **`/search` was in this list and has been taken out**, because W2-07 built the page (SRCH-02) and an
+ * entry for an address that has a real route is dead: it cannot take effect, since the real route is
+ * declared above it, and it tells the next reader that `/search` has no page. It was added here when
+ * the page did not exist and the header's form already navigated to it. `app.routes.spec.ts` now
+ * asserts that no path in this list has a route of its own, so the next one to be built cannot be left
+ * behind the same way.
  */
 export const UNBUILT_PATHS = [
   'about',
@@ -46,7 +56,6 @@ export const UNBUILT_PATHS = [
   'contact',
   'privacy',
   'returns',
-  'search',
   'shipping',
   'terms',
   'wishlist',
@@ -95,11 +104,14 @@ export const routes: Routes = [
   // about. So the list is the price of fixing #28 before GLB-10, W2-08 and W2-09 land; #28 itself says
   // the catch-all may become the 404 once they have. **Each of these is deleted by the task that gives
   // the page a real route** — GLB-10 for the six content pages, W2-08 for /wishlist, W2-09 for /bag,
-  // W3-01 for /account, W3-02 for /checkout, W2-07 for /search — and a leftover entry is harmless but
-  // dead, because a real route declared above it wins.
+  // W3-01 for /account, W3-02 for /checkout — and W2-07 already deleted /search's, which is the
+  // pattern. A leftover entry cannot take effect, because a real route declared above it wins, but it
+  // is a lie about what the site has, so `app.routes.spec.ts` fails on one.
   //
   // Ahead of `:department` on purpose: these are known answers and should not wait on the catalogue
-  // feed to be given.
+  // feed to be given. Behind `search` on purpose too, which is the same point from the other side:
+  // W2-07's page is a real route and claims its address before this list is consulted.
+  //
   // `pathMatch: 'full'`, and it is load-bearing. A route's default is `'prefix'`, so `path: 'account'`
   // also matched `/account/orders` — Angular then redirected to the matched prefix's target and kept
   // the rest, and the result was a **404 with an empty body**: a blank page for a shopper and nothing

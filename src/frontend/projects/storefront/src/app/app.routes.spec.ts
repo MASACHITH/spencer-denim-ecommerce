@@ -54,7 +54,8 @@ describe('the storefront route table (#28)', () => {
    * declared above it, which `declared.indexOf` proves below.
    */
   it('lists every single-segment address the unbuilt pages are linked at, and nothing already built', () => {
-    // Read off the shell: site-header.ts, site-footer.ts, mobile-nav.ts and header-search.ts.
+    // Read off the shell: site-header.ts, site-footer.ts and mobile-nav.ts. `/search` is not here
+    // any more — W2-07 built its page, so it has a route of its own (SRCH-02).
     const linkedFromTheShell = [
       'about',
       'account',
@@ -62,7 +63,6 @@ describe('the storefront route table (#28)', () => {
       'contact',
       'privacy',
       'returns',
-      'search',
       'shipping',
       'terms',
       'wishlist',
@@ -72,10 +72,30 @@ describe('the storefront route table (#28)', () => {
       expect(UNBUILT_PATHS).toContain(path);
     }
 
-    // And none of them shadows a page that does exist.
     for (const path of UNBUILT_PATHS) {
       expect(declared.indexOf(path)).toBeLessThan(declared.indexOf(':department'));
-      expect(['', 'new-arrivals', 'sale', 'product/:slug']).not.toContain(path);
+    }
+  });
+
+  /**
+   * **The other half of the invariant, which a list in a file cannot keep on its own.**
+   *
+   * An entry whose page has since been built is dead — the real route is declared above it, so it
+   * cannot take effect — and it is a lie about what the site has. It is also exactly what nearly
+   * shipped: `/search` was in this list, W2-07 landed the page while this branch was in flight, and
+   * **git merged both sides without a conflict**, leaving a redirect for an address that now has a
+   * page. Nothing broke, because the real route won; nothing would have told anyone either.
+   *
+   * So the list is checked against the table rather than against a second list: a path with a route
+   * of its own does not belong in it, whichever task built that route.
+   */
+  it('holds no path that already has a route of its own', () => {
+    const realRoutes = routes
+      .filter((route) => route.redirectTo === undefined && route.path !== undefined)
+      .map((route) => route.path);
+
+    for (const path of UNBUILT_PATHS) {
+      expect(realRoutes, `${path} has a real route now, so its redirect is dead`).not.toContain(path);
     }
   });
 

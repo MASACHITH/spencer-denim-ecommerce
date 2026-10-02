@@ -67,6 +67,21 @@ test.describe('robots.txt', () => {
     expect(await (await request.get('/robots.txt')).text()).not.toContain('Disallow: /search');
   });
 
+  /**
+   * The other half of that argument, measured rather than asserted in prose: `/search` really does
+   * carry `noindex` (SRCH-02, W2-07). The two tests only mean something together — a `Disallow` with
+   * no `noindex` behind it would leave the page indexable, and a `noindex` behind a `Disallow` would
+   * never be read. This branch does not set that tag and must not contradict it.
+   */
+  test('/search carries the noindex that makes allowing the crawl the right answer', async ({
+    request,
+  }) => {
+    const html = await (await request.get('/search?q=test')).text();
+
+    expect(html).toContain('<sd-search-page');
+    expect(html).toMatch(/<meta[^>]*name="robots"[^>]*content="[^"]*noindex/);
+  });
+
   test('answers HEAD, which link checkers and monitors lead with', async ({ request }) => {
     const response = await request.head('/robots.txt');
 
@@ -289,7 +304,10 @@ test.describe('an address this site does not have (#28)', () => {
    * pages belong to GLB-10, W2-07, W2-08, W2-09, W3-01 and W3-02. A 404 on a link the shop's own
    * footer offers would be a worse answer than the redirect.
    */
-  for (const path of ['/bag', '/wishlist', '/account', '/about', '/contact', '/privacy', '/terms', '/returns', '/shipping', '/search']) {
+  // `/search` is deliberately absent: W2-07 built its page while this branch was in flight, so it has
+  // a route of its own and must **not** redirect home. `app.routes.spec.ts` holds the same property on
+  // the list itself.
+  for (const path of ['/bag', '/wishlist', '/account', '/about', '/contact', '/privacy', '/terms', '/returns', '/shipping']) {
     test(`${path} still reaches the home page while its page is unbuilt`, async ({ request }) => {
       const response = await request.get(path);
 
@@ -316,6 +334,53 @@ test.describe('an address this site does not have (#28)', () => {
       expect(html.length).toBeGreaterThan(0);
       expect(html).toContain('We could not find that page');
       expect(html).toContain('noindex');
+    });
+  }
+
+  /**
+   * **The search address, now that W2-07 has built the page, measured rather than reasoned about.**
+   *
+   * These four shapes were verified by hand on W2-07's branch and asserted nowhere, which is why they
+   * are here: two of them **change answer** because of the `**` fix above, and a hand check does not
+   * notice that. Angular's router matches paths case-sensitively, so `/SEARCH` never matched the
+   * `search` route and fell through to the catch-all; it used to be answered with the home page at 200
+   * and is now a 404.
+   *
+   * 404 is the intended answer and not an oversight. `/SEARCH` is not an address this site has, and
+   * the home page served under it was exactly the soft 404 #28 is about — the same thing `/WOMEN` did,
+   * and does, so nothing here is special-cased. A case-normalising redirect would be a new behaviour
+   * for every route rather than for this one, and it is not in GLB-11's scope; it is written down here
+   * so the next person reads a decision rather than guesses at a bug.
+   */
+  for (const path of ['/SEARCH?q=test', '/Search?q=test']) {
+    test(`${path} is a 404, because routes are matched case-sensitively`, async ({ request }) => {
+      const response = await request.get(path);
+
+      expect(response.status()).toBe(404);
+      expect(await response.text()).toContain('We could not find that page');
+    });
+  }
+
+  /** Deeper than the search page goes. Its route has no children, so it cannot claim these. */
+  for (const path of ['/search/foo', '/search/foo/bar']) {
+    test(`${path} is a 404, not the search page and not the home page`, async ({ request }) => {
+      const response = await request.get(path);
+
+      expect(response.status()).toBe(404);
+
+      const html = await response.text();
+      expect(html).toContain('We could not find that page');
+      expect(html).not.toContain('<sd-search-page');
+    });
+  }
+
+  /** And the two shapes that must keep working: a trailing slash, and a differently-cased parameter. */
+  for (const path of ['/search/', '/search?Q=test', '/search?q=test']) {
+    test(`${path} still reaches the search page`, async ({ request }) => {
+      const response = await request.get(path);
+
+      expect(response.status()).toBe(200);
+      expect(await response.text()).toContain('<sd-search-page');
     });
   }
 
