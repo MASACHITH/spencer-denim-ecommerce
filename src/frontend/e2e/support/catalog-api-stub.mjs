@@ -11,6 +11,7 @@
  * the unit tests are what pin the mapping; this only has to be shaped like the real thing.
  */
 import { readFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 
 const PORT = Number(process.env.E2E_API_PORT ?? 4421);
@@ -1033,6 +1034,13 @@ function galleryImage(id, overrides) {
 }
 
 /** The sizes every demo product is made in, in the API's shape. */
+/**
+ * How many variant ids each product index owns, so a variant id says which product it belongs to:
+ * `Math.floor(id / VARIANT_ID_STRIDE)`. Three sizes times at most sixteen colourways is well inside
+ * 1000, and the cart stub relies on the arithmetic to resolve a variant without a catalogue scan.
+ */
+const VARIANT_ID_STRIDE = 1000;
+
 const SIZES = [
   { id: 10, label: 'S', scaleName: 'Apparel alpha', sortOrder: 1 },
   { id: 11, label: 'M', scaleName: 'Apparel alpha', sortOrder: 2 },
@@ -1195,7 +1203,11 @@ function productDetail(index, slug) {
       const discounted = card.price.hasDiscount;
 
       variants.push({
-        id: variants.length + 1,
+        // Unique across the whole catalogue, as `catalog.ProductVariants.Id` is. It used to restart
+        // at 1 for every product, which is a shape the real API cannot produce — and the bag is
+        // addressed by variant id, so two products' variants would have collided in one cart and the
+        // stub would have been quietly answering a different question from the API (W2-09).
+        id: index * VARIANT_ID_STRIDE + variants.length + 1,
         sku: `${card.productCode}-${colour.id}-${size.id}`,
         colourId: colour.id,
         colourName: colour.name,
@@ -1582,6 +1594,474 @@ let departmentsFault = 'none';
  */
 const SLOW_DEPARTMENTS_MS = 12_000;
 
+// ---------------------------------------------------------------- the bag API (CART-01, CART-02)
+
+/**
+ * `sales.Carts` and `sales.CartItems`, in memory, for the length of one run.
+ *
+ * **It refuses what the real API refuses, and that is the whole point of writing it out rather than
+ * answering 200 to everything.** A stub shaped more politely than the API means a failure path can
+ * never be exercised in a browser: the search stub that answered 200 where the API answers 400 is why
+ * that rule is written down. So every refusal below is the one `CartEndpoints` makes — 415 on a body
+ * that is not JSON, 400 on a body it cannot read, 400 on a quantity outside 1–10, 400 on a variant the
+ * shop does not sell, 409 on one that is sold out, and a cookie that is not a canonical GUID read as no
+ * bag at all rather than as an error.
+ *
+ * Keyed by token, as the cookie is. There is no account cart here because there is no customer
+ * sign-in in the application either (ACC-01).
+ */
+const carts = new Map();
+
+/** Must match `CartCookie.Name`. */
+const CART_COOKIE = 'sd_cart';
+
+/** Doc 08 §3.5: 30 days, sliding. */
+const CART_COOKIE_SECONDS = 30 * 24 * 60 * 60;
+
+/** Doc 08 §3.5: `CK Quantity 1–10`. */
+const MAX_CART_QUANTITY = 10;
+
+/** The canonical GUID form, which is the only one `CartCookie.Read` accepts. */
+const GUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const EMPTY_GUID = '00000000-0000-0000-0000-000000000000';
+
+/**
+ * Stock overrides a test has asked for, by variant id.
+ *
+ * The catalogue's own numbers cover "sold out from the start"; what they cannot cover is **stock that
+ * runs out while the bag is open**, which is a state CART-01 has to display and which only exists
+ * between two requests. A switch rather than an environment variable, for the same reason
+ * `/__test__/departments-fault` is one: a variable would mean another pair of servers.
+ */
+const variantOverrides = new Map();
+
+function readCartCookie(request) {
+  const header = request.headers.cookie;
+  if (!header) {
+    return null;
+  }
+
+  for (const part of header.split(';')) {
+    const separator = part.indexOf('=');
+    if (separator < 0) {
+      continue;
+    }
+
+    if (part.slice(0, separator).trim() === CART_COOKIE) {
+      const value = part.slice(separator + 1).trim();
+      // Exactly `CartCookie.Read`: the canonical form only, and never the all-zero GUID. Anything
+      // else is no bag, not a bad request — a shopper cannot edit their own cookie.
+      return GUID_PATTERN.test(value) && value !== EMPTY_GUID ? value.toLowerCase() : null;
+    }
+  }
+
+  return null;
+}
+
+function issueCartCookie(response, token) {
+  // HttpOnly, Secure, SameSite=Lax, Path=/ and a 30-day window, exactly as `CartCookie.Options` sets
+  // them. Secure is accepted on http://localhost, which browsers treat as a trustworthy origin.
+  response.setHeader(
+    'Set-Cookie',
+    `${CART_COOKIE}=${token}; Path=/; Max-Age=${CART_COOKIE_SECONDS}; HttpOnly; Secure; SameSite=Lax`,
+  );
+}
+
+function clearCartCookie(response) {
+  response.setHeader(
+    'Set-Cookie',
+    `${CART_COOKIE}=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; Secure; SameSite=Lax`,
+  );
+}
+
+/**
+ * The variant, if the shop sells it. Mirrors `CartReader.FindSellableVariantAsync`: one answer for
+ * "no such variant" and "not for sale", so ids cannot be probed.
+ */
+function sellableVariant(variantId) {
+  if (!Number.isSafeInteger(variantId) || variantId <= 0) {
+    return null;
+  }
+
+  const override = variantOverrides.get(variantId);
+  if (override && override.sellable === false) {
+    return null;
+  }
+
+  const index = Math.floor(variantId / VARIANT_ID_STRIDE);
+  if (index < 1 || index > TOTAL_PRODUCTS) {
+    return null;
+  }
+
+  const detail = productDetail(index, `test-product-${index}`);
+  const variant = detail.variants.find((candidate) => candidate.id === variantId);
+  return variant ? { index, detail, variant } : null;
+}
+
+/** What is left of a variant right now, after any override a test has set. */
+function availableNow(variantId, fallback) {
+  const override = variantOverrides.get(variantId);
+  return override && override.available !== undefined ? override.available : fallback;
+}
+
+/** Enough of a line to name it after the catalogue has stopped offering it. */
+function rememberLine(found) {
+  const { detail, variant } = found;
+  const image = detail.images.find((candidate) => candidate.colourId === variant.colourId) ?? null;
+
+  return {
+    productId: detail.id,
+    productName: detail.name,
+    slug: detail.slug,
+    sku: variant.sku,
+    colourId: variant.colourId,
+    colourName: variant.colourName,
+    sizeId: variant.sizeId,
+    sizeLabel: variant.sizeLabel,
+    scaleName: variant.scaleName,
+    imageUrl: image ? image.thumbnailUrl : null,
+    imageAltText: image ? image.altText : null,
+  };
+}
+
+/** One `CartLineDto`, priced from the catalogue on every read exactly as `CartReader` does. */
+function cartLine(variantId, row) {
+  const found = sellableVariant(variantId);
+
+  if (!found) {
+    // Withdrawn: the line keeps its name and size so it can be identified and removed, and carries no
+    // price at all, because the shop is no longer offering one.
+    const remembered = row.remembered;
+    return {
+      variantId,
+      productId: remembered.productId,
+      productName: remembered.productName,
+      slug: remembered.slug,
+      sku: remembered.sku,
+      colourId: remembered.colourId,
+      colourName: remembered.colourName,
+      sizeId: remembered.sizeId,
+      sizeLabel: remembered.sizeLabel,
+      scaleName: remembered.scaleName,
+      imageUrl: remembered.imageUrl,
+      imageAltText: remembered.imageAltText,
+      quantity: row.quantity,
+      maxQuantity: row.quantity,
+      availableQuantity: 0,
+      price: null,
+      lineSubtotal: null,
+      unitPriceAtAdd: row.unitPriceAtAdd,
+      priceChanged: false,
+      status: 'Unavailable',
+    };
+  }
+
+  const { detail, variant } = found;
+  const available = Math.max(availableNow(variantId, variant.availableQuantity), 0);
+  const status =
+    available <= 0 ? 'OutOfStock' : available < row.quantity ? 'NotEnoughStock' : 'Buyable';
+  const image = detail.images.find((candidate) => candidate.colourId === variant.colourId) ?? null;
+
+  return {
+    variantId,
+    productId: detail.id,
+    productName: detail.name,
+    slug: detail.slug,
+    sku: variant.sku,
+    colourId: variant.colourId,
+    colourName: variant.colourName,
+    sizeId: variant.sizeId,
+    sizeLabel: variant.sizeLabel,
+    scaleName: variant.scaleName,
+    imageUrl: image ? image.thumbnailUrl : null,
+    imageAltText: image ? image.altText : null,
+    quantity: row.quantity,
+    // min(10, stock), never below what the line already holds — a selector that could not re-select
+    // its own current value would be unusable.
+    maxQuantity: Math.max(Math.min(MAX_CART_QUANTITY, available), row.quantity),
+    availableQuantity: available,
+    price: variant.price,
+    lineSubtotal: variant.price.current * row.quantity,
+    unitPriceAtAdd: row.unitPriceAtAdd,
+    priceChanged: variant.price.current !== row.unitPriceAtAdd,
+    status,
+  };
+}
+
+/** The whole bag, with the same totals rule as `CartReader.Totals`: buyable lines only. */
+function cartBody(token) {
+  const rows = token ? carts.get(token) : null;
+  if (!rows || rows.size === 0) {
+    return {
+      lines: [],
+      totals: {
+        itemCount: 0,
+        buyableItemCount: 0,
+        lineCount: 0,
+        itemsOriginalTotal: 0,
+        itemsSubtotal: 0,
+        savedTotal: 0,
+        currency: 'LKR',
+      },
+    };
+  }
+
+  const lines = [...rows.entries()]
+    .sort((left, right) => left[1].addedAt - right[1].addedAt)
+    .map(([variantId, row]) => cartLine(variantId, row));
+
+  const buyable = lines.filter(
+    (candidate) => candidate.status === 'Buyable' || candidate.status === 'NotEnoughStock',
+  );
+  const subtotal = buyable.reduce((total, l) => total + l.price.current * l.quantity, 0);
+  const original = buyable.reduce((total, l) => total + l.price.original * l.quantity, 0);
+
+  return {
+    lines,
+    totals: {
+      itemCount: lines.reduce((total, l) => total + l.quantity, 0),
+      buyableItemCount: buyable.reduce((total, l) => total + l.quantity, 0),
+      lineCount: lines.length,
+      itemsOriginalTotal: original,
+      itemsSubtotal: subtotal,
+      savedTotal: original - subtotal,
+      currency: 'LKR',
+    },
+  };
+}
+
+function cartNoStore(response) {
+  response.setHeader('Cache-Control', 'no-store, no-cache, private');
+  response.setHeader('Vary', 'Cookie');
+}
+
+function validationProblem(response, field, message) {
+  response.statusCode = 400;
+  response.setHeader('Content-Type', 'application/problem+json; charset=utf-8');
+  response.end(
+    JSON.stringify({
+      title: 'One or more validation errors occurred.',
+      status: 400,
+      errors: { [field]: [message] },
+    }),
+  );
+}
+
+/** Reads a JSON body the way minimal-API binding does: anything it cannot read is a 400, never a 500. */
+function readJsonBody(request, response, then) {
+  const contentType = String(request.headers['content-type'] ?? '');
+  if (!contentType.toLowerCase().includes('application/json')) {
+    // 415, which is also what stops a cross-site HTML form reaching a bag: a form can only send
+    // urlencoded, multipart or text/plain, and a cross-origin JSON fetch needs a CORS preflight the
+    // API does not answer.
+    response.statusCode = 415;
+    response.end(JSON.stringify({ title: 'Unsupported Media Type', status: 415 }));
+    return;
+  }
+
+  let raw = '';
+  request.on('data', (chunk) => {
+    raw += chunk;
+  });
+  request.on('end', () => {
+    let body;
+    try {
+      body = JSON.parse(raw);
+    } catch {
+      response.statusCode = 400;
+      response.end(JSON.stringify({ title: 'Bad Request', status: 400 }));
+      return;
+    }
+
+    if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+      response.statusCode = 400;
+      response.end(JSON.stringify({ title: 'Bad Request', status: 400 }));
+      return;
+    }
+
+    then(body);
+  });
+}
+
+/** A JSON whole number, or null. Mirrors what model binding accepts for an `int`. */
+function wholeNumber(value) {
+  return typeof value === 'number' && Number.isInteger(value) ? value : null;
+}
+
+function handleCartRead(request, response) {
+  const token = readCartCookie(request);
+  cartNoStore(response);
+
+  if (token && !carts.has(token)) {
+    // A well-formed token naming a bag that is not there: clear it rather than let the browser keep
+    // sending a dead one for another 30 days.
+    clearCartCookie(response);
+    response.end(JSON.stringify(cartBody(null)));
+    return;
+  }
+
+  if (token) {
+    issueCartCookie(response, token);
+  }
+
+  response.end(JSON.stringify(cartBody(token)));
+}
+
+function handleCartAdd(request, response) {
+  readJsonBody(request, response, (body) => {
+    cartNoStore(response);
+
+    const variantId = wholeNumber(body.variantId);
+    const quantity = wholeNumber(body.quantity);
+
+    if (variantId === null || variantId <= 0) {
+      validationProblem(response, 'variantId', 'Choose a size and colour before adding to the bag.');
+      return;
+    }
+
+    if (quantity === null || quantity < 1 || quantity > MAX_CART_QUANTITY) {
+      validationProblem(response, 'quantity', 'Choose a quantity between 1 and 10.');
+      return;
+    }
+
+    const found = sellableVariant(variantId);
+    if (!found) {
+      validationProblem(response, 'variantId', 'That item is not available to buy.');
+      return;
+    }
+
+    const available = Math.max(availableNow(variantId, found.variant.availableQuantity), 0);
+    if (available <= 0) {
+      response.statusCode = 409;
+      response.setHeader('Content-Type', 'application/problem+json; charset=utf-8');
+      response.end(
+        JSON.stringify({
+          title: 'Out of stock',
+          status: 409,
+          detail: 'That size has just sold out. Nothing was added to your bag.',
+        }),
+      );
+      return;
+    }
+
+    // The variant is checked before the bag is created, so a scripted probe with a nonsense id leaves
+    // no cart row and no cookie behind.
+    const token = readCartCookie(request) ?? randomUUID();
+    const rows = carts.get(token) ?? new Map();
+    carts.set(token, rows);
+
+    const existing = rows.get(variantId);
+    rows.set(variantId, {
+      // Doc 08 §3.5's IIF: the sum, capped at 10.
+      quantity: Math.min((existing ? existing.quantity : 0) + quantity, MAX_CART_QUANTITY),
+      unitPriceAtAdd: existing ? existing.unitPriceAtAdd : found.variant.price.current,
+      addedAt: existing ? existing.addedAt : Date.now() + rows.size,
+      remembered: existing ? existing.remembered : rememberLine(found),
+    });
+
+    issueCartCookie(response, token);
+    response.end(JSON.stringify(cartBody(token)));
+  });
+}
+
+function handleCartSetQuantity(request, response, variantId) {
+  readJsonBody(request, response, (body) => {
+    cartNoStore(response);
+
+    const quantity = wholeNumber(body.quantity);
+    if (quantity === null || quantity < 1 || quantity > MAX_CART_QUANTITY) {
+      validationProblem(
+        response,
+        'quantity',
+        'Choose a quantity between 1 and 10. To take the item out, remove it.',
+      );
+      return;
+    }
+
+    const token = readCartCookie(request);
+    const rows = token ? carts.get(token) : null;
+    const existing = rows ? rows.get(variantId) : null;
+    if (existing) {
+      rows.set(variantId, { ...existing, quantity });
+    }
+
+    if (token && rows) {
+      issueCartCookie(response, token);
+    }
+
+    response.end(JSON.stringify(cartBody(token && rows ? token : null)));
+  });
+}
+
+function handleCartRemove(request, response, variantId) {
+  cartNoStore(response);
+
+  const token = readCartCookie(request);
+  const rows = token ? carts.get(token) : null;
+  // Idempotent: removing something that is not there is a 200 with the bag, not a 404.
+  if (rows) {
+    rows.delete(variantId);
+  }
+
+  if (token && rows) {
+    issueCartCookie(response, token);
+  }
+
+  response.end(JSON.stringify(cartBody(token && rows ? token : null)));
+}
+
+/**
+ * Routes the bag. Returns false when the path is not a bag path, so the caller carries on.
+ *
+ * A variant id that is not an integer is a **404**, because that is what the route constraint
+ * `{variantId:int}` does in the API: the address itself does not exist.
+ */
+function handleCart(request, response, url) {
+  if (url.pathname === '/api/cart') {
+    if (request.method === 'GET') {
+      handleCartRead(request, response);
+      return true;
+    }
+
+    response.statusCode = 405;
+    response.end(JSON.stringify({ title: 'Method Not Allowed', status: 405 }));
+    return true;
+  }
+
+  if (url.pathname === '/api/cart/items' && request.method === 'POST') {
+    handleCartAdd(request, response);
+    return true;
+  }
+
+  const item = /^\/api\/cart\/items\/(.*)$/.exec(url.pathname);
+  if (item) {
+    const raw = item[1];
+    if (!/^\d+$/.test(raw)) {
+      response.statusCode = 404;
+      response.end(JSON.stringify({ title: 'Not found', status: 404 }));
+      return true;
+    }
+
+    const variantId = Number(raw);
+    if (request.method === 'PATCH') {
+      handleCartSetQuantity(request, response, variantId);
+      return true;
+    }
+
+    if (request.method === 'DELETE') {
+      handleCartRemove(request, response, variantId);
+      return true;
+    }
+
+    response.statusCode = 405;
+    response.end(JSON.stringify({ title: 'Method Not Allowed', status: 405 }));
+    return true;
+  }
+
+  return false;
+}
+
 const server = createServer((request, response) => {
   const url = new URL(request.url ?? '/', `http://localhost:${PORT}`);
 
@@ -1601,6 +2081,35 @@ const server = createServer((request, response) => {
   if (url.pathname === '/__test__/departments-fault') {
     departmentsFault = url.searchParams.get('mode') ?? 'none';
     response.end(JSON.stringify({ fault: departmentsFault }));
+    return;
+  }
+
+  // The bag (W2-09, CART-01/02), ahead of everything else because it owns a prefix of its own.
+  if (handleCart(request, response, url)) {
+    return;
+  }
+
+  // Test-only, and named so. It makes a variant's stock, or its very existence in the catalogue,
+  // something a test can change *between* two requests — which is the only way the bag's
+  // "it sold out while you were looking" and "we no longer sell this" states exist at all.
+  if (url.pathname === '/__test__/cart-variant') {
+    const variantId = Number(url.searchParams.get('variantId'));
+    if (url.searchParams.get('reset') === 'all') {
+      variantOverrides.clear();
+    } else if (url.searchParams.get('reset') === 'variant') {
+      // Deletes the entry rather than writing zeroes into it. `available=` would otherwise arrive as
+      // the empty string, `Number('')` is 0, and "reset" would have meant "sell out for ever".
+      variantOverrides.delete(variantId);
+    } else if (Number.isSafeInteger(variantId) && variantId > 0) {
+      const available = url.searchParams.get('available');
+      const sellable = url.searchParams.get('sellable');
+      variantOverrides.set(variantId, {
+        available: available === null ? undefined : Number(available),
+        sellable: sellable === null ? true : sellable !== '0',
+      });
+    }
+
+    response.end(JSON.stringify({ overrides: variantOverrides.size }));
     return;
   }
 
