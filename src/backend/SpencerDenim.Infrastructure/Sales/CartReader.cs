@@ -1,0 +1,298 @@
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+using SpencerDenim.Application.Catalog;
+using SpencerDenim.Application.Catalog.Contracts;
+using SpencerDenim.Application.Sales.Cart.Abstractions;
+using SpencerDenim.Application.Sales.Cart.Contracts;
+using SpencerDenim.Domain.Catalog;
+using SpencerDenim.Domain.Media;
+using SpencerDenim.Domain.Sales;
+using SpencerDenim.Infrastructure.Catalog;
+using SpencerDenim.Infrastructure.Persistence;
+
+namespace SpencerDenim.Infrastructure.Sales;
+
+/// <summary>
+/// Reads the bag (CART-01, CART-02).
+/// <para>
+/// <b>Everything about money is recomputed here, on every read.</b> Doc 08 §6: "prices are computed on
+/// every cart read and again at placement". <c>CartItems.UnitPriceAtAdd</c> is carried through only so the
+/// storefront can say the price has changed (§3.5), and the subtotal is never built from it. A stale
+/// price is a commercial risk in both directions — an old low price the shop would have to honour, an old
+/// high one the shopper would be overcharged by — and the only way neither can happen is for the stored
+/// figure to have no path into any total.
+/// </para>
+/// <para>
+/// <b>Why <see cref="EntityFrameworkQueryableExtensions.IgnoreQueryFilters{TEntity}(IQueryable{TEntity})"/>.</b>
+/// <c>Product</c>, <c>Category</c> and <c>MediaAsset</c> all carry the soft-delete query filter (doc 08
+/// §10.2). A cart line's product is a <i>required</i> navigation, so with the filter on, a line whose
+/// product was deleted would be dropped from the join and the item would simply vanish out of the
+/// shopper's bag with no message at all. That is the worst available behaviour, so the filter is turned
+/// off and <c>IsDeleted</c> is read as data: the line is still shown, named, removable, and marked
+/// <see cref="CartLineStatus.Unavailable"/>.
+/// </para>
+/// </summary>
+internal sealed class CartReader(AppDbContext dbContext, IOptions<CatalogOptions> options) : ICartReader
+{
+    private readonly CatalogOptions _options = options.Value;
+
+    public async Task<CartDto> ReadAsync(int? cartId, CancellationToken cancellationToken)
+    {
+        if (cartId is not { } id)
+        {
+            // No cart row, so nothing to read. Doc 08 §3.5: the row is created on the first Add to Bag,
+            // which means "no cart" is the ordinary state of most visitors and must cost no query.
+            return CartDto.Empty;
+        }
+
+        var rows = await dbContext.CartItems
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(item => item.CartId == id)
+            .OrderBy(item => item.AddedAtUtc)
+            .ThenBy(item => item.Id)
+            .Select(item => new CartLineRow(
+                item.VariantId,
+                item.Quantity,
+                item.UnitPriceAtAdd,
+                item.Variant!.Sku,
+                item.Variant.IsActive,
+                item.Variant.PriceOverride,
+                item.Variant.CompareAtPriceOverride,
+                item.Variant.ProductColourId,
+                item.Variant.ProductColour!.Name,
+                item.Variant.SizeId,
+                item.Variant.Size!.Label,
+                item.Variant.Size.ScaleName,
+                item.Variant.ProductId,
+                item.Variant.Product!.Name,
+                item.Variant.Product.Slug,
+                item.Variant.Product.BasePrice,
+                item.Variant.Product.CompareAtPrice,
+                item.Variant.Product.IsPublished,
+                item.Variant.Product.IsDeleted,
+                item.Variant.Product.Department!.IsActive,
+                item.Variant.Product.PrimaryCategory!.IsActive,
+                item.Variant.Product.PrimaryCategory.IsDeleted,
+                item.Variant.StockLevel == null ? 0 : item.Variant.StockLevel.Available,
+                // The photograph of the colourway in the bag, not of the product's default colour: a bag
+                // line that showed the wrong colour would contradict the words next to it. Falls back to
+                // the card image, then to nothing, which the storefront draws as a placeholder.
+                item.Variant.Product.Media
+                    .Where(media =>
+                        media.ProductColourId == item.Variant.ProductColourId
+                        && media.MediaRole == ProductMediaRole.Gallery
+                        && media.MediaAsset!.Status == MediaAssetStatus.Ready
+                        && !media.MediaAsset.IsDeleted)
+                    .OrderBy(media => media.SortOrder)
+                    .ThenBy(media => media.Id)
+                    .Select(media => new MediaRef(
+                        media.MediaAsset!.StorageKey,
+                        media.MediaAsset.PublicId,
+                        media.MediaAsset.RenditionSetVersion,
+                        media.MediaAsset.Width))
+                    .FirstOrDefault()
+                    ?? (item.Variant.Product.CardImageAsset != null
+                        && item.Variant.Product.CardImageAsset.Status == MediaAssetStatus.Ready
+                        && !item.Variant.Product.CardImageAsset.IsDeleted
+                            ? new MediaRef(
+                                item.Variant.Product.CardImageAsset.StorageKey,
+                                item.Variant.Product.CardImageAsset.PublicId,
+                                item.Variant.Product.CardImageAsset.RenditionSetVersion,
+                                item.Variant.Product.CardImageAsset.Width)
+                            : null),
+                item.Variant.Product.Media
+                    .Where(media =>
+                        media.ProductColourId == item.Variant.ProductColourId
+                        && media.MediaRole == ProductMediaRole.Gallery
+                        && media.MediaAsset!.Status == MediaAssetStatus.Ready
+                        && !media.MediaAsset.IsDeleted)
+                    .OrderBy(media => media.SortOrder)
+                    .ThenBy(media => media.Id)
+                    .Select(media => media.AltTextOverride ?? media.MediaAsset!.AltText)
+                    .FirstOrDefault()
+                    ?? (item.Variant.Product.CardImageAsset != null
+                        && item.Variant.Product.CardImageAsset.Status == MediaAssetStatus.Ready
+                        && !item.Variant.Product.CardImageAsset.IsDeleted
+                            ? item.Variant.Product.CardImageAsset.AltText
+                            : null)))
+            .ToListAsync(cancellationToken);
+
+        var lines = rows.Select(row => ToLine(row, _options.MediaBaseUrl)).ToList();
+        return new CartDto(lines.AsReadOnly(), Totals(lines));
+    }
+
+    public async Task<CartVariantSnapshot?> FindSellableVariantAsync(
+        int variantId,
+        CancellationToken cancellationToken)
+    {
+        // The same visibility rule the listing starts from (doc 08 §7.1 and ProductCatalogReader's
+        // BaseQuery): published, not deleted, department and primary category active. A variant the
+        // storefront could never link to is one the bag must refuse, or a deactivated category could be
+        // bought from by anyone who kept the id.
+        var row = await dbContext.ProductVariants
+            .AsNoTracking()
+            .Where(variant => variant.Id == variantId)
+            .Where(variant => variant.IsActive)
+            .Where(variant => variant.Product!.IsPublished)
+            .Where(variant => variant.Product!.Department!.IsActive)
+            .Where(variant => variant.Product!.PrimaryCategory!.IsActive)
+            .Select(variant => new
+            {
+                variant.Id,
+                variant.PriceOverride,
+                BasePrice = variant.Product!.BasePrice,
+                Available = variant.StockLevel == null ? 0 : variant.StockLevel.Available,
+            })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (row is null)
+        {
+            return null;
+        }
+
+        var list = CatalogPricing.ListPrice(row.BasePrice, row.PriceOverride);
+
+        return new CartVariantSnapshot(
+            row.Id,
+            // Step 3 with no campaign is the list price. Campaigns (ADM-14) are week 3; passing null
+            // rather than skipping the call keeps the one place that knows the rule in the loop.
+            CatalogPricing.SalePrice(list, campaignPrice: null),
+            Math.Max(row.Available, 0));
+    }
+
+    private static CartLineDto ToLine(CartLineRow row, string? mediaBaseUrl)
+    {
+        var sellable = row is { IsPublished: true, IsProductDeleted: false, IsVariantActive: true }
+            && row.IsDepartmentActive
+            && row.IsCategoryActive
+            && !row.IsCategoryDeleted;
+
+        var list = CatalogPricing.ListPrice(row.BasePrice, row.PriceOverride);
+        var original = CatalogPricing.OriginalPrice(list, row.CompareAtPrice, row.CompareAtPriceOverride);
+        var sale = CatalogPricing.SalePrice(list, campaignPrice: null);
+        var available = Math.Max(row.Available, 0);
+
+        var status = !sellable
+            ? CartLineStatus.Unavailable
+            : available <= 0
+                ? CartLineStatus.OutOfStock
+                : available < row.Quantity
+                    ? CartLineStatus.NotEnoughStock
+                    : CartLineStatus.Buyable;
+
+        // An unavailable line is shown without a price. There is no price to show: the shop has withdrawn
+        // the product, so quoting what it used to cost would be quoting an offer that no longer stands —
+        // which is the same mistake as pricing from UnitPriceAtAdd, one line further down the page.
+        var price = sellable
+            ? new PriceDto(
+                sale,
+                original,
+                CatalogPricing.DiscountPercent(original, sale),
+                CatalogPricing.HasDiscount(original, sale),
+                PriceDto.Lkr)
+            : null;
+
+        return new CartLineDto(
+            row.VariantId,
+            row.ProductId,
+            row.ProductName,
+            row.Slug,
+            row.Sku,
+            row.ColourId,
+            row.ColourName,
+            row.SizeId,
+            row.SizeLabel,
+            row.ScaleName,
+            MediaUrlBuilder.ToRenditionUrl(mediaBaseUrl, row.Image, MediaRenditions.Thumb),
+            row.Image is null ? null : row.ImageAltText,
+            row.Quantity,
+            MaxQuantityFor(row.Quantity, available, sellable),
+            available,
+            price,
+            price is null ? null : price.Current * row.Quantity,
+            row.UnitPriceAtAdd,
+            // Compared against today's price, not against the "was" price: what changed is what the
+            // shopper would pay. Only claimed for a line that still has a price at all.
+            price is not null && price.Current != row.UnitPriceAtAdd,
+            status);
+    }
+
+    /// <summary>
+    /// The largest quantity the line's selector may offer: the per-line ceiling of 10 (doc 08 §3.5), cut
+    /// down to what is in stock, but never below what the line already holds.
+    /// <para>
+    /// That last clause matters: a selector whose maximum is below its own current value cannot re-select
+    /// the value it is showing, and a shopper with 3 of something that has 1 left would find the control
+    /// refusing to admit the number printed in it.
+    /// </para>
+    /// </summary>
+    private static short MaxQuantityFor(short quantity, int available, bool sellable)
+    {
+        if (!sellable)
+        {
+            return quantity;
+        }
+
+        var ceiling = Math.Min((int)CartQuantity.Max, Math.Max(available, 0));
+        return (short)Math.Max(ceiling, quantity);
+    }
+
+    private static CartTotalsDto Totals(List<CartLineDto> lines)
+    {
+        if (lines.Count == 0)
+        {
+            return CartTotalsDto.Empty;
+        }
+
+        var itemCount = lines.Sum(line => (int)line.Quantity);
+
+        // Buyable only. A line that cannot be sold is not priced into a figure the shopper is being asked
+        // to pay — which is the other half of "the subtotal cannot be computed from a price nobody is
+        // offering". NotEnoughStock lines are included at the quantity the shopper chose: the price is
+        // real and the items may be restocked, and the line says how many there are.
+        var buyable = lines
+            .Where(line => line.Status is CartLineStatus.Buyable or CartLineStatus.NotEnoughStock)
+            .ToList();
+
+        var subtotal = buyable.Sum(line => line.Price!.Current * line.Quantity);
+        var originalTotal = buyable.Sum(line => line.Price!.Original * line.Quantity);
+
+        return new CartTotalsDto(
+            itemCount,
+            buyable.Sum(line => (int)line.Quantity),
+            lines.Count,
+            originalTotal,
+            subtotal,
+            originalTotal - subtotal,
+            PriceDto.Lkr);
+    }
+
+    /// <summary>One <c>sales.CartItems</c> row joined to everything the bag has to say about it.</summary>
+    private sealed record CartLineRow(
+        int VariantId,
+        short Quantity,
+        decimal UnitPriceAtAdd,
+        string Sku,
+        bool IsVariantActive,
+        decimal? PriceOverride,
+        decimal? CompareAtPriceOverride,
+        int ColourId,
+        string ColourName,
+        int SizeId,
+        string SizeLabel,
+        string ScaleName,
+        int ProductId,
+        string ProductName,
+        string Slug,
+        decimal BasePrice,
+        decimal? CompareAtPrice,
+        bool IsPublished,
+        bool IsProductDeleted,
+        bool IsDepartmentActive,
+        bool IsCategoryActive,
+        bool IsCategoryDeleted,
+        int Available,
+        MediaRef? Image,
+        string? ImageAltText);
+}

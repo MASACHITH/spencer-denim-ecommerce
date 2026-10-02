@@ -10,6 +10,7 @@ using SpencerDenim.Application.Catalog.Abstractions;
 using SpencerDenim.Application.Catalog.Admin.Abstractions;
 using SpencerDenim.Application.Content.Abstractions;
 using SpencerDenim.Application.Marketing.Newsletter;
+using SpencerDenim.Application.Sales.Cart.Abstractions;
 using SpencerDenim.Infrastructure.Admin.Auditing;
 using SpencerDenim.Infrastructure.Catalog;
 using SpencerDenim.Infrastructure.Content;
@@ -20,6 +21,7 @@ using SpencerDenim.Infrastructure.Identity;
 using SpencerDenim.Infrastructure.Persistence;
 using SpencerDenim.Infrastructure.Persistence.Interceptors;
 using SpencerDenim.Infrastructure.Persistence.Seeding;
+using SpencerDenim.Infrastructure.Sales;
 using SpencerDenim.Infrastructure.Time;
 
 namespace SpencerDenim.Infrastructure;
@@ -107,6 +109,11 @@ public static class DependencyInjection
         // Doc 08 §3.7's homepage cache. A singleton, because a cache scoped to one request caches
         // nothing at all.
         services.AddSingleton<IHomePageCache, HomePageCache>();
+
+        // The bag (W2-09, CART-01/02). The store writes with doc 08 §3.5's item-level upserts and the
+        // reader reprices every line from the catalogue on each read (doc 08 §6).
+        services.AddScoped<ICartStore, CartStore>();
+        services.AddScoped<ICartReader, CartReader>();
 
         services.AddMediaLibrary();
 
