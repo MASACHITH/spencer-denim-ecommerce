@@ -33,8 +33,13 @@ const angularApp = new AngularNodeAppEngine();
  * protocol-relative URL, but only once a component is about to render, so the throw was unreachable
  * while the catch-all was a redirect and became reachable the moment it became a page (#28).
  *
- * Mounted at the top on purpose. Nothing below may assume it has been given a canonical path, and
- * nothing below is where this belongs: a route is exactly the thing that proved unreliable.
+ * Mounted at the top on purpose, and it tests the **effective** path — the one a URL parser produces
+ * after resolving dot segments — not the raw request target. Testing the raw target is how F1's fix was
+ * narrowed rather than complete: `/.//robots.txt` arrives with one leading slash and ends up with two, so
+ * nine shapes went on answering 500 for a round (F9).
+ *
+ * Nothing below may assume it has been given a canonical path, and nothing below is where this belongs: a
+ * route is exactly the thing that proved unreliable.
  */
 app.use((req, res, next) => {
   const canonical = canonicalTarget(req.url);

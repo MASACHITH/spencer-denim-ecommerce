@@ -1,3 +1,4 @@
+import { effectivePath } from './canonical-path';
 import { RequestHeaders } from './origins';
 import { robotsTxt } from './robots-txt';
 
@@ -65,7 +66,11 @@ export function answerRenderFailure(
     return 'already-answered';
   }
 
-  if (request.path === '/robots.txt') {
+  // The **effective** path, not the raw one (F9). Express does not resolve dot segments either, so
+  // `req.path` for `/.//robots.txt` is `/.//robots.txt` and a raw comparison missed — which meant the
+  // branch that exists so `robots.txt` can never be a 5xx answered 500 for the one shape that actually
+  // reached it. A last line of defence that is narrower than the request is not one.
+  if (effectivePath(request.path) === '/robots.txt') {
     response.status(200);
     response.type('text/plain; charset=utf-8');
     // Not cached: this one was served from a failure path, so the next request should ask again.

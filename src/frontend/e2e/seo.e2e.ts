@@ -1,3 +1,5 @@
+import { request as httpRequest } from 'node:http';
+
 import { APIResponse, expect, test } from '@playwright/test';
 
 import { deepCatalogueURL, faultyCatalogueURL } from '../playwright.config';
@@ -18,6 +20,51 @@ import { deepCatalogueURL, faultyCatalogueURL } from '../playwright.config';
 /** The media type a crawler is given, with the parameters it is given. */
 function contentType(response: APIResponse): string {
   return response.headers()['content-type'] ?? '';
+}
+
+/** What a raw request answered: the status, the `Location` if any, and the body. */
+interface RawAnswer {
+  readonly status: number;
+  readonly location: string;
+  readonly body: string;
+}
+
+/**
+ * **One GET with the path sent byte for byte, because every other client in reach rewrites it.**
+ *
+ * Playwright's request client, `fetch` and undici all build the request through WHATWG `URL`, which
+ * resolves dot segments **client-side** — so `request.get(`${baseURL}/.//robots.txt`)` arrives at the
+ * server as `//robots.txt` and measures the already-fixed case while looking like it measures the
+ * unfixed one. That blind spot was identified for backslashes in round 1 and the insight did not
+ * generalise: dot segments have exactly the same property, and F9 lived in it for a round.
+ *
+ * `node:http`'s `path` option is passed through to the request line unchanged, so this is the only
+ * client here that can put `/.//robots.txt` on the wire. Backslashes stay hand-measured — Node rejects
+ * them in `path` as an invalid character — and that limit is recorded where it applies below.
+ */
+async function raw(baseURL: string | undefined, path: string): Promise<RawAnswer> {
+  const url = new URL(baseURL ?? '');
+
+  return new Promise<RawAnswer>((resolve, reject) => {
+    const call = httpRequest(
+      { host: url.hostname, port: url.port, path, method: 'GET' },
+      (response) => {
+        let body = '';
+        response.setEncoding('utf8');
+        response.on('data', (chunk: string) => (body += chunk));
+        response.on('end', () =>
+          resolve({
+            status: response.statusCode ?? 0,
+            location: response.headers.location ?? '',
+            body,
+          }),
+        );
+      },
+    );
+
+    call.on('error', reject);
+    call.end();
+  });
 }
 
 /**
@@ -179,6 +226,168 @@ test.describe('a leading run of slashes (F1)', () => {
     const answers: Record<string, number> = {};
     for (const shape of shapes) {
       answers[shape] = (await request.get(`${baseURL}${shape}`, { maxRedirects: 0 })).status();
+    }
+
+    const serverErrors = Object.entries(answers).filter(([, status]) => status >= 500);
+    expect(serverErrors, JSON.stringify(answers, null, 2)).toEqual([]);
+  });
+});
+
+/**
+ * **F9: a path that *normalises* to a leading `//` still answered 500. F1 was narrowed, not fixed.**
+ *
+ * The first fix tested the **raw** request target for a leading run. The URL parser removes dot segments
+ * first, so a path can arrive with one leading slash and end up with two —
+ * `new URL('/.//robots.txt', 'http://h').pathname` is `//robots.txt` — and nine shapes went on answering
+ * 500 on a build whose whole point was that they could not. The same control proved the cause as in round
+ * one: `/.//about`, `/..//bag` and `/.//terms` kept answering 302, because a redirect route
+ * short-circuits before a component is built.
+ *
+ * **These tests could not be written with the suite's own client, and that is the reason they are here
+ * in this shape.** Playwright's request client resolves dot segments before the request leaves, so it
+ * reports the already-fixed `//robots.txt` case no matter which spelling it is given. `raw` above uses
+ * `node:http`, which sends the path verbatim. Without that the guarantee would rest on somebody
+ * remembering to run `curl`, which is how F9 survived round one.
+ */
+test.describe('a path that normalises to a leading slash run (F9)', () => {
+  /** Every address class, in the spellings that only a non-normalising client can send. */
+  const DOT_SEGMENT_SHAPES = [
+    '/.//robots.txt',
+    '/..//robots.txt',
+    '/a/..//robots.txt',
+    '/%2e//robots.txt',
+    '/%2E//robots.txt',
+    '/.%2e//robots.txt',
+    '/.//sitemap.xml',
+    '/..//sitemap.xml',
+    '/.//healthz',
+    '/.//',
+    '/.//women',
+    '/.//women/jeans',
+    '/a/../..//women',
+    '/.//kids/girls/girls-dresses',
+    '/.//product/test-product-1',
+    '/.//search?q=test',
+    '/.//new-arrivals',
+    '/.//not-a-dept',
+    '/.//bogus/thing',
+    '/.//favicon.ico',
+    // The four that were *not* broken, because a redirect route short-circuited the throw. They are here
+    // so the fix is shown to cover the whole class rather than the part that failed.
+    '/.//about',
+    '/..//bag',
+    '/.//terms',
+    '/a/..//wishlist',
+  ] as const;
+
+  for (const path of DOT_SEGMENT_SHAPES) {
+    test(`${path} is a 301 to the single-slash form, never a 5xx`, async ({ baseURL }) => {
+      const answer = await raw(baseURL, path);
+
+      expect(answer.status, `body was: ${answer.body.slice(0, 200)}`).toBe(301);
+      expect(answer.location.startsWith('//')).toBe(false);
+      expect(answer.location.startsWith('/')).toBe(true);
+    });
+  }
+
+  /** The redirect resolves the dot segments as well, so one hop reaches the address. */
+  test('the Location is the fully resolved path', async ({ baseURL }) => {
+    expect((await raw(baseURL, '/.//robots.txt')).location).toBe('/robots.txt');
+    expect((await raw(baseURL, '/..//sitemap.xml')).location).toBe('/sitemap.xml');
+    expect((await raw(baseURL, '/a/..//women')).location).toBe('/women');
+    expect((await raw(baseURL, '/a/../..//women')).location).toBe('/women');
+    expect((await raw(baseURL, '/.//')).location).toBe('/');
+    expect((await raw(baseURL, '/.//women?colour=navy')).location).toBe('/women?colour=navy');
+  });
+
+  /**
+   * **The redirect must not be able to leave this origin, through this route either.** The hostile host
+   * has to end up as a path segment, exactly as for the raw `//` forms.
+   */
+  for (const path of [
+    '/.//evil.example.com/x',
+    '/..//evil.example.com/x',
+    '/a/..//evil.example.com',
+    '/%2e//evil.example.com',
+  ]) {
+    test(`${path} redirects inside this origin, not to it`, async ({ baseURL }) => {
+      const answer = await raw(baseURL, path);
+
+      expect(answer.status).toBe(301);
+
+      const location = new URL(answer.location, baseURL);
+      expect(location.origin).toBe(new URL(baseURL ?? '').origin);
+      expect(location.pathname.startsWith('//')).toBe(false);
+      expect(location.hostname).toBe(new URL(baseURL ?? '').hostname);
+    });
+  }
+
+  /** And following the redirect reaches the thing itself. */
+  test('following it reaches the real answer', async ({ baseURL }) => {
+    const first = await raw(baseURL, '/.//robots.txt');
+    expect(first.status).toBe(301);
+
+    const robots = await raw(baseURL, first.location);
+    expect(robots.status).toBe(200);
+    expect(robots.body).toContain('User-agent: *');
+  });
+
+  /**
+   * **Shapes that must keep answering as they do.** A dot segment that does not produce a leading run is
+   * deliberately left alone — it is safe, and redirecting it would be a crawl-canonicalisation change
+   * rather than a fix. `/./robots.txt` answers **404**, which for `robots.txt` means "crawl freely" and
+   * is never the dangerous answer; it reads 200 under `curl` only because `curl` normalises it first.
+   */
+  test('a dot segment that does not reach the front is left alone', async ({ baseURL }) => {
+    const untouched: Record<string, number> = {};
+    for (const path of ['/./robots.txt', '/a/../robots.txt', '/women//jeans', '/robots.txt', '/women']) {
+      untouched[path] = (await raw(baseURL, path)).status;
+    }
+
+    expect(untouched).toEqual({
+      '/./robots.txt': 404,
+      '/a/../robots.txt': 404,
+      '/women//jeans': 200,
+      '/robots.txt': 200,
+      '/women': 200,
+    });
+  });
+
+  /**
+   * The property that matters site-wide, over both families at once: **no address shape answers a 5xx**.
+   * Sent raw, so every entry means what it says.
+   */
+  test('no address shape answers a 5xx', async ({ baseURL }) => {
+    const shapes = [
+      '/robots.txt',
+      '//robots.txt',
+      '///robots.txt',
+      '/.//robots.txt',
+      '/..//robots.txt',
+      '/%2e//robots.txt',
+      '/./robots.txt',
+      '/robots.txt/',
+      '/sitemap.xml',
+      '//sitemap.xml',
+      '/.//sitemap.xml',
+      '/women//jeans',
+      '/%2F%2Frobots.txt',
+      '/.//',
+      '////',
+      // Matrix parameters: the subject of GHSA-ff3f-86qr-9cv3, on the catch-all this branch changed.
+      '/;1=1',
+      '//;1=1',
+      '/.//;1=1',
+      '/women;1=1',
+      '/not-a-dept;1=1',
+      '/not-a-dept',
+      '//not-a-dept',
+      '/.//not-a-dept',
+    ];
+
+    const answers: Record<string, number> = {};
+    for (const shape of shapes) {
+      answers[shape] = (await raw(baseURL, shape)).status;
     }
 
     const serverErrors = Object.entries(answers).filter(([, status]) => status >= 500);
