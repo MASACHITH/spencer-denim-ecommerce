@@ -126,17 +126,25 @@ internal sealed class CartReader(AppDbContext dbContext, IOptions<CatalogOptions
         int variantId,
         CancellationToken cancellationToken)
     {
-        // The same visibility rule the listing starts from (doc 08 §7.1 and ProductCatalogReader's
-        // BaseQuery): published, not deleted, department and primary category active. A variant the
-        // storefront could never link to is one the bag must refuse, or a deactivated category could be
-        // bought from by anyone who kept the id.
-        var row = await dbContext.ProductVariants
+        // **`CatalogVisibility.VisibleProduct`, composed rather than spelled out again.** A variant the
+        // storefront could never link to is one the bag must refuse — otherwise a category the client
+        // has deactivated can still be bought from by anyone who kept a variant id — and "what a
+        // shopper may reach" has exactly one definition (GLB-11, W2-10). Writing `IsPublished` and the
+        // two `IsActive`s here would have been a fourth copy of it, free to drift the next time an
+        // admin gains a way to hide something.
+        //
+        // The query therefore starts at `Products` rather than at `ProductVariants`, which is what lets
+        // the expression be applied at all: `VisibleProduct` is an `Expression<Func<Product, bool>>` and
+        // there is no way to invoke one against `variant.Product` inside an EF predicate without an
+        // expression rewriter. `SelectMany` over the product's variants produces the same single join
+        // the three `Where` clauses did. The variant's own `IsActive` stays here: doc 08's
+        // `CatalogVisibility` deliberately leaves variant activity out, because a deactivated variant
+        // changes a product page's size list rather than making a URL appear or disappear.
+        var row = await dbContext.Products
             .AsNoTracking()
-            .Where(variant => variant.Id == variantId)
-            .Where(variant => variant.IsActive)
-            .Where(variant => variant.Product!.IsPublished)
-            .Where(variant => variant.Product!.Department!.IsActive)
-            .Where(variant => variant.Product!.PrimaryCategory!.IsActive)
+            .Where(Catalog.CatalogVisibility.VisibleProduct)
+            .SelectMany(product => product.Variants)
+            .Where(variant => variant.Id == variantId && variant.IsActive)
             .Select(variant => new
             {
                 variant.Id,
