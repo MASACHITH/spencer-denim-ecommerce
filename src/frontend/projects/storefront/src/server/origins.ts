@@ -58,17 +58,90 @@ export interface RequestHeaders {
  * an `og:url` without one is ignored.
  */
 export function publicOrigin(headers: RequestHeaders): string {
-  const configured = normaliseOrigin(process.env['PUBLIC_SITE_ORIGIN']);
+  const raw = process.env['PUBLIC_SITE_ORIGIN'];
+  const configured = normaliseOrigin(raw);
   if (configured) {
     return configured;
   }
 
+  if (raw !== undefined && raw.trim() !== '') {
+    // **Said out loud, which was F6.** The docblock below claims a deployment is better served by "a
+    // look at its configuration" than by a plausible-looking wrong answer - and then rejected the value
+    // in complete silence, so nothing told anyone to look. A value that was set and refused is a
+    // configuration mistake, not a default, and it is the one case here worth an error.
+    warnOnce(
+      raw,
+      `PUBLIC_SITE_ORIGIN is set to something unusable and is being ignored: ${describeRejected(raw)}. ` +
+        'It must be a scheme and host only, for example https://colombowardrobecompany.com. ' +
+        `Falling back to https://${BRAND.domain}, which is wrong on any host but production.`,
+    );
+  }
+
   const host = first(headers['x-forwarded-host']) ?? first(headers.host);
-  if (host && HOST_PATTERN.test(host) && isAllowedHost(host)) {
-    return `${protocolFrom(headers)}://${host}`;
+  if (host && HOST_PATTERN.test(host)) {
+    // The **normalised** host, which was F7: `Host: LOCALHOST:5200` was echoed verbatim into the
+    // `Sitemap:` line and into every `og:url`, so one deployment could publish several spellings of one
+    // address. `isAllowedHost` already lower-cases and strips the port to make its decision; returning
+    // what it matched means the answer cannot disagree with the check.
+    const allowed = allowedHost(host);
+    if (allowed) {
+      return `${protocolFrom(headers)}://${allowed}`;
+    }
   }
 
   return `https://${BRAND.domain}`;
+}
+
+/**
+ * Says a thing once per process rather than once per request.
+ *
+ * A misconfiguration is a standing condition, and `sitemap.xml` plus every rendered page would otherwise
+ * repeat it until the disk filled - which is how a real message becomes noise and then becomes filtered.
+ *
+ * Keyed on the **value**, not on the message: `describeRejected` describes the shape of the mistake, so
+ * two different bad values produce one line of text, and keying on the text would silence the second
+ * misconfiguration anybody made. The key never leaves this set, which is why keying on a value that may
+ * carry a credential is safe where logging it would not be.
+ */
+const alreadyWarned = new Set<string>();
+
+function warnOnce(key: string, message: string): void {
+  if (alreadyWarned.has(key)) {
+    return;
+  }
+
+  alreadyWarned.add(key);
+  console.error(message);
+}
+
+/**
+ * The rejected value, described rather than echoed.
+ *
+ * It comes from this deployment's own environment, so there is no attacker here - but a configured value
+ * can carry a credential (`https://user:password@host` is one of the shapes this refuses), and a log line
+ * is the wrong place for one.
+ */
+function describeRejected(raw: string): string {
+  const trimmed = raw.trim();
+
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    return 'it is not a URL';
+  }
+
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    return `its scheme is "${url.protocol.replace(':', '')}" rather than http or https`;
+  }
+  if (url.username || url.password) {
+    return 'it carries credentials';
+  }
+  if (url.search || url.hash) {
+    return 'it carries a query string or a fragment';
+  }
+
+  return `it carries the path "${url.pathname}"`;
 }
 
 /**
@@ -92,22 +165,34 @@ function protocolFrom(headers: RequestHeaders): 'http' | 'https' {
 }
 
 /**
- * Whether we are willing to repeat this host back to a crawler.
+ * The host we are willing to repeat back to a crawler, **normalised**, or `null` when there is none.
+ *
+ * It returns the value rather than a boolean so that the answer cannot disagree with the check: the
+ * decision is made on the lower-cased name, so that is what gets published. `Host: LOCALHOST:5200` was
+ * being echoed verbatim, which meant one deployment could publish several spellings of a single address
+ * in its `Sitemap:` line and its `og:url` tags (F7).
+ *
+ * The port is kept, because a port is part of an origin and `ng serve` and the browser tests are
+ * reached on one. Only its case and the name's are settled here, since a port has no case.
  *
  * `NG_ALLOWED_HOSTS` is read per call rather than once at module load so a test can set it; it is a
- * handful of string comparisons on a request that is answered a few times an hour.
+ * handful of string comparisons on a request answered a few times an hour.
  */
-function isAllowedHost(host: string): boolean {
+function allowedHost(host: string): string | null {
   const name = withoutPort(host).toLowerCase();
+  const port = host.slice(withoutPort(host).length);
+
   if (LOCAL_HOSTS.has(name)) {
-    return true;
+    return `${name}${port}`;
   }
 
-  return (process.env['NG_ALLOWED_HOSTS'] ?? '')
+  const listed = (process.env['NG_ALLOWED_HOSTS'] ?? '')
     .split(',')
     .map((entry) => withoutPort(entry.trim()).toLowerCase())
     .filter((entry) => entry.length > 0)
     .includes(name);
+
+  return listed ? `${name}${port}` : null;
 }
 
 /** `example.com:4000` → `example.com`, leaving a bracketed IPv6 literal alone. */
