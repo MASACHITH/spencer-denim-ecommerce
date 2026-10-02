@@ -91,6 +91,8 @@ app.MapRoleEndpoints();
 app.MapCatalogEndpoints();
 app.MapAdminCatalogEndpoints();
 app.MapContentEndpoints();
+app.MapSiteSettingsEndpoints();
+app.MapAdminSettingsEndpoints();
 app.MapCartEndpoints();
 app.MapAdminMediaEndpoints();
 app.MapMediaFileEndpoints();

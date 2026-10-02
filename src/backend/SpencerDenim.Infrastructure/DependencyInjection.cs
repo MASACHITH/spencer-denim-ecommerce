@@ -12,6 +12,7 @@ using SpencerDenim.Application.Catalog.Admin.Abstractions;
 using SpencerDenim.Application.Content.Abstractions;
 using SpencerDenim.Application.Marketing.Newsletter;
 using SpencerDenim.Application.Sales.Cart.Abstractions;
+using SpencerDenim.Application.Settings.Abstractions;
 using SpencerDenim.Infrastructure.Admin.Auditing;
 using SpencerDenim.Infrastructure.Admin.Users;
 using SpencerDenim.Infrastructure.Catalog;
@@ -24,6 +25,7 @@ using SpencerDenim.Infrastructure.Persistence;
 using SpencerDenim.Infrastructure.Persistence.Interceptors;
 using SpencerDenim.Infrastructure.Persistence.Seeding;
 using SpencerDenim.Infrastructure.Sales;
+using SpencerDenim.Infrastructure.Settings;
 using SpencerDenim.Infrastructure.Time;
 
 namespace SpencerDenim.Infrastructure;
@@ -122,11 +124,22 @@ public static class DependencyInjection
         services.AddScoped<ICartStore, CartStore>();
         services.AddScoped<ICartReader, CartReader>();
 
+        // Settings (ADM-22, GLB-02). The write store and the storefront reader are separate ports on
+        // purpose: the public one has no method that could reach a secret, a permission or an unseeded key.
+        services.AddScoped<ISettingsStore, SettingsStore>();
+        services.AddScoped<ISiteSettingsReader, SiteSettingsReader>();
+        services.AddScoped<ISettingSecretProtector, SettingSecretProtector>();
+
+        // Doc 08 §3.8's sixty-second cache. A singleton, because a cache scoped to one request caches
+        // nothing — and this payload is read during the server render of every page on the site.
+        services.AddSingleton<ISiteSettingsCache, SiteSettingsCache>();
+
         services.AddMediaLibrary();
 
         services.AddOptions<SeedOptions>().BindConfiguration(SeedOptions.SectionName);
         services.AddScoped<CatalogReferenceDataSeeder>();
         services.AddScoped<HomeContentSeeder>();
+        services.AddScoped<SettingsSeeder>();
         services.AddScoped<DemoCatalogueSeeder>();
         services.AddScoped<CatalogSeedRunner>();
         services.AddHostedService<CatalogSeedHostedService>();

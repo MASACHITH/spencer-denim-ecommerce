@@ -22,6 +22,11 @@ using SpencerDenim.Application.Content.Home;
 using SpencerDenim.Application.Diagnostics.Ping;
 using SpencerDenim.Application.Marketing.Newsletter;
 using SpencerDenim.Application.Sales.Cart;
+using SpencerDenim.Application.Settings;
+using SpencerDenim.Application.Settings.Abstractions;
+using SpencerDenim.Application.Settings.Admin;
+using SpencerDenim.Application.Settings.Contracts;
+using SpencerDenim.Application.Settings.Site;
 
 namespace SpencerDenim.Application;
 
@@ -32,6 +37,9 @@ public static class DependencyInjection
     /// without the two registrations resolving each other in a circle.
     /// </summary>
     private const string UncachedHomePage = "home-page:uncached";
+
+    /// <inheritdoc cref="UncachedHomePage"/>
+    private const string UncachedSiteSettings = "site-settings:uncached";
 
     /// <summary>Registers application use-case handlers.</summary>
     public static IServiceCollection AddApplication(this IServiceCollection services)
@@ -162,6 +170,24 @@ public static class DependencyInjection
             ICommandHandler<RemoveCartItemCommand, CartWriteResult>,
             RemoveCartItemCommandHandler>();
         services.AddScoped<ICommandHandler<MergeGuestCartCommand, CartView>, MergeGuestCartCommandHandler>();
+
+        // Settings (ADM-22, GLB-02). The storefront read is wrapped in doc 08 §3.8's sixty-second cache the
+        // same way the homepage is, and for a stronger reason: this payload is read during the server render
+        // of every page rather than of one.
+        services.AddScoped<IQueryHandler<GetAdminSettingsQuery, AdminSettingsDto>, GetAdminSettingsQueryHandler>();
+        services.AddScoped<
+            ICommandHandler<SetStoreLogoCommand, SettingsWriteResult>,
+            SetStoreLogoCommandHandler>();
+        services.AddScoped<
+            ICommandHandler<UpdateContactAndSocialCommand, SettingsWriteResult>,
+            UpdateContactAndSocialCommandHandler>();
+        services.AddKeyedScoped<IQueryHandler<GetSiteSettingsQuery, SiteSettingsDto>, GetSiteSettingsQueryHandler>(
+            UncachedSiteSettings);
+        services.AddScoped<IQueryHandler<GetSiteSettingsQuery, SiteSettingsDto>>(provider =>
+            new CachedSiteSettingsQueryHandler(
+                provider.GetRequiredKeyedService<IQueryHandler<GetSiteSettingsQuery, SiteSettingsDto>>(
+                    UncachedSiteSettings),
+                provider.GetRequiredService<ISiteSettingsCache>()));
 
         return services;
     }
