@@ -317,8 +317,16 @@ export class MainNav {
   /** The id of the department whose mega menu is open, or `null`. */
   readonly openId = this.expanded.asReadonly();
 
-  /** The department Escape closed, so focus alone does not reopen it. */
-  private dismissed: string | null = null;
+  /**
+   * The departments Escape has closed, so focus alone does not reopen them.
+   *
+   * **A set and not one id, which was F3.** With a single slot a second Escape overwrote the first, so
+   * four keystrokes brought #20's SH8 straight back: focus Women, Escape, Tab to Men, Escape,
+   * Shift+Tab to Women - and Women opened again, because the slot now held `men`. A shopper working
+   * along the nav with the keyboard dismisses more than one menu, so the guard has to remember more
+   * than one. Cleared as a whole when focus leaves the nav, which is the scope that was already right.
+   */
+  private readonly dismissed = new Set<string>();
 
   protected menuOf(item: NavItem): boolean {
     return hasMenu(item);
@@ -341,7 +349,7 @@ export class MainNav {
 
   /** Hovering always opens: a pointer arriving is a fresh request, even after Escape. */
   openFromPointer(item: NavItem): void {
-    this.dismissed = null;
+    this.dismissed.clear();
     this.show(item);
   }
 
@@ -350,7 +358,7 @@ export class MainNav {
    * guard, returning focus to the department link would immediately reopen what Escape closed.
    */
   openFromFocus(item: NavItem): void {
-    if (this.dismissed === item.id) {
+    if (this.dismissed.has(item.id)) {
       return;
     }
 
@@ -364,7 +372,7 @@ export class MainNav {
   }
 
   protected onPointerLeave(id: string): void {
-    this.dismissed = null;
+    this.dismissed.clear();
     this.close(id);
   }
 
@@ -387,7 +395,7 @@ export class MainNav {
     // one thing Escape is supposed to be able to do. So it is cleared only once focus has left the
     // nav altogether, which is a fresh arrival; moving between departments inside it is not.
     if (!(nextFocus instanceof Node && this.host.nativeElement.contains(nextFocus))) {
-      this.dismissed = null;
+      this.dismissed.clear();
     }
 
     this.close(id);
@@ -400,7 +408,7 @@ export class MainNav {
       return;
     }
 
-    this.dismissed = id;
+    this.dismissed.add(id);
     this.close(id);
     this.host.nativeElement
       .querySelector<HTMLElement>(`[aria-controls="mega-${id}"]`)
