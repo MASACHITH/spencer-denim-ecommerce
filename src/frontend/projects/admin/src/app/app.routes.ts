@@ -39,6 +39,15 @@ export const routes: Routes = [
     loadComponent: () => import('./pages/catalog/catalog-page').then((m) => m.CatalogPage),
   },
   {
+    // ADM-22 + GLB-02 (W1-16). Like every other admin route the guard only asks for a session: the API is
+    // the security boundary (doc 03 §3a), and a user without Settings.Edit is shown the refusal rather than
+    // bounced from a page that then cannot explain itself.
+    path: 'settings',
+    title: `Settings — ${BRAND.adminName}`,
+    canActivate: [adminSessionGuard],
+    loadComponent: () => import('./pages/settings/settings-page').then((m) => m.SettingsPage),
+  },
+  {
     path: 'audit-log',
     title: `Audit log — ${BRAND.adminName}`,
     canActivate: [adminSessionGuard],

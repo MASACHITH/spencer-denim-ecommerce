@@ -16,6 +16,7 @@ import { AdminAuthApi } from '../../core/auth/admin-auth-api';
       <sd-api-status />
       <nav class="panel__nav" aria-label="Admin sections">
         <a class="panel__link" routerLink="/catalog">Departments and categories</a>
+        <a class="panel__link" routerLink="/settings">Settings</a>
         <a class="panel__link" routerLink="/audit-log">Audit log</a>
         <a class="panel__link" routerLink="/users">Staff users</a>
         <a class="panel__link" routerLink="/roles">Roles</a>
