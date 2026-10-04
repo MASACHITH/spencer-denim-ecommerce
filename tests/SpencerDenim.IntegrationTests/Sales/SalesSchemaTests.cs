@@ -357,51 +357,77 @@ public sealed class SalesSchemaTests(SqlServerDatabaseFixture sqlServer) : Sales
     }
 
     /// <summary>Every index doc 08 §3.5 names by name, with the filter it names.</summary>
+    /// <summary>
+    /// Every index doc 08 section 3.5 names, pinned whole: <c>is_unique|key columns in order with direction|
+    /// included columns|filter</c>. Each expectation was read from doc 08 and then confirmed against
+    /// <c>sys.indexes</c>, so a mismatch means the schema drifted from the document, not that the test guessed.
+    /// </summary>
     [Theory]
-    [InlineData("Orders", "UX_Orders_OrderNumber", "")]
-    [InlineData("Orders", "UX_Orders_PublicId", "")]
-    [InlineData("Orders", "UX_Orders_CheckoutIdempotencyKey", "")]
-    [InlineData("Orders", "UX_Orders_InvoiceNumber", "([InvoiceNumber] IS NOT NULL)")]
-    [InlineData("Orders", "IX_Orders_Customer_Placed", "([CustomerUserId] IS NOT NULL)")]
-    [InlineData("Orders", "IX_Orders_Status_Placed", "")]
-    [InlineData("Orders", "IX_Orders_Placed", "")]
-    [InlineData("Orders", "IX_Orders_Pending_Due", "([Status]=(0))")]
-    [InlineData("Orders", "IX_Orders_StockReserved", "([StockState]=(0))")]
-    [InlineData("Orders", "IX_Orders_Paid", "([PaidAtUtc] IS NOT NULL)")]
-    [InlineData("Orders", "IX_Orders_Promo_Email", "([PromoCodeId] IS NOT NULL)")]
-    [InlineData("Orders", "IX_Orders_Shipped", "([Status]=(3))")]
-    [InlineData("Orders", "IX_Orders_EmailNormalized", "")]
-    [InlineData("Orders", "IX_Orders_Phone", "")]
-    [InlineData("OrderLines", "UX_OrderLines_Order_Line", "")]
-    [InlineData("OrderLines", "IX_OrderLines_Variant", "")]
-    [InlineData("OrderLines", "IX_OrderLines_Product", "")]
-    [InlineData("OrderStatusHistory", "IX_OrderStatusHistory_Order_Occurred", "")]
-    [InlineData("Payments", "UX_Payments_OneSettlement", "([IsOrderSettlement]=(1))")]
-    [InlineData("Payments", "UX_Payments_OneOpen", "([Status] IN ((0), (1)))")]
-    [InlineData("Payments", "IX_Payments_Capturing", "([Status]=(2))")]
-    [InlineData("Payments", "UX_Payments_Provider_Reference", "([ProviderReference] IS NOT NULL)")]
-    [InlineData("Payments", "UX_Payments_Provider_Txn", "([ProviderTransactionId] IS NOT NULL)")]
-    [InlineData("Payments", "IX_Payments_Exceptions", "([Status]=(7))")]
-    [InlineData("Payments", "IX_Payments_BankQueue", "([ProviderCode]='BankTransfer' AND [Status]=(1))")]
-    [InlineData("PaymentEvents", "UX_PaymentEvents_IdempotencyKey", "")]
-    [InlineData("PaymentEvents", "IX_PaymentEvents_Retry", "([ProcessingStatus] IN ((0), (3)))")]
-    [InlineData("Refunds", "IX_Refunds_Completed", "([Status]=(1))")]
-    [InlineData("Refunds", "UX_Refunds_ProviderRefundId", "([ProviderRefundId] IS NOT NULL)")]
-    [InlineData("DeliveryMethods", "UX_DeliveryMethods_Code", "")]
-    [InlineData("Couriers", "UX_Couriers_Name", "")]
-    public async Task The_index_doc_08_names_exists_with_its_filter(string table, string index, string filter)
+    [InlineData("Orders", "UX_Orders_OrderNumber", "1|OrderNumber||")]
+    [InlineData("Orders", "UX_Orders_PublicId", "1|PublicId||")]
+    [InlineData("Orders", "UX_Orders_CheckoutIdempotencyKey", "1|CheckoutIdempotencyKey||")]
+    [InlineData("Orders", "UX_Orders_InvoiceNumber", "1|InvoiceNumber||([InvoiceNumber] IS NOT NULL)")]
+    [InlineData("Orders", "IX_Orders_Customer_Placed", "0|CustomerUserId,PlacedAtUtc DESC|GrandTotal,PaidAtUtc,Status|([CustomerUserId] IS NOT NULL)")]
+    [InlineData("Orders", "IX_Orders_Status_Placed", "0|Status,PlacedAtUtc DESC|GrandTotal,PaymentProviderCode|")]
+    [InlineData("Orders", "IX_Orders_Placed", "0|PlacedAtUtc DESC|FirstName,GrandTotal,LastName,OrderNumber,Status|")]
+    [InlineData("Orders", "IX_Orders_Pending_Due", "0|PaymentDueAtUtc|CaptureLockedUntilUtc|([Status]=(0))")]
+    [InlineData("Orders", "IX_Orders_StockReserved", "0|Id||([StockState]=(0))")]
+    [InlineData("Orders", "IX_Orders_Paid", "0|PaidAtUtc|CustomerUserId,DeliveryDistrictId,EmailNormalized,GrandTotal,PaymentProviderCode,Status|([PaidAtUtc] IS NOT NULL)")]
+    [InlineData("Orders", "IX_Orders_Promo_Email", "0|PromoCodeId,EmailNormalized|PaidAtUtc,Status|([PromoCodeId] IS NOT NULL)")]
+    [InlineData("Orders", "IX_Orders_Shipped", "0|ShippedAtUtc||([Status]=(3))")]
+    [InlineData("Orders", "IX_Orders_EmailNormalized", "0|EmailNormalized||")]
+    [InlineData("Orders", "IX_Orders_Phone", "0|Phone||")]
+    [InlineData("OrderLines", "UX_OrderLines_Order_Line", "1|OrderId,LineNumber|CategoryId,DepartmentId,LineTotal,ProductId,Quantity,VariantId|")]
+    [InlineData("OrderLines", "IX_OrderLines_Variant", "0|VariantId|OrderId,Quantity|")]
+    [InlineData("OrderLines", "IX_OrderLines_Product", "0|ProductId|LineTotal,OrderId,Quantity|")]
+    [InlineData("OrderStatusHistory", "IX_OrderStatusHistory_Order_Occurred", "0|OrderId,OccurredAtUtc||")]
+    [InlineData("Payments", "UX_Payments_OneSettlement", "1|OrderId||([IsOrderSettlement]=(1))")]
+    [InlineData("Payments", "UX_Payments_OneOpen", "1|OrderId||([Status] IN ((0), (1)))")]
+    [InlineData("Payments", "IX_Payments_Capturing", "0|CaptureStartedAtUtc||([Status]=(2))")]
+    [InlineData("Payments", "UX_Payments_Provider_Reference", "1|ProviderCode,ProviderReference||([ProviderReference] IS NOT NULL)")]
+    [InlineData("Payments", "UX_Payments_Provider_Txn", "1|ProviderCode,ProviderTransactionId||([ProviderTransactionId] IS NOT NULL)")]
+    [InlineData("Payments", "IX_Payments_Exceptions", "0|CreatedAtUtc||([Status]=(7))")]
+    [InlineData("Payments", "IX_Payments_BankQueue", "0|CreatedAtUtc||([ProviderCode]='BankTransfer' AND [Status]=(1))")]
+    [InlineData("PaymentEvents", "UX_PaymentEvents_IdempotencyKey", "1|IdempotencyKey||")]
+    [InlineData("PaymentEvents", "IX_PaymentEvents_Retry", "0|NextAttemptAtUtc||([ProcessingStatus] IN ((0), (3)))")]
+    [InlineData("Refunds", "IX_Refunds_Completed", "0|CompletedAtUtc||([Status]=(1))")]
+    [InlineData("Refunds", "UX_Refunds_ProviderRefundId", "1|ProviderRefundId||([ProviderRefundId] IS NOT NULL)")]
+    [InlineData("DeliveryMethods", "UX_DeliveryMethods_Code", "1|Code||")]
+    [InlineData("Couriers", "UX_Couriers_Name", "1|Name||")]
+    public async Task The_index_doc_08_names_exists_with_its_shape(string table, string index, string expected)
     {
         SqlServer.SkipIfUnavailable();
 
+        // Tester round 1, Minor 1: this test used to compare the filter alone, so an index that existed but had
+        // lost its uniqueness, or was keyed on the wrong column, or had dropped its INCLUDE list, still passed.
+        // That is the exact failure mode this task already hit once — two HasIndex calls over the same property
+        // collapsed into one and silently deleted UX_Payments_OneSettlement, while building clean and reporting
+        // no pending model changes. So the shape is compared whole: uniqueness, key columns in order with their
+        // direction, included columns, and the filter.
         var actual = await DbContext.Database
             .SqlQuery<string>($"""
-                SELECT ISNULL(i.filter_definition, '') AS [Value]
+                SELECT CONVERT(varchar(11), i.is_unique)
+                     + '|' + STUFF((
+                         SELECT ',' + c.name + CASE WHEN ic.is_descending_key = 1 THEN ' DESC' ELSE '' END
+                         FROM sys.index_columns ic
+                         JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
+                         WHERE ic.object_id = i.object_id AND ic.index_id = i.index_id AND ic.is_included_column = 0
+                         ORDER BY ic.key_ordinal
+                         FOR XML PATH('')), 1, 1, '')
+                     + '|' + ISNULL(STUFF((
+                         SELECT ',' + c.name
+                         FROM sys.index_columns ic
+                         JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
+                         WHERE ic.object_id = i.object_id AND ic.index_id = i.index_id AND ic.is_included_column = 1
+                         ORDER BY c.name
+                         FOR XML PATH('')), 1, 1, ''), '')
+                     + '|' + ISNULL(i.filter_definition, '') AS [Value]
                 FROM sys.indexes i
                 WHERE i.object_id = OBJECT_ID('sales.' + {table}) AND i.name = {index}
                 """)
             .ToListAsync(Token);
 
-        Assert.Equal(filter, Assert.Single(actual));
+        Assert.Equal(expected, Assert.Single(actual));
     }
 
     public static TheoryData<string, string[]> TableColumns()
