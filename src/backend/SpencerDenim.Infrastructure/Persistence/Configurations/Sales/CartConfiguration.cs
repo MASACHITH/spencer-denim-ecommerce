@@ -60,5 +60,21 @@ internal sealed class CartConfiguration : IEntityTypeConfiguration<Cart>
             .WithMany()
             .HasForeignKey(cart => cart.CustomerUserId)
             .OnDelete(DeleteBehavior.NoAction);
+
+        // W3-03, doc 08 §3.5. W2-09 left this column out because sales.DeliveryMethods did not exist and the
+        // column could not have carried its foreign key; W3-03 creates the table, so the column and the
+        // constraint arrive together — which is the whole point of deferring it rather than adding a bare int
+        // that nothing validated. NO ACTION: a method an admin retires must not be deletable out from under a
+        // live bag, and ADM-22 disables rather than deletes.
+        builder
+            .HasOne(cart => cart.DeliveryMethod)
+            .WithMany()
+            .HasForeignKey(cart => cart.DeliveryMethodId)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        // Doc 08 §1.6 (DB7): the new FK column leads an index of its own.
+        builder
+            .HasIndex(cart => cart.DeliveryMethodId)
+            .HasDatabaseName("IX_Carts_DeliveryMethodId");
     }
 }

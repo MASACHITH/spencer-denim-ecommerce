@@ -57,8 +57,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public const string MarketingSchema = "marketing";
 
     /// <summary>
-    /// Doc 08 §1.2. <b>Created by W2-09's migration with <c>Carts</c> and <c>CartItems</c> only</b>; orders,
-    /// payments, delivery methods and the rest of §3.5 belong to #53, and <c>WishlistItems</c> to W2-08.
+    /// Doc 08 §1.2. Created by W2-09's migration with <c>Carts</c> and <c>CartItems</c>; W3-03 added the rest
+    /// of §3.5 — number series, payment providers, delivery, orders, payments and refunds.
+    /// <c>WishlistItems</c> is still W2-08's.
     /// </summary>
     public const string SalesSchema = "sales";
 
@@ -128,6 +129,30 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<Cart> Carts => Set<Cart>();
 
     public DbSet<CartItem> CartItems => Set<CartItem>();
+
+    public DbSet<NumberSeries> NumberSeries => Set<NumberSeries>();
+
+    public DbSet<PaymentProvider> PaymentProviders => Set<PaymentProvider>();
+
+    public DbSet<DeliveryMethod> DeliveryMethods => Set<DeliveryMethod>();
+
+    public DbSet<DeliveryMethodZoneRate> DeliveryMethodZoneRates => Set<DeliveryMethodZoneRate>();
+
+    public DbSet<PickupLocation> PickupLocations => Set<PickupLocation>();
+
+    public DbSet<Courier> Couriers => Set<Courier>();
+
+    public DbSet<Order> Orders => Set<Order>();
+
+    public DbSet<OrderLine> OrderLines => Set<OrderLine>();
+
+    public DbSet<OrderStatusHistoryEntry> OrderStatusHistory => Set<OrderStatusHistoryEntry>();
+
+    public DbSet<Payment> Payments => Set<Payment>();
+
+    public DbSet<PaymentEvent> PaymentEvents => Set<PaymentEvent>();
+
+    public DbSet<Refund> Refunds => Set<Refund>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
