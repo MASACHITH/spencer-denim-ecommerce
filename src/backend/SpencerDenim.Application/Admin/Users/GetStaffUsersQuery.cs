@@ -22,6 +22,13 @@ public sealed record GetStaffUsersQuery
     {
     }
 
+    /// <summary>
+    /// The signed-in staff user asking. The handler resolves their effective permissions from this id (never
+    /// from the principal) to decide whether GrantsAll holders are visible to them at all — see
+    /// <see cref="GetStaffUsersQueryHandler"/>.
+    /// </summary>
+    public int ActorUserId { get; private init; }
+
     public string? Search { get; private init; }
 
     public int? RoleId { get; private init; }
@@ -34,7 +41,7 @@ public sealed record GetStaffUsersQuery
 
     public int Skip => (Page - 1) * PageSize;
 
-    public static Result<GetStaffUsersQuery> Create(StaffUserListCriteria criteria)
+    public static Result<GetStaffUsersQuery> Create(StaffUserListCriteria criteria, int actorUserId)
     {
         ArgumentNullException.ThrowIfNull(criteria);
 
@@ -53,6 +60,7 @@ public sealed record GetStaffUsersQuery
 
         return Result.Success(new GetStaffUsersQuery
         {
+            ActorUserId = actorUserId,
             Search = search,
             RoleId = roleId,
             IsActive = isActive,

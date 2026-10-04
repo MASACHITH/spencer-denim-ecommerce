@@ -8,7 +8,7 @@ public sealed class GetStaffUsersQueryTests
     [Fact]
     public void Defaults_apply_when_nothing_is_given()
     {
-        var result = GetStaffUsersQuery.Create(new StaffUserListCriteria());
+        var result = GetStaffUsersQuery.Create(new StaffUserListCriteria(), actorUserId: 1);
 
         Assert.True(result.IsSuccess);
         Assert.Equal(1, result.Value.Page);
@@ -28,7 +28,7 @@ public sealed class GetStaffUsersQueryTests
             Page: "0",
             PageSize: "0");
 
-        var result = GetStaffUsersQuery.Create(criteria);
+        var result = GetStaffUsersQuery.Create(criteria, actorUserId: 1);
 
         Assert.False(result.IsSuccess);
         Assert.Equal(5, result.Errors.Count);
@@ -37,7 +37,7 @@ public sealed class GetStaffUsersQueryTests
     [Fact]
     public void PageSize_above_the_maximum_is_rejected()
     {
-        var result = GetStaffUsersQuery.Create(new StaffUserListCriteria(PageSize: (GetStaffUsersQuery.MaxPageSize + 1).ToString(System.Globalization.CultureInfo.InvariantCulture)));
+        var result = GetStaffUsersQuery.Create(new StaffUserListCriteria(PageSize: (GetStaffUsersQuery.MaxPageSize + 1).ToString(System.Globalization.CultureInfo.InvariantCulture)), actorUserId: 1);
 
         Assert.False(result.IsSuccess);
         Assert.Contains(result.Errors, e => e.Field == "pageSize");
@@ -46,7 +46,7 @@ public sealed class GetStaffUsersQueryTests
     [Fact]
     public void Valid_filters_are_trimmed_and_parsed()
     {
-        var result = GetStaffUsersQuery.Create(new StaffUserListCriteria(Search: "  ada  ", RoleId: "3", IsActive: "true", Page: "2", PageSize: "10"));
+        var result = GetStaffUsersQuery.Create(new StaffUserListCriteria(Search: "  ada  ", RoleId: "3", IsActive: "true", Page: "2", PageSize: "10"), actorUserId: 1);
 
         Assert.True(result.IsSuccess);
         Assert.Equal("ada", result.Value.Search);

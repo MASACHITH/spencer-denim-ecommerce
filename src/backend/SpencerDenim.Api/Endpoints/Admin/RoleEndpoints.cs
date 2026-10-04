@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using Microsoft.AspNetCore.Http.HttpResults;
 using SpencerDenim.Api.Authorization;
 using SpencerDenim.Application.Abstractions.Messaging;
@@ -38,20 +39,32 @@ internal static class RoleEndpoints
         return endpoints;
     }
 
-    private static async Task<Ok<IReadOnlyList<RoleSummaryDto>>> ListAsync(
+    private static async Task<Results<Ok<IReadOnlyList<RoleSummaryDto>>, UnauthorizedHttpResult>> ListAsync(
+        ClaimsPrincipal principal,
         IQueryHandler<GetRolesQuery, IReadOnlyList<RoleSummaryDto>> handler,
         CancellationToken cancellationToken)
     {
-        var roles = await handler.HandleAsync(new GetRolesQuery(), cancellationToken);
+        if (!AdminSessionCookies.TryGetUserId(principal, out var actorId))
+        {
+            return TypedResults.Unauthorized();
+        }
+
+        var roles = await handler.HandleAsync(new GetRolesQuery(actorId), cancellationToken);
         return TypedResults.Ok(roles);
     }
 
-    private static async Task<Results<Ok<RoleDetailDto>, NotFound>> GetByIdAsync(
+    private static async Task<Results<Ok<RoleDetailDto>, NotFound, UnauthorizedHttpResult>> GetByIdAsync(
         int roleId,
+        ClaimsPrincipal principal,
         IQueryHandler<GetRoleByIdQuery, RoleDetailDto?> handler,
         CancellationToken cancellationToken)
     {
-        var detail = await handler.HandleAsync(new GetRoleByIdQuery(roleId), cancellationToken);
+        if (!AdminSessionCookies.TryGetUserId(principal, out var actorId))
+        {
+            return TypedResults.Unauthorized();
+        }
+
+        var detail = await handler.HandleAsync(new GetRoleByIdQuery(roleId, actorId), cancellationToken);
         return detail is null ? TypedResults.NotFound() : TypedResults.Ok(detail);
     }
 }

@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using SpencerDenim.Application.Admin.Users.Abstractions;
+using SpencerDenim.Domain.Auditing;
 using SpencerDenim.Domain.Identity;
 using SpencerDenim.Infrastructure.Identity;
 using SpencerDenim.Infrastructure.Persistence;
@@ -50,7 +51,7 @@ public sealed class StaffUserRoleManagementStoreTests(SqlServerDatabaseFixture s
         await DeactivateAllOtherActiveGrantsAllHoldersAsync(scope.ServiceProvider, soleAdminId);
 
         var store = scope.ServiceProvider.GetRequiredService<IStaffUserRoleManagementStore>();
-        var result = await store.SetActiveAsync(soleAdminId, active: false, GrantsAllActor, TestContext.Current.CancellationToken);
+        var result = await store.SetActiveAsync(soleAdminId, active: false, GrantsAllActor, Audit(), TestContext.Current.CancellationToken);
 
         Assert.IsType<SetActiveStoreResult.LastSuperAdminGuardTriggered>(result);
 
@@ -75,7 +76,7 @@ public sealed class StaffUserRoleManagementStoreTests(SqlServerDatabaseFixture s
         await DeactivateAllOtherActiveGrantsAllHoldersAsync(scope.ServiceProvider, soleAdminId);
 
         var store = scope.ServiceProvider.GetRequiredService<IStaffUserRoleManagementStore>();
-        var result = await store.ReplaceRolesAsync(soleAdminId, [], GrantsAllActor, TestContext.Current.CancellationToken);
+        var result = await store.ReplaceRolesAsync(soleAdminId, [], GrantsAllActor, Audit(), TestContext.Current.CancellationToken);
 
         Assert.IsType<ReplaceRolesStoreResult.LastSuperAdminGuardTriggered>(result);
 
@@ -105,7 +106,7 @@ public sealed class StaffUserRoleManagementStoreTests(SqlServerDatabaseFixture s
         await DeactivateAllOtherActiveGrantsAllHoldersAsync(scope.ServiceProvider, firstId, secondId);
 
         var store = scope.ServiceProvider.GetRequiredService<IStaffUserRoleManagementStore>();
-        var result = await store.SetActiveAsync(firstId, active: false, GrantsAllActor, TestContext.Current.CancellationToken);
+        var result = await store.SetActiveAsync(firstId, active: false, GrantsAllActor, Audit(), TestContext.Current.CancellationToken);
 
         Assert.IsType<SetActiveStoreResult.Success>(result);
 
@@ -147,11 +148,11 @@ public sealed class StaffUserRoleManagementStoreTests(SqlServerDatabaseFixture s
         // A different (GrantsAll) admin fully commits a role change to the SAME target in between — before the
         // low-privilege actor's write below ever reaches the store.
         var grantsAllStore = scope.ServiceProvider.GetRequiredService<IStaffUserRoleManagementStore>();
-        var concurrentChange = await grantsAllStore.ReplaceRolesAsync(targetId, [wideRoleId], GrantsAllActor, TestContext.Current.CancellationToken);
+        var concurrentChange = await grantsAllStore.ReplaceRolesAsync(targetId, [wideRoleId], GrantsAllActor, Audit(), TestContext.Current.CancellationToken);
         Assert.IsType<ReplaceRolesStoreResult.Success>(concurrentChange);
 
         var store = scope.ServiceProvider.GetRequiredService<IStaffUserRoleManagementStore>();
-        var result = await store.SetActiveAsync(targetId, active: false, lowPrivilegeActor, TestContext.Current.CancellationToken);
+        var result = await store.SetActiveAsync(targetId, active: false, lowPrivilegeActor, Audit(), TestContext.Current.CancellationToken);
 
         Assert.IsType<SetActiveStoreResult.AuthorizationStale>(result);
 
@@ -194,8 +195,8 @@ public sealed class StaffUserRoleManagementStoreTests(SqlServerDatabaseFixture s
         var storeA = scopeA.ServiceProvider.GetRequiredService<IStaffUserRoleManagementStore>();
         var storeB = scopeB.ServiceProvider.GetRequiredService<IStaffUserRoleManagementStore>();
 
-        var lowPrivilegeWriteTask = storeA.ReplaceRolesAsync(targetId, [narrowRoleId], lowPrivilegeActor, TestContext.Current.CancellationToken);
-        var grantsAllWriteTask = storeB.ReplaceRolesAsync(targetId, [wideRoleId], GrantsAllActor, TestContext.Current.CancellationToken);
+        var lowPrivilegeWriteTask = storeA.ReplaceRolesAsync(targetId, [narrowRoleId], lowPrivilegeActor, Audit(), TestContext.Current.CancellationToken);
+        var grantsAllWriteTask = storeB.ReplaceRolesAsync(targetId, [wideRoleId], GrantsAllActor, Audit(), TestContext.Current.CancellationToken);
 
         var results = await Task.WhenAll(lowPrivilegeWriteTask, grantsAllWriteTask);
         var lowPrivilegeResult = results[0];
@@ -224,6 +225,200 @@ public sealed class StaffUserRoleManagementStoreTests(SqlServerDatabaseFixture s
         Assert.NotNull(wideRoleName);
         Assert.Equal([wideRoleName], finalRoles);
     }
+
+    /// <summary>
+    /// Issue #59 for the staff-user writes: the audit row and the change it describes are one transaction. A write
+    /// the store refuses (here, a stale authorization) must leave <b>no</b> row, and one it accepts must leave
+    /// exactly one. Before the conversion to <c>Enlist</c> the handler wrote the row after the store had already
+    /// committed, so the first half held only because the handler returned early, not because anything made it so.
+    /// </summary>
+    [Fact]
+    public async Task A_refused_write_leaves_no_audit_row_and_an_accepted_one_leaves_exactly_one()
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, TestContext.Current.CancellationToken);
+
+        await using var factory = new ApiFactory(sqlServer.ConnectionString);
+        await using var scope = factory.Services.CreateAsyncScope();
+        var userManager = scope.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
+        var roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<AppRole>>();
+        var store = scope.ServiceProvider.GetRequiredService<IStaffUserRoleManagementStore>();
+
+        var narrowRoleId = await CreateRoleAsync(roleManager, Permissions.Orders.View);
+        var wideRoleId = await CreateRoleAsync(roleManager, Permissions.Content.Edit);
+        var targetId = await CreateStaffUserWithRoleAsync(userManager, roleManager, "audit-pair", narrowRoleId);
+
+        var acceptedMarker = $"accepted-{Guid.NewGuid():N}";
+        var accepted = await store.ReplaceRolesAsync(targetId, [wideRoleId], GrantsAllActor, Audit(acceptedMarker), TestContext.Current.CancellationToken);
+        Assert.IsType<ReplaceRolesStoreResult.Success>(accepted);
+
+        // The target now holds the wide role, so this low-privilege actor's earlier decision is stale.
+        var lowPrivilegeActor = new RbacActorContext(HasGrantsAll: false, HasUsersManage: true, EffectivePermissions: new HashSet<string> { Permissions.Orders.View });
+        var refusedMarker = $"refused-{Guid.NewGuid():N}";
+        var refused = await store.SetActiveAsync(targetId, active: false, lowPrivilegeActor, Audit(refusedMarker), TestContext.Current.CancellationToken);
+        Assert.IsType<SetActiveStoreResult.AuthorizationStale>(refused);
+
+        await using var readScope = factory.Services.CreateAsyncScope();
+        var dbContext = readScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        Assert.Equal(1, await CountAuditRowsAsync(dbContext, acceptedMarker));
+        Assert.Equal(0, await CountAuditRowsAsync(dbContext, refusedMarker));
+    }
+
+    /// <summary>
+    /// The other direction of issue #59: if the audit row itself cannot be written, the change must not survive
+    /// without it. An over-long <c>UserAgent</c> is rejected by SQL Server only at the final save, after the role
+    /// change and the stamp rotation have already been saved inside the transaction, so a pass here proves those
+    /// earlier saves are rolled back with it rather than left behind as a change with no trail.
+    /// </summary>
+    [Fact]
+    public async Task A_failure_writing_the_audit_row_rolls_back_the_role_change_with_it()
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, TestContext.Current.CancellationToken);
+
+        await using var factory = new ApiFactory(sqlServer.ConnectionString);
+        int narrowRoleId;
+        int wideRoleId;
+        int targetId;
+        string stampBefore;
+        await using (var setup = factory.Services.CreateAsyncScope())
+        {
+            var userManager = setup.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
+            var roleManager = setup.ServiceProvider.GetRequiredService<RoleManager<AppRole>>();
+            narrowRoleId = await CreateRoleAsync(roleManager, Permissions.Orders.View);
+            wideRoleId = await CreateRoleAsync(roleManager, Permissions.Content.Edit);
+            targetId = await CreateStaffUserWithRoleAsync(userManager, roleManager, "audit-fails", narrowRoleId);
+            stampBefore = (await userManager.FindByIdAsync(targetId.ToString(CultureInfo.InvariantCulture)))!.SecurityStamp!;
+        }
+
+        await using (var writeScope = factory.Services.CreateAsyncScope())
+        {
+            var store = writeScope.ServiceProvider.GetRequiredService<IStaffUserRoleManagementStore>();
+            await Assert.ThrowsAnyAsync<Exception>(() =>
+                store.ReplaceRolesAsync(targetId, [wideRoleId], GrantsAllActor, UnwritableAudit(), TestContext.Current.CancellationToken));
+        }
+
+        await using var readScope = factory.Services.CreateAsyncScope();
+        var readUserManager = readScope.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
+        var readRoleManager = readScope.ServiceProvider.GetRequiredService<RoleManager<AppRole>>();
+        var user = await readUserManager.FindByIdAsync(targetId.ToString(CultureInfo.InvariantCulture));
+        Assert.NotNull(user);
+
+        var narrowName = await readRoleManager.Roles.Where(r => r.Id == narrowRoleId).Select(r => r.Name!).SingleAsync(TestContext.Current.CancellationToken);
+        Assert.Equal([narrowName], await readUserManager.GetRolesAsync(user));
+        Assert.Equal(stampBefore, user.SecurityStamp);
+    }
+
+    [Fact]
+    public async Task A_failure_writing_the_audit_row_rolls_back_a_deactivation_and_a_profile_edit_with_it()
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, TestContext.Current.CancellationToken);
+
+        await using var factory = new ApiFactory(sqlServer.ConnectionString);
+        int targetId;
+        await using (var setup = factory.Services.CreateAsyncScope())
+        {
+            var roleId = await CreateRoleAsync(setup.ServiceProvider.GetRequiredService<RoleManager<AppRole>>(), Permissions.Orders.View);
+            targetId = await CreateStaffUserWithRoleAsync(
+                setup.ServiceProvider.GetRequiredService<UserManager<AppUser>>(),
+                setup.ServiceProvider.GetRequiredService<RoleManager<AppRole>>(),
+                "audit-fails-2",
+                roleId);
+        }
+
+        await using (var deactivateScope = factory.Services.CreateAsyncScope())
+        {
+            var store = deactivateScope.ServiceProvider.GetRequiredService<IStaffUserRoleManagementStore>();
+            await Assert.ThrowsAnyAsync<Exception>(() =>
+                store.SetActiveAsync(targetId, active: false, GrantsAllActor, UnwritableAudit(), TestContext.Current.CancellationToken));
+        }
+
+        await using (var editScope = factory.Services.CreateAsyncScope())
+        {
+            var store = editScope.ServiceProvider.GetRequiredService<IStaffUserRoleManagementStore>();
+            await Assert.ThrowsAnyAsync<Exception>(() =>
+                store.UpdateProfileAsync(targetId, "Changed", "Name", newEmail: null, GrantsAllActor, UnwritableAudit(), TestContext.Current.CancellationToken));
+        }
+
+        await using var readScope = factory.Services.CreateAsyncScope();
+        var user = await readScope.ServiceProvider.GetRequiredService<AppDbContext>().Users.AsNoTracking()
+            .SingleAsync(u => u.Id == targetId, TestContext.Current.CancellationToken);
+        Assert.True(user.IsActive, "The deactivation must not survive a failed audit write.");
+        Assert.Equal("Test", user.FirstName);
+        Assert.Equal("Staff", user.LastName);
+    }
+
+    /// <summary>
+    /// Creating a user was the one write here with no transaction at all: a failure after the user row was
+    /// inserted left a staff user who existed but held no roles. It is one transaction now, so a failed audit
+    /// write leaves no user, and a successful one leaves a row naming the id that was really inserted, which
+    /// the handler cannot know until the store has inserted them.
+    /// </summary>
+    [Fact]
+    public async Task Creating_a_user_is_one_transaction_with_its_audit_row()
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, TestContext.Current.CancellationToken);
+
+        await using var factory = new ApiFactory(sqlServer.ConnectionString);
+        int roleId;
+        await using (var setup = factory.Services.CreateAsyncScope())
+        {
+            roleId = await CreateRoleAsync(setup.ServiceProvider.GetRequiredService<RoleManager<AppRole>>(), Permissions.Orders.View);
+        }
+
+        var failedEmail = $"never-created-{Guid.NewGuid():N}@example.com";
+        await using (var failingScope = factory.Services.CreateAsyncScope())
+        {
+            var store = failingScope.ServiceProvider.GetRequiredService<IStaffUserRoleManagementStore>();
+            await Assert.ThrowsAnyAsync<Exception>(() =>
+                store.CreateStaffUserAsync(
+                    new NewStaffUserData(failedEmail, "Never", "Created", "Correct-Password-1!", [roleId]),
+                    _ => UnwritableAudit(),
+                    TestContext.Current.CancellationToken));
+        }
+
+        var okEmail = $"created-{Guid.NewGuid():N}@example.com";
+        var marker = $"create-{Guid.NewGuid():N}";
+        CreateStaffUserStoreResult created;
+        await using (var okScope = factory.Services.CreateAsyncScope())
+        {
+            var store = okScope.ServiceProvider.GetRequiredService<IStaffUserRoleManagementStore>();
+            created = await store.CreateStaffUserAsync(
+                new NewStaffUserData(okEmail, "Really", "Created", "Correct-Password-1!", [roleId]),
+                newUserId => Audit(marker, entityId: newUserId.ToString(CultureInfo.InvariantCulture)),
+                TestContext.Current.CancellationToken);
+        }
+
+        var success = Assert.IsType<CreateStaffUserStoreResult.Success>(created);
+
+        await using var readScope = factory.Services.CreateAsyncScope();
+        var dbContext = readScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var userManager = readScope.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
+
+        Assert.Null(await userManager.FindByEmailAsync(failedEmail));
+        Assert.NotNull(await userManager.FindByEmailAsync(okEmail));
+
+        var row = await dbContext.AuditLogs.AsNoTracking().SingleAsync(a => a.UserAgent == marker, TestContext.Current.CancellationToken);
+        Assert.Equal(success.UserId.ToString(CultureInfo.InvariantCulture), row.EntityId);
+    }
+
+    /// <summary>A valid audit row. <paramref name="marker"/> goes in <c>UserAgent</c> so a test can find exactly its own row in a shared database.</summary>
+    private static AuditLog Audit(string? marker = null, string? entityId = null) => new()
+    {
+        OccurredAtUtc = DateTime.UtcNow,
+        Action = AuditActions.PermissionChange,
+        EntityType = "User",
+        EntityId = entityId ?? "0",
+        UserAgent = marker ?? "store-test",
+    };
+
+    /// <summary>A row SQL Server rejects at the last save: <c>UserAgent</c> is capped at 400 characters.</summary>
+    private static AuditLog UnwritableAudit() => Audit(new string('x', 401));
+
+    private static Task<int> CountAuditRowsAsync(AppDbContext dbContext, string marker) =>
+        dbContext.AuditLogs.AsNoTracking().CountAsync(a => a.UserAgent == marker, TestContext.Current.CancellationToken);
 
     /// <summary>Creates a fresh, uniquely-named, non-GrantsAll role granting exactly one permission.</summary>
     private static async Task<int> CreateRoleAsync(RoleManager<AppRole> roleManager, string permission)

@@ -16,6 +16,12 @@ namespace SpencerDenim.Domain.Identity;
 /// </summary>
 public static class DefaultRoleDefinitions
 {
+    // Adding a permission to the catalogue means asking, for each of these three roles, whether doc 08 section 9's
+    // wording ("Module.*", "every Module.Action except ...") now covers it. These lists are written out rather than
+    // computed by exclusion on purpose (a new permission must be granted deliberately, never by default), which is
+    // exactly why Categories.Create/Delete and Media.Create/Edit, added by the catalogue admin work (W1-12, W1-04),
+    // had to be added here by hand. The unit test for Store Manager walks the whole catalogue and fails on a miss.
+
     /// <summary>
     /// Doc 08 §9: "Every Module.Action except Users.*, Settings.Payments and Settings.Security (the last
     /// can't be granted to any role). Includes Orders.Refund, Settings.View/Edit, AuditLog.View,
@@ -36,7 +42,9 @@ public static class DefaultRoleDefinitions
             Identity.Permissions.Products.Edit,
             Identity.Permissions.Products.Delete,
             Identity.Permissions.Categories.View,
+            Identity.Permissions.Categories.Create,
             Identity.Permissions.Categories.Edit,
+            Identity.Permissions.Categories.Delete,
             Identity.Permissions.Inventory.View,
             Identity.Permissions.Inventory.Edit,
             Identity.Permissions.Customers.View,
@@ -50,6 +58,8 @@ public static class DefaultRoleDefinitions
             Identity.Permissions.Content.View,
             Identity.Permissions.Content.Edit,
             Identity.Permissions.Media.View,
+            Identity.Permissions.Media.Create,
+            Identity.Permissions.Media.Edit,
             Identity.Permissions.Media.Delete,
             Identity.Permissions.Reports.View,
             Identity.Permissions.Reports.Export,
@@ -86,10 +96,14 @@ public static class DefaultRoleDefinitions
             Identity.Permissions.Products.Edit,
             Identity.Permissions.Products.Delete,
             Identity.Permissions.Categories.View,
+            Identity.Permissions.Categories.Create,
             Identity.Permissions.Categories.Edit,
+            Identity.Permissions.Categories.Delete,
             Identity.Permissions.Content.View,
             Identity.Permissions.Content.Edit,
             Identity.Permissions.Media.View,
+            Identity.Permissions.Media.Create,
+            Identity.Permissions.Media.Edit,
             Identity.Permissions.Media.Delete,
             Identity.Permissions.Reviews.View,
             Identity.Permissions.Reviews.Edit,

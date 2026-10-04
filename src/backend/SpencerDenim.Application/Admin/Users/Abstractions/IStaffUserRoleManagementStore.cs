@@ -1,4 +1,5 @@
 using SpencerDenim.Application.Admin.Users.Contracts;
+using SpencerDenim.Domain.Auditing;
 using SpencerDenim.Domain.Identity;
 
 namespace SpencerDenim.Application.Admin.Users.Abstractions;
@@ -10,6 +11,13 @@ namespace SpencerDenim.Application.Admin.Users.Abstractions;
 /// supplies — this port itself only ever enforces the one rule that needs real transactional machinery to be
 /// correct under concurrency: DB4 rule 4, the last-Super-Admin guard (see the remarks on
 /// <see cref="ReplaceRolesStoreResult.LastSuperAdminGuardTriggered"/>).
+/// <para>
+/// <b>Every write method takes the audit row it must leave behind</b> (issue #59) and enlists it inside its own
+/// transaction, on the success path only. The change and its trail therefore commit together or not at all: a
+/// refused write (a stale authorization, the last-Super-Admin guard) rolls back and leaves no row, and a failure
+/// to write the row rolls the change back with it. The handler builds the row because it holds the before and
+/// after state; the store owns the transaction, so only the store can enlist it at the right moment.
+/// </para>
 /// </summary>
 public interface IStaffUserRoleManagementStore
 {
@@ -19,7 +27,15 @@ public interface IStaffUserRoleManagementStore
 
     Task<bool> IsEmailInUseAsync(string email, int? excludingUserId, CancellationToken cancellationToken);
 
-    Task<CreateStaffUserStoreResult> CreateStaffUserAsync(NewStaffUserData data, CancellationToken cancellationToken);
+    /// <summary>
+    /// Creates the user and assigns their roles in one transaction together with the audit row.
+    /// <paramref name="auditForNewUser"/> is called inside that transaction, once the identity value exists (and
+    /// again on a transient-failure retry), so the row always names the id that was really inserted.
+    /// </summary>
+    Task<CreateStaffUserStoreResult> CreateStaffUserAsync(
+        NewStaffUserData data,
+        Func<int, AuditLog> auditForNewUser,
+        CancellationToken cancellationToken);
 
     /// <summary>
     /// Replaces the target's entire role assignment with <paramref name="roleIds"/> and, on success, rotates
@@ -30,7 +46,12 @@ public interface IStaffUserRoleManagementStore
     /// change to the same target between the caller's read and this call fails this call cleanly
     /// (<see cref="ReplaceRolesStoreResult.AuthorizationStale"/>) instead of being silently overwritten.
     /// </summary>
-    Task<ReplaceRolesStoreResult> ReplaceRolesAsync(int targetUserId, IReadOnlyList<int> roleIds, RbacActorContext actor, CancellationToken cancellationToken);
+    Task<ReplaceRolesStoreResult> ReplaceRolesAsync(
+        int targetUserId,
+        IReadOnlyList<int> roleIds,
+        RbacActorContext actor,
+        AuditLog audit,
+        CancellationToken cancellationToken);
 
     /// <summary>
     /// Flips <c>IsActive</c>. Deactivating rejects under the same last-Super-Admin guard as unassigning the
@@ -38,7 +59,12 @@ public interface IStaffUserRoleManagementStore
     /// See <see cref="ReplaceRolesAsync"/>'s remarks on <paramref name="actor"/> — the same re-validation
     /// applies here against the target's current (roles unchanged by this operation) permission set.
     /// </summary>
-    Task<SetActiveStoreResult> SetActiveAsync(int targetUserId, bool active, RbacActorContext actor, CancellationToken cancellationToken);
+    Task<SetActiveStoreResult> SetActiveAsync(
+        int targetUserId,
+        bool active,
+        RbacActorContext actor,
+        AuditLog audit,
+        CancellationToken cancellationToken);
 
     /// <summary>
     /// Updates profile fields. <paramref name="newEmail"/> is null when the email is not changing; the caller
@@ -51,5 +77,6 @@ public interface IStaffUserRoleManagementStore
         string? lastName,
         string? newEmail,
         RbacActorContext actor,
+        AuditLog audit,
         CancellationToken cancellationToken);
 }

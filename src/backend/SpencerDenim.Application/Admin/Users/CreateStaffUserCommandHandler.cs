@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Text.Json;
-using SpencerDenim.Application.Abstractions.Auditing;
 using SpencerDenim.Application.Abstractions.Messaging;
 using SpencerDenim.Application.Abstractions.Results;
 using SpencerDenim.Application.Abstractions.Time;
@@ -24,7 +23,6 @@ public sealed class CreateStaffUserCommandHandler(
     IStaffUserRoleManagementStore store,
     IEffectivePermissionsProvider permissionsProvider,
     IAdminUserLookup actorLookup,
-    IAuditLogWriter auditLogWriter,
     IClock clock) : ICommandHandler<CreateStaffUserCommand, CreateStaffUserResult>
 {
     private static readonly IReadOnlySet<string> NoPermissions = new HashSet<string>();
@@ -74,16 +72,18 @@ public sealed class CreateStaffUserCommandHandler(
             return new CreateStaffUserResult.EmailAlreadyInUse();
         }
 
+        // The row names the new user's id, which only exists once the store has inserted them, so the store calls
+        // this inside its transaction and enlists what it returns (issue #59).
+        var roleRefs = roles.Values.Select(role => new RoleRefDto(role.Id, role.Name, role.GrantsAllPermissions)).ToList();
+        var actorSummary = await actorLookup.FindByIdAsync(command.ActorUserId, cancellationToken);
         var createResult = await store.CreateStaffUserAsync(
             new NewStaffUserData(command.Email, command.FirstName, command.LastName, command.InitialPassword, distinctRoleIds),
+            newUserId => BuildAuditRow(command, actorSummary?.Email, newUserId, roleRefs, afterPermissions),
             cancellationToken);
 
         switch (createResult)
         {
             case CreateStaffUserStoreResult.Success success:
-                var roleRefs = roles.Values.Select(role => new RoleRefDto(role.Id, role.Name, role.GrantsAllPermissions)).ToList();
-                var actorSummary = await actorLookup.FindByIdAsync(command.ActorUserId, cancellationToken);
-                await WriteAuditAsync(command, actorSummary?.Email, success.UserId, roleRefs, afterPermissions, cancellationToken);
                 return new CreateStaffUserResult.Success(success.UserId, command.Email, command.FirstName, command.LastName, afterGrantsAll, roleRefs);
 
             case CreateStaffUserStoreResult.IdentityErrors identityErrors:
@@ -121,13 +121,12 @@ public sealed class CreateStaffUserCommandHandler(
         return errors;
     }
 
-    private Task WriteAuditAsync(
+    private AuditLog BuildAuditRow(
         CreateStaffUserCommand command,
         string? actorEmail,
         int newUserId,
         IReadOnlyList<RoleRefDto> roles,
-        IReadOnlySet<string> permissions,
-        CancellationToken cancellationToken)
+        IReadOnlySet<string> permissions)
     {
         var afterJson = JsonSerializer.Serialize(new
         {
@@ -139,7 +138,7 @@ public sealed class CreateStaffUserCommandHandler(
             permissionsAfter = permissions.Order(StringComparer.Ordinal),
         });
 
-        var entry = new AuditLog
+        return new AuditLog
         {
             OccurredAtUtc = clock.UtcNow.UtcDateTime,
             UserId = command.ActorUserId,
@@ -152,7 +151,5 @@ public sealed class CreateStaffUserCommandHandler(
             IpAddress = command.IpAddress,
             UserAgent = command.UserAgent,
         };
-
-        return auditLogWriter.WriteAsync(entry, cancellationToken);
     }
 }

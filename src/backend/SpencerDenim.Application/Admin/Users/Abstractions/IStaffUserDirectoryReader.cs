@@ -11,7 +11,14 @@ namespace SpencerDenim.Application.Admin.Users.Abstractions;
 /// </summary>
 public interface IStaffUserDirectoryReader
 {
-    Task<PagedResult<StaffUserSummaryDto>> ListAsync(GetStaffUsersQuery query, CancellationToken cancellationToken);
+    /// <param name="query">The validated listing query.</param>
+    /// <param name="includeGrantsAllHolders">
+    /// <c>false</c> removes every GrantsAll holder from the rows <i>before</i> they are counted and paged, so the
+    /// total, the page and the paging all behave as if those accounts did not exist.
+    /// </param>
+    /// <param name="cancellationToken">Cancels the read.</param>
+    Task<PagedResult<StaffUserSummaryDto>> ListAsync(GetStaffUsersQuery query, bool includeGrantsAllHolders, CancellationToken cancellationToken);
 
-    Task<StaffUserDetailDto?> GetByIdAsync(int userId, CancellationToken cancellationToken);
+    /// <summary>Returns <c>null</c> for a missing id, and also for a GrantsAll holder when <paramref name="includeGrantsAllHolders"/> is <c>false</c>.</summary>
+    Task<StaffUserDetailDto?> GetByIdAsync(int userId, bool includeGrantsAllHolders, CancellationToken cancellationToken);
 }

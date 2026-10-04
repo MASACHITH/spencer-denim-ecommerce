@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Text.Json;
-using SpencerDenim.Application.Abstractions.Auditing;
 using SpencerDenim.Application.Abstractions.Messaging;
 using SpencerDenim.Application.Abstractions.Results;
 using SpencerDenim.Application.Abstractions.Time;
@@ -22,7 +21,6 @@ public sealed class UpdateStaffUserProfileCommandHandler(
     IStaffUserRoleManagementStore store,
     IEffectivePermissionsProvider permissionsProvider,
     IAdminUserLookup actorLookup,
-    IAuditLogWriter auditLogWriter,
     IClock clock) : ICommandHandler<UpdateStaffUserProfileCommand, UpdateStaffUserProfileResult>
 {
     public async Task<UpdateStaffUserProfileResult> HandleAsync(UpdateStaffUserProfileCommand command, CancellationToken cancellationToken)
@@ -49,6 +47,10 @@ public sealed class UpdateStaffUserProfileCommandHandler(
 
             // A non-GrantsAll actor must not be able to distinguish "doesn't exist" from "exists but is
             // protected" by the response shape.
+            // The body is identical to the subset-rule refusal below, but the time taken is not: this path does
+            // less database work than one that loads a real target, so response time still answers "does this id
+            // exist" (issue #101). Reachable only by a holder of Users.Manage who is not a Super Admin, which no
+            // role can be until role CRUD ships — see #101 for the measurements and the fix.
             return new UpdateStaffUserProfileResult.Forbidden(RbacDenialReason.NotSubsetOfActorPermissions, RbacDenialClassifier.Message(RbacDenialReason.NotSubsetOfActorPermissions));
         }
 
@@ -83,20 +85,24 @@ public sealed class UpdateStaffUserProfileCommandHandler(
             return new UpdateStaffUserProfileResult.EmailAlreadyInUse();
         }
 
+        // Built before the write and enlisted by the store inside its transaction (issue #59): the profile change
+        // and its trail commit together, and a refused write leaves no row.
+        var finalEmail = newEmail ?? target.Email;
+        var actorSummary = await actorLookup.FindByIdAsync(command.ActorUserId, cancellationToken);
+        var audit = BuildAuditRow(command, actorSummary?.Email, target, finalEmail, isEmailChanging);
+
         var writeResult = await store.UpdateProfileAsync(
             command.TargetUserId,
             command.FirstName,
             command.LastName,
             newEmail,
             new RbacActorContext(actor.GrantsAllPermissions, actorHasUsersManage, actorPermissions),
+            audit,
             cancellationToken);
 
         switch (writeResult)
         {
             case UpdateProfileStoreResult.Success:
-                var actorSummary = await actorLookup.FindByIdAsync(command.ActorUserId, cancellationToken);
-                var finalEmail = newEmail ?? target.Email;
-                await WriteAuditAsync(command, actorSummary?.Email, target, finalEmail, isEmailChanging, cancellationToken);
                 return new UpdateStaffUserProfileResult.Success(command.TargetUserId, finalEmail, command.FirstName, command.LastName);
 
             case UpdateProfileStoreResult.TargetNotFound:
@@ -118,13 +124,12 @@ public sealed class UpdateStaffUserProfileCommandHandler(
         }
     }
 
-    private Task WriteAuditAsync(
+    private AuditLog BuildAuditRow(
         UpdateStaffUserProfileCommand command,
         string? actorEmail,
         StaffUserSnapshot targetBefore,
         string finalEmail,
-        bool emailChanged,
-        CancellationToken cancellationToken)
+        bool emailChanged)
     {
         var beforeJson = JsonSerializer.Serialize(new
         {
@@ -140,7 +145,7 @@ public sealed class UpdateStaffUserProfileCommandHandler(
             lastName = command.LastName,
         });
 
-        var entry = new AuditLog
+        return new AuditLog
         {
             OccurredAtUtc = clock.UtcNow.UtcDateTime,
             UserId = command.ActorUserId,
@@ -153,7 +158,5 @@ public sealed class UpdateStaffUserProfileCommandHandler(
             IpAddress = command.IpAddress,
             UserAgent = command.UserAgent,
         };
-
-        return auditLogWriter.WriteAsync(entry, cancellationToken);
     }
 }

@@ -25,6 +25,8 @@ internal sealed class RecordingAuditLogWriter : IAuditLogWriter
         Entries.Add(entry);
         return Task.CompletedTask;
     }
+
+    public void Enlist(AuditLog entry) => Entries.Add(entry);
 }
 
 internal sealed class StubEffectivePermissionsProvider(EffectivePermissions permissions) : IEffectivePermissionsProvider
@@ -52,6 +54,17 @@ internal sealed class FakeStaffUserRoleManagementStore : IStaffUserRoleManagemen
     public Dictionary<int, RoleGrantSnapshot> Roles { get; } = [];
 
     public HashSet<string> EmailsInUse { get; } = [];
+
+    /// <summary>
+    /// Where this fake enlists the audit row the handler hands it, exactly as the real store does inside its
+    /// transaction (issue #59): on the success path only. A refused write (stale authorization, last-Super-Admin
+    /// guard, target not found) enlists nothing, so <c>Assert.Empty(audit.Entries)</c> keeps meaning "a refused
+    /// write leaves no trail".
+    /// </summary>
+    public IAuditLogWriter? AuditWriter { get; set; }
+
+    /// <summary>The audit row most recently handed to a write method, whether or not the write succeeded.</summary>
+    public AuditLog? LastAuditRowOffered { get; private set; }
 
     public bool NextReplaceRolesTriggersGuard { get; set; }
 
@@ -89,18 +102,31 @@ internal sealed class FakeStaffUserRoleManagementStore : IStaffUserRoleManagemen
     public Task<bool> IsEmailInUseAsync(string email, int? excludingUserId, CancellationToken cancellationToken) =>
         Task.FromResult(EmailsInUse.Contains(email));
 
-    public Task<CreateStaffUserStoreResult> CreateStaffUserAsync(NewStaffUserData data, CancellationToken cancellationToken)
+    public Task<CreateStaffUserStoreResult> CreateStaffUserAsync(
+        NewStaffUserData data,
+        Func<int, AuditLog> auditForNewUser,
+        CancellationToken cancellationToken)
     {
         var newId = Users.Count == 0 ? 1000 : Users.Keys.Max() + 1;
         var roles = data.RoleIds.Where(Roles.ContainsKey).Select(id => Roles[id]).ToList();
         Users[newId] = new StaffUserSnapshot(newId, data.Email, data.FirstName, data.LastName, true, "stamp-0", roles);
+
+        var audit = auditForNewUser(newId);
+        LastAuditRowOffered = audit;
+        AuditWriter?.Enlist(audit);
         return Task.FromResult<CreateStaffUserStoreResult>(new CreateStaffUserStoreResult.Success(newId, "stamp-0"));
     }
 
-    public Task<ReplaceRolesStoreResult> ReplaceRolesAsync(int targetUserId, IReadOnlyList<int> roleIds, RbacActorContext actor, CancellationToken cancellationToken)
+    public Task<ReplaceRolesStoreResult> ReplaceRolesAsync(
+        int targetUserId,
+        IReadOnlyList<int> roleIds,
+        RbacActorContext actor,
+        AuditLog audit,
+        CancellationToken cancellationToken)
     {
         ReplaceRolesCall = (targetUserId, roleIds);
         LastActorContext = actor;
+        LastAuditRowOffered = audit;
 
         if (!Users.TryGetValue(targetUserId, out var existing))
         {
@@ -120,13 +146,20 @@ internal sealed class FakeStaffUserRoleManagementStore : IStaffUserRoleManagemen
         var newRoles = roleIds.Where(Roles.ContainsKey).Select(id => Roles[id]).ToList();
         var newStamp = $"stamp-{Guid.NewGuid():N}";
         Users[targetUserId] = existing with { Roles = newRoles, SecurityStamp = newStamp };
+        AuditWriter?.Enlist(audit);
         return Task.FromResult<ReplaceRolesStoreResult>(new ReplaceRolesStoreResult.Success(newStamp));
     }
 
-    public Task<SetActiveStoreResult> SetActiveAsync(int targetUserId, bool active, RbacActorContext actor, CancellationToken cancellationToken)
+    public Task<SetActiveStoreResult> SetActiveAsync(
+        int targetUserId,
+        bool active,
+        RbacActorContext actor,
+        AuditLog audit,
+        CancellationToken cancellationToken)
     {
         SetActiveCall = (targetUserId, active);
         LastActorContext = actor;
+        LastAuditRowOffered = audit;
 
         if (!Users.TryGetValue(targetUserId, out var existing))
         {
@@ -144,12 +177,21 @@ internal sealed class FakeStaffUserRoleManagementStore : IStaffUserRoleManagemen
         }
 
         Users[targetUserId] = existing with { IsActive = active };
+        AuditWriter?.Enlist(audit);
         return Task.FromResult<SetActiveStoreResult>(new SetActiveStoreResult.Success());
     }
 
-    public Task<UpdateProfileStoreResult> UpdateProfileAsync(int targetUserId, string firstName, string? lastName, string? newEmail, RbacActorContext actor, CancellationToken cancellationToken)
+    public Task<UpdateProfileStoreResult> UpdateProfileAsync(
+        int targetUserId,
+        string firstName,
+        string? lastName,
+        string? newEmail,
+        RbacActorContext actor,
+        AuditLog audit,
+        CancellationToken cancellationToken)
     {
         LastActorContext = actor;
+        LastAuditRowOffered = audit;
 
         if (!Users.TryGetValue(targetUserId, out var existing))
         {
@@ -162,6 +204,7 @@ internal sealed class FakeStaffUserRoleManagementStore : IStaffUserRoleManagemen
         }
 
         Users[targetUserId] = existing with { FirstName = firstName, LastName = lastName, Email = newEmail ?? existing.Email };
+        AuditWriter?.Enlist(audit);
         return Task.FromResult<UpdateProfileStoreResult>(new UpdateProfileStoreResult.Success());
     }
 }

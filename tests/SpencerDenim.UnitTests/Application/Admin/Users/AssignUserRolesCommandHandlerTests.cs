@@ -24,8 +24,11 @@ public sealed class AssignUserRolesCommandHandlerTests
         FakeStaffUserRoleManagementStore store,
         EffectivePermissions actorPermissions,
         RecordingAuditLogWriter audit,
-        string? actorEmail = "actor@example.com") =>
-        new(store, new StubEffectivePermissionsProvider(actorPermissions), new StubAdminUserLookup(new AdminUserSummary(1, actorEmail!, "Actor", null, true, false, "actor-stamp")), audit, Clock);
+        string? actorEmail = "actor@example.com")
+    {
+        store.AuditWriter = audit;
+        return new(store, new StubEffectivePermissionsProvider(actorPermissions), new StubAdminUserLookup(new AdminUserSummary(1, actorEmail!, "Actor", null, true, false, "actor-stamp")), Clock);
+    }
 
     private static RoleGrantSnapshot Role(int id, string name, bool grantsAll, params string[] permissions) =>
         new(id, name, grantsAll, permissions.ToHashSet());

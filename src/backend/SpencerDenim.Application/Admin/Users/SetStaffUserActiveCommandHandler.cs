@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Text.Json;
-using SpencerDenim.Application.Abstractions.Auditing;
 using SpencerDenim.Application.Abstractions.Messaging;
 using SpencerDenim.Application.Abstractions.Time;
 using SpencerDenim.Application.Admin.CurrentUser;
@@ -21,7 +20,6 @@ public sealed class SetStaffUserActiveCommandHandler(
     IStaffUserRoleManagementStore store,
     IEffectivePermissionsProvider permissionsProvider,
     IAdminUserLookup actorLookup,
-    IAuditLogWriter auditLogWriter,
     IClock clock) : ICommandHandler<SetStaffUserActiveCommand, SetStaffUserActiveResult>
 {
     public async Task<SetStaffUserActiveResult> HandleAsync(SetStaffUserActiveCommand command, CancellationToken cancellationToken)
@@ -50,6 +48,10 @@ public sealed class SetStaffUserActiveCommandHandler(
 
             // A non-GrantsAll actor must not be able to distinguish "doesn't exist" from "exists but is
             // protected" by the response shape.
+            // The body is identical to the subset-rule refusal below, but the time taken is not: this path does
+            // less database work than one that loads a real target, so response time still answers "does this id
+            // exist" (issue #101). Reachable only by a holder of Users.Manage who is not a Super Admin, which no
+            // role can be until role CRUD ships — see #101 for the measurements and the fix.
             return new SetStaffUserActiveResult.Forbidden(RbacDenialReason.NotSubsetOfActorPermissions, RbacDenialClassifier.Message(RbacDenialReason.NotSubsetOfActorPermissions));
         }
 
@@ -74,17 +76,21 @@ public sealed class SetStaffUserActiveCommandHandler(
             return new SetStaffUserActiveResult.Success(command.TargetUserId, command.Active);
         }
 
+        // Built before the write and enlisted by the store inside its transaction (issue #59): the state change
+        // and its trail commit together, and a refused write leaves no row.
+        var actorSummary = await actorLookup.FindByIdAsync(command.ActorUserId, cancellationToken);
+        var audit = BuildAuditRow(command, actorSummary?.Email);
+
         var writeResult = await store.SetActiveAsync(
             command.TargetUserId,
             command.Active,
             new RbacActorContext(actor.GrantsAllPermissions, actorHasUsersManage, actorPermissions),
+            audit,
             cancellationToken);
 
         switch (writeResult)
         {
             case SetActiveStoreResult.Success:
-                var actorSummary = await actorLookup.FindByIdAsync(command.ActorUserId, cancellationToken);
-                await WriteAuditAsync(command, actorSummary?.Email, cancellationToken);
                 return new SetStaffUserActiveResult.Success(command.TargetUserId, command.Active);
 
             case SetActiveStoreResult.TargetNotFound:
@@ -102,9 +108,8 @@ public sealed class SetStaffUserActiveCommandHandler(
         }
     }
 
-    private Task WriteAuditAsync(SetStaffUserActiveCommand command, string? actorEmail, CancellationToken cancellationToken)
-    {
-        var entry = new AuditLog
+    private AuditLog BuildAuditRow(SetStaffUserActiveCommand command, string? actorEmail) =>
+        new()
         {
             OccurredAtUtc = clock.UtcNow.UtcDateTime,
             UserId = command.ActorUserId,
@@ -117,7 +122,4 @@ public sealed class SetStaffUserActiveCommandHandler(
             IpAddress = command.IpAddress,
             UserAgent = command.UserAgent,
         };
-
-        return auditLogWriter.WriteAsync(entry, cancellationToken);
-    }
 }

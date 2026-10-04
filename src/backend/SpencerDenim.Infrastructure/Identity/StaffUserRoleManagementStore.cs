@@ -1,8 +1,10 @@
 using System.Globalization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using SpencerDenim.Application.Abstractions.Auditing;
 using SpencerDenim.Application.Admin.Users;
 using SpencerDenim.Application.Admin.Users.Abstractions;
+using SpencerDenim.Domain.Auditing;
 using SpencerDenim.Domain.Identity;
 using SpencerDenim.Infrastructure.Persistence;
 using SpencerDenim.Infrastructure.Persistence.Configurations.Identity;
@@ -30,7 +32,8 @@ namespace SpencerDenim.Infrastructure.Identity;
 internal sealed class StaffUserRoleManagementStore(
     AppDbContext dbContext,
     UserManager<AppUser> userManager,
-    RoleManager<AppRole> roleManager) : IStaffUserRoleManagementStore
+    RoleManager<AppRole> roleManager,
+    IAuditLogWriter auditLog) : IStaffUserRoleManagementStore
 {
     /// <summary>Doc 08 §3.1 DB4 rule 4: the one application-lock resource name for the whole GrantsAll headcount.</summary>
     private const string GrantsAllLockResource = "rbac:grants-all";
@@ -75,52 +78,86 @@ internal sealed class StaffUserRoleManagementStore(
         return await query.AnyAsync(cancellationToken);
     }
 
-    public async Task<CreateStaffUserStoreResult> CreateStaffUserAsync(NewStaffUserData data, CancellationToken cancellationToken)
+    public async Task<CreateStaffUserStoreResult> CreateStaffUserAsync(
+        NewStaffUserData data,
+        Func<int, AuditLog> auditForNewUser,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(data);
+        ArgumentNullException.ThrowIfNull(auditForNewUser);
 
-        var user = new AppUser
+        // One transaction for the user, their roles and the audit row. Before issue #59 this method had none:
+        // a failure in AddToRolesAsync left a staff user who existed but held no roles, with nothing in the trail.
+        // See ReplaceRolesAsync for why the block must sit inside CreateExecutionStrategy().ExecuteAsync.
+        var strategy = dbContext.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
         {
-            UserName = data.Email,
-            Email = data.Email,
-            EmailConfirmed = true,
-            UserType = UserType.Staff,
-            FirstName = data.FirstName,
-            LastName = data.LastName,
-            IsActive = true,
+            // A retry re-runs this whole block, and the previous attempt's new user would still be tracked as
+            // Added, so without this the retry would insert it a second time.
+            //
+            // What else this discards: the handler resolves the actor's email through IAdminUserLookup, which
+            // goes via UserManager and therefore *does* track that AppUser. Detaching it is safe because it is an
+            // unmodified read whose only use — the email string — is already materialised into the audit row by
+            // the time this runs. Nothing in this request has pending changes to lose.
+            dbContext.ChangeTracker.Clear();
 
-            // Same convention as the bootstrap Super Admin seed (issue #17): a temporary password handed over
-            // out of band must not stay valid past the first sign-in.
-            MustChangePassword = true,
-        };
+            await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
 
-        var createResult = await userManager.CreateAsync(user, data.InitialPassword);
-        if (!createResult.Succeeded)
-        {
-            return new CreateStaffUserStoreResult.IdentityErrors([.. createResult.Errors.Select(e => e.Description)]);
-        }
-
-        if (data.RoleIds.Count > 0)
-        {
-            var roleNames = await roleManager.Roles
-                .Where(r => data.RoleIds.Contains(r.Id))
-                .Select(r => r.Name!)
-                .ToListAsync(cancellationToken);
-
-            var addRolesResult = await userManager.AddToRolesAsync(user, roleNames);
-            if (!addRolesResult.Succeeded)
+            var user = new AppUser
             {
-                return new CreateStaffUserStoreResult.IdentityErrors([.. addRolesResult.Errors.Select(e => e.Description)]);
-            }
-        }
+                UserName = data.Email,
+                Email = data.Email,
+                EmailConfirmed = true,
+                UserType = UserType.Staff,
+                FirstName = data.FirstName,
+                LastName = data.LastName,
+                IsActive = true,
 
-        var stamp = await userManager.GetSecurityStampAsync(user);
-        return new CreateStaffUserStoreResult.Success(user.Id, stamp);
+                // Same convention as the bootstrap Super Admin seed (issue #17): a temporary password handed over
+                // out of band must not stay valid past the first sign-in.
+                MustChangePassword = true,
+            };
+
+            var createResult = await userManager.CreateAsync(user, data.InitialPassword);
+            if (!createResult.Succeeded)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return (CreateStaffUserStoreResult)new CreateStaffUserStoreResult.IdentityErrors([.. createResult.Errors.Select(e => e.Description)]);
+            }
+
+            if (data.RoleIds.Count > 0)
+            {
+                var roleNames = await roleManager.Roles
+                    .Where(r => data.RoleIds.Contains(r.Id))
+                    .Select(r => r.Name!)
+                    .ToListAsync(cancellationToken);
+
+                var addRolesResult = await userManager.AddToRolesAsync(user, roleNames);
+                if (!addRolesResult.Succeeded)
+                {
+                    await transaction.RollbackAsync(cancellationToken);
+                    return (CreateStaffUserStoreResult)new CreateStaffUserStoreResult.IdentityErrors([.. addRolesResult.Errors.Select(e => e.Description)]);
+                }
+            }
+
+            auditLog.Enlist(auditForNewUser(user.Id));
+            await dbContext.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+
+            var stamp = await userManager.GetSecurityStampAsync(user);
+            return (CreateStaffUserStoreResult)new CreateStaffUserStoreResult.Success(user.Id, stamp);
+        });
     }
 
-    public async Task<ReplaceRolesStoreResult> ReplaceRolesAsync(int targetUserId, IReadOnlyList<int> roleIds, RbacActorContext actor, CancellationToken cancellationToken)
+    public async Task<ReplaceRolesStoreResult> ReplaceRolesAsync(
+        int targetUserId,
+        IReadOnlyList<int> roleIds,
+        RbacActorContext actor,
+        AuditLog audit,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(actor);
+        ArgumentNullException.ThrowIfNull(audit);
 
         var user = await userManager.FindByIdAsync(targetUserId.ToString(CultureInfo.InvariantCulture));
         if (user is null)
@@ -209,6 +246,11 @@ internal sealed class StaffUserRoleManagementStore(
             // this up without any explicit cache-eviction call.
             await userManager.UpdateSecurityStampAsync(user);
 
+            // Enlisted only here, on the success path: every refusal above returned before this line, so a
+            // refused write leaves no row. Saved explicitly rather than relying on the stamp update's own save.
+            auditLog.Enlist(audit);
+            await dbContext.SaveChangesAsync(cancellationToken);
+
             await transaction.CommitAsync(cancellationToken);
 
             var newStamp = await userManager.GetSecurityStampAsync(user);
@@ -216,9 +258,15 @@ internal sealed class StaffUserRoleManagementStore(
         });
     }
 
-    public async Task<SetActiveStoreResult> SetActiveAsync(int targetUserId, bool active, RbacActorContext actor, CancellationToken cancellationToken)
+    public async Task<SetActiveStoreResult> SetActiveAsync(
+        int targetUserId,
+        bool active,
+        RbacActorContext actor,
+        AuditLog audit,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(actor);
+        ArgumentNullException.ThrowIfNull(audit);
 
         var user = await dbContext.Users.FirstOrDefaultAsync(u => u.Id == targetUserId && u.UserType == UserType.Staff, cancellationToken);
         if (user is null)
@@ -274,6 +322,7 @@ internal sealed class StaffUserRoleManagementStore(
             }
 
             user.IsActive = active;
+            auditLog.Enlist(audit);
             await dbContext.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
 
@@ -287,9 +336,11 @@ internal sealed class StaffUserRoleManagementStore(
         string? lastName,
         string? newEmail,
         RbacActorContext actor,
+        AuditLog audit,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(actor);
+        ArgumentNullException.ThrowIfNull(audit);
 
         var user = await userManager.FindByIdAsync(targetUserId.ToString(CultureInfo.InvariantCulture));
         if (user is null || user.UserType != UserType.Staff)
@@ -356,6 +407,8 @@ internal sealed class StaffUserRoleManagementStore(
                 return (UpdateProfileStoreResult)MapProfileError(updateResult);
             }
 
+            auditLog.Enlist(audit);
+            await dbContext.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             return (UpdateProfileStoreResult)new UpdateProfileStoreResult.Success();
         });

@@ -25,6 +25,8 @@ public sealed class UserEndpointTests(SqlServerDatabaseFixture sqlServer)
     private const string LoginUrl = "/api/admin/auth/login";
     private const string AntiforgeryUrl = "/api/admin/auth/antiforgery-token";
     private const string UsersUrl = "/api/admin/users";
+    private const string TwoFactorSetupUrl = "/api/admin/auth/two-factor/setup";
+    private const string TwoFactorEnableUrl = "/api/admin/auth/two-factor/enable";
 
     [Fact]
     public async Task UsersManage_actor_can_assign_a_role_that_is_a_subset_of_their_own_permissions()
@@ -530,6 +532,266 @@ public sealed class UserEndpointTests(SqlServerDatabaseFixture sqlServer)
 
     private static (string Email, string Password) UniqueCredentials(string label) => (UniqueEmail(label), "Correct-Password-1!");
 
+    /// <summary>
+    /// Tester round 2, defect B. Closing the write-side oracle was moot while the read endpoints listed every
+    /// Super Admin in plain JSON, and any real <c>Users.Manage</c> holder needs <c>Users.View</c> to pick a
+    /// target at all. A viewer who is not a Super Admin must not see one: not in the page, not in the total.
+    /// The same search is run by a Super Admin, who sees both, so the filter is shown to be doing the work
+    /// rather than the search simply matching nothing.
+    /// </summary>
+    [Fact]
+    public async Task A_viewer_without_GrantsAll_never_sees_a_Super_Admin_in_the_user_list_or_its_total()
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, TestContext.Current.CancellationToken);
+
+        await using var factory = new ApiFactory(sqlServer.ConnectionString);
+        var token = $"vis{Guid.NewGuid():N}";
+        var viewerRoleId = await CreateRoleAsync(factory, UniqueName("viewer-list"), [Permissions.Users.View, Permissions.Users.Manage]);
+        var ordinaryRoleId = await CreateRoleAsync(factory, UniqueName("ordinary-list"), [Permissions.Orders.View]);
+        var grantsAllRoleId = await GetOrCreateGrantsAllRoleIdAsync(factory);
+
+        var (viewerEmail, viewerPassword) = UniqueCredentials("viewer-list");
+        await CreateStaffUserWithRolesAsync(factory, viewerEmail, viewerPassword, [viewerRoleId]);
+        var ordinaryEmail = UniqueEmail($"{token}-ordinary");
+        var superAdminEmail = UniqueEmail($"{token}-superadmin");
+        await CreateStaffUserWithRolesAsync(factory, ordinaryEmail, "Target-Pass-1!", [ordinaryRoleId]);
+        var superAdminId = await CreateStaffUserWithRolesAsync(factory, superAdminEmail, "Target-Pass-1!", [grantsAllRoleId]);
+
+        var (adminEmail, adminPassword) = UniqueCredentials("admin-list");
+        var adminId = await CreateStaffUserWithRolesAsync(factory, adminEmail, adminPassword, [grantsAllRoleId]);
+
+        try
+        {
+            using var viewerClient = CreateClient(factory);
+            await LoginAsync(viewerClient, viewerEmail, viewerPassword);
+            var (viewerEmails, viewerTotal) = await ListEmailsAsync(viewerClient, token);
+
+            Assert.Equal([ordinaryEmail], viewerEmails);
+            Assert.Equal(1, viewerTotal);
+
+            using var adminClient = CreateClient(factory);
+            await LoginAsync(adminClient, adminEmail, adminPassword);
+            var (adminEmails, adminTotal) = await ListEmailsAsync(adminClient, token);
+
+            Assert.Equal(new[] { ordinaryEmail, superAdminEmail }.Order(StringComparer.Ordinal), adminEmails.Order(StringComparer.Ordinal));
+            Assert.Equal(2, adminTotal);
+
+            // A filter on the Super Admin role must not be a way round it either.
+            using var byRole = await viewerClient.GetAsync(new Uri($"{UsersUrl}?search={token}&roleId={grantsAllRoleId}", UriKind.Relative), TestContext.Current.CancellationToken);
+            Assert.Equal(HttpStatusCode.OK, byRole.StatusCode);
+            var byRoleBody = await byRole.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
+            Assert.Equal(0, byRoleBody.GetProperty("totalCount").GetInt32());
+            Assert.Empty(byRoleBody.GetProperty("items").EnumerateArray());
+        }
+        finally
+        {
+            await RemoveFromGrantsAllRoleAsync(factory, superAdminId, adminId);
+        }
+    }
+
+    /// <summary>
+    /// The by-id half of defect B, and the one that matters most: a protected account and an id that does not
+    /// exist must be the same answer. Compared on the wire (status and body), not just on the status code.
+    /// </summary>
+    [Fact]
+    public async Task A_viewer_without_GrantsAll_gets_the_same_404_for_a_Super_Admin_as_for_an_id_that_does_not_exist()
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, TestContext.Current.CancellationToken);
+
+        await using var factory = new ApiFactory(sqlServer.ConnectionString);
+        var viewerRoleId = await CreateRoleAsync(factory, UniqueName("viewer-detail"), [Permissions.Users.View, Permissions.Users.Manage]);
+        var grantsAllRoleId = await GetOrCreateGrantsAllRoleIdAsync(factory);
+
+        var (viewerEmail, viewerPassword) = UniqueCredentials("viewer-detail");
+        await CreateStaffUserWithRolesAsync(factory, viewerEmail, viewerPassword, [viewerRoleId]);
+        var superAdminId = await CreateStaffUserWithRolesAsync(factory, UniqueEmail("superadmin-detail"), "Target-Pass-1!", [grantsAllRoleId]);
+
+        var (adminEmail, adminPassword) = UniqueCredentials("admin-detail");
+        var adminId = await CreateStaffUserWithRolesAsync(factory, adminEmail, adminPassword, [grantsAllRoleId]);
+
+        try
+        {
+            using var viewerClient = CreateClient(factory);
+            await LoginAsync(viewerClient, viewerEmail, viewerPassword);
+
+            using var hidden = await viewerClient.GetAsync(new Uri($"{UsersUrl}/{superAdminId}", UriKind.Relative), TestContext.Current.CancellationToken);
+            using var missing = await viewerClient.GetAsync(new Uri($"{UsersUrl}/2000000002", UriKind.Relative), TestContext.Current.CancellationToken);
+
+            Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
+            Assert.Equal(missing.StatusCode, hidden.StatusCode);
+            Assert.Equal(await BodyWithoutTraceIdAsync(missing), await BodyWithoutTraceIdAsync(hidden));
+            Assert.Equal(missing.Content.Headers.ContentType?.ToString(), hidden.Content.Headers.ContentType?.ToString());
+
+            // The same Super Admin is fully visible to a Super Admin, with the flag the viewer was never shown.
+            using var adminClient = CreateClient(factory);
+            await LoginAsync(adminClient, adminEmail, adminPassword);
+            using var visible = await adminClient.GetAsync(new Uri($"{UsersUrl}/{superAdminId}", UriKind.Relative), TestContext.Current.CancellationToken);
+            Assert.Equal(HttpStatusCode.OK, visible.StatusCode);
+            var visibleBody = await visible.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
+            Assert.True(visibleBody.GetProperty("grantsAllPermissions").GetBoolean());
+        }
+        finally
+        {
+            await RemoveFromGrantsAllRoleAsync(factory, superAdminId, adminId);
+        }
+    }
+
+    /// <summary>
+    /// The role views: the GrantsAll role is not offered to a viewer who could never assign it, its detail is the
+    /// same 404 as an unknown role, and a role's headcount does not include a Super Admin who also holds it
+    /// (otherwise the count would reveal one).
+    /// </summary>
+    [Fact]
+    public async Task A_viewer_without_GrantsAll_is_not_shown_the_GrantsAll_role_or_a_Super_Admin_in_a_role_count()
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, TestContext.Current.CancellationToken);
+
+        await using var factory = new ApiFactory(sqlServer.ConnectionString);
+        var viewerRoleId = await CreateRoleAsync(factory, UniqueName("viewer-roles"), [Permissions.Users.View, Permissions.Users.Manage]);
+        var sharedRoleId = await CreateRoleAsync(factory, UniqueName("shared-role"), [Permissions.Orders.View]);
+        var grantsAllRoleId = await GetOrCreateGrantsAllRoleIdAsync(factory);
+
+        var (viewerEmail, viewerPassword) = UniqueCredentials("viewer-roles");
+        await CreateStaffUserWithRolesAsync(factory, viewerEmail, viewerPassword, [viewerRoleId]);
+
+        // One ordinary holder of the shared role, and one Super Admin who ALSO holds it.
+        await CreateStaffUserWithRolesAsync(factory, UniqueEmail("ordinary-holder"), "Target-Pass-1!", [sharedRoleId]);
+        var superAdminId = await CreateStaffUserWithRolesAsync(factory, UniqueEmail("superadmin-holder"), "Target-Pass-1!", [grantsAllRoleId, sharedRoleId]);
+
+        var (adminEmail, adminPassword) = UniqueCredentials("admin-roles");
+        var adminId = await CreateStaffUserWithRolesAsync(factory, adminEmail, adminPassword, [grantsAllRoleId]);
+
+        try
+        {
+            using var viewerClient = CreateClient(factory);
+            await LoginAsync(viewerClient, viewerEmail, viewerPassword);
+
+            var viewerRoles = await GetRolesAsync(viewerClient);
+            Assert.DoesNotContain(viewerRoles, role => role.GetProperty("grantsAllPermissions").GetBoolean());
+            Assert.DoesNotContain(viewerRoles, role => role.GetProperty("id").GetInt32() == grantsAllRoleId);
+            Assert.Equal(1, viewerRoles.Single(role => role.GetProperty("id").GetInt32() == sharedRoleId).GetProperty("userCount").GetInt32());
+
+            using var hiddenRole = await viewerClient.GetAsync(new Uri($"/api/admin/roles/{grantsAllRoleId}", UriKind.Relative), TestContext.Current.CancellationToken);
+            using var missingRole = await viewerClient.GetAsync(new Uri("/api/admin/roles/2000000003", UriKind.Relative), TestContext.Current.CancellationToken);
+            Assert.Equal(HttpStatusCode.NotFound, missingRole.StatusCode);
+            Assert.Equal(missingRole.StatusCode, hiddenRole.StatusCode);
+            Assert.Equal(await BodyWithoutTraceIdAsync(missingRole), await BodyWithoutTraceIdAsync(hiddenRole));
+
+            using var viewerSharedDetail = await viewerClient.GetAsync(new Uri($"/api/admin/roles/{sharedRoleId}", UriKind.Relative), TestContext.Current.CancellationToken);
+            var viewerSharedBody = await viewerSharedDetail.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
+            Assert.Equal(1, viewerSharedBody.GetProperty("userCount").GetInt32());
+
+            // A Super Admin sees all of it.
+            using var adminClient = CreateClient(factory);
+            await LoginAsync(adminClient, adminEmail, adminPassword);
+            var adminRoles = await GetRolesAsync(adminClient);
+            Assert.Contains(adminRoles, role => role.GetProperty("id").GetInt32() == grantsAllRoleId);
+            Assert.Equal(2, adminRoles.Single(role => role.GetProperty("id").GetInt32() == sharedRoleId).GetProperty("userCount").GetInt32());
+        }
+        finally
+        {
+            await RemoveFromGrantsAllRoleAsync(factory, superAdminId, adminId);
+        }
+    }
+
+    /// <summary>
+    /// The hiding in defect B must not become the leak defect A is (#101). Because a GrantsAll holder is excluded
+    /// by the <c>WHERE</c> clause rather than fetched and then dropped, a by-id read of a protected account and one
+    /// of an id that does not exist run the <b>same number of database commands</b> — so the two are
+    /// indistinguishable by work done, not only by the bytes returned. Counted rather than timed: a count is what
+    /// actually differs when this is got wrong, and it does not flake on a loaded machine.
+    /// </summary>
+    [Fact]
+    public async Task A_hidden_Super_Admin_and_a_missing_id_cost_the_same_queries_so_hiding_adds_no_timing_oracle()
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, TestContext.Current.CancellationToken);
+
+        var commands = new CommandCountingInterceptor();
+        await using var factory = new ApiFactory(sqlServer.ConnectionString, commandInterceptor: commands);
+
+        var viewerRoleId = await CreateRoleAsync(factory, UniqueName("viewer-plan"), [Permissions.Users.View, Permissions.Users.Manage]);
+        var grantsAllRoleId = await GetOrCreateGrantsAllRoleIdAsync(factory);
+        var (viewerEmail, viewerPassword) = UniqueCredentials("viewer-plan");
+        await CreateStaffUserWithRolesAsync(factory, viewerEmail, viewerPassword, [viewerRoleId]);
+        var superAdminId = await CreateStaffUserWithRolesAsync(factory, UniqueEmail("superadmin-plan"), "Target-Pass-1!", [grantsAllRoleId]);
+
+        try
+        {
+            using var client = CreateClient(factory);
+            await LoginAsync(client, viewerEmail, viewerPassword);
+
+            // Warm up, so neither count includes the model build or the first session read.
+            using (var warmup = await client.GetAsync(new Uri($"{UsersUrl}/2000000004", UriKind.Relative), TestContext.Current.CancellationToken))
+            {
+                Assert.Equal(HttpStatusCode.NotFound, warmup.StatusCode);
+            }
+
+            commands.Reset();
+            using (var hidden = await client.GetAsync(new Uri($"{UsersUrl}/{superAdminId}", UriKind.Relative), TestContext.Current.CancellationToken))
+            {
+                Assert.Equal(HttpStatusCode.NotFound, hidden.StatusCode);
+            }
+
+            var hiddenCommands = commands.Count;
+
+            commands.Reset();
+            using (var missing = await client.GetAsync(new Uri($"{UsersUrl}/2000000005", UriKind.Relative), TestContext.Current.CancellationToken))
+            {
+                Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
+            }
+
+            var missingCommands = commands.Count;
+
+            Assert.Equal(missingCommands, hiddenCommands);
+        }
+        finally
+        {
+            await RemoveFromGrantsAllRoleAsync(factory, superAdminId);
+        }
+    }
+
+    /// <summary>
+    /// The response body with its per-request <c>traceId</c> removed, as sorted <c>name=value</c> pairs, so two
+    /// responses compare equal exactly when everything the caller could use to tell them apart is equal.
+    /// </summary>
+    private static async Task<string> BodyWithoutTraceIdAsync(HttpResponseMessage response)
+    {
+        var text = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return string.Empty;
+        }
+
+        var body = JsonSerializer.Deserialize<JsonElement>(text);
+        return string.Join(
+            ";",
+            body.EnumerateObject()
+                .Where(property => !string.Equals(property.Name, "traceId", StringComparison.Ordinal))
+                .OrderBy(property => property.Name, StringComparer.Ordinal)
+                .Select(property => $"{property.Name}={property.Value.GetRawText()}"));
+    }
+
+    private static async Task<(List<string> Emails, int Total)> ListEmailsAsync(HttpClient client, string search)
+    {
+        using var response = await client.GetAsync(new Uri($"{UsersUrl}?search={search}&pageSize=100", UriKind.Relative), TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
+        var emails = body.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("email").GetString()!).ToList();
+        return (emails, body.GetProperty("totalCount").GetInt32());
+    }
+
+    private static async Task<List<JsonElement>> GetRolesAsync(HttpClient client)
+    {
+        using var response = await client.GetAsync(new Uri("/api/admin/roles", UriKind.Relative), TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
+        return body.EnumerateArray().ToList();
+    }
+
     private static HttpClient CreateClient(ApiFactory factory) =>
         factory.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://localhost") });
 
@@ -537,6 +799,31 @@ public sealed class UserEndpointTests(SqlServerDatabaseFixture sqlServer)
     {
         using var response = await client.PostAsJsonAsync(LoginUrl, new { email, password }, TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        // W1-10: a Super Admin without a second factor is refused on every endpoint but the enrolment ones, so a
+        // test that needs a Super Admin actor has to do what the product makes them do. Enrolling through the same
+        // two endpoints the enrolment page calls keeps these tests running behind the real gate, not around it.
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
+        if (body.TryGetProperty("twoFactorEnrolmentRequired", out var enrolmentRequired) && enrolmentRequired.GetBoolean())
+        {
+            await EnrolTwoFactorAsync(client);
+        }
+    }
+
+    private static async Task EnrolTwoFactorAsync(HttpClient client)
+    {
+        using var setup = await PostAsync(client, TwoFactorSetupUrl, await GetAntiforgeryTokenAsync(client));
+        Assert.Equal(HttpStatusCode.OK, setup.StatusCode);
+        var setupBody = await setup.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
+        var key = TotpTestCodes.SecretFromUri(setupBody.GetProperty("authenticatorUri").GetString()!);
+
+        using var enableRequest = new HttpRequestMessage(HttpMethod.Post, TwoFactorEnableUrl)
+        {
+            Content = JsonContent.Create(new { code = TotpTestCodes.Current(key) }),
+        };
+        enableRequest.Headers.Add("X-XSRF-TOKEN", await GetAntiforgeryTokenAsync(client));
+        using var enable = await client.SendAsync(enableRequest, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, enable.StatusCode);
     }
 
     private static async Task<string> GetAntiforgeryTokenAsync(HttpClient client)

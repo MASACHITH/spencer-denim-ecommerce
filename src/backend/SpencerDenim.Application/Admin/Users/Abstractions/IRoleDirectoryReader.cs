@@ -9,7 +9,12 @@ namespace SpencerDenim.Application.Admin.Users.Abstractions;
 /// </summary>
 public interface IRoleDirectoryReader
 {
-    Task<IReadOnlyList<RoleSummaryDto>> ListAsync(CancellationToken cancellationToken);
+    /// <param name="includeGrantsAllHolders">
+    /// <c>false</c> omits the GrantsAll role and leaves GrantsAll holders out of every role's user count.
+    /// </param>
+    /// <param name="cancellationToken">Cancels the read.</param>
+    Task<IReadOnlyList<RoleSummaryDto>> ListAsync(bool includeGrantsAllHolders, CancellationToken cancellationToken);
 
-    Task<RoleDetailDto?> GetByIdAsync(int roleId, CancellationToken cancellationToken);
+    /// <summary>Returns <c>null</c> for a missing id, and also for the GrantsAll role when <paramref name="includeGrantsAllHolders"/> is <c>false</c>.</summary>
+    Task<RoleDetailDto?> GetByIdAsync(int roleId, bool includeGrantsAllHolders, CancellationToken cancellationToken);
 }

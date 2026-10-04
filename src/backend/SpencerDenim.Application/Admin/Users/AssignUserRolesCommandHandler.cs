@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Text.Json;
-using SpencerDenim.Application.Abstractions.Auditing;
 using SpencerDenim.Application.Abstractions.Messaging;
 using SpencerDenim.Application.Abstractions.Time;
 using SpencerDenim.Application.Admin.CurrentUser;
@@ -22,7 +21,6 @@ public sealed class AssignUserRolesCommandHandler(
     IStaffUserRoleManagementStore store,
     IEffectivePermissionsProvider permissionsProvider,
     IAdminUserLookup actorLookup,
-    IAuditLogWriter auditLogWriter,
     IClock clock) : ICommandHandler<AssignUserRolesCommand, AssignUserRolesResult>
 {
     public async Task<AssignUserRolesResult> HandleAsync(AssignUserRolesCommand command, CancellationToken cancellationToken)
@@ -53,6 +51,10 @@ public sealed class AssignUserRolesCommandHandler(
 
             // A Super Admin is allowed to know a target genuinely doesn't exist; anyone else must not be able
             // to distinguish "doesn't exist" from "exists but is protected" by the response shape.
+            // The body is identical to the subset-rule refusal below, but the time taken is not: this path does
+            // less database work than one that loads a real target, so response time still answers "does this id
+            // exist" (issue #101). Reachable only by a holder of Users.Manage who is not a Super Admin, which no
+            // role can be until role CRUD ships — see #101 for the measurements and the fix.
             return new AssignUserRolesResult.Forbidden(RbacDenialReason.NotSubsetOfActorPermissions, RbacDenialClassifier.Message(RbacDenialReason.NotSubsetOfActorPermissions));
         }
 
@@ -82,18 +84,22 @@ public sealed class AssignUserRolesCommandHandler(
             return new AssignUserRolesResult.Forbidden(reason, RbacDenialClassifier.Message(reason));
         }
 
+        // Built before the write and handed to the store, which enlists it inside its own transaction so the role
+        // change and its trail commit together (issue #59). A refused write enlists nothing.
+        var roleRefs = roles.Values.Select(role => new RoleRefDto(role.Id, role.Name, role.GrantsAllPermissions)).ToList();
+        var actorSummary = await actorLookup.FindByIdAsync(command.ActorUserId, cancellationToken);
+        var audit = BuildAuditRow(command, actorSummary?.Email, target, roleRefs, afterPermissions);
+
         var writeResult = await store.ReplaceRolesAsync(
             command.TargetUserId,
             distinctRoleIds,
             new RbacActorContext(actor.GrantsAllPermissions, actorHasUsersManage, actorPermissions),
+            audit,
             cancellationToken);
 
         switch (writeResult)
         {
             case ReplaceRolesStoreResult.Success:
-                var roleRefs = roles.Values.Select(role => new RoleRefDto(role.Id, role.Name, role.GrantsAllPermissions)).ToList();
-                var actorSummary = await actorLookup.FindByIdAsync(command.ActorUserId, cancellationToken);
-                await WriteAuditAsync(command, actorSummary?.Email, target, roleRefs, afterPermissions, cancellationToken);
                 return new AssignUserRolesResult.Success(command.TargetUserId, afterGrantsAll, roleRefs);
 
             case ReplaceRolesStoreResult.TargetNotFound:
@@ -113,13 +119,12 @@ public sealed class AssignUserRolesCommandHandler(
         }
     }
 
-    private Task WriteAuditAsync(
+    private AuditLog BuildAuditRow(
         AssignUserRolesCommand command,
         string? actorEmail,
         StaffUserSnapshot targetBefore,
         IReadOnlyList<RoleRefDto> rolesAfter,
-        IReadOnlySet<string> permissionsAfter,
-        CancellationToken cancellationToken)
+        IReadOnlySet<string> permissionsAfter)
     {
         var beforeJson = JsonSerializer.Serialize(new
         {
@@ -133,7 +138,7 @@ public sealed class AssignUserRolesCommandHandler(
             permissions = permissionsAfter.Order(StringComparer.Ordinal),
         });
 
-        var entry = new AuditLog
+        return new AuditLog
         {
             OccurredAtUtc = clock.UtcNow.UtcDateTime,
             UserId = command.ActorUserId,
@@ -146,7 +151,5 @@ public sealed class AssignUserRolesCommandHandler(
             IpAddress = command.IpAddress,
             UserAgent = command.UserAgent,
         };
-
-        return auditLogWriter.WriteAsync(entry, cancellationToken);
     }
 }

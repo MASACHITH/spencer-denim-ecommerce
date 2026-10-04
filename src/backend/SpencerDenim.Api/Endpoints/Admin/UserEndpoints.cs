@@ -92,12 +92,18 @@ internal static class UserEndpoints
         return endpoints;
     }
 
-    private static async Task<Results<Ok<PagedResult<StaffUserSummaryDto>>, ValidationProblem>> ListAsync(
+    private static async Task<Results<Ok<PagedResult<StaffUserSummaryDto>>, ValidationProblem, UnauthorizedHttpResult>> ListAsync(
         [AsParameters] StaffUserListRequest request,
+        ClaimsPrincipal principal,
         IQueryHandler<GetStaffUsersQuery, PagedResult<StaffUserSummaryDto>> handler,
         CancellationToken cancellationToken)
     {
-        var query = GetStaffUsersQuery.Create(request.ToCriteria());
+        if (!TryGetActorId(principal, out var actorId))
+        {
+            return TypedResults.Unauthorized();
+        }
+
+        var query = GetStaffUsersQuery.Create(request.ToCriteria(), actorId);
         if (!query.IsSuccess)
         {
             return ToValidationProblem(query.Errors);
@@ -107,12 +113,18 @@ internal static class UserEndpoints
         return TypedResults.Ok(page);
     }
 
-    private static async Task<Results<Ok<StaffUserDetailDto>, NotFound>> GetByIdAsync(
+    private static async Task<Results<Ok<StaffUserDetailDto>, NotFound, UnauthorizedHttpResult>> GetByIdAsync(
         int userId,
+        ClaimsPrincipal principal,
         IQueryHandler<GetStaffUserByIdQuery, StaffUserDetailDto?> handler,
         CancellationToken cancellationToken)
     {
-        var detail = await handler.HandleAsync(new GetStaffUserByIdQuery(userId), cancellationToken);
+        if (!TryGetActorId(principal, out var actorId))
+        {
+            return TypedResults.Unauthorized();
+        }
+
+        var detail = await handler.HandleAsync(new GetStaffUserByIdQuery(userId, actorId), cancellationToken);
         return detail is null ? TypedResults.NotFound() : TypedResults.Ok(detail);
     }
 
@@ -308,11 +320,8 @@ internal static class UserEndpoints
         };
     }
 
-    private static bool TryGetActorId(ClaimsPrincipal principal, out int actorId)
-    {
-        var value = principal.FindFirstValue(ClaimTypes.NameIdentifier);
-        return int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out actorId);
-    }
+    private static bool TryGetActorId(ClaimsPrincipal principal, out int actorId) =>
+        AdminSessionCookies.TryGetUserId(principal, out actorId);
 
     private static ProblemHttpResult ToProblem(RbacDenialReason reason, string message) =>
         TypedResults.Problem(

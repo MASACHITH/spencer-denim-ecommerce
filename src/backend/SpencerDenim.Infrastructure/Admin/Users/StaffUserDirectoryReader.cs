@@ -18,14 +18,26 @@ namespace SpencerDenim.Infrastructure.Admin.Users;
 /// plain Identity join tables), so a user's roles are loaded in one extra, batched query per page rather than
 /// per row — exactly two round trips regardless of how many users are on the page, never N+1.
 /// </para>
+/// <para>
+/// <b>Protected targets are filtered in SQL, not after the read.</b> When the viewer does not hold GrantsAll,
+/// every GrantsAll holder is excluded by the <c>WHERE</c> clause itself (tester round 2, defect B). A by-id
+/// lookup of a Super Admin therefore runs the same single query and gets the same empty result as an id that
+/// does not exist, so neither the response nor its timing can tell the two apart.
+/// </para>
 /// </summary>
 internal sealed class StaffUserDirectoryReader(AppDbContext dbContext) : IStaffUserDirectoryReader
 {
-    public async Task<PagedResult<StaffUserSummaryDto>> ListAsync(GetStaffUsersQuery query, CancellationToken cancellationToken)
+    public async Task<PagedResult<StaffUserSummaryDto>> ListAsync(
+        GetStaffUsersQuery query,
+        bool includeGrantsAllHolders,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(query);
 
-        var rows = ApplyFilters(dbContext.Users.AsNoTracking().Where(u => u.UserType == UserType.Staff), query);
+        var grantsAllHolders = GrantsAllHolderIds();
+        var rows = ApplyFilters(
+            dbContext.Users.AsNoTracking().Where(u => u.UserType == UserType.Staff && (includeGrantsAllHolders || !grantsAllHolders.Contains(u.Id))),
+            query);
 
         var totalCount = await rows.CountAsync(cancellationToken);
         if (totalCount == 0)
@@ -66,10 +78,11 @@ internal sealed class StaffUserDirectoryReader(AppDbContext dbContext) : IStaffU
         return new PagedResult<StaffUserSummaryDto>(items, query.Page, query.PageSize, totalCount);
     }
 
-    public async Task<StaffUserDetailDto?> GetByIdAsync(int userId, CancellationToken cancellationToken)
+    public async Task<StaffUserDetailDto?> GetByIdAsync(int userId, bool includeGrantsAllHolders, CancellationToken cancellationToken)
     {
+        var grantsAllHolders = GrantsAllHolderIds();
         var user = await dbContext.Users.AsNoTracking()
-            .Where(u => u.Id == userId && u.UserType == UserType.Staff)
+            .Where(u => u.Id == userId && u.UserType == UserType.Staff && (includeGrantsAllHolders || !grantsAllHolders.Contains(u.Id)))
             .Select(u => new
             {
                 u.Id,
@@ -109,6 +122,16 @@ internal sealed class StaffUserDirectoryReader(AppDbContext dbContext) : IStaffU
             roles,
             permissions);
     }
+
+    /// <summary>
+    /// The ids of every user who holds a role that grants every permission. Held in a local and closed over by the
+    /// caller's <c>Where</c> so EF composes it into the same SQL statement as a subquery: calling an ordinary method
+    /// from inside the predicate would not translate. The same shape the store's last-Super-Admin count uses.
+    /// </summary>
+    private IQueryable<int> GrantsAllHolderIds() =>
+        dbContext.UserRoles.AsNoTracking()
+            .Where(ur => dbContext.Roles.Any(r => r.Id == ur.RoleId && r.GrantsAllPermissions))
+            .Select(ur => ur.UserId);
 
     private IQueryable<AppUser> ApplyFilters(IQueryable<AppUser> rows, GetStaffUsersQuery query)
     {
