@@ -76,16 +76,18 @@ public sealed class SetStaffUserActiveCommandHandler(
             return new SetStaffUserActiveResult.Success(command.TargetUserId, command.Active);
         }
 
-        // Built before the write and enlisted by the store inside its transaction (issue #59): the state change
-        // and its trail commit together, and a refused write leaves no row.
+        // Enlisted by the store inside its transaction (issue #59): the state change and its trail commit
+        // together, and a refused write leaves no row.
+        // A factory, not a row: EnableRetryOnFailure re-runs the store's transaction on a transient failure and
+        // each attempt needs its own AuditLog instance (tester round 3, Major 1).
         var actorSummary = await actorLookup.FindByIdAsync(command.ActorUserId, cancellationToken);
-        var audit = BuildAuditRow(command, actorSummary?.Email);
+        AuditLog Audit() => BuildAuditRow(command, actorSummary?.Email);
 
         var writeResult = await store.SetActiveAsync(
             command.TargetUserId,
             command.Active,
             new RbacActorContext(actor.GrantsAllPermissions, actorHasUsersManage, actorPermissions),
-            audit,
+            Audit,
             cancellationToken);
 
         switch (writeResult)

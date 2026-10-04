@@ -755,6 +755,106 @@ public sealed class UserEndpointTests(SqlServerDatabaseFixture sqlServer)
     }
 
     /// <summary>
+    /// Tester round 3, Major 2 — the tester's exact exploit, as a test. Hiding Super Admins from
+    /// <c>GET /users</c> is worth nothing while the audit log names them, and the actor who can do this holds
+    /// <b>only <c>AuditLog.View</c></b>: the seeded Store Manager's shape (doc 08 §9), so no role CRUD and no
+    /// custom role is needed. The same request made by a Super Admin returns the row, which is what shows the
+    /// filter is doing the work rather than the query simply matching nothing.
+    /// </summary>
+    [Fact]
+    public async Task The_audit_log_never_names_a_Super_Admin_to_a_viewer_who_only_holds_AuditLogView()
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, TestContext.Current.CancellationToken);
+
+        await using var factory = new ApiFactory(sqlServer.ConnectionString);
+        var grantsAllRoleId = await GetOrCreateGrantsAllRoleIdAsync(factory);
+        var ordinaryRoleId = await CreateRoleAsync(factory, UniqueName("audit-ordinary"), [Permissions.Orders.View]);
+
+        // The acting Super Admin, who will promote someone through the real API so the row is a real one.
+        var (adminEmail, adminPassword) = UniqueCredentials("audit-admin");
+        var adminId = await CreateStaffUserWithRolesAsync(factory, adminEmail, adminPassword, [grantsAllRoleId]);
+
+        // The target, who ends up holding GrantsAll, and a control target who never does.
+        var promotedId = await CreateStaffUserWithRolesAsync(factory, UniqueEmail("audit-promoted"), "Target-Pass-1!", [ordinaryRoleId]);
+        var controlId = await CreateStaffUserWithRolesAsync(factory, UniqueEmail("audit-control"), "Target-Pass-1!", [ordinaryRoleId]);
+
+        // The viewer: AuditLog.View and nothing else, exactly like the seeded Store Manager.
+        var auditViewerRoleId = await CreateRoleAsync(factory, UniqueName("audit-viewer"), [Permissions.AuditLog.View]);
+        var (viewerEmail, viewerPassword) = UniqueCredentials("audit-viewer");
+        await CreateStaffUserWithRolesAsync(factory, viewerEmail, viewerPassword, [auditViewerRoleId]);
+
+        try
+        {
+            using var adminClient = CreateClient(factory);
+            await LoginAsync(adminClient, adminEmail, adminPassword);
+
+            // A real promotion and a real ordinary edit, so there is one row of each kind to find.
+            using (var promote = await PutJsonAsync(adminClient, $"{UsersUrl}/{promotedId}/roles", new { roleIds = new[] { grantsAllRoleId } }, await GetAntiforgeryTokenAsync(adminClient)))
+            {
+                Assert.Equal(HttpStatusCode.OK, promote.StatusCode);
+            }
+
+            using (var edit = await PutJsonAsync(adminClient, $"{UsersUrl}/{controlId}/roles", new { roleIds = new[] { ordinaryRoleId } }, await GetAntiforgeryTokenAsync(adminClient)))
+            {
+                Assert.Equal(HttpStatusCode.OK, edit.StatusCode);
+            }
+
+            using var viewerClient = CreateClient(factory);
+            await LoginAsync(viewerClient, viewerEmail, viewerPassword);
+
+            // The viewer cannot read the promoted user directly...
+            using (var denied = await viewerClient.GetAsync(new Uri($"{UsersUrl}/{promotedId}", UriKind.Relative), TestContext.Current.CancellationToken))
+            {
+                Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+            }
+
+            // ...and must not be able to read the same fact out of the audit log instead.
+            var promotedRows = await AuditRowsAsync(viewerClient, promotedId);
+            Assert.Empty(promotedRows);
+
+            // Nor by naming the acting Super Admin, nor by asking for the action unfiltered.
+            Assert.Empty(await AuditRowsAsync(viewerClient, adminId));
+            var everything = await AuditPageAsync(viewerClient, $"/api/admin/audit-logs?action={AuditActions.PermissionChange}&pageSize=100");
+            Assert.DoesNotContain(
+                everything.GetProperty("items").EnumerateArray(),
+                row => (row.GetProperty("afterJson").GetString() ?? string.Empty).Contains("Super Admin", StringComparison.Ordinal));
+            Assert.DoesNotContain(
+                everything.GetProperty("items").EnumerateArray(),
+                row => row.GetProperty("userEmail").GetString() == adminEmail);
+
+            // The control row — an ordinary user edited by the same Super Admin — is hidden too, because its
+            // actor is a holder. That is the cost of the rule and is asserted so it is a decision, not a surprise.
+            Assert.Empty(await AuditRowsAsync(viewerClient, controlId));
+
+            // A Super Admin sees all of it, which is what proves the rows exist at all.
+            var adminSees = await AuditRowsAsync(adminClient, promotedId);
+            Assert.Contains(adminSees, row => (row.GetProperty("afterJson").GetString() ?? string.Empty).Contains("Super Admin", StringComparison.Ordinal));
+        }
+        finally
+        {
+            await RemoveFromGrantsAllRoleAsync(factory, adminId, promotedId);
+        }
+    }
+
+    private static async Task<List<JsonElement>> AuditRowsAsync(HttpClient client, int subjectUserId)
+    {
+        var body = await AuditPageAsync(client, $"/api/admin/audit-logs?entityType=User&entityId={subjectUserId}&pageSize=100");
+        var items = body.GetProperty("items").EnumerateArray().ToList();
+
+        // The total must agree with the page, or the count itself becomes the oracle.
+        Assert.Equal(items.Count, body.GetProperty("totalCount").GetInt32());
+        return items;
+    }
+
+    private static async Task<JsonElement> AuditPageAsync(HttpClient client, string url)
+    {
+        using var response = await client.GetAsync(new Uri(url, UriKind.Relative), TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        return await response.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>
     /// The response body with its per-request <c>traceId</c> removed, as sorted <c>name=value</c> pairs, so two
     /// responses compare equal exactly when everything the caller could use to tell them apart is equal.
     /// </summary>

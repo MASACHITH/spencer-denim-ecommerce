@@ -12,11 +12,18 @@ namespace SpencerDenim.Application.Admin.Users.Abstractions;
 /// correct under concurrency: DB4 rule 4, the last-Super-Admin guard (see the remarks on
 /// <see cref="ReplaceRolesStoreResult.LastSuperAdminGuardTriggered"/>).
 /// <para>
-/// <b>Every write method takes the audit row it must leave behind</b> (issue #59) and enlists it inside its own
-/// transaction, on the success path only. The change and its trail therefore commit together or not at all: a
-/// refused write (a stale authorization, the last-Super-Admin guard) rolls back and leaves no row, and a failure
-/// to write the row rolls the change back with it. The handler builds the row because it holds the before and
-/// after state; the store owns the transaction, so only the store can enlist it at the right moment.
+/// <b>Every write method takes a factory for the audit row it must leave behind</b> (issue #59) and enlists a
+/// fresh row inside its own transaction, on the success path only. The change and its trail therefore commit
+/// together or not at all: a refused write (a stale authorization, the last-Super-Admin guard) rolls back and
+/// leaves no row, and a failure to write the row rolls the change back with it. The handler supplies the factory
+/// because it holds the before and after state; the store owns the transaction, so only the store can enlist at
+/// the right moment.
+/// </para>
+/// <para>
+/// <b>Why a factory and not the row itself</b> (tester round 3, Major 1). <c>EnableRetryOnFailure</c> re-runs the
+/// whole transaction on a transient failure, and an <see cref="AuditLog"/> that has already been through a failed
+/// <c>SaveChanges</c> can carry the identity value EF assigned it, so re-enlisting that same instance makes the
+/// retry fail with "Cannot insert explicit value for identity column". Each attempt therefore builds its own row.
 /// </para>
 /// </summary>
 public interface IStaffUserRoleManagementStore
@@ -50,7 +57,7 @@ public interface IStaffUserRoleManagementStore
         int targetUserId,
         IReadOnlyList<int> roleIds,
         RbacActorContext actor,
-        AuditLog audit,
+        Func<AuditLog> audit,
         CancellationToken cancellationToken);
 
     /// <summary>
@@ -63,7 +70,7 @@ public interface IStaffUserRoleManagementStore
         int targetUserId,
         bool active,
         RbacActorContext actor,
-        AuditLog audit,
+        Func<AuditLog> audit,
         CancellationToken cancellationToken);
 
     /// <summary>
@@ -77,6 +84,6 @@ public interface IStaffUserRoleManagementStore
         string? lastName,
         string? newEmail,
         RbacActorContext actor,
-        AuditLog audit,
+        Func<AuditLog> audit,
         CancellationToken cancellationToken);
 }

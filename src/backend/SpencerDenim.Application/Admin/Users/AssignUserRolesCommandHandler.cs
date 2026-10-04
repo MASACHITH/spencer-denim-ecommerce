@@ -84,17 +84,19 @@ public sealed class AssignUserRolesCommandHandler(
             return new AssignUserRolesResult.Forbidden(reason, RbacDenialClassifier.Message(reason));
         }
 
-        // Built before the write and handed to the store, which enlists it inside its own transaction so the role
-        // change and its trail commit together (issue #59). A refused write enlists nothing.
+        // Handed to the store, which enlists inside its own transaction so the role change and its trail commit
+        // together (issue #59). A refused write enlists nothing.
+        // A factory, not a row: EnableRetryOnFailure re-runs the store's transaction on a transient failure and
+        // each attempt needs its own AuditLog instance (tester round 3, Major 1).
         var roleRefs = roles.Values.Select(role => new RoleRefDto(role.Id, role.Name, role.GrantsAllPermissions)).ToList();
         var actorSummary = await actorLookup.FindByIdAsync(command.ActorUserId, cancellationToken);
-        var audit = BuildAuditRow(command, actorSummary?.Email, target, roleRefs, afterPermissions);
+        AuditLog Audit() => BuildAuditRow(command, actorSummary?.Email, target, roleRefs, afterPermissions);
 
         var writeResult = await store.ReplaceRolesAsync(
             command.TargetUserId,
             distinctRoleIds,
             new RbacActorContext(actor.GrantsAllPermissions, actorHasUsersManage, actorPermissions),
-            audit,
+            Audit,
             cancellationToken);
 
         switch (writeResult)

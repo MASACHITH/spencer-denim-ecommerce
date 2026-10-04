@@ -15,7 +15,9 @@ namespace SpencerDenim.Api.Endpoints.Admin;
 
 /// <summary>
 /// Staff user list/create/edit/deactivate/reactivate and role assignment (ADM-02, W1-08, issue #8). Every
-/// mutating route validates the antiforgery token by hand (doc 03 §3a; see <see cref="AntiforgeryValidation"/>),
+/// mutating route validates the antiforgery token by hand (doc 03 §3a) through the same
+/// <see cref="AdminWriteRequest.ValidateAntiforgeryAsync"/> the catalogue write routes use, so every admin write
+/// refuses a missing or forged token with one error contract,
 /// exactly like <c>AdminAuthEndpoints</c>'s change-password route — there is no global antiforgery middleware.
 /// Read routes need <see cref="Permissions.Users.View"/>; every write route needs
 /// <see cref="Permissions.Users.Manage"/>, which is necessary but never sufficient on its own — the command
@@ -138,9 +140,9 @@ internal static class UserEndpoints
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        if (!await AntiforgeryValidation.IsRequestValidAsync(httpContext, antiforgery))
+        if (await AdminWriteRequest.ValidateAntiforgeryAsync(httpContext, antiforgery) is { } forged)
         {
-            return TypedResults.BadRequest(new { error = "invalid_antiforgery_token" });
+            return forged;
         }
 
         if (!TryGetActorId(principal, out var actorId))
@@ -187,9 +189,9 @@ internal static class UserEndpoints
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        if (!await AntiforgeryValidation.IsRequestValidAsync(httpContext, antiforgery))
+        if (await AdminWriteRequest.ValidateAntiforgeryAsync(httpContext, antiforgery) is { } forged)
         {
-            return TypedResults.BadRequest(new { error = "invalid_antiforgery_token" });
+            return forged;
         }
 
         if (!TryGetActorId(principal, out var actorId))
@@ -231,9 +233,9 @@ internal static class UserEndpoints
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        if (!await AntiforgeryValidation.IsRequestValidAsync(httpContext, antiforgery))
+        if (await AdminWriteRequest.ValidateAntiforgeryAsync(httpContext, antiforgery) is { } forged)
         {
-            return TypedResults.BadRequest(new { error = "invalid_antiforgery_token" });
+            return forged;
         }
 
         if (!TryGetActorId(principal, out var actorId))
@@ -290,9 +292,9 @@ internal static class UserEndpoints
         ICommandHandler<SetStaffUserActiveCommand, SetStaffUserActiveResult> handler,
         CancellationToken cancellationToken)
     {
-        if (!await AntiforgeryValidation.IsRequestValidAsync(httpContext, antiforgery))
+        if (await AdminWriteRequest.ValidateAntiforgeryAsync(httpContext, antiforgery) is { } forged)
         {
-            return TypedResults.BadRequest(new { error = "invalid_antiforgery_token" });
+            return forged;
         }
 
         if (!TryGetActorId(principal, out var actorId))

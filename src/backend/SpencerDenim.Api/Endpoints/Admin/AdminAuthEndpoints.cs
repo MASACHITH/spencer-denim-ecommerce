@@ -3,7 +3,6 @@ using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Http.HttpResults;
 using SpencerDenim.Api.Authorization;
-using SpencerDenim.Api.Http;
 using SpencerDenim.Application.Abstractions.Messaging;
 using SpencerDenim.Application.Admin.Account;
 using SpencerDenim.Application.Admin.Authentication;
@@ -195,7 +194,7 @@ internal static class AdminAuthEndpoints
 
     private static async Task<IResult> LogoutAsync(HttpContext httpContext, IAntiforgery antiforgery)
     {
-        if (!await AntiforgeryValidation.IsRequestValidAsync(httpContext, antiforgery))
+        if (!await IsAntiforgeryTokenValidAsync(httpContext, antiforgery))
         {
             return InvalidAntiforgeryToken();
         }
@@ -221,7 +220,7 @@ internal static class AdminAuthEndpoints
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        if (!await AntiforgeryValidation.IsRequestValidAsync(httpContext, antiforgery))
+        if (!await IsAntiforgeryTokenValidAsync(httpContext, antiforgery))
         {
             return InvalidAntiforgeryToken();
         }

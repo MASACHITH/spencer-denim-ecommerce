@@ -153,14 +153,13 @@ internal sealed class StaffUserRoleManagementStore(
         int targetUserId,
         IReadOnlyList<int> roleIds,
         RbacActorContext actor,
-        AuditLog audit,
+        Func<AuditLog> audit,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(actor);
         ArgumentNullException.ThrowIfNull(audit);
 
-        var user = await userManager.FindByIdAsync(targetUserId.ToString(CultureInfo.InvariantCulture));
-        if (user is null)
+        if (await userManager.FindByIdAsync(targetUserId.ToString(CultureInfo.InvariantCulture)) is null)
         {
             return new ReplaceRolesStoreResult.TargetNotFound();
         }
@@ -177,6 +176,11 @@ internal sealed class StaffUserRoleManagementStore(
         var strategy = dbContext.Database.CreateExecutionStrategy();
         return await strategy.ExecuteAsync(async () =>
         {
+            // Tester round 3, Major 1: every attempt starts from a clean tracker and re-reads the user, because a
+            // retry of a failed attempt would otherwise re-apply that attempt's tracked role changes on top of
+            // state that was rolled back — which surfaced as "User already in role" rather than a retry.
+            dbContext.ChangeTracker.Clear();
+
             await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
 
             // Tester-round-1 fix (defect 2): serialise on this target before re-reading its current role
@@ -184,6 +188,13 @@ internal sealed class StaffUserRoleManagementStore(
             // its result) or blocks until this transaction commits or rolls back — closing the gap between the
             // handler's necessarily non-transactional authorization read and this write.
             await AcquireUserLockAsync(targetUserId, cancellationToken);
+
+            var user = await userManager.FindByIdAsync(targetUserId.ToString(CultureInfo.InvariantCulture));
+            if (user is null)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return (ReplaceRolesStoreResult)new ReplaceRolesStoreResult.TargetNotFound();
+            }
 
             var currentRoleNames = await userManager.GetRolesAsync(user);
             var (currentHasGrantsAll, currentPermissions) = await LoadCurrentPermissionStateAsync(targetUserId, cancellationToken);
@@ -248,7 +259,7 @@ internal sealed class StaffUserRoleManagementStore(
 
             // Enlisted only here, on the success path: every refusal above returned before this line, so a
             // refused write leaves no row. Saved explicitly rather than relying on the stamp update's own save.
-            auditLog.Enlist(audit);
+            auditLog.Enlist(audit());
             await dbContext.SaveChangesAsync(cancellationToken);
 
             await transaction.CommitAsync(cancellationToken);
@@ -262,14 +273,13 @@ internal sealed class StaffUserRoleManagementStore(
         int targetUserId,
         bool active,
         RbacActorContext actor,
-        AuditLog audit,
+        Func<AuditLog> audit,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(actor);
         ArgumentNullException.ThrowIfNull(audit);
 
-        var user = await dbContext.Users.FirstOrDefaultAsync(u => u.Id == targetUserId && u.UserType == UserType.Staff, cancellationToken);
-        if (user is null)
+        if (!await dbContext.Users.AsNoTracking().AnyAsync(u => u.Id == targetUserId && u.UserType == UserType.Staff, cancellationToken))
         {
             return new SetActiveStoreResult.TargetNotFound();
         }
@@ -279,12 +289,22 @@ internal sealed class StaffUserRoleManagementStore(
         var strategy = dbContext.Database.CreateExecutionStrategy();
         return await strategy.ExecuteAsync(async () =>
         {
+            // See ReplaceRolesAsync (tester round 3, Major 1): a clean tracker and a fresh read per attempt.
+            dbContext.ChangeTracker.Clear();
+
             await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
 
             // Tester-round-1 fix (defect 2): see ReplaceRolesAsync's remarks — this operation does not change
             // the target's roles itself, but a concurrent role change elsewhere to the SAME target between the
             // handler's authorization read and this write could make that earlier decision stale.
             await AcquireUserLockAsync(targetUserId, cancellationToken);
+
+            var user = await dbContext.Users.FirstOrDefaultAsync(u => u.Id == targetUserId && u.UserType == UserType.Staff, cancellationToken);
+            if (user is null)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return (SetActiveStoreResult)new SetActiveStoreResult.TargetNotFound();
+            }
 
             var (currentHasGrantsAll, currentPermissions) = await LoadCurrentPermissionStateAsync(targetUserId, cancellationToken);
 
@@ -322,7 +342,7 @@ internal sealed class StaffUserRoleManagementStore(
             }
 
             user.IsActive = active;
-            auditLog.Enlist(audit);
+            auditLog.Enlist(audit());
             await dbContext.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
 
@@ -336,14 +356,13 @@ internal sealed class StaffUserRoleManagementStore(
         string? lastName,
         string? newEmail,
         RbacActorContext actor,
-        AuditLog audit,
+        Func<AuditLog> audit,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(actor);
         ArgumentNullException.ThrowIfNull(audit);
 
-        var user = await userManager.FindByIdAsync(targetUserId.ToString(CultureInfo.InvariantCulture));
-        if (user is null || user.UserType != UserType.Staff)
+        if (await userManager.FindByIdAsync(targetUserId.ToString(CultureInfo.InvariantCulture)) is not { UserType: UserType.Staff })
         {
             return new UpdateProfileStoreResult.TargetNotFound();
         }
@@ -354,9 +373,22 @@ internal sealed class StaffUserRoleManagementStore(
         var strategy = dbContext.Database.CreateExecutionStrategy();
         return await strategy.ExecuteAsync(async () =>
         {
+            // See ReplaceRolesAsync (tester round 3, Major 1). This method is the one the tester saw fail with
+            // "Cannot insert explicit value for identity column": the enlisted audit row carried the identity
+            // value EF had assigned it on the failed attempt. The row comes from a factory now, and the tracker
+            // is cleared, so a retry starts from nothing.
+            dbContext.ChangeTracker.Clear();
+
             await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
 
             await AcquireUserLockAsync(targetUserId, cancellationToken);
+
+            var user = await userManager.FindByIdAsync(targetUserId.ToString(CultureInfo.InvariantCulture));
+            if (user is null || user.UserType != UserType.Staff)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return (UpdateProfileStoreResult)new UpdateProfileStoreResult.TargetNotFound();
+            }
 
             if (!actor.HasGrantsAll)
             {
@@ -407,7 +439,7 @@ internal sealed class StaffUserRoleManagementStore(
                 return (UpdateProfileStoreResult)MapProfileError(updateResult);
             }
 
-            auditLog.Enlist(audit);
+            auditLog.Enlist(audit());
             await dbContext.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             return (UpdateProfileStoreResult)new UpdateProfileStoreResult.Success();

@@ -11,14 +11,14 @@ public sealed class GetAuditLogsQueryTests
 {
     private static GetAuditLogsQuery Create(AuditLogListCriteria criteria)
     {
-        var result = GetAuditLogsQuery.Create(criteria);
+        var result = GetAuditLogsQuery.Create(criteria, actorUserId: 1);
         Assert.True(result.IsSuccess, string.Join("; ", result.Errors.Select(error => $"{error.Field}: {error.Message}")));
         return result.Value;
     }
 
     private static List<string> FailureFields(AuditLogListCriteria criteria)
     {
-        var result = GetAuditLogsQuery.Create(criteria);
+        var result = GetAuditLogsQuery.Create(criteria, actorUserId: 1);
         Assert.False(result.IsSuccess);
         return result.Errors.Select(error => error.Field).ToList();
     }
@@ -214,7 +214,7 @@ public sealed class GetAuditLogsQueryTests
     [Fact]
     public void A_null_criteria_throws()
     {
-        Assert.Throws<ArgumentNullException>(() => GetAuditLogsQuery.Create(null!));
+        Assert.Throws<ArgumentNullException>(() => GetAuditLogsQuery.Create(null!, actorUserId: 1));
     }
 
     [Fact]

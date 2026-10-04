@@ -51,7 +51,7 @@ public sealed class StaffUserRoleManagementStoreTests(SqlServerDatabaseFixture s
         await DeactivateAllOtherActiveGrantsAllHoldersAsync(scope.ServiceProvider, soleAdminId);
 
         var store = scope.ServiceProvider.GetRequiredService<IStaffUserRoleManagementStore>();
-        var result = await store.SetActiveAsync(soleAdminId, active: false, GrantsAllActor, Audit(), TestContext.Current.CancellationToken);
+        var result = await store.SetActiveAsync(soleAdminId, active: false, GrantsAllActor, () => Audit(), TestContext.Current.CancellationToken);
 
         Assert.IsType<SetActiveStoreResult.LastSuperAdminGuardTriggered>(result);
 
@@ -76,7 +76,7 @@ public sealed class StaffUserRoleManagementStoreTests(SqlServerDatabaseFixture s
         await DeactivateAllOtherActiveGrantsAllHoldersAsync(scope.ServiceProvider, soleAdminId);
 
         var store = scope.ServiceProvider.GetRequiredService<IStaffUserRoleManagementStore>();
-        var result = await store.ReplaceRolesAsync(soleAdminId, [], GrantsAllActor, Audit(), TestContext.Current.CancellationToken);
+        var result = await store.ReplaceRolesAsync(soleAdminId, [], GrantsAllActor, () => Audit(), TestContext.Current.CancellationToken);
 
         Assert.IsType<ReplaceRolesStoreResult.LastSuperAdminGuardTriggered>(result);
 
@@ -106,7 +106,7 @@ public sealed class StaffUserRoleManagementStoreTests(SqlServerDatabaseFixture s
         await DeactivateAllOtherActiveGrantsAllHoldersAsync(scope.ServiceProvider, firstId, secondId);
 
         var store = scope.ServiceProvider.GetRequiredService<IStaffUserRoleManagementStore>();
-        var result = await store.SetActiveAsync(firstId, active: false, GrantsAllActor, Audit(), TestContext.Current.CancellationToken);
+        var result = await store.SetActiveAsync(firstId, active: false, GrantsAllActor, () => Audit(), TestContext.Current.CancellationToken);
 
         Assert.IsType<SetActiveStoreResult.Success>(result);
 
@@ -148,11 +148,11 @@ public sealed class StaffUserRoleManagementStoreTests(SqlServerDatabaseFixture s
         // A different (GrantsAll) admin fully commits a role change to the SAME target in between — before the
         // low-privilege actor's write below ever reaches the store.
         var grantsAllStore = scope.ServiceProvider.GetRequiredService<IStaffUserRoleManagementStore>();
-        var concurrentChange = await grantsAllStore.ReplaceRolesAsync(targetId, [wideRoleId], GrantsAllActor, Audit(), TestContext.Current.CancellationToken);
+        var concurrentChange = await grantsAllStore.ReplaceRolesAsync(targetId, [wideRoleId], GrantsAllActor, () => Audit(), TestContext.Current.CancellationToken);
         Assert.IsType<ReplaceRolesStoreResult.Success>(concurrentChange);
 
         var store = scope.ServiceProvider.GetRequiredService<IStaffUserRoleManagementStore>();
-        var result = await store.SetActiveAsync(targetId, active: false, lowPrivilegeActor, Audit(), TestContext.Current.CancellationToken);
+        var result = await store.SetActiveAsync(targetId, active: false, lowPrivilegeActor, () => Audit(), TestContext.Current.CancellationToken);
 
         Assert.IsType<SetActiveStoreResult.AuthorizationStale>(result);
 
@@ -195,8 +195,8 @@ public sealed class StaffUserRoleManagementStoreTests(SqlServerDatabaseFixture s
         var storeA = scopeA.ServiceProvider.GetRequiredService<IStaffUserRoleManagementStore>();
         var storeB = scopeB.ServiceProvider.GetRequiredService<IStaffUserRoleManagementStore>();
 
-        var lowPrivilegeWriteTask = storeA.ReplaceRolesAsync(targetId, [narrowRoleId], lowPrivilegeActor, Audit(), TestContext.Current.CancellationToken);
-        var grantsAllWriteTask = storeB.ReplaceRolesAsync(targetId, [wideRoleId], GrantsAllActor, Audit(), TestContext.Current.CancellationToken);
+        var lowPrivilegeWriteTask = storeA.ReplaceRolesAsync(targetId, [narrowRoleId], lowPrivilegeActor, () => Audit(), TestContext.Current.CancellationToken);
+        var grantsAllWriteTask = storeB.ReplaceRolesAsync(targetId, [wideRoleId], GrantsAllActor, () => Audit(), TestContext.Current.CancellationToken);
 
         var results = await Task.WhenAll(lowPrivilegeWriteTask, grantsAllWriteTask);
         var lowPrivilegeResult = results[0];
@@ -249,13 +249,13 @@ public sealed class StaffUserRoleManagementStoreTests(SqlServerDatabaseFixture s
         var targetId = await CreateStaffUserWithRoleAsync(userManager, roleManager, "audit-pair", narrowRoleId);
 
         var acceptedMarker = $"accepted-{Guid.NewGuid():N}";
-        var accepted = await store.ReplaceRolesAsync(targetId, [wideRoleId], GrantsAllActor, Audit(acceptedMarker), TestContext.Current.CancellationToken);
+        var accepted = await store.ReplaceRolesAsync(targetId, [wideRoleId], GrantsAllActor, () => Audit(acceptedMarker), TestContext.Current.CancellationToken);
         Assert.IsType<ReplaceRolesStoreResult.Success>(accepted);
 
         // The target now holds the wide role, so this low-privilege actor's earlier decision is stale.
         var lowPrivilegeActor = new RbacActorContext(HasGrantsAll: false, HasUsersManage: true, EffectivePermissions: new HashSet<string> { Permissions.Orders.View });
         var refusedMarker = $"refused-{Guid.NewGuid():N}";
-        var refused = await store.SetActiveAsync(targetId, active: false, lowPrivilegeActor, Audit(refusedMarker), TestContext.Current.CancellationToken);
+        var refused = await store.SetActiveAsync(targetId, active: false, lowPrivilegeActor, () => Audit(refusedMarker), TestContext.Current.CancellationToken);
         Assert.IsType<SetActiveStoreResult.AuthorizationStale>(refused);
 
         await using var readScope = factory.Services.CreateAsyncScope();
@@ -295,7 +295,7 @@ public sealed class StaffUserRoleManagementStoreTests(SqlServerDatabaseFixture s
         {
             var store = writeScope.ServiceProvider.GetRequiredService<IStaffUserRoleManagementStore>();
             await Assert.ThrowsAnyAsync<Exception>(() =>
-                store.ReplaceRolesAsync(targetId, [wideRoleId], GrantsAllActor, UnwritableAudit(), TestContext.Current.CancellationToken));
+                store.ReplaceRolesAsync(targetId, [wideRoleId], GrantsAllActor, UnwritableAudit, TestContext.Current.CancellationToken));
         }
 
         await using var readScope = factory.Services.CreateAsyncScope();
@@ -331,14 +331,14 @@ public sealed class StaffUserRoleManagementStoreTests(SqlServerDatabaseFixture s
         {
             var store = deactivateScope.ServiceProvider.GetRequiredService<IStaffUserRoleManagementStore>();
             await Assert.ThrowsAnyAsync<Exception>(() =>
-                store.SetActiveAsync(targetId, active: false, GrantsAllActor, UnwritableAudit(), TestContext.Current.CancellationToken));
+                store.SetActiveAsync(targetId, active: false, GrantsAllActor, UnwritableAudit, TestContext.Current.CancellationToken));
         }
 
         await using (var editScope = factory.Services.CreateAsyncScope())
         {
             var store = editScope.ServiceProvider.GetRequiredService<IStaffUserRoleManagementStore>();
             await Assert.ThrowsAnyAsync<Exception>(() =>
-                store.UpdateProfileAsync(targetId, "Changed", "Name", newEmail: null, GrantsAllActor, UnwritableAudit(), TestContext.Current.CancellationToken));
+                store.UpdateProfileAsync(targetId, "Changed", "Name", newEmail: null, GrantsAllActor, UnwritableAudit, TestContext.Current.CancellationToken));
         }
 
         await using var readScope = factory.Services.CreateAsyncScope();

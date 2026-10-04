@@ -113,7 +113,7 @@ internal sealed class FakeStaffUserRoleManagementStore : IStaffUserRoleManagemen
 
         var audit = auditForNewUser(newId);
         LastAuditRowOffered = audit;
-        AuditWriter?.Enlist(audit);
+        AuditWriter?.Enlist(LastAuditRowOffered!);
         return Task.FromResult<CreateStaffUserStoreResult>(new CreateStaffUserStoreResult.Success(newId, "stamp-0"));
     }
 
@@ -121,12 +121,12 @@ internal sealed class FakeStaffUserRoleManagementStore : IStaffUserRoleManagemen
         int targetUserId,
         IReadOnlyList<int> roleIds,
         RbacActorContext actor,
-        AuditLog audit,
+        Func<AuditLog> audit,
         CancellationToken cancellationToken)
     {
         ReplaceRolesCall = (targetUserId, roleIds);
         LastActorContext = actor;
-        LastAuditRowOffered = audit;
+        LastAuditRowOffered = audit();
 
         if (!Users.TryGetValue(targetUserId, out var existing))
         {
@@ -146,7 +146,7 @@ internal sealed class FakeStaffUserRoleManagementStore : IStaffUserRoleManagemen
         var newRoles = roleIds.Where(Roles.ContainsKey).Select(id => Roles[id]).ToList();
         var newStamp = $"stamp-{Guid.NewGuid():N}";
         Users[targetUserId] = existing with { Roles = newRoles, SecurityStamp = newStamp };
-        AuditWriter?.Enlist(audit);
+        AuditWriter?.Enlist(LastAuditRowOffered!);
         return Task.FromResult<ReplaceRolesStoreResult>(new ReplaceRolesStoreResult.Success(newStamp));
     }
 
@@ -154,12 +154,12 @@ internal sealed class FakeStaffUserRoleManagementStore : IStaffUserRoleManagemen
         int targetUserId,
         bool active,
         RbacActorContext actor,
-        AuditLog audit,
+        Func<AuditLog> audit,
         CancellationToken cancellationToken)
     {
         SetActiveCall = (targetUserId, active);
         LastActorContext = actor;
-        LastAuditRowOffered = audit;
+        LastAuditRowOffered = audit();
 
         if (!Users.TryGetValue(targetUserId, out var existing))
         {
@@ -177,7 +177,7 @@ internal sealed class FakeStaffUserRoleManagementStore : IStaffUserRoleManagemen
         }
 
         Users[targetUserId] = existing with { IsActive = active };
-        AuditWriter?.Enlist(audit);
+        AuditWriter?.Enlist(LastAuditRowOffered!);
         return Task.FromResult<SetActiveStoreResult>(new SetActiveStoreResult.Success());
     }
 
@@ -187,11 +187,11 @@ internal sealed class FakeStaffUserRoleManagementStore : IStaffUserRoleManagemen
         string? lastName,
         string? newEmail,
         RbacActorContext actor,
-        AuditLog audit,
+        Func<AuditLog> audit,
         CancellationToken cancellationToken)
     {
         LastActorContext = actor;
-        LastAuditRowOffered = audit;
+        LastAuditRowOffered = audit();
 
         if (!Users.TryGetValue(targetUserId, out var existing))
         {
@@ -204,7 +204,7 @@ internal sealed class FakeStaffUserRoleManagementStore : IStaffUserRoleManagemen
         }
 
         Users[targetUserId] = existing with { FirstName = firstName, LastName = lastName, Email = newEmail ?? existing.Email };
-        AuditWriter?.Enlist(audit);
+        AuditWriter?.Enlist(LastAuditRowOffered!);
         return Task.FromResult<UpdateProfileStoreResult>(new UpdateProfileStoreResult.Success());
     }
 }
