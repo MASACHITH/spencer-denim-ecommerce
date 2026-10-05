@@ -53,9 +53,16 @@ public sealed class MediaTestHost : IAsyncDisposable
     /// <summary>Starts an API with its own volumes.</summary>
     /// <param name="connectionString">The test database.</param>
     /// <param name="configure">Extra configuration, e.g. a lower size ceiling.</param>
+    /// <param name="environment">
+    /// The hosting environment. <c>Testing</c> for everything but issue #47's regression tests, which have to
+    /// run in <c>Development</c> as well: minimal APIs are configured to <i>throw</i> on a bad request there
+    /// and <c>UseExceptionHandler</c> turns the throw into a 500, so the status an admin screen gets otherwise
+    /// depends on which environment it is talking to.
+    /// </param>
     public static MediaTestHost Create(
         string connectionString,
-        IReadOnlyDictionary<string, string?>? configure = null)
+        IReadOnlyDictionary<string, string?>? configure = null,
+        string environment = "Testing")
     {
         var root = Path.Combine(Path.GetTempPath(), "sd-media-it-" + Guid.NewGuid().ToString("N"));
         var publicRoot = Path.Combine(root, "public-volume");
@@ -78,7 +85,7 @@ public sealed class MediaTestHost : IAsyncDisposable
         }
 
         return new MediaTestHost(
-            new ApiFactory(connectionString, additionalConfiguration: configuration),
+            new ApiFactory(connectionString, environment, configuration),
             root,
             publicRoot,
             privateRoot);

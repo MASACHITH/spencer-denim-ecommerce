@@ -7,6 +7,10 @@ import { SiteHeader } from './site-header';
 import { CartApi } from '../../core/cart/cart-api';
 import { CartDto } from '../../core/cart/cart.model';
 import { CartStore } from '../../core/cart/cart.store';
+import { SiteSettingsDto } from '../../core/site-settings/site-settings.model';
+
+/** The honest default: the client has uploaded no logo and supplied no profile addresses (ADM-22). */
+const NO_SETTINGS: SiteSettingsDto = { logo: null, whatsAppNumber: null, social: [] };
 
 const EMPTY_BAG: CartDto = {
   lines: [],
@@ -59,15 +63,58 @@ describe('SiteHeader shell (GLB-04, GLB-05)', () => {
   afterEach(() => TestBed.inject(HttpTestingController).verify());
 
   /**
+   * Builds a second header whose settings request this test answers itself.
+   *
+   * A fresh TestBed rather than a second flush: `beforeEach` has already answered the first request, and
+   * `SiteSettingsService` is `providedIn: 'root'`, so its signal is settled for that injector.
+   */
+  async function rebuild(
+    answerSettings: (http: HttpTestingController) => void,
+  ): Promise<HTMLElement> {
+    TestBed.resetTestingModule();
+    TestBed.configureTestingModule({
+      imports: [SiteHeader],
+      providers: [
+        provideRouter([
+          { path: '', children: [] },
+          { path: 'bag', children: [] },
+          { path: 'wishlist', children: [] },
+          { path: 'account', children: [] },
+        ]),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+      ],
+    });
+
+    const rebuilt = TestBed.createComponent(SiteHeader);
+    rebuilt.detectChanges();
+    await rebuilt.whenStable();
+
+    const http = TestBed.inject(HttpTestingController);
+    http.match((request) => request.url === '/api/content/announcements').forEach((request) => request.flush([]));
+    http.match((request) => request.url === '/api/catalog/departments').forEach((request) => request.flush([]));
+    http.match((request) => request.url === CartApi.url && request.method === 'GET')
+      .forEach((request) => request.flush(EMPTY_BAG));
+    answerSettings(http);
+
+    rebuilt.detectChanges();
+    await rebuilt.whenStable();
+    rebuilt.detectChanges();
+
+    return rebuilt.nativeElement as HTMLElement;
+  }
+
+  /**
    * Answers everything the shell asks for on its own behalf: the announcement strip (GLB-03), the
    * department tree (GLB-05) and the bag count (GLB-04). They were all going to the real backend before
    * this spec had an HTTP client of its own, which is to say they were uncontrolled requests in a jsdom
    * test; `verify()` in `afterEach` only means something once they are answered here.
    */
-  function flushShell(cart: CartDto = EMPTY_BAG): void {
+  function flushShell(cart: CartDto = EMPTY_BAG, settings: SiteSettingsDto = NO_SETTINGS): void {
     const http = TestBed.inject(HttpTestingController);
     http.match((request) => request.url === '/api/content/announcements').forEach((request) => request.flush([]));
     http.match((request) => request.url === '/api/catalog/departments').forEach((request) => request.flush([]));
+    http.match((request) => request.url === '/api/site/settings').forEach((request) => request.flush(settings));
     flushBag(cart);
   }
 
@@ -97,6 +144,85 @@ describe('SiteHeader shell (GLB-04, GLB-05)', () => {
   it('renders one banner landmark with the wordmark', () => {
     expect(element.querySelectorAll('header')).toHaveLength(1);
     expect(element.querySelector('.wordmark')?.textContent?.trim()).toBe('Colombo Wardrobe');
+  });
+
+  /**
+   * GLB-02, ADM-22. The fallback, and it is the *normal* state rather than an error state: no logo is
+   * uploaded on a fresh deployment, so the text wordmark is what most visitors see.
+   *
+   * It asserts the absence of the `<img>` as well as the presence of the text, because "renders the
+   * wordmark" would also pass for a header that drew both — a text wordmark beside a broken image is the
+   * failure this is guarding, and the text alone cannot see it.
+   */
+  it('keeps the text wordmark and renders no image when no logo is set', () => {
+    expect(element.querySelector('[data-testid="wordmark-text"]')?.textContent?.trim()).toBe(
+      'Colombo Wardrobe',
+    );
+    expect(element.querySelector('[data-testid="logo"]')).toBeNull();
+  });
+
+  /** The same, for a settings read that failed outright rather than one that answered "nothing set". */
+  it('keeps the text wordmark when the settings read fails', async () => {
+    const header = await rebuild((http) =>
+      http
+        .match((request) => request.url === '/api/site/settings')
+        .forEach((request) => request.flush('boom', { status: 500, statusText: 'Server Error' })),
+    );
+
+    expect(header.querySelector('[data-testid="wordmark-text"]')?.textContent?.trim()).toBe(
+      'Colombo Wardrobe',
+    );
+    expect(header.querySelector('[data-testid="logo"]')).toBeNull();
+  });
+
+  it('draws the uploaded logo instead of the text, with its box reserved and a real alt', async () => {
+    const header = await rebuild((http) =>
+      http.match((request) => request.url === '/api/site/settings').forEach((request) =>
+        request.flush({
+          logo: { url: '/media/public/renditions/abc/card.webp', width: 600, height: 150, altText: 'Our logo' },
+          whatsAppNumber: null,
+          social: [],
+        }),
+      ),
+    );
+
+    const logo = header.querySelector<HTMLImageElement>('[data-testid="logo"]');
+
+    expect(logo).not.toBeNull();
+    expect(logo!.getAttribute('src')).toBe('/media/public/renditions/abc/card.webp');
+    expect(logo!.getAttribute('alt')).toBe('Our logo');
+    expect(logo!.getAttribute('width')).toBe('600');
+    expect(logo!.getAttribute('height')).toBe('150');
+    expect(header.querySelector('[data-testid="wordmark-text"]')).toBeNull();
+
+    // The logo still has to be the link home: one anchor serves both states, so the tap target and the
+    // focus ring cannot drift apart between them.
+    expect(logo!.closest('a')?.getAttribute('href')).toBe('/');
+  });
+
+  /**
+   * An asset with no alt text is the ordinary case — nothing makes a staff user type one — and an
+   * unlabelled image doing the job of the site's own name is a WCAG 1.1.1 failure (GLB-12). The shop's
+   * name is the fallback, read from the one place it is written down.
+   */
+  it('falls back to the shop name for alt text when the asset has none', async () => {
+    const header = await rebuild((http) =>
+      http.match((request) => request.url === '/api/site/settings').forEach((request) =>
+        request.flush({
+          logo: { url: '/media/logo.webp', width: null, height: null, altText: null },
+          whatsAppNumber: null,
+          social: [],
+        }),
+      ),
+    );
+
+    const logo = header.querySelector<HTMLImageElement>('[data-testid="logo"]');
+
+    expect(logo!.getAttribute('alt')).toBe('Colombo Wardrobe');
+
+    // No dimensions reported means no attributes at all, rather than width="0", which would collapse it.
+    expect(logo!.hasAttribute('width')).toBe(false);
+    expect(logo!.hasAttribute('height')).toBe(false);
   });
 
   it('shows the five main navigation entries', () => {

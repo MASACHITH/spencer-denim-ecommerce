@@ -22,6 +22,7 @@ import { MainNav } from '../main-nav/main-nav';
 import { MiniBag } from '../mini-bag/mini-bag';
 import { MobileNav } from '../mobile-nav/mobile-nav';
 import { CartStore } from '../../core/cart/cart.store';
+import { SiteSettingsService } from '../../core/site-settings/site-settings.service';
 import { StorefrontCounts } from '../../core/storefront-counts.service';
 
 /**
@@ -57,7 +58,31 @@ import { StorefrontCounts } from '../../core/storefront-counts.service';
             <sd-icon name="menu" />
           </button>
 
-          <a class="wordmark site-header__wordmark" routerLink="/">{{ brand }}</a>
+          <!-- GLB-02. The logo when the client has uploaded one, the text wordmark otherwise — and the
+               wordmark is the normal state, not an error state: nothing is uploaded on a fresh
+               deployment, so it is what most visitors see and what every test defaults to.
+
+               One anchor either way, so the link to the home page, its tap target and its focus ring
+               are the same object in both states and cannot drift apart. The img carries explicit
+               width/height so the box is reserved before the bytes arrive (CLS), and alt is never
+               blank: SiteSettingsService falls back to the shop's name, because this image *is* the
+               site's name and a decorative-empty alt would lose it (GLB-12, WCAG 1.1.1). -->
+          <a class="wordmark site-header__wordmark" routerLink="/" data-testid="wordmark">
+            @if (logo(); as mark) {
+              <img
+                class="site-header__logo"
+                data-testid="logo"
+                [src]="mark.url"
+                [alt]="mark.alt"
+                [attr.width]="mark.width"
+                [attr.height]="mark.height"
+                decoding="async"
+                fetchpriority="high"
+              />
+            } @else {
+              <span data-testid="wordmark-text">{{ brand }}</span>
+            }
+          </a>
 
           <sd-main-nav />
 
@@ -190,16 +215,52 @@ import { StorefrontCounts } from '../../core/storefront-counts.service';
     .site-header__menu {
       grid-area: 1 / 1;
     }
+    /* The wordmark anchor carries BOTH minimums, not just min-height — min-width: var(--tap) rather than the
+       min-width: 0 that was here before ADM-22.
+
+       **Found by a browser test, not predicted.** With a logo set, the anchor is only as wide as the drawn
+       image, and the drawn width comes from the file's *intrinsic* ratio once it loads: the width and height
+       attributes only supply a ratio beforehand. A square logo, or a small one the encoder clamped rather than
+       upscaled, therefore gave a 32x32 box — the shop's primary link, on every page, below the 44 px touch
+       minimum (WCAG 2.5.8 and this project's own rule). Measured at 1024 px as 32x44.
+
+       min-width: 0 was correct while the content was text that had to shrink inside the grid's minmax(0, 1fr)
+       column; it is wrong now that the content is an image whose size the client chooses. 44 px is far
+       narrower than any real wordmark, so it costs nothing in the ordinary case and is the floor in the one
+       nobody would have thought to try.
+
+       The browser suite's square logo state is what holds this: a square logo drawn at the header's height is
+       exactly that wide, so it is the only shape that reaches the floor. */
     .site-header__wordmark {
       grid-area: 1 / 2;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      min-width: 0;
+      min-width: var(--tap);
       min-height: var(--tap);
       font-size: 0.75rem;
       letter-spacing: 0.16em;
       text-align: center;
+    }
+    /* The uploaded logo is sized by the *header*, not by the file.
+
+       This is the whole reason an admin can upload any image here without breaking the layout. The
+       height is fixed to roughly the text wordmark's line box and the width follows the aspect ratio,
+       capped so a very wide logo cannot squeeze the navigation: the grid's middle column is
+       minmax(0, 1fr), so max-width: 100% keeps the image inside its share and the row cannot wrap.
+
+       It also protects --header-height in tokens.css, which is measured from this component and which
+       anchor jumps and focused controls clear. If the logo could set its own height, every upload would
+       silently invalidate that token — and the symptom would be a focused control hidden under the
+       header, three screens away from the cause. object-fit: contain means a logo whose proportions
+       differ is letterboxed inside its box rather than distorted. */
+    .site-header__logo {
+      display: block;
+      width: auto;
+      height: 24px;
+      max-width: 100%;
+      object-fit: contain;
+      object-position: center;
     }
     .site-header__tools {
       grid-area: 1 / 3;
@@ -247,6 +308,12 @@ import { StorefrontCounts } from '../../core/storefront-counts.service';
         letter-spacing: var(--tracking-wordmark);
         white-space: nowrap;
       }
+      /* Taller with the row, and bounded in width because from 1024 px the bar is a nowrap flex row:
+         an unbounded logo would push the navigation off the end rather than wrap under it. */
+      .site-header__logo {
+        height: 32px;
+        max-width: 220px;
+      }
       sd-main-nav {
         order: 2;
       }
@@ -285,8 +352,25 @@ import { StorefrontCounts } from '../../core/storefront-counts.service';
   `,
 })
 export class SiteHeader {
-  /** The shop's name, from the one place it is written down (@spencer-denim/shared). */
+  /**
+   * The shop's name, from the one place it is written down (@spencer-denim/shared).
+   *
+   * **Still a constant, and still not a setting.** ADM-22 makes the *logo* editable; the name stays a
+   * compile-time value in exactly one place per application (owner's decision, W1-15, docs/02 §I2), with
+   * a convention test that fails if it is ever written out again. The server renders this header, so a
+   * name fetched over HTTP would have to resolve before the first byte of the shell — and the fallback
+   * below is the reason it must never depend on a fetch at all.
+   */
   protected readonly brand = BRAND.name;
+
+  /**
+   * The uploaded logo, or null for the text wordmark (GLB-02, ADM-22).
+   *
+   * Null is the normal state: the client has not uploaded one yet, and `SiteSettingsService` also
+   * answers null for a settings read that failed, timed out or came back malformed — so there is one
+   * rendering for "no logo" rather than a second, less-looked-at one for "could not find out".
+   */
+  protected readonly logo = inject(SiteSettingsService).logo;
 
   private readonly counts = inject(StorefrontCounts);
   private readonly cart = inject(CartStore);

@@ -1,0 +1,73 @@
+import { HttpClient } from '@angular/common/http';
+import { Injectable, inject } from '@angular/core';
+import { Observable } from 'rxjs';
+
+import { AdminAuthApi } from '../auth/admin-auth-api';
+import { AdminSettings, ContactAndSocialValues, UploadedMediaAsset } from './admin-settings.model';
+
+/**
+ * `/api/admin/settings` and the one media call this screen makes (ADM-22, GLB-02).
+ *
+ * Every mutating call carries a freshly fetched antiforgery token, through {@link AdminAuthApi}, so the
+ * header name and the token endpoint live in one place.
+ */
+@Injectable({ providedIn: 'root' })
+export class AdminSettingsApi {
+  static readonly settingsUrl = '/api/admin/settings';
+  static readonly storeLogoUrl = '/api/admin/settings/store-logo';
+  static readonly contactSocialUrl = '/api/admin/settings/contact-social';
+  static readonly imagesUrl = '/api/admin/media/images';
+
+  private readonly http = inject(HttpClient);
+  private readonly auth = inject(AdminAuthApi);
+
+  settings(): Observable<AdminSettings> {
+    return this.http.get<AdminSettings>(AdminSettingsApi.settingsUrl);
+  }
+
+  /**
+   * Uploads a logo image to the media library.
+   *
+   * **Two steps, not one, and the order is the point.** The file goes to the library first and the setting
+   * is pointed at the result second, so a failed or refused upload changes nothing at all — rather than a
+   * single endpoint that has to undo a half-applied change. It also means the logo is an ordinary library
+   * asset: it appears in ADM-18, it has a checksum, and the library's delete guard protects it.
+   *
+   * `altText` is sent with the file because a public image needs alt text before the content using it is
+   * published (doc 11 P13, GLB-12) — and for a logo the content using it is every page.
+   */
+  uploadLogo(file: File, altText: string): Observable<UploadedMediaAsset> {
+    const form = new FormData();
+    form.append('file', file, file.name);
+    form.append('altText', altText);
+    form.append('title', file.name);
+
+    return this.auth.withAntiforgeryToken((token) =>
+      this.http.post<UploadedMediaAsset>(AdminSettingsApi.imagesUrl, form, {
+        headers: { 'X-XSRF-TOKEN': token },
+      }),
+    );
+  }
+
+  /**
+   * Points `Store.LogoAssetId` at an uploaded asset, or clears it.
+   *
+   * `logoAssetPublicId: null` is Remove — the owner's stated requirement, "let them remove the existing one
+   * and add a new one". The API releases the previous asset's usage row in the same transaction, so the
+   * media library will then allow the old file to be deleted.
+   */
+  setStoreLogo(logoAssetPublicId: string | null, rowVersion: string): Observable<void> {
+    return this.put(AdminSettingsApi.storeLogoUrl, { logoAssetPublicId, rowVersion });
+  }
+
+  /** The WhatsApp number and the three social addresses. Every field, every save — PUT replaces. */
+  updateContactAndSocial(values: ContactAndSocialValues, rowVersion: string): Observable<void> {
+    return this.put(AdminSettingsApi.contactSocialUrl, { ...values, rowVersion });
+  }
+
+  private put(url: string, body: unknown): Observable<void> {
+    return this.auth.withAntiforgeryToken((token) =>
+      this.http.put<void>(url, body, { headers: { 'X-XSRF-TOKEN': token } }),
+    );
+  }
+}

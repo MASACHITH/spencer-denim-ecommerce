@@ -4,6 +4,7 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 
 import { SiteFooter } from './site-footer';
+import { SiteSettingsDto } from '../../core/site-settings/site-settings.model';
 
 describe('SiteFooter (GLB-07)', () => {
   let fixture: ComponentFixture<SiteFooter>;
@@ -24,7 +25,38 @@ describe('SiteFooter (GLB-07)', () => {
     // The footer lists the departments (GLB-05), so creating it fetches the navigation tree. It
     // is answered here so the newsletter assertions below are about the newsletter.
     http.match('/api/catalog/departments').forEach((request) => request.flush([]));
+
+    // ADM-22: the social icons come from ops.Settings now. Answered with the honest default — the
+    // client has supplied nothing — so every assertion below is about the state a visitor meets
+    // today. The tests that care about a configured profile answer it themselves via `settings`.
+    http.match('/api/site/settings').forEach((request) =>
+      request.flush({ logo: null, whatsAppNumber: null, social: [] }),
+    );
   });
+
+  /**
+   * Rebuilds the footer with a settings payload of the test's choosing.
+   *
+   * A second fixture rather than a second `flush`, because the request in `beforeEach` has already been
+   * answered — and the service is `providedIn: 'root'`, so its signal is settled for this TestBed.
+   */
+  function withSettings(settings: SiteSettingsDto): HTMLElement {
+    TestBed.resetTestingModule();
+    TestBed.configureTestingModule({
+      imports: [SiteFooter],
+      providers: [provideRouter([]), provideHttpClient(), provideHttpClientTesting()],
+    });
+
+    const rebuilt = TestBed.createComponent(SiteFooter);
+    const controller = TestBed.inject(HttpTestingController);
+    rebuilt.detectChanges();
+
+    controller.match('/api/catalog/departments').forEach((request) => request.flush([]));
+    controller.match('/api/site/settings').forEach((request) => request.flush(settings));
+    rebuilt.detectChanges();
+
+    return rebuilt.nativeElement as HTMLElement;
+  }
 
   afterEach(() => http.verify());
 
@@ -68,14 +100,60 @@ describe('SiteFooter (GLB-07)', () => {
     expect(hrefs).toEqual(expect.arrayContaining(['/returns', '/shipping', '/privacy', '/terms']));
   });
 
-  it('gives every social icon a text name and opens it safely', () => {
-    const social = Array.from(element.querySelectorAll<HTMLAnchorElement>('.site-footer__social a'));
+  /**
+   * ADM-22. The footer used to carry three icons pointing at facebook.com, instagram.com and
+   * tiktok.com — the networks' own front pages rather than this shop's profiles. A dead social icon on
+   * a live shop is worse than no icon, so an address the client has not supplied shows nothing.
+   *
+   * The list element itself has to be absent rather than empty: an empty `<ul>` keeps its `margin-top`
+   * and leaves a gap under the opening hours.
+   */
+  it('shows no social icons at all until the client supplies an address', () => {
+    expect(element.querySelectorAll('.site-footer__social a')).toHaveLength(0);
+    expect(element.querySelector('[data-testid="social-links"]')).toBeNull();
+  });
 
-    expect(social.length).toBeGreaterThan(0);
+  it('gives every supplied social icon a text name and opens it safely', () => {
+    const configured = withSettings({
+      logo: null,
+      whatsAppNumber: null,
+      social: [
+        { network: 'facebook', url: 'https://www.facebook.com/colombowardrobe' },
+        { network: 'instagram', url: 'https://www.instagram.com/colombowardrobe' },
+      ],
+    });
+
+    const social = Array.from(configured.querySelectorAll<HTMLAnchorElement>('.site-footer__social a'));
+
+    expect(social).toHaveLength(2);
     social.forEach((link) => {
       expect(link.querySelector('.sr-only')?.textContent?.trim().length).toBeGreaterThan(0);
       expect(link.getAttribute('rel')).toContain('noopener');
+      expect(link.getAttribute('href')).toMatch(/^https:\/\/www\.(facebook|instagram)\.com\//);
     });
+  });
+
+  /**
+   * The dangerous half of the same rule, and the reason the check is repeated on this side of the wire:
+   * the API refuses these on the way in, but a row can predate the rule, and an `href` is what a browser
+   * actually follows. `javascript:` must never reach one.
+   */
+  it('drops a social address a browser should not follow, rather than linking it', () => {
+    const configured = withSettings({
+      logo: null,
+      whatsAppNumber: null,
+      social: [
+        { network: 'facebook', url: 'javascript:alert(1)' },
+        { network: 'instagram', url: '/women/jeans' },
+        { network: 'tiktok', url: 'https://www.tiktok.com/@colombowardrobe' },
+      ],
+    });
+
+    const hrefs = Array.from(
+      configured.querySelectorAll<HTMLAnchorElement>('.site-footer__social a'),
+    ).map((link) => link.getAttribute('href'));
+
+    expect(hrefs).toEqual(['https://www.tiktok.com/@colombowardrobe']);
   });
 
   it('says nothing until the newsletter form is used', () => {

@@ -11,6 +11,7 @@ namespace SpencerDenim.Infrastructure.Persistence.Seeding;
 public sealed partial class CatalogSeedRunner(
     CatalogReferenceDataSeeder referenceData,
     HomeContentSeeder homeContent,
+    SettingsSeeder settings,
     DemoCatalogueSeeder demoCatalogue,
     DemoMediaPlaceholderGenerator demoMedia,
     ILogger<CatalogSeedRunner> logger)
@@ -30,6 +31,14 @@ public sealed partial class CatalogSeedRunner(
         counts.HomeSections = content.Sections;
         counts.HomeSectionItems = content.SectionItems;
         counts.AnnouncementMessages = content.Announcements;
+
+        // ops.Settings (ADM-22). Unconditional, like the reference data and unlike the demo catalogue: these
+        // rows are the *shape* of the settings screen rather than sample data, their values are all null, and
+        // a production database without them has a settings screen with no boxes on it. It runs after the
+        // content seeder for no ordering reason — nothing here depends on anything above — but keeping the
+        // one order makes the log line's counts read in a fixed order.
+        var settingsCounts = await settings.SeedAsync(cancellationToken);
+        counts.Settings = settingsCounts.Inserted;
 
         if (includeDemoCatalogue)
         {

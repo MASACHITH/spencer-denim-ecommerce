@@ -55,7 +55,17 @@ const SESSION = {
   firstName: 'Cata',
   lastName: 'Logue',
   grantsAllPermissions: true,
-  permissions: ['Categories.View', 'Categories.Create', 'Categories.Edit', 'Categories.Delete'],
+  permissions: [
+    'Categories.View',
+    'Categories.Create',
+    'Categories.Edit',
+    'Categories.Delete',
+
+    // ADM-22. Settings.Edit and Media.Create: the settings screen's logo flow uploads to the library before
+    // it points the setting at the result, so both are needed to drive it.
+    'Settings.Edit',
+    'Media.Create',
+  ],
   mustChangePassword: false,
   twoFactorEnabled: true,
   twoFactorEnrolmentRequired: false,
@@ -184,7 +194,103 @@ function freshState() {
       ],
       3: [category(70, 'Girls', 'girls', null, 1, '/70/', 0, { productCount: 4, primaryProductCount: 4 })],
     },
+
+    // ADM-22. Every value null, which is how the real seeder leaves them: the client has uploaded no logo
+    // and sent no profile addresses. Any other starting state would hide the fallback the screen spends
+    // most of its life in.
+    settings: {
+      'Store.LogoAssetId': null,
+      'Contact.WhatsApp': null,
+      'Social.FacebookUrl': null,
+      'Social.InstagramUrl': null,
+      'Social.TikTokUrl': null,
+    },
+    logo: null,
+    uploads: new Map(),
   };
+}
+
+/**
+ * The settings groups, built from the state's values (ADM-22).
+ *
+ * <b>The row version is per *save unit*, not per group</b>, exactly as the real read model publishes it:
+ * `Contact` and `Social` are one form with one Save button, so their token covers both groups' rows. The first
+ * version of the real API got this wrong and answered 409 to every valid save; a stub that published a
+ * per-group token would let the screen regress to it with every browser test still passing.
+ */
+function settingsPayload(state) {
+  const groups = [
+    { groupKey: 'Store', keys: ['Store.LogoAssetId'], types: { 'Store.LogoAssetId': 'MediaAssetRef' } },
+    { groupKey: 'Contact', keys: ['Contact.WhatsApp'], types: {} },
+    {
+      groupKey: 'Social',
+      keys: ['Social.FacebookUrl', 'Social.InstagramUrl', 'Social.TikTokUrl'],
+      types: {},
+    },
+  ];
+
+  const unitFor = (groupKey) =>
+    groupKey === 'Store'
+      ? ['Store.LogoAssetId']
+      : ['Contact.WhatsApp', 'Social.FacebookUrl', 'Social.InstagramUrl', 'Social.TikTokUrl'];
+
+  const tokenFor = (groupKey) =>
+    Buffer.from(unitFor(groupKey).map((key) => `${key}=${state.settings[key] ?? ''}`).join('|')).toString('base64');
+
+  return {
+    groups: groups.map((group) => ({
+      groupKey: group.groupKey,
+      rowVersion: tokenFor(group.groupKey),
+      settings: group.keys.map((key) => ({
+        key,
+        valueType: group.types[key] ?? 'String',
+        value: state.settings[key],
+        isSecret: false,
+        hasValue: Boolean(state.settings[key]),
+        requiredPermission: 'Settings.Edit',
+        description: `What ${key} is for.`,
+        updatedAtUtc: null,
+      })),
+    })),
+    logo: state.logo,
+  };
+}
+
+/** The token a save of `groupKey` must carry, so a stale one is genuinely refused. */
+function settingsToken(state, groupKey) {
+  return settingsPayload(state).groups.find((group) => group.groupKey === groupKey).rowVersion;
+}
+
+/**
+ * The same absolute-URL rule the API applies (`SettingFieldRules.IsAcceptableProfileUrl`).
+ *
+ * The stub enforces it because without it the screen could stop showing field errors and every browser test
+ * would still pass — the shape of gap that let W1-12's antiforgery header go unchecked for 246 tests.
+ */
+function acceptableProfileUrl(value) {
+  if (typeof value !== 'string') {
+    return false;
+  }
+
+  const candidate = value.trim();
+  if (candidate.length === 0 || /[\\\u0000-\u001f\s]/u.test(candidate)) {
+    return false;
+  }
+
+  try {
+    const parsed = new URL(candidate);
+    return (
+      (parsed.protocol === 'https:' || parsed.protocol === 'http:') &&
+      parsed.hostname.length > 0 &&
+      parsed.username.length === 0
+    );
+  } catch {
+    return false;
+  }
+}
+
+function acceptableWhatsApp(value) {
+  return typeof value === 'string' && /^[1-9][0-9]{6,14}$/.test(value.trim());
 }
 
 /**
@@ -236,6 +342,17 @@ function problem(response, status, title, detail, code, extra = {}) {
 function noContent(response) {
   response.writeHead(204, { 'Cache-Control': 'no-store' });
   response.end();
+}
+
+/** A 1x1 WebP, so the logo preview loads a real image rather than a data URL. */
+const LOGO_PIXEL = Buffer.from('UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==', 'base64');
+
+/** Reads a body to the end without parsing it — a multipart upload, where only its arrival matters. */
+function drain(request) {
+  return new Promise((done) => {
+    request.on('data', () => {});
+    request.on('end', () => done());
+  });
 }
 
 function readBody(request) {
@@ -376,6 +493,138 @@ const server = createServer(async (request, response) => {
 
   if (path === '/api/ping') {
     return json(response, 200, { message: 'pong', utcNow: new Date().toISOString() });
+  }
+
+  // ---- settings (ADM-22, GLB-02) -------------------------------------------------------------
+  if (path === '/api/admin/settings' && request.method === 'GET') {
+    return json(response, 200, settingsPayload(state));
+  }
+
+  // The media upload the screen does before it points the setting at the result. Multipart, so the body is
+  // not parsed: what matters is that a file arrived, and that the answer carries a publicId the next call
+  // can use — which is what makes the two-step flow testable at all.
+  if (path === '/api/admin/media/images' && request.method === 'POST') {
+    await drain(request);
+
+    const publicId = `0000f00d-0000-4000-8000-${String(state.uploads.size + 1).padStart(12, '0')}`;
+    const asset = {
+      publicId,
+      url: '/__test__/logo.webp',
+      width: 600,
+      height: 150,
+      altText: 'The shop logo',
+      originalFileName: 'logo.png',
+    };
+
+    state.uploads.set(publicId, asset);
+
+    return json(response, 201, asset);
+  }
+
+  if (path === '/api/admin/settings/store-logo' && request.method === 'PUT') {
+    const body = await readBody(request);
+    if (body === undefined || body === null) {
+      return problem(response, 400, 'Malformed JSON', 'The request body is not valid JSON.', 'malformed_json');
+    }
+
+    if (body.rowVersion !== settingsToken(state, 'Store')) {
+      return problem(
+        response,
+        409,
+        'This change cannot be applied',
+        'Somebody else changed these settings while you were editing them.',
+        'stale_row_version',
+      );
+    }
+
+    const wanted = body.logoAssetPublicId ?? null;
+
+    if (wanted !== null && !state.uploads.has(wanted)) {
+      return json(response, 400, {
+        type: 'about:blank',
+        title: 'One or more fields are invalid.',
+        status: 400,
+        errors: {
+          logoAssetPublicId: ['That image is not in the media library, or is not a ready public image.'],
+        },
+      });
+    }
+
+    state.settings['Store.LogoAssetId'] = wanted;
+    state.logo = wanted === null ? null : state.uploads.get(wanted);
+
+    return noContent(response);
+  }
+
+  if (path === '/api/admin/settings/contact-social' && request.method === 'PUT') {
+    const body = await readBody(request);
+    if (body === undefined || body === null) {
+      return problem(response, 400, 'Malformed JSON', 'The request body is not valid JSON.', 'malformed_json');
+    }
+
+    if (body.rowVersion !== settingsToken(state, 'Contact')) {
+      return problem(
+        response,
+        409,
+        'This change cannot be applied',
+        'Somebody else changed these settings while you were editing them.',
+        'stale_row_version',
+      );
+    }
+
+    // The same per-field refusals the API makes, so the screen's error display is actually exercised.
+    const errors = {};
+    const fields = {
+      whatsApp: 'Contact.WhatsApp',
+      facebookUrl: 'Social.FacebookUrl',
+      instagramUrl: 'Social.InstagramUrl',
+      tikTokUrl: 'Social.TikTokUrl',
+    };
+
+    for (const field of ['facebookUrl', 'instagramUrl', 'tikTokUrl']) {
+      const value = body[field];
+      if (value !== null && value !== undefined && String(value).trim() !== '' && !acceptableProfileUrl(value)) {
+        errors[field] = [
+          'The address must be a full web address starting with https://. Leave the box empty to hide the icon.',
+        ];
+      }
+    }
+
+    const whatsApp = body.whatsApp;
+    if (whatsApp !== null && whatsApp !== undefined && String(whatsApp).trim() !== '' && !acceptableWhatsApp(whatsApp)) {
+      errors.whatsApp = [
+        'The WhatsApp number must be 7 to 15 digits in international form, with no plus sign, spaces or '
+        + 'leading zero — for example 94771234567.',
+      ];
+    }
+
+    if (Object.keys(errors).length > 0) {
+      return json(response, 400, {
+        type: 'about:blank',
+        title: 'One or more fields are invalid.',
+        status: 400,
+        errors,
+      });
+    }
+
+    // PUT replaces: a field the body omits is a field the API is told to clear. The stub does the same, so a
+    // screen that stopped sending one would show up as a cleared value rather than as nothing at all —
+    // which is the W1-12 blocker's exact shape.
+    for (const [field, key] of Object.entries(fields)) {
+      const value = body[field];
+      state.settings[key] = value === null || value === undefined || String(value).trim() === ''
+        ? null
+        : String(value).trim();
+    }
+
+    return noContent(response);
+  }
+
+  // The logo the preview points at. A real 1x1 WebP, so a broken image is visibly broken.
+  if (path === '/__test__/logo.webp') {
+    response.writeHead(200, { 'Content-Type': 'image/webp', 'Cache-Control': 'no-store' });
+    response.end(LOGO_PIXEL);
+    return;
   }
 
   // ---- catalogue ----------------------------------------------------------------------------

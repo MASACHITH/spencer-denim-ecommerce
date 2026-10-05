@@ -8,6 +8,7 @@ using SpencerDenim.Domain.Inventory;
 using SpencerDenim.Domain.Marketing;
 using SpencerDenim.Domain.Media;
 using SpencerDenim.Domain.Sales;
+using SpencerDenim.Domain.Settings;
 using SpencerDenim.Infrastructure.Identity;
 
 namespace SpencerDenim.Infrastructure.Persistence;
@@ -44,6 +45,14 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public const string MigrationsHistorySchema = "ops";
 
     public const string MigrationsHistoryTable = "__EFMigrationsHistory";
+
+    /// <summary>
+    /// Doc 08 §1.2's operational schema: the migrations history table, <c>AuditLogs</c> and
+    /// <c>Settings</c>. The same string as <see cref="MigrationsHistorySchema"/> and kept separate from
+    /// it — one names where EF records its own bookkeeping, the other names a module's tables, and a
+    /// future decision to move the history table must not silently move <c>ops.Settings</c> with it.
+    /// </summary>
+    public const string OpsSchema = "ops";
 
     /// <summary>Doc 08 §1.2 schemas.</summary>
     public const string CatalogSchema = "catalog";
@@ -153,6 +162,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<PaymentEvent> PaymentEvents => Set<PaymentEvent>();
 
     public DbSet<Refund> Refunds => Set<Refund>();
+
+    /// <summary><c>ops.Settings</c> (doc 08 §3.8, ADM-22). Created by W1-16's migration.</summary>
+    public DbSet<Setting> Settings => Set<Setting>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {

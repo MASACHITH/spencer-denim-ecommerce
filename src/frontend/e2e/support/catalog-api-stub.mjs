@@ -12,6 +12,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
+import { deflateSync } from 'node:zlib';
 import { createServer } from 'node:http';
 
 const PORT = Number(process.env.E2E_API_PORT ?? 4421);
@@ -2062,6 +2063,165 @@ function handleCart(request, response, url) {
   return false;
 }
 
+/**
+ * A solid-colour PNG of a given size, built here rather than checked in.
+ *
+ * **Why this exists at all.** The logo fixtures used to reuse the 1x1 {@link WEBP_PIXEL} while the settings
+ * payload declared them 600x150 and 200x600. So every logo drawn anywhere in the suite was one 1x1 square, and
+ * the two tests that exist to prove the header sizes the logo rather than the file could not fail for the
+ * reason they state: `max-width` was never reached, and `height`/`object-fit` were never exercised. That was
+ * round 1's Major 1, and the stub's own comment about serving a real URL "so a broken one would show up as a
+ * broken one" made the gap read as covered.
+ *
+ * PNG rather than WebP because a lossless WebP encoder is a few hundred lines and nothing here needs one: the
+ * property under test is the *intrinsic size*, which is format-independent. It is also a real production shape
+ * — `MediaUrlBuilder` returns the original file's key for an asset with no renditions, and an original may be a
+ * PNG — which is why these are served from `public/originals/` rather than `public/renditions/`.
+ *
+ * Solid colour, so deflate takes even 2000x100 to a few hundred bytes. Nothing measures the pixels.
+ */
+function solidPng(width, height, [red, green, blue]) {
+  const stride = width * 3 + 1;
+  const raw = Buffer.alloc(stride * height);
+
+  for (let y = 0; y < height; y++) {
+    const row = y * stride;
+
+    // Filter byte 0 (None), then the scanline.
+    raw[row] = 0;
+    for (let x = 0; x < width; x++) {
+      raw[row + 1 + x * 3] = red;
+      raw[row + 2 + x * 3] = green;
+      raw[row + 3 + x * 3] = blue;
+    }
+  }
+
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 2; // colour type: truecolour
+  ihdr[10] = 0; // deflate
+  ihdr[11] = 0; // adaptive filtering
+  ihdr[12] = 0; // no interlace
+
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk('IHDR', ihdr),
+    pngChunk('IDAT', deflateSync(raw)),
+    pngChunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
+function pngChunk(type, data) {
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(data.length, 0);
+
+  const body = Buffer.concat([Buffer.from(type, 'ascii'), data]);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(pngCrc(body), 0);
+
+  return Buffer.concat([length, body, crc]);
+}
+
+const PNG_CRC_TABLE = (() => {
+  const table = new Int32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) {
+      c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    }
+    table[n] = c;
+  }
+  return table;
+})();
+
+function pngCrc(buffer) {
+  let crc = -1;
+  for (const byte of buffer) {
+    crc = PNG_CRC_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  }
+  return (crc ^ -1) >>> 0;
+}
+
+/**
+ * The logo shapes a test can ask for, each served as a real image of the size its payload declares.
+ *
+ * - `wide` (2000x100) is the ordinary shape of a wordmark, and the one that reaches `max-width: 220px`: at the
+ *   header's 32 px height its natural width would be 640 px, so the cap is what keeps the navigation on the row.
+ * - `tall` (200x600) is portrait — the shape that would grow the header if the file could set its own height,
+ *   and the one that shows `object-fit: contain` letterboxing rather than stretching.
+ * - `square` (512x512) is **kept deliberately**: it is the state that gates the wordmark's
+ *   `min-width: var(--tap)`, because a square logo drawn 32 px high is 32 px wide, which is how the shop's
+ *   primary link fell below the 44 px touch minimum. The old 1x1 pixel made *every* logo square by accident, so
+ *   fixing the other two shapes without adding this one would have quietly un-gated that fix.
+ */
+const LOGO_SHAPES = {
+  wide: { width: 2000, height: 100, colour: [20, 20, 20] },
+  tall: { width: 200, height: 600, colour: [30, 60, 90] },
+  square: { width: 512, height: 512, colour: [90, 30, 60] },
+};
+
+const LOGO_FILES = Object.fromEntries(
+  Object.entries(LOGO_SHAPES).map(([name, shape]) => [name, solidPng(shape.width, shape.height, shape.colour)]),
+);
+
+function logoMark(shape, altText) {
+  const { width, height } = LOGO_SHAPES[shape];
+
+  // `public/originals/...` rather than `public/renditions/...`: MediaUrlBuilder returns the original's key for
+  // an asset with no renditions, so this is a shape the real API produces, and the extension matches the bytes.
+  return { url: `${MEDIA_BASE}/public/originals/logo-${shape}.png`, width, height, altText };
+}
+
+/**
+ * The storefront shell's settings (GLB-02, GLB-07, GLB-08), as `GET /api/site/settings` returns them.
+ *
+ * `logo` is a real URL this stub also serves, so the browser genuinely fetches an image and a broken one
+ * would show up as a broken one — a `data:` URL would prove the markup and nothing about the wiring.
+ */
+function buildSiteSettings(logo, social, whatsApp) {
+  const links = {
+    none: [],
+    one: [{ network: 'instagram', url: 'https://www.instagram.com/colombowardrobe' }],
+    all: [
+      { network: 'facebook', url: 'https://www.facebook.com/colombowardrobe' },
+      { network: 'instagram', url: 'https://www.instagram.com/colombowardrobe' },
+      { network: 'tiktok', url: 'https://www.tiktok.com/@colombowardrobe' },
+    ],
+  };
+
+  // The declared dimensions are the served bytes' real dimensions (see LOGO_SHAPES). They used to be a fiction
+  // over a 1x1 pixel, which is what made the two layout tests unable to fail — round 1, Major 1.
+  //
+  // `wide` has no altText on purpose: that is the ordinary case, because nothing makes a staff user type one,
+  // and it is what exercises the header's fallback to the shop's name.
+  const marks = {
+    none: null,
+    wide: logoMark('wide', null),
+    tall: logoMark('tall', 'Our logo'),
+    square: logoMark('square', 'Our logo'),
+  };
+
+  return {
+    logo: marks[logo] ?? null,
+    whatsAppNumber: whatsApp ?? null,
+    social: links[social] ?? [],
+  };
+}
+
+/** Forced status for `/api/site/settings`, set through the test switch. 0 means answer normally. */
+let siteSettingsStatus = Number(process.env.E2E_SITE_SETTINGS_STATUS ?? 0);
+
+/** How long `/api/site/settings` holds its answer, in ms. 0 means answer at once. */
+let siteSettingsDelayMs = 0;
+
+let siteSettings = buildSiteSettings(
+  process.env.E2E_SITE_LOGO ?? 'none',
+  process.env.E2E_SITE_SOCIAL ?? 'none',
+  process.env.E2E_SITE_WHATSAPP ?? null,
+);
+
 const server = createServer((request, response) => {
   const url = new URL(request.url ?? '/', `http://localhost:${PORT}`);
 
@@ -2078,6 +2238,30 @@ const server = createServer((request, response) => {
   // accident: `reuseExistingServer` means a run that ended mid-fault would otherwise hand the next
   // run a stub that is still broken — and a readiness probe on `/departments` could not even tell,
   // because under `destroy` it never answers. Probing this resets the fault on the way in.
+  // Test-only, like the departments fault below: sets what `/api/site/settings` answers next.
+  //
+  // `logo=none|wide|tall` and `social=none|all|one` rather than a free-form payload, so a test names a
+  // *state* and this file owns what that state's bytes are. A GET with no parameters resets it, which is
+  // what makes a run that ended mid-switch harmless.
+  if (url.pathname === '/__test__/site-settings') {
+    siteSettings = buildSiteSettings(
+      url.searchParams.get('logo') ?? 'none',
+      url.searchParams.get('social') ?? 'none',
+      url.searchParams.get('whatsApp'),
+    );
+
+    // The fault modes belong here rather than in a `page.route` handler, and that is the whole reason this
+    // switch exists. The storefront reads these settings during the **server** render, which Playwright's
+    // request interception cannot touch — a test that routed the browser's call would fault a request the
+    // browser never makes (the server hands its answer over with the page) and would quietly measure
+    // nothing. Faulting the stub is the only way to make the server's own read fail.
+    siteSettingsStatus = Number(url.searchParams.get('status') ?? 0);
+    siteSettingsDelayMs = Number(url.searchParams.get('delay') ?? 0);
+
+    response.end(JSON.stringify({ settings: siteSettings, status: siteSettingsStatus, delay: siteSettingsDelayMs }));
+    return;
+  }
+
   if (url.pathname === '/__test__/departments-fault') {
     departmentsFault = url.searchParams.get('mode') ?? 'none';
     response.end(JSON.stringify({ fault: departmentsFault }));
@@ -2156,6 +2340,16 @@ const server = createServer((request, response) => {
   // Stands in for `MediaFileEndpoints`: anything under the media base is a real file with a real
   // media type, so an `<img>` that asks for a rendition gets one instead of a 404 the card would
   // have to swap for its placeholder.
+  // Before the generic rendition handler below, which answers everything under /media/public/ with a 1x1 WebP.
+  // These are real images of the size their payload declares, served as PNG with the matching content type,
+  // which is what lets a test read `naturalWidth` and get an answer that means something.
+  const logoMatch = url.pathname.match(/^\/media\/public\/originals\/logo-([a-z]+)\.png$/);
+  if (logoMatch && LOGO_FILES[logoMatch[1]]) {
+    response.setHeader('Content-Type', 'image/png');
+    response.end(LOGO_FILES[logoMatch[1]]);
+    return;
+  }
+
   if (url.pathname.startsWith('/media/public/')) {
     response.setHeader('Content-Type', 'image/webp');
     response.end(WEBP_PIXEL);
@@ -2178,6 +2372,32 @@ const server = createServer((request, response) => {
     }
 
     response.end(JSON.stringify(homePage()));
+    return;
+  }
+
+  // ADM-22 / GLB-02: the storefront shell's settings, which every page reads on the server.
+  //
+  // Mutable rather than fixed, because the thing under test is what the shell does when it *changes*: the
+  // header has to go from the text wordmark to the logo and back without a rebuild. A test switches it
+  // through `/__test__/site-settings`, so `site-branding.e2e.ts` runs serially — the same arrangement, and
+  // the same reason, as the departments fault switch above.
+  if (url.pathname === '/api/site/settings') {
+    const forced = siteSettingsStatus || Number(process.env.E2E_SITE_SETTINGS_STATUS ?? 0);
+    if (forced >= 400) {
+      response.statusCode = forced;
+      response.end(JSON.stringify({ title: 'Forced failure', status: forced }));
+      return;
+    }
+
+    // An answer that never comes, which `catchError` cannot see — the W2-03 lesson the storefront's timeout
+    // exists for. The socket is left open rather than destroyed, because a destroyed one is an *error* and
+    // the timeout is what has to be proved.
+    if (siteSettingsDelayMs > 0) {
+      setTimeout(() => response.end(JSON.stringify(siteSettings)), siteSettingsDelayMs);
+      return;
+    }
+
+    response.end(JSON.stringify(siteSettings));
     return;
   }
 

@@ -46,6 +46,20 @@ public static class MediaUsageOwnerTypes
     /// </para>
     /// </summary>
     public const string HomeSectionItem = "HomeSectionItem";
+
+    /// <summary>
+    /// An <c>ops.Settings</c> row whose <c>ValueType</c> is <c>MediaAssetRef</c> (doc 08 §3.3, §3.8;
+    /// ADM-22). <see cref="MediaUsage.OwnerId"/> is the setting <b>key</b> rather than a number — the
+    /// one owner type whose id is not an integer, which is why the library's label lookup has to handle
+    /// it separately.
+    /// <para>
+    /// This is what makes the media library refuse to delete the shop's logo while it is the shop's
+    /// logo: <c>Settings.Value</c> has no foreign key to <c>MediaAssets</c> (it is an
+    /// <c>nvarchar(max)</c> holding a number), so the usage row is the <i>only</i> thing standing
+    /// between a staff user and a header with a broken image in it.
+    /// </para>
+    /// </summary>
+    public const string Setting = "Setting";
 }
 
 /// <summary>The <see cref="MediaUsage.UsageRole"/> values this milestone writes.</summary>
@@ -60,4 +74,7 @@ public static class MediaUsageRoles
     public const string Image = "Image";
     public const string Banner = "Banner";
     public const string Poster = "Poster";
+
+    /// <summary>The shop's logo (GLB-02, ADM-22): <c>Store.LogoAssetId</c>'s image.</summary>
+    public const string Logo = "Logo";
 }

@@ -10,6 +10,7 @@ using SpencerDenim.Application.Media;
 using SpencerDenim.Application.Media.Abstractions;
 using SpencerDenim.Application.Media.Contracts;
 using SpencerDenim.Domain.Media;
+using SpencerDenim.Domain.Settings;
 using SpencerDenim.Infrastructure.Catalog;
 using SpencerDenim.Infrastructure.Persistence;
 
@@ -592,6 +593,17 @@ public sealed class MediaService(
 
         foreach (var group in byType)
         {
+            // Settings first, and *before* the integer parse below, because this is the one owner type whose
+            // id is not a number: doc 08 §3.3 says OwnerId is "the owning entity's ID, **or the setting
+            // key**". Parsing first and bailing on `ids.Count == 0` would skip the group entirely, and the
+            // 409 that refuses to delete the shop's live logo would read "Setting Store.LogoAssetId" with no
+            // label at all — on the exact screen the owner asked for so they could remove an old logo.
+            if (string.Equals(group.Key, MediaUsageOwnerTypes.Setting, StringComparison.Ordinal))
+            {
+                AddSettingLabels(labels, group.Select(owner => owner.OwnerId));
+                continue;
+            }
+
             var ids = group
                 .Select(owner => int.TryParse(owner.OwnerId, CultureInfo.InvariantCulture, out var id) ? id : (int?)null)
                 .OfType<int>()
@@ -670,13 +682,42 @@ public sealed class MediaService(
                     break;
 
                 default:
-                    // SizeGuide, Setting, ContentPage … : their tables arrive with later milestones, and
-                    // a missing label is a display fallback, not a failure.
+                    // SizeGuide, ContentPage … : their tables arrive with later milestones, and a missing
+                    // label is a display fallback, not a failure.
                     break;
             }
         }
 
         return labels;
+    }
+
+    /// <summary>
+    /// Labels for <c>ops.Settings</c> owners (ADM-22). Keyed by the setting key rather than by an id, which
+    /// is why it cannot share <see cref="AddLabelsAsync"/>.
+    /// <para>
+    /// <b>No query, because the label is not data.</b> A key's short name is a property of the key, declared
+    /// in <see cref="SettingCatalog"/> — so it is read from source rather than from the row, which also means
+    /// the "used in…" panel labels a setting correctly on a database whose row was scripted in with different
+    /// casing. A key this build does not know gets no label, and the client falls back to the type and id as
+    /// it does for every other unlabelled owner.
+    /// </para>
+    /// <para>
+    /// It is the <i>short</i> label and not <c>Description</c>: the first version used the description, so a
+    /// 185-character paragraph arrived in a field doc 08 §3.3 documents as "a name a person recognises",
+    /// beside entries like "Wide-Leg Rinse Jeans".
+    /// </para>
+    /// </summary>
+    private static void AddSettingLabels(
+        Dictionary<(string, string), string> labels,
+        IEnumerable<string> settingKeys)
+    {
+        foreach (var key in settingKeys.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (SettingCatalog.Find(key) is { } definition)
+            {
+                labels[(MediaUsageOwnerTypes.Setting, key)] = definition.Label;
+            }
+        }
     }
 
     private sealed record LabelRow(int Id, string Name);
