@@ -29,8 +29,15 @@ namespace SpencerDenim.IntegrationTests.Identity;
 /// audit row now comes from a factory.
 /// </para>
 /// <para>
-/// The failure is injected at the <i>audit insert</i> — the last write inside each transaction — because that is
-/// the latest possible point, where the most state has accumulated and a retry has the most to get wrong.
+/// <b>Two injection points, because one of them cannot see half the defect.</b>
+/// <see cref="AuditInsertFailureInterceptor"/> throws from <c>ReaderExecuting</c>/<c>NonQueryExecuting</c>, so the
+/// failure lands <i>before</i> the audit INSERT reaches SQL Server: the most state the transaction will ever hold,
+/// and the point that proves the change tracker is cleared per attempt. But EF never reads an identity value back
+/// on that attempt, so <c>AuditLog.Id</c> stays <c>0</c> and re-enlisting one shared instance is harmless — a test
+/// injecting there cannot fail on the identity-value half of the defect, and with the factory reverted it does not.
+/// <see cref="AuditCommitFailureInterceptor"/> exists for exactly that half: it throws at transaction
+/// <i>commit</i>, after <c>SaveChangesAsync</c> has returned and written the generated key onto the entity, which
+/// is the only moment from which a retry can carry a populated <c>AuditLog.Id</c> into a second INSERT.
 /// </para>
 /// </summary>
 public sealed class StaffUserWriteRetryTests(SqlServerDatabaseFixture sqlServer)
@@ -72,6 +79,42 @@ public sealed class StaffUserWriteRetryTests(SqlServerDatabaseFixture sqlServer)
         var user = await scope.ServiceProvider.GetRequiredService<AppDbContext>().Users.AsNoTracking()
             .SingleAsync(u => u.Id == world.TargetId, Token);
         Assert.Equal("Renamed", user.FirstName);
+        Assert.Equal(1, await world.CountAuditRowsAsync(marker));
+    }
+
+    /// <summary>
+    /// The <c>Func&lt;AuditLog&gt;</c> half of tester round 3's Major 1 (review round 4, item 3). The transient
+    /// arrives at <c>CommitAsync</c>, so the audit INSERT has already run and EF has written the identity value it
+    /// read back onto the enlisted <see cref="AuditLog"/>. Hoist that row out of the retried block — one instance
+    /// for every attempt, which is what this branch's first <c>Enlist</c> conversion did — and the retry re-adds an
+    /// entity whose key is already set, which SQL Server refuses with
+    /// <c>Cannot insert explicit value for identity column in table 'AuditLogs' when IDENTITY_INSERT is set to
+    /// OFF</c>: the exact symptom reported for this defect. Taking the row from a factory is what makes this pass,
+    /// and nothing else here does — <c>ChangeTracker.Clear()</c> cannot help, because detaching the instance does
+    /// not clear the key EF put on it.
+    /// </summary>
+    [Fact]
+    public async Task A_profile_edit_survives_one_transient_failure_at_commit_and_leaves_exactly_one_audit_row()
+    {
+        var world = await ArrangeAsync("retry-commit", injectFailure: false);
+        var marker = $"retry-commit-{Guid.NewGuid():N}";
+
+        // Armed only now: unlike the command injector, this one cannot filter by SQL text, so arming it before
+        // the arrangement above would fire on whichever of its saves opened a transaction first.
+        world.CommitInjector.Arm();
+
+        var result = await world.RunAsync((store, _) =>
+            store.UpdateProfileAsync(world.TargetId, "Renamed", "Target", newEmail: null, GrantsAllActor, () => Audit(marker, world.TargetId), Token));
+
+        Assert.IsType<UpdateProfileStoreResult.Success>(result);
+        Assert.Equal(1, world.CommitInjector.Fired);
+
+        await using var scope = world.Factory.Services.CreateAsyncScope();
+        var user = await scope.ServiceProvider.GetRequiredService<AppDbContext>().Users.AsNoTracking()
+            .SingleAsync(u => u.Id == world.TargetId, Token);
+        Assert.Equal("Renamed", user.FirstName);
+
+        // One row, not two: the first attempt's INSERT was rolled back with its transaction.
         Assert.Equal(1, await world.CountAuditRowsAsync(marker));
     }
 
@@ -150,9 +193,14 @@ public sealed class StaffUserWriteRetryTests(SqlServerDatabaseFixture sqlServer)
         await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, Token);
 
         var injector = new AuditInsertFailureInterceptor(armed: injectFailure);
+        var commitInjector = new AuditCommitFailureInterceptor();
         var factory = new ApiFactory(
             sqlServer.ConnectionString,
-            configureServices: services => services.AddSingleton<IInterceptor>(injector));
+            configureServices: services =>
+            {
+                services.AddSingleton<IInterceptor>(injector);
+                services.AddSingleton<IInterceptor>(commitInjector);
+            });
 
         await using var scope = factory.Services.CreateAsyncScope();
         var userManager = scope.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
@@ -177,10 +225,16 @@ public sealed class StaffUserWriteRetryTests(SqlServerDatabaseFixture sqlServer)
         Assert.True((await userManager.CreateAsync(target, "Correct-Password-1!")).Succeeded);
         Assert.True((await userManager.AddToRoleAsync(target, narrowRole.Name!)).Succeeded);
 
-        return new RetryWorld(factory, injector, target.Id, wideRole.Id, wideRole.Name!);
+        return new RetryWorld(factory, injector, commitInjector, target.Id, wideRole.Id, wideRole.Name!);
     }
 
-    private sealed record RetryWorld(ApiFactory Factory, AuditInsertFailureInterceptor Injector, int TargetId, int WideRoleId, string WideRoleName)
+    private sealed record RetryWorld(
+        ApiFactory Factory,
+        AuditInsertFailureInterceptor Injector,
+        AuditCommitFailureInterceptor CommitInjector,
+        int TargetId,
+        int WideRoleId,
+        string WideRoleName)
     {
         /// <summary>Runs the write in its own scope, exactly as one HTTP request would, then arms nothing further.</summary>
         public async Task<T> RunAsync<T>(Func<IStaffUserRoleManagementStore, AppDbContext, Task<T>> write)
@@ -269,6 +323,67 @@ public sealed class StaffUserWriteRetryTests(SqlServerDatabaseFixture sqlServer)
             if (Interlocked.CompareExchange(ref _fired, 1, 0) == 0)
             {
                 throw new TimeoutException("Injected transient failure on the audit insert (tester round 3, Major 1).");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Throws a <see cref="TimeoutException"/> — which EF's SQL Server transient detector retries, exactly as it
+    /// does for <see cref="AuditInsertFailureInterceptor"/> — the first time a transaction tries to commit, then
+    /// never again. A commit timeout is one of the plainest Azure SQL transients there is (doc 08 §10.5).
+    /// <para>
+    /// <b>Why this exists alongside the command injector</b> (review round 4, item 3). A failure injected before
+    /// the audit INSERT leaves <c>AuditLog.Id</c> at <c>0</c>, so re-enlisting one shared row on the retry inserts
+    /// it as if it were new and nothing goes wrong: that injection point simply cannot observe the identity-value
+    /// defect, which is why the suite stayed green when the <c>Func&lt;AuditLog&gt;</c> fix was reverted under it.
+    /// By the time <c>CommitAsync</c> runs, <c>SaveChangesAsync</c> has returned and EF has written the key the
+    /// database generated onto the tracked entity, so a retried attempt that reuses that instance carries the key
+    /// into its own INSERT. The two injectors therefore test different things and neither replaces the other: the
+    /// command one proves the change tracker is cleared per attempt, this one proves the audit row is rebuilt.
+    /// </para>
+    /// <para>
+    /// It cannot filter by SQL text the way the command injector does, so it stays disarmed until
+    /// <see cref="Arm"/> is called — otherwise it would fire on the arrangement's own saves.
+    /// </para>
+    /// </summary>
+    private sealed class AuditCommitFailureInterceptor : DbTransactionInterceptor
+    {
+        private int _armed;
+        private int _fired;
+
+        public int Fired => Volatile.Read(ref _fired);
+
+        public void Arm() => Volatile.Write(ref _armed, 1);
+
+        public override InterceptionResult TransactionCommitting(
+            DbTransaction transaction,
+            TransactionEventData eventData,
+            InterceptionResult result)
+        {
+            FailOnce();
+            return base.TransactionCommitting(transaction, eventData, result);
+        }
+
+        public override ValueTask<InterceptionResult> TransactionCommittingAsync(
+            DbTransaction transaction,
+            TransactionEventData eventData,
+            InterceptionResult result,
+            CancellationToken cancellationToken = default)
+        {
+            FailOnce();
+            return base.TransactionCommittingAsync(transaction, eventData, result, cancellationToken);
+        }
+
+        private void FailOnce()
+        {
+            if (Volatile.Read(ref _armed) == 0)
+            {
+                return;
+            }
+
+            if (Interlocked.CompareExchange(ref _fired, 1, 0) == 0)
+            {
+                throw new TimeoutException("Injected transient failure at transaction commit (review round 4, item 3).");
             }
         }
     }
