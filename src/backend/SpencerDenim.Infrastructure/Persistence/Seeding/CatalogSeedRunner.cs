@@ -10,6 +10,7 @@ namespace SpencerDenim.Infrastructure.Persistence.Seeding;
 /// </summary>
 public sealed partial class CatalogSeedRunner(
     CatalogReferenceDataSeeder referenceData,
+    SalesReferenceDataSeeder salesReferenceData,
     HomeContentSeeder homeContent,
     SettingsSeeder settings,
     DemoCatalogueSeeder demoCatalogue,
@@ -24,6 +25,13 @@ public sealed partial class CatalogSeedRunner(
     public async Task<SeedCounts> RunAsync(bool includeDemoCatalogue, CancellationToken cancellationToken)
     {
         var counts = await referenceData.SeedAsync(cancellationToken);
+
+        // Doc 08 §9's sales reference data: the districts an address names, the delivery methods and their
+        // zone rates, and the payment providers checkout lists. It runs on every environment including
+        // production, because none of it is sample data — a shop with no districts cannot take an order at
+        // all (`sales.Orders.DeliveryDistrictId` is NOT NULL) and a shop with no enabled payment provider
+        // has nothing for a shopper to choose.
+        counts.Sales = await salesReferenceData.SeedAsync(cancellationToken);
 
         // After the reference data, because the department tiles of HOME-02 point at the three
         // seeded departments and cannot be written before they exist.
