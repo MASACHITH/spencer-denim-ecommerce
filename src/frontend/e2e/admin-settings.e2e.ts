@@ -1,5 +1,5 @@
 import AxeBuilder from '@axe-core/playwright';
-import { Page, expect, test } from '@playwright/test';
+import { Page, Response, expect, test } from '@playwright/test';
 
 import { adminURL, adminWorktreeRoot } from '../playwright.config';
 import { edgesWithoutRing, horizontalOverflow, undersized } from './support/measure';
@@ -190,6 +190,36 @@ test.describe('the logo panel (GLB-02)', () => {
   });
 });
 
+/**
+ * Clicks Save on the contact and social form and waits for **that save's own response**.
+ *
+ * **Why this exists, and why a wait would not do.** `page.reload()` aborts whatever the page still has in
+ * flight. A reload issued straight after the click therefore races the `PUT` off the socket, and when the
+ * navigation wins the save never reaches the server at all — so the reloaded form shows the *old* value,
+ * settled, pristine and completely stable. No amount of polling can recover it, because the value on the
+ * server is already the wrong one; this is why the failure presented as a confident wrong value rather than
+ * as a timeout.
+ *
+ * **The screen offers nothing in the DOM to gate on instead.** `announcement` is set to the same sentence by
+ * every save and never clears, so after a *second* save nothing in the markup transitions — which is how the
+ * first version of these tests came to gate on `page-error` having count 0. That assertion is already true
+ * before the request is even sent, so it gated nothing and the reload went out on top of the live `PUT`.
+ *
+ * Returning the response lets the caller assert the save was *accepted*. A 409 or a 400 here used to leave no
+ * trace but a stale value several lines later.
+ */
+async function saveContactAndSocial(page: Page): Promise<Response> {
+  const settled = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/admin/settings/contact-social'
+      && response.request().method() === 'PUT',
+  );
+
+  await page.locator('[data-testid="save-contact-social"]').click();
+
+  return settled;
+}
+
 test.describe('the contact and social panel (GLB-07, GLB-08)', () => {
   test('saves the number and the three addresses together', async ({ page }) => {
     await openSettings(page);
@@ -199,7 +229,8 @@ test.describe('the contact and social panel (GLB-07, GLB-08)', () => {
     await page.locator('[data-testid="field-instagramUrl"]').fill('https://www.instagram.com/colombowardrobe');
     await page.locator('[data-testid="field-tikTokUrl"]').fill('https://www.tiktok.com/@colombowardrobe');
 
-    await page.locator('[data-testid="save-contact-social"]').click();
+    const saved = await saveContactAndSocial(page);
+    expect(saved.ok(), `the save answered ${saved.status()}`).toBe(true);
 
     await expect(page.locator('[data-testid="announcement"]')).toContainText('saved');
     await expect(page.locator('[data-testid="page-error"]')).toHaveCount(0);
@@ -223,11 +254,18 @@ test.describe('the contact and social panel (GLB-07, GLB-08)', () => {
     await page.locator('[data-testid="field-facebookUrl"]').fill('https://www.facebook.com/one');
     await page.locator('[data-testid="field-instagramUrl"]').fill('https://www.instagram.com/one');
     await page.locator('[data-testid="field-tikTokUrl"]').fill('https://www.tiktok.com/@one');
-    await page.locator('[data-testid="save-contact-social"]').click();
+
+    const first = await saveContactAndSocial(page);
+    expect(first.ok(), `the first save answered ${first.status()}`).toBe(true);
     await expect(page.locator('[data-testid="announcement"]')).toContainText('saved');
 
     await page.locator('[data-testid="field-whatsApp"]').fill('94779999999');
-    await page.locator('[data-testid="save-contact-social"]').click();
+
+    // The second save needs a gate of its own. The announcement already says "saved" from the first one, so
+    // it transitions on nothing here — and the reload below would otherwise abort this `PUT` before it left
+    // the browser, which is exactly how this test failed on Linux CI while passing on Windows.
+    const second = await saveContactAndSocial(page);
+    expect(second.ok(), `the second save answered ${second.status()}`).toBe(true);
     await expect(page.locator('[data-testid="page-error"]')).toHaveCount(0);
 
     await page.reload();
@@ -241,11 +279,16 @@ test.describe('the contact and social panel (GLB-07, GLB-08)', () => {
     await openSettings(page);
 
     await page.locator('[data-testid="field-instagramUrl"]').fill('https://www.instagram.com/one');
-    await page.locator('[data-testid="save-contact-social"]').click();
+
+    const set = await saveContactAndSocial(page);
+    expect(set.ok(), `the save answered ${set.status()}`).toBe(true);
     await expect(page.locator('[data-testid="announcement"]')).toContainText('saved');
 
     await page.locator('[data-testid="field-instagramUrl"]').fill('');
-    await page.locator('[data-testid="save-contact-social"]').click();
+
+    // As above: the clearing save had no gate at all, so the reload raced it.
+    const cleared = await saveContactAndSocial(page);
+    expect(cleared.ok(), `the clearing save answered ${cleared.status()}`).toBe(true);
 
     await page.reload();
     await expect(page.locator('[data-testid="field-instagramUrl"]')).toHaveValue('');
