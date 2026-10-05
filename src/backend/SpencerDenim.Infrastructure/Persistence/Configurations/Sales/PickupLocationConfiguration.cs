@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using SpencerDenim.Domain.Reference;
 using SpencerDenim.Domain.Sales;
 
 namespace SpencerDenim.Infrastructure.Persistence.Configurations.Sales;
@@ -26,13 +27,21 @@ internal sealed class PickupLocationConfiguration : IEntityTypeConfiguration<Pic
 
         builder.ApplyAuditColumns();
 
-        // The index for a foreign key that cannot exist yet. Doc 08 §3.5 gives DistrictId an FK to
-        // ref.Districts; no migration has created that table (GLB-06), so the constraint is deferred and
-        // only the column and its index are built. Building the index now means adding the FK later is a
-        // metadata-only change, and it keeps doc 08 §1.6's DB7 rule ("every FK column leads at least one
-        // index") true at the moment the constraint arrives rather than one migration afterwards.
+        // Doc 08 §3.5 gives DistrictId an FK to ref.Districts. W3-03 built the column and this index with
+        // no constraint because the table did not exist; W3-02 created it (doc 08 §3.1), so the constraint
+        // lands here. The index stays named explicitly rather than left to EF's convention, which is what
+        // doc 08 §1.6's DB7 rule asks for.
+        //
+        // NO ACTION, and it is load-bearing for R7: a PICKUP order's district is the *location's*
+        // district, so a district that still has an active pickup location must not be removable.
         builder
             .HasIndex(location => location.DistrictId)
             .HasDatabaseName("IX_PickupLocations_DistrictId");
+
+        builder
+            .HasOne<District>()
+            .WithMany()
+            .HasForeignKey(location => location.DistrictId)
+            .OnDelete(DeleteBehavior.NoAction);
     }
 }

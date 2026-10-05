@@ -438,15 +438,29 @@ public sealed class SalesSchemaTests(SqlServerDatabaseFixture sqlServer) : Sales
             .ToListAsync(Token);
 
     /// <summary>
-    /// The three doc 08 foreign keys that are columns without constraints, because the table they would point
-    /// at does not exist yet. Named in a test so that creating <c>ref.Districts</c> or
-    /// <c>marketing.PromoCodes</c> and forgetting the constraint is a failure rather than a silence.
+    /// The doc 08 foreign keys that are still columns without constraints, because the table they would
+    /// point at does not exist yet. Named in a test so that creating <c>marketing.PromoCodes</c> or
+    /// <c>marketing.SaleCampaigns</c> and forgetting the constraint is a failure rather than a silence.
     /// </summary>
+    /// <remarks>
+    /// <b><c>Orders.DeliveryDistrictId</c> and <c>PickupLocations.DistrictId</c> have been taken out of
+    /// this list by W3-02, and this test is why they were in it.</b> W3-03 built them as bare columns
+    /// because <c>ref.Districts</c> did not exist, and listed them here so that whichever task created
+    /// that table would be forced to notice. W3-02 created it (doc 08 §3.1 heads it "GLB-06, CHK-01"),
+    /// and this test failed — which is the guard working, not a regression. Both now have real
+    /// constraints, asserted positively in
+    /// <see cref="The_district_foreign_keys_W3_03_deferred_now_exist"/>; leaving them here would have
+    /// meant asserting the absence of a constraint this branch deliberately added.
+    /// <para>
+    /// <c>identity.Users.DefaultDistrictId</c> is doc 08 §3.1's third FK to <c>ref.Districts</c> and is
+    /// deliberately still unconstrained — it has no index, no reader (there is no customer sign-in,
+    /// ACC-01) and lives on a table this branch does not own. It is not in either list because this
+    /// theory only looks at the <c>sales</c> schema; see <c>AppUser.DefaultDistrictId</c>.
+    /// </para>
+    /// </remarks>
     [Theory]
-    [InlineData("Orders", "DeliveryDistrictId")]
     [InlineData("Orders", "PromoCodeId")]
     [InlineData("OrderLines", "SaleCampaignId")]
-    [InlineData("PickupLocations", "DistrictId")]
     public async Task The_deferred_foreign_keys_are_indexed_columns_with_no_constraint(string table, string column)
     {
         SqlServer.SkipIfUnavailable();
@@ -475,6 +489,58 @@ public sealed class SalesSchemaTests(SqlServerDatabaseFixture sqlServer) : Sales
             .SingleAsync(Token);
 
         Assert.True(leadsAnIndex >= 1, $"sales.{table}.{column} leads no index.");
+    }
+
+    /// <summary>
+    /// The two foreign keys to <c>ref.Districts</c> that W3-03 deferred and W3-02 added, asserted
+    /// positively: the constraint exists, it points at <c>ref.Districts.Id</c>, and it is
+    /// <c>NO ACTION</c>.
+    /// </summary>
+    /// <remarks>
+    /// <b>The delete rule is the half worth asserting.</b> Doc 08 §1.6 makes <c>NO ACTION</c> the default
+    /// and names the complete cascade allow-list, which these are not on. A cascade here would mean
+    /// deleting one row of reference data deleted <b>orders</b> — and doc 08 §1.6 lists Orders among the
+    /// rows that are never deleted at all. The constraint existing is the easy part; it existing with the
+    /// wrong rule is the one that would be a catastrophe nobody noticed, which is the same lesson W3-03's
+    /// own silently-missing index taught.
+    /// <para>
+    /// The referenced table and column are checked too, because an FK pointing at the wrong column would
+    /// still satisfy "a constraint exists on this column".
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData("Orders", "DeliveryDistrictId")]
+    [InlineData("PickupLocations", "DistrictId")]
+    public async Task The_district_foreign_keys_W3_03_deferred_now_exist(string table, string column)
+    {
+        SqlServer.SkipIfUnavailable();
+
+        var shape = await DbContext.Database
+            .SqlQuery<string>($"""
+                -- COLLATE DATABASE_DEFAULT on every catalogue string: `sys` views carry the server's
+                -- collation (Latin1_General_CI_AS_KS_WS here) and this database is created with doc 08
+                -- §1.1's Latin1_General_100_CI_AS_SC, so concatenating the two is a collation conflict
+                -- rather than a comparison. It fails as a SqlException, which is loud — but it only fails
+                -- on a database whose collation differs from the server's, which is every database this
+                -- fixture makes and not necessarily a developer's dev one.
+                SELECT CONCAT(
+                           SCHEMA_NAME(rt.schema_id) COLLATE DATABASE_DEFAULT, '.',
+                           rt.name COLLATE DATABASE_DEFAULT, '.',
+                           rc.name COLLATE DATABASE_DEFAULT,
+                           '|', fk.delete_referential_action_desc COLLATE DATABASE_DEFAULT,
+                           '|', fk.update_referential_action_desc COLLATE DATABASE_DEFAULT) AS [Value]
+                FROM sys.foreign_keys fk
+                JOIN sys.foreign_key_columns fc ON fc.constraint_object_id = fk.object_id
+                JOIN sys.columns pc
+                  ON pc.object_id = fc.parent_object_id AND pc.column_id = fc.parent_column_id
+                JOIN sys.tables rt ON rt.object_id = fc.referenced_object_id
+                JOIN sys.columns rc
+                  ON rc.object_id = fc.referenced_object_id AND rc.column_id = fc.referenced_column_id
+                WHERE fc.parent_object_id = OBJECT_ID('sales.' + {table}) AND pc.name = {column}
+                """)
+            .ToListAsync(Token);
+
+        Assert.Equal(["ref.Districts.Id|NO_ACTION|NO_ACTION"], shape);
     }
 
     /// <summary>Every index doc 08 §3.5 names by name, with the filter it names.</summary>

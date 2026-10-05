@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using SpencerDenim.Domain.Reference;
 using SpencerDenim.Domain.Sales;
 using SpencerDenim.Infrastructure.Identity;
 
@@ -14,11 +15,19 @@ namespace SpencerDenim.Infrastructure.Persistence.Configurations.Sales;
 /// make a cascade by convention because the line's <c>OrderId</c> is required.
 /// </para>
 /// <para>
-/// <b>Three of doc 08's foreign keys are columns only, for now:</b> <c>DeliveryDistrictId</c> and
-/// <c>PromoCodeId</c> here, and <c>SaleCampaignId</c> on the line. <c>ref.Districts</c> (GLB-06),
-/// <c>marketing.PromoCodes</c> (ADM-13) and <c>marketing.SaleCampaigns</c> (ADM-14) have not been created
-/// by any migration, so there is nothing for the constraints to reference. Each column is indexed as if the
-/// constraint existed, so adding it later is one <c>ALTER TABLE</c>.
+/// <b>Two of doc 08's foreign keys are still columns only:</b> <c>PromoCodeId</c> here and
+/// <c>SaleCampaignId</c> on the line, because <c>marketing.PromoCodes</c> (ADM-13) and
+/// <c>marketing.SaleCampaigns</c> (ADM-14) have not been created by any migration. Each is indexed as if
+/// the constraint existed, so adding it later is one <c>ALTER TABLE</c>.
+/// </para>
+/// <para>
+/// <b><c>DeliveryDistrictId</c> was the third, and W3-02 has made it a real constraint.</b> W3-03 built
+/// the column with its index and no foreign key because <c>ref.Districts</c> did not exist; checkout
+/// created that table (doc 08 §3.1 heads it "GLB-06, CHK-01, ADM-08") and so owed the constraint in the
+/// same change. <c>NO ACTION</c>, like every other relationship here: a district is reference data that is
+/// deactivated rather than deleted, and an order's own <c>DeliveryDistrictName</c> and
+/// <c>DeliveryZone</c> are snapshots precisely so the row keeps reading correctly whatever happens to the
+/// district afterwards.
 /// </para>
 /// </summary>
 internal sealed class OrderConfiguration : IEntityTypeConfiguration<Order>
@@ -344,6 +353,16 @@ internal sealed class OrderConfiguration : IEntityTypeConfiguration<Order>
             .HasOne(order => order.Courier)
             .WithMany()
             .HasForeignKey(order => order.CourierId)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        // No navigation property, for the reason the AppUser relationship above gives: a collection of
+        // orders on a `ref` entity would make reference data depend on sales. The constraint is what
+        // matters — doc 08 §3.5 calls this an "entity-level FK Districts" — and `DeliveryDistrictName`
+        // plus `DeliveryZone` are the snapshots the order reads from, so nothing here ever navigates.
+        builder
+            .HasOne<District>()
+            .WithMany()
+            .HasForeignKey(order => order.DeliveryDistrictId)
             .OnDelete(DeleteBehavior.NoAction);
     }
 }

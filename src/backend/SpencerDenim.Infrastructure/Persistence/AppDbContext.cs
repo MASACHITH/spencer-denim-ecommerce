@@ -7,6 +7,7 @@ using SpencerDenim.Domain.Content;
 using SpencerDenim.Domain.Inventory;
 using SpencerDenim.Domain.Marketing;
 using SpencerDenim.Domain.Media;
+using SpencerDenim.Domain.Reference;
 using SpencerDenim.Domain.Sales;
 using SpencerDenim.Domain.Settings;
 using SpencerDenim.Infrastructure.Identity;
@@ -64,6 +65,13 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public const string ContentSchema = "content";
 
     public const string MarketingSchema = "marketing";
+
+    /// <summary>
+    /// Doc 08 §1.2's shared reference data: <c>Provinces</c> and <c>Districts</c>. Created by W3-02's
+    /// migration, because <c>sales.Orders.DeliveryDistrictId</c> is <c>NOT NULL</c> and no order can be
+    /// written without it (doc 08 §3.1 heads both tables "GLB-06, CHK-01").
+    /// </summary>
+    public const string ReferenceSchema = "ref";
 
     /// <summary>
     /// Doc 08 §1.2. Created by W2-09's migration with <c>Carts</c> and <c>CartItems</c>; W3-03 added the rest
@@ -134,6 +142,10 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<AnnouncementMessage> AnnouncementMessages => Set<AnnouncementMessage>();
 
     public DbSet<NewsletterSubscriber> NewsletterSubscribers => Set<NewsletterSubscriber>();
+
+    public DbSet<Province> Provinces => Set<Province>();
+
+    public DbSet<District> Districts => Set<District>();
 
     public DbSet<Cart> Carts => Set<Cart>();
 
