@@ -1291,6 +1291,65 @@ public sealed class AdminSettingsEndpointTests(SqlServerDatabaseFixture sqlServe
     }
 
     /// <summary>
+    /// **The refusal must not depend on whether the guess was right.**
+    ///
+    /// The first version checked the caller's permission against the keys that turned out to have
+    /// <i>changed</i>, which made the endpoint a one-bit oracle on a value the caller may not read: submit a
+    /// candidate equal to the stored value and the key never enters the diff, so the answer is 204; submit one
+    /// that differs and it is 403. One guess, one bit, repeatable — and the round-2 fix that lets a request
+    /// carry a single field made it a clean probe, because nothing else masks the signal.
+    ///
+    /// So this asserts the two answers are the <b>same</b>. It is deliberately not an assertion about 403
+    /// alone: a handler that refused both would pass that, and a handler that leaked would too.
+    /// </summary>
+    [Fact]
+    public async Task A_refusal_does_not_reveal_whether_the_submitted_value_matched()
+    {
+        await using var host = await StartAsync();
+        using var client = await host.SignInAsync(Permissions.Settings.Edit);
+
+        const string stored = "https://www.facebook.com/the-real-one";
+
+        try
+        {
+            // Put a known value in while the caller is still allowed to write it, then take the permission away.
+            await PutAsync(client, ContactSocialUrl, new
+            {
+                facebookUrl = stored,
+                rowVersion = await ContactVersionAsync(client),
+            });
+
+            await RequirePermissionAsync(host, SettingKeys.Social.FacebookUrl, Permissions.Settings.Payments);
+
+            // A guess that is wrong.
+            var (wrongStatus, _) = await PutAsync(client, ContactSocialUrl, new
+            {
+                facebookUrl = "https://www.facebook.com/a-wrong-guess",
+                rowVersion = await ContactVersionAsync(client),
+            });
+
+            // And a guess that is exactly right. Under the old check this one answered 204, because an
+            // unchanged key never reached the permission test.
+            var (rightStatus, _) = await PutAsync(client, ContactSocialUrl, new
+            {
+                facebookUrl = stored,
+                rowVersion = await ContactVersionAsync(client),
+            });
+
+            Assert.Equal(HttpStatusCode.Forbidden, wrongStatus);
+            Assert.Equal(wrongStatus, rightStatus);
+
+            // And the value the caller was guessing at is still what it was.
+            Assert.Equal(stored, await ValueAsync(host, SettingKeys.Social.FacebookUrl));
+        }
+        finally
+        {
+            await RequirePermissionAsync(host, SettingKeys.Social.FacebookUrl, Permissions.Settings.Edit);
+            await RestoreAsync(host);
+        }
+    }
+
+    /// <summary>
     /// And a field the request <b>omits</b> is not written, so a caller whose screen cannot read a group does
     /// not clear it. This is the server-side half of W1-12's shape, which the first version had backwards:
     /// absent read as null and cleared the key.

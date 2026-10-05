@@ -144,6 +144,27 @@ public sealed class UpdateContactAndSocialCommandHandler(
                       + "see their change, then re-apply yours.");
         }
 
+        // **Over the keys the caller asked to write, not the ones that turned out to differ.**
+        //
+        // Checking the diff instead made this a one-bit oracle on a value the caller may not read: submit a
+        // guess equal to the stored value and the key never enters `changed`, so the answer is 204; submit one
+        // that differs and it is 403. One guess, one bit, repeatable. The round-2 fix that let a request carry
+        // a single field made it a *clean* probe, because nothing else masks the signal.
+        //
+        // The usability reason for diffing first — "a screen that re-submits a field it cannot change should
+        // not be refused" — went away with that same fix: such a screen no longer sends the field at all.
+        //
+        // Still after the concurrency check, deliberately. A stale form should be told to reload before it is
+        // told about permissions, and "is my token current" is something any legitimate save reveals anyway.
+        var requested = Targets
+            .Where(target => wanted.ContainsKey(target.Key))
+            .Select(target => byKey[target.Key]);
+
+        if (await CheckPermissionAsync(requested, command.Actor, cancellationToken) is { } refused)
+        {
+            return refused;
+        }
+
         var changed = new List<string>();
         var audits = new List<AuditLog>();
         var now = clock.UtcNow.UtcDateTime;
@@ -172,14 +193,6 @@ public sealed class UpdateContactAndSocialCommandHandler(
         if (changed.Count == 0)
         {
             return new SettingsWriteResult.Unchanged();
-        }
-
-        // After the diff, so a key the caller may not write is only a refusal when they are actually changing
-        // it — and before any mutation, so a refusal leaves nothing half applied.
-        if (await CheckPermissionAsync(changed.Select(key => byKey[key]), command.Actor, cancellationToken)
-            is { } forbidden)
-        {
-            return forbidden;
         }
 
         foreach (var key in changed)

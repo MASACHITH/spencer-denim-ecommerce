@@ -266,11 +266,24 @@ public sealed class SettingsRoundTripTests
     }
 
     /// <summary>
-    /// And a key they may not write but are <i>not changing</i> is not a refusal — which is what lets a screen
-    /// that omits the group it cannot read save the group it can.
+    /// **Reversed on purpose, and this test is the record of why.**
+    ///
+    /// It used to assert the opposite: that a key the caller may not write is <i>not</i> a refusal when the
+    /// submitted value happens to equal the stored one, so that a screen re-submitting a field it cannot
+    /// change would still save the fields it can. That was a deliberate choice and it was wrong — it made the
+    /// endpoint a **one-bit oracle** on a value the caller is not allowed to read. Submit a guess that matches
+    /// and the answer is success; submit one that differs and it is a refusal. One guess, one bit, repeatable.
+    ///
+    /// The usability reason for it went away with the absent-is-not-null fix: a screen that cannot read a group
+    /// no longer <i>sends</i> that group, so it is never refused for it. The permission is therefore checked
+    /// over the keys the request asked to write, before the diff — and a request that names a key it may not
+    /// write is refused whether or not it guessed the value correctly.
+    ///
+    /// See <c>A_refusal_does_not_reveal_whether_the_submitted_value_matched</c>, which asserts the two answers
+    /// are the same rather than asserting either one.
     /// </summary>
     [Fact]
-    public async Task A_key_the_caller_cannot_write_but_is_not_changing_is_not_a_refusal()
+    public async Task A_key_the_caller_cannot_write_is_refused_even_when_the_value_would_not_change()
     {
         var store = new FakeSettingsStore();
         store.Rows[SettingKeys.Social.FacebookUrl].Value = "https://www.facebook.com/unchanged";
@@ -280,6 +293,32 @@ public sealed class SettingsRoundTripTests
         var result = await Contact(store, Permissions.Settings.Edit).HandleAsync(
             new UpdateContactAndSocialCommand(
                 AllFields("94771234567", "https://www.facebook.com/unchanged"), token, Actor),
+            Token);
+
+        var forbidden = Assert.IsType<SettingsWriteResult.Forbidden>(result);
+        Assert.Equal([SettingKeys.Social.FacebookUrl], forbidden.Keys);
+
+        // And nothing was written, including the key they could have changed.
+        Assert.Equal(0, store.Saves);
+        Assert.Null(store.Rows[SettingKeys.Contact.WhatsApp].Value);
+    }
+
+    /// <summary>
+    /// The half that still has to work: a screen that <b>omits</b> the group it cannot read saves the group it
+    /// can. This is what the reversed test above was reaching for, and it is the correct way to get it.
+    /// </summary>
+    [Fact]
+    public async Task A_request_that_omits_the_group_it_cannot_write_still_saves_the_one_it_can()
+    {
+        var store = new FakeSettingsStore();
+        var token = await PublishedTokenAsync(store, SettingKeys.Contact.Group);
+        store.Rows[SettingKeys.Social.FacebookUrl].RequiredPermission = Permissions.Settings.Payments;
+
+        var result = await Contact(store, Permissions.Settings.Edit).HandleAsync(
+            new UpdateContactAndSocialCommand(
+                new Dictionary<string, string?>(StringComparer.Ordinal) { ["whatsApp"] = "94771234567" },
+                token,
+                Actor),
             Token);
 
         var succeeded = Assert.IsType<SettingsWriteResult.Succeeded>(result);
