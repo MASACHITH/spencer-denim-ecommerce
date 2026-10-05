@@ -129,7 +129,7 @@ const LOGO_ACCEPT = 'image/png,image/jpeg,image/webp';
                     type="file"
                     name="logoFile"
                     [accept]="accept"
-                    [disabled]="busy()"
+                    [attr.aria-disabled]="busy() ? 'true' : null"
                     (change)="onLogoChosen($event)"
                     data-testid="logo-file"
                     #logoFile
@@ -142,10 +142,15 @@ const LOGO_ACCEPT = 'image/png,image/jpeg,image/webp';
 
               @if (loaded.logo) {
                 <div class="adm-actions">
+                  <!-- Also aria-disabled, for the reason the Save button gives. This one differs in what
+                       happens *after*: a successful removal takes loaded.logo away, so this button is
+                       gone from the screen by design and focus cannot stay on it. removeLogo therefore
+                       hands focus to the upload box, which is the control that replaces it in the same
+                       panel and the obvious next step. -->
                   <button
                     class="adm-btn--danger"
                     type="button"
-                    [disabled]="busy()"
+                    [attr.aria-disabled]="busy() ? 'true' : null"
                     (click)="removeLogo()"
                     data-testid="logo-remove"
                   >
@@ -224,10 +229,16 @@ const LOGO_ACCEPT = 'image/png,image/jpeg,image/webp';
               }
 
               <div class="adm-actions adm-field--wide">
+                <!-- aria-disabled rather than disabled, and that is the whole point of it.
+                     Disabling a button that currently has focus makes the browser drop focus to <body>,
+                     so the admin lost their place on the screen the moment they pressed Save — by their
+                     own keystroke. aria-disabled tells assistive technology the control is unavailable
+                     while leaving it focusable, and saveContactAndSocial already refuses to start a
+                     second write while one is in flight, so the button is inert either way. -->
                 <button
                   class="adm-btn--primary"
                   type="submit"
-                  [disabled]="busy()"
+                  [attr.aria-disabled]="busy() ? 'true' : null"
                   data-testid="save-contact-social"
                 >
                   {{ busy() ? 'Saving…' : 'Save' }}
@@ -257,6 +268,15 @@ const LOGO_ACCEPT = 'image/png,image/jpeg,image/webp';
     .settings__logo {
       display: grid;
       gap: var(--space-2, 1rem);
+    }
+    /* The three write controls say aria-disabled rather than disabled, so that pressing one does not throw
+       the admin's focus to the document body. That leaves the visual unavailable state to be drawn here,
+       which :disabled was drawing before. Opacity only, and no pointer-events: none, because a control that
+       cannot be hovered cannot show a cursor at all, and the press is already a no-op.
+       (No backticks in this block: it is a template literal, and one would end it.) */
+    .settings [aria-disabled='true'] {
+      opacity: 0.6;
+      cursor: progress;
     }
     .settings__preview {
       display: grid;
@@ -313,6 +333,16 @@ export class SettingsPage {
   private readonly values = signal<ContactAndSocialValues>(EMPTY_FORM);
   private readonly said = signal('');
 
+  /**
+   * The fields typed into since the last write was sent, which the re-read after that write must not
+   * overwrite. Cleared when a save goes out, because the save carries the whole form and the server is
+   * about to agree with it.
+   *
+   * Deliberately not a signal: nothing renders from it, and it is only ever read inside the subscription
+   * callbacks that apply a payload.
+   */
+  private readonly editedSinceWrite = new Set<keyof ContactAndSocialValues>();
+
   protected readonly settings = this.loaded.asReadonly();
   protected readonly loading = this.isLoading.asReadonly();
   protected readonly busy = this.isBusy.asReadonly();
@@ -353,15 +383,42 @@ export class SettingsPage {
     this.load();
   }
 
+  /**
+   * Reads the settings and puts the screen into its loading state while it waits.
+   *
+   * This is the *first* read, and the one behind "Try again" — the two cases where there is genuinely
+   * nothing on screen worth keeping. The re-read after a write goes through `refresh()` instead.
+   */
   load(): void {
-    this.isLoading.set(true);
+    this.read({ takeScreenDown: true });
+  }
+
+  /**
+   * Re-reads the settings **without taking the screen down**.
+   *
+   * `load()` sets `isLoading`, and the template replaces the whole panel with "Loading settings…" while it
+   * is set. Using it after a write meant every save destroyed the form — which dropped the admin's keyboard
+   * focus to `<body>`, so a keyboard user lost their place on the screen every time they saved, and Tab
+   * started again at the top of the document.
+   *
+   * Leaving the form mounted keeps the control the user pressed alive across the whole operation, so focus
+   * is never *moved* and never has to be restored. The cost is that the form is now on screen and typeable
+   * while the re-read is in flight, which is what `editedSinceWrite` exists to make safe.
+   */
+  private refresh(): void {
+    this.read({ takeScreenDown: false });
+  }
+
+  private read({ takeScreenDown }: { takeScreenDown: boolean }): void {
+    if (takeScreenDown) {
+      this.isLoading.set(true);
+    }
+
     this.problem.set(null);
 
     this.api.settings().subscribe({
       next: (settings) => {
-        this.loaded.set(settings);
-        this.values.set(toForm(settings));
-        this.logoAltText.set(settings.logo?.altText?.trim() || BRAND.name);
+        this.applySettings(settings, { keepUnsavedEdits: !takeScreenDown });
         this.isLoading.set(false);
       },
       error: (error: unknown) => {
@@ -371,10 +428,47 @@ export class SettingsPage {
     });
   }
 
+  /**
+   * Puts a freshly read payload onto the screen.
+   *
+   * **Why `keepUnsavedEdits` is not optional politeness.** A re-read that followed a write used to land
+   * while the form was off screen, so it could not overwrite anything the admin was typing. Now that the
+   * form stays mounted — which is what keeps their focus — the re-read's response can arrive *after* they
+   * have started on the next field, and setting the whole form from the server would silently wipe those
+   * keystrokes and reset the control to pristine, giving no hint it had happened.
+   *
+   * Values the server normalised are still adopted, which is the point of re-reading: only the fields
+   * touched since the write was sent are held back.
+   */
+  private applySettings(settings: AdminSettings, { keepUnsavedEdits }: { keepUnsavedEdits: boolean }): void {
+    this.loaded.set(settings);
+
+    const fromServer: Record<string, string | null> = { ...toForm(settings) };
+
+    if (keepUnsavedEdits) {
+      const current = this.values() as Record<string, string | null | undefined>;
+
+      for (const field of this.editedSinceWrite) {
+        // Only a field the server actually sent. `toForm` leaves an unreadable group's keys *absent* on
+        // purpose, so that the next save omits them rather than telling the API to clear them (W1-12);
+        // putting one back here would undo that.
+        if (field in fromServer) {
+          fromServer[field] = current[field] ?? null;
+        }
+      }
+    } else {
+      this.editedSinceWrite.clear();
+    }
+
+    this.values.set(fromServer as ContactAndSocialValues);
+    this.logoAltText.set(settings.logo?.altText?.trim() || BRAND.name);
+  }
+
   protected patch<K extends keyof ContactAndSocialValues>(
     field: K,
     value: ContactAndSocialValues[K],
   ): void {
+    this.editedSinceWrite.add(field);
     this.values.update((current) => ({ ...current, [field]: value }));
 
     // The message about this field is now about a value nobody is looking at any more.
@@ -395,8 +489,7 @@ export class SettingsPage {
       return;
     }
 
-    this.isBusy.set(true);
-    this.problem.set(null);
+    this.beforeWrite('Saving the contact and social settings…');
 
     // Every field, every save: the API replaces the group, so a field this object omitted would be a field
     // the API is told to clear (W1-12's blocker).
@@ -411,6 +504,15 @@ export class SettingsPage {
     const file = input.files?.[0];
 
     this.logoProblem.set(null);
+
+    // The box carries `aria-disabled` rather than `disabled` while a write is in flight, for the reason the
+    // Save button gives — a disabled control under the cursor throws focus to `<body>`. So the guard the
+    // attribute used to provide has to be here instead, and the box is cleared so no filename is left on
+    // screen implying a file was taken.
+    if (this.isBusy()) {
+      this.clearFileInput();
+      return;
+    }
 
     if (!file) {
       return;
@@ -432,8 +534,7 @@ export class SettingsPage {
 
     const alt = this.logoAltText().trim() || BRAND.name;
 
-    this.isBusy.set(true);
-    this.problem.set(null);
+    this.beforeWrite('Uploading the logo…');
 
     // Upload first, then point the setting at it. A failed upload therefore changes nothing, and the
     // previous logo is still the live one.
@@ -453,32 +554,73 @@ export class SettingsPage {
       return;
     }
 
-    this.isBusy.set(true);
-    this.problem.set(null);
+    this.beforeWrite('Removing the logo…');
 
     this.api.setStoreLogo(null, group).subscribe({
-      next: () => this.afterWrite("The logo was removed. The header shows the shop's name as text."),
+      next: () => {
+        this.afterWrite("The logo was removed. The header shows the shop's name as text.");
+
+        // The only write whose own control does not survive it: with the logo gone, `loaded.logo` is null
+        // and the Remove button leaves the screen, so focus has to be given somewhere deliberately. The
+        // upload box is the control that takes its place in the same panel. It is safe to focus now rather
+        // than after the re-read because it is never `disabled` — see `onLogoChosen`.
+        this.fileInput()?.nativeElement.focus();
+      },
       error: (error: unknown) => this.afterFailure(error),
     });
   }
 
   /**
-   * After any successful write: say so, clear the file box, and reload.
+   * Before any write: mark the screen busy and **say that the write has started**.
    *
-   * **The reload is not laziness.** Every save moves the group's row version, so the token on screen is
+   * **Why the live region has to speak here and not only at the end.** `role="status"` announces a
+   * *change*. Every save used to finish by setting the region to the same sentence it already held, and
+   * setting a region to the text it already has is not a change — so an admin who saved twice was told
+   * once and then never again, which on a screen whose whole purpose is repeated edits is most of the time.
+   *
+   * Saying "…saving" on the way in is the honest fix rather than a differentiator: the screen really does
+   * have an in-progress state — the button has always read "Saving…" — and the region was simply the one
+   * place not reflecting it. It gives assistive technology two real mutations per save with two different,
+   * true sentences, instead of one sentence stamped with a counter that tells the listener nothing.
+   */
+  private beforeWrite(message: string): void {
+    this.isBusy.set(true);
+    this.problem.set(null);
+    this.said.set(message);
+
+    // The save carries the whole form, so the server is about to hold exactly what is on screen: nothing
+    // typed before this moment needs holding back from the re-read that follows.
+    this.editedSinceWrite.clear();
+  }
+
+  /**
+   * After any successful write: say so, clear the file box, and re-read.
+   *
+   * **The re-read is not laziness.** Every save moves the group's row version, so the token on screen is
    * stale the moment the save succeeds — keeping it would make the admin's *next* save fail with a conflict
-   * they did nothing to cause. Re-reading also brings back the logo's URL and dimensions, which only the
-   * server can produce.
+   * they did nothing to cause. Re-reading also brings back the logo's URL and dimensions, and any value the
+   * API normalised, which only the server can produce.
+   *
+   * It goes through `refresh()` rather than `load()` so the form is not destroyed under the admin's focus.
    */
   private afterWrite(message: string): void {
     this.isBusy.set(false);
     this.said.set(message);
     this.clearFileInput();
-    this.load();
+    this.refresh();
   }
 
+  /**
+   * After a refused write.
+   *
+   * **The announcement is cleared rather than left alone.** `beforeWrite` has just put "…saving" into the
+   * live region; leaving it there would have the screen quietly insisting it was still saving something it
+   * has already given up on. The refusal itself is announced by the `role="alert"` message, which is where
+   * a failure belongs — this only stops the status region from contradicting it.
+   */
   private afterFailure(error: unknown): void {
     this.isBusy.set(false);
+    this.said.set('');
     this.problem.set(toCatalogFailure(error));
     this.clearFileInput();
   }

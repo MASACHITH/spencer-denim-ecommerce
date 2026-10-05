@@ -209,15 +209,51 @@ test.describe('the logo panel (GLB-02)', () => {
  * trace but a stale value several lines later.
  */
 async function saveContactAndSocial(page: Page): Promise<Response> {
-  const settled = page.waitForResponse(
-    (response) =>
-      new URL(response.url()).pathname === '/api/admin/settings/contact-social'
-      && response.request().method() === 'PUT',
-  );
+  const settled = contactSaveResponse(page);
 
   await page.locator('[data-testid="save-contact-social"]').click();
 
   return settled;
+}
+
+/** <inheritdoc cref="saveContactAndSocial" /> — for the tests that have to press the button themselves. */
+function contactSaveResponse(page: Page): Promise<Response> {
+  return page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/admin/settings/contact-social'
+      && response.request().method() === 'PUT',
+  );
+}
+
+/**
+ * The re-read the screen performs after every successful write, so a test can wait for the screen to have
+ * *settled* rather than merely for the write to have been accepted.
+ */
+function settingsReloadResponse(page: Page): Promise<Response> {
+  return page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/admin/settings'
+      && response.request().method() === 'GET',
+  );
+}
+
+/**
+ * Holds the contact and social `PUT` open for `delayMs`, so the screen's *in-progress* state can be
+ * observed instead of raced for.
+ *
+ * This does not change what the screen does — it only widens a window that is genuinely there. The same
+ * technique is what established the cause of the CI failure these tests were fixed for: the race was not
+ * reachable on a developer machine, so it was reproduced by holding the request rather than by hoping.
+ */
+async function holdContactSave(page: Page, delayMs: number): Promise<void> {
+  await page.route('**/api/admin/settings/contact-social', async (route) => {
+    if (route.request().method() !== 'PUT') {
+      return route.continue();
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    await route.continue();
+  });
 }
 
 test.describe('the contact and social panel (GLB-07, GLB-08)', () => {
@@ -292,6 +328,48 @@ test.describe('the contact and social panel (GLB-07, GLB-08)', () => {
 
     await page.reload();
     await expect(page.locator('[data-testid="field-instagramUrl"]')).toHaveValue('');
+  });
+
+  /**
+   * **GLB-12: the second save has to be announced too.**
+   *
+   * `role="status"` announces a *change*. Setting the region to the same sentence it already holds is not a
+   * change, so an admin who saves twice — which is most of what this screen is for — is told once and then
+   * never again. The screen knew it was saving and knew it had finished; it simply never said so.
+   *
+   * The assertion is on the transition, not on any particular wording: the region must leave the old
+   * sentence while the save is in flight and come back to a completion message. That is a real mutation for
+   * assistive technology to voice, and it is information rather than a differentiator bolted on to force a
+   * re-announcement — a counter or a timestamp appended to an unchanged sentence would satisfy a naive
+   * version of this test while telling the listener nothing.
+   */
+  test('a second save is announced too, not silently', async ({ page }) => {
+    await openSettings(page);
+
+    const status = page.locator('[data-testid="announcement"]');
+
+    await page.locator('[data-testid="field-whatsApp"]').fill('94771234567');
+    const first = await saveContactAndSocial(page);
+    expect(first.ok(), `the first save answered ${first.status()}`).toBe(true);
+    await expect(status).toContainText('saved');
+
+    const announcedFirst = (await status.textContent())?.trim() ?? '';
+
+    // Held open so the in-progress state is observable rather than raced for.
+    await holdContactSave(page, 600);
+
+    await page.locator('[data-testid="field-whatsApp"]').fill('94779999999');
+    const settled = contactSaveResponse(page);
+    await page.locator('[data-testid="save-contact-social"]').click();
+
+    // The region has to *leave* the old sentence, or a screen reader hears nothing for this save at all.
+    await expect(status).not.toHaveText(announcedFirst);
+    await expect(status).toContainText('Saving');
+
+    const second = await settled;
+    expect(second.ok(), `the second save answered ${second.status()}`).toBe(true);
+
+    await expect(status).toContainText('saved');
   });
 
   test('a rejected address is reported against its own box', async ({ page }) => {
@@ -438,6 +516,86 @@ test.describe('the settings screen is usable and accessible', () => {
     await page.keyboard.press('Tab');
 
     await expect(page.locator('[data-testid="save-contact-social"]')).toBeFocused();
+  });
+
+  /**
+   * **The save button is reachable by keyboard — and has to still be there afterwards.**
+   *
+   * The test above proves a keyboard user can *get* to Save. This one proves the operation does not throw
+   * them off the screen: `afterWrite` re-reads the settings, and while that read is in flight the panel is
+   * replaced by "Loading settings…", so the button the user just pressed is destroyed under their focus and
+   * focus falls to `<body>`. From there Tab starts again at the top of the document, which on a settings
+   * screen the client uses repeatedly is the difference between usable and not.
+   *
+   * Driven with real keys rather than by calling the handler: `[disabled]` on a focused button moves focus
+   * on its own, so a programmatic `.click()` would not exercise the same path a keyboard user takes.
+   */
+  test('keyboard focus survives a save', async ({ page }) => {
+    await openSettings(page);
+
+    await page.locator('[data-testid="field-whatsApp"]').fill('94771234567');
+
+    const save = page.locator('[data-testid="save-contact-social"]');
+    await page.locator('[data-testid="field-tikTokUrl"]').focus();
+    await page.keyboard.press('Tab');
+    await expect(save, 'Tab from the last field did not reach Save').toBeFocused();
+
+    const settled = contactSaveResponse(page);
+    const reloaded = settingsReloadResponse(page);
+    await page.keyboard.press('Enter');
+
+    const response = await settled;
+    expect(response.ok(), `the save answered ${response.status()}`).toBe(true);
+    await reloaded;
+
+    // Reported rather than merely asserted: "focus is not on Save" is far less useful than knowing it
+    // landed on `<body>`, which is what a destroyed control does to it.
+    const landedOn = await page.evaluate(() => {
+      const active = document.activeElement as HTMLElement | null;
+      return active
+        ? `${active.tagName.toLowerCase()}${active.dataset['testid'] ? `[${active.dataset['testid']}]` : ''}`
+        : 'nothing';
+    });
+
+    expect(landedOn, 'focus after a save').toBe('button[save-contact-social]');
+    await expect(save).toBeFocused();
+  });
+
+  /**
+   * The one write whose own control does not survive it.
+   *
+   * Removing the logo takes the Remove button off the screen — the logo is what put it there — so focus
+   * cannot simply stay put the way it does for Save, and "wherever the browser leaves it" means `<body>`.
+   * The upload box is the deliberate choice: same panel, and the next thing an admin who just removed a
+   * logo is likely to want.
+   */
+  test('removing the logo hands focus to the upload box, not to nothing', async ({ page }) => {
+    await openSettings(page);
+
+    await page.locator('[data-testid="logo-file"]').setInputFiles({
+      name: 'logo.png',
+      mimeType: 'image/png',
+      buffer: PNG,
+    });
+
+    const remove = page.locator('[data-testid="logo-remove"]');
+    await expect(remove).toBeVisible();
+
+    await remove.focus();
+    await page.keyboard.press('Enter');
+
+    // Gone by design, so this is not a race: the button exists only while a logo does.
+    await expect(page.locator('[data-testid="logo-empty"]')).toBeVisible();
+    await expect(remove).toHaveCount(0);
+
+    const landedOn = await page.evaluate(() => {
+      const active = document.activeElement as HTMLElement | null;
+      return active
+        ? `${active.tagName.toLowerCase()}${active.dataset['testid'] ? `[${active.dataset['testid']}]` : ''}`
+        : 'nothing';
+    });
+
+    expect(landedOn, 'focus after removing the logo').toBe('input[logo-file]');
   });
 
   /** Lesson L4: a ring an ancestor clips away computes as present, so it is photographed instead. */
