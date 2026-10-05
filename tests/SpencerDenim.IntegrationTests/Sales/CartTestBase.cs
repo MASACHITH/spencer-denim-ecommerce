@@ -133,7 +133,16 @@ public abstract class CartTestBase(SqlServerDatabaseFixture sqlServer) : IAsyncD
         return ids;
     }
 
-    public async ValueTask DisposeAsync()
+    /// <summary>
+    /// <c>virtual</c> so a derived suite can put shared state back before the host goes away.
+    /// <para>
+    /// Added by W3-02, which needs it: its tests set a variant's stock to arrange "one unit left" and the
+    /// cart suites read the <b>seeded</b> stock of the same low-numbered variants — so without a restore,
+    /// four <c>CartStaleItemTests</c> failed in a full run and passed on their own, which is the exact
+    /// shape of a test measuring its neighbours. An override must call <c>base.DisposeAsync()</c>.
+    /// </para>
+    /// </summary>
+    public virtual async ValueTask DisposeAsync()
     {
         foreach (var client in _clients)
         {
