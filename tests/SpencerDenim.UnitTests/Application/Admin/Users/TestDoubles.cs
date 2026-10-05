@@ -66,6 +66,14 @@ internal sealed class FakeStaffUserRoleManagementStore : IStaffUserRoleManagemen
     /// <summary>The audit row most recently handed to a write method, whether or not the write succeeded.</summary>
     public AuditLog? LastAuditRowOffered { get; private set; }
 
+    /// <summary>
+    /// The Identity-level outcome the next <see cref="CreateStaffUserAsync"/> call returns instead of inserting,
+    /// so a handler test can cover each mapped failure without a real <c>UserManager</c> (review round 4, item 4).
+    /// Which Identity error <i>code</i> produces which of these is the store's decision and is proven against
+    /// real Identity in <c>StaffUserRoleManagementStoreTests</c>; this covers what the handler does with them.
+    /// </summary>
+    public CreateStaffUserStoreResult? NextCreateResult { get; set; }
+
     public bool NextReplaceRolesTriggersGuard { get; set; }
 
     public bool NextSetActiveTriggersGuard { get; set; }
@@ -107,6 +115,12 @@ internal sealed class FakeStaffUserRoleManagementStore : IStaffUserRoleManagemen
         Func<int, AuditLog> auditForNewUser,
         CancellationToken cancellationToken)
     {
+        if (NextCreateResult is { } failure)
+        {
+            // A refused write enlists nothing, exactly as the real store's rollback leaves no row.
+            return Task.FromResult(failure);
+        }
+
         var newId = Users.Count == 0 ? 1000 : Users.Keys.Max() + 1;
         var roles = data.RoleIds.Where(Roles.ContainsKey).Select(id => Roles[id]).ToList();
         Users[newId] = new StaffUserSnapshot(newId, data.Email, data.FirstName, data.LastName, true, "stamp-0", roles);

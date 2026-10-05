@@ -86,8 +86,24 @@ public sealed class CreateStaffUserCommandHandler(
             case CreateStaffUserStoreResult.Success success:
                 return new CreateStaffUserResult.Success(success.UserId, command.Email, command.FirstName, command.LastName, afterGrantsAll, roleRefs);
 
+            // The IsEmailInUseAsync check above is not transactional, so two creates for the same address can
+            // both pass it; the loser arrives here and gets the same 409 as the one that lost that check
+            // (review round 4, item 4). It used to arrive as a password error instead.
+            case CreateStaffUserStoreResult.EmailAlreadyInUse:
+                return new CreateStaffUserResult.EmailAlreadyInUse();
+
+            // The password policy, which is the one case the old mapping got right: a 400 keyed on
+            // initialPassword, which is what the form renders under the password box.
+            case CreateStaffUserStoreResult.PasswordRejected passwordRejected:
+                return new CreateStaffUserResult.PasswordRejected(passwordRejected.Errors);
+
+            // Everything else Identity refuses is about the account, not the password — in practice the address,
+            // because UserName mirrors Email and ValidateInput never checks the address's shape, so Identity is
+            // the first thing to refuse a space or an accent in it. Keyed on email for the same reason
+            // UpdateStaffUserProfileCommandHandler keys its own IdentityErrors there.
             case CreateStaffUserStoreResult.IdentityErrors identityErrors:
-                return new CreateStaffUserResult.PasswordRejected(identityErrors.Errors);
+                return new CreateStaffUserResult.ValidationFailed(
+                    [.. identityErrors.Errors.Select(error => new ValidationError("email", error))]);
 
             default:
                 throw new InvalidOperationException($"Unhandled {nameof(CreateStaffUserStoreResult)}: {createResult.GetType().Name}");

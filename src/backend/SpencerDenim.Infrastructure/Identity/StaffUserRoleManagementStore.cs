@@ -38,6 +38,23 @@ internal sealed class StaffUserRoleManagementStore(
     /// <summary>Doc 08 §3.1 DB4 rule 4: the one application-lock resource name for the whole GrantsAll headcount.</summary>
     private const string GrantsAllLockResource = "rbac:grants-all";
 
+    /// <summary>
+    /// Every code <c>PasswordValidator</c> and <c>IdentityErrorDescriber</c> can raise about a password. The set
+    /// is written out rather than matched on a <c>"Password"</c> prefix so that a future custom validator's code
+    /// has to be added here deliberately, where this comment is, instead of being silently classified by its
+    /// name — and nothing in this project registers an <c>IPasswordValidator</c> of its own today.
+    /// </summary>
+    private static readonly HashSet<string> PasswordErrorCodes = new(StringComparer.Ordinal)
+    {
+        "PasswordTooShort",
+        "PasswordRequiresUniqueChars",
+        "PasswordRequiresNonAlphanumeric",
+        "PasswordRequiresDigit",
+        "PasswordRequiresLower",
+        "PasswordRequiresUpper",
+        "PasswordMismatch",
+    };
+
     public async Task<StaffUserSnapshot?> GetStaffUserSnapshotAsync(int userId, CancellationToken cancellationToken)
     {
         var user = await dbContext.Users.AsNoTracking()
@@ -122,7 +139,7 @@ internal sealed class StaffUserRoleManagementStore(
             if (!createResult.Succeeded)
             {
                 await transaction.RollbackAsync(cancellationToken);
-                return (CreateStaffUserStoreResult)new CreateStaffUserStoreResult.IdentityErrors([.. createResult.Errors.Select(e => e.Description)]);
+                return MapCreateError(createResult);
             }
 
             if (data.RoleIds.Count > 0)
@@ -136,7 +153,7 @@ internal sealed class StaffUserRoleManagementStore(
                 if (!addRolesResult.Succeeded)
                 {
                     await transaction.RollbackAsync(cancellationToken);
-                    return (CreateStaffUserStoreResult)new CreateStaffUserStoreResult.IdentityErrors([.. addRolesResult.Errors.Select(e => e.Description)]);
+                    return MapCreateError(addRolesResult);
                 }
             }
 
@@ -446,10 +463,56 @@ internal sealed class StaffUserRoleManagementStore(
         });
     }
 
+    /// <summary>
+    /// Review round 4, item 4. The create path had no equivalent of <see cref="MapProfileError"/>, so every
+    /// Identity failure came back as one undifferentiated list that the caller could only key on the password
+    /// field — and since <c>UserName</c> mirrors <c>Email</c> and nothing validates the address's shape before
+    /// this, a staff address with a space or an accent in it produced a password error quoting the address.
+    /// Identity's own error codes are the only thing that knows which input a failure is about, and this is the
+    /// layer that has them.
+    /// <para>
+    /// Duplicate first and on its own, exactly as <see cref="MapProfileError"/> does it: the handler already
+    /// asked whether the address was taken, so a duplicate here is the race between that read and this insert,
+    /// and it has a 409 of its own rather than being a 400 about some field.
+    /// </para>
+    /// <para>
+    /// This also maps the role-assignment step's failures, where "about the account" is the best available
+    /// answer rather than a true one. That step cannot fail today — the roles were looked up by id moments
+    /// earlier and the user is brand new, so neither <c>UserAlreadyInRole</c> nor an unknown role name is
+    /// reachable — so it is not worth a field of its own until something can actually produce it.
+    /// </para>
+    /// </summary>
+    private static CreateStaffUserStoreResult MapCreateError(IdentityResult result)
+    {
+        if (result.Errors.Any(IsDuplicateIdentity))
+        {
+            return new CreateStaffUserStoreResult.EmailAlreadyInUse();
+        }
+
+        var descriptions = result.Errors.Select(e => e.Description).ToArray();
+
+        // A password refusal only when every error in the result is one, so a result carrying anything else is
+        // treated as being about the account. Identity does not in fact mix the two on this path —
+        // UserManager.CreateAsync validates the password first and returns before it validates the user, so a
+        // request with a weak password *and* a refused address comes back about the password, and the address is
+        // only reported once the password is fixed (proven in StaffUserRoleManagementStoreTests). The rule still
+        // has to say which wins, because nothing stops a future validator from returning both. A failed result
+        // carrying no errors at all is not a password complaint either, hence the length check.
+        var passwordOnly = descriptions.Length > 0 && result.Errors.All(IsPasswordIdentity);
+        return passwordOnly
+            ? new CreateStaffUserStoreResult.PasswordRejected(descriptions)
+            : new CreateStaffUserStoreResult.IdentityErrors(descriptions);
+    }
+
+    private static bool IsDuplicateIdentity(IdentityError error) =>
+        string.Equals(error.Code, "DuplicateEmail", StringComparison.Ordinal)
+        || string.Equals(error.Code, "DuplicateUserName", StringComparison.Ordinal);
+
+    private static bool IsPasswordIdentity(IdentityError error) => PasswordErrorCodes.Contains(error.Code);
+
     private static UpdateProfileStoreResult MapProfileError(IdentityResult result)
     {
-        if (result.Errors.Any(e => string.Equals(e.Code, "DuplicateEmail", StringComparison.Ordinal)
-            || string.Equals(e.Code, "DuplicateUserName", StringComparison.Ordinal)))
+        if (result.Errors.Any(IsDuplicateIdentity))
         {
             return new UpdateProfileStoreResult.EmailAlreadyInUse();
         }

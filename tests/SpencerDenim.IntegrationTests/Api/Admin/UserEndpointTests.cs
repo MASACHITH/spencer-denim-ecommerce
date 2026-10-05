@@ -263,6 +263,94 @@ public sealed class UserEndpointTests(SqlServerDatabaseFixture sqlServer)
         Assert.Equal("EmailChangeRequiresGrantsAll", body.GetProperty("error").GetString());
     }
 
+    /// <summary>
+    /// Review round 4, item 4. <c>UserName</c> mirrors <c>Email</c> and nothing checks the address's shape before
+    /// Identity does, so an address a real staff name produces — a space in it, an accent in it — is refused by
+    /// Identity's <c>InvalidUserName</c> rule. Every Identity failure used to come back as
+    /// <c>PasswordRejected</c>: a 400 keyed on <c>initialPassword</c>, titled "The initial password does not meet
+    /// the password rules.", carrying Identity's message about the <i>address</i>, which the form then renders
+    /// under the password box. The admin is told to fix the password and shown the email.
+    /// <para>
+    /// Asserted through HTTP rather than at the handler because the field key is the whole point: it is what the
+    /// form reads to decide which input to put the message under.
+    /// </para>
+    /// </summary>
+    [Theory]
+    [InlineData("space")]
+    [InlineData("accent")]
+    public async Task An_email_Identity_refuses_is_reported_against_the_email_field_not_the_password(string shape)
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, TestContext.Current.CancellationToken);
+
+        await using var factory = new ApiFactory(sqlServer.ConnectionString);
+        var actorRoleId = await CreateRoleAsync(factory, UniqueName($"creator-{shape}"), [Permissions.Users.Manage, Permissions.Orders.View]);
+        var newUserRoleId = await CreateRoleAsync(factory, UniqueName($"created-{shape}"), [Permissions.Orders.View]);
+
+        var (actorEmail, actorPassword) = UniqueCredentials($"actor-create-{shape}");
+        await CreateStaffUserWithRolesAsync(factory, actorEmail, actorPassword, [actorRoleId]);
+
+        using var client = CreateClient(factory);
+        await LoginAsync(client, actorEmail, actorPassword);
+        var token = await GetAntiforgeryTokenAsync(client);
+
+        // Both are what a Sri Lankan or European staff name actually produces when someone types it into an
+        // address. The accented one passes every structural email check there is — exactly one @, no whitespace,
+        // a real domain — so no amount of format validation on this side would catch it; only Identity's
+        // allowed-characters rule refuses it, and that refusal has to name the right field.
+        var email = shape == "space"
+            ? $"nimal perera-{Guid.NewGuid():N}@example.com"
+            : $"josé-{Guid.NewGuid():N}@example.com";
+
+        using var response = await PostJsonAsync(
+            client,
+            UsersUrl,
+            new { email, firstName = "Nimal", lastName = "Perera", initialPassword = "Correct-Password-1!", roleIds = new[] { newUserRoleId } },
+            token);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
+        var errors = body.GetProperty("errors");
+        Assert.True(errors.TryGetProperty("email", out var emailErrors), $"Expected the error keyed on 'email'; got {errors.GetRawText()}");
+        Assert.NotEmpty(emailErrors.EnumerateArray());
+        Assert.False(errors.TryGetProperty("initialPassword", out _), "The password was valid; nothing may be reported against it.");
+        Assert.DoesNotContain("password", body.GetProperty("title").GetString()!, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// The other half of item 4: a genuine password failure still gets the password-specific response, so the
+    /// fix above cannot have been "key everything on the email instead".
+    /// </summary>
+    [Fact]
+    public async Task A_password_the_policy_refuses_is_still_reported_against_the_password_field()
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, TestContext.Current.CancellationToken);
+
+        await using var factory = new ApiFactory(sqlServer.ConnectionString);
+        var actorRoleId = await CreateRoleAsync(factory, UniqueName("creator-weak-pw"), [Permissions.Users.Manage, Permissions.Orders.View]);
+        var newUserRoleId = await CreateRoleAsync(factory, UniqueName("created-weak-pw"), [Permissions.Orders.View]);
+
+        var (actorEmail, actorPassword) = UniqueCredentials("actor-create-weak-pw");
+        await CreateStaffUserWithRolesAsync(factory, actorEmail, actorPassword, [actorRoleId]);
+
+        using var client = CreateClient(factory);
+        await LoginAsync(client, actorEmail, actorPassword);
+        var token = await GetAntiforgeryTokenAsync(client);
+
+        using var response = await PostJsonAsync(
+            client,
+            UsersUrl,
+            new { email = UniqueEmail("weak-password-target"), firstName = "Weak", lastName = "Password", initialPassword = "abc", roleIds = new[] { newUserRoleId } },
+            token);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
+        Assert.True(body.GetProperty("errors").TryGetProperty("initialPassword", out var passwordErrors));
+        Assert.NotEmpty(passwordErrors.EnumerateArray());
+        Assert.Equal("The initial password does not meet the password rules.", body.GetProperty("title").GetString());
+    }
+
     [Fact]
     public async Task Self_role_edit_is_always_blocked()
     {
@@ -936,6 +1024,13 @@ public sealed class UserEndpointTests(SqlServerDatabaseFixture sqlServer)
     private static Task<HttpResponseMessage> PutJsonAsync(HttpClient client, string url, object body, string antiforgeryToken)
     {
         var request = new HttpRequestMessage(HttpMethod.Put, url) { Content = JsonContent.Create(body) };
+        request.Headers.Add("X-XSRF-TOKEN", antiforgeryToken);
+        return client.SendAsync(request, TestContext.Current.CancellationToken);
+    }
+
+    private static Task<HttpResponseMessage> PostJsonAsync(HttpClient client, string url, object body, string antiforgeryToken)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, url) { Content = JsonContent.Create(body) };
         request.Headers.Add("X-XSRF-TOKEN", antiforgeryToken);
         return client.SendAsync(request, TestContext.Current.CancellationToken);
     }

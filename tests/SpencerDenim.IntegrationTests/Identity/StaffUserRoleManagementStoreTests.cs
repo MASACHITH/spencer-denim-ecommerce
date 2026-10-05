@@ -404,6 +404,83 @@ public sealed class StaffUserRoleManagementStoreTests(SqlServerDatabaseFixture s
         Assert.Equal(success.UserId.ToString(CultureInfo.InvariantCulture), row.EntityId);
     }
 
+    /// <summary>
+    /// Which Identity error code means which input, proven against real Identity and real SQL Server rather
+    /// than asserted (review round 4, item 4). This is the table <c>MapCreateError</c> implements: the handler's
+    /// own mapping of these outcomes to fields and status codes is covered in
+    /// <c>CreateStaffUserCommandHandlerTests</c>.
+    /// <para>
+    /// The accented address is the one worth keeping in mind: it passes every structural check for an email
+    /// address, and Identity still refuses it, because <c>UserName</c> mirrors <c>Email</c> and the default
+    /// <c>AllowedUserNameCharacters</c> is ASCII letters, digits and <c>-._@+</c>. A staff list for this client
+    /// produces both of these.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task Identity_failures_on_create_are_classified_by_the_input_they_are_about()
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, TestContext.Current.CancellationToken);
+
+        await using var factory = new ApiFactory(sqlServer.ConnectionString);
+        int roleId;
+        string takenEmail;
+        await using (var setup = factory.Services.CreateAsyncScope())
+        {
+            roleId = await CreateRoleAsync(setup.ServiceProvider.GetRequiredService<RoleManager<AppRole>>(), Permissions.Orders.View);
+            var takenId = await CreateStaffUserWithRoleAsync(
+                setup.ServiceProvider.GetRequiredService<UserManager<AppUser>>(),
+                setup.ServiceProvider.GetRequiredService<RoleManager<AppRole>>(),
+                "already-taken",
+                roleId);
+            takenEmail = await setup.ServiceProvider.GetRequiredService<AppDbContext>().Users.AsNoTracking()
+                .Where(u => u.Id == takenId)
+                .Select(u => u.Email!)
+                .SingleAsync(TestContext.Current.CancellationToken);
+        }
+
+        async Task<CreateStaffUserStoreResult> AttemptAsync(string email, string password)
+        {
+            await using var scope = factory.Services.CreateAsyncScope();
+            return await scope.ServiceProvider.GetRequiredService<IStaffUserRoleManagementStore>().CreateStaffUserAsync(
+                new NewStaffUserData(email, "Nimal", "Perera", password, [roleId]),
+                newUserId => Audit(entityId: newUserId.ToString(CultureInfo.InvariantCulture)),
+                TestContext.Current.CancellationToken);
+        }
+
+        var withSpace = Assert.IsType<CreateStaffUserStoreResult.IdentityErrors>(
+            await AttemptAsync($"nimal perera-{Guid.NewGuid():N}@example.com", "Correct-Password-1!"));
+        Assert.NotEmpty(withSpace.Errors);
+
+        var withAccent = Assert.IsType<CreateStaffUserStoreResult.IdentityErrors>(
+            await AttemptAsync($"josé-{Guid.NewGuid():N}@example.com", "Correct-Password-1!"));
+        Assert.NotEmpty(withAccent.Errors);
+
+        var weakPassword = Assert.IsType<CreateStaffUserStoreResult.PasswordRejected>(
+            await AttemptAsync($"fine-address-{Guid.NewGuid():N}@example.com", "abc"));
+        Assert.NotEmpty(weakPassword.Errors);
+
+        // Both inputs wrong at once answers about the password only, and that is Identity's own order rather than
+        // anything decided here: UserManager.CreateAsync hashes and validates the password first and returns
+        // before it ever validates the user, so the two kinds of failure never arrive in one result. Worth
+        // knowing when reading the mapping — it means an admin who gets both wrong fixes the password, resubmits,
+        // and only then hears that the address is refused too.
+        var bothWrong = Assert.IsType<CreateStaffUserStoreResult.PasswordRejected>(
+            await AttemptAsync($"josé-{Guid.NewGuid():N}@example.com", "abc"));
+        Assert.NotEmpty(bothWrong.Errors);
+        Assert.DoesNotContain(bothWrong.Errors, error => error.Contains("invalid, can only contain", StringComparison.Ordinal));
+
+        // The duplicate-email race: Identity's unique index refuses it, and that is a conflict of its own, not
+        // an error about a field. The handler's non-transactional pre-check cannot see this one.
+        Assert.IsType<CreateStaffUserStoreResult.EmailAlreadyInUse>(
+            await AttemptAsync(takenEmail, "Correct-Password-1!"));
+
+        // None of the five left a user behind: every refusal rolls its transaction back.
+        await using var readScope = factory.Services.CreateAsyncScope();
+        var dbContext = readScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        Assert.Equal(0, await dbContext.Users.AsNoTracking().CountAsync(u => u.FirstName == "Nimal", TestContext.Current.CancellationToken));
+    }
+
     /// <summary>A valid audit row. <paramref name="marker"/> goes in <c>UserAgent</c> so a test can find exactly its own row in a shared database.</summary>
     private static AuditLog Audit(string? marker = null, string? entityId = null) => new()
     {
