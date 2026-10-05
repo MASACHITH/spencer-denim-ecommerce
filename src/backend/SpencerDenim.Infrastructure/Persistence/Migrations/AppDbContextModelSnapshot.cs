@@ -2693,6 +2693,9 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                     b.HasIndex("ProofAssetId")
                         .HasDatabaseName("IX_Payments_ProofAssetId");
 
+                    b.HasIndex("ProviderCode")
+                        .HasDatabaseName("IX_Payments_ProviderCode");
+
                     b.HasIndex("ProviderCode", "ProviderReference")
                         .IsUnique()
                         .HasDatabaseName("UX_Payments_Provider_Reference")
@@ -2710,6 +2713,9 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                     b.HasIndex(new[] { "CreatedAtUtc" }, "IX_Payments_Exceptions")
                         .HasDatabaseName("IX_Payments_Exceptions")
                         .HasFilter("[Status] = 7");
+
+                    b.HasIndex(new[] { "OrderId" }, "IX_Payments_OrderId")
+                        .HasDatabaseName("IX_Payments_OrderId");
 
                     b.HasIndex(new[] { "OrderId" }, "UX_Payments_OneOpen")
                         .IsUnique()

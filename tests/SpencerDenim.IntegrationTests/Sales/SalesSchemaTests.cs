@@ -285,15 +285,137 @@ public sealed class SalesSchemaTests(SqlServerDatabaseFixture sqlServer) : Sales
     }
 
     /// <summary>
+    /// The foreign key columns whose <b>only</b> leading index is filtered, and for which that is correct
+    /// rather than a gap — because the lookup predicate <i>implies</i> the filter, so the optimiser matches
+    /// it. Key is <c>Table.Column</c>, value is the reason.
+    /// <para>
+    /// This list, and not a looser rule, is the whole content of the finding below. A filtered index covers
+    /// an FK lookup only when <c>&lt;column&gt; = @x</c> provably implies the index's filter at compile time
+    /// (doc 08 §1.6 and §10.2, DB28). <c>CustomerUserId = @x</c> implies <c>CustomerUserId IS NOT NULL</c>,
+    /// so <c>UX_Carts_Customer</c> and <c>IX_Orders_Customer_Placed</c> really are enough and a plain
+    /// duplicate of either would be dead weight. <c>OrderId = @o</c> implies neither <c>Status IN (0,1)</c>
+    /// nor <c>IsOrderSettlement = 1</c>, so <c>UX_Payments_OneOpen</c> and <c>UX_Payments_OneSettlement</c>
+    /// were <b>not</b> enough — and EF's FK-index convention, which suppresses its own index whenever some
+    /// index already leads on the column and never looks at that index's filter, wrote no plain index for
+    /// <c>Payments.OrderId</c> or <c>Payments.ProviderCode</c> at all. Both are declared explicitly now.
+    /// </para>
+    /// <para>
+    /// Both entries here are doc-specified and both are <c>IS NOT NULL</c> on the FK column itself, which is
+    /// the only shape of filter an equality lookup can imply.
+    /// <see cref="Every_exempted_foreign_key_is_covered_by_an_implied_filter"/> checks that shape in the
+    /// database rather than taking these sentences for it, so an entry cannot quietly start excusing a
+    /// filter that implies nothing.
+    /// </para>
+    /// </summary>
+    private static readonly Dictionary<string, string> FilteredLeadingIndexIsEnough =
+        new(StringComparer.Ordinal)
+        {
+            ["Orders.CustomerUserId"] =
+                "IX_Orders_Customer_Placed (CustomerUserId, PlacedAtUtc DESC) WHERE CustomerUserId IS NOT "
+                + "NULL, doc 08 §3.5. Guest orders keep a NULL and are read by email, never by user id, so "
+                + "the filter costs the index nothing it is used for — and 'my orders' passes a real user "
+                + "id, which implies IS NOT NULL.",
+            ["Carts.CustomerUserId"] =
+                "UX_Carts_Customer (CustomerUserId) WHERE CustomerUserId IS NOT NULL, doc 08 §3.5 and "
+                + "W2-09's. The filter is what makes 'one cart per customer' expressible at all, since a "
+                + "plain unique index would allow exactly one guest cart in the whole table; and a cart is "
+                + "looked up either by token or by a known user id, which implies the filter.",
+        };
+
+    /// <summary>
     /// Doc 08 §1.6 (DB7): every foreign key column leads an index. Asserted against the database rather than
     /// the model, because the model test cannot see an index a migration failed to write.
+    /// <para>
+    /// <b>Filtered indexes do not count</b> (<c>i.has_filter = 0</c>), except for
+    /// <see cref="FilteredLeadingIndexIsEnough"/>. Without that clause this test passed while
+    /// <c>Payments.OrderId</c> and <c>Payments.ProviderCode</c> had no index a lookup by order or by
+    /// provider could use, because four filtered indexes lead on those two columns and the rule only asked
+    /// whether <i>some</i> index led on them. That is how the gap got past a test written to catch it.
+    /// </para>
     /// </summary>
     [Fact]
     public async Task Every_sales_foreign_key_column_leads_an_index()
     {
         SqlServer.SkipIfUnavailable();
 
-        var offenders = await DbContext.Database
+        var offenders = await ForeignKeyColumnsWithNoUnfilteredLeadingIndexAsync();
+        var gaps = offenders.Where(offender => !FilteredLeadingIndexIsEnough.ContainsKey(offender)).ToList();
+
+        Assert.True(
+            gaps.Count == 0,
+            "Doc 08 §1.6 (DB7): every FK column leads an index, and the convention indexes exist on every "
+            + "FK even where §3 does not list them. Each column below leads only filtered indexes, and a "
+            + "filtered index is matched only when the lookup predicate implies the filter (DB28).\n\n"
+            + "Declare the plain index with the named HasIndex overload — EF's convention will not, because "
+            + "it sees an index already leading on the column and does not read its filter — or, if "
+            + "'<column> = @x' really does imply every one of that column's filters, add it to "
+            + "FilteredLeadingIndexIsEnough with the reason.\n\n"
+            + string.Join('\n', gaps));
+    }
+
+    /// <summary>
+    /// The exemptions are real and still shaped the way they claim: each is still a column whose only
+    /// leading indexes are filtered, and every one of those filters is <c>IS NOT NULL</c> on the column
+    /// itself — the only filter an equality lookup can imply.
+    /// <para>
+    /// This is the half that keeps the list from rotting in either direction. An entry that is no longer an
+    /// offender is an exemption excusing nothing, which is how an allow-list turns into a no-op; and an
+    /// entry whose filter has changed to something an equality predicate does <b>not</b> imply would
+    /// otherwise go on excusing a real scan under a reason that had stopped being true.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task Every_exempted_foreign_key_is_covered_by_an_implied_filter()
+    {
+        SqlServer.SkipIfUnavailable();
+
+        var offenders = await ForeignKeyColumnsWithNoUnfilteredLeadingIndexAsync();
+
+        foreach (var (qualified, reason) in FilteredLeadingIndexIsEnough)
+        {
+            Assert.True(
+                offenders.Contains(qualified),
+                $"sales.{qualified} is exempted from DB7 because \"{reason}\" — and it now has an unfiltered "
+                + "leading index anyway, so the exemption excuses nothing and should go.");
+
+            var parts = qualified.Split('.');
+            var table = parts[0];
+            var column = parts[1];
+
+            var filters = await DbContext.Database
+                .SqlQuery<string>($"""
+                    SELECT ISNULL(i.filter_definition, '') COLLATE DATABASE_DEFAULT AS [Value]
+                    FROM sys.indexes i
+                    JOIN sys.index_columns ic
+                      ON ic.object_id = i.object_id AND ic.index_id = i.index_id AND ic.key_ordinal = 1
+                    JOIN sys.columns c
+                      ON c.object_id = ic.object_id AND c.column_id = ic.column_id
+                    WHERE i.object_id = OBJECT_ID('sales.' + {table}) AND c.name = {column}
+                    """)
+                .ToListAsync(Token);
+
+            Assert.NotEmpty(filters);
+
+            // The one filter shape that '<column> = @x' provably implies. Anything else — a status set, a
+            // flag, another column's predicate — does not, and the exemption would be excusing a scan.
+            var implied = $"([{column}] IS NOT NULL)";
+
+            Assert.All(
+                filters,
+                filter => Assert.True(
+                    filter == implied,
+                    $"sales.{qualified} is exempted because every filter on it is implied by "
+                    + $"'{column} = @x'. One of its leading indexes is now filtered \"{filter}\", which that "
+                    + "predicate does not imply, so the column needs a plain index after all."));
+        }
+    }
+
+    /// <summary>
+    /// Every <c>sales</c> foreign key column that leads no <b>unfiltered</b> index, as <c>Table.Column</c>.
+    /// Read from the database, not the model: the model cannot see an index a migration failed to write.
+    /// </summary>
+    private async Task<List<string>> ForeignKeyColumnsWithNoUnfilteredLeadingIndexAsync() =>
+        await DbContext.Database
             .SqlQuery<string>($"""
                 SELECT t.name COLLATE DATABASE_DEFAULT + '.' + c.name COLLATE DATABASE_DEFAULT AS [Value]
                 FROM sys.foreign_keys f
@@ -307,14 +429,13 @@ public sealed class SalesSchemaTests(SqlServerDatabaseFixture sqlServer) : Sales
                   AND NOT EXISTS (
                       SELECT 1
                       FROM sys.index_columns ic
+                      JOIN sys.indexes i ON i.object_id = ic.object_id AND i.index_id = ic.index_id
                       WHERE ic.object_id = t.object_id
                         AND ic.key_ordinal = 1
-                        AND ic.column_id = c.column_id)
+                        AND ic.column_id = c.column_id
+                        AND i.has_filter = 0)
                 """)
             .ToListAsync(Token);
-
-        Assert.Empty(offenders);
-    }
 
     /// <summary>
     /// The three doc 08 foreign keys that are columns without constraints, because the table they would point

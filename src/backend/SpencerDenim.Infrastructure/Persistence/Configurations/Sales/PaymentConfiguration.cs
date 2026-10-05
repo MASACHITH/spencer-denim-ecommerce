@@ -167,8 +167,44 @@ internal sealed class PaymentConfiguration : IEntityTypeConfiguration<Payment>
                 $"[ProviderCode] = '{PaymentProviderCodes.BankTransfer}' AND [Status] = {(byte)PaymentStatus.Pending}")
             .HasDatabaseName("IX_Payments_BankQueue");
 
-        // Doc 08 §1.6 (DB7). OrderId and ProviderCode already lead a unique index above; ProofAssetId does
-        // not, and the media delete guard relies on media FKs being indexed.
+        // Doc 08 §1.6 (DB7): every FK column leads an index, and "the convention indexes exist on every FK"
+        // even where §3.5 does not list them. All three FK columns are declared here rather than left to EF's
+        // convention, because the convention suppresses its index whenever some existing index already leads
+        // on the column — and it does not look at that index's filter.
+        //
+        // OrderId leads UX_Payments_OneSettlement and UX_Payments_OneOpen; ProviderCode leads
+        // UX_Payments_Provider_Reference and _Txn. All four are filtered, so EF saw both columns as covered
+        // and wrote no plain index for either, and until this was added no query could reach a Payments row
+        // by order or by provider without reading the whole table. Measured on 100 000 payments over 20 000
+        // orders:
+        //
+        //   - "list this order's payments" (ADM-09's order detail, the screen this schema unblocks) went
+        //     Clustered Index Scan(PK_Payments) -> Index Seek(IX_Payments_OrderId), literal and parameterised
+        //     alike. A filtered index is only matched when the predicate provably implies the filter (DB28),
+        //     and "OrderId = @o" implies neither "Status IN (0,1)" nor "IsOrderSettlement = 1".
+        //   - SQL Server's own referential-integrity check behind DELETE FROM sales.PaymentProviders went
+        //     Clustered Index Scan(PK_Payments) -> Index Seek(IX_Payments_ProviderCode). The filtered
+        //     UX_Payments_Provider_* cannot serve it: that check has to see rows with a NULL reference too.
+        //     This is the case DB7 exists for, and it is the FK check, not application SQL, so nothing in
+        //     this repository could have been rewritten to avoid it.
+        //
+        // What is *not* a reason for these two: §4.2 step 3.2's settlement guard,
+        //     NOT EXISTS (SELECT 1 FROM sales.Payments s WHERE s.OrderId = @o AND s.IsOrderSettlement = 1)
+        // already seeks UX_Payments_OneSettlement and did so before this change. Its parameter is on
+        // OrderId, the index *key*; the filter's own column is the literal 1, which implies the filter, so
+        // DB28 does not bite. It would bite if that 1 ever became a parameter — "IsOrderSettlement = @flag"
+        // falls straight back to a scan, measured — so keep it a constant when step 3 writes the guard.
+        //
+        // Named overload for OrderId: two indexes above are already over that same single property, and the
+        // unnamed overload would reconfigure one of them instead of declaring a third.
+        builder
+            .HasIndex(payment => payment.OrderId, "IX_Payments_OrderId")
+            .HasDatabaseName("IX_Payments_OrderId");
+
+        builder.HasIndex(payment => payment.ProviderCode).HasDatabaseName("IX_Payments_ProviderCode");
+
+        // ProofAssetId leads no index of its own at all, and the media delete guard relies on media FKs
+        // being indexed.
         builder.HasIndex(payment => payment.ProofAssetId).HasDatabaseName("IX_Payments_ProofAssetId");
     }
 

@@ -816,10 +816,22 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                 filter: "[Status] = 7");
 
             migrationBuilder.CreateIndex(
+                name: "IX_Payments_OrderId",
+                schema: "sales",
+                table: "Payments",
+                column: "OrderId");
+
+            migrationBuilder.CreateIndex(
                 name: "IX_Payments_ProofAssetId",
                 schema: "sales",
                 table: "Payments",
                 column: "ProofAssetId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_Payments_ProviderCode",
+                schema: "sales",
+                table: "Payments",
+                column: "ProviderCode");
 
             migrationBuilder.CreateIndex(
                 name: "UX_Payments_OneOpen",
