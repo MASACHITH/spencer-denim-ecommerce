@@ -318,14 +318,20 @@ test.describe('the bag (CART-01, CART-02)', () => {
       await expect(summary).toContainText('Total (items only)');
     });
 
-    test('has no promo field and no checkout button, because neither has anything behind it', async ({
-      page,
-    }) => {
-      // ADM-13 (promo codes) and W3-02 (checkout) are not built. A field or a button that looked like
-      // it worked and did nothing would be worse than its absence.
+    /**
+     * **W3-02 changed half of this test, and that is the point of it.**
+     *
+     * It used to assert that the bag had neither a promo field nor a checkout button, because neither
+     * had anything behind it. Checkout now exists, so the button is a real link and asserting its
+     * absence would be asserting that the shop is still unfinished. The promo field is unchanged: ADM-13
+     * is not built, and a field that refused every code a shopper typed would teach them the shop is
+     * broken.
+     */
+    test('offers checkout, and still has no promo field', async ({ page }) => {
+      await expect(page.locator('a.bag__checkout')).toHaveAttribute('href', '/checkout');
+
+      // ADM-13 is not built, so there is nothing to type a code into.
       await expect(page.locator('input[type="text"]')).toHaveCount(0);
-      await expect(page.getByRole('button', { name: /checkout/i })).toHaveCount(0);
-      await expect(page.getByRole('link', { name: /checkout/i })).toHaveCount(0);
     });
 
     test('steps the quantity and the subtotal follows', async ({ page }) => {
@@ -461,7 +467,16 @@ test.describe('the bag (CART-01, CART-02)', () => {
         await page.reload();
 
         await expect(page.locator('.qty__input')).toHaveValue('2');
-        await expect(page.locator('.bag__notice')).toContainText('Only 1 left');
+
+        // Scoped to the line, because W3-02 added a second `.bag__notice--warn` to the summary — the
+        // one that says to adjust the bag before checking out — and a bare class selector is now a
+        // strict-mode violation rather than a test. The line's own notice is the subject here.
+        await expect(page.locator('.bag__line .bag__notice')).toContainText('Only 1 left');
+
+        // And the two notices are about different things, which is worth pinning: the line says how
+        // many are left, the summary says what to do about it (G-08).
+        await expect(page.locator('#bag-checkout-blocked')).toContainText('before you check out');
+        await expect(page.locator('button.bag__checkout')).toBeDisabled();
       } finally {
         await resetStock(page, indigoSmall(product));
       }

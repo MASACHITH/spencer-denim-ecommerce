@@ -153,6 +153,10 @@ test.describe('axe over the storefront (#65)', () => {
     // meet; a bag with something in it, the open mini bag, and a line the shop has withdrawn are
     // scanned separately below, because none of them is reachable by navigating to an address.
     { label: 'the bag page', path: '/bag' },
+    // W3-02. The same argument: an address alone gives the empty checkout, which is a state a shopper
+    // reaches by emptying their bag in another tab. The checkout **with a bag** is where every control
+    // lives and is scanned separately below, as is the order success page.
+    { label: 'the checkout page', path: '/checkout' },
   ] as const;
 
   for (const subject of PAGES) {
@@ -254,6 +258,110 @@ test.describe('axe over the storefront (#65)', () => {
     } finally {
       await page.request.get(`${apiURL}/__test__/cart-variant?reset=variant&variantId=${5 * 1000 + 1}`);
     }
+  });
+
+  /**
+   * **Checkout with a bag, a district and a delivery option (W3-02, CHK-01..03)**, which the loop above
+   * cannot reach: an address alone gives the empty state, and every control that matters — nine labelled
+   * inputs, a select, two radio groups and the submit button — only exists once there is something to buy.
+   *
+   * This is the most form-heavy page in the storefront, so it is the one where `label`, `aria-invalid`,
+   * `aria-describedby` and `color-contrast` have the most ways to be wrong.
+   */
+  test('the checkout page with a bag has no serious or critical violation', async ({ page }) => {
+    await useStubApi(page);
+    await addToBag(page, 2);
+
+    const read = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === '/api/checkout' && response.request().method() === 'GET',
+    );
+    await page.goto('/checkout');
+    await read;
+    await expect(page.locator('#co-firstName')).toBeVisible();
+
+    // A district, so the delivery radios and the priced summary are in the document too.
+    const quoted = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === '/api/checkout'
+        && new URL(response.url()).searchParams.get('districtId') === '1',
+    );
+    await page.locator('#co-district').selectOption('1');
+    await quoted;
+    await expect(page.locator('input[name="deliveryMethodId"]').first()).toBeVisible();
+
+    const found = await violations(page);
+    expect(found, JSON.stringify(found, null, 2)).toEqual([]);
+  });
+
+  /**
+   * **Checkout showing its refusals.** The error summary, the per-field messages and the blocker notice
+   * are all drawn in `--color-sale`, which is the one colour pair on this page that is not the body
+   * text's — and `color-contrast` is a rule axe gates at serious. A page scanned only in its happy state
+   * would never see them.
+   */
+  test('the checkout page showing field errors has no serious or critical violation', async ({
+    page,
+  }) => {
+    await useStubApi(page);
+    await addToBag(page, 3);
+
+    const read = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === '/api/checkout' && response.request().method() === 'GET',
+    );
+    await page.goto('/checkout');
+    await read;
+
+    // An email that is not an address, and a submit with everything else blank: both messages at once.
+    await page.locator('#co-email').fill('not-an-address');
+    await page.locator('form#checkout-form').dispatchEvent('submit');
+
+    await expect(page.locator('#co-email-error')).toBeVisible();
+    await expect(page.locator('#co-firstName-error')).toBeVisible();
+
+    const found = await violations(page);
+    expect(found, JSON.stringify(found, null, 2)).toEqual([]);
+  });
+
+  /**
+   * **The order success page (CHK-04)**, which no address can reach either: its token is minted by
+   * placing an order. It is the page a shopper lands on at the end of the whole journey, and the one they
+   * come back to from an emailed link.
+   */
+  test('the order success page has no serious or critical violation', async ({ page }) => {
+    await useStubApi(page);
+    await addToBag(page, 4);
+
+    const read = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === '/api/checkout' && response.request().method() === 'GET',
+    );
+    await page.goto('/checkout');
+    await read;
+
+    const quoted = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === '/api/checkout'
+        && new URL(response.url()).searchParams.get('deliveryMethodId') === '1',
+    );
+    await page.locator('#co-district').selectOption('1');
+    await page.locator('input[name="deliveryMethodId"][value="1"]').check();
+    await quoted;
+
+    await page.locator('#co-firstName').fill('Nimali');
+    await page.locator('#co-email').fill('nimali@example.com');
+    await page.locator('#co-phone').fill('0771234567');
+    await page.locator('#co-recipient').fill('Nimali Perera');
+    await page.locator('#co-address-phone').fill('0771234567');
+    await page.locator('#co-line1').fill('14 Galle Road');
+    await page.locator('#co-city').fill('Kollupitiya');
+
+    await page.locator('.checkout__place').click();
+    await expect(page.locator('[data-order-number]')).toBeVisible();
+
+    const found = await violations(page);
+    expect(found, JSON.stringify(found, null, 2)).toEqual([]);
   });
 
   /**
