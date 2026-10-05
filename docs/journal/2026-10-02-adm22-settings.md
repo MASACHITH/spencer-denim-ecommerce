@@ -35,7 +35,14 @@ JPEG's background is obvious *before* it reaches the shop) and a contact-and-soc
 
 ## One migration
 
-`20261002111130_OpsSettingsTable`. **It creates exactly one table and touches nothing else:** `ops.Settings`
+`20261002111130_OpsSettingsTable` — **renumbered to `20261005063301_OpsSettingsTable`** on 2026-10-05, when
+this branch was rebased onto a `main` that had gained #103's `20261004073717_SalesOrdersAndPayments`. The
+original timestamp was earlier than a migration already on `main`, so the file order claimed `ops.Settings`
+was created *before* the `sales` tables when in truth it is created after them. It was regenerated against
+`main`'s snapshot rather than hand-merged; the schema operations are byte-identical. Left in place rather
+than rewritten, so this entry still reads as what was true on the day.
+
+**It creates exactly one table and touches nothing else:** `ops.Settings`
 with the ten columns above, `PK_Settings` on `Key`, three CHECK constraints
 (`CK_Settings_ValueType` 1–8, `CK_Settings_IsSecret` for the biconditional, and
 `CK_Settings_RequiredPermission` requiring a non-empty permission — the last is not in doc 08 and is

@@ -3027,6 +3027,60 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("SpencerDenim.Domain.Settings.Setting", b =>
+                {
+                    b.Property<string>("Key")
+                        .HasColumnType("varchar(100)");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(300)
+                        .HasColumnType("nvarchar(300)");
+
+                    b.Property<string>("GroupKey")
+                        .IsRequired()
+                        .HasColumnType("varchar(50)");
+
+                    b.Property<bool>("IsSecret")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false);
+
+                    b.Property<string>("RequiredPermission")
+                        .IsRequired()
+                        .HasColumnType("varchar(64)");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<int?>("UpdatedByUserId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Value")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<byte>("ValueType")
+                        .HasColumnType("tinyint");
+
+                    b.HasKey("Key");
+
+                    b.HasIndex("GroupKey")
+                        .HasDatabaseName("IX_Settings_GroupKey");
+
+                    b.ToTable("Settings", "ops", t =>
+                        {
+                            t.HasCheckConstraint("CK_Settings_IsSecret", "([IsSecret] = CAST(1 AS bit) AND [ValueType] = 7) OR ([IsSecret] = CAST(0 AS bit) AND [ValueType] <> 7)");
+
+                            t.HasCheckConstraint("CK_Settings_RequiredPermission", "LEN([RequiredPermission]) > 0");
+
+                            t.HasCheckConstraint("CK_Settings_ValueType", "[ValueType] >= 1 AND [ValueType] <= 8");
+                        });
+                });
+
             modelBuilder.Entity("SpencerDenim.Infrastructure.Identity.AppRole", b =>
                 {
                     b.Property<int>("Id")

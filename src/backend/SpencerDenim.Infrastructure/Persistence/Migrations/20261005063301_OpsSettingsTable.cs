@@ -30,8 +30,16 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
     /// <para>
     /// <b>The <c>ops</c> schema already exists</b> — the initial migration created it for
     /// <c>__EFMigrationsHistory</c> and <c>ops.AuditLogs</c> — so there is no <c>EnsureSchema</c> here and
-    /// nothing in this migration can collide with <c>sales</c> (W2-09, an hour earlier) or with issue
-    /// #53's tables.
+    /// nothing in this migration can collide with <c>sales</c> or with issue #53's tables.
+    /// </para>
+    /// <para>
+    /// <b>The timestamp is later than this work started, and that is the point.</b> This migration was
+    /// first written as <c>20261002111130</c>, which was earlier than <c>20261004073717</c>
+    /// (<c>SalesOrdersAndPayments</c>, #103) once that merged to <c>main</c> — so the file order claimed
+    /// <c>ops.Settings</c> was created before the <c>sales</c> tables when in truth it is created after
+    /// them. It was regenerated against <c>main</c>'s snapshot rather than hand-merged, so the ordering on
+    /// disk is the ordering a fresh database actually gets. The schema operations below are byte-identical
+    /// to the original; only the timestamp and the snapshot it was diffed against changed.
     /// </para>
     /// <para><c>Down</c> drops the table. No data is migrated in either direction.</para>
     /// </summary>
