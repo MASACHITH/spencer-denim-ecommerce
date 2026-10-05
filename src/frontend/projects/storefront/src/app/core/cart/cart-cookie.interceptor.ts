@@ -2,6 +2,7 @@ import { HttpInterceptorFn } from '@angular/common/http';
 import { REQUEST, inject } from '@angular/core';
 
 import { CartApi } from './cart-api';
+import { CheckoutApi } from '../checkout/checkout-api';
 
 /** The cookie that holds `sales.Carts.Token`. Must match `CartCookie.Name` in the API. */
 const CART_COOKIE = 'sd_cart';
@@ -20,7 +21,12 @@ const CART_COOKIE = 'sd_cart';
  * - It forwards **only `sd_cart`**, never the whole `Cookie` header. The same browser may be carrying
  *   `sd_admin_auth`; relaying a staff session from the SSR process to the API on a shopper's page
  *   render would hand the storefront an authenticated identity it has no business holding.
- * - It applies **only to `/api/cart`** requests. No other call the storefront makes is per-visitor.
+ * - It applies **only to the calls that are identified by that cookie**: `/api/cart` and
+ *   `/api/checkout`. Nothing else the storefront asks for is per-visitor in this way.
+ *   **`/api/orders/{token}` is deliberately not one of them** — an order is found by the unguessable
+ *   token in its own URL, so a guest opening their link from another browser must get the same answer,
+ *   and sending a bearer cookie to a call that has no use for it is the mistake the `sd_admin_auth` rule
+ *   above exists to prevent.
  * - It never writes a cookie back. A read never creates a cart (doc 08 §3.5: the row is created on
  *   the first Add to Bag), so the API issues no `Set-Cookie` on a render, and there is nothing for the
  *   SSR response to relay. Every mutation happens in the browser, where the cookie round-trip is the
@@ -30,7 +36,7 @@ const CART_COOKIE = 'sd_cart';
  */
 export const cartCookieInterceptor: HttpInterceptorFn = (request, next) => {
   const incoming = inject(REQUEST, { optional: true });
-  if (!incoming || !isCartRequest(request.url)) {
+  if (!incoming || !isPerVisitorRequest(request.url)) {
     return next(request);
   }
 
@@ -43,7 +49,7 @@ export const cartCookieInterceptor: HttpInterceptorFn = (request, next) => {
 };
 
 /**
- * Whether this is a bag call, decided on the **path** rather than on a substring.
+ * Whether this call is identified by the bag cookie, decided on the **path** rather than on a substring.
  *
  * The URL may already be absolute — `apiBaseUrlInterceptor` runs in the same chain and rewrites
  * `/api/...` to the internal address during SSR — so it is parsed rather than prefix-matched. It used to
@@ -52,10 +58,16 @@ export const cartCookieInterceptor: HttpInterceptorFn = (request, next) => {
  * and so would any URL carrying `?returnTo=/api/cart`. Nothing leaks today because no such URL exists,
  * which is exactly why it is worth fixing before one does.
  *
- * A URL that cannot be parsed is not a cart call. `URL` needs a base for a relative path, and the base
+ * **`/api/checkout` was added by W3-02, and its absence was a real bug.** Checkout finds the bag by the
+ * same cookie, so while this function knew only about `/api/cart` the server rendered every checkout
+ * with an empty bag — the HTML said "your bag is empty" and the page filled itself in after hydration,
+ * which is precisely the failure this interceptor's own docblock says SSR exists to avoid. It was caught
+ * by `checkout.e2e.ts` reading the server's HTML, and `cart-cookie.interceptor.spec.ts` now pins it.
+ *
+ * A URL that cannot be parsed is not one of these. `URL` needs a base for a relative path, and the base
  * is never used for anything else.
  */
-function isCartRequest(url: string): boolean {
+function isPerVisitorRequest(url: string): boolean {
   let path: string;
   try {
     path = new URL(url, 'http://cart.invalid').pathname;
@@ -63,7 +75,9 @@ function isCartRequest(url: string): boolean {
     return false;
   }
 
-  return path === CartApi.url || path.startsWith(`${CartApi.url}/`);
+  return [CartApi.url, CheckoutApi.url].some(
+    (prefix) => path === prefix || path.startsWith(`${prefix}/`),
+  );
 }
 
 /**
