@@ -439,11 +439,15 @@ public sealed class StaffUserRoleManagementStoreTests(SqlServerDatabaseFixture s
                 .SingleAsync(TestContext.Current.CancellationToken);
         }
 
+        // A first name no other test can produce, so the "nothing was left behind" assertion at the end cannot be
+        // answered by another class's row in this shared database (doc 06 §4).
+        var firstName = $"Nimal-{Guid.NewGuid():N}";
+
         async Task<CreateStaffUserStoreResult> AttemptAsync(string email, string password)
         {
             await using var scope = factory.Services.CreateAsyncScope();
             return await scope.ServiceProvider.GetRequiredService<IStaffUserRoleManagementStore>().CreateStaffUserAsync(
-                new NewStaffUserData(email, "Nimal", "Perera", password, [roleId]),
+                new NewStaffUserData(email, firstName, "Perera", password, [roleId]),
                 newUserId => Audit(entityId: newUserId.ToString(CultureInfo.InvariantCulture)),
                 TestContext.Current.CancellationToken);
         }
@@ -478,7 +482,7 @@ public sealed class StaffUserRoleManagementStoreTests(SqlServerDatabaseFixture s
         // None of the five left a user behind: every refusal rolls its transaction back.
         await using var readScope = factory.Services.CreateAsyncScope();
         var dbContext = readScope.ServiceProvider.GetRequiredService<AppDbContext>();
-        Assert.Equal(0, await dbContext.Users.AsNoTracking().CountAsync(u => u.FirstName == "Nimal", TestContext.Current.CancellationToken));
+        Assert.Equal(0, await dbContext.Users.AsNoTracking().CountAsync(u => u.FirstName == firstName, TestContext.Current.CancellationToken));
     }
 
     /// <summary>A valid audit row. <paramref name="marker"/> goes in <c>UserAgent</c> so a test can find exactly its own row in a shared database.</summary>
