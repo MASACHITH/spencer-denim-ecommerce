@@ -1,0 +1,29 @@
+# Kids stand-in photographs — TEST DATA, not delivered artwork (owner decision, 2026-10-02).
+#
+# The client has not supplied photographs for the ten kids products. Until they do, each kids
+# product borrows the nearest delivered adult photograph so the Kids section can be seen and
+# tested. THE REAL PHOTOGRAPHS ARE STILL OUTSTANDING; nothing here is finished work.
+#
+# This file is the single authoritative list. `tools/kids-stand-in-photos.ps1` reads it, and
+# `KidsStandInMappingTests` holds every slug in it against the real catalogue, so a row that names
+# a product that does not exist fails the build rather than the import.
+#
+# Quality is an honest grade of the match, not a label on the picture:
+#   exact  the same garment in the same material
+#   good   the same garment type; one property (fabric, count) differs
+#   fair   the same construction or the same cloth, but plainly a different garment
+#   poor   only one property carries over; a viewer will see the wrong garment
+#   none   nothing in the delivery is close — recorded so nobody mistakes it for a match
+#
+# To replace these with the real photographs, see README §2b "Kids stand-in photographs".
+KidsSlug,KidsProduct,DonorSlug,DonorProduct,Quality,Why
+girls-cotton-sundress,Girls Cotton Sundress,tiered-midi-dress,Tiered Midi Dress,fair,"The nearest one-piece light dress in the delivery: unstructured, gathered and summer-weight, and the tiering reads as a sundress silhouette. It is an adult woman in the frame, so the scale and the body are wrong."
+girls-printed-tee,Girls Printed Tee,oversized-graphic-tee,Oversized Graphic Tee,good,"The only printed cotton jersey tee delivered, and the print is the defining feature of the kids product. Boxy where the kids tee is a regular fit."
+girls-jersey-leggings,Girls Jersey Leggings,seamless-studio-leggings,Seamless Studio Leggings,good,"Exactly the same garment — full-length leggings with a covered waistband. The knit is a performance seamless rather than cotton jersey, so the surface is wrong and the shape is right."
+boys-checked-shirt,Boys Checked Shirt,oxford-button-down-shirt,Oxford Button-Down Shirt,fair,"Same construction: a woven cotton shirt with a button-down collar, which is the detail the kids product leads on. Nothing checked was delivered, so the pattern is wrong and only the pattern."
+boys-cotton-tee-two-pack,Boys Cotton Tee Two-Pack,heavyweight-crew-tee,Heavyweight Crew Tee,good,"A plain taped-shoulder crew-neck tee in pure cotton — the garment and the fabric both match. One tee is in frame where the product is a two-pack, so the count is wrong."
+boys-pull-on-shorts,Boys Pull-On Shorts,linen-drawstring-shorts,Linen Drawstring Shorts,good,"Pull-on shorts cut above the knee with an elastic back and a flat drawcord, which is the closure the kids product is named for. Linen rather than a cotton blend. Chino Shorts were rejected: a flat front with a zip is the wrong closure, which is the one thing a shopper is looking at here."
+baby-ribbed-bodysuit-set,Baby Ribbed Bodysuit Set,ribbed-scoop-neck-tee,Ribbed Scoop-Neck Tee,poor,"The only ribbed cotton jersey in the delivery, and the rib is the one property that carries over. A bodysuit is not a tee and no babywear at all was delivered, so a viewer sees an adult top, not a bodysuit set."
+baby-muslin-bib-set,Baby Muslin Bib Set,everyday-canvas-tote,Everyday Canvas Tote,none,"Nothing in the delivery is close: there is no bib, no muslin and no flat cloth accessory. The tote is chosen only because it is a plain woven-cotton accessory photographed as an object rather than a garment on an adult body — on a baby product that is the less misleading of the two available errors. It is a bag; treat this row as a gap, not a match."
+kids-canvas-sneakers,Kids Canvas Sneakers,court-canvas-sneakers,Court Canvas Sneakers,exact,"The same shoe in the same materials: a cotton canvas upper with a reinforced toe on a vulcanised rubber sole, low profile. Only the closure differs (laces, where the kids shoe is hook-and-loop)."
+girls-denim-pinafore,Girls Denim Pinafore,denim-wrap-mini-skirt,Denim Wrap Mini Skirt,fair,"Washed denim cut as a short A-line skirt, and denim is what a pinafore is bought for. The bib and the adjustable straps — the half that makes it a pinafore — are not in the picture. Belted Shirt Dress was rejected: the dress shape is closer, the cloth is not, and denim is the stronger cue."

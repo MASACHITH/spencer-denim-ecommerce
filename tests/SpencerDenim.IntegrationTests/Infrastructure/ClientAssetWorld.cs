@@ -63,6 +63,19 @@ public sealed class ClientAssetWorld : IAsyncDisposable
     /// <summary>Where <see cref="Drop"/> writes the files an import then reads.</summary>
     public string DropRoot => Path.Combine(Root, "drop");
 
+    /// <summary>
+    /// A <b>second</b> drop, for the kids stand-in photographs (2026-10-02).
+    /// <para>
+    /// A separate root rather than more files in <see cref="DropRoot"/>, because that is how the thing
+    /// under test actually works: borrowing an adult photograph for a kids product is an operator's own
+    /// act, run after the client's delivery and over bytes the library already holds, not something the
+    /// client's drop does. Keeping the two apart is also what lets
+    /// <c>Kids_products_keep_their_placeholders_rather_than_borrowing_an_adult_photograph</c> go on
+    /// meaning what it says.
+    /// </para>
+    /// </summary>
+    public string StandInRoot => Path.Combine(Root, "stand-ins");
+
     /// <summary>What the seeders inserted.</summary>
     public SeedCounts SeedCounts { get; private set; } = new();
 
@@ -162,11 +175,35 @@ public sealed class ClientAssetWorld : IAsyncDisposable
     }
 
     /// <summary>Writes a file into the drop, creating the folder.</summary>
-    public async Task Drop(string folder, string fileName, byte[] content, CancellationToken cancellationToken)
+    public Task Drop(string folder, string fileName, byte[] content, CancellationToken cancellationToken) =>
+        DropInto(DropRoot, folder, fileName, content, cancellationToken);
+
+    /// <summary>Writes a file into a named drop, creating the folder.</summary>
+    public static async Task DropInto(
+        string root,
+        string folder,
+        string fileName,
+        byte[] content,
+        CancellationToken cancellationToken)
     {
-        var directory = Path.Combine(DropRoot, folder);
+        var directory = Path.Combine(root, folder);
         Directory.CreateDirectory(directory);
         await File.WriteAllBytesAsync(Path.Combine(directory, fileName), content, cancellationToken);
+    }
+
+    /// <summary>
+    /// The three folders a drop has to have even when it sends nothing in them, because the importer
+    /// fails on a missing folder rather than importing half a drop. Empty, they import nothing: a
+    /// missing home or department file is a note, never a withdrawal.
+    /// </summary>
+    public static void MakeTheEmptyFolders(string root)
+    {
+        ArgumentNullException.ThrowIfNull(root);
+
+        foreach (var folder in new[] { "products", "departments", "home", "social" })
+        {
+            Directory.CreateDirectory(Path.Combine(root, folder));
+        }
     }
 
     /// <summary>A complete, well-formed drop: two photographs per named product, and all the home media.</summary>
@@ -221,12 +258,13 @@ public sealed class ClientAssetWorld : IAsyncDisposable
     public async Task<ClientAssetImportReport> ImportAsync(
         CancellationToken cancellationToken,
         bool dryRun = false,
-        bool replace = false)
+        bool replace = false,
+        string? root = null)
     {
         await using var scope = _services.CreateAsyncScope();
         var importer = scope.ServiceProvider.GetRequiredService<IClientAssetImporter>();
         return await importer.ImportAsync(
-            new ClientAssetImportRequest(DropRoot, dryRun, replace),
+            new ClientAssetImportRequest(root ?? DropRoot, dryRun, replace),
             cancellationToken);
     }
 
