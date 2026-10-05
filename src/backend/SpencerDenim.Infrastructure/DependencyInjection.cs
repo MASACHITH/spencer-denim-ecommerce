@@ -12,6 +12,8 @@ using SpencerDenim.Application.Catalog.Admin.Abstractions;
 using SpencerDenim.Application.Content.Abstractions;
 using SpencerDenim.Application.Marketing.Newsletter;
 using SpencerDenim.Application.Sales.Cart.Abstractions;
+using SpencerDenim.Application.Sales.Checkout;
+using SpencerDenim.Application.Sales.Checkout.Abstractions;
 using SpencerDenim.Application.Settings.Abstractions;
 using SpencerDenim.Infrastructure.Admin.Auditing;
 using SpencerDenim.Infrastructure.Admin.Users;
@@ -75,6 +77,19 @@ public static class DependencyInjection
         // than for IOptions<T>. IOptions<T> is itself a singleton, so this is the same instance.
         services.AddSingleton(provider => provider.GetRequiredService<IOptions<CatalogOptions>>().Value);
 
+        // Checkout's two settings, which belong in ops.Settings and have no table to live in yet
+        // (ADM-22 — see CheckoutOptions). Bound and validated here, and exposed as the bare value for
+        // the same reason CatalogOptions is.
+        services.AddOptions<CheckoutOptions>()
+            .BindConfiguration(CheckoutOptions.SectionName)
+            .Validate(
+                options => options.BankTransferExpiryHours > 0,
+                "Checkout:BankTransferExpiryHours must be greater than zero: an order placed with a payment "
+                + "deadline in the past would be expired by the first run of the expiry job.")
+            .ValidateOnStart();
+
+        services.AddSingleton(provider => provider.GetRequiredService<IOptions<CheckoutOptions>>().Value);
+
         services.AddScoped<AuditAndSoftDeleteInterceptor>();
 
         services.AddDbContext<AppDbContext>((serviceProvider, builder) =>
@@ -134,10 +149,18 @@ public static class DependencyInjection
         // nothing — and this payload is read during the server render of every page on the site.
         services.AddSingleton<ISiteSettingsCache, SiteSettingsCache>();
 
+        // Checkout (W3-02, CHK-01..04). `NumberSeriesAllocator` implements doc 08 §3.5's
+        // UPDATE … OUTPUT deleted.NextValue exactly; `OrderPlacementStore` is doc 08 §5.4's one
+        // transaction; `CheckoutReader` is the single repricing read where an order's prices are frozen.
+        services.AddScoped<ICheckoutReader, CheckoutReader>();
+        services.AddScoped<INumberSeriesAllocator, NumberSeriesAllocator>();
+        services.AddScoped<IOrderPlacementStore, OrderPlacementStore>();
+
         services.AddMediaLibrary();
 
         services.AddOptions<SeedOptions>().BindConfiguration(SeedOptions.SectionName);
         services.AddScoped<CatalogReferenceDataSeeder>();
+        services.AddScoped<SalesReferenceDataSeeder>();
         services.AddScoped<HomeContentSeeder>();
         services.AddScoped<SettingsSeeder>();
         services.AddScoped<DemoCatalogueSeeder>();

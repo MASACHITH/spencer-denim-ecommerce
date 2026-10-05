@@ -1,0 +1,629 @@
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+using SpencerDenim.Application.Catalog;
+using SpencerDenim.Application.Sales.Cart.Contracts;
+using SpencerDenim.Application.Sales.Checkout.Abstractions;
+using SpencerDenim.Application.Sales.Checkout.Contracts;
+using SpencerDenim.Domain.Catalog;
+using SpencerDenim.Domain.Media;
+using SpencerDenim.Domain.Reference;
+using SpencerDenim.Domain.Sales;
+using SpencerDenim.Infrastructure.Catalog;
+using SpencerDenim.Infrastructure.Persistence;
+
+namespace SpencerDenim.Infrastructure.Sales;
+
+/// <summary>
+/// Reads for checkout (CHK-01..04).
+/// <para>
+/// <b><see cref="ReadCartAsync"/> is where a price stops being a quote and becomes a record.</b> The bag
+/// reprices on every read, deliberately (doc 08 §6, and <c>CartReader</c>'s remarks say why at length);
+/// an order line must never be repriced, because it is the record of what was agreed. This method is the
+/// join: it runs the same arithmetic as the bag, over the same catalogue columns, and its three prices are
+/// the figures written into <c>sales.OrderLines</c> without being touched again. <c>UnitPriceAtAdd</c> is
+/// not read at all — not here and not downstream.
+/// </para>
+/// <para>
+/// <b>Why the pricing is not shared with <c>CartReader</c> as code.</b> Both call the same
+/// <c>CatalogPricing</c> functions (<c>ListPrice</c>, <c>OriginalPrice</c>, <c>SalePrice</c>) and the same
+/// <c>CatalogVisibility.VisibleProduct</c> expression; what differs is the projection, because an order
+/// line keeps a product code, a department, a category and a thumbnail key that a bag line has no use for.
+/// Sharing the projection would mean the bag page carrying columns it never draws. Sharing the *rules* is
+/// what matters, and those live in one place already.
+/// </para>
+/// </summary>
+internal sealed class CheckoutReader(AppDbContext dbContext, IOptions<CatalogOptions> options) : ICheckoutReader
+{
+    private readonly CatalogOptions _options = options.Value;
+
+    public async Task<IReadOnlyList<CheckoutDistrict>> ActiveDistrictsAsync(CancellationToken cancellationToken) =>
+        await dbContext.Districts
+            .AsNoTracking()
+            .Where(district => district.IsActive)
+
+            // By name, not by SortOrder: a shopper looking for Matara in a list of twenty-five scans
+            // alphabetically. SortOrder exists for an admin screen that groups them by province.
+            .OrderBy(district => district.Name)
+            .Select(district => new CheckoutDistrict(district.Id, district.Name, district.DeliveryZone))
+            .ToListAsync(cancellationToken);
+
+    public async Task<CheckoutDistrict?> FindActiveDistrictAsync(
+        int districtId,
+        CancellationToken cancellationToken) =>
+        await dbContext.Districts
+            .AsNoTracking()
+            .Where(district => district.Id == districtId && district.IsActive)
+            .Select(district => (CheckoutDistrict?)new CheckoutDistrict(
+                district.Id,
+                district.Name,
+                district.DeliveryZone))
+            .FirstOrDefaultAsync(cancellationToken);
+
+    public async Task<IReadOnlyList<CheckoutDeliveryMethod>> DeliveryMethodsForZoneAsync(
+        DeliveryZone zone,
+        CancellationToken cancellationToken)
+    {
+        // A left join, so a method with no rate row for this zone still comes back. Doc 08 §3.5 gives "no
+        // row" the meaning "unavailable", and the page has to be able to say that rather than silently
+        // showing one option fewer than the shopper saw last week.
+        var rows = await dbContext.DeliveryMethods
+            .AsNoTracking()
+            .Where(method => method.IsEnabled)
+            .OrderBy(method => method.SortOrder)
+            .ThenBy(method => method.Id)
+            .Select(method => new
+            {
+                method.Id,
+                method.Code,
+                method.Name,
+                method.Description,
+                method.RequiresAddress,
+                Rate = method.ZoneRates
+                    .Where(rate => rate.DeliveryZone == zone)
+                    .Select(rate => new RateRow(
+                        rate.IsAvailable,
+                        rate.Fee,
+                        rate.FreeAboveAmount,
+                        rate.EstimatedDaysMin,
+                        rate.EstimatedDaysMax))
+                    .FirstOrDefault(),
+            })
+            .ToListAsync(cancellationToken);
+
+        return rows
+            .Select(row => new CheckoutDeliveryMethod(
+                row.Id,
+                row.Code,
+                row.Name,
+                row.Description,
+                row.RequiresAddress,
+                ToRate(row.Rate)))
+            .ToList();
+    }
+
+    public async Task<CheckoutDeliveryMethod?> FindEnabledDeliveryMethodAsync(
+        int deliveryMethodId,
+        CancellationToken cancellationToken) =>
+        await dbContext.DeliveryMethods
+            .AsNoTracking()
+            .Where(method => method.Id == deliveryMethodId && method.IsEnabled)
+            .Select(method => new CheckoutDeliveryMethod(
+                method.Id,
+                method.Code,
+                method.Name,
+                method.Description,
+                method.RequiresAddress,
+
+                // No zone is known at this point, so no rate is attached. The caller asks for the rate
+                // separately once it has resolved the district (doc 08 §3.5 R7).
+                null))
+            .FirstOrDefaultAsync(cancellationToken);
+
+    public async Task<CheckoutZoneRate?> FindZoneRateAsync(
+        int deliveryMethodId,
+        DeliveryZone zone,
+        CancellationToken cancellationToken)
+    {
+        var row = await dbContext.DeliveryMethodZoneRates
+            .AsNoTracking()
+            .Where(rate => rate.DeliveryMethodId == deliveryMethodId && rate.DeliveryZone == zone)
+            .Select(rate => new RateRow(
+                rate.IsAvailable,
+                rate.Fee,
+                rate.FreeAboveAmount,
+                rate.EstimatedDaysMin,
+                rate.EstimatedDaysMax))
+            .FirstOrDefaultAsync(cancellationToken);
+
+        return ToRate(row);
+    }
+
+    public async Task<IReadOnlyList<CheckoutPickupLocation>> ActivePickupLocationsAsync(
+        CancellationToken cancellationToken)
+    {
+        var rows = await (
+            from location in dbContext.PickupLocations.AsNoTracking()
+            join district in dbContext.Districts.AsNoTracking()
+                on location.DistrictId equals district.Id
+            where location.IsActive && district.IsActive
+            orderby location.Name
+            select new { location, district })
+            .ToListAsync(cancellationToken);
+
+        return rows.Select(row => ToPickupLocation(row.location, row.district)).ToList();
+    }
+
+    public async Task<CheckoutPickupLocation?> FindActivePickupLocationAsync(
+        int pickupLocationId,
+        CancellationToken cancellationToken)
+    {
+        var row = await (
+            from location in dbContext.PickupLocations.AsNoTracking()
+            join district in dbContext.Districts.AsNoTracking()
+                on location.DistrictId equals district.Id
+            where location.Id == pickupLocationId && location.IsActive && district.IsActive
+            select new { location, district })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        return row is null ? null : ToPickupLocation(row.location, row.district);
+    }
+
+    public async Task<IReadOnlyList<CheckoutPaymentMethod>> EnabledPaymentMethodsAsync(
+        CancellationToken cancellationToken) =>
+        await dbContext.PaymentProviders
+            .AsNoTracking()
+            .Where(provider => provider.IsEnabled)
+            .OrderBy(provider => provider.DisplayOrder)
+            .ThenBy(provider => provider.Code)
+            .Select(provider => new CheckoutPaymentMethod(
+                provider.Code,
+                provider.DisplayName,
+                provider.CheckoutDescription))
+            .ToListAsync(cancellationToken);
+
+    public async Task<IReadOnlyList<CheckoutCartLine>> ReadCartAsync(
+        int cartId,
+        CancellationToken cancellationToken)
+    {
+        // IgnoreQueryFilters for the reason CartReader gives: Product, Category and MediaAsset carry the
+        // soft-delete filter, and with it on, a line whose product was deleted would be dropped from the
+        // join and vanish. At checkout that would be worse than on the bag page — an order placed for
+        // everything *except* the thing that was withdrawn, with no message. IsDeleted is read as data and
+        // the line comes back Unavailable, which blocks the placement (G-08).
+        var rows = await dbContext.CartItems
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(item => item.CartId == cartId)
+
+            // Oldest first, the same order the bag page lists them in, so the order lines are numbered the
+            // way the shopper read their bag.
+            .OrderBy(item => item.AddedAtUtc)
+            .ThenBy(item => item.Id)
+            .Select(item => new CheckoutLineRow(
+                item.VariantId,
+                item.Quantity,
+                item.Variant!.Sku,
+                item.Variant.IsActive,
+                item.Variant.PriceOverride,
+                item.Variant.CompareAtPriceOverride,
+                item.Variant.ProductColour!.Name,
+                item.Variant.Size!.Label,
+                item.Variant.ProductId,
+                item.Variant.Product!.ProductCode,
+                item.Variant.Product.Name,
+                item.Variant.Product.Slug,
+                item.Variant.Product.BasePrice,
+                item.Variant.Product.CompareAtPrice,
+                item.Variant.Product.IsPublished,
+                item.Variant.Product.IsDeleted,
+                item.Variant.Product.DepartmentId,
+                item.Variant.Product.Department!.IsActive,
+                item.Variant.Product.PrimaryCategoryId,
+                item.Variant.Product.PrimaryCategory!.IsActive,
+                item.Variant.Product.PrimaryCategory.IsDeleted,
+                item.Variant.StockLevel == null ? 0 : item.Variant.StockLevel.Available,
+                item.Variant.Product.Media
+                    .Where(media =>
+                        media.ProductColourId == item.Variant.ProductColourId
+                        && media.MediaRole == ProductMediaRole.Gallery
+                        && media.MediaAsset!.Status == MediaAssetStatus.Ready
+                        && !media.MediaAsset.IsDeleted)
+                    .OrderBy(media => media.SortOrder)
+                    .ThenBy(media => media.Id)
+                    .Select(media => new MediaRef(
+                        media.MediaAsset!.StorageKey,
+                        media.MediaAsset.PublicId,
+                        media.MediaAsset.RenditionSetVersion,
+                        media.MediaAsset.Width))
+                    .FirstOrDefault()
+                    ?? (item.Variant.Product.CardImageAsset != null
+                        && item.Variant.Product.CardImageAsset.Status == MediaAssetStatus.Ready
+                        && !item.Variant.Product.CardImageAsset.IsDeleted
+                            ? new MediaRef(
+                                item.Variant.Product.CardImageAsset.StorageKey,
+                                item.Variant.Product.CardImageAsset.PublicId,
+                                item.Variant.Product.CardImageAsset.RenditionSetVersion,
+                                item.Variant.Product.CardImageAsset.Width)
+                            : null),
+                item.Variant.Product.Media
+                    .Where(media =>
+                        media.ProductColourId == item.Variant.ProductColourId
+                        && media.MediaRole == ProductMediaRole.Gallery
+                        && media.MediaAsset!.Status == MediaAssetStatus.Ready
+                        && !media.MediaAsset.IsDeleted)
+                    .OrderBy(media => media.SortOrder)
+                    .ThenBy(media => media.Id)
+                    .Select(media => media.AltTextOverride ?? media.MediaAsset!.AltText)
+                    .FirstOrDefault()
+                    ?? (item.Variant.Product.CardImageAsset != null
+                        && item.Variant.Product.CardImageAsset.Status == MediaAssetStatus.Ready
+                        && !item.Variant.Product.CardImageAsset.IsDeleted
+                            ? item.Variant.Product.CardImageAsset.AltText
+                            : null)))
+            .ToListAsync(cancellationToken);
+
+        return rows.Select(row => ToLine(row, _options.MediaBaseUrl)).ToList();
+    }
+
+    public async Task<IReadOnlyDictionary<int, int>> AvailableStockAsync(
+        IReadOnlyCollection<int> variantIds,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(variantIds);
+
+        if (variantIds.Count == 0)
+        {
+            return new Dictionary<int, int>();
+        }
+
+        var rows = await dbContext.StockLevels
+            .AsNoTracking()
+            .Where(level => variantIds.Contains(level.VariantId))
+            .Select(level => new { level.VariantId, level.Available })
+            .ToListAsync(cancellationToken);
+
+        var available = rows.ToDictionary(row => row.VariantId, row => Math.Max(row.Available, 0));
+
+        // A variant with no StockLevels row has nothing in stock, which is a different statement from
+        // "we have no figure for it". The caller is reporting a shortfall to a shopper and needs an entry
+        // for every line it asked about.
+        foreach (var variantId in variantIds)
+        {
+            available.TryAdd(variantId, 0);
+        }
+
+        return available;
+    }
+
+    public async Task<OrderConfirmationDto?> FindOrderAsync(Guid publicId, CancellationToken cancellationToken) =>
+        await FindOrderWhereAsync(order => order.PublicId == publicId, cancellationToken);
+
+    public async Task<OrderConfirmationDto?> FindOrderByCheckoutKeyAsync(
+        Guid checkoutIdempotencyKey,
+        CancellationToken cancellationToken) =>
+        await FindOrderWhereAsync(
+            order => order.CheckoutIdempotencyKey == checkoutIdempotencyKey,
+            cancellationToken);
+
+    /// <summary>
+    /// One projection for both ways of finding an order, so the success page and the replay of a double
+    /// submission cannot answer differently about the same row.
+    /// </summary>
+    private async Task<OrderConfirmationDto?> FindOrderWhereAsync(
+        System.Linq.Expressions.Expression<Func<Order, bool>> predicate,
+        CancellationToken cancellationToken)
+    {
+        // One projection for both ways of finding an order, so the success page and the replay of a double
+        // submission cannot answer differently about the same row.
+        var row = await dbContext.Orders
+            .AsNoTracking()
+            .Where(predicate)
+            .Select(order => new OrderRow(
+                order.OrderNumber,
+                order.PublicId,
+                order.Status,
+                order.Email,
+                order.FirstName,
+                order.LastName,
+                order.Phone,
+                order.Lines
+                    .OrderBy(line => line.LineNumber)
+                    .Select(line => new OrderLineRow(
+                        line.LineNumber,
+                        line.ProductName,
+                        line.ProductCode,
+                        line.Sku,
+                        line.ColourName,
+                        line.SizeLabel,
+                        line.ThumbnailStorageKey,
+                        line.Quantity,
+                        line.UnitOriginalPrice,
+                        line.UnitPrice,
+                        line.LineSubtotal,
+                        line.PromoDiscountAllocated,
+                        line.LineTotal))
+                    .ToList(),
+                order.Delivery.DeliveryMethodCode,
+                order.Delivery.DeliveryMethodName,
+                order.Delivery.PickupLocationName,
+                order.Delivery.EstimatedDaysMin,
+                order.Delivery.EstimatedDaysMax,
+                order.ShipAddress.RecipientName,
+                order.ShipAddress.Phone,
+                order.ShipAddress.Line1,
+                order.ShipAddress.Line2,
+                order.ShipAddress.City,
+                order.ShipAddress.PostalCode,
+                order.ShipAddress.Landmark,
+                order.DeliveryDistrictName,
+                order.ItemsOriginalTotal,
+                order.ItemsSubtotal,
+                order.MarkdownDiscountTotal,
+                order.CampaignDiscountTotal,
+                order.PromoDiscountAmount,
+                order.DeliveryFeeAmount,
+                order.DeliveryDiscountAmount,
+                order.GrandTotal,
+                order.Currency,
+                order.PaymentProviderCode,
+                order.PaymentProvider!.DisplayName,
+                order.CustomerNote,
+                order.PlacedAtUtc,
+                order.PaymentDueAtUtc))
+            .FirstOrDefaultAsync(cancellationToken);
+
+        return row is null ? null : ToConfirmation(row, _options.MediaBaseUrl);
+    }
+
+    private static OrderConfirmationDto ToConfirmation(OrderRow row, string? mediaBaseUrl) =>
+        new(
+            row.OrderNumber,
+            row.PublicId,
+            row.Status.ToString(),
+            row.Email,
+            row.FirstName,
+            row.LastName,
+            row.Phone,
+            row.Lines
+                .Select(line => new OrderLineDto(
+                    line.LineNumber,
+                    line.ProductName,
+                    line.ProductCode,
+                    line.Sku,
+                    line.ColourName,
+                    line.SizeLabel,
+
+                    // The stored key turned into a URL, and deliberately **not** a rendition: choosing one
+                    // needs the live asset's RenditionSetVersion and width, and an order must not read the
+                    // catalogue again — which is the whole reason doc 08 §3.5 snapshots a storage key here.
+                    // So an order keeps showing the file it was placed against, and a withdrawn photograph
+                    // leaves a gap rather than quietly becoming a different picture.
+                    MediaUrlBuilder.ToPublicUrl(mediaBaseUrl, line.ThumbnailStorageKey),
+                    line.Quantity,
+                    line.UnitOriginalPrice,
+                    line.UnitPrice,
+                    line.LineSubtotal,
+                    line.PromoDiscountAllocated,
+                    line.LineTotal))
+                .ToList()
+                .AsReadOnly(),
+            new OrderDeliveryDto(
+                row.DeliveryMethodCode,
+                row.DeliveryMethodName,
+                row.PickupLocationName,
+                row.RecipientName,
+                row.ShipPhone,
+                row.Line1,
+                row.Line2,
+                row.City,
+                row.DeliveryDistrictName,
+                row.PostalCode,
+                row.Landmark,
+                row.EstimatedDaysMin,
+                row.EstimatedDaysMax),
+            row.ItemsOriginalTotal,
+            row.ItemsSubtotal,
+
+            // The same "Savings" figure the bag and the checkout summary print: markdown plus campaign.
+            // Derived rather than stored, because CK_Orders_Totals already proves the two components are
+            // exactly this difference.
+            row.MarkdownDiscountTotal + row.CampaignDiscountTotal,
+            row.PromoDiscountAmount,
+            row.DeliveryFeeAmount,
+            row.DeliveryDiscountAmount,
+            row.GrandTotal,
+            row.Currency,
+            row.PaymentProviderCode,
+            row.PaymentProviderName,
+            row.CustomerNote,
+            row.PlacedAtUtc,
+            row.PaymentDueAtUtc);
+
+    /// <summary>
+    /// Builds a <see cref="CheckoutPickupLocation"/> from a location and the district it is in (R7).
+    /// <para>
+    /// <b>The join is written out in both callers rather than shared</b>, and that is a constraint rather
+    /// than duplication for its own sake: EF cannot translate a <c>Where</c> or an <c>OrderBy</c> over a
+    /// property of an object a projection constructed, so a shared helper returning
+    /// <c>IQueryable&lt;CheckoutPickupLocation&gt;</c> — or even one returning a named record wrapping the
+    /// two entities — threw <i>"could not be translated"</i> as soon as either caller added its own clause.
+    /// That was found as a <b>500 on every checkout read</b>, which is why it is written down here.
+    /// </para>
+    /// <para>
+    /// Both callers join to the <b>active</b> districts, which is load-bearing rather than incidental: a
+    /// store in a district the client has deactivated must not be offered, because the order would snapshot
+    /// a district the shop has withdrawn and <c>FindActiveDistrictAsync</c> would refuse the same id on the
+    /// delivery path. One rule, both paths.
+    /// </para>
+    /// <para>
+    /// And neither joins through a navigation, because <c>PickupLocation</c> has none to <c>District</c>:
+    /// the foreign key is configured without one so that <c>ref</c> reference data does not gain a
+    /// collection of sales rows — the same rule <c>Orders.CustomerUserId</c> follows for <c>AppUser</c>.
+    /// </para>
+    /// The district's name and zone are read <b>live</b> here, which is right for an option being offered
+    /// now. The order snapshots whichever one the shopper chose, so a later reassignment cannot change a
+    /// placed order (doc 08 §3.5 R7, N4).
+    /// </summary>
+    private static CheckoutPickupLocation ToPickupLocation(PickupLocation location, District district) =>
+        new(
+            location.Id,
+            location.Name,
+            location.AddressLine,
+            location.City,
+            district.Id,
+            district.Name,
+            district.DeliveryZone,
+            location.Phone,
+            location.OpeningHours);
+
+    private static CheckoutZoneRate? ToRate(RateRow? row) =>
+        row is null
+            ? null
+            : new CheckoutZoneRate(
+                row.IsAvailable,
+                row.Fee,
+                row.FreeAboveAmount,
+                row.EstimatedDaysMin,
+                row.EstimatedDaysMax);
+
+    private static CheckoutCartLine ToLine(CheckoutLineRow row, string? mediaBaseUrl)
+    {
+        // The same five conditions CartReader applies, and they are the storefront's definition of "a
+        // shopper may reach this": published, not deleted, active variant, active department, active and
+        // undeleted primary category.
+        var sellable = row is { IsPublished: true, IsProductDeleted: false, IsVariantActive: true }
+            && row.IsDepartmentActive
+            && row.IsCategoryActive
+            && !row.IsCategoryDeleted;
+
+        var list = CatalogPricing.ListPrice(row.BasePrice, row.PriceOverride);
+        var original = CatalogPricing.OriginalPrice(list, row.CompareAtPrice, row.CompareAtPriceOverride);
+
+        // Step 3 with no campaign is the list price. Sale campaigns are ADM-14 (W3-05) and no table
+        // exists, so passing null keeps the one place that knows the rule in the loop rather than
+        // open-coding "sale = list" here and having to find it again later.
+        var sale = CatalogPricing.SalePrice(list, campaignPrice: null);
+
+        var available = Math.Max(row.Available, 0);
+
+        var status = !sellable
+            ? CartLineStatus.Unavailable
+            : available <= 0
+                ? CartLineStatus.OutOfStock
+                : available < row.Quantity
+                    ? CartLineStatus.NotEnoughStock
+                    : CartLineStatus.Buyable;
+
+        return new CheckoutCartLine(
+            row.VariantId,
+            row.ProductId,
+            row.DepartmentId,
+            row.CategoryId,
+            row.ProductName,
+            row.ProductCode,
+            row.Slug,
+            row.Sku,
+            row.ColourName,
+            row.SizeLabel,
+
+            // The storage key, not a URL: doc 08 §3.5 stores `ThumbnailStorageKey` on the order line so a
+            // withdrawn photograph leaves a gap in an old order rather than changing it, and a URL would
+            // bake today's rendition scheme into a row that outlives it.
+            row.Image?.StorageKey,
+            MediaUrlBuilder.ToRenditionUrl(mediaBaseUrl, row.Image, MediaRenditions.Thumb),
+            row.Image is null ? null : row.ImageAltText,
+            row.Quantity,
+            available,
+            original,
+            list,
+            sale,
+            status);
+    }
+
+    /// <summary>One <c>sales.Orders</c> row as the confirmation needs it, before the image URL is built.</summary>
+    private sealed record OrderRow(
+        string OrderNumber,
+        Guid PublicId,
+        OrderStatus Status,
+        string Email,
+        string FirstName,
+        string? LastName,
+        string? Phone,
+        List<OrderLineRow> Lines,
+        string DeliveryMethodCode,
+        string DeliveryMethodName,
+        string? PickupLocationName,
+        byte EstimatedDaysMin,
+        byte EstimatedDaysMax,
+        string? RecipientName,
+        string? ShipPhone,
+        string? Line1,
+        string? Line2,
+        string? City,
+        string? PostalCode,
+        string? Landmark,
+        string DeliveryDistrictName,
+        decimal ItemsOriginalTotal,
+        decimal ItemsSubtotal,
+        decimal MarkdownDiscountTotal,
+        decimal CampaignDiscountTotal,
+        decimal PromoDiscountAmount,
+        decimal DeliveryFeeAmount,
+        decimal DeliveryDiscountAmount,
+        decimal GrandTotal,
+        string Currency,
+        string PaymentProviderCode,
+        string PaymentProviderName,
+        string? CustomerNote,
+        DateTime PlacedAtUtc,
+        DateTime PaymentDueAtUtc);
+
+    private sealed record OrderLineRow(
+        short LineNumber,
+        string ProductName,
+        string ProductCode,
+        string Sku,
+        string ColourName,
+        string SizeLabel,
+        string? ThumbnailStorageKey,
+        short Quantity,
+        decimal UnitOriginalPrice,
+        decimal UnitPrice,
+        decimal LineSubtotal,
+        decimal PromoDiscountAllocated,
+        decimal LineTotal);
+
+    private sealed record RateRow(
+        bool IsAvailable,
+        decimal Fee,
+        decimal? FreeAboveAmount,
+        byte EstimatedDaysMin,
+        byte EstimatedDaysMax);
+
+    /// <summary>One <c>sales.CartItems</c> row joined to everything an order line has to snapshot.</summary>
+    private sealed record CheckoutLineRow(
+        int VariantId,
+        short Quantity,
+        string Sku,
+        bool IsVariantActive,
+        decimal? PriceOverride,
+        decimal? CompareAtPriceOverride,
+        string ColourName,
+        string SizeLabel,
+        int ProductId,
+        string ProductCode,
+        string ProductName,
+        string Slug,
+        decimal BasePrice,
+        decimal? CompareAtPrice,
+        bool IsPublished,
+        bool IsProductDeleted,
+        int DepartmentId,
+        bool IsDepartmentActive,
+        int CategoryId,
+        bool IsCategoryActive,
+        bool IsCategoryDeleted,
+        int Available,
+        MediaRef? Image,
+        string? ImageAltText);
+}

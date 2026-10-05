@@ -1,0 +1,279 @@
+using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Mvc;
+using SpencerDenim.Api.Http;
+using SpencerDenim.Application.Abstractions.Messaging;
+using SpencerDenim.Application.Abstractions.Results;
+using SpencerDenim.Application.Sales.Cart;
+using SpencerDenim.Application.Sales.Checkout;
+using SpencerDenim.Application.Sales.Checkout.Contracts;
+
+namespace SpencerDenim.Api.Endpoints.Sales;
+
+/// <summary>
+/// Checkout and the order it produces (CHK-01..04).
+/// <para>
+/// <b>No authentication, and every checkout here is a guest checkout (CHK-03).</b> There is no customer
+/// sign-in anywhere in this repository — ACC-01 is W3-01 — so the visitor is identified exactly as the bag
+/// identifies them: by the token in <c>sd_cart</c>. <see cref="ReadLookup"/> is the one line W3-01 changes,
+/// and <c>PlaceOrderCommand.CustomerUserId</c> is the one field it fills in.
+/// </para>
+/// <para>
+/// <b>Where this ends.</b> A placed order and its number. Nothing here touches money: PAY-01/PAY-03 — the
+/// bank details, the reference to quote, the slip upload, the approval queue and the expiry job — are
+/// W3-03's steps 2 and 3, and PAY-02 (PayPal) is W4-01.
+/// </para>
+/// </summary>
+internal static class CheckoutEndpoints
+{
+    public static IEndpointRouteBuilder MapCheckoutEndpoints(this IEndpointRouteBuilder endpoints)
+    {
+        var checkout = endpoints.MapGroup("/api/checkout").WithTags("Checkout");
+
+        checkout.MapGet(string.Empty, GetCheckoutAsync)
+            .WithName("GetCheckout")
+            .WithSummary("The visitor's checkout: bag, districts, delivery options, payment methods.")
+            .WithDescription(
+                "CHK-01..03. Every line is repriced from the catalogue on each read (doc 08 §6). "
+                + "Pass districtId and deliveryMethodId to be quoted a delivery fee: without a district "
+                + "there is no zone, and doc 08 §6 step 10 has no fee to give — so none is shown rather "
+                + "than one being invented.")
+            .Produces<CheckoutSessionDto>();
+
+        checkout.MapPost("/orders", PlaceOrderAsync)
+            .WithName("PlaceOrder")
+            .WithSummary("Place the order.")
+            .WithDescription(
+                "CHK-01..04, doc 11 P6. Reserves stock for every line in one transaction and writes the "
+                + "order as PendingPayment. Re-sending the same checkoutKey returns the first order and "
+                + "creates nothing (doc 08 §5.4). 409 when a line has sold out or the total has changed "
+                + "since it was displayed; nothing is written in either case.")
+            .Produces<OrderConfirmationDto>(StatusCodes.Status201Created)
+            .ProducesValidationProblem()
+            .ProducesProblem(StatusCodes.Status409Conflict);
+
+        // Outside the /api/checkout group: an order outlives the checkout that made it, and the guest
+        // order link in doc 11 P6 step 11 points at the order, not at a checkout.
+        endpoints.MapGet("/api/orders/{publicId:guid}", GetOrderAsync)
+            .WithTags("Checkout")
+            .WithName("GetOrder")
+            .WithSummary("One placed order, by the unguessable token in its link.")
+            .WithDescription(
+                "CHK-04. The success page and a guest's order link read the same endpoint, so the page "
+                + "survives a reload. A token that matches no order answers 404 and says nothing else.")
+            .Produces<OrderConfirmationDto>()
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
+        return endpoints;
+    }
+
+    private static async Task<Ok<CheckoutSessionDto>> GetCheckoutAsync(
+        IQueryHandler<GetCheckoutQuery, CheckoutView> handler,
+        HttpContext httpContext,
+        TimeProvider clock,
+        CancellationToken cancellationToken,
+        [FromQuery] int? districtId = null,
+        [FromQuery] int? deliveryMethodId = null)
+    {
+        var view = await handler.HandleAsync(
+            new GetCheckoutQuery(ReadLookup(httpContext), districtId, deliveryMethodId),
+            cancellationToken);
+
+        CartCookie.Apply(httpContext.Response, view.Cookie, view.GuestToken, clock);
+        NoStore(httpContext.Response);
+
+        return TypedResults.Ok(view.Session);
+    }
+
+    private static async Task<Results<Created<OrderConfirmationDto>, Ok<OrderConfirmationDto>, ProblemHttpResult, ValidationProblem>>
+        PlaceOrderAsync(
+            [FromBody] PlaceOrderRequest? request,
+            ICommandHandler<PlaceOrderCommand, PlaceOrderResult> handler,
+            HttpContext httpContext,
+            CancellationToken cancellationToken)
+    {
+        // `request` is nullable and every string on it is nullable, which is issue #47: a body of `{}` —
+        // or no body at all — binds nulls into whatever the shape declares, and a non-nullable string
+        // property is an annotation rather than a runtime guard. The command carries the nulls and the
+        // validator turns them into one 400 naming every missing field. Nothing here dereferences before
+        // that happens.
+        var command = new PlaceOrderCommand(
+            ReadLookup(httpContext),
+            request?.CheckoutKey ?? Guid.Empty,
+            request?.FirstName,
+            request?.LastName,
+            request?.Email,
+            request?.Phone,
+            request?.DeliveryMethodId,
+            request?.DistrictId,
+            request?.PickupLocationId,
+            request?.Address,
+            request?.PaymentMethodCode,
+            request?.ExpectedGrandTotal,
+            request?.CustomerNote,
+
+            // Doc 11 P6: "Customer IP is stored with the order for fraud checks and deleted after 90
+            // days" (doc 08 §8.4 owns the purge, which is not built — see the task report). Read from the
+            // connection rather than from a header the client controls; the forwarded-headers middleware
+            // is what makes this the real address behind Caddy.
+            httpContext.Connection.RemoteIpAddress?.ToString());
+
+        var result = await handler.HandleAsync(command, cancellationToken);
+
+        NoStore(httpContext.Response);
+
+        switch (result.Status)
+        {
+            case PlaceOrderStatus.Placed:
+                // 201 with the order's own address in Location. The resource that was created is the
+                // order, and that is the address a shopper can come back to.
+                return TypedResults.Created(
+                    $"/api/orders/{result.Confirmation!.PublicId:D}",
+                    result.Confirmation);
+
+            case PlaceOrderStatus.AlreadyPlaced:
+                // 200 and not 201: this request created nothing. The body is the order that was created
+                // the first time, flagged as a replay, so a client that double-submitted still lands on
+                // the right success page instead of being shown an error for succeeding twice.
+                return TypedResults.Ok(result.Confirmation!);
+
+            case PlaceOrderStatus.Invalid:
+                return ToValidationProblem(result.Errors);
+
+            case PlaceOrderStatus.Blocked:
+                // 409: the request was well formed and the shop's state refused it. The same reasoning
+                // the bag's out-of-stock answer records — a 400 would blame the shopper's input for
+                // something that is nothing to do with it.
+                return TypedResults.Problem(
+                    title: "Checkout is not possible",
+                    detail: BlockedDetail(result.Blockers),
+                    statusCode: StatusCodes.Status409Conflict,
+                    extensions: new Dictionary<string, object?>(StringComparer.Ordinal)
+                    {
+                        ["blockers"] = result.Blockers.Select(blocker => blocker.ToString()).ToArray(),
+                    });
+
+            case PlaceOrderStatus.OutOfStock:
+                return TypedResults.Problem(
+                    title: "Out of stock",
+                    detail:
+                        "Some of your items sold out while you were checking out. Your order has not been "
+                        + "placed and nothing has been charged.",
+                    statusCode: StatusCodes.Status409Conflict,
+                    extensions: new Dictionary<string, object?>(StringComparer.Ordinal)
+                    {
+                        // Keyed by variant id so the page can mark the line it belongs to rather than
+                        // showing one sentence about the whole bag.
+                        ["shortLines"] = result.ShortLines.ToDictionary(
+                            line => line.Key.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                            line => line.Value),
+                    });
+
+            case PlaceOrderStatus.TotalChanged:
+                return TypedResults.Problem(
+                    title: "Prices changed",
+                    detail:
+                        "The total has changed since this page was loaded. Review the new total and place "
+                        + "your order again. Nothing has been placed.",
+                    statusCode: StatusCodes.Status409Conflict,
+                    extensions: new Dictionary<string, object?>(StringComparer.Ordinal)
+                    {
+                        ["totals"] = result.Totals,
+                    });
+
+            default:
+                throw new InvalidOperationException($"Unhandled placement status {result.Status}.");
+        }
+    }
+
+    private static async Task<Results<Ok<OrderConfirmationDto>, NotFound>> GetOrderAsync(
+        Guid publicId,
+        IQueryHandler<GetOrderQuery, OrderConfirmationDto?> handler,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        var order = await handler.HandleAsync(new GetOrderQuery(publicId), cancellationToken);
+
+        NoStore(httpContext.Response);
+
+        // A bare 404 with no body. "No such order" and "that order is not yours" must be the same answer:
+        // telling them apart would confirm that a guessed token names a real order.
+        return order is null ? TypedResults.NotFound() : TypedResults.Ok(order);
+    }
+
+    /// <summary>One sentence per blocker, in the order the use case put them.</summary>
+    private static string BlockedDetail(IReadOnlyList<CheckoutBlocker> blockers) =>
+        string.Join(
+            ' ',
+            blockers.Select(blocker => blocker switch
+            {
+                CheckoutBlocker.EmptyBag => "Your bag is empty.",
+                CheckoutBlocker.LineNotPurchasable =>
+                    "Something in your bag cannot be bought right now. Go back to your bag to adjust it.",
+                CheckoutBlocker.NoDeliveryMethod =>
+                    "We cannot deliver to that district at the moment.",
+                CheckoutBlocker.NoPaymentMethod =>
+                    "No payment method is available at the moment. Please try again shortly.",
+                _ => "Checkout is not available.",
+            }));
+
+    /// <summary>
+    /// Who is asking. Identical to the bag's, and for the identical reason: the only cookie
+    /// authentication scheme in this application is the admin one, and an admin principal is not a
+    /// customer, so <c>httpContext.User</c> is not read for a customer id that cannot exist.
+    /// </summary>
+    private static CartLookup ReadLookup(HttpContext httpContext) =>
+        CartLookup.ForGuest(CartCookie.Read(httpContext.Request));
+
+    /// <summary>
+    /// Nothing about a checkout may be stored by a shared cache: it holds a name, an address, a phone
+    /// number and the idempotency token that places the order. <c>Vary: Cookie</c> as well as
+    /// <c>no-store</c>, because the two say different things and a cache honouring only one of them has
+    /// handed one shopper another shopper's checkout.
+    /// </summary>
+    private static void NoStore(HttpResponse response)
+    {
+        response.Headers.CacheControl = "no-store, no-cache, private";
+        response.Headers.Vary = "Cookie";
+    }
+
+    private static ValidationProblem ToValidationProblem(IReadOnlyList<ValidationError> errors) =>
+        TypedResults.ValidationProblem(
+            errors
+                .GroupBy(error => error.Field, StringComparer.Ordinal)
+                .ToDictionary(
+                    group => group.Key,
+                    group => group.Select(error => error.Message).ToArray(),
+                    StringComparer.Ordinal));
+}
+
+/// <summary>
+/// Place order's body (CHK-01..04).
+/// </summary>
+/// <remarks>
+/// <b>Every string is nullable and so is the record itself — issue #47.</b> A well-formed JSON object that
+/// omits a required string binds <see langword="null"/> into a non-nullable reference property, because the
+/// annotation is not a runtime check, and the public API answered <b>500</b> for that until a tester found
+/// it. The shapes that matter are <c>{}</c> and <c>{"email":"a@b.c"}</c>, and both are integration-tested
+/// against this endpoint. A checkout body is almost all strings, which is why this is spelled out here
+/// rather than assumed.
+/// </remarks>
+/// <param name="CheckoutKey">
+/// From <c>GET /api/checkout</c>. Sending it twice returns the same order rather than placing a second one.
+/// </param>
+/// <param name="ExpectedGrandTotal">
+/// The total shown on the page. The order is refused if the freshly priced total differs (G-10), so an
+/// order is never placed at a figure the customer has not seen.
+/// </param>
+public sealed record PlaceOrderRequest(
+    Guid CheckoutKey,
+    string? FirstName,
+    string? LastName,
+    string? Email,
+    string? Phone,
+    int? DeliveryMethodId,
+    int? DistrictId,
+    int? PickupLocationId,
+    CheckoutAddressInput? Address,
+    string? PaymentMethodCode,
+    decimal? ExpectedGrandTotal,
+    string? CustomerNote);

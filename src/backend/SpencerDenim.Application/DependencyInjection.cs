@@ -22,6 +22,8 @@ using SpencerDenim.Application.Content.Home;
 using SpencerDenim.Application.Diagnostics.Ping;
 using SpencerDenim.Application.Marketing.Newsletter;
 using SpencerDenim.Application.Sales.Cart;
+using SpencerDenim.Application.Sales.Checkout;
+using SpencerDenim.Application.Sales.Checkout.Contracts;
 using SpencerDenim.Application.Settings;
 using SpencerDenim.Application.Settings.Abstractions;
 using SpencerDenim.Application.Settings.Admin;
@@ -188,6 +190,12 @@ public static class DependencyInjection
                 provider.GetRequiredKeyedService<IQueryHandler<GetSiteSettingsQuery, SiteSettingsDto>>(
                     UncachedSiteSettings),
                 provider.GetRequiredService<ISiteSettingsCache>()));
+
+        // Checkout (W3-02, CHK-01..04). The reads, the number series and the one placement transaction are
+        // ports Infrastructure registers; the arithmetic is the Domain's `OrderPricing`.
+        services.AddScoped<IQueryHandler<GetCheckoutQuery, CheckoutView>, GetCheckoutQueryHandler>();
+        services.AddScoped<IQueryHandler<GetOrderQuery, OrderConfirmationDto?>, GetOrderQueryHandler>();
+        services.AddScoped<ICommandHandler<PlaceOrderCommand, PlaceOrderResult>, PlaceOrderCommandHandler>();
 
         return services;
     }
