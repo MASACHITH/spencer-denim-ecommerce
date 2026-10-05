@@ -13,8 +13,8 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
     /// derived from the district's zone. No order row can be written until these twenty-five rows exist,
     /// so checkout cannot be built without them. W3-03's journal (decision 1) left the columns indexed and
     /// unconstrained on purpose, so that whichever task created the table would add the constraints in the
-    /// same change; its <c>SalesSchemaTests</c> asserts the absence, and this migration is why that
-    /// assertion has been narrowed to the two columns still waiting on <c>marketing</c>.
+    /// same change; its <c>SalesSchemaTests</c> asserted the absence, which is why that assertion has been
+    /// narrowed to the two columns still waiting on <c>marketing</c>.
     /// </para>
     /// <para>
     /// <b>No rows are inserted here.</b> The twenty-five districts and the nine provinces arrive through
@@ -27,6 +27,13 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
     /// here. It has no index, so adding the foreign key would mean a new index on the busiest table in the
     /// schema for a column that no code reads — there is no customer authentication yet (ACC-01). GLB-06 or
     /// W3-01 owes both together. See <c>AppUser.DefaultDistrictId</c>.
+    /// </para>
+    /// <para>
+    /// <b>Regenerated after rebasing onto <c>7566c1c</c></b>, which brought in #104's
+    /// <c>20261005063301_OpsSettingsTable</c>. The first attempt was stamped 05:12:59 and would have sorted
+    /// <i>before</i> a migration already on <c>main</c>, with a designer snapshot built against a model
+    /// that had no <c>ops.Settings</c> in it. The schema operations below are byte-identical to that first
+    /// attempt; only the timestamp and the snapshot it was diffed against changed.
     /// </para>
     /// </summary>
     public partial class CheckoutReferenceData : Migration
