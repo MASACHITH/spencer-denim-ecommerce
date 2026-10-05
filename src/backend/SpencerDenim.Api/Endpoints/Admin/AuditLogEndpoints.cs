@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using Microsoft.AspNetCore.Http.HttpResults;
 using SpencerDenim.Api.Authorization;
 using SpencerDenim.Application.Abstractions.Messaging;
@@ -37,12 +38,18 @@ internal static class AuditLogEndpoints
         return endpoints;
     }
 
-    private static async Task<Results<Ok<PagedResult<AuditLogEntryDto>>, ValidationProblem>> GetAuditLogsAsync(
+    private static async Task<Results<Ok<PagedResult<AuditLogEntryDto>>, ValidationProblem, UnauthorizedHttpResult>> GetAuditLogsAsync(
         [AsParameters] AuditLogListRequest request,
+        ClaimsPrincipal principal,
         IQueryHandler<GetAuditLogsQuery, PagedResult<AuditLogEntryDto>> handler,
         CancellationToken cancellationToken)
     {
-        var query = GetAuditLogsQuery.Create(request.ToCriteria());
+        if (!AdminSessionCookies.TryGetUserId(principal, out var actorId))
+        {
+            return TypedResults.Unauthorized();
+        }
+
+        var query = GetAuditLogsQuery.Create(request.ToCriteria(), actorId);
         if (!query.IsSuccess)
         {
             return ToValidationProblem(query.Errors);

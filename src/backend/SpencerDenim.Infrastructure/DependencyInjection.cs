@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using SpencerDenim.Application.Abstractions.Time;
 using SpencerDenim.Application.Admin.Auditing;
+using SpencerDenim.Application.Admin.Users.Abstractions;
 using SpencerDenim.Application.Catalog;
 using SpencerDenim.Application.Catalog.Abstractions;
 using SpencerDenim.Application.Catalog.Admin.Abstractions;
@@ -12,6 +13,7 @@ using SpencerDenim.Application.Content.Abstractions;
 using SpencerDenim.Application.Marketing.Newsletter;
 using SpencerDenim.Application.Sales.Cart.Abstractions;
 using SpencerDenim.Infrastructure.Admin.Auditing;
+using SpencerDenim.Infrastructure.Admin.Users;
 using SpencerDenim.Infrastructure.Catalog;
 using SpencerDenim.Infrastructure.Content;
 using SpencerDenim.Infrastructure.Marketing;
@@ -101,6 +103,11 @@ public static class DependencyInjection
         // Admin catalogue structure (ADM-11, W1-12).
         services.AddScoped<IAdminCatalogReader, AdminCatalogReader>();
         services.AddScoped<ICatalogStructureStore, CatalogStructureStore>();
+
+        // Users & Roles management (W1-08, issue #8).
+        services.AddScoped<IStaffUserDirectoryReader, StaffUserDirectoryReader>();
+        services.AddScoped<IRoleDirectoryReader, RoleDirectoryReader>();
+        services.AddScoped<IStaffUserRoleManagementStore, StaffUserRoleManagementStore>();
 
         // Content and newsletter (W2-01, HOME-01..10, GLB-03).
         services.AddScoped<IHomeContentReader, HomeContentReader>();

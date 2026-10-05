@@ -11,5 +11,14 @@ namespace SpencerDenim.Application.Admin.Auditing;
 public interface IAuditLogReader
 {
     /// <summary>One page of audit log rows, filtered and sorted <c>OccurredAtUtc DESC</c>.</summary>
-    Task<PagedResult<AuditLogEntryDto>> ListAsync(GetAuditLogsQuery query, CancellationToken cancellationToken);
+    /// <param name="query">The validated listing query.</param>
+    /// <param name="includeGrantsAllHolders">
+    /// <c>false</c> removes, before the count and the page, every row whose subject or acting user is a current
+    /// Super Admin — so the audit log cannot be used to learn who holds that role (tester round 3, Major 2).
+    /// </param>
+    /// <param name="cancellationToken">Cancels the read.</param>
+    Task<PagedResult<AuditLogEntryDto>> ListAsync(
+        GetAuditLogsQuery query,
+        bool includeGrantsAllHolders,
+        CancellationToken cancellationToken);
 }

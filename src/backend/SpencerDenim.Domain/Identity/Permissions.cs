@@ -76,7 +76,18 @@ public static class Permissions
     public static class Reviews
     {
         public const string View = "Reviews.View";
+
+        /// <summary>
+        /// Added for W1-08 (issue #8): doc 08 §9's default-role table grants Content Editor
+        /// "Reviews.View/Edit/Approve/Delete", so Edit and Delete need to exist as real permission values —
+        /// this module previously declared only View/Approve.
+        /// </summary>
+        public const string Edit = "Reviews.Edit";
+
         public const string Approve = "Reviews.Approve";
+
+        /// <summary>See <see cref="Edit"/>.</summary>
+        public const string Delete = "Reviews.Delete";
     }
 
     public static class Promotions
@@ -134,6 +145,13 @@ public static class Permissions
 
     public static class Settings
     {
+        /// <summary>
+        /// Added for W1-08 (issue #8): doc 08 §9's default-role table grants Store Manager
+        /// "Settings.View/Edit", so View needs to exist as a real permission value alongside the
+        /// already-declared Edit.
+        /// </summary>
+        public const string View = "Settings.View";
+
         public const string Edit = "Settings.Edit";
 
         /// <summary>Bank details, payment providers, PayPal and FX (doc 08 §3.1 DB2).</summary>

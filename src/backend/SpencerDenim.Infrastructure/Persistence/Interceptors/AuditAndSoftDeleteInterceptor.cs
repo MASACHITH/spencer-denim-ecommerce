@@ -1,3 +1,6 @@
+using System.Globalization;
+using System.Security.Claims;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using SpencerDenim.Application.Abstractions.Time;
@@ -23,13 +26,35 @@ namespace SpencerDenim.Infrastructure.Persistence.Interceptors;
 /// The audit <i>log</i> table (<c>ops.AuditLogs</c>, ADM-03) arrives with the admin milestone; this
 /// interceptor only maintains the per-row audit columns.
 /// </summary>
-public sealed class AuditAndSoftDeleteInterceptor(IClock clock) : SaveChangesInterceptor
+public sealed class AuditAndSoftDeleteInterceptor(IClock clock, IHttpContextAccessor? httpContextAccessor = null) : SaveChangesInterceptor
 {
     /// <summary>
-    /// The user to stamp on a write. Storefront reads do not write, and the admin API supplies a real
-    /// user once authentication lands (W3-01); until then the columns stay NULL, which doc 08 allows.
+    /// The user to stamp on a write, when explicitly set. A hosted service or seeder running outside any HTTP
+    /// request has no principal to read, so it sets this directly; an admin write endpoint does not need to —
+    /// see <see cref="ResolveCurrentUserId"/>.
     /// </summary>
     public int? CurrentUserId { get; set; }
+
+    /// <summary>
+    /// Issue #8 follow-up flagged in the 2026-09-29 journal: nothing wired the signed-in admin's user ID into
+    /// this interceptor for any write endpoint, including this feature's own (the first authenticated admin
+    /// *write* endpoints in the codebase). Resolved here, once, from the ambient <see cref="HttpContext"/>'s
+    /// authenticated principal, rather than requiring every command handler to set <see cref="CurrentUserId"/>
+    /// by hand and risk forgetting it. <see cref="CurrentUserId"/> still wins when a caller (a seeder, a test)
+    /// sets it explicitly, since there is no HTTP request for this to read in that case anyway.
+    /// </summary>
+    private int? ResolveCurrentUserId()
+    {
+        if (CurrentUserId is { } explicitUserId)
+        {
+            return explicitUserId;
+        }
+
+        var claim = httpContextAccessor?.HttpContext?.User.FindFirst(ClaimTypes.NameIdentifier);
+        return claim is not null && int.TryParse(claim.Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var userId)
+            ? userId
+            : null;
+    }
 
     public override InterceptionResult<int> SavingChanges(
         DbContextEventData eventData,
@@ -79,7 +104,7 @@ public sealed class AuditAndSoftDeleteInterceptor(IClock clock) : SaveChangesInt
             {
                 case EntityState.Added:
                     auditable.CreatedAtUtc = utcNow;
-                    auditable.CreatedByUserId ??= CurrentUserId;
+                    auditable.CreatedByUserId ??= ResolveCurrentUserId();
                     auditable.UpdatedAtUtc = null;
                     auditable.UpdatedByUserId = null;
                     break;
@@ -89,7 +114,7 @@ public sealed class AuditAndSoftDeleteInterceptor(IClock clock) : SaveChangesInt
                     entry.Property(nameof(IAuditable.CreatedAtUtc)).IsModified = false;
                     entry.Property(nameof(IAuditable.CreatedByUserId)).IsModified = false;
                     auditable.UpdatedAtUtc = utcNow;
-                    auditable.UpdatedByUserId = CurrentUserId;
+                    auditable.UpdatedByUserId = ResolveCurrentUserId();
                     break;
 
                 default:

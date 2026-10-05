@@ -3,41 +3,17 @@ namespace SpencerDenim.Domain.Identity;
 /// <summary>
 /// RBAC safety rules (doc 08 §3.1 "RBAC safety rules (DB4)"). Pure domain rules: no persistence access, so the
 /// caller (an Application command handler) supplies effective permission sets it already loaded.
-/// Full Users &amp; Roles management (the actual assign/unassign endpoints) is out of scope for this slice
-/// (ADM-02 follow-up); this policy is the piece doc 08 asks to have enforced "at least at the domain/application
-/// layer" now, ready for that endpoint to call.
+/// <para>
+/// The assign/unassign endpoints W1-08 built are now the real callers — this stopped being "ready for that
+/// endpoint to call" when they landed. <b>Role</b> management (creating and editing roles themselves) is still
+/// to come and is tracked as issue #105, which carries two blockers that only become reachable once a role's
+/// permissions can change: #101's timing oracle, and a stale permission snapshot in the store that calls this
+/// policy. Whoever builds that must take a <i>role</i>-scoped lock on both sides, because re-reading inside the
+/// transaction is not enough when the lock is per user.
+/// </para>
 /// </summary>
 public static class RoleAssignmentPolicy
 {
-    /// <summary>
-    /// DB4 rule 1: only a GrantsAll holder may assign or unassign the GrantsAll role.
-    /// DB4 rule 2 (subset rule, N3): a <see cref="Permissions.Users.Manage"/> holder without GrantsAll may
-    /// assign a role only if every permission of that role is already in the actor's own effective set.
-    /// A GrantsAll actor always passes (rule 1 covers the GrantsAll-role case specifically).
-    /// </summary>
-    public static bool CanAssignRole(
-        bool actorHasGrantsAll,
-        bool actorHasUsersManage,
-        IReadOnlySet<string> actorEffectivePermissions,
-        bool roleGrantsAllPermissions,
-        IReadOnlySet<string> rolePermissions)
-    {
-        ArgumentNullException.ThrowIfNull(actorEffectivePermissions);
-        ArgumentNullException.ThrowIfNull(rolePermissions);
-
-        if (roleGrantsAllPermissions)
-        {
-            return actorHasGrantsAll;
-        }
-
-        if (actorHasGrantsAll)
-        {
-            return true;
-        }
-
-        return actorHasUsersManage && rolePermissions.IsSubsetOf(actorEffectivePermissions);
-    }
-
     /// <summary>
     /// DB4 rule 2: a <see cref="Permissions.Users.Manage"/> holder without GrantsAll may modify, reset the
     /// password or 2FA of, deactivate, reactivate or change the roles of a staff user only if the target's

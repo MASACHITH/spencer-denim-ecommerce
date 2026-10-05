@@ -86,6 +86,8 @@ app.MapAdminAuthEndpoints();
 app.MapAdminTwoFactorEndpoints();
 app.MapAuditLogEndpoints();
 
+app.MapUserEndpoints();
+app.MapRoleEndpoints();
 app.MapCatalogEndpoints();
 app.MapAdminCatalogEndpoints();
 app.MapContentEndpoints();

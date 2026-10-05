@@ -37,6 +37,12 @@ public sealed record GetAuditLogsQuery
     {
     }
 
+    /// <summary>
+    /// The signed-in staff user asking. The handler resolves their effective permissions from this id to decide
+    /// whether rows about, or written by, a Super Admin are visible to them at all.
+    /// </summary>
+    public int ActorUserId { get; private init; }
+
     public string? EntityType { get; private init; }
 
     public string? EntityId { get; private init; }
@@ -60,7 +66,7 @@ public sealed record GetAuditLogsQuery
     /// Validates and normalises a raw query string. Every problem is collected, so one 400 answers the
     /// whole request instead of the first mistake (same contract as <c>ProductListQuery.Create</c>).
     /// </summary>
-    public static Result<GetAuditLogsQuery> Create(AuditLogListCriteria criteria)
+    public static Result<GetAuditLogsQuery> Create(AuditLogListCriteria criteria, int actorUserId)
     {
         ArgumentNullException.ThrowIfNull(criteria);
 
@@ -92,6 +98,7 @@ public sealed record GetAuditLogsQuery
 
         return Result.Success(new GetAuditLogsQuery
         {
+            ActorUserId = actorUserId,
             EntityType = entityType,
             EntityId = entityId,
             UserId = userId,

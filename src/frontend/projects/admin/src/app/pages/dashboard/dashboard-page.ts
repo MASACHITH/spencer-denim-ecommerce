@@ -17,6 +17,8 @@ import { AdminAuthApi } from '../../core/auth/admin-auth-api';
       <nav class="panel__nav" aria-label="Admin sections">
         <a class="panel__link" routerLink="/catalog">Departments and categories</a>
         <a class="panel__link" routerLink="/audit-log">Audit log</a>
+        <a class="panel__link" routerLink="/users">Staff users</a>
+        <a class="panel__link" routerLink="/roles">Roles</a>
       </nav>
       <button class="panel__logout" type="button" (click)="logout()" [disabled]="loggingOut()">
         {{ loggingOut() ? 'Signing out…' : 'Sign out' }}
