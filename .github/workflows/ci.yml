@@ -223,16 +223,48 @@ jobs:
           done
 
           # The wordmark, tied to its own element rather than looked for anywhere on the page.
-          # A bare 'Colombo Wardrobe' substring proves nothing: delete the whole <header> and 14
+          # A bare 'Colombo Wardrobe' substring proves nothing: delete the whole <header> and 12
           # occurrences survive in the footer, the nav and the inlined JSON, so the check passed
-          # with no wordmark at all. The closing quote after the class name is what keeps this off
-          # the inlined <style>, where the same string appears a dozen times as a selector. The
-          # name is written out rather than read from BRAND because this is an assertion about the
-          # shipped bundle, like the specs. `[[ =~ ]]` avoids a pipe, for the pipefail reason above.
-          wordmark='site-header__wordmark"[^>]*>[[:space:]]*Colombo Wardrobe'
-          if [[ ! "$html" =~ $wordmark ]]; then
+          # with no wordmark at all. The name is written out rather than read from BRAND because
+          # this is an assertion about the shipped bundle, like the specs. `[[ =~ ]]` avoids a
+          # pipe, for the pipefail reason above.
+          #
+          # Keyed on the wordmark's own `data-testid` rather than on its class plus its position.
+          # The anchor holds *either* an uploaded logo or the text now (GLB-02), so the name is no
+          # longer a direct child of it — Angular server-renders
+          # `<a ... class="wordmark site-header__wordmark" ...><!----><span
+          # data-testid="wordmark-text">Colombo Wardrobe</span><!----></a>` — and the previous
+          # pattern required the text to follow the opening tag with nothing but whitespace
+          # between, so it went red on markup that was correct. Measured against the real bundle,
+          # not read off the source: `data-testid="wordmark-text"` occurs exactly once in the page,
+          # where `Colombo Wardrobe` occurs twelve times and `site-header__wordmark` three. A
+          # testid also survives a class reorder, which the old `site-header__wordmark"` guard did
+          # not: it quietly depended on that class being the last one in the attribute.
+          #
+          # Both header states are accepted, because both carry the name: the text span, or an
+          # uploaded logo whose alt falls back to the shop's name (GLB-12, WCAG 1.1.1). With no API
+          # behind this server there are no settings and so no logo, so it is the text branch that
+          # is exercised here — proved by mutation, by deleting the `@else` and watching this go
+          # red. The logo branch is allowed so this does not become a tripwire if the storefront
+          # ever server-renders a default one, and is written for either attribute order because
+          # the template's order is not a promise. Neither pattern can reach the inlined <style>,
+          # which carries no testid, nor the footer or nav, where these testids do not appear.
+          wordmark_text='data-testid="wordmark-text"[^>]*>[[:space:]]*Colombo Wardrobe'
+          wordmark_logo='data-testid="logo"[^>]*alt="[^"]*Colombo Wardrobe|alt="[^"]*Colombo Wardrobe"[^>]*data-testid="logo"'
+          if [[ ! "$html" =~ $wordmark_text ]] && [[ ! "$html" =~ $wordmark_logo ]]; then
             echo "::error::Server-rendered HTML has no Colombo Wardrobe wordmark in the site header."
-            echo "${html:0:2000}"
+            # Not the first 2000 bytes: those are all <head>, so the markup this assertion is about
+            # was missing from the log the one time it fired. Print the header's own anchor instead,
+            # and fall back to the head only when there is no anchor to print. A here-string rather
+            # than a pipe, and `-m1` rather than `head -1`, for the pipefail reason above.
+            anchor="$(grep -o -m1 '<a[^>]*site-header__wordmark.\{0,400\}' <<<"$html")"
+            if [ -n "$anchor" ]; then
+              echo "The site header's wordmark anchor, as served:"
+              echo "$anchor"
+            else
+              echo "There is no site-header__wordmark anchor in the page at all. First 2000 bytes:"
+              echo "${html:0:2000}"
+            fi
             exit 1
           fi
 
