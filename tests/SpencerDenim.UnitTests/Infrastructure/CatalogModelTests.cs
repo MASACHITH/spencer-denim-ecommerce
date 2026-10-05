@@ -7,6 +7,7 @@ using SpencerDenim.Domain.Catalog;
 using SpencerDenim.Domain.Common;
 using SpencerDenim.Domain.Content;
 using SpencerDenim.Domain.Inventory;
+using SpencerDenim.Domain.Sales;
 using SpencerDenim.Infrastructure;
 using SpencerDenim.Infrastructure.Persistence;
 
@@ -126,6 +127,11 @@ public sealed class CatalogModelTests
 
             // W2-01, doc 08 §3.7 and §1.4 (DB15): per-type section settings are JSON.
             $"{nameof(HomeSection)}.{nameof(HomeSection.SettingsJson)}",
+
+            // W3-03, doc 08 §3.5 and §1.4 (DB15): the seller details frozen onto an invoice, and the verbatim
+            // provider payload. Both nvarchar(max) with an ISJSON check, never the native json type.
+            $"{nameof(Order)}.{nameof(Order.InvoiceSellerSnapshotJson)}",
+            $"{nameof(PaymentEvent)}.{nameof(PaymentEvent.PayloadJson)}",
         ];
 
         var offenders = Model.GetEntityTypes()
@@ -297,8 +303,13 @@ public sealed class CatalogModelTests
             "HomeSectionItem -> HomeSection",
 
             // W2-09's bag. Doc 08 §1.6 names CartItems first in the permitted list — a cart item has no
-            // meaning apart from its cart — and nothing else in the sales schema is mapped yet.
+            // meaning apart from its cart.
             "CartItem -> Cart",
+
+            // W3-03, the last entry on doc 08 §1.6's list: a zone rate has no meaning apart from its
+            // delivery method. Nothing else in the twelve tables W3-03 added cascades — Orders and
+            // OrderLines are on §1.6's "never deleted" list instead.
+            "DeliveryMethodZoneRate -> DeliveryMethod",
 
             // W1-01's Identity model, the same doc 08 §1.6 list.
             "IdentityUserRole -> AppUser",

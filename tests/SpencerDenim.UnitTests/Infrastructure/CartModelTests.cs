@@ -47,20 +47,44 @@ public sealed class CartModelTests
     }
 
     /// <summary>
-    /// <b>The sales schema holds exactly two tables.</b> Orders, OrderLines, OrderStatusHistory, Payments,
-    /// PaymentEvents, Refunds, NumberSeries, DeliveryMethods, DeliveryMethodZoneRates, PickupLocations,
-    /// Couriers and PaymentProviders are #53's, and WishlistItems is W2-08's. Adding one here would mean two
+    /// <b>The sales schema holds the fourteen tables of W2-09 plus W3-03, and no more.</b> W3-03 (#53) added
+    /// the twelve this list gained; <c>WishlistItems</c> is still W2-08's, and mapping it here would mean two
     /// branches creating the same table.
+    /// <para>
+    /// W2-09 asserted "exactly two tables" because that was the claim it made to #53 on the coordination note.
+    /// W3-03 is that task, so the number moved — but the test still exists for the same reason: the sales
+    /// schema is built by more than one branch, and what each one owns has to be written down somewhere a
+    /// build can check.
+    /// </para>
     /// </summary>
     [Fact]
-    public void The_sales_schema_holds_only_carts_and_cart_items()
+    public void The_sales_schema_holds_the_tables_w2_09_and_w3_03_own()
     {
         var tables = Model.GetEntityTypes()
             .Where(entity => entity.GetSchema() == AppDbContext.SalesSchema)
             .Select(entity => entity.GetTableName())
             .ToList();
 
-        Assert.Equal(["CartItems", "Carts"], tables.Order(StringComparer.Ordinal));
+        Assert.Equal(
+            [
+                "CartItems",
+                "Carts",
+                "Couriers",
+                "DeliveryMethodZoneRates",
+                "DeliveryMethods",
+                "NumberSeries",
+                "OrderLines",
+                "OrderStatusHistory",
+                "Orders",
+                "PaymentEvents",
+                "PaymentProviders",
+                "Payments",
+                "PickupLocations",
+                "Refunds",
+            ],
+            tables.Order(StringComparer.Ordinal));
+
+        Assert.DoesNotContain("WishlistItems", tables);
     }
 
     /// <summary>
@@ -71,7 +95,7 @@ public sealed class CartModelTests
     [Fact]
     public void Neither_cart_table_has_a_concurrency_token()
     {
-        foreach (var entity in SalesEntities())
+        foreach (var entity in CartEntities())
         {
             Assert.DoesNotContain(entity.GetProperties(), property => property.IsConcurrencyToken);
         }
@@ -130,8 +154,11 @@ public sealed class CartModelTests
     }
 
     /// <summary>
-    /// Doc 08 §1.6: CartItems cascade from Carts (a pure child row) and nothing else about a cart cascades.
-    /// A cascade from ProductVariants would mean deleting a variant silently emptied part of somebody's bag.
+    /// Doc 08 §1.6's cascade allow-list, over the whole <c>sales</c> schema. Two entries, and only two:
+    /// CartItems from Carts, and (W3-03) DeliveryMethodZoneRates from DeliveryMethods. A cascade from
+    /// ProductVariants would mean deleting a variant silently emptied part of somebody's bag, and a cascade
+    /// from Orders to OrderLines would let a purge take the accounting records — EF's default for a required
+    /// relationship, so it is worth asserting rather than assuming.
     /// </summary>
     [Fact]
     public void Only_the_cart_to_item_relationship_cascades()
@@ -143,17 +170,23 @@ public sealed class CartModelTests
                     $"{entity.ShortName()} -> {foreignKey.PrincipalEntityType.ShortName()}"))
             .ToList();
 
-        Assert.Equal(["CartItem -> Cart"], cascading);
+        Assert.Equal(
+            ["CartItem -> Cart", "DeliveryMethodZoneRate -> DeliveryMethod"],
+            cascading.Order(StringComparer.Ordinal));
     }
 
     /// <summary>
-    /// The three doc 08 columns this migration deliberately leaves out, named so that adding one is a
-    /// decision rather than an accident.
+    /// The doc 08 cart columns that are still deliberately left out, named so that adding one is a decision
+    /// rather than an accident.
     /// <para>
-    /// <c>PromoCodeText</c> needs <c>marketing.PromoCodes</c> (ADM-13) before §3.5's "revalidated on every
-    /// read" can mean anything; <c>DistrictId</c> needs <c>ref.Districts</c>, which no migration has created;
-    /// <c>DeliveryMethodId</c> needs <c>sales.DeliveryMethods</c> (#53). Two of the three could not carry
-    /// their foreign key today, and none of them is read or written by CART-01/02.
+    /// <c>PromoCodeText</c> needs <c>marketing.PromoCodes</c> (ADM-13 / W3-05) before §3.5's "revalidated on
+    /// every read" can mean anything, and <c>DistrictId</c> needs <c>ref.Districts</c> (GLB-06), which no
+    /// migration has created — so it still could not carry its foreign key.
+    /// </para>
+    /// <para>
+    /// <b><c>DeliveryMethodId</c> has moved from this list to the one below.</b> W2-09 deferred it because
+    /// <c>sales.DeliveryMethods</c> did not exist; W3-03 created that table, so the column and its constraint
+    /// were added together, which is what W2-09 said the owning task should do.
     /// </para>
     /// </summary>
     [Fact]
@@ -166,12 +199,35 @@ public sealed class CartModelTests
 
         Assert.DoesNotContain("PromoCodeText", columns);
         Assert.DoesNotContain("DistrictId", columns);
-        Assert.DoesNotContain("DeliveryMethodId", columns);
 
-        // And what is there is only what the bag uses.
+        // And what is there is only what the bag uses, plus W3-03's delivery method.
         Assert.Equal(
-            ["CreatedAtUtc", "CustomerUserId", "Id", "LastActivityAtUtc", "Token"],
+            ["CreatedAtUtc", "CustomerUserId", "DeliveryMethodId", "Id", "LastActivityAtUtc", "Token"],
             columns.Order(StringComparer.Ordinal));
+    }
+
+    /// <summary>
+    /// The new column is only worth having with its constraint: doc 08 §3.5 gives it an FK to
+    /// <c>sales.DeliveryMethods</c>, and <c>NO ACTION</c>, because a method an admin retires must not be
+    /// deletable out from under a live bag.
+    /// </summary>
+    [Fact]
+    public void The_cart_delivery_method_carries_its_foreign_key()
+    {
+        var cart = Model.FindEntityType(typeof(Cart))!;
+
+        var foreignKey = Assert.Single(
+            cart.GetForeignKeys(),
+            candidate => candidate.Properties.Count == 1
+                && candidate.Properties[0].Name == nameof(Cart.DeliveryMethodId));
+
+        Assert.Equal(nameof(DeliveryMethod), foreignKey.PrincipalEntityType.ShortName());
+        Assert.Equal(DeleteBehavior.NoAction, foreignKey.DeleteBehavior);
+
+        // Doc 08 §1.6 (DB7): and it leads an index.
+        Assert.Contains(
+            cart.GetIndexes(),
+            index => index.Properties[0].Name == nameof(Cart.DeliveryMethodId));
     }
 
     /// <summary>
@@ -198,7 +254,7 @@ public sealed class CartModelTests
     [Fact]
     public void Neither_cart_table_carries_the_audit_columns()
     {
-        foreach (var entity in SalesEntities())
+        foreach (var entity in CartEntities())
         {
             var columns = entity.GetProperties().Select(property => property.Name).ToList();
             Assert.DoesNotContain("CreatedByUserId", columns);
@@ -209,4 +265,12 @@ public sealed class CartModelTests
 
     private static IEnumerable<IEntityType> SalesEntities() => Model.GetEntityTypes()
         .Where(entity => entity.GetSchema() == AppDbContext.SalesSchema);
+
+    /// <summary>
+    /// The two bag tables only. The cart assertions above are about rowversion and audit columns, and W3-03
+    /// added sales tables that legitimately have both — so a test about carts has to say carts rather than
+    /// sweep the schema.
+    /// </summary>
+    private static IEnumerable<IEntityType> CartEntities() =>
+        [Model.FindEntityType(typeof(Cart))!, Model.FindEntityType(typeof(CartItem))!];
 }
