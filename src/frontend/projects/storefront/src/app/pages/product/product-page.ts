@@ -113,8 +113,8 @@ const RECENT_SHOWN = 6;
  * as PDP-03 asks, and a successful add opens the mini bag. **Buy Now is still not here**: it is Add to
  * Bag followed by checkout, and checkout is W3-02 — a button that looked like it worked and did
  * nothing would be worse than no button, which is the same judgement that kept Add to Bag off this page
- * until the bag API existed. The real wishlist still needs W2-08, so the heart remains the local,
- * per-browser list the product card uses. Reviews are PDP-08 (W2-06) and Quick View is QV-01 (W2-04).
+ * until the bag API existed. The heart writes to the same per-browser list the product card uses, which
+ * W2-08's `/wishlist` page reads; a guest's wishlist lives in the browser by design (doc 08 §1.7). Reviews are PDP-08 (W2-06) and Quick View is QV-01 (W2-04).
  */
 @Component({
   selector: 'sd-product-page',

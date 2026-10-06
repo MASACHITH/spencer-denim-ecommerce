@@ -216,11 +216,11 @@ export class CartStore {
   /**
    * Move to wishlist (CART-01).
    *
-   * **It saves to this browser, not to an account, and that is a gap rather than a shortcut.** There is
-   * no wishlist API: W2-08 is not built, and doc 08 §1.7 already specifies that a guest wishlist is
-   * `localStorage` merged into `sales.WishlistItems` on login. So this writes to the same
-   * {@link LocalWishlist} the product card's heart has used since W2-04, and removes the line **only if
-   * that write succeeded**. The ordering alone was not the protection it was described as: storage here
+   * **It saves to this browser, not to an account, and that is the specification rather than a gap.**
+   * Doc 02's WISH-01 line keeps a guest's wishlist in the browser and doc 08 §1.7 lists it under
+   * "Client-side only (no tables)", merged into `sales.WishlistItems` on login — which is W3-01's. So
+   * this writes to the same {@link LocalWishlist} the product card's heart has used since W2-04 and that
+   * W2-08's wishlist page reads, and removes the line **only if that write succeeded**. The ordering alone was not the protection it was described as: storage here
    * cannot throw, it returns `false`, so the check is what protects the item and the order is merely
    * what makes the check possible.
    *

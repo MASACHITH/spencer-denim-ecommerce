@@ -14,9 +14,11 @@ import { LocalWishlist } from './wishlist/local-wishlist.service';
 /**
  * The wishlist and bag counts shown on the header icons (GLB-04).
  *
- * The wishlist number comes from {@link LocalWishlist} until the customer's saved list exists
- * (W2-08): a heart on a product card that saved something and left the header reading
- * "Wishlist, 0 items" was telling the shopper their tap had not worked.
+ * The wishlist number comes from {@link LocalWishlist}, which **is** the wishlist (W2-08, WISH-01):
+ * doc 02's WISH-01 line and doc 08 §1.7 both keep a guest's saved products in the browser, so there is
+ * no server-side count to prefer over this one. A heart on a product card that saved something and
+ * left the header reading "Wishlist, 0 items" was telling the shopper their tap had not worked.
+ * W3-01 adds the account list and the merge; this number will then be whichever of the two is live.
  *
  * It is taken up only after the first render. The count lives in this browser and the server
  * cannot know it, so reading it any earlier would grow the header during hydration — a badge the

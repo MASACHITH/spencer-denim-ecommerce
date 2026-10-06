@@ -91,9 +91,9 @@ let nextId = 0;
  *   `?colour=` and `?size=` as **filters** (PLP-02), so writing a colourway id into `colour` would
  *   re-run the listing against a filter value that is not even a colour-family slug. The selection
  *   is therefore local to the dialog, and the link out is what makes it shareable.
- * - **No wishlist heart.** The card's heart is right beside the trigger and is still the local,
- *   per-browser list until W2-08; a second heart over the same `localStorage` would be two controls
- *   for one bit of state.
+ * - **No wishlist heart.** The card's heart is right beside the trigger and writes the same
+ *   per-browser list (doc 08 §1.7); a second heart over the same storage would be two controls for one
+ *   bit of state.
  * - **No reviews, no delivery estimate, no related products, no size guide.** Those are the product
  *   page, and this is the thing that exists so a shopper does not have to go there.
  *

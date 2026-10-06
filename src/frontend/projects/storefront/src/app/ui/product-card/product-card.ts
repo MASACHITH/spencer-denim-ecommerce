@@ -93,8 +93,9 @@ interface ColourDot {
  * worth having is `variantCount` on the card projection, so the card can skip the dialog *before*
  * opening it; that follow-up is filed.
  *
- * The wishlist heart is a real control, but it saves to this browser only until the wishlist API
- * arrives (W2-08) — see {@link LocalWishlist}.
+ * The wishlist heart saves to this browser, which is where a guest's wishlist belongs (doc 02's WISH-01
+ * line, doc 08 §1.7) — see {@link LocalWishlist}. It sends the product's **name** as well as the slug, so
+ * W2-08's `/wishlist` page can still name an item the shop has since withdrawn.
  */
 @Component({
   selector: 'sd-product-card',
