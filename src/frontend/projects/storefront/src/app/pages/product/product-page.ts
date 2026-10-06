@@ -299,14 +299,22 @@ const RECENT_SHOWN = 6;
               <p class="pdp__qty-note" role="status">{{ quantityNote() }}</p>
             </div>
 
-            <!-- PDP-03: disabled until there is exactly one thing to add. aria-describedby points at
-                 the note below, so a screen reader is told *why* it is disabled rather than only that it
-                 is — a disabled control with no reason is the accessible version of a dead button. -->
+            <!-- PDP-03: unavailable until there is exactly one thing to add. aria-describedby points at
+                 the note below, so a screen reader is told *why* it is unavailable rather than only that
+                 it is — a dead control with no reason is the accessible version of a dead button.
+
+                 **aria-disabled, not disabled (W2-04 round 2).** This carried the same defect Quick View
+                 was failed for and the same one ADM-22 was fixed for: the disabled attribute on the
+                 element that holds focus makes the browser blur it to the document body with no focusin
+                 event, so pressing Add to Bag threw the shopper's place away. Here there is no dialog to
+                 be ejected from, but a refused add still leaves a keyboard user at the top of the
+                 document next to an error they can no longer get back to, and aria-describedby on an
+                 unfocusable button was never reachable at all. addToBag() refuses the activation. -->
             <button
               class="btn btn--primary btn--block pdp__add"
               type="button"
               data-testid="add-to-bag"
-              [disabled]="!canAddToBag() || adding()"
+              [attr.aria-disabled]="canAddToBag() && !adding() ? null : 'true'"
               [attr.aria-describedby]="addToBagReason() ? 'pdp-add-reason' : null"
               (click)="addToBag()"
             >
@@ -933,7 +941,9 @@ export class ProductPage {
   protected addToBag(): void {
     const variant = this.chosenVariant();
     const item = this.product();
-    if (!variant || !item || !this.canAddToBag()) {
+    // `adding()` joins the guard because the button is `aria-disabled` rather than `disabled` and
+    // so is still clickable: what the attribute says is unavailable, this has to make inert.
+    if (!variant || !item || !this.canAddToBag() || this.adding()) {
       return;
     }
 

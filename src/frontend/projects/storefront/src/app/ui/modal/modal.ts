@@ -93,11 +93,30 @@ let nextModalId = 0;
     }
   `,
   styles: `
+    /* The grid-template-rows line below is load-bearing, and it is a fix (W2-04 round 2).
+       (No backticks in this block: it is a template literal, and one would end it.)
+
+       Without it there is one *implicit* row, sized auto - that is, to the panel's **unclamped**
+       content height. place-items: center sets align-items and justify-items, never
+       align-content, so the panel was clamped to 92vh and then centred inside a row far taller
+       than the screen: at 390x844 the host's scrollHeight was 981 against a height of 844, and the
+       panel hung 137 px below the fold with Add to Bag off the screen and unscrollable-to, because
+       the thing that overflowed was the host and not the panel's own scrolling body. The size
+       guide never triggered it - its content fits 92vh - so this sat latent from PDP-04 until
+       Quick View was the first panel tall enough to show it.
+
+       One explicit row with a **zero minimum** removes the cause rather than compensating for it.
+       1fr alone keeps an automatic min-content minimum and blows the track out again; and
+       align-content: center, which was the other candidate, leaves the track oversized and merely
+       centres the overflow, so it fixes this panel and not the next one. minmax(0, 1fr) also makes
+       the panel's max-height: min(100%, 92vh) mean what it says - 100% now resolves against the
+       room actually available rather than against the content's own height. */
     :host {
       position: fixed;
       inset: 0;
       z-index: 120;
       display: grid;
+      grid-template-rows: minmax(0, 1fr);
       place-items: center;
       padding: var(--space-2);
     }

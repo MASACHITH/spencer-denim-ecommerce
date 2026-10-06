@@ -27,6 +27,18 @@ const SMALL = 10;
 const MEDIUM = 11;
 const LARGE = 12;
 
+/**
+ * Whether Add to Bag is refusing.
+ *
+ * It carries `aria-disabled` rather than the `disabled` attribute (W2-04 round 2: `disabled` on a
+ * focused button blurs it to `<body>` with no `focusin`, which ejected the shopper from the open
+ * dialog by their own press). So `.disabled` is `false` on it **by design**, and an assertion
+ * reading `.disabled` would be one that cannot fail.
+ */
+function unavailable(button: HTMLButtonElement): boolean {
+  return button.getAttribute('aria-disabled') === 'true';
+}
+
 function price(current: number, original = current): PriceDto {
   const discount = original > current ? Math.floor(((original - current) / original) * 100) : 0;
   return {
@@ -492,11 +504,55 @@ describe('QuickView (QV-01)', () => {
   });
 
   describe('Add to Bag', () => {
+    /**
+     * **The attribute itself, pinned, because the whole fix is which attribute is used.**
+     *
+     * `disabled` on the element that currently holds focus makes the browser blur it to `<body>`
+     * and fire no `focusin`, so `Modal.onFocusIn` never re-trapped and pressing Add to Bag threw
+     * the shopper out of an open dialog. (ADM-22's settings form was fixed for the same reason.)
+     * Where focus actually lands is a browser question and is measured in `quick-view.e2e.ts`;
+     * what jsdom can hold is the contract that makes it possible — unavailable is *said*, never
+     * *enforced by the platform*, and the element stays focusable and clickable either way.
+     */
+    it('says it is unavailable without ever carrying the disabled attribute', async () => {
+      const harness = await ready();
+
+      const add = harness.query<HTMLButtonElement>('[data-testid="quick-view-add"]')!;
+      expect(add.getAttribute('aria-disabled')).toBe('true');
+      expect(add.hasAttribute('disabled')).toBe(false);
+      // Still in the tab order, which is what keeps the focus trap able to see it at all.
+      expect(add.matches('button:not([disabled]):not([tabindex="-1"])')).toBe(true);
+
+      harness.all<HTMLButtonElement>('.size')[0].click();
+      await harness.settle();
+
+      // And once it can add, the attribute is gone rather than set to 'false'.
+      expect(
+        harness
+          .query<HTMLButtonElement>('[data-testid="quick-view-add"]')!
+          .hasAttribute('aria-disabled'),
+      ).toBe(false);
+    });
+
+    /** Clickable means the handler is what refuses, so it has to actually refuse. */
+    it('adds nothing when a click reaches it while it is unavailable', async () => {
+      const harness = await ready();
+
+      harness.all<HTMLButtonElement>('.size')[1].click(); // the sold-out size
+      await harness.settle();
+
+      harness.query<HTMLButtonElement>('[data-testid="quick-view-add"]')!.click();
+      await harness.settle();
+
+      http.verify();
+      expect(harness.host.closes).toBe(0);
+    });
+
     it('is disabled, and says why, until a size is settled', async () => {
       const harness = await ready();
 
       const add = harness.query<HTMLButtonElement>('[data-testid="quick-view-add"]')!;
-      expect(add.disabled).toBe(true);
+      expect(unavailable(add)).toBe(true);
 
       const reason = harness.query(`#${add.getAttribute('aria-describedby')}`);
       expect(reason?.textContent?.trim()).toBe('Choose a size to add this to your bag.');
@@ -504,7 +560,7 @@ describe('QuickView (QV-01)', () => {
       harness.all<HTMLButtonElement>('.size')[0].click();
       await harness.settle();
 
-      expect(harness.query<HTMLButtonElement>('[data-testid="quick-view-add"]')!.disabled).toBe(
+      expect(unavailable(harness.query<HTMLButtonElement>('[data-testid="quick-view-add"]')!)).toBe(
         false,
       );
       expect(
@@ -521,7 +577,7 @@ describe('QuickView (QV-01)', () => {
       await harness.settle();
 
       const add = harness.query<HTMLButtonElement>('[data-testid="quick-view-add"]')!;
-      expect(add.disabled).toBe(true);
+      expect(unavailable(add)).toBe(true);
       expect(harness.query(`#${add.getAttribute('aria-describedby')}`)?.textContent?.trim()).toBe(
         'That size is out of stock. Choose another size.',
       );
@@ -645,7 +701,7 @@ describe('QuickView (QV-01)', () => {
 
       http.verify();
       expect(harness.host.closes).toBe(0);
-      expect(harness.query<HTMLButtonElement>('[data-testid="quick-view-add"]')!.disabled).toBe(
+      expect(unavailable(harness.query<HTMLButtonElement>('[data-testid="quick-view-add"]')!)).toBe(
         true,
       );
     });
@@ -673,14 +729,14 @@ describe('QuickView (QV-01)', () => {
 
       http.verify();
       expect(harness.host.closes).toBe(0);
-      expect(harness.query<HTMLButtonElement>('[data-testid="quick-view-add"]')!.disabled).toBe(
+      expect(unavailable(harness.query<HTMLButtonElement>('[data-testid="quick-view-add"]')!)).toBe(
         true,
       );
 
       harness.all<HTMLButtonElement>('.size')[0].click();
       await harness.settle();
 
-      expect(harness.query<HTMLButtonElement>('[data-testid="quick-view-add"]')!.disabled).toBe(
+      expect(unavailable(harness.query<HTMLButtonElement>('[data-testid="quick-view-add"]')!)).toBe(
         false,
       );
       http.verify();
@@ -742,7 +798,7 @@ describe('QuickView (QV-01)', () => {
 
       expect(harness.query('.qv__stock')?.textContent?.trim()).toBe('Out of stock');
       const add = harness.query<HTMLButtonElement>('[data-testid="quick-view-add"]')!;
-      expect(add.disabled).toBe(true);
+      expect(unavailable(add)).toBe(true);
       expect(harness.query(`#${add.getAttribute('aria-describedby')}`)?.textContent?.trim()).toBe(
         'This product is out of stock.',
       );

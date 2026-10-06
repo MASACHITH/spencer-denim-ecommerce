@@ -311,14 +311,25 @@ let nextId = 0;
                 <p class="qv__note" role="status">{{ quantityNote() }}</p>
               </div>
 
-              <!-- Disabled until there is exactly one thing to add, as PDP-03 asks of the product
-                   page's button, and describing itself for the same reason: a greyed-out control
-                   with no reason is the accessible version of a dead button. -->
+              <!-- Unavailable until there is exactly one thing to add, as PDP-03 asks of the
+                   product page's button, and describing itself for the same reason: a greyed-out
+                   control with no reason is the accessible version of a dead button.
+
+                   **aria-disabled rather than disabled, and that is the fix (round 2).** The
+                   disabled attribute on the element that *currently holds focus* makes the browser
+                   blur it to the document body, and Chromium fires no focusin doing so - so
+                   Modal.onFocusIn never re-trapped and the shopper was thrown out of an open
+                   dialog by their own press of Add to Bag. On a successful add the mini bag takes
+                   focus and hides it; on a **refused** add it does not, and a screen-reader user
+                   simply lost their place inside a dialog that was still open. Identical root
+                   cause to the ADM-22 settings defect, and the identical remedy: stay focusable,
+                   say unavailable, and refuse the activation in addToBag(). It also makes the
+                   aria-describedby below reachable, which on a disabled button it was not. -->
               <button
                 class="btn btn--primary btn--block"
                 type="button"
                 data-testid="quick-view-add"
-                [disabled]="!canAddToBag() || adding()"
+                [attr.aria-disabled]="canAddToBag() && !adding() ? null : 'true'"
                 [attr.aria-describedby]="addToBagReason() ? quantityNoteId : null"
                 (click)="addToBag()"
               >
@@ -850,7 +861,18 @@ export class QuickView {
     input.value = String(this.quantity());
   }
 
+  /**
+   * The button says `aria-disabled` rather than `disabled`, so it is still focusable and still
+   * clickable — which makes refusing the activation *here* the thing that keeps it inert. `send`
+   * already refuses a missing variant, a sold-out one and a second add over one in flight, which
+   * is exactly `!canAddToBag() || adding()`; the guard is restated so the rejection is visible at
+   * the handler the button actually calls rather than two frames away.
+   */
   protected addToBag(): void {
+    if (!this.canAddToBag() || this.adding()) {
+      return;
+    }
+
     this.send(this.chosenVariant());
   }
 

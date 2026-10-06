@@ -8,6 +8,35 @@
    component's scoped styles. Anything that belongs to one component stays with that component.
    ========================================================================== */
 
+/* ---- A button that is unavailable without being `disabled` (W2-04 round 2, after ADM-22) ----
+   Both Add to Bag buttons — the product page's (PDP-03) and Quick View's (QV-01) — say
+   `aria-disabled="true"` rather than carrying the `disabled` attribute. The reason is in their
+   templates: `disabled` on the element that currently holds focus makes the browser blur it to
+   `<body>` and fire no `focusin`, so the press of the button threw the shopper's place away, and
+   inside Quick View it threw them out of an open dialog. The admin panel's settings form reached
+   the same conclusion first and draws its own version of these rules.
+
+   What that costs is the *look*: `.btn:disabled` in the shared `base.css` can no longer match, so
+   the unavailable state is drawn here instead, with the same four declarations it had. The hover
+   selectors are repeated because `base.css` guards hover with `:not(:disabled)` alone, which an
+   `aria-disabled` button passes; these are equal in specificity and later in the cascade (this
+   sheet loads after `base.css` — see angular.json), so they win.
+
+   Deliberately no `pointer-events: none`, as in the admin's copy: a control that cannot be hovered
+   cannot show a cursor at all, and the press is already refused by the handler.
+
+   This belongs in `base.css` beside `.btn:disabled`, and is here instead because a shared-library
+   change lands in every open branch at once and two are live (the same reason `ui/modal` has not
+   moved yet). Hoist it when they land; no other consumer puts `aria-disabled` on a `.btn` today. */
+.btn[aria-disabled='true'],
+.btn--primary[aria-disabled='true']:hover,
+.btn--secondary[aria-disabled='true']:hover {
+  background: var(--color-border);
+  border-color: var(--color-border);
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+}
+
 /* ---- Breadcrumb (PLP-01, PDP-01) ---- */
 .breadcrumb ol {
   display: flex;
