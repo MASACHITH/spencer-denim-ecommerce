@@ -4,6 +4,7 @@ import { Icon } from '@spencer-denim/shared';
 
 import { ColourSwatchDto, ProductBadge, ProductCardDto } from '../../core/catalog/catalog.model';
 import { formatLkr } from '../../core/catalog/money';
+import { QuickView, QuickViewIntent } from '../quick-view/quick-view';
 import { LocalWishlist } from '../../core/wishlist/local-wishlist.service';
 
 /** How many colour dots fit under a card at 320 px before the rest become "+3". */
@@ -61,18 +62,25 @@ interface ColourDot {
 /**
  * A product card in a listing grid (CARD-01).
  *
- * Deliberately not on this card yet:
- * - **Quick View** (QV-01) is its own task.
- * - **Add to Bag** needs the bag API (W2-09). A button that looked like it worked and did
- *   nothing would be worse than no button, so the card has none; the product page will take the
- *   first Add to Bag.
+ * **Quick View and Add to Bag (QV-01, W2-04).** Both sit on the photograph, as docs/04 §4 decision
+ * 5 draws them: two small icon buttons on a phone, a pair of labelled bars revealed on hover from
+ * 1024 px. Tapping the card itself still opens the product page, which is the same decision's
+ * other half, and is why neither trigger is the card's primary action.
+ *
+ * **Both triggers open the same dialog, and that is not an oversight.** `ProductCardDto` carries
+ * colours and *no variants at all*, so a card cannot know whether this product needs a size
+ * chosen — and a card that guessed a size would put the wrong thing in a bag. So Add to Bag opens
+ * Quick View with `intent="add"`, and the dialog, which does have the variants, decides: a product
+ * with exactly one buyable variant is added and the dialog closes itself, anything else stays open
+ * on the size list. The visible difference between the two triggers is therefore one request long,
+ * which is the honest cost of the card projection not carrying a variant count.
  *
  * The wishlist heart is a real control, but it saves to this browser only until the wishlist API
  * arrives (W2-08) — see {@link LocalWishlist}.
  */
 @Component({
   selector: 'sd-product-card',
-  imports: [Icon, RouterLink],
+  imports: [Icon, QuickView, RouterLink],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="card">
@@ -121,7 +129,7 @@ interface ColourDot {
              which is the truth, and the accessible name and the tooltip explain why. The product page
              has room for a sentence and shows one. -->
         <button
-          class="card__wish"
+          class="card__icon card__wish"
           type="button"
           [attr.aria-pressed]="saved()"
           [attr.aria-label]="wishLabel()"
@@ -130,6 +138,38 @@ interface ColourDot {
         >
           <sd-icon name="heart" size="sm" [filled]="saved()" />
         </button>
+
+        <!-- QV-01. aria-haspopup and aria-expanded on both, because both of them open the dialog
+             and a shopper is entitled to know that before pressing: see the class docblock for why
+             Add to Bag cannot skip it. The label is the product's, not "Quick view" alone - there
+             are twenty-four of these on a listing and a screen reader reading twenty-four
+             identically named buttons has told the shopper nothing. -->
+        <div class="card__actions">
+          <button
+            class="card__icon card__action"
+            type="button"
+            data-testid="card-quick-view"
+            aria-haspopup="dialog"
+            [attr.aria-expanded]="openedBy() === 'view'"
+            (click)="openQuickView('view')"
+          >
+            <sd-icon name="eye" size="sm" />
+            <span class="card__action-label">Quick view</span>
+            <span class="sr-only">&ngsp;{{ product().name }}</span>
+          </button>
+          <button
+            class="card__icon card__action card__action--bag"
+            type="button"
+            data-testid="card-add-to-bag"
+            aria-haspopup="dialog"
+            [attr.aria-expanded]="openedBy() === 'add'"
+            (click)="openQuickView('add')"
+          >
+            <sd-icon name="bag" size="sm" />
+            <span class="card__action-label">Add to bag</span>
+            <span class="sr-only">&ngsp;{{ product().name }}</span>
+          </button>
+        </div>
       </div>
 
       <div class="card__body">
@@ -180,6 +220,19 @@ interface ColourDot {
         </p>
       </div>
     </div>
+
+    <!-- Created by the press and destroyed by the close, which is what makes the focus trap, the
+         scroll lock and the return of focus all free: the shared modal does them on activate and
+         on destroy. A listing holds twenty-four cards, so a dialog that stayed mounted would be
+         twenty-four dialogs' worth of render effects for the one a shopper might open. -->
+    @if (quickViewOpen()) {
+      <sd-quick-view
+        [product]="product()"
+        [open]="true"
+        [intent]="quickViewIntent()"
+        (closed)="closeQuickView()"
+      />
+    }
   `,
   styles: `
     :host {
@@ -257,10 +310,11 @@ interface ColourDot {
       border: 1px solid currentColor;
     }
 
-    .card__wish {
-      position: absolute;
-      top: 0;
-      right: 0;
+    /* The shell all three photo controls share - the heart, Quick View and Add to Bag (docs/04 §4
+       decision 5). A 44 px target with a smaller white plate inside it, so the icons line up with
+       each other and the target is a thumb's rather than an icon's. */
+    .card__icon {
+      position: relative;
       z-index: 1;
       display: grid;
       place-items: center;
@@ -272,18 +326,100 @@ interface ColourDot {
       color: var(--color-text);
       cursor: pointer;
     }
-    .card__wish::before {
+    .card__icon::before {
       content: '';
       position: absolute;
       inset: 6px;
       background: var(--color-surface);
       transition: background-color var(--duration) var(--ease);
     }
-    .card__wish sd-icon {
+    .card__icon sd-icon,
+    .card__icon .card__action-label {
       position: relative;
     }
-    .card__wish:hover::before {
+    .card__icon:hover::before {
       background: var(--color-bg-alt);
+    }
+    .card__wish {
+      position: absolute;
+      top: 0;
+      right: 0;
+    }
+
+    /* Bottom-right on a phone, stacked, always there: docs/04 §4 decision 5 asks for small icon
+       buttons on the photo rather than a hover affordance a touch screen has no way to produce. */
+    .card__actions {
+      position: absolute;
+      z-index: 1;
+      right: 0;
+      bottom: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    /* Visible from 1024 px, where the pair becomes a labelled bar; until then it is the accessible
+       name and nothing more. Same geometry as .sr-only, which cannot be used directly because the
+       desktop rule has to undo it. */
+    .card__action-label {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+      white-space: nowrap;
+    }
+    @media (min-width: 1024px) {
+      .card__actions {
+        left: 0;
+        flex-direction: row;
+      }
+      .card__action {
+        flex: 1 1 50%;
+        width: auto;
+        padding-inline: var(--space-0-5);
+        font-size: 0.6875rem;
+        font-weight: var(--weight-medium);
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+      }
+      .card__action::before {
+        inset: 0;
+      }
+      .card__action sd-icon {
+        display: none;
+      }
+      .card__action-label {
+        position: relative;
+        width: auto;
+        height: auto;
+        overflow: visible;
+        clip: auto;
+      }
+      .card__action--bag {
+        color: var(--color-on-primary);
+      }
+      .card__action--bag::before {
+        background: var(--color-primary);
+      }
+      .card__action--bag:hover::before {
+        background: var(--color-primary-hover);
+      }
+    }
+    /* Revealed on hover only where there is a pointer that can hover. A touch screen keeps the
+       icon buttons, which is the whole of decision 5. :focus-within is what makes the pair
+       reachable by keyboard on a desktop. */
+    @media (min-width: 1024px) and (hover: hover) {
+      .card__actions {
+        opacity: 0;
+        transform: translateY(6px);
+        transition:
+          opacity var(--duration) var(--ease),
+          transform var(--duration) var(--ease);
+      }
+      .card:hover .card__actions,
+      .card:focus-within .card__actions {
+        opacity: 1;
+        transform: none;
+      }
     }
     /* #38: the ring is drawn **outside** the control.
 
@@ -298,8 +434,13 @@ interface ColourDot {
        kept — it is what makes a dark ring legible over a dark photograph — as a box-shadow filling
        the 2 px the outline offset leaves. Both are outside the border box, so neither can be
        painted over. */
-    .card__wish:focus-visible {
+    .card__icon:focus-visible {
       box-shadow: 0 0 0 2px var(--color-on-primary);
+    }
+    /* The white band would be invisible against the dark Add to Bag bar, so that one gets the
+       inverse: a dark band inside the primary-coloured plate, with the global ring outside it. */
+    .card__action--bag:focus-visible {
+      box-shadow: 0 0 0 2px var(--color-primary);
     }
 
     .card__body {
@@ -380,9 +521,25 @@ export class ProductCard {
   private readonly mainFailed = signal(false);
   private readonly hoverFailed = signal(false);
 
+  /**
+   * Which trigger has the Quick View dialog open, or null (QV-01).
+   *
+   * One signal rather than a boolean and an intent, so the two can never disagree - and it is what
+   * `aria-expanded` is read from, per trigger: the dialog belongs to whichever button opened it,
+   * and reporting both as expanded would tell a screen reader that pressing Add to Bag had done
+   * something it had not.
+   */
+  private readonly quickView = signal<QuickViewIntent | null>(null);
+
+  protected readonly openedBy = this.quickView.asReadonly();
+
+  protected readonly quickViewOpen = computed(() => this.quickView() !== null);
+
+  protected readonly quickViewIntent = computed<QuickViewIntent>(() => this.quickView() ?? 'view');
+
   protected readonly saved = computed(() => this.wishlist.has(this.product().slug));
 
-  /** TODO(W2-04): this is the product detail page's route (PDP-01..08). */
+  /** The product detail page (PDP-01..08), which tapping the card itself opens (docs/04 §4). */
   protected readonly link = computed(() => ['/product', this.product().slug]);
 
   protected readonly mainImage = computed(() =>
@@ -486,6 +643,14 @@ export class ProductCard {
     // `'unavailable'` means nothing changed anywhere, so the heart stays as it was and the label says
     // why. A filled heart over a refused write is the lie this replaced.
     this.wishFailed.set(this.wishlist.toggle(this.product().slug) === 'unavailable');
+  }
+
+  protected openQuickView(intent: QuickViewIntent): void {
+    this.quickView.set(intent);
+  }
+
+  protected closeQuickView(): void {
+    this.quickView.set(null);
   }
 
   protected onImageError(): void {

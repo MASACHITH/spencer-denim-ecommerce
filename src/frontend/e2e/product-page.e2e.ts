@@ -957,10 +957,23 @@ test.describe('what is deliberately not here', () => {
 
     // Add to Bag is here, and it is disabled until a size is chosen rather than absent — which is
     // PDP-03's own wording, and is the one disabled control this page is allowed.
-    const add = page.getByRole('button', { name: /add to bag/i });
+    //
+    // **Scoped to this page's own button since QV-01 (W2-04).** The related-products and
+    // recently-viewed rows are product cards, and a card now carries an Add to Bag of its own
+    // (CARD-01), so an unscoped name match finds three. The other two are a different control with
+    // a different job: they open Quick View, and neither is ever disabled — which is asserted
+    // below, because "the one disabled control this page is allowed" is the claim being made and it
+    // would otherwise now be measured over one of three buttons.
+    const add = page.locator('[data-testid="add-to-bag"]');
     await expect(add).toHaveCount(1);
     await expect(add).toBeDisabled();
     await expect(page.locator('#pdp-add-reason')).toContainText('Choose a size');
+
+    const cardAdds = page.locator('[data-testid="card-add-to-bag"]');
+    await expect(cardAdds).not.toHaveCount(0);
+    for (const trigger of await cardAdds.all()) {
+      await expect(trigger).toBeEnabled();
+    }
   });
 
   test('the wishlist heart works, per browser, as it does on a card (W2-08)', async ({ page }) => {

@@ -1,3 +1,5 @@
+import { provideHttpClient } from '@angular/common/http';
+import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { Component, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
@@ -218,14 +220,42 @@ describe('ProductCard content (CARD-01)', () => {
     expect(dots[1].classList.contains('dot--light')).toBe(false);
   });
 
-  it('offers no Add to Bag and no Quick View: neither is built yet', async () => {
+  /**
+   * Both triggers (QV-01, W2-04). They used to be absent and this test used to say so.
+   *
+   * The names carry the product, which is the point: a listing holds twenty-four cards, and
+   * twenty-four buttons all called "Quick view" tell a screen-reader user nothing about which one
+   * they are on. `aria-haspopup` is on both because both open the dialog - a card cannot know
+   * whether a size has to be chosen, so Add to Bag cannot skip it (see the component docblock).
+   */
+  it('offers Quick View and Add to Bag, each named after this product', async () => {
     const { element } = await render();
-    const labels = [...element.querySelectorAll('button')].map(
-      (button) => `${button.textContent} ${button.getAttribute('aria-label') ?? ''}`,
+
+    const view = element.querySelector<HTMLButtonElement>('[data-testid="card-quick-view"]')!;
+    const add = element.querySelector<HTMLButtonElement>('[data-testid="card-add-to-bag"]')!;
+
+    expect(view.textContent?.replace(/\s+/g, ' ').trim()).toBe(
+      'Quick view Linen Wrap Midi Dress',
+    );
+    expect(add.textContent?.replace(/\s+/g, ' ').trim()).toBe(
+      'Add to bag Linen Wrap Midi Dress',
     );
 
-    expect(labels.some((label) => /add to bag/i.test(label))).toBe(false);
-    expect(labels.some((label) => /quick view/i.test(label))).toBe(false);
+    for (const trigger of [view, add]) {
+      expect(trigger.getAttribute('aria-haspopup')).toBe('dialog');
+      expect(trigger.getAttribute('aria-expanded')).toBe('false');
+      expect(trigger.type).toBe('button');
+    }
+
+    // On the photograph, with the heart, rather than under the card: docs/04 §4 decision 5.
+    expect(element.querySelector('.card__media .card__actions')).not.toBeNull();
+    expect(element.querySelector('.card__media .card__wish')).not.toBeNull();
+  });
+
+  it('opens no dialog until a trigger is pressed, so a grid of cards costs nothing', async () => {
+    const { element } = await render();
+
+    expect(element.querySelector('sd-quick-view')).toBeNull();
   });
 });
 
@@ -396,5 +426,86 @@ describe('ProductCard renditions (CARD-01)', () => {
     await settle();
 
     expect(element.querySelector('img')).toBeNull();
+  });
+});
+
+/**
+ * The card's half of Quick View (QV-01): which dialog the press opens, which trigger owns it, and
+ * that it goes away again. What the dialog then *does* is `ui/quick-view/quick-view.spec.ts`; the
+ * whole flow through a real browser is `e2e/quick-view.e2e.ts`.
+ */
+describe('ProductCard Quick View (QV-01)', () => {
+  async function open(testId: string) {
+    TestBed.resetTestingModule();
+    TestBed.configureTestingModule({
+      imports: [CardHost],
+      providers: [provideRouter([]), provideHttpClient(), provideHttpClientTesting()],
+    });
+
+    const http = TestBed.inject(HttpTestingController);
+    const fixture = TestBed.createComponent(CardHost);
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    const element = fixture.nativeElement as HTMLElement;
+    const trigger = element.querySelector<HTMLButtonElement>(`[data-testid="${testId}"]`)!;
+
+    trigger.click();
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    return { fixture, element, trigger, http };
+  }
+
+  afterEach(() => document.body.classList.remove('sd-no-scroll'));
+
+  it('opens the dialog for this product, and only the pressed trigger says so', async () => {
+    const { element, trigger, http } = await open('card-quick-view');
+
+    expect(element.querySelector('sd-quick-view')).not.toBeNull();
+    expect(element.querySelector('[role="dialog"]')?.id).toBe('quick-view');
+    expect(trigger.getAttribute('aria-expanded')).toBe('true');
+    expect(
+      element.querySelector('[data-testid="card-add-to-bag"]')?.getAttribute('aria-expanded'),
+    ).toBe('false');
+
+    // It fetches the variants the card does not carry, for this card's slug.
+    http
+      .expectOne('/api/catalog/products/linen-wrap-midi-dress')
+      .flush({}, { status: 404, statusText: 'Not Found' });
+  });
+
+  it('opens the same dialog from Add to Bag, which is the trigger that then owns it', async () => {
+    const { element, trigger, http } = await open('card-add-to-bag');
+
+    expect(element.querySelector('[role="dialog"]')?.id).toBe('quick-view');
+    expect(trigger.getAttribute('aria-expanded')).toBe('true');
+    expect(
+      element.querySelector('[data-testid="card-quick-view"]')?.getAttribute('aria-expanded'),
+    ).toBe('false');
+
+    http
+      .expectOne('/api/catalog/products/linen-wrap-midi-dress')
+      .flush({}, { status: 404, statusText: 'Not Found' });
+  });
+
+  it('takes the dialog away again when it closes, leaving the card as it was', async () => {
+    const { fixture, element, trigger, http } = await open('card-quick-view');
+
+    http
+      .expectOne('/api/catalog/products/linen-wrap-midi-dress')
+      .flush({}, { status: 404, statusText: 'Not Found' });
+    fixture.detectChanges();
+
+    element.querySelector<HTMLButtonElement>('.sd-modal__close')!.click();
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(element.querySelector('sd-quick-view')).toBeNull();
+    expect(trigger.getAttribute('aria-expanded')).toBe('false');
+    // The dialog owns the scroll lock, so a card that opened one must not leave the page frozen.
+    expect(document.body.classList.contains('sd-no-scroll')).toBe(false);
   });
 });

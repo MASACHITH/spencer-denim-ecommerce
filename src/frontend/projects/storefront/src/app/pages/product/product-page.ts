@@ -480,121 +480,9 @@ const RECENT_SHOWN = 6;
       flex-wrap: wrap;
       gap: var(--space-1);
     }
-    /* Round, like the card's colour dots (docs/04 style-tile decision 3), inside a 44 px target. */
-    .swatch {
-      display: grid;
-      place-items: center;
-      width: var(--tap);
-      height: var(--tap);
-      padding: 0;
-      border: 1px solid transparent;
-      border-radius: var(--radius-round);
-      background: none;
-      cursor: pointer;
-    }
-    .swatch.is-selected {
-      border-color: var(--color-primary);
-    }
-    .swatch__dot {
-      width: 26px;
-      height: 26px;
-      border: 1px solid var(--color-border);
-      border-radius: var(--radius-round);
-      background: var(--swatch);
-    }
-    .swatch__dot--light {
-      border-color: var(--color-border-strong);
-    }
-    /* Sold out, but still made and still selectable — a different thing from a size this
-       colourway is not made in (disabled, struck through) and a different thing again from one in
-       stock. The screen reader was told "Indigo, out of stock" and the sighted shopper was not:
-       a wholly sold-out colourway drew exactly the same swatch as a live one. A diagonal slash
-       rather than a colour change, so it does not rest on colour alone (WCAG 1.4.1), and the same
-       mark on a size button so "sold out" reads the same wherever it appears. It is inset inside
-       the border box and so can never reach the focus ring, which is drawn further out again. */
-    .size.is-sold-out,
-    .swatch__dot.is-sold-out {
-      position: relative;
-      color: var(--color-text-muted);
-    }
-    /* A size button has text and a known background, so the mark can follow its own colour. A
-       swatch is whatever an admin chose, so the mark is given one measured against it. */
-    .swatch__dot.is-sold-out {
-      color: var(--slash);
-    }
-    /* The chosen size is a dark button; muting its label there would drop it below AA. */
-    .size.is-sold-out.is-selected {
-      color: var(--color-on-primary);
-    }
-    .size.is-sold-out::after,
-    .swatch__dot.is-sold-out::after {
-      content: '';
-      position: absolute;
-      inset: 1px;
-      background: linear-gradient(to top left, transparent 47%, currentColor 47% 53%, transparent 53%);
-      pointer-events: none;
-    }
-    .swatch__dot.is-sold-out::after {
-      border-radius: var(--radius-round);
-    }
-    .size {
-      min-width: var(--tap);
-      min-height: var(--tap);
-      padding-inline: var(--space-1-5);
-      border: 1px solid var(--color-border-strong);
-      background: var(--color-surface);
-      font-size: var(--text-small);
-      cursor: pointer;
-    }
-    .size.is-selected {
-      border-color: var(--color-primary);
-      background: var(--color-primary);
-      color: var(--color-on-primary);
-    }
-    /* A size this colourway is not made in. Struck through rather than merely greyed, so it does
-       not rely on colour alone (WCAG 1.4.1). */
-    .size:disabled {
-      border-color: var(--color-border);
-      background: var(--color-bg-alt);
-      color: var(--color-text-muted);
-      text-decoration: line-through;
-      cursor: not-allowed;
-    }
-
-    .qty {
-      display: flex;
-      align-items: stretch;
-      width: max-content;
-      border: 1px solid var(--color-border-strong);
-    }
-    /* The three controls sit edge to edge with no gap, so each one's ring landed underneath the
-       next sibling and its right-hand side was invisible. Lifting whichever has focus puts the
-       ring on top of its neighbours instead. */
-    .qty > :focus-visible {
-      position: relative;
-      z-index: 1;
-    }
-    .qty__step {
-      width: var(--tap);
-      min-height: var(--tap);
-      border: 0;
-      background: var(--color-surface);
-      font-size: var(--text-h4);
-      cursor: pointer;
-    }
-    .qty__step:disabled {
-      color: var(--color-text-muted);
-      cursor: not-allowed;
-    }
-    .qty__input {
-      width: 3.5rem;
-      min-height: var(--tap);
-      border: 0;
-      border-inline: 1px solid var(--color-border-strong);
-      background: var(--color-surface);
-      text-align: center;
-      font-variant-numeric: tabular-nums;
-    }
+    /* .swatch, .size and .qty are in the storefront stylesheet, not here: Quick View (QV-01)
+       draws the same picker from the same markup, and two copies of these rules is how a sold-out
+       swatch ends up slashed on one screen and plain on the other. */
     .pdp__qty-note {
       font-size: var(--text-label);
       color: var(--color-text-muted);
@@ -898,13 +786,18 @@ export class ProductPage {
       return null;
     }
 
-    if (this.stock().status === 'OutOfStock') {
-      return 'This product is out of stock.';
-    }
-
+    // **The chosen size first, and the order is a fix (QV-01, W2-04).** `stock()` narrows to the
+    // selection, so picking a sold-out size makes `stock().status` `OutOfStock` for a product with
+    // plenty of the other sizes. Asked in the other order, this said "This product is out of
+    // stock" - false, and it made the sentence below unreachable for the one case it was written
+    // for. Found while Quick View was being built from this same logic.
     const variant = this.chosenVariant();
     if (variant && variant.availableQuantity <= 0) {
       return 'That size is out of stock. Choose another size.';
+    }
+
+    if (this.stock().status === 'OutOfStock') {
+      return 'This product is out of stock.';
     }
 
     if (this.sizes().length > 0 && !variant) {

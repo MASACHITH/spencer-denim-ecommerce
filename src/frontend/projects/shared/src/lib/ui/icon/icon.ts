@@ -29,7 +29,11 @@ export type IconName =
   // Added for the homepage benefits row (HOME-09): the three seeded benefits are delivery,
   // returns and quality, and only the first had an icon in this set.
   | 'refresh'
-  | 'shield';
+  | 'shield'
+  // Quick View (QV-01). The style tile already draws this glyph — `#i-eye` in
+  // `design/style-tile/index.html` §13, listed there beside the word "Quick view" — so the paths
+  // are copied from it rather than invented, and the set stays one family.
+  | 'eye';
 
 export type IconSize = 'xs' | 'sm' | 'md';
 
@@ -134,6 +138,10 @@ export type IconSize = 'xs' | 'sm' | 'md';
         @case ('shield') {
           <path d="M12 3.2l7 2.6v5.4c0 4.4-2.9 7.7-7 9.6-4.1-1.9-7-5.2-7-9.6V5.8z" />
           <path d="M9 12l2.2 2.2L15.4 10" />
+        }
+        @case ('eye') {
+          <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z" />
+          <circle cx="12" cy="12" r="3" />
         }
       }
     </svg>

@@ -46,10 +46,14 @@ let nextModalId = 0;
  * painted, and the whole class of bug is designed out. The two therefore do not share an
  * implementation, only the shape of the trap.
  *
- * TODO(QV-01): Quick View wants exactly this. When that task lands, this moves to
- * `@spencer-denim/shared` alongside the drawer and the trap becomes one utility both use. It is
- * deliberately storefront-local today, next to `ui/product-card`, so a shared-library change does
- * not land in three other branches at once.
+ * **Quick View (QV-01) now uses it, and it deliberately did not move.** That task was the trigger
+ * this file's own TODO named: "when that task lands, this moves to `@spencer-denim/shared` and the
+ * trap becomes one utility both use". It landed, and the move was not made, for the reason the same
+ * TODO gave in its next sentence — a shared-library change lands in every open branch at once, and
+ * there were several. Quick View is a **storefront** component, so there is still no consumer
+ * outside this application, and folding the trap together would touch `sd-drawer`, which is the
+ * mobile navigation *and* the mini bag. Three components sharing the shape of a trap and not its
+ * code is the cheaper mistake of the two. Revisit when the admin panel wants a modal.
  */
 @Component({
   selector: 'sd-modal',
