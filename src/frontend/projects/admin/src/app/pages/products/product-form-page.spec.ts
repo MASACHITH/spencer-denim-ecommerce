@@ -130,11 +130,11 @@ function product(overrides: Partial<AdminProductDetail> = {}): AdminProductDetai
       {
         id: 301,
         assetPublicId: 'aaaaaaaa-0000-0000-0000-000000000001',
-        mediaType: 1,
+        mediaType: 'Image',
         url: '/media/one.webp',
         posterUrl: null,
         colourName: null,
-        mediaRole: 1,
+        mediaRole: 'Gallery',
         sortOrder: 0,
         altTextOverride: 'Front view',
         assetAltText: 'A photograph',
@@ -142,11 +142,11 @@ function product(overrides: Partial<AdminProductDetail> = {}): AdminProductDetai
       {
         id: 302,
         assetPublicId: 'aaaaaaaa-0000-0000-0000-000000000002',
-        mediaType: 1,
+        mediaType: 'Image',
         url: '/media/two.webp',
         posterUrl: null,
         colourName: 'Jet Black',
-        mediaRole: 1,
+        mediaRole: 'Gallery',
         sortOrder: 1,
         altTextOverride: 'Jet Black, front',
         assetAltText: 'A photograph',
@@ -154,11 +154,11 @@ function product(overrides: Partial<AdminProductDetail> = {}): AdminProductDetai
       {
         id: 303,
         assetPublicId: 'aaaaaaaa-0000-0000-0000-000000000003',
-        mediaType: 1,
+        mediaType: 'Image',
         url: '/media/hover.webp',
         posterUrl: null,
         colourName: null,
-        mediaRole: 2,
+        mediaRole: 'Hover',
         sortOrder: 0,
         altTextOverride: 'Back view',
         assetAltText: 'A photograph',
@@ -166,11 +166,11 @@ function product(overrides: Partial<AdminProductDetail> = {}): AdminProductDetai
       {
         id: 304,
         assetPublicId: 'aaaaaaaa-0000-0000-0000-000000000004',
-        mediaType: 2,
+        mediaType: 'Video',
         url: '/media/clip.mp4',
         posterUrl: '/media/poster.webp',
         colourName: null,
-        mediaRole: 3,
+        mediaRole: 'Video',
         sortOrder: 0,
         altTextOverride: null,
         assetAltText: null,
@@ -762,7 +762,13 @@ describe('ProductFormPage (ADM-10)', () => {
     await settle();
 
     const request = writeTo(AdminProductApi.mediaImagesUrl);
-    request.flush({ publicId: 'new-asset', mediaType: 1, url: '/media/new.webp', posterUrl: null, altText: null });
+    request.flush({
+      publicId: 'new-asset',
+      mediaType: 'Image',
+      url: '/media/new.webp',
+      posterUrl: null,
+      altText: null,
+    });
     await settle();
 
     expect(testId('media-list').children).toHaveLength(1);

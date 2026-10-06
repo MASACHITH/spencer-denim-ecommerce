@@ -521,10 +521,10 @@ const server = createServer(async (request, response) => {
     const asset = {
       publicId,
 
-      // 1 Image (media.MediaAssets.MediaType). ADM-10's product form reads it to tell a photograph from
-      // the video; the logo flow ignores it, so adding it breaks nothing and leaving it out would make a
-      // freshly uploaded gallery row claim to be a video.
-      mediaType: 1,
+      // media.MediaAssets.MediaType, as a *name* — the real API registers a global
+      // JsonStringEnumConverter, so every enum in a response is a string. ADM-10's product form reads
+      // this to tell a photograph from the video; the logo flow ignores it.
+      mediaType: 'Image',
       url: '/__test__/logo.webp',
       posterUrl: null,
       width: 600,
@@ -547,7 +547,7 @@ const server = createServer(async (request, response) => {
     const publicId = `0000f00d-0000-4000-8000-${String(state.uploads.size + 1).padStart(12, '0')}`;
     const asset = {
       publicId,
-      mediaType: 2,
+      mediaType: 'Video',
       url: '/__test__/clip.mp4',
       posterUrl: '/__test__/poster.webp',
       durationSeconds: 12.5,

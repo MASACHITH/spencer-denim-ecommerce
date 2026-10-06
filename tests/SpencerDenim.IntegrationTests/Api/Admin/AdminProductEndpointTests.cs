@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using SpencerDenim.Domain.Catalog;
@@ -182,9 +183,9 @@ public sealed class AdminProductEndpointTests(SqlServerDatabaseFixture sqlServer
         };
         body["media"] = new object[]
         {
-            Media(gallery, null, 1, 0, "Front view"),
-            Media(hover, null, 2, 0, "Back view"),
-            Media(video, null, 3, 0, null),
+            Media(gallery, null, "Gallery", 0, "Front view"),
+            Media(hover, null, "Hover", 0, "Back view"),
+            Media(video, null, "Video", 0, null),
         };
 
         var (status, created) = await client.PostAsync(ProductsUrl, body, Token);
@@ -339,7 +340,7 @@ public sealed class AdminProductEndpointTests(SqlServerDatabaseFixture sqlServer
             Assert.False(before.Body.GetProperty("canBePublished").GetBoolean());
 
             // Attach one and try again.
-            body["media"] = new object[] { Media(gallery, null, 1, 0, "Front view") };
+            body["media"] = new object[] { Media(gallery, null, "Gallery", 0, "Front view") };
             body["rowVersion"] = await RowVersionAsync(factory, productId);
 
             Assert.Equal(
@@ -389,7 +390,7 @@ public sealed class AdminProductEndpointTests(SqlServerDatabaseFixture sqlServer
         var body = Body(seed, "w103-slug");
         body["colours"] = new object[] { Colour("Indigo Rinse", seed.ColourFamilyId) };
         body["variants"] = new object[] { Variant("Indigo Rinse", seed.SizeIds[0], "W103-SLUG-S") };
-        body["media"] = new object[] { Media(gallery, null, 1, 0, "Front view") };
+        body["media"] = new object[] { Media(gallery, null, "Gallery", 0, "Front view") };
 
         var (_, created) = await client.PostAsync(ProductsUrl, body, Token);
         var productId = created.GetProperty("id").GetInt32();
@@ -455,9 +456,9 @@ public sealed class AdminProductEndpointTests(SqlServerDatabaseFixture sqlServer
         body["variants"] = new object[] { Variant("Indigo Rinse", seed.SizeIds[0], "W103-MEDIA-S") };
         body["media"] = new object[]
         {
-            Media(gallery, null, 1, 0, "Front view"),
-            Media(hover, null, 2, 0, "Back view"),
-            Media(video, null, 3, 0, null),
+            Media(gallery, null, "Gallery", 0, "Front view"),
+            Media(hover, null, "Hover", 0, "Back view"),
+            Media(video, null, "Video", 0, null),
         };
 
         var (_, created) = await client.PostAsync(ProductsUrl, body, Token);
@@ -548,8 +549,8 @@ public sealed class AdminProductEndpointTests(SqlServerDatabaseFixture sqlServer
         };
         body["media"] = new object[]
         {
-            Media(shared, null, 1, 0, "Shared front view"),
-            Media(blackOnly, "Jet Black", 1, 1, "Jet Black, front"),
+            Media(shared, null, "Gallery", 0, "Shared front view"),
+            Media(blackOnly, "Jet Black", "Gallery", 1, "Jet Black, front"),
         };
 
         var (_, created) = await client.PostAsync(ProductsUrl, body, Token);
@@ -562,7 +563,7 @@ public sealed class AdminProductEndpointTests(SqlServerDatabaseFixture sqlServer
             body["extraCategoryIds"] = Array.Empty<object>();
             body["colours"] = new object[] { Colour("Indigo Rinse", seed.ColourFamilyId) };
             body["variants"] = new object[] { Variant("Indigo Rinse", seed.SizeIds[0], "W103-SEV-IR-S") };
-            body["media"] = new object[] { Media(shared, null, 1, 0, "Shared front view") };
+            body["media"] = new object[] { Media(shared, null, "Gallery", 0, "Shared front view") };
             body["rowVersion"] = await RowVersionAsync(factory, productId);
 
             var (status, problem) = await client.PutAsync($"{ProductsUrl}/{productId}", body, Token);
@@ -627,8 +628,8 @@ public sealed class AdminProductEndpointTests(SqlServerDatabaseFixture sqlServer
         body["variants"] = new object[] { Variant("Indigo Rinse", seed.SizeIds[0], "W103-SCOPED-S") };
         body["media"] = new object[]
         {
-            Media(shared, null, 1, 0, "Shared front view"),
-            Media(blackOnly, "Jet Black", 1, 1, "Jet Black, front"),
+            Media(shared, null, "Gallery", 0, "Shared front view"),
+            Media(blackOnly, "Jet Black", "Gallery", 1, "Jet Black, front"),
         };
 
         var (_, created) = await client.PostAsync(ProductsUrl, body, Token);
@@ -723,6 +724,187 @@ public sealed class AdminProductEndpointTests(SqlServerDatabaseFixture sqlServer
         {
             await HardDeleteAsync(factory, productId);
         }
+    }
+
+    /// <summary>
+    /// <b>The read model can be handed straight back to the write model.</b>
+    /// <para>
+    /// <c>GET /products/{id}</c>, then <c>PUT</c> that same body back unchanged, and expect 204 with
+    /// nothing moved. This is the test that did not exist anywhere, and its absence is why two of ADM-10's
+    /// scope bullets shipped broken: every other integration test hand-builds its request body from
+    /// scratch, so none of them could notice that the response and the request disagreed about how an enum
+    /// is spelled.
+    /// </para>
+    /// <para>
+    /// <c>Program.cs</c> registers a global <c>JsonStringEnumConverter</c>, so <c>badgeOverride</c> comes
+    /// back as <c>OnlineExclusive</c> and <c>mediaRole</c> as <c>Gallery</c>. The request DTOs declared
+    /// <c>int?</c>, so feeding either back answered <b>500</b> (the badge) or a raw <b>400</b> (the
+    /// gallery). A round trip is the cheapest possible guard against that whole family, and it keeps
+    /// guarding as fields are added.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task A_products_own_payload_can_be_sent_straight_back_unchanged()
+    {
+        var factory = await HostAsync();
+        var seed = await ReferenceDataAsync(factory);
+        var client = await AdminCatalogApiClient.SignInAsync(factory, "w103-roundtrip", FullProductRights, Token);
+
+        var gallery = await AddImageAssetAsync(factory, "Front view");
+        var hover = await AddImageAssetAsync(factory, "Back view");
+        var (video, poster) = await AddVideoAssetAsync(factory);
+
+        // Every field that can carry a value carries one, including both enums and a colour-scoped
+        // gallery row: a round trip over a payload full of nulls proves almost nothing.
+        var body = Body(seed, "w103-roundtrip");
+        body["extraCategoryIds"] = new object[] { seed.ExtraCategoryId };
+        body["badgeOverride"] = "OnlineExclusive";
+        body["shortDescription"] = "Everyday denim.";
+        body["description"] = "<p>Everyday denim.</p>";
+        body["careInstructions"] = "Machine wash cold.";
+        body["compareAtPrice"] = 6990m;
+        body["recommendedRank"] = 3;
+        body["seoTitle"] = "Round trip | Colombo Wardrobe";
+        body["seoDescription"] = "Everyday denim.";
+        body["colours"] = new object[]
+        {
+            Colour("Indigo Rinse", seed.ColourFamilyId),
+            Colour("Jet Black", seed.ColourFamilyId),
+        };
+        body["variants"] = new object[]
+        {
+            Variant("Indigo Rinse", seed.SizeIds[0], "W103-RT-IR-S"),
+            Variant("Jet Black", seed.SizeIds[0], "W103-RT-JB-S"),
+        };
+        body["media"] = new object[]
+        {
+            Media(gallery, null, "Gallery", 0, "Front view"),
+            Media(hover, "Jet Black", "Hover", 1, "Back view"),
+            Media(video, null, "Video", 2, null),
+        };
+
+        var (createStatus, created) = await client.PostAsync(ProductsUrl, body, Token);
+        Assert.Equal(HttpStatusCode.Created, createStatus);
+        var productId = created.GetProperty("id").GetInt32();
+
+        try
+        {
+            var (readStatus, detail) = await client.GetAsync($"{ProductsUrl}/{productId}", Token);
+            Assert.Equal(HttpStatusCode.OK, readStatus);
+
+            // The payload really does spell its enums as names, which is what makes this test meaningful.
+            Assert.Equal("OnlineExclusive", detail.GetProperty("badgeOverride").GetString());
+            Assert.Equal("Gallery", detail.GetProperty("media")[0].GetProperty("mediaRole").GetString());
+
+            // Straight back, untouched but for the confirmation an unpublished product does not need and
+            // a published one would.
+            var echoed = JsonNode.Parse(detail.GetRawText())!.AsObject();
+            echoed["confirmSlugChange"] = true;
+
+            var (writeStatus, problem) = await client.PutRawAsync(
+                $"{ProductsUrl}/{productId}", echoed.ToJsonString(), Token);
+
+            Assert.True(
+                writeStatus == HttpStatusCode.NoContent,
+                $"the product's own payload was refused with {writeStatus}: {problem}");
+
+            // Nothing moved: a round trip that quietly dropped the gallery or the badge would be worse
+            // than a refusal.
+            var (_, after) = await client.GetAsync($"{ProductsUrl}/{productId}", Token);
+
+            Assert.Equal("OnlineExclusive", after.GetProperty("badgeOverride").GetString());
+            Assert.Equal(3, after.GetProperty("media").GetArrayLength());
+            Assert.Equal(2, after.GetProperty("colours").GetArrayLength());
+            Assert.Equal(2, after.GetProperty("variants").GetArrayLength());
+            Assert.Single(after.GetProperty("extraCategoryIds").EnumerateArray());
+            Assert.Equal(
+                detail.GetProperty("cardImageUrl").GetString(),
+                after.GetProperty("cardImageUrl").GetString());
+            Assert.Equal(
+                detail.GetProperty("hoverImageUrl").GetString(),
+                after.GetProperty("hoverImageUrl").GetString());
+        }
+        finally
+        {
+            await HardDeleteAsync(factory, productId);
+            await HardDeleteAssetsAsync(factory, [gallery, hover, video, poster]);
+        }
+    }
+
+    /// <summary>
+    /// Every assignable badge is storable and reads back as its own name (ADM-10's "badges").
+    /// <para>
+    /// Zero tests mentioned <c>badgeOverride</c> before this one, and the field answered 500 for every
+    /// value an admin could choose.
+    /// </para>
+    /// </summary>
+    [Theory]
+    [InlineData("New")]
+    [InlineData("Sale")]
+    [InlineData("OnlineExclusive")]
+    [InlineData("BestSeller")]
+    public async Task Every_assignable_badge_can_be_saved_and_read_back(string badge)
+    {
+        var factory = await HostAsync();
+        var seed = await ReferenceDataAsync(factory);
+        var client = await AdminCatalogApiClient.SignInAsync(
+            factory, $"w103-badge-{badge}", FullProductRights, Token);
+
+        var body = Body(seed, $"w103-badge-{badge}");
+        body["badgeOverride"] = badge;
+
+        var (status, created) = await client.PostAsync(ProductsUrl, body, Token);
+        Assert.Equal(HttpStatusCode.Created, status);
+        var productId = created.GetProperty("id").GetInt32();
+
+        try
+        {
+            var (_, detail) = await client.GetAsync($"{ProductsUrl}/{productId}", Token);
+            Assert.Equal(badge, detail.GetProperty("badgeOverride").GetString());
+
+            // And through an edit, which is the other half of the field.
+            body["badgeOverride"] = null;
+            body["rowVersion"] = await RowVersionAsync(factory, productId);
+
+            Assert.Equal(
+                HttpStatusCode.NoContent,
+                (await client.PutAsync($"{ProductsUrl}/{productId}", body, Token)).Status);
+
+            var (_, cleared) = await client.GetAsync($"{ProductsUrl}/{productId}", Token);
+            Assert.Equal(JsonValueKind.Null, cleared.GetProperty("badgeOverride").ValueKind);
+        }
+        finally
+        {
+            await HardDeleteAsync(factory, productId);
+        }
+    }
+
+    /// <summary>
+    /// <c>LowStock</c> is a real <c>ProductBadge</c> that doc 08 §3.2 forbids storing, and the numeric
+    /// spellings a lenient parse would accept. Each has to be a named field error rather than a 500 or an
+    /// undefined value in the column.
+    /// </summary>
+    [Theory]
+    [InlineData("LowStock")]
+    [InlineData("1")]
+    [InlineData("9")]
+    [InlineData("255")]
+    [InlineData("Badge")]
+    public async Task A_badge_the_shop_cannot_store_is_a_named_field_error(string badge)
+    {
+        var factory = await HostAsync();
+        var seed = await ReferenceDataAsync(factory);
+        var client = await AdminCatalogApiClient.SignInAsync(factory, "w103-badbadge", FullProductRights, Token);
+
+        var body = Body(seed, "w103-badbadge");
+        body["badgeOverride"] = badge;
+
+        var (status, problem) = await client.PostAsync(ProductsUrl, body, Token);
+
+        Assert.Equal(HttpStatusCode.BadRequest, status);
+        Assert.True(
+            problem.GetProperty("errors").TryGetProperty("badgeOverride", out _),
+            $"the refusal did not name the field: {problem}");
     }
 
     [Fact]
@@ -1078,7 +1260,7 @@ public sealed class AdminProductEndpointTests(SqlServerDatabaseFixture sqlServer
     private static Dictionary<string, object?> Media(
         Guid assetPublicId,
         string? colourName,
-        int mediaRole,
+        string mediaRole,
         int sortOrder,
         string? altText) => new()
     {

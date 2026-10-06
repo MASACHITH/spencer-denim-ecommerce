@@ -25,6 +25,7 @@ import {
   BADGES,
   ColourValues,
   MEDIA_ROLE,
+  MediaAssetType,
   MediaValues,
   ProductBadge,
   ProductFormOptions,
@@ -72,7 +73,7 @@ interface Scalars {
 interface MediaRow extends MediaValues {
   readonly url: string | null;
   readonly posterUrl: string | null;
-  readonly mediaType: number;
+  readonly mediaType: MediaAssetType;
   readonly assetAltText: string | null;
 }
 
@@ -696,7 +697,7 @@ const EMPTY: Scalars = {
                 @for (row of media(); track row.assetPublicId + '/' + (row.colourName ?? ''); let index = $index) {
                   <li class="form__row" [attr.data-testid]="'media-' + index">
                     <div class="form__media-head">
-                      @if (row.mediaRole === 3) {
+                      @if (row.mediaRole === 'Video') {
                         <span class="adm-pill">Video</span>
                         @if (row.posterUrl) {
                           <img class="form__thumb" [src]="row.posterUrl" alt="" width="72" height="72" />
@@ -707,7 +708,7 @@ const EMPTY: Scalars = {
                     </div>
 
                     <div class="adm-fields">
-                      @if (row.mediaRole !== 3) {
+                      @if (row.mediaRole !== 'Video') {
                         <label class="adm-field">
                           <span class="adm-label">Role</span>
                           <select
@@ -717,8 +718,8 @@ const EMPTY: Scalars = {
                             (ngModelChange)="patchMedia(index, { mediaRole: toMediaRole($event) })"
                             [attr.data-testid]="'media-role-' + index"
                           >
-                            <option [ngValue]="1">Gallery photograph</option>
-                            <option [ngValue]="2">Hover photograph</option>
+                            <option [ngValue]="'Gallery'">Gallery photograph</option>
+                            <option [ngValue]="'Hover'">Hover photograph</option>
                           </select>
                         </label>
 
@@ -1473,14 +1474,15 @@ export class ProductFormPage {
 
   /** The `<select>` gives a number; the model wants the narrowed union the API accepts. */
   protected toMediaRole(value: unknown): ProductMediaRole {
-    return Number(value) === MEDIA_ROLE.hover ? MEDIA_ROLE.hover : MEDIA_ROLE.gallery;
+    // Only the two a photograph can switch between. The video's row has no role select at all, so
+    // Video can never arrive here, and narrowing anything unexpected to Gallery keeps a stale option
+    // from sending a role the API would refuse.
+    return value === MEDIA_ROLE.hover ? MEDIA_ROLE.hover : MEDIA_ROLE.gallery;
   }
 
-  /** <inheritdoc cref="toMediaRole" /> — 1 New, 2 Sale, 3 Online Exclusive, 4 Best Seller. */
+  /** <inheritdoc cref="toMediaRole" /> — the four assignable badges; LowStock is computed, never stored. */
   protected toBadge(value: unknown): ProductBadge | null {
-    const parsed = Number(value);
-
-    return parsed === 1 || parsed === 2 || parsed === 3 || parsed === 4 ? parsed : null;
+    return BADGES.find((badge) => badge.value === value)?.value ?? null;
   }
 
   /**
@@ -1643,7 +1645,7 @@ export class ProductFormPage {
             {
               assetPublicId: asset.publicId,
               colourName: null,
-              mediaRole: MEDIA_ROLE.gallery as ProductMediaRole,
+              mediaRole: MEDIA_ROLE.gallery,
               sortOrder: current.length,
               altTextOverride: null,
               url: asset.url,
@@ -1718,7 +1720,7 @@ export class ProductFormPage {
             {
               assetPublicId: asset.publicId,
               colourName: null,
-              mediaRole: MEDIA_ROLE.video as ProductMediaRole,
+              mediaRole: MEDIA_ROLE.video,
               sortOrder: current.length,
               altTextOverride: null,
               url: asset.url,

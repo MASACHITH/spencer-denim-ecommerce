@@ -7,19 +7,36 @@
  * only kind there is before it is finished.
  */
 
-/** 1 New, 2 Sale, 3 Online Exclusive, 4 Best Seller (doc 08 §3.2). Low Stock is computed, never stored. */
-export type ProductBadge = 1 | 2 | 3 | 4;
+/**
+ * **Every enum crosses this API as its name, never as a number.**
+ *
+ * `Program.cs` registers a global `JsonStringEnumConverter` and says why: "Enums travel as their names …
+ * so a client never has to keep a copy of our numeric values in sync." This file used to keep exactly
+ * such a copy — `1 | 2 | 3` — and the consequence was that a saved product's payload could not be handed
+ * back to the API at all: the form sent `"mediaRole": 1` where the API had sent `"Gallery"`, so reordering
+ * or re-captioning a photograph on any product loaded from the server answered 400, and setting a badge
+ * answered 500.
+ *
+ * `AdminProductEnumContractTests` (xUnit) now asserts these unions against `Enum.GetNames` on the real
+ * C# enums, so adding a badge without updating this file fails the build rather than the client.
+ */
 
-/** 1 Gallery, 2 Hover, 3 Video (doc 08 §3.2's `CK_ProductMedia_MediaRole`). */
-export type ProductMediaRole = 1 | 2 | 3;
+/** Doc 08 §3.2. `LowStock` is computed at read time and never stored, so it is not assignable. */
+export type ProductBadge = 'New' | 'Sale' | 'OnlineExclusive' | 'BestSeller';
 
-export const MEDIA_ROLE = { gallery: 1, hover: 2, video: 3 } as const;
+/** Doc 08 §3.2's `CK_ProductMedia_MediaRole`. */
+export type ProductMediaRole = 'Gallery' | 'Hover' | 'Video';
+
+/** `media.MediaAssets.MediaType` (doc 08 §3.3). */
+export type MediaAssetType = 'Image' | 'Video' | 'Document';
+
+export const MEDIA_ROLE = { gallery: 'Gallery', hover: 'Hover', video: 'Video' } as const;
 
 export const BADGES: readonly { readonly value: ProductBadge; readonly label: string }[] = [
-  { value: 1, label: 'New' },
-  { value: 2, label: 'Sale' },
-  { value: 3, label: 'Online Exclusive' },
-  { value: 4, label: 'Best Seller' },
+  { value: 'New', label: 'New' },
+  { value: 'Sale', label: 'Sale' },
+  { value: 'OnlineExclusive', label: 'Online Exclusive' },
+  { value: 'BestSeller', label: 'Best Seller' },
 ];
 
 export interface AdminProductListItem {
@@ -90,7 +107,7 @@ export interface AdminProductMedia {
   readonly id: number | null;
   readonly assetPublicId: string;
   /** 1 Image, 2 Video, 3 Document (`media.MediaAssets.MediaType`). */
-  readonly mediaType: number;
+  readonly mediaType: MediaAssetType;
   readonly url: string | null;
   readonly posterUrl: string | null;
   readonly colourName: string | null;
@@ -254,7 +271,7 @@ export interface MediaValues {
 /** One asset as `/api/admin/media` returns it after an upload. */
 export interface UploadedAsset {
   readonly publicId: string;
-  readonly mediaType: number;
+  readonly mediaType: MediaAssetType;
   readonly url: string | null;
   readonly posterUrl: string | null;
   readonly altText: string | null;

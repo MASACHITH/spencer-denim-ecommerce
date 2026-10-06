@@ -24,6 +24,15 @@
  *
  * The endpoint behaviour itself is proved against a real SQL Server in `AdminProductEndpointTests`; what
  * these browser tests need is a predictable product at a predictable shape, in real CSS.
+ *
+ * **Every enum here is a name, and that is now enforced rather than agreed.** This file used to answer
+ * `mediaRole: 1|2|3` and `badgeOverride: 3` while the real API — which registers a global
+ * `JsonStringEnumConverter` — answered `"Gallery"` and `"OnlineExclusive"`. A stub is a second
+ * implementation of the API, so the disagreement meant 43 Playwright and 348 Vitest tests asserted a
+ * contract that did not exist, and two of ADM-10's own scope bullets shipped broken behind green suites.
+ * `AdminProductEnumContractTests` (xUnit) now reads this file and `admin-product.model.ts` and checks
+ * their enum vocabularies against `Enum.GetNames` on the real C# enums, so the next divergence fails the
+ * build instead of being asserted.
  */
 
 /** `rowversion` is eight bytes; the shape matters because the screen round-trips it untouched. */
@@ -125,10 +134,10 @@ export function freshProductState() {
           { id: 603, colourName: 'Jet Black', sizeId: 81, sizeLabel: 'S', sizeScaleName: 'Alpha', sku: 'SD-W-0301-JB-S', barcode: null, priceOverride: null, compareAtPriceOverride: null, isActive: true, sortOrder: 2, hasOrders: false, onHand: 0 },
         ],
         media: [
-          { id: 701, assetPublicId: '0000beef-0000-4000-8000-000000000001', mediaType: 1, url: '/__test__/one.webp', posterUrl: null, colourName: null, mediaRole: 1, sortOrder: 0, altTextOverride: 'Front view', assetAltText: 'A photograph' },
-          { id: 702, assetPublicId: '0000beef-0000-4000-8000-000000000002', mediaType: 1, url: '/__test__/two.webp', posterUrl: null, colourName: 'Jet Black', mediaRole: 1, sortOrder: 1, altTextOverride: 'Jet Black, front', assetAltText: 'A photograph' },
-          { id: 703, assetPublicId: '0000beef-0000-4000-8000-000000000003', mediaType: 1, url: '/__test__/three.webp', posterUrl: null, colourName: null, mediaRole: 2, sortOrder: 0, altTextOverride: 'Back view', assetAltText: 'A photograph' },
-          { id: 704, assetPublicId: '0000beef-0000-4000-8000-000000000004', mediaType: 2, url: '/__test__/clip.mp4', posterUrl: '/__test__/poster.webp', colourName: null, mediaRole: 3, sortOrder: 0, altTextOverride: null, assetAltText: null },
+          { id: 701, assetPublicId: '0000beef-0000-4000-8000-000000000001', mediaType: 'Image', url: '/__test__/one.webp', posterUrl: null, colourName: null, mediaRole: 'Gallery', sortOrder: 0, altTextOverride: 'Front view', assetAltText: 'A photograph' },
+          { id: 702, assetPublicId: '0000beef-0000-4000-8000-000000000002', mediaType: 'Image', url: '/__test__/two.webp', posterUrl: null, colourName: 'Jet Black', mediaRole: 'Gallery', sortOrder: 1, altTextOverride: 'Jet Black, front', assetAltText: 'A photograph' },
+          { id: 703, assetPublicId: '0000beef-0000-4000-8000-000000000003', mediaType: 'Image', url: '/__test__/three.webp', posterUrl: null, colourName: null, mediaRole: 'Hover', sortOrder: 0, altTextOverride: 'Back view', assetAltText: 'A photograph' },
+          { id: 704, assetPublicId: '0000beef-0000-4000-8000-000000000004', mediaType: 'Video', url: '/__test__/clip.mp4', posterUrl: '/__test__/poster.webp', colourName: null, mediaRole: 'Video', sortOrder: 0, altTextOverride: null, assetAltText: null },
         ],
         relatedProducts: [
           { relatedProductId: 302, name: 'Linen Shirt Dress', productCode: 'SD-W-0302', isPublished: false, sortOrder: 0 },
@@ -155,7 +164,7 @@ export function freshProductState() {
         occasionId: null,
         basePrice: 7490,
         compareAtPrice: null,
-        badgeOverride: 3,
+        badgeOverride: 'OnlineExclusive',
         newUntilUtc: null,
         recommendedRank: null,
         sizeGuideId: null,
@@ -192,12 +201,12 @@ function publishBlockers(product) {
     );
   }
 
-  if (!product.media.some((row) => row.mediaRole === 1)) {
+  if (!product.media.some((row) => row.mediaRole === 'Gallery')) {
     blockers.push('Add at least one gallery photograph: it becomes the picture on the listing card.');
   }
 
   const withoutAlt = product.media.filter(
-    (row) => row.mediaRole !== 3 && !row.altTextOverride && !row.assetAltText,
+    (row) => row.mediaRole !== 'Video' && !row.altTextOverride && !row.assetAltText,
   ).length;
 
   if (withoutAlt > 0) {
@@ -229,7 +238,7 @@ function listItem(product) {
     updatedAtUtc: product.updatedAtUtc,
     variantCount: product.variants.filter((variant) => variant.isActive).length,
     colourCount: product.colours.length,
-    hasVideo: product.media.some((row) => row.mediaRole === 3),
+    hasVideo: product.media.some((row) => row.mediaRole === 'Video'),
     cardImageUrl: product.cardImageUrl,
     rowVersion: product.rowVersion,
   };
@@ -345,7 +354,7 @@ function apply(product, body, state) {
       return {
         id: existing?.id ?? state.nextProductId++,
         assetPublicId: row.assetPublicId,
-        mediaType: existing?.mediaType ?? uploaded?.mediaType ?? (row.mediaRole === 3 ? 2 : 1),
+        mediaType: existing?.mediaType ?? uploaded?.mediaType ?? (row.mediaRole === 'Video' ? 'Video' : 'Image'),
         url: existing?.url ?? uploaded?.url ?? null,
         posterUrl: existing?.posterUrl ?? uploaded?.posterUrl ?? null,
         colourName: row.colourName ?? null,
@@ -370,8 +379,8 @@ function apply(product, body, state) {
   });
 
   // Doc 08 §3.2: the card and hover images are denormalised from the gallery on save.
-  const gallery = product.media.filter((row) => row.mediaRole === 1);
-  const hover = product.media.filter((row) => row.mediaRole === 2);
+  const gallery = product.media.filter((row) => row.mediaRole === 'Gallery');
+  const hover = product.media.filter((row) => row.mediaRole === 'Hover');
 
   product.cardImageUrl = gallery[0]?.url ?? null;
   product.hoverImageUrl = hover[0]?.url ?? gallery[1]?.url ?? null;

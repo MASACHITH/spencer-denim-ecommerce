@@ -42,11 +42,28 @@ public sealed record ProductVariantRequest(
     int? SortOrder);
 
 /// <inheritdoc cref="ProductColourRequest"/>
-/// <param name="MediaRole">1 Gallery, 2 Hover, 3 Video (doc 08 §3.2's <c>CK_ProductMedia_MediaRole</c>).</param>
+/// <param name="MediaRole">
+/// <c>Gallery</c>, <c>Hover</c> or <c>Video</c> — the <b>name</b>, which is what the API emits.
+/// <para>
+/// <b>A name rather than a number, and this is the decision that makes the payload round-trip.</b>
+/// <c>Program.cs</c> registers a global <c>JsonStringEnumConverter</c> with its reason written down:
+/// "Enums travel as their names … so a client never has to keep a copy of our numeric values in sync."
+/// Every enum in a <i>response</i> therefore serialises as a string — including
+/// <c>AdminProductMediaDto.MediaRole</c>. This field was declared <c>int?</c>, so the read model could not
+/// be handed back to the write model: a screen that had loaded a saved product and then nudged a
+/// photograph sent <c>"mediaRole": "Gallery"</c> and got a raw 400 about a JSON value that could not be
+/// converted. Taking the name here is the half of the fix that belongs to the API; the other half is that
+/// the client stops inventing numbers.
+/// </para>
+/// <para>
+/// <see cref="ProductRequestMapper"/> parses it with an explicit allow-list rather than
+/// <see cref="Enum.IsDefined(Type, object)"/>, so an unknown name is a named field error and never a 500.
+/// </para>
+/// </param>
 public sealed record ProductMediaRequest(
     Guid? AssetPublicId,
     string? ColourName,
-    int? MediaRole,
+    string? MediaRole,
     int? SortOrder,
     string? AltTextOverride);
 
@@ -60,6 +77,11 @@ public sealed record RelatedProductRequest(int? RelatedProductId, int? SortOrder
 /// Required to change the slug of a product that has been published at least once (doc 11 P1's "Slug
 /// change after first publish shows a 'this breaks existing links' confirmation"). Ignored on a create and
 /// on a product that has never been published.
+/// </param>
+/// <param name="BadgeOverride">
+/// <c>New</c>, <c>Sale</c>, <c>OnlineExclusive</c> or <c>BestSeller</c> — the <b>name</b>, for the reason
+/// <see cref="ProductMediaRequest.MediaRole"/> gives. <c>LowStock</c> is refused: it is worked out at read
+/// time and never stored (doc 08 §3.2).
 /// </param>
 /// <param name="RowVersion">
 /// Base64 of <c>catalog.Products.RowVersion</c>, from the admin read model. May be sent in the
@@ -81,7 +103,7 @@ public sealed record ProductRequestBody(
     int? OccasionId,
     decimal? BasePrice,
     decimal? CompareAtPrice,
-    int? BadgeOverride,
+    string? BadgeOverride,
     int? RecommendedRank,
     int? SizeGuideId,
     string? SeoTitle,
@@ -132,18 +154,18 @@ internal static class ProductRequestMapper
         }
 
         ProductBadge? badge = null;
-        if (body.BadgeOverride is { } badgeValue)
+        if (CleanEnum(body.BadgeOverride) is { } badgeName)
         {
-            if (!Enum.IsDefined(typeof(ProductBadge), badgeValue) || badgeValue is < 1 or > 4)
+            if (!TryReadEnum(badgeName, AssignableBadges, out var parsedBadge))
             {
                 return (
                     null,
                     "badgeOverride",
-                    "A badge is 1 New, 2 Sale, 3 Online Exclusive or 4 Best Seller. Low Stock is worked out "
-                    + "from stock when the card is shown, so it cannot be set here.");
+                    "A badge is New, Sale, OnlineExclusive or BestSeller. LowStock is worked out from stock "
+                    + "when the card is shown, so it cannot be set here.");
             }
 
-            badge = (ProductBadge)badgeValue;
+            badge = parsedBadge;
         }
 
         var colours = new List<ProductColourInput>(body.Colours?.Count ?? 0);
@@ -202,18 +224,19 @@ internal static class ProductRequestMapper
                     return (null, "media", "Every photograph or video row has to name a media asset.");
                 }
 
-                if (row.MediaRole is not (1 or 2 or 3))
+                if (!TryReadEnum(CleanEnum(row.MediaRole), MediaRoles, out var role))
                 {
                     return (
                         null,
                         "media",
-                        "A media row is 1 a gallery photograph, 2 the hover photograph or 3 the video.");
+                        "A media row is Gallery (a gallery photograph), Hover (the hover photograph) or "
+                        + "Video (the product video).");
                 }
 
                 media.Add(new ProductMediaInput(
                     row.AssetPublicId.Value,
                     row.ColourName,
-                    (ProductMediaRole)row.MediaRole.Value,
+                    role,
                     ToSortOrder(row.SortOrder),
                     row.AltTextOverride));
             }
@@ -258,6 +281,64 @@ internal static class ProductRequestMapper
                 related),
             null,
             null);
+    }
+
+    /// <summary>The badges a staff member may assign (doc 08 §3.2's <c>CK_Products_BadgeOverride</c>).</summary>
+    private static readonly ProductBadge[] AssignableBadges =
+        [ProductBadge.New, ProductBadge.Sale, ProductBadge.OnlineExclusive, ProductBadge.BestSeller];
+
+    /// <summary>The roles a product media row may take (doc 08 §3.2's <c>CK_ProductMedia_MediaRole</c>).</summary>
+    private static readonly ProductMediaRole[] MediaRoles =
+        [ProductMediaRole.Gallery, ProductMediaRole.Hover, ProductMediaRole.Video];
+
+    /// <summary>Trims an enum name a client sent, turning blank into <c>null</c> as "not set".</summary>
+    private static string? CleanEnum(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    /// <summary>
+    /// Reads an enum name against an explicit allow-list.
+    /// <para>
+    /// <b>Why not <see cref="Enum.IsDefined(Type, object)"/>, which is what this replaced.</b> That overload
+    /// compares the boxed argument's type against the enum's <i>underlying</i> type, so
+    /// <c>Enum.IsDefined(typeof(ProductBadge), someInt)</c> throws <see cref="ArgumentException"/> —
+    /// <c>ProductBadge</c> is a <c>byte</c> enum, and the argument was an <c>int</c>. It threw before the
+    /// range check beside it could run, which made that check dead code and the field error it was written
+    /// to produce unreachable: <i>every</i> badge value answered 500 and only <c>null</c> succeeded.
+    /// </para>
+    /// <para>
+    /// <b>And why an allow-list rather than the parse's own answer.</b>
+    /// <see cref="Enum.TryParse{TEnum}(string, bool, out TEnum)"/> accepts any numeric string, so "9"
+    /// parses happily into an undefined value. It also accepts names outside the allow-list —
+    /// <c>LowStock</c> is a real <see cref="ProductBadge"/> that doc 08 §3.2 forbids storing. Membership of
+    /// the list is the only check that answers the question actually being asked.
+    /// </para>
+    /// </summary>
+    private static bool TryReadEnum<TEnum>(string? name, TEnum[] allowed, out TEnum value)
+        where TEnum : struct, Enum
+    {
+        value = default;
+
+        if (name is null)
+        {
+            return false;
+        }
+
+        // A numeric string is refused outright, although Enum.TryParse would take it. "3" parsing happily
+        // into OnlineExclusive would keep the numeric vocabulary alive in a client's head, which is the one
+        // thing Program.cs's converter exists to stop — and it is how this field came to be int? in the
+        // first place. One representation, and it is the name the API emits.
+        if (name.All(character => char.IsAsciiDigit(character) || character is '-' or '+'))
+        {
+            return false;
+        }
+
+        if (!Enum.TryParse(name, ignoreCase: true, out TEnum parsed) || !allowed.Contains(parsed))
+        {
+            return false;
+        }
+
+        value = parsed;
+        return true;
     }
 
     /// <summary>
