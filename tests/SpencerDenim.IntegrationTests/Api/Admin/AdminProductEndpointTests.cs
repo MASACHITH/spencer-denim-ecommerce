@@ -230,6 +230,14 @@ public sealed class AdminProductEndpointTests(SqlServerDatabaseFixture sqlServer
             var galleryAsset = await AssetIdAsync(dbContext, gallery);
             Assert.Equal(galleryAsset, product.CardImageAssetId);
 
+            // And the payload reports them. The columns were right while the detail read never loaded the
+            // two navigations, so every product came back with cardImageUrl and hoverImageUrl null however
+            // full its gallery was — a projection loads a navigation it selects from, a tracked graph has
+            // to be told to Include it.
+            var (_, detail) = await client.GetAsync($"{ProductsUrl}/{productId}", Token);
+            Assert.NotNull(detail.GetProperty("cardImageUrl").GetString());
+            Assert.NotNull(detail.GetProperty("hoverImageUrl").GetString());
+
             // Doc 11 P1 step 10: a stock row per variant, at zero.
             var stock = await dbContext.StockLevels
                 .AsNoTracking()

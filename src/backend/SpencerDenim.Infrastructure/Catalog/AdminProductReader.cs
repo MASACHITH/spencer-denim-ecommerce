@@ -180,6 +180,12 @@ internal sealed class AdminProductReader(AppDbContext dbContext, CatalogOptions 
             .Include(candidate => candidate.CategoryLinks)
             .Include(candidate => candidate.RelatedProducts)
                 .ThenInclude(related => related.Related)
+            // The two denormalised slots of doc 08 §3.2. Without these the graph is loaded but the
+            // navigations are not, so AssetUrl saw null and the payload reported cardImageUrl and
+            // hoverImageUrl as null for every product — including one with a full gallery. A projection
+            // would have loaded them implicitly; a tracked graph has to be told.
+            .Include(candidate => candidate.CardImageAsset)
+            .Include(candidate => candidate.HoverImageAsset)
             .AsSplitQuery()
             .FirstOrDefaultAsync(candidate => candidate.Id == productId, cancellationToken);
 
