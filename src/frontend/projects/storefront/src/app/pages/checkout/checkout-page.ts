@@ -172,6 +172,20 @@ const SUMMARY_FIELDS: readonly { readonly field: string; readonly elementId: str
  *   them in.
  * - **`overflow-wrap: anywhere`** on product names and the order number, which are the two strings long
  *   enough to widen a column on a 320 px screen.
+ * - **`min-height: 44px` on each error-summary entry.** They are real focusable controls that move focus
+ *   to a field, and there can be five of them in a column, so GLB-09's 44 px floor applies — they
+ *   shipped at 142×22, 168×22 and 254×22 at every breakpoint, under WCAG 2.2 SC 2.5.8's 24 px as well.
+ *   Block-level and full width rather than inline text, and `checkout.e2e.ts` measures the rendered box
+ *   in the **refused** state, because the test that measures the un-refused page cannot see a control
+ *   that does not exist there — which is exactly how this one got past the project's own gate.
+ * - **None of that is written here**, and finding that out was the useful part. `base.css` already had
+ *   `button.link` — "a button that reads as a link … **full tap height, because it is a control however
+ *   it reads**", `min-height: var(--tap)` — so the summary's entries are `class="link"` and this
+ *   component adds no rule for them at all; they are found by `data-testid="refused-field"`. The box and
+ *   its list reuse `.checkout__notice`/`--warn`, the heading is a `<strong>`, and the unavailable Place
+ *   order button is styled by a shared `.btn[aria-disabled='true']` beside `.btn:disabled`. The first
+ *   version wrote all of it locally and took this 4 kB budget over by 587 bytes — which is the only
+ *   reason the duplication was noticed, and the budget earning its keep.
  */
 @Component({
   selector: 'sd-checkout-page',
@@ -196,16 +210,26 @@ const SUMMARY_FIELDS: readonly { readonly field: string; readonly elementId: str
            and takes you to its control. It is computed from the live errors, so it empties itself as the
            shopper fixes them rather than going stale. -->
       @if (refusedSummary(); as refused) {
-        <div class="checkout__refused" id="checkout-refused" role="alert" tabindex="-1">
-          <p class="checkout__refused-head">
-            Your order was not placed.
+        <div
+          class="checkout__notice checkout__notice--warn"
+          id="checkout-refused"
+          role="alert"
+          tabindex="-1"
+        >
+          <p>
+            <strong>Your order was not placed.</strong>
             {{ refused.length === 1 ? 'One thing needs your attention:' : 'These need your attention:' }}
           </p>
-          <ul class="checkout__refused-list">
+          <ul class="checkout__notice">
             @for (item of refused; track item.field) {
               <li>
                 @if (item.elementId; as elementId) {
-                  <button class="checkout__refused-link" type="button" (click)="goToField(elementId)">
+                  <button
+                    class="link"
+                    type="button"
+                    data-testid="refused-field"
+                    (click)="goToField(elementId)"
+                  >
                     {{ item.message }}
                   </button>
                 } @else {
@@ -866,48 +890,10 @@ const SUMMARY_FIELDS: readonly { readonly field: string; readonly elementId: str
       color: var(--color-text-muted);
     }
     .checkout__error,
-    .checkout__refused,
     .checkout__notice--warn {
       padding: var(--space-1-5);
       border: 1px solid var(--color-sale);
       color: var(--color-sale);
-    }
-    .checkout__refused {
-      display: grid;
-      gap: var(--space-1);
-      min-width: 0;
-    }
-    .checkout__refused-head {
-      font-weight: var(--weight-medium);
-    }
-    .checkout__refused-list {
-      display: grid;
-      gap: var(--space-0-5);
-      margin: 0;
-      padding-inline-start: var(--space-2);
-      font-size: var(--text-small);
-    }
-    .checkout__refused-link {
-      /* GLB-09's 44 px floor, and this breached it: the entries shipped at 22 px tall, under WCAG 2.2
-         SC 2.5.8's 24 px as well. They are real focusable controls that move focus to a field, and there
-         can be five of them in a column, so block-level and full width rather than inline text. */
-      display: block;
-      width: 100%;
-      min-height: 44px;
-      padding: var(--space-1-5) 0;
-      border: 0;
-      background: none;
-      color: inherit;
-      font: inherit;
-      text-align: start;
-      text-decoration: underline;
-      cursor: pointer;
-    }
-    .checkout__place[aria-disabled='true'] {
-      background: var(--color-border);
-      border-color: var(--color-border);
-      color: var(--color-text-muted);
-      cursor: not-allowed;
     }
     .checkout__notice {
       display: grid;

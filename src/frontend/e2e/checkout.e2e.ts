@@ -922,7 +922,7 @@ test.describe('checkout (CHK-01..04)', () => {
           '.checkout__input',
           '.checkout__choice',
           '.checkout__place',
-          '.checkout__refused-link',
+          '[data-testid="refused-field"]',
         ]);
       });
     }

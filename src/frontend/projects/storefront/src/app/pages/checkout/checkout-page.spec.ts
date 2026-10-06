@@ -922,15 +922,16 @@ describe('CheckoutPage (CHK-01..03)', () => {
       placeButton().click();
       await settle();
 
-      const link = element.querySelector<HTMLElement>('.checkout__refused-link');
+      const link = element.querySelector<HTMLElement>('[data-testid="refused-field"]');
 
       expect(link).not.toBeNull();
 
-      // jsdom applies no stylesheet, so the box cannot be measured here; the rule is what is asserted,
-      // and `checkout.e2e.ts` measures the box in a real browser at 320, 768 and 1280 px.
-      const styles = (CheckoutPage as unknown as { ɵcmp: { styles: string[] } }).ɵcmp.styles.join('');
-
-      expect(styles).toContain('min-height: 44px');
+      // **`class="link"` is the assertion.** `base.css` gives `button.link` `min-height: var(--tap)`,
+      // which is the 44 px floor, and writing a second copy of that here is what took the component's
+      // style budget over. jsdom applies no stylesheet so the box cannot be measured; `checkout.e2e.ts`
+      // measures the rendered box in a real browser at 320, 768 and 1280 px with the form refused.
+      expect(link!.classList.contains('link')).toBe(true);
+      expect(link!.tagName).toBe('BUTTON');
     });
 
     /** The list is live, so it empties itself as the shopper fixes things rather than going stale. */

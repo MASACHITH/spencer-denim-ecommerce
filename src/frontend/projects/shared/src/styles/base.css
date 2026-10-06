@@ -139,10 +139,17 @@ a { color: inherit; }
     border-color var(--duration) var(--ease);
 }
 .btn--primary { background: var(--color-primary); color: var(--color-on-primary); }
-.btn--primary:hover:not(:disabled) { background: var(--color-primary-hover); border-color: var(--color-primary-hover); }
+.btn--primary:hover:not(:disabled):not([aria-disabled='true']) { background: var(--color-primary-hover); border-color: var(--color-primary-hover); }
 .btn--secondary { color: var(--color-primary); }
-.btn--secondary:hover:not(:disabled) { background: var(--color-primary); color: var(--color-on-primary); }
-.btn:disabled {
+.btn--secondary:hover:not(:disabled):not([aria-disabled='true']) { background: var(--color-primary); color: var(--color-on-primary); }
+/* `aria-disabled` looks the same as `disabled`, and that is not cosmetic tidiness: a control that says it
+   is unavailable to assistive technology and looks available on screen is worse than either alone.
+   `aria-disabled` is the form several controls now take — checkout's Place order, the admin settings
+   writes, Add to Bag — because `disabled` removes a control from the tab order, so nobody can reach it to
+   learn why it will not work, and disabling a *focused* control throws focus to `<body>` (ADM-22). The
+   press is a no-op either way; what changes is that the page can answer it. */
+.btn:disabled,
+.btn[aria-disabled='true'] {
   background: var(--color-border);
   border-color: var(--color-border);
   color: var(--color-text-muted);
@@ -160,8 +167,13 @@ a { color: inherit; }
 
 /* A button that reads as a link. The size guide's trigger is the first (PDP-04, behind issue
    #32); anything that performs an action but belongs in a sentence wants it. Full tap height,
-   because it is a control however it reads. */
+   because it is a control however it reads — and `inline-flex` so the label is centred *in* that
+   height rather than sitting at the top of it, which is what a bare `min-height` leaves. Inline,
+   not block: the comment above says these belong in a sentence, and `display: flex` would take
+   them out of one. */
 button.link {
+  display: inline-flex;
+  align-items: center;
   min-height: var(--tap);
   padding: 0;
   border: 0;
