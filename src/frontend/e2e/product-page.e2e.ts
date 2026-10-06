@@ -974,6 +974,60 @@ test.describe('what is deliberately not here', () => {
     for (const trigger of await cardAdds.all()) {
       await expect(trigger).toBeEnabled();
     }
+
+    // And "disabled" here means `aria-disabled`, not the `disabled` attribute — see the test
+    // below for the difference that makes. `toBeDisabled()` above is satisfied by either.
+    await expect(add).toHaveAttribute('aria-disabled', 'true');
+    expect(await add.evaluate((button: HTMLButtonElement) => button.hasAttribute('disabled'))).toBe(
+      false,
+    );
+  });
+
+  /**
+   * **Pressing Add to Bag must not throw the shopper's place away (W2-04 round 2, MAJOR 3).**
+   *
+   * This was pre-existing and is the identical root cause Quick View was failed for and ADM-22 was
+   * fixed for: `[disabled]` on the element that currently holds focus makes Chromium blur it to
+   * `<body>` and fire no `focusin`. Quick View's version was the serious one, because it ejected a
+   * shopper from an open dialog; here it leaves a keyboard user at the top of the document beside
+   * an error they can no longer get back to.
+   *
+   * The 409 is injected into this page's own routing rather than through the stub's
+   * `/__test__/cart-variant` switch, which is one shared map against a `fullyParallel` suite — and
+   * what is under test is what the client does with a refusal, not how the stub produces one.
+   */
+  test('a refused add leaves focus on the button that was pressed', async ({ page }) => {
+    await page.route('**/api/cart/items', async (route) => {
+      if (route.request().method() !== 'POST') {
+        await route.fallback();
+        return;
+      }
+
+      await route.fulfill({
+        status: 409,
+        contentType: 'application/problem+json; charset=utf-8',
+        body: JSON.stringify({
+          title: 'Out of stock',
+          status: 409,
+          detail: 'That size has just sold out. Nothing was added to your bag.',
+        }),
+      });
+    });
+
+    await page.goto(`${PRODUCT}?colour=1&size=10`);
+
+    const add = page.locator('[data-testid="add-to-bag"]');
+    await expect(add).toBeEnabled();
+
+    // Reached by keyboard, so there is a place to lose.
+    await add.focus();
+    await expect(add).toBeFocused();
+
+    await add.click();
+
+    await expect(page.locator('.pdp__add-error')).toContainText('sold out');
+    await expect(add).toBeFocused();
+    expect(await page.evaluate(() => document.activeElement?.tagName)).not.toBe('BODY');
   });
 
   test('the wishlist heart works, per browser, as it does on a card (W2-08)', async ({ page }) => {
