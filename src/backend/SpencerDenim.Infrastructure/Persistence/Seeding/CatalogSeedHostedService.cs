@@ -223,24 +223,86 @@ internal sealed partial class CatalogSeedHostedService(
             return;
         }
 
+        // **The token is taken here, not inside the lambda, and that is not style.** Reading
+        // `_stopping.Token` from the thread-pool thread means reading it after `Dispose` may already have
+        // run — `CancellationTokenSource.get_Token()` throws `ObjectDisposedException` once disposed, the
+        // task faults, and `StopAsync`'s `await` rethrows it, which is the same shutdown exception by a
+        // second route. A `CancellationToken` is a struct and stays readable after its source is gone.
+        var stopping = _stopping.Token;
+
         // Not with `cancellationToken`: that one is the *startup* token and is done with once StartAsync
         // returns. The retry loop lives until StopAsync.
-        _retrying = Task.Run(() => RetryUntilEstablishedAsync(_stopping.Token), CancellationToken.None);
+        _retrying = Task.Run(() => RetryUntilEstablishedAsync(stopping), CancellationToken.None);
     }
 
+    /// <summary>
+    /// Stops the retry loop and waits for it. Safe in any order relative to <see cref="Dispose"/>, and
+    /// safe to call more than once.
+    /// </summary>
+    /// <remarks>
+    /// <b>Nothing orders <see cref="StopAsync"/> and <see cref="Dispose"/>, and assuming otherwise was a
+    /// defect.</b> This is a singleton hosted service, so the service provider disposes it — and
+    /// <c>WebApplicationFactory.DisposeAsync()</c> disposes the provider and then calls
+    /// <c>Host.StopAsync</c>, which arrives at a <see cref="CancellationTokenSource"/> that has already
+    /// been disposed. <c>CancelAsync()</c> on a disposed source throws <c>ObjectDisposedException</c>, so
+    /// shutdown threw. In CI it took down <c>SizeGuideContentTests</c>, whose own body had passed: a
+    /// teardown exception is attributed to whichever host happens to be disposing, which is why the
+    /// victim looked arbitrary.
+    /// <para>
+    /// <b>It is not test-only.</b> Any host that disposes before it stops — and the framework is free to —
+    /// would log an exception on a perfectly normal container stop. That is the same shape as the defect
+    /// this class was changed to remove in the first place: a healthy operation producing an alarming
+    /// error. So both paths are idempotent and order-independent rather than the symptom being guarded.
+    /// </para>
+    /// </remarks>
     public async Task StopAsync(CancellationToken cancellationToken)
     {
-        await _stopping.CancelAsync();
+        RequestStop();
 
-        if (_retrying is { } retrying)
+        // Taken rather than read, so two concurrent stops do not both await it and the second does not
+        // then null a field the first already cleared.
+        if (Interlocked.Exchange(ref _retrying, null) is { } retrying)
         {
             // The loop swallows its own cancellation, so this is just "wait for it to notice".
             await retrying;
-            _retrying = null;
         }
     }
 
-    public void Dispose() => _stopping.Dispose();
+    /// <summary>
+    /// Releases the cancellation source, having first asked the retry loop to stop. Safe before or after
+    /// <see cref="StopAsync"/>, and safe to call twice — <c>CancellationTokenSource.Dispose()</c> is
+    /// itself idempotent.
+    /// </summary>
+    /// <remarks>
+    /// It cannot wait for the loop, because disposal is synchronous. Cancelling first is what makes that
+    /// acceptable: the loop is signalled before the source goes, so it is already unwinding, and a
+    /// <see cref="StopAsync"/> arriving afterwards still waits for it through the task.
+    /// </remarks>
+    public void Dispose()
+    {
+        RequestStop();
+        _stopping.Dispose();
+    }
+
+    /// <summary>
+    /// Cancels the retry loop if the source is still alive.
+    /// </summary>
+    /// <remarks>
+    /// <b>The catch is the whole point, not a shrug.</b> A disposed source means <see cref="Dispose"/> ran
+    /// first, and <see cref="Dispose"/> cancels before it disposes — so the loop has already been told,
+    /// and there is genuinely nothing left to do. Testing <c>IsCancellationRequested</c> instead would be
+    /// a race: the source can be disposed between the test and the call.
+    /// </remarks>
+    private void RequestStop()
+    {
+        try
+        {
+            _stopping.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+    }
 
     /// <summary>
     /// One attempt at the reference data, re-run when another instance wins a row. True once the data is
@@ -382,6 +444,13 @@ internal sealed partial class CatalogSeedHostedService(
         catch (OperationCanceledException)
         {
             // The host is stopping. Nothing to report: readiness already says what the state is.
+        }
+        catch (ObjectDisposedException)
+        {
+            // The same thing arriving by a different door: `Dispose` ran while this loop was between
+            // ticks, so the timer or the token source went out from under it. A faulted task here would
+            // be rethrown by `StopAsync` and turn a clean shutdown into an error, which is the defect
+            // this method is on the other side of.
         }
     }
 
