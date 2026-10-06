@@ -62,6 +62,9 @@ internal sealed class FakeProductWriteStore : IProductWriteStore
     /// <summary>Variants an order line names, so the delete guard has something to refuse.</summary>
     public HashSet<int> VariantIdsWithOrders { get; } = [];
 
+    /// <summary>Variants with stock on hand or reserved, which is the delete guard's second reason.</summary>
+    public HashSet<int> VariantIdsHoldingStock { get; } = [];
+
     public Dictionary<int, int> OnHand { get; } = [];
 
     /// <summary>Forces the next save's answer, standing in for a race only the database can lose.</summary>
@@ -156,10 +159,10 @@ internal sealed class FakeProductWriteStore : IProductWriteStore
                 .ToDictionary(id => id, id => RelatedProducts[id])));
     }
 
-    public Task<IReadOnlySet<int>> VariantIdsWithOrdersAsync(
+    public Task<VariantDeleteGuards> VariantDeleteGuardsAsync(
         int productId,
         CancellationToken cancellationToken) =>
-        Task.FromResult<IReadOnlySet<int>>(VariantIdsWithOrders);
+        Task.FromResult(new VariantDeleteGuards(VariantIdsWithOrders, VariantIdsHoldingStock));
 
     public Task<IReadOnlyDictionary<int, int>> OnHandByVariantAsync(
         int productId,
@@ -208,6 +211,26 @@ internal sealed class FakeProductWriteStore : IProductWriteStore
 
         Saves++;
         return CatalogSaveOutcome.Saved;
+    }
+
+    /// <summary>
+    /// The variants the handler asked to be deleted.
+    /// <para>
+    /// Recorded rather than ignored, because this is the one call a fake cannot stand in for: against real
+    /// EF a variant that leaves the collection without it is a 500, since <c>ProductVariants to
+    /// Products</c> is <c>NO ACTION</c>. The proof lives in
+    /// <c>AdminProductEndpointTests.An_edit_can_remove_a_variant_and_a_colour_that_owns_a_gallery_row</c>;
+    /// what this records is that the handler makes the call at all.
+    /// </para>
+    /// </summary>
+    public List<ProductVariant> RemovedVariants { get; } = [];
+
+    public Task RemoveVariantsAsync(
+        IReadOnlyCollection<ProductVariant> variants,
+        CancellationToken cancellationToken)
+    {
+        RemovedVariants.AddRange(variants);
+        return Task.CompletedTask;
     }
 
     public Task<CatalogSaveOutcome> SaveAsync(int? actingUserId, CancellationToken cancellationToken)

@@ -523,11 +523,58 @@ public sealed class ProductWriteHandlerTests
         });
 
         var conflict = Assert.IsType<CatalogWriteResult.Conflict>(result);
-        Assert.Equal(CatalogConflictCodes.VariantHasOrders, conflict.Code);
-        Assert.Contains(ordered.Sku, (IEnumerable<string>)conflict.Details!["skus"]!);
+        Assert.Equal(CatalogConflictCodes.VariantNotDeletable, conflict.Code);
+        Assert.Contains(ordered.Sku, (IEnumerable<string>)conflict.Details!["orderedSkus"]!);
+        Assert.Empty((IEnumerable<string>)conflict.Details["stockedSkus"]!);
 
-        // Nothing was written: the variant is still there.
+        // Nothing was written: the variant is still there, and nothing was handed to the store to delete.
         Assert.Contains(_store.Products[existing.Id].Variants, variant => variant.Id == ordered.Id);
+        Assert.Empty(_store.RemovedVariants);
+    }
+
+    /// <summary>
+    /// The second reason a variant cannot be deleted, and the one a real database insists on:
+    /// <c>FK_StockLevels_ProductVariants_VariantId</c> is <c>NO ACTION</c>, and deleting the row would take
+    /// a count of real garments with it. Stock belongs to ADM-12's ledger, not to this form.
+    /// </summary>
+    [Fact]
+    public async Task A_variant_that_holds_stock_cannot_be_deleted_either()
+    {
+        var existing = await Seed();
+        var stocked = existing.Variants.Last();
+        _store.VariantIdsHoldingStock.Add(stocked.Id);
+
+        var form = FormFrom(existing);
+        var result = await Update(existing.Id, form with
+        {
+            Variants = form.Variants!.Where(variant => variant.Id != stocked.Id).ToList(),
+        });
+
+        var conflict = Assert.IsType<CatalogWriteResult.Conflict>(result);
+        Assert.Equal(CatalogConflictCodes.VariantNotDeletable, conflict.Code);
+        Assert.Contains(stocked.Sku, (IEnumerable<string>)conflict.Details!["stockedSkus"]!);
+        Assert.Contains("Inventory", conflict.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A variant with nothing against it goes, and goes <b>through the store</b> — the collection removal
+    /// alone is a 500 against real EF, because the relationship is <c>NO ACTION</c> rather than a cascade.
+    /// </summary>
+    [Fact]
+    public async Task A_variant_with_no_orders_and_no_stock_is_handed_to_the_store_to_delete()
+    {
+        var existing = await Seed();
+        var gone = existing.Variants.Last();
+
+        var form = FormFrom(existing);
+        var result = await Update(existing.Id, form with
+        {
+            Variants = form.Variants!.Where(variant => variant.Id != gone.Id).ToList(),
+        });
+
+        Assert.IsType<CatalogWriteResult.Succeeded>(result);
+        Assert.DoesNotContain(_store.Products[existing.Id].Variants, variant => variant.Id == gone.Id);
+        Assert.Equal([gone.Id], _store.RemovedVariants.Select(variant => variant.Id));
     }
 
     [Fact]

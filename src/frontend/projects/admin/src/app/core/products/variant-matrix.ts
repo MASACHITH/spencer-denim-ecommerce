@@ -55,9 +55,12 @@ export function withSortOrder<T extends { sortOrder: number }>(items: readonly T
  * - A pair that is new gets a row with a **suggested** SKU, which the admin can overwrite. A suggestion
  *   rather than a blank, because a 6 × 8 matrix is 48 SKUs to type and the convention
  *   (code-colour-size) is the one the demo catalogue uses.
- * - A row whose pair is no longer chosen is dropped — **unless it has been ordered**, in which case it is
- *   kept and switched off, because doc 08 §3.2 keeps an ordered variant for ever and the API would refuse
- *   the delete anyway. Keeping it visible is what lets the admin see why.
+ * - A row whose pair is no longer chosen is dropped — **unless it cannot be deleted**, in which case it is
+ *   kept and switched off so the admin can see why. Two things make a row undeletable and the API refuses
+ *   both: **it has been ordered** (doc 08 §3.2 keeps an ordered variant for ever) or **it holds stock**
+ *   (deleting the row would take a count of real garments with it, and
+ *   `FK_StockLevels_ProductVariants_VariantId` is `NO ACTION`). Dropping such a row would produce a 409
+ *   about a row that was no longer on screen to explain it.
  */
 export function buildMatrix(
   productCode: string,
@@ -109,10 +112,9 @@ export function buildMatrix(
     }
   }
 
-  // An ordered variant whose pair is no longer chosen: kept, switched off, and shown. Dropping it would
-  // make the save a 409 the admin could not act on, because the row would not be on screen to explain it.
+  // A row that cannot be deleted and whose pair is no longer chosen: kept, switched off, and shown.
   for (const row of existing) {
-    if (!chosen.has(pairKey(row.colourName, row.sizeId)) && row.hasOrders) {
+    if (!chosen.has(pairKey(row.colourName, row.sizeId)) && isUndeletable(row)) {
       rows.push({ ...row, isActive: false });
     }
   }
@@ -127,6 +129,16 @@ export function buildMatrix(
  * `varchar(64)` is the column, so the result is clipped — at a hyphen where there is one, so a clipped SKU
  * does not end mid-word.
  */
+/**
+ * Whether the API would refuse to delete this row: an order line names it, or it holds stock.
+ *
+ * Exported because the form shows the same two facts beside the row, and a second copy of the rule is a
+ * second chance for the screen and the API to disagree about which rows can go.
+ */
+export function isUndeletable(row: Pick<MatrixRow, 'hasOrders' | 'onHand'>): boolean {
+  return row.hasOrders || row.onHand > 0;
+}
+
 export function suggestSku(productCode: string, colourName: string, sizeLabel: string): string {
   const parts = [productCode, colourName, sizeLabel]
     .map((part) =>

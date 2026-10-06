@@ -34,6 +34,7 @@ import {
 import {
   MatrixRow,
   buildMatrix,
+  isUndeletable,
   moveInArray,
   scaleIn,
   sizeIdsIn,
@@ -520,6 +521,8 @@ const EMPTY: Scalars = {
                       {{ row.colourName }} · {{ row.sizeLabel }}
                       @if (row.hasOrders) {
                         <span class="adm-pill" [attr.data-testid]="'variant-ordered-' + index">Ordered</span>
+                      } @else if (row.onHand > 0) {
+                        <span class="adm-pill" [attr.data-testid]="'variant-stocked-' + index">In stock</span>
                       }
                     </p>
 
@@ -583,7 +586,12 @@ const EMPTY: Scalars = {
                       </label>
                     </div>
 
-                    <p class="adm-muted">In stock: {{ row.onHand }} — change it on the Inventory screen.</p>
+                    <p class="adm-muted">
+                      In stock: {{ row.onHand }} — change it on the Inventory screen.
+                      @if (undeletable(row)) {
+                        This size cannot be deleted; untick it and it stays here, switched off.
+                      }
+                    </p>
 
                     <div class="adm-actions">
                       <label class="adm-check">
@@ -1473,6 +1481,15 @@ export class ProductFormPage {
     const parsed = Number(value);
 
     return parsed === 1 || parsed === 2 || parsed === 3 || parsed === 4 ? parsed : null;
+  }
+
+  /**
+   * Whether the API would refuse to delete this row. Read from the one function
+   * {@link buildMatrix} applies, so the explanation on screen and the rows the matrix keeps cannot
+   * disagree.
+   */
+  protected undeletable(row: MatrixRow): boolean {
+    return isUndeletable(row);
   }
 
   protected toNumber(value: unknown): number | null {

@@ -72,11 +72,16 @@ public interface IProductWriteStore
         CancellationToken cancellationToken);
 
     /// <summary>
-    /// The ids of this product's variants that an order line already names. Doc 08 §3.2: such a variant is
-    /// deactivated, never deleted — doc 11 P1's "Removing a variant that has orders → offered as
-    /// 'deactivate' instead".
+    /// Which of this product's variants may not be hard-deleted, and why.
+    /// <para>
+    /// Two reasons, and they are different facts about the same row. <b>An order line names it</b>
+    /// (doc 08 §3.2: "Deactivate once ordered; never delete", doc 11 P1's "Removing a variant that has
+    /// orders -&gt; offered as 'deactivate' instead"). Or <b>it holds stock</b>: deleting it would take a
+    /// count of real garments in a real warehouse with it, and stock belongs to ADM-12 and its ledger, not
+    /// to a product form. In both cases the answer is to switch the variant off.
+    /// </para>
     /// </summary>
-    Task<IReadOnlySet<int>> VariantIdsWithOrdersAsync(int productId, CancellationToken cancellationToken);
+    Task<VariantDeleteGuards> VariantDeleteGuardsAsync(int productId, CancellationToken cancellationToken);
 
     /// <summary>On-hand stock per variant id, for the read-only column on the matrix.</summary>
     Task<IReadOnlyDictionary<int, int>> OnHandByVariantAsync(int productId, CancellationToken cancellationToken);
@@ -127,6 +132,22 @@ public interface IProductWriteStore
         CancellationToken cancellationToken);
 
     /// <summary>
+    /// Marks variants for deletion, enlisting the deletes in the same unit of work.
+    /// <para>
+    /// <b>Why this cannot be "take it out of the collection".</b> <c>ProductVariants to Products</c> is
+    /// <c>NO ACTION</c>, not a cascade (doc 08 §1.6 lists the cascades and variants are not among
+    /// them), so removing a variant from <see cref="Product.Variants"/> severs a <i>required</i>
+    /// relationship and EF Core refuses the save: the association between a product and a variant "has
+    /// been severed". It is the one place in this aggregate where the orphan is not deleted for us, and
+    /// no test with an in-memory store can see it -- this exact save answered <b>500</b> against real SQL
+    /// Server while 1,312 unit tests and 42 browser tests were green.
+    /// </para>
+    /// </summary>
+    Task RemoveVariantsAsync(
+        IReadOnlyCollection<ProductVariant> variants,
+        CancellationToken cancellationToken);
+
+    /// <summary>
     /// Commits everything the handler changed, stamping <paramref name="actingUserId"/> into the audit
     /// columns of doc 08 §1.5 [A].
     /// </summary>
@@ -138,6 +159,28 @@ public interface IProductWriteStore
 /// (<see cref="MediaUsageRoles"/>).
 /// </summary>
 public sealed record ProductMediaUsage(int MediaAssetId, string UsageRole);
+
+/// <summary>
+/// The variants of one product that may not be hard-deleted (see
+/// <see cref="IProductWriteStore.VariantDeleteGuardsAsync"/>).
+/// </summary>
+/// <param name="Ordered">An order line names it.</param>
+/// <param name="HoldingStock">
+/// <c>inventory.StockLevels</c> records some on hand, or some reserved.
+/// <para>
+/// <b>And a forward note for ADM-12.</b> <c>inventory.InventoryMovements</c> does not exist yet. When it
+/// does it is append-only and never deleted (doc 08 §1.6), so a variant with a movement row will not be
+/// deletable either and this guard will need a third set. Until then the only foreign key in the way is
+/// <c>FK_StockLevels_ProductVariants_VariantId</c>, which is <c>NO ACTION</c> — a DELETE through it is the
+/// 500 this whole pair of members exists because of.
+/// </para>
+/// </param>
+public sealed record VariantDeleteGuards(IReadOnlySet<int> Ordered, IReadOnlySet<int> HoldingStock)
+{
+    /// <summary>Nothing is guarded, which is every variant of a product that is being created.</summary>
+    public static VariantDeleteGuards None { get; } =
+        new(new HashSet<int>(), new HashSet<int>());
+}
 
 /// <summary>Which reference rows a handler needs looked up (see <see cref="IProductWriteStore.LoadReferencesAsync"/>).</summary>
 /// <param name="MediaAssetPublicIds">Gallery, hover, video and swatch assets, by their public token.</param>

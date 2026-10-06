@@ -180,7 +180,7 @@ test.describe('the product form', () => {
 
   /**
    * Doc 08 §3.2 keeps an ordered variant for ever, and the API refuses the delete with 409
-   * `variant_has_orders`. **The form's answer is to make that refusal unreachable**: unticking the size
+   * `variant_not_deletable`. **The form's answer is to make that refusal unreachable**: unticking the size
    * keeps the ordered row, switched off and still on screen, so the admin can see what happened and the
    * save goes through. A row that simply vanished would produce a 409 about a row that was no longer
    * there to explain it.
@@ -201,6 +201,35 @@ test.describe('the product form', () => {
     await expect(page.getByTestId('variant-list').locator('> li')).toHaveCount(3);
     const ordered = page.locator('[data-testid^="variant-active-"]').nth(2);
     await expect(ordered).not.toBeChecked();
+
+    await page.getByTestId('save').click();
+
+    await expect(page.getByTestId('announcement')).toHaveText(/changes saved/i);
+    await expect(page.getByTestId('page-error')).toHaveCount(0);
+  });
+
+  /**
+   * The second reason a size cannot be deleted: it holds stock. The seeded Jet Black S has none, so this
+   * uses the Indigo Rinse S row, which the stub seeds with six on hand.
+   */
+  test('unticking a size that holds stock also switches it off rather than deleting it', async ({ page }) => {
+    await openProduct(page, 301);
+
+    await expect(page.getByTestId('variant-stocked-0')).toBeVisible();
+
+    await page.getByTestId('size-81').uncheck();
+
+    const skus = () =>
+      page
+        .getByTestId('variant-list')
+        .locator('[data-testid^="variant-sku-"]')
+        .evaluateAll((inputs) => inputs.map((input) => (input as HTMLInputElement).value));
+
+    // Indigo Rinse S holds six, so it is kept and switched off. Jet Black S holds nothing and has never
+    // been ordered, so it goes. (A Jet Black M row appears, because M is now the only ticked size and the
+    // matrix is one row per colour and size — that is the generation working, not a leftover.)
+    await expect.poll(skus).toContain('SD-W-0301-IR-S');
+    expect(await skus()).not.toContain('SD-W-0301-JB-S');
 
     await page.getByTestId('save').click();
 

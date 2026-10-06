@@ -23,27 +23,37 @@ internal static class ProductAggregateWriter
     /// <summary>
     /// Applies <paramref name="form"/> to <paramref name="product"/>, or returns the refusal.
     /// </summary>
-    /// <param name="variantIdsWithOrders">
-    /// Variants an order line already names. Doc 08 §3.2: such a variant is deactivated, never deleted. A
-    /// request that drops one is refused with the SKUs named, so the screen can offer the deactivation
-    /// instead (doc 11 P1's "Removing a variant that has orders → offered as 'deactivate'").
+    /// <param name="guards">
+    /// The variants that may not be hard-deleted: the ones an order line names (doc 08 §3.2: such a variant
+    /// is deactivated, never deleted) and the ones that hold stock. A request that drops one is refused
+    /// with the SKUs and the reason named, so the screen can offer the deactivation instead (doc 11 P1's
+    /// "Removing a variant that has orders → offered as 'deactivate'").
+    /// </param>
+    /// <param name="removedVariants">
+    /// The variants that left the product. The caller hands them to
+    /// <see cref="Abstractions.IProductWriteStore.RemoveVariantsAsync"/>, because
+    /// <c>ProductVariants</c> → <c>Products</c> is <c>NO ACTION</c> and EF will not delete the orphan for
+    /// us — see that method for what happens when nobody does.
     /// </param>
     public static CatalogWriteResult? Apply(
         Product product,
         ValidatedProductForm form,
-        IReadOnlySet<int> variantIdsWithOrders,
-        DateTime utcNow)
+        VariantDeleteGuards guards,
+        DateTime utcNow,
+        out IReadOnlyList<ProductVariant> removedVariants)
     {
+        removedVariants = [];
+
         ArgumentNullException.ThrowIfNull(product);
         ArgumentNullException.ThrowIfNull(form);
-        ArgumentNullException.ThrowIfNull(variantIdsWithOrders);
+        ArgumentNullException.ThrowIfNull(guards);
 
         ApplyScalars(product, form);
         ApplyCategoryLinks(product, form);
 
         var coloursByName = ApplyColours(product, form);
 
-        if (ApplyVariants(product, form, coloursByName, variantIdsWithOrders) is { } refusal)
+        if (ApplyVariants(product, form, coloursByName, guards, out removedVariants) is { } refusal)
         {
             return refusal;
         }
@@ -161,8 +171,11 @@ internal static class ProductAggregateWriter
         Product product,
         ValidatedProductForm form,
         Dictionary<string, ProductColour> coloursByName,
-        IReadOnlySet<int> variantIdsWithOrders)
+        VariantDeleteGuards guards,
+        out IReadOnlyList<ProductVariant> removedVariants)
     {
+        removedVariants = [];
+
         var byId = product.Variants.Where(variant => variant.Id != 0).ToDictionary(variant => variant.Id);
 
         // The natural key of a variant row: its colour and its size (UX_ProductVariants_Colour_Size). Keyed
@@ -214,25 +227,37 @@ internal static class ProductAggregateWriter
 
         var removing = product.Variants.Where(variant => !matched.Contains(variant)).ToList();
 
-        var ordered = removing
-            .Where(variant => variant.Id != 0 && variantIdsWithOrders.Contains(variant.Id))
+        var orderedSkus = GuardedSkus(removing, guards.Ordered);
+        var stockedSkus = GuardedSkus(removing, guards.HoldingStock)
+            .Where(sku => !orderedSkus.Contains(sku, StringComparer.Ordinal))
             .ToList();
 
-        if (ordered.Count > 0)
+        if (orderedSkus.Count > 0 || stockedSkus.Count > 0)
         {
-            var skus = ordered.Select(variant => variant.Sku).Order(StringComparer.Ordinal).ToList();
+            var reasons = new List<string>(2);
 
-            var subject = skus.Count == 1
-                ? "This variant has"
-                : $"These {skus.Count.ToString(CultureInfo.InvariantCulture)} variants have";
-            var pronoun = skus.Count == 1 ? "it" : "they";
+            if (orderedSkus.Count > 0)
+            {
+                reasons.Add($"{Were(orderedSkus)} already been ordered ({string.Join(", ", orderedSkus)})");
+            }
+
+            if (stockedSkus.Count > 0)
+            {
+                reasons.Add(
+                    $"{Were(stockedSkus)} stock recorded against {(stockedSkus.Count == 1 ? "it" : "them")} "
+                    + $"({string.Join(", ", stockedSkus)})");
+            }
 
             return new CatalogWriteResult.Conflict(
-                CatalogConflictCodes.VariantHasOrders,
-                $"{subject} already been ordered, so {pronoun} cannot be deleted: {string.Join(", ", skus)}. "
-                + "Switch them off instead — the order history keeps pointing at them, and nothing new can be "
-                + "bought.",
-                new Dictionary<string, object?>(StringComparer.Ordinal) { ["skus"] = skus });
+                CatalogConflictCodes.VariantNotDeletable,
+                $"Some of these sizes cannot be deleted: {string.Join("; and ", reasons)}. Switch them off "
+                + "instead — the order history keeps pointing at them, the stock figures stay with "
+                + "Inventory, and nothing new can be bought.",
+                new Dictionary<string, object?>(StringComparer.Ordinal)
+                {
+                    ["orderedSkus"] = orderedSkus,
+                    ["stockedSkus"] = stockedSkus,
+                });
         }
 
         foreach (var gone in removing)
@@ -240,8 +265,25 @@ internal static class ProductAggregateWriter
             product.Variants.Remove(gone);
         }
 
+        // Reported rather than simply dropped: the store has to delete these explicitly.
+        removedVariants = removing;
+
         return null;
     }
+
+    /// <summary>The SKUs of the variants being removed whose ids are in <paramref name="guarded"/>.</summary>
+    private static List<string> GuardedSkus(
+        IReadOnlyCollection<ProductVariant> removing,
+        IReadOnlySet<int> guarded) =>
+        removing
+            .Where(variant => variant.Id != 0 && guarded.Contains(variant.Id))
+            .Select(variant => variant.Sku)
+            .Order(StringComparer.Ordinal)
+            .ToList();
+
+    private static string Were(List<string> skus) => skus.Count == 1
+        ? "one has"
+        : string.Create(CultureInfo.InvariantCulture, $"{skus.Count} have");
 
     /// <summary>
     /// Reconciles the media rows — or leaves them entirely alone when the request carried no media field.

@@ -16,7 +16,8 @@
  *   `slug_change_needs_confirmation`, with both slugs;
  * - publishing a product that fails doc 11 §7 G-01's checklist is a 409 `publish_checklist_failed` with
  *   the blockers;
- * - dropping a variant an order line names is a 409 `variant_has_orders` with the SKUs.
+ * - dropping a variant that cannot be deleted is a 409 `variant_not_deletable`, with `orderedSkus` and
+ *   `stockedSkus` listed separately.
  *
  * Without those, a screen that stopped sending the row version, or that conflated "say nothing about
  * media" with "clear the media", would pass every browser test.
@@ -593,17 +594,33 @@ export async function handleProductRoute({
       (variant) => variant.hasOrders && !sentIds.has(variant.id),
     );
 
-    if (droppedOrdered.length > 0) {
-      const skus = droppedOrdered.map((variant) => variant.sku);
+    // The second reason, and the one a real database insists on:
+    // FK_StockLevels_ProductVariants_VariantId is NO ACTION, so a variant that holds stock cannot be
+    // deleted at all. The real guard reads inventory.StockLevels; the stub reads the seeded onHand.
+    const droppedStocked = product.variants.filter(
+      (variant) => !variant.hasOrders && variant.onHand > 0 && !sentIds.has(variant.id),
+    );
+
+    if (droppedOrdered.length > 0 || droppedStocked.length > 0) {
+      const orderedSkus = droppedOrdered.map((variant) => variant.sku);
+      const stockedSkus = droppedStocked.map((variant) => variant.sku);
+      const reasons = [];
+
+      if (orderedSkus.length > 0) {
+        reasons.push(`${orderedSkus.length} already been ordered (${orderedSkus.join(', ')})`);
+      }
+
+      if (stockedSkus.length > 0) {
+        reasons.push(`${stockedSkus.length} stock recorded against them (${stockedSkus.join(', ')})`);
+      }
+
       problem(
         response,
         409,
         'This change cannot be applied',
-        `${skus.length === 1 ? 'This variant has' : `These ${skus.length} variants have`} already been ` +
-          `ordered, so ${skus.length === 1 ? 'it' : 'they'} cannot be deleted: ${skus.join(', ')}. Switch ` +
-          'them off instead.',
-        'variant_has_orders',
-        { skus },
+        `Some of these sizes cannot be deleted: ${reasons.join('; and ')}. Switch them off instead.`,
+        'variant_not_deletable',
+        { orderedSkus, stockedSkus },
       );
       return true;
     }

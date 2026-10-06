@@ -2,6 +2,7 @@ import { ColourValues, ProductSizeOption } from './admin-product.model';
 import {
   MatrixRow,
   buildMatrix,
+  isUndeletable,
   moveInArray,
   scaleIn,
   sizeIdsIn,
@@ -83,7 +84,7 @@ describe('buildMatrix', () => {
 
   /**
    * Doc 08 §3.2 keeps an ordered variant for ever, and the API refuses the delete with 409
-   * `variant_has_orders`. Dropping it from the screen would make that refusal impossible to act on,
+   * `variant_not_deletable`. Dropping it from the screen would make that refusal impossible to act on,
    * because the row would not be there to explain it.
    */
   it('keeps an ordered row that is no longer chosen, switched off', () => {
@@ -96,6 +97,33 @@ describe('buildMatrix', () => {
     const kept = matrix.find((candidate) => candidate.id === 78);
     expect(kept).toBeDefined();
     expect(kept!.isActive).toBe(false);
+  });
+
+  /**
+   * The second reason a row cannot be deleted, and the one a real database insists on:
+   * `FK_StockLevels_ProductVariants_VariantId` is `NO ACTION`, so deleting a variant that holds stock is
+   * refused outright — and it would take a count of real garments with it.
+   */
+  it('keeps a row that holds stock but has never been ordered, switched off', () => {
+    const existing = [
+      row({ colourName: 'Jet Black', sizeId: 1, id: 79, sku: 'JB-S', hasOrders: false, onHand: 12 }),
+    ];
+
+    const matrix = buildMatrix('SD-W-0001', [colour('Indigo Rinse')], [1], sizesById, existing);
+
+    const kept = matrix.find((candidate) => candidate.id === 79);
+    expect(kept).toBeDefined();
+    expect(kept!.isActive).toBe(false);
+  });
+
+  it('drops a row with no orders and no stock, which is the ordinary correction', () => {
+    const existing = [
+      row({ colourName: 'Jet Black', sizeId: 1, id: 80, sku: 'JB-S', hasOrders: false, onHand: 0 }),
+    ];
+
+    const matrix = buildMatrix('SD-W-0001', [colour('Indigo Rinse')], [1], sizesById, existing);
+
+    expect(matrix.find((candidate) => candidate.id === 80)).toBeUndefined();
   });
 
   it('suggests a SKU for every new row and never repeats one', () => {
@@ -124,6 +152,14 @@ describe('buildMatrix', () => {
     const matrix = buildMatrix('SD-W-0001', [colour('INDIGO RINSE')], [1], sizesById, existing);
 
     expect(matrix[0].sku).toBe('KEEP-ME');
+  });
+});
+
+describe('isUndeletable', () => {
+  it('is true for a row an order names and for one that holds stock, false otherwise', () => {
+    expect(isUndeletable({ hasOrders: true, onHand: 0 })).toBe(true);
+    expect(isUndeletable({ hasOrders: false, onHand: 1 })).toBe(true);
+    expect(isUndeletable({ hasOrders: false, onHand: 0 })).toBe(false);
   });
 });
 

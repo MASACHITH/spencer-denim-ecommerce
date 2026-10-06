@@ -83,10 +83,17 @@ public static class CatalogConflictCodes
     public const string SlugChangeNeedsConfirmation = "slug_change_needs_confirmation";
 
     /// <summary>
-    /// A variant an order line names was asked to be deleted (doc 08 §3.2, doc 11 P1). The answer is to
+    /// A variant that cannot be hard-deleted was asked to be deleted (ADM-10, W1-03). The answer is to
     /// deactivate it, which is what the <c>Details</c> SKUs let the screen offer.
+    /// <para>
+    /// Two reasons reach this one code and <c>Details</c> separates them. <c>orderedSkus</c>: an order line
+    /// names the variant (doc 08 §3.2's "Deactivate once ordered; never delete", doc 11 P1).
+    /// <c>stockedSkus</c>: the variant holds stock, so deleting the row would take a count of real garments
+    /// with it — and stock belongs to ADM-12's ledger rather than to a product form. The second is also
+    /// what <c>FK_StockLevels_ProductVariants_VariantId</c> (<c>NO ACTION</c>) refuses outright.
+    /// </para>
     /// </summary>
-    public const string VariantHasOrders = "variant_has_orders";
+    public const string VariantNotDeletable = "variant_not_deletable";
 
     /// <summary>
     /// Publishing was refused because the checklist of doc 11 §7 G-01 is not met: at least one active

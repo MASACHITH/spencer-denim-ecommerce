@@ -1,5 +1,6 @@
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
 using SpencerDenim.Application.Catalog.Admin.Abstractions;
 using SpencerDenim.Application.Catalog.Admin.Products.Abstractions;
 using SpencerDenim.Domain.Catalog;
@@ -19,11 +20,37 @@ namespace SpencerDenim.Infrastructure.Catalog;
 /// the database alone can make: a row somebody else changed first, and a unique index.
 /// </para>
 /// </summary>
-internal sealed class ProductWriteStore(AppDbContext dbContext, AuditAndSoftDeleteInterceptor auditColumns)
-    : IProductWriteStore
+internal sealed class ProductWriteStore : IProductWriteStore
 {
     /// <summary>SQL Server: 2627 is a unique-constraint violation, 2601 a unique-index one.</summary>
     private static readonly int[] DuplicateKeyErrors = [2601, 2627];
+
+    private readonly AppDbContext dbContext;
+    private readonly AuditAndSoftDeleteInterceptor auditColumns;
+
+    public ProductWriteStore(AppDbContext dbContext, AuditAndSoftDeleteInterceptor auditColumns)
+    {
+        this.dbContext = dbContext;
+        this.auditColumns = auditColumns;
+
+        // **Both timings moved to the save, and this is not a performance tweak.**
+        //
+        // One product save can remove a colourway *and* the variants that belong to it. With EF's default
+        // `Immediate` timing, taking the colourway out of `Product.Colours` makes EF try to null the
+        // variants' foreign key there and then — and `ProductVariants (ProductColourId, ProductId)` is a
+        // *required* composite key with `NO ACTION` (doc 08 §3.2), so EF throws
+        // "the association between entity types 'ProductColour' and 'ProductVariant' has been severed"
+        // before the variants have been marked for deletion at all. The order the handler would need to
+        // work in to avoid that — delete the variants, then detach the colourway — is an EF implementation
+        // detail leaking into a use case, and it cannot be expressed at all while the colour reconciliation
+        // has to run first so new variants can point at new colourways.
+        //
+        // Deferring both to `SaveChanges` lets the whole intended end state be assembled first; EF then
+        // works out the cascades and the orphans once, with every deletion already known. It is set here,
+        // in the store that owns this unit of work, rather than on `AppDbContext` for everybody.
+        dbContext.ChangeTracker.CascadeDeleteTiming = CascadeTiming.OnSaveChanges;
+        dbContext.ChangeTracker.DeleteOrphansTiming = CascadeTiming.OnSaveChanges;
+    }
 
     public Task<Product?> FindProductAsync(int productId, CancellationToken cancellationToken) =>
         dbContext.Products
@@ -31,6 +58,16 @@ internal sealed class ProductWriteStore(AppDbContext dbContext, AuditAndSoftDele
             .Include(product => product.Variants)
             .Include(product => product.Media)
                 .ThenInclude(media => media.MediaAsset)
+
+            // The colourway a gallery row belongs to, loaded explicitly rather than left to EF's fixup
+            // from Colours. Fixup does wire it, but the handler's reconciliation keys a media row by its
+            // colourway, and a null navigation there would read a colour-scoped row as a whole-product
+            // one — which collides with UX_ProductMedia_Product_Asset_Colour on the next save, and would
+            // leave a row pointing at a colourway the same request removed (the FK is NO ACTION).
+            .Include(product => product.Media)
+                .ThenInclude(media => media.ProductColour)
+            .Include(product => product.Variants)
+                .ThenInclude(variant => variant.ProductColour)
             .Include(product => product.CategoryLinks)
             .Include(product => product.RelatedProducts)
             .Include(product => product.Stats)
@@ -246,7 +283,7 @@ internal sealed class ProductWriteStore(AppDbContext dbContext, AuditAndSoftDele
             related);
     }
 
-    public async Task<IReadOnlySet<int>> VariantIdsWithOrdersAsync(
+    public async Task<VariantDeleteGuards> VariantDeleteGuardsAsync(
         int productId,
         CancellationToken cancellationToken)
     {
@@ -261,7 +298,18 @@ internal sealed class ProductWriteStore(AppDbContext dbContext, AuditAndSoftDele
             .Distinct()
             .ToListAsync(cancellationToken);
 
-        return ids.ToHashSet();
+        // The other foreign key in the way, and the one that turned this save into a 500 before it was
+        // found: FK_StockLevels_ProductVariants_VariantId is NO ACTION. A variant with nothing on hand and
+        // nothing reserved is deleted along with its empty stock row; one with either is kept and switched
+        // off, because deleting it would take a count of real garments with it.
+        var stocked = await dbContext.StockLevels
+            .AsNoTracking()
+            .Where(stock =>
+                stock.Variant!.ProductId == productId && (stock.OnHand > 0 || stock.Reserved > 0))
+            .Select(stock => stock.VariantId)
+            .ToListAsync(cancellationToken);
+
+        return new VariantDeleteGuards(ids.ToHashSet(), stocked.ToHashSet());
     }
 
     public async Task<IReadOnlyDictionary<int, int>> OnHandByVariantAsync(
@@ -397,6 +445,36 @@ internal sealed class ProductWriteStore(AppDbContext dbContext, AuditAndSoftDele
             }
         },
         cancellationToken);
+    }
+
+    public async Task RemoveVariantsAsync(
+        IReadOnlyCollection<ProductVariant> variants,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(variants);
+
+        if (variants.Count == 0)
+        {
+            return;
+        }
+
+        // The stock rows first, because FK_StockLevels_ProductVariants_VariantId is NO ACTION: a variant
+        // cannot leave the table while its 1:1 stock row still points at it. The handler has already
+        // refused any variant that holds stock, so every row deleted here reads zero on hand and zero
+        // reserved.
+        var variantIds = variants.Select(variant => variant.Id).Where(id => id != 0).ToList();
+
+        var stockRows = await dbContext.StockLevels
+            .Where(stock => variantIds.Contains(stock.VariantId))
+            .ToListAsync(cancellationToken);
+
+        dbContext.StockLevels.RemoveRange(stockRows);
+
+        // Marking the entity Deleted is what makes the severed required relationship harmless: a DELETE
+        // needs the primary key and the row version, not the foreign key the fixup has just cleared. EF
+        // orders the statements by the dependency graph, so these go out before the colourways they point
+        // at -- the variants' composite foreign key onto ProductColours is NO ACTION as well.
+        dbContext.ProductVariants.RemoveRange(variants);
     }
 
     public async Task<CatalogSaveOutcome> SaveAsync(int? actingUserId, CancellationToken cancellationToken)

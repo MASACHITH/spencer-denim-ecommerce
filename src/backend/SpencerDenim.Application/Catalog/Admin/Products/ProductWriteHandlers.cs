@@ -116,7 +116,8 @@ public sealed class CreateProductCommandHandler(
         // have to pass a checklist about photographs the admin has not attached yet.
         var product = new Product { IsPublished = false };
 
-        if (ProductAggregateWriter.Apply(product, form!, new HashSet<int>(), utcNow) is { } refusal)
+        if (ProductAggregateWriter.Apply(product, form!, VariantDeleteGuards.None, utcNow, out _)
+            is { } refusal)
         {
             return refusal;
         }
@@ -220,12 +221,18 @@ public sealed class UpdateProductCommandHandler(
         // a ProductStats row that is not there.
         var hadDerivedRows = product.Stats is not null && product.SearchIndex is not null;
 
-        var variantsWithOrders = await store.VariantIdsWithOrdersAsync(product.Id, cancellationToken);
+        var guards = await store.VariantDeleteGuardsAsync(product.Id, cancellationToken);
 
-        if (ProductAggregateWriter.Apply(product, form, variantsWithOrders, utcNow) is { } refusal)
+        if (ProductAggregateWriter.Apply(product, form, guards, utcNow, out var removedVariants)
+            is { } refusal)
         {
             return refusal;
         }
+
+        // Taking a variant out of the collection is not enough. ProductVariants -> Products is NO ACTION,
+        // and so is StockLevels -> ProductVariants, so the delete has to be explicit and has to take the
+        // stock row with it. See IProductWriteStore.RemoveVariantsAsync.
+        await store.RemoveVariantsAsync(removedVariants, cancellationToken);
 
         var after = ProductWriteRules.Snapshot(product);
 

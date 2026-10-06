@@ -508,6 +508,153 @@ public sealed class AdminProductEndpointTests(SqlServerDatabaseFixture sqlServer
         }
     }
 
+    /// <summary>
+    /// <b>What EF does when a variant leaves a product, against the real model.</b>
+    /// <c>ProductVariants → Products</c> is <c>NO ACTION</c> (doc 08 §1.6), not a cascade, so severing that
+    /// required relationship by taking the variant out of the collection is exactly the case EF Core can
+    /// answer with "the association … has been severed" instead of a DELETE. No unit test can tell: the
+    /// fake store just drops it from a list.
+    /// <para>
+    /// The same save also removes a colourway that owns a gallery row, which is the other half —
+    /// <c>ProductMedia.ProductColourId</c> is a real foreign key with <c>NO ACTION</c>, so a row left
+    /// pointing at a deleted colourway is a constraint violation rather than a tidy-up.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task An_edit_can_remove_a_variant_and_a_colour_that_owns_a_gallery_row()
+    {
+        var factory = await HostAsync();
+        var seed = await ReferenceDataAsync(factory);
+        var client = await AdminCatalogApiClient.SignInAsync(factory, "w103-sever", FullProductRights, Token);
+
+        var shared = await AddImageAssetAsync(factory, "Shared front view");
+        var blackOnly = await AddImageAssetAsync(factory, "Jet Black, front");
+
+        var body = Body(seed, "w103-sever");
+        body["colours"] = new object[]
+        {
+            Colour("Indigo Rinse", seed.ColourFamilyId),
+            Colour("Jet Black", seed.ColourFamilyId),
+        };
+        body["variants"] = new object[]
+        {
+            Variant("Indigo Rinse", seed.SizeIds[0], "W103-SEV-IR-S"),
+            Variant("Indigo Rinse", seed.SizeIds[1], "W103-SEV-IR-M"),
+            Variant("Jet Black", seed.SizeIds[0], "W103-SEV-JB-S"),
+        };
+        body["media"] = new object[]
+        {
+            Media(shared, null, 1, 0, "Shared front view"),
+            Media(blackOnly, "Jet Black", 1, 1, "Jet Black, front"),
+        };
+
+        var (_, created) = await client.PostAsync(ProductsUrl, body, Token);
+        var productId = created.GetProperty("id").GetInt32();
+
+        try
+        {
+            // Jet Black goes, with its own variant and its own gallery row; one Indigo Rinse size goes too.
+            body["colours"] = new object[] { Colour("Indigo Rinse", seed.ColourFamilyId) };
+            body["variants"] = new object[] { Variant("Indigo Rinse", seed.SizeIds[0], "W103-SEV-IR-S") };
+            body["media"] = new object[] { Media(shared, null, 1, 0, "Shared front view") };
+            body["rowVersion"] = await RowVersionAsync(factory, productId);
+
+            var (status, problem) = await client.PutAsync($"{ProductsUrl}/{productId}", body, Token);
+
+            Assert.True(
+                status == HttpStatusCode.NoContent,
+                $"the save was refused with {status}: {problem}");
+
+            await using var scope = factory.Services.CreateAsyncScope();
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+            var product = await dbContext.Products
+                .AsNoTracking()
+                .Include(candidate => candidate.Colours)
+                .Include(candidate => candidate.Variants)
+                .Include(candidate => candidate.Media)
+                .SingleAsync(candidate => candidate.Id == productId, Token);
+
+            Assert.Single(product.Colours);
+            Assert.Single(product.Variants);
+            Assert.Single(product.Media);
+            Assert.Equal("W103-SEV-IR-S", product.Variants.Single().Sku);
+
+            // The variants really left the table rather than being orphaned with a dangling key.
+            Assert.Equal(
+                1,
+                await dbContext.ProductVariants.CountAsync(variant => variant.ProductId == productId, Token));
+        }
+        finally
+        {
+            await HardDeleteAsync(factory, productId);
+            await HardDeleteAssetsAsync(factory, [shared, blackOnly]);
+        }
+    }
+
+    /// <summary>
+    /// The omit-media rule again, this time with a <b>colour-scoped</b> gallery row — the shape that needs
+    /// <c>ProductMedia.ProductColour</c> to be loaded, and the one the first version of the
+    /// whole-product test could not have caught.
+    /// </summary>
+    [Fact]
+    public async Task A_save_that_omits_media_keeps_a_colour_scoped_gallery_row()
+    {
+        var factory = await HostAsync();
+        var seed = await ReferenceDataAsync(factory);
+        var client = await AdminCatalogApiClient.SignInAsync(factory, "w103-scoped", FullProductRights, Token);
+
+        var shared = await AddImageAssetAsync(factory, "Shared front view");
+        var blackOnly = await AddImageAssetAsync(factory, "Jet Black, front");
+
+        var body = Body(seed, "w103-scoped");
+        body["colours"] = new object[]
+        {
+            Colour("Indigo Rinse", seed.ColourFamilyId),
+            Colour("Jet Black", seed.ColourFamilyId),
+        };
+        body["variants"] = new object[] { Variant("Indigo Rinse", seed.SizeIds[0], "W103-SCOPED-S") };
+        body["media"] = new object[]
+        {
+            Media(shared, null, 1, 0, "Shared front view"),
+            Media(blackOnly, "Jet Black", 1, 1, "Jet Black, front"),
+        };
+
+        var (_, created) = await client.PostAsync(ProductsUrl, body, Token);
+        var productId = created.GetProperty("id").GetInt32();
+
+        try
+        {
+            var (before, _, _) = await MediaStateAsync(factory, productId);
+            Assert.Equal(2, before.Count);
+
+            body.Remove("media");
+            body["name"] = "W103 Scoped (renamed)";
+            body["rowVersion"] = await RowVersionAsync(factory, productId);
+
+            var (status, problem) = await client.PutAsync($"{ProductsUrl}/{productId}", body, Token);
+            Assert.True(status == HttpStatusCode.NoContent, $"refused with {status}: {problem}");
+
+            var (after, _, _) = await MediaStateAsync(factory, productId);
+            Assert.Equal(before, after);
+
+            await using var scope = factory.Services.CreateAsyncScope();
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+            // The colour-scoped row still names its colourway, rather than having quietly become a
+            // whole-product row — which is what a null navigation during the reconciliation would do.
+            Assert.Equal(
+                1,
+                await dbContext.ProductMedia.CountAsync(
+                    row => row.ProductId == productId && row.ProductColourId != null, Token));
+        }
+        finally
+        {
+            await HardDeleteAsync(factory, productId);
+            await HardDeleteAssetsAsync(factory, [shared, blackOnly]);
+        }
+    }
+
     [Fact]
     public async Task A_stale_row_version_loses_a_real_race_and_writes_nothing()
     {

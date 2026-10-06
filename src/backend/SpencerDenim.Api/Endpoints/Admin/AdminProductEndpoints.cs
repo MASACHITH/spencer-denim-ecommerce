@@ -118,8 +118,11 @@ internal static class AdminProductEndpoints
                 + "Changing the slug of a product that has been published needs `confirmSlugChange: true`; "
                 + "without it the answer is 409 `slug_change_needs_confirmation`, naming both slugs, because "
                 + "there are no redirects in this version (doc 08 Appendix A).\n\n"
-                + "Dropping a variant an order line names is refused with 409 `variant_has_orders` and the "
-                + "SKUs: doc 08 §3.2 keeps an ordered variant for ever, so the answer is to switch it off.")
+                + "Dropping a variant that cannot be deleted is refused with 409 `variant_not_deletable`, "
+                + "which carries `orderedSkus` and `stockedSkus` separately. An order line names it (doc 08 "
+                + "§3.2 keeps an ordered variant for ever), or it holds stock — deleting that row would take "
+                + "a count of real garments with it, and stock belongs to ADM-12's ledger. Either way the "
+                + "answer is to switch the variant off.")
             .Produces(StatusCodes.Status204NoContent)
             .ProducesValidationProblem()
             .ProducesProblem(StatusCodes.Status404NotFound)
