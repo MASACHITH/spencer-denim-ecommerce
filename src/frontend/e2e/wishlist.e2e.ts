@@ -154,11 +154,42 @@ test.describe('the wishlist (WISH-01)', () => {
     test('the wishlist read is no-store and does not claim to vary on the cookie', async ({
       page,
     }) => {
-      const response = await page.request.get(`${apiURL}/api/wishlist?slug=test-product-1`);
+      const response = await page.request.post(`${apiURL}/api/wishlist/products`, {
+        data: { slugs: ['test-product-1'] },
+      });
 
       expect(response.status()).toBe(200);
       expect(response.headers()['cache-control']).toContain('no-store');
       expect(response.headers()['vary']).toBeUndefined();
+    });
+
+    /**
+     * **The URL does not grow with the wishlist**, which is the whole of the 414 fix. A `GET` with a
+     * repeated `slug` parameter exceeded Kestrel's 8,192-byte request line at about 32 characters per
+     * slug, so a shopper with a full wishlist got a Try again button that failed identically forever.
+     * Read off the browser's own request rather than off the client that made it.
+     */
+    test('the request the browser makes carries no slugs in its URL', async ({ page }) => {
+      await savedInBrowser(
+        page,
+        Array.from({ length: 60 }, (_unused, index) => ({
+          slug: `test-product-${index + 1}`,
+        })),
+      );
+
+      const sent = page.waitForRequest(
+        (request) => request.url().includes('/api/wishlist') && request.method() === 'POST',
+      );
+
+      await openWishlist(page);
+      const request = await sent;
+
+      expect(new URL(request.url()).search).toBe('');
+      expect(request.url().length).toBeLessThan(80);
+
+      // And every slug really was sent, so the short URL is not a short list.
+      const body = request.postDataJSON() as { slugs: string[] };
+      expect(body.slugs).toHaveLength(60);
     });
   });
 
@@ -284,7 +315,7 @@ test.describe('the wishlist (WISH-01)', () => {
       await savedInBrowser(page, [{ slug: 'test-product-12', name: 'Saved Jacket' }]);
 
       let fail = true;
-      await page.route('**/api/wishlist**', async (route) => {
+      await page.route('**/api/wishlist/products', async (route) => {
         if (fail) {
           await route.fulfill({ status: 500, body: '{"title":"nope","status":500}' });
           return;
@@ -547,6 +578,268 @@ test.describe('the wishlist (WISH-01)', () => {
       expect(geometry!.badgeFromRight).toBeGreaterThanOrEqual(0);
       expect(geometry!.badgeFromRight).toBeLessThanOrEqual(8);
       expect(geometry!.overlap).toBe(false);
+    });
+  });
+
+
+  test.describe('focus, in a real browser (MAJOR 1)', () => {
+    /**
+     * **Removing a row destroys the control that was pressed.** That throws focus to `<body>` exactly
+     * as `[disabled]` does, which this page deliberately never uses — so round 1 passed its own
+     * "no disabled attribute" test and lost a keyboard shopper's place on every single item anyway.
+     *
+     * jsdom can see this, and `wishlist-page.spec.ts` does. It is here as well because focus is the one
+     * thing jsdom models loosely: a real browser has one focus, a real tab order and a real
+     * `activeElement` after a node is removed, and this is the control a keyboard shopper actually
+     * reaches for.
+     */
+    test('a keyboard removal keeps focus in the list', async ({ page }) => {
+      await savedInBrowser(page, [
+        { slug: 'test-product-21' },
+        { slug: 'test-product-22' },
+        { slug: 'test-product-23' },
+      ]);
+      await openWishlist(page);
+      await expect(page.locator('.wish__item')).toHaveCount(3);
+
+      const second = page.locator('[data-testid="wishlist-remove"]').nth(1);
+      await second.focus();
+      await page.keyboard.press('Enter');
+
+      await expect(page.locator('.wish__item')).toHaveCount(2);
+
+      // Not `<body>`: the Remove of the row that took its place.
+      const focused = await page.evaluate(() => {
+        const node = document.activeElement as HTMLElement | null;
+        const buttons = [...document.querySelectorAll('[data-testid="wishlist-remove"]')];
+        return { tag: node?.tagName ?? 'nothing', nth: node ? buttons.indexOf(node) : -1 };
+      });
+
+      expect(focused.tag).toBe('BUTTON');
+      expect(focused.nth).toBe(1);
+    });
+
+    test('clearing the list leaves focus on Start shopping', async ({ page }) => {
+      await savedInBrowser(page, [{ slug: 'test-product-24' }, { slug: 'test-product-25' }]);
+      await openWishlist(page);
+
+      await page.getByRole('button', { name: 'Clear wishlist' }).click();
+      await page.getByRole('button', { name: 'Yes, clear it' }).focus();
+      await page.keyboard.press('Enter');
+
+      await expect(page.locator('.wish__empty')).toBeVisible();
+      await expect(page.locator('[data-testid="wishlist-start-shopping"]')).toBeFocused();
+    });
+
+    /**
+     * The card's heart is the third removal control and was the worst of the three: the row vanished,
+     * nothing was announced and focus went to `<body>`.
+     */
+    test('the card heart announces the removal and keeps focus in the list', async ({ page }) => {
+      await savedInBrowser(page, [{ slug: 'test-product-26' }, { slug: 'test-product-27' }]);
+      await openWishlist(page);
+
+      await page.locator('.wish__item .card__wish').first().focus();
+      await page.keyboard.press('Enter');
+
+      await expect(page.locator('.wish__item')).toHaveCount(1);
+      await expect(page.locator('[data-testid="wishlist-status"]')).toContainText(
+        'removed from your wishlist',
+      );
+      await expect(page.locator('[data-testid="wishlist-remove"]').first()).toBeFocused();
+    });
+
+    /**
+     * Moving to the bag removes a row too — and `ui/modal` returns focus to the control that opened it,
+     * which is the Move to bag button that has just been destroyed with its row. The page's handler runs
+     * after that render, so it wins.
+     */
+    test('moving to the bag leaves focus in the list, not on a destroyed button', async ({ page }) => {
+      await savedInBrowser(page, [{ slug: 'test-product-28' }, { slug: 'test-product-29' }]);
+      await openWishlist(page);
+
+      await page.locator('[data-testid="wishlist-move-to-bag"]').first().click();
+      const dialog = page.locator('#quick-view');
+      await dialog.locator('.sd-size').first().click();
+      await dialog.locator('[data-testid="quick-view-add"]').click();
+      await expect(dialog).toHaveCount(0);
+
+      await expect(page.locator('.wish__item')).toHaveCount(1);
+
+      const onBody = await page.evaluate(() => document.activeElement === document.body);
+      expect(onBody).toBe(false);
+    });
+  });
+
+  test.describe('nothing on this page is covered by the float', () => {
+    /**
+     * **The tester's scan, landed.** The suite's other `elementFromPoint` scan covers `.card__wish` on a
+     * listing; this one covers the wishlist page's **own** controls, which the #111 fix did not move and
+     * which `undersized` and `unreachable` say nothing about — they measure size and reachability, and a
+     * 44 px control a thumb cannot reach *through the float* passes both.
+     *
+     * The page is filled with enough rows to scroll, and the scan is the same shape as the listing one:
+     * whole box on screen, clear of the sticky header, one `page.evaluate`, images blocked.
+     */
+    for (const [width, height] of [
+      [320, 720],
+      [390, 844],
+    ] as const) {
+      test(`${width}x${height}: no wishlist control is covered`, async ({ page }) => {
+        await savedInBrowser(
+          page,
+          Array.from({ length: 12 }, (_unused, index) => ({ slug: `test-product-${index + 30}` })),
+        );
+
+        await page.setViewportSize({ width, height });
+        await page.route('**/media/**', (route) => route.abort());
+
+        await openWishlist(page);
+        await expect(page.locator('.wish__item')).toHaveCount(12);
+        await expect(page.locator('.wa-float')).toBeVisible();
+
+        const { covered, sampled, offsets } = await page.evaluate(() => {
+          const selector =
+            '.wish__move, .wish__remove, .wish__clear, .wish__continue, .wish__item .card__wish';
+          const problems: { scrollY: number; label: string; hit: string }[] = [];
+          const root = document.documentElement;
+          let counted = 0;
+          let steps = 0;
+
+          for (let offset = 0; offset <= 40 * 60; offset += 40) {
+            window.scrollTo(0, offset);
+            steps += 1;
+
+            const header = document.querySelector<HTMLElement>('.site-header');
+            const headerBottom = header ? header.getBoundingClientRect().bottom : 0;
+
+            [...document.querySelectorAll<HTMLElement>(selector)].forEach((control) => {
+              const box = control.getBoundingClientRect();
+
+              if (
+                box.top < headerBottom ||
+                box.bottom > root.clientHeight ||
+                box.left < 0 ||
+                box.right > root.clientWidth
+              ) {
+                return;
+              }
+
+              counted += 1;
+
+              const hit = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
+              if (hit !== control && !control.contains(hit)) {
+                problems.push({
+                  scrollY: Math.round(window.scrollY),
+                  label: `${control.tagName}.${control.className}`.slice(0, 50),
+                  hit: `${hit?.tagName ?? 'nothing'}.${hit?.className ?? ''}`.slice(0, 50),
+                });
+              }
+            });
+          }
+
+          window.scrollTo(0, 0);
+
+          return { covered: problems, sampled: counted, offsets: steps };
+        });
+
+        expect(offsets, 'no scroll offset was sampled, so this could not fail').toBeGreaterThan(5);
+        expect(sampled, 'no control centre was ever tested, so this could not fail').toBeGreaterThan(
+          100,
+        );
+        expect(covered, JSON.stringify(covered.slice(0, 8), null, 2)).toEqual([]);
+      });
+    }
+  });
+
+  test.describe('round 2: what the browser had been getting wrong', () => {
+    /**
+     * **m1.** `rows()` mapped every saved entry while the request asked about the first 200, so an entry
+     * past the cap rendered as a row stuck on "Loading…" for as long as the page stayed open — 201 rows
+     * drawn under a note saying 200 are shown. Nothing is deleted: the note says how many there are.
+     */
+    test('a wishlist over the cap draws exactly the rows it asked about', async ({ page }) => {
+      await savedInBrowser(
+        page,
+        Array.from({ length: 201 }, (_unused, index) => ({ slug: `test-product-${index + 1}` })),
+      );
+
+      await openWishlist(page);
+
+      await expect(page.locator('.wish__item')).toHaveCount(200);
+      await expect(page.locator('.wish__note')).toContainText('201 items saved');
+      await expect(page.locator('.wish__placeholder')).toHaveCount(0);
+      // And nothing was taken away from the shopper.
+      expect(await storedSlugs(page)).toHaveLength(201);
+    });
+
+    /**
+     * **m2.** The version-1 read did not de-duplicate, so a repeated slug became two rows for one
+     * product and the first Remove press destroyed both at once.
+     */
+    test('a duplicated slug in an old stored list is one row, and one Remove takes one product', async ({
+      page,
+    }) => {
+      await page.addInitScript(
+        ([key, value]) => window.localStorage.setItem(key, value),
+        [
+          STORAGE_KEY,
+          JSON.stringify(['test-product-41', 'test-product-41', 'test-product-42']),
+        ] as const,
+      );
+
+      await openWishlist(page);
+
+      await expect(page.locator('.wish__item')).toHaveCount(2);
+
+      await page.locator('[data-testid="wishlist-remove"]').first().click();
+
+      await expect(page.locator('.wish__item')).toHaveCount(1);
+      expect(await storedSlugs(page)).toEqual(['test-product-42']);
+    });
+
+    /**
+     * **MAJOR 2.** The product page's heart recorded neither the name nor the colourway, so a withdrawn
+     * entry had nothing to be called. Saved from the product page, then withdrawn: the row names it.
+     */
+    test('a product saved from its own page is still named after the shop withdraws it', async ({
+      page,
+    }) => {
+      await page.goto('/product/test-product-43?colour=1&size=10');
+      await expect
+        .poll(() => page.evaluate(() => localStorage.getItem('sd.recently-viewed') ?? ''))
+        .toContain('test-product-43');
+
+      const heart = page.locator('.pdp__wish');
+      await heart.click();
+      await expect(heart).toHaveAttribute('aria-pressed', 'true');
+
+      // What was stored, before anything else touches it.
+      const stored = await page.evaluate((key) => {
+        const raw = window.localStorage.getItem(key) ?? 'null';
+        return (JSON.parse(raw) as { items: { name: string | null; colourName: string | null }[] })
+          .items[0];
+      }, STORAGE_KEY);
+
+      expect(stored.name).toBe('Test Product 43');
+      expect(stored.colourName).not.toBeNull();
+
+      // Now pretend the shop has withdrawn it: the page has no card to draw and falls back to the name.
+      await page.route('**/api/wishlist/products', (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ items: [{ slug: 'test-product-43', product: null }] }),
+        }),
+      );
+
+      await openWishlist(page);
+
+      await expect(page.locator('.wish__gone')).toContainText('Test Product 43');
+      await expect(page.locator('[data-testid="wishlist-remove"]')).toHaveAttribute(
+        'aria-label',
+        'Remove Test Product 43 from your wishlist',
+      );
     });
   });
 

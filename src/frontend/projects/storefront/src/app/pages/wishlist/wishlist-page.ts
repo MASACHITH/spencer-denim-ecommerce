@@ -88,7 +88,10 @@ import { QuickView } from '../../ui/quick-view/quick-view';
            did, so they are announced politely rather than interrupting. It is rendered on the server
            and always present, because a live region added to the page at the same moment as its text
            is a region a screen reader has not been watching. -->
-      <p class="sr-only" role="status">{{ announcement() }}</p>
+      <!-- It carries a test id because the status role is not a unique address on this page: the
+           announcement bar, the header search, the mini bag (twice) and the footer newsletter all
+           have a live region, so the shell brings five before this page adds its own. -->
+      <p class="sr-only" role="status" data-testid="wishlist-status">{{ announcement() }}</p>
 
       @if (error(); as message) {
         <p class="wish__error" role="alert">

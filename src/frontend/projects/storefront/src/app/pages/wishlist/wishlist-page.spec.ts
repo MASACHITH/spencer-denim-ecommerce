@@ -176,8 +176,9 @@ describe('WishlistPage (WISH-01)', () => {
       create();
       fixture.detectChanges();
 
-      const region = element.querySelector('[role="status"]');
+      const region = element.querySelector('[data-testid="wishlist-status"]');
       expect(region).not.toBeNull();
+      expect(region?.getAttribute('role')).toBe('status');
     });
   });
 
@@ -265,7 +266,7 @@ describe('WishlistPage (WISH-01)', () => {
       await settle();
 
       expect(element.querySelectorAll('sd-product-card')).toHaveLength(1);
-      expect(element.querySelector('[role="status"]')?.textContent).toContain(
+      expect(element.querySelector('[data-testid="wishlist-status"]')?.textContent).toContain(
         'removed from your wishlist',
       );
     });
@@ -463,7 +464,7 @@ describe('WishlistPage (WISH-01)', () => {
       await settle();
 
       expect(element.querySelectorAll('.wish__item')).toHaveLength(1);
-      expect(element.querySelector('[role="status"]')?.textContent).toContain(
+      expect(element.querySelector('[data-testid="wishlist-status"]')?.textContent).toContain(
         'Product A removed from your wishlist',
       );
       expect(document.activeElement).toBe(

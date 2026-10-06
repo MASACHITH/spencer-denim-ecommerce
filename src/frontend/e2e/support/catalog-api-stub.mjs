@@ -1337,7 +1337,7 @@ function productBySlug(slug) {
 }
 
 /**
- * `GET /api/wishlist?slug=…` as the real endpoint answers it (W2-08, WISH-01).
+ * `POST /api/wishlist/products` as the real endpoint answers it (W2-08, WISH-01).
  *
  * The shopper's list lives in their browser, so the slugs arrive on the query string and the answer
  * is the live card for each — **in the order asked, with a `null` product for anything the shop no
@@ -1348,9 +1348,14 @@ function productBySlug(slug) {
  * Also truncated at the handler's own cap, so the page's "showing the most recent 200" note is
  * reachable without the real API.
  *
+ * **The slugs arrive in the body, not the query string**, because the query string could not hold
+ * them: Kestrel's request line is 8,192 bytes and 200 slugs exceeded it at about 32 characters each, so
+ * a full wishlist answered 414 and the page could never load. A stub that still read `?slug=` would let
+ * this suite pass against a shape the real server refuses.
+ *
  * `E2E_WISHLIST_STATUS` forces a failure, for the page's error state and Try again.
  */
-function wishlistFor(params) {
+function wishlistFor(slugs) {
   const forced = Number(process.env.E2E_WISHLIST_STATUS ?? 0);
   if (forced >= 400) {
     return { status: forced, body: { title: 'Forced failure', status: forced } };
@@ -1359,7 +1364,7 @@ function wishlistFor(params) {
   const seen = new Set();
   const items = [];
 
-  for (const raw of params.getAll('slug')) {
+  for (const raw of Array.isArray(slugs) ? slugs : []) {
     if (typeof raw !== 'string' || raw.trim().length === 0 || raw.length > 220) {
       continue;
     }
@@ -3110,14 +3115,17 @@ const server = createServer((request, response) => {
     return;
   }
 
-  if (url.pathname === '/api/wishlist') {
-    const answer = wishlistFor(url.searchParams);
+  if (url.pathname === '/api/wishlist/products') {
+    readJsonBody(request, response, (body) => {
+      const answer = wishlistFor(body.slugs);
 
-    // The real endpoint answers `no-store` and no `Vary`, and `wishlist.e2e.ts` reads both off the
-    // wire — so a stub that omitted them would make that assertion a test of the stub.
-    response.setHeader('Cache-Control', 'no-store, no-cache, private');
-    response.statusCode = answer.status;
-    response.end(JSON.stringify(answer.body));
+      // The real endpoint answers `no-store` and no `Vary`, and `wishlist.e2e.ts` reads both off the
+      // wire — so a stub that omitted them would make that assertion a test of the stub.
+      response.setHeader('Cache-Control', 'no-store, no-cache, private');
+      response.statusCode = answer.status;
+      response.end(JSON.stringify(answer.body));
+    });
+
     return;
   }
 
