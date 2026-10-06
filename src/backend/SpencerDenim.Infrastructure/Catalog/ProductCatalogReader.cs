@@ -7,6 +7,7 @@ using SpencerDenim.Application.Catalog.Abstractions;
 using SpencerDenim.Application.Catalog.Contracts;
 using SpencerDenim.Application.Catalog.Products;
 using SpencerDenim.Application.Catalog.Search;
+using SpencerDenim.Application.Sales.Wishlist.Abstractions;
 using SpencerDenim.Domain.Catalog;
 using SpencerDenim.Domain.Inventory;
 using SpencerDenim.Domain.Media;
@@ -25,7 +26,7 @@ internal sealed class ProductCatalogReader(
     AppDbContext dbContext,
     IOptions<CatalogOptions> options,
     IClock clock)
-    : IProductCatalogReader
+    : IProductCatalogReader, IWishlistCatalogReader
 {
     private readonly CatalogOptions _options = options.Value;
 
@@ -112,6 +113,62 @@ internal sealed class ProductCatalogReader(
 
         var cards = await ToCardsAsync(page, cancellationToken);
         return Result.Success(new PagedResult<ProductCardDto>(cards, listQuery.Page, listQuery.PageSize, totalCount));
+    }
+
+    /// <summary>
+    /// <see cref="IWishlistCatalogReader.GetCardsBySlugAsync"/> (WISH-01).
+    /// <para>
+    /// <b>One query, <c>BaseQuery</c> and <c>CardProjection</c> like every other card read</b>, which is
+    /// the whole reason this method is on this class rather than in a reader of its own: a second
+    /// implementation would be a second answer to "is this product still for sale" and a second card
+    /// projection to keep in step. The order is restored in memory afterwards, exactly as
+    /// <c>LoadRelatedAsync</c> restores the merchandiser's order, because an <c>IN</c> list has none.
+    /// </para>
+    /// <para>
+    /// <b>A slug that matches nothing comes back with a null product rather than not coming back.</b>
+    /// The shopper has it in their list; the answer "the shop no longer offers this" is the answer
+    /// (doc 11 §575), and leaving it out would read as the server having lost it. That includes a slug
+    /// that names a product which exists but is unpublished, soft-deleted or in a deactivated category:
+    /// <c>CatalogVisibility.VisibleProduct</c> is the one definition of sellable and this read does not
+    /// get a looser one.
+    /// </para>
+    /// </summary>
+    public async Task<IReadOnlyList<(string Slug, ProductCardDto? Product)>> GetCardsBySlugAsync(
+        IReadOnlyList<string> slugs,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(slugs);
+
+        if (slugs.Count == 0)
+        {
+            return [];
+        }
+
+        var rows = await BaseQuery()
+            .Where(product => slugs.Contains(product.Slug))
+            .Select(CardProjection(_options.DefaultLowStockThreshold))
+            .ToListAsync(cancellationToken);
+
+        var cards = await ToCardsAsync(rows, cancellationToken);
+
+        // Ordinal, because the caller's slugs are the keys its own storage is held under and the slug
+        // echoed back has to be the one that was sent. `UX_Products_Slug` lives under the database's
+        // `Latin1_General_100_CI_AS_SC` collation, so the match above is case-insensitive and a card may
+        // come back under a different spelling from the one asked for — hence the fallback to a
+        // case-insensitive lookup, with the *requested* spelling kept in the tuple either way.
+        var bySlug = cards.ToDictionary(card => card.Slug, StringComparer.Ordinal);
+        var loosely = cards
+            .GroupBy(card => card.Slug, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+
+        return slugs
+            .Select(slug => (
+                Slug: slug,
+                Product: bySlug.TryGetValue(slug, out var exact)
+                    ? exact
+                    : loosely.GetValueOrDefault(slug)))
+            .ToList()
+            .AsReadOnly();
     }
 
     public async Task<ProductDetailDto?> GetBySlugAsync(string slug, CancellationToken cancellationToken)

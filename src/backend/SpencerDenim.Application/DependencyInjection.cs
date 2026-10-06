@@ -22,6 +22,8 @@ using SpencerDenim.Application.Content.Home;
 using SpencerDenim.Application.Diagnostics.Ping;
 using SpencerDenim.Application.Marketing.Newsletter;
 using SpencerDenim.Application.Sales.Cart;
+using SpencerDenim.Application.Sales.Wishlist;
+using SpencerDenim.Application.Sales.Wishlist.Contracts;
 using SpencerDenim.Application.Sales.Checkout;
 using SpencerDenim.Application.Sales.Checkout.Contracts;
 using SpencerDenim.Application.Settings;
@@ -172,6 +174,12 @@ public static class DependencyInjection
             ICommandHandler<RemoveCartItemCommand, CartWriteResult>,
             RemoveCartItemCommandHandler>();
         services.AddScoped<ICommandHandler<MergeGuestCartCommand, CartView>, MergeGuestCartCommandHandler>();
+
+        // The wishlist (W2-08, WISH-01). One read and no writes: the shopper's list is in their browser
+        // (doc 02's WISH-01 line, doc 08 §1.7), so this query only turns their slugs into live cards. The
+        // merge into an account belongs to W3-01, which is the half of WISH-01 that cannot exist before
+        // there is an account to merge into — see `WishlistItem`.
+        services.AddScoped<IQueryHandler<GetWishlistQuery, WishlistDto>, GetWishlistQueryHandler>();
 
         // Settings (ADM-22, GLB-02). The storefront read is wrapped in doc 08 §3.8's sixty-second cache the
         // same way the homepage is, and for a stronger reason: this payload is read during the server render

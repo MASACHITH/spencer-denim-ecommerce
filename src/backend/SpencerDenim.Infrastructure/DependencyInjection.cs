@@ -14,6 +14,7 @@ using SpencerDenim.Application.Marketing.Newsletter;
 using SpencerDenim.Application.Sales.Cart.Abstractions;
 using SpencerDenim.Application.Sales.Checkout;
 using SpencerDenim.Application.Sales.Checkout.Abstractions;
+using SpencerDenim.Application.Sales.Wishlist.Abstractions;
 using SpencerDenim.Application.Settings.Abstractions;
 using SpencerDenim.Infrastructure.Admin.Auditing;
 using SpencerDenim.Infrastructure.Admin.Users;
@@ -113,7 +114,16 @@ public static class DependencyInjection
         });
 
         services.AddScoped<IDepartmentCatalogReader, DepartmentCatalogReader>();
-        services.AddScoped<IProductCatalogReader, ProductCatalogReader>();
+
+        // `ProductCatalogReader` serves two ports: the storefront catalogue (PLP, PDP, SRCH) and the
+        // wishlist's "cards for these slugs" (WISH-01). It is registered as itself and both ports resolve
+        // to it, so one scope gets one instance however many ports it is asked for — rather than
+        // `AddScoped<IWishlistCatalogReader, ProductCatalogReader>()`, which would build a second reader
+        // (and a second `CatalogOptions` snapshot) for a request that used both.
+        services.AddScoped<ProductCatalogReader>();
+        services.AddScoped<IProductCatalogReader>(provider => provider.GetRequiredService<ProductCatalogReader>());
+        services.AddScoped<IWishlistCatalogReader>(provider => provider.GetRequiredService<ProductCatalogReader>());
+
         services.AddScoped<ISitemapCatalogReader, SitemapCatalogReader>();
         services.AddScoped<IAuditLogReader, AuditLogReader>();
 

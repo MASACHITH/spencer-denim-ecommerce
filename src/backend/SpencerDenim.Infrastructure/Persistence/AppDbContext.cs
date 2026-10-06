@@ -75,8 +75,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
 
     /// <summary>
     /// Doc 08 §1.2. Created by W2-09's migration with <c>Carts</c> and <c>CartItems</c>; W3-03 added the rest
-    /// of §3.5 — number series, payment providers, delivery, orders, payments and refunds.
-    /// <c>WishlistItems</c> is still W2-08's.
+    /// of §3.5 — number series, payment providers, delivery, orders, payments and refunds. W2-08 added the
+    /// last of them, <c>WishlistItems</c>, so §3.5's fifteen tables are now all here.
     /// </summary>
     public const string SalesSchema = "sales";
 
@@ -150,6 +150,19 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<Cart> Carts => Set<Cart>();
 
     public DbSet<CartItem> CartItems => Set<CartItem>();
+
+    /// <summary>
+    /// <c>sales.WishlistItems</c> (doc 08 §3.5, WISH-01), created by W2-08's migration.
+    /// <para>
+    /// <b>Nothing in the application reads or writes it yet.</b> Every row needs a registered customer
+    /// (<see cref="WishlistItem.CustomerUserId"/> is <c>NOT NULL</c>, as doc 08 §3.5 specifies) and there
+    /// are no customer accounts until W3-01 / ACC-01. A guest's wishlist lives in the browser — doc 08
+    /// §1.7, doc 02's WISH-01 line and doc 11 §553 all say so — and W3-01 owns the merge that turns it
+    /// into rows here. The set exists so that the schema, the integration tests and the merge's target
+    /// are all in place before the task that needs them.
+    /// </para>
+    /// </summary>
+    public DbSet<WishlistItem> WishlistItems => Set<WishlistItem>();
 
     public DbSet<NumberSeries> NumberSeries => Set<NumberSeries>();
 
