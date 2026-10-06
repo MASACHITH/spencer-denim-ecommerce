@@ -1158,6 +1158,17 @@ const EMPTY: Scalars = {
       gap: var(--space-1) var(--space-2);
     }
 
+    /* A tick is 44 px in both directions, not only in height.
+       .adm-check in the shared stylesheet sets a min-height of one tap target and nothing about width, which is
+       right for a long label ("Show in the mega menu") and wrong for these: the size ticks are labelled
+       "S", "M", "L" and measured 36–41 px wide at 320 px. The browser suite caught it; jsdom could not,
+       because it has no layout. WCAG 2.2 AA asks for 44 px, which means the smaller of the two edges. */
+    .form__checks .adm-check {
+      min-width: var(--tap);
+      justify-content: center;
+      padding-inline: var(--space-0-5);
+    }
+
     .form__slug {
       display: flex;
       align-items: center;

@@ -33,6 +33,8 @@ import { readFileSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { extname, join, normalize, resolve } from 'node:path';
 
+import { freshProductState, handleProductRoute } from './admin-product-stub.mjs';
+
 const PORT = Number(process.env.E2E_ADMIN_PORT ?? 4430);
 const DIST = resolve(process.env.E2E_ADMIN_DIST ?? 'dist/admin/browser');
 
@@ -60,6 +62,12 @@ const SESSION = {
     'Categories.Create',
     'Categories.Edit',
     'Categories.Delete',
+
+    // ADM-10 (W1-03): the product screens.
+    'Products.View',
+    'Products.Create',
+    'Products.Edit',
+    'Products.Delete',
 
     // ADM-22. Settings.Edit and Media.Create: the settings screen's logo flow uploads to the library before
     // it points the setting at the result, so both are needed to drive it.
@@ -207,6 +215,9 @@ function freshState() {
     },
     logo: null,
     uploads: new Map(),
+
+    // ADM-10 (W1-03). Its own module, because this file is already a thousand lines about ADM-11.
+    ...freshProductState(),
   };
 }
 
@@ -509,11 +520,39 @@ const server = createServer(async (request, response) => {
     const publicId = `0000f00d-0000-4000-8000-${String(state.uploads.size + 1).padStart(12, '0')}`;
     const asset = {
       publicId,
+
+      // 1 Image (media.MediaAssets.MediaType). ADM-10's product form reads it to tell a photograph from
+      // the video; the logo flow ignores it, so adding it breaks nothing and leaving it out would make a
+      // freshly uploaded gallery row claim to be a video.
+      mediaType: 1,
       url: '/__test__/logo.webp',
+      posterUrl: null,
       width: 600,
       height: 150,
       altText: 'The shop logo',
       originalFileName: 'logo.png',
+    };
+
+    state.uploads.set(publicId, asset);
+
+    return json(response, 201, asset);
+  }
+
+  // The product video and its poster, in one multipart request (ADM-10, doc 08 §3.3: a video row cannot
+  // exist without a poster, and nothing on the server extracts a frame). The body is not parsed; what
+  // matters is that two files arrived and that the answer carries a publicId the form can reference.
+  if (path === '/api/admin/media/videos' && request.method === 'POST') {
+    await drain(request);
+
+    const publicId = `0000f00d-0000-4000-8000-${String(state.uploads.size + 1).padStart(12, '0')}`;
+    const asset = {
+      publicId,
+      mediaType: 2,
+      url: '/__test__/clip.mp4',
+      posterUrl: '/__test__/poster.webp',
+      durationSeconds: 12.5,
+      altText: null,
+      originalFileName: 'clip.mp4',
     };
 
     state.uploads.set(publicId, asset);
@@ -625,6 +664,25 @@ const server = createServer(async (request, response) => {
     response.writeHead(200, { 'Content-Type': 'image/webp', 'Cache-Control': 'no-store' });
     response.end(LOGO_PIXEL);
     return;
+  }
+
+  // ---- products (ADM-10, W1-03) --------------------------------------------------------------
+  if (
+    await handleProductRoute({
+      path,
+      method: request.method,
+      url,
+      request,
+      response,
+      state,
+      json,
+      problem,
+      noContent,
+      readBody,
+      suppliedRowVersion,
+    })
+  ) {
+    return undefined;
   }
 
   // ---- catalogue ----------------------------------------------------------------------------
