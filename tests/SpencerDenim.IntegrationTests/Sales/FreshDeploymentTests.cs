@@ -5,7 +5,9 @@ using System.Text.Json;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using SpencerDenim.Domain.Settings;
 using SpencerDenim.Infrastructure.Persistence;
+using SpencerDenim.Infrastructure.Persistence.Seeding;
 using SpencerDenim.IntegrationTests.Infrastructure;
 
 namespace SpencerDenim.IntegrationTests.Sales;
@@ -35,6 +37,9 @@ public sealed class FreshDeploymentTests(SqlServerDatabaseFixture sqlServer)
     private const int Provinces = 9;
 
     private const int Districts = 25;
+
+    /// <summary>Doc 08 §9's sample catalogue, which only the demo-catalogue test asks for.</summary>
+    private const int DemoProducts = 45;
 
     [Fact]
     public async Task Migrating_an_empty_database_and_starting_the_api_leaves_a_shop_that_can_take_an_order()
@@ -314,6 +319,17 @@ public sealed class FreshDeploymentTests(SqlServerDatabaseFixture sqlServer)
 
             // Nothing was inserted twice: the losers inserted what was missing, not a second copy.
             Assert.Equal(3, await db.Departments.CountAsync(cancellationToken));
+
+            // **And `catalog.SizeGuides`, which is the only one that matters.** Every other seeded
+            // reference table has a unique index, so a duplicate there is an exception somebody sees.
+            // This one has only `PK_SizeGuides` and a non-unique `IX_SizeGuides_ImageAssetId`, so two
+            // instances both finding "Women's apparel" missing both insert it and *nothing errors* —
+            // the next pass's `ToDictionaryAsync(guide => guide.Name, …)` throws, one startup later, on
+            // data that is already wrong. It is the failure mode that made the lock necessary, and
+            // asserting the counts above without this one would have passed straight through it.
+            Assert.Equal(
+                CatalogReferenceData.SizeGuides.Count,
+                await db.SizeGuides.CountAsync(cancellationToken));
         }
         finally
         {
@@ -322,6 +338,302 @@ public sealed class FreshDeploymentTests(SqlServerDatabaseFixture sqlServer)
                 await factory.DisposeAsync();
             }
         }
+    }
+
+    /// <summary>
+    /// **A host that cannot get the seed lock says it is waiting, not that the database is broken.**
+    /// </summary>
+    /// <remarks>
+    /// <b>This is the contention fallback, and it was unreachable.</b> The acquire built a raw
+    /// <c>DbCommand</c> with <c>@LockTimeout = 60000</c> and never set <c>CommandTimeout</c>, so it took
+    /// ADO's 30 s default: the client gave up at 32 s with "Execution Timeout Expired", SQL Server never
+    /// reached its own timeout, and the exception — not being a unique violation — landed in the broad
+    /// catch. The host logged a 20-line stack trace saying "cannot take an order" and telling an operator
+    /// to run <c>dotnet ef database update</c> on a database that was fine and fully migrated, and
+    /// <c>LogLockBusy</c> never fired once. That is exactly the "Error on a healthy startup" the lock was
+    /// introduced to remove.
+    /// <para>
+    /// Here the lock is held by a session this test owns, for longer than the host's patience, and the
+    /// assertion is on what the host <i>says</i>: not ready, which is true, with a reason that does not
+    /// blame the database. Then the lock is released and the host gets there by itself on the retry timer.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task A_host_that_cannot_get_the_seed_lock_says_it_is_waiting_and_then_recovers()
+    {
+        sqlServer.SkipIfUnavailable();
+
+        var cancellationToken = TestContext.Current.CancellationToken;
+        await using var deployment = await FreshDeployment.CreateAsync(
+            sqlServer.ConnectionString,
+            cancellationToken);
+
+        // **A session of this test's own, holding the lock the seeder wants — and `Pooling=false`, which
+        // is not a detail.** `sp_getapplock` with owner `Session` is released when the session ends, and
+        // `SqlConnection.Close()` on a *pooled* connection does not end the session: it returns it to the
+        // pool, and the reset that would release the lock is sent on the next use of that connection, not
+        // on close. The first version of this test closed a pooled holder and then waited ninety seconds
+        // for a lock that was still held by an idle pooled session. Worth knowing outside the test, too:
+        // anything holding one of these locks must end its session, not merely close its connection.
+        var holderConnectionString = new SqlConnectionStringBuilder(deployment.ConnectionString)
+        {
+            Pooling = false,
+        }.ConnectionString;
+
+        await using var holder = new SqlConnection(holderConnectionString);
+        await holder.OpenAsync(cancellationToken);
+
+        await using (var take = holder.CreateCommand())
+        {
+            take.CommandText =
+                "DECLARE @r int; EXEC @r = sp_getapplock @Resource = N'SpencerDenim:ReferenceDataSeed', "
+                + "@LockMode = 'Exclusive', @LockOwner = 'Session', @LockTimeout = 0; SELECT @r;";
+
+            Assert.True(
+                Convert.ToInt32(await take.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture) >= 0,
+                "this test could not take the lock it is about");
+        }
+
+        await using var factory = new ApiFactory(deployment.ConnectionString);
+        using var client = factory.CreateClient();
+
+        // **Three waits of five seconds is the host's patience**, so it has moved on to the retry timer by
+        // now and readiness says what it is waiting for.
+        var reason = await ReadinessReasonAsync(client, cancellationToken);
+
+        Assert.NotNull(reason);
+        Assert.Contains("still establishing the reference data", reason, StringComparison.Ordinal);
+
+        // The two sentences that were wrong: it must not blame the database or name a migration.
+        Assert.DoesNotContain("cannot take an order", reason, StringComparison.Ordinal);
+        Assert.DoesNotContain("dotnet ef database update", reason, StringComparison.Ordinal);
+
+        // Nothing was seeded, because nothing could be: the lock did its job.
+        using (var scope = deployment.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            Assert.Equal(0, await db.Districts.CountAsync(cancellationToken));
+        }
+
+        // And now the holder lets go, and the host gets there on its own.
+        await holder.CloseAsync();
+
+        var deadline = DateTime.UtcNow.AddSeconds(90);
+        HttpStatusCode status;
+
+        while (true)
+        {
+            using (var after = await client.GetAsync(
+                new Uri("/health/ready", UriKind.Relative),
+                cancellationToken))
+            {
+                status = after.StatusCode;
+            }
+
+            if (status == HttpStatusCode.OK || DateTime.UtcNow > deadline)
+            {
+                break;
+            }
+
+            await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
+        }
+
+        Assert.Equal(HttpStatusCode.OK, status);
+
+        using var seeded = deployment.Services.CreateScope();
+        Assert.Equal(
+            Districts,
+            await seeded.ServiceProvider.GetRequiredService<AppDbContext>().Districts
+                .CountAsync(cancellationToken));
+    }
+
+    /// <summary>
+    /// **The seed lock is free while the demo catalogue is being seeded**, and this host does not claim to
+    /// be ready while still holding it.
+    /// </summary>
+    /// <remarks>
+    /// <b>Both of those were the other way round, and together they are why the contention path was
+    /// reachable at all.</b> The demo catalogue ran <i>inside</i> the lock, before the release: 45
+    /// products, 480 variants and 149 media assets, measured at about eleven seconds on a fresh database
+    /// with the placeholder generator switched off — and with <c>Media__PublicRoot</c> configured, as
+    /// development and staging have it, 149 images are drawn in there too. So a second instance on a
+    /// developer's machine really would wait on it, which is a scenario the lock was never meant to cover:
+    /// the lock exists because <c>catalog.SizeGuides</c> has no unique index on <c>Name</c>, and the demo
+    /// catalogue is gated behind two flags no multi-instance deployment sets. <c>state.Established()</c>
+    /// was also called before the demo phase, so the host announced itself ready while holding the lock.
+    /// <para>
+    /// The assertion is an ordering, taken from outside: once the reference data is in and the demo
+    /// catalogue is still being written, the lock must be takeable. Before the fix it was held for that
+    /// whole window.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task The_seed_lock_is_released_before_the_demo_catalogue_is_written()
+    {
+        sqlServer.SkipIfUnavailable();
+
+        var cancellationToken = TestContext.Current.CancellationToken;
+        await using var deployment = await FreshDeployment.CreateAsync(
+            sqlServer.ConnectionString,
+            cancellationToken);
+
+        await using var factory = new ApiFactory(
+            deployment.ConnectionString,
+            additionalConfiguration: new Dictionary<string, string?>
+            {
+                ["Seed:RunOnStartup"] = "true",
+                ["Seed:IncludeDemoCatalogue"] = "true",
+            });
+
+        // `CreateClient()` does not return until every hosted service's StartAsync has, and the demo
+        // phase is inside it — so the host is started on a task and watched from here.
+        var starting = Task.Run(() => factory.CreateClient(), cancellationToken);
+
+        var probeConnectionString = new SqlConnectionStringBuilder(deployment.ConnectionString)
+        {
+            Pooling = false,
+        }.ConnectionString;
+
+        var sawTheWindow = false;
+        var deadline = DateTime.UtcNow.AddSeconds(120);
+
+        while (DateTime.UtcNow < deadline)
+        {
+            int settings;
+            int products;
+
+            using (var scope = deployment.Services.CreateScope())
+            {
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+                // **`ops.Settings`, not `ref.Districts`, and the difference is the whole test.** The
+                // districts are committed by step 2 of `RunReferenceDataAsync` and the lock is correctly
+                // still held for steps 3 and 4 — the first version of this watched for districts and
+                // reported a held lock that was being held exactly as intended. The settings keys are the
+                // last thing the reference phase writes, so they are the marker for "that phase is done".
+                settings = await db.Settings.CountAsync(cancellationToken);
+                products = await db.Products.CountAsync(cancellationToken);
+            }
+
+            // The window: reference data complete, demo catalogue not finished.
+            if (settings == SettingCatalog.All.Count && products < DemoProducts && !starting.IsCompleted)
+            {
+                // Given a couple of seconds, because the release is the statement after the one that
+                // committed the settings: a sub-millisecond gap, against a demo phase of about eleven
+                // seconds. If it is still held after this, it is held for the demo.
+                Assert.True(
+                    await Eventually(() => LockIsFreeAsync(probeConnectionString, cancellationToken)),
+                    "the seed lock was still held while the demo catalogue was being written");
+
+                sawTheWindow = true;
+                break;
+            }
+
+            if (starting.IsCompleted)
+            {
+                break;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(100), cancellationToken);
+        }
+
+        using var client = await starting;
+
+        Assert.True(sawTheWindow, "the demo catalogue never took long enough to observe; test needs rework");
+
+        // It finished the job as well as ordering it correctly.
+        using var ready = await client.GetAsync(new Uri("/health/ready", UriKind.Relative), cancellationToken);
+        Assert.Equal(HttpStatusCode.OK, ready.StatusCode);
+
+        using var seeded = deployment.Services.CreateScope();
+        Assert.Equal(
+            DemoProducts,
+            await seeded.ServiceProvider.GetRequiredService<AppDbContext>().Products
+                .CountAsync(cancellationToken));
+    }
+
+    /// <summary>Polls a condition for two seconds, so a statement-sized gap is not read as a held lock.</summary>
+    private static async Task<bool> Eventually(Func<Task<bool>> condition)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(2);
+
+        while (DateTime.UtcNow < deadline)
+        {
+            if (await condition())
+            {
+                return true;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(50), CancellationToken.None);
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Whether the seed lock can be taken right now, on a session of its own that ends immediately.
+    /// </summary>
+    /// <remarks>
+    /// <c>@LockTimeout = 0</c>, so it answers rather than waits, and <c>Pooling=false</c> so closing the
+    /// connection really ends the session and releases what it took — a pooled close would leave this
+    /// probe holding the lock it just tested for.
+    /// </remarks>
+    private static async Task<bool> LockIsFreeAsync(
+        string connectionString,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = new SqlConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            "DECLARE @r int; EXEC @r = sp_getapplock @Resource = N'SpencerDenim:ReferenceDataSeed', "
+            + "@LockMode = 'Exclusive', @LockOwner = 'Session', @LockTimeout = 0; SELECT @r;";
+
+        var result = Convert.ToInt32(
+            await command.ExecuteScalarAsync(cancellationToken),
+            CultureInfo.InvariantCulture);
+
+        return result >= 0;
+    }
+
+    /// <summary>
+    /// The <c>referencedata</c> check's description once readiness has settled on an answer, or null
+    /// while it is still deciding.
+    /// </summary>
+    /// <remarks>
+    /// Polled, because the host answers the first probe before the seeder has finished waiting and the
+    /// reason at that moment is "not established yet" rather than the one under test. The deadline is
+    /// generous: three waits of five seconds plus the jitter between them, plus a retry cycle.
+    /// </remarks>
+    private static async Task<string?> ReadinessReasonAsync(
+        HttpClient client,
+        CancellationToken cancellationToken)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(120);
+
+        while (DateTime.UtcNow < deadline)
+        {
+            using var response = await client.GetAsync(
+                new Uri("/health/ready", UriKind.Relative),
+                cancellationToken);
+
+            var body = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken);
+
+            var description = body.GetProperty("checks").EnumerateArray()
+                .Where(check => check.GetProperty("name").GetString() == "referencedata")
+                .Select(check => check.GetProperty("description").GetString())
+                .FirstOrDefault();
+
+            if (description is not null && description.Contains("waiting", StringComparison.Ordinal))
+            {
+                return description;
+            }
+
+            await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
+        }
+
+        return null;
     }
 
     /// <summary>

@@ -135,11 +135,64 @@ internal sealed partial class CatalogSeedHostedService(
     private const string SeedLockResource = "SpencerDenim:ReferenceDataSeed";
 
     /// <summary>
-    /// How long to wait for the lock before giving up and treating it as contention. Generously longer
-    /// than a seeding pass takes (about a second against an empty database, a dozen SELECTs against a
-    /// seeded one), so a waiter only ever times out if something is genuinely stuck.
+    /// <c>SqlException.Number</c> for "Execution Timeout Expired" — the client giving up on a command,
+    /// not the server refusing one. The 258 in its message is the inner Win32 wait code.
     /// </summary>
-    private static readonly TimeSpan SeedLockTimeout = TimeSpan.FromSeconds(60);
+    private const int ClientTimeout = -2;
+
+    /// <summary>
+    /// How long <c>sp_getapplock</c> waits for the lock before answering -1, which the caller treats as
+    /// contention and retries.
+    /// </summary>
+    /// <remarks>
+    /// <b>Fifteen seconds, and the number has to sit under ADO's command timeout to mean anything.</b>
+    /// The first version asked SQL Server to wait 60 s on a raw <c>DbCommand</c> whose
+    /// <see cref="System.Data.Common.DbCommand.CommandTimeout"/> was left at ADO's 30 s default — so the
+    /// client gave up at 32 s with "Execution Timeout Expired", SQL Server never reached its own timeout,
+    /// and <c>@LockTimeout</c> was configuration that could not take effect. Worse, the resulting
+    /// <c>SqlException</c> is not a unique violation, so it landed in the broad catch and reported
+    /// "cannot take an order" with the wrong remedy, on a database that was fine. The graceful
+    /// contention branch never fired once.
+    /// <para>
+    /// So the two are now set together and deliberately apart: SQL Server answers -1 first and the
+    /// contention path is the one that runs.
+    /// </para>
+    /// <para>
+    /// <b>Five seconds, not sixty, and the reason is <see cref="StartAsync"/>.</b> Hosted services are
+    /// started before Kestrel listens, so every second spent waiting here is a second in which the host
+    /// answers nothing at all — including the readiness probe that exists to explain the wait. A minute of
+    /// patience would have made the signal unreachable for a minute, which is the same defect this lock's
+    /// timeout already had in a different costume. Five seconds is generous for what the lock now covers:
+    /// the reference data alone, about a second against an empty database and a dozen SELECTs against a
+    /// seeded one, with the demo catalogue outside. Three attempts of it bound the startup delay at about
+    /// fifteen seconds, and after that the retry timer takes over with the host up and answering.
+    /// </para>
+    /// </remarks>
+    private static readonly TimeSpan SeedLockTimeout = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// The ADO command timeout for the <c>sp_getapplock</c> call. Above <see cref="SeedLockTimeout"/> on
+    /// purpose, so the server's own "-1, busy" is what comes back rather than the client's exception.
+    /// </summary>
+    private static readonly TimeSpan SeedLockCommandTimeout = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// How many times to wait for the lock before leaving it to the retry timer.
+    /// </summary>
+    /// <remarks>
+    /// <b>A cap, because the first version had none.</b> The lock-busy branch was
+    /// <c>for (var attempt = 1; ; attempt++)</c> with a bare <c>continue</c>, so a holder that never
+    /// released would have been waited on inside <c>StartAsync</c> for ever. The unique-violation branch
+    /// has had a cap all along and this one now matches it in kind: when the attempts run out the host
+    /// says it is still waiting — at Information, not Error — and the 10 s retry loop keeps trying, which
+    /// is the same self-healing path a late database takes.
+    /// <para>
+    /// Three, with <see cref="SeedLockTimeout"/> at five seconds, so the most a contended startup can
+    /// delay the host answering anything is about fifteen seconds. The cap is not "give up": nothing is
+    /// given up, the waiting simply moves off the startup path and onto the timer.
+    /// </para>
+    /// </remarks>
+    private const int SeedLockAttempts = 3;
 
     /// <summary>
     /// How long to wait before trying again after a real failure. Long enough that a SQL Server coming up
@@ -151,6 +204,17 @@ internal sealed partial class CatalogSeedHostedService(
     private readonly CancellationTokenSource _stopping = new();
 
     private Task? _retrying;
+
+    /// <summary>
+    /// Whether the failure has already been reported at <see cref="LogLevel.Error"/> with its stack trace.
+    /// </summary>
+    /// <remarks>
+    /// <b>The retry loop logged the whole exception at Error every ten seconds</b> — thirty SQL stack
+    /// traces in five minutes of testing, which is how a signal stops being one. The first failure is the
+    /// news and gets the stack trace; every repeat after it is a one-line Warning, because readiness
+    /// already carries the state and the diagnosis has not changed. A failure after a success starts over.
+    /// </remarks>
+    private bool _reportedFailure;
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
@@ -199,10 +263,30 @@ internal sealed partial class CatalogSeedHostedService(
                 // immediately and acquire nothing.
                 await dbContext.Database.OpenConnectionAsync(cancellationToken);
 
+                SeedCounts counts;
+
                 try
                 {
                     if (!await TryAcquireSeedLockAsync(dbContext, cancellationToken))
                     {
+                        if (attempt >= SeedLockAttempts)
+                        {
+                            // Out of patience, not in trouble. Readiness stays red because this host is
+                            // genuinely not ready, but it says what is actually happening instead of
+                            // naming a database problem that does not exist, and the retry timer carries
+                            // on from here.
+                            state.Failed(
+                                "Another instance is still establishing the reference data; this host is "
+                                + "waiting for it and will be ready once it finishes.");
+
+                            LogStillWaiting(logger, attempt);
+
+                            // Not reported as a failure, so the next real failure still gets its stack
+                            // trace: waiting for another instance is not the thing that log line is for.
+
+                            return false;
+                        }
+
                         LogLockBusy(logger, attempt);
                         await Task.Delay(Jitter(), cancellationToken);
                         continue;
@@ -210,21 +294,24 @@ internal sealed partial class CatalogSeedHostedService(
 
                     try
                     {
-                        var counts = await runner.RunReferenceDataAsync(cancellationToken);
-
-                        // Ready as soon as the reference data is in. The demo catalogue is
-                        // development-only sample data: a shop with no sample products is a shop, a shop
-                        // with no districts is not.
-                        state.Established();
-
-                        await SeedDemoCatalogueIfAskedAsync(runner, counts, cancellationToken);
-
-                        runner.LogCounts(counts);
+                        counts = await runner.RunReferenceDataAsync(cancellationToken);
                     }
                     finally
                     {
                         await ReleaseSeedLockAsync(dbContext);
                     }
+
+                    // **Established after the lock is released, and before the demo catalogue.** The
+                    // reference data is committed, so the shop can take an order; holding a lock while
+                    // claiming to be ready was the previous shape, and the demo catalogue is
+                    // development-only sample data that readiness has no opinion about.
+                    state.Established();
+                    _reportedFailure = false;
+
+                    // **Outside the lock, deliberately — see `SeedDemoCatalogueIfAskedAsync`.**
+                    await SeedDemoCatalogueIfAskedAsync(runner, counts, cancellationToken);
+
+                    runner.LogCounts(counts);
                 }
                 finally
                 {
@@ -256,7 +343,15 @@ internal sealed partial class CatalogSeedHostedService(
                     "The reference data could not be established, so this host cannot take an order: "
                     + Explain(exception));
 
-                LogSeedingFailed(logger, exception);
+                if (_reportedFailure)
+                {
+                    LogStillFailing(logger);
+                }
+                else
+                {
+                    _reportedFailure = true;
+                    LogSeedingFailed(logger, exception);
+                }
 
                 return false;
             }
@@ -292,13 +387,29 @@ internal sealed partial class CatalogSeedHostedService(
 
     /// <summary>
     /// The sample catalogue, which is development and staging only and still needs both flags. It runs
-    /// inside the caller's scope and on the caller's counts, so the one "Catalogue seeding inserted …"
-    /// line reports both phases together.
+    /// in the caller's scope and on the caller's counts, so the one "Catalogue seeding inserted …" line
+    /// reports both phases together.
     /// </summary>
     /// <remarks>
+    /// <b>It runs outside the seed lock, and that is the fix for contention being reachable at all.</b> It
+    /// used to run inside, before the release — and it is the expensive phase: 45 products, 480 variants
+    /// and 149 media assets held the lock for about eleven seconds on a fresh database <i>with the
+    /// placeholder generator switched off</i>, and with <c>Media__PublicRoot</c> configured, as
+    /// development and staging have it, <c>DemoMediaPlaceholderGenerator</c> draws 149 images in there
+    /// too. That made a second instance's wait — and so the whole contention path — reachable in a normal
+    /// development environment rather than only when somebody holds a lock by hand.
+    /// <para>
+    /// <b>Nothing needs it serialised.</b> The lock exists because <c>catalog.SizeGuides</c> has no unique
+    /// index on <c>Name</c>, so two instances could both insert the same reference row; the demo catalogue
+    /// is gated behind <c>Seed__RunOnStartup</c> <i>and</i> <c>Seed__IncludeDemoCatalogue</c>, which no
+    /// multi-instance deployment sets, and its own seeder is idempotent on keys that are indexed. Two
+    /// developers racing it on one database is not a scenario this exists for.
+    /// </para>
+    /// <para>
     /// <b>Its failure is logged and no more.</b> It is not what readiness is about, and swallowing it here
     /// rather than letting it reach <see cref="TryEstablishAsync"/>'s handler is deliberate: a broken
     /// demo seeder must not make a correctly seeded production host report itself unable to take an order.
+    /// </para>
     /// </remarks>
     private async Task SeedDemoCatalogueIfAskedAsync(
         CatalogSeedRunner runner,
@@ -327,12 +438,24 @@ internal sealed partial class CatalogSeedHostedService(
     }
 
     /// <summary>
-    /// Takes the exclusive application lock for the reference-data phase. False when it could not be had
-    /// inside <see cref="SeedLockTimeout"/>, which the caller treats as contention and retries.
+    /// Takes the exclusive application lock for the reference-data phase. False when it could not be had,
+    /// which the caller treats as contention and retries.
     /// </summary>
     /// <remarks>
     /// <c>sp_getapplock</c> returns 0 (granted) or 1 (granted after waiting) on success, and -1 (timeout),
     /// -2 (cancelled), -3 (deadlock victim) or -999 (bad parameter) otherwise. Only 0 and 1 are a lock.
+    /// <para>
+    /// <b>The client must not give up before the server does</b>, which is why
+    /// <see cref="SeedLockCommandTimeout"/> is set explicitly: a raw <c>DbCommand</c> takes ADO's 30 s
+    /// default rather than anything EF is configured with, so a 60 s <c>@LockTimeout</c> was unreachable
+    /// and produced an exception instead of the -1 this method is written to read.
+    /// </para>
+    /// <para>
+    /// <b>And a client timeout is still contention, not a failure.</b> If one ever does arrive — a
+    /// cancelled command, a server pausing — <c>SqlException.Number == -2</c> means "I gave up waiting",
+    /// which is the same answer as -1 and must not be reported as a database that cannot be seeded. The
+    /// two are mapped to the same false here rather than left for the broad catch to mislabel.
+    /// </para>
     /// </remarks>
     private static async Task<bool> TryAcquireSeedLockAsync(
         AppDbContext dbContext,
@@ -343,6 +466,7 @@ internal sealed partial class CatalogSeedHostedService(
         await using var command = connection.CreateCommand();
         command.CommandText = "sp_getapplock";
         command.CommandType = System.Data.CommandType.StoredProcedure;
+        command.CommandTimeout = (int)SeedLockCommandTimeout.TotalSeconds;
 
         AddParameter(command, "@Resource", SeedLockResource);
         AddParameter(command, "@LockMode", "Exclusive");
@@ -355,7 +479,14 @@ internal sealed partial class CatalogSeedHostedService(
         result.Direction = System.Data.ParameterDirection.ReturnValue;
         command.Parameters.Add(result);
 
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        try
+        {
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        catch (SqlException exception) when (exception.Number == ClientTimeout)
+        {
+            return false;
+        }
 
         return result.Value is int outcome && outcome >= 0;
     }
@@ -448,6 +579,22 @@ internal sealed partial class CatalogSeedHostedService(
         Level = LogLevel.Information,
         Message = "Another instance holds the reference-data seed lock (attempt {Attempt}); waiting.")]
     private static partial void LogLockBusy(ILogger logger, int attempt);
+
+    // No exception parameter and no stack trace: the first report carried both, readiness carries the
+    // reason, and repeating a diagnosis every ten seconds is how a log stops being read.
+    [LoggerMessage(
+        EventId = 1010,
+        Level = LogLevel.Warning,
+        Message = "The reference data still could not be established; retrying. See the first error above "
+            + "for the reason, or /health/ready for the current one.")]
+    private static partial void LogStillFailing(ILogger logger);
+
+    [LoggerMessage(
+        EventId = 1009,
+        Level = LogLevel.Information,
+        Message = "Another instance has held the reference-data seed lock for {Attempt} waits; leaving it "
+            + "to the retry timer. This host is not ready yet and nothing is wrong with the database.")]
+    private static partial void LogStillWaiting(ILogger logger, int attempt);
 
     [LoggerMessage(
         EventId = 1008,
