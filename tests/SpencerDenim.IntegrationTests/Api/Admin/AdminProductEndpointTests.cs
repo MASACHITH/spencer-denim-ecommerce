@@ -655,6 +655,65 @@ public sealed class AdminProductEndpointTests(SqlServerDatabaseFixture sqlServer
         }
     }
 
+    /// <summary>
+    /// <b>A size added to a product that already exists has to get a stock row too.</b>
+    /// <para>
+    /// Doc 11 P1 step 10 says the system creates one for every new variant with on-hand 0, and it is not a
+    /// nicety: a variant with no <c>inventory.StockLevels</c> row is invisible to the availability join
+    /// <c>ProductCatalogReader</c> uses, so it reads as out of stock for ever and ADM-12 has nothing to
+    /// update. The rows were originally created only on create, which left exactly this case broken, and no
+    /// test with an in-memory store could tell.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task Adding_a_size_to_an_existing_product_gives_it_a_stock_row_at_zero()
+    {
+        var factory = await HostAsync();
+        var seed = await ReferenceDataAsync(factory);
+        var client = await AdminCatalogApiClient.SignInAsync(factory, "w103-newsize", FullProductRights, Token);
+
+        var body = Body(seed, "w103-newsize");
+        body["colours"] = new object[] { Colour("Indigo Rinse", seed.ColourFamilyId) };
+        body["variants"] = new object[] { Variant("Indigo Rinse", seed.SizeIds[0], "W103-NEW-S") };
+
+        var (_, created) = await client.PostAsync(ProductsUrl, body, Token);
+        var productId = created.GetProperty("id").GetInt32();
+
+        try
+        {
+            body["variants"] = new object[]
+            {
+                Variant("Indigo Rinse", seed.SizeIds[0], "W103-NEW-S"),
+                Variant("Indigo Rinse", seed.SizeIds[1], "W103-NEW-M"),
+            };
+            body["rowVersion"] = await RowVersionAsync(factory, productId);
+
+            var (status, problem) = await client.PutAsync($"{ProductsUrl}/{productId}", body, Token);
+            Assert.True(status == HttpStatusCode.NoContent, $"refused with {status}: {problem}");
+
+            await using var scope = factory.Services.CreateAsyncScope();
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+            var stock = await dbContext.StockLevels
+                .AsNoTracking()
+                .Where(level => level.Variant!.ProductId == productId)
+                .Select(level => new { level.VariantId, level.OnHand, level.Reserved })
+                .ToListAsync(Token);
+
+            Assert.Equal(2, stock.Count);
+            Assert.All(stock, level => Assert.Equal(0, level.OnHand));
+            Assert.All(stock, level => Assert.Equal(0, level.Reserved));
+
+            // And the detail payload shows the new size with nothing in stock, rather than omitting it.
+            var (_, detail) = await client.GetAsync($"{ProductsUrl}/{productId}", Token);
+            Assert.Equal(2, detail.GetProperty("variants").GetArrayLength());
+        }
+        finally
+        {
+            await HardDeleteAsync(factory, productId);
+        }
+    }
+
     [Fact]
     public async Task A_stale_row_version_loses_a_real_race_and_writes_nothing()
     {

@@ -1,6 +1,7 @@
 using System.Globalization;
 using SpencerDenim.Application.Catalog.Admin.Products.Abstractions;
 using SpencerDenim.Domain.Catalog;
+using SpencerDenim.Domain.Inventory;
 
 namespace SpencerDenim.Application.Catalog.Admin.Products;
 
@@ -204,7 +205,21 @@ internal static class ProductAggregateWriter
 
             if (variant is null)
             {
-                variant = new ProductVariant { Product = product };
+                // Doc 11 P1 step 10: "[System] Creates a stock record for every new variant with on-hand 0."
+                //
+                // Through the navigation rather than by a later insert, and that is the fix for a defect
+                // this nearly shipped: the stock rows were only created on *create*, so a size added to an
+                // existing product had none — and a variant with no `inventory.StockLevels` row is
+                // invisible to the availability join `ProductCatalogReader` uses, so it reads as out of
+                // stock for ever and ADM-12 has nothing to update. The navigation makes the row part of the
+                // same unit of work whichever write created the variant; EF fills in the key, which is also
+                // the primary key (doc 08 §3.4, 1:1).
+                variant = new ProductVariant
+                {
+                    Product = product,
+                    StockLevel = new StockLevel { OnHand = 0, Reserved = 0 },
+                };
+
                 product.Variants.Add(variant);
             }
 

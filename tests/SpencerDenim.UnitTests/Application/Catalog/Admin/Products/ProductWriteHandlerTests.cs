@@ -44,6 +44,7 @@ public sealed class ProductWriteHandlerTests
         _store.ColourFamilies[52] = "Black";
         _store.Sizes[61] = new SizeReference(61, "Alpha", "S", 1);
         _store.Sizes[62] = new SizeReference(62, "Alpha", "M", 2);
+        _store.Sizes[63] = new SizeReference(63, "Alpha", "L", 3);
         _store.SizeGuideIds.Add(70);
     }
 
@@ -508,6 +509,30 @@ public sealed class ProductWriteHandlerTests
     }
 
     // ---- variants with orders -------------------------------------------------------------------
+
+    /// <summary>
+    /// Doc 11 P1 step 10, for a size added to a product that already exists. It is carried on the variant's
+    /// own navigation rather than inserted afterwards, so it is part of whichever save created the variant
+    /// — the create path had it and the edit path did not, which left a new size permanently out of stock.
+    /// </summary>
+    [Fact]
+    public async Task A_size_added_to_an_existing_product_carries_a_stock_row_at_zero()
+    {
+        var existing = await Seed();
+        var form = FormFrom(existing);
+
+        var result = await Update(existing.Id, form with
+        {
+            Variants = [..form.Variants!, Variant("Indigo Rinse", 63, "SKU-EXTRA")],
+        });
+
+        Assert.IsType<CatalogWriteResult.Succeeded>(result);
+
+        var added = _store.Products[existing.Id].Variants.Single(variant => variant.Sku == "SKU-EXTRA");
+        Assert.NotNull(added.StockLevel);
+        Assert.Equal(0, added.StockLevel!.OnHand);
+        Assert.Equal(0, added.StockLevel.Reserved);
+    }
 
     [Fact]
     public async Task A_variant_an_order_names_cannot_be_deleted_and_the_refusal_names_the_sku()

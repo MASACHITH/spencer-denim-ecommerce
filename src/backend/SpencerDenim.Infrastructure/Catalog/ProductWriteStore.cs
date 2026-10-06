@@ -530,6 +530,13 @@ internal sealed class ProductWriteStore : IProductWriteStore
             variant.ProductId = 0;
             variant.ProductColourId = 0;
             variant.RowVersion = null;
+
+            // The stock row's key is the variant's, so it has to be cleared with it or the retry is an
+            // explicit-identity insert on a primary key SQL Server has not assigned yet.
+            if (variant.StockLevel is { } stock)
+            {
+                stock.VariantId = 0;
+            }
         }
 
         foreach (var media in product.Media)
