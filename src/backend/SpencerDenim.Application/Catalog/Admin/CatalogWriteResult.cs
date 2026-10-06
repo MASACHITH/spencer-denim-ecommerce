@@ -100,4 +100,19 @@ public static class CatalogConflictCodes
     /// variant, a card image, and alt text on every public image.
     /// </summary>
     public const string PublishChecklistFailed = "publish_checklist_failed";
+
+    /// <summary>
+    /// An edit would have left a product that is <b>on the shop</b> in a state its own publish checklist
+    /// forbids — no active variant, no gallery photograph, or an image with no alt text (doc 11 §7 G-01).
+    /// <para>
+    /// The edit is refused rather than applied, and rather than silently unpublishing. A shopper was
+    /// otherwise served a live product page with no photograph at all: <c>media: []</c> on a published
+    /// product answered 204 and left <c>isPublished = 1</c> with a null card image. The <c>media: []</c>
+    /// instruction itself is correct — it is the documented way to clear a gallery — so what is refused is
+    /// doing it while the product is live. Taking a product off the shop is its own deliberate act with
+    /// its own <c>StatusChange</c> audit row (<see cref="SetProductPublishedCommand"/>), and it must not
+    /// become a side effect of saving a form.
+    /// </para>
+    /// </summary>
+    public const string PublishedProductWouldBreak = "published_product_would_break";
 }

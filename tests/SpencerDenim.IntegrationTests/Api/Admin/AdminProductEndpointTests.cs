@@ -1134,6 +1134,106 @@ public sealed class AdminProductEndpointTests(SqlServerDatabaseFixture sqlServer
         }
     }
 
+    /// <summary>
+    /// <b>A published product cannot be edited into a state its own checklist forbids.</b>
+    /// <para>
+    /// The checklist of doc 11 §7 G-01 ran only on the publish <i>transition</i>, so <c>media: []</c> on a
+    /// published product answered 204 and left it on the shop with no photographs and a null card image —
+    /// and the storefront then served that product 200 with zero images. A shopper saw a live product with
+    /// nothing to look at.
+    /// </para>
+    /// <para>
+    /// The <c>media: []</c> instruction itself is right; doing it while the product is live is not. It is
+    /// refused rather than auto-unpublished, because taking a product off the shop is its own deliberate
+    /// act with its own audit row and a 204 that had quietly done it would be discovered days later.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task An_edit_cannot_leave_a_published_product_in_a_state_it_could_not_be_published_in()
+    {
+        var factory = await HostAsync();
+        var seed = await ReferenceDataAsync(factory);
+        var client = await AdminCatalogApiClient.SignInAsync(factory, "w103-live", FullProductRights, Token);
+
+        var gallery = await AddImageAssetAsync(factory, "Front view");
+
+        var body = Body(seed, "w103-live");
+        body["colours"] = new object[] { Colour("Indigo Rinse", seed.ColourFamilyId) };
+        body["variants"] = new object[] { Variant("Indigo Rinse", seed.SizeIds[0], "W103-LIVE-S") };
+        body["media"] = new object[] { Media(gallery, null, "Gallery", 0, "Front view") };
+
+        var (_, created) = await client.PostAsync(ProductsUrl, body, Token);
+        var productId = created.GetProperty("id").GetInt32();
+
+        try
+        {
+            Assert.Equal(
+                HttpStatusCode.NoContent,
+                (await client.PutAsync(
+                    $"{ProductsUrl}/{productId}/published",
+                    new { isPublished = true, rowVersion = await RowVersionAsync(factory, productId) },
+                    Token)).Status);
+
+            // Clearing the gallery of a live product.
+            body["media"] = Array.Empty<object>();
+            body["rowVersion"] = await RowVersionAsync(factory, productId);
+
+            var (status, problem) = await client.PutAsync($"{ProductsUrl}/{productId}", body, Token);
+
+            Assert.Equal(HttpStatusCode.Conflict, status);
+            Assert.Equal("published_product_would_break", problem.GetProperty("code").GetString());
+            Assert.Contains(
+                "gallery photograph",
+                problem.GetProperty("detail").GetString()!,
+                StringComparison.Ordinal);
+
+            // Nothing was written, and the product is still whole on the shop.
+            var (_, unchanged) = await client.GetAsync($"{ProductsUrl}/{productId}", Token);
+            Assert.True(unchanged.GetProperty("isPublished").GetBoolean());
+            Assert.Equal(1, unchanged.GetProperty("media").GetArrayLength());
+            Assert.NotNull(unchanged.GetProperty("cardImageUrl").GetString());
+
+            // Switching every variant off is the same class of change, and is refused the same way.
+            var offBody = Body(seed, "w103-live");
+            offBody["colours"] = new object[] { Colour("Indigo Rinse", seed.ColourFamilyId) };
+            offBody["variants"] = new object[]
+            {
+                SwitchedOff(Variant("Indigo Rinse", seed.SizeIds[0], "W103-LIVE-S")),
+            };
+            offBody["media"] = new object[] { Media(gallery, null, "Gallery", 0, "Front view") };
+            offBody["rowVersion"] = await RowVersionAsync(factory, productId);
+
+            var (offStatus, offProblem) = await client.PutAsync($"{ProductsUrl}/{productId}", offBody, Token);
+
+            Assert.Equal(HttpStatusCode.Conflict, offStatus);
+            Assert.Equal("published_product_would_break", offProblem.GetProperty("code").GetString());
+
+            // And the way through is the honest one: take it off the shop, then make the change.
+            Assert.Equal(
+                HttpStatusCode.NoContent,
+                (await client.PutAsync(
+                    $"{ProductsUrl}/{productId}/published",
+                    new { isPublished = false, rowVersion = await RowVersionAsync(factory, productId) },
+                    Token)).Status);
+
+            body["rowVersion"] = await RowVersionAsync(factory, productId);
+            var (afterStatus, afterProblem) = await client.PutAsync($"{ProductsUrl}/{productId}", body, Token);
+
+            Assert.True(
+                afterStatus == HttpStatusCode.NoContent,
+                $"clearing the gallery of an unpublished product was refused with {afterStatus}: {afterProblem}");
+
+            var (_, cleared) = await client.GetAsync($"{ProductsUrl}/{productId}", Token);
+            Assert.False(cleared.GetProperty("isPublished").GetBoolean());
+            Assert.Equal(0, cleared.GetProperty("media").GetArrayLength());
+        }
+        finally
+        {
+            await HardDeleteAsync(factory, productId);
+            await HardDeleteAssetsAsync(factory, [gallery]);
+        }
+    }
+
     [Fact]
     public async Task A_stale_row_version_loses_a_real_race_and_writes_nothing()
     {
@@ -1474,6 +1574,14 @@ public sealed class AdminProductEndpointTests(SqlServerDatabaseFixture sqlServer
         ["colourFamilyId"] = colourFamilyId,
         ["sortOrder"] = 0,
     };
+
+    /// <summary>The same variant row, switched off.</summary>
+    private static Dictionary<string, object?> SwitchedOff(Dictionary<string, object?> variant)
+    {
+        variant["isActive"] = false;
+
+        return variant;
+    }
 
     private static Dictionary<string, object?> Variant(string colourName, int sizeId, string sku) => new()
     {

@@ -122,7 +122,12 @@ internal static class AdminProductEndpoints
                 + "which carries `orderedSkus` and `stockedSkus` separately. An order line names it (doc 08 "
                 + "§3.2 keeps an ordered variant for ever), or it holds stock — deleting that row would take "
                 + "a count of real garments with it, and stock belongs to ADM-12's ledger. Either way the "
-                + "answer is to switch the variant off.")
+                + "answer is to switch the variant off.\n\n"
+                + "An edit that would leave a **published** product in a state doc 11 §7 G-01 forbids — no "
+                + "active variant, no gallery photograph, an image with no alt text — is refused with 409 "
+                + "`published_product_would_break` and the blockers. It is not unpublished for you: taking a "
+                + "product off the shop is its own route with its own audit row, and a 204 that had quietly "
+                + "removed a product from the shop would be discovered days later.")
             .Produces(StatusCodes.Status204NoContent)
             .ProducesValidationProblem()
             .ProducesProblem(StatusCodes.Status404NotFound)

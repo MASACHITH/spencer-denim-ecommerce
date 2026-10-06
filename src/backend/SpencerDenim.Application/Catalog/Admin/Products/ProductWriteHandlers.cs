@@ -40,6 +40,13 @@ internal static class ProductUniquenessRules
                 "productCode", $"Another product already uses the code '{form.ProductCode}'."));
         }
 
+        // A request that sent no variants is saying nothing about them, so there is nothing of its own to
+        // check for uniqueness — the rows already on the product keep the SKUs they have.
+        if (form.Variants is null)
+        {
+            return;
+        }
+
         var skus = form.Variants.Select(variant => variant.Sku).ToList();
         if (skus.Count > 0)
         {
@@ -232,6 +239,32 @@ public sealed class UpdateProductCommandHandler(
         // Taking a variant out of the collection is not enough. ProductVariants -> Products is NO ACTION,
         // and so is StockLevels -> ProductVariants, so the delete has to be explicit and has to take the
         // stock row with it. See IProductWriteStore.RemoveVariantsAsync.
+        // Doc 11 §7 G-01 again, and this is the half that was missing: the checklist ran only on the
+        // publish *transition*, so a product already on the shop could be edited into a state it would
+        // never have been allowed to reach. `media: []` on a published product answered 204 and left
+        // isPublished = 1 with no photographs and a null card image, and the storefront then served that
+        // product 200 with zero images. A shopper saw a live product with nothing to look at.
+        //
+        // Refused rather than auto-unpublished. Taking a product off the shop is its own deliberate act
+        // with its own StatusChange audit row, and the whole design of SetProductPublishedCommand — and of
+        // SetCategoryActiveCommand before it — rests on that never being a side effect of saving a form.
+        // Auto-unpublishing here would also be silent: the admin would get a 204 and discover later that
+        // their product had left the shop.
+        if (product.IsPublished)
+        {
+            var liveBlockers = ProductPublishChecklist.Blockers(product);
+
+            if (liveBlockers.Count > 0)
+            {
+                return new CatalogWriteResult.Conflict(
+                    CatalogConflictCodes.PublishedProductWouldBreak,
+                    "This product is on the shop, and this change would leave it in a state it is not "
+                    + $"allowed to be on the shop in: {string.Join(" ", liveBlockers)} Take it off the shop "
+                    + "first if that is what you meant, then make the change.",
+                    new Dictionary<string, object?>(StringComparer.Ordinal) { ["blockers"] = liveBlockers });
+            }
+        }
+
         var cartLinesRemoved = await store.RemoveVariantsAsync(removedVariants, cancellationToken);
 
         var after = ProductWriteRules.Snapshot(product);
