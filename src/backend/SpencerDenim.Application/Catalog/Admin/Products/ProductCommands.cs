@@ -56,17 +56,31 @@ public sealed record RelatedProductInput(int RelatedProductId, short SortOrder);
 /// Categories besides the primary one. The primary category is linked automatically (doc 08 §3.2: "The
 /// primary category is also stored here"), so a form cannot accidentally unlink a product from its own
 /// category by leaving it out of a list.
+/// <para>
+/// <c>null</c> means the request says nothing about them and they are left alone; an empty list clears
+/// them. The same rule as <paramref name="Media"/>, and for the same reason — it previously held for
+/// <paramref name="Media"/> alone, so a client that omitted this field unlinked every extra category and
+/// got a 204 for it.
+/// </para>
 /// </param>
 /// <param name="Colours">
-/// Every colourway the product should end up with. A colourway the request omits is <b>removed</b>, along
-/// with its variants — which is refused when any of those variants has been ordered, because doc 08 §3.2
-/// keeps an ordered variant for ever.
+/// Every colourway the product should end up with. A colourway <i>within a supplied list</i> that the
+/// request omits is <b>removed</b>, along with its variants — which is refused when any of those variants
+/// cannot be deleted (doc 08 §3.2, <c>VariantReferences</c>).
+/// <para>
+/// A <c>null</c> list is different from an empty one: it leaves the colourways alone. See
+/// <paramref name="ExtraCategoryIds"/>.
+/// </para>
 /// </param>
 /// <param name="Variants">
-/// Every variant the product should end up with, one per colour × size. The request is the whole matrix,
-/// not a delta: the same argument <see cref="ReorderCategoriesCommand"/> makes for a reorder, and the
-/// reason W1-12's staged reorder being silently discarded cannot happen here — there is no staging, the
-/// matrix on screen is what is sent.
+/// Every variant the product should end up with, one per colour × size. A supplied list is the whole
+/// matrix, not a delta: the same argument <see cref="ReorderCategoriesCommand"/> makes for a reorder, and
+/// the reason W1-12's staged reorder being silently discarded cannot happen here — there is no staging,
+/// the matrix on screen is what is sent.
+/// <para>
+/// A <c>null</c> list leaves the matrix alone. That distinction matters most here: omitting this field
+/// used to delete every size the guards allowed, silently, with a 204.
+/// </para>
 /// </param>
 /// <param name="Media">
 /// Every gallery image, hover image and video the product should end up with. <b>A request that omits this

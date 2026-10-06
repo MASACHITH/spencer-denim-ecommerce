@@ -1234,6 +1234,77 @@ public sealed class AdminProductEndpointTests(SqlServerDatabaseFixture sqlServer
         }
     }
 
+    /// <summary>
+    /// <b>A collection the request leaves out is left alone; an empty one clears it.</b>
+    /// <para>
+    /// The rule was documented for all five collections and honoured for <c>media</c> alone, so omitting
+    /// <c>extraCategoryIds</c> unlinked every extra category and omitting <c>variants</c> deleted every
+    /// size the guards allowed — both with a 204. Two more ways to lose work silently, in the same family
+    /// as the W1-12 defect.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task A_collection_the_request_omits_is_left_alone_and_an_empty_one_clears_it()
+    {
+        var factory = await HostAsync();
+        var seed = await ReferenceDataAsync(factory);
+        var client = await AdminCatalogApiClient.SignInAsync(factory, "w103-omit", FullProductRights, Token);
+
+        var body = Body(seed, "w103-omit");
+        body["extraCategoryIds"] = new object[] { seed.ExtraCategoryId };
+        body["colours"] = new object[] { Colour("Indigo Rinse", seed.ColourFamilyId) };
+        body["variants"] = new object[]
+        {
+            Variant("Indigo Rinse", seed.SizeIds[0], "W103-OMIT-S"),
+            Variant("Indigo Rinse", seed.SizeIds[1], "W103-OMIT-M"),
+        };
+
+        var (_, created) = await client.PostAsync(ProductsUrl, body, Token);
+        var productId = created.GetProperty("id").GetInt32();
+
+        try
+        {
+            // A save that mentions none of them: a price change and nothing else.
+            var minimal = new Dictionary<string, object?>
+            {
+                ["productCode"] = body["productCode"],
+                ["name"] = body["name"],
+                ["slug"] = body["slug"],
+                ["departmentId"] = seed.DepartmentId,
+                ["primaryCategoryId"] = seed.CategoryId,
+                ["materialId"] = seed.MaterialId,
+                ["basePrice"] = 4990m,
+                ["rowVersion"] = await RowVersionAsync(factory, productId),
+            };
+
+            var (status, problem) = await client.PutAsync($"{ProductsUrl}/{productId}", minimal, Token);
+            Assert.True(status == HttpStatusCode.NoContent, $"refused with {status}: {problem}");
+
+            var (_, kept) = await client.GetAsync($"{ProductsUrl}/{productId}", Token);
+
+            Assert.Equal(4990m, kept.GetProperty("basePrice").GetDecimal());
+            Assert.Equal(2, kept.GetProperty("variants").GetArrayLength());
+            Assert.Equal(1, kept.GetProperty("colours").GetArrayLength());
+            Assert.Single(kept.GetProperty("extraCategoryIds").EnumerateArray());
+
+            // And an explicit empty list still clears, which is what makes the distinction useful.
+            body["extraCategoryIds"] = Array.Empty<object>();
+            body["rowVersion"] = await RowVersionAsync(factory, productId);
+
+            Assert.Equal(
+                HttpStatusCode.NoContent,
+                (await client.PutAsync($"{ProductsUrl}/{productId}", body, Token)).Status);
+
+            var (_, emptied) = await client.GetAsync($"{ProductsUrl}/{productId}", Token);
+            Assert.Empty(emptied.GetProperty("extraCategoryIds").EnumerateArray());
+            Assert.Equal(2, emptied.GetProperty("variants").GetArrayLength());
+        }
+        finally
+        {
+            await HardDeleteAsync(factory, productId);
+        }
+    }
+
     [Fact]
     public async Task A_stale_row_version_loses_a_real_race_and_writes_nothing()
     {

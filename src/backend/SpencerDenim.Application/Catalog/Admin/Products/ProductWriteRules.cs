@@ -39,21 +39,38 @@ internal sealed record NormalisedMedia(
 /// Everything a validated product form adds up to: the normalised collections and the reference rows the
 /// derived data needs. Produced once, used by both the create and the edit handler.
 /// </summary>
+/// <param name="CategoryIds">
+/// Every category the product should be in, primary first — or <c>null</c> when the request said nothing
+/// about the extras and the existing links stand. See <c>ProductFormInput.ExtraCategoryIds</c>.
+/// </param>
+/// <param name="Colours">The colourways, or <c>null</c> to leave them alone.</param>
+/// <param name="Variants">The whole matrix, or <c>null</c> to leave it alone.</param>
+/// <param name="Media">The gallery, or <c>null</c> to leave it alone.</param>
+/// <param name="RelatedProducts">The picks, or <c>null</c> to leave them alone.</param>
 internal sealed record ValidatedProductForm(
     ProductFormInput Form,
     string ProductCode,
     string Name,
     string Slug,
-    IReadOnlyList<int> CategoryIds,
-    IReadOnlyList<NormalisedColour> Colours,
-    IReadOnlyList<NormalisedVariant> Variants,
+    IReadOnlyList<int>? CategoryIds,
+    IReadOnlyList<NormalisedColour>? Colours,
+    IReadOnlyList<NormalisedVariant>? Variants,
     IReadOnlyList<NormalisedMedia>? Media,
-    IReadOnlyList<RelatedProductInput> RelatedProducts,
+    IReadOnlyList<RelatedProductInput>? RelatedProducts,
     ProductReferenceData References)
 {
-    /// <summary>Every category the product will be in, for the search text.</summary>
-    public IReadOnlyList<CategoryReference> Categories { get; } =
-        CategoryIds.Select(id => References.Categories[id]).ToList();
+    /// <summary>
+    /// The categories whose names go into the search text (doc 08 §3.2).
+    /// <para>
+    /// Only the ones this request named. When <see cref="CategoryIds"/> is <c>null</c> the request said
+    /// nothing about the extra links, so the primary category is all that is certainly known here and the
+    /// aggregate writer fills the rest in from the links already on the product.
+    /// </para>
+    /// </summary>
+    public IReadOnlyList<CategoryReference> Categories { get; } = (CategoryIds ?? [Form.PrimaryCategoryId])
+        .Where(References.Categories.ContainsKey)
+        .Select(id => References.Categories[id])
+        .ToList();
 }
 
 /// <summary>
@@ -101,9 +118,15 @@ internal static class ProductWriteRules
         CheckAttributes(errors, form, references);
         CheckSizeGuide(errors, form, references);
 
+        // Each of these returns null when the request carried no such field, which means "leave it
+        // alone" (ProductFormInput). The variants and the gallery still have to be validated against the
+        // colourways, so a request that sends variants without colours is checked against whatever
+        // colours it did send — and when it sent none, against none, which refuses a variant naming a
+        // colour that is not in the body. That is the right answer: the aggregate writer matches an
+        // unchanged colour list by name, so a variant can only name a colour the request has shown it.
         var colours = NormaliseColours(errors, form, references);
-        var variants = NormaliseVariants(errors, form, references, colours);
-        var media = NormaliseMedia(errors, form, references, colours);
+        var variants = NormaliseVariants(errors, form, references, colours ?? []);
+        var media = NormaliseMedia(errors, form, references, colours ?? []);
         var related = CheckRelated(errors, form, references, productId);
 
         if (errors.Count > 0)
@@ -300,9 +323,9 @@ internal static class ProductWriteRules
         List<ValidationError> errors,
         ProductFormInput form,
         ProductReferenceData references,
-        out IReadOnlyList<int> categoryIds)
+        out IReadOnlyList<int>? categoryIds)
     {
-        categoryIds = [];
+        categoryIds = null;
 
         if (references.DepartmentName is null)
         {
@@ -330,7 +353,37 @@ internal static class ProductWriteRules
             return;
         }
 
-        var extras = (form.ExtraCategoryIds ?? []).Where(id => id != form.PrimaryCategoryId).Distinct().ToList();
+        // Doc 08 §3.2: "Required for Kids (app)". The age group drives the Kids filters (PLP-02, DEPT-01),
+        // and a Kids product without one is invisible to every one of them.
+        if (string.Equals(references.DepartmentSlug, CatalogDepartments.KidsSlug, StringComparison.Ordinal))
+        {
+            if (form.AgeGroupId is null)
+            {
+                errors.Add(new ValidationError(
+                    "ageGroupId",
+                    "A Kids product needs an age group: it is what the Baby / Toddler / Kids / Juniors "
+                    + "filters are built from."));
+            }
+        }
+
+        if (form.AgeGroupId is not null && !references.AgeGroupExists)
+        {
+            errors.Add(new ValidationError("ageGroupId", "That age group does not exist."));
+        }
+
+        // No extras field at all: the request says nothing about the extra links, so they stand and
+        // CategoryIds is left null for the aggregate writer to read as "leave them alone".
+        //
+        // The age-group rules above deliberately run *before* this return. They belong to the department,
+        // not to the extras, and putting this guard in front of them silently stopped a Kids product
+        // without an age group from being refused — caught by
+        // ProductWriteHandlerTests.A_kids_product_without_an_age_group_is_refused_by_name.
+        if (form.ExtraCategoryIds is null)
+        {
+            return;
+        }
+
+        var extras = form.ExtraCategoryIds.Where(id => id != form.PrimaryCategoryId).Distinct().ToList();
 
         if (extras.Count > ProductFieldRules.MaxExtraCategories)
         {
@@ -362,24 +415,6 @@ internal static class ProductWriteRules
                     $"'{extra.Name}' belongs to another department, so listing this product in it would put "
                     + "it in that department's pages."));
             }
-        }
-
-        // Doc 08 §3.2: "Required for Kids (app)". The age group drives the Kids filters (PLP-02, DEPT-01),
-        // and a Kids product without one is invisible to every one of them.
-        if (string.Equals(references.DepartmentSlug, CatalogDepartments.KidsSlug, StringComparison.Ordinal))
-        {
-            if (form.AgeGroupId is null)
-            {
-                errors.Add(new ValidationError(
-                    "ageGroupId",
-                    "A Kids product needs an age group: it is what the Baby / Toddler / Kids / Juniors "
-                    + "filters are built from."));
-            }
-        }
-
-        if (form.AgeGroupId is not null && !references.AgeGroupExists)
-        {
-            errors.Add(new ValidationError("ageGroupId", "That age group does not exist."));
         }
 
         if (errors.Count == 0)
@@ -437,12 +472,17 @@ internal static class ProductWriteRules
 
     // ---- colours ------------------------------------------------------------------------------
 
-    private static List<NormalisedColour> NormaliseColours(
+    private static List<NormalisedColour>? NormaliseColours(
         List<ValidationError> errors,
         ProductFormInput form,
         ProductReferenceData references)
     {
-        var input = form.Colours ?? [];
+        if (form.Colours is null)
+        {
+            return null;
+        }
+
+        var input = form.Colours;
 
         if (input.Count > ProductFieldRules.MaxColours)
         {
@@ -526,13 +566,18 @@ internal static class ProductWriteRules
 
     // ---- variants -----------------------------------------------------------------------------
 
-    private static List<NormalisedVariant> NormaliseVariants(
+    private static List<NormalisedVariant>? NormaliseVariants(
         List<ValidationError> errors,
         ProductFormInput form,
         ProductReferenceData references,
         IReadOnlyList<NormalisedColour> colours)
     {
-        var input = form.Variants ?? [];
+        if (form.Variants is null)
+        {
+            return null;
+        }
+
+        var input = form.Variants;
 
         if (input.Count > ProductFieldRules.MaxVariants)
         {
@@ -866,13 +911,18 @@ internal static class ProductWriteRules
 
     // ---- related ------------------------------------------------------------------------------
 
-    private static List<RelatedProductInput> CheckRelated(
+    private static List<RelatedProductInput>? CheckRelated(
         List<ValidationError> errors,
         ProductFormInput form,
         ProductReferenceData references,
         int? productId)
     {
-        var input = form.RelatedProducts ?? [];
+        if (form.RelatedProducts is null)
+        {
+            return null;
+        }
+
+        var input = form.RelatedProducts;
 
         if (input.Count > ProductFieldRules.MaxRelatedProducts)
         {

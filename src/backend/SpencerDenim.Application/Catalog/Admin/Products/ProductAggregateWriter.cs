@@ -102,6 +102,23 @@ internal static class ProductAggregateWriter
     /// </summary>
     private static void ApplyCategoryLinks(Product product, ValidatedProductForm form)
     {
+        if (form.CategoryIds is null)
+        {
+            // The request said nothing about the extra categories, so they stand. The primary one still
+            // has to be linked, because changing `primaryCategoryId` without sending the extras is a
+            // legitimate request and the link set has to follow it (doc 08 §3.2).
+            if (!product.CategoryLinks.Any(link => link.CategoryId == form.Form.PrimaryCategoryId))
+            {
+                product.CategoryLinks.Add(new ProductCategory
+                {
+                    CategoryId = form.Form.PrimaryCategoryId,
+                    Product = product,
+                });
+            }
+
+            return;
+        }
+
         var wanted = form.CategoryIds.ToHashSet();
 
         foreach (var link in product.CategoryLinks.Where(link => !wanted.Contains(link.CategoryId)).ToList())
@@ -123,6 +140,13 @@ internal static class ProductAggregateWriter
     /// </summary>
     private static Dictionary<string, ProductColour> ApplyColours(Product product, ValidatedProductForm form)
     {
+        // Nothing said about the colourways: hand back the ones that are there, so the variants and the
+        // gallery can still be matched against them by name.
+        if (form.Colours is null)
+        {
+            return product.Colours.ToDictionary(colour => colour.Name, StringComparer.OrdinalIgnoreCase);
+        }
+
         var byId = product.Colours.Where(colour => colour.Id != 0).ToDictionary(colour => colour.Id);
         var byName = product.Colours.ToDictionary(colour => colour.Name, StringComparer.OrdinalIgnoreCase);
 
@@ -176,6 +200,11 @@ internal static class ProductAggregateWriter
         out IReadOnlyList<ProductVariant> removedVariants)
     {
         removedVariants = [];
+
+        if (form.Variants is null)
+        {
+            return null;
+        }
 
         var byId = product.Variants.Where(variant => variant.Id != 0).ToDictionary(variant => variant.Id);
 
@@ -358,6 +387,11 @@ internal static class ProductAggregateWriter
 
     private static void ApplyRelated(Product product, ValidatedProductForm form)
     {
+        if (form.RelatedProducts is null)
+        {
+            return;
+        }
+
         var wanted = form.RelatedProducts.ToDictionary(related => related.RelatedProductId);
 
         foreach (var gone in product.RelatedProducts

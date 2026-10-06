@@ -16,9 +16,15 @@ namespace SpencerDenim.Api.Endpoints.Admin;
 /// <para>
 /// <b>The three collections are nullable for a second, sharper reason.</b> A <c>null</c> collection means
 /// "this request says nothing about it"; an empty list means "make it empty". W1-12 conflated those and
-/// every save silently cleared a block's images. Here that distinction is honoured for
-/// <see cref="ProductRequestBody.Media"/> — a request with no media field leaves a product's photographs
-/// and video exactly as they are.
+/// every save silently cleared a block's images.
+/// <para>
+/// <b>That claim was true of <c>media</c> only, and the gap was a second way to lose work silently.</b>
+/// Omitting <c>extraCategoryIds</c> unlinked a product from every extra category; omitting
+/// <c>variants</c> deleted every size whose stock and order history allowed it. Both answered 204. The
+/// rule now holds for all five collections — <c>extraCategoryIds</c>, <c>colours</c>, <c>variants</c>,
+/// <c>media</c> and <c>relatedProducts</c> — so a client that has not been updated to send one cannot
+/// destroy it, and a client that means to clear one still can by sending <c>[]</c>.
+/// </para>
 /// </para>
 /// </summary>
 public sealed record ProductColourRequest(
@@ -168,9 +174,11 @@ internal static class ProductRequestMapper
             badge = parsedBadge;
         }
 
-        var colours = new List<ProductColourInput>(body.Colours?.Count ?? 0);
+        List<ProductColourInput>? colours = null;
         foreach (var colour in body.Colours ?? [])
         {
+            colours ??= new List<ProductColourInput>(body.Colours!.Count);
+
             if (colour.ColourFamilyId is null)
             {
                 return (
@@ -189,9 +197,11 @@ internal static class ProductRequestMapper
                 ToSortOrder(colour.SortOrder)));
         }
 
-        var variants = new List<ProductVariantInput>(body.Variants?.Count ?? 0);
+        List<ProductVariantInput>? variants = null;
         foreach (var variant in body.Variants ?? [])
         {
+            variants ??= new List<ProductVariantInput>(body.Variants!.Count);
+
             if (variant.SizeId is null)
             {
                 return (null, "variants", "Every size row has to say which size it is.");
@@ -242,9 +252,11 @@ internal static class ProductRequestMapper
             }
         }
 
-        var related = new List<RelatedProductInput>(body.RelatedProducts?.Count ?? 0);
+        List<RelatedProductInput>? related = null;
         foreach (var pick in body.RelatedProducts ?? [])
         {
+            related ??= new List<RelatedProductInput>(body.RelatedProducts!.Count);
+
             if (pick.RelatedProductId is null)
             {
                 return (null, "relatedProducts", "Every related row has to name a product.");
@@ -275,10 +287,13 @@ internal static class ProductRequestMapper
                 body.SizeGuideId,
                 body.SeoTitle,
                 body.SeoDescription,
-                colours,
-                variants,
+                // An empty list sent explicitly is an instruction; an absent field is silence. The
+                // foreach above only allocates once it has something to add, so `[]` in the body reaches
+                // the use case as an empty list and a missing field reaches it as null.
+                body.Colours is null ? null : colours ?? [],
+                body.Variants is null ? null : variants ?? [],
                 media,
-                related),
+                body.RelatedProducts is null ? null : related ?? []),
             null,
             null);
     }
