@@ -67,6 +67,27 @@ public sealed class CatalogSeedHostedServiceLifetimeTests
     }
 
     /// <summary>
+    /// **The case the integration suite actually hits**, and the one that makes the defect's reach wide.
+    /// </summary>
+    /// <remarks>
+    /// Every host in the integration suite seeds against the fixture's already-seeded database, so the
+    /// first attempt <b>succeeds</b> and no retry loop is ever started — yet the old <c>StopAsync</c>
+    /// called <c>_stopping.CancelAsync()</c> unconditionally, before it looked at the loop. So the throw
+    /// did not need the retry loop at all: any host disposed before it was stopped would do, which is why
+    /// the victims were spread across unrelated areas rather than clustered near seeding.
+    /// </remarks>
+    [Fact]
+    public async Task Dispose_before_StopAsync_does_not_throw_when_no_retry_loop_was_started()
+    {
+        var service = Create();
+
+        // No StartAsync, so `_retrying` is null — the shape every successfully-seeded host is in.
+        service.Dispose();
+
+        await service.StopAsync(TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>
     /// Stopping a service that never started, which is what happens when an earlier hosted service's
     /// <c>StartAsync</c> throws and the host unwinds the ones behind it.
     /// </summary>
