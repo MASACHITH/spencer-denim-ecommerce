@@ -1820,8 +1820,17 @@ public sealed class AdminProductEndpointTests(SqlServerDatabaseFixture sqlServer
 
         // Order matters: the usage rows and the stock rows have no cascade from the product, and the
         // variants are NO ACTION.
+        //
+        // The audit rows go too, which needs saying because nothing in the application may ever delete
+        // one. They are the reason this helper exists: every create, edit, publish and remove here writes
+        // an ops.AuditLogs row for entity type Product, and AuditLogEndpointTests seeds rows dated August
+        // 2026 and then reads the newest 50 looking for them. Enough live Product rows from this file and
+        // its own rows fall off the first page, so it failed on a count of 2 that came back 1 -- in a run
+        // of the whole assembly, never in a run of this file, which is the hardest kind of failure to
+        // place. Doc 14's rule about a shared database covers the audit log as much as the catalogue.
         await dbContext.Database.ExecuteSqlRawAsync(
             """
+            DELETE FROM ops.AuditLogs WHERE EntityType = 'Product' AND EntityId = CAST({0} AS varchar(100));
             DELETE FROM media.MediaUsages WHERE OwnerType = 'Product' AND OwnerId = CAST({0} AS varchar(100));
             DELETE FROM inventory.StockLevels WHERE VariantId IN (SELECT Id FROM catalog.ProductVariants WHERE ProductId = {0});
             DELETE FROM catalog.ProductVariants WHERE ProductId = {0};
