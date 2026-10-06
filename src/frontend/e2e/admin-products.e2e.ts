@@ -5,7 +5,12 @@ import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
 
 import { adminURL, adminWorktreeRoot } from '../playwright.config';
-import { edgesWithoutRing, horizontalOverflow, undersized } from './support/measure';
+import {
+  edgesWithoutRing,
+  horizontalOverflow,
+  undersized,
+  unreachable,
+} from './support/measure';
 
 /**
  * The ADM-10 product screens in a real browser (W1-03).
@@ -433,6 +438,74 @@ test.describe('layout', () => {
 
     expect(await undersized(page, '.products button')).toEqual([]);
     expect(await undersized(page, '.products input, .products select')).toEqual([]);
+
+    // And reachable, not merely large: the row actions sit at the end of a wide row.
+    expect(await unreachable(page, '.products button')).toEqual([]);
+    expect(await unreachable(page, '.products input, .products select')).toEqual([]);
+  });
+
+  /**
+   * **Size is not reachability, and neither is "not covered".** Three different questions, and this
+   * screen has now been wrong about two of them:
+   *
+   * 1. *Big enough* — {@link undersized}. The size and category ticks were 36–41 px wide at 320 px.
+   * 2. *Not buried* — the save-bar test below. An opaque sticky bar covered 17 controls at 320 px.
+   * 3. *On the screen at all* — this test, with {@link unreachable}. A 48 px button that no amount of
+   *    scrolling brings into the viewport passes both of the others with nothing to say about the fact
+   *    that nobody can press it. That is W2-04's MAJOR 1 exactly: an unclamped panel hung 137 px off
+   *    the bottom and Quick View's Add to Bag could not be reached at four of the eight widths, while
+   *    both of its layout tests passed because every number they looked at was horizontal.
+   *
+   * This form is the same shape of risk — a long grid of rows inside panels, measured until now only
+   * for width and size — so it gets the same question asked of it at every width.
+   */
+  test('every control on the form can be brought onto the screen', async ({ page }) => {
+    for (const width of WIDTHS) {
+      await page.setViewportSize({ width, height: 720 });
+      await openProduct(page, 301);
+
+      // `unreachable` refuses to measure nothing, unlike `undersized` (#80), so these three calls are
+      // self-guarding: a selector that stopped matching throws instead of passing.
+      expect(await unreachable(page, '.form button'), `buttons at ${width} px`).toEqual([]);
+      expect(
+        await unreachable(page, '.form input:not([type="checkbox"]), .form select, .form textarea'),
+        `fields at ${width} px`,
+      ).toEqual([]);
+      expect(await unreachable(page, '.form .adm-check'), `ticks at ${width} px`).toEqual([]);
+    }
+  });
+
+  /**
+   * The two confirmation panels, which are where an unreachable control would actually cost the client
+   * something: a panel the admin cannot finish is a product they cannot rename or remove, and both
+   * panels are opened by a press that has already decided to do the thing.
+   *
+   * At 320 px by 568 px — the shortest viewport doc 04 §4 implies, an iPhone SE in portrait. Height is
+   * what catches this class of bug, and the rest of this block uses 720 or 900.
+   */
+  test('both confirmation panels can be finished on the shortest phone', async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 568 });
+    await openProduct(page, 301);
+
+    await page.getByTestId('field-slug').fill('wide-leg-rinse-jeans-2026');
+    await page.getByTestId('save').click();
+    await expect(page.getByTestId('confirm-slug')).toBeVisible();
+
+    // `confirm-slug` is the button itself, not the panel, so the pair is named directly. Writing it as
+    // a descendant selector is what `unreachable`'s refusal to measure nothing caught here — the
+    // version of this test that asked for `[data-testid="confirm-slug"] button` would have passed on an
+    // empty match, which is #80's failure mode and the reason the refusal exists.
+    const slugButtons = '[data-testid="confirm-slug"], [data-testid="cancel-slug"]';
+
+    expect(await unreachable(page, slugButtons)).toEqual([]);
+    expect(await undersized(page, slugButtons)).toEqual([]);
+
+    await page.getByTestId('cancel-slug').click();
+    await page.getByTestId('remove').click();
+    await expect(page.getByTestId('confirm-remove')).toBeVisible();
+
+    expect(await unreachable(page, '[data-testid="confirm-remove"] button')).toEqual([]);
+    expect(await undersized(page, '[data-testid="confirm-remove"] button')).toEqual([]);
   });
 
   /**
