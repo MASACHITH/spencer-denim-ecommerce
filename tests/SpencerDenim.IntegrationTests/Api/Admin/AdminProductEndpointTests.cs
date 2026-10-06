@@ -579,6 +579,7 @@ public sealed class AdminProductEndpointTests(SqlServerDatabaseFixture sqlServer
                 .Include(candidate => candidate.Colours)
                 .Include(candidate => candidate.Variants)
                 .Include(candidate => candidate.Media)
+                .Include(candidate => candidate.CategoryLinks)
                 .SingleAsync(candidate => candidate.Id == productId, Token);
 
             Assert.Single(product.Colours);
