@@ -454,7 +454,7 @@ test.describe('the rest of the site still resolves', () => {
     });
   }
 
-  for (const path of ['/wishlist', '/account', '/about', '/privacy']) {
+  for (const path of ['/account', '/about', '/privacy']) {
     test(`${path} still goes to the home page`, async ({ page }) => {
       await page.goto(path);
 

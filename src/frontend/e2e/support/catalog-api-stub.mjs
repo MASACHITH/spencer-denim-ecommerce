@@ -1336,6 +1336,54 @@ function productBySlug(slug) {
   return { status: 200, body: productDetail(index, slug) };
 }
 
+/**
+ * `GET /api/wishlist?slug=…` as the real endpoint answers it (W2-08, WISH-01).
+ *
+ * The shopper's list lives in their browser, so the slugs arrive on the query string and the answer
+ * is the live card for each — **in the order asked, with a `null` product for anything the shop no
+ * longer offers** (doc 11 §575). Both halves are what the page's behaviour hangs on, so a stub that
+ * only answered for slugs it liked would make the "no longer available" row unreachable in a
+ * browser, which is exactly how a search stub once hid a 400.
+ *
+ * Also truncated at the handler's own cap, so the page's "showing the most recent 200" note is
+ * reachable without the real API.
+ *
+ * `E2E_WISHLIST_STATUS` forces a failure, for the page's error state and Try again.
+ */
+function wishlistFor(params) {
+  const forced = Number(process.env.E2E_WISHLIST_STATUS ?? 0);
+  if (forced >= 400) {
+    return { status: forced, body: { title: 'Forced failure', status: forced } };
+  }
+
+  const seen = new Set();
+  const items = [];
+
+  for (const raw of params.getAll('slug')) {
+    if (typeof raw !== 'string' || raw.trim().length === 0 || raw.length > 220) {
+      continue;
+    }
+
+    if (seen.has(raw)) {
+      continue;
+    }
+
+    seen.add(raw);
+
+    const match = /^test-product-(\d+)$/.exec(raw);
+    const index = match ? Number(match[1]) : 0;
+    const sellable = Boolean(match) && index >= 1 && index <= TOTAL_PRODUCTS;
+
+    items.push({ slug: raw, product: sellable ? product(index) : null });
+
+    if (items.length === 200) {
+      break;
+    }
+  }
+
+  return { status: 200, body: { items } };
+}
+
 
 // ---------------------------------------------------------------- the storefront content API
 
@@ -3059,6 +3107,17 @@ const server = createServer((request, response) => {
 
   if (url.pathname === '/api/catalog/products') {
     response.end(JSON.stringify(productsFor(url.searchParams)));
+    return;
+  }
+
+  if (url.pathname === '/api/wishlist') {
+    const answer = wishlistFor(url.searchParams);
+
+    // The real endpoint answers `no-store` and no `Vary`, and `wishlist.e2e.ts` reads both off the
+    // wire — so a stub that omitted them would make that assertion a test of the stub.
+    response.setHeader('Cache-Control', 'no-store, no-cache, private');
+    response.statusCode = answer.status;
+    response.end(JSON.stringify(answer.body));
     return;
   }
 
