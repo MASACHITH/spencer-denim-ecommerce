@@ -778,6 +778,12 @@ describe('ProductFormPage (ADM-10)', () => {
     await settle();
 
     const request = writeTo(AdminProductApi.mediaImagesUrl);
+
+    // Uploaded undescribed. Pre-filling the alt text with the product's name made doc 11 §7
+    // G-01's third rule unable to ever block a publish, because the checklist accepts the
+    // library asset's own alt text.
+    expect((request.request.body as FormData).has('altText')).toBe(false);
+
     request.flush({
       publicId: 'new-asset',
       mediaType: 'Image',

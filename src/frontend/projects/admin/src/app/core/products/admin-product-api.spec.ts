@@ -154,6 +154,27 @@ describe('AdminProductApi', () => {
     request.flush({ publicId: 'abc' });
   });
 
+  it('sends no alt text when it has none, rather than an empty one', () => {
+    // The publish checklist reads "has alt text", and an empty string would satisfy it. This is
+    // what lets doc 11 §7 G-01's third rule block a publish until somebody has described the
+    // photograph: the product form uploads with null, and nothing arrives in its place.
+    api.uploadImage(new File(['x'], 'front.png', { type: 'image/png' }), null).subscribe();
+    grantToken();
+
+    const request = controller.expectOne(AdminProductApi.mediaImagesUrl);
+    expect((request.request.body as FormData).has('altText')).toBe(false);
+    request.flush({ publicId: 'abc' });
+  });
+
+  it('treats whitespace as no alt text at all', () => {
+    api.uploadImage(new File(['x'], 'front.png', { type: 'image/png' }), '   ').subscribe();
+    grantToken();
+
+    const request = controller.expectOne(AdminProductApi.mediaImagesUrl);
+    expect((request.request.body as FormData).has('altText')).toBe(false);
+    request.flush({ publicId: 'abc' });
+  });
+
   it('uploads the video and its poster in one request, because the library needs both', () => {
     api
       .uploadVideo(

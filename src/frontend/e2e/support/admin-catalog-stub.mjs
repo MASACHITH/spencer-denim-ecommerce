@@ -358,12 +358,32 @@ function noContent(response) {
 /** A 1x1 WebP, so the logo preview loads a real image rather than a data URL. */
 const LOGO_PIXEL = Buffer.from('UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==', 'base64');
 
-/** Reads a body to the end without parsing it — a multipart upload, where only its arrival matters. */
+/** Reads a multipart body to the end and hands back its raw text. */
 function drain(request) {
   return new Promise((done) => {
-    request.on('data', () => {});
-    request.on('end', () => done());
+    let raw = '';
+    request.on('data', (chunk) => {
+      raw += chunk;
+    });
+    request.on('end', () => done(raw));
   });
+}
+
+/**
+ * The `altText` field of a multipart upload, or null when it was not sent.
+ *
+ * Echoed rather than invented, because what the library stores decides whether doc 11 §7 G-01's
+ * third rule can block a publish. A stub that answered with an alt text of its own made every
+ * uploaded photograph look described and quietly disabled the rule in every browser test.
+ */
+function uploadedAltText(body) {
+  const field = /name="altText"?
+?
+([^
+]*)/.exec(body);
+  const described = (field?.[1] ?? '').trim();
+
+  return described.length > 0 ? described : null;
 }
 
 function readBody(request) {
@@ -515,7 +535,7 @@ const server = createServer(async (request, response) => {
   // not parsed: what matters is that a file arrived, and that the answer carries a publicId the next call
   // can use — which is what makes the two-step flow testable at all.
   if (path === '/api/admin/media/images' && request.method === 'POST') {
-    await drain(request);
+    const altText = uploadedAltText(await drain(request));
 
     const publicId = `0000f00d-0000-4000-8000-${String(state.uploads.size + 1).padStart(12, '0')}`;
     const asset = {
@@ -529,7 +549,7 @@ const server = createServer(async (request, response) => {
       posterUrl: null,
       width: 600,
       height: 150,
-      altText: 'The shop logo',
+      altText,
       originalFileName: 'logo.png',
     };
 
@@ -542,7 +562,7 @@ const server = createServer(async (request, response) => {
   // exist without a poster, and nothing on the server extracts a frame). The body is not parsed; what
   // matters is that two files arrived and that the answer carries a publicId the form can reference.
   if (path === '/api/admin/media/videos' && request.method === 'POST') {
-    await drain(request);
+    const altText = uploadedAltText(await drain(request));
 
     const publicId = `0000f00d-0000-4000-8000-${String(state.uploads.size + 1).padStart(12, '0')}`;
     const asset = {
@@ -551,7 +571,7 @@ const server = createServer(async (request, response) => {
       url: '/__test__/clip.mp4',
       posterUrl: '/__test__/poster.webp',
       durationSeconds: 12.5,
-      altText: null,
+      altText,
       originalFileName: 'clip.mp4',
     };
 

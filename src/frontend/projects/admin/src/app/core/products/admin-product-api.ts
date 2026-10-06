@@ -150,10 +150,10 @@ export class AdminProductApi {
   }
 
   /** Uploads a photograph to the media library and returns the asset the product form will reference. */
-  uploadImage(file: File, altText: string): Observable<UploadedAsset> {
+  uploadImage(file: File, altText: string | null): Observable<UploadedAsset> {
     const form = new FormData();
     form.append('file', file, file.name);
-    form.append('altText', altText);
+    AdminProductApi.appendAltText(form, altText);
 
     return this.auth.withAntiforgeryToken((token) =>
       this.http.post<UploadedAsset>(AdminProductApi.mediaImagesUrl, form, {
@@ -169,17 +169,32 @@ export class AdminProductApi {
    * poster (doc 08 §3.3's check constraint) and nothing on this server extracts a frame — the VPS has two
    * vCPUs (doc 03 §3b). The limits are the library's: MP4 only, checked by file signature, at most 50 MB.
    */
-  uploadVideo(file: File, poster: File, altText: string): Observable<UploadedAsset> {
+  uploadVideo(file: File, poster: File, altText: string | null): Observable<UploadedAsset> {
     const form = new FormData();
     form.append('file', file, file.name);
     form.append('poster', poster, poster.name);
-    form.append('altText', altText);
+    AdminProductApi.appendAltText(form, altText);
 
     return this.auth.withAntiforgeryToken((token) =>
       this.http.post<UploadedAsset>(AdminProductApi.mediaVideosUrl, form, {
         headers: { 'X-XSRF-TOKEN': token },
       }),
     );
+  }
+
+  /**
+   * Sends `altText` only when there is something to send.
+   *
+   * The library takes the field as optional, and an empty one would store an empty string where
+   * the publish checklist (doc 11 §7 G-01) reads "has alt text". A product upload therefore
+   * sends none, so the asset arrives undescribed and the checklist's third rule can block.
+   */
+  private static appendAltText(form: FormData, altText: string | null): void {
+    const described = (altText ?? '').trim();
+
+    if (described.length > 0) {
+      form.append('altText', described);
+    }
   }
 
   private put(url: string, body: unknown): Observable<void> {

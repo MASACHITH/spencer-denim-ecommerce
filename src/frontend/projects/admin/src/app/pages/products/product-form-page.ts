@@ -1632,7 +1632,12 @@ export class ProductFormPage {
     this.isBusy.set(true);
     this.said.set('Uploading the photograph…');
 
-    this.api.uploadImage(file, this.scalars().name || file.name).subscribe({
+    // Uploaded with no alt text on purpose. Pre-filling it with the product's name defeated
+    // doc 11 §7 G-01's third rule outright: the checklist accepts the library asset's own alt
+    // text, so every photograph arrived already "described" and the rule could never block a
+    // publish. A shopper using a screen reader would have heard the product's name read out
+    // once for each of its six pictures.
+    this.api.uploadImage(file, null).subscribe({
       next: (asset) => {
         this.isBusy.set(false);
         this.said.set('Photograph added. Describe it in the alt text box.');
@@ -1704,7 +1709,10 @@ export class ProductFormPage {
     this.isBusy.set(true);
     this.said.set('Uploading the video…');
 
-    this.api.uploadVideo(video, poster, this.scalars().name || video.name).subscribe({
+    // As with a photograph, and for the same reason. The checklist excludes the video itself (it
+    // is not an image), but its poster is an image, and a poster "described" as the product's
+    // own name is the same empty gesture.
+    this.api.uploadVideo(video, poster, null).subscribe({
       next: (asset) => {
         this.isBusy.set(false);
         this.said.set('Video added.');
