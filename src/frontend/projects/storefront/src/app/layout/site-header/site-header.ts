@@ -173,7 +173,11 @@ import { StorefrontCounts } from '../../core/storefront-counts.service';
 
       <sd-mobile-nav [open]="menuOpen()" (closed)="closeMenu()" />
 
-      <sd-mini-bag [open]="bagOpen()" (closed)="closeBag()" />
+      <sd-mini-bag
+        [open]="bagOpen()"
+        (closed)="closeBag()"
+        (focusLost)="recoverBagFocus()"
+      />
     </header>
   `,
   styles: `
@@ -471,14 +475,31 @@ export class SiteHeader {
 
   closeBag(): void {
     this.bag.set(false);
+  }
 
-    // sd-drawer returns focus to whatever opened it, which is this anchor when the shopper opened the
-    // drawer themselves. When it was opened by an Add to Bag on another part of the page, the element
-    // that had focus was that button — so focus is only steered here if the drawer did not manage it.
-    const toggle = this.bagToggle()?.nativeElement;
-    if (toggle && this.document.activeElement === this.document.body) {
-      toggle.focus();
-    }
+  /**
+   * The mini bag closed and had nowhere to give focus back to, so it comes here.
+   *
+   * `sd-drawer` returns focus to whatever opened it, which is this anchor when the shopper opened the
+   * drawer themselves, and the Add to Bag button when something else did. Either is better than this
+   * fallback. It is reached only when that element has been **removed while the drawer was open** —
+   * which is what moving a wishlist row to the bag does to its own Move to bag button, and the
+   * measured cause of a keyboard shopper landing on `<body>` (W2-08 round 3).
+   *
+   * **This used to be a `=== body` test run from `closeBag`, and it could not work.** At that moment
+   * focus is still inside the drawer, so the test declined; the drawer then declined to focus a
+   * detached node and the browser left focus on `<body>`. Deferring the same test to a later render
+   * phase was tried and measured, and still ran too early — the probe read
+   * `active=BUTTON`, the drawer's own close button. The drawer is the only thing that knows at the one
+   * moment it is knowable, so it says so (`sd-drawer.focusLost`) and this is the answer.
+   *
+   * **The bag anchor, deliberately.** Returning the shopper to exactly where they were working would
+   * be better, but only the page knows where that is and the page has no view of the drawer's
+   * lifecycle. This anchor is one answer for every page, it is a real labelled control, and its count
+   * has just gone up — it describes what the shopper did.
+   */
+  recoverBagFocus(): void {
+    this.bagToggle()?.nativeElement.focus();
   }
 
   private focusSearchToggle(): void {

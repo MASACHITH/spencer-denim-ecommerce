@@ -3096,6 +3096,43 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("SpencerDenim.Domain.Sales.WishlistItem", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime>("AddedAtUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2(3)")
+                        .HasDefaultValueSql("sysutcdatetime()");
+
+                    b.Property<int>("CustomerUserId")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("ProductColourId")
+                        .HasColumnType("int");
+
+                    b.Property<int>("ProductId")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProductColourId")
+                        .HasDatabaseName("IX_WishlistItems_ProductColour");
+
+                    b.HasIndex("ProductId")
+                        .HasDatabaseName("IX_WishlistItems_Product");
+
+                    b.HasIndex("CustomerUserId", "ProductId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_WishlistItems_Customer_Product");
+
+                    b.ToTable("WishlistItems", "sales");
+                });
+
             modelBuilder.Entity("SpencerDenim.Domain.Settings.Setting", b =>
                 {
                     b.Property<string>("Key")
@@ -3968,6 +4005,30 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                     b.Navigation("Order");
 
                     b.Navigation("Payment");
+                });
+
+            modelBuilder.Entity("SpencerDenim.Domain.Sales.WishlistItem", b =>
+                {
+                    b.HasOne("SpencerDenim.Infrastructure.Identity.AppUser", null)
+                        .WithMany()
+                        .HasForeignKey("CustomerUserId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
+                    b.HasOne("SpencerDenim.Domain.Catalog.ProductColour", "ProductColour")
+                        .WithMany()
+                        .HasForeignKey("ProductColourId")
+                        .OnDelete(DeleteBehavior.NoAction);
+
+                    b.HasOne("SpencerDenim.Domain.Catalog.Product", "Product")
+                        .WithMany()
+                        .HasForeignKey("ProductId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
+                    b.Navigation("Product");
+
+                    b.Navigation("ProductColour");
                 });
 
             modelBuilder.Entity("SpencerDenim.Domain.Catalog.Category", b =>

@@ -656,7 +656,7 @@ export class BagPage {
   }
 
   protected moveToWishlist(line: CartLineDto): void {
-    this.cart.moveToWishlist(line.variantId, line.slug, this.label(line));
+    this.cart.moveToWishlist(line, this.label(line));
   }
 
   /**

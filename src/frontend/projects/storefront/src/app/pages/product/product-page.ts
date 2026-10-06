@@ -49,7 +49,7 @@ import { readableInk } from '../../core/platform/contrast';
 import { RobotsMeta } from '../../core/platform/robots-meta';
 import { serviceUnavailable } from '../../core/platform/service-unavailable';
 import { CartStore } from '../../core/cart/cart.store';
-import { LocalWishlist } from '../../core/wishlist/local-wishlist.service';
+import { WishlistStore } from '../../core/wishlist/wishlist.store';
 
 /** What the API answers for `StockStatus`, in the shopper's words. */
 const STOCK_LABEL: Readonly<Record<StockStatus, string>> = {
@@ -113,8 +113,8 @@ const RECENT_SHOWN = 6;
  * as PDP-03 asks, and a successful add opens the mini bag. **Buy Now is still not here**: it is Add to
  * Bag followed by checkout, and checkout is W3-02 — a button that looked like it worked and did
  * nothing would be worse than no button, which is the same judgement that kept Add to Bag off this page
- * until the bag API existed. The real wishlist still needs W2-08, so the heart remains the local,
- * per-browser list the product card uses. Reviews are PDP-08 (W2-06) and Quick View is QV-01 (W2-04).
+ * until the bag API existed. The heart writes to the same per-browser list the product card uses, which
+ * W2-08's `/wishlist` page reads; a guest's wishlist lives in the browser by design (doc 08 §1.7). Reviews are PDP-08 (W2-06) and Quick View is QV-01 (W2-04).
  */
 @Component({
   selector: 'sd-product-page',
@@ -548,7 +548,19 @@ export class ProductPage {
   private readonly meta = inject(Meta);
   private readonly pageMeta = inject(PageMeta);
   private readonly robots = inject(RobotsMeta);
-  private readonly wishlist = inject(LocalWishlist);
+  // **`WishlistStore`, like the listing card** (W2-08 round 3). This page wrote the stored list
+  // directly while the card went through the store, so "every heart in the storefront goes through
+  // `WishlistStore`" was false and was reported to the owner as fact. One feature with two code paths
+  // is the m3 finding again, one layer up.
+  //
+  // **It still does not need a sentence, and that is not the same as not announcing.** The heart here
+  // is a persistent toggle: `aria-pressed` flips and the accessible name changes from "Save to
+  // wishlist" to "Saved to wishlist", which a screen reader reads out on the press. A live-region
+  // sentence on top of that would say the same thing twice. What the page gains from the store is the
+  // single code path, the shared refusal wording, and a `lastChange` that is correct for whoever reads
+  // it — not a second announcement. There are also no rows here to re-home focus to, and the button
+  // survives its own press, so the removal reporting is simply unused on this page.
+  private readonly wishlist = inject(WishlistStore);
   private readonly cart = inject(CartStore);
   private readonly recent = inject(RecentlyViewed);
   private readonly response = inject(RESPONSE_INIT, { optional: true });
@@ -707,7 +719,7 @@ export class ProductPage {
     this.recent.except(this.currentSlug()).slice(0, RECENT_SHOWN),
   );
 
-  protected readonly saved = computed(() => this.wishlist.has(this.currentSlug()));
+  protected readonly saved = computed(() => this.wishlist.isSaved(this.currentSlug()));
 
   private readonly wishFailure = signal<string | null>(null);
 
@@ -965,7 +977,31 @@ export class ProductPage {
     // Read `saved()` **before** the toggle: on a refusal the signal does not move, but reading it
     // first says plainly that it is the attempted operation being named rather than the outcome.
     const wasSaved = this.saved();
-    const outcome = this.wishlist.toggle(this.currentSlug());
+
+    // **The name and the colourway are recorded, and this is the one surface that knows both** (W2-08
+    // round 2, MAJOR 2). It used to send a bare slug while the listing card sent `{ slug, name }`, so the
+    // page with a colour visibly chosen on it stored the least of the two — and the stored name is the
+    // only thing the wishlist page can print for an item the shop has since withdrawn (doc 11 §575).
+    // Two such entries read as "This item … no longer available" twice over, with two identically
+    // labelled Remove buttons.
+    //
+    // This is **not** the absent-field rule being bent: that rule is for a caller which does not know
+    // (the listing card has colour dots and no selection, so it omits the colour). Here the selection is
+    // on screen, so the fields are sent — and `colourId` is sent as an explicit `null` when nothing is
+    // chosen yet, because "the shopper has not picked a colour on the product page" really is "no
+    // colour", not "I was not asked".
+    const item = this.product();
+    const colour = this.colours().find((option) => option.colour.id === this.selection().colourId);
+
+    const outcome = this.wishlist.toggle(
+      {
+        slug: this.currentSlug(),
+        name: item?.name ?? null,
+        colourId: colour?.colour.id ?? null,
+        colourName: colour?.colour.name ?? null,
+      },
+      item?.name ?? 'This item',
+    );
 
     if (outcome !== 'unavailable') {
       this.wishFailure.set(null);

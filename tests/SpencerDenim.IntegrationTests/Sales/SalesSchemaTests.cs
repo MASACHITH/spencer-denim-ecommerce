@@ -46,11 +46,17 @@ public sealed class SalesSchemaTests(SqlServerDatabaseFixture sqlServer) : Sales
     }
 
     /// <summary>
-    /// W2-08's <c>WishlistItems</c> is the one doc 08 §3.5 table this migration must <b>not</b> have created.
-    /// Creating it here would mean two branches racing to build the same table.
+    /// <c>WishlistItems</c> was the one doc 08 §3.5 table this migration had to <b>not</b> create, because
+    /// it belonged to W2-08 and two branches racing to build the same table was the thing to avoid.
+    /// <para>
+    /// <b>W2-08 has now created it, so the assertion has been inverted rather than deleted</b> — the point
+    /// of the original was that exactly one migration owns the table, and that is still worth holding. Its
+    /// columns, indexes and foreign keys are in <c>WishlistSchemaTests</c>; with it here, doc 08 §3.5's
+    /// fifteen tables are all present, which is what this asserts in one line.
+    /// </para>
     /// </summary>
     [Fact]
-    public async Task The_wishlist_table_is_still_not_here()
+    public async Task The_wishlist_table_arrived_with_W2_08()
     {
         SqlServer.SkipIfUnavailable();
 
@@ -63,7 +69,7 @@ public sealed class SalesSchemaTests(SqlServerDatabaseFixture sqlServer) : Sales
                 """)
             .SingleAsync(Token);
 
-        Assert.Equal(0, exists);
+        Assert.Equal(1, exists);
     }
 
     [Theory]

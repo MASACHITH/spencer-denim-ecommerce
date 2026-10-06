@@ -436,9 +436,15 @@ test.describe('the triggers on the card (CARD-01, docs/04 §4 decision 5)', () =
   /**
    * The mirror image of the move: having gone left, the pair must clear what is on that side.
    *
-   * The badge is top-left and the heart top-right, so the bottom-left corner was free — but "free"
-   * is a claim about the stylesheet, and this measures the screen. 320 px is the width where the
-   * card is narrowest and the two-column grid leaves least room.
+   * The bottom-left corner was free — but "free" is a claim about the stylesheet, and this measures
+   * the screen. 320 px is the width where the card is narrowest and the two-column grid leaves least
+   * room.
+   *
+   * **W2-08 moved the heart to top-left and the badge to top-right** (issue #111: the float covered
+   * the heart too, which is why its corner could not stay). So the heart is now on *this* pair's
+   * side, and what has to be measured is the vertical gap between them rather than their being on
+   * opposite sides. The badge is the one on the far side now, and the overlap check below covers it
+   * from the other direction.
    */
   test('320px: the actions clear the card’s own furniture on the left', async ({ page }) => {
     await page.setViewportSize({ width: 320, height: 720 });
@@ -461,8 +467,10 @@ test.describe('the triggers on the card (CARD-01, docs/04 §4 decision 5)', () =
         insideMediaLeft: Math.round(a.left - m.left),
         insideMediaBottom: Math.round(m.bottom - a.bottom),
         clearsBodyText: Math.round(body.getBoundingClientRect().top - a.bottom),
-        // On the opposite side from the heart, which never moved.
-        wishIsRight: Math.round(wish.getBoundingClientRect().right - m.right),
+        // The heart is top-left since W2-08 (#111), so it shares this pair's side of the photo and
+        // the clearance that matters is vertical.
+        wishIsLeft: Math.round(wish.getBoundingClientRect().left - m.left),
+        clearsWish: Math.round(a.top - wish.getBoundingClientRect().bottom),
         overlapsBadge: badge
           ? !(
               a.right <= badge.getBoundingClientRect().left ||
@@ -479,7 +487,8 @@ test.describe('the triggers on the card (CARD-01, docs/04 §4 decision 5)', () =
     expect(geometry.insideMediaLeft).toBe(0);
     expect(geometry.insideMediaBottom).toBe(0);
     expect(geometry.clearsBodyText).toBeGreaterThanOrEqual(0);
-    expect(geometry.wishIsRight).toBe(0);
+    expect(geometry.wishIsLeft).toBe(0);
+    expect(geometry.clearsWish).toBeGreaterThanOrEqual(0);
     expect(geometry.overlapsBadge).toBe(false);
     expect(geometry.roomForRing).toBe(true);
 

@@ -214,7 +214,7 @@ test.describe('addresses that are not listings are never a 503', () => {
   });
 
   /** And the unbuilt pages the shell links to still go home, outage or not (#28). */
-  for (const path of ['/wishlist', '/account', '/about', '/privacy']) {
+  for (const path of ['/account', '/about', '/privacy']) {
     test(`${path} still reaches the home page during an outage`, async ({ request }) => {
       const response = await request.get(`${liveOnlyCatalogueURL}${path}`);
 

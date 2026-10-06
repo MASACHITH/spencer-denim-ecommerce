@@ -165,7 +165,7 @@ test.describe('addresses that are not a department', () => {
    * used to render the listing's not-found state at HTTP 200 — the copy told a shopper that a
    * *department* no longer existed when they had clicked "Bag".
    */
-  for (const path of ['/wishlist', '/account', '/about', '/privacy', '/terms', '/contact']) {
+  for (const path of ['/account', '/about', '/privacy', '/terms', '/contact']) {
     test(`${path} goes to the home page`, async ({ page }) => {
       const response = await page.goto(path);
 

@@ -797,6 +797,39 @@ describe('ProductPage (PDP-01..07)', () => {
       expect(query('.pdp__wish')?.getAttribute('aria-pressed')).toBe('true');
       expect(localStorage.getItem('sd.wishlist.local')).toContain('high-rise-straight-jean');
     });
+
+    /**
+     * **It records the name and the colourway, which it did not** (W2-08 round 2, MAJOR 2). The heart
+     * used to send a bare slug while the listing card sent `{ slug, name }` — so the one surface with a
+     * colour visibly chosen on it stored the least of the two, and the wishlist page had nothing to
+     * print for an item the shop later withdrew: two such entries read "This item … no longer
+     * available" twice over, with two identically labelled Remove buttons.
+     *
+     * The colourway is the half only this page knows. `ProductCardDto` carries colour dots and no
+     * selection, so a listing card genuinely cannot say which one the shopper meant — which is why it
+     * *omits* the field rather than nulling it.
+     */
+    it('records the product name and the chosen colourway (MAJOR 2)', async () => {
+      await open('/product/high-rise-straight-jean');
+
+      // The page opens on the first colourway with stock, which the suite above pins as Indigo.
+      expect(query('.pdp__chosen')?.textContent).toContain('Indigo');
+
+      query<HTMLButtonElement>('.pdp__wish')!.click();
+      harness.detectChanges();
+
+      const stored = JSON.parse(localStorage.getItem('sd.wishlist.local') ?? 'null') as {
+        items: { slug: string; name: string | null; colourId: number | null; colourName: string | null }[];
+      };
+
+      expect(stored.items).toHaveLength(1);
+      expect(stored.items[0]).toMatchObject({
+        slug: 'high-rise-straight-jean',
+        name: 'High-Rise Straight Jean',
+        colourId: INDIGO,
+        colourName: 'Indigo',
+      });
+    });
   });
 
   /**

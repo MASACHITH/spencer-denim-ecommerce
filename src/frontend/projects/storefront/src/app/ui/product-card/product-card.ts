@@ -5,7 +5,7 @@ import { Icon } from '@spencer-denim/shared';
 import { ColourSwatchDto, ProductBadge, ProductCardDto } from '../../core/catalog/catalog.model';
 import { formatLkr } from '../../core/catalog/money';
 import { QuickView, QuickViewIntent } from '../quick-view/quick-view';
-import { LocalWishlist } from '../../core/wishlist/local-wishlist.service';
+import { WishlistStore } from '../../core/wishlist/wishlist.store';
 
 /** How many colour dots fit under a card at 320 px before the rest become "+3". */
 const MAX_COLOUR_DOTS = 4;
@@ -71,9 +71,14 @@ interface ColourDot {
  * with decision 6's floating WhatsApp button (GLB-08), which owns the bottom-**right** corner of
  * the viewport site-wide. They were both in that corner and the float covered a card's Add to Bag
  * outright — at 320x720 on the very first card. The side is chosen in `.card__actions`, which says
- * so at length. The heart is untouched at top-right - but it is *not* collision-free: the float
- * covers it at a few scroll positions on every phone width (issue #111, to be fixed with W2-08).
- * An earlier version of this comment claimed it never collided, which had not been measured.
+ * so at length.
+ *
+ * **The heart and the badge have now swapped corners, which is W2-08's fix for issue #111.** The float
+ * covered the heart's centre too - 5 of 116 sampled scroll positions at 320x720, 5 of 134 at 390x844 and
+ * so on - the mirror image of the same bug, because the heart sat at the card's *top*-right against the
+ * float's *bottom*-right. The heart is at top-left now and the badge at top-right, so the only thing
+ * left in the float's column is a label nobody taps. See the `.badge` block for the measurements and for
+ * why the four alternatives docs/04 lists were all worse.
  *
  * **Both triggers open the same dialog, and that is not an oversight.** `ProductCardDto` carries
  * colours and *no variants at all*, so a card cannot know whether this product needs a size
@@ -88,8 +93,9 @@ interface ColourDot {
  * worth having is `variantCount` on the card projection, so the card can skip the dialog *before*
  * opening it; that follow-up is filed.
  *
- * The wishlist heart is a real control, but it saves to this browser only until the wishlist API
- * arrives (W2-08) — see {@link LocalWishlist}.
+ * The wishlist heart saves to this browser, which is where a guest's wishlist belongs (doc 02's WISH-01
+ * line, doc 08 §1.7) — see `LocalWishlist`. It sends the product's **name** as well as the slug, so
+ * W2-08's `/wishlist` page can still name an item the shop has since withdrawn.
  */
 @Component({
   selector: 'sd-product-card',
@@ -291,10 +297,33 @@ interface ColourDot {
       opacity: 1;
     }
 
+    /* **Top-right, swapped with the heart, and that is the fix for issue #111.**
+
+       The float at the viewport's bottom-right (GLB-08, docs/04 §4 decision dated 2026-10-06) covered
+       the heart's centre at 5 of 116 sampled scroll positions at 320x720 and 5 of 134 at 390x844, among
+       others - the mirror image of the collision W2-04 fixed by moving the action pair to bottom-left,
+       and measured rather than reasoned about, which is why the first attempt at that decision wrongly
+       claimed the heart never collided. A tap in one of those positions opened WhatsApp instead of
+       saving the item.
+
+       (No backticks in this block: it is a template literal, and one would end it.)
+
+       **Why swapping, and not one of the four alternatives docs/04 already rejected.** Raising the
+       float moves a site-wide element to suit one page and only shifts the overlap up the card;
+       dropping the heart on phones removes a feature CARD-01 asks for; hiding the float on listings
+       contradicts GLB-08's "site-wide"; and insetting the heart from the right edge by one tap target
+       still leaves a few pixels of overlap at 320 px, which is a collision that is merely harder to
+       measure. Swapping the two things in the card's top row is the one move that takes the *control*
+       out of the float's column entirely - and the thing that lands in it instead is a badge, which
+       receives no taps, so an occluded badge costs a shopper nothing but a glance. Nothing is removed
+       and neither owner decision is weakened: the float keeps its corner.
+
+       The clearance arithmetic is unchanged, only mirrored: the badge still gives up one tap target
+       plus a gap so a long label cannot run under the heart. */
     .badge {
       position: absolute;
       top: var(--space-1);
-      left: var(--space-1);
+      right: var(--space-1);
       /* Keeps clear of the wishlist button whatever the label says. */
       max-width: calc(100% - var(--tap) - var(--space-2));
       padding: 3px 6px;
@@ -352,10 +381,14 @@ interface ColourDot {
     .card__icon:hover::before {
       background: var(--color-bg-alt);
     }
+    /* Top-**left**, swapped with the badge: see the .badge block for the measurements and the reasoning.
+       The float owns the viewport's bottom-right (GLB-08), so the right-hand column of every card is
+       the one place an interactive control must not be, and a card's left edge is never under it at any
+       scroll offset or viewport width. */
     .card__wish {
       position: absolute;
       top: 0;
-      right: 0;
+      left: 0;
     }
 
     /* Bottom-**left** on a phone, stacked, always there: docs/04 §4 decision 5 asks for small icon
@@ -370,10 +403,12 @@ interface ColourDot {
        was *fully* covered at 4 of 41 sampled scroll offsets, and at 320x720 it happened at
        scrollY 0 - so the first card a shopper saw had a dead button that opened WhatsApp. The
        float keeps the corner it was given and the card actions take the opposite one; nothing is
-       removed and neither decision is weakened. The heart stays top-right - and collides at a
-       handful of scroll positions itself, which is issue #111 rather than something this decision
-       fixed: the heart is at the card's *top*-right against the float's *bottom*-right, so they
-       meet as a card enters from below. Milder, and left to W2-08.
+       removed and neither decision is weakened. The heart collided at a handful of scroll positions
+       itself - at the card's *top*-right against the float's *bottom*-right, so they met as a card
+       entered from below rather than as one left at the bottom, which is why moving this pair did not
+       move it. That was issue #111, and W2-08 has fixed it by swapping the heart with the badge: the
+       heart is top-left and the badge top-right, so the float's column holds no control at all. See
+       the .card__wish and .badge blocks.
 
        **Where the switch happens, and why there is no new number here.** The side is set once in
        each of the two states this component already has, and the boundary between them is the
@@ -550,7 +585,12 @@ export class ProductCard {
    */
   readonly sizes = input<string>(LISTING_GRID_CARD_SIZES);
 
-  private readonly wishlist = inject(LocalWishlist);
+  // **`WishlistStore`, not `LocalWishlist` directly** (W2-08 round 2, m3). The heart used to write the
+  // stored list itself, so pressing it on the wishlist page made a row disappear in silence while the
+  // same row's Remove button announced a full sentence - one feature, two controls, one of them mute.
+  // The store announces the change and reports the removal, which is also what lets the page put focus
+  // somewhere after the control that was pressed has been destroyed with its row.
+  private readonly wishlist = inject(WishlistStore);
 
   /** An image the browser could not fetch is dropped, so a card never shows a broken picture. */
   private readonly mainFailed = signal(false);
@@ -570,7 +610,7 @@ export class ProductCard {
 
   protected readonly quickViewOpen = computed(() => this.quickView() !== null);
 
-  protected readonly saved = computed(() => this.wishlist.has(this.product().slug));
+  protected readonly saved = computed(() => this.wishlist.isSaved(this.product().slug));
 
   /** The product detail page (PDP-01..08), which tapping the card itself opens (docs/04 §4). */
   protected readonly link = computed(() => ['/product', this.product().slug]);
@@ -675,7 +715,21 @@ export class ProductCard {
   protected toggleWishlist(): void {
     // `'unavailable'` means nothing changed anywhere, so the heart stays as it was and the label says
     // why. A filled heart over a refused write is the lie this replaced.
-    this.wishFailed.set(this.wishlist.toggle(this.product().slug) === 'unavailable');
+    //
+    // **The name is sent and the colourway deliberately is not** (W2-08). The name is what the wishlist
+    // page prints for an item the shop has since withdrawn, when the API has no card left to send
+    // (doc 11 §575) — so a heart tapped today names the product for a page opened in a month. The
+    // colourway is *omitted*, not nulled: `ProductCardDto` carries colour dots and no selection, so this
+    // card genuinely does not know which colourway the shopper meant, and `WishlistSave` treats an
+    // absent field as "say nothing". Nulling it would clear a colour the bag's "move to wishlist" had
+    // recorded — which is W1-12's defect, where a save that did not mention a field cleared it.
+    const product = this.product();
+    const outcome = this.wishlist.toggle(
+      { slug: product.slug, name: product.name },
+      product.name,
+    );
+
+    this.wishFailed.set(outcome === 'unavailable');
   }
 
   protected openQuickView(intent: QuickViewIntent): void {

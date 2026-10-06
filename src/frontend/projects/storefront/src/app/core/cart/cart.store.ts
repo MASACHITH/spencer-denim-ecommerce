@@ -3,7 +3,7 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { Observable } from 'rxjs';
 
 import { CartApi, cartErrorMessage, cartFailure } from './cart-api';
-import { CartDto, EMPTY_CART, cartLineNotice } from './cart.model';
+import { CartDto, CartLineDto, EMPTY_CART, cartLineNotice } from './cart.model';
 import { ServerHandover } from '../platform/server-handover';
 import { LocalWishlist } from '../wishlist/local-wishlist.service';
 
@@ -216,26 +216,41 @@ export class CartStore {
   /**
    * Move to wishlist (CART-01).
    *
-   * **It saves to this browser, not to an account, and that is a gap rather than a shortcut.** There is
-   * no wishlist API: W2-08 is not built, and doc 08 §1.7 already specifies that a guest wishlist is
-   * `localStorage` merged into `sales.WishlistItems` on login. So this writes to the same
-   * {@link LocalWishlist} the product card's heart has used since W2-04, and removes the line **only if
-   * that write succeeded**. The ordering alone was not the protection it was described as: storage here
+   * **It saves to this browser, not to an account, and that is the specification rather than a gap.**
+   * Doc 02's WISH-01 line keeps a guest's wishlist in the browser and doc 08 §1.7 lists it under
+   * "Client-side only (no tables)", merged into `sales.WishlistItems` on login — which is W3-01's. So
+   * this writes to the same {@link LocalWishlist} the product card's heart has used since W2-04 and that
+   * W2-08's wishlist page reads, and removes the line **only if that write succeeded**. The ordering alone was not the protection it was described as: storage here
    * cannot throw, it returns `false`, so the check is what protects the item and the order is merely
    * what makes the check possible.
    *
-   * **What it cannot keep: the colour and the size.** `LocalWishlist` holds product slugs, as the heart
-   * does, while `sales.WishlistItems` has a `ProductColourId`. Moving "Beige / M" saves the product and
-   * not the colourway. That is the honest limit of what exists today and is reported with the task; the
-   * alternative — inventing a table — is worse.
+   * **It now keeps the colourway, and the size is still lost** (W2-08). `LocalWishlist` holds an entry
+   * per product with an optional colour, which is the shape doc 08 §3.5 gives `sales.WishlistItems`
+   * (`ProductColourId`, nullable) and doc 11 §553 describes as "one entry per product per customer,
+   * optional colour" — so moving "Beige / M" saves the product in Beige. The **size** is not kept
+   * because the wishlist has nowhere to keep one: doc 08 §3.5 has no size column, and that is the point
+   * of "move to bag (size must be chosen first)" in doc 11 §539. A shopper moving a line back to their
+   * bag picks the size again, which is also the only honest thing to do about a size that may have sold
+   * out in the meantime.
    */
-  moveToWishlist(variantId: number, slug: string, label: string): void {
+  moveToWishlist(line: CartLineDto, label: string): void {
     // **Nothing is removed unless the save really happened.** The save coming first was never
     // protection on its own: `SafeLocalStorage.write` cannot throw, so the only failure it has is a
     // silent `false`, and discarding that meant the line was deleted over a save that did not occur —
     // in a private window, with site data blocked, or on a full quota. The shopper is told, in an
     // `role="alert"`, and the item is still where they left it.
-    if (!this.wishlist.save(slug)) {
+    // The product's own name, not `label` — `label` is the bag's wording ("Linen shirt, Beige, M") and
+    // includes a size the wishlist has no column for. The colourway is sent explicitly, because this
+    // caller genuinely knows it; a listing card's heart omits the field instead of nulling it, so neither
+    // caller can clear what the other recorded (see `WishlistSave`).
+    if (
+      !this.wishlist.save({
+        slug: line.slug,
+        name: line.productName,
+        colourId: line.colourId,
+        colourName: line.colourName,
+      })
+    ) {
       this.failure.set(
         'We could not save that to your wishlist, so it is still in your bag. ' +
           'Your browser may be blocking site data — private browsing often does.',
@@ -243,7 +258,7 @@ export class CartStore {
       return;
     }
 
-    this.mutate(variantId, this.api.remove(variantId), (cart) =>
+    this.mutate(line.variantId, this.api.remove(line.variantId), (cart) =>
       `${label} moved to your wishlist. ${this.bagSummary(cart)}`,
     );
   }

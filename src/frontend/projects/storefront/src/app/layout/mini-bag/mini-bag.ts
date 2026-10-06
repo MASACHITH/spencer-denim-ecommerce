@@ -48,6 +48,7 @@ import { formatLkr } from '../../core/catalog/money';
       heading="Your bag"
       closeLabel="Close bag"
       (closed)="closed.emit()"
+      (focusLost)="focusLost.emit()"
     >
       <div class="mini-bag">
         <!-- Inside the dialog, because a dialog with aria-modal="true" can hide everything outside it
@@ -242,6 +243,13 @@ export class MiniBag {
   readonly open = input.required<boolean>();
 
   readonly closed = output<void>();
+
+  /**
+   * Relayed from `sd-drawer`: the drawer closed and had nowhere to give focus back to, because what
+   * opened it has been removed in the meantime. The header decides where focus goes — see
+   * `SiteHeader.recoverBagFocus`.
+   */
+  readonly focusLost = output<void>();
 
   protected readonly cart = inject(CartStore);
 

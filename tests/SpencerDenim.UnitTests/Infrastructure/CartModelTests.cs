@@ -47,18 +47,20 @@ public sealed class CartModelTests
     }
 
     /// <summary>
-    /// <b>The sales schema holds the fourteen tables of W2-09 plus W3-03, and no more.</b> W3-03 (#53) added
-    /// the twelve this list gained; <c>WishlistItems</c> is still W2-08's, and mapping it here would mean two
-    /// branches creating the same table.
+    /// <b>The sales schema holds all fifteen tables of doc 08 §3.5, and no more.</b> W2-09 mapped the two
+    /// cart tables, W3-03 (#53) the twelve for orders, payments and delivery, and W2-08 the last one,
+    /// <c>WishlistItems</c>.
     /// <para>
-    /// W2-09 asserted "exactly two tables" because that was the claim it made to #53 on the coordination note.
-    /// W3-03 is that task, so the number moved — but the test still exists for the same reason: the sales
-    /// schema is built by more than one branch, and what each one owns has to be written down somewhere a
-    /// build can check.
+    /// W2-09 asserted "exactly two tables" because that was the claim it made to #53 on the coordination note,
+    /// and it then asserted that <c>WishlistItems</c> was absent because mapping it would have meant two
+    /// branches creating the same table. Both numbers have moved as the branches landed — but the test exists
+    /// for the same reason throughout: the sales schema is built by more than one branch, and what each one
+    /// owns has to be written down somewhere a build can check. With §3.5 complete, the list is now the
+    /// document's own and the next entry would be a table doc 08 does not have.
     /// </para>
     /// </summary>
     [Fact]
-    public void The_sales_schema_holds_the_tables_w2_09_and_w3_03_own()
+    public void The_sales_schema_holds_every_table_doc_08_gives_it()
     {
         var tables = Model.GetEntityTypes()
             .Where(entity => entity.GetSchema() == AppDbContext.SalesSchema)
@@ -81,10 +83,9 @@ public sealed class CartModelTests
                 "Payments",
                 "PickupLocations",
                 "Refunds",
+                "WishlistItems",
             ],
             tables.Order(StringComparer.Ordinal));
-
-        Assert.DoesNotContain("WishlistItems", tables);
     }
 
     /// <summary>

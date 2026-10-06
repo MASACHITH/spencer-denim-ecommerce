@@ -731,7 +731,7 @@ test.describe('an address this site does not have (#28)', () => {
   // was in flight, so each has a route of its own and must **not** redirect home.
   // `app.routes.spec.ts` holds the same property on the list itself, and the bag's own address is
   // asserted directly above.
-  for (const path of ['/wishlist', '/account', '/about', '/contact', '/privacy', '/terms', '/returns', '/shipping']) {
+  for (const path of ['/account', '/about', '/contact', '/privacy', '/terms', '/returns', '/shipping']) {
     test(`${path} still reaches the home page while its page is unbuilt`, async ({ request }) => {
       const response = await request.get(path);
 

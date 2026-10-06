@@ -697,10 +697,10 @@ describe('ListingPage', () => {
      * the shell links to all of them on every page and a 404 on a link in the footer is worse than
      * the redirect (#28, and `app.routes.ts` on `UNBUILT_PATHS`).
      */
-    // `/not-a-department` left this list in W2-10 (#28 — it is a real 404 now, see below) and `/bag`
-    // left it in W2-09 (it is a real page now, see below). The four that remain are still in
+    // `/not-a-department` left this list in W2-10 (#28 — it is a real 404 now, see below), `/bag` left
+    // it in W2-09 and `/wishlist` in W2-08 (both are real pages now). The four that remain are still in
     // `UNBUILT_PATHS`, so they still redirect to the home page.
-    for (const path of ['/wishlist', '/account', '/privacy', '/contact']) {
+    for (const path of ['/account', '/privacy', '/contact', '/terms']) {
       it(`${path} goes back to the home page, not to the listing`, async () => {
         await goTo(path);
 

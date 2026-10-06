@@ -4,8 +4,9 @@ import { SafeLocalStorage } from '@spencer-denim/shared';
 import { LocalWishlist } from './local-wishlist.service';
 
 /**
- * The per-browser wishlist (WISH-01's stand-in until W2-08), and in particular **whether it tells the
- * truth about having saved anything**.
+ * The per-browser wishlist (WISH-01), and in particular **whether it tells the truth about having
+ * saved anything**. Its order, its stored shape and the "absent means say nothing" rule on a save are
+ * in `local-wishlist-list.spec.ts`, which needs a stub that really stores.
  *
  * `SafeLocalStorage.write` cannot throw — it catches everything and returns `false` — so the only
  * failure either method can have is a silent one. Both used to discard that boolean, which made the
