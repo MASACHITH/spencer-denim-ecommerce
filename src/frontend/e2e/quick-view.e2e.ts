@@ -2,7 +2,7 @@ import AxeBuilder from '@axe-core/playwright';
 import { Locator, Page, expect, test } from '@playwright/test';
 
 import { apiURL } from '../playwright.config';
-import { edgesWithoutRing, horizontalOverflow, undersized } from './support/measure';
+import { edgesWithoutRing, horizontalOverflow, undersized, unreachable } from './support/measure';
 
 /**
  * Browser checks for Quick View and the card's Add to Bag (QV-01, CARD-01, W2-04).
@@ -99,16 +99,30 @@ async function focusIsInside(page: Page, selector: string): Promise<boolean> {
 }
 
 /**
- * Horizontal overflow **with a dialog open**, which `horizontalOverflow` alone cannot answer.
+ * Overflow **with a dialog open**, which `horizontalOverflow` alone cannot answer.
  *
  * An open dialog puts `sd-no-scroll` on the body, and `overflow: hidden` hides exactly the symptom
- * that function measures. So this looks in the two places the overflow can actually be: the panel
+ * that function measures. So this looks in the places the overflow can actually be: the panel
  * sticking out past the viewport, and the panel's own scrolling body having content wider than
  * itself. The document is measured too, so a regression that does reach it is still reported.
+ *
+ * **`pastTopEdge` and `pastBottomEdge` are a fix, and the whole of MAJOR 1 lived in the gap they
+ * fill (round 2).** Every number this returned was *horizontal* — `document` is `scrollWidth`,
+ * and the other three are left, right and the body's own width. A panel hanging 137 px off the
+ * bottom of a 390x844 screen, with Add to Bag unreachable even by keyboard, returned
+ * `{0, 0, 0, 0}` and both layout tests passed. The vertical twin of a measurement is not a
+ * detail; it is the other half of the thing being measured.
+ *
+ * The **host** is read for the vertical pair rather than the panel, because the host is what
+ * overflowed: `ui/modal`'s single implicit grid row sized itself to the panel's unclamped content
+ * (981 px against 844), and `host.scrollHeight - host.clientHeight` names that directly instead of
+ * inferring it from where the panel ended up. The panel's own edges are reported too, since that
+ * is what a shopper sees.
  */
 async function dialogOverflow(page: Page): Promise<Record<string, number>> {
   return page.evaluate(() => {
     const panel = document.querySelector<HTMLElement>('#quick-view');
+    const host = panel?.closest<HTMLElement>('sd-modal');
     const body = panel?.querySelector<HTMLElement>('.sd-modal__body');
     const box = panel?.getBoundingClientRect();
     const root = document.documentElement;
@@ -118,9 +132,26 @@ async function dialogOverflow(page: Page): Promise<Record<string, number>> {
       pastLeftEdge: box ? Math.round(Math.max(0, -box.x)) : -1,
       pastRightEdge: box ? Math.round(Math.max(0, box.right - root.clientWidth)) : -1,
       insidePanel: body ? body.scrollWidth - body.clientWidth : -1,
+      pastTopEdge: box ? Math.round(Math.max(0, -box.y)) : -1,
+      pastBottomEdge: box ? Math.round(Math.max(0, box.bottom - root.clientHeight)) : -1,
+      insideHost: host ? host.scrollHeight - host.clientHeight : -1,
     };
   });
 }
+
+/** What {@link dialogOverflow} reads on a dialog that fits: nothing anywhere. */
+const FITS = {
+  document: 0,
+  pastLeftEdge: 0,
+  pastRightEdge: 0,
+  insidePanel: 0,
+  pastTopEdge: 0,
+  pastBottomEdge: 0,
+  insideHost: 0,
+} as const;
+
+/** Every control in the dialog a shopper has to be able to reach, Add to Bag first. */
+const DIALOG_CONTROLS = '#quick-view [data-testid="quick-view-add"], #quick-view .qv__full';
 
 /** Serious and critical only, which is the gate `docs/06` §3 states (and `accessibility.e2e.ts`). */
 async function violations(page: Page, within?: string) {
@@ -486,6 +517,105 @@ test.describe('adding to the bag from the dialog', () => {
   });
 
   /**
+   * **The same add, on a phone.** Every test above runs at 1280x900, where the panel fits whatever
+   * it holds — so the one viewport class on which the add was *impossible* (MAJOR 1: Add to Bag at
+   * y 852-900 against an 844 px screen, unreachable by scroll or by keyboard) had no coverage of
+   * the add at all. 390x844 is an iPhone 12/13/14, which is to say most of the shop's traffic.
+   */
+  test('390px: the add goes through from a panel that has been scrolled to its end', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(LISTING);
+
+    const { dialog } = await openQuickView(page, { nth: 5 });
+    await dialog.locator('[data-testid="quick-view-size"]').nth(0).click();
+
+    const add = dialog.locator('[data-testid="quick-view-add"]');
+    await expect(add).toBeEnabled();
+
+    // Where the shopper is after reading the panel, and where the button was off the screen.
+    await dialog.locator('.sd-modal__body').evaluate((body: HTMLElement) => {
+      body.scrollTop = body.scrollHeight;
+    });
+    await expect(add).toBeInViewport({ ratio: 1 });
+
+    // A real press, not `.click({ force: true })`: an unreachable button fails actionability, and
+    // that failure is the bug.
+    await add.click();
+
+    await expect(page.locator('#quick-view')).toBeHidden();
+    await expect(page.locator('sd-mini-bag .mini-bag__line')).toHaveCount(1);
+    await expect(page.locator('[data-testid="bag-toggle"] .count')).toHaveText('1');
+  });
+
+  /**
+   * **A refused add leaves focus inside the dialog (MAJOR 3).**
+   *
+   * `[disabled]` on the button that currently holds focus makes Chromium blur it to `<body>` and
+   * fire **no** `focusin`, so `Modal.onFocusIn` never re-trapped: Escape still worked and one Tab
+   * came back, but the shopper landed at the *top* of the dialog and a screen-reader user had lost
+   * their place inside a dialog that was still open. A **successful** add masks it, because the
+   * mini bag takes focus; a refused one does not, which is why this test refuses the add.
+   *
+   * The 409 is injected into this page's own routing rather than through the stub's
+   * `/__test__/cart-variant` switch. That switch is one shared map and the suite is
+   * `fullyParallel` (see `bag.e2e.ts`), and the thing under test is what the *client* does with a
+   * refusal — so a per-page route is both safer and a closer statement of the question. Registered
+   * after `useStubApi`'s `**` route, because Playwright matches the most recently added first.
+   */
+  test('a refused add keeps focus inside the open dialog', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.route('**/api/cart/items', async (route) => {
+      if (route.request().method() !== 'POST') {
+        await route.fallback();
+        return;
+      }
+
+      await route.fulfill({
+        status: 409,
+        contentType: 'application/problem+json; charset=utf-8',
+        body: JSON.stringify({
+          title: 'Out of stock',
+          status: 409,
+          detail: 'That size has just sold out. Nothing was added to your bag.',
+        }),
+      });
+    });
+
+    await page.goto(LISTING);
+
+    const { dialog } = await openQuickView(page, { nth: 6 });
+    await dialog.locator('[data-testid="quick-view-size"]').nth(0).click();
+
+    const add = dialog.locator('[data-testid="quick-view-add"]');
+    await expect(add).toBeEnabled();
+
+    // Focus the button the way a keyboard shopper reaches it, so the blur has something to throw
+    // away. Without this the test would pass against the original bug.
+    await add.focus();
+    expect(await focusIsInside(page, '#quick-view')).toBe(true);
+
+    await add.click();
+
+    // The dialog is still open, because nothing was added.
+    await expect(page.locator('#quick-view')).toBeVisible();
+    await expect(dialog.locator('[role="alert"]')).toContainText('sold out');
+
+    // And focus never left it. `<body>` is what it used to be.
+    expect(await focusIsInside(page, '#quick-view')).toBe(true);
+    expect(await page.evaluate(() => document.activeElement?.tagName)).not.toBe('BODY');
+
+    // Specifically, it is still on the button the shopper pressed — not reset to the top of the
+    // dialog, which is where the old focus trap would have put them had it fired at all.
+    expect(
+      await page.evaluate(
+        () => document.activeElement?.getAttribute('data-testid') ?? null,
+      ),
+    ).toBe('quick-view-add');
+  });
+
+  /**
    * The card's Add to Bag on a product that needs a size. Every stub product has three, so this is
    * the only shape reachable here — and it is the one that matters: the card must not guess.
    */
@@ -516,7 +646,9 @@ test.describe('adding to the bag from the dialog', () => {
 
 test.describe('the dialog at every viewport (GLB-12)', () => {
   for (const width of BREAKPOINTS) {
-    test(`${width}px: nothing scrolls sideways and the panel fits`, async ({ page }) => {
+    test(`${width}px: nothing overflows in either direction and the panel fits`, async ({
+      page,
+    }) => {
       await page.setViewportSize({ width, height: 900 });
       await page.goto(LISTING);
 
@@ -525,15 +657,60 @@ test.describe('the dialog at every viewport (GLB-12)', () => {
       // swatch row ever gets; this one has two, so both shapes are covered by the pair of tests.
       await expect(dialog.locator('.sd-swatch').first()).toBeVisible();
 
-      expect(await dialogOverflow(page)).toEqual({
-        document: 0,
-        pastLeftEdge: 0,
-        pastRightEdge: 0,
-        insidePanel: 0,
-      });
+      expect(await dialogOverflow(page)).toEqual(FITS);
     });
   }
 
+  /**
+   * **A size chosen, at the real phone sizes, with the panel scrolled to its end.** The original
+   * loop ran every width at a 900 px height, where the panel fits whatever it holds — so MAJOR 1
+   * was invisible to it twice over: it never looked downwards, and it never stood anywhere short
+   * enough for there to be anything to see. These four are the shapes that broke, measured by the
+   * tester: 390x844 overflowed by 137 px, 375x667 by 223, 375x844 by 127, 320x844 by 91.
+   *
+   * A size is chosen first because that is what makes the panel tall: the quantity stepper, the
+   * total and a second line of swatches all arrive with it.
+   */
+  for (const [width, height] of [
+    [320, 844],
+    [375, 667],
+    [375, 844],
+    [390, 844],
+    [1280, 600],
+  ] as const) {
+    test(`${width}x${height}: Add to Bag and the way out are both reachable`, async ({ page }) => {
+      await page.setViewportSize({ width, height });
+      await page.goto(LISTING);
+
+      const { dialog } = await openQuickView(page);
+      await dialog.locator('[data-testid="quick-view-size"]').nth(0).click();
+      await expect(dialog.locator('[data-testid="quick-view-add"]')).toBeEnabled();
+
+      // Nothing hangs off any edge of the screen.
+      expect(await dialogOverflow(page)).toEqual(FITS);
+
+      // And the two controls the whole feature is for can actually be got to — which is a
+      // different question from the one above, and a different question again from their size.
+      expect(await unreachable(page, DIALOG_CONTROLS)).toEqual([]);
+
+      // The end of the panel's own scroll is the end of the content, not the point at which the
+      // content runs off the screen. This is the exact move the tester made to find MAJOR 1.
+      await dialog.locator('.sd-modal__body').evaluate((body: HTMLElement) => {
+        body.scrollTop = body.scrollHeight;
+      });
+
+      await expect(dialog.locator('[data-testid="quick-view-add"]')).toBeInViewport({ ratio: 1 });
+      expect(await unreachable(page, DIALOG_CONTROLS)).toEqual([]);
+    });
+  }
+
+  /**
+   * **Sixteen swatches, asserted as sixteen (round 2, MINOR 4).** This was named "sixteen
+   * colourways still fit" and asserted that the *first* `.sd-swatch` was visible — true of every
+   * product in the stub, including the two-colourway one the listing opens on. That it landed on
+   * the sixteen-swatch product at all was incidental, by way of the stub's related-product
+   * ordering. The count is the premise of the test, so the test says the number.
+   */
   test('320px: sixteen colourways still fit, and every control is a 44px target', async ({
     page,
   }) => {
@@ -543,14 +720,9 @@ test.describe('the dialog at every viewport (GLB-12)', () => {
     await expect(page.locator('.pdp__row').first()).toBeVisible();
 
     const { dialog } = await openQuickView(page);
-    await expect(dialog.locator('.sd-swatch').first()).toBeVisible();
+    await expect(dialog.locator('.sd-swatch')).toHaveCount(16);
 
-    expect(await dialogOverflow(page)).toEqual({
-      document: 0,
-      pastLeftEdge: 0,
-      pastRightEdge: 0,
-      insidePanel: 0,
-    });
+    expect(await dialogOverflow(page)).toEqual(FITS);
 
     // Every control the dialog puts on a 320 px screen. Measured per clause, because `undersized`
     // reports an empty list for a selector that matched nothing (issue #80).
@@ -565,7 +737,10 @@ test.describe('the dialog at every viewport (GLB-12)', () => {
     ]) {
       const rendered = await page.locator(clause).count();
       expect(rendered, `nothing matches "${clause}", so measuring it could not fail`).toBeGreaterThan(0);
+      // Big enough to press *and* on the screen to press. `undersized` answers only the first,
+      // which is how a 48 px Add to Bag eight pixels below the fold passed this loop.
       expect(await undersized(page, clause), clause).toEqual([]);
+      expect(await unreachable(page, clause), clause).toEqual([]);
     }
   });
 });
