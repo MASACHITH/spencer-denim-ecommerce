@@ -1,7 +1,12 @@
 import { Browser, Page, expect, test } from '@playwright/test';
 
 import { apiURL } from '../playwright.config';
-import { edgesWithoutRing, horizontalOverflow, undersized } from './support/measure';
+import {
+  edgesWithoutRing,
+  horizontalOverflow,
+  undersized,
+  unreachable,
+} from './support/measure';
 
 /**
  * Browser checks for checkout and the order success page (CHK-01..04).
@@ -246,6 +251,12 @@ async function everyClauseIsBigEnough(page: Page, clauses: readonly string[]): P
       page.locator(clause).first(),
       `nothing matched ${clause}, so nothing was measured`,
     ).toBeVisible();
+
+    // **Big enough to press *and* on the screen to press.** `undersized` answers only the first, which
+    // is how QV-01 found a 48 px Add to Bag eight pixels below the fold passing a loop like this one.
+    // `unreachable` is its helper, reused rather than reinvented, and it throws rather than passing when
+    // its selector matches nothing.
+    expect(await unreachable(page, clause), clause).toEqual([]);
   }
 
   expect(await undersized(page, clauses.join(', '))).toEqual([]);
@@ -877,6 +888,16 @@ test.describe('checkout (CHK-01..04)', () => {
         await page.locator('#co-email').fill('nope');
         await expect(page.locator('#co-email-error')).toBeVisible();
         expect(await horizontalOverflow(page), `${width} px overflows with an error shown`).toBe(0);
+
+        // **And with the refusal summary up**, which is a block of full-width buttons the layout did not
+        // have before. It is measured here because the summary's box takes its grid from
+        // `.checkout__notice` and carries no `min-width: 0` of its own — this is what says that is safe.
+        await page.locator('.checkout__place').click({ force: true });
+        await expect(page.locator('#checkout-refused')).toBeVisible();
+        expect(
+          await horizontalOverflow(page),
+          `${width} px overflows with the refusal summary shown`,
+        ).toBe(0);
       });
     }
 
