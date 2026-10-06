@@ -134,10 +134,23 @@ These answer the style tile's "For your review" list. They are **build defaults*
 > decision gives it and nothing is removed.
 >
 > The thing that lands in the float's column instead is a **badge**, which receives no taps — an
-> occluded badge costs a glance rather than an order, and it is occluded only in the same handful
-> of scroll positions, briefly, as a card passes. The clearance arithmetic is unchanged and only
+> occluded badge costs a glance rather than an order. The clearance arithmetic is unchanged and only
 > mirrored: the badge still gives up one tap target plus a gap (`max-width: calc(100% - var(--tap)
 > - var(--space-2))`) so a long label cannot run under the heart.
+>
+> **It happens slightly more often than the heart used to, not less, and that was measured rather
+> than assumed.** The independent tester counted 6 of 99 badge boxes overlapping the float at
+> 320x720 and 7 of 113 at 390x844 — marginally above the heart's old 5 of 116 and 5 of 134, because
+> a badge is wider than a 44 px control. An earlier version of this paragraph said "the same handful
+> of scroll positions", which was a guess; the trade is accepted on the *kind* of harm, not on the
+> count.
+>
+> **What is lost when a badge is covered, and what is not.** A **Sale** product is flagged three
+> other ways outside the float's column — a struck-through original price, a `-N%` chip, and an
+> `sr-only` "Sale price" / "Original price" pair — so hiding the Sale flash hides no sale. **New**,
+> **Best seller**, **Online exclusive** and **Low stock** have no second signal, so those four can
+> be briefly invisible as a card passes the float. That residue is **with the owner** and nothing
+> should be designed around it yet.
 >
 > **The four alternatives listed below were all still worse** for the heart than for the action
 > pair, which is why swapping was the move left. Insetting the heart from the right edge by one tap

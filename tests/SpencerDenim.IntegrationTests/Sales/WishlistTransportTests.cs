@@ -29,7 +29,7 @@ namespace SpencerDenim.IntegrationTests.Sales;
 /// database can never be mistaken for a transport failure. Most of them need no SQL Server at all.
 /// </para>
 /// </summary>
-public sealed class WishlistTransportTests(SqlServerDatabaseFixture sqlServer) : IAsyncDisposable
+public sealed class WishlistTransportTests : IAsyncDisposable
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
@@ -95,6 +95,10 @@ public sealed class WishlistTransportTests(SqlServerDatabaseFixture sqlServer) :
 
     private async Task<KestrelApiHost> HostAsync() =>
         _host ??= await KestrelApiHost.StartWishlistAsync(new EchoHandler());
+
+    // No `SqlServerDatabaseFixture`: nothing in this suite reads or writes a database, so it needs no
+    // SQL Server and cannot disturb the one the rest of the integration suite shares. That is worth
+    // having for its own sake and it also keeps this file out of a shared-fixture collection.
 
     /// <summary>
     /// <b>The defect, as arithmetic.</b> This is the sum the endpoint's old comment got wrong when it
@@ -299,9 +303,11 @@ public sealed class WishlistTransportTests(SqlServerDatabaseFixture sqlServer) :
     [Fact]
     public async Task The_in_memory_server_does_not_enforce_a_request_line_limit_at_all()
     {
-        sqlServer.SkipIfUnavailable();
-
-        await using var factory = new ApiFactory(sqlServer.ConnectionString);
+        // **A deliberately unreachable database**, so this needs no SQL Server and touches no shared one.
+        // The request is refused by the *catalogue* rather than answered, which is exactly as good: what
+        // is asserted is the status that did **not** come back, and a request line that was never
+        // rejected is one the transport never looked at.
+        await using var factory = new ApiFactory(ApiFactory.UnreachableConnectionString);
         using var client = factory.CreateClient();
 
         var padding = new string('a', 12_000);
