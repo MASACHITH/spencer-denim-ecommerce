@@ -1,7 +1,7 @@
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { ActivatedRoute, provideRouter } from '@angular/router';
+import { ActivatedRoute, Router, provideRouter } from '@angular/router';
 
 import { AdminProductApi } from '../../core/products/admin-product-api';
 import { AdminProductDetail, ProductFormOptions } from '../../core/products/admin-product.model';
@@ -678,8 +678,14 @@ describe('ProductFormPage (ADM-10)', () => {
     const request = writeTo('/api/admin/products/12');
     expect(request.request.method).toBe('DELETE');
     expect(request.request.headers.get('If-Match')).toBe('"rv-1"');
+
+    const navigate = vi.spyOn(TestBed.inject(Router), 'navigate').mockResolvedValue(true);
+
     request.flush(null);
     await settle();
+
+    // And back to the list, because the product this form was editing no longer exists.
+    expect(navigate).toHaveBeenCalledWith(['/products']);
   });
 
   // ---- creating --------------------------------------------------------------------------------
@@ -709,8 +715,18 @@ describe('ProductFormPage (ADM-10)', () => {
     expect(request.request.method).toBe('POST');
     expect(body['slug']).toBe('linen-shirt');
     expect(body['rowVersion']).toBeUndefined();
+
+    const navigate = vi.spyOn(TestBed.inject(Router), 'navigate').mockResolvedValue(true);
+
     request.flush({ id: 55 });
     await settle();
+
+    // **The half of this test that was missing.** It asserted the request body and stopped, so it never
+    // checked that the admin is then taken to the product they just created — which is the only way to
+    // publish it. The gap also left a real promise rejection escaping the suite: the component navigated
+    // to /products/55 against `provideRouter([])`, so Angular raised NG04002 "Cannot match any routes",
+    // Vitest printed `Errors 2` and still exited 0. A pass with errors beside it is not a pass.
+    expect(navigate).toHaveBeenCalledWith(['/products', 55]);
   });
 
   it('does not offer publish or remove before the product exists', async () => {
