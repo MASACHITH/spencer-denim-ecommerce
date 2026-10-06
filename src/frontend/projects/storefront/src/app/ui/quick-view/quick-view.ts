@@ -231,7 +231,7 @@ let nextId = 0;
                   <div class="qv__options">
                     @for (option of colours(); track option.colour.id) {
                       <button
-                        class="swatch"
+                        class="sd-swatch"
                         type="button"
                         [class.is-selected]="option.colour.id === selection().colourId"
                         [attr.aria-pressed]="option.colour.id === selection().colourId"
@@ -239,8 +239,8 @@ let nextId = 0;
                         (click)="chooseColour(option.colour.id)"
                       >
                         <span
-                          class="swatch__dot"
-                          [class.swatch__dot--light]="isLight(option.colour.hexCode)"
+                          class="sd-swatch__dot"
+                          [class.sd-swatch__dot--light]="isLight(option.colour.hexCode)"
                           [class.is-sold-out]="!option.isInStock"
                           [style.--swatch]="option.colour.hexCode ?? 'transparent'"
                           [style.--slash]="slashInk(option.colour.hexCode)"
@@ -259,7 +259,7 @@ let nextId = 0;
                   <div class="qv__options">
                     @for (option of sizes(); track option.size.id) {
                       <button
-                        class="size"
+                        class="sd-size"
                         type="button"
                         data-testid="quick-view-size"
                         [class.is-selected]="option.size.id === selection().sizeId"
@@ -337,9 +337,16 @@ let nextId = 0;
                 {{ adding() ? 'Adding…' : 'Add to bag' }}
               </button>
 
-              @if (addToBagReason(); as reason) {
-                <p class="qv__note" [id]="quantityNoteId">{{ reason }}</p>
-              }
+              <!-- A live region, and always in the DOM rather than inside an @if (round 2, NIT 2).
+                   Choosing a sold-out size announced **nothing**: quantityNote() returns '' for an
+                   OutOfStock selection, so the status region above went silent, and the one line
+                   that did change - this one - was not a live region at all. An emptied region says
+                   nothing and a region that appears already holding its text is not a change, so
+                   this has to exist before the sentence arrives in it. Empty when there is no
+                   reason, which costs an empty paragraph and no height.
+                   It is also the aria-describedby target, so the reason is both read on focus and
+                   announced when it changes. -->
+              <p class="qv__note" [id]="quantityNoteId" role="status">{{ addToBagReason() }}</p>
             } @else if (store.isUnavailable()) {
               <!-- The store answered badly. The product probably exists, so the dialog says so and
                    offers the two things that can still be done: ask again, or open the full page. -->

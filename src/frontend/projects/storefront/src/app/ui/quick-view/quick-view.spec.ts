@@ -320,7 +320,7 @@ describe('QuickView (QV-01)', () => {
 
       // And nothing that needs the variants is pretending to be there yet.
       expect(harness.query('[data-testid="quick-view-add"]')).toBeNull();
-      expect(harness.query('.swatch')).toBeNull();
+      expect(harness.query('.sd-swatch')).toBeNull();
       expect(harness.text()).toContain('Loading sizes and colours');
 
       request.flush(detail('high-rise-straight-jean'));
@@ -372,12 +372,12 @@ describe('QuickView (QV-01)', () => {
       expect(harness.query('#qv-size-label')?.textContent).toContain('Choose a size');
 
       const pressed = harness
-        .all<HTMLButtonElement>('.swatch')
+        .all<HTMLButtonElement>('.sd-swatch')
         .filter((button) => button.getAttribute('aria-pressed') === 'true');
       expect(pressed.length).toBe(1);
 
       expect(
-        harness.all('.size').filter((button) => button.getAttribute('aria-pressed') === 'true'),
+        harness.all('.sd-size').filter((button) => button.getAttribute('aria-pressed') === 'true'),
       ).toEqual([]);
     });
 
@@ -388,7 +388,7 @@ describe('QuickView (QV-01)', () => {
       expect(harness.query('.qv__from')).not.toBeNull();
       expect(harness.query('.price__now')?.textContent).toContain('Rs. 5,990');
 
-      harness.all<HTMLButtonElement>('.size')[2].click();
+      harness.all<HTMLButtonElement>('.sd-size')[2].click();
       await harness.settle();
 
       expect(harness.query('.qv__from')).toBeNull();
@@ -400,18 +400,18 @@ describe('QuickView (QV-01)', () => {
       const harness = await ready();
 
       // Ecru is made in S and L only.
-      harness.all<HTMLButtonElement>('.swatch')[1].click();
+      harness.all<HTMLButtonElement>('.sd-swatch')[1].click();
       await harness.settle();
 
-      const medium = harness.all<HTMLButtonElement>('.size')[1];
+      const medium = harness.all<HTMLButtonElement>('.sd-size')[1];
       expect(medium.disabled).toBe(true);
       expect(medium.getAttribute('aria-label')).toBe('Size M, not made in this colour');
 
       // And a size that is made but sold out stays selectable, because a shopper may look at it.
-      harness.all<HTMLButtonElement>('.swatch')[0].click();
+      harness.all<HTMLButtonElement>('.sd-swatch')[0].click();
       await harness.settle();
 
-      const soldOut = harness.all<HTMLButtonElement>('.size')[1];
+      const soldOut = harness.all<HTMLButtonElement>('.sd-size')[1];
       expect(soldOut.disabled).toBe(false);
       expect(soldOut.getAttribute('aria-label')).toBe('Size M, out of stock');
       expect(soldOut.classList.contains('is-sold-out')).toBe(true);
@@ -420,11 +420,11 @@ describe('QuickView (QV-01)', () => {
     it('clears a size the new colourway does not come in rather than leaving a dead button lit', async () => {
       const harness = await ready();
 
-      harness.all<HTMLButtonElement>('.size')[1].click();
+      harness.all<HTMLButtonElement>('.sd-size')[1].click();
       await harness.settle();
       expect(harness.query('#qv-size-label')?.textContent).toContain('M');
 
-      harness.all<HTMLButtonElement>('.swatch')[1].click();
+      harness.all<HTMLButtonElement>('.sd-swatch')[1].click();
       await harness.settle();
 
       expect(harness.query('#qv-size-label')?.textContent).toContain('Choose a size');
@@ -433,11 +433,11 @@ describe('QuickView (QV-01)', () => {
     it('un-picks a size when the chosen one is tapped again', async () => {
       const harness = await ready();
 
-      harness.all<HTMLButtonElement>('.size')[0].click();
+      harness.all<HTMLButtonElement>('.sd-size')[0].click();
       await harness.settle();
       expect(harness.query('#qv-size-label')?.textContent).toContain('S');
 
-      harness.all<HTMLButtonElement>('.size')[0].click();
+      harness.all<HTMLButtonElement>('.sd-size')[0].click();
       await harness.settle();
       expect(harness.query('#qv-size-label')?.textContent).toContain('Choose a size');
     });
@@ -445,7 +445,7 @@ describe('QuickView (QV-01)', () => {
     it('names a colour with its family when the two differ, and says when it is sold out', async () => {
       const harness = await ready({}, { variants: [variant(101, INDIGO, SMALL, 0)] });
 
-      expect(harness.all('.swatch')[0].getAttribute('aria-label')).toBe(
+      expect(harness.all('.sd-swatch')[0].getAttribute('aria-label')).toBe(
         'Indigo (Blue), out of stock',
       );
     });
@@ -469,7 +469,7 @@ describe('QuickView (QV-01)', () => {
 
       // Changing the colour re-stocks the rail and goes back to its first picture, rather than
       // leaving an index pointing into the colourway that has just gone.
-      harness.all<HTMLButtonElement>('.swatch')[1].click();
+      harness.all<HTMLButtonElement>('.sd-swatch')[1].click();
       await harness.settle();
 
       expect(harness.query<HTMLImageElement>('.qv__photo')?.getAttribute('src')).toBe(
@@ -523,7 +523,7 @@ describe('QuickView (QV-01)', () => {
       // Still in the tab order, which is what keeps the focus trap able to see it at all.
       expect(add.matches('button:not([disabled]):not([tabindex="-1"])')).toBe(true);
 
-      harness.all<HTMLButtonElement>('.size')[0].click();
+      harness.all<HTMLButtonElement>('.sd-size')[0].click();
       await harness.settle();
 
       // And once it can add, the attribute is gone rather than set to 'false'.
@@ -538,7 +538,7 @@ describe('QuickView (QV-01)', () => {
     it('adds nothing when a click reaches it while it is unavailable', async () => {
       const harness = await ready();
 
-      harness.all<HTMLButtonElement>('.size')[1].click(); // the sold-out size
+      harness.all<HTMLButtonElement>('.sd-size')[1].click(); // the sold-out size
       await harness.settle();
 
       harness.query<HTMLButtonElement>('[data-testid="quick-view-add"]')!.click();
@@ -557,7 +557,7 @@ describe('QuickView (QV-01)', () => {
       const reason = harness.query(`#${add.getAttribute('aria-describedby')}`);
       expect(reason?.textContent?.trim()).toBe('Choose a size to add this to your bag.');
 
-      harness.all<HTMLButtonElement>('.size')[0].click();
+      harness.all<HTMLButtonElement>('.sd-size')[0].click();
       await harness.settle();
 
       expect(unavailable(harness.query<HTMLButtonElement>('[data-testid="quick-view-add"]')!)).toBe(
@@ -570,10 +570,46 @@ describe('QuickView (QV-01)', () => {
       ).toBeNull();
     });
 
+    /**
+     * **Choosing a sold-out size has to announce something (round 2, NIT 2).**
+     *
+     * It announced nothing. `quantityNote()` returns `''` for an `OutOfStock` selection, so the
+     * one `role="status"` region on the screen went *blank* — and an emptied live region says
+     * nothing at all — while the line that actually changed, the reason, was not a live region.
+     * So the reason line is the live region now, and it is in the DOM before the sentence arrives
+     * in it, because a region that appears already holding its text is not a change either.
+     */
+    it('announces the reason it changes to, from a region that was already there', async () => {
+      const harness = await ready();
+
+      // By id prefix rather than through aria-describedby, because the whole point is that this
+      // element outlives the attribute pointing at it.
+      const REGION = '[id^="qv-add-reason-"]';
+
+      const region = harness.query(REGION)!;
+      expect(region.getAttribute('role')).toBe('status');
+      expect(region.textContent?.trim()).toBe('Choose a size to add this to your bag.');
+
+      // Settle on a size that can be bought: the same element stays, holding nothing.
+      harness.all<HTMLButtonElement>('.sd-size')[0].click();
+      await harness.settle();
+
+      expect(harness.query(REGION)).toBe(region);
+      expect(region.textContent?.trim()).toBe('');
+
+      // Now the sold-out size. The sentence changes *inside the same element*, which is the only
+      // shape a screen reader reads out.
+      harness.all<HTMLButtonElement>('.sd-size')[1].click();
+      await harness.settle();
+
+      expect(harness.query(REGION)).toBe(region);
+      expect(region.textContent?.trim()).toBe('That size is out of stock. Choose another size.');
+    });
+
     it('stays disabled on a sold-out size and names that as the reason', async () => {
       const harness = await ready();
 
-      harness.all<HTMLButtonElement>('.size')[1].click();
+      harness.all<HTMLButtonElement>('.sd-size')[1].click();
       await harness.settle();
 
       const add = harness.query<HTMLButtonElement>('[data-testid="quick-view-add"]')!;
@@ -586,7 +622,7 @@ describe('QuickView (QV-01)', () => {
     it('sends the variant, the quantity and a label the bag can read out', async () => {
       const harness = await ready();
 
-      harness.all<HTMLButtonElement>('.size')[2].click();
+      harness.all<HTMLButtonElement>('.sd-size')[2].click();
       await harness.settle();
       harness.all<HTMLButtonElement>('.qty__step')[1].click();
       await harness.settle();
@@ -602,7 +638,7 @@ describe('QuickView (QV-01)', () => {
     it('takes itself away once its own add has landed', async () => {
       const harness = await ready();
 
-      harness.all<HTMLButtonElement>('.size')[0].click();
+      harness.all<HTMLButtonElement>('.sd-size')[0].click();
       await harness.settle();
       harness.query<HTMLButtonElement>('[data-testid="quick-view-add"]')!.click();
       await harness.settle();
@@ -624,7 +660,7 @@ describe('QuickView (QV-01)', () => {
     it('stays open, showing what the shop said, when the add is refused', async () => {
       const harness = await ready();
 
-      harness.all<HTMLButtonElement>('.size')[0].click();
+      harness.all<HTMLButtonElement>('.sd-size')[0].click();
       await harness.settle();
       harness.query<HTMLButtonElement>('[data-testid="quick-view-add"]')!.click();
       await harness.settle();
@@ -646,7 +682,7 @@ describe('QuickView (QV-01)', () => {
       const harness = await ready();
 
       // The large Indigo has four.
-      harness.all<HTMLButtonElement>('.size')[2].click();
+      harness.all<HTMLButtonElement>('.sd-size')[2].click();
       await harness.settle();
 
       const box = harness.query<HTMLInputElement>('.qty__input')!;
@@ -733,7 +769,7 @@ describe('QuickView (QV-01)', () => {
         true,
       );
 
-      harness.all<HTMLButtonElement>('.size')[0].click();
+      harness.all<HTMLButtonElement>('.sd-size')[0].click();
       await harness.settle();
 
       expect(unavailable(harness.query<HTMLButtonElement>('[data-testid="quick-view-add"]')!)).toBe(
@@ -751,7 +787,7 @@ describe('QuickView (QV-01)', () => {
         '/product/high-rise-straight-jean?colour=1',
       );
 
-      harness.all<HTMLButtonElement>('.size')[2].click();
+      harness.all<HTMLButtonElement>('.sd-size')[2].click();
       await harness.settle();
 
       expect(harness.query<HTMLAnchorElement>('.qv__full')?.getAttribute('href')).toBe(
@@ -778,9 +814,9 @@ describe('QuickView (QV-01)', () => {
     it('counts down for a low-stock variant rather than only labelling it', async () => {
       const harness = await ready();
 
-      harness.all<HTMLButtonElement>('.swatch')[1].click();
+      harness.all<HTMLButtonElement>('.sd-swatch')[1].click();
       await harness.settle();
-      harness.all<HTMLButtonElement>('.size')[0].click();
+      harness.all<HTMLButtonElement>('.sd-size')[0].click();
       await harness.settle();
 
       expect(harness.query('.qv__stock')?.textContent?.trim()).toBe('Only 2 left');
@@ -859,7 +895,7 @@ describe('QuickView (QV-01)', () => {
     expect(element.querySelector('.qv__error')).toBeNull();
 
     // And it does appear for this dialog's own failure, so the gate is not simply "never".
-    element.querySelectorAll<HTMLButtonElement>('.size')[0].click();
+    element.querySelectorAll<HTMLButtonElement>('.sd-size')[0].click();
     fixture.detectChanges();
     await fixture.whenStable();
     element.querySelector<HTMLButtonElement>('[data-testid="quick-view-add"]')!.click();

@@ -128,10 +128,18 @@
    Moved out of `product-page.ts`'s scoped styles when Quick View arrived, for the reason the
    price block above moved out of the card's: two components drawing the same design-system piece
    from two copies of the same rules is how a sold-out swatch ends up slashed in one place and
-   plain in the other. The markup is identical in both, so the class names are the contract. */
+   plain in the other. The markup is identical in both, so the class names are the contract.
+
+   **`.sd-swatch` and `.sd-size` carry the prefix, and they did not at first (round 2, MINOR 3).**
+   Hoisting them made `.size` and `.swatch` *global*, and they are about as generic as class names
+   get: nothing collides today, but a third-party widget, an admin-written rich-text block or the
+   next component to want a "size" modifier all collide with the picker by accident, and the
+   failure would be a silently restyled control rather than an error. `.qty*` below is unprefixed
+   and stays that way for now — it is pre-existing, `bag-page` and the product page both consume
+   it under that name, and it is a good deal less generic. */
 
 /* Round, like the card's colour dots (docs/04 style-tile decision 3), inside a 44 px target. */
-.swatch {
+.sd-swatch {
   display: grid;
   place-items: center;
   width: var(--tap);
@@ -142,17 +150,17 @@
   background: none;
   cursor: pointer;
 }
-.swatch.is-selected {
+.sd-swatch.is-selected {
   border-color: var(--color-primary);
 }
-.swatch__dot {
+.sd-swatch__dot {
   width: 26px;
   height: 26px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-round);
   background: var(--swatch);
 }
-.swatch__dot--light {
+.sd-swatch__dot--light {
   border-color: var(--color-border-strong);
 }
 /* Sold out, but still made and still selectable - a different thing from a size this colourway is
@@ -162,32 +170,32 @@
    change, so it does not rest on colour alone (WCAG 1.4.1), and the same mark on a size button so
    "sold out" reads the same wherever it appears. It is inset inside the border box and so can never
    reach the focus ring, which is drawn further out again. */
-.size.is-sold-out,
-.swatch__dot.is-sold-out {
+.sd-size.is-sold-out,
+.sd-swatch__dot.is-sold-out {
   position: relative;
   color: var(--color-text-muted);
 }
 /* A size button has text and a known background, so the mark can follow its own colour. A swatch is
    whatever an admin chose, so the mark is given one measured against it. */
-.swatch__dot.is-sold-out {
+.sd-swatch__dot.is-sold-out {
   color: var(--slash);
 }
 /* The chosen size is a dark button; muting its label there would drop it below AA. */
-.size.is-sold-out.is-selected {
+.sd-size.is-sold-out.is-selected {
   color: var(--color-on-primary);
 }
-.size.is-sold-out::after,
-.swatch__dot.is-sold-out::after {
+.sd-size.is-sold-out::after,
+.sd-swatch__dot.is-sold-out::after {
   content: '';
   position: absolute;
   inset: 1px;
   background: linear-gradient(to top left, transparent 47%, currentColor 47% 53%, transparent 53%);
   pointer-events: none;
 }
-.swatch__dot.is-sold-out::after {
+.sd-swatch__dot.is-sold-out::after {
   border-radius: var(--radius-round);
 }
-.size {
+.sd-size {
   min-width: var(--tap);
   min-height: var(--tap);
   padding-inline: var(--space-1-5);
@@ -196,14 +204,14 @@
   font-size: var(--text-small);
   cursor: pointer;
 }
-.size.is-selected {
+.sd-size.is-selected {
   border-color: var(--color-primary);
   background: var(--color-primary);
   color: var(--color-on-primary);
 }
 /* A size this colourway is not made in. Struck through rather than merely greyed, so it does not
    rely on colour alone (WCAG 1.4.1). */
-.size:disabled {
+.sd-size:disabled {
   border-color: var(--color-border);
   background: var(--color-bg-alt);
   color: var(--color-text-muted);

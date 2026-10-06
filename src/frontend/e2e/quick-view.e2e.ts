@@ -393,7 +393,7 @@ test.describe('the dialog (QV-01)', () => {
     const photo = dialog.locator('.qv__photo');
     const first = await photo.getAttribute('src');
 
-    const swatches = dialog.locator('.swatch');
+    const swatches = dialog.locator('.sd-swatch');
     await expect(swatches).not.toHaveCount(0);
     await swatches.nth(1).click();
 
@@ -411,7 +411,7 @@ test.describe('the dialog (QV-01)', () => {
 
     await expect(page).toHaveURL(/\/product\/test-product-1\?colour=\d+&size=\d+/);
     // The product page opens on the same choice, not on a blank one.
-    await expect(page.locator('.pdp__sizes .size.is-selected')).toHaveCount(1);
+    await expect(page.locator('.pdp__sizes .sd-size.is-selected')).toHaveCount(1);
     // And the dialog went with the page, scroll lock and all.
     await expect(page.locator('#quick-view')).toBeHidden();
     expect(await page.evaluate(() => document.body.classList.contains('sd-no-scroll'))).toBe(false);
@@ -469,7 +469,7 @@ test.describe('adding to the bag from the dialog', () => {
 
     const { dialog } = await openQuickView(page, { nth: 1 });
 
-    const swatches = dialog.locator('.swatch');
+    const swatches = dialog.locator('.sd-swatch');
     await expect(swatches).toHaveCount(3);
     await swatches.nth(2).click();
     await dialog.locator('[data-testid="quick-view-size"]').nth(0).click();
@@ -523,7 +523,7 @@ test.describe('the dialog at every viewport (GLB-12)', () => {
       const { dialog } = await openQuickView(page);
       // The wholly sold-out product wears all sixteen seeded colourways, which is the widest the
       // swatch row ever gets; this one has two, so both shapes are covered by the pair of tests.
-      await expect(dialog.locator('.swatch').first()).toBeVisible();
+      await expect(dialog.locator('.sd-swatch').first()).toBeVisible();
 
       expect(await dialogOverflow(page)).toEqual({
         document: 0,
@@ -543,7 +543,7 @@ test.describe('the dialog at every viewport (GLB-12)', () => {
     await expect(page.locator('.pdp__row').first()).toBeVisible();
 
     const { dialog } = await openQuickView(page);
-    await expect(dialog.locator('.swatch').first()).toBeVisible();
+    await expect(dialog.locator('.sd-swatch').first()).toBeVisible();
 
     expect(await dialogOverflow(page)).toEqual({
       document: 0,
@@ -556,7 +556,7 @@ test.describe('the dialog at every viewport (GLB-12)', () => {
     // reports an empty list for a selector that matched nothing (issue #80).
     for (const clause of [
       '#quick-view .sd-modal__close',
-      '#quick-view .swatch',
+      '#quick-view .sd-swatch',
       '#quick-view [data-testid="quick-view-size"]',
       '#quick-view .qty__step',
       '#quick-view .qty__input',

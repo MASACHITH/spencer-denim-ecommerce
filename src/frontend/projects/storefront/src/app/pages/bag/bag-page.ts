@@ -389,39 +389,12 @@ import { RobotsMeta } from '../../core/platform/robots-meta';
       align-items: center;
       color: var(--color-text-muted);
     }
-    .qty {
-      display: flex;
-      align-items: stretch;
-      width: max-content;
-      border: 1px solid var(--color-border-strong);
-    }
-    /* The three controls sit edge to edge, so a focus ring would be painted under its neighbour.
-       Lifting whichever has focus puts the whole ring on top (lesson L4). */
-    .qty > :focus-visible {
-      position: relative;
-      z-index: 1;
-    }
-    .qty__step {
-      width: var(--tap);
-      min-height: var(--tap);
-      border: 0;
-      background: var(--color-surface);
-      font-size: var(--text-h4);
-      cursor: pointer;
-    }
-    .qty__step:disabled {
-      color: var(--color-text-muted);
-      cursor: not-allowed;
-    }
-    .qty__input {
-      width: 3.5rem;
-      min-height: var(--tap);
-      border: 0;
-      border-inline: 1px solid var(--color-border-strong);
-      background: var(--color-surface);
-      text-align: center;
-      font-variant-numeric: tabular-nums;
-    }
+    /* .qty, .qty > :focus-visible, .qty__step and .qty__input are **not** here. They were, as a
+       byte-for-byte copy of the declarations QV-01 hoisted into the storefront stylesheet, which
+       left two sources for one design-system piece and this one shadowing the global by the
+       specificity a scoped attribute adds. Removed in round 2: the quantity stepper is the same
+       control on this page, the product page and in Quick View, and the class names are the
+       contract between them. See projects/storefront/src/styles.css. */
     .bag__total {
       grid-area: total;
       font-weight: var(--weight-medium);

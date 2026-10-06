@@ -401,7 +401,7 @@ describe('ProductPage (PDP-01..07)', () => {
     it('disables a size the chosen colourway is not made in', async () => {
       await open('/product/high-rise-straight-jean?colour=2');
 
-      const sizes = queryAll<HTMLButtonElement>('.size');
+      const sizes = queryAll<HTMLButtonElement>('.sd-size');
       expect(sizes.map((button) => button.disabled)).toEqual([false, false, true]);
       expect(sizes[2].getAttribute('aria-label')).toContain('not made in this colour');
     });
@@ -415,7 +415,7 @@ describe('ProductPage (PDP-01..07)', () => {
     it('writes the chosen colour into the address bar', async () => {
       await open('/product/high-rise-straight-jean');
 
-      queryAll<HTMLButtonElement>('.swatch')[1].click();
+      queryAll<HTMLButtonElement>('.sd-swatch')[1].click();
       await settle();
 
       expect(TestBed.inject(Router).url).toContain('colour=2');
@@ -425,7 +425,7 @@ describe('ProductPage (PDP-01..07)', () => {
     it('clears the size when the new colourway is not made in it', async () => {
       await open('/product/high-rise-straight-jean?colour=1&size=12');
 
-      queryAll<HTMLButtonElement>('.swatch')[1].click();
+      queryAll<HTMLButtonElement>('.sd-swatch')[1].click();
       await settle();
 
       expect(TestBed.inject(Router).url).not.toContain('size=');
@@ -603,7 +603,10 @@ describe('ProductPage (PDP-01..07)', () => {
 
       expect(addUnavailable()).toBe(false);
       expect(addButton().hasAttribute('aria-disabled')).toBe(false);
-      expect(query('#pdp-add-reason')).toBeNull();
+      // The paragraph stays on the page as an empty live region (NIT 2) — what goes away is the
+      // sentence in it and the aria-describedby pointing at it.
+      expect(query('#pdp-add-reason')?.textContent?.trim()).toBe('');
+      expect(addButton().hasAttribute('aria-describedby')).toBe(false);
 
       addButton().click();
       await settle();
@@ -850,7 +853,7 @@ describe('ProductPage (PDP-01..07)', () => {
     it('marks a sold-out size without disabling it', async () => {
       await open('/product/high-rise-straight-jean?colour=1');
 
-      const sizes = queryAll<HTMLButtonElement>('.size');
+      const sizes = queryAll<HTMLButtonElement>('.sd-size');
       // Indigo: S has five, M has none, L has two.
       expect(sizes[0].classList.contains('is-sold-out')).toBe(false);
       expect(sizes[1].classList.contains('is-sold-out')).toBe(true);
@@ -861,7 +864,7 @@ describe('ProductPage (PDP-01..07)', () => {
     it('keeps "sold out" and "not made in this colour" apart', async () => {
       await open('/product/high-rise-straight-jean?colour=2');
 
-      const sizes = queryAll<HTMLButtonElement>('.size');
+      const sizes = queryAll<HTMLButtonElement>('.sd-size');
       // Ecru has no L variant at all, which is a disabled button, not a sold-out one.
       expect(sizes[2].disabled).toBe(true);
       expect(sizes[2].classList.contains('is-sold-out')).toBe(false);
@@ -873,7 +876,7 @@ describe('ProductPage (PDP-01..07)', () => {
         variants: [variant(1, INDIGO, SMALL, 0), variant(2, ECRU, SMALL, 4)],
       });
 
-      const dots = queryAll<HTMLElement>('.swatch__dot');
+      const dots = queryAll<HTMLElement>('.sd-swatch__dot');
       expect(dots[0].classList.contains('is-sold-out')).toBe(true);
       expect(dots[1].classList.contains('is-sold-out')).toBe(false);
     });

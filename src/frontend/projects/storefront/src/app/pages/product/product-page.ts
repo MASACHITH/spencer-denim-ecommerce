@@ -208,7 +208,7 @@ const RECENT_SHOWN = 6;
                 <div class="pdp__swatches">
                   @for (option of colours(); track option.colour.id) {
                     <button
-                      class="swatch"
+                      class="sd-swatch"
                       type="button"
                       [class.is-selected]="option.colour.id === selection().colourId"
                       [attr.aria-pressed]="option.colour.id === selection().colourId"
@@ -216,8 +216,8 @@ const RECENT_SHOWN = 6;
                       (click)="chooseColour(option.colour.id)"
                     >
                       <span
-                        class="swatch__dot"
-                        [class.swatch__dot--light]="isLight(option.colour.hexCode)"
+                        class="sd-swatch__dot"
+                        [class.sd-swatch__dot--light]="isLight(option.colour.hexCode)"
                         [class.is-sold-out]="!option.isInStock"
                         [style.--swatch]="option.colour.hexCode ?? 'transparent'"
                         [style.--slash]="slashInk(option.colour.hexCode)"
@@ -236,7 +236,7 @@ const RECENT_SHOWN = 6;
                 <div class="pdp__sizes">
                   @for (option of sizes(); track option.size.id) {
                     <button
-                      class="size"
+                      class="sd-size"
                       type="button"
                       [class.is-selected]="option.size.id === selection().sizeId"
                       [class.is-sold-out]="option.offered && !option.isInStock"
@@ -322,9 +322,12 @@ const RECENT_SHOWN = 6;
               {{ adding() ? 'Adding…' : 'Add to bag' }}
             </button>
 
-            @if (addToBagReason(); as reason) {
-              <p class="pdp__qty-note" id="pdp-add-reason">{{ reason }}</p>
-            }
+            <!-- A live region, always in the DOM rather than inside an @if, for the reason Quick
+                 View's copy of this line gives (round 2, NIT 2): quantityNote() returns '' for an
+                 OutOfStock selection, so picking a sold-out size silenced the status region above
+                 and changed only this line, which was not live. An emptied region announces
+                 nothing, and a region that appears already holding its text is not a change. -->
+            <p class="pdp__qty-note" id="pdp-add-reason" role="status">{{ addToBagReason() }}</p>
 
             @if (bagError(); as message) {
               <p class="pdp__add-error" role="alert">{{ message }}</p>
@@ -488,9 +491,11 @@ const RECENT_SHOWN = 6;
       flex-wrap: wrap;
       gap: var(--space-1);
     }
-    /* .swatch, .size and .qty are in the storefront stylesheet, not here: Quick View (QV-01)
+    /* .sd-swatch, .sd-size and .qty are in the storefront stylesheet, not here: Quick View (QV-01)
        draws the same picker from the same markup, and two copies of these rules is how a sold-out
-       swatch ends up slashed on one screen and plain on the other. */
+       swatch ends up slashed on one screen and plain on the other. The two picker classes carry
+       the sd- prefix because they are global and "size" and "swatch" are about as generic as a
+       class name gets; .qty does not, and that is pre-existing rather than considered. */
     .pdp__qty-note {
       font-size: var(--text-label);
       color: var(--color-text-muted);

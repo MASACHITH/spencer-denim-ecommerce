@@ -545,8 +545,8 @@ test.describe('reduced motion', () => {
    * listed explicitly, and `quantity` puts the page in the state where the minus is live.
    */
   const FOCUSABLE = [
-    { name: 'a colour swatch', selector: '.swatch' },
-    { name: 'a size button', selector: '.size:not(:disabled)' },
+    { name: 'a colour swatch', selector: '.sd-swatch' },
+    { name: 'a size button', selector: '.sd-size:not(:disabled)' },
     { name: 'the wishlist button', selector: '.pdp__wish' },
     // With no size chosen the stepper's ceiling is one and both its buttons are disabled, so
     // there is nothing to focus. A size is the state a shopper is in when they use it anyway.
@@ -784,7 +784,7 @@ test.describe('the selection (PDP-03)', () => {
     const first = page.locator('.gallery__img');
     await expect(first).toHaveAttribute('alt', 'Test Product 1 in Indigo');
 
-    await page.locator('.swatch').nth(1).click();
+    await page.locator('.sd-swatch').nth(1).click();
 
     await expect(page).toHaveURL(/colour=2/);
     await expect(page.locator('.gallery__img')).toHaveAttribute('alt', 'Test Product 1 in Black');
@@ -795,7 +795,7 @@ test.describe('the selection (PDP-03)', () => {
   }) => {
     await page.goto(`${PRODUCT}?colour=2`);
 
-    const large = page.locator('.size').nth(2);
+    const large = page.locator('.sd-size').nth(2);
     await expect(large).toBeDisabled();
     expect(
       await large.evaluate((element) => getComputedStyle(element).textDecorationLine),
@@ -808,7 +808,7 @@ test.describe('the selection (PDP-03)', () => {
     const now = page.locator('.pdp__price .price__now');
     await expect(now).toHaveText('Rs. 2,600');
 
-    await page.locator('.size').nth(2).click();
+    await page.locator('.sd-size').nth(2).click();
 
     await expect(page).toHaveURL(/size=12/);
     await expect(now).toHaveText('Rs. 3,100');
@@ -826,10 +826,10 @@ test.describe('sold out looks sold out (PDP-03)', () => {
   }) => {
     await page.goto(`${PRODUCT}?colour=1`);
 
-    const sizes = page.locator('.size');
+    const sizes = page.locator('.sd-size');
     const inStock = sizes.nth(0);
     const soldOut = sizes.nth(1);
-    const notMade = page.locator('.size:disabled');
+    const notMade = page.locator('.sd-size:disabled');
 
     await expect(soldOut).toBeEnabled();
     await expect(soldOut).toHaveClass(/is-sold-out/);
@@ -891,7 +891,7 @@ test.describe('sold out looks sold out (PDP-03)', () => {
           .map((match) => match[1].split(/[,/]/).map((part) => parseFloat(part.trim())))
           .filter((parts) => parts.length < 4 || parts[3] > 0);
 
-      return [...document.querySelectorAll<HTMLElement>('.swatch__dot')].map((dot) => {
+      return [...document.querySelectorAll<HTMLElement>('.sd-swatch__dot')].map((dot) => {
         const after = getComputedStyle(dot, '::after');
         const slash = opaque(after.backgroundImage)[0] ?? null;
         const behind = opaque(getComputedStyle(dot).backgroundColor)[0] ?? [255, 255, 255];
@@ -921,7 +921,7 @@ test.describe('sold out looks sold out (PDP-03)', () => {
     await page.goto('/product/test-product-11');
     await expect(page.locator('h1')).toBeVisible();
 
-    const dots = page.locator('.swatch__dot');
+    const dots = page.locator('.sd-swatch__dot');
     await expect(dots.first()).toHaveClass(/is-sold-out/);
     expect(
       await dots.first().evaluate((element) => getComputedStyle(element, '::after').content),
@@ -934,7 +934,7 @@ test.describe('sold out looks sold out (PDP-03)', () => {
 
     expect(
       await page
-        .locator('.swatch__dot')
+        .locator('.sd-swatch__dot')
         .first()
         .evaluate((element) => getComputedStyle(element, '::after').content),
     ).toBe('none');
