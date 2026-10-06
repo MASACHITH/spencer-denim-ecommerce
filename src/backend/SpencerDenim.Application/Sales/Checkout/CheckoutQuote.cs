@@ -58,12 +58,19 @@ internal static class CheckoutQuote
         var priced = lines.Where(IsPriced).ToList();
         var itemCount = lines.Sum(line => (int)line.Quantity);
 
+        // The count that goes beside the Subtotal *figure*, so the two describe the same lines. The bag
+        // has had this distinction since W2-09 (`CartTotalsDto.BuyableItemCount`); checkout printed
+        // `itemCount` against a subtotal that excludes the unbuyable lines, and so said "3 items" for a
+        // sum of two.
+        var buyableItemCount = priced.Sum(line => (int)line.Quantity);
+
         if (priced.Count == 0)
         {
             return lines.Count == 0
                 ? null
                 : new CheckoutTotalsDto(
                     itemCount,
+                    buyableItemCount,
                     lines.Count,
                     0m,
                     0m,
@@ -86,6 +93,7 @@ internal static class CheckoutQuote
 
             return new CheckoutTotalsDto(
                 itemCount,
+                buyableItemCount,
                 lines.Count,
                 original,
                 subtotal,
@@ -102,6 +110,7 @@ internal static class CheckoutQuote
 
         return new CheckoutTotalsDto(
             itemCount,
+            buyableItemCount,
             lines.Count,
             pricing.ItemsOriginalTotal,
             pricing.ItemsSubtotal,

@@ -1,3 +1,4 @@
+import { DOCUMENT } from '@angular/common';
 import {
   ChangeDetectionStrategy,
   Component,
@@ -29,8 +30,11 @@ import {
   EMPTY_CHECKOUT,
   checkoutBlockerMessage,
   deliveryEstimate,
+  isPricedLine,
   looksLikeEmail,
+  looksLikePhone,
 } from '../../core/checkout/checkout.model';
+import { DeliveryDistrictService } from '../../core/delivery/delivery-district.service';
 import { RobotsMeta } from '../../core/platform/robots-meta';
 import { ServerHandover } from '../../core/platform/server-handover';
 
@@ -68,6 +72,44 @@ const EMPTY_FORM: CheckoutForm = {
   customerNote: '',
 };
 
+/** One entry of the refused-submission summary: what is wrong, and which control to go to. */
+interface RefusedField {
+  readonly field: string;
+  readonly message: string;
+  readonly elementId: string | null;
+}
+
+/**
+ * The fields the summary can name, **in the order they appear on the page**, with the control a shopper
+ * has to reach to fix each one.
+ *
+ * The order is the page's rather than the order the errors were produced in, because a summary that
+ * listed them in validation order would send somebody up and down the form. `elementId` is null for the
+ * two that have no control — a stale checkout key and a missing total both mean "reload the page" — so
+ * those read as text rather than as a link to nowhere.
+ */
+const SUMMARY_FIELDS: readonly { readonly field: string; readonly elementId: string | null }[] = [
+  { field: 'checkoutKey', elementId: null },
+  { field: 'expectedGrandTotal', elementId: null },
+  { field: 'firstName', elementId: 'co-firstName' },
+  { field: 'lastName', elementId: 'co-lastName' },
+  { field: 'email', elementId: 'co-email' },
+  { field: 'phone', elementId: 'co-phone' },
+  { field: 'districtId', elementId: 'co-district' },
+  { field: 'deliveryMethodId', elementId: 'co-delivery' },
+  { field: 'pickupLocationId', elementId: 'co-pickup' },
+  { field: 'address', elementId: 'co-recipient' },
+  { field: 'address.recipientName', elementId: 'co-recipient' },
+  { field: 'address.phone', elementId: 'co-address-phone' },
+  { field: 'address.line1', elementId: 'co-line1' },
+  { field: 'address.line2', elementId: 'co-line2' },
+  { field: 'address.city', elementId: 'co-city' },
+  { field: 'address.postalCode', elementId: 'co-postcode' },
+  { field: 'address.landmark', elementId: 'co-landmark' },
+  { field: 'paymentMethodCode', elementId: 'co-payment' },
+  { field: 'customerNote', elementId: 'co-note' },
+];
+
 /**
  * Checkout (CHK-01, CHK-02, CHK-03).
  *
@@ -95,6 +137,13 @@ const EMPTY_FORM: CheckoutForm = {
  * reference to quote and a slip upload; all of that is doc 11 P7 — PAY-01, W3-03's step 3. Checkout ends
  * by placing the order and showing its number (CHK-04), and the success page says the order is waiting
  * for payment without promising details it does not have.
+ *
+ * **And no promise of an email**, which this page used to make twice. `ops.EmailOutbox` does not exist
+ * and ACC-03's `OrderPlaced` and `BankTransferInstructions` messages are W3-06, so "we send your order
+ * number and its link here" was a sentence nothing could honour — and it contradicted the success page,
+ * which correctly tells the shopper to keep the page's address. A guest's only route back to their order
+ * is that `PublicId` link. The email field stays: the address is stored on the order and W3-06 sends to
+ * it. Only the promise is gone.
  *
  * **No "I agree to the Terms" checkbox.** Doc 11 §7 G-31 asks for the sentence and explicitly records
  * that v1 stores no acceptance flag, so the sentence is here and the checkbox is not. It does not link to
@@ -137,6 +186,35 @@ const EMPTY_FORM: CheckoutForm = {
            interruption, a recalculated delivery fee is not. -->
       @if (error(); as message) {
         <p class="checkout__error" role="alert">{{ message }}</p>
+      }
+
+      <!-- **WCAG 2.2 4.1.3, and the defect it names.** Pressing Place order with nothing filled in used
+           to draw three red field messages and nothing else: no summary, no announcement, and focus left
+           on BODY. A keyboard or screen-reader user had no way to learn the form had been refused at all,
+           and axe cannot see it (it reported zero violations on this page). role="alert" makes this speak
+           the moment it appears; placeOrder moves focus into it; and each entry names the blocking field
+           and takes you to its control. It is computed from the live errors, so it empties itself as the
+           shopper fixes them rather than going stale. -->
+      @if (refusedSummary(); as refused) {
+        <div class="checkout__refused" id="checkout-refused" role="alert" tabindex="-1">
+          <p class="checkout__refused-head">
+            Your order was not placed.
+            {{ refused.length === 1 ? 'One thing needs your attention:' : 'These need your attention:' }}
+          </p>
+          <ul class="checkout__refused-list">
+            @for (item of refused; track item.field) {
+              <li>
+                @if (item.elementId; as elementId) {
+                  <button class="checkout__refused-link" type="button" (click)="goToField(elementId)">
+                    {{ item.message }}
+                  </button>
+                } @else {
+                  {{ item.message }}
+                }
+              </li>
+            }
+          </ul>
+        </div>
       }
 
       @if (isLoading() && isEmpty()) {
@@ -222,8 +300,16 @@ const EMPTY_FORM: CheckoutForm = {
                     "
                     (input)="set('email', $event)"
                   />
+                  <!-- **It does not say an email is coming, and that is deliberate.** It said "We send
+                       your order number and its link here" and nothing can: ops.EmailOutbox does not
+                       exist and ACC-03's OrderPlaced and BankTransferInstructions messages are W3-06. The
+                       success page already tells the truth - "Keep this page's address: it is the link to
+                       your order" - so the two pages contradicted each other and the false one was the
+                       page a shopper reads *before* committing. A guest's only route back to their order
+                       is the PublicId link, so one who expects an email closes the tab and loses it. The
+                       field stays, because the address is on the order and W3-06 will send to it. -->
                   <p class="checkout__hint" id="co-email-hint">
-                    We send your order number and its link here.
+                    Kept with your order, for us to reach you about it.
                   </p>
                   @if (messageFor('email'); as message) {
                     <p class="checkout__fielderror" id="co-email-error">{{ message }}</p>
@@ -285,7 +371,12 @@ const EMPTY_FORM: CheckoutForm = {
               </div>
 
               @if (districtId() !== null) {
-                <fieldset class="checkout__group checkout__group--nested">
+                <!-- The group carries the error, because a radio group's message belongs to the group
+                     and not to whichever option happens to be first. -->
+                <fieldset
+                  class="checkout__group checkout__group--nested"
+                  [attr.aria-describedby]="messageFor('deliveryMethodId') ? 'co-delivery-error' : null"
+                >
                   <legend class="checkout__legend checkout__legend--sub">Delivery</legend>
 
                   @if (deliveryOptions().length === 0) {
@@ -294,12 +385,13 @@ const EMPTY_FORM: CheckoutForm = {
                     </p>
                   }
 
-                  @for (option of deliveryOptions(); track option.id) {
+                  @for (option of deliveryOptions(); track option.id; let first = $first) {
                     <label class="checkout__choice" [class.is-unavailable]="!option.isAvailable">
                       <input
                         class="checkout__radio"
                         type="radio"
                         name="deliveryMethodId"
+                        [attr.id]="first ? 'co-delivery' : null"
                         [value]="option.id"
                         [checked]="option.id === deliveryMethodId()"
                         [disabled]="!option.isAvailable"
@@ -343,7 +435,7 @@ const EMPTY_FORM: CheckoutForm = {
                   }
 
                   @if (messageFor('deliveryMethodId'); as message) {
-                    <p class="checkout__fielderror">{{ message }}</p>
+                    <p class="checkout__fielderror" id="co-delivery-error">{{ message }}</p>
                   }
                 </fieldset>
 
@@ -488,7 +580,10 @@ const EMPTY_FORM: CheckoutForm = {
                   <!-- Store pickup (CHK-02). The list is empty until the client gives us a shop address
                        (doc 08 §9 seeds zero pickup locations, D8), and the method ships disabled for
                        exactly that reason — so this branch is reachable only once both exist. -->
-                  <fieldset class="checkout__group checkout__group--nested">
+                  <fieldset
+                    class="checkout__group checkout__group--nested"
+                    [attr.aria-describedby]="messageFor('pickupLocationId') ? 'co-pickup-error' : null"
+                  >
                     <legend class="checkout__legend checkout__legend--sub">Collect from</legend>
 
                     @if (pickupLocations().length === 0) {
@@ -497,12 +592,13 @@ const EMPTY_FORM: CheckoutForm = {
                       </p>
                     }
 
-                    @for (location of pickupLocations(); track location.id) {
+                    @for (location of pickupLocations(); track location.id; let first = $first) {
                       <label class="checkout__choice">
                         <input
                           class="checkout__radio"
                           type="radio"
                           name="pickupLocationId"
+                          [attr.id]="first ? 'co-pickup' : null"
                           [value]="location.id"
                           [checked]="location.id === pickupLocationId()"
                           (change)="choosePickupLocation(location.id)"
@@ -520,14 +616,17 @@ const EMPTY_FORM: CheckoutForm = {
                     }
 
                     @if (messageFor('pickupLocationId'); as message) {
-                      <p class="checkout__fielderror">{{ message }}</p>
+                      <p class="checkout__fielderror" id="co-pickup-error">{{ message }}</p>
                     }
                   </fieldset>
                 }
               }
             </fieldset>
 
-            <fieldset class="checkout__group">
+            <fieldset
+              class="checkout__group"
+              [attr.aria-describedby]="messageFor('paymentMethodCode') ? 'co-payment-error' : null"
+            >
               <legend class="checkout__legend">How you would like to pay</legend>
 
               @if (session().paymentMethods.length === 0) {
@@ -536,12 +635,13 @@ const EMPTY_FORM: CheckoutForm = {
                 </p>
               }
 
-              @for (method of session().paymentMethods; track method.code) {
+              @for (method of session().paymentMethods; track method.code; let first = $first) {
                 <label class="checkout__choice">
                   <input
                     class="checkout__radio"
                     type="radio"
                     name="paymentMethodCode"
+                    [attr.id]="first ? 'co-payment' : null"
                     [value]="method.code"
                     [checked]="method.code === paymentMethodCode()"
                     (change)="choosePaymentMethod(method.code)"
@@ -556,7 +656,7 @@ const EMPTY_FORM: CheckoutForm = {
               }
 
               @if (messageFor('paymentMethodCode'); as message) {
-                <p class="checkout__fielderror">{{ message }}</p>
+                <p class="checkout__fielderror" id="co-payment-error">{{ message }}</p>
               }
             </fieldset>
 
@@ -605,7 +705,17 @@ const EMPTY_FORM: CheckoutForm = {
                       <span class="checkout__line-notice">{{ notice }}</span>
                     }
                   </span>
-                  <span class="checkout__line-price">{{ money(line.lineSubtotal) }}</span>
+                  <!-- **A line that is not in the total does not print a price.** An Unavailable line
+                       printed Rs. 3,990 in this column while contributing nothing to the figures below
+                       it, which reads as a total that does not add up. The bag already prints an em dash
+                       for exactly this, and the two pages are read one after the other. -->
+                  <span class="checkout__line-price">
+                    @if (isPriced(line)) {
+                      {{ money(line.lineSubtotal) }}
+                    } @else {
+                      <span class="checkout__muted">&mdash;</span>
+                    }
+                  </span>
                 </li>
               }
             </ul>
@@ -619,7 +729,14 @@ const EMPTY_FORM: CheckoutForm = {
                  figures back off the rendered DOM and asserts the sum. -->
             <dl class="checkout__sums">
               <div>
-                <dt>Subtotal ({{ totals().itemCount }} {{ totals().itemCount === 1 ? 'item' : 'items' }})</dt>
+                <!-- buyableItemCount, not itemCount: the count has to describe the same lines the
+                     figure beside it sums. itemCount made a bag with one deactivated line say
+                     "Subtotal (3 items) Rs. 7,980" here and "Subtotal (2 items) Rs. 7,980" on the bag,
+                     for one bag. -->
+                <dt>
+                  Subtotal ({{ totals().buyableItemCount }}
+                  {{ totals().buyableItemCount === 1 ? 'item' : 'items' }})
+                </dt>
                 <dd data-sum="subtotal">{{ money(totals().itemsOriginalTotal) }}</dd>
               </div>
 
@@ -687,11 +804,19 @@ const EMPTY_FORM: CheckoutForm = {
               <a class="link" routerLink="/bag">Back to your bag</a>
             }
 
+            <!-- **aria-disabled, not disabled, and that is two defects at once.** A disabled button is
+                 out of the tab order, so a keyboard or screen-reader user could not reach it, could not
+                 read why it would not work, and was told nothing: no aria-describedby, no aria-disabled,
+                 no title. And disabling a control that already has focus throws that focus to BODY, which
+                 is ADM-22's known defect and which the admin settings page fixed the same way. The press
+                 is still a no-op - placeOrder refuses it and raises the summary at the top of the page,
+                 which is the answer the shopper was pressing for. -->
             <button
               class="btn btn--primary checkout__place"
               type="submit"
               form="checkout-form"
-              [disabled]="!canSubmit()"
+              [attr.aria-disabled]="canSubmit() ? null : 'true'"
+              [attr.aria-describedby]="blockedReason() ? 'checkout-place-blocked' : null"
             >
               @if (isPlacing()) {
                 Placing your order…
@@ -700,9 +825,18 @@ const EMPTY_FORM: CheckoutForm = {
               }
             </button>
 
+            <!-- The visible reason it is unavailable, which is the pattern the bag page already uses
+                 (bag-checkout-blocked): a reason everybody can read beats a dead control. -->
+            @if (blockedReason(); as reason) {
+              <p class="checkout__notice" id="checkout-place-blocked">{{ reason }}</p>
+            }
+
+            <!-- No email is promised here. See the email field's own comment: nothing in the repository
+                 can send one yet (W3-06), and the success page's "keep this page's address" is the truth
+                 this sentence now matches. -->
             <p class="checkout__muted checkout__fineprint">
-              By placing this order you agree to our terms and conditions. We will email your order
-              number and a link to it.
+              By placing this order you agree to our terms and conditions. The next page shows your order
+              number and its link &mdash; keep that address, because it is how you come back to your order.
             </p>
           </aside>
         </div>
@@ -726,10 +860,42 @@ const EMPTY_FORM: CheckoutForm = {
       color: var(--color-text-muted);
     }
     .checkout__error,
+    .checkout__refused,
     .checkout__notice--warn {
       padding: var(--space-1-5);
       border: 1px solid var(--color-sale);
       color: var(--color-sale);
+    }
+    .checkout__refused {
+      display: grid;
+      gap: var(--space-1);
+      min-width: 0;
+    }
+    .checkout__refused-head {
+      font-weight: var(--weight-medium);
+    }
+    .checkout__refused-list {
+      display: grid;
+      gap: var(--space-0-5);
+      margin: 0;
+      padding-inline-start: var(--space-2);
+      font-size: var(--text-small);
+    }
+    .checkout__refused-link {
+      padding: 0;
+      border: 0;
+      background: none;
+      color: inherit;
+      font: inherit;
+      text-align: start;
+      text-decoration: underline;
+      cursor: pointer;
+    }
+    .checkout__place[aria-disabled='true'] {
+      background: var(--color-border);
+      border-color: var(--color-border);
+      color: var(--color-text-muted);
+      cursor: not-allowed;
     }
     .checkout__notice {
       display: grid;
@@ -956,6 +1122,32 @@ export class CheckoutPage {
   private readonly handover = inject(ServerHandover);
   private readonly router = inject(Router);
   private readonly destroyRef = inject(DestroyRef);
+  private readonly document = inject(DOCUMENT);
+
+  /**
+   * GLB-06's header selector, which is the shopper's own stated district (CHK-01).
+   *
+   * **The service's docblock has said "later this drives the delivery estimate and fee (PDP-05, CHK-01)"
+   * since it was written, and CHK-01 is this page.** It was ignored, so the header said Colombo while
+   * this form said "Choose a district" in three places and asked the same question again.
+   *
+   * **`chosen`, not `selected`.** The header is never blank, so `selected` falls back to Colombo; using
+   * that would print a Colombo delivery fee to a shopper in Jaffna who has said nothing, which is
+   * precisely what `CheckoutSessionDto.SelectedDistrictId` has no default in order to avoid. A default
+   * is not a statement. `chosen` is null until the visitor has picked one, and is always null on the
+   * server, so a server-rendered checkout asks exactly as it did before and the browser fills it in on
+   * hydration.
+   *
+   * **The two sources of truth are handled rather than wished away.** `district.data.ts` is a frozen
+   * client-side list — its own TODO(W1-03) says to replace it with the reference-data API — and
+   * `ref.Districts` is the server's, which an admin can rename, deactivate or re-zone. All 25 names agree
+   * today and nothing enforces it. So the client's id is sent only as a **hint**: the server answers with
+   * the district it actually priced (`SelectedDistrictId`, which is null for an id it does not recognise),
+   * and {@link recoverDistrictByName} then tries the name instead. If neither works the form asks, which
+   * is the behaviour before any of this existed. Pointing `DELIVERY_DISTRICTS` at the API is W1-03 and
+   * would delete the duplication outright rather than reconcile it.
+   */
+  private readonly headerDistrict = inject(DeliveryDistrictService);
 
   private readonly current = signal<CheckoutSessionDto>(EMPTY_CHECKOUT);
   private readonly loading = signal(false);
@@ -964,6 +1156,9 @@ export class CheckoutPage {
   private readonly serverErrors = signal<ReadonlyMap<string, string>>(new Map());
   private readonly localErrors = signal<ReadonlyMap<string, string>>(new Map());
   private readonly short = signal<ReadonlyMap<number, number> | null>(null);
+
+  /** Whether the shopper has pressed Place order and been refused. Raises the summary. */
+  private readonly refused = signal(false);
 
   private readonly chosenDistrictId = signal<number | null>(null);
   private readonly chosenDeliveryMethodId = signal<number | null>(null);
@@ -983,6 +1178,9 @@ export class CheckoutPage {
 
   /** Guards against two reads in flight: the later answer wins and an earlier one is discarded. */
   private ticket = 0;
+
+  /** Whether {@link recoverDistrictByName} has already had its one attempt. */
+  private districtRecovered = false;
 
   constructor() {
     inject(Title).setTitle(brandPageTitle('Checkout'));
@@ -1012,6 +1210,14 @@ export class CheckoutPage {
     const handedOver = this.handover.take<CheckoutSessionDto>(HANDOVER_KEY);
     if (handedOver) {
       this.apply(handedOver);
+    }
+
+    // The shopper's own district (GLB-06), *before* the first read rather than after it, so the quote
+    // comes back priced for it in one request instead of two. It is a hint, not a decision — see
+    // `headerDistrict`.
+    const stated = this.headerDistrict.chosen();
+    if (stated && this.chosenDistrictId() === null) {
+      this.chosenDistrictId.set(stated.id);
     }
 
     // From the constructor, so the request is in flight before the first change detection and the server
@@ -1103,8 +1309,103 @@ export class CheckoutPage {
     );
   });
 
+  /**
+   * The refused submission, as a list in page order, or null when there is nothing to say.
+   *
+   * It reads the live errors rather than a snapshot taken at the moment of the refusal, so a shopper
+   * filling the fields in watches the list shrink and then vanish. A frozen copy would keep telling them
+   * about a field they had already corrected, which is the same trap `set()` avoids per field.
+   */
+  protected readonly refusedSummary = computed<readonly RefusedField[] | null>(() => {
+    if (!this.refused()) {
+      return null;
+    }
+
+    const server = this.serverErrors();
+    const local = this.localErrors();
+
+    const named = SUMMARY_FIELDS.map(({ field, elementId }) => ({
+      field,
+      elementId,
+      message: server.get(field) ?? local.get(field) ?? null,
+    })).filter((entry): entry is RefusedField => entry.message !== null);
+
+    return named.length === 0 ? null : named;
+  });
+
+  /**
+   * Why Place order cannot be pressed, in one sentence, or null when it can.
+   *
+   * **It exists because a disabled button explains nothing.** The bag page settled this pattern
+   * (`bag-checkout-blocked`): when the control is unavailable, say so where everybody can read it and
+   * point `aria-describedby` at it. The order of the cases is the order a shopper would have to fix
+   * them in, so the sentence always names the *next* thing rather than the last.
+   */
+  protected readonly blockedReason = computed<string | null>(() => {
+    if (this.isPlacing()) {
+      return 'Your order is being placed.';
+    }
+
+    if (this.isEmpty()) {
+      return null;
+    }
+
+    if (this.blockers().length > 0) {
+      // The blocker notices are already on screen above, with their own wording; this only has to say
+      // that the button is waiting on them.
+      return 'Sort out the notice above before you place the order.';
+    }
+
+    const option = this.selectedOption();
+
+    if (this.chosenDistrictId() === null) {
+      return 'Choose the district your order is going to.';
+    }
+
+    if (option === null) {
+      return 'Choose a delivery option.';
+    }
+
+    if (!option.isAvailable) {
+      return 'That delivery option is not available for your district. Choose another.';
+    }
+
+    if (!option.requiresAddress && this.chosenPickupLocationId() === null) {
+      return 'Choose which store to collect from.';
+    }
+
+    if (this.chosenPaymentMethodCode() === null) {
+      return 'Choose how you would like to pay.';
+    }
+
+    if (this.missingFields().size > 0) {
+      return 'Fill in the fields marked above.';
+    }
+
+    return this.totals().grandTotal === null ? 'Waiting for the delivery fee.' : null;
+  });
+
   protected money(amount: number): string {
     return formatLkr(amount);
+  }
+
+  /** Whether this line is one of the ones the subtotal sums (`CheckoutQuote.IsPriced`'s rule). */
+  protected isPriced(line: CheckoutLineDto): boolean {
+    return isPricedLine(line);
+  }
+
+  /**
+   * Moves focus to the control one summary entry names.
+   *
+   * Through `DOCUMENT` rather than the global, like every other platform read in this app, and it is
+   * only ever reached from a click so there is no server-side path through it. A control that is no
+   * longer rendered — the delivery radios, after the district was cleared — is simply not focused
+   * rather than throwing.
+   */
+  protected goToField(elementId: string): void {
+    const element = this.document.getElementById(elementId);
+    element?.focus();
+    element?.scrollIntoView({ block: 'center', behavior: 'smooth' });
   }
 
   protected estimate(option: DeliveryOptionDto): string | null {
@@ -1159,6 +1460,17 @@ export class CheckoutPage {
 
     this.chosenDistrictId.set(Number.isInteger(districtId) ? districtId : null);
 
+    // **The header follows the form.** GLB-06's selector is one answer to one question, so a shopper who
+    // corrects it here should not find the header still saying Colombo on the next page. By name, for the
+    // reason `headerDistrict` gives; a name the frozen client list does not hold is ignored by
+    // `select()` itself, which is the right outcome rather than a blank header.
+    const district = this.session().districts.find((candidate) => candidate.id === this.districtId());
+    const known = this.headerDistrict.districts.find((candidate) => candidate.name === district?.name);
+
+    if (known) {
+      this.headerDistrict.select(known.code);
+    }
+
     // The chosen method may not exist in the new district's zone at all, so it is dropped rather than
     // carried over: doc 11 P6's "this delivery option is no longer available, choose another", applied
     // before the shopper can submit it rather than after.
@@ -1190,6 +1502,7 @@ export class CheckoutPage {
   protected choosePickupLocation(pickupLocationId: number): void {
     this.chosenPickupLocationId.set(pickupLocationId);
     this.clearError('pickupLocationId');
+    this.localErrors.set(this.missingFields());
   }
 
   protected choosePaymentMethod(code: string): void {
@@ -1204,8 +1517,16 @@ export class CheckoutPage {
     this.localErrors.set(missing);
 
     if (missing.size > 0 || !this.canSubmit()) {
+      // **The refusal is announced, which is the whole of WCAG 2.2 4.1.3 here.** This branch used to
+      // return in silence: three red field messages appeared, nothing was said, and focus stayed on
+      // BODY. Now the summary appears with `role="alert"` and focus moves into it, so a keyboard or
+      // screen-reader user learns both that the form was refused and what to do next. The press reaching
+      // this code at all is the `aria-disabled` button working as intended.
+      this.announceRefusal();
       return;
     }
+
+    this.refused.set(false);
 
     const option = this.selectedOption();
     const form = this.values();
@@ -1264,6 +1585,11 @@ export class CheckoutPage {
           switch (checkoutFailure(error)) {
             case 'invalid':
               this.serverErrors.set(fieldErrorsOf(error));
+
+              // The server named fields, so the summary names them too — and focus goes to it, because a
+              // 400 arriving after a press is exactly the moment nothing on screen has changed where the
+              // shopper is looking.
+              this.announceRefusal();
               break;
 
             case 'soldOut':
@@ -1292,6 +1618,20 @@ export class CheckoutPage {
           }
         },
       });
+  }
+
+  /**
+   * Raises the summary and puts focus in it.
+   *
+   * The focus move waits a tick, because the summary does not exist in the DOM until change detection
+   * has run for the signal that was just set. `setTimeout` rather than `afterNextRender`, which runs
+   * once per component and so cannot serve a second refused press. It is reached only from a user
+   * event, so there is no server-side path through it.
+   */
+  private announceRefusal(): void {
+    this.refused.set(true);
+
+    setTimeout(() => this.document.getElementById('checkout-refused')?.focus());
   }
 
   /** The delivery option the shopper has chosen, or null. */
@@ -1328,12 +1668,35 @@ export class CheckoutPage {
 
     if (blank(form.phone)) {
       errors.set('phone', 'Enter a phone number for the delivery.');
+    } else if (!looksLikePhone(form.phone.trim())) {
+      // Shape only, and the same shape the server checks. `phone: "not-a-phone"` used to place an order:
+      // the field is required because a courier needs to be able to call it, which an unreachable number
+      // defeats.
+      errors.set('phone', 'Enter a phone number the courier can call.');
     }
 
     const option = this.selectedOption();
 
     if (option === null) {
+      // **Which control is to blame depends on what is on the page, and this is the defect.** It used to
+      // set `deliveryMethodId` and return — but the delivery radios do not exist until a district has
+      // been chosen, so the message had nothing to attach itself to: the shopper saw three red messages,
+      // a District select with no error beside it and a neutral grey hint, and the one field actually
+      // blocking the order was never named. So with no district the district is the error, and the
+      // address fields are reported as well rather than held back for a second press, because
+      // `needsAddress()` is true in this state and they are on screen.
+      if (this.chosenDistrictId() === null) {
+        // Nothing below the District select is on screen yet — the whole "Where it is going" block is
+        // gated on a district — so the district is the only honest error to report here.
+        errors.set('districtId', 'Choose the district your order is going to.');
+        return errors;
+      }
+
       errors.set('deliveryMethodId', 'Choose how you would like your order delivered.');
+
+      // The address fields *are* on screen in this state (`needsAddress()` is true when nothing is
+      // chosen), so they are reported too rather than held back for a second press.
+      this.addAddressErrors(errors, form);
       return errors;
     }
 
@@ -1349,12 +1712,23 @@ export class CheckoutPage {
       errors.set('districtId', 'Choose the district your order is going to.');
     }
 
+    this.addAddressErrors(errors, form);
+
+    return errors;
+  }
+
+  /** The four fields `CK_Orders_ShipAddress` requires of a shipped order, named as the shopper sees them. */
+  private addAddressErrors(errors: Map<string, string>, form: CheckoutForm): void {
+    const blank = (value: string) => value.trim() === '';
+
     if (blank(form.recipientName)) {
       errors.set('address.recipientName', 'Enter the name of the person receiving the order.');
     }
 
     if (blank(form.addressPhone)) {
       errors.set('address.phone', 'Enter a phone number for the delivery address.');
+    } else if (!looksLikePhone(form.addressPhone.trim())) {
+      errors.set('address.phone', 'Enter a phone number the courier can call.');
     }
 
     if (blank(form.line1)) {
@@ -1364,8 +1738,6 @@ export class CheckoutPage {
     if (blank(form.city)) {
       errors.set('address.city', 'Enter the town or city.');
     }
-
-    return errors;
   }
 
   /** The API's field name for one of this form's keys. */
@@ -1434,6 +1806,35 @@ export class CheckoutPage {
       });
   }
 
+  /**
+   * The server did not recognise the district that was asked for. Tries the header's choice again by
+   * **name** against the list the server did send, and gives up if that fails too.
+   *
+   * Two things reach here: the header's placeholder id and `ref.Districts` having diverged (see
+   * `headerDistrict`), and an admin deactivating a district a shopper had chosen. Both end the same way —
+   * either a name matches, in which case the quote is re-read for the real id, or the form asks. It runs
+   * at most once per page, because a second attempt could only repeat the first.
+   */
+  private recoverDistrictByName(session: CheckoutSessionDto): void {
+    this.districtRecovered = true;
+    this.chosenDistrictId.set(null);
+
+    const chosen = this.headerDistrict.chosen()?.name;
+    const match = chosen
+      ? session.districts.find((district) => district.name === chosen)
+      : undefined;
+
+    if (!match) {
+      return;
+    }
+
+    this.chosenDistrictId.set(match.id);
+
+    // Re-read, because the options and the fee are priced per zone: a district selected with no quote
+    // behind it shows "Choose a district" in the Delivery row under a select that names one.
+    this.read();
+  }
+
   private apply(session: CheckoutSessionDto): void {
     this.current.set(session);
 
@@ -1446,6 +1847,9 @@ export class CheckoutPage {
     // round: if a method was dropped because it is unavailable in the new zone, the radio clears too.
     if (session.selectedDistrictId !== null) {
       this.chosenDistrictId.set(session.selectedDistrictId);
+    } else if (this.chosenDistrictId() !== null && !this.districtRecovered) {
+      // We asked for a district and the server priced nothing, so the id was not one it knows.
+      this.recoverDistrictByName(session);
     }
 
     this.chosenDeliveryMethodId.set(session.selectedDeliveryMethodId);

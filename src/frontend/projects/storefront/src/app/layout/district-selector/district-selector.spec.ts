@@ -117,4 +117,46 @@ describe('DistrictSelector (GLB-06)', () => {
     expect(() => choose(select, 'LK-21')).not.toThrow();
     expect(service.selected().name).toBe('Kandy');
   });
+
+  /**
+   * **`chosen` and `selected` are not the same question, and checkout needs the first one.** The header
+   * is never blank, so `selected` falls back to Colombo; pre-selecting that on checkout would print a
+   * Colombo delivery fee to somebody in Jaffna who has said nothing, which is exactly what
+   * `CheckoutSessionDto.SelectedDistrictId` has no default in order to avoid.
+   */
+  describe('chosen, which is what CHK-01 reads', () => {
+    it('is null until the visitor has actually chosen', () => {
+      const { service } = setUp(new StorageStub());
+
+      expect(service.selected().name).toBe('Colombo');
+      expect(service.chosen()).toBeNull();
+    });
+
+    it('is the choice once one has been made', () => {
+      const { select, service } = setUp(new StorageStub());
+
+      choose(select, 'LK-21');
+
+      expect(service.chosen()?.name).toBe('Kandy');
+    });
+
+    it('is the stored choice on a later visit', () => {
+      const storage = new StorageStub();
+      storage.entries.set(DELIVERY_DISTRICT_STORAGE_KEY, 'LK-31');
+
+      const { service } = setUp(storage);
+
+      expect(service.chosen()?.name).toBe('Galle');
+    });
+
+    /** A stored value that is not a district is not a choice either. */
+    it('stays null when the stored value is not a district', () => {
+      const storage = new StorageStub();
+      storage.entries.set(DELIVERY_DISTRICT_STORAGE_KEY, 'not-a-district');
+
+      const { service } = setUp(storage);
+
+      expect(service.chosen()).toBeNull();
+    });
+  });
 });

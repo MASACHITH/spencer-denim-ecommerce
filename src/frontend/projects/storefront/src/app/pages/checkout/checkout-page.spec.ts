@@ -20,6 +20,8 @@ import {
   OrderConfirmationDto,
   PaymentMethodDto,
 } from '../../core/checkout/checkout.model';
+import { DELIVERY_DISTRICTS } from '../../core/delivery/district.data';
+import { DELIVERY_DISTRICT_STORAGE_KEY } from '../../core/delivery/delivery-district.service';
 
 const COLOMBO: DistrictDto = { id: 1, name: 'Colombo', deliveryZone: 1 };
 const JAFFNA: DistrictDto = { id: 10, name: 'Jaffna', deliveryZone: 3 };
@@ -68,6 +70,7 @@ function line(overrides: Partial<CheckoutLineDto> = {}): CheckoutLineDto {
 function totals(overrides: Partial<CheckoutTotalsDto> = {}): CheckoutTotalsDto {
   return {
     itemCount: 2,
+    buyableItemCount: 2,
     lineCount: 1,
     itemsOriginalTotal: 13_980,
     itemsSubtotal: 8_784,
@@ -118,6 +121,7 @@ const EMPTY: CheckoutSessionDto = session({
   lines: [],
   totals: totals({
     itemCount: 0,
+    buyableItemCount: 0,
     lineCount: 0,
     itemsOriginalTotal: 0,
     itemsSubtotal: 0,
@@ -245,6 +249,18 @@ describe('CheckoutPage (CHK-01..03)', () => {
     return node;
   }
 
+  /**
+   * Whether Place order is unavailable.
+   *
+   * **`aria-disabled`, not `disabled`, and the assertions were changed on purpose.** A `disabled` button
+   * is out of the tab order, so a keyboard or screen-reader user could neither reach it nor read why it
+   * would not work, and disabling a focused control throws focus to BODY (ADM-22). The press is still a
+   * no-op; what changed is that the page now answers it.
+   */
+  function placeBlocked(): boolean {
+    return placeButton().getAttribute('aria-disabled') === 'true';
+  }
+
   async function type(id: string, value: string): Promise<void> {
     const input = field(id);
     input.value = value;
@@ -336,7 +352,20 @@ describe('CheckoutPage (CHK-01..03)', () => {
     });
   }
 
-  afterEach(() => TestBed.inject(HttpTestingController).verify());
+  /**
+   * **The header district is persisted in `localStorage`, which jsdom keeps between tests in one file.**
+   * A test that chooses Jaffna therefore left the *next* test's page pre-selecting Jaffna and issuing a
+   * second `GET /api/checkout?districtId=10` that nobody flushed. Cleared here rather than worked
+   * around: the write-back is the behaviour under test in `the header district` below.
+   */
+  beforeEach(() => {
+    localStorage.removeItem(DELIVERY_DISTRICT_STORAGE_KEY);
+  });
+
+  afterEach(() => {
+    TestBed.inject(HttpTestingController).verify();
+    localStorage.removeItem(DELIVERY_DISTRICT_STORAGE_KEY);
+  });
 
   describe('the request and the response it belongs to', () => {
     /**
@@ -476,6 +505,42 @@ describe('CheckoutPage (CHK-01..03)', () => {
     });
   });
 
+  /**
+   * **One bag, two pages, one count.** The bag's Subtotal label counts the priced lines
+   * (`buyableItemCount`); checkout counted every line, so a bag of "470 x2 + 471 x1" whose 471 had been
+   * deactivated printed "Subtotal (2 items) Rs. 7,980" on the bag and "Subtotal (3 items) Rs. 7,980"
+   * here. The money was right both times; the label counted an item its own figure excludes.
+   */
+  describe('the counts and the line prices', () => {
+    it('counts only the items the subtotal sums', async () => {
+      await openWith(
+        session({
+          lines: [line(), line({ variantId: 471, status: 'Unavailable', quantity: 1 })],
+          totals: totals({ itemCount: 3, buyableItemCount: 2, lineCount: 2 }),
+        }),
+      );
+
+      const label = element.querySelector('.checkout__sums dt')?.textContent ?? '';
+
+      expect(label).toContain('2 items');
+      expect(label).not.toContain('3 items');
+    });
+
+    it('prints no price for a line that is not in the total', async () => {
+      await openWith(
+        session({
+          lines: [line({ variantId: 471, status: 'Unavailable', lineSubtotal: 3_990 })],
+          totals: totals({ itemCount: 2, buyableItemCount: 0 }),
+        }),
+      );
+
+      const price = element.querySelector('.checkout__line-price')?.textContent ?? '';
+
+      expect(price).not.toContain('3,990');
+      expect(price).toContain('\u2014');
+    });
+  });
+
   describe('the delivery options', () => {
     it('shows the fee, the estimate and the free-delivery threshold', async () => {
       await openWith(session());
@@ -555,7 +620,145 @@ describe('CheckoutPage (CHK-01..03)', () => {
       );
       await settle();
 
-      expect(placeButton().disabled).toBe(true);
+      expect(placeBlocked()).toBe(true);
+    });
+  });
+
+  /**
+   * **GLB-06's header selector is the shopper's own answer to the question this form asks**, and ignoring
+   * it meant the shop asked twice: the header said Colombo while the form said "Choose a district" in
+   * three places. `DeliveryDistrictService`'s docblock has named CHK-01 as its consumer since it was
+   * written.
+   */
+  /**
+   * **The page promised an email that nothing can send.** `ops.EmailOutbox` does not exist and ACC-03's
+   * `OrderPlaced` and `BankTransferInstructions` messages are W3-06, so "We send your order number and
+   * its link here" and "We will email your order number and a link to it" were two sentences nothing
+   * could honour — and they contradicted the success page, which correctly says to keep the page's
+   * address. A guest's only route back to their order is that link, so a shopper told to expect an email
+   * closes the tab and loses the order.
+   */
+  describe('what it promises', () => {
+    it('does not say an email is coming', async () => {
+      await openWith(session());
+
+      const copy = text();
+
+      expect(copy).not.toContain('We send your order number');
+      expect(copy).not.toContain('We will email');
+      expect(copy).not.toMatch(/email (you|your order)/i);
+    });
+
+    it('tells the shopper to keep the link instead, as the success page does', async () => {
+      await openWith(session());
+
+      expect(text()).toContain('keep that address');
+    });
+
+    /** The field stays: the address is stored on the order and W3-06 will send to it. */
+    it('still asks for the email address', async () => {
+      await openWith(session());
+
+      expect(field('co-email')).not.toBeNull();
+      expect(field('co-email').getAttribute('required')).not.toBeNull();
+    });
+  });
+
+  describe('the header district', () => {
+    const jaffnaCode = DELIVERY_DISTRICTS.find((district) => district.name === 'Jaffna')!.code;
+    const gampahaCode = DELIVERY_DISTRICTS.find((district) => district.name === 'Gampaha')!.code;
+
+    it('prices the quote for the district the shopper chose in the header', async () => {
+      localStorage.setItem(DELIVERY_DISTRICT_STORAGE_KEY, jaffnaCode);
+
+      create();
+      await settle();
+
+      const request = checkoutRequest();
+      expect(request.request.params.get('districtId')).toBe(String(JAFFNA.id));
+
+      request.flush(session({ selectedDistrictId: JAFFNA.id }));
+      await settle();
+
+      expect(field('co-district').value).toBe(String(JAFFNA.id));
+    });
+
+    /**
+     * **A default is not a statement.** The header is never blank, so it falls back to Colombo for a
+     * visitor who has said nothing — and printing a Colombo delivery fee to somebody in Jaffna is
+     * exactly what `CheckoutSessionDto.SelectedDistrictId` has no default in order to avoid.
+     */
+    it('does not pre-select the header default for a visitor who has chosen nothing', async () => {
+      create();
+      await settle();
+
+      const request = checkoutRequest();
+      expect(request.request.params.has('districtId')).toBe(false);
+
+      request.flush(unquoted());
+      await settle();
+
+      expect(field('co-district').value).toBe('');
+    });
+
+    /** One question, one answer: the header follows the form as well as the other way round. */
+    it('writes the district chosen here back to the header', async () => {
+      await openWith(unquoted());
+
+      const select = element.querySelector<HTMLSelectElement>('#co-district')!;
+      select.value = String(JAFFNA.id);
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      await settle();
+
+      checkoutRequest().flush(session({ selectedDistrictId: JAFFNA.id }));
+      await settle();
+
+      expect(localStorage.getItem(DELIVERY_DISTRICT_STORAGE_KEY)).toBe(jaffnaCode);
+    });
+
+    /**
+     * **The two lists are allowed to diverge, so the id is only a hint.** `district.data.ts` is frozen
+     * client-side data (TODO(W1-03)) and `ref.Districts` is the server's; all 25 names agree today and
+     * nothing enforces it. When the server answers that it priced nothing, the name is tried against the
+     * list the server did send.
+     */
+    it('recovers by name when the server does not recognise the header id', async () => {
+      localStorage.setItem(DELIVERY_DISTRICT_STORAGE_KEY, gampahaCode);
+
+      create();
+      await settle();
+
+      const serverGampaha: DistrictDto = { id: 902, name: 'Gampaha', deliveryZone: 2 };
+
+      // The server did not price anything, because the id it was handed is not one of its own.
+      checkoutRequest().flush(
+        session({ districts: [COLOMBO, serverGampaha], selectedDistrictId: null }),
+      );
+      await settle();
+
+      const second = checkoutRequest();
+      expect(second.request.params.get('districtId')).toBe(String(serverGampaha.id));
+
+      second.flush(
+        session({ districts: [COLOMBO, serverGampaha], selectedDistrictId: serverGampaha.id }),
+      );
+      await settle();
+
+      expect(field('co-district').value).toBe(String(serverGampaha.id));
+    });
+
+    it('gives up and asks when the name is not in the server list either', async () => {
+      localStorage.setItem(DELIVERY_DISTRICT_STORAGE_KEY, gampahaCode);
+
+      create();
+      await settle();
+
+      // Colombo and Jaffna only: an admin has deactivated Gampaha.
+      checkoutRequest().flush(unquoted());
+      await settle();
+
+      expect(field('co-district').value).toBe('');
+      expect(text()).toContain('Choose a district');
     });
   });
 
@@ -581,7 +784,7 @@ describe('CheckoutPage (CHK-01..03)', () => {
 
       expect(text()).toContain('cannot be bought right now');
       expect(text()).toContain('Only 1 left');
-      expect(placeButton().disabled).toBe(true);
+      expect(placeBlocked()).toBe(true);
       expect(element.querySelector('a[href="/bag"]')).not.toBeNull();
     });
 
@@ -596,8 +799,131 @@ describe('CheckoutPage (CHK-01..03)', () => {
       );
 
       expect(text()).toContain('cannot deliver to that district');
-      expect(placeButton().disabled).toBe(true);
+      expect(placeBlocked()).toBe(true);
     });
+  });
+
+  /**
+   * **The refused submission, which used to be announced to nobody.** Pressing Place order with nothing
+   * filled in drew three red field messages, said nothing, and left focus on BODY — WCAG 2.2 4.1.3, and
+   * invisible to axe, which reported zero violations on this page.
+   */
+  describe('a refused submission', () => {
+    it('announces it, names every blocking field and takes focus', async () => {
+      await openWith(session());
+      await choosePayment('BankTransfer');
+
+      placeButton().click();
+      await settle();
+
+      const refused = element.querySelector('#checkout-refused');
+      expect(refused).not.toBeNull();
+      expect(refused!.getAttribute('role')).toBe('alert');
+
+      const named = Array.from(refused!.querySelectorAll('li')).map((item) =>
+        (item.textContent ?? '').trim(),
+      );
+
+      expect(named).toContain('Enter your first name.');
+      expect(named).toContain('Enter your email address.');
+      expect(named).toContain('Enter a phone number for the delivery.');
+      expect(named).toContain('Enter the street address.');
+
+      // The focus move is deferred by a tick, because the summary does not exist until the signal that
+      // raises it has been rendered.
+      await new Promise((resolve) => setTimeout(resolve));
+      expect(document.activeElement).toBe(refused);
+    });
+
+    /**
+     * **The district was the one field never reported.** `missingFields()` set `deliveryMethodId` and
+     * returned, and there is no delivery-method control to attach an error to until a district is
+     * chosen — so the shopper saw three red messages, a District select with no error and a grey hint.
+     */
+    it('names the district when no delivery option has been chosen', async () => {
+      await openWith(unquoted());
+
+      // The fields that are on screen before a district is chosen, filled in, so the only thing left
+      // outstanding is the one the form never used to name.
+      await type('co-firstName', 'Nimali');
+      await type('co-email', 'nimali@example.com');
+      await type('co-phone', '0771234567');
+      await choosePayment('BankTransfer');
+
+      placeButton().click();
+      await settle();
+
+      expect(field('co-district').getAttribute('aria-invalid')).toBe('true');
+      expect(element.querySelector('#co-district-error')?.textContent).toContain(
+        'Choose the district your order is going to',
+      );
+    });
+
+    /** The list is live, so it empties itself as the shopper fixes things rather than going stale. */
+    it('clears itself as the fields are filled in', async () => {
+      await openWith(session());
+
+      placeButton().click();
+      await settle();
+
+      expect(element.querySelector('#checkout-refused')).not.toBeNull();
+
+      await fillValidForm();
+
+      expect(element.querySelector('#checkout-refused')).toBeNull();
+    });
+
+    /**
+     * **`aria-disabled` and a reason, not `disabled` and silence.** A disabled button is out of the tab
+     * order, carried no `aria-describedby`, no `aria-disabled` and no title, so there was no way to
+     * learn why it would not work. The bag page already does this (`bag-checkout-blocked`).
+     */
+    it('says why Place order is unavailable, and keeps it reachable', async () => {
+      await openWith(unquoted());
+
+      const button = placeButton();
+
+      expect(button.disabled).toBe(false);
+      expect(button.getAttribute('aria-disabled')).toBe('true');
+      expect(button.getAttribute('aria-describedby')).toBe('checkout-place-blocked');
+      expect(element.querySelector('#checkout-place-blocked')?.textContent).toContain(
+        'Choose the district your order is going to',
+      );
+    });
+  });
+
+  /**
+   * **`phone: "not-a-phone"` placed an order (201).** The server now refuses it, and the page refuses it
+   * first with the same rule, so a shopper is told before the round trip rather than after.
+   */
+  describe('the phone number', () => {
+    it('refuses one the courier could not call', async () => {
+      await openWith(session());
+      await fillValidForm();
+      await type('co-phone', 'not-a-phone');
+
+      expect(placeBlocked()).toBe(true);
+      expect(text()).toContain('phone number the courier can call');
+    });
+
+    it('refuses one on the delivery address too, which is the one the driver dials', async () => {
+      await openWith(session());
+      await fillValidForm();
+      await type('co-address-phone', 'ring the bell');
+
+      expect(placeBlocked()).toBe(true);
+    });
+
+    it.each(['077 123 4567', '+94 77 123 4567', '011-2345678'])(
+      'accepts %s, because somebody really typed it that way',
+      async (candidate) => {
+        await openWith(session());
+        await fillValidForm();
+        await type('co-phone', candidate);
+
+        expect(placeBlocked()).toBe(false);
+      },
+    );
   });
 
   describe('placing the order', () => {
@@ -610,7 +936,7 @@ describe('CheckoutPage (CHK-01..03)', () => {
       await fillValidForm();
       await type('co-firstName', '  Nimali  ');
 
-      expect(placeButton().disabled).toBe(false);
+      expect(placeBlocked()).toBe(false);
       placeButton().click();
       await settle();
 
@@ -703,7 +1029,7 @@ describe('CheckoutPage (CHK-01..03)', () => {
       placeButton().click();
       await settle();
 
-      expect(placeButton().disabled).toBe(true);
+      expect(placeBlocked()).toBe(true);
       expect(text()).toContain('Placing your order…');
 
       placeButton().click();
@@ -725,7 +1051,7 @@ describe('CheckoutPage (CHK-01..03)', () => {
       await openWith(session());
       await choosePayment('BankTransfer');
 
-      expect(placeButton().disabled).toBe(true);
+      expect(placeBlocked()).toBe(true);
 
       // Pressed anyway, as a keyboard Enter in a field would: nothing is sent and the reasons appear.
       element.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true }));
@@ -745,7 +1071,7 @@ describe('CheckoutPage (CHK-01..03)', () => {
       await fillValidForm();
       await type('co-email', '0771234567');
 
-      expect(placeButton().disabled).toBe(true);
+      expect(placeBlocked()).toBe(true);
       expect(text()).toContain('email address we can send your order to');
     });
   });

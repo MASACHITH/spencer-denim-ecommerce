@@ -93,6 +93,53 @@ public sealed class PlaceOrderValidatorTests
         Assert.Empty(PlaceOrderValidator.Validate(Valid, requiresAddress: true));
     }
 
+    /// <summary>
+    /// <b><c>phone: "not-a-phone"</c> placed an order (201).</b> The field was checked for presence and
+    /// twenty characters and nothing else, which defeats the only reason it is required — a courier has to
+    /// be able to call it.
+    /// </summary>
+    [Theory]
+    [InlineData("not-a-phone")]
+    [InlineData("call me")]
+    [InlineData("077ABCDEFG")]
+    [InlineData("12345")]
+    [InlineData("0")]
+    [InlineData("-")]
+    [InlineData("0771234567890123456")] // Nineteen digits: fits the column, is not a telephone number.
+    [InlineData("077123456+7")] // A `+` anywhere but the front is a typo or two numbers in one box.
+    [InlineData("077<script>")]
+    public void A_phone_number_the_courier_could_not_call_is_refused(string phone)
+    {
+        var onTheOrder = PlaceOrderValidator.Validate(Valid with { Phone = phone }, requiresAddress: true);
+        Assert.Contains("phone", onTheOrder.Select(error => error.Field));
+
+        // The address's own number is held to the same rule: it is the one the driver actually dials.
+        var onTheAddress = PlaceOrderValidator.Validate(
+            Valid with { Address = Valid.Address! with { Phone = phone } },
+            requiresAddress: true);
+        Assert.Contains("address.phone", onTheAddress.Select(error => error.Field));
+    }
+
+    /// <summary>
+    /// The other half of the rule, and the more important one: a shopper who typed their real number in
+    /// any of the ways people write one down must still be able to buy something.
+    /// </summary>
+    [Theory]
+    [InlineData("0771234567")]
+    [InlineData("077 123 4567")]
+    [InlineData("077-123-4567")]
+    [InlineData("(077) 1234567")]
+    [InlineData("011 2345678")]
+    [InlineData("+94771234567")]
+    [InlineData("+94 77 123 4567")]
+    [InlineData("0094771234567")]
+    [InlineData("771234567")]
+    [InlineData("+44 20 7123 4567")]
+    public void A_phone_number_somebody_really_typed_is_accepted(string phone)
+    {
+        Assert.Empty(PlaceOrderValidator.Validate(Valid with { Phone = phone }, requiresAddress: true));
+    }
+
     [Fact]
     public void A_missing_address_is_one_error_and_not_five()
     {

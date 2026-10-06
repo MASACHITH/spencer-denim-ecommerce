@@ -1,9 +1,12 @@
 import {
+  CheckoutLineDto,
   DeliveryOptionDto,
   checkoutBlockerMessage,
   deliveryEstimate,
   formatColomboDateTime,
+  isPricedLine,
   looksLikeEmail,
+  looksLikePhone,
 } from './checkout.model';
 
 function option(overrides: Partial<DeliveryOptionDto> = {}): DeliveryOptionDto {
@@ -89,6 +92,73 @@ describe('looksLikeEmail', () => {
     '',
   ])('refuses %s', (candidate) => {
     expect(looksLikeEmail(candidate)).toBe(false);
+  });
+});
+
+/**
+ * **`phone: "not-a-phone"` placed an order.** The field is required because a courier in Sri Lanka needs
+ * one, which an unreachable number defeats, and the rule here has to match the server's
+ * `PlaceOrderValidator.LooksLikePhone` exactly — a client stricter than the server stops a shopper
+ * buying for no reason.
+ */
+describe('looksLikePhone', () => {
+  it.each([
+    '0771234567',
+    '077 123 4567',
+    '077-123-4567',
+    '(077) 1234567',
+    '011 2345678',
+    '+94771234567',
+    '+94 77 123 4567',
+    '0094771234567',
+    '771234567',
+    '+44 20 7123 4567',
+  ])('accepts %s, because somebody really typed it that way', (candidate) => {
+    expect(looksLikePhone(candidate)).toBe(true);
+  });
+
+  it.each([
+    'not-a-phone',
+    'call me',
+    '077ABCDEFG',
+    '12345',
+    '0',
+    '-',
+    '',
+    '077123456+7',
+    '0771234567890123456',
+  ])('refuses %s, because a courier could not call it', (candidate) => {
+    expect(looksLikePhone(candidate)).toBe(false);
+  });
+});
+
+/**
+ * The summary prints a price for a line only when that price is in the figures underneath it. An
+ * `Unavailable` line printed `Rs. 3,990` beside a total it contributed nothing to.
+ */
+describe('isPricedLine', () => {
+  const line = (status: CheckoutLineDto['status']): CheckoutLineDto => ({
+    variantId: 470,
+    productId: 1,
+    productName: 'Slim Fit Jean',
+    slug: 'slim-fit-jean',
+    colourName: 'Indigo',
+    sizeLabel: '32',
+    imageUrl: null,
+    imageAltText: null,
+    quantity: 1,
+    availableQuantity: 5,
+    unitOriginalPrice: 6_990,
+    unitPrice: 4_392,
+    lineSubtotal: 4_392,
+    status,
+  });
+
+  it('matches the bag, and the server, exactly', () => {
+    expect(isPricedLine(line('Buyable'))).toBe(true);
+    expect(isPricedLine(line('NotEnoughStock'))).toBe(true);
+    expect(isPricedLine(line('OutOfStock'))).toBe(false);
+    expect(isPricedLine(line('Unavailable'))).toBe(false);
   });
 });
 

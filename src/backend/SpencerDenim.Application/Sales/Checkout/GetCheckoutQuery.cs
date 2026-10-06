@@ -205,5 +205,5 @@ public sealed class GetCheckoutQueryHandler(ICartStore carts, ICheckoutReader re
         new(method.Code, method.DisplayName, method.CheckoutDescription);
 
     private static CheckoutTotalsDto EmptyTotals { get; } =
-        new(0, 0, 0m, 0m, 0m, 0m, null, 0m, null, false, Catalog.Contracts.PriceDto.Lkr);
+        new(0, 0, 0, 0m, 0m, 0m, 0m, null, 0m, null, false, Catalog.Contracts.PriceDto.Lkr);
 }

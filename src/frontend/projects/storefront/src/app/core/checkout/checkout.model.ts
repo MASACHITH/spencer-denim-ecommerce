@@ -93,7 +93,14 @@ export interface CheckoutLineDto {
  * be a promise of free delivery.
  */
 export interface CheckoutTotalsDto {
+  /** Σ quantity over **every** line, including the ones that cannot be bought. */
   readonly itemCount: number;
+  /**
+   * Σ quantity over the lines the subtotal sums — the bag's `buyableItemCount`, and the figure the
+   * Subtotal label prints. It used to print `itemCount`, so a bag holding one deactivated line said
+   * "Subtotal (3 items)" above a sum of two.
+   */
+  readonly buyableItemCount: number;
   readonly lineCount: number;
   readonly itemsOriginalTotal: number;
   readonly itemsSubtotal: number;
@@ -220,6 +227,7 @@ export const EMPTY_CHECKOUT: CheckoutSessionDto = {
   lines: [],
   totals: {
     itemCount: 0,
+    buyableItemCount: 0,
     lineCount: 0,
     itemsOriginalTotal: 0,
     itemsSubtotal: 0,
@@ -302,6 +310,49 @@ export function looksLikeEmail(candidate: string): boolean {
   const dot = domain.indexOf('.');
 
   return dot > 0 && dot < domain.length - 1;
+}
+
+/**
+ * Whether a phone number is one somebody could dial.
+ *
+ * **Deliberately the same rule as the server's `PlaceOrderValidator.LooksLikePhone`**, and the same
+ * contract as `looksLikeEmail` above: the client may be no stricter than the server. Separators people
+ * type are ignored (`077 123 4567`, `011-2345678`, `(077) 1234567`, `+94 77 123 4567`), a `+` is allowed
+ * only at the front, and what is left has to be nine to fifteen digits — nine is Sri Lanka's national
+ * significant number, fifteen is E.164's maximum. `phone: "not-a-phone"` placed an order before this
+ * existed, and the field is required precisely because a courier has to be able to call it.
+ */
+export function looksLikePhone(candidate: string): boolean {
+  let digits = 0;
+
+  for (let index = 0; index < candidate.length; index++) {
+    const character = candidate[index];
+
+    if (character >= '0' && character <= '9') {
+      digits++;
+    } else if (character === '+') {
+      if (index !== 0) {
+        return false;
+      }
+    } else if (!' -./()'.includes(character)) {
+      return false;
+    }
+  }
+
+  return digits >= 9 && digits <= 15;
+}
+
+/**
+ * Whether a line is one of the ones the subtotal sums.
+ *
+ * **Exactly `CheckoutQuote.IsPriced` on the server, which is exactly the bag's `isBuyable`.** The
+ * summary prints a price for a line only when that price is in the figures underneath it: an
+ * `Unavailable` line printed `Rs. 3,990` beside a total it contributed nothing to, which reads as a
+ * ladder that does not add up — the one class of defect this whole area of the code is organised to
+ * prevent.
+ */
+export function isPricedLine(line: CheckoutLineDto): boolean {
+  return line.status === 'Buyable' || line.status === 'NotEnoughStock';
 }
 
 const MONTHS = [

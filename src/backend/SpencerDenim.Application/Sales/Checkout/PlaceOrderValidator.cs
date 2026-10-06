@@ -87,7 +87,7 @@ internal static class PlaceOrderValidator
         // Required although `Orders.Phone` is nullable, and the column's nullability is not the reason to
         // skip it: doc 11 P6 step 2 asks for a phone number, a courier in Sri Lanka needs one, and the
         // column is nullable only so that a PDPA anonymisation can clear it later (doc 08 §3.1, N5).
-        Required(errors, "phone", command.Phone, MaxPhoneLength, "Enter a phone number for the delivery.");
+        Phone(errors, "phone", command.Phone, "Enter a phone number for the delivery.");
 
         if (command.DeliveryMethodId is null or <= 0)
         {
@@ -162,18 +162,38 @@ internal static class PlaceOrderValidator
             address.RecipientName,
             MaxRecipientNameLength,
             "Enter the name of the person receiving the order.");
-        Required(
-            errors,
-            "address.phone",
-            address.Phone,
-            MaxPhoneLength,
-            "Enter a phone number for the delivery address.");
+        Phone(errors, "address.phone", address.Phone, "Enter a phone number for the delivery address.");
         Required(errors, "address.line1", address.Line1, MaxAddressLineLength, "Enter the street address.");
         Required(errors, "address.city", address.City, MaxCityLength, "Enter the town or city.");
 
         Optional(errors, "address.line2", address.Line2, MaxAddressLineLength);
         Optional(errors, "address.postalCode", address.PostalCode, MaxPostalCodeLength);
         Optional(errors, "address.landmark", address.Landmark, MaxAddressLineLength);
+    }
+
+    /// <summary>
+    /// A required phone number: present, within <see cref="MaxPhoneLength"/>, and dialable.
+    /// </summary>
+    private static void Phone(
+        List<ValidationError> errors,
+        string field,
+        string? value,
+        string missingMessage)
+    {
+        var trimmed = Trimmed(value);
+
+        if (trimmed is null)
+        {
+            errors.Add(new ValidationError(field, missingMessage));
+        }
+        else if (trimmed.Length > MaxPhoneLength)
+        {
+            errors.Add(new ValidationError(field, TooLong(MaxPhoneLength)));
+        }
+        else if (!LooksLikePhone(trimmed))
+        {
+            errors.Add(new ValidationError(field, "Enter a phone number the courier can call."));
+        }
     }
 
     private static void Required(
@@ -245,4 +265,70 @@ internal static class PlaceOrderValidator
 
         return dot > 0 && dot < domain.Length - 1;
     }
+
+    /// <summary>
+    /// A number somebody could dial: an optional leading <c>+</c>, then nine to fifteen digits once the
+    /// punctuation people type is ignored.
+    /// </summary>
+    /// <remarks>
+    /// <b>The field was previously checked for presence and length only, so <c>"not-a-phone"</c> placed an
+    /// order.</b> The field's own comment says it is required because "a courier in Sri Lanka needs one",
+    /// which an unreachable number defeats, so there is a check now — and it is a shape check, not a
+    /// registry lookup. Only a call can prove a number is real.
+    /// <para>
+    /// <b>What is accepted.</b> Spaces, hyphens, dots, slashes and parentheses are ignored, because that
+    /// is how people write a number down: <c>077 123 4567</c>, <c>011-2345678</c>, <c>(077) 1234567</c>,
+    /// <c>+94 77 123 4567</c>, <c>0094771234567</c> and the bare national form <c>771234567</c> all pass.
+    /// </para>
+    /// <para>
+    /// <b>What is rejected, and why those bounds.</b> Anything with a letter in it — the defect that
+    /// started this. Anything shorter than nine digits, which is Sri Lanka's national significant number
+    /// (two-digit area or mobile prefix plus seven), so a half-typed number no longer reaches an order.
+    /// Anything longer than fifteen, which is E.164's maximum and therefore cannot be a telephone number
+    /// anywhere.
+    /// </para>
+    /// <para>
+    /// <b>Why it is not a Sri Lankan pattern.</b> A <c>^0(7[0-8]|\d{2})\d{7}$</c> would be tighter and
+    /// would also refuse the overseas customer sending something to a relative here — their own mobile is
+    /// the number the courier would call about a failed delivery. Doc 08 puts no country constraint on the
+    /// column, and the expensive direction of being wrong is refusing a shopper who typed their real
+    /// number. The prefix list would also need maintaining every time a Sri Lankan operator is allocated
+    /// a new one, in code, by deployment.
+    /// </para>
+    /// </remarks>
+    public static bool LooksLikePhone(string candidate)
+    {
+        ArgumentNullException.ThrowIfNull(candidate);
+
+        var digits = 0;
+
+        for (var index = 0; index < candidate.Length; index++)
+        {
+            var character = candidate[index];
+
+            if (char.IsAsciiDigit(character))
+            {
+                digits++;
+            }
+            else if (character == '+')
+            {
+                // Only as the country-code marker, and only once: a `+` in the middle is a typo or two
+                // numbers in one box, and the courier cannot tell which half to call.
+                if (index != 0)
+                {
+                    return false;
+                }
+            }
+            else if (!IsPhonePunctuation(character))
+            {
+                return false;
+            }
+        }
+
+        return digits is >= 9 and <= 15;
+    }
+
+    /// <summary>The separators people type into a phone box, all of which are ignored.</summary>
+    private static bool IsPhonePunctuation(char character) =>
+        character is ' ' or '-' or '.' or '/' or '(' or ')';
 }

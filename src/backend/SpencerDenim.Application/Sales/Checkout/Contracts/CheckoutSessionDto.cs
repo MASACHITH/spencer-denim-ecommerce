@@ -129,13 +129,33 @@ public sealed record CheckoutLineDto(
 /// same three rows from the same arithmetic, with delivery added, so a shopper moving from one page to the
 /// other never sees the same word mean two things.
 /// <para>
+/// <b>And the <i>count</i> beside the Subtotal label is the bag's too, which is
+/// <see cref="BuyableItemCount"/> and not <see cref="ItemCount"/>.</b> It was <c>ItemCount</c>, and that
+/// is a defect found in testing: a bag of "470 ×2 + 471 ×1" whose 471 had been deactivated printed
+/// "Subtotal (2 items) Rs. 7,980" on the bag page and "Subtotal (3 items) Rs. 7,980" on checkout. The
+/// money was right both times; the label counted an item its own figure excludes. One count per question
+/// is the fix, which is what the bag already had — see <c>CartTotalsDto</c>.
+/// </para>
+/// <para>
 /// <b><c>DeliveryFeeAmount</c> is null until a delivery option is chosen</b>, and null is not zero. Doc 08
 /// §6 step 10 needs a district and a method before a fee exists at all; printing 0.00 would be a promise
 /// of free delivery.
 /// </para>
 /// </remarks>
+/// <param name="ItemCount">
+/// Σ quantity over <b>every</b> line, including the ones that cannot be bought. It is what a header badge
+/// or a "your bag has N things in it" sentence counts, and it is deliberately not what the Subtotal label
+/// counts, because it is not what the Subtotal figure sums.
+/// </param>
+/// <param name="BuyableItemCount">
+/// Σ quantity over the lines that are priced into <see cref="ItemsOriginalTotal"/> and
+/// <see cref="ItemsSubtotal"/> — exactly <c>CheckoutQuote.IsPriced</c>, which is exactly the bag's rule.
+/// This is the figure the Subtotal label prints, so the count and the money describe the same set of
+/// lines.
+/// </param>
 public sealed record CheckoutTotalsDto(
     int ItemCount,
+    int BuyableItemCount,
     int LineCount,
     decimal ItemsOriginalTotal,
     decimal ItemsSubtotal,
