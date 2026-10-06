@@ -20,40 +20,36 @@ namespace SpencerDenim.Infrastructure.Catalog;
 /// the database alone can make: a row somebody else changed first, and a unique index.
 /// </para>
 /// </summary>
-internal sealed class ProductWriteStore : IProductWriteStore
+internal sealed class ProductWriteStore(AppDbContext dbContext, AuditAndSoftDeleteInterceptor auditColumns)
+    : IProductWriteStore
 {
     /// <summary>SQL Server: 2627 is a unique-constraint violation, 2601 a unique-index one.</summary>
     private static readonly int[] DuplicateKeyErrors = [2601, 2627];
 
-    private readonly AppDbContext dbContext;
-    private readonly AuditAndSoftDeleteInterceptor auditColumns;
-
-    public ProductWriteStore(AppDbContext dbContext, AuditAndSoftDeleteInterceptor auditColumns)
+    public Task<Product?> FindProductAsync(int productId, CancellationToken cancellationToken)
     {
-        this.dbContext = dbContext;
-        this.auditColumns = auditColumns;
-
-        // **Both timings moved to the save, and this is not a performance tweak.**
+        // **Both cascade timings moved to the save, and this is not a performance tweak.**
         //
         // One product save can remove a colourway *and* the variants that belong to it. With EF's default
         // `Immediate` timing, taking the colourway out of `Product.Colours` makes EF try to null the
         // variants' foreign key there and then — and `ProductVariants (ProductColourId, ProductId)` is a
         // *required* composite key with `NO ACTION` (doc 08 §3.2), so EF throws
         // "the association between entity types 'ProductColour' and 'ProductVariant' has been severed"
-        // before the variants have been marked for deletion at all. The order the handler would need to
-        // work in to avoid that — delete the variants, then detach the colourway — is an EF implementation
-        // detail leaking into a use case, and it cannot be expressed at all while the colour reconciliation
-        // has to run first so new variants can point at new colourways.
+        // before the variants have been marked for deletion at all. The order the handler would have to
+        // work in to avoid that — delete the variants, *then* detach the colourway — is an EF
+        // implementation detail leaking into a use case, and it cannot be expressed anyway while the
+        // colour reconciliation has to run first so new variants can point at new colourways.
         //
         // Deferring both to `SaveChanges` lets the whole intended end state be assembled first; EF then
-        // works out the cascades and the orphans once, with every deletion already known. It is set here,
-        // in the store that owns this unit of work, rather than on `AppDbContext` for everybody.
+        // works out the cascades and the orphans once, with every deletion already known.
+        //
+        // Set here rather than in a constructor, and rather than on `AppDbContext` for everybody: this is
+        // the method that hands out the tracked graph the handler is about to mutate, so the change in
+        // behaviour begins exactly where the mutation does.
         dbContext.ChangeTracker.CascadeDeleteTiming = CascadeTiming.OnSaveChanges;
         dbContext.ChangeTracker.DeleteOrphansTiming = CascadeTiming.OnSaveChanges;
-    }
 
-    public Task<Product?> FindProductAsync(int productId, CancellationToken cancellationToken) =>
-        dbContext.Products
+        return dbContext.Products
             .Include(product => product.Colours)
             .Include(product => product.Variants)
             .Include(product => product.Media)
@@ -73,6 +69,7 @@ internal sealed class ProductWriteStore : IProductWriteStore
             .Include(product => product.Stats)
             .Include(product => product.SearchIndex)
             .FirstOrDefaultAsync(product => product.Id == productId, cancellationToken);
+    }
 
     public Task<bool> ProductSlugTakenAsync(
         string slug,
