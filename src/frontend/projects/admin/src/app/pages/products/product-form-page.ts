@@ -602,7 +602,12 @@ const EMPTY: Scalars = {
                           (change)="patchVariant(index, { isActive: !row.isActive })"
                           [attr.data-testid]="'variant-active-' + index"
                         />
-                        <span>On sale</span>
+                        <!--
+                          Not "On sale". Sale is one of the four badges a product can carry, and a
+                          size being offered has nothing to do with whether it is discounted — two
+                          meanings for one phrase on the same screen.
+                        -->
+                        <span>Available to buy</span>
                       </label>
 
                       <button

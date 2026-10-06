@@ -192,8 +192,13 @@ describe('suggestSlug', () => {
     expect(suggestSlug('  --Denim  Jacket!!  ')).toBe('denim-jacket');
   });
 
-  it('drops characters varchar cannot hold rather than guessing a romanisation', () => {
-    expect(suggestSlug('Café au Lait')).toBe('caf-au-lait');
+  it('keeps an accented letter and drops only its accent', () => {
+    expect(suggestSlug('Café au Lait')).toBe('cafe-au-lait');
+    expect(suggestSlug('Café Déjà-Vu Dress')).toBe('cafe-deja-vu-dress');
+    expect(suggestSlug('Über Schön')).toBe('uber-schon');
+
+    // A script with no Latin form still has nothing a varchar slug can hold.
+    expect(suggestSlug('ආඩුම')).toBe('');
   });
 
   it('stays inside varchar(220) and still ends on a letter', () => {

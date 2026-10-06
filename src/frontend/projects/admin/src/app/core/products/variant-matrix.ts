@@ -183,12 +183,21 @@ function uniqueSku(candidate: string, used: ReadonlySet<string>): string {
  * A slug suggestion for a product name: lower case, letters and digits, single hyphens between them.
  *
  * It is the same grammar `CatalogSlug` enforces in the domain and `CK_Products_Slug` enforces in the
- * database, so a suggestion is never a value the API will refuse. Non-ASCII letters are stripped rather
- * than transliterated: the column is `varchar`, and guessing at a romanisation would produce a URL nobody
- * chose.
+ * database, so a suggestion is never a value the API will refuse.
+ *
+ * An accented Latin letter keeps its letter and loses its accent, because dropping the letter
+ * outright turned "Café Déjà-Vu Dress" into `caf-d-j-vu-dress` — a suggestion an admin has to
+ * retype, which is the one thing a suggestion must not be. NFD splits each letter from its combining
+ * marks and the marks are then dropped, so `café` becomes `cafe` by a rule, not by a guess.
+ *
+ * A script with no Latin form at all — Sinhala, Tamil — still has nothing a `varchar` slug can hold, so
+ * it is stripped and the admin types the slug they want. Transliterating it would invent a
+ * romanisation nobody chose.
  */
 export function suggestSlug(name: string): string {
   return name
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')

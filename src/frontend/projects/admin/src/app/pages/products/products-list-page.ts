@@ -161,7 +161,8 @@ const EMPTY_FILTERS: Filters = { term: '', departmentId: null, published: 'all',
                   <p class="adm-muted products__meta">
                     {{ product.colourCount }} {{ product.colourCount === 1 ? 'colour' : 'colours' }},
                     {{ product.variantCount }}
-                    {{ product.variantCount === 1 ? 'size on sale' : 'sizes on sale' }}
+                    <!-- "on sale" is the Sale badge's phrase; this is a count of sizes offered. -->
+                    {{ product.variantCount === 1 ? 'size available' : 'sizes available' }}
                     @if (product.hasVideo) {
                       · has a video
                     }
