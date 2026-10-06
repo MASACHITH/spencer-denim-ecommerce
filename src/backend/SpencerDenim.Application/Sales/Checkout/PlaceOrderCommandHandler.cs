@@ -20,6 +20,16 @@ namespace SpencerDenim.Application.Sales.Checkout;
 /// be told its bag was empty — the right answer to the wrong question.
 /// </description></item>
 /// <item><description>
+/// <b>And replay last, on every refusal.</b> The pre-check above closes the <i>sequential</i> resubmit
+/// only, and it cannot close the simultaneous one: between it and the repricing read this handler makes
+/// about five more round trips, and a winner's transaction can reserve the stock, write the order and
+/// delete <c>sales.CartItems</c> inside that window. The loser then reads nothing in the bag and used to
+/// answer 409 "your bag is empty" to a shopper whose order had just been placed — observed in CI, and
+/// reproducible over HTTP in roughly a quarter of rounds at 24 contenders. So every refusal that depends
+/// on state the winner can have changed goes through
+/// <see cref="RefuseUnlessAlreadyPlacedAsync"/>, which asks the index one more question before answering.
+/// </description></item>
+/// <item><description>
 /// <b>Resolve the delivery method, then validate.</b> <c>RequiresAddress</c> decides which half of the
 /// request is required, so it cannot be checked before it is known.
 /// </description></item>
@@ -134,7 +144,10 @@ public sealed class PlaceOrderCommandHandler(
         var cart = await carts.FindAsync(command.Lookup, cancellationToken);
         if (cart is not { } identity)
         {
-            return PlaceOrderResult.Blocked([CheckoutBlocker.EmptyBag]);
+            return await RefuseUnlessAlreadyPlacedAsync(
+                command,
+                PlaceOrderResult.Blocked([CheckoutBlocker.EmptyBag]),
+                cancellationToken);
         }
 
         // 4. The repricing read. **This is where the price is frozen.**
@@ -142,14 +155,20 @@ public sealed class PlaceOrderCommandHandler(
 
         if (lines.Count == 0)
         {
-            return PlaceOrderResult.Blocked([CheckoutBlocker.EmptyBag]);
+            return await RefuseUnlessAlreadyPlacedAsync(
+                command,
+                PlaceOrderResult.Blocked([CheckoutBlocker.EmptyBag]),
+                cancellationToken);
         }
 
         if (!lines.All(CheckoutQuote.IsPlaceable))
         {
             // G-08: warn and block. Nothing is dropped and no quantity is reduced on the shopper's behalf —
             // an order silently missing an item is the defect this rule exists to prevent.
-            return PlaceOrderResult.Blocked([CheckoutBlocker.LineNotPurchasable]);
+            return await RefuseUnlessAlreadyPlacedAsync(
+                command,
+                PlaceOrderResult.Blocked([CheckoutBlocker.LineNotPurchasable]),
+                cancellationToken);
         }
 
         var pricing = CheckoutQuote.Price(lines, zoneRate);
@@ -194,7 +213,15 @@ public sealed class PlaceOrderCommandHandler(
                     : PlaceOrderResult.Placed(confirmation);
 
             case OrderPlacementStatus.OutOfStock:
-                return PlaceOrderResult.OutOfStock(result.ShortLines);
+                // Re-checked for the same reason as the blockers above, and this one the brief did not
+                // name: `OrderPlacementStore` reserves *before* it inserts, so a loser whose bag holds
+                // exactly the available stock is refused by the reserving UPDATE and never reaches
+                // `UX_Orders_CheckoutIdempotencyKey` at all. Without this, that loser is told "sold out"
+                // about an order it has already placed.
+                return await RefuseUnlessAlreadyPlacedAsync(
+                    command,
+                    PlaceOrderResult.OutOfStock(result.ShortLines),
+                    cancellationToken);
 
             case OrderPlacementStatus.DuplicateSubmission:
                 // Two submissions genuinely in flight at once: the unique index on
@@ -209,6 +236,42 @@ public sealed class PlaceOrderCommandHandler(
             default:
                 throw new InvalidOperationException($"Unhandled placement status {result.Status}.");
         }
+    }
+
+    /// <summary>
+    /// The refusal, unless this checkout key has in the meantime produced an order — in which case the
+    /// order is the answer.
+    /// </summary>
+    /// <remarks>
+    /// <b>This is the second half of the idempotency guarantee, and the first half cannot do it.</b> Step
+    /// 1's pre-check answers a resubmit that arrives <i>after</i> the first one finished. A resubmit that
+    /// arrives <i>during</i> it passes that check truthfully — no order existed yet — and then runs into
+    /// the winner's committed work: an emptied bag, a line the reservation made unbuyable, a reserving
+    /// UPDATE that matches no row. Each of those is a correct description of the database and the wrong
+    /// answer to the question asked, which was "place my order", and the order is placed.
+    /// <para>
+    /// <b>It costs one query, and only on a path that is already refusing.</b> The happy path is
+    /// untouched; so is every refusal decided from the command alone (<see cref="PlaceOrderValidator"/>,
+    /// the payment method, the district, the zone rate), because those answers do not change when another
+    /// request commits — two submissions of one key carry the same fields and would be refused alike.
+    /// </para>
+    /// <para>
+    /// <b>Why this is safe rather than a way to swallow a real refusal.</b> The only thing that turns the
+    /// refusal into a replay is an order row holding <i>this</i> key, which only a committed placement of
+    /// this very submission can create — <c>UX_Orders_CheckoutIdempotencyKey</c> makes the key unique, and
+    /// the server is the only party that issues one (<c>CheckoutSessionDto.CheckoutKey</c>). With no such
+    /// row the refusal is returned exactly as it was built.
+    /// </para>
+    /// </remarks>
+    private async Task<PlaceOrderResult> RefuseUnlessAlreadyPlacedAsync(
+        PlaceOrderCommand command,
+        PlaceOrderResult refusal,
+        CancellationToken cancellationToken)
+    {
+        // Non-empty from here: the validator reports an empty key and the caller returned long ago.
+        var winner = await reader.FindOrderByCheckoutKeyAsync(command.CheckoutKey, cancellationToken);
+
+        return winner is null ? refusal : PlaceOrderResult.AlreadyPlaced(winner);
     }
 
     /// <summary>

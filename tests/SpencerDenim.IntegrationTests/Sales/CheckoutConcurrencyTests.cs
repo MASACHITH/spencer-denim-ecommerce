@@ -47,10 +47,30 @@ public sealed class CheckoutConcurrencyTests(SqlServerDatabaseFixture sqlServer)
     private const int LastUnitRounds = 20;
 
     /// <summary>How many times the double-submit race is replayed.</summary>
-    private const int DoubleSubmitRounds = 15;
+    private const int DoubleSubmitRounds = 12;
 
     /// <summary>How many shoppers fight over the last unit in each round.</summary>
     private const int Contenders = 4;
+
+    /// <summary>
+    /// How many submissions of <b>one</b> checkout key race each other, and why it is not four.
+    /// <para>
+    /// <b>Four could not see the defect this number exists to catch.</b> The window between the handler's
+    /// replay pre-check and its repricing read is a few milliseconds wide, and a loser only falls into it
+    /// if the winner commits while it is in there. At four contenders that happened in approximately 0% of
+    /// rounds on a developer machine — the suite passed 6/6 on three consecutive runs over a handler that
+    /// returned 409 "your bag is empty" to shoppers whose orders were placed, and the only machine that
+    /// ever caught it was CI, whose slower SQL Server and narrower thread pool widen the window. At
+    /// twenty-four it appears in roughly a quarter of rounds on a developer machine, which is what makes
+    /// the twelve rounds below a test rather than a hope.
+    /// </para>
+    /// <para>
+    /// It is deliberately not shared with <see cref="Contenders"/>: the last-unit race needs a fresh bag
+    /// and a fresh stock row per contender per round, so twenty-four of those would cost minutes to prove
+    /// something four already prove.
+    /// </para>
+    /// </summary>
+    private const int DoubleSubmitContenders = 24;
 
     /// <summary>
     /// <b>The last unit, over HTTP.</b> Four shoppers, each with their own bag holding the one remaining
@@ -145,12 +165,19 @@ public sealed class CheckoutConcurrencyTests(SqlServerDatabaseFixture sqlServer)
     }
 
     /// <summary>
-    /// <b>The double submit, over HTTP.</b> The same cart and the same checkout key, submitted four times
-    /// at once. One order, one reservation — and the three that lost must be told their order is already
-    /// placed rather than that something went wrong.
+    /// <b>The double submit, over HTTP.</b> The same cart and the same checkout key, submitted
+    /// twenty-four times at once. One order, one reservation — and the twenty-three that lost must be
+    /// told their order is already placed rather than that something went wrong.
     /// </summary>
+    /// <remarks>
+    /// <b>This is the regression test for the CI failure, and the contention is the test.</b> A loser that
+    /// passes the handler's replay pre-check and then meets the winner's committed work — an emptied bag,
+    /// or a reserving UPDATE that matches no row — used to be refused with 409 and a reason drawn from the
+    /// database rather than from the question it asked. See <see cref="DoubleSubmitContenders"/> for why
+    /// four contenders demonstrably could not see it.
+    /// </remarks>
     [Fact]
-    public async Task Four_simultaneous_submissions_of_one_cart_place_exactly_one_order()
+    public async Task Many_simultaneous_submissions_of_one_cart_place_exactly_one_order()
     {
         var variantId = await CheckoutVariantIdAsync();
         var colombo = await DistrictIdAsync("Colombo");
@@ -158,16 +185,22 @@ public sealed class CheckoutConcurrencyTests(SqlServerDatabaseFixture sqlServer)
 
         for (var round = 1; round <= DoubleSubmitRounds; round++)
         {
-            await SetStockAsync(variantId, 10);
+            // **The stock is exactly what the bag holds on the odd rounds, and plentiful on the even
+            // ones**, because the two refusals a loser can hit are reached through different code. With
+            // spare stock a loser reserves successfully and is caught by
+            // `UX_Orders_CheckoutIdempotencyKey` on the INSERT; with none spare its reserving UPDATE
+            // matches no row and `OrderPlacementStore` returns OUT_OF_STOCK before the index is ever
+            // consulted. Both have to answer with the order.
+            await SetStockAsync(variantId, round % 2 == 1 ? 2 : 10);
 
             var (token, cartId, api) = await NewBagAsync(variantId, quantity: 2);
             var (_, session) = await api.GetAsync(colombo, standard, Token);
             var body = ValidBody(session!.CheckoutKey, standard, colombo, session.Totals.GrandTotal!.Value);
 
-            // One cookie jar would serialise nothing, but each request is its own client so that four
-            // genuinely simultaneous submissions reach the server — which is what a double-clicked button
-            // on a flaky connection produces.
-            var clients = Enumerable.Range(0, Contenders)
+            // One cookie jar would serialise nothing, but each request is its own client so that the
+            // submissions are genuinely simultaneous — which is what a double-clicked button on a flaky
+            // connection produces.
+            var clients = Enumerable.Range(0, DoubleSubmitContenders)
                 .Select(_ => NewCheckoutVisitorWithoutCookieJar())
                 .ToList();
 
@@ -177,8 +210,21 @@ public sealed class CheckoutConcurrencyTests(SqlServerDatabaseFixture sqlServer)
             var created = results.Count(result => result.Response.StatusCode == HttpStatusCode.Created);
             var replayed = results.Count(result => result.Response.StatusCode == HttpStatusCode.OK);
 
+            // **Asserted before the counts, because the counts cannot say what went wrong.** A refused
+            // submission of a key that placed an order is the defect, and the message has to name the
+            // reason it was given — "EmptyBag" is the one CI saw.
+            foreach (var refused in results.Where(result => !result.Response.IsSuccessStatusCode))
+            {
+                using var problem = await CheckoutApiClient.ProblemAsync(refused.Response, Token);
+
+                Assert.Fail(
+                    $"Round {round}: one of {DoubleSubmitContenders} submissions of a single checkout key "
+                    + $"was refused with {(int)refused.Response.StatusCode} instead of being replayed the "
+                    + $"order its own key placed. Body: {problem.RootElement.GetRawText()}");
+            }
+
             Assert.Equal(1, created);
-            Assert.Equal(Contenders - 1, replayed);
+            Assert.Equal(DoubleSubmitContenders - 1, replayed);
 
             // Every answer names the same order, and only the replays say so.
             var numbers = results
