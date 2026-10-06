@@ -7,10 +7,10 @@ namespace SpencerDenim.Domain.Catalog;
 /// hyphens. It lives in the domain because both sides need the same answer — the storefront refuses a
 /// URL that does not match it, so a row that does not match it is a product no one can open.
 /// <para>
-/// The database does not enforce this yet: <c>catalog.Products.Slug</c> is a plain <c>varchar(220)</c>
-/// with a unique index and no CHECK. The matching constraint is a W1-03 migration (see
-/// <c>ProductConfiguration</c>); until then this guard is the only thing standing between an admin
-/// write and an unreachable product page.
+/// The database enforces it too, on every slug column an admin can write: <c>CK_Departments_Slug</c> and
+/// <c>CK_Categories_Slug</c> (W1-12) and <c>CK_Products_Slug</c> (W1-03). This guard catches a typo on the
+/// way in with a named field error; the check constraint catches a support script, a data fix or a restore
+/// from a spreadsheet, none of which comes through a property setter.
 /// </para>
 /// </summary>
 public static partial class CatalogSlug

@@ -27,14 +27,21 @@ internal sealed class ProductConfiguration : IEntityTypeConfiguration<Product>
                 table.HasCheckConstraint(
                     "CK_Products_BadgeOverride",
                     "[BadgeOverride] IS NULL OR [BadgeOverride] IN (1, 2, 3, 4)");
+
+                // The W1-02 follow-up, carried by W1-03 because W1-03 is what gives this column a write
+                // path that is not the seeder. CatalogSlug guards the property setter, which protects every
+                // write that goes through the application and nothing else — a support script, a data fix
+                // or a restore from a spreadsheet can all put a value here that makes /p/{slug} answer 400,
+                // and a product nobody can open is not a defect any screen shows. The expression is
+                // CatalogSlug's own regular expression in SQL; see CatalogSlugConstraint for why the
+                // collation matters.
+                table.HasCheckConstraint("CK_Products_Slug", CatalogSlugConstraint.For("Slug"));
             });
 
         builder.HasKey(product => product.Id);
 
         builder.Property(product => product.ProductCode).HasColumnType("varchar(40)").IsRequired();
         builder.Property(product => product.Name).HasMaxLength(200).IsRequired();
-        // W1-03 owns the next catalogue migration; it adds CK_Products_Slug for the pattern
-        // CatalogSlug enforces in the domain, so the rule holds for a direct SQL write too.
         builder.Property(product => product.Slug).HasColumnType("varchar(220)").IsRequired();
         builder.Property(product => product.ShortDescription).HasMaxLength(500);
         builder.Property(product => product.Description).HasColumnType("nvarchar(max)");

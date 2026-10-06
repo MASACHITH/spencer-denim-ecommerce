@@ -42,6 +42,41 @@ public static class CategoryPath
     }
 
     /// <summary>
+    /// The category ids a path names, root first: <c>/12/34/</c> gives 12 then 34.
+    /// <para>
+    /// Added for ADM-10 (W1-03): doc 08 §3.2 puts "category path names" into
+    /// <c>ProductSearchIndex.SearchText</c>, so a product filed under Midi is found by a shopper who
+    /// searches for "dresses". The names need the ancestors, and a materialised path already holds exactly
+    /// which rows those are — so the whole set can be read in one query instead of walked one parent at a
+    /// time.
+    /// </para>
+    /// <para>
+    /// A segment that is not a number is skipped rather than thrown over: a path is written by this file's
+    /// own arithmetic, so a malformed one is a corrupted row, and the right answer to a corrupted row in a
+    /// search-text builder is a slightly poorer search text rather than a 500 on a save.
+    /// </para>
+    /// </summary>
+    public static IReadOnlyList<int> IdsIn(string? path)
+    {
+        if (string.IsNullOrEmpty(path))
+        {
+            return [];
+        }
+
+        var ids = new List<int>(4);
+
+        foreach (var segment in path.Split('/', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (int.TryParse(segment, System.Globalization.CultureInfo.InvariantCulture, out var id))
+            {
+                ids.Add(id);
+            }
+        }
+
+        return ids;
+    }
+
+    /// <summary>
     /// True when <paramref name="path"/> is <paramref name="ancestorPath"/> or sits underneath it.
     /// <para>
     /// The trailing slash is what makes this safe: without it <c>/1/</c> would "contain" <c>/12/</c>,
