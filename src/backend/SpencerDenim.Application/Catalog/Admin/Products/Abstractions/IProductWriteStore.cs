@@ -140,7 +140,11 @@ public interface IProductWriteStore
     /// Server while 1,312 unit tests and 42 browser tests were green.
     /// </para>
     /// </summary>
-    Task RemoveVariantsAsync(
+    /// <returns>
+    /// How many <c>sales.CartItems</c> rows went with them, so the audit row can say that a shopper's bag
+    /// was changed. See <see cref="VariantReferences"/> for why a bag line is deleted rather than blocking.
+    /// </returns>
+    Task<int> RemoveVariantsAsync(
         IReadOnlyCollection<ProductVariant> variants,
         CancellationToken cancellationToken);
 

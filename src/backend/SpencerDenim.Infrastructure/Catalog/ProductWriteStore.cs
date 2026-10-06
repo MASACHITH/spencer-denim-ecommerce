@@ -436,7 +436,7 @@ internal sealed class ProductWriteStore(AppDbContext dbContext, AuditAndSoftDele
         cancellationToken);
     }
 
-    public async Task RemoveVariantsAsync(
+    public async Task<int> RemoveVariantsAsync(
         IReadOnlyCollection<ProductVariant> variants,
         CancellationToken cancellationToken)
     {
@@ -444,26 +444,46 @@ internal sealed class ProductWriteStore(AppDbContext dbContext, AuditAndSoftDele
 
         if (variants.Count == 0)
         {
-            return;
+            return 0;
         }
 
-        // The stock rows first, because FK_StockLevels_ProductVariants_VariantId is NO ACTION: a variant
-        // cannot leave the table while its 1:1 stock row still points at it. The handler has already
-        // refused any variant that holds stock, so every row deleted here reads zero on hand and zero
-        // reserved.
+        // Everything that points at the variant goes first, because doc 08 §1.6 makes NO ACTION the
+        // default and nothing pointing at ProductVariants is one of its listed cascades. The set is
+        // VariantReferences.Known, which a model convention test holds to the EF model, so ADM-12's
+        // inventory.InventoryMovements (issue #108) cannot be forgotten the way CartItems was.
         var variantIds = variants.Select(variant => variant.Id).Where(id => id != 0).ToList();
 
+        // StockLevels: 1:1 and the variant's current count, meaningless without it. The handler has
+        // already refused any variant that holds stock, so every row deleted here reads zero on hand and
+        // zero reserved.
         var stockRows = await dbContext.StockLevels
             .Where(stock => variantIds.Contains(stock.VariantId))
             .ToListAsync(cancellationToken);
 
         dbContext.StockLevels.RemoveRange(stockRows);
 
+        // CartItems: a bag line is a shopper's current intention, not a record to keep. Doc 11 P1's edge
+        // cases name this exact case and P5 already copes with a line going away, so deleting it is
+        // legitimate — and the alternative is worse: any shopper who left a size in their bag could stop
+        // an admin correcting the catalogue. Before this, FK_CartItems_ProductVariants_VariantId answered
+        // 500 with a constraint name and no explanation.
+        var cartRows = await dbContext.CartItems
+            .Where(item => variantIds.Contains(item.VariantId))
+            .ToListAsync(cancellationToken);
+
+        dbContext.CartItems.RemoveRange(cartRows);
+
+        // OrderLines are deliberately absent: they are VariantReferences.Disposition.BlocksTheDelete, and
+        // VariantDeleteGuardsAsync has already refused any variant one of them names (doc 08 §3.2
+        // "Deactivate once ordered; never delete").
+
         // Marking the entity Deleted is what makes the severed required relationship harmless: a DELETE
         // needs the primary key and the row version, not the foreign key the fixup has just cleared. EF
         // orders the statements by the dependency graph, so these go out before the colourways they point
         // at -- the variants' composite foreign key onto ProductColours is NO ACTION as well.
         dbContext.ProductVariants.RemoveRange(variants);
+
+        return cartRows.Count;
     }
 
     public async Task<CatalogSaveOutcome> SaveAsync(int? actingUserId, CancellationToken cancellationToken)

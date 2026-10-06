@@ -9,6 +9,8 @@ using SpencerDenim.Domain.Identity;
 using SpencerDenim.Domain.Media;
 using SpencerDenim.Infrastructure.Persistence;
 using SpencerDenim.IntegrationTests.Infrastructure;
+using SpencerDenim.IntegrationTests.Sales;
+using SpencerDenim.Domain.Sales;
 
 namespace SpencerDenim.IntegrationTests.Api.Admin;
 
@@ -905,6 +907,231 @@ public sealed class AdminProductEndpointTests(SqlServerDatabaseFixture sqlServer
         Assert.True(
             problem.GetProperty("errors").TryGetProperty("badgeOverride", out _),
             $"the refusal did not name the field: {problem}");
+    }
+
+    /// <summary>
+    /// <b>Removing a size that sits in a shopper's bag.</b>
+    /// <para>
+    /// <c>FK_CartItems_ProductVariants_VariantId</c> is <c>NO ACTION</c> (doc 08 §1.6), so this answered
+    /// <b>500</b> with a constraint name and no explanation — the fourth unguarded reference found on this
+    /// task, and the first one a test rather than luck did not find. The bag line is deleted with the
+    /// variant: doc 11 P1's edge cases name this exact case, P5 already copes with a line going away, and
+    /// blocking instead would let any shopper who left a size in their bag stop an admin correcting the
+    /// catalogue (see <c>VariantReferences</c>).
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task Removing_a_size_that_sits_in_a_shoppers_bag_takes_the_bag_line_with_it()
+    {
+        var factory = await HostAsync();
+        var seed = await ReferenceDataAsync(factory);
+        var client = await AdminCatalogApiClient.SignInAsync(factory, "w103-bag", FullProductRights, Token);
+
+        var body = Body(seed, "w103-bag");
+        body["colours"] = new object[] { Colour("Indigo Rinse", seed.ColourFamilyId) };
+        body["variants"] = new object[]
+        {
+            Variant("Indigo Rinse", seed.SizeIds[0], "W103-BAG-S"),
+            Variant("Indigo Rinse", seed.SizeIds[1], "W103-BAG-M"),
+        };
+
+        var (_, created) = await client.PostAsync(ProductsUrl, body, Token);
+        var productId = created.GetProperty("id").GetInt32();
+
+        try
+        {
+            int variantId;
+            int cartId;
+
+            await using (var scope = factory.Services.CreateAsyncScope())
+            {
+                var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+                variantId = await dbContext.ProductVariants
+                    .AsNoTracking()
+                    .Where(variant => variant.ProductId == productId && variant.Sku == "W103-BAG-S")
+                    .Select(variant => variant.Id)
+                    .SingleAsync(Token);
+
+                // A real bag with a real line, so the real foreign key is in the way.
+                var cart = new Cart { Token = Guid.NewGuid(), LastActivityAtUtc = DateTime.UtcNow };
+                dbContext.Carts.Add(cart);
+                await dbContext.SaveChangesAsync(Token);
+                cartId = cart.Id;
+
+                dbContext.CartItems.Add(new CartItem
+                {
+                    CartId = cartId,
+                    VariantId = variantId,
+                    Quantity = 1,
+                    UnitPriceAtAdd = 5490m,
+                });
+
+                await dbContext.SaveChangesAsync(Token);
+            }
+
+            // Untick the size the bag holds.
+            body["variants"] = new object[] { Variant("Indigo Rinse", seed.SizeIds[1], "W103-BAG-M") };
+            body["rowVersion"] = await RowVersionAsync(factory, productId);
+
+            var (status, problem) = await client.PutAsync($"{ProductsUrl}/{productId}", body, Token);
+
+            Assert.True(status == HttpStatusCode.NoContent, $"refused with {status}: {problem}");
+
+            await using (var scope = factory.Services.CreateAsyncScope())
+            {
+                var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+                Assert.False(
+                    await dbContext.ProductVariants.AnyAsync(variant => variant.Id == variantId, Token));
+
+                Assert.False(
+                    await dbContext.CartItems.AnyAsync(item => item.VariantId == variantId, Token));
+
+                // The bag itself survives: only the line went.
+                Assert.True(await dbContext.Carts.AnyAsync(cart => cart.Id == cartId, Token));
+
+                // And the trail says a shopper's bag was changed, which is the one effect of this save
+                // that nobody on the admin side can see afterwards.
+                var audit = await dbContext.AuditLogs
+                    .AsNoTracking()
+                    .Where(entry =>
+                        entry.EntityType == "Product"
+                        && entry.EntityId == productId.ToString(CultureInfo.InvariantCulture))
+                    .OrderByDescending(entry => entry.Id)
+                    .Select(entry => entry.AfterJson)
+                    .FirstAsync(Token);
+
+                Assert.Contains("cartLinesRemoved", audit!, StringComparison.Ordinal);
+            }
+
+            await using (var cleanup = factory.Services.CreateAsyncScope())
+            {
+                var dbContext = cleanup.ServiceProvider.GetRequiredService<AppDbContext>();
+                await dbContext.Database.ExecuteSqlRawAsync(
+                    "DELETE FROM sales.CartItems WHERE CartId = {0}; DELETE FROM sales.Carts WHERE Id = {0};",
+                    [cartId],
+                    Token);
+            }
+        }
+        finally
+        {
+            await HardDeleteAsync(factory, productId);
+        }
+    }
+
+    /// <summary>
+    /// <b>The ordered-variant guard, against a real order line rather than a fake store.</b>
+    /// <para>
+    /// The guard had only ever met <c>FakeProductWriteStore</c> — the same fake-store coverage that missed
+    /// the original 500 — so this inserts a genuine <c>sales.Orders</c> row and a genuine
+    /// <c>sales.OrderLines</c> row through <c>SalesRowWriter</c>, the helper the sales schema tests use,
+    /// and proves two things: the 409 names the SKU, and <c>FK_OrderLines_ProductVariants_VariantId</c> is
+    /// never reached.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task A_variant_a_real_order_line_names_is_refused_rather_than_breaking_the_foreign_key()
+    {
+        var factory = await HostAsync();
+        var seed = await ReferenceDataAsync(factory);
+        var client = await AdminCatalogApiClient.SignInAsync(factory, "w103-ordered", FullProductRights, Token);
+
+        var body = Body(seed, "w103-ordered");
+        body["colours"] = new object[] { Colour("Indigo Rinse", seed.ColourFamilyId) };
+        body["variants"] = new object[]
+        {
+            Variant("Indigo Rinse", seed.SizeIds[0], "W103-ORD-S"),
+            Variant("Indigo Rinse", seed.SizeIds[1], "W103-ORD-M"),
+        };
+
+        var (_, created) = await client.PostAsync(ProductsUrl, body, Token);
+        var productId = created.GetProperty("id").GetInt32();
+        var orderId = 0;
+
+        try
+        {
+            await using (var scope = factory.Services.CreateAsyncScope())
+            {
+                var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                var writer = new SalesRowWriter(dbContext);
+
+                var variantId = await dbContext.ProductVariants
+                    .AsNoTracking()
+                    .Where(variant => variant.ProductId == productId && variant.Sku == "W103-ORD-S")
+                    .Select(variant => variant.Id)
+                    .SingleAsync(Token);
+
+                // The sales reference data is not in the shared seed — `SalesSchemaTestBase` creates its
+                // own per run, with codes nothing else uses, and so does this. An order has real foreign
+                // keys to both, so there is no way to make a real order line without them.
+                var providerCode = SalesRowWriter.Unique("W103Prov");
+                await writer.InsertWithoutIdentityAsync(
+                    "sales.PaymentProviders",
+                    new Dictionary<string, object?>(StringComparer.Ordinal)
+                    {
+                        ["Code"] = providerCode,
+                        ["DisplayName"] = "W1-03 test provider",
+                        ["IsEnabled"] = true,
+                        ["DisplayOrder"] = (short)1,
+                        ["CreatedAtUtc"] = DateTime.UtcNow,
+                    },
+                    Token);
+
+                var deliveryRow = SalesRowWriter.DeliveryMethodRow();
+                var deliveryMethodId = await writer.InsertAsync("sales.DeliveryMethods", deliveryRow, Token);
+
+                orderId = await writer.InsertAsync(
+                    "sales.Orders",
+                    SalesRowWriter.OrderRow(
+                        providerCode, deliveryMethodId, (string)deliveryRow["Code"]!),
+                    Token);
+
+                await writer.InsertAsync(
+                    "sales.OrderLines",
+                    SalesRowWriter.OrderLineRow(
+                        orderId, productId, variantId, seed.DepartmentId, seed.CategoryId),
+                    Token);
+            }
+
+            body["variants"] = new object[] { Variant("Indigo Rinse", seed.SizeIds[1], "W103-ORD-M") };
+            body["rowVersion"] = await RowVersionAsync(factory, productId);
+
+            var (status, problem) = await client.PutAsync($"{ProductsUrl}/{productId}", body, Token);
+
+            Assert.Equal(HttpStatusCode.Conflict, status);
+            Assert.Equal("variant_not_deletable", problem.GetProperty("code").GetString());
+            Assert.Contains(
+                "W103-ORD-S",
+                problem.GetProperty("orderedSkus").EnumerateArray().Select(sku => sku.GetString()));
+
+            // Nothing was written: the variant and its line are both still there.
+            await using (var scope = factory.Services.CreateAsyncScope())
+            {
+                var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+                Assert.Equal(
+                    2,
+                    await dbContext.ProductVariants.CountAsync(
+                        variant => variant.ProductId == productId, Token));
+
+                Assert.True(await dbContext.OrderLines.AnyAsync(line => line.OrderId == orderId, Token));
+            }
+        }
+        finally
+        {
+            if (orderId != 0)
+            {
+                await using var cleanup = factory.Services.CreateAsyncScope();
+                var dbContext = cleanup.ServiceProvider.GetRequiredService<AppDbContext>();
+                await dbContext.Database.ExecuteSqlRawAsync(
+                    "DELETE FROM sales.OrderLines WHERE OrderId = {0}; DELETE FROM sales.Orders WHERE Id = {0};",
+                    [orderId],
+                    Token);
+            }
+
+            await HardDeleteAsync(factory, productId);
+        }
     }
 
     [Fact]

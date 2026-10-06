@@ -218,12 +218,16 @@ internal sealed class FakeProductWriteStore : IProductWriteStore
     /// </summary>
     public List<ProductVariant> RemovedVariants { get; } = [];
 
-    public Task RemoveVariantsAsync(
+    /// <summary>Bag lines the fake pretends went with the variants, so the audit assertion has something.</summary>
+    public int CartLinesPerRemovedVariant { get; set; }
+
+    public Task<int> RemoveVariantsAsync(
         IReadOnlyCollection<ProductVariant> variants,
         CancellationToken cancellationToken)
     {
         RemovedVariants.AddRange(variants);
-        return Task.CompletedTask;
+
+        return Task.FromResult(variants.Count * CartLinesPerRemovedVariant);
     }
 
     public Task<CatalogSaveOutcome> SaveAsync(int? actingUserId, CancellationToken cancellationToken)

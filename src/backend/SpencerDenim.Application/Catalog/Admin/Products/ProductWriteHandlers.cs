@@ -232,9 +232,16 @@ public sealed class UpdateProductCommandHandler(
         // Taking a variant out of the collection is not enough. ProductVariants -> Products is NO ACTION,
         // and so is StockLevels -> ProductVariants, so the delete has to be explicit and has to take the
         // stock row with it. See IProductWriteStore.RemoveVariantsAsync.
-        await store.RemoveVariantsAsync(removedVariants, cancellationToken);
+        var cartLinesRemoved = await store.RemoveVariantsAsync(removedVariants, cancellationToken);
 
         var after = ProductWriteRules.Snapshot(product);
+
+        // A removed size can take a line out of a shopper's bag (VariantReferences), and that is the one
+        // effect of this save that nobody on the admin side can see afterwards. It belongs in the trail.
+        if (cartLinesRemoved > 0)
+        {
+            after["cartLinesRemoved"] = cartLinesRemoved;
+        }
 
         var audit = CatalogAuditTrail.ForChange(
             AuditActions.Update,
