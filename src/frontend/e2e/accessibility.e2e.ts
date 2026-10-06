@@ -303,6 +303,11 @@ test.describe('axe over the storefront (#65)', () => {
   test('the checkout page showing field errors has no serious or critical violation', async ({
     page,
   }) => {
+    // Two full axe scans now — the serious/critical gate and the any-impact record — on top of the bag
+    // and checkout navigations, so it gets the same tripled budget as the file's other scan-heavy test
+    // rather than sitting a few seconds under the default.
+    test.slow();
+
     await useStubApi(page);
     await addToBag(page, 3);
 
