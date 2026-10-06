@@ -511,6 +511,58 @@ describe('CheckoutPage (CHK-01..03)', () => {
    * deactivated printed "Subtotal (2 items) Rs. 7,980" on the bag and "Subtotal (3 items) Rs. 7,980"
    * here. The money was right both times; the label counted an item its own figure excludes.
    */
+  /**
+   * **"Choose a district" when a district has been chosen.** The Delivery and Total rows said it
+   * whatever the reason, which was true only while a district could never be pre-selected. The header
+   * district made "district chosen, method not" reachable, and in it the summary asked for something the
+   * form above already showed as answered.
+   */
+  describe('the pending delivery figure', () => {
+    it('asks for a district when none is chosen', async () => {
+      await openWith(unquoted());
+
+      expect(element.querySelector('[data-sum="delivery-pending"]')?.textContent?.trim()).toBe(
+        'Choose a district',
+      );
+      expect(element.querySelector('[data-sum="total-pending"]')?.textContent?.trim()).toBe(
+        'Choose a district',
+      );
+    });
+
+    it('asks for a delivery option once a district is chosen', async () => {
+      await openWith(
+        session({
+          selectedDistrictId: COLOMBO.id,
+          selectedDeliveryMethodId: null,
+          totals: totals({ deliveryFeeAmount: null, grandTotal: null }),
+        }),
+      );
+
+      expect(element.querySelector('[data-sum="delivery-pending"]')?.textContent?.trim()).toBe(
+        'Choose a delivery option',
+      );
+      expect(element.querySelector('[data-sum="total-pending"]')?.textContent?.trim()).toBe(
+        'Choose a delivery option',
+      );
+    });
+
+    /** Chosen, but the zone rate does not offer it here — asking for the district again is the same bug. */
+    it('says so when the chosen option is not available for the district', async () => {
+      await openWith(
+        session({
+          selectedDistrictId: COLOMBO.id,
+          selectedDeliveryMethodId: 1,
+          deliveryOptions: [option({ isAvailable: false, fee: null, feeAfterDiscount: null })],
+          totals: totals({ deliveryFeeAmount: null, grandTotal: null }),
+        }),
+      );
+
+      expect(element.querySelector('[data-sum="delivery-pending"]')?.textContent?.trim()).toBe(
+        'Choose an available delivery option',
+      );
+    });
+  });
+
   describe('the counts and the line prices', () => {
     it('counts only the items the subtotal sums', async () => {
       await openWith(
@@ -857,6 +909,28 @@ describe('CheckoutPage (CHK-01..03)', () => {
       expect(element.querySelector('#co-district-error')?.textContent).toContain(
         'Choose the district your order is going to',
       );
+    });
+
+    /**
+     * **GLB-09's 44 px floor, which these entries breached at every breakpoint.** They shipped at 22 px
+     * tall — under WCAG 2.2 SC 2.5.8's 24 px as well — and axe does not enforce 2.5.8, so nothing saw it.
+     * Measured here on the style rule and in `checkout.e2e.ts` on the rendered box.
+     */
+    it('gives each entry a 44 px tap target', async () => {
+      await openWith(session());
+
+      placeButton().click();
+      await settle();
+
+      const link = element.querySelector<HTMLElement>('.checkout__refused-link');
+
+      expect(link).not.toBeNull();
+
+      // jsdom applies no stylesheet, so the box cannot be measured here; the rule is what is asserted,
+      // and `checkout.e2e.ts` measures the box in a real browser at 320, 768 and 1280 px.
+      const styles = (CheckoutPage as unknown as { ɵcmp: { styles: string[] } }).ɵcmp.styles.join('');
+
+      expect(styles).toContain('min-height: 44px');
     });
 
     /** The list is live, so it empties itself as the shopper fixes things rather than going stale. */

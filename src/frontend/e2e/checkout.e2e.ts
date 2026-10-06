@@ -896,6 +896,37 @@ test.describe('checkout (CHK-01..04)', () => {
       });
     }
 
+    /**
+     * **The same 44 px floor, measured on the page in its *refused* state**, which is where this suite
+     * had a hole a new control walked straight through.
+     *
+     * The test above runs on the un-refused page, so the error summary — up to five focusable buttons
+     * that move focus to a field — did not exist when it measured, and shipped at 22 px tall. axe does
+     * not enforce SC 2.5.8 either, so nothing in the pipeline saw it. A state a control only exists in
+     * has to be a state the gate visits, or the next control added there slips through the same way.
+     */
+    for (const width of [320, 768, 1280] as const) {
+      test(`every control clears 44 px with the form refused at ${width} px`, async ({ page }) => {
+        await page.setViewportSize({ width, height: 900 });
+        await addToBag(page, 26);
+        await openCheckout(page, { lines: 1 });
+        await chooseDistrict(page, COLOMBO);
+        await chooseMethod(page, STANDARD);
+
+        // Nothing filled in, so every field is named in the summary. `force`, because the button is
+        // `aria-disabled` and Playwright honours that for actionability.
+        await page.locator('.checkout__place').click({ force: true });
+        await expect(page.locator('#checkout-refused')).toBeVisible();
+
+        await everyClauseIsBigEnough(page, [
+          '.checkout__input',
+          '.checkout__choice',
+          '.checkout__place',
+          '.checkout__refused-link',
+        ]);
+      });
+    }
+
     for (const width of BREAKPOINTS) {
       test(`the success page has no horizontal scroll at ${width} px`, async ({ page }) => {
         await page.setViewportSize({ width, height: 900 });

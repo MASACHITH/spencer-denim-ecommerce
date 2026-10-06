@@ -759,9 +759,15 @@ const SUMMARY_FIELDS: readonly { readonly field: string; readonly elementId: str
               <div>
                 <dt>Delivery</dt>
                 @if (totals().deliveryFeeAmount === null) {
-                  <!-- Null, not zero. Doc 08 §6 step 10 has no fee without a district and a method, and
-                       printing 0.00 here would be a promise of free delivery. -->
-                  <dd class="checkout__muted" data-sum="delivery-pending">Choose a district</dd>
+                  <!-- Null, not zero. Doc 08 §6 step 10 has no fee without a district *and* a method, and
+                       printing 0.00 here would be a promise of free delivery.
+
+                       **It names whichever of the two is actually missing.** It said "Choose a district"
+                       unconditionally, which was true for as long as a district could not be pre-selected
+                       — and the moment the header's district became the initial value, this row started
+                       telling a shopper looking at "Gampaha" and a list of Western options to choose the
+                       district they had already chosen. -->
+                  <dd class="checkout__muted" data-sum="delivery-pending">{{ pendingFeeReason() }}</dd>
                 } @else {
                   <dd data-sum="delivery">{{ money(totals().deliveryFeeAmount ?? 0) }}</dd>
                 }
@@ -779,7 +785,7 @@ const SUMMARY_FIELDS: readonly { readonly field: string; readonly elementId: str
               <div class="checkout__sums-total">
                 <dt>Total</dt>
                 @if (totals().grandTotal === null) {
-                  <dd class="checkout__muted" data-sum="total-pending">Choose a district</dd>
+                  <dd class="checkout__muted" data-sum="total-pending">{{ pendingFeeReason() }}</dd>
                 } @else {
                   <dd data-sum="total">{{ money(totals().grandTotal ?? 0) }}</dd>
                 }
@@ -882,7 +888,13 @@ const SUMMARY_FIELDS: readonly { readonly field: string; readonly elementId: str
       font-size: var(--text-small);
     }
     .checkout__refused-link {
-      padding: 0;
+      /* GLB-09's 44 px floor, and this breached it: the entries shipped at 22 px tall, under WCAG 2.2
+         SC 2.5.8's 24 px as well. They are real focusable controls that move focus to a field, and there
+         can be five of them in a column, so block-level and full width rather than inline text. */
+      display: block;
+      width: 100%;
+      min-height: 44px;
+      padding: var(--space-1-5) 0;
       border: 0;
       background: none;
       color: inherit;
@@ -1383,6 +1395,31 @@ export class CheckoutPage {
     }
 
     return this.totals().grandTotal === null ? 'Waiting for the delivery fee.' : null;
+  });
+
+  /**
+   * Why the Delivery and Total rows have no figure yet, naming the input that is missing.
+   *
+   * **Both rows said "Choose a district" whatever the reason**, and that was true only while a district
+   * could never be pre-selected. `m3` made the district come from the header, so the state "district
+   * chosen, method not" became reachable for the first time — and in it the summary asked for something
+   * the form above it already showed as answered. The figure is null until doc 08 §6 step 10 has *both*
+   * a zone and a rate, so there are two things it can be waiting for and it now says which.
+   */
+  protected readonly pendingFeeReason = computed(() => {
+    if (this.districtId() === null) {
+      return 'Choose a district';
+    }
+
+    const option = this.selectedOption();
+
+    if (option === null) {
+      return 'Choose a delivery option';
+    }
+
+    // Chosen, but the zone rate says this method is not offered here (doc 08 §3.5's "a missing row means
+    // unavailable"). Asking for the district again would be the same wrong answer in a new state.
+    return option.isAvailable ? 'Choose a delivery option' : 'Choose an available delivery option';
   });
 
   protected money(amount: number): string {
