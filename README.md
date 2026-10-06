@@ -114,12 +114,21 @@ dotnet ef database update 0 --project src/backend/SpencerDenim.Infrastructure --
 
 `dotnet ef` needs the matching tool version: `dotnet tool update --global dotnet-ef --version 10.0.12`.
 
-Seeding is a separate, deliberate step and is **off** unless you ask for it. It is idempotent: it
-inserts only rows that are missing and never overwrites an admin edit.
+**Reference data needs no flag.** Doc 08 §9's reference data — provinces, districts, delivery methods
+and their zone rates, payment providers, departments, categories, sizes, colours, attributes, size
+guides, the homepage's structure and the `ops.Settings` keys — is established on **every** startup of
+every environment, including production. None of it is sample data: a shop with no districts has an
+empty district dropdown, no delivery options and an `Orders.DeliveryDistrictId NOT NULL` it cannot
+satisfy, so it can never take an order. Migrate and start the API and it is there. The step is
+idempotent — it inserts only rows that are missing and never overwrites an admin edit — so a second
+startup over a seeded database inserts nothing. If it cannot run (no database, migrations not applied)
+the API still starts and logs an error naming the fix; `/health/ready` reports the database.
+
+**Sample data is a separate, deliberate step** and is **off** unless you ask for it:
 
 ```powershell
-$env:Seed__RunOnStartup = "true"          # reference data: departments, categories, sizes, colours, attributes, size guides
-$env:Seed__IncludeDemoCatalogue = "true"  # plus the 45-product sample catalogue (development and staging only)
+$env:Seed__RunOnStartup = "true"          # this host may seed optional data
+$env:Seed__IncludeDemoCatalogue = "true"  # the 45-product sample catalogue (development and staging only)
 dotnet run --project src/backend/SpencerDenim.Api
 # ... "Catalogue seeding inserted ..." appears in the log; stop the API and unset the variables
 Remove-Item Env:Seed__RunOnStartup, Env:Seed__IncludeDemoCatalogue
@@ -127,8 +136,8 @@ Remove-Item Env:Seed__RunOnStartup, Env:Seed__IncludeDemoCatalogue
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `Seed__RunOnStartup` | `false` | Run the idempotent reference-data seeder at startup |
-| `Seed__IncludeDemoCatalogue` | `false` | Also insert the sample catalogue. Never set this in production |
+| `Seed__RunOnStartup` | `false` | Allow this host to seed **optional** data at startup. Reference data is not gated by it |
+| `Seed__IncludeDemoCatalogue` | `false` | Insert the sample catalogue (needs `Seed__RunOnStartup`). Never set this in production |
 | `Catalog__DefaultLowStockThreshold` | `5` | Fallback when a variant has no threshold (doc 08 §9 `Inventory.DefaultLowStockThreshold`) |
 | `Catalog__NewArrivalDays` | `30` | How long a published product keeps the "New" badge |
 | `Catalog__BestSellerTopN` | `10` | Products per department that count as best sellers |
