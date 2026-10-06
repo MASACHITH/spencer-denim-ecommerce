@@ -172,6 +172,33 @@ export class Drawer {
   /** Raised when the scrim, the close button or Escape asks for the drawer to be dismissed. */
   readonly closed = output<void>();
 
+  /**
+   * Raised when the drawer closed and **could not give focus back**, so the host can decide where it
+   * should go instead.
+   *
+   * The drawer records whatever had focus when it opened and restores it on the way out. That element
+   * can be gone by then — the control that opened the drawer may have been removed by what the drawer
+   * was confirming. The drawer declines to focus a detached node, correctly, and the browser's answer
+   * to "focus nothing" is `<body>`: no tab position, nothing announced, a keyboard shopper stranded.
+   *
+   * **Found in W2-08.** Moving a wishlist row to the bag deletes that row's Move to bag button and the
+   * mini bag opens over the gap; dismissing it left focus on `<body>`. Adding from a listing card was
+   * unaffected, because that opener survives — which is how the cause was identified rather than
+   * guessed at.
+   *
+   * **Why an output and not a guess inside the drawer.** Only the host knows what a sensible
+   * destination is: the shell's bag anchor, a page heading, the row that took the removed one's place.
+   * A drawer that picked for itself would be wrong on some page.
+   *
+   * **Why a host cannot work this out for itself.** It has no moment to look: the drawer restores focus
+   * in a render phase of its own, and a host that checked on the `closed` output — or in a later render
+   * phase, which was tried and measured — runs while the drawing is still focused and sees nothing
+   * wrong. This fires at the one instant the answer is known.
+   *
+   * It is not raised when the drawer is destroyed with its host: there is no page left to put focus on.
+   */
+  readonly focusLost = output<void>();
+
   protected readonly headingId = `sd-drawer-title-${nextDrawerId++}`;
 
   private readonly panel = viewChild.required<ElementRef<HTMLElement>>('panel');
@@ -184,10 +211,12 @@ export class Drawer {
     // the host, so the panel is really visible by the time focus moves into it.
     afterRenderEffect(() => {
       const isOpen = this.open();
-      untracked(() => (isOpen ? this.activate() : this.deactivate()));
+      untracked(() => (isOpen ? this.activate() : this.deactivate({ restoring: true })));
     });
 
-    inject(DestroyRef).onDestroy(() => this.deactivate());
+    // `restoring: false`: the host is going away, so there is nothing to hand focus back to and
+    // nothing listening for the fact.
+    inject(DestroyRef).onDestroy(() => this.deactivate({ restoring: false }));
   }
 
   protected requestClose(): void {
@@ -209,7 +238,16 @@ export class Drawer {
 
     this.isActive = true;
     const active = this.document.activeElement;
-    this.returnFocusTo = active instanceof HTMLElement ? active : null;
+
+    // **`<body>` is not a return target, it is the absence of one** — and treating it as one is what
+    // made `focusLost` unreachable in the case it was written for (W2-08 round 3). The sequence: a
+    // control opens a dialog, the dialog's work removes that control, the dialog declines to restore
+    // focus to a detached node, and focus is therefore on `<body>` by the time *this* drawer opens.
+    // Recording that and then "restoring" it is a no-op dressed up as success: `body.isConnected` is
+    // true and `body.focus()` changes nothing, so the drawer reported a restore it had not made and
+    // the host was never told. Null here is the truth, and `deactivate` turns it into `focusLost`.
+    this.returnFocusTo =
+      active instanceof HTMLElement && active !== this.document.body ? active : null;
 
     this.document.body.classList.add('sd-no-scroll');
     this.document.addEventListener('keydown', this.onKeydown, true);
@@ -217,7 +255,7 @@ export class Drawer {
     this.focusFirst();
   }
 
-  private deactivate(): void {
+  private deactivate(options: { restoring: boolean } = { restoring: true }): void {
     if (!this.isActive) {
       return;
     }
@@ -229,8 +267,16 @@ export class Drawer {
 
     const target = this.returnFocusTo;
     this.returnFocusTo = null;
+
     if (target?.isConnected) {
       target.focus();
+      return;
+    }
+
+    // Nothing to return focus to: the opener has been removed while the drawer was open, or there was
+    // never one. See `focusLost` — the host decides, because only the host knows where.
+    if (options.restoring) {
+      this.focusLost.emit();
     }
   }
 

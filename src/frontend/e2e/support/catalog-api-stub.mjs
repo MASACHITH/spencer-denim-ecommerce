@@ -1339,7 +1339,7 @@ function productBySlug(slug) {
 /**
  * `POST /api/wishlist/products` as the real endpoint answers it (W2-08, WISH-01).
  *
- * The shopper's list lives in their browser, so the slugs arrive on the query string and the answer
+ * The shopper's list lives in their browser, so the slugs arrive **in the request body** and the answer
  * is the live card for each — **in the order asked, with a `null` product for anything the shop no
  * longer offers** (doc 11 §575). Both halves are what the page's behaviour hangs on, so a stub that
  * only answered for slugs it liked would make the "no longer available" row unreachable in a

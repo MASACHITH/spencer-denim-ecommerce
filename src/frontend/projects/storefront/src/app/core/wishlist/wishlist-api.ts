@@ -30,14 +30,6 @@ export interface WishlistResponse {
 export const WISHLIST_MAX_SLUGS = 200;
 
 /**
- * How long the request URL is, whatever is saved.
- *
- * Exported so a test can hold it: the whole of the 414 defect was a URL that grew with the wishlist, and
- * the fix is only the fix while the slugs stay in the body.
- */
-export const WISHLIST_URL_BYTES = 22;
-
-/**
  * The wishlist API (`/api/wishlist/products`). One place that knows the endpoint name.
  *
  * **It sends the shopper's slugs and no identity at all.** The list lives in this browser (doc 08 §1.7),

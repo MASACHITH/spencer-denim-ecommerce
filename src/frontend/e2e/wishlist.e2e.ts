@@ -650,24 +650,99 @@ test.describe('the wishlist (WISH-01)', () => {
     });
 
     /**
-     * Moving to the bag removes a row too — and `ui/modal` returns focus to the control that opened it,
-     * which is the Move to bag button that has just been destroyed with its row. The page's handler runs
-     * after that render, so it wins.
+     * **Moving to the bag destroys the opener, and the measurement has to be taken after the drawer has
+     * gone.** Round 2's version of this test asserted only that focus was not on `<body>` *immediately
+     * after the add* — at which point the mini bag holds focus, so it passed with the entire fix
+     * removed. It was a test that could not fail, which is the one shape this branch is otherwise
+     * careful about. Its name was wrong too: focus was in the drawer, not "in the list".
+     *
+     * The real sequence is: the row is removed, `sd-drawer` records whatever has focus when it opens
+     * (by then `<body>`, because Quick View has already declined to restore to the destroyed button),
+     * and on dismissal it restores to that — `<body>`. The page's own handler cannot help: by the time
+     * it runs, focus is inside the drawer and outside `.wish`, so its "do not steal focus" guard
+     * correctly declines, and nothing re-runs when the drawer later closes.
+     *
+     * So the fix is in the shell, in `SiteHeader.closeBag`: its existing `=== body` fallback is now
+     * deferred to the `read` phase, which runs after the drawer has restored (or declined). Focus lands
+     * on the header's bag anchor — a real, labelled control whose count has just gone up. Not the row
+     * the shopper was on, which would be better; see `closeBag` for why only the shell can know this
+     * and what returning to the list would cost.
      */
-    test('moving to the bag leaves focus in the list, not on a destroyed button', async ({ page }) => {
+    test('moving to the bag lands on the bag anchor once the mini bag is dismissed', async ({
+      page,
+    }) => {
       await savedInBrowser(page, [{ slug: 'test-product-28' }, { slug: 'test-product-29' }]);
       await openWishlist(page);
 
-      await page.locator('[data-testid="wishlist-move-to-bag"]').first().click();
+      await page.locator('[data-testid="wishlist-move-to-bag"]').first().focus();
+      await page.keyboard.press('Enter');
+
+      const dialog = page.locator('#quick-view');
+      await dialog.locator('.sd-size').first().click();
+      await dialog.locator('[data-testid="quick-view-add"]').click();
+      await expect(dialog).toHaveCount(0);
+      await expect(page.locator('.wish__item')).toHaveCount(1);
+
+      // The mini bag is the confirmation and it holds focus, which is correct and is *not* the thing
+      // under test — asserting here is what made the old version vacuous.
+      const drawer = page.locator('sd-mini-bag [role="dialog"]');
+      await expect(drawer).toBeVisible();
+
+      await page.keyboard.press('Escape');
+      await expect(drawer).toBeHidden();
+
+      // **Now** the question: where did the shopper end up? Polled, because the shell's fallback runs
+      // in the render phase after the drawer has restored, which is not the same tick as the drawer
+      // becoming hidden.
+      const landed = await page.evaluate(() => {
+        const node = document.activeElement as HTMLElement | null;
+        return {
+          onBody: node === document.body,
+          testId: node?.dataset['testid'] ?? null,
+          label: node?.getAttribute('aria-label') ?? node?.tagName ?? 'nothing',
+        };
+      });
+
+      expect(landed.onBody, `focus landed on ${landed.label}`).toBe(false);
+      expect(landed.testId).toBe('bag-toggle');
+    });
+
+    /**
+     * **The control that survives is still restored to, which is what makes the fix a net rather than a
+     * takeover.** Adding from a listing card leaves its Add to Bag button in the DOM, so `sd-drawer`
+     * restores to it and the header's fallback declines. This is the half that would break if the
+     * deferred check were made unconditional, and it is why the `=== body` test stays.
+     */
+    test('a surviving opener is still what focus returns to', async ({ page }) => {
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.goto(LISTING);
+      await expect(page.locator('.product-grid > li').first()).toBeVisible();
+
+      const trigger = page.locator('[data-testid="card-add-to-bag"]').first();
+      await expect
+        .poll(
+          async () => {
+            if (!(await page.locator('#quick-view').isVisible())) {
+              await trigger.click();
+            }
+
+            return page.locator('#quick-view').isVisible();
+          },
+          { timeout: 15_000 },
+        )
+        .toBe(true);
+
       const dialog = page.locator('#quick-view');
       await dialog.locator('.sd-size').first().click();
       await dialog.locator('[data-testid="quick-view-add"]').click();
       await expect(dialog).toHaveCount(0);
 
-      await expect(page.locator('.wish__item')).toHaveCount(1);
+      const drawer = page.locator('sd-mini-bag [role="dialog"]');
+      await expect(drawer).toBeVisible();
+      await page.keyboard.press('Escape');
+      await expect(drawer).toBeHidden();
 
-      const onBody = await page.evaluate(() => document.activeElement === document.body);
-      expect(onBody).toBe(false);
+      await expect(page.locator('[data-testid="card-add-to-bag"]').first()).toBeFocused();
     });
   });
 

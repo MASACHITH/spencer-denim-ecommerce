@@ -47,6 +47,17 @@ namespace SpencerDenim.Api.Endpoints.Sales;
 /// saved. A body does not. That argument was always available and was missed first time round.
 /// </para>
 /// <para>
+/// <b>And the bound the move took away has been put back.</b> The old <c>GET</c> was refused by the
+/// transport at 8,192 bytes <i>before anything was allocated</i>; a <c>POST</c> is accepted up to
+/// Kestrel's 30 MB default, and <c>System.Text.Json</c> materialises the whole array before
+/// <see cref="GetWishlistQueryHandler.MaxSlugs"/> trims it. Measured against a real Kestrel: 200,000
+/// slugs is a 20.68 MB body that reached the handler in 2,192 ms. The catalogue was never at risk —
+/// the handler's cap holds the database work at 200 either way — but the parse-and-allocate cost had
+/// nothing in front of it, and <b>a fix for an input that was too large should not remove the only
+/// bound on input size</b>. <see cref="MaxBodyBytes"/> is that bound, and it is far above anything the
+/// storefront can send.
+/// </para>
+/// <para>
 /// <b>What is given up, and why it costs nothing here.</b> A <c>POST</c> is neither safe nor cacheable
 /// by HTTP's rules, while this call is in fact both — the same slugs get the same answer for anyone who
 /// asks, and nothing is written. No cache is lost, because every answer is <c>no-store</c> on purpose
@@ -57,6 +68,23 @@ namespace SpencerDenim.Api.Endpoints.Sales;
 /// </summary>
 internal static class WishlistEndpoints
 {
+    /// <summary>
+    /// The largest body this endpoint will read: 64 KiB.
+    /// <para>
+    /// The worst request the storefront can make is <see cref="GetWishlistQueryHandler.MaxSlugs"/>
+    /// slugs of <see cref="GetWishlistQueryHandler.MaxSlugLength"/> characters, which is about 45 KB of
+    /// JSON — so this is roughly 40% of headroom over a full wishlist and about 480 times tighter than
+    /// Kestrel's 30 MB default. A shopper cannot reach it: the storefront trims to the same cap before
+    /// it asks.
+    /// </para>
+    /// <para>
+    /// Over the limit is a <b>413</b>, which is the right answer and a different one from the handler's
+    /// own cap: 201 slugs are <i>trimmed</i> and answered, because that is a wishlist the shop simply
+    /// will not draw all of; 200,000 are <i>refused</i>, because that is not a wishlist.
+    /// </para>
+    /// </summary>
+    public const long MaxBodyBytes = 64 * 1024;
+
     public static IEndpointRouteBuilder MapWishlistEndpoints(this IEndpointRouteBuilder endpoints)
     {
         var wishlist = endpoints.MapGroup("/api/wishlist").WithTags("Wishlist");
@@ -73,7 +101,15 @@ internal static class WishlistEndpoints
                 "a null product for anything the shop no longer offers (doc 11 §575). Reads nothing " +
                 "per-visitor and writes nothing at all. A POST because the slugs do not fit in a request " +
                 "line and because a wishlist in a URL is a wishlist in every access log on the way.")
-            .Produces<WishlistDto>();
+            .Produces<WishlistDto>()
+            .ProducesProblem(StatusCodes.Status413PayloadTooLarge)
+
+            // Per-endpoint rather than a Kestrel-wide `Limits` change: this is the only endpoint in the
+            // application that takes a list from the client, and lowering the server's global ceiling
+            // would silently cap media uploads (ADM-14), which legitimately need megabytes.
+            // `WishlistTransportTests` holds both halves — that a full wishlist passes and that a body
+            // far over it is refused.
+            .WithMetadata(new RequestSizeLimitAttribute(MaxBodyBytes));
 
         return endpoints;
     }

@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
+using SpencerDenim.Api.Endpoints.Sales;
 using SpencerDenim.Application.Abstractions.Messaging;
 using SpencerDenim.Application.Sales.Wishlist;
 using SpencerDenim.Application.Sales.Wishlist.Contracts;
@@ -236,9 +237,17 @@ public sealed class WishlistTransportTests : IAsyncDisposable
         var host = await HostAsync();
         using var client = host.CreateClient();
 
+        // **Short slugs**, so this stays well inside `WishlistEndpoints.MaxBodyBytes` and the thing
+        // being measured is the *handler's* cap. With worst-case slugs the body would be refused at 413
+        // and this would quietly become a second copy of the body-limit test.
+        var slugs = Enumerable
+            .Range(0, GetWishlistQueryHandler.MaxSlugs * 3)
+            .Select(index => Slug(20, index))
+            .ToArray();
+
         var response = await client.PostAsJsonAsync(
             new Uri("/api/wishlist/products", UriKind.Relative),
-            new { slugs = WorstCaseSlugs(GetWishlistQueryHandler.MaxSlugs * 3) },
+            new { slugs },
             Json,
             Token);
 
@@ -247,6 +256,59 @@ public sealed class WishlistTransportTests : IAsyncDisposable
         var body = await response.Content.ReadFromJsonAsync<WishlistDto>(Json, Token);
         Assert.NotNull(body);
         Assert.Equal(GetWishlistQueryHandler.MaxSlugs, body.Items.Count);
+    }
+
+    /// <summary>
+    /// <b>The bound the move to a body took away, put back.</b>
+    /// <para>
+    /// The old <c>GET</c> was refused at 8,192 bytes by the transport before anything was allocated. A
+    /// <c>POST</c> is accepted up to Kestrel's 30 MB default and <c>System.Text.Json</c> materialises the
+    /// whole array before the handler's cap trims it — measured at 20.68 MB and 2,192 ms for 200,000
+    /// slugs. The catalogue was never at risk, because the cap holds the database work at 200 either
+    /// way; what had nothing in front of it was the parse-and-allocate cost. <b>A fix for an input that
+    /// was too large must not remove the only bound on input size.</b>
+    /// </para>
+    /// <para>
+    /// 413, not 400 and not a trimmed answer: 201 slugs are a wishlist the shop will not draw all of, so
+    /// they are trimmed; 200,000 are not a wishlist.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task A_body_far_larger_than_any_wishlist_is_refused_outright()
+    {
+        var host = await HostAsync();
+        using var client = host.CreateClient();
+
+        // **Just over the limit, not megabytes over it.** A body the server stops reading part way
+        // through is answered *and* reset, and whether the client sees the 413 or the reset first is a
+        // race — which is exactly how this test failed in the suite and passed on its own. At 400
+        // worst-case slugs (about 90 KB) the declared `Content-Length` is over the ceiling, so the
+        // refusal happens before the body is read at all and the answer is deterministic.
+        var slugs = WorstCaseSlugs(400);
+        var response = await client.PostAsJsonAsync(
+            new Uri("/api/wishlist/products", UriKind.Relative),
+            new { slugs },
+            Json,
+            Token);
+
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, response.StatusCode);
+    }
+
+    /// <summary>
+    /// And the limit really is above a full wishlist, measured rather than asserted from the constant:
+    /// the worst body the storefront can send is well inside it, with room to spare.
+    /// </summary>
+    [Fact]
+    public void The_body_limit_leaves_room_over_a_full_wishlist()
+    {
+        var body = JsonSerializer.Serialize(new { slugs = WorstCaseSlugs() }, Json);
+
+        Assert.True(
+            body.Length < WishlistEndpoints.MaxBodyBytes,
+            $"a full wishlist is {body.Length} bytes against a limit of {WishlistEndpoints.MaxBodyBytes}");
+
+        // Headroom, but not so much that the limit stops being one: between 1.2x and 3x a full wishlist.
+        Assert.InRange(WishlistEndpoints.MaxBodyBytes / (double)body.Length, 1.2, 3.0);
     }
 
     /// <summary>

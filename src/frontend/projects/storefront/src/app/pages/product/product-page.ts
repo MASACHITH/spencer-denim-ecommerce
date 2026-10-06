@@ -49,7 +49,7 @@ import { readableInk } from '../../core/platform/contrast';
 import { RobotsMeta } from '../../core/platform/robots-meta';
 import { serviceUnavailable } from '../../core/platform/service-unavailable';
 import { CartStore } from '../../core/cart/cart.store';
-import { LocalWishlist } from '../../core/wishlist/local-wishlist.service';
+import { WishlistStore } from '../../core/wishlist/wishlist.store';
 
 /** What the API answers for `StockStatus`, in the shopper's words. */
 const STOCK_LABEL: Readonly<Record<StockStatus, string>> = {
@@ -548,7 +548,19 @@ export class ProductPage {
   private readonly meta = inject(Meta);
   private readonly pageMeta = inject(PageMeta);
   private readonly robots = inject(RobotsMeta);
-  private readonly wishlist = inject(LocalWishlist);
+  // **`WishlistStore`, like the listing card** (W2-08 round 3). This page wrote the stored list
+  // directly while the card went through the store, so "every heart in the storefront goes through
+  // `WishlistStore`" was false and was reported to the owner as fact. One feature with two code paths
+  // is the m3 finding again, one layer up.
+  //
+  // **It still does not need a sentence, and that is not the same as not announcing.** The heart here
+  // is a persistent toggle: `aria-pressed` flips and the accessible name changes from "Save to
+  // wishlist" to "Saved to wishlist", which a screen reader reads out on the press. A live-region
+  // sentence on top of that would say the same thing twice. What the page gains from the store is the
+  // single code path, the shared refusal wording, and a `lastChange` that is correct for whoever reads
+  // it — not a second announcement. There are also no rows here to re-home focus to, and the button
+  // survives its own press, so the removal reporting is simply unused on this page.
+  private readonly wishlist = inject(WishlistStore);
   private readonly cart = inject(CartStore);
   private readonly recent = inject(RecentlyViewed);
   private readonly response = inject(RESPONSE_INIT, { optional: true });
@@ -707,7 +719,7 @@ export class ProductPage {
     this.recent.except(this.currentSlug()).slice(0, RECENT_SHOWN),
   );
 
-  protected readonly saved = computed(() => this.wishlist.has(this.currentSlug()));
+  protected readonly saved = computed(() => this.wishlist.isSaved(this.currentSlug()));
 
   private readonly wishFailure = signal<string | null>(null);
 
@@ -981,12 +993,15 @@ export class ProductPage {
     const item = this.product();
     const colour = this.colours().find((option) => option.colour.id === this.selection().colourId);
 
-    const outcome = this.wishlist.toggle({
-      slug: this.currentSlug(),
-      name: item?.name ?? null,
-      colourId: colour?.colour.id ?? null,
-      colourName: colour?.colour.name ?? null,
-    });
+    const outcome = this.wishlist.toggle(
+      {
+        slug: this.currentSlug(),
+        name: item?.name ?? null,
+        colourId: colour?.colour.id ?? null,
+        colourName: colour?.colour.name ?? null,
+      },
+      item?.name ?? 'This item',
+    );
 
     if (outcome !== 'unavailable') {
       this.wishFailure.set(null);
