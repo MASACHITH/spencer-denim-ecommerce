@@ -20,6 +20,9 @@ const searchPage = () => import('./pages/search/search-page').then((m) => m.Sear
 /** The bag page (CART-01). */
 const bagPage = () => import('./pages/bag/bag-page').then((m) => m.BagPage);
 
+/** The wishlist page (WISH-01). */
+const wishlistPage = () => import('./pages/wishlist/wishlist-page').then((m) => m.WishlistPage);
+
 /** Checkout (CHK-01..03). */
 const checkoutPage = () =>
   import('./pages/checkout/checkout-page').then((m) => m.CheckoutPage);
@@ -47,9 +50,12 @@ const catalogUnavailablePage = () =>
  * **If you are building one of these pages, delete its entry in the same change.** That is the whole
  * maintenance rule, and it is here rather than only in a journal because this is where someone adding
  * a route will be looking. Each entry is owed by a known task: GLB-10 for `about`, `contact`,
- * `returns`, `shipping`, `privacy` and `terms`; W2-08 for `wishlist`; W3-01 for `account`; W3-02 for
- * `checkout`. A leftover entry cannot take effect — the real route is declared above this list and
- * wins — but it says the site has no such page, so the spec fails on one.
+ * `returns`, `shipping`, `privacy` and `terms`; W3-01 for `account`. A leftover entry cannot take
+ * effect — the real route is declared above this list and wins — but it says the site has no such
+ * page, so the spec fails on one.
+ *
+ * **`/wishlist` has been taken out by W2-08**, which is that rule being followed: the page is real, so
+ * the entry claiming the site has no such address goes in the same change.
  *
  * **`/search` and `/bag` were in this list and have been taken out**, because W2-07 built the search
  * page (SRCH-02) and W2-09 built the bag page (CART-01), and an entry for an address that has a real
@@ -75,7 +81,6 @@ export const UNBUILT_PATHS = [
   'returns',
   'shipping',
   'terms',
-  'wishlist',
 ] as const;
 
 export const routes: Routes = [
@@ -108,6 +113,16 @@ export const routes: Routes = [
   // It takes no `canMatch` guard — the page is valid for every visitor, including one with an empty
   // bag — and so it can never answer 404 or 503.
   { path: 'bag', loadComponent: bagPage },
+
+  // The wishlist (W2-08, WISH-01). A single-segment route listed **ahead of `:department`**, which
+  // matches any single segment, and its `UNBUILT_PATHS` entry is removed in this change — the rule that
+  // list states for itself, and the one `/search` and `/bag` were each left behind by once.
+  //
+  // No `canMatch` guard: the page is valid for every visitor, including one with nothing saved, which it
+  // says rather than 404ing. It is personal, so it answers `no-store` and `noindex` like `/bag` — but
+  // unlike `/bag` it renders **no list on the server at all**, because a guest's wishlist is in their own
+  // browser (doc 08 §1.7) and the server has nothing to render it from. See the component.
+  { path: 'wishlist', loadComponent: wishlistPage },
 
   // Checkout (W3-02, CHK-01..03). A single-segment route listed **ahead of `:department`**, which matches
   // any single segment, and its `UNBUILT_PATHS` entry is removed in this change.
@@ -147,12 +162,12 @@ export const routes: Routes = [
   // **Why they have to be listed, rather than left to the catch-all.** The header and the footer link
   // to every one of these on every page of the site. Answering 404 on an address the shop's own footer
   // offers would hand a crawler a site-wide broken link, which is worse than the soft 404 #28 is
-  // about. So the list is the price of fixing #28 before GLB-10 and W2-08 land; #28 itself says the
-  // catch-all may become the 404 once they have. **Each of these is deleted by the task that gives the
-  // page a real route** — GLB-10 for the six content pages, W2-08 for /wishlist, W3-01 for /account,
-  // W3-02 for /checkout — and W2-07 (/search) and W2-09 (/bag) have already deleted theirs, which is
-  // the pattern. A leftover entry cannot take effect, because a real route declared above it wins, but
-  // it is a lie about what the site has, so `app.routes.spec.ts` fails on one.
+  // about. So the list is the price of fixing #28 before GLB-10 lands; #28 itself says the catch-all
+  // may become the 404 once it has. **Each of these is deleted by the task that gives the page a real
+  // route** — GLB-10 for the six content pages, W3-01 for /account — and W2-07 (/search), W2-09 (/bag),
+  // W3-02 (/checkout) and W2-08 (/wishlist) have already deleted theirs, which is the pattern. A
+  // leftover entry cannot take effect, because a real route declared above it wins, but it is a lie
+  // about what the site has, so `app.routes.spec.ts` fails on one.
   //
   // Ahead of `:department` on purpose: these are known answers and should not wait on the catalogue
   // feed to be given. Behind `search` on purpose too, which is the same point from the other side:

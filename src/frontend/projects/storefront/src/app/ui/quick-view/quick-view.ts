@@ -533,6 +533,21 @@ export class QuickView {
   /** Raised when the dialog should go away: Escape, the scrim, the close button, or a finished add. */
   readonly closed = output<void>();
 
+  /**
+   * Raised when **this dialog's** add succeeded, immediately before {@link closed} (W2-08, WISH-01).
+   *
+   * It exists because "move to bag" has to know. A wishlist row that is moved to the bag leaves the
+   * wishlist, and it must leave it only if the bag really took it — W2-09 shipped the mirror of that
+   * defect in the other direction, destroying a bag line over a wishlist save that had silently failed.
+   * `CartStore.lastAdded` is not usable for this: it is a **root** signal that moves for an add made
+   * anywhere, including from a card on the same page, so a wishlist watching it would delete the wrong
+   * row. `addRequested` is what makes this output answer only for the add this dialog asked for.
+   *
+   * A failed add — sold out, offline, refused — raises nothing at all, and the dialog stays open with
+   * the reason on it. Most callers ignore this output; the product card does.
+   */
+  readonly added = output<void>();
+
   protected readonly store = inject(ProductDetailStore);
   private readonly cart = inject(CartStore);
 
@@ -616,6 +631,10 @@ export class QuickView {
 
         this.addRequested = false;
         if (this.cart.error() === null) {
+          // `added` before `closed`, so a caller that acts on the add is acting while the dialog it
+          // belongs to still exists. Both are synchronous, so the order is the only thing that decides
+          // it.
+          this.added.emit();
           this.closed.emit();
         }
       });
