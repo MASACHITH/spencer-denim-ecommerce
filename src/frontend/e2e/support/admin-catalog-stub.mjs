@@ -377,11 +377,23 @@ function drain(request) {
  * uploaded photograph look described and quietly disabled the rule in every browser test.
  */
 function uploadedAltText(body) {
-  const field = /name="altText"?
-?
-([^
-]*)/.exec(body);
-  const described = (field?.[1] ?? '').trim();
+  const at = body.indexOf('name="altText"');
+
+  if (at < 0) {
+    return null;
+  }
+
+  // A multipart part's value starts after the blank line that ends its own headers and runs to the
+  // next boundary. Parsed by hand because the stub has no dependencies, and only loosely because
+  // all it has to tell apart is "a description arrived" from "none did".
+  const blank = '\r\n\r\n';
+  const headersEnd = body.indexOf(blank, at);
+
+  if (headersEnd < 0) {
+    return null;
+  }
+
+  const described = body.slice(headersEnd + blank.length).split('\r')[0].trim();
 
   return described.length > 0 ? described : null;
 }

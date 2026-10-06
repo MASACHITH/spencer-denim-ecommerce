@@ -435,6 +435,69 @@ test.describe('layout', () => {
     expect(await undersized(page, '.products input, .products select')).toEqual([]);
   });
 
+  /**
+   * The save bar is `position: sticky; bottom: 0` over an opaque panel, so while it is stuck it covers
+   * whatever is behind it. A control under it cannot be clicked, and axe reports the same thing as a
+   * serious `target-size` violation against whichever control happens to be at the viewport's bottom
+   * edge — which is why the finding moved from one element to another as the form's content changed, and
+   * why the 320 px scan passed while the 1280 px scan did not.
+   *
+   * Scrolled in viewport-height steps rather than measured once, because an overlap at scroll 0 is the
+   * accident and an overlap somewhere down the form is the rule.
+   */
+  test('no control is ever covered by the save bar', async ({ page }) => {
+    for (const width of WIDTHS) {
+      await page.setViewportSize({ width, height: 720 });
+      await openProduct(page, 301);
+
+      const covered = await page.evaluate(async () => {
+        const bar = document.querySelector('.form__actions');
+
+        if (bar === null) {
+          return ['there is no save bar at all'];
+        }
+
+        const found = new Set();
+        const step = Math.max(240, Math.round(window.innerHeight * 0.75));
+
+        for (let top = 0; top <= document.body.scrollHeight; top += step) {
+          window.scrollTo(0, top);
+          await new Promise((settled) => requestAnimationFrame(() => settled(null)));
+
+          const barBox = bar.getBoundingClientRect();
+
+          for (const control of document.querySelectorAll(
+            '.form input, .form select, .form textarea, .form button, .form a',
+          )) {
+            if (bar.contains(control)) {
+              continue;
+            }
+
+            const box = control.getBoundingClientRect();
+
+            if (box.width === 0 || box.height === 0) {
+              continue;
+            }
+
+            const across = Math.min(box.right, barBox.right) - Math.max(box.left, barBox.left);
+            const down = Math.min(box.bottom, barBox.bottom) - Math.max(box.top, barBox.top);
+
+            if (across > 1 && down > 1) {
+              const name =
+                control.getAttribute('data-testid') ?? control.getAttribute('name') ?? control.tagName;
+
+              found.add(`${name} covered by ${Math.round(down)}px`);
+            }
+          }
+        }
+
+        return [...found];
+      });
+
+      expect(covered, `at ${width} px`).toEqual([]);
+    }
+  });
+
   test('a focused move button shows a focus ring nothing is clipping', async ({ page }) => {
     await page.setViewportSize({ width: 320, height: 900 });
     await openProduct(page, 301);

@@ -1234,11 +1234,16 @@ const EMPTY: Scalars = {
       border: 1px solid var(--color-border);
     }
 
+    /* Not sticky. It was, and an opaque panel stuck to the bottom of the viewport covered whatever
+       was behind it: at 320 px, scrolling the form put the save bar over field-care, every media
+       row's alt text box and the related-product buttons, 44 px of each — their whole height, so
+       they could not be clicked at all until the admin nudged the page. axe reported the same
+       thing as a serious target-size violation against whichever control sat at the viewport edge,
+       which is why the finding moved as the content changed and why the 320 px scan passed while
+       the 1280 px one did not. No other admin screen has a sticky bar; this one no longer does. */
     .form__actions {
       display: grid;
       gap: var(--space-1);
-      position: sticky;
-      bottom: 0;
     }
 
     /* The visual unavailable state, which aria-disabled has to draw because the disabled attribute is
