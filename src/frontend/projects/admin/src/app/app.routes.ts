@@ -39,6 +39,28 @@ export const routes: Routes = [
     loadComponent: () => import('./pages/catalog/catalog-page').then((m) => m.CatalogPage),
   },
   {
+    // ADM-10 (W1-03). Like every other admin route the guard only asks for a session: the API is the
+    // security boundary (doc 03 §3a), and a user without Products.View is shown the refusal rather than
+    // bounced from a page that then cannot explain itself.
+    path: 'products',
+    title: `Products — ${BRAND.adminName}`,
+    canActivate: [adminSessionGuard],
+    loadComponent: () =>
+      import('./pages/products/products-list-page').then((m) => m.ProductsListPage),
+  },
+  {
+    path: 'products/new',
+    title: `Add a product — ${BRAND.adminName}`,
+    canActivate: [adminSessionGuard],
+    loadComponent: () => import('./pages/products/product-form-page').then((m) => m.ProductFormPage),
+  },
+  {
+    path: 'products/:id',
+    title: `Edit product — ${BRAND.adminName}`,
+    canActivate: [adminSessionGuard],
+    loadComponent: () => import('./pages/products/product-form-page').then((m) => m.ProductFormPage),
+  },
+  {
     // ADM-22 + GLB-02 (W1-16). Like every other admin route the guard only asks for a session: the API is
     // the security boundary (doc 03 §3a), and a user without Settings.Edit is shown the refusal rather than
     // bounced from a page that then cannot explain itself.
