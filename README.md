@@ -122,7 +122,11 @@ empty district dropdown, no delivery options and an `Orders.DeliveryDistrictId N
 satisfy, so it can never take an order. Migrate and start the API and it is there. The step is
 idempotent — it inserts only rows that are missing and never overwrites an admin edit — so a second
 startup over a seeded database inserts nothing. If it cannot run (no database, migrations not applied)
-the API still starts and logs an error naming the fix; `/health/ready` reports the database.
+the API still starts — liveness and the OpenAPI document keep answering, so a late SQL Server is not a
+crash loop — and it logs an error naming the fix. **`/health/ready` answers 503 until the data is really
+there**, so an orchestrator does not route live traffic to a host that cannot take an order, and the
+attempt is retried every 10 s, so applying the migrations or bringing the database up makes the host ready
+on its own without a restart.
 
 **Sample data is a separate, deliberate step** and is **off** unless you ask for it:
 
@@ -397,7 +401,7 @@ It listens on http://localhost:5080:
 |---|---|
 | `GET /api/ping` | Reachability check (no database) |
 | `GET /health` | Liveness: the process answers |
-| `GET /health/ready` | Readiness: includes SQL Server connectivity (503 when unreachable) |
+| `GET /health/ready` | Readiness: SQL Server connectivity **and** whether doc 08 §9's reference data is established (503 until both hold — a connectable database with no migrations applied is not ready) |
 | `/api/swagger` | Swagger UI, **Development only** (OpenAPI JSON at `/api/openapi/v1.json`) |
 | `GET /api/catalog/departments` | Departments with their category tree (GLB-05, DEPT-01) |
 | `GET /api/catalog/products` | Listing with filters, sort and paging (PLP-01..07, CARD-01) |

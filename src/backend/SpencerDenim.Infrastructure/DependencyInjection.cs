@@ -159,6 +159,11 @@ public static class DependencyInjection
         services.AddMediaLibrary();
 
         services.AddOptions<SeedOptions>().BindConfiguration(SeedOptions.SectionName);
+
+        // Written by the seeder, read by the readiness check. A singleton because it is this host's
+        // answer to "did I come up able to take an order", which outlives any request scope.
+        services.AddSingleton<ReferenceDataState>();
+
         services.AddScoped<CatalogReferenceDataSeeder>();
         services.AddScoped<SalesReferenceDataSeeder>();
         services.AddScoped<HomeContentSeeder>();
@@ -172,7 +177,17 @@ public static class DependencyInjection
                 name: "sqlserver",
                 failureStatus: null,
                 tags: [HealthCheckTags.Ready],
-                timeout: DatabaseHealthCheckTimeout);
+                timeout: DatabaseHealthCheckTimeout)
+
+            // **`CanConnectAsync()` is not enough to call a host ready, and that was a real defect.** A
+            // database that is connectable but has no migrations applied answered `/health/ready` with
+            // `200 Healthy` while every `/api/checkout` returned 500, so an orchestrator routed live
+            // traffic to a shop that could not take an order. This check reports what the seeder actually
+            // managed; see `ReferenceDataHealthCheck`. No timeout, because it never does any I/O.
+            .AddCheck<ReferenceDataHealthCheck>(
+                name: "referencedata",
+                failureStatus: null,
+                tags: [HealthCheckTags.Ready]);
 
         services.AddAdminIdentity();
 
