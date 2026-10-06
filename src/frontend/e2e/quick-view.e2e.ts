@@ -311,89 +311,121 @@ test.describe('the triggers on the card (CARD-01, docs/04 §4 decision 5)', () =
       page,
     }) => {
       await page.setViewportSize({ width, height });
+
+      // **The photographs are not loaded, and that makes this test both cheap and deterministic.**
+      //
+      // It is the only test in the file that scrolls a listing, and scrolling one wakes every
+      // `loading="lazy"` image on it: forty-eight renditions fetched from the media stub, on the
+      // same server every other test in this file is trying to hydrate against. Measured: with
+      // these two tests present, `openQuickView`'s 15 s poll timed out on a *different* neighbour
+      // in three runs out of five; with them removed, 45/45 three times over. Collapsing the scan
+      // into one `page.evaluate` did not fix it, which is what pointed at the images rather than
+      // the round trips.
+      //
+      // Nothing measured here is in a photograph. `.card__media` is `aspect-ratio: 3 / 4`, so the
+      // card's geometry does not depend on an image having arrived — and the buttons sit on the
+      // media box, not on the `<img>`. Blocking them also removes the lazy-load reflow that made
+      // the very first version of this test flake on its own account.
+      await page.route('**/media/**', (route) => route.abort());
+
       await page.goto(LISTING);
       await expect(page.locator('.product-grid > li').first()).toBeVisible();
       // The float is really there, or this test proves nothing at all.
       await expect(page.locator('.wa-float')).toBeVisible();
+      // And the cards are laid out, image or no image — the premise of blocking them.
+      expect(
+        await page.locator('.card__media').first().evaluate((box: HTMLElement) =>
+          Math.round(box.getBoundingClientRect().height),
+        ),
+        'a card photo has no height without its image, so blocking images changed the layout',
+      ).toBeGreaterThan(100);
 
-      // **Settle the page before sampling it.** The cards' photographs are `loading="lazy"`, so
-      // scrolling loads images, which changes the document's height *under* the sampler: the first
-      // version of this read `scrollHeight` once, and a point measured before a reflow and hit
-      // after it came back as `elementFromPoint` → null at the very bottom of the page. It failed
-      // in a full-file run and passed alone, which is the shape of a flake rather than a bug. So
-      // walk to the bottom first, let every image load, and only then measure.
-      await page.evaluate(async () => {
-        const step = document.documentElement.clientHeight;
-        for (let y = 0; y <= document.documentElement.scrollHeight; y += step) {
-          window.scrollTo(0, y);
-          await new Promise((resolve) => requestAnimationFrame(resolve));
-        }
-        window.scrollTo(0, 0);
-      });
-      await page
-        .waitForFunction(() => [...document.images].every((image) => image.complete), undefined, {
-          timeout: 15_000,
-        })
-        .catch(() => undefined);
-      await page.evaluate(() => window.scrollTo(0, 0));
+      // **The whole scan happens in one `page.evaluate`, and that is not only for speed.**
+      //
+      // It was 41 round trips per viewport, and the cost did not land on this test — it landed on
+      // its *neighbours*: `openQuickView`'s 15 s hydration poll started timing out on a different
+      // test in this file in roughly one run in two, while removing just these two tests gave
+      // 45/45 three times over. A test that makes its neighbours fail is a broken test, whatever
+      // it proves about the thing it was written for. One call does the same work in two.
+      //
+      // It is also strictly more reliable: scrolling and measuring in the same synchronous pass
+      // leaves no window at all for a reflow to land between them, which was the other thing that
+      // made the first version flaky. `scrollTo` applies synchronously and both
+      // `getBoundingClientRect` and `elementFromPoint` force layout, so each offset is measured
+      // against its own scroll position.
+      //
+      // **41 offsets of 40 px, which is the tester's own sample**, rather than the whole 4,000 px
+      // document. The float is `position: fixed`, so it stays put while every row of cards is
+      // scrolled *through* its band: 1,600 px carries four rows past it at 320 px, and the
+      // mutation proof's first hit is at `scrollY 0`. Scanning further asks the same question
+      // about more cards.
+      const { covered, sampled, offsets } = await page.evaluate(() => {
+        const problems: {
+          scrollY: number;
+          nth: number;
+          hit: string;
+          probe: string;
+        }[] = [];
+        const root = document.documentElement;
+        let counted = 0;
+        let steps = 0;
 
-      const pageHeight = await page.evaluate(() => document.documentElement.scrollHeight);
-      const offsets: number[] = [];
-      for (let y = 0; y <= Math.max(0, pageHeight - height); y += 40) {
-        offsets.push(y);
-      }
+        for (let offset = 0; offset <= 40 * 40; offset += 40) {
+          window.scrollTo(0, offset);
+          steps += 1;
 
-      const covered: unknown[] = [];
-      let sampled = 0;
-
-      for (const offset of offsets) {
-        // Scrolled and measured in **one** evaluate, so no reflow can land between the two.
-        const result = await page.evaluate((target) => {
-          window.scrollTo(0, target);
-          const problems: { scrollY: number; nth: number; hit: string }[] = [];
-          const root = document.documentElement;
-          // The sticky header's own box, so the excluded band is measured and not assumed.
+          // The sticky header's own box, so the excluded band is measured and not assumed. Read
+          // per offset, because a sticky element's box moves with the scroll.
           const header = document.querySelector<HTMLElement>('.site-header');
           const headerBottom = header ? header.getBoundingClientRect().bottom : 0;
-          let counted = 0;
 
-          const buttons = [
-            ...document.querySelectorAll<HTMLElement>('[data-testid="card-add-to-bag"]'),
-          ];
+          [...document.querySelectorAll<HTMLElement>('[data-testid="card-add-to-bag"]')].forEach(
+            (button, nth) => {
+              const box = button.getBoundingClientRect();
 
-          buttons.forEach((button, nth) => {
-            const box = button.getBoundingClientRect();
-            const x = box.x + box.width / 2;
-            const y = box.y + box.height / 2;
+              // Only a control **wholly** on the screen and clear of the sticky header is a
+              // question this test can answer. Testing the centre of a half-visible button is
+              // where an earlier version broke: at the bottom of the page a centre landed at
+              // y=719.6 in a 720 px viewport, passed a `y < clientHeight` guard, and
+              // `elementFromPoint` returned null, because a sub-pixel point on the viewport's own
+              // edge is not reliably inside it.
+              //
+              // Requiring the whole box does **not** weaken the check, and that was verified
+              // rather than assumed: the float occupies the band from `clientHeight - 72` to
+              // `clientHeight - 16`, so a button fully on screen can sit squarely underneath it —
+              // which is what the mutation proof reports, at y=697 in that same 720 px viewport.
+              if (
+                box.top < headerBottom ||
+                box.bottom > root.clientHeight ||
+                box.left < 0 ||
+                box.right > root.clientWidth
+              ) {
+                return;
+              }
 
-            // Only a point on the screen and clear of the sticky header can be tapped at all.
-            if (y <= headerBottom || y >= root.clientHeight || x < 0 || x >= root.clientWidth) {
-              return;
-            }
+              counted += 1;
 
-            counted += 1;
+              const x = box.x + box.width / 2;
+              const y = box.y + box.height / 2;
+              const hit = document.elementFromPoint(x, y);
+              if (hit !== button && !button.contains(hit)) {
+                problems.push({
+                  scrollY: Math.round(window.scrollY),
+                  nth,
+                  hit: `${hit?.tagName ?? 'nothing'}.${hit?.className ?? ''}`.slice(0, 70),
+                  probe: `x=${Math.round(x)} y=${Math.round(y)} vw=${root.clientWidth} vh=${root.clientHeight} hb=${Math.round(headerBottom)}`,
+                });
+              }
+            },
+          );
+        }
 
-            const hit = document.elementFromPoint(x, y);
-            if (hit !== button && !button.contains(hit)) {
-              problems.push({
-                scrollY: Math.round(window.scrollY),
-                nth,
-                hit: `${hit?.tagName ?? 'nothing'}.${hit?.className ?? ''}`.slice(0, 70),
-                probe: `x=${Math.round(x)} y=${Math.round(y)} vw=${root.clientWidth} vh=${root.clientHeight} hb=${Math.round(headerBottom)} box=${Math.round(box.width)}x${Math.round(box.height)}`,
-              });
-            }
-          });
+        window.scrollTo(0, 0);
 
-          return { problems, counted };
-        }, offset);
+        return { covered: problems, sampled: counted, offsets: steps };
+      });
 
-        sampled += result.counted;
-        covered.push(...result.problems);
-      }
-
-      expect(offsets.length, 'no scroll offset was sampled, so this could not fail').toBeGreaterThan(
-        5,
-      );
+      expect(offsets, 'no scroll offset was sampled, so this could not fail').toBeGreaterThan(5);
       expect(sampled, 'no button centre was ever tested, so this could not fail').toBeGreaterThan(
         20,
       );

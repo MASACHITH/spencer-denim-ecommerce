@@ -35,6 +35,16 @@ import { SITE_CONFIG, whatsAppUrl } from '../../core/config/site-config';
     </a>
   `,
   styles: `
+    /* **Bottom-right is a stated owner decision now, not just where this landed** (docs/04 §4,
+       decision dated 2026-10-06). It never used to be: GLB-08 says "site-wide" and the style
+       tile's decision 6 settles only the colour, so this corner was an implementation choice
+       nothing could be checked against - and a product card's Add to Bag was built into the same
+       corner and covered outright, at scrollY 0 on the first card at 320x720. The card actions
+       moved to bottom-left; this button keeps the corner and now owns it on the record.
+       (No backticks in this block: it is a template literal, and one would end it.)
+
+       So: anything else that wants a fixed viewport corner reads that decision first, and proves
+       what it did with elementFromPoint rather than with a stylesheet. */
     :host {
       position: fixed;
       right: var(--space-2);
