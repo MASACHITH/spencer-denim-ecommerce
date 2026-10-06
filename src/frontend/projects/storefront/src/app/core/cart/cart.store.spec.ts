@@ -303,7 +303,7 @@ describe('CartStore (CART-01, CART-02, GLB-04)', () => {
     it('saves the product to this browser and only then takes the line out', () => {
       const wishlist = TestBed.inject(LocalWishlist);
 
-      store.moveToWishlist(1, 'relaxed-linen-blend-shirt', 'Linen shirt');
+      store.moveToWishlist(line(), 'Linen shirt');
 
       expect(wishlist.has('relaxed-linen-blend-shirt')).toBe(true);
       pending('DELETE', `${CartApi.url}/items/1`).flush(EMPTY);
@@ -338,7 +338,7 @@ describe('CartStore (CART-01, CART-02, GLB-04)', () => {
       const blocked = TestBed.inject(CartStore);
       const wishlist = TestBed.inject(LocalWishlist);
 
-      blocked.moveToWishlist(1, 'relaxed-linen-blend-shirt', 'Linen shirt');
+      blocked.moveToWishlist(line(), 'Linen shirt');
 
       // No DELETE at all — `verify()` in afterEach is the other half of this assertion.
       expect(http.match(() => true)).toEqual([]);
@@ -385,7 +385,7 @@ describe('CartStore (CART-01, CART-02, GLB-04)', () => {
       expect(wishlist.count()).toBe(0);
 
       // Step 2: Move to wishlist on that same product.
-      blocked.moveToWishlist(1, 'relaxed-linen-blend-shirt', 'Linen shirt');
+      blocked.moveToWishlist(line(), 'Linen shirt');
 
       // The line stays, and the shopper is told.
       expect(http.match(() => true)).toEqual([]);
@@ -398,7 +398,7 @@ describe('CartStore (CART-01, CART-02, GLB-04)', () => {
       const wishlist = TestBed.inject(LocalWishlist);
       wishlist.toggle('relaxed-linen-blend-shirt');
 
-      store.moveToWishlist(1, 'relaxed-linen-blend-shirt', 'Linen shirt');
+      store.moveToWishlist(line(), 'Linen shirt');
 
       expect(wishlist.has('relaxed-linen-blend-shirt')).toBe(true);
       pending('DELETE', `${CartApi.url}/items/1`).flush(EMPTY);

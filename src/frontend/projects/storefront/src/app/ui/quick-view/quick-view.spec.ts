@@ -192,6 +192,7 @@ function detail(slug: string, overrides: Partial<ProductDetailDto> = {}): Produc
       <sd-quick-view
         [product]="item()"
         [open]="true"
+        (added)="adds = adds + 1"
         (closed)="closes = closes + 1; open.set(false)"
       />
     }
@@ -201,6 +202,7 @@ class Host {
   readonly item = signal<ProductCardDto>(card());
   readonly open = signal(true);
   closes = 0;
+  adds = 0;
 }
 
 /**
@@ -648,6 +650,29 @@ describe('QuickView (QV-01)', () => {
     });
 
     /**
+     * **`added` is the seam "move to bag" hangs on (W2-08, WISH-01).** A wishlist row leaves the
+     * wishlist when the bag takes the item and on nothing else, so it needs an event that fires for
+     * *this dialog's* successful add. `CartStore.lastAdded` cannot serve: it is a root signal that
+     * moves for an add made anywhere on the page, so a wishlist watching it would delete the wrong
+     * row. It is raised before `closed`, so a caller acting on it is acting while the dialog exists.
+     */
+    it('raises added, once, when its own add lands', async () => {
+      const harness = await ready();
+
+      harness.all<HTMLButtonElement>('.sd-size')[0].click();
+      await harness.settle();
+      harness.query<HTMLButtonElement>('[data-testid="quick-view-add"]')!.click();
+      await harness.settle();
+
+      expect(harness.host.adds).toBe(0);
+
+      addRequest().flush(EMPTY_CART);
+      await harness.settle();
+
+      expect(harness.host.adds).toBe(1);
+    });
+
+    /**
      * A refused add is the one case where the dialog has to stay: the message and the control that
      * caused it belong on the same screen, and a shopper whose size has just sold out needs the
      * size list in front of them.
@@ -664,6 +689,8 @@ describe('QuickView (QV-01)', () => {
       await harness.settle();
 
       expect(harness.host.closes).toBe(0);
+      // And it raises no `added`, which is what keeps a wishlist row in the wishlist (W2-08).
+      expect(harness.host.adds).toBe(0);
       expect(harness.query('.qv__error')?.textContent).toBeTruthy();
 
       // A sold-out add makes the store re-read the bag, which is not this dialog's business but is

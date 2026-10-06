@@ -1,7 +1,9 @@
+import { isPlatformBrowser } from '@angular/common';
 import {
   ChangeDetectionStrategy,
   Component,
   DestroyRef,
+  PLATFORM_ID,
   RESPONSE_INIT,
   afterNextRender,
   computed,
@@ -434,10 +436,18 @@ export class WishlistPage {
     // The list is in `localStorage`, so this is the earliest honest moment: the server has rendered, the
     // browser has hydrated the markup the server sent, and anything added now is an ordinary update
     // rather than a node Angular never sent.
-    afterNextRender(() => {
-      this.localTaken.set(true);
-      this.store.load();
-    });
+    //
+    // Guarded by `isPlatformBrowser` as well, the shape `RecentlyViewed` uses. Angular skips
+    // `afterNextRender` during a real server render on its own, so this is not a fix — it makes the
+    // rule *explicit and testable*: "the server never takes the list up" is then a property of this
+    // file rather than of the framework's render scheduler, and a unit test can render on the server
+    // platform and see the loading state the SSR process really emits.
+    if (isPlatformBrowser(inject(PLATFORM_ID))) {
+      afterNextRender(() => {
+        this.localTaken.set(true);
+        this.store.load();
+      });
+    }
   }
 
   /** What to call a row: the live name, the stored one, or something true but general. */
