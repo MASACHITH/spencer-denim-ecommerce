@@ -1136,6 +1136,15 @@ export class CheckoutPage {
    * server, so a server-rendered checkout asks exactly as it did before and the browser fills it in on
    * hydration.
    *
+   * **That hand-off is a content shift, not a hydration mismatch, and the difference is worth being
+   * precise about.** For a returning shopper the server sends a form with no address fields and no
+   * delivery radios, and the browser then adds seven fields and two radios as the district arrives from
+   * storage. Angular sees no mismatch and the console stays clean — the markup the server sent is the
+   * markup the browser first rendered — but the page does visibly grow, and this made that bigger. The
+   * alternative is for the server to guess a district it has no storage to read, which is the thing
+   * `CheckoutSessionDto.SelectedDistrictId` has no default in order to avoid. Recorded rather than
+   * traded away; `Carts.DistrictId` (W2-09, #33) is what would let the server know.
+   *
    * **The two sources of truth are handled rather than wished away.** `district.data.ts` is a frozen
    * client-side list — its own TODO(W1-03) says to replace it with the reference-data API — and
    * `ref.Districts` is the server's, which an admin can rename, deactivate or re-zone. All 25 names agree

@@ -288,6 +288,15 @@ internal static class PlaceOrderValidator
     /// anywhere.
     /// </para>
     /// <para>
+    /// <b>What the floor costs, named rather than discovered later.</b> Nine digits refuses two things a
+    /// shopper could legitimately type: an extension (<c>011 2345678 x203</c>) — the <c>x</c> is a letter,
+    /// so it fails before the count even matters — and a bare foreign national number shorter than nine
+    /// digits, such as an eight-digit Singapore or Hong Kong mobile given without its country code. The
+    /// first is a courier instruction rather than a number to dial and belongs in the order note; the
+    /// second is reachable by typing the <c>+</c> and the country code, which is what an international
+    /// number needs anyway. Both are deliberate and both are in the task report.
+    /// </para>
+    /// <para>
     /// <b>Why it is not a Sri Lankan pattern.</b> A <c>^0(7[0-8]|\d{2})\d{7}$</c> would be tighter and
     /// would also refuse the overseas customer sending something to a relative here — their own mobile is
     /// the number the courier would call about a failed delivery. Doc 08 puts no country constraint on the
