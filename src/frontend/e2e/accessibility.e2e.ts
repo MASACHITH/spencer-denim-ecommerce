@@ -320,8 +320,19 @@ test.describe('axe over the storefront (#65)', () => {
     await expect(page.locator('#co-email-error')).toBeVisible();
     await expect(page.locator('#co-firstName-error')).toBeVisible();
 
+    // The summary too, which is the markup W3-02's round 2 added: a `role="alert"` region of buttons
+    // that name the blocking fields. Asserted present rather than assumed, so the scan below is really
+    // scanning it.
+    await expect(page.locator('#checkout-refused')).toBeVisible();
+
     const found = await violations(page);
     expect(found, JSON.stringify(found, null, 2)).toEqual([]);
+
+    // **And nothing at any impact either, not just the gate.** The refusal state is the one where this
+    // page grew new markup, and "zero violations at any impact on /checkout" is the measurement the
+    // round-1 tester recorded. Asserting it here keeps that number from quietly becoming a different one.
+    const all = await everything(page);
+    expect(all, JSON.stringify(all, null, 2)).toEqual([]);
   });
 
   /**

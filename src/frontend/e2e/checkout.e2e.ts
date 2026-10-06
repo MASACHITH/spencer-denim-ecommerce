@@ -204,7 +204,7 @@ async function readyToPlace(page: Page, index: number): Promise<void> {
   await chooseDistrict(page, COLOMBO);
   await chooseMethod(page, STANDARD);
   await fillDetails(page);
-  await expect(page.locator('.checkout__place')).toBeEnabled();
+  await expect(page.locator('.checkout__place')).not.toHaveAttribute('aria-disabled', 'true');
 }
 
 /** The money figures, read off the rendered DOM rather than taken from a fixture. */
@@ -391,7 +391,11 @@ test.describe('checkout (CHK-01..04)', () => {
 
       await expect(page.locator(`input[name="deliveryMethodId"][value="${EXPRESS}"]`)).not.toBeChecked();
       await expect(page.locator('[data-sum="total-pending"]')).toBeVisible();
-      await expect(page.locator('.checkout__place')).toBeDisabled();
+
+      // `aria-disabled`, not `disabled`: the button stays reachable and says why it will not work, which
+      // is the bag page's pattern and the fix for a focused control that `disabled` throws to BODY.
+      await expect(page.locator('.checkout__place')).toHaveAttribute('aria-disabled', 'true');
+      await expect(page.locator('#checkout-place-blocked')).toBeVisible();
     });
   });
 
@@ -537,7 +541,7 @@ test.describe('checkout (CHK-01..04)', () => {
 
       await page.locator('.checkout__place').click();
 
-      await expect(page.locator('.checkout__place')).toBeDisabled();
+      await expect(page.locator('.checkout__place')).toHaveAttribute('aria-disabled', 'true');
       await expect(page.locator('.checkout__place')).toContainText('Placing your order');
 
       release();
@@ -674,6 +678,67 @@ test.describe('checkout (CHK-01..04)', () => {
     });
   });
 
+  test.describe('a refused submission', () => {
+    /**
+     * **It used to be announced to nobody.** Pressing Place order with nothing filled in drew three red
+     * field messages, said nothing, and left focus on BODY — WCAG 2.2 4.1.3, which axe cannot see (it
+     * reported zero violations on this page). In a real browser, because "focus stayed on BODY" is
+     * something only a real browser can be asked about.
+     */
+    test('is announced, names the district, and takes focus', async ({ page }) => {
+      await addToBag(page, 24);
+      await openCheckout(page, { lines: 1 });
+
+      // **Reachable, which `disabled` was not.** A disabled button is out of the tab order, carried no
+      // reason, and throws a focused control's focus to BODY (ADM-22).
+      const place = page.locator('.checkout__place');
+      await expect(place).toHaveAttribute('aria-disabled', 'true');
+      await expect(page.locator('#checkout-place-blocked')).toBeVisible();
+
+      // The DOM property, not `toBeDisabled()`: Playwright treats `aria-disabled` as disabled for its
+      // own actionability, which is the right default and the wrong question here. What matters is that
+      // the element is a real, focusable control.
+      expect(await place.evaluate((node: HTMLButtonElement) => node.disabled)).toBe(false);
+
+      // Pressed with the keyboard, which is the user this fix is for — and which also sidesteps
+      // Playwright's actionability wait on an `aria-disabled` control.
+      await place.focus();
+      await expect(place).toBeFocused();
+      await page.keyboard.press('Enter');
+
+      const refused = page.locator('#checkout-refused');
+      await expect(refused).toBeVisible();
+      await expect(refused).toHaveAttribute('role', 'alert');
+
+      // The district is the field that used to be named nowhere: `missingFields()` set
+      // `deliveryMethodId` and returned, and there is no delivery-method control until a district exists.
+      await expect(refused).toContainText('Choose the district your order is going to');
+      await expect(refused).toBeFocused();
+
+      // And the entry takes you to the control, which is the other half of naming the blocking field.
+      await refused.getByRole('button', { name: /Choose the district/ }).click();
+      await expect(page.locator('#co-district')).toBeFocused();
+    });
+
+    /** It is computed from the live errors, so it empties itself rather than going stale. */
+    test('clears itself as the fields are filled in', async ({ page }) => {
+      await addToBag(page, 25);
+      await openCheckout(page, { lines: 1 });
+
+      // `force`, because Playwright treats `aria-disabled` as disabled and would wait for ever: the
+      // press being a no-op that *answers* is the behaviour under test.
+      await page.locator('.checkout__place').click({ force: true });
+      await expect(page.locator('#checkout-refused')).toBeVisible();
+
+      await chooseDistrict(page, COLOMBO);
+      await chooseMethod(page, STANDARD);
+      await fillDetails(page);
+
+      await expect(page.locator('#checkout-refused')).toHaveCount(0);
+      await expect(page.locator('.checkout__place')).not.toHaveAttribute('aria-disabled', 'true');
+    });
+  });
+
   test.describe('the keyboard', () => {
     /**
      * **Driven for real**, which is the point: every control reached with Tab, the radios chosen with
@@ -733,7 +798,7 @@ test.describe('checkout (CHK-01..04)', () => {
         await page.keyboard.type(value);
       }
 
-      await expect(page.locator('.checkout__place')).toBeEnabled();
+      await expect(page.locator('.checkout__place')).not.toHaveAttribute('aria-disabled', 'true');
 
       // **Enter from inside a field**, not a click on the button.
       await page.locator('#co-city').focus();
