@@ -5,7 +5,7 @@ import { Icon } from '@spencer-denim/shared';
 import { ColourSwatchDto, ProductBadge, ProductCardDto } from '../../core/catalog/catalog.model';
 import { formatLkr } from '../../core/catalog/money';
 import { QuickView, QuickViewIntent } from '../quick-view/quick-view';
-import { LocalWishlist } from '../../core/wishlist/local-wishlist.service';
+import { WishlistStore } from '../../core/wishlist/wishlist.store';
 
 /** How many colour dots fit under a card at 320 px before the rest become "+3". */
 const MAX_COLOUR_DOTS = 4;
@@ -94,7 +94,7 @@ interface ColourDot {
  * opening it; that follow-up is filed.
  *
  * The wishlist heart saves to this browser, which is where a guest's wishlist belongs (doc 02's WISH-01
- * line, doc 08 §1.7) — see {@link LocalWishlist}. It sends the product's **name** as well as the slug, so
+ * line, doc 08 §1.7) — see `LocalWishlist`. It sends the product's **name** as well as the slug, so
  * W2-08's `/wishlist` page can still name an item the shop has since withdrawn.
  */
 @Component({
@@ -585,7 +585,12 @@ export class ProductCard {
    */
   readonly sizes = input<string>(LISTING_GRID_CARD_SIZES);
 
-  private readonly wishlist = inject(LocalWishlist);
+  // **`WishlistStore`, not `LocalWishlist` directly** (W2-08 round 2, m3). The heart used to write the
+  // stored list itself, so pressing it on the wishlist page made a row disappear in silence while the
+  // same row's Remove button announced a full sentence - one feature, two controls, one of them mute.
+  // The store announces the change and reports the removal, which is also what lets the page put focus
+  // somewhere after the control that was pressed has been destroyed with its row.
+  private readonly wishlist = inject(WishlistStore);
 
   /** An image the browser could not fetch is dropped, so a card never shows a broken picture. */
   private readonly mainFailed = signal(false);
@@ -605,7 +610,7 @@ export class ProductCard {
 
   protected readonly quickViewOpen = computed(() => this.quickView() !== null);
 
-  protected readonly saved = computed(() => this.wishlist.has(this.product().slug));
+  protected readonly saved = computed(() => this.wishlist.isSaved(this.product().slug));
 
   /** The product detail page (PDP-01..08), which tapping the card itself opens (docs/04 §4). */
   protected readonly link = computed(() => ['/product', this.product().slug]);
@@ -719,9 +724,12 @@ export class ProductCard {
     // absent field as "say nothing". Nulling it would clear a colour the bag's "move to wishlist" had
     // recorded — which is W1-12's defect, where a save that did not mention a field cleared it.
     const product = this.product();
-    this.wishFailed.set(
-      this.wishlist.toggle({ slug: product.slug, name: product.name }) === 'unavailable',
+    const outcome = this.wishlist.toggle(
+      { slug: product.slug, name: product.name },
+      product.name,
     );
+
+    this.wishFailed.set(outcome === 'unavailable');
   }
 
   protected openQuickView(intent: QuickViewIntent): void {

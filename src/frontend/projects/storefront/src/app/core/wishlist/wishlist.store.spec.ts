@@ -96,9 +96,23 @@ describe('WishlistStore (WISH-01)', () => {
     });
   }
 
-  /** The one outstanding request, by URL prefix — the slugs ride in the query string. */
+  /**
+   * The one outstanding request.
+   *
+   * A **`POST`**: the slugs used to ride in the query string and did not fit — Kestrel's request line
+   * is 8,192 bytes and 200 slugs exceeded it at about 32 characters each, so a full wishlist was a 414
+   * and a page that could never load. `WishlistTransportTests` holds that against a real server; what
+   * this helper pins is that the slugs are in the **body**, where their length cannot reach the URL.
+   */
   function pendingRead() {
-    return http.expectOne((request) => request.url === WishlistApi.url);
+    return http.expectOne(
+      (request) => request.url === WishlistApi.url && request.method === 'POST',
+    );
+  }
+
+  /** The slugs one request asked about, read out of its body. */
+  function askedAbout(request: { request: { body: unknown } }): readonly string[] {
+    return (request.request.body as { slugs: readonly string[] }).slugs;
   }
 
   afterEach(() => http?.verify());
@@ -110,7 +124,9 @@ describe('WishlistStore (WISH-01)', () => {
       store.load();
 
       const request = pendingRead();
-      expect(request.request.params.getAll('slug')).toEqual(['a', 'b']);
+      expect(askedAbout(request)).toEqual(['a', 'b']);
+      // And nothing is in the URL, which is the whole of the 414 fix.
+      expect(request.request.urlWithParams).toBe(WishlistApi.url);
       request.flush({ items: [] } satisfies WishlistResponse);
     });
 
@@ -241,12 +257,46 @@ describe('WishlistStore (WISH-01)', () => {
       store.load();
 
       const request = pendingRead();
-      expect(request.request.params.getAll('slug')).toHaveLength(200);
+      expect(askedAbout(request)).toHaveLength(200);
       request.flush({ items: [] } satisfies WishlistResponse);
 
       expect(store.truncated()).toBe(true);
       // Nothing was removed from the shopper's own list.
       expect(store.count()).toBe(205);
+    });
+
+    /**
+     * **And no row is drawn that the request never asked about** (round 2, m1). `rows()` used to map
+     * every saved entry while `load()` asked about the first 200, so entries past the cap rendered as
+     * rows stuck on "Loading…" for as long as the page stayed open — 205 rows under a note saying 200
+     * are shown. The count and the note still read the whole list, because nothing has been deleted.
+     */
+    it('draws no more rows than one request can answer for', () => {
+      const many = Array.from({ length: 205 }, (_unused, index) => `product-${index}`);
+      configure(savedList(...many));
+
+      store.load();
+      pendingRead().flush({ items: [] } satisfies WishlistResponse);
+
+      expect(store.rows()).toHaveLength(200);
+      expect(store.count()).toBe(205);
+      expect(store.truncated()).toBe(true);
+    });
+
+    /** The boundary either side of the cap, so the slice cannot be off by one. */
+    it.each([
+      [199, 199, false],
+      [200, 200, false],
+      [201, 200, true],
+    ])('%i saved draws %i rows (truncated: %s)', (saved, drawn, truncated) => {
+      const many = Array.from({ length: saved }, (_unused, index) => `product-${index}`);
+      configure(savedList(...many));
+
+      store.load();
+      pendingRead().flush({ items: [] } satisfies WishlistResponse);
+
+      expect(store.rows()).toHaveLength(drawn);
+      expect(store.truncated()).toBe(truncated);
     });
   });
 
@@ -357,6 +407,125 @@ describe('WishlistStore (WISH-01)', () => {
       expect(local.has('a')).toBe(true);
       expect(store.error()).toContain('could not take it out of your wishlist');
       expect(store.lastChange()).toContain('still in your wishlist');
+    });
+  });
+
+  describe('reporting a removal, so a page can re-home focus', () => {
+    /**
+     * **Removing a row destroys the control that was pressed, which throws focus to `<body>`** — the
+     * same harm a `[disabled]` attribute does, arriving by a different route. Round 1 of W2-08 kept the
+     * attribute off the page and lost focus on all three removal controls anyway, so the store now
+     * reports *what went and where it was* and the page decides where focus goes.
+     */
+    it('says which visible row went', () => {
+      configure(savedList('a', 'b', 'c'));
+      store.load();
+      pendingRead().flush({ items: [] } satisfies WishlistResponse);
+
+      store.remove('b', 'B');
+
+      expect(store.lastRemoval()).toMatchObject({ kind: 'row', index: 1 });
+    });
+
+    /** A clear is not a row, and the page puts focus somewhere else for it. */
+    it('says the whole list went on a clear', () => {
+      configure(savedList('a', 'b'));
+
+      store.clear();
+
+      expect(store.lastRemoval()).toMatchObject({ kind: 'all' });
+    });
+
+    /** Moving to the bag removes a row too, and destroys the button that opened the chooser. */
+    it('reports a move to the bag as a removal', () => {
+      configure(savedList('a', 'b'));
+
+      store.completeMove('a', 'A');
+
+      expect(store.lastRemoval()).toMatchObject({ kind: 'row', index: 0 });
+    });
+
+    /** A refused write removed nothing, so there is nothing to re-home focus for. */
+    it('reports nothing when storage refuses the removal', () => {
+      configure(savedList('a'), false);
+
+      store.remove('a', 'A');
+
+      expect(store.lastRemoval()).toBeNull();
+    });
+
+    /**
+     * Two removals of the same row produce the same `kind` and the same `index`, so without a fresh
+     * ticket the page would see no change and leave focus on `<body>` for the second one.
+     */
+    it('gives every removal a new ticket, even an identical one', () => {
+      configure(savedList('a', 'b'));
+      store.load();
+      pendingRead().flush({ items: [] } satisfies WishlistResponse);
+
+      store.remove('a', 'A');
+      const first = store.lastRemoval();
+
+      store.remove('b', 'B');
+      const second = store.lastRemoval();
+
+      expect(first).not.toBeNull();
+      expect(second?.index).toBe(first?.index);
+      expect(second?.ticket).not.toBe(first?.ticket);
+    });
+
+    /** An entry past the visible cap has no row, so there is no successor to focus. */
+    it('reports -1 for an entry that was never on screen', () => {
+      const many = Array.from({ length: 205 }, (_unused, index) => `product-${index}`);
+      configure(savedList(...many));
+      store.load();
+      pendingRead().flush({ items: [] } satisfies WishlistResponse);
+
+      store.remove('product-204', 'Last');
+
+      expect(store.lastRemoval()).toMatchObject({ index: -1 });
+    });
+  });
+
+  describe('the heart, from wherever it is pressed (m3)', () => {
+    /**
+     * **The card's heart used to be silent.** It called `LocalWishlist.toggle` directly, so a row
+     * disappearing from the wishlist page announced nothing while the same row's Remove button
+     * announced a full sentence — one feature, two controls, one of them mute. Going through the store
+     * means both speak, and both report the removal that focus handling needs.
+     */
+    it('announces a save and a removal, and reports the removal', () => {
+      configure(savedList('a'));
+      store.load();
+      pendingRead().flush({ items: [] } satisfies WishlistResponse);
+
+      expect(store.toggle({ slug: 'b', name: 'B' }, 'B')).toBe('saved');
+      expect(store.lastChange()).toContain('B saved to your wishlist');
+      expect(store.lastRemoval()).toBeNull();
+
+      expect(store.toggle({ slug: 'b' }, 'B')).toBe('removed');
+      expect(store.lastChange()).toContain('B removed from your wishlist');
+      expect(store.lastRemoval()).toMatchObject({ kind: 'row', index: 0 });
+    });
+
+    /**
+     * A refused write changes nothing, so nothing is announced and nothing is reported — a sentence
+     * about a save that did not happen is the same lie as a filled heart over one.
+     */
+    it('announces nothing when storage refuses the write', () => {
+      configure(null, false);
+
+      expect(store.toggle({ slug: 'a', name: 'A' }, 'A')).toBe('unavailable');
+      expect(store.lastChange()).toBe('');
+      expect(store.lastRemoval()).toBeNull();
+      expect(store.error()).toContain('exactly as it was');
+    });
+
+    it('answers whether a product is saved, so a card needs one injection', () => {
+      configure(savedList('a'));
+
+      expect(store.isSaved('a')).toBe(true);
+      expect(store.isSaved('b')).toBe(false);
     });
   });
 

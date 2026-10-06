@@ -51,6 +51,15 @@ public sealed class GetWishlistQueryHandler(IWishlistCatalogReader reader)
     /// is still one short <c>IN</c> list.
     /// </para>
     /// <para>
+    /// <b>It is no longer also a transport limit, and it used to be one by accident.</b> While the
+    /// endpoint was a <c>GET</c> with a repeated <c>slug</c> parameter, 200 slugs exceeded Kestrel's
+    /// 8,192-byte request line at about 32 characters each and the shopper's own wishlist page became
+    /// permanently unloadable — see <c>WishlistEndpoints</c> for the measurements. The slugs now travel
+    /// in a <c>POST</c> body, where 200 of them at the maximum length is about 45 KB against Kestrel's
+    /// 30 MB default, so this number bounds <i>work</i> and nothing else and is reachable whatever a
+    /// slug looks like. <c>WishlistTransportTests</c> holds that against a real Kestrel.
+    /// </para>
+    /// <para>
     /// <b>Over the cap the extra slugs are not answered, and the shopper is told.</b> Truncating is the
     /// least bad of the three options: a 400 would make a shopper's own list unviewable with nothing they
     /// could do about it, and dropping their stored entries to fit would be destroying saved items to
@@ -86,11 +95,19 @@ public sealed class GetWishlistQueryHandler(IWishlistCatalogReader reader)
     /// The slugs worth asking the catalogue about: non-blank, short enough to be a slug, de-duplicated,
     /// in the order the browser sent them, capped at <see cref="MaxSlugs"/>.
     /// <para>
-    /// <b>Ordinal de-duplication, not case-insensitive.</b> A slug is an address and the database's
-    /// unique index on it is what decides identity; two spellings that differ in case are two slugs as
-    /// far as this query is concerned, and at most one of them will match a product. Folding them would
-    /// mean echoing back a slug the browser did not send, which is the one thing the contract promises
-    /// not to do.
+    /// <b>Ordinal de-duplication, not case-insensitive</b> — because the slug echoed back has to be the
+    /// one the browser sent: it is the key the browser's own storage is held under, and folding two
+    /// spellings into one would mean answering about a slug nobody asked about, which is the one thing
+    /// <see cref="Contracts.WishlistEntryDto"/> promises not to do.
+    /// <para>
+    /// <b>It is not because only one spelling can match.</b> An earlier version of this comment said so
+    /// and it was wrong: the database's collation is <c>Latin1_General_100_CI_AS_SC</c> (doc 08 §1.1), so
+    /// <c>linen-shirt</c> and <c>Linen-Shirt</c> match the <i>same</i> product —
+    /// <c>ProductCatalogReader.GetCardsBySlugAsync</c> says as much and keeps a case-insensitive fallback
+    /// for exactly that reason. So two such slugs in one list come back as two entries holding the same
+    /// product. That is benign and it is the right answer: the browser has two entries, and telling it
+    /// about one of them would leave the other looking withdrawn.
+    /// </para>
     /// </para>
     /// </summary>
     private static List<string> Usable(IReadOnlyList<string>? slugs)

@@ -217,6 +217,43 @@ describe('LocalWishlist, the saved list itself (WISH-01)', () => {
       });
     });
 
+    /**
+     * **The version-1 branch de-duplicates, which it did not** (round 2, m2). The version-2 branch has
+     * had a `seen` set from the start, with a reason written beside it; the version-1 array had none, so
+     * a repeated slug became two rows for one product — and the first Remove press destroyed **both**,
+     * because `without()` filters every match. A normally-written version-1 list cannot hold a duplicate
+     * (it was serialised from a `Set`), but this method's whole premise is that the value came from
+     * another tab, an older build or a curious visitor.
+     */
+    it('reads a duplicated slug in a version-1 array as one entry', () => {
+      const { wishlist } = setUp(
+        JSON.stringify(['test-product-4', 'test-product-4', 'test-product-5']),
+      );
+
+      expect(wishlist.slugs()).toEqual(['test-product-4', 'test-product-5']);
+      expect(wishlist.count()).toBe(2);
+    });
+
+    /**
+     * **One Remove press takes one product, not two rows at once.**
+     *
+     * The assertion that matters is the *delta*, not the end state: `without()` filters every match, so
+     * the list after the press is `['b']` either way. Without de-duplication the shopper saw three rows,
+     * pressed Remove once and watched two of them go — which is why this counts before as well as
+     * after. A test that only checked the end state would have passed over the defect, and the first
+     * version of this one did.
+     */
+    it('removes one product from a de-duplicated version-1 list', () => {
+      const { wishlist } = setUp(JSON.stringify(['a', 'a', 'b']));
+
+      const before = wishlist.count();
+      expect(wishlist.remove('a')).toBe(true);
+
+      expect(before).toBe(2);
+      expect(before - wishlist.count()).toBe(1);
+      expect(wishlist.slugs()).toEqual(['b']);
+    });
+
     it('upgrades the stored shape on the first write', () => {
       const { wishlist, stored } = setUp(JSON.stringify(['linen-shirt']));
 

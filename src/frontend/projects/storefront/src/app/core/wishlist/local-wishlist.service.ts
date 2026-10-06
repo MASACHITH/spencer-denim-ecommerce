@@ -260,8 +260,24 @@ export class LocalWishlist {
       const parsed: unknown = JSON.parse(raw);
 
       if (Array.isArray(parsed)) {
+        // **De-duplicated, exactly as the version-2 branch below is.** It was not, and the version-1
+        // branch is the one that needs it most: a repeated slug became two rows for one product, and the
+        // first Remove press destroyed both of them at once, because `without()` filters *every* match.
+        // A normally-written version-1 list cannot contain a duplicate — it was serialised from a `Set` —
+        // but this method's whole premise is that the value came from another tab, an older build or a
+        // curious visitor (lesson L1), and the version-2 branch defends against precisely this.
+        const seenV1 = new Set<string>();
+
         return parsed
           .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+          .filter((slug) => {
+            if (seenV1.has(slug)) {
+              return false;
+            }
+
+            seenV1.add(slug);
+            return true;
+          })
           .map((slug) => ({ slug, name: null, colourId: null, colourName: null, addedAt: 0 }));
       }
 

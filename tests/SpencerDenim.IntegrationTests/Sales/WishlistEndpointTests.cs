@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -13,7 +14,7 @@ using SpencerDenim.IntegrationTests.Infrastructure;
 namespace SpencerDenim.IntegrationTests.Sales;
 
 /// <summary>
-/// <c>GET /api/wishlist</c> against a real SQL Server (W2-08, WISH-01).
+/// <c>POST /api/wishlist/products</c> against a real SQL Server (W2-08, WISH-01).
 /// <para>
 /// The endpoint holds no state: a guest's wishlist is in their browser (doc 08 §1.7), so the slugs come
 /// in on the query string and the answer is the live card for each. What is worth proving on a real
@@ -57,14 +58,20 @@ public sealed class WishlistEndpointTests(SqlServerDatabaseFixture sqlServer) : 
         return client;
     }
 
-    private static string Url(params string[] slugs) =>
-        "/api/wishlist" + (slugs.Length == 0
-            ? string.Empty
-            : "?" + string.Join('&', slugs.Select(slug => $"slug={Uri.EscapeDataString(slug)}")));
+    /// <summary>
+    /// The one address, whatever is saved. <b>It takes no slugs</b>, which is the whole of the 414 fix: a
+    /// URL that grew with the wishlist is what put a shopper's own page permanently out of reach.
+    /// </summary>
+    private const string Url = "/api/wishlist/products";
 
     private async Task<(HttpResponseMessage Response, WishlistDto? Body)> GetAsync(params string[] slugs)
     {
-        var response = await NewVisitor().GetAsync(new Uri(Url(slugs), UriKind.Relative), Token);
+        var response = await NewVisitor().PostAsJsonAsync(
+            new Uri(Url, UriKind.Relative),
+            new { slugs },
+            Json,
+            Token);
+
         var body = response.IsSuccessStatusCode
             ? await response.Content.ReadFromJsonAsync<WishlistDto>(Json, Token)
             : null;
@@ -87,6 +94,25 @@ public sealed class WishlistEndpointTests(SqlServerDatabaseFixture sqlServer) : 
             .Select(product => product.Slug)
             .Take(count)
             .ToListAsync(Token);
+    }
+
+    /// <summary>
+    /// A body with no <c>slugs</c> at all. Not a 400: the list is written by <c>localStorage</c> and a
+    /// shopper can neither see nor fix it, so the honest answer is "nothing saved".
+    /// </summary>
+    [Fact]
+    public async Task A_body_with_no_slugs_is_an_empty_list_rather_than_a_400()
+    {
+        var response = await NewVisitor().PostAsync(
+            new Uri(Url, UriKind.Relative),
+            new StringContent("{}", Encoding.UTF8, "application/json"),
+            Token);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var body = await response.Content.ReadFromJsonAsync<WishlistDto>(Json, Token);
+        Assert.NotNull(body);
+        Assert.Empty(body.Items);
     }
 
     [Fact]

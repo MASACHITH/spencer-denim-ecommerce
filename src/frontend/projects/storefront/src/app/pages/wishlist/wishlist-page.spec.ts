@@ -12,6 +12,7 @@ import { provideRouter } from '@angular/router';
 import { WishlistPage } from './wishlist-page';
 import { ProductCardDto } from '../../core/catalog/catalog.model';
 import { WishlistApi, WishlistResponse } from '../../core/wishlist/wishlist-api';
+import { WishlistStore } from '../../core/wishlist/wishlist.store';
 
 function product(overrides: Partial<ProductCardDto> = {}): ProductCardDto {
   return {
@@ -106,8 +107,12 @@ describe('WishlistPage (WISH-01)', () => {
     create('server');
   }
 
+  /**
+   * A **`POST`**: the slugs used to ride in the query string and did not fit in a request line, so a
+   * full wishlist answered 414 and the page could never load. See `WishlistTransportTests`.
+   */
   function readRequest(): TestRequest {
-    return http.expectOne((request) => request.url === WishlistApi.url && request.method === 'GET');
+    return http.expectOne((request) => request.url === WishlistApi.url && request.method === 'POST');
   }
 
   async function open(items: WishlistResponse['items']): Promise<void> {
@@ -353,6 +358,165 @@ describe('WishlistPage (WISH-01)', () => {
 
       const disabled = Array.from(element.querySelectorAll('button[disabled], a[disabled]'));
       expect(disabled).toEqual([]);
+    });
+  });
+
+  describe('focus, after a removal has destroyed the control that was pressed (MAJOR 1)', () => {
+    /**
+     * **This is the `[disabled]` defect arriving by another route.** Round 1 kept the attribute off this
+     * page - and a spec asserts it stays off - and then removed the focused button from the DOM
+     * instead, which throws focus to `<body>` just the same. A keyboard or screen-reader shopper
+     * clearing a wishlist lost their place on every single item. Banning the attribute was necessary
+     * and not sufficient.
+     */
+    it('moves focus to the row that took the removed one\u2019s place', async () => {
+      saved({ slug: 'a' }, { slug: 'b' }, { slug: 'c' });
+      await open([
+        { slug: 'a', product: product({ slug: 'a' }) },
+        { slug: 'b', product: product({ id: 2, slug: 'b' }) },
+        { slug: 'c', product: product({ id: 3, slug: 'c' }) },
+      ]);
+
+      const buttons = Array.from(
+        element.querySelectorAll<HTMLButtonElement>('[data-testid="wishlist-remove"]'),
+      );
+      buttons[1].focus();
+      buttons[1].click();
+      await settle();
+
+      // Two rows left, and focus is on the Remove of the row now in position 1 - not on `<body>`.
+      expect(element.querySelectorAll('.wish__item')).toHaveLength(2);
+      expect(document.activeElement).toBe(
+        element.querySelectorAll<HTMLButtonElement>('[data-testid="wishlist-remove"]')[1],
+      );
+    });
+
+    /** Removing the last row has no successor, so focus falls back to the row before it. */
+    it('moves focus to the last row when the removed one was last', async () => {
+      saved({ slug: 'a' }, { slug: 'b' });
+      await open([
+        { slug: 'a', product: product({ slug: 'a' }) },
+        { slug: 'b', product: product({ id: 2, slug: 'b' }) },
+      ]);
+
+      const buttons = Array.from(
+        element.querySelectorAll<HTMLButtonElement>('[data-testid="wishlist-remove"]'),
+      );
+      buttons[1].focus();
+      buttons[1].click();
+      await settle();
+
+      expect(document.activeElement).toBe(
+        element.querySelector<HTMLButtonElement>('[data-testid="wishlist-remove"]'),
+      );
+    });
+
+    it('moves focus to Start shopping when the last item goes', async () => {
+      saved({ slug: 'a' });
+      await open([{ slug: 'a', product: product({ slug: 'a' }) }]);
+
+      const button = element.querySelector<HTMLButtonElement>('[data-testid="wishlist-remove"]')!;
+      button.focus();
+      button.click();
+      await settle();
+
+      expect(document.activeElement).toBe(
+        element.querySelector('[data-testid="wishlist-start-shopping"]'),
+      );
+    });
+
+    it('moves focus to Start shopping after a clear', async () => {
+      saved({ slug: 'a' }, { slug: 'b' });
+      await open([
+        { slug: 'a', product: product({ slug: 'a' }) },
+        { slug: 'b', product: product({ id: 2, slug: 'b' }) },
+      ]);
+
+      link('Clear wishlist').click();
+      await settle();
+
+      const yes = link('Yes, clear it');
+      yes.focus();
+      yes.click();
+      await settle();
+
+      expect(document.activeElement).toBe(
+        element.querySelector('[data-testid="wishlist-start-shopping"]'),
+      );
+    });
+
+    /**
+     * **The card's heart is the third removal control**, and it was the worst of them: the row vanished,
+     * nothing was announced and focus went to `<body>`. It goes through `WishlistStore` now, so it
+     * announces and re-homes focus exactly as the Remove button does.
+     */
+    it('announces and re-homes focus when the card heart removes a row', async () => {
+      saved({ slug: 'a' }, { slug: 'b' });
+      await open([
+        { slug: 'a', product: product({ slug: 'a', name: 'Product A' }) },
+        { slug: 'b', product: product({ id: 2, slug: 'b' }) },
+      ]);
+
+      const heart = element.querySelector<HTMLButtonElement>('.wish__item .card__wish')!;
+      heart.focus();
+      heart.click();
+      await settle();
+
+      expect(element.querySelectorAll('.wish__item')).toHaveLength(1);
+      expect(element.querySelector('[role="status"]')?.textContent).toContain(
+        'Product A removed from your wishlist',
+      );
+      expect(document.activeElement).toBe(
+        element.querySelector('[data-testid="wishlist-remove"]'),
+      );
+    });
+
+    /**
+     * **It will not take focus from somewhere else.** A removal can happen while the shopper is in the
+     * header - a heart on another surface, or a future undo - and moving focus then would be a worse
+     * surprise than the one being fixed.
+     */
+    it('leaves focus alone when it was not on this page', async () => {
+      saved({ slug: 'a' }, { slug: 'b' });
+      await open([
+        { slug: 'a', product: product({ slug: 'a' }) },
+        { slug: 'b', product: product({ id: 2, slug: 'b' }) },
+      ]);
+
+      const outside = document.createElement('button');
+      document.body.append(outside);
+      outside.focus();
+
+      // Made through the store, as a heart on another page would make it.
+      TestBed.inject(WishlistStore).remove('a', 'A');
+      await settle();
+
+      expect(document.activeElement).toBe(outside);
+      outside.remove();
+    });
+
+    /** A refused write removed nothing, so focus must not move either. */
+    it('leaves focus on the button when storage refuses the removal', async () => {
+      saved({ slug: 'a' }, { slug: 'b' });
+      await open([
+        { slug: 'a', product: product({ slug: 'a' }) },
+        { slug: 'b', product: product({ id: 2, slug: 'b' }) },
+      ]);
+
+      const button = element.querySelector<HTMLButtonElement>('[data-testid="wishlist-remove"]')!;
+      button.focus();
+
+      // Storage stops answering, exactly as a full quota does mid-session.
+      const refuse = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+        throw new DOMException('refused', 'QuotaExceededError');
+      });
+
+      button.click();
+      await settle();
+      refuse.mockRestore();
+
+      expect(element.querySelectorAll('.wish__item')).toHaveLength(2);
+      expect(document.activeElement).toBe(button);
     });
   });
 

@@ -1,4 +1,4 @@
-import { HttpClient, HttpErrorResponse, HttpParams } from '@angular/common/http';
+import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 
@@ -30,16 +30,30 @@ export interface WishlistResponse {
 export const WISHLIST_MAX_SLUGS = 200;
 
 /**
- * The wishlist API (`/api/wishlist`). One place that knows the endpoint name.
+ * How long the request URL is, whatever is saved.
+ *
+ * Exported so a test can hold it: the whole of the 414 defect was a URL that grew with the wishlist, and
+ * the fix is only the fix while the slugs stay in the body.
+ */
+export const WISHLIST_URL_BYTES = 22;
+
+/**
+ * The wishlist API (`/api/wishlist/products`). One place that knows the endpoint name.
  *
  * **It sends the shopper's slugs and no identity at all.** The list lives in this browser (doc 08 §1.7),
- * so there is no cookie to forward and nothing for `cartCookieInterceptor` to do — which is why
- * `/api/wishlist` is deliberately *not* in that interceptor's per-visitor list. A `GET` because it reads
- * and changes nothing.
+ * so there is no cookie to forward and nothing for `cartCookieInterceptor` to do — which is why this
+ * path is deliberately *not* in that interceptor's per-visitor list.
+ *
+ * **A `POST`, for a call that reads and changes nothing.** It was a `GET` with a repeated `slug`
+ * parameter and that did not fit in a request line: Kestrel's default is 8,192 bytes, and 200 slugs
+ * exceeded it at about 32 characters each — so a shopper with a full wishlist got a 414 and a Try again
+ * button that failed identically every time. A body also keeps the list out of every access log on the
+ * way. The endpoint's own docblock has the measurements; `WishlistApi.url` carrying no query string at
+ * all is what makes the URL a constant 22 bytes however many products are saved.
  */
 @Injectable({ providedIn: 'root' })
 export class WishlistApi {
-  static readonly url = '/api/wishlist';
+  static readonly url = '/api/wishlist/products';
 
   private readonly http = inject(HttpClient);
 
@@ -51,13 +65,10 @@ export class WishlistApi {
    * to tell the shopper.
    */
   get(slugs: readonly string[]): Observable<WishlistResponse> {
-    return this.http.get<WishlistResponse>(WishlistApi.url, {
-      // `appendAll` with an array gives `?slug=a&slug=b`, which is what the endpoint's `string[]` binds
-      // from. A single comma-joined parameter would break on a slug containing a comma — slugs cannot
-      // today (CK_Products_Slug), but a contract that depends on that is a contract that breaks quietly
-      // when the rule changes.
-      params: new HttpParams().appendAll({ slug: [...slugs] }),
-    });
+    // An array in the body, not a joined string: a slug containing a comma cannot exist today
+    // (CK_Products_Slug), but a contract that depends on that is a contract that breaks quietly when the
+    // rule changes.
+    return this.http.post<WishlistResponse>(WishlistApi.url, { slugs: [...slugs] });
   }
 }
 

@@ -3,12 +3,15 @@ import {
   ChangeDetectionStrategy,
   Component,
   DestroyRef,
+  ElementRef,
   PLATFORM_ID,
   RESPONSE_INIT,
   afterNextRender,
+  afterRenderEffect,
   computed,
   inject,
   signal,
+  untracked,
 } from '@angular/core';
 import { Meta, Title } from '@angular/platform-browser';
 import { RouterLink } from '@angular/router';
@@ -16,7 +19,7 @@ import { BRAND, Icon, brandPageTitle } from '@spencer-denim/shared';
 
 import { RobotsMeta } from '../../core/platform/robots-meta';
 import { WISHLIST_MAX_SLUGS } from '../../core/wishlist/wishlist-api';
-import { WishlistRow, WishlistStore } from '../../core/wishlist/wishlist.store';
+import { WishlistRemoval, WishlistRow, WishlistStore } from '../../core/wishlist/wishlist.store';
 import { FULL_WIDTH_GRID_CARD_SIZES, ProductCard } from '../../ui/product-card/product-card';
 import { QuickView } from '../../ui/quick-view/quick-view';
 
@@ -51,6 +54,16 @@ import { QuickView } from '../../ui/quick-view/quick-view';
  * be chosen first, and Quick View is the only thing in the storefront that has the variants
  * (`ProductCardDto` carries colour dots and no sizes at all). The entry leaves the wishlist on the
  * dialog's `added` output and on nothing else — see `WishlistStore.completeMove` for why that matters.
+ *
+ * ## Focus, after the control that was pressed has been destroyed
+ *
+ * Every removal on this page deletes the button that caused it. That throws focus to `<body>` exactly as
+ * a `[disabled]` attribute does — which this page deliberately never uses, and which was not enough:
+ * round 1 of W2-08 lost focus on all three removal controls, so a keyboard shopper clearing a wishlist
+ * lost their place on every item. `WishlistStore.lastRemoval` says what went and where it was, and
+ * {@link WishlistPage.rehomeFocus} puts focus on the row that took its place — or on "Start shopping"
+ * when there is nothing left. It runs in an `afterRenderEffect`, which is the first moment the
+ * replacement row exists.
  *
  * ## The two controls that remove an item
  *
@@ -97,7 +110,14 @@ import { QuickView } from '../../ui/quick-view/quick-view';
           <p class="wish__hint">
             Tap the heart on anything you like and it will be saved here, in this browser.
           </p>
-          <a class="btn btn--primary" routerLink="/">Start shopping</a>
+          <!-- The focus target when the last item goes: actionable, and the one thing on an empty
+               wishlist worth doing. -->
+          <a
+            class="btn btn--primary wish__start"
+            data-testid="wishlist-start-shopping"
+            routerLink="/"
+            >Start shopping</a
+          >
         </div>
       } @else {
         <div class="wish__bar">
@@ -110,7 +130,12 @@ import { QuickView } from '../../ui/quick-view/quick-view';
               <button class="link" type="button" (click)="cancelClear()">Cancel</button>
             </p>
           } @else {
-            <button class="link wish__clear" type="button" (click)="askToClear()">
+            <button
+              class="link wish__clear"
+              type="button"
+              data-testid="wishlist-clear"
+              (click)="askToClear()"
+            >
               Clear wishlist
             </button>
           }
@@ -339,10 +364,13 @@ import { QuickView } from '../../ui/quick-view/quick-view';
       font-size: var(--text-small);
     }
 
-    .wish__continue {
+    .wish__continue,
+    .wish__start {
       display: inline-flex;
       align-items: center;
       min-height: var(--tap);
+    }
+    .wish__continue {
       margin-top: var(--space-4);
     }
   `,
@@ -352,6 +380,7 @@ export class WishlistPage {
   protected readonly CARD_SIZES = FULL_WIDTH_GRID_CARD_SIZES;
 
   private readonly store = inject(WishlistStore);
+  private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
 
   /**
    * Whether the browser's own list has been taken up yet.
@@ -433,6 +462,19 @@ export class WishlistPage {
       response.headers = headers;
     }
 
+    // **Focus, after a removal has destroyed the control that caused it.** See the class docblock.
+    //
+    // `afterRenderEffect` rather than an `effect`: the row that takes the removed row's place does not
+    // exist until the render has happened, so an ordinary effect would focus the row *before* it, or
+    // nothing. It depends on `lastRemoval` alone and reads everything else untracked, so it fires once
+    // per removal and not on every change to the list.
+    if (isPlatformBrowser(inject(PLATFORM_ID))) {
+      afterRenderEffect(() => {
+        const removal = this.store.lastRemoval();
+        untracked(() => this.rehomeFocus(removal));
+      });
+    }
+
     // The list is in `localStorage`, so this is the earliest honest moment: the server has rendered, the
     // browser has hydrated the markup the server sent, and anything added now is an ordinary update
     // rather than a node Angular never sent.
@@ -448,6 +490,48 @@ export class WishlistPage {
         this.store.load();
       });
     }
+  }
+
+  /** The removal this page has already answered for, so one is never acted on twice. */
+  private answeredRemoval = 0;
+
+  /**
+   * Puts focus where the shopper was.
+   *
+   * - one row gone → the Remove button of the row that took its place, or of the last row when the
+   *   removed one was last;
+   * - nothing left, or the whole list cleared → "Start shopping", which is the only thing left to do.
+   *
+   * **It will not take focus from somewhere else.** A removal can happen while the shopper is in the
+   * header or the footer — a heart pressed on another surface, or a future undo — and moving focus then
+   * would be a worse surprise than the one being fixed. The node that was pressed is already gone by
+   * now, so focus sitting on `<body>` is the signal that it was ours; anything else inside this page is
+   * ours too.
+   */
+  private rehomeFocus(removal: WishlistRemoval | null): void {
+    if (!removal || removal.ticket === this.answeredRemoval) {
+      return;
+    }
+
+    this.answeredRemoval = removal.ticket;
+
+    const host = this.host.nativeElement;
+    const active = host.ownerDocument.activeElement;
+    if (active !== host.ownerDocument.body && !host.contains(active)) {
+      return;
+    }
+
+    if (removal.kind === 'all' || this.rows().length === 0) {
+      host.querySelector<HTMLElement>('[data-testid="wishlist-start-shopping"]')?.focus();
+      return;
+    }
+
+    const buttons = [...host.querySelectorAll<HTMLElement>('[data-testid="wishlist-remove"]')];
+    const successor = buttons[Math.min(Math.max(removal.index, 0), buttons.length - 1)];
+
+    // The clear button as a fallback: it is the nearest control that is certainly still there when a row
+    // was removed from past the visible cap, where there is no successor to speak of.
+    (successor ?? host.querySelector<HTMLElement>('[data-testid="wishlist-clear"]'))?.focus();
   }
 
   /** What to call a row: the live name, the stored one, or something true but general. */

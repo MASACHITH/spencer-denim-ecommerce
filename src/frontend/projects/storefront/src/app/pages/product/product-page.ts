@@ -965,7 +965,28 @@ export class ProductPage {
     // Read `saved()` **before** the toggle: on a refusal the signal does not move, but reading it
     // first says plainly that it is the attempted operation being named rather than the outcome.
     const wasSaved = this.saved();
-    const outcome = this.wishlist.toggle(this.currentSlug());
+
+    // **The name and the colourway are recorded, and this is the one surface that knows both** (W2-08
+    // round 2, MAJOR 2). It used to send a bare slug while the listing card sent `{ slug, name }`, so the
+    // page with a colour visibly chosen on it stored the least of the two — and the stored name is the
+    // only thing the wishlist page can print for an item the shop has since withdrawn (doc 11 §575).
+    // Two such entries read as "This item … no longer available" twice over, with two identically
+    // labelled Remove buttons.
+    //
+    // This is **not** the absent-field rule being bent: that rule is for a caller which does not know
+    // (the listing card has colour dots and no selection, so it omits the colour). Here the selection is
+    // on screen, so the fields are sent — and `colourId` is sent as an explicit `null` when nothing is
+    // chosen yet, because "the shopper has not picked a colour on the product page" really is "no
+    // colour", not "I was not asked".
+    const item = this.product();
+    const colour = this.colours().find((option) => option.colour.id === this.selection().colourId);
+
+    const outcome = this.wishlist.toggle({
+      slug: this.currentSlug(),
+      name: item?.name ?? null,
+      colourId: colour?.colour.id ?? null,
+      colourName: colour?.colour.name ?? null,
+    });
 
     if (outcome !== 'unavailable') {
       this.wishFailure.set(null);
