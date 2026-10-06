@@ -17,7 +17,6 @@ import { productErrorMessage } from '../../core/catalog/catalog-api';
 import {
   ProductBadge,
   ProductCardDto,
-  ProductDetailDto,
   ProductVariantDto,
   StockStatus,
 } from '../../core/catalog/catalog.model';
@@ -514,10 +513,22 @@ export class QuickView {
   readonly open = input.required<boolean>();
 
   /**
-   * Which trigger opened it. `'add'` means the shopper pressed Add to Bag on the card, so a
-   * product with exactly one thing to buy is added without a second press — see {@link autoAdd}.
+   * **There is no `intent` input any more, and that is deliberate (W2-04 round 2).**
+   *
+   * There was one, and `'add'` made the dialog add a single-variant product and close itself
+   * without a second press. It is gone. Its only *observable* effect was a dialog that opened,
+   * added and vanished — a flash on a fast connection, an open-then-disappear on a slow one, with
+   * the mini bag arriving after the dialog had already gone. And it saved nothing: `ProductCardDto`
+   * carries colours and no variant count, so a genuinely single-variant product costs the same
+   * round trip and renders the same dialog either way. It could not be covered end to end by
+   * construction either — every product the stub serves has three sizes — so it was a path with no
+   * benefit, a worse interaction and no browser test. {@link QuickViewIntent} survives as the
+   * **card's** record of which of its two triggers is open, which is what `aria-expanded` needs.
+   *
+   * The way to do this honestly is `variantCount` (or `hasSingleVariant`) on the card projection,
+   * so the card can skip the dialog *before* opening it rather than after. That follow-up stays
+   * filed; see the journal.
    */
-  readonly intent = input<QuickViewIntent>('view');
 
   /** Raised when the dialog should go away: Escape, the scrim, the close button, or a finished add. */
   readonly closed = output<void>();
@@ -553,9 +564,6 @@ export class QuickView {
    */
   private readonly tried = signal(false);
 
-  /** So the single-variant shortcut fires at most once per dialog. */
-  private autoAdded = false;
-
   protected readonly detail = this.store.product;
 
   /** The slug the fetch was issued for, so a re-render cannot issue it again. */
@@ -588,11 +596,6 @@ export class QuickView {
           this.activeImage.set(0);
         }
       });
-    });
-
-    effect(() => {
-      const item = this.detail();
-      untracked(() => this.autoAdd(item));
     });
 
     // Closing on a finished add is what makes the mini bag (CART-02) the confirmation: the drawer
@@ -914,33 +917,6 @@ export class QuickView {
 
   protected isLight(hex: string | null): boolean {
     return isLightSwatch(hex);
-  }
-
-  /**
-   * The card's Add to Bag, finished.
-   *
-   * A card cannot know whether a choice is required — `ProductCardDto` carries colours and no
-   * variants at all — so the trigger opens this dialog and the decision is made **here**, where
-   * the variants are known. A product with exactly one buyable variant has nothing to choose, so
-   * it goes straight into the bag and the dialog closes itself; anything else stays open with the
-   * size list and the reason. The card never guesses a size, which is the rule this preserves.
-   *
-   * Once only, and never for the Quick View trigger: `'view'` means the shopper asked to look.
-   */
-  private autoAdd(item: ProductDetailDto | null): void {
-    if (!item || this.autoAdded || this.intent() !== 'add') {
-      return;
-    }
-
-    // Consumed whether or not the shortcut then fires, so a retry after a failed fetch does not
-    // put something in the bag a second or two after the shopper has started reading the dialog.
-    this.autoAdded = true;
-
-    const buyable = item.variants.filter((variant) => variant.availableQuantity > 0);
-    if (item.variants.length === 1 && buyable.length === 1) {
-      this.chosen.set({ colourId: buyable[0].colourId, sizeId: buyable[0].sizeId });
-      this.send(buyable[0]);
-    }
   }
 
   private send(variant: ProductVariantDto | null): void {

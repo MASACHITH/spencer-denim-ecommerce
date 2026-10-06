@@ -279,6 +279,185 @@ test.describe('the triggers on the card (CARD-01, docs/04 §4 decision 5)', () =
   });
 
   /**
+   * **Nothing covers a card's Add to Bag (MAJOR 2, owner decision 2026-10-06).**
+   *
+   * `docs/04` §4 decision 5 put these buttons on the photograph and decision 6 put a 56 px fixed
+   * WhatsApp button (`.wa-float`, `z-index: 70`, GLB-08) in the bottom-right corner of the viewport
+   * site-wide. Neither mentioned the other, and they collided: at 390x844 a card's Add to Bag was
+   * *fully* covered at 4 of 41 sampled scroll offsets, and at 320x720 it happened at `scrollY 0`,
+   * so the first card a shopper saw had a dead button that opened WhatsApp instead. The owner moved
+   * the card actions to the bottom-**left** at phone widths; the float keeps its corner.
+   *
+   * **This asks the question a thumb asks.** `document.elementFromPoint` at the centre of each
+   * button, at every scroll offset, because the only thing that matters is what actually receives
+   * the tap — a CSS assertion would have passed happily throughout the bug. Both viewports the
+   * tester measured are covered, and the assertion is that the element hit *is the button*, not
+   * merely that it is not the float: "some other thing is on top" is the same dead button.
+   *
+   * **Points behind the sticky header are not sampled, and that is not a loophole.** The header is
+   * `position: sticky` by design, so a card scrolling up behind it is *correctly* covered — the
+   * shopper scrolls it back down. The first version of this test did not exclude that band and
+   * reported 442 "covered" points at 320x720, every one of them the header, the announcement bar
+   * or the district selector. The float is the opposite case: it does not move, so a button under
+   * it can never be uncovered by scrolling, which is exactly why it was a dead button. The band is
+   * measured from the header's own box rather than hard-coded, and the sample count is asserted so
+   * that narrowing it to nothing would fail rather than pass.
+   */
+  for (const [width, height] of [
+    [320, 720],
+    [390, 844],
+  ] as const) {
+    test(`${width}x${height}: the WhatsApp float never covers a card's Add to Bag`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width, height });
+      await page.goto(LISTING);
+      await expect(page.locator('.product-grid > li').first()).toBeVisible();
+      // The float is really there, or this test proves nothing at all.
+      await expect(page.locator('.wa-float')).toBeVisible();
+
+      // **Settle the page before sampling it.** The cards' photographs are `loading="lazy"`, so
+      // scrolling loads images, which changes the document's height *under* the sampler: the first
+      // version of this read `scrollHeight` once, and a point measured before a reflow and hit
+      // after it came back as `elementFromPoint` → null at the very bottom of the page. It failed
+      // in a full-file run and passed alone, which is the shape of a flake rather than a bug. So
+      // walk to the bottom first, let every image load, and only then measure.
+      await page.evaluate(async () => {
+        const step = document.documentElement.clientHeight;
+        for (let y = 0; y <= document.documentElement.scrollHeight; y += step) {
+          window.scrollTo(0, y);
+          await new Promise((resolve) => requestAnimationFrame(resolve));
+        }
+        window.scrollTo(0, 0);
+      });
+      await page
+        .waitForFunction(() => [...document.images].every((image) => image.complete), undefined, {
+          timeout: 15_000,
+        })
+        .catch(() => undefined);
+      await page.evaluate(() => window.scrollTo(0, 0));
+
+      const pageHeight = await page.evaluate(() => document.documentElement.scrollHeight);
+      const offsets: number[] = [];
+      for (let y = 0; y <= Math.max(0, pageHeight - height); y += 40) {
+        offsets.push(y);
+      }
+
+      const covered: unknown[] = [];
+      let sampled = 0;
+
+      for (const offset of offsets) {
+        // Scrolled and measured in **one** evaluate, so no reflow can land between the two.
+        const result = await page.evaluate((target) => {
+          window.scrollTo(0, target);
+          const problems: { scrollY: number; nth: number; hit: string }[] = [];
+          const root = document.documentElement;
+          // The sticky header's own box, so the excluded band is measured and not assumed.
+          const header = document.querySelector<HTMLElement>('.site-header');
+          const headerBottom = header ? header.getBoundingClientRect().bottom : 0;
+          let counted = 0;
+
+          const buttons = [
+            ...document.querySelectorAll<HTMLElement>('[data-testid="card-add-to-bag"]'),
+          ];
+
+          buttons.forEach((button, nth) => {
+            const box = button.getBoundingClientRect();
+            const x = box.x + box.width / 2;
+            const y = box.y + box.height / 2;
+
+            // Only a point on the screen and clear of the sticky header can be tapped at all.
+            if (y <= headerBottom || y >= root.clientHeight || x < 0 || x >= root.clientWidth) {
+              return;
+            }
+
+            counted += 1;
+
+            const hit = document.elementFromPoint(x, y);
+            if (hit !== button && !button.contains(hit)) {
+              problems.push({
+                scrollY: Math.round(window.scrollY),
+                nth,
+                hit: `${hit?.tagName ?? 'nothing'}.${hit?.className ?? ''}`.slice(0, 70),
+                probe: `x=${Math.round(x)} y=${Math.round(y)} vw=${root.clientWidth} vh=${root.clientHeight} hb=${Math.round(headerBottom)} box=${Math.round(box.width)}x${Math.round(box.height)}`,
+              });
+            }
+          });
+
+          return { problems, counted };
+        }, offset);
+
+        sampled += result.counted;
+        covered.push(...result.problems);
+      }
+
+      expect(offsets.length, 'no scroll offset was sampled, so this could not fail').toBeGreaterThan(
+        5,
+      );
+      expect(sampled, 'no button centre was ever tested, so this could not fail').toBeGreaterThan(
+        20,
+      );
+      expect(covered, JSON.stringify(covered.slice(0, 8), null, 2)).toEqual([]);
+    });
+  }
+
+  /**
+   * The mirror image of the move: having gone left, the pair must clear what is on that side.
+   *
+   * The badge is top-left and the heart top-right, so the bottom-left corner was free — but "free"
+   * is a claim about the stylesheet, and this measures the screen. 320 px is the width where the
+   * card is narrowest and the two-column grid leaves least room.
+   */
+  test('320px: the actions clear the card’s own furniture on the left', async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 720 });
+    await page.goto(LISTING);
+    await expect(page.locator('.product-grid > li').first()).toBeVisible();
+
+    const geometry = await page.evaluate(() => {
+      const card = document.querySelector<HTMLElement>('.card')!;
+      const media = card.querySelector<HTMLElement>('.card__media')!;
+      const actions = card.querySelector<HTMLElement>('.card__actions')!;
+      const body = card.querySelector<HTMLElement>('.card__body')!;
+      const badge = card.querySelector<HTMLElement>('.badge');
+      const wish = card.querySelector<HTMLElement>('.card__wish')!;
+
+      const a = actions.getBoundingClientRect();
+      const m = media.getBoundingClientRect();
+
+      return {
+        // Inside the photograph on every side, so nothing hangs over the card's edge.
+        insideMediaLeft: Math.round(a.left - m.left),
+        insideMediaBottom: Math.round(m.bottom - a.bottom),
+        clearsBodyText: Math.round(body.getBoundingClientRect().top - a.bottom),
+        // On the opposite side from the heart, which never moved.
+        wishIsRight: Math.round(wish.getBoundingClientRect().right - m.right),
+        overlapsBadge: badge
+          ? !(
+              a.right <= badge.getBoundingClientRect().left ||
+              a.left >= badge.getBoundingClientRect().right ||
+              a.bottom <= badge.getBoundingClientRect().top ||
+              a.top >= badge.getBoundingClientRect().bottom
+            )
+          : false,
+        // Room for the photo link's focus ring, drawn at outline-offset 2 plus 2.5 px (RING_BAND).
+        roomForRing: Math.round(a.left - m.left) >= 0,
+      };
+    });
+
+    expect(geometry.insideMediaLeft).toBe(0);
+    expect(geometry.insideMediaBottom).toBe(0);
+    expect(geometry.clearsBodyText).toBeGreaterThanOrEqual(0);
+    expect(geometry.wishIsRight).toBe(0);
+    expect(geometry.overlapsBadge).toBe(false);
+    expect(geometry.roomForRing).toBe(true);
+
+    // And both controls are still full 44 px targets, on the screen, on the left.
+    expect(
+      await unreachable(page, '[data-testid="card-quick-view"], [data-testid="card-add-to-bag"]'),
+    ).toEqual([]);
+  });
+
+  /**
    * On a desktop the pair is revealed on hover, which is the style tile's design — and a keyboard
    * has no pointer, so `:focus-within` has to reveal it too or the controls are unreachable.
    */

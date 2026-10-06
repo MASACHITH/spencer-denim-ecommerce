@@ -67,13 +67,24 @@ interface ColourDot {
  * 1024 px. Tapping the card itself still opens the product page, which is the same decision's
  * other half, and is why neither trigger is the card's primary action.
  *
+ * **Bottom-left on a phone, by an owner decision dated 2026-10-06** that reconciles decision 5
+ * with decision 6's floating WhatsApp button (GLB-08), which owns the bottom-**right** corner of
+ * the viewport site-wide. They were both in that corner and the float covered a card's Add to Bag
+ * outright — at 320x720 on the very first card. The side is chosen in `.card__actions`, which says
+ * so at length. The heart is untouched at top-right; it never collided.
+ *
  * **Both triggers open the same dialog, and that is not an oversight.** `ProductCardDto` carries
  * colours and *no variants at all*, so a card cannot know whether this product needs a size
- * chosen — and a card that guessed a size would put the wrong thing in a bag. So Add to Bag opens
- * Quick View with `intent="add"`, and the dialog, which does have the variants, decides: a product
- * with exactly one buyable variant is added and the dialog closes itself, anything else stays open
- * on the size list. The visible difference between the two triggers is therefore one request long,
- * which is the honest cost of the card projection not carrying a variant count.
+ * chosen — and a card that guessed a size would put the wrong thing in a bag. So both triggers
+ * open Quick View, which does have the variants, and the choice is made there. The two buttons
+ * therefore differ only in what they say and in which one reports itself expanded — and that is
+ * the honest cost of the card projection not carrying a variant count.
+ *
+ * There *was* a third behaviour: `intent="add"` made the dialog add a single-variant product and
+ * close itself. Removed in round 2 — it opened, added and vanished, which reads as a flash or a
+ * glitch, and it saved no request because the card still had to fetch the detail to know. The fix
+ * worth having is `variantCount` on the card projection, so the card can skip the dialog *before*
+ * opening it; that follow-up is filed.
  *
  * The wishlist heart is a real control, but it saves to this browser only until the wishlist API
  * arrives (W2-08) — see {@link LocalWishlist}.
@@ -229,7 +240,6 @@ interface ColourDot {
       <sd-quick-view
         [product]="product()"
         [open]="true"
-        [intent]="quickViewIntent()"
         (closed)="closeQuickView()"
       />
     }
@@ -346,12 +356,30 @@ interface ColourDot {
       right: 0;
     }
 
-    /* Bottom-right on a phone, stacked, always there: docs/04 §4 decision 5 asks for small icon
-       buttons on the photo rather than a hover affordance a touch screen has no way to produce. */
+    /* Bottom-**left** on a phone, stacked, always there: docs/04 §4 decision 5 asks for small icon
+       buttons on the photo rather than a hover affordance a touch screen has no way to produce.
+
+       (No backticks in this block: it is a template literal, and one would end it.)
+
+       **Left, and that is an owner decision dated 2026-10-06 reconciling decisions 5 and 6
+       (docs/04 §4).** These were bottom-right, and decision 6 puts a 56 px fixed WhatsApp button in
+       the bottom-right corner of the viewport site-wide at z-index 70 (GLB-08). The two
+       specifications never mentioned each other and they collided: at 390x844 a card's Add to Bag
+       was *fully* covered at 4 of 41 sampled scroll offsets, and at 320x720 it happened at
+       scrollY 0 - so the first card a shopper saw had a dead button that opened WhatsApp. The
+       float keeps the corner it was given and the card actions take the opposite one; nothing is
+       removed and neither decision is weakened. The heart stays top-right: it never collided.
+
+       **Where the switch happens, and why there is no new number here.** The side is set once in
+       each of the two states this component already has, and the boundary between them is the
+       existing min-width: 1024px query below - the same one that turns the stacked icon pair into
+       a labelled bar. Below it the pair is a 44 px column and has a side to choose; at and above it
+       the bar spans the whole photo (left: 0 *and* right: 0), so there is no side to choose and
+       nothing to move. One declaration lives in each block and no third rule repeats the figure. */
     .card__actions {
       position: absolute;
       z-index: 1;
-      right: 0;
+      left: 0;
       bottom: 0;
       display: flex;
       flex-direction: column;
@@ -368,8 +396,10 @@ interface ColourDot {
       white-space: nowrap;
     }
     @media (min-width: 1024px) {
+      /* right: 0 is the other half of the side decision above: with left: 0 already set, the pair
+         stops being a column with a side and becomes a bar across the whole photo. */
       .card__actions {
-        left: 0;
+        right: 0;
         flex-direction: row;
       }
       .card__action {
@@ -534,8 +564,6 @@ export class ProductCard {
   protected readonly openedBy = this.quickView.asReadonly();
 
   protected readonly quickViewOpen = computed(() => this.quickView() !== null);
-
-  protected readonly quickViewIntent = computed<QuickViewIntent>(() => this.quickView() ?? 'view');
 
   protected readonly saved = computed(() => this.wishlist.has(this.product().slug));
 

@@ -8,7 +8,7 @@ import { ChangeDetectionStrategy, Component, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 
-import { QuickView, QuickViewIntent } from './quick-view';
+import { QuickView } from './quick-view';
 import { EMPTY_CART } from '../../core/cart/cart.model';
 import { CartStore } from '../../core/cart/cart.store';
 import {
@@ -192,7 +192,6 @@ function detail(slug: string, overrides: Partial<ProductDetailDto> = {}): Produc
       <sd-quick-view
         [product]="item()"
         [open]="true"
-        [intent]="intent()"
         (closed)="closes = closes + 1; open.set(false)"
       />
     }
@@ -201,7 +200,6 @@ function detail(slug: string, overrides: Partial<ProductDetailDto> = {}): Produc
 class Host {
   readonly item = signal<ProductCardDto>(card());
   readonly open = signal(true);
-  readonly intent = signal<QuickViewIntent>('view');
   closes = 0;
 }
 
@@ -219,7 +217,7 @@ class Host {
 describe('QuickView (QV-01)', () => {
   let http: HttpTestingController;
 
-  function setUp(options: { product?: ProductCardDto; intent?: QuickViewIntent } = {}) {
+  function setUp(options: { product?: ProductCardDto } = {}) {
     localStorage.clear();
     TestBed.resetTestingModule();
     TestBed.configureTestingModule({
@@ -232,9 +230,6 @@ describe('QuickView (QV-01)', () => {
     const fixture = TestBed.createComponent(Host);
     if (options.product) {
       fixture.componentInstance.item.set(options.product);
-    }
-    if (options.intent) {
-      fixture.componentInstance.intent.set(options.intent);
     }
 
     fixture.detectChanges();
@@ -266,7 +261,7 @@ describe('QuickView (QV-01)', () => {
   }
 
   async function ready(
-    options: { product?: ProductCardDto; intent?: QuickViewIntent } = {},
+    options: { product?: ProductCardDto } = {},
     overrides: Partial<ProductDetailDto> = {},
   ) {
     const harness = setUp(options);
@@ -707,11 +702,20 @@ describe('QuickView (QV-01)', () => {
   });
 
   /**
-   * **The card's Add to Bag, finished here.** A card has no variants, so it cannot know whether a
-   * choice is required; the dialog can, and this is where the brief's "a single-variant product may
-   * add straight to the bag" actually happens.
+   * **The dialog never adds anything by itself, and that is the contract since round 2.**
+   *
+   * It used to. An `intent="add"` input made the dialog add a single-variant product and close
+   * itself without a second press — the card's Add to Bag "finished here", because a card has no
+   * variants and cannot know whether a choice is required. The behaviour is removed: all it did
+   * that a shopper could see was open, add and vanish, and it saved no request, because the detail
+   * had to be fetched either way to know there was only one variant.
+   *
+   * So what is pinned here is the *absence*, on the one product shape that used to trigger it —
+   * a single buyable variant, one colour, "One size". The size still has to be tapped, which is
+   * not an accident: `resolveSelection` gives a colourway a default and never gives a size one,
+   * because PDP-03 wants a deliberate choice. Put the shortcut back and the first of these fails.
    */
-  describe('intent="add", which is the card’s Add to Bag', () => {
+  describe('a single-variant product (the shortcut that was removed)', () => {
     const singleVariant: Partial<ProductDetailDto> = {
       colours: [colour(INDIGO, 'Indigo', '#2b3a55')],
       sizes: [size(SMALL, 'One size')],
@@ -720,55 +724,17 @@ describe('QuickView (QV-01)', () => {
       maxPrice: 5990,
     };
 
-    it('adds a product with one buyable variant without a second press', async () => {
-      const harness = await ready({ intent: 'add' }, singleVariant);
+    it('adds nothing on its own, and does not close itself', async () => {
+      const harness = await ready({}, singleVariant);
 
-      const request = addRequest();
-      expect(request.request.body).toEqual({ variantId: 101, quantity: 1 });
-
-      request.flush(EMPTY_CART);
-      await harness.settle();
-
-      expect(harness.host.closes).toBe(1);
-    });
-
-    it('does not add anything when a size has to be chosen', async () => {
-      const harness = await ready({ intent: 'add' });
-
-      http.verify();
-      expect(harness.host.closes).toBe(0);
-      expect(unavailable(harness.query<HTMLButtonElement>('[data-testid="quick-view-add"]')!)).toBe(
-        true,
-      );
-    });
-
-    it('does not add a single variant that is sold out', async () => {
-      const harness = await ready(
-        { intent: 'add' },
-        { ...singleVariant, variants: [variant(101, INDIGO, SMALL, 0)] },
-      );
-
-      http.verify();
-      expect(harness.host.closes).toBe(0);
-    });
-
-    /**
-     * The Quick View trigger means "let me look", so it never adds anything by itself.
-     *
-     * The button is **still disabled** on the same one-size product, and that is the product page's
-     * rule rather than an accident: `resolveSelection` gives a colourway a default and never gives
-     * a size one, so even "One size" has to be tapped. Pinned so the difference between the two
-     * triggers is a measured fact rather than a hope.
-     */
-    it('adds nothing for intent="view", even on a single-variant product', async () => {
-      const harness = await ready({ intent: 'view' }, singleVariant);
-
+      // No POST at all: `http.verify()` would fail on one outstanding.
       http.verify();
       expect(harness.host.closes).toBe(0);
       expect(unavailable(harness.query<HTMLButtonElement>('[data-testid="quick-view-add"]')!)).toBe(
         true,
       );
 
+      // "One size" still has to be tapped, and then the add is the shopper's.
       harness.all<HTMLButtonElement>('.sd-size')[0].click();
       await harness.settle();
 
@@ -776,6 +742,37 @@ describe('QuickView (QV-01)', () => {
         false,
       );
       http.verify();
+
+      harness.query<HTMLButtonElement>('[data-testid="quick-view-add"]')!.click();
+      await harness.settle();
+
+      const request = addRequest();
+      expect(request.request.body).toEqual({ variantId: 101, quantity: 1 });
+      request.flush(EMPTY_CART);
+      await harness.settle();
+
+      // And *that* add closes it, which is the mini bag becoming the confirmation (CART-02).
+      expect(harness.host.closes).toBe(1);
+    });
+
+    it('adds nothing on its own when a size has to be chosen either', async () => {
+      const harness = await ready();
+
+      http.verify();
+      expect(harness.host.closes).toBe(0);
+      expect(unavailable(harness.query<HTMLButtonElement>('[data-testid="quick-view-add"]')!)).toBe(
+        true,
+      );
+    });
+
+    it('adds nothing on its own for a single variant that is sold out', async () => {
+      const harness = await ready(
+        {},
+        { ...singleVariant, variants: [variant(101, INDIGO, SMALL, 0)] },
+      );
+
+      http.verify();
+      expect(harness.host.closes).toBe(0);
     });
   });
 
