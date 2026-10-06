@@ -545,8 +545,8 @@ test.describe('reduced motion', () => {
    * listed explicitly, and `quantity` puts the page in the state where the minus is live.
    */
   const FOCUSABLE = [
-    { name: 'a colour swatch', selector: '.swatch' },
-    { name: 'a size button', selector: '.size:not(:disabled)' },
+    { name: 'a colour swatch', selector: '.sd-swatch' },
+    { name: 'a size button', selector: '.sd-size:not(:disabled)' },
     { name: 'the wishlist button', selector: '.pdp__wish' },
     // With no size chosen the stepper's ceiling is one and both its buttons are disabled, so
     // there is nothing to focus. A size is the state a shopper is in when they use it anyway.
@@ -784,7 +784,7 @@ test.describe('the selection (PDP-03)', () => {
     const first = page.locator('.gallery__img');
     await expect(first).toHaveAttribute('alt', 'Test Product 1 in Indigo');
 
-    await page.locator('.swatch').nth(1).click();
+    await page.locator('.sd-swatch').nth(1).click();
 
     await expect(page).toHaveURL(/colour=2/);
     await expect(page.locator('.gallery__img')).toHaveAttribute('alt', 'Test Product 1 in Black');
@@ -795,7 +795,7 @@ test.describe('the selection (PDP-03)', () => {
   }) => {
     await page.goto(`${PRODUCT}?colour=2`);
 
-    const large = page.locator('.size').nth(2);
+    const large = page.locator('.sd-size').nth(2);
     await expect(large).toBeDisabled();
     expect(
       await large.evaluate((element) => getComputedStyle(element).textDecorationLine),
@@ -808,7 +808,7 @@ test.describe('the selection (PDP-03)', () => {
     const now = page.locator('.pdp__price .price__now');
     await expect(now).toHaveText('Rs. 2,600');
 
-    await page.locator('.size').nth(2).click();
+    await page.locator('.sd-size').nth(2).click();
 
     await expect(page).toHaveURL(/size=12/);
     await expect(now).toHaveText('Rs. 3,100');
@@ -826,10 +826,10 @@ test.describe('sold out looks sold out (PDP-03)', () => {
   }) => {
     await page.goto(`${PRODUCT}?colour=1`);
 
-    const sizes = page.locator('.size');
+    const sizes = page.locator('.sd-size');
     const inStock = sizes.nth(0);
     const soldOut = sizes.nth(1);
-    const notMade = page.locator('.size:disabled');
+    const notMade = page.locator('.sd-size:disabled');
 
     await expect(soldOut).toBeEnabled();
     await expect(soldOut).toHaveClass(/is-sold-out/);
@@ -891,7 +891,7 @@ test.describe('sold out looks sold out (PDP-03)', () => {
           .map((match) => match[1].split(/[,/]/).map((part) => parseFloat(part.trim())))
           .filter((parts) => parts.length < 4 || parts[3] > 0);
 
-      return [...document.querySelectorAll<HTMLElement>('.swatch__dot')].map((dot) => {
+      return [...document.querySelectorAll<HTMLElement>('.sd-swatch__dot')].map((dot) => {
         const after = getComputedStyle(dot, '::after');
         const slash = opaque(after.backgroundImage)[0] ?? null;
         const behind = opaque(getComputedStyle(dot).backgroundColor)[0] ?? [255, 255, 255];
@@ -921,7 +921,7 @@ test.describe('sold out looks sold out (PDP-03)', () => {
     await page.goto('/product/test-product-11');
     await expect(page.locator('h1')).toBeVisible();
 
-    const dots = page.locator('.swatch__dot');
+    const dots = page.locator('.sd-swatch__dot');
     await expect(dots.first()).toHaveClass(/is-sold-out/);
     expect(
       await dots.first().evaluate((element) => getComputedStyle(element, '::after').content),
@@ -934,7 +934,7 @@ test.describe('sold out looks sold out (PDP-03)', () => {
 
     expect(
       await page
-        .locator('.swatch__dot')
+        .locator('.sd-swatch__dot')
         .first()
         .evaluate((element) => getComputedStyle(element, '::after').content),
     ).toBe('none');
@@ -957,10 +957,77 @@ test.describe('what is deliberately not here', () => {
 
     // Add to Bag is here, and it is disabled until a size is chosen rather than absent — which is
     // PDP-03's own wording, and is the one disabled control this page is allowed.
-    const add = page.getByRole('button', { name: /add to bag/i });
+    //
+    // **Scoped to this page's own button since QV-01 (W2-04).** The related-products and
+    // recently-viewed rows are product cards, and a card now carries an Add to Bag of its own
+    // (CARD-01), so an unscoped name match finds three. The other two are a different control with
+    // a different job: they open Quick View, and neither is ever disabled — which is asserted
+    // below, because "the one disabled control this page is allowed" is the claim being made and it
+    // would otherwise now be measured over one of three buttons.
+    const add = page.locator('[data-testid="add-to-bag"]');
     await expect(add).toHaveCount(1);
     await expect(add).toBeDisabled();
     await expect(page.locator('#pdp-add-reason')).toContainText('Choose a size');
+
+    const cardAdds = page.locator('[data-testid="card-add-to-bag"]');
+    await expect(cardAdds).not.toHaveCount(0);
+    for (const trigger of await cardAdds.all()) {
+      await expect(trigger).toBeEnabled();
+    }
+
+    // And "disabled" here means `aria-disabled`, not the `disabled` attribute — see the test
+    // below for the difference that makes. `toBeDisabled()` above is satisfied by either.
+    await expect(add).toHaveAttribute('aria-disabled', 'true');
+    expect(await add.evaluate((button: HTMLButtonElement) => button.hasAttribute('disabled'))).toBe(
+      false,
+    );
+  });
+
+  /**
+   * **Pressing Add to Bag must not throw the shopper's place away (W2-04 round 2, MAJOR 3).**
+   *
+   * This was pre-existing and is the identical root cause Quick View was failed for and ADM-22 was
+   * fixed for: `[disabled]` on the element that currently holds focus makes Chromium blur it to
+   * `<body>` and fire no `focusin`. Quick View's version was the serious one, because it ejected a
+   * shopper from an open dialog; here it leaves a keyboard user at the top of the document beside
+   * an error they can no longer get back to.
+   *
+   * The 409 is injected into this page's own routing rather than through the stub's
+   * `/__test__/cart-variant` switch, which is one shared map against a `fullyParallel` suite — and
+   * what is under test is what the client does with a refusal, not how the stub produces one.
+   */
+  test('a refused add leaves focus on the button that was pressed', async ({ page }) => {
+    await page.route('**/api/cart/items', async (route) => {
+      if (route.request().method() !== 'POST') {
+        await route.fallback();
+        return;
+      }
+
+      await route.fulfill({
+        status: 409,
+        contentType: 'application/problem+json; charset=utf-8',
+        body: JSON.stringify({
+          title: 'Out of stock',
+          status: 409,
+          detail: 'That size has just sold out. Nothing was added to your bag.',
+        }),
+      });
+    });
+
+    await page.goto(`${PRODUCT}?colour=1&size=10`);
+
+    const add = page.locator('[data-testid="add-to-bag"]');
+    await expect(add).toBeEnabled();
+
+    // Reached by keyboard, so there is a place to lose.
+    await add.focus();
+    await expect(add).toBeFocused();
+
+    await add.click();
+
+    await expect(page.locator('.pdp__add-error')).toContainText('sold out');
+    await expect(add).toBeFocused();
+    expect(await page.evaluate(() => document.activeElement?.tagName)).not.toBe('BODY');
   });
 
   test('the wishlist heart works, per browser, as it does on a card (W2-08)', async ({ page }) => {

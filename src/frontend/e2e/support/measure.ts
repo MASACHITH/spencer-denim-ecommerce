@@ -40,6 +40,71 @@ export async function undersized(page: Page, selector: string): Promise<Undersiz
   );
 }
 
+/** One control the shopper cannot get to, with how far outside the viewport it stayed. */
+export interface UnreachableBox {
+  readonly label: string;
+  readonly above: number;
+  readonly below: number;
+  readonly beforeStart: number;
+  readonly pastEnd: number;
+}
+
+/**
+ * Every control matching `selector` that **cannot be brought onto the screen at all**.
+ *
+ * **Why this exists, and why {@link undersized} is not it.** `undersized` reads a control's *size*.
+ * A 48 px button eight pixels below the fold passes "every control is a 44 px target at 320 px"
+ * with nothing to say about the fact that nobody can press it — and that is precisely the shape of
+ * the bug this helper was written for (W2-04 round 2, MAJOR 1): `ui/modal`'s host sized its single
+ * implicit grid row to the panel's unclamped content, so the panel hung 137 px off the bottom at
+ * 390x844 and Quick View's Add to Bag was unreachable at four of the eight project widths. Both of
+ * the dialog's layout tests passed, because every number either of them looked at was horizontal.
+ *
+ * **Reachable, not merely visible.** A control below the fold inside something that scrolls is
+ * fine; the shopper scrolls to it. So this asks the browser to do its best first —
+ * `scrollIntoView` walks every scrollable ancestor, which is the same work the browser does when
+ * focus moves to a control — and only then measures. What is left outside the viewport is outside
+ * it for good, which is why keyboard focus did not rescue Add to Bag either.
+ *
+ * **It refuses to measure nothing**, unlike `undersized` (issue #80, still open there): a selector
+ * that matches no element is a check that cannot fail, and this helper exists because of one.
+ */
+export async function unreachable(page: Page, selector: string): Promise<UnreachableBox[]> {
+  const found = await page.evaluate(
+    (target) =>
+      [...document.querySelectorAll<HTMLElement>(target)].filter(
+        (element) => element.getClientRects().length > 0,
+      ).length,
+    selector,
+  );
+
+  if (found === 0) {
+    throw new Error(`nothing visible matches "${selector}", so reachability could not fail`);
+  }
+
+  return page.evaluate(
+    (target) =>
+      [...document.querySelectorAll<HTMLElement>(target)]
+        .filter((element) => element.getClientRects().length > 0)
+        .map((element) => {
+          element.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' });
+
+          const box = element.getBoundingClientRect();
+          const root = document.documentElement;
+
+          return {
+            label: `${element.tagName}.${element.className}`.slice(0, 60),
+            above: Math.round(Math.max(0, -box.top)),
+            below: Math.round(Math.max(0, box.bottom - root.clientHeight)),
+            beforeStart: Math.round(Math.max(0, -box.left)),
+            pastEnd: Math.round(Math.max(0, box.right - root.clientWidth)),
+          };
+        })
+        .filter((box) => box.above > 0 || box.below > 0 || box.beforeStart > 0 || box.pastEnd > 0),
+    selector,
+  );
+}
+
 /**
  * How far outside a control's border box the focus ring is drawn: `outline-offset: 2px` plus
  * `--focus-width: 2.5px`, rounded up.

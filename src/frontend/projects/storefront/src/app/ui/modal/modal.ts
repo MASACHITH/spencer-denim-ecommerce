@@ -46,10 +46,14 @@ let nextModalId = 0;
  * painted, and the whole class of bug is designed out. The two therefore do not share an
  * implementation, only the shape of the trap.
  *
- * TODO(QV-01): Quick View wants exactly this. When that task lands, this moves to
- * `@spencer-denim/shared` alongside the drawer and the trap becomes one utility both use. It is
- * deliberately storefront-local today, next to `ui/product-card`, so a shared-library change does
- * not land in three other branches at once.
+ * **Quick View (QV-01) now uses it, and it deliberately did not move.** That task was the trigger
+ * this file's own TODO named: "when that task lands, this moves to `@spencer-denim/shared` and the
+ * trap becomes one utility both use". It landed, and the move was not made, for the reason the same
+ * TODO gave in its next sentence — a shared-library change lands in every open branch at once, and
+ * there were several. Quick View is a **storefront** component, so there is still no consumer
+ * outside this application, and folding the trap together would touch `sd-drawer`, which is the
+ * mobile navigation *and* the mini bag. Three components sharing the shape of a trap and not its
+ * code is the cheaper mistake of the two. Revisit when the admin panel wants a modal.
  */
 @Component({
   selector: 'sd-modal',
@@ -89,11 +93,31 @@ let nextModalId = 0;
     }
   `,
   styles: `
+    /* The grid-template-rows line below is load-bearing, and it is a fix (W2-04 round 2).
+       (No backticks in this block: it is a template literal, and one would end it.)
+
+       Without it there is one *implicit* row, sized auto - that is, to the panel's **unclamped**
+       content height. place-items: center sets align-items and justify-items, never
+       align-content, so the panel was clamped to 92vh and then centred inside a row far taller
+       than the screen: at 390x844 the host's scrollHeight was 981 against a height of 844, and the
+       panel hung 137 px below the fold with Add to Bag off the screen and unscrollable-to, because
+       the thing that overflowed was the host and not the panel's own scrolling body. The size
+       guide never triggered it - its content fits 92vh - so this sat latent from PDP-04 until
+       Quick View was the first panel tall enough to show it.
+
+       One explicit row with a **zero minimum** removes the cause rather than compensating for it.
+       1fr alone keeps an automatic min-content minimum and blows the track out again; and
+       align-content: center, the other candidate, also puts this panel on screen at every
+       viewport - that was measured, so it is not wrong, it just leaves the track oversized and
+       centres the overflow inside it rather than removing the cause. minmax(0, 1fr) also makes
+       the panel's max-height: min(100%, 92vh) mean what it says - 100% now resolves against the
+       room actually available rather than against the content's own height. */
     :host {
       position: fixed;
       inset: 0;
       z-index: 120;
       display: grid;
+      grid-template-rows: minmax(0, 1fr);
       place-items: center;
       padding: var(--space-2);
     }

@@ -393,6 +393,12 @@ test.describe('axe over the storefront (#65)', () => {
    * or explicitly allowed; this is where it shows up either way.
    */
   test('reports every axe finding at any impact, for the record', async ({ page }) => {
+    // Six pages, each scanned with **every** axe rule rather than the gate's tag list, and the
+    // listing pages grew forty-eight interactive controls with QV-01 (W2-04) — two triggers on each
+    // of twenty-four cards. That tipped this one test past the 30 s default. It is a duration, not a
+    // hang: the same six scans finish well inside this.
+    test.setTimeout(90_000);
+
     await useStubApi(page);
 
     const report: Record<string, unknown> = {};

@@ -96,6 +96,53 @@ These answer the style tile's "For your review" list. They are **build defaults*
 | 8 | Sample content | Placeholders: free delivery above Rs. 10,000, zone fees and announcement messages are all admin-editable. **Real values from the client before go-live** (D8). |
 | 9 | Hero on very wide screens | **Keep the 880 px height cap** (16:9 up to ~1580 px, cropped not stretched). |
 
+> **Decision (owner, 2026-10-06): the floating WhatsApp button owns the bottom-right corner, and a
+> phone card's action buttons sit bottom-LEFT.** This reconciles decision 5 above with GLB-08, and
+> it is written down because the two were never reconciled anywhere — which is how they came to
+> collide in W2-04.
+>
+> **What went wrong.** Decision 5 puts Quick View and Add to Bag on the photograph; GLB-08 asks for
+> a floating WhatsApp button, site-wide. Decision 6 above settles that button's *colour* and says
+> nothing about where it goes, and `docs/02`'s GLB-08 line says only "site-wide" — so its corner
+> was never a stated decision at all, only an implementation choice (`layout/whatsapp-button`:
+> fixed, bottom-right, 56 px, `z-index: 70`). The card actions were then built into the same
+> corner. Measured on the built storefront: at 390 × 844 a card's Add to Bag was **fully covered**
+> at 4 of 41 sampled scroll offsets, and at 320 × 720 it happened at `scrollY 0` — so the first
+> card a shopper saw had a dead button that opened WhatsApp instead. An undocumented decision is
+> worse than a conflicting one: there was nothing for the second decision to be checked against.
+>
+> **The rule now.** The float keeps bottom-right, stated here rather than left to the stylesheet.
+> A phone card's action pair takes the opposite corner, bottom-left, stacked. Neither decision is
+> weakened and nothing is removed: the two owners of that corner become one, and the other corner
+> was empty (the badge is top-left, the wishlist heart top-right — the heart does **not** move).
+>
+> **The heart collides too, and is deliberately left alone for now.** An earlier version of this
+> decision claimed it "never collided". That was never measured and it is false: the float covers
+> the heart's centre at 5 of 116 sampled positions at 320x720, 8 of 148 at 320x844, 6 of 100 at
+> 375x667, 5 of 134 at 390x844 and 4 of 219 at 768x1024. The geometry is the mirror image — the
+> heart is at a card's *top*-right and the float at the viewport's *bottom*-right, so they meet as
+> a card enters from below rather than as one leaves at the bottom, which is why moving the action
+> pair did not move this and why a scan of the action pair alone could not see it. It is milder (a
+> missed heart costs no order, and scrolling clears it) and it is tracked as issue #111, to be
+> fixed with W2-08 when the heart gains a real API. Stated here because an unverified claim in this
+> document is the very failure the rule below exists to prevent.
+>
+> **Where the side changes.** At the existing 1024 px breakpoint, which is already where the
+> stacked icon pair becomes a labelled bar: below it the pair is a 44 px column and has a side to
+> choose, at and above it the bar spans the whole photo and has none. No new breakpoint was
+> introduced for this.
+>
+> **The alternatives, and why not.** Raising the float clear of the cards moves a site-wide element
+> to suit one page and only shifts the overlap up the card. Dropping the heart from phone cards
+> removes a feature CARD-01 asks for. Hiding the float on listing pages contradicts GLB-08's
+> "site-wide" in the one place a shopper is most likely to want to ask a question.
+>
+> **How to keep it true.** A stylesheet assertion cannot see this: the collision is about what
+> receives a tap. `e2e/quick-view.e2e.ts` samples `document.elementFromPoint` at the centre of every
+> card's Add to Bag across every 40 px scroll offset at 320 × 720 and 390 × 844, and requires the
+> element hit to *be* the button. Anything else added to a viewport corner should be checked the
+> same way before it lands.
+
 ## 5. Admin panel
 
 Same neutral tokens, denser layout, a readable data font size (14 px), and charts in a restrained palette. Function over flourish.

@@ -401,7 +401,7 @@ describe('ProductPage (PDP-01..07)', () => {
     it('disables a size the chosen colourway is not made in', async () => {
       await open('/product/high-rise-straight-jean?colour=2');
 
-      const sizes = queryAll<HTMLButtonElement>('.size');
+      const sizes = queryAll<HTMLButtonElement>('.sd-size');
       expect(sizes.map((button) => button.disabled)).toEqual([false, false, true]);
       expect(sizes[2].getAttribute('aria-label')).toContain('not made in this colour');
     });
@@ -415,7 +415,7 @@ describe('ProductPage (PDP-01..07)', () => {
     it('writes the chosen colour into the address bar', async () => {
       await open('/product/high-rise-straight-jean');
 
-      queryAll<HTMLButtonElement>('.swatch')[1].click();
+      queryAll<HTMLButtonElement>('.sd-swatch')[1].click();
       await settle();
 
       expect(TestBed.inject(Router).url).toContain('colour=2');
@@ -425,7 +425,7 @@ describe('ProductPage (PDP-01..07)', () => {
     it('clears the size when the new colourway is not made in it', async () => {
       await open('/product/high-rise-straight-jean?colour=1&size=12');
 
-      queryAll<HTMLButtonElement>('.swatch')[1].click();
+      queryAll<HTMLButtonElement>('.sd-swatch')[1].click();
       await settle();
 
       expect(TestBed.inject(Router).url).not.toContain('size=');
@@ -511,23 +511,102 @@ describe('ProductPage (PDP-01..07)', () => {
       return query<HTMLButtonElement>('[data-testid="add-to-bag"]')!;
     }
 
+    /**
+     * Whether the button is refusing. It says `aria-disabled` rather than carrying `disabled`
+     * (W2-04 round 2: `disabled` on a focused button blurs it to `<body>` with no `focusin`, so
+     * the press threw the shopper's place away), so `.disabled` is `false` on it by design and an
+     * assertion reading it would be one that cannot fail.
+     */
+    function addUnavailable(): boolean {
+      return addButton().getAttribute('aria-disabled') === 'true';
+    }
+
     it('is disabled until a size is chosen, and says why', async () => {
       await open('/product/high-rise-straight-jean');
 
 
-      expect(addButton().disabled).toBe(true);
+      expect(addUnavailable()).toBe(true);
       expect(query('#pdp-add-reason')?.textContent).toContain('Choose a size');
 
       // aria-describedby, so the reason is announced rather than inferred from a greyed-out control.
       expect(addButton().getAttribute('aria-describedby')).toBe('pdp-add-reason');
     });
 
+    /**
+     * **The attribute, pinned, because which attribute is used *is* the fix.** Same root cause as
+     * ADM-22 and as Quick View's own button: the platform must not be the thing enforcing this, or
+     * it takes focus off the screen on the way. Where focus lands is measured in
+     * `product-page.e2e.ts`; what jsdom holds is that the element stays focusable and clickable and
+     * the handler is what refuses.
+     */
+    it('says it is unavailable without ever carrying the disabled attribute', async () => {
+      await open('/product/high-rise-straight-jean');
+
+      expect(addButton().getAttribute('aria-disabled')).toBe('true');
+      expect(addButton().hasAttribute('disabled')).toBe(false);
+      expect(addButton().matches('button:not([disabled]):not([tabindex="-1"])')).toBe(true);
+
+      // A click that reaches it anyway is refused: nothing is posted at all.
+      addButton().click();
+      await settle();
+      http.verify();
+    });
+
+    /**
+     * **The branch order in `addToBagReason`, which had no test at all (W2-04 round 2, MINOR 1).**
+     *
+     * `stock()` narrows to the selection, so a shopper who picks Indigo / M — the one sold-out
+     * variant of a product that is `InStock` overall and has four other buyable variants — makes
+     * `stock().status` read `OutOfStock`. Asked in the original order, `stock()` first, the page
+     * said **"This product is out of stock"**, which is simply false, and made the sentence that
+     * was written for exactly this case unreachable. QV-01 reordered both pages' branches; the
+     * reorder shipped with nothing holding it, and reverting it kept all 61 of this file's tests
+     * green.
+     *
+     * So this asserts the *right* sentence and the **absence of the wrong one**: swap the two
+     * branches back and both halves fail.
+     */
+    it('blames the sold-out size, not the product, when the product is not out of stock', async () => {
+      // Indigo / M is variant 2 with nothing in stock; the product's own status is InStock.
+      await open('/product/high-rise-straight-jean?colour=1&size=11');
+
+      expect(addUnavailable()).toBe(true);
+
+      const reason = query('#pdp-add-reason')?.textContent?.trim();
+      expect(reason).toBe('That size is out of stock. Choose another size.');
+      expect(reason).not.toContain('This product is out of stock');
+    });
+
+    /**
+     * The other side of the same order: when the product really is out of stock and no size has
+     * been settled, the product-level sentence is still the one that is said. Without this the
+     * reorder could be "fixed" by deleting the `stock()` branch outright.
+     */
+    it('still blames the product when the product itself is out of stock', async () => {
+      await open('/product/high-rise-straight-jean', {
+        stockStatus: 'OutOfStock',
+        isInStock: false,
+        variants: [
+          variant(1, INDIGO, SMALL, 0),
+          variant(2, INDIGO, MEDIUM, 0),
+          variant(4, ECRU, SMALL, 0),
+        ],
+      });
+
+      expect(addUnavailable()).toBe(true);
+      expect(query('#pdp-add-reason')?.textContent?.trim()).toBe('This product is out of stock.');
+    });
+
     it('posts the chosen variant and quantity once a size is settled', async () => {
       // Indigo / S is variant 1 with five in stock (see the fixture).
       await open('/product/high-rise-straight-jean?colour=1&size=10');
 
-      expect(addButton().disabled).toBe(false);
-      expect(query('#pdp-add-reason')).toBeNull();
+      expect(addUnavailable()).toBe(false);
+      expect(addButton().hasAttribute('aria-disabled')).toBe(false);
+      // The paragraph stays on the page as an empty live region (NIT 2) — what goes away is the
+      // sentence in it and the aria-describedby pointing at it.
+      expect(query('#pdp-add-reason')?.textContent?.trim()).toBe('');
+      expect(addButton().hasAttribute('aria-describedby')).toBe(false);
 
       addButton().click();
       await settle();
@@ -774,7 +853,7 @@ describe('ProductPage (PDP-01..07)', () => {
     it('marks a sold-out size without disabling it', async () => {
       await open('/product/high-rise-straight-jean?colour=1');
 
-      const sizes = queryAll<HTMLButtonElement>('.size');
+      const sizes = queryAll<HTMLButtonElement>('.sd-size');
       // Indigo: S has five, M has none, L has two.
       expect(sizes[0].classList.contains('is-sold-out')).toBe(false);
       expect(sizes[1].classList.contains('is-sold-out')).toBe(true);
@@ -785,7 +864,7 @@ describe('ProductPage (PDP-01..07)', () => {
     it('keeps "sold out" and "not made in this colour" apart', async () => {
       await open('/product/high-rise-straight-jean?colour=2');
 
-      const sizes = queryAll<HTMLButtonElement>('.size');
+      const sizes = queryAll<HTMLButtonElement>('.sd-size');
       // Ecru has no L variant at all, which is a disabled button, not a sold-out one.
       expect(sizes[2].disabled).toBe(true);
       expect(sizes[2].classList.contains('is-sold-out')).toBe(false);
@@ -797,7 +876,7 @@ describe('ProductPage (PDP-01..07)', () => {
         variants: [variant(1, INDIGO, SMALL, 0), variant(2, ECRU, SMALL, 4)],
       });
 
-      const dots = queryAll<HTMLElement>('.swatch__dot');
+      const dots = queryAll<HTMLElement>('.sd-swatch__dot');
       expect(dots[0].classList.contains('is-sold-out')).toBe(true);
       expect(dots[1].classList.contains('is-sold-out')).toBe(false);
     });

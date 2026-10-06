@@ -8,6 +8,35 @@
    component's scoped styles. Anything that belongs to one component stays with that component.
    ========================================================================== */
 
+/* ---- A button that is unavailable without being `disabled` (W2-04 round 2, after ADM-22) ----
+   Both Add to Bag buttons — the product page's (PDP-03) and Quick View's (QV-01) — say
+   `aria-disabled="true"` rather than carrying the `disabled` attribute. The reason is in their
+   templates: `disabled` on the element that currently holds focus makes the browser blur it to
+   `<body>` and fire no `focusin`, so the press of the button threw the shopper's place away, and
+   inside Quick View it threw them out of an open dialog. The admin panel's settings form reached
+   the same conclusion first and draws its own version of these rules.
+
+   What that costs is the *look*: `.btn:disabled` in the shared `base.css` can no longer match, so
+   the unavailable state is drawn here instead, with the same four declarations it had. The hover
+   selectors are repeated because `base.css` guards hover with `:not(:disabled)` alone, which an
+   `aria-disabled` button passes; these are equal in specificity and later in the cascade (this
+   sheet loads after `base.css` — see angular.json), so they win.
+
+   Deliberately no `pointer-events: none`, as in the admin's copy: a control that cannot be hovered
+   cannot show a cursor at all, and the press is already refused by the handler.
+
+   This belongs in `base.css` beside `.btn:disabled`, and is here instead because a shared-library
+   change lands in every open branch at once and two are live (the same reason `ui/modal` has not
+   moved yet). Hoist it when they land; no other consumer puts `aria-disabled` on a `.btn` today. */
+.btn[aria-disabled='true'],
+.btn--primary[aria-disabled='true']:hover,
+.btn--secondary[aria-disabled='true']:hover {
+  background: var(--color-border);
+  border-color: var(--color-border);
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+}
+
 /* ---- Breadcrumb (PLP-01, PDP-01) ---- */
 .breadcrumb ol {
   display: flex;
@@ -94,6 +123,136 @@
 .price__was { color: var(--color-text-muted); font-size: var(--text-small); white-space: nowrap; }
 .price__off { color: var(--color-sale); font-size: var(--text-small); font-weight: var(--weight-medium); }
 .price--sale .price__now { color: var(--color-sale); }
+
+/* ---- Variant picker: colour swatches, size buttons, quantity (PDP-03, QV-01) ----
+   Moved out of `product-page.ts`'s scoped styles when Quick View arrived, for the reason the
+   price block above moved out of the card's: two components drawing the same design-system piece
+   from two copies of the same rules is how a sold-out swatch ends up slashed in one place and
+   plain in the other. The markup is identical in both, so the class names are the contract.
+
+   **`.sd-swatch` and `.sd-size` carry the prefix, and they did not at first (round 2, MINOR 3).**
+   Hoisting them made `.size` and `.swatch` *global*, and they are about as generic as class names
+   get: nothing collides today, but a third-party widget, an admin-written rich-text block or the
+   next component to want a "size" modifier all collide with the picker by accident, and the
+   failure would be a silently restyled control rather than an error. `.qty*` below is unprefixed
+   and stays that way for now — it is pre-existing, `bag-page` and the product page both consume
+   it under that name, and it is a good deal less generic. */
+
+/* Round, like the card's colour dots (docs/04 style-tile decision 3), inside a 44 px target. */
+.sd-swatch {
+  display: grid;
+  place-items: center;
+  width: var(--tap);
+  height: var(--tap);
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-round);
+  background: none;
+  cursor: pointer;
+}
+.sd-swatch.is-selected {
+  border-color: var(--color-primary);
+}
+.sd-swatch__dot {
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-round);
+  background: var(--swatch);
+}
+.sd-swatch__dot--light {
+  border-color: var(--color-border-strong);
+}
+/* Sold out, but still made and still selectable - a different thing from a size this colourway is
+   not made in (disabled, struck through) and a different thing again from one in stock. The screen
+   reader was told "Indigo, out of stock" and the sighted shopper was not: a wholly sold-out
+   colourway drew exactly the same swatch as a live one. A diagonal slash rather than a colour
+   change, so it does not rest on colour alone (WCAG 1.4.1), and the same mark on a size button so
+   "sold out" reads the same wherever it appears. It is inset inside the border box and so can never
+   reach the focus ring, which is drawn further out again. */
+.sd-size.is-sold-out,
+.sd-swatch__dot.is-sold-out {
+  position: relative;
+  color: var(--color-text-muted);
+}
+/* A size button has text and a known background, so the mark can follow its own colour. A swatch is
+   whatever an admin chose, so the mark is given one measured against it. */
+.sd-swatch__dot.is-sold-out {
+  color: var(--slash);
+}
+/* The chosen size is a dark button; muting its label there would drop it below AA. */
+.sd-size.is-sold-out.is-selected {
+  color: var(--color-on-primary);
+}
+.sd-size.is-sold-out::after,
+.sd-swatch__dot.is-sold-out::after {
+  content: '';
+  position: absolute;
+  inset: 1px;
+  background: linear-gradient(to top left, transparent 47%, currentColor 47% 53%, transparent 53%);
+  pointer-events: none;
+}
+.sd-swatch__dot.is-sold-out::after {
+  border-radius: var(--radius-round);
+}
+.sd-size {
+  min-width: var(--tap);
+  min-height: var(--tap);
+  padding-inline: var(--space-1-5);
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-surface);
+  font-size: var(--text-small);
+  cursor: pointer;
+}
+.sd-size.is-selected {
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+}
+/* A size this colourway is not made in. Struck through rather than merely greyed, so it does not
+   rely on colour alone (WCAG 1.4.1). */
+.sd-size:disabled {
+  border-color: var(--color-border);
+  background: var(--color-bg-alt);
+  color: var(--color-text-muted);
+  text-decoration: line-through;
+  cursor: not-allowed;
+}
+
+.qty {
+  display: flex;
+  align-items: stretch;
+  width: max-content;
+  border: 1px solid var(--color-border-strong);
+}
+/* The three controls sit edge to edge with no gap, so each one's ring landed underneath the next
+   sibling and its right-hand side was invisible. Lifting whichever has focus puts the ring on top
+   of its neighbours instead. */
+.qty > :focus-visible {
+  position: relative;
+  z-index: 1;
+}
+.qty__step {
+  width: var(--tap);
+  min-height: var(--tap);
+  border: 0;
+  background: var(--color-surface);
+  font-size: var(--text-h4);
+  cursor: pointer;
+}
+.qty__step:disabled {
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+}
+.qty__input {
+  width: 3.5rem;
+  min-height: var(--tap);
+  border: 0;
+  border-inline: 1px solid var(--color-border-strong);
+  background: var(--color-surface);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
 
 /* ---- Admin-written rich text (PDP-05, GLB-10 content pages next) ----
    Content injected with [innerHTML] carries no _ngcontent attribute, so a component's own scoped
