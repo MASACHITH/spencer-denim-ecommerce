@@ -312,14 +312,6 @@ internal sealed class ProductWriteStore : IProductWriteStore
         return new VariantDeleteGuards(ids.ToHashSet(), stocked.ToHashSet());
     }
 
-    public async Task<IReadOnlyDictionary<int, int>> OnHandByVariantAsync(
-        int productId,
-        CancellationToken cancellationToken) =>
-        await dbContext.StockLevels
-            .AsNoTracking()
-            .Where(stock => stock.Variant!.ProductId == productId)
-            .ToDictionaryAsync(stock => stock.VariantId, stock => stock.OnHand, cancellationToken);
-
     public async Task SyncProductMediaUsagesAsync(
         int productId,
         IReadOnlyCollection<ProductMediaUsage> desired,

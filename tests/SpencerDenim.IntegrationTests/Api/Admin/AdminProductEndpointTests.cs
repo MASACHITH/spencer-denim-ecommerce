@@ -531,6 +531,10 @@ public sealed class AdminProductEndpointTests(SqlServerDatabaseFixture sqlServer
         var blackOnly = await AddImageAssetAsync(factory, "Jet Black, front");
 
         var body = Body(seed, "w103-sever");
+
+        // An extra category link as well, so this save also exercises a cascade-deleted child. The store
+        // defers CascadeDeleteTiming to SaveChanges, and that has to leave an ordinary cascade working.
+        body["extraCategoryIds"] = new object[] { seed.ExtraCategoryId };
         body["colours"] = new object[]
         {
             Colour("Indigo Rinse", seed.ColourFamilyId),
@@ -553,7 +557,9 @@ public sealed class AdminProductEndpointTests(SqlServerDatabaseFixture sqlServer
 
         try
         {
-            // Jet Black goes, with its own variant and its own gallery row; one Indigo Rinse size goes too.
+            // Jet Black goes, with its own variant and its own gallery row; one Indigo Rinse size goes too;
+            // and the extra category link goes with them.
+            body["extraCategoryIds"] = Array.Empty<object>();
             body["colours"] = new object[] { Colour("Indigo Rinse", seed.ColourFamilyId) };
             body["variants"] = new object[] { Variant("Indigo Rinse", seed.SizeIds[0], "W103-SEV-IR-S") };
             body["media"] = new object[] { Media(shared, null, 1, 0, "Shared front view") };
@@ -579,6 +585,10 @@ public sealed class AdminProductEndpointTests(SqlServerDatabaseFixture sqlServer
             Assert.Single(product.Variants);
             Assert.Single(product.Media);
             Assert.Equal("W103-SEV-IR-S", product.Variants.Single().Sku);
+
+            // The primary category's own link stays; the extra one is gone (doc 08 §3.2: the primary
+            // category is stored in ProductCategories too, which is why a form cannot unlink it).
+            Assert.Equal([seed.CategoryId], product.CategoryLinks.Select(link => link.CategoryId));
 
             // The variants really left the table rather than being orphaned with a dangling key.
             Assert.Equal(
@@ -1024,7 +1034,14 @@ public sealed class AdminProductEndpointTests(SqlServerDatabaseFixture sqlServer
             .Select(option => option.Id)
             .FirstAsync(Token);
 
-        return new SeedIds(department.Id, category.Id, colourFamily.Id, sizes, material);
+        var extraCategory = await dbContext.Categories
+            .AsNoTracking()
+            .Where(candidate => candidate.DepartmentId == department.Id && candidate.Id != category.Id)
+            .OrderBy(candidate => candidate.Id)
+            .Select(candidate => candidate.Id)
+            .FirstAsync(Token);
+
+        return new SeedIds(department.Id, category.Id, extraCategory, colourFamily.Id, sizes, material);
     }
 
     private static Dictionary<string, object?> Body(SeedIds seed, string label) => new()
@@ -1267,6 +1284,7 @@ public sealed class AdminProductEndpointTests(SqlServerDatabaseFixture sqlServer
     private sealed record SeedIds(
         int DepartmentId,
         int CategoryId,
+        int ExtraCategoryId,
         int ColourFamilyId,
         IReadOnlyList<int> SizeIds,
         int MaterialId);

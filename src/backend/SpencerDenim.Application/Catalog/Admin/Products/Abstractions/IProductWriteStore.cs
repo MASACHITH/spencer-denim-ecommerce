@@ -83,9 +83,6 @@ public interface IProductWriteStore
     /// </summary>
     Task<VariantDeleteGuards> VariantDeleteGuardsAsync(int productId, CancellationToken cancellationToken);
 
-    /// <summary>On-hand stock per variant id, for the read-only column on the matrix.</summary>
-    Task<IReadOnlyDictionary<int, int>> OnHandByVariantAsync(int productId, CancellationToken cancellationToken);
-
     /// <summary>
     /// Brings <c>media.MediaUsages</c> for this product in line with <paramref name="desired"/>, enlisting
     /// the inserts and deletes in the same unit of work rather than saving them.

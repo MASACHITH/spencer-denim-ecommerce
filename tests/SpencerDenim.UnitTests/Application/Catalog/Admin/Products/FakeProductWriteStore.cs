@@ -65,8 +65,6 @@ internal sealed class FakeProductWriteStore : IProductWriteStore
     /// <summary>Variants with stock on hand or reserved, which is the delete guard's second reason.</summary>
     public HashSet<int> VariantIdsHoldingStock { get; } = [];
 
-    public Dictionary<int, int> OnHand { get; } = [];
-
     /// <summary>Forces the next save's answer, standing in for a race only the database can lose.</summary>
     public CatalogSaveOutcome? NextSaveOutcome { get; set; }
 
@@ -163,11 +161,6 @@ internal sealed class FakeProductWriteStore : IProductWriteStore
         int productId,
         CancellationToken cancellationToken) =>
         Task.FromResult(new VariantDeleteGuards(VariantIdsWithOrders, VariantIdsHoldingStock));
-
-    public Task<IReadOnlyDictionary<int, int>> OnHandByVariantAsync(
-        int productId,
-        CancellationToken cancellationToken) =>
-        Task.FromResult<IReadOnlyDictionary<int, int>>(OnHand);
 
     public Task SyncProductMediaUsagesAsync(
         int productId,
