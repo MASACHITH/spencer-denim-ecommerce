@@ -101,7 +101,7 @@ public sealed class CheckoutConcurrencyTests(SqlServerDatabaseFixture sqlServer)
 
                 shoppers.Add((
                     api,
-                    ValidBody(session!.CheckoutKey, standard, colombo, session.Totals.GrandTotal!.Value)));
+                    ValidBody(session!.CheckoutKey, standard, colombo, QuotedTotal(session))));
             }
 
             var placedBefore = await OrderNumbersSinceAsync();
@@ -195,7 +195,7 @@ public sealed class CheckoutConcurrencyTests(SqlServerDatabaseFixture sqlServer)
 
             var (token, cartId, api) = await NewBagAsync(variantId, quantity: 2);
             var (_, session) = await api.GetAsync(colombo, standard, Token);
-            var body = ValidBody(session!.CheckoutKey, standard, colombo, session.Totals.GrandTotal!.Value);
+            var body = ValidBody(session!.CheckoutKey, standard, colombo, QuotedTotal(session));
 
             // One cookie jar would serialise nothing, but each request is its own client so that the
             // submissions are genuinely simultaneous — which is what a double-clicked button on a flaky
@@ -421,7 +421,7 @@ public sealed class CheckoutConcurrencyTests(SqlServerDatabaseFixture sqlServer)
 
                 prepared.Add((
                     api,
-                    ValidBody(session!.CheckoutKey, standard, colombo, session.Totals.GrandTotal!.Value)));
+                    ValidBody(session!.CheckoutKey, standard, colombo, QuotedTotal(session))));
             }
 
             var results = await Task.WhenAll(prepared.Select(entry => entry.Api.PlaceAsync(entry.Body, Token)));
@@ -493,7 +493,7 @@ public sealed class CheckoutConcurrencyTests(SqlServerDatabaseFixture sqlServer)
 
                 prepared.Add((
                     api,
-                    ValidBody(session!.CheckoutKey, standard, colombo, session.Totals.GrandTotal!.Value)));
+                    ValidBody(session!.CheckoutKey, standard, colombo, QuotedTotal(session))));
             }
         }
 

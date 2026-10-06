@@ -157,7 +157,7 @@ public sealed class CheckoutRequestValidationTests(SqlServerDatabaseFixture sqlS
         var standard = await DeliveryMethodIdAsync(DeliveryMethod.StandardCode);
 
         var (_, session) = await api.GetAsync(colombo, standard, Token);
-        var body = ValidBody(session!.CheckoutKey, standard, colombo, session.Totals.GrandTotal!.Value);
+        var body = ValidBody(session!.CheckoutKey, standard, colombo, QuotedTotal(session));
 
         var address = (Dictionary<string, object?>)body["address"]!;
         address[field] = null;
@@ -192,7 +192,7 @@ public sealed class CheckoutRequestValidationTests(SqlServerDatabaseFixture sqlS
         var standard = await DeliveryMethodIdAsync(DeliveryMethod.StandardCode);
 
         var (_, session) = await api.GetAsync(colombo, standard, Token);
-        var body = ValidBody(session!.CheckoutKey, standard, colombo, session.Totals.GrandTotal!.Value);
+        var body = ValidBody(session!.CheckoutKey, standard, colombo, QuotedTotal(session));
         body["firstName"] = value;
 
         var ordersBefore = await OrderCountAsync();
@@ -216,7 +216,7 @@ public sealed class CheckoutRequestValidationTests(SqlServerDatabaseFixture sqlS
         var standard = await DeliveryMethodIdAsync(DeliveryMethod.StandardCode);
 
         var (_, session) = await api.GetAsync(colombo, standard, Token);
-        var body = ValidBody(session!.CheckoutKey, standard, colombo, session.Totals.GrandTotal!.Value);
+        var body = ValidBody(session!.CheckoutKey, standard, colombo, QuotedTotal(session));
         body["email"] = email;
 
         var ordersBefore = await OrderCountAsync();
@@ -244,7 +244,7 @@ public sealed class CheckoutRequestValidationTests(SqlServerDatabaseFixture sqlS
         var standard = await DeliveryMethodIdAsync(DeliveryMethod.StandardCode);
 
         var (_, session) = await api.GetAsync(colombo, standard, Token);
-        var body = ValidBody(session!.CheckoutKey, standard, colombo, session.Totals.GrandTotal!.Value);
+        var body = ValidBody(session!.CheckoutKey, standard, colombo, QuotedTotal(session));
         body[field] = new string('x', maxLength + 1);
 
         var ordersBefore = await OrderCountAsync();
@@ -264,7 +264,7 @@ public sealed class CheckoutRequestValidationTests(SqlServerDatabaseFixture sqlS
         var standard = await DeliveryMethodIdAsync(DeliveryMethod.StandardCode);
 
         var (_, session) = await api.GetAsync(colombo, standard, Token);
-        var body = ValidBody(session!.CheckoutKey, standard, colombo, session.Totals.GrandTotal!.Value);
+        var body = ValidBody(session!.CheckoutKey, standard, colombo, QuotedTotal(session));
         body["checkoutKey"] = Guid.Empty;
 
         var ordersBefore = await OrderCountAsync();
@@ -290,7 +290,7 @@ public sealed class CheckoutRequestValidationTests(SqlServerDatabaseFixture sqlS
         var pickup = await DeliveryMethodIdAsync(DeliveryMethod.PickupCode);
 
         var (_, session) = await api.GetAsync(colombo, standard, Token);
-        var body = ValidBody(session!.CheckoutKey, standard, colombo, session.Totals.GrandTotal!.Value);
+        var body = ValidBody(session!.CheckoutKey, standard, colombo, QuotedTotal(session));
 
         // PICKUP is seeded disabled (doc 08 §9), so its id exists and must still be refused.
         body["deliveryMethodId"] = pickup;
@@ -322,7 +322,7 @@ public sealed class CheckoutRequestValidationTests(SqlServerDatabaseFixture sqlS
 
         // Quote with Standard, which is available island-wide, then submit Express, which is not.
         var (_, session) = await api.GetAsync(jaffna, standard, Token);
-        var body = ValidBody(session!.CheckoutKey, express, jaffna, session.Totals.GrandTotal!.Value);
+        var body = ValidBody(session!.CheckoutKey, express, jaffna, QuotedTotal(session));
 
         var ordersBefore = await OrderCountAsync();
         var reservedBefore = await ReservedAsync(variantId);
@@ -354,7 +354,7 @@ public sealed class CheckoutRequestValidationTests(SqlServerDatabaseFixture sqlS
         var standard = await DeliveryMethodIdAsync(DeliveryMethod.StandardCode);
 
         var (_, session) = await api.GetAsync(colombo, standard, Token);
-        var body = ValidBody(session!.CheckoutKey, standard, 9_999, session.Totals.GrandTotal!.Value);
+        var body = ValidBody(session!.CheckoutKey, standard, 9_999, QuotedTotal(session));
 
         var ordersBefore = await OrderCountAsync();
         var reservedBefore = await ReservedAsync(variantId);
@@ -377,7 +377,7 @@ public sealed class CheckoutRequestValidationTests(SqlServerDatabaseFixture sqlS
         var standard = await DeliveryMethodIdAsync(DeliveryMethod.StandardCode);
 
         var (_, session) = await api.GetAsync(colombo, standard, Token);
-        var body = ValidBody(session!.CheckoutKey, standard, colombo, session.Totals.GrandTotal!.Value);
+        var body = ValidBody(session!.CheckoutKey, standard, colombo, QuotedTotal(session));
         body["paymentMethodCode"] = PaymentProviderCodes.PayPal;
 
         var ordersBefore = await OrderCountAsync();
@@ -397,7 +397,7 @@ public sealed class CheckoutRequestValidationTests(SqlServerDatabaseFixture sqlS
         var standard = await DeliveryMethodIdAsync(DeliveryMethod.StandardCode);
 
         var (_, session) = await api.GetAsync(colombo, standard, Token);
-        var body = ValidBody(session!.CheckoutKey, standard, colombo, session.Totals.GrandTotal!.Value);
+        var body = ValidBody(session!.CheckoutKey, standard, colombo, QuotedTotal(session));
         body["paymentMethodCode"] = "CashOnDelivery";
 
         var ordersBefore = await OrderCountAsync();

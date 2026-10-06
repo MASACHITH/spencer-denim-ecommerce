@@ -1,6 +1,5 @@
 using System.Data;
 using System.Data.Common;
-using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using SpencerDenim.Application.Abstractions.Time;
@@ -36,8 +35,6 @@ internal sealed class NumberSeriesAllocator(AppDbContext dbContext, IClock clock
     /// </summary>
     private const int Attempts = 3;
 
-    /// <summary>SQL Server: 2627 is a PK/unique-constraint violation, 2601 a unique-index violation.</summary>
-    private static readonly int[] UniqueViolationErrors = [2627, 2601];
 
     public async Task<int> AllocateAsync(string seriesKey, string prefix, CancellationToken cancellationToken)
     {
@@ -68,7 +65,7 @@ internal sealed class NumberSeriesAllocator(AppDbContext dbContext, IClock clock
                 // of the insert would have made the two paths different, and one of them untested.
                 await InsertSeriesAsync(seriesKey, prefix, cancellationToken);
             }
-            catch (Exception exception) when (IsUniqueViolation(exception))
+            catch (Exception exception) when (SqlUniqueViolation.Matches(exception))
             {
                 // Somebody else created it first. The next pass's UPDATE allocates from their row.
             }
@@ -180,8 +177,4 @@ internal sealed class NumberSeriesAllocator(AppDbContext dbContext, IClock clock
         command.Parameters.Add(parameter);
     }
 
-    private static bool IsUniqueViolation(Exception exception) =>
-        exception is SqlException sql
-            ? sql.Errors.Cast<SqlError>().Any(error => UniqueViolationErrors.Contains(error.Number))
-            : exception.InnerException is not null && IsUniqueViolation(exception.InnerException);
 }

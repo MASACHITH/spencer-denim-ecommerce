@@ -73,7 +73,7 @@ public sealed class CheckoutPlacedIpTests(SqlServerDatabaseFixture sqlServer) : 
 
         var placed = await client.PostAsJsonAsync(
             new Uri("/api/checkout/orders", UriKind.Relative),
-            ValidBody(session.CheckoutKey, standard, colombo, session.Totals.GrandTotal!.Value),
+            ValidBody(session.CheckoutKey, standard, colombo, QuotedTotal(session)),
             Token);
 
         Assert.Equal(HttpStatusCode.Created, placed.StatusCode);

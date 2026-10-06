@@ -1412,8 +1412,13 @@ export class CheckoutPage {
       return 'Choose a delivery option';
     }
 
-    // Chosen, but the zone rate says this method is not offered here (doc 08 §3.5's "a missing row means
-    // unavailable"). Asking for the district again would be the same wrong answer in a new state.
+    // **A guard, not a case anyone sees — and that is the tester's correction, not a hedge.** A method
+    // whose zone rate is unavailable renders as a `disabled` radio labelled "Not available here", a
+    // forced click leaves the group unchecked, and the server echoes `selectedDeliveryMethodId` only when
+    // the rate is available — so there is no route to "chosen but unavailable" in the running app. The
+    // branch stays because `selectedOption()` returns the option the *session* names and a future change
+    // to any of those three could open it; what it must not do is ask for the district again, which was
+    // the whole defect.
     return option.isAvailable ? 'Choose a delivery option' : 'Choose an available delivery option';
   });
 

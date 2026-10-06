@@ -6,15 +6,16 @@ namespace SpencerDenim.Infrastructure.Persistence;
 /// "Somebody else inserted this row first", as SQL Server reports it.
 /// </summary>
 /// <remarks>
-/// <b>A unique violation on a row whose job is to exist is success, not failure.</b> Three places in this
-/// codebase already act on that — <c>NumberSeriesAllocator</c>'s lazy series insert,
-/// <c>CartStore</c>'s cart and item upserts, and <c>OrderPlacementStore</c>'s idempotency key — and each
-/// carries its own private copy of this predicate. This is the shared one, added for
-/// <c>CatalogSeedHostedService</c> rather than as a fourth copy.
+/// <b>A unique violation on a row whose job is to exist is success, not failure.</b> Four places act on
+/// that — <c>NumberSeriesAllocator</c>'s lazy series insert, <c>CartStore</c>'s cart and item upserts,
+/// <c>OrderPlacementStore</c>'s idempotency key, and <c>CatalogSeedHostedService</c>'s reference-data
+/// pass — and each of the first three carried its own byte-identical private copy of this predicate.
 /// <para>
-/// The three existing copies are <b>deliberately left alone</b> in this round: they sit inside the money
-/// and stock paths, which this task was told not to refactor. Adopting this helper there is a
-/// one-line-per-file change for whoever next touches them.
+/// <b>It is now actually shared</b>, which it was not when it was introduced: it had one caller and the
+/// word "shared" in its own documentation, which the W3-02 round-3 tester rightly called out. The three
+/// copies are gone and the call sites read <c>SqlUniqueViolation.Matches(…)</c>. Nothing about the
+/// behaviour of the money or stock paths changed — the predicate is the same comparison against the same
+/// two error numbers, and the concurrency suite that proves those paths is what says so.
 /// </para>
 /// </remarks>
 internal static class SqlUniqueViolation

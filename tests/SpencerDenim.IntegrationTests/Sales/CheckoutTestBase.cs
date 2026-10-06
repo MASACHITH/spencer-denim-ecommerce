@@ -301,6 +301,25 @@ public abstract class CheckoutTestBase(SqlServerDatabaseFixture sqlServer) : Car
     }
 
     /// <summary>
+    /// The grand total the server quoted, with a readable failure when there is not one.
+    /// </summary>
+    /// <remarks>
+    /// <b><c>session.Totals.GrandTotal!.Value</c> threw instead of failing</b>, and twenty-eight call
+    /// sites were written that way. A quote that unexpectedly carries no total — the delivery option
+    /// vanished, the zone rate went unavailable — turned "expected 400, got 201" into a
+    /// <c>NullReferenceException</c> inside the arrange step, which is a confusing crash in the test's
+    /// setup rather than a statement about the behaviour under test. These two assertions name the real
+    /// problem instead.
+    /// </remarks>
+    protected static decimal QuotedTotal(CheckoutSessionDto? session)
+    {
+        Assert.NotNull(session);
+        Assert.NotNull(session.Totals.GrandTotal);
+
+        return session.Totals.GrandTotal.Value;
+    }
+
+    /// <summary>
     /// A complete, valid body for a Standard delivery to a district, for the tests whose subject is
     /// something other than the fields.
     /// </summary>

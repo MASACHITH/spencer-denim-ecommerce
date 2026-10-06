@@ -546,8 +546,15 @@ describe('CheckoutPage (CHK-01..03)', () => {
       );
     });
 
-    /** Chosen, but the zone rate does not offer it here — asking for the district again is the same bug. */
-    it('says so when the chosen option is not available for the district', async () => {
+    /**
+     * **This pins an unreachable guard, and says so rather than pretending to be a scenario.** In the
+     * running app a method whose zone rate is unavailable renders as a `disabled` radio, a forced click
+     * leaves the group unchecked, and the server echoes `selectedDeliveryMethodId` only for an available
+     * rate — the round-3 tester could not reach this state by any route. The session fixture below
+     * constructs it directly, so the guard is held to the one thing that matters if a future change ever
+     * does open it: it must not ask for the district again.
+     */
+    it('pins the guard for a chosen option the zone does not offer', async () => {
       await openWith(
         session({
           selectedDistrictId: COLOMBO.id,

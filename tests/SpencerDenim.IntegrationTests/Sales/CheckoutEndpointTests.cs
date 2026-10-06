@@ -217,7 +217,7 @@ public sealed class CheckoutEndpointTests(SqlServerDatabaseFixture sqlServer) : 
         var standard = await DeliveryMethodIdAsync(DeliveryMethod.StandardCode);
 
         var (_, session) = await api.GetAsync(colombo, standard, Token);
-        var body = ValidBody(session!.CheckoutKey, standard, colombo, session.Totals.GrandTotal!.Value);
+        var body = ValidBody(session!.CheckoutKey, standard, colombo, QuotedTotal(session));
 
         var (response, order) = await api.PlaceAsync(body, Token);
 
@@ -290,7 +290,7 @@ public sealed class CheckoutEndpointTests(SqlServerDatabaseFixture sqlServer) : 
 
         var (_, session) = await api.GetAsync(colombo, standard, Token);
         var (response, order) = await api.PlaceAsync(
-            ValidBody(session!.CheckoutKey, standard, colombo, session.Totals.GrandTotal!.Value),
+            ValidBody(session!.CheckoutKey, standard, colombo, QuotedTotal(session)),
             Token);
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
@@ -346,7 +346,7 @@ public sealed class CheckoutEndpointTests(SqlServerDatabaseFixture sqlServer) : 
 
         var (_, session) = await api.GetAsync(colombo, standard, Token);
         var (_, order) = await api.PlaceAsync(
-            ValidBody(session!.CheckoutKey, standard, colombo, session.Totals.GrandTotal!.Value),
+            ValidBody(session!.CheckoutKey, standard, colombo, QuotedTotal(session)),
             Token);
 
         var before = await OrderByNumberAsync(order!.OrderNumber);
@@ -414,7 +414,7 @@ public sealed class CheckoutEndpointTests(SqlServerDatabaseFixture sqlServer) : 
 
         var (_, session) = await api.GetAsync(colombo, standard, Token);
         var (_, order) = await api.PlaceAsync(
-            ValidBody(session!.CheckoutKey, standard, colombo, session.Totals.GrandTotal!.Value),
+            ValidBody(session!.CheckoutKey, standard, colombo, QuotedTotal(session)),
             Token);
 
         var row = await OrderByNumberAsync(order!.OrderNumber);
@@ -448,7 +448,7 @@ public sealed class CheckoutEndpointTests(SqlServerDatabaseFixture sqlServer) : 
 
         var (_, session) = await api.GetAsync(colombo, standard, Token);
         var (response, _) = await api.PlaceAsync(
-            ValidBody(session!.CheckoutKey, standard, colombo, session.Totals.GrandTotal!.Value),
+            ValidBody(session!.CheckoutKey, standard, colombo, QuotedTotal(session)),
             Token);
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
@@ -498,7 +498,7 @@ public sealed class CheckoutEndpointTests(SqlServerDatabaseFixture sqlServer) : 
         await SetStockAsync(variantIds[1], 1);
 
         var (response, _) = await api.PlaceAsync(
-            ValidBody(session!.CheckoutKey, standard, colombo, session.Totals.GrandTotal!.Value),
+            ValidBody(session!.CheckoutKey, standard, colombo, QuotedTotal(session)),
             Token);
 
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
@@ -576,10 +576,10 @@ public sealed class CheckoutEndpointTests(SqlServerDatabaseFixture sqlServer) : 
         var standard = await DeliveryMethodIdAsync(DeliveryMethod.StandardCode);
 
         var (_, session) = await api.GetAsync(colombo, standard, Token);
-        var body = ValidBody(session!.CheckoutKey, standard, colombo, session.Totals.GrandTotal!.Value);
+        var body = ValidBody(session!.CheckoutKey, standard, colombo, QuotedTotal(session));
 
         // A total one rupee away from the quote, which is what a campaign ending mid-checkout looks like.
-        body["expectedGrandTotal"] = session.Totals.GrandTotal!.Value + 1m;
+        body["expectedGrandTotal"] = QuotedTotal(session) + 1m;
 
         var (response, _) = await api.PlaceAsync(body, Token);
 
@@ -589,7 +589,7 @@ public sealed class CheckoutEndpointTests(SqlServerDatabaseFixture sqlServer) : 
         var totals = problem.RootElement.GetProperty("totals");
 
         Assert.Equal(
-            session.Totals.GrandTotal!.Value,
+            QuotedTotal(session),
             totals.GetProperty("grandTotal").GetDecimal());
 
         // Nothing placed, nothing reserved, bag intact.
@@ -611,7 +611,7 @@ public sealed class CheckoutEndpointTests(SqlServerDatabaseFixture sqlServer) : 
 
         var (_, session) = await api.GetAsync(colombo, standard, Token);
         var (_, order) = await api.PlaceAsync(
-            ValidBody(session!.CheckoutKey, standard, colombo, session.Totals.GrandTotal!.Value),
+            ValidBody(session!.CheckoutKey, standard, colombo, QuotedTotal(session)),
             Token);
 
         var (found, confirmation) = await api.GetOrderAsync(order!.PublicId.ToString("D"), Token);
@@ -649,7 +649,7 @@ public sealed class CheckoutEndpointTests(SqlServerDatabaseFixture sqlServer) : 
 
         var (_, session) = await api.GetAsync(colombo, standard, Token);
         var (_, order) = await api.PlaceAsync(
-            ValidBody(session!.CheckoutKey, standard, colombo, session.Totals.GrandTotal!.Value),
+            ValidBody(session!.CheckoutKey, standard, colombo, QuotedTotal(session)),
             Token);
 
         var row = await OrderByNumberAsync(order!.OrderNumber);
@@ -688,7 +688,7 @@ public sealed class CheckoutEndpointTests(SqlServerDatabaseFixture sqlServer) : 
         var standard = await DeliveryMethodIdAsync(DeliveryMethod.StandardCode);
 
         var (_, session) = await api.GetAsync(colombo, standard, Token);
-        var body = ValidBody(session!.CheckoutKey, standard, colombo, session.Totals.GrandTotal!.Value);
+        var body = ValidBody(session!.CheckoutKey, standard, colombo, QuotedTotal(session));
 
         var (first, firstOrder) = await api.PlaceAsync(body, Token);
         Assert.Equal(HttpStatusCode.Created, first.StatusCode);
@@ -731,7 +731,7 @@ public sealed class CheckoutEndpointTests(SqlServerDatabaseFixture sqlServer) : 
             var (_, _, api) = await NewBagAsync(variantId);
             var (_, session) = await api.GetAsync(colombo, standard, Token);
             var (response, order) = await api.PlaceAsync(
-                ValidBody(session!.CheckoutKey, standard, colombo, session.Totals.GrandTotal!.Value),
+                ValidBody(session!.CheckoutKey, standard, colombo, QuotedTotal(session)),
                 Token);
 
             Assert.Equal(HttpStatusCode.Created, response.StatusCode);

@@ -1,5 +1,4 @@
 using System.Data;
-using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using SpencerDenim.Application.Sales.Checkout.Abstractions;
 using SpencerDenim.Domain.Sales;
@@ -45,8 +44,6 @@ namespace SpencerDenim.Infrastructure.Sales;
 /// </summary>
 internal sealed class OrderPlacementStore(AppDbContext dbContext, ICheckoutReader reader) : IOrderPlacementStore
 {
-    /// <summary>SQL Server: 2627 is a PK/unique-constraint violation, 2601 a unique-index violation.</summary>
-    private static readonly int[] UniqueViolationErrors = [2627, 2601];
 
     public async Task<OrderPlacementResult> PlaceAsync(
         OrderPlacement placement,
@@ -127,7 +124,7 @@ internal sealed class OrderPlacementStore(AppDbContext dbContext, ICheckoutReade
             {
                 await dbContext.SaveChangesAsync(cancellationToken);
             }
-            catch (DbUpdateException exception) when (IsUniqueViolation(exception))
+            catch (DbUpdateException exception) when (SqlUniqueViolation.Matches(exception))
             {
                 // Two submissions of the same checkout in flight at once.
                 // UX_Orders_CheckoutIdempotencyKey rejected this one, so the reservation above is released
@@ -363,10 +360,6 @@ internal sealed class OrderPlacementStore(AppDbContext dbContext, ICheckoutReade
         }
     }
 
-    private static bool IsUniqueViolation(Exception exception) =>
-        exception is SqlException sql
-            ? sql.Errors.Cast<SqlError>().Any(error => UniqueViolationErrors.Contains(error.Number))
-            : exception.InnerException is not null && IsUniqueViolation(exception.InnerException);
 
     /// <summary>
     /// Detaches the order graph after the transaction, successful or not.
