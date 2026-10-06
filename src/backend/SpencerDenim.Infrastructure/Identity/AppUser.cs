@@ -24,7 +24,20 @@ public sealed class AppUser : IdentityUser<int>, IAuditable
     public string? LastName { get; set; }
 
     /// <summary>
-    /// FK <c>ref.Districts</c> in doc 08, left unconfigured here (see doc): follow-up when reference data lands.
+    /// FK <c>ref.Districts</c> in doc 08 §3.1, still unconfigured: the header district selector's default
+    /// for a signed-in customer (GLB-06).
+    /// <para>
+    /// <b><c>ref.Districts</c> now exists</b> — W3-02 created it, because <c>sales.Orders</c> could not be
+    /// written without it — so the original "follow-up when reference data lands" note is answered, and the
+    /// constraint is still deliberately not added. Two reasons. Doc 08 §1.6's DB7 rule requires an FK column
+    /// to lead an index, and <c>identity.Users</c> has none on this column, so the constraint would mean a
+    /// new index on the user table that <b>nothing reads</b>: there is no customer authentication in the
+    /// repository at all (ACC-01, W3-01), so no code path can set or read this field, and checkout
+    /// takes the district from the request. Adding an index to the busiest table in the schema to serve
+    /// a column with no reader, on a branch that does not own that table, is a change for its owner to
+    /// make. <b>GLB-06 / W3-01 owes the index and the constraint together</b>, in the change that gives the
+    /// column its first reader.
+    /// </para>
     /// </summary>
     public int? DefaultDistrictId { get; set; }
 

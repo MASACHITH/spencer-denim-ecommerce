@@ -34,21 +34,26 @@ import { RobotsMeta } from '../../core/platform/robots-meta';
  *
  * ## What this page does not have, and why
  *
- * **No "Proceed to checkout".** Checkout is W3-02 and is not built. This task is its unblocker, not its
- * delivery. A button that looked like it worked and did nothing would be worse than no button — the same
- * judgement the product page made about Add to Bag until this task, and the product card still makes
- * about Quick View.
+ * **There is now a "Proceed to checkout" button (W3-02).** It was absent while checkout did not exist,
+ * because a button that looked like it worked and did nothing would have been worse than no button. It is
+ * **disabled while any line cannot be bought** — doc 11 §7 G-08: warn and block until the shopper adjusts
+ * it, never reduce a quantity or drop a line on their behalf — and the reason is said in words next to it
+ * rather than left to a greyed-out control.
  *
  * **No promo code field.** CART-01 asks for one and there is nothing behind it: promo codes are ADM-13
  * (week 3) and `marketing.PromoCodes` does not exist, so every code a shopper typed would be refused and
  * the field would teach them the shop is broken. Doc 08 §3.5 wants the code revalidated on every cart
  * read, which is impossible with no table to read.
  *
- * **No delivery fee, and so no grand total.** Doc 08 §6 step 10 takes the fee from a
- * `sales.DeliveryMethodZoneRates` row that "must exist and be available". That table is #53's and
- * `ref.Districts` has never been created, so any figure here would be invented — and issue #33 is open
- * precisely because delivery estimates have no source. The summary says what the items cost and that
- * delivery is worked out at checkout, which is true. All three are in the task report.
+ * **Still no delivery fee here, and so no grand total here** — and that is now a narrower statement than
+ * it was. W3-02 created `ref.Districts` and seeded `sales.DeliveryMethodZoneRates`, so a fee *can* be
+ * priced; what the bag lacks is a **district to price it for**. Doc 08 §3.5 R7 would take one from
+ * `Users.DefaultDistrictId` (no customer sign-in, ACC-01) or the `Delivery.DefaultZone` setting (no
+ * `ops.Settings`, ADM-22), and `Carts.DistrictId` is not in the schema — W2-09 left the column out and
+ * GLB-06's header district selector, which would write it, is unbuilt (#33). So the bag keeps saying
+ * delivery is worked out at checkout, and **checkout now genuinely works it out**, which is what makes
+ * that sentence true rather than merely unfalsifiable. The three figures the bag does print are the same
+ * three, with the same labels, that checkout prints.
  */
 @Component({
   selector: 'sd-bag-page',
@@ -257,6 +262,27 @@ import { RobotsMeta } from '../../core/platform/robots-meta';
               </p>
             }
 
+            <!-- G-08: block, do not silently fix. A short-stock line keeps the quantity the shopper
+                 chose and this button waits for them to change it. "<a>" when it works and "<button
+                 disabled>" when it does not, rather than one element pretending: a disabled anchor is
+                 still followable by keyboard and by a crawler, and "pointer-events: none" is not a
+                 disabled control to anyone using a keyboard. -->
+            @if (canCheckout()) {
+              <a class="btn btn--primary bag__checkout" routerLink="/checkout">Proceed to checkout</a>
+            } @else {
+              <button class="btn btn--primary bag__checkout" type="button" disabled
+                [attr.aria-describedby]="'bag-checkout-blocked'">
+                Proceed to checkout
+              </button>
+              <p class="bag__notice bag__notice--warn" id="bag-checkout-blocked">
+                @if (blockedCount() === 1) {
+                  Adjust or remove the item above before you check out.
+                } @else {
+                  Adjust or remove the {{ blockedCount() }} items above before you check out.
+                }
+              </p>
+            }
+
             <p class="bag__muted bag__fineprint">
               Delivery is worked out at checkout, so this covers the items only.
             </p>
@@ -425,6 +451,23 @@ import { RobotsMeta } from '../../core/platform/robots-meta';
       border: 1px solid var(--color-border);
       background: var(--color-bg-alt);
     }
+    .bag__checkout {
+      width: 100%;
+
+      /* 44 px is doc 02 GLB-09 / doc 04's tap-target floor, and the padding alone does not guarantee it
+         at the smallest root font size. A disabled <button> and an <a> are different elements with
+         different default box models, so the height is stated once here and applies to both — otherwise
+         the enabled and blocked states of the same control differ in height and the summary jumps. */
+      min-height: 44px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+    }
+    .bag__checkout:disabled {
+      cursor: not-allowed;
+      opacity: 0.55;
+    }
     .bag__summary-title {
       font-size: var(--text-h4);
     }
@@ -488,6 +531,31 @@ export class BagPage {
 
   protected readonly unavailableCount = computed(
     () => this.lines().filter((line) => !isBuyable(line)).length,
+  );
+
+  /**
+   * How many lines stand between this bag and checkout.
+   *
+   * **Not `unavailableCount()`, and the difference is the whole of G-08.** `isBuyable` counts a
+   * short-stock line as buyable — it is in the subtotal, because the price is real and the items may be
+   * restocked — but it cannot be *ordered*, because the API reserves the full quantity or refuses the
+   * order. So the row that says "not in this total" and the row that says "fix this before you check
+   * out" are counting two different things, and conflating them would either disable checkout for a line
+   * that is fine or offer it for one the server will refuse.
+   */
+  protected readonly blockedCount = computed(
+    () => this.lines().filter((line) => line.status !== 'Buyable').length,
+  );
+
+  /**
+   * Whether Proceed to checkout is a link or a disabled button.
+   *
+   * The same rule the API applies (`CheckoutQuote.IsPlaceable`): every line must be `Buyable`. It is
+   * asserted on both sides — here so the shopper is not sent to a page that will refuse them, and in the
+   * use case because this check is a courtesy and the server's is the one that counts.
+   */
+  protected readonly canCheckout = computed(
+    () => !this.isEmpty() && this.blockedCount() === 0,
   );
 
   constructor() {

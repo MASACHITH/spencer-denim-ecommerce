@@ -122,16 +122,30 @@ export const RING_BAND = 6;
  * whose pixels come back byte for byte identical. If the ring painted there, they cannot be.
  *
  * The control must be focused on the way in; it is left blurred on the way out.
+ *
+ * **`ringAround` is for a control whose ring is drawn on something else.** A radio inside a bordered
+ * row gets its ring on the row — a 2.5 px outline around a 20 px dot inside a box is almost invisible,
+ * which is lesson L4 from the other side — so the strips have to be photographed around the row while
+ * the thing that is blurred is still the radio. Without it this helper reported "no ring on any edge"
+ * for a control whose ring was perfectly visible, which is how the parameter came to exist. It is a
+ * parameter rather than a second copy of the function on purpose: the type remarks above say why a copy
+ * is the more dangerous option.
  */
-export async function edgesWithoutRing(page: Page, control: Locator): Promise<string[]> {
+export async function edgesWithoutRing(
+  page: Page,
+  control: Locator,
+  options: { ringAround?: Locator } = {},
+): Promise<string[]> {
+  const painted = options.ringAround ?? control;
+
   // Centred, not merely "scrolled into view": a control resting against the bottom of the
   // viewport has no room below it for the strip, and the guard below would rightly refuse to
   // measure rather than quietly report the ring intact.
-  await control.evaluate((element: HTMLElement) =>
+  await painted.evaluate((element: HTMLElement) =>
     element.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' }),
   );
 
-  const box = await control.boundingBox();
+  const box = await painted.boundingBox();
   const viewport = page.viewportSize();
   if (!box || !viewport) {
     throw new Error('the control has no box to look around');

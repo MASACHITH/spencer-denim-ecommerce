@@ -2222,6 +2222,587 @@ let siteSettings = buildSiteSettings(
   process.env.E2E_SITE_WHATSAPP ?? null,
 );
 
+/* ===========================================================================================
+   Checkout (W3-02, CHK-01..04).
+
+   **This stub refuses what the real API refuses, and that rule is the whole point of it.** The
+   lesson this project paid for once already: a stub that answered 200 where the API answers 400
+   made a failure path unreachable in the browser for a whole task, so the test "passed" while the
+   screen it was testing could never be reached. So every refusal below is modelled on the real
+   endpoint's, status code and body shape included:
+
+     * a missing or blank required string -> 400 `ValidationProblem` with camelCase field keys,
+       including the nested `address.line1` form, and **all** the fields at once;
+     * an email that is not an address -> 400 against `email`;
+     * a delivery method that is not enabled, or has no rate for the district -> 400 against
+       `deliveryMethodId`;
+     * a payment method that is not enabled -> 400 against `paymentMethodCode`;
+     * a bag that cannot be checked out -> 409 with `blockers`;
+     * a total that does not match -> 409 with `totals` (doc 11 G-10);
+     * stock that has gone -> 409 with `shortLines`;
+     * the same `checkoutKey` twice -> **200** with the first order, not 201 and not an error.
+
+   The reference data is doc 08 section 9's, trimmed to the three districts a test needs and the two
+   methods that are enabled. The figures are the seeded placeholders (D8), so a test that asserts
+   "Rs. 400" is asserting the same number the API would have given it.
+   =========================================================================================== */
+
+/** Doc 08 section 9's zones: 1 Colombo, 2 Western, 3 IslandWide. */
+const CHECKOUT_DISTRICTS = [
+  { id: 1, name: 'Colombo', deliveryZone: 1 },
+  { id: 2, name: 'Gampaha', deliveryZone: 2 },
+  { id: 10, name: 'Jaffna', deliveryZone: 3 },
+];
+
+/** The two enabled methods of doc 08 section 9. PICKUP is seeded disabled, so it is not here. */
+const CHECKOUT_METHODS = [
+  { id: 1, code: 'STANDARD', name: 'Standard delivery', description: 'Delivered by courier to your address.', requiresAddress: true },
+  { id: 2, code: 'EXPRESS', name: 'Express delivery', description: 'Our fastest courier service, where it is available.', requiresAddress: true },
+];
+
+/** Doc 08 section 9's nine zone rates, for the two enabled methods. Express is unavailable island-wide. */
+const CHECKOUT_RATES = [
+  { methodId: 1, zone: 1, isAvailable: true, fee: 400, freeAboveAmount: 10000, min: 1, max: 2 },
+  { methodId: 2, zone: 1, isAvailable: true, fee: 950, freeAboveAmount: null, min: 1, max: 1 },
+  { methodId: 1, zone: 2, isAvailable: true, fee: 450, freeAboveAmount: 10000, min: 2, max: 3 },
+  { methodId: 2, zone: 2, isAvailable: true, fee: 1200, freeAboveAmount: null, min: 1, max: 2 },
+  { methodId: 1, zone: 3, isAvailable: true, fee: 600, freeAboveAmount: 15000, min: 3, max: 5 },
+  { methodId: 2, zone: 3, isAvailable: false, fee: 0, freeAboveAmount: null, min: 1, max: 2 },
+];
+
+const CHECKOUT_PAYMENT_METHODS = [
+  {
+    code: 'BankTransfer',
+    displayName: 'Bank or online transfer',
+    checkoutDescription:
+      'Place your order now and transfer the total to our bank account. We hold your items while we wait for the payment.',
+  },
+];
+
+/**
+ * Test-only: makes the next Place order answer doc 08 §5.4 step 3's OUT_OF_STOCK refusal.
+ *
+ * **Why a switch is the only way.** Both the real API and this stub re-read the bag immediately before
+ * claiming the stock, so a line that has gone is caught first as G-08's "adjust your bag" and answered
+ * with `blockers`. The `shortLines` answer only exists when the stock goes in the window *between* that
+ * read and the claim — a race, which a single browser cannot create. The integration suite proves the
+ * branch is reachable (`CheckoutConcurrencyTests`, four shoppers and one unit); this switch exists so
+ * the browser can prove the **page renders it**, and the body it renders is built by the stub's own code
+ * rather than written out in a test.
+ */
+const checkoutStockFaults = new Set();
+
+/** Orders this run has placed, by public token, and the checkout keys that created them. */
+const placedOrders = new Map();
+const placedByCheckoutKey = new Map();
+
+let nextOrderSequence = 123;
+
+/** Rounded the way the API rounds: half away from zero to two places. */
+function money(value) {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+function checkoutRateFor(methodId, zone) {
+  return CHECKOUT_RATES.find((rate) => rate.methodId === methodId && rate.zone === zone) ?? null;
+}
+
+/**
+ * The bag priced for checkout, with the same rule the API applies: Buyable and NotEnoughStock lines
+ * are priced; OutOfStock and Unavailable are not.
+ */
+function checkoutLines(token) {
+  const bag = cartBody(token);
+
+  return bag.lines.map((line) => ({
+    variantId: line.variantId,
+    productId: line.productId,
+    productName: line.productName,
+    slug: line.slug,
+    colourName: line.colourName,
+    sizeLabel: line.sizeLabel,
+    imageUrl: line.imageUrl,
+    imageAltText: line.imageAltText,
+    quantity: line.quantity,
+    availableQuantity: line.availableQuantity,
+    unitOriginalPrice: line.price ? line.price.original : 0,
+    unitPrice: line.price ? line.price.current : 0,
+    lineSubtotal: line.lineSubtotal ?? 0,
+    status: line.status,
+  }));
+}
+
+function isPriced(line) {
+  return line.status === 'Buyable' || line.status === 'NotEnoughStock';
+}
+
+/** Doc 08 section 6 steps 5, 6, 10 and 11, with no promo code (ADM-13 does not exist). */
+function checkoutTotals(lines, rate) {
+  const priced = lines.filter(isPriced);
+  const itemCount = lines.reduce((total, line) => total + line.quantity, 0);
+
+  const original = money(priced.reduce((total, line) => total + line.unitOriginalPrice * line.quantity, 0));
+  const subtotal = money(priced.reduce((total, line) => total + line.unitPrice * line.quantity, 0));
+
+  const base = {
+    itemCount,
+    lineCount: lines.length,
+    itemsOriginalTotal: priced.length === 0 ? 0 : original,
+    itemsSubtotal: priced.length === 0 ? 0 : subtotal,
+    savedTotal: priced.length === 0 ? 0 : money(original - subtotal),
+    promoDiscountAmount: 0,
+    deliveryFeeAmount: null,
+    deliveryDiscountAmount: 0,
+    grandTotal: null,
+    promoDiscountClamped: false,
+    currency: 'LKR',
+  };
+
+  if (priced.length === 0 || !rate || !rate.isAvailable) {
+    return base;
+  }
+
+  const discount = rate.freeAboveAmount !== null && subtotal >= rate.freeAboveAmount ? rate.fee : 0;
+
+  return {
+    ...base,
+    deliveryFeeAmount: rate.fee,
+    deliveryDiscountAmount: discount,
+    grandTotal: money(subtotal + rate.fee - discount),
+  };
+}
+
+function checkoutBlockers(lines, districtId, options) {
+  const blockers = [];
+
+  if (lines.length === 0) {
+    blockers.push('EmptyBag');
+  } else if (!lines.every((line) => line.status === 'Buyable')) {
+    blockers.push('LineNotPurchasable');
+  }
+
+  if (districtId !== null && !options.some((option) => option.isAvailable)) {
+    blockers.push('NoDeliveryMethod');
+  }
+
+  if (CHECKOUT_PAYMENT_METHODS.length === 0) {
+    blockers.push('NoPaymentMethod');
+  }
+
+  return blockers;
+}
+
+function checkoutSession(token, districtId, deliveryMethodId) {
+  const lines = checkoutLines(token);
+  const district = CHECKOUT_DISTRICTS.find((candidate) => candidate.id === districtId) ?? null;
+
+  const options = district
+    ? CHECKOUT_METHODS.map((method) => {
+        const rate = checkoutRateFor(method.id, district.deliveryZone);
+        const available = rate !== null && rate.isAvailable;
+        const subtotal = checkoutTotals(lines, null).itemsSubtotal;
+        const feeAfterDiscount = available
+          ? rate.freeAboveAmount !== null && subtotal >= rate.freeAboveAmount
+            ? 0
+            : rate.fee
+          : null;
+
+        return {
+          id: method.id,
+          code: method.code,
+          name: method.name,
+          description: method.description,
+          requiresAddress: method.requiresAddress,
+          isAvailable: available,
+          fee: available ? rate.fee : null,
+          freeAboveAmount: available ? rate.freeAboveAmount : null,
+          feeAfterDiscount,
+          estimatedDaysMin: available ? rate.min : null,
+          estimatedDaysMax: available ? rate.max : null,
+        };
+      })
+    : [];
+
+  const selected = options.find((option) => option.id === deliveryMethodId && option.isAvailable) ?? null;
+  const rate = selected && district ? checkoutRateFor(selected.id, district.deliveryZone) : null;
+
+  return {
+    checkoutKey: randomUUID(),
+    lines,
+    totals: checkoutTotals(lines, rate),
+    districts: CHECKOUT_DISTRICTS,
+    deliveryOptions: options,
+    pickupLocations: [],
+    paymentMethods: CHECKOUT_PAYMENT_METHODS,
+    selectedDistrictId: district ? district.id : null,
+    selectedDeliveryMethodId: selected ? selected.id : null,
+    blockers: checkoutBlockers(lines, district ? district.id : null, options),
+  };
+}
+
+function checkoutProblem(response, status, body) {
+  response.statusCode = status;
+  response.setHeader('Content-Type', 'application/problem+json; charset=utf-8');
+  response.end(JSON.stringify({ status, ...body }));
+}
+
+function validationProblems(response, errors) {
+  response.statusCode = 400;
+  response.setHeader('Content-Type', 'application/problem+json; charset=utf-8');
+  response.end(
+    JSON.stringify({
+      title: 'One or more validation errors occurred.',
+      status: 400,
+      errors,
+    }),
+  );
+}
+
+function trimmed(value) {
+  return typeof value === 'string' && value.trim() !== '' ? value.trim() : null;
+}
+
+/** The same permissive rule as `PlaceOrderValidator.LooksLikeEmail`. */
+function looksLikeEmail(candidate) {
+  if (/\s/.test(candidate)) {
+    return false;
+  }
+
+  const at = candidate.indexOf('@');
+  if (at <= 0 || at !== candidate.lastIndexOf('@')) {
+    return false;
+  }
+
+  const domain = candidate.slice(at + 1);
+  const dot = domain.indexOf('.');
+
+  return dot > 0 && dot < domain.length - 1;
+}
+
+function handleCheckoutRead(request, response, url) {
+  cartNoStore(response);
+
+  const token = readCartCookie(request);
+  const rawDistrict = url.searchParams.get('districtId');
+  const rawMethod = url.searchParams.get('deliveryMethodId');
+
+  const districtId = rawDistrict !== null && /^\d+$/.test(rawDistrict) ? Number(rawDistrict) : null;
+  const methodId = rawMethod !== null && /^\d+$/.test(rawMethod) ? Number(rawMethod) : null;
+
+  if (token && carts.has(token)) {
+    issueCartCookie(response, token);
+  }
+
+  response.end(JSON.stringify(checkoutSession(token && carts.has(token) ? token : null, districtId, methodId)));
+}
+
+function handlePlaceOrder(request, response) {
+  readJsonBody(request, response, (body) => {
+    cartNoStore(response);
+
+    const checkoutKey = typeof body.checkoutKey === 'string' ? body.checkoutKey : '';
+
+    // The replay path comes first, for the reason the use case gives: a successful placement empties
+    // the bag, so a later replay would otherwise be told its bag was empty.
+    if (checkoutKey && placedByCheckoutKey.has(checkoutKey)) {
+      const existing = placedOrders.get(placedByCheckoutKey.get(checkoutKey));
+      response.statusCode = 200;
+      response.end(JSON.stringify({ ...existing, isDuplicateSubmission: true }));
+      return;
+    }
+
+    const errors = {};
+    const EMPTY_GUID = '00000000-0000-0000-0000-000000000000';
+
+    if (!checkoutKey || checkoutKey === EMPTY_GUID) {
+      errors['checkoutKey'] = ['This checkout session has expired. Reload the page and try again.'];
+    }
+
+    if (!trimmed(body.firstName)) {
+      errors['firstName'] = ['Enter your first name.'];
+    }
+
+    const email = trimmed(body.email);
+    if (!email) {
+      errors['email'] = ['Enter your email address.'];
+    } else if (!looksLikeEmail(email)) {
+      errors['email'] = ['Enter an email address we can send your order to.'];
+    }
+
+    if (!trimmed(body.phone)) {
+      errors['phone'] = ['Enter a phone number for the delivery.'];
+    }
+
+    const method = CHECKOUT_METHODS.find((candidate) => candidate.id === wholeNumber(body.deliveryMethodId)) ?? null;
+    if (!method) {
+      errors['deliveryMethodId'] = body.deliveryMethodId
+        ? ['This delivery option is no longer available. Choose another.']
+        : ['Choose how you would like your order delivered.'];
+    }
+
+    if (!CHECKOUT_PAYMENT_METHODS.some((candidate) => candidate.code === trimmed(body.paymentMethodCode))) {
+      errors['paymentMethodCode'] = trimmed(body.paymentMethodCode)
+        ? ['That payment method is not available. Choose another.']
+        : ['Choose how you would like to pay.'];
+    }
+
+    if (typeof body.expectedGrandTotal !== 'number') {
+      errors['expectedGrandTotal'] = ['The order total is missing. Reload the page and try again.'];
+    }
+
+    const district = CHECKOUT_DISTRICTS.find((candidate) => candidate.id === wholeNumber(body.districtId)) ?? null;
+
+    if (method && method.requiresAddress) {
+      if (!district) {
+        errors['districtId'] = ['Choose the district your order is going to.'];
+      }
+
+      const address = body.address;
+      if (!address || typeof address !== 'object') {
+        errors['address'] = ['Enter the delivery address.'];
+      } else {
+        if (!trimmed(address.recipientName)) {
+          errors['address.recipientName'] = ['Enter the name of the person receiving the order.'];
+        }
+        if (!trimmed(address.phone)) {
+          errors['address.phone'] = ['Enter a phone number for the delivery address.'];
+        }
+        if (!trimmed(address.line1)) {
+          errors['address.line1'] = ['Enter the street address.'];
+        }
+        if (!trimmed(address.city)) {
+          errors['address.city'] = ['Enter the town or city.'];
+        }
+      }
+    }
+
+    if (Object.keys(errors).length > 0) {
+      validationProblems(response, errors);
+      return;
+    }
+
+    const rate = checkoutRateFor(method.id, district.deliveryZone);
+    if (!rate || !rate.isAvailable) {
+      validationProblems(response, {
+        deliveryMethodId: ['This delivery option is not available for that district. Choose another.'],
+      });
+      return;
+    }
+
+    const token = readCartCookie(request);
+    const lines = checkoutLines(token && carts.has(token) ? token : null);
+
+    if (lines.length === 0) {
+      checkoutProblem(response, 409, {
+        title: 'Checkout is not possible',
+        detail: 'Your bag is empty.',
+        blockers: ['EmptyBag'],
+      });
+      return;
+    }
+
+    if (!lines.every((line) => line.status === 'Buyable')) {
+      checkoutProblem(response, 409, {
+        title: 'Checkout is not possible',
+        detail: 'Something in your bag cannot be bought right now. Go back to your bag to adjust it.',
+        blockers: ['LineNotPurchasable'],
+      });
+      return;
+    }
+
+    const totals = checkoutTotals(lines, rate);
+
+    if (totals.grandTotal !== body.expectedGrandTotal) {
+      checkoutProblem(response, 409, {
+        title: 'Prices changed',
+        detail:
+          'The total has changed since this page was loaded. Review the new total and place your order again. ' +
+          'Nothing has been placed.',
+        totals,
+      });
+      return;
+    }
+
+    // The stock claim. The fault set stands in for the race that is the only way to reach this from one
+    // browser — see its own comment.
+    const faulted = token !== null && checkoutStockFaults.has(token);
+    const short = {};
+
+    for (const line of lines) {
+      const available = faulted
+        ? line.quantity - 1
+        : Math.max(availableNow(line.variantId, line.availableQuantity), 0);
+
+      if (available < line.quantity) {
+        short[String(line.variantId)] = Math.max(available, 0);
+      }
+    }
+
+    // One-shot per bag, so a run that ends mid-fault cannot hand anything a broken checkout.
+    if (token !== null) {
+      checkoutStockFaults.delete(token);
+    }
+
+    if (Object.keys(short).length > 0) {
+      checkoutProblem(response, 409, {
+        title: 'Out of stock',
+        detail:
+          'Some of your items sold out while you were checking out. Your order has not been placed and ' +
+          'nothing has been charged.',
+        shortLines: short,
+      });
+      return;
+    }
+
+    const publicId = randomUUID();
+    const placedAt = new Date();
+    const dueAt = new Date(placedAt.getTime() + 48 * 60 * 60 * 1000);
+    const address = method.requiresAddress ? body.address : null;
+
+    const order = {
+      orderNumber: `SD-${placedAt.getFullYear()}-${String(nextOrderSequence++).padStart(6, '0')}`,
+      publicId,
+      status: 'PendingPayment',
+      email,
+      firstName: trimmed(body.firstName),
+      lastName: trimmed(body.lastName),
+      phone: trimmed(body.phone),
+      lines: lines.map((line, index) => ({
+        lineNumber: index + 1,
+        productName: line.productName,
+        productCode: `CW-${line.productId}`,
+        sku: `SKU-${line.variantId}`,
+        colourName: line.colourName,
+        sizeLabel: line.sizeLabel,
+        imageUrl: line.imageUrl,
+        quantity: line.quantity,
+        unitOriginalPrice: line.unitOriginalPrice,
+        unitPrice: line.unitPrice,
+        lineSubtotal: line.lineSubtotal,
+        promoDiscountAllocated: 0,
+        lineTotal: line.lineSubtotal,
+      })),
+      delivery: {
+        methodCode: method.code,
+        methodName: method.name,
+        pickupLocationName: null,
+        recipientName: address ? trimmed(address.recipientName) : null,
+        phone: address ? trimmed(address.phone) : null,
+        line1: address ? trimmed(address.line1) : null,
+        line2: address ? trimmed(address.line2) : null,
+        city: address ? trimmed(address.city) : null,
+        districtName: district.name,
+        postalCode: address ? trimmed(address.postalCode) : null,
+        landmark: address ? trimmed(address.landmark) : null,
+        estimatedDaysMin: rate.min,
+        estimatedDaysMax: rate.max,
+      },
+      itemsOriginalTotal: totals.itemsOriginalTotal,
+      itemsSubtotal: totals.itemsSubtotal,
+      savedTotal: totals.savedTotal,
+      promoDiscountAmount: 0,
+      deliveryFeeAmount: totals.deliveryFeeAmount,
+      deliveryDiscountAmount: totals.deliveryDiscountAmount,
+      grandTotal: totals.grandTotal,
+      currency: 'LKR',
+      paymentMethodCode: 'BankTransfer',
+      paymentMethodName: 'Bank or online transfer',
+      customerNote: trimmed(body.customerNote),
+      placedAtUtc: placedAt.toISOString(),
+      paymentDueAtUtc: dueAt.toISOString(),
+      isDuplicateSubmission: false,
+    };
+
+    placedOrders.set(publicId, order);
+    placedByCheckoutKey.set(checkoutKey, publicId);
+
+    // The placement transaction empties the bag, so the stub does too — otherwise the header badge
+    // would keep counting items that have been bought, and the next test would start with them.
+    if (token) {
+      carts.delete(token);
+    }
+
+    response.statusCode = 201;
+    response.setHeader('Location', `/api/orders/${publicId}`);
+    response.end(JSON.stringify(order));
+  });
+}
+
+/**
+ * Routes checkout and orders. Returns false when the path is not one of theirs.
+ *
+ * A public token that is not a GUID is a **404**, because that is what the route constraint
+ * `{publicId:guid}` does in the API: the address itself does not exist.
+ */
+function handleCheckout(request, response, url) {
+  // Test-only, and deliberately named so: a switch on a fixture, not an API the storefront knows about.
+  //
+  // **Keyed by the requesting bag's token, not global.** The suite is `fullyParallel`, so a single flag
+  // is consumed by whichever POST arrives first and two tests end up testing each other — the same
+  // mistake the shared variant-override map taught `bag.e2e.ts`. The test's request carries its own
+  // `sd_cart`, so the fault belongs to that bag and nobody else's.
+  if (url.pathname === '/__test__/checkout-stock-fault') {
+    const token = readCartCookie(request);
+    const armed = url.searchParams.get('mode') === 'short';
+
+    if (!token) {
+      response.statusCode = 400;
+      response.end(JSON.stringify({ title: 'No bag to arm the fault on', status: 400 }));
+      return true;
+    }
+
+    if (armed) {
+      checkoutStockFaults.add(token);
+    } else {
+      checkoutStockFaults.delete(token);
+    }
+
+    response.end(JSON.stringify({ token, fault: armed }));
+    return true;
+  }
+
+  if (url.pathname === '/api/checkout') {
+    if (request.method === 'GET') {
+      handleCheckoutRead(request, response, url);
+      return true;
+    }
+
+    response.statusCode = 405;
+    response.end(JSON.stringify({ title: 'Method Not Allowed', status: 405 }));
+    return true;
+  }
+
+  if (url.pathname === '/api/checkout/orders') {
+    if (request.method === 'POST') {
+      handlePlaceOrder(request, response);
+      return true;
+    }
+
+    response.statusCode = 405;
+    response.end(JSON.stringify({ title: 'Method Not Allowed', status: 405 }));
+    return true;
+  }
+
+  const order = /^\/api\/orders\/(.*)$/.exec(url.pathname);
+  if (order) {
+    cartNoStore(response);
+
+    const raw = decodeURIComponent(order[1]);
+    const isGuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(raw);
+
+    if (!isGuid || !placedOrders.has(raw)) {
+      response.statusCode = 404;
+      response.end(JSON.stringify({ title: 'Not found', status: 404 }));
+      return true;
+    }
+
+    response.end(JSON.stringify(placedOrders.get(raw)));
+    return true;
+  }
+
+  return false;
+}
+
 const server = createServer((request, response) => {
   const url = new URL(request.url ?? '/', `http://localhost:${PORT}`);
 
@@ -2270,6 +2851,11 @@ const server = createServer((request, response) => {
 
   // The bag (W2-09, CART-01/02), ahead of everything else because it owns a prefix of its own.
   if (handleCart(request, response, url)) {
+    return;
+  }
+
+  // Checkout and the orders it places (W3-02, CHK-01..04). Same reason: its own prefixes.
+  if (handleCheckout(request, response, url)) {
     return;
   }
 

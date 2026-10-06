@@ -152,4 +152,44 @@ describe('cartCookieInterceptor (CART-01, SSR)', () => {
 
     expect(controller.expectOne('http://api:8080/api/cart').request.headers.has('Cookie')).toBe(true);
   });
+
+  /**
+   * **W3-02's checkout is per-visitor in exactly the same way, and this interceptor did not know it.**
+   *
+   * `/api/checkout` finds the bag by the same `sd_cart` cookie, so without the cookie the server
+   * rendered every checkout with an empty bag: the page said "your bag is empty" in the HTML and then
+   * filled itself in after hydration — the precise failure this interceptor's own docblock says SSR
+   * exists to avoid. It was found by `checkout.e2e.ts` asserting the server's HTML, and this is the unit
+   * test that should have caught it first.
+   */
+  it.each([
+    ['the checkout itself', '/api/checkout'],
+    ['the checkout with a quote', '/api/checkout?districtId=1&deliveryMethodId=2'],
+    ['placing the order', '/api/checkout/orders'],
+    ['an absolute checkout URL', 'http://api:8080/api/checkout'],
+  ])('copies the bag cookie onto %s', (_name, url) => {
+    const token = '8e29b4c6-c0f9-4f0e-9b7e-2d1a5c3f6a7b';
+    const { http, controller } = setUp(`sd_cart=${token}`);
+
+    http.get(url).subscribe();
+
+    expect(controller.expectOne(url).request.headers.get('Cookie')).toBe(`sd_cart=${token}`);
+  });
+
+  /**
+   * **And not onto the order link.** `/api/orders/{token}` is found by the unguessable token in the URL,
+   * not by a cookie, so sending one would be relaying a bearer credential to a call that has no use for
+   * it — the same rule that keeps `sd_admin_auth` out of every request above. A guest opening their order
+   * link from a different browser must get the same answer, which is only true if the cookie is irrelevant.
+   */
+  it.each([
+    ['an order by its public token', '/api/orders/22222222-2222-4222-8222-222222222222'],
+    ['a near-miss prefix', '/api/checkoutish'],
+  ])('sends no cookie for %s', (_name, url) => {
+    const { http, controller } = setUp('sd_cart=8e29b4c6-c0f9-4f0e-9b7e-2d1a5c3f6a7b');
+
+    http.get(url).subscribe();
+
+    expect(controller.expectOne(url).request.headers.has('Cookie')).toBe(false);
+  });
 });

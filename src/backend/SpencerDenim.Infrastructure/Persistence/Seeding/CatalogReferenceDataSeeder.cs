@@ -332,11 +332,22 @@ public sealed class SeedCounts
     /// <summary><c>ops.Settings</c> rows created because the key had none (ADM-22). Values are always null.</summary>
     public int Settings { get; set; }
 
+    /// <summary>
+    /// What <see cref="SalesReferenceDataSeeder"/> inserted (doc 08 §9): provinces, districts, delivery
+    /// methods, zone rates and payment providers. Separate from the catalogue counts above because a
+    /// different seeder writes them, and reported so that a deployment can see whether checkout's
+    /// reference data landed.
+    /// </summary>
+    public SalesSeedCounts Sales { get; set; } = new();
+
     public override string ToString() =>
         $"departments {Departments}, age groups {AgeGroups}, attribute options {AttributeOptions}, " +
         $"colour families {ColourFamilies}, sizes {Sizes}, size guides {SizeGuides}, categories {Categories}, " +
         $"products {Products}, variants {Variants}, media assets {MediaAssets}, " +
         $"media placeholders {MediaPlaceholders}, " +
         $"home sections {HomeSections}, home section items {HomeSectionItems}, " +
-        $"announcements {AnnouncementMessages}, settings {Settings}";
+        $"announcements {AnnouncementMessages}, settings {Settings}, " +
+        $"provinces {Sales.Provinces}, districts {Sales.Districts}, " +
+        $"delivery methods {Sales.DeliveryMethods}, zone rates {Sales.DeliveryMethodZoneRates}, " +
+        $"payment providers {Sales.PaymentProviders}";
 }

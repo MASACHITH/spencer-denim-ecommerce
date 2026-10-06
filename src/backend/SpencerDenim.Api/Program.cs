@@ -94,6 +94,7 @@ app.MapContentEndpoints();
 app.MapSiteSettingsEndpoints();
 app.MapAdminSettingsEndpoints();
 app.MapCartEndpoints();
+app.MapCheckoutEndpoints();
 app.MapAdminMediaEndpoints();
 app.MapMediaFileEndpoints();
 

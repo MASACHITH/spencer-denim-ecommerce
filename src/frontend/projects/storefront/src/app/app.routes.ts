@@ -20,6 +20,13 @@ const searchPage = () => import('./pages/search/search-page').then((m) => m.Sear
 /** The bag page (CART-01). */
 const bagPage = () => import('./pages/bag/bag-page').then((m) => m.BagPage);
 
+/** Checkout (CHK-01..03). */
+const checkoutPage = () =>
+  import('./pages/checkout/checkout-page').then((m) => m.CheckoutPage);
+
+/** The order success page and a guest's order link (CHK-04). */
+const orderPage = () => import('./pages/order/order-page').then((m) => m.OrderPage);
+
 /** An address the catalogue does not have. Answers a real 404 (see the component). */
 const notFoundPage = () => import('./pages/not-found/not-found-page').then((m) => m.NotFoundPage);
 
@@ -51,6 +58,10 @@ const catalogUnavailablePage = () =>
  * shell already linked to it. `app.routes.spec.ts` asserts that no path in this list has a route of
  * its own, so the next one to be built cannot be left behind the same way.
  *
+ * **`/checkout` has been taken out by W3-02**, which is the rule above being followed: the page is real,
+ * so the entry claiming the site has no such address is deleted in the same change. `/order/:publicId`
+ * was never in this list — nothing linked to it before there were orders to link to.
+ *
  * `/bag` is worth one more line, because the rebase very nearly got it wrong: git **auto-merged**
  * W2-09's route declaration in above this list and left `'bag'` in the list, with no conflict to look
  * at — exactly how `/search` survived here through W2-07. The route wins at runtime, so every
@@ -59,7 +70,6 @@ const catalogUnavailablePage = () =>
 export const UNBUILT_PATHS = [
   'about',
   'account',
-  'checkout',
   'contact',
   'privacy',
   'returns',
@@ -98,6 +108,27 @@ export const routes: Routes = [
   // It takes no `canMatch` guard — the page is valid for every visitor, including one with an empty
   // bag — and so it can never answer 404 or 503.
   { path: 'bag', loadComponent: bagPage },
+
+  // Checkout (W3-02, CHK-01..03). A single-segment route listed **ahead of `:department`**, which matches
+  // any single segment, and its `UNBUILT_PATHS` entry is removed in this change.
+  //
+  // No `canMatch` guard: the page is valid for every visitor, including one with an empty bag, which it
+  // says so rather than 404ing. It renders on the server and is per-visitor, so it answers `no-store`
+  // and `noindex` — the same treatment `/bag` gets, for the same reason, and more sharply, because this
+  // page's markup holds a name, an address and a phone number.
+  { path: 'checkout', loadComponent: checkoutPage },
+
+  // The order success page and a guest's order link (W3-02, CHK-04). Two segments, so it cannot collide
+  // with `:department`, and the page answers 404 when the token names no order, exactly as a wrong
+  // product slug does.
+  //
+  // **The segment is `:token`, not `:publicId` or `:id`, and that is GLB-11 being obeyed rather than
+  // worked around.** `app.routes.spec.ts` requires every route to be slug-shaped with no ids in it,
+  // because doc 02 GLB-11 asks for friendly URLs — and an order genuinely has no slug: there is nothing
+  // human-readable to address it by, and it must not be addressable by a sequential id, because the
+  // address is the only credential a guest's link can carry (doc 08 §3.5 `Orders.PublicId`). So the
+  // segment is named after what it is, an unguessable token, which is both honest and lower case.
+  { path: 'order/:token', loadComponent: orderPage },
 
   // Two of the five permanent navigation entries (GLB-05). They are the same listing with one
   // filter fixed and no department, so neither points at a not-found page while DEPT-02 and

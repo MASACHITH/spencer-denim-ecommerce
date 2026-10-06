@@ -1725,6 +1725,75 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                     b.ToTable("MediaUsages", "media");
                 });
 
+            modelBuilder.Entity("SpencerDenim.Domain.Reference.District", b =>
+                {
+                    b.Property<int>("Id")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasColumnType("varchar(6)");
+
+                    b.Property<byte>("DeliveryZone")
+                        .HasColumnType("tinyint");
+
+                    b.Property<bool>("IsActive")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(true);
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("nvarchar(60)");
+
+                    b.Property<int>("ProvinceId")
+                        .HasColumnType("int");
+
+                    b.Property<short>("SortOrder")
+                        .HasColumnType("smallint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Code")
+                        .IsUnique()
+                        .HasDatabaseName("UX_Districts_Code");
+
+                    b.HasIndex("Name")
+                        .IsUnique()
+                        .HasDatabaseName("UX_Districts_Name");
+
+                    b.HasIndex("ProvinceId");
+
+                    b.ToTable("Districts", "ref", t =>
+                        {
+                            t.HasCheckConstraint("CK_Districts_DeliveryZone", "[DeliveryZone] BETWEEN 1 AND 3");
+                        });
+                });
+
+            modelBuilder.Entity("SpencerDenim.Domain.Reference.Province", b =>
+                {
+                    b.Property<int>("Id")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasColumnType("varchar(6)");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("nvarchar(60)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Code")
+                        .IsUnique()
+                        .HasDatabaseName("UX_Provinces_Code");
+
+                    b.ToTable("Provinces", "ref");
+                });
+
             modelBuilder.Entity("SpencerDenim.Domain.Sales.Cart", b =>
                 {
                     b.Property<int>("Id")
@@ -3668,6 +3737,17 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                     b.Navigation("MediaAsset");
                 });
 
+            modelBuilder.Entity("SpencerDenim.Domain.Reference.District", b =>
+                {
+                    b.HasOne("SpencerDenim.Domain.Reference.Province", "Province")
+                        .WithMany("Districts")
+                        .HasForeignKey("ProvinceId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
+                    b.Navigation("Province");
+                });
+
             modelBuilder.Entity("SpencerDenim.Domain.Sales.Cart", b =>
                 {
                     b.HasOne("SpencerDenim.Infrastructure.Identity.AppUser", null)
@@ -3724,6 +3804,12 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                         .WithMany()
                         .HasForeignKey("CustomerUserId")
                         .OnDelete(DeleteBehavior.NoAction);
+
+                    b.HasOne("SpencerDenim.Domain.Reference.District", null)
+                        .WithMany()
+                        .HasForeignKey("DeliveryDistrictId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
 
                     b.HasOne("SpencerDenim.Domain.Sales.DeliveryMethod", "DeliveryMethod")
                         .WithMany()
@@ -3856,6 +3942,15 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                     b.Navigation("PaymentProvider");
                 });
 
+            modelBuilder.Entity("SpencerDenim.Domain.Sales.PickupLocation", b =>
+                {
+                    b.HasOne("SpencerDenim.Domain.Reference.District", null)
+                        .WithMany()
+                        .HasForeignKey("DistrictId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("SpencerDenim.Domain.Sales.Refund", b =>
                 {
                     b.HasOne("SpencerDenim.Domain.Sales.Order", "Order")
@@ -3921,6 +4016,11 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("SpencerDenim.Domain.Content.HomeSection", b =>
                 {
                     b.Navigation("Items");
+                });
+
+            modelBuilder.Entity("SpencerDenim.Domain.Reference.Province", b =>
+                {
+                    b.Navigation("Districts");
                 });
 
             modelBuilder.Entity("SpencerDenim.Domain.Sales.Cart", b =>

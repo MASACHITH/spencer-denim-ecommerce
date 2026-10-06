@@ -561,4 +561,76 @@ describe('BagPage (CART-01)', () => {
       expect(element.querySelector('[role="alert"]')).not.toBeNull();
     });
   });
+  /**
+   * The button W3-02 added, and the rule it enforces (doc 11 §7 G-08: warn and block, never silently
+   * reduce a quantity or drop a line).
+   */
+  describe('Proceed to checkout (W3-02)', () => {
+    function checkoutLink(): HTMLAnchorElement | null {
+      return element.querySelector<HTMLAnchorElement>('a.bag__checkout');
+    }
+
+    function blockedButton(): HTMLButtonElement | null {
+      return element.querySelector<HTMLButtonElement>('button.bag__checkout');
+    }
+
+    it('links to /checkout when every line can be bought', async () => {
+      await open({ lines: [line()], totals: totals() });
+
+      expect(checkoutLink()?.getAttribute('href')).toBe('/checkout');
+      expect(blockedButton()).toBeNull();
+    });
+
+    /**
+     * **A disabled `<button>`, not a styled `<a>`.** A disabled anchor is still followable by keyboard
+     * and by a crawler, and `pointer-events: none` is not a disabled control to anyone navigating with a
+     * keyboard — so the two states are two elements.
+     */
+    it('is a disabled button, not a link, while a line cannot be bought', async () => {
+      await open({
+        lines: [line({ status: 'OutOfStock', availableQuantity: 0, price: null, lineSubtotal: null })],
+        totals: totals({ buyableItemCount: 0, itemsOriginalTotal: 0, itemsSubtotal: 0, savedTotal: 0 }),
+      });
+
+      expect(checkoutLink()).toBeNull();
+      expect(blockedButton()?.disabled).toBe(true);
+      expect(text()).toContain('before you check out');
+    });
+
+    /**
+     * **This is the case the two counts are not allowed to agree on.** `isBuyable` counts a short-stock
+     * line as buyable — it is in the subtotal, because the price is real — but it cannot be *ordered*,
+     * because the API reserves the full quantity or refuses the order. So checkout is blocked while the
+     * "not in this total" warning stays silent, and conflating the two would have offered a button the
+     * server refuses.
+     */
+    it('blocks a short-stock line although it is still in the subtotal', async () => {
+      await open({
+        lines: [line({ status: 'NotEnoughStock', availableQuantity: 1 })],
+        totals: totals(),
+      });
+
+      expect(blockedButton()?.disabled).toBe(true);
+      expect(text()).not.toContain('cannot be bought at the moment and is not in this total');
+      expect(sums().total).toBe(8784);
+    });
+
+    it('names the reason through aria-describedby, not only by being grey', async () => {
+      await open({
+        lines: [line({ status: 'Unavailable', price: null, lineSubtotal: null })],
+        totals: totals({ buyableItemCount: 0, itemsOriginalTotal: 0, itemsSubtotal: 0, savedTotal: 0 }),
+      });
+
+      const describedBy = blockedButton()?.getAttribute('aria-describedby');
+      expect(describedBy).toBe('bag-checkout-blocked');
+      expect(element.querySelector(`#${describedBy}`)?.textContent).toContain('before you check out');
+    });
+
+    it('is absent altogether when the bag is empty', async () => {
+      await open(EMPTY);
+
+      expect(checkoutLink()).toBeNull();
+      expect(blockedButton()).toBeNull();
+    });
+  });
 });

@@ -13,4 +13,18 @@
     <ProjectReference Include="..\SpencerDenim.Domain\SpencerDenim.Domain.csproj" />
   </ItemGroup>
 
+  <!--
+    Checkout's two pure helpers are implementation details with tests on them, the same arrangement
+    Infrastructure and Api already have. `PlaceOrderValidator` turns a request into the list of reasons it
+    was refused and `CheckoutQuote` decides which lines are priced and hands them to the Domain's
+    arithmetic: both are worth testing directly, with a table of inputs, rather than through a hand-written
+    fake of five ports — and a stub shaped more politely than the real reader would prove nothing. Making
+    them public instead would put two helpers nothing outside this project calls on the Application layer's
+    surface.
+  -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="SpencerDenim.UnitTests" />
+    <InternalsVisibleTo Include="SpencerDenim.IntegrationTests" />
+  </ItemGroup>
+
 </Project>

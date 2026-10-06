@@ -20,9 +20,21 @@ public sealed class HealthEndpointTests(SqlServerDatabaseFixture sqlServer)
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("Healthy", body.GetProperty("status").GetString());
-        var check = Assert.Single(body.GetProperty("checks").EnumerateArray());
-        Assert.Equal("sqlserver", check.GetProperty("name").GetString());
-        Assert.Equal("Healthy", check.GetProperty("status").GetString());
+
+        // **Two checks, and the second one is the point.** `sqlserver` is `CanConnectAsync()` and knows
+        // only whether the server answers; `referencedata` is whether this host actually established doc
+        // 08 §9's reference data. A connectable database with no migrations applied passes the first and
+        // fails the second, which is the state that used to report `200 Healthy` while every checkout
+        // returned 500.
+        var checks = body.GetProperty("checks").EnumerateArray()
+            .ToDictionary(
+                check => check.GetProperty("name").GetString()!,
+                check => check.GetProperty("status").GetString(),
+                StringComparer.Ordinal);
+
+        Assert.Equal("Healthy", checks["sqlserver"]);
+        Assert.Equal("Healthy", checks["referencedata"]);
+        Assert.Equal(2, checks.Count);
     }
 
     [Fact]

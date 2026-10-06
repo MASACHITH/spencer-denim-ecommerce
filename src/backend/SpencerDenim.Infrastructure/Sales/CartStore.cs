@@ -32,8 +32,6 @@ internal sealed class CartStore(AppDbContext dbContext, IClock clock) : ICartSto
     /// </summary>
     private const int UniqueViolationAttempts = 3;
 
-    /// <summary>SQL Server: 2627 is a PK/unique-constraint violation, 2601 a unique-index violation.</summary>
-    private static readonly int[] UniqueViolationErrors = [2627, 2601];
 
     public async Task<CartIdentity?> FindAsync(CartLookup lookup, CancellationToken cancellationToken)
     {
@@ -77,7 +75,7 @@ internal sealed class CartStore(AppDbContext dbContext, IClock clock) : ICartSto
                 return await InsertCartAsync(lookup.CustomerUserId, cancellationToken);
             }
             catch (DbUpdateException exception)
-                when (IsUniqueViolation(exception) && attempt < UniqueViolationAttempts)
+                when (SqlUniqueViolation.Matches(exception) && attempt < UniqueViolationAttempts)
             {
                 // Two requests for the same customer raced to create the account cart and
                 // UX_Carts_Customer refused the second. The loop re-reads and finds the winner's row,
@@ -127,7 +125,7 @@ internal sealed class CartStore(AppDbContext dbContext, IClock clock) : ICartSto
                 return;
             }
             catch (SqlException exception)
-                when (IsUniqueViolation(exception) && attempt < UniqueViolationAttempts)
+                when (SqlUniqueViolation.Matches(exception) && attempt < UniqueViolationAttempts)
             {
                 // Somebody else inserted the same (CartId, VariantId) between our UPDATE and our INSERT.
                 // UX_CartItems_Cart_Variant is what turned that into an error instead of a second row,
@@ -290,8 +288,4 @@ internal sealed class CartStore(AppDbContext dbContext, IClock clock) : ICartSto
         return new CartIdentity(cart.Id, token, customerUserId);
     }
 
-    private static bool IsUniqueViolation(Exception exception) =>
-        exception is SqlException sql
-            ? sql.Errors.Cast<SqlError>().Any(error => UniqueViolationErrors.Contains(error.Number))
-            : exception.InnerException is not null && IsUniqueViolation(exception.InnerException);
 }
