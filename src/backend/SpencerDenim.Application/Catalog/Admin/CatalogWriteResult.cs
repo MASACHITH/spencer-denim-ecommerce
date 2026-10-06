@@ -71,4 +71,26 @@ public static class CatalogConflictCodes
 
     /// <summary>A unique index refused the write after the handler's own check passed — the race.</summary>
     public const string DuplicateKey = "duplicate_key";
+
+    /// <summary>
+    /// A published product's slug was changed without the admin confirming it (ADM-10, W1-03).
+    /// <para>
+    /// Doc 11 P1's business rules: "Slug change after first publish shows a 'this breaks existing links'
+    /// confirmation; redirects are not in v1". A 409 rather than a 400 because there is nothing wrong with
+    /// the field — the screen has to ask a question, not correct a value.
+    /// </para>
+    /// </summary>
+    public const string SlugChangeNeedsConfirmation = "slug_change_needs_confirmation";
+
+    /// <summary>
+    /// A variant an order line names was asked to be deleted (doc 08 §3.2, doc 11 P1). The answer is to
+    /// deactivate it, which is what the <c>Details</c> SKUs let the screen offer.
+    /// </summary>
+    public const string VariantHasOrders = "variant_has_orders";
+
+    /// <summary>
+    /// Publishing was refused because the checklist of doc 11 §7 G-01 is not met: at least one active
+    /// variant, a card image, and alt text on every public image.
+    /// </summary>
+    public const string PublishChecklistFailed = "publish_checklist_failed";
 }

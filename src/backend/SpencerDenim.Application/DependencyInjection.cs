@@ -8,6 +8,8 @@ using SpencerDenim.Application.Admin.Auditing.Contracts;
 using SpencerDenim.Application.Admin.CurrentUser;
 using SpencerDenim.Application.Catalog.Admin;
 using SpencerDenim.Application.Catalog.Admin.Contracts;
+using SpencerDenim.Application.Catalog.Admin.Products;
+using SpencerDenim.Application.Catalog.Admin.Products.Contracts;
 using SpencerDenim.Application.Admin.Users;
 using SpencerDenim.Application.Admin.Users.Contracts;
 using SpencerDenim.Application.Catalog.Contracts;
@@ -142,6 +144,34 @@ public static class DependencyInjection
         services.AddScoped<
             ICommandHandler<RemoveCategoryCommand, CatalogWriteResult>,
             RemoveCategoryCommandHandler>();
+
+        // Admin products (ADM-10, W1-03). The read side is again its own port, because the storefront's
+        // reader drops every unpublished row and those are exactly the products this screen exists to
+        // finish and publish (see IAdminProductReader).
+        services.AddScoped<
+            IQueryHandler<GetAdminProductsQuery, PagedResult<AdminProductListItemDto>>,
+            GetAdminProductsQueryHandler>();
+        services.AddScoped<
+            IQueryHandler<GetAdminProductQuery, AdminProductDetailDto?>,
+            GetAdminProductQueryHandler>();
+        services.AddScoped<
+            IQueryHandler<GetProductFormOptionsQuery, ProductFormOptionsDto>,
+            GetProductFormOptionsQueryHandler>();
+        services.AddScoped<
+            IQueryHandler<SearchProductsForRelatedQuery, IReadOnlyList<AdminRelatedProductDto>>,
+            SearchProductsForRelatedQueryHandler>();
+        services.AddScoped<
+            ICommandHandler<CreateProductCommand, CatalogWriteResult>,
+            CreateProductCommandHandler>();
+        services.AddScoped<
+            ICommandHandler<UpdateProductCommand, CatalogWriteResult>,
+            UpdateProductCommandHandler>();
+        services.AddScoped<
+            ICommandHandler<SetProductPublishedCommand, CatalogWriteResult>,
+            SetProductPublishedCommandHandler>();
+        services.AddScoped<
+            ICommandHandler<RemoveProductCommand, CatalogWriteResult>,
+            RemoveProductCommandHandler>();
 
         // Storefront content (W2-01). The homepage handler also depends on the catalogue read port,
         // because a product row is the head of the listing it links to, and it is wrapped in doc 08
