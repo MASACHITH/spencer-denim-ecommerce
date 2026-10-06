@@ -33,6 +33,8 @@ import { readFileSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { extname, join, normalize, resolve } from 'node:path';
 
+import { freshProductState, handleProductRoute } from './admin-product-stub.mjs';
+
 const PORT = Number(process.env.E2E_ADMIN_PORT ?? 4430);
 const DIST = resolve(process.env.E2E_ADMIN_DIST ?? 'dist/admin/browser');
 
@@ -60,6 +62,12 @@ const SESSION = {
     'Categories.Create',
     'Categories.Edit',
     'Categories.Delete',
+
+    // ADM-10 (W1-03): the product screens.
+    'Products.View',
+    'Products.Create',
+    'Products.Edit',
+    'Products.Delete',
 
     // ADM-22. Settings.Edit and Media.Create: the settings screen's logo flow uploads to the library before
     // it points the setting at the result, so both are needed to drive it.
@@ -207,6 +215,9 @@ function freshState() {
     },
     logo: null,
     uploads: new Map(),
+
+    // ADM-10 (W1-03). Its own module, because this file is already a thousand lines about ADM-11.
+    ...freshProductState(),
   };
 }
 
@@ -347,12 +358,44 @@ function noContent(response) {
 /** A 1x1 WebP, so the logo preview loads a real image rather than a data URL. */
 const LOGO_PIXEL = Buffer.from('UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==', 'base64');
 
-/** Reads a body to the end without parsing it — a multipart upload, where only its arrival matters. */
+/** Reads a multipart body to the end and hands back its raw text. */
 function drain(request) {
   return new Promise((done) => {
-    request.on('data', () => {});
-    request.on('end', () => done());
+    let raw = '';
+    request.on('data', (chunk) => {
+      raw += chunk;
+    });
+    request.on('end', () => done(raw));
   });
+}
+
+/**
+ * The `altText` field of a multipart upload, or null when it was not sent.
+ *
+ * Echoed rather than invented, because what the library stores decides whether doc 11 §7 G-01's
+ * third rule can block a publish. A stub that answered with an alt text of its own made every
+ * uploaded photograph look described and quietly disabled the rule in every browser test.
+ */
+function uploadedAltText(body) {
+  const at = body.indexOf('name="altText"');
+
+  if (at < 0) {
+    return null;
+  }
+
+  // A multipart part's value starts after the blank line that ends its own headers and runs to the
+  // next boundary. Parsed by hand because the stub has no dependencies, and only loosely because
+  // all it has to tell apart is "a description arrived" from "none did".
+  const blank = '\r\n\r\n';
+  const headersEnd = body.indexOf(blank, at);
+
+  if (headersEnd < 0) {
+    return null;
+  }
+
+  const described = body.slice(headersEnd + blank.length).split('\r')[0].trim();
+
+  return described.length > 0 ? described : null;
 }
 
 function readBody(request) {
@@ -504,16 +547,44 @@ const server = createServer(async (request, response) => {
   // not parsed: what matters is that a file arrived, and that the answer carries a publicId the next call
   // can use — which is what makes the two-step flow testable at all.
   if (path === '/api/admin/media/images' && request.method === 'POST') {
-    await drain(request);
+    const altText = uploadedAltText(await drain(request));
 
     const publicId = `0000f00d-0000-4000-8000-${String(state.uploads.size + 1).padStart(12, '0')}`;
     const asset = {
       publicId,
+
+      // media.MediaAssets.MediaType, as a *name* — the real API registers a global
+      // JsonStringEnumConverter, so every enum in a response is a string. ADM-10's product form reads
+      // this to tell a photograph from the video; the logo flow ignores it.
+      mediaType: 'Image',
       url: '/__test__/logo.webp',
+      posterUrl: null,
       width: 600,
       height: 150,
-      altText: 'The shop logo',
+      altText,
       originalFileName: 'logo.png',
+    };
+
+    state.uploads.set(publicId, asset);
+
+    return json(response, 201, asset);
+  }
+
+  // The product video and its poster, in one multipart request (ADM-10, doc 08 §3.3: a video row cannot
+  // exist without a poster, and nothing on the server extracts a frame). The body is not parsed; what
+  // matters is that two files arrived and that the answer carries a publicId the form can reference.
+  if (path === '/api/admin/media/videos' && request.method === 'POST') {
+    const altText = uploadedAltText(await drain(request));
+
+    const publicId = `0000f00d-0000-4000-8000-${String(state.uploads.size + 1).padStart(12, '0')}`;
+    const asset = {
+      publicId,
+      mediaType: 'Video',
+      url: '/__test__/clip.mp4',
+      posterUrl: '/__test__/poster.webp',
+      durationSeconds: 12.5,
+      altText,
+      originalFileName: 'clip.mp4',
     };
 
     state.uploads.set(publicId, asset);
@@ -625,6 +696,25 @@ const server = createServer(async (request, response) => {
     response.writeHead(200, { 'Content-Type': 'image/webp', 'Cache-Control': 'no-store' });
     response.end(LOGO_PIXEL);
     return;
+  }
+
+  // ---- products (ADM-10, W1-03) --------------------------------------------------------------
+  if (
+    await handleProductRoute({
+      path,
+      method: request.method,
+      url,
+      request,
+      response,
+      state,
+      json,
+      problem,
+      noContent,
+      readBody,
+      suppliedRowVersion,
+    })
+  ) {
+    return undefined;
   }
 
   // ---- catalogue ----------------------------------------------------------------------------

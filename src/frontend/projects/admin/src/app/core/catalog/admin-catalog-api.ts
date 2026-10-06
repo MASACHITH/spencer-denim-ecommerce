@@ -143,6 +143,8 @@ export class AdminCatalogApi {
  * - `validation`: a field the API rejected; the messages are in `fieldErrors`, keyed by field name.
  * - `conflict`: well-formed and still impossible — a stale row version, a stale order, a category
  *   something still points at. The screen must reload rather than ask the admin to fix a field.
+ * - `unprocessable`: the right kind of request about a file the server cannot use (422) or one over its
+ *   size ceiling (413). The server's sentence names what to do about it, so it is shown verbatim.
  * - `notFound`: the row has gone since the page was loaded.
  * - `offline`: the browser could not reach the API (status 0).
  * - `unknown`: anything else.
@@ -151,6 +153,7 @@ export type CatalogFailureKind =
   | 'forbidden'
   | 'validation'
   | 'conflict'
+  | 'unprocessable'
   | 'notFound'
   | 'offline'
   | 'unknown';
@@ -178,7 +181,9 @@ export function toCatalogFailure(error: unknown): CatalogFailure {
   const detail = typeof body?.['detail'] === 'string' ? (body['detail'] as string) : undefined;
 
   if (error.status === 403) {
-    return { kind: 'forbidden', message: 'You do not have permission to make this change.' };
+    // Not "to make this change": this classifier is used for reads as well, and a viewer who lacks
+    // Products.View was being told they could not change something they were only looking at.
+    return { kind: 'forbidden', message: 'You do not have permission to do that.' };
   }
 
   if (error.status === 400 && body?.errors) {
@@ -204,6 +209,18 @@ export function toCatalogFailure(error: unknown): CatalogFailure {
 
   if (error.status === 409) {
     return { kind: 'conflict', message: detail ?? GENERIC, code, details: body ?? undefined };
+  }
+
+  // 422 and 413 are the media library's two most useful refusals, and both were being thrown away.
+  //
+  // `POST /api/admin/media/videos` answers **422** with a sentence an admin can act on — "The MP4's video
+  // track is 'hvc1', not H.264 (avc1)… Export it as H.264." **iPhone records HEVC by default**, so for a
+  // client shooting product video on a phone this is the first thing that happens; without the branch it
+  // read "Something went wrong" and gave no hint the file needed re-encoding. **413** is the same story
+  // for a file over the ceiling. The server's own words are better than anything this function could
+  // invent, so they are passed straight through.
+  if (error.status === 422 || error.status === 413) {
+    return { kind: 'unprocessable', message: detail ?? GENERIC, code };
   }
 
   if (error.status === 0) {

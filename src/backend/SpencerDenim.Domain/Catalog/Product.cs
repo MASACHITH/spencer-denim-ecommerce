@@ -166,4 +166,15 @@ public sealed class Product : IAuditable, ISoftDeletable
         FirstPublishedAtUtc ??= utcNow;
         NewUntilUtc ??= FirstPublishedAtUtc.Value.AddDays(newArrivalDays);
     }
+
+    /// <summary>
+    /// Takes the product off the storefront (doc 11 P1 step 15).
+    /// <para>
+    /// <see cref="FirstPublishedAtUtc"/> and <see cref="NewUntilUtc"/> are deliberately left alone:
+    /// "first published" is a fact about history that unpublishing does not undo, and clearing the New
+    /// window would hand a product a fresh thirty days of the New badge every time somebody hid it for an
+    /// afternoon.
+    /// </para>
+    /// </summary>
+    public void Unpublish() => IsPublished = false;
 }

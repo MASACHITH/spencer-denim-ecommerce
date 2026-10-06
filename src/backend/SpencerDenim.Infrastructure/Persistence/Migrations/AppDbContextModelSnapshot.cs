@@ -765,6 +765,8 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                             t.HasCheckConstraint("CK_Products_BasePrice", "[BasePrice] > 0");
 
                             t.HasCheckConstraint("CK_Products_CompareAtGtBase", "[CompareAtPrice] IS NULL OR [CompareAtPrice] > [BasePrice]");
+
+                            t.HasCheckConstraint("CK_Products_Slug", "[Slug] COLLATE Latin1_General_100_BIN2 NOT LIKE '%[^a-z0-9-]%' AND [Slug] NOT LIKE '-%' AND [Slug] NOT LIKE '%-' AND [Slug] NOT LIKE '%--%' AND DATALENGTH([Slug]) > 0");
                         });
                 });
 

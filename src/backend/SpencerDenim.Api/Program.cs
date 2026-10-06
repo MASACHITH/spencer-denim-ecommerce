@@ -90,6 +90,7 @@ app.MapUserEndpoints();
 app.MapRoleEndpoints();
 app.MapCatalogEndpoints();
 app.MapAdminCatalogEndpoints();
+app.MapAdminProductEndpoints();
 app.MapContentEndpoints();
 app.MapSiteSettingsEndpoints();
 app.MapAdminSettingsEndpoints();

@@ -123,6 +123,46 @@ describe('toCatalogFailure', () => {
     return new HttpErrorResponse({ status, error: body, url: '/api/admin/catalog/categories' });
   }
 
+  /**
+   * `POST /api/admin/media/videos` answers **422** with a sentence an admin can act on. **iPhone records
+   * HEVC by default**, so for a client shooting product video on a phone this is the first thing that
+   * happens; this classifier used to have no 422 branch, so the form showed "Something went wrong" and
+   * gave no hint the file needed re-encoding.
+   */
+  it('passes a 422 through verbatim, because the server knows what is wrong with the file', () => {
+    const detail =
+      "The MP4's video track is 'hvc1', not H.264 (avc1), which is the only codec the shop plays. "
+      + 'Export it as H.264.';
+
+    const failure = toCatalogFailure(response(422, { detail, code: 'unprocessable_file' }));
+
+    expect(failure.kind).toBe('unprocessable');
+    expect(failure.message).toBe(detail);
+    expect(failure.code).toBe('unprocessable_file');
+  });
+
+  it('passes a 413 through verbatim too, which is the same story for an over-size file', () => {
+    const failure = toCatalogFailure(response(413, { detail: 'That video is larger than 50 MB.' }));
+
+    expect(failure.kind).toBe('unprocessable');
+    expect(failure.message).toContain('50 MB');
+  });
+
+  it('still says something sayable when a 422 carries no detail', () => {
+    const failure = toCatalogFailure(response(422, null));
+
+    expect(failure.kind).toBe('unprocessable');
+    expect(failure.message.length).toBeGreaterThan(0);
+  });
+
+  /** m2: this classifier serves reads as well, so a refusal must not claim a change was attempted. */
+  it('does not tell a reader that they cannot make a change', () => {
+    const failure = toCatalogFailure(response(403, null));
+
+    expect(failure.kind).toBe('forbidden');
+    expect(failure.message).not.toContain('change');
+  });
+
   it('reads a 400 validation body as field errors the screen can attach to a control', () => {
     const failure = toCatalogFailure(
       response(400, {

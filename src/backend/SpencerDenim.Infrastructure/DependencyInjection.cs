@@ -9,6 +9,7 @@ using SpencerDenim.Application.Admin.Users.Abstractions;
 using SpencerDenim.Application.Catalog;
 using SpencerDenim.Application.Catalog.Abstractions;
 using SpencerDenim.Application.Catalog.Admin.Abstractions;
+using SpencerDenim.Application.Catalog.Admin.Products.Abstractions;
 using SpencerDenim.Application.Content.Abstractions;
 using SpencerDenim.Application.Marketing.Newsletter;
 using SpencerDenim.Application.Sales.Cart.Abstractions;
@@ -130,6 +131,11 @@ public static class DependencyInjection
         // Admin catalogue structure (ADM-11, W1-12).
         services.AddScoped<IAdminCatalogReader, AdminCatalogReader>();
         services.AddScoped<ICatalogStructureStore, CatalogStructureStore>();
+
+        // Admin products (ADM-10, W1-03). Same split as above and for the same reason: the read side has
+        // to be able to see an unpublished product, which is the only kind there is before it is finished.
+        services.AddScoped<IAdminProductReader, AdminProductReader>();
+        services.AddScoped<IProductWriteStore, ProductWriteStore>();
 
         // Users & Roles management (W1-08, issue #8).
         services.AddScoped<IStaffUserDirectoryReader, StaffUserDirectoryReader>();

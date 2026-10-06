@@ -71,4 +71,48 @@ public static class CatalogConflictCodes
 
     /// <summary>A unique index refused the write after the handler's own check passed — the race.</summary>
     public const string DuplicateKey = "duplicate_key";
+
+    /// <summary>
+    /// A published product's slug was changed without the admin confirming it (ADM-10, W1-03).
+    /// <para>
+    /// Doc 11 P1's business rules: "Slug change after first publish shows a 'this breaks existing links'
+    /// confirmation; redirects are not in v1". A 409 rather than a 400 because there is nothing wrong with
+    /// the field — the screen has to ask a question, not correct a value.
+    /// </para>
+    /// </summary>
+    public const string SlugChangeNeedsConfirmation = "slug_change_needs_confirmation";
+
+    /// <summary>
+    /// A variant that cannot be hard-deleted was asked to be deleted (ADM-10, W1-03). The answer is to
+    /// deactivate it, which is what the <c>Details</c> SKUs let the screen offer.
+    /// <para>
+    /// Two reasons reach this one code and <c>Details</c> separates them. <c>orderedSkus</c>: an order line
+    /// names the variant (doc 08 §3.2's "Deactivate once ordered; never delete", doc 11 P1).
+    /// <c>stockedSkus</c>: the variant holds stock, so deleting the row would take a count of real garments
+    /// with it — and stock belongs to ADM-12's ledger rather than to a product form. The second is also
+    /// what <c>FK_StockLevels_ProductVariants_VariantId</c> (<c>NO ACTION</c>) refuses outright.
+    /// </para>
+    /// </summary>
+    public const string VariantNotDeletable = "variant_not_deletable";
+
+    /// <summary>
+    /// Publishing was refused because the checklist of doc 11 §7 G-01 is not met: at least one active
+    /// variant, a card image, and alt text on every public image.
+    /// </summary>
+    public const string PublishChecklistFailed = "publish_checklist_failed";
+
+    /// <summary>
+    /// An edit would have left a product that is <b>on the shop</b> in a state its own publish checklist
+    /// forbids — no active variant, no gallery photograph, or an image with no alt text (doc 11 §7 G-01).
+    /// <para>
+    /// The edit is refused rather than applied, and rather than silently unpublishing. A shopper was
+    /// otherwise served a live product page with no photograph at all: <c>media: []</c> on a published
+    /// product answered 204 and left <c>isPublished = 1</c> with a null card image. The <c>media: []</c>
+    /// instruction itself is correct — it is the documented way to clear a gallery — so what is refused is
+    /// doing it while the product is live. Taking a product off the shop is its own deliberate act with
+    /// its own <c>StatusChange</c> audit row (<see cref="SetProductPublishedCommand"/>), and it must not
+    /// become a side effect of saving a form.
+    /// </para>
+    /// </summary>
+    public const string PublishedProductWouldBreak = "published_product_would_break";
 }

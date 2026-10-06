@@ -60,6 +60,23 @@ public sealed class CatalogVisibilityConventionTests
         ["src/backend/SpencerDenim.Infrastructure/Catalog/CatalogStructureStore.cs"] =
             "the admin write path: it loads rows in order to change their IsActive, so it must see them "
             + "whatever their current value is.",
+        ["src/backend/SpencerDenim.Infrastructure/Catalog/ProductWriteStore.cs"] =
+            "the admin product write path (ADM-10, W1-03), for the same reason as CatalogStructureStore "
+            + "above: it loads a product in order to change its IsPublished, so it must see it whatever "
+            + "the current value is. What this rule trips on is narrower than that even so — two "
+            + "*projections*, not predicates: a category reference that carries IsActive so the product "
+            + "form can show which category a product is filed under, and a related-product reference "
+            + "that carries IsPublished so the picker can mark a pick that is not live. Neither decides "
+            + "whether an address is reachable, and nothing here can put a URL in the sitemap.",
+        ["src/backend/SpencerDenim.Infrastructure/Catalog/AdminProductReader.cs"] =
+            "the admin product read model (ADM-10, W1-03), which exists precisely to show the products "
+            + "the storefront drops — an unpublished one is the only kind there is before it is finished, "
+            + "so the storefront's definition of visible is the wrong one here by design, exactly as for "
+            + "AdminCatalogReader above. **Listed although the rule's heuristic does not currently flag "
+            + "it:** its `published` filter sits in a statement of its own, two statements after the "
+            + "`dbContext.Products` that starts the query, so the per-statement scan misses it. That is "
+            + "luck, not compliance, and an entry here is better than a rule that passes for a reason "
+            + "nobody wrote down.",
         ["src/backend/SpencerDenim.Infrastructure/Sales/CartReader.cs"] =
             "the bag (W2-09, CART-01). Two halves, and only one of them could be composed. Its "
             + "*filtering* half, FindSellableVariantAsync, does compose VisibleProduct — it starts the "
