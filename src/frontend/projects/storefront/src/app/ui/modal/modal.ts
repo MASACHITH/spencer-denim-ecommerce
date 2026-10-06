@@ -107,8 +107,9 @@ let nextModalId = 0;
 
        One explicit row with a **zero minimum** removes the cause rather than compensating for it.
        1fr alone keeps an automatic min-content minimum and blows the track out again; and
-       align-content: center, which was the other candidate, leaves the track oversized and merely
-       centres the overflow, so it fixes this panel and not the next one. minmax(0, 1fr) also makes
+       align-content: center, the other candidate, also puts this panel on screen at every
+       viewport - that was measured, so it is not wrong, it just leaves the track oversized and
+       centres the overflow inside it rather than removing the cause. minmax(0, 1fr) also makes
        the panel's max-height: min(100%, 92vh) mean what it says - 100% now resolves against the
        room actually available rather than against the content's own height. */
     :host {

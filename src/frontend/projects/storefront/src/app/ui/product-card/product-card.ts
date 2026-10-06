@@ -71,7 +71,9 @@ interface ColourDot {
  * with decision 6's floating WhatsApp button (GLB-08), which owns the bottom-**right** corner of
  * the viewport site-wide. They were both in that corner and the float covered a card's Add to Bag
  * outright — at 320x720 on the very first card. The side is chosen in `.card__actions`, which says
- * so at length. The heart is untouched at top-right; it never collided.
+ * so at length. The heart is untouched at top-right - but it is *not* collision-free: the float
+ * covers it at a few scroll positions on every phone width (issue #111, to be fixed with W2-08).
+ * An earlier version of this comment claimed it never collided, which had not been measured.
  *
  * **Both triggers open the same dialog, and that is not an oversight.** `ProductCardDto` carries
  * colours and *no variants at all*, so a card cannot know whether this product needs a size
@@ -368,7 +370,10 @@ interface ColourDot {
        was *fully* covered at 4 of 41 sampled scroll offsets, and at 320x720 it happened at
        scrollY 0 - so the first card a shopper saw had a dead button that opened WhatsApp. The
        float keeps the corner it was given and the card actions take the opposite one; nothing is
-       removed and neither decision is weakened. The heart stays top-right: it never collided.
+       removed and neither decision is weakened. The heart stays top-right - and collides at a
+       handful of scroll positions itself, which is issue #111 rather than something this decision
+       fixed: the heart is at the card's *top*-right against the float's *bottom*-right, so they
+       meet as a card enters from below. Milder, and left to W2-08.
 
        **Where the switch happens, and why there is no new number here.** The side is set once in
        each of the two states this component already has, and the boundary between them is the

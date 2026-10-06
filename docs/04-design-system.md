@@ -114,8 +114,18 @@ These answer the style tile's "For your review" list. They are **build defaults*
 > **The rule now.** The float keeps bottom-right, stated here rather than left to the stylesheet.
 > A phone card's action pair takes the opposite corner, bottom-left, stacked. Neither decision is
 > weakened and nothing is removed: the two owners of that corner become one, and the other corner
-> was empty (the badge is top-left, the wishlist heart top-right — the heart does **not** move, it
-> never collided).
+> was empty (the badge is top-left, the wishlist heart top-right — the heart does **not** move).
+>
+> **The heart collides too, and is deliberately left alone for now.** An earlier version of this
+> decision claimed it "never collided". That was never measured and it is false: the float covers
+> the heart's centre at 5 of 116 sampled positions at 320x720, 8 of 148 at 320x844, 6 of 100 at
+> 375x667, 5 of 134 at 390x844 and 4 of 219 at 768x1024. The geometry is the mirror image — the
+> heart is at a card's *top*-right and the float at the viewport's *bottom*-right, so they meet as
+> a card enters from below rather than as one leaves at the bottom, which is why moving the action
+> pair did not move this and why a scan of the action pair alone could not see it. It is milder (a
+> missed heart costs no order, and scrolling clears it) and it is tracked as issue #111, to be
+> fixed with W2-08 when the heart gains a real API. Stated here because an unverified claim in this
+> document is the very failure the rule below exists to prevent.
 >
 > **Where the side changes.** At the existing 1024 px breakpoint, which is already where the
 > stacked icon pair becomes a labelled bar: below it the pair is a 44 px column and has a side to
