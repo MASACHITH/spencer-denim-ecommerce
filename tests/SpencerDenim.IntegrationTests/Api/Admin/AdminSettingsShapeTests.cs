@@ -117,8 +117,22 @@ public sealed class AdminSettingsShapeTests(SqlServerDatabaseFixture sqlServer)
             .Order(StringComparer.Ordinal)
             .ToList();
 
+        // Five more in W2-11 (GLB-10): doc 11 P13 step 13's contact details, which join the existing
+        // Contact+Social save unit. This list is spelled out as well as derived below, deliberately — the
+        // derived check alone would pass if a key and its request field were both deleted.
         Assert.Equal(
-            ["FacebookUrl", "InstagramUrl", "RowVersion", "TikTokUrl", "WhatsApp"],
+            [
+                "Address",
+                "Email",
+                "FacebookUrl",
+                "InstagramUrl",
+                "MapEmbedUrl",
+                "OpeningHours",
+                "Phone",
+                "RowVersion",
+                "TikTokUrl",
+                "WhatsApp",
+            ],
             fields);
 
         // The keys the Contact and Social groups hold, derived rather than listed, so adding one to the
@@ -161,6 +175,11 @@ public sealed class AdminSettingsShapeTests(SqlServerDatabaseFixture sqlServer)
             var sent = new Dictionary<string, string>(StringComparer.Ordinal)
             {
                 [SettingKeys.Contact.WhatsApp] = "94770000042",
+                [SettingKeys.Contact.Phone] = "+94 11 234 5678",
+                [SettingKeys.Contact.Email] = "shape-test@example.com",
+                [SettingKeys.Contact.Address] = "Shape Test Studio\nColombo 03\nSri Lanka",
+                [SettingKeys.Contact.OpeningHours] = "Monday to Friday, 9am \u2013 6pm\nSaturday, 9am \u2013 1pm",
+                [SettingKeys.Contact.MapEmbedUrl] = "https://www.google.com/maps/embed?pb=shape-test",
                 [SettingKeys.Social.FacebookUrl] = "https://www.facebook.com/shape-test",
                 [SettingKeys.Social.InstagramUrl] = "https://www.instagram.com/shape-test",
                 [SettingKeys.Social.TikTokUrl] = "https://www.tiktok.com/@shape-test",
@@ -171,6 +190,11 @@ public sealed class AdminSettingsShapeTests(SqlServerDatabaseFixture sqlServer)
                 new
                 {
                     whatsApp = sent[SettingKeys.Contact.WhatsApp],
+                    phone = sent[SettingKeys.Contact.Phone],
+                    email = sent[SettingKeys.Contact.Email],
+                    address = sent[SettingKeys.Contact.Address],
+                    openingHours = sent[SettingKeys.Contact.OpeningHours],
+                    mapEmbedUrl = sent[SettingKeys.Contact.MapEmbedUrl],
                     facebookUrl = sent[SettingKeys.Social.FacebookUrl],
                     instagramUrl = sent[SettingKeys.Social.InstagramUrl],
                     tikTokUrl = sent[SettingKeys.Social.TikTokUrl],

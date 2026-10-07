@@ -131,11 +131,19 @@ public sealed class SettingCatalogTests
     /// leave the settings screen with one box fewer and no test to notice — and a key quietly <i>added</i>
     /// is a row a screen offers that nothing may honour, which is the other half of why this list is
     /// written out rather than counted.
+    /// <para>
+    /// <b>The <c>Contact</c> group was completed in W2-11 (GLB-10), not extended.</b> ADM-22's first slice
+    /// deliberately seeded only the two keys the client was blocked on; doc 11 P13 step 13 puts the Contact
+    /// page's telephone number, email address, postal address, opening hours and map in Settings, and the
+    /// storefront had a placeholder constant standing in for all five (the TODO on
+    /// <c>DEFAULT_SITE_CONFIG</c>, now deleted). They are keys doc 08 §3.8 already named.
+    /// </para>
     /// </summary>
     /// <remarks>
-    /// Five keys when ADM-22 shipped; ten since W3-03 added the <c>Bank</c> group, which doc 11 P7 makes a
-    /// precondition of taking money at all. The test's name no longer counts them, because a name that
-    /// counts is a name that has to be renamed.
+    /// Five keys when ADM-22 shipped; ten once W2-11 completed the <c>Contact</c> group; fifteen since
+    /// W3-03 added the <c>Bank</c> group, which doc 11 P7 makes a precondition of taking money at all.
+    /// The test's name does not count them, because a name that counts is a name that has to be renamed —
+    /// and this list has now been renamed past twice in two weeks.
     /// </remarks>
     [Fact]
     public void The_keys_this_build_populates_are_all_there_and_nothing_else_is()
@@ -144,6 +152,11 @@ public sealed class SettingCatalogTests
         [
             SettingKeys.Store.LogoAssetId,
             SettingKeys.Contact.WhatsApp,
+            SettingKeys.Contact.Phone,
+            SettingKeys.Contact.Email,
+            SettingKeys.Contact.Address,
+            SettingKeys.Contact.OpeningHours,
+            SettingKeys.Contact.MapEmbedUrl,
             SettingKeys.Social.FacebookUrl,
             SettingKeys.Social.InstagramUrl,
             SettingKeys.Social.TikTokUrl,
@@ -218,8 +231,38 @@ public sealed class SettingCatalogTests
         Assert.Equal(SettingValueType.String, instructions.ValueType);
         Assert.NotEqual(SettingValueType.TextHtml, instructions.ValueType);
 
-        // And nothing else in the catalogue is TextHtml either, for the same reason.
+        // And nothing else in the catalogue is TextHtml either, for the same reason — including the five
+        // Contact keys W2-11 added, which the test below pins from the other direction.
         Assert.DoesNotContain(SettingValueType.TextHtml, SettingCatalog.All.Select(d => d.ValueType));
+    }
+
+    /// <summary>
+    /// Every one of the five keys W2-11 adds is a plain <c>String</c>, not doc 08 §3.8's
+    /// <see cref="SettingValueType.TextHtml"/>.
+    /// <para>
+    /// <b>Said as a test because it is the decision that keeps a second stored-XSS surface from existing.</b>
+    /// The postal address and the opening hours are multi-line, which makes <c>TextHtml</c> the tempting
+    /// type — and <c>TextHtml</c> means "sanitised on save and rendered as markup". The storefront splits
+    /// these on newlines and interpolates each line, so there is no markup surface at all; typing them as
+    /// <c>TextHtml</c> would create one in order to then have to defend it. If a later task genuinely needs
+    /// HTML in a settings value, <c>Content.PdpReturnsInfoHtml</c> (PDP-05) is the key doc 08 gives that
+    /// type to.
+    /// </para>
+    /// </summary>
+    [Theory]
+    [InlineData("Contact.Phone")]
+    [InlineData("Contact.Email")]
+    [InlineData("Contact.Address")]
+    [InlineData("Contact.OpeningHours")]
+    [InlineData("Contact.MapEmbedUrl")]
+    public void The_contact_details_are_plain_text_rather_than_html(string key)
+    {
+        var definition = SettingCatalog.Find(key);
+
+        Assert.NotNull(definition);
+        Assert.Equal(SettingValueType.String, definition.ValueType);
+        Assert.Equal(SettingKeys.Contact.Group, definition.GroupKey);
+        Assert.Equal(Permissions.Settings.Edit, definition.RequiredPermission);
     }
 
     [Fact]

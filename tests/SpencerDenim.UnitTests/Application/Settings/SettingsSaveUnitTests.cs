@@ -112,6 +112,17 @@ public sealed class SettingsSaveUnitTests
         string[] contactAndSocial =
         [
             SettingKeys.Contact.WhatsApp,
+
+            // W2-11 (GLB-10): the Contact page's own details. They join this save unit rather than getting
+            // one of their own because they are one strip of one page, filled in from one email from the
+            // client — which is the argument SettingCatalog.SaveUnits already makes for pairing Contact
+            // with Social.
+            SettingKeys.Contact.Phone,
+            SettingKeys.Contact.Email,
+            SettingKeys.Contact.Address,
+            SettingKeys.Contact.OpeningHours,
+            SettingKeys.Contact.MapEmbedUrl,
+
             SettingKeys.Social.FacebookUrl,
             SettingKeys.Social.InstagramUrl,
             SettingKeys.Social.TikTokUrl,

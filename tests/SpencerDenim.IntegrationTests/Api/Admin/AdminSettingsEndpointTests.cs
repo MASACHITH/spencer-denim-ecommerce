@@ -348,10 +348,24 @@ public sealed class AdminSettingsEndpointTests(SqlServerDatabaseFixture sqlServe
             Assert.DoesNotContain("pretend-ciphertext", body.GetRawText(), StringComparison.Ordinal);
             Assert.Equal(JsonValueKind.Null, body.GetProperty("whatsAppNumber").ValueKind);
 
-            // The payload has three members and no general-purpose value, so there is nowhere for one to be.
+            // The payload has four named members and no general-purpose value, so there is nowhere for one
+            // to be. `contact` joined the three in W2-11 (GLB-10); it is itself a named record with five
+            // named members, which is the same guarantee one level down — see
+            // SettingSecretGuardTests.The_contact_block_has_no_field_a_secret_could_occupy.
             Assert.Equal(
-                ["logo", "social", "whatsAppNumber"],
+                ["contact", "logo", "social", "whatsAppNumber"],
                 body.EnumerateObject().Select(property => property.Name).Order(StringComparer.Ordinal));
+
+            // And the same for the nested block, on the live payload rather than on the type: a secret
+            // flipped onto any of the five Contact keys must not appear here either. They are read through
+            // the same `!setting.IsSecret` clause, so this is that clause being exercised rather than a
+            // second mechanism.
+            Assert.Equal(
+                ["addressLines", "email", "hasAny", "mapEmbedUrl", "openingHours", "phone"],
+                body.GetProperty("contact")
+                    .EnumerateObject()
+                    .Select(property => property.Name)
+                    .Order(StringComparer.Ordinal));
         }
         finally
         {

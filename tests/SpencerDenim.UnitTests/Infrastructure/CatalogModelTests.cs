@@ -142,6 +142,18 @@ public sealed class CatalogModelTests
             // SettingFieldRules caps a profile URL at 2,048 characters and a WhatsApp number at 15 digits,
             // so no endpoint in this build can write an unbounded value into it.
             $"{nameof(Setting)}.{nameof(Setting.Value)}",
+
+            // GLB-10 (W2-11), doc 08 §3.7: content.ContentPages.BodyHtml is listed there as
+            // nvarchar(max) and "Sanitised". A policy page is the one piece of admin-written copy with no
+            // natural ceiling — a terms-and-conditions page runs to tens of kilobytes — and sizing the
+            // column would mean choosing a number that one client's lawyer eventually exceeds.
+            //
+            // The *input* is bounded instead, where a person can be told why:
+            // ContentPage.BodyHtmlMaxLength caps it at 200,000 characters and
+            // ContentPageWriteHandlers.CheckBody refuses more with the figure in the message. The check is
+            // deliberately applied to the *cleaned* markup rather than the paste, because the cleaned
+            // markup is what is stored.
+            $"{nameof(SpencerDenim.Domain.Content.ContentPage)}.{nameof(SpencerDenim.Domain.Content.ContentPage.BodyHtml)}",
         ];
 
         var offenders = Model.GetEntityTypes()
@@ -210,12 +222,17 @@ public sealed class CatalogModelTests
             .Select(entity => entity.ClrType)
             .ToList();
 
-        Assert.Equal(4, filtered.Count);
+        Assert.Equal(5, filtered.Count);
         Assert.All(filtered, type => Assert.True(typeof(ISoftDeletable).IsAssignableFrom(type)));
         Assert.Contains(typeof(Product), filtered);
         Assert.Contains(typeof(Category), filtered);
         Assert.Contains(typeof(SizeGuide), filtered);
         Assert.Contains(typeof(SpencerDenim.Domain.Media.MediaAsset), filtered);
+
+        // GLB-10 (W2-11): doc 08 §3.7 marks content.ContentPages [SD], and the filter is what makes a
+        // removed custom page gone rather than hidden — the storefront reader never mentions IsDeleted,
+        // so the filter is the only thing keeping a deleted page off the shop.
+        Assert.Contains(typeof(SpencerDenim.Domain.Content.ContentPage), filtered);
     }
 
     /// <summary>Doc 08 §3.4: Available is a persisted computed column so it can be indexed.</summary>
