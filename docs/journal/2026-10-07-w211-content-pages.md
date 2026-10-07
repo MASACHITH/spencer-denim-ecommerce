@@ -69,12 +69,12 @@ guard for every deeper address on the origin.
 
 | Suite | Result |
 |---|---|
-| xUnit unit | **1,679 passed**, 0 failed, 11 s |
-| xUnit integration, real SQL Server | **1,058 passed**, 0 failed, 14 m 41 s |
-| Vitest storefront | **1,389 passed** (53 files) |
+| xUnit unit | **1,691 passed**, 0 failed, 9 s |
+| xUnit integration, real SQL Server | **1,058 passed**, 0 failed, 15 m 15 s |
+| Vitest storefront | **1,397 passed** (54 files) |
 | Vitest admin | **385 passed** (354 before, +31) |
 | Vitest shared | **24 passed**, unchanged |
-| Playwright, whole suite | **865 passed, 0 failed** at `--workers=1` and at `--workers=2`; **864/1** at the capped default, the one being the known `admin-catalog` flake |
+| Playwright, whole suite | **867 passed, 0 failed** at `--workers=2`. At the capped default, run alongside the SQL integration suite, 866/1 — `search.e2e.ts`'s suggestions overlay, which then passed **246 of 246** on its own with `--repeat-each=3 --workers=1`. |
 
 New: **121** sanitiser cases, 50 content-page write cases, 35 contact-enquiry cases, 12
 system-page-copy cases, 11 reserved-slug
