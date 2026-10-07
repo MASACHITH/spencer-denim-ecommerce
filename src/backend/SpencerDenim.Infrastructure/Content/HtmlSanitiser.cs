@@ -521,7 +521,7 @@ public sealed class HtmlSanitiser : IHtmlSanitiser
             // have come through counted as depth zero and reached the parser 100,000 deep. Inside
             // `<svg>` or `<math>` the slash is real, and modelling that keeps a pasted SVG full of
             // `<path/>` from being counted as a deep tree and refused.
-            var foreignAt = open.FindIndex(static open => open is "svg" or "math");
+            var foreignAt = open.FindIndex(static element => element is "svg" or "math");
 
             // ...but an HTML element that breaks the parser out of foreign content ends that exception at
             // the same moment the parser ends it, and takes the foreign subtree off this stack the way

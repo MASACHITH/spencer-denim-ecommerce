@@ -368,3 +368,95 @@ Writing it measured two things worth recording:
   one, and the residue is one more third-party request from a page whose images the attacker already
   controls.
 - The residues in the section above all still stand.
+
+---
+
+## Round three: two findings, and four notes for whoever owns this next
+
+### M1 was not closed — the exception I added for SVG was the same vector
+
+Round two bounded nesting and the crash went away, which the tester re-verified: no process
+termination, and with `MaxNestingDepth` raised to 100,000 it parsed 60,000-deep trees and survived. But
+the foreign-content exception — honouring a trailing slash inside `<svg>` or `<math>`, because a browser
+honours it — reopened the hole it was added to close.
+
+`<b>`, `<div>`, `<span>` and `<ul>` are **breakout** elements: inside `<svg>` the parser leaves foreign
+content and opens real nesting, while my scan still had `svg` on its stack and went on skipping. Measured
+by the tester against the real `Sanitise`:
+
+| payload | chars | scan read | real depth | outcome |
+|---|---|---|---|---|
+| `<svg>` + `<b/>` × 90,000 | 360 KB | ~1 | 90,000 | refused after **44,035 ms** |
+| `<svg>` + `<div/>` × 66,000 | 396 KB | ~1 | 66,000 | **accepted** after **41,112 ms** |
+| `<svg>` + `<div/>` × 40,000 | 240 KB | ~1 | 40,000 | **accepted** after **11,258 ms** |
+| control: `<b>` × 133,330 | 400 KB | 133,330 | — | refused in **3 ms** |
+
+A five-character prefix turned a 3 ms refusal into 42 seconds at 100% CPU, and for unwrapped elements the
+save *succeeded* after paying it. `AdminContentReader` re-sanitises every row on every content-list load,
+so one poisoned 396 KB row taxed every admin list view by the same 42 seconds — the amplification pattern
+from round two, in its third form: **the screen that would clear the row is the screen nobody can open.**
+Reachable with `Content.Edit`, the role doc 08 §3.7's G-06 split keeps least trusted.
+
+My own `A_trailing_slash_does_not_hide_the_nesting` used `<b/>` with no `<svg>` wrapper, which is exactly
+why it did not cover this.
+
+The scan now pops the foreign subtree when a breakout start tag appears, which is not an approximation of
+the parser but what the parser does. The element list is the HTML standard's own, oddities like `nobr` and
+`listing` included, because a list that leaves one out has a hole in precisely this shape. **Each case
+asserts the clock as well as the verdict**, because the first of them was refused before the fix too —
+forty-four seconds later — so a verdict-only test would have passed against the defect. Mutation proof:
+disabling the pop turns 4 of 5 cases red and takes the filtered run from 1 second to 1 minute 29.
+
+Writing it corrected an expectation of mine. `<math><p/>` × 40,000 is **accepted**, and that is right: `p`
+breaks out and then closes the previous `p`, so they are forty thousand siblings one level deep, which is
+what a browser builds. The test failing is what made me check; asserting the refusal would have pinned a
+false positive against every page that pastes unclosed paragraphs. Five more tests pin the case the
+exception exists for — `path`, `circle`, `rect`, `g`, `use` do not break out.
+
+### The WhatsApp number was the last invented value in the bundle
+
+`whatsAppUrl` fell back to `94770000000` and so could never return null, so a fresh shop carried a
+floating button on **every page** and four links on the Contact page, all opening a chat with nobody.
+`SITE_CONFIG`'s docblock argued for keeping it: GLB-08 says the float is site-wide, and removing it over
+an unset setting would take a scoped feature off the shop. That is wrong in the same way M4's footer
+argument was wrong — a float that reaches nobody is not the feature, and a shopper who messages it
+concludes the shop does not answer.
+
+It now returns `string | null`, and null is the point of the signature: "there is no WhatsApp yet" becomes
+a state every caller has to handle. The float, the mobile-menu row and the panel's "WhatsApp is the
+fastest way" sentence all hide; the panel's two links already did. The float also **drops its landmark**
+when it has no button, because a named `complementary` region with nothing in it is a worse defect than
+the one the landmark was added to fix (#65). A grep of `dist/` now finds no invented value in either
+bundle.
+
+One thing that fix made load-bearing: **the stub's shop now has a WhatsApp number unless a test asks for
+none.** `quick-view`, `wishlist` and `content-pages` scan the bottom-right corner with `elementFromPoint`
+*because the float owns it*, so with no number those scans would pass by measuring a corner with nothing
+in it. A content-pages occlusion test caught exactly that, which is why the switch distinguishes an absent
+`whatsApp` parameter from `whatsApp=none`.
+
+### Four notes, from the coordinator and worth keeping
+
+1. **`ng lint` is in CI** (`ci.yml:145`). The six errors round two found survived only because **the
+   branch was never pushed**, so CI never ran on it. The gate is correctly placed; a never-pushed branch
+   bypasses it by definition. Nothing to fix in the pipeline — but it is the argument for pushing early.
+2. **The suite starts 17 web servers, not sixteen.**
+3. **865/0 is the no-flake outcome, not a guarantee.** #88 can fire at any worker count, and a clean
+   `--workers=1` run tripped it once in the named test (`admin-catalog`, keyboard reorder — a spec this
+   branch does not touch). Expect 864/1 or 865/0.
+4. **`workers: '25%'` is not the whole answer.** The 17 servers are a *fixed* baseline load whatever the
+   worker count, so on a 16–32-core runner 25% could re-oversubscribe them. Whoever owns CI should
+   consider an absolute cap as well as the percentage.
+
+### Two residuals, recorded rather than coded
+
+- **M3's guard covers the seeder only.** Both tests read `HomeContentSeeder` and the seeded rows, so copy
+  written out-of-band — by a migration, or a data fix — is caught by neither. That is arguably outside the
+  claim ("nothing in this repository writes their copy"), and it is a line here rather than code because
+  the honest check would be a constraint on the column, which cannot distinguish the client's own copy
+  from an agent's.
+- **`srcset` survives the render layer**, re-verified by the tester through the real SSR build and
+  hydrated Chromium: it is kept verbatim, `window.__xss` stays `undefined`, and a `javascript:` href is
+  neutralised to `unsafe:`. Correctly a residue — and the note to carry forward is that **any future
+  image-host allow-list must cover `srcset` too**, because the two layers disagree about whether the
+  attribute exists at all.
