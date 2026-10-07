@@ -242,7 +242,14 @@ export const routes: Routes = [
   //
   // An unpublished page is absent from the index, so it falls through to `**` and answers a real 404 —
   // which is the whole of "a draft must not leak": not linked, not crawled, not openable.
-  { path: ':slug', canMatch: [isKnownContentPage], loadComponent: contentPage },
+  //
+  // **`pathMatch: 'full'`, and it is load-bearing** — the same lesson `UNBUILT_PATHS` records having
+  // measured. A route's default is `'prefix'`, so `:slug` matches `/about/x` by consuming `about` and
+  // leaving `x`: the match then fails for want of a child route, but the `canMatch` guard has already
+  // run, so every deeper address on the origin paid for a content-feed lookup it could not use. Caught
+  // by `listing-page.spec.ts`, where `/bogus/thing` left an outstanding `GET /api/content/pages` that
+  // `HttpTestingController.verify()` reported.
+  { path: ':slug', pathMatch: 'full', canMatch: [isKnownContentPage], loadComponent: contentPage },
 
   // The mirror of the listing's own 503 route (#30), for the single-segment space. The content feed did
   // not answer, so the storefront cannot say whether this address is a published page: a 404 here would
@@ -255,6 +262,7 @@ export const routes: Routes = [
   // outside it by construction — the mistake `isUnconfirmedCatalogue` records having measured.
   {
     path: ':slug',
+    pathMatch: 'full',
     canMatch: [isUnconfirmedContentPage],
     loadComponent: catalogUnavailablePage,
   },

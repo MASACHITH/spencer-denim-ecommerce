@@ -36,7 +36,17 @@ export interface SiteSettingsDto {
   readonly logo: SiteLogoDto | null;
   readonly whatsAppNumber: string | null;
   readonly social: readonly SiteSocialLinkDto[];
-  readonly contact: SiteContactDto | null;
+  /**
+   * The contact details (W2-11).
+   *
+   * **Optional, and the distinction from a write model is the point.** W1-12's lesson is that an
+   * optional field in a *request* model is how a column gets silently cleared — a body that omits a
+   * field is a body telling the API to clear it. This is a *response* model, where optional is simply
+   * the truth about a wire payload: an older API, a proxy that rewrote the body, or a 200 of the wrong
+   * shape all legitimately arrive without it, and `toContact` turns every one of those into "the client
+   * has supplied no contact details", which is a state the storefront already renders correctly.
+   */
+  readonly contact?: SiteContactDto | null;
 }
 
 /** The shop's logo once the storefront has decided it is usable. */

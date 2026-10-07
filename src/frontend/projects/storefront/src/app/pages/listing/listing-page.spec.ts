@@ -6,6 +6,10 @@ import { Router, provideRouter } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 
 import { routes } from '../../app.routes';
+import {
+  primeContentPages,
+  primeFailedContentPages,
+} from '../../core/content/content-pages.testing';
 import { NavigationService } from '../../core/navigation/navigation.service';
 import { PagedResult, ProductCardDto } from '../../core/catalog/catalog.model';
 import { MAX_LOADED_PAGES, MAX_PAGE_SIZE, PAGE_SIZE } from '../../core/catalog/listing-state';
@@ -151,6 +155,19 @@ describe('ListingPage', () => {
   }
 
   /**
+   * Answers the published-page index (GLB-10), which a **single-segment** navigation now waits on.
+   *
+   * Priming it with an empty live index is the state of a fresh shop: the client has published none of
+   * the six content pages (doc 11 P13 — they stay unpublished until the copy arrives), so a
+   * single-segment address that is not a department is genuinely not a page and the catch-all's real
+   * 404 is the honest answer. `flushContentPages` is a `match`, so a two- or three-segment navigation
+   * that never asks is fine.
+   */
+  function primeContent(): void {
+    primeContentPages(http);
+  }
+
+  /**
    * Waits for the router to finish, then renders once.
    *
    * `canMatch` puts an asynchronous hop between "navigate" and "the component exists", and
@@ -185,6 +202,11 @@ describe('ListingPage', () => {
 
   async function goTo(url: string): Promise<void> {
     primeDepartments();
+
+    // Primed before navigating, like the departments feed above and for the same reason: a
+    // single-segment address waits on the content guard, and the guard waits on this index.
+    primeContent();
+
     harness = await RouterTestingHarness.create(url);
     await activated();
   }
@@ -698,9 +720,14 @@ describe('ListingPage', () => {
      * the redirect (#28, and `app.routes.ts` on `UNBUILT_PATHS`).
      */
     // `/not-a-department` left this list in W2-10 (#28 — it is a real 404 now, see below), `/bag` left
-    // it in W2-09 and `/wishlist` in W2-08 (both are real pages now). The four that remain are still in
-    // `UNBUILT_PATHS`, so they still redirect to the home page.
-    for (const path of ['/account', '/privacy', '/contact', '/terms']) {
+    // it in W2-09 and `/wishlist` in W2-08 (both are real pages now).
+    //
+    // **W2-11 took the last three of the content pages out of it (GLB-10).** `/privacy`, `/contact` and
+    // `/terms` no longer redirect home: they are content-page addresses now, and on a shop whose client
+    // has published nothing they are addresses the shop genuinely does not have — so the honest answer
+    // is the catch-all's real 404, not the home page at HTTP 200, which is #28's own defect. The three
+    // cases that replace this loop are below.
+    for (const path of ['/account']) {
       it(`${path} goes back to the home page, not to the listing`, async () => {
         await goTo(path);
 
@@ -712,6 +739,44 @@ describe('ListingPage', () => {
         expect(text()).not.toContain('could not find that page');
       });
     }
+
+    /**
+     * The three content-page addresses this listing used to swallow (GLB-10, W2-11).
+     *
+     * **Nothing is published on a fresh shop**, so each of these is a 404 rather than a redirect — and
+     * crucially it is *not* this listing's "no products found" state, which is the thing this whole
+     * describe block exists to prevent: telling a shopper a department is missing when they clicked
+     * "Privacy policy".
+     */
+    for (const path of ['/privacy', '/contact', '/terms']) {
+      it(`${path} is a real 404 while the client has published nothing`, async () => {
+        await goTo(path);
+
+        expect(TestBed.inject(Router).url).toBe(path);
+        expect(text()).toContain('could not find that page');
+        expect(text()).not.toContain('No products found');
+      });
+    }
+
+    /**
+     * #30, in the single-segment space (GLB-10, W2-11).
+     *
+     * The content feed did not answer, so the storefront cannot say whether `/returns` is a published
+     * policy page. A 404 here would deindex a live one for the length of an API wobble, so the answer
+     * is the 503 page — and it must not be this listing's not-found state either.
+     */
+    it('answers 503 for a single segment when the content feed could not be read', async () => {
+      primeDepartments();
+      primeFailedContentPages(http);
+
+      harness = await RouterTestingHarness.create('/returns');
+      await activated();
+
+      expect(TestBed.inject(Router).url).toBe('/returns');
+      expect(text()).toContain('We could not load this page just now');
+      expect(text()).not.toContain('could not find that page');
+      expect(text()).not.toContain('No products found');
+    });
 
     /**
      * **#28, and the reason this test changed rather than was deleted.**
