@@ -26,6 +26,24 @@ export const CONTENT_PAGES_TIMEOUT_MS = 2_000;
 const CONTENT_PAGES_HANDOVER = 'content:pages';
 
 /**
+ * Where the server leaves one page's body for the browser, keyed by slug.
+ *
+ * **This exists because the first version did not have it, and the cost was not a wasted request.**
+ * The server render fetched the page and the browser fetched it again on hydration — which is the
+ * defect `ServerHandover`'s own documentation records having found across the catalogue ("every
+ * catalogue call was therefore made twice, and the second one replaced server-rendered content with a
+ * loading state"). Here the second call is worse than wasteful: if it fails, `ContentPage` renders its
+ * missing state, so **a transient blip turns a perfectly good server-rendered policy page into a 404 in
+ * the shopper's browser**, with the real page already on screen and then taken away. Measured in
+ * `content-pages.e2e.ts`, where the browser's own `/api/content/pages/about` answered 404 and the
+ * heading changed from "Our story" to "We could not find that page" a moment after load.
+ *
+ * Keyed by slug so a client-side navigation to a second content page is not handed the first one's
+ * body, and taken once, so a shopper who comes back later gets a fresh read rather than a replay.
+ */
+const contentPageHandover = (slug: string): string => `content:page:${slug}`;
+
+/**
  * The published content pages (GLB-10): what the footer links to, and what the router uses to decide
  * whether a single-segment address is a page, is genuinely not a page, or cannot be decided at all.
  *
@@ -65,9 +83,25 @@ export class ContentPageService {
    */
   readonly pages: Signal<readonly ContentPageLink[]> = computed(() => this.index().pages);
 
-  /** One published page by slug. 404 travels to the caller, which turns it into the 404 page. */
+  /**
+   * One published page by slug. A 404 travels to the caller, which turns it into the missing state.
+   *
+   * The server's read is handed to the browser with the page (see {@link contentPageHandover}), so
+   * hydration does not ask again — and cannot replace a rendered page with a 404 because the second
+   * ask failed. Only a **successful** read is handed over: a failure hands over nothing, so the browser
+   * retries it, which is the arrangement `NavigationService` arrived at after the same mistake.
+   */
   page(slug: string): Observable<ContentPageDto> {
-    return this.http.get<ContentPageDto>(`/api/content/pages/${encodeURIComponent(slug)}`);
+    const key = contentPageHandover(slug);
+    const handedOver = this.handover.take<ContentPageDto>(key);
+
+    if (handedOver && typeof handedOver.slug === 'string' && typeof handedOver.bodyHtml === 'string') {
+      return of(handedOver);
+    }
+
+    return this.http
+      .get<ContentPageDto>(`/api/content/pages/${encodeURIComponent(slug)}`)
+      .pipe(tap((page) => this.handover.give(key, page)));
   }
 
   /** The published page with this system key, or null — so nothing matches on an editable slug. */

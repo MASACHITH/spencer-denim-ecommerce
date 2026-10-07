@@ -630,13 +630,20 @@ export class ContactPanel {
    * Moves focus to an element that the change just made, after the view has caught up.
    *
    * Through `DOCUMENT` rather than the global, because this component renders on the server too and
-   * there is no global `document` there. `queueMicrotask` rather than `setTimeout(0)`: the signal write
-   * above schedules change detection, and a microtask runs after it without adding a visible frame.
+   * there is no global `document` there.
+   *
+   * **`setTimeout(0)` and not `queueMicrotask`, which is what the first version used and what did not
+   * work.** A signal write schedules change detection as a task, not a microtask, so a microtask runs
+   * *before* the view has been re-rendered and the element it is looking for does not exist yet. Focus
+   * then stayed on `<body>` — the exact harm the re-homing exists to prevent, arrived at by trying to
+   * prevent it. Measured by `content-pages.e2e.ts`, which reads `document.activeElement` after the
+   * form is replaced; a jsdom test would not have caught it, because `fixture.detectChanges()` is
+   * synchronous there.
    */
   private focusAfterRender(elementId: string): void {
-    queueMicrotask(() => {
+    setTimeout(() => {
       const target = this.document.getElementById(elementId);
       target?.focus();
-    });
+    }, 0);
   }
 }

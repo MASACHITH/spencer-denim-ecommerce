@@ -1,4 +1,13 @@
-import { ChangeDetectionStrategy, Component, DestroyRef, RESPONSE_INIT, computed, inject, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  DestroyRef,
+  RESPONSE_INIT,
+  computed,
+  effect,
+  inject,
+  untracked,
+} from '@angular/core';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { toSignal } from '@angular/core/rxjs-interop';
 import { catchError, map, of, switchMap } from 'rxjs';
@@ -59,7 +68,7 @@ type State =
           @if (page()!.bodyHtml) {
             <!-- Already-sanitised HTML from the API, bound so Angular's sanitiser runs over it too.
                  See the component's own documentation for why both layers are kept. -->
-            <div class="page__body" [innerHTML]="page()!.bodyHtml"></div>
+            <div class="page__body rich rich--page" [innerHTML]="page()!.bodyHtml"></div>
           } @else if (!isContact()) {
             <!-- A page the client has published with nothing in it. It is a real page and it says so,
                  rather than rendering a heading over empty space. The Contact page is excluded because
@@ -144,95 +153,13 @@ type State =
       padding-top: var(--space-1);
     }
 
-    /* The body is admin-written markup, so it is styled by element rather than by class: there are no
-       classes on it to hook, because the sanitiser's allow-list does not permit the 'class' attribute.
-       That is deliberate — a client cannot accidentally reach into the theme — and it means every
-       element the allow-list does permit needs a rule here, or it renders unstyled. */
-    .page__body {
-      line-height: 1.7;
-    }
-    .page__body > * + * {
-      margin-top: var(--space-2);
-    }
-    .page__body h2 {
-      font-size: var(--text-h3);
-      margin-top: var(--space-5);
-    }
-    .page__body h3 {
-      font-size: var(--text-h4);
-      margin-top: var(--space-4);
-    }
-    .page__body h4 {
-      font-size: var(--text-body);
-      font-weight: 600;
-      margin-top: var(--space-3);
-    }
-    .page__body ul,
-    .page__body ol {
-      padding-left: var(--space-3);
-    }
-    .page__body li + li {
-      margin-top: var(--space-0-5);
-    }
-    .page__body a {
-      color: var(--color-primary);
-      text-decoration: underline;
-      /* An inline link inside a paragraph cannot be given a 44 px box without breaking the line box it
-         sits in, and WCAG 2.2's 2.5.8 exempts a target "in a sentence or block of text" for exactly
-         that reason. The underline and the 1.7 line height are what make it hittable; the project's
-         44 px floor applies to the standalone links above, which have it. */
-    }
-    .page__body img {
-      max-width: 100%;
-      height: auto;
-      display: block;
-    }
-    .page__body figure {
-      margin: 0;
-    }
-    .page__body figcaption {
-      color: var(--color-text-muted);
-      font-size: var(--text-small);
-      padding-top: var(--space-0-5);
-    }
-    .page__body blockquote {
-      border-left: 2px solid var(--color-border);
-      padding-left: var(--space-2);
-      color: var(--color-text-muted);
-    }
-    .page__body hr {
-      border: 0;
-      border-top: 1px solid var(--color-border);
-    }
-    /* A shipping page is mostly a table of zones and fees, and a wide one must not make the whole
-       document scroll sideways (GLB-09: no horizontal scroll at any of the eight widths). The wrapper
-       the body would need for that cannot be added — the allow-list permits no markup around the table
-       — so the table itself scrolls, which 'display: block' plus 'overflow-x: auto' gives it. */
-    .page__body table {
-      display: block;
-      overflow-x: auto;
-      width: 100%;
-      border-collapse: collapse;
-      font-size: var(--text-small);
-    }
-    .page__body th,
-    .page__body td {
-      border: 1px solid var(--color-border);
-      padding: var(--space-1) var(--space-1-5);
-      text-align: left;
-      vertical-align: top;
-    }
-    .page__body th {
-      background: var(--color-bg-alt);
-      font-weight: 600;
-    }
-    .page__body caption {
-      caption-side: bottom;
-      color: var(--color-text-muted);
-      font-size: var(--text-small);
-      padding-top: var(--space-1);
-      text-align: left;
-    }
+    /* **The body's own styles are in projects/storefront/src/styles.css, not here, and that is not a
+       preference.** Content injected with [innerHTML] carries no _ngcontent attribute, so a component's
+       scoped styles can never reach it: every rule written here for '.page__body table', '.page__body h2'
+       and the rest matched nothing at all. Measured by content-pages.e2e.ts, which read 'overflow-x'
+       off a table inside the body and got the empty string. The global sheet's '.rich'/'.rich--page'
+       block is where they live, which is the convention PDP-05's product description already set and the
+       note in that file already anticipated for this task. */
   `,
 })
 export class ContentPage {
@@ -241,9 +168,6 @@ export class ContentPage {
   private readonly pageMeta = inject(PageMeta);
   private readonly robots = inject(RobotsMeta);
   private readonly response = inject(RESPONSE_INIT, { optional: true });
-
-  /** Set once per resolved address, so a client-side navigation away clears what this page claimed. */
-  private readonly announcedMissing = signal(false);
 
   protected readonly state = toSignal(
     this.route.paramMap.pipe(
@@ -302,45 +226,40 @@ export class ContentPage {
   });
 
   constructor() {
-    // The metadata is set as an effect of the state rather than in the subscription, so a client-side
-    // navigation between two content pages updates it — and so the server render has it before the HTML
-    // is produced.
+    // **An `effect`, and the first version was wrong about this.** It read the state signal once in the
+    // constructor, reasoning that a server render would have resolved it by then — and it had not: the
+    // HTTP call resolves later, so the title, the description and the canonical address were never set
+    // at all. The body still rendered, because the template reads the signal reactively, which is
+    // exactly what made it invisible until `content-pages.e2e.ts` read the document title off the wire.
+    //
+    // An effect is the primitive the product page uses for the same job and for the same reason: the
+    // server render waits for stability before serialising, so an effect that runs during change
+    // detection has set the tags before the HTML a crawler reads is produced. `untracked` around the
+    // writes, as there, so setting a tag cannot re-trigger the effect.
+    effect(() => {
+      const state = this.state();
+
+      untracked(() => {
+        if (state.kind === 'page') {
+          this.describePage(state.page);
+          return;
+        }
+
+        if (state.kind === 'missing') {
+          this.describeMissing();
+        }
+      });
+    });
+
+    // The next page owns its own canonical address and card, or has none.
     inject(DestroyRef).onDestroy(() => {
       this.pageMeta.clear();
       this.robots.clear();
     });
-
-    this.describe();
-  }
-
-  private describe(): void {
-    // A computed that runs for its side effects would be wrong (it would not run unless read), so this
-    // is an explicit effect-like subscription on the same signal the template reads.
-    const apply = (): void => {
-      const state = this.state();
-
-      if (state.kind === 'page') {
-        this.describePage(state.page);
-        return;
-      }
-
-      if (state.kind === 'missing') {
-        this.describeMissing();
-      }
-    };
-
-    // Angular's `effect` is the right primitive and it is deliberately not used during SSR for
-    // metadata: effects are flushed after the first render pass, which is after the HTML the crawler
-    // reads has been produced. `toObservable` on the state signal would have the same problem. So the
-    // state is read once synchronously here — `toSignal` has already resolved it during a server render,
-    // because the render waits for the HTTP call — and again whenever the route's params change.
-    apply();
-
-    this.route.paramMap.subscribe(() => apply());
   }
 
   private describePage(page: ContentPageDto): void {
-    this.announcedMissing.set(false);
+    // A page that is fine must not inherit the noindex a 404 left behind on a client-side navigation.
     this.robots.clear();
 
     if (this.response) {
@@ -377,12 +296,6 @@ export class ContentPage {
    * `NotFoundPage` documents in full.
    */
   private describeMissing(): void {
-    if (this.announcedMissing()) {
-      return;
-    }
-
-    this.announcedMissing.set(true);
-
     this.pageMeta.set({
       title: brandPageTitle('Page not found'),
       description: `The page you asked for is not part of the ${BRAND.name} store.`,
