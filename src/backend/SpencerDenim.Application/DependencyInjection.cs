@@ -252,6 +252,10 @@ public static class DependencyInjection
             ICommandHandler<SubmitBankTransferReferenceCommand, SubmitBankTransferReferenceResult>,
             SubmitBankTransferReferenceCommandHandler>();
 
+        services.AddScoped<
+            ICommandHandler<SubmitBankTransferSlipCommand, SubmitBankTransferSlipResult>,
+            SubmitBankTransferSlipCommandHandler>();
+
         // Settings (ADM-22 + W3-03): the bank details a customer transfers to, under Settings.Payments.
         services.AddScoped<
             ICommandHandler<UpdateBankDetailsCommand, SettingsWriteResult>,

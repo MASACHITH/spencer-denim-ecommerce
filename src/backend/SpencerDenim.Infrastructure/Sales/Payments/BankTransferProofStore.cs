@@ -1,6 +1,7 @@
 using System.Data;
 using Microsoft.EntityFrameworkCore;
 using SpencerDenim.Application.Sales.Payments.Abstractions;
+using SpencerDenim.Domain.Media;
 using SpencerDenim.Domain.Sales;
 using SpencerDenim.Infrastructure.Persistence;
 
@@ -28,6 +29,13 @@ internal sealed class BankTransferProofStore(AppDbContext dbContext) : IBankTran
             """,
             cancellationToken) == 1;
 
+    public async Task<int?> CurrentProofAssetIdAsync(int paymentId, CancellationToken cancellationToken) =>
+        await dbContext.Payments
+            .AsNoTracking()
+            .Where(payment => payment.Id == paymentId)
+            .Select(payment => payment.ProofAssetId)
+            .FirstOrDefaultAsync(cancellationToken);
+
     /// <summary>
     /// Points the payment at the new slip and soft-deletes the previous one, in one transaction.
     /// </summary>
@@ -46,12 +54,31 @@ internal sealed class BankTransferProofStore(AppDbContext dbContext) : IBankTran
     /// </remarks>
     public async Task<bool> ReplaceProofAsync(
         int paymentId,
-        int newAssetId,
+        Guid newAssetPublicId,
         int? previousAssetId,
         int? actingUserId,
         DateTime nowUtc,
         CancellationToken cancellationToken)
     {
+        // Resolved here, from the token, and narrowed to what a slip may be: private, Ready, not deleted.
+        // The Application layer never handles internal media ids \u2014 the same rule the settings' logo
+        // follows \u2014 and the narrowing is what stops a payment being pointed at a public library image,
+        // which would publish it through a route that promises a private file.
+        var asset = await dbContext.MediaAssets
+            .AsNoTracking()
+            .Where(candidate =>
+                candidate.PublicId == newAssetPublicId
+                && candidate.Visibility == MediaVisibility.Private
+                && candidate.Status == MediaAssetStatus.Ready
+                && !candidate.IsDeleted)
+            .Select(candidate => (int?)candidate.Id)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (asset is not { } newAssetId)
+        {
+            return false;
+        }
+
         var strategy = dbContext.Database.CreateExecutionStrategy();
 
         return await strategy.ExecuteAsync(async () =>
@@ -81,14 +108,35 @@ internal sealed class BankTransferProofStore(AppDbContext dbContext) : IBankTran
 
                 if (previousAssetId is { } previous && previous != newAssetId)
                 {
-                    var asset = await dbContext.MediaAssets
-                        .FirstOrDefaultAsync(candidate => candidate.Id == previous, cancellationToken);
+                    // **Only when nothing else points at it, and this guard closes a real hole in the
+                    // schema rather than a theoretical one.** `UX_MediaAssets_Checksum_Ready` is unique on
+                    // (Checksum, MediaType, Visibility) for live Ready rows, so two *identical* private
+                    // files cannot both exist: the second upload is answered from the existing asset. If
+                    // two orders ever end up sharing one slip asset that way, soft-deleting it here when
+                    // one of them replaces their slip would make the other order's slip vanish from the
+                    // staff queue — a customer's evidence destroyed by somebody else's upload.
+                    //
+                    // Identical bytes across two real slips is vanishingly unlikely (a photograph or a
+                    // bank's PDF differs every time), and the deduplication is forced by the index, so the
+                    // fix is this one read rather than a migration. It is doc 08 §3.3's own delete guard,
+                    // asked of the FK that actually exists.
+                    var stillReferenced = await dbContext.Payments
+                        .AsNoTracking()
+                        .AnyAsync(
+                            candidate => candidate.ProofAssetId == previous && candidate.Id != paymentId,
+                            cancellationToken);
 
-                    // SoftDelete rather than an UPDATE, because the entity owns the rule: IsDeleted has a
-                    // private setter and the audit interceptor stamps the row on SaveChanges.
-                    asset?.SoftDelete(nowUtc, actingUserId);
+                    if (!stillReferenced)
+                    {
+                        var asset = await dbContext.MediaAssets
+                            .FirstOrDefaultAsync(candidate => candidate.Id == previous, cancellationToken);
 
-                    await dbContext.SaveChangesAsync(cancellationToken);
+                        // SoftDelete rather than an UPDATE, because the entity owns the rule: IsDeleted
+                        // has a private setter and the audit interceptor stamps the row on SaveChanges.
+                        asset?.SoftDelete(nowUtc, actingUserId);
+
+                        await dbContext.SaveChangesAsync(cancellationToken);
+                    }
                 }
 
                 await transaction.CommitAsync(cancellationToken);

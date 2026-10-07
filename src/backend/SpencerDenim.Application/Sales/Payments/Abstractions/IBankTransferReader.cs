@@ -44,6 +44,24 @@ public interface IBankTransferReader
     Task<BankTransferTarget?> FindTargetAsync(Guid orderPublicId, CancellationToken cancellationToken);
 
     /// <summary>
+    /// The slip on an order's most recent bank payment, as a file to stream, or <see langword="null"/>
+    /// when there is none.
+    /// </summary>
+    /// <remarks>
+    /// <b>Found by the order, never by the asset's own token, and that is the access control.</b> A
+    /// private asset has no public URL (doc 08 §3.3) and the only two parties who may see a slip are the
+    /// customer holding the order link and a staff member with <c>Orders.View</c>. Both of them name an
+    /// <i>order</i>; neither has any business naming a media asset, and a route keyed on the asset would
+    /// serve any private file in the system to whoever could produce its id.
+    /// <para>
+    /// "Most recent" rather than "the open payment's", so that staff can still open the slip of an order
+    /// they have already approved — the evidence outlives the decision — and so a customer whose transfer
+    /// was rejected can still see what they sent.
+    /// </para>
+    /// </remarks>
+    Task<PaymentSlipFile?> FindSlipAsync(Guid orderPublicId, CancellationToken cancellationToken);
+
+    /// <summary>
     /// The open bank payment of a <c>PendingPayment</c> order reached by its public token, which is the
     /// only thing a customer may attach a reference or a slip to (doc 08 §3.3 N10).
     /// <see langword="null"/> when the order is not in that state, so "no such order" and "that order can
@@ -92,6 +110,22 @@ public sealed record BankTransferTarget(
 /// <param name="ProofFileName">What the customer called the file.</param>
 /// <param name="ProofContentType">Image or PDF, so a page knows what to draw before fetching it.</param>
 /// <param name="ProofUploadedAtUtc">When it arrived.</param>
+/// <summary>
+/// One stored slip, ready to stream.
+/// </summary>
+/// <param name="StorageKey">
+/// The key under <c>private/</c>. It never reaches a client: the reverse proxy does not mount that volume
+/// (doc 03 §4) and this is the only thing that opens it.
+/// </param>
+/// <param name="ContentType">From the file's signature at upload, never from what the client claimed.</param>
+/// <param name="SizeBytes">For <c>Content-Length</c>.</param>
+/// <param name="LastModifiedUtc">When the asset row was created, which is when the bytes landed.</param>
+public sealed record PaymentSlipFile(
+    string StorageKey,
+    string ContentType,
+    long SizeBytes,
+    DateTime LastModifiedUtc);
+
 public sealed record CustomerBankPayment(
     int OrderId,
     int PaymentId,

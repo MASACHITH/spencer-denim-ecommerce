@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using SpencerDenim.Application.Sales.Payments.Abstractions;
 using SpencerDenim.Application.Sales.Payments.Contracts;
+using SpencerDenim.Domain.Media;
 using SpencerDenim.Domain.Sales;
 using SpencerDenim.Infrastructure.Persistence;
 
@@ -159,6 +160,29 @@ internal sealed class BankTransferReader(AppDbContext dbContext) : IBankTransfer
             payment?.Id,
             payment?.Status);
     }
+
+    public async Task<PaymentSlipFile?> FindSlipAsync(
+        Guid orderPublicId,
+        CancellationToken cancellationToken) =>
+        await dbContext.Payments
+            .AsNoTracking()
+            .Where(payment =>
+                payment.Order!.PublicId == orderPublicId
+                && payment.ProviderCode == PaymentProviderCodes.BankTransfer
+                && payment.ProofAsset != null
+                && !payment.ProofAsset.IsDeleted
+                && payment.ProofAsset.Status == MediaAssetStatus.Ready
+
+                // Private only. A payment could only point at a public asset through a bug, and serving one
+                // from a route that promises a private file would be the wrong half of that bug to indulge.
+                && payment.ProofAsset.Visibility == MediaVisibility.Private)
+            .OrderByDescending(payment => payment.Id)
+            .Select(payment => new PaymentSlipFile(
+                payment.ProofAsset!.StorageKey,
+                payment.ProofAsset.ContentType,
+                payment.ProofAsset.SizeBytes,
+                payment.ProofAsset.CreatedAtUtc))
+            .FirstOrDefaultAsync(cancellationToken);
 
     /// <summary>
     /// The open payment of a <c>PendingPayment</c> bank order, found by its public token.

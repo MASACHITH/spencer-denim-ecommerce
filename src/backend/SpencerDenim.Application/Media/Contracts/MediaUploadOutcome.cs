@@ -30,6 +30,28 @@ public sealed record UploadImageRequest(
     int? UploadedByUserId);
 
 /// <summary>
+/// A customer's bank-transfer slip (PAY-01, doc 11 P7 step 3, doc 08 §3.3 N10).
+/// </summary>
+/// <remarks>
+/// <b>Its own request type rather than <see cref="UploadImageRequest"/> with
+/// <see cref="MediaVisibility.Private"/>, for two reasons that are both about what cannot be chosen.</b>
+/// A slip may be a <b>PDF</b> — doc 08 §3.3 allows "PDF only when Visibility = Private" and a bank's
+/// receipt very often is one — which the image path refuses by signature. And the visibility must not be
+/// a parameter here at all: a caller that could ask for a public slip would be a caller that could put a
+/// customer's bank document on the volume the reverse proxy serves. There is no field for it.
+/// <para>
+/// There is no alt text and no title either: nobody curates a slip, it is evidence. The uploader is
+/// <see langword="null"/> for a guest, which is what <c>MediaAssets.UploadedByUserId</c> is nullable for.
+/// </para>
+/// </remarks>
+/// <param name="File">The uploaded bytes and the customer's filename.</param>
+/// <param name="UploadedByUserId">
+/// Null for a guest, which is every customer today (ACC-01 is W3-01). It is here so a signed-in customer's
+/// upload is attributable the day sign-in exists, rather than this record having to change then.
+/// </param>
+public sealed record UploadPaymentSlipRequest(MediaUploadFile File, int? UploadedByUserId);
+
+/// <summary>
 /// A video upload. The poster travels with it because doc 08 §3.3's check constraint
 /// (<c>MediaType = 2 ⇒ PosterAssetId NOT NULL</c>) means a video row cannot exist without one, and
 /// nothing here converts or extracts frames — the VPS has 2 vCPUs (doc 03 §3b).

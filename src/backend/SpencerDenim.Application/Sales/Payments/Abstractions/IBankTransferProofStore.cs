@@ -30,14 +30,29 @@ public interface IBankTransferProofStore
     /// Points the open bank payment at a newly uploaded slip and soft-deletes the one it held, in one
     /// transaction (doc 08 §3.3 N10: "at most one current file per payment").
     /// </summary>
-    /// <returns><see langword="false"/> on the same condition as <see cref="SetReferenceAsync"/>.</returns>
+    /// <returns>
+    /// <see langword="false"/> on the same condition as <see cref="SetReferenceAsync"/>, and also when
+    /// <paramref name="newAssetPublicId"/> names no usable private asset — which cannot happen from the
+    /// upload path and is refused rather than trusted, because the alternative is a payment pointing at an
+    /// asset somebody else owns.
+    /// </returns>
     Task<bool> ReplaceProofAsync(
         int paymentId,
-        int newAssetId,
+        Guid newAssetPublicId,
         int? previousAssetId,
         int? actingUserId,
         DateTime nowUtc,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The slip currently on a payment, re-read immediately before a replacement.
+    /// </summary>
+    /// <remarks>
+    /// Its own call rather than a value carried from an earlier read, because two uploads in quick
+    /// succession would otherwise have the second one soft-delete the asset the first had already replaced
+    /// — leaving the live slip undeleted and a dead one not.
+    /// </remarks>
+    Task<int?> CurrentProofAssetIdAsync(int paymentId, CancellationToken cancellationToken);
 
     /// <summary>
     /// Ensures the order has an open <c>Pending</c> bank payment, creating one if its previous attempt was

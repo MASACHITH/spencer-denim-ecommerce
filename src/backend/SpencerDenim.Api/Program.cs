@@ -28,6 +28,7 @@ builder.Services.AddApiOpenApi();
 builder.Services.AddApiHealthChecks();
 builder.Services.AddApiForwardedHeaders();
 builder.Services.AddNewsletterSignupThrottle();
+builder.Services.AddPaymentSlipUploadThrottle();
 // Output caching, with no base policy: only the sitemap feed opts in (see SitemapOutputCache for the
 // window and why it is a minute rather than matching the storefront's fifteen).
 builder.Services.AddSitemapOutputCache();
@@ -95,6 +96,7 @@ app.MapContentEndpoints();
 app.MapSiteSettingsEndpoints();
 app.MapAdminSettingsEndpoints();
 app.MapAdminBankTransferEndpoints();
+app.MapPaymentSlipEndpoints();
 app.MapCartEndpoints();
 app.MapWishlistEndpoints();
 app.MapCheckoutEndpoints();
