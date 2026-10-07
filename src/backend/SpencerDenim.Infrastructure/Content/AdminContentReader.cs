@@ -62,7 +62,7 @@ internal sealed class AdminContentReader(AppDbContext dbContext, IHtmlSanitiser 
                 row.Title,
                 row.IsPublished,
                 HasBody: row.BodyHtml.Length > 0,
-                ImagesMissingAltText: sanitiser.Sanitise(row.BodyHtml).ImagesMissingAltText,
+                ImagesMissingAltText: MissingAltText(row.BodyHtml),
                 row.PublishedAtUtc,
                 row.UpdatedAtUtc,
                 CanBeDeleted: !ContentPageKeys.IsSystemKey(row.SystemKey),
@@ -105,7 +105,7 @@ internal sealed class AdminContentReader(AppDbContext dbContext, IHtmlSanitiser 
                 row.PublishedAtUtc,
                 row.UpdatedAtUtc,
                 CanBeDeleted: !ContentPageKeys.IsSystemKey(row.SystemKey),
-                ImagesMissingAltText: sanitiser.Sanitise(row.BodyHtml).ImagesMissingAltText,
+                ImagesMissingAltText: MissingAltText(row.BodyHtml),
                 RowVersion: Token(row.RowVersion));
     }
 
@@ -280,4 +280,23 @@ internal sealed class AdminContentReader(AppDbContext dbContext, IHtmlSanitiser 
     /// </summary>
     private static string Token(byte[]? rowVersion) =>
         rowVersion is null ? string.Empty : Convert.ToBase64String(rowVersion);
+
+    /// <summary>
+    /// How many images in a stored body have no alt text, and <b>zero for a body the sanitiser will not
+    /// read</b>.
+    /// <para>
+    /// Zero rather than a refusal, because this is a list and a detail screen, and the useful behaviour
+    /// for a row nobody can parse is that the screen still opens so a staff member can see the row and
+    /// repair it. The publish gate answers the same question differently — it refuses, with
+    /// <c>ContentConflictCodes.BodyNotReadable</c> — and that asymmetry is the right way round: reading is
+    /// allowed to know less, publishing is not allowed to guess.
+    /// </para>
+    /// <para>
+    /// Such a row can only have been written outside this API, since the save refuses the same markup. The
+    /// reason this method exists at all is that before the sanitiser bounded nesting, that row terminated
+    /// the API process on every read of this screen — so the one page a staff member would use to fix it
+    /// was the page that killed the service.
+    /// </para>
+    /// </summary>
+    private int MissingAltText(string bodyHtml) => sanitiser.Sanitise(bodyHtml).ImagesMissingAltText;
 }

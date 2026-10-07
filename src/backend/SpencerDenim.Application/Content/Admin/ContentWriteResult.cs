@@ -98,4 +98,17 @@ public static class ContentConflictCodes
     /// W1-03's <c>published_product_would_break</c>, one feature over.
     /// </summary>
     public const string PublishedPageWouldBreak = "published_page_would_break";
+
+    /// <summary>
+    /// The page's <b>stored</b> body is markup the sanitiser will not parse — longer than
+    /// <c>HtmlSanitiser.MaxInputLength</c> or nested past <c>HtmlSanitiser.MaxNestingDepth</c> — so the
+    /// publish gate cannot read it to check its images, and a gate that cannot check refuses.
+    /// <para>
+    /// Only reachable for a row that did not come through this API, because the same markup is refused on
+    /// the way in. That is the case worth a code of its own: a support script, data fix or restore is
+    /// exactly how such a row appears, and the staff member meeting this message needs to be told the
+    /// stored copy is the problem rather than the one they are sending.
+    /// </para>
+    /// </summary>
+    public const string BodyNotReadable = "body_not_readable";
 }

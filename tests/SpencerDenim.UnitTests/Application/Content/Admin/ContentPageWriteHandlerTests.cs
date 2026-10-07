@@ -338,6 +338,92 @@ public sealed class ContentPageWriteHandlerTests
 
     // ---- publishing ------------------------------------------------------------------------------
 
+    // ---- Major 1: markup the sanitiser will not parse ---------------------------------------------
+
+    /// <summary>
+    /// The depth bound reaching the staff member as a message on the field they typed into, rather than
+    /// as a terminated process.
+    /// <para>
+    /// 8,500 opening tags are 25,501 characters against a 200,000 limit, so the length check in
+    /// <c>CheckBody</c> is not involved and never could have been. What this pins is the <i>shape</i> of
+    /// the answer: a validation error on <c>bodyHtml</c>, so the form shows it under the editor, nothing
+    /// is written, and no audit row is issued.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task A_body_too_deeply_nested_to_parse_is_a_validation_error_on_the_field()
+    {
+        var page = _store.Seed(
+            1, "returns", "Returns and exchanges", bodyHtml: "<p>The copy the client wrote.</p>");
+
+        var result = await Handlers().HandleAsync(
+            new UpdateContentPageCommand(
+                page.Id,
+                Patched.Unset<string?>(),
+                Patched.Unset<string?>(),
+                Patched.Set<string?>(string.Concat(Enumerable.Repeat("<b>", 8_500)) + "x"),
+                Patched.Unset<string?>(),
+                Patched.Unset<string?>(),
+                FakeContentPageStore.Token(page),
+                Actor),
+            Token);
+
+        var invalid = Assert.IsType<ContentWriteResult.Invalid>(result);
+        Assert.Contains(invalid.Errors, error => error.Field == "bodyHtml");
+
+        // And the copy that was there is still there: a refusal must not be a deletion.
+        Assert.Equal("<p>The copy the client wrote.</p>", page.BodyHtml);
+        Assert.Empty(_audit.Entries);
+    }
+
+    /// <summary>
+    /// The read-path half of the same finding. A row like this cannot be written through the API — the
+    /// test above refuses it — so it got there through a support script, a data fix or a restore, which
+    /// is exactly the case the sanitiser port's remarks say the API cannot assume away.
+    /// <para>
+    /// The publish gate has to read that body to count its images, cannot, and therefore refuses. A gate
+    /// that cannot check must not pass: the alternative is a page going on the shop with its alt text
+    /// unexamined.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task Publishing_is_refused_when_the_stored_body_cannot_be_parsed()
+    {
+        var page = _store.Seed(
+            1, "about", "About us", bodyHtml: string.Concat(Enumerable.Repeat("<b>", 8_500)) + "x");
+
+        var result = await Handlers().HandleAsync(
+            new SetContentPagePublishedCommand(page.Id, true, FakeContentPageStore.Token(page), Actor),
+            Token);
+
+        var conflict = Assert.IsType<ContentWriteResult.Conflict>(result);
+        Assert.Equal(ContentConflictCodes.BodyNotReadable, conflict.Code);
+        Assert.False(page.IsPublished);
+        Assert.Empty(_audit.Entries);
+    }
+
+    /// <summary>
+    /// And taking such a page <i>off</i> the shop is still allowed, which is the whole reason the refusal
+    /// above is on the publish branch only. Refusing both would leave a page nobody can unpublish.
+    /// </summary>
+    [Fact]
+    public async Task Unpublishing_is_allowed_even_when_the_stored_body_cannot_be_parsed()
+    {
+        var page = _store.Seed(
+            1,
+            "about",
+            "About us",
+            bodyHtml: string.Concat(Enumerable.Repeat("<b>", 8_500)) + "x",
+            isPublished: true);
+
+        var result = await Handlers().HandleAsync(
+            new SetContentPagePublishedCommand(page.Id, false, FakeContentPageStore.Token(page), Actor),
+            Token);
+
+        Assert.IsType<ContentWriteResult.Succeeded>(result);
+        Assert.False(page.IsPublished);
+    }
+
     /// <summary>
     /// Doc 08 §3.3 and GLB-12: a public image needs alt text before the content using it is published.
     /// The refusal is a 409 with the count, because nothing the staff member typed in this request is

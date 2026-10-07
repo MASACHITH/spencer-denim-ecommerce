@@ -25,6 +25,13 @@ public interface IHtmlSanitiser
     /// Cleans <paramref name="html"/> against the allow-list. Never throws on malformed input: an HTML
     /// parser's whole job is to have an opinion about nonsense, and a save that threw would be a 500 on a
     /// field a person typed into.
+    /// <para>
+    /// <b>It can, however, refuse to look at input at all</b>, and then
+    /// <see cref="SanitisedHtml.Rejection"/> says why. That is not the same as "this cleaned to nothing":
+    /// it means the markup was too long or too deeply nested to hand to a parser safely, so no claim is
+    /// made about its contents. Callers must check it before treating <see cref="SanitisedHtml.Html"/> or
+    /// the image counts as an answer.
+    /// </para>
     /// </summary>
     SanitisedHtml Sanitise(string? html);
 }
@@ -47,12 +54,28 @@ public interface IHtmlSanitiser
 /// text before the content that uses them is published", so publishing is refused while this is above
 /// zero. A draft may hold them; a published page may not.
 /// </param>
+/// <param name="Rejection">
+/// Why the input was <b>not cleaned at all</b>, or <see langword="null"/> when it was. A sanitiser that
+/// only ever returns markup has no way to say "I will not parse this", and it needs one: the input is
+/// attacker-chosen markup handed to an HTML parser, and a parser's recursive parts are bounded by the
+/// shape of the tree rather than by its size. A refusal here is a <i>validation</i> answer — the caller
+/// turns it into a message on the <c>bodyHtml</c> field — and when it is set, <see cref="Html"/> is empty
+/// and the counts are zero, because nothing was examined and reporting zero images would be a claim this
+/// made no attempt to check.
+/// </param>
 public sealed record SanitisedHtml(
     string Html,
     IReadOnlyList<string> Removed,
     int ImageCount,
-    int ImagesMissingAltText)
+    int ImagesMissingAltText,
+    string? Rejection = null)
 {
+    /// <summary>
+    /// <see langword="true"/> when the input was refused before cleaning, so <see cref="Html"/> and the
+    /// counts say nothing about it. See <see cref="Rejection"/>.
+    /// </summary>
+    public bool WasRejected => Rejection is not null;
+
     /// <summary>The answer for an empty body, which is what all six system pages are seeded with.</summary>
     public static SanitisedHtml Empty { get; } = new(string.Empty, [], 0, 0);
 }

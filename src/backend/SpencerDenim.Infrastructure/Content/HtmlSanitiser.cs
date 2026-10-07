@@ -1,11 +1,22 @@
+using System.Globalization;
+using AngleSharp.Dom;
 using Ganss.Xss;
 using SpencerDenim.Application.Content.Abstractions;
 
 namespace SpencerDenim.Infrastructure.Content;
 
 /// <summary>
-/// The allow-list HTML sanitiser of doc 08 §3.7/§3.8 (GLB-10, ADM-17), used for every content-page body
-/// and for every <c>ops.Settings</c> value of type <c>Text/HTML</c>.
+/// The allow-list HTML sanitiser of doc 08 §3.7/§3.8 (GLB-10, ADM-17).
+/// <para>
+/// <b>Its one caller is the content-page body</b> — on save in
+/// <c>ContentPageWriteHandlers.CheckBody</c>, and on read in <c>AdminContentReader</c>, which re-reads the
+/// stored body only to count images missing alt text. Doc 08 §3.8 also describes a settings value of type
+/// <c>Text/HTML</c>, and this is the sanitiser such a value would use, but <b>no settings path calls it
+/// today</b>: every setting the catalogue defines is plain text, a URL or a number, each with its own
+/// check in <c>SettingFieldRules</c>. Said plainly because the earlier wording here claimed a reach this
+/// class does not have, and a security control that is believed to cover a field it never sees is worse
+/// than one whose scope is written down.
+/// </para>
 /// <para>
 /// <b>It is an allow-list, in both directions, and that is the only arrangement that is safe.</b> A
 /// block-list has to enumerate every dangerous construct — and it is wrong the day a browser gains one.
@@ -190,11 +201,22 @@ public sealed class HtmlSanitiser : IHtmlSanitiser
             return SanitisedHtml.Empty;
         }
 
+        // Before the parser, not after it. See MaxNestingDepth for what this is defending and why a check
+        // on the length could never have been it.
+        if (Refuse(html) is { } refusal)
+        {
+            return new SanitisedHtml(string.Empty, [], 0, 0, refusal);
+        }
+
         var removed = new List<string>();
         var sanitiser = Build(removed);
 
         var cleaned = sanitiser.Sanitize(html).Trim();
-        var inspection = Inspect(cleaned);
+
+        if (Inspect(cleaned) is not { } inspection)
+        {
+            return new SanitisedHtml(string.Empty, [], 0, 0, TooDeeplyNested());
+        }
 
         // A body of only whitespace or only empty tags reads as "nothing", and an empty string is what the
         // rest of the system already means by that (an unpublished shell). Without this, a paste that was
@@ -264,6 +286,194 @@ public sealed class HtmlSanitiser : IHtmlSanitiser
         return sanitiser;
     }
 
+    /// <summary>
+    /// The longest chain of nested elements a body may hold, and the <b>only</b> bound that stops a
+    /// content-page save from terminating the API process.
+    /// <para>
+    /// <b>The failure this exists for.</b> Walking a DOM is naturally recursive, and this class walked one
+    /// through three convenient calls that each recurse once per level — <c>TextContent</c> and two
+    /// <c>QuerySelectorAll</c>s. A body of <c>"&lt;b&gt;"</c> repeated 8,500 times is <b>25,501
+    /// characters</b>, well inside the 200,000 a page may hold, and it overflowed the stack. A stack
+    /// overflow in .NET cannot be caught: the runtime terminates the process, so every other request in
+    /// flight — every shopper mid-checkout — dies with it. Measured: 8,000 levels cleaned in 556 ms, 8,500
+    /// killed the process, while the library's own <c>Sanitize</c> survived 60,000.
+    /// </para>
+    /// <para>
+    /// <b>Why a length limit is not the fix</b>, and why the length check in
+    /// <c>ContentPageWriteHandlers.CheckBody</c> could never have caught this: 25 KB is an ordinary page.
+    /// The cost of walking a tree is set by its <i>shape</i>, not its size, and three characters buy a
+    /// level. Any bound that works has to be a bound on depth.
+    /// </para>
+    /// <para>
+    /// <b>Why it is a read-path fix too.</b> <c>AdminContentReader</c> re-sanitises the stored body on
+    /// every content list and every detail read, to count images missing alt text. So a row written
+    /// <i>outside</i> this API — the support script, data fix or restore that the port's own remarks call
+    /// out — would have terminated the process on every attempt to open the screen a staff member would
+    /// use to repair it, for everyone, the owner included. This guard covers that path because it lives
+    /// inside the sanitiser rather than beside one of its callers.
+    /// </para>
+    /// <para>
+    /// <b>Why 200.</b> A deep page is a table of shipping zones inside a list inside a blockquote: six or
+    /// seven levels, and the allow-list permits nothing that nests arbitrarily except lists. Two hundred is
+    /// an order of magnitude above the deepest plausible document and nearly two below the level that
+    /// crashed, so it is chosen to be obviously safe at both ends rather than to be tight.
+    /// </para>
+    /// </summary>
+    public const int MaxNestingDepth = 200;
+
+    /// <summary>
+    /// The longest input this will hand to a parser at all, in characters of markup <b>before</b>
+    /// cleaning.
+    /// <para>
+    /// Twice <c>ContentPage.BodyHtmlMaxLength</c>, and deliberately looser than it: the stored value is the
+    /// cleaned one, so a paste that arrives as 300 KB of editor markup and cleans to 8 KB of text is
+    /// something that fits and has to be allowed. This is not that check — it is the point past which
+    /// refusing to look is cheaper than parsing, so an unbounded request body cannot become unbounded
+    /// parser work. The limit a staff member actually meets is still the one on the cleaned length.
+    /// </para>
+    /// </summary>
+    public const int MaxInputLength = 400_000;
+
+    /// <summary>
+    /// Why this input will not be parsed, or <see langword="null"/> when it will be. Purely lexical: it
+    /// reads characters and never builds a tree, because its whole job is to run <i>before</i> anything
+    /// does.
+    /// </summary>
+    private static string? Refuse(string html)
+    {
+        if (html.Length > MaxInputLength)
+        {
+            return string.Create(
+                CultureInfo.InvariantCulture,
+                $"That is {html.Length:N0} characters of markup, which is more than this editor will read "
+                + $"in one go ({MaxInputLength:N0}). Paste the page in sections.");
+        }
+
+        return MeasureNesting(html) > MaxNestingDepth ? TooDeeplyNested() : null;
+    }
+
+    private static string TooDeeplyNested() =>
+        "That markup nests tags more than "
+        + MaxNestingDepth.ToString(CultureInfo.InvariantCulture)
+        + " levels deep, which no page needs and this editor will not open. It is nearly always a paste "
+        + "whose tags were left open: paste it as plain text and format it here.";
+
+    /// <summary>
+    /// Elements that never hold anything, so a start tag for one does not deepen the tree whether or not
+    /// it is closed.
+    /// </summary>
+    private static readonly HashSet<string> NeverHoldAnything = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "area", "base", "br", "col", "embed", "hr", "img", "input", "keygen", "link", "meta", "param",
+        "source", "track", "wbr",
+    };
+
+    /// <summary>
+    /// Elements that a start tag of the same name closes rather than nests inside — a second
+    /// <c>&lt;p&gt;</c> ends the first, as every browser does. Modelled here so that an export full of
+    /// unclosed paragraphs or list items is not mistaken for a deep tree and refused.
+    /// </summary>
+    private static readonly HashSet<string> ClosedByAnotherOfItsKind = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "p", "li", "dt", "dd", "tr", "td", "th", "thead", "tbody", "tfoot", "option", "optgroup",
+    };
+
+    /// <summary>
+    /// A conservative reading of how deeply <paramref name="html"/> nests elements.
+    /// <para>
+    /// <b>It does not have to be exact, and it is not.</b> It is a filter in front of the parser, and
+    /// <see cref="Inspect"/> measures the real depth of the real tree afterwards and refuses there too —
+    /// so an input this reads as shallower than the parser builds it is still refused, one step later and
+    /// before anything recursive touches it. What this must not do is read a <i>legitimate</i> page as
+    /// deep, which is why the implied end tags above are modelled: without them, a page of three hundred
+    /// unclosed <c>&lt;p&gt;</c> tags — which older editors produce — would count as three hundred deep.
+    /// </para>
+    /// </summary>
+    private static int MeasureNesting(string html)
+    {
+        var open = new List<string>(capacity: 32);
+        var deepest = 0;
+        var cursor = 0;
+
+        while (cursor < html.Length)
+        {
+            var at = html.IndexOf('<', cursor);
+            if (at < 0)
+            {
+                break;
+            }
+
+            cursor = at + 1;
+            if (cursor >= html.Length)
+            {
+                break;
+            }
+
+            var isEndTag = html[cursor] == '/';
+            if (isEndTag)
+            {
+                cursor++;
+            }
+
+            var nameStart = cursor;
+            while (cursor < html.Length && char.IsAsciiLetterOrDigit(html[cursor]))
+            {
+                cursor++;
+            }
+
+            if (cursor == nameStart)
+            {
+                // A "<" that starts no tag: a comment, a doctype, or a stray character in text.
+                continue;
+            }
+
+            var name = html[nameStart..cursor].ToLowerInvariant();
+
+            var closeBracket = html.IndexOf('>', cursor);
+            var selfClosing = closeBracket > nameStart && html[closeBracket - 1] == '/';
+            cursor = closeBracket < 0 ? html.Length : closeBracket + 1;
+
+            if (isEndTag)
+            {
+                var opened = open.LastIndexOf(name);
+                if (opened >= 0)
+                {
+                    open.RemoveRange(opened, open.Count - opened);
+                }
+
+                continue;
+            }
+
+            if (selfClosing || NeverHoldAnything.Contains(name))
+            {
+                continue;
+            }
+
+            if (open.Count > 0
+                && string.Equals(open[^1], name, StringComparison.Ordinal)
+                && ClosedByAnotherOfItsKind.Contains(name))
+            {
+                open.RemoveAt(open.Count - 1);
+            }
+
+            open.Add(name);
+
+            if (open.Count <= deepest)
+            {
+                continue;
+            }
+
+            deepest = open.Count;
+            if (deepest > MaxNestingDepth)
+            {
+                // Nothing a longer scan could learn changes the answer.
+                return deepest;
+            }
+        }
+
+        return deepest;
+    }
+
     /// <summary>What a reader of the cleaned body would find in it.</summary>
     /// <param name="RendersNothing">
     /// No text and nothing visual: whitespace, or structural tags with nothing inside them.
@@ -275,7 +485,8 @@ public sealed class HtmlSanitiser : IHtmlSanitiser
     private readonly record struct Inspection(bool RendersNothing, int Images, int ImagesMissingAlt);
 
     /// <summary>
-    /// Reads the counts off the <b>cleaned</b> markup, in one parse.
+    /// Reads the counts off the <b>cleaned</b> markup, in one parse and one walk — or
+    /// <see langword="null"/> when the cleaned tree is deeper than <see cref="MaxNestingDepth"/>.
     /// <para>
     /// Cleaned rather than input, deliberately, and on two counts. An <c>&lt;img&gt;</c> the allow-list
     /// removed is not on the page, so it is not an accessibility problem; and an <c>&lt;img&gt;</c> whose
@@ -288,8 +499,15 @@ public sealed class HtmlSanitiser : IHtmlSanitiser
     /// The parse is AngleSharp's, which is the parser the sanitiser itself used, so the two cannot
     /// disagree about what an element is.
     /// </para>
+    /// <para>
+    /// <b>The walk is iterative, with its own stack, and that is the point.</b> It used to be
+    /// <c>TextContent</c> plus two <c>QuerySelectorAll</c>s, each recursing once per level of the tree,
+    /// which is how 25 KB of markup terminated the process. An explicit stack costs one loop and cannot
+    /// overflow; the depth limit then bounds the <i>work</i>, and catches a tree the lexical pre-scan read
+    /// as shallower than the parser built it.
+    /// </para>
     /// </summary>
-    private static Inspection Inspect(string cleanedHtml)
+    private static Inspection? Inspect(string cleanedHtml)
     {
         if (cleanedHtml.Length == 0)
         {
@@ -297,25 +515,65 @@ public sealed class HtmlSanitiser : IHtmlSanitiser
         }
 
         var document = new AngleSharp.Html.Parser.HtmlParser().ParseDocument("<body>" + cleanedHtml + "</body>");
-        var body = document.Body;
 
-        if (body is null)
+        if (document.Body is not { } body)
         {
             return new Inspection(true, 0, 0);
         }
 
-        var images = body
-            .QuerySelectorAll("img")
-            .Where(image => !string.IsNullOrWhiteSpace(image.GetAttribute("src")))
-            .ToList();
+        var images = 0;
+        var imagesMissingAlt = 0;
+        var hasText = false;
+        var hasSomethingVisual = false;
 
-        var missing = images.Count(image => string.IsNullOrWhiteSpace(image.GetAttribute("alt")));
+        var pending = new Stack<(INode Node, int Depth)>();
+        foreach (var child in body.ChildNodes)
+        {
+            pending.Push((child, 1));
+        }
 
-        var rendersNothing = string.IsNullOrWhiteSpace(body.TextContent)
-            && images.Count == 0
-            && body.QuerySelectorAll("hr, br").Length == 0;
+        while (pending.Count > 0)
+        {
+            var (node, depth) = pending.Pop();
 
-        return new Inspection(rendersNothing, images.Count, missing);
+            if (depth > MaxNestingDepth)
+            {
+                return null;
+            }
+
+            switch (node)
+            {
+                case IText text:
+                    hasText = hasText || !string.IsNullOrWhiteSpace(text.Data);
+                    break;
+
+                case IElement element:
+                    if (string.Equals(element.LocalName, "img", StringComparison.Ordinal))
+                    {
+                        if (!string.IsNullOrWhiteSpace(element.GetAttribute("src")))
+                        {
+                            images++;
+                            if (string.IsNullOrWhiteSpace(element.GetAttribute("alt")))
+                            {
+                                imagesMissingAlt++;
+                            }
+                        }
+                    }
+                    else if (element.LocalName is "hr" or "br")
+                    {
+                        hasSomethingVisual = true;
+                    }
+
+                    foreach (var child in element.ChildNodes)
+                    {
+                        pending.Push((child, depth + 1));
+                    }
+
+                    break;
+            }
+        }
+
+        return new Inspection(!hasText && images == 0 && !hasSomethingVisual, images, imagesMissingAlt);
     }
 
     /// <summary>

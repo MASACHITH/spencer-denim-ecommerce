@@ -370,7 +370,20 @@ public sealed class ContentPageWriteHandlers(
         // and the editor's warning can never disagree about the count.
         if (command.IsPublished)
         {
-            var missing = sanitiser.Sanitise(page.BodyHtml).ImagesMissingAltText;
+            var stored = sanitiser.Sanitise(page.BodyHtml);
+
+            // A stored body the sanitiser will not parse cannot be checked for alt text, and a gate that
+            // cannot check must refuse rather than pass. This is only reachable for a row written outside
+            // this API, because CheckBody refuses the same markup on the way in — which is the case worth
+            // handling, since that row is also the one nobody can fix through the form.
+            if (stored.Rejection is { } refused)
+            {
+                return new ContentWriteResult.Conflict(
+                    ContentConflictCodes.BodyNotReadable,
+                    "This page's stored copy cannot be read, so it cannot be put on the shop. " + refused);
+            }
+
+            var missing = stored.ImagesMissingAltText;
             if (missing > 0)
             {
                 return AltTextConflict(
@@ -618,10 +631,24 @@ public sealed class ContentPageWriteHandlers(
     /// Sanitises a body and bounds its length. The length is checked <b>after</b> cleaning, because the
     /// stored value is the cleaned one — refusing a 300 KB paste that cleans down to 4 KB of text would be
     /// refusing something that fits.
+    /// <para>
+    /// <b>Which is exactly why this cannot be the only bound on the input, and is not.</b> The sanitiser
+    /// refuses markup it will not parse at all — too long, or nested past
+    /// <c>HtmlSanitiser.MaxNestingDepth</c> — and that refusal arrives here as
+    /// <see cref="SanitisedHtml.Rejection"/> and becomes a message on this field. It has to live there
+    /// rather than here: 8,500 nested tags are 25 KB, so no length check could catch them, and the bound
+    /// has to apply on the <i>read</i> path as well, which never reaches this method.
+    /// </para>
     /// </summary>
     private SanitisedHtml CheckBody(List<ValidationError> errors, string? supplied)
     {
         var cleaned = sanitiser.Sanitise(supplied);
+
+        if (cleaned.Rejection is { } refused)
+        {
+            errors.Add(new ValidationError("bodyHtml", refused));
+            return cleaned;
+        }
 
         if (cleaned.Html.Length > ContentPage.BodyHtmlMaxLength)
         {

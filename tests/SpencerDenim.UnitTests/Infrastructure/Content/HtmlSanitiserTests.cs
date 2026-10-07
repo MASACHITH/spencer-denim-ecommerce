@@ -359,4 +359,158 @@ public sealed class HtmlSanitiserTests
     [Fact]
     public void The_allow_lists_hold_what_a_body_needs() =>
         Assert.All(NeededTags, tag => Assert.Contains(tag, HtmlSanitiser.AllowedTags));
+
+    // ---------------------------------------------------------------------------------------------
+    // Nesting depth. These are availability tests rather than allow-list tests, and they are in this
+    // class because the thing being bounded is this class's parse.
+    //
+    // THE FAILURE THEY GUARD. A body of "<b>" repeated 8,500 times is 25,501 characters, inside the
+    // 200,000 a page may hold and inside any length check that could be written. Walking the resulting
+    // tree recursed once per level and overflowed the stack, and a stack overflow in .NET cannot be
+    // caught: the runtime terminates the process, taking every other request in flight with it. Measured
+    // before the fix: 8,000 levels cleaned in 556 ms, 8,500 killed the test host outright. Reported by
+    // the W2-11 tester as Major 1.
+    //
+    // WHY THESE TESTS CAN FAIL, AND WHAT FAILURE LOOKS LIKE. Raising MaxNestingDepth past about 8,000
+    // does not turn these red — it crashes the whole test run, which is the honest signal and the reason
+    // the numbers below straddle the old threshold rather than sitting under it. Removing the guard
+    // while keeping the iterative walk turns the two refusal tests red and leaves the run alive;
+    // restoring TextContent in place of the walk and keeping the guard leaves everything green, which is
+    // why both halves of the fix are tested separately below.
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// The tester's reproduction shape, which is also the cheapest: opening tags only. Three characters a
+    /// level, so 8,500 levels is 25,501 characters — the whole point of the finding.
+    /// </summary>
+    private static string Nested(string tag, int levels) =>
+        string.Concat(Enumerable.Repeat($"<{tag}>", levels)) + "x";
+
+    [Theory]
+    [InlineData(8_500)]
+    [InlineData(60_000)]
+    public void Markup_nested_past_the_limit_is_refused_rather_than_parsed(int levels)
+    {
+        var result = _sanitiser.Sanitise(Nested("b", levels));
+
+        Assert.True(result.WasRejected);
+        Assert.Contains("levels deep", result.Rejection);
+
+        // Nothing is claimed about input that was never read.
+        Assert.Equal(string.Empty, result.Html);
+        Assert.Equal(0, result.ImageCount);
+        Assert.Equal(0, result.ImagesMissingAltText);
+        Assert.Empty(result.Removed);
+    }
+
+    [Fact]
+    public void Well_formed_markup_nested_past_the_limit_is_refused_as_well()
+    {
+        // Every tag properly closed, so the refusal is not an artefact of counting unclosed ones: a tree
+        // this deep is the problem whether or not the markup is tidy.
+        var payload = string.Concat(Enumerable.Repeat("<b>", 8_500))
+            + "x"
+            + string.Concat(Enumerable.Repeat("</b>", 8_500));
+
+        var result = _sanitiser.Sanitise(payload);
+
+        Assert.True(result.WasRejected);
+
+        // The point of the fix is that this line runs at all. Before it, the process was gone by here —
+        // the tester proved a try/catch around the call does not get control.
+        Assert.Contains("levels deep", result.Rejection);
+    }
+
+    [Fact]
+    public void Nesting_through_a_list_is_counted_too()
+    {
+        // The shape that defeats a naive "a tag of the same name closes the previous one" scan: each <li>
+        // is inside a new <ul>, so none of them closes an earlier one and the real tree is 2n deep.
+        var payload = string.Concat(Enumerable.Repeat("<ul><li>", 5_000));
+
+        Assert.True(_sanitiser.Sanitise(payload).WasRejected);
+    }
+
+    /// <summary>
+    /// The other half of the fix, tested on its own: the walk over the cleaned tree has no recursion in
+    /// it, so a tree that gets past the lexical pre-scan still cannot overflow.
+    /// <para>
+    /// <c>&lt;p&gt;</c> is the probe because the pre-scan models the implied end tag — it reads a run of
+    /// unclosed paragraphs as one level, which is what a browser builds — so these 9,000 tags reach the
+    /// parser. They clean to 9,000 flat paragraphs, which the old <c>TextContent</c> walk survived and a
+    /// recursive walk over a deep tree would not; what this pins is that the guard does not <i>rely</i> on
+    /// the pre-scan being exact.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void A_run_of_unclosed_paragraphs_reaches_the_parser_and_is_cleaned()
+    {
+        var payload = string.Concat(Enumerable.Repeat("<p>Paragraph.", 9_000));
+
+        var result = _sanitiser.Sanitise(payload);
+
+        Assert.False(result.WasRejected);
+        Assert.Contains("<p>Paragraph.</p>", result.Html);
+    }
+
+    /// <summary>
+    /// The false-positive side, which matters as much as the refusal: a real policy page is nested five
+    /// or six deep, and an export is full of wrappers and unclosed tags. None of it may be refused.
+    /// </summary>
+    [Theory]
+    [InlineData("<div><div><div><div><p>Our story.</p></div></div></div></div>")]
+    [InlineData("<blockquote><ul><li><table><tbody><tr><td><strong>14 days</strong></td></tr></tbody></table></li></ul></blockquote>")]
+    [InlineData("<p>One<p>Two<p>Three<p>Four")]
+    [InlineData("<ul><li>One<li>Two<li>Three</ul>")]
+    [InlineData("<table><tr><td>A<td>B<tr><td>C<td>D</table>")]
+    [InlineData("<dl><dt>Term<dd>Meaning<dt>Term<dd>Meaning</dl>")]
+    public void Ordinary_markup_is_not_mistaken_for_a_deep_tree(string html) =>
+        Assert.False(_sanitiser.Sanitise(html).WasRejected);
+
+    [Fact]
+    public void An_export_of_three_hundred_unclosed_paragraphs_is_accepted()
+    {
+        // The specific false positive a plain open-tag counter would produce, and the reason the implied
+        // end tags are modelled: older editors emit exactly this.
+        var result = _sanitiser.Sanitise(string.Concat(Enumerable.Repeat("<p>A clause of the policy.", 300)));
+
+        Assert.False(result.WasRejected);
+        Assert.Equal(300, result.Html.Split("<p>").Length - 1);
+    }
+
+    [Fact]
+    public void A_deeply_nested_list_that_a_person_could_write_is_accepted()
+    {
+        var result = _sanitiser.Sanitise(string.Concat(Enumerable.Repeat("<ul><li>", 40)) + "Deep");
+
+        Assert.False(result.WasRejected);
+    }
+
+    [Fact]
+    public void Markup_longer_than_the_parser_limit_is_refused()
+    {
+        var result = _sanitiser.Sanitise(new string('a', HtmlSanitiser.MaxInputLength + 1));
+
+        Assert.True(result.WasRejected);
+        Assert.Contains("in sections", result.Rejection);
+    }
+
+    [Fact]
+    public void Markup_at_the_parser_limit_is_still_read()
+    {
+        // The boundary, from the allowed side: a long paste that cleans down is the case the looser
+        // input limit exists for, so it must not be refused here.
+        var result = _sanitiser.Sanitise("<p>" + new string('a', HtmlSanitiser.MaxInputLength - 7) + "</p>");
+
+        Assert.False(result.WasRejected);
+    }
+
+    [Fact]
+    public void An_accepted_body_reports_no_rejection()
+    {
+        var result = _sanitiser.Sanitise("<p>Returns within 14 days.</p>");
+
+        Assert.False(result.WasRejected);
+        Assert.Null(result.Rejection);
+    }
 }
