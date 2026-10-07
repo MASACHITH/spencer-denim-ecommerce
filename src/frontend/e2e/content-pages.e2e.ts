@@ -39,7 +39,10 @@ test.use({ baseURL: contentPagesURL });
 const BREAKPOINTS = [320, 375, 390, 768, 1024, 1280, 1440, 1920] as const;
 
 /** Sets which pages the stub reports as published. The switch is reset by every test that uses it. */
-async function publish(page: Page, state: 'none' | 'all' | 'contact' | 'custom'): Promise<void> {
+async function publish(
+  page: Page,
+  state: 'none' | 'all' | 'contact' | 'custom' | 'hostile',
+): Promise<void> {
   const response = await page.request.get(`${contentPagesApiURL}/__test__/content-pages?state=${state}`);
   expect(response.ok(), 'the content-pages switch did not answer').toBe(true);
 }
@@ -702,5 +705,186 @@ test.describe('the contact form (GLB-10)', () => {
       results.violations,
       JSON.stringify(results.violations.map((violation) => violation.id), null, 2),
     ).toEqual([]);
+  });
+});
+
+/**
+ * **The render layer, against markup that never went through the sanitiser.**
+ *
+ * Everything else in this file uses already-clean fixtures, because the API cleans on save — so nothing
+ * in the repository was exercising the *second* line of defence. `IHtmlSanitiser`'s remarks say it
+ * exists on purpose: the body is bound with `[innerHTML]` and never `bypassSecurityTrustHtml`, so
+ * Angular's DOM sanitiser runs again in the browser and during the server render, and that is the layer
+ * that still holds for a row written by a support script, a data fix or a restore from a spreadsheet,
+ * none of which comes through the API. An untested second line of defence is a hope.
+ *
+ * The W2-11 tester built a fixture of this shape outside the repository and measured 9 raw payloads, 0
+ * rendering dangerously, with the server-rendered bytes clean on the wire too. This is that, inside the
+ * repository, so it keeps being measured. The stub's `hostile` state holds the payloads and says why
+ * each is there.
+ *
+ * **Both halves are checked, and the first one is the one a crawler sees.** The server-rendered HTML is
+ * read before any JavaScript runs — `page.content()` after a `domcontentloaded` navigation with
+ * scripting off — and then the hydrated DOM is read, and a counter the payloads all try to increment is
+ * checked to be untouched. A test that only looked at the hydrated DOM would miss a `<script>` that had
+ * already executed.
+ */
+test.describe('a body that never went through the sanitiser still renders safely', () => {
+  test.beforeEach(async ({ page }) => {
+    await publish(page, 'hostile');
+  });
+
+  test.afterEach(async ({ page }) => {
+    await publish(page, 'none');
+  });
+
+  test('nothing executes, and nothing dangerous reaches the DOM', async ({ page }) => {
+    const consoleErrors: string[] = [];
+    page.on('pageerror', (error) => consoleErrors.push(error.message));
+
+    await page.goto('/hostile');
+
+    // The page itself rendered: the copy around the payloads is on it, so this is not passing because
+    // the page failed to load.
+    await expect(page.locator('h1')).toHaveText('Hostile body');
+    await expect(page.locator('.rich--page')).toContainText('Before.');
+    await expect(page.locator('.rich--page')).toContainText('After.');
+
+    // Not one of the nine payloads ran. They all increment the same counter, so one assertion covers
+    // them and names the failure unambiguously when it happens.
+    expect(await page.evaluate(() => (window as unknown as { __xss?: number }).__xss ?? 0)).toBe(0);
+
+    // And nothing dangerous is in the hydrated tree, by element and by attribute rather than by
+    // searching the HTML text — an `onerror=` inside a text node is harmless and would fail a string
+    // search, which is how this kind of test ends up weakened to make it pass.
+    const dangerous = await page.evaluate(() => {
+      const root = document.querySelector('.rich--page');
+      if (!root) {
+        return ['the body did not render at all'];
+      }
+
+      const found: string[] = [];
+      for (const element of Array.from(root.querySelectorAll('*'))) {
+        const name = element.tagName.toLowerCase();
+        if (['script', 'iframe', 'object', 'embed', 'form', 'input', 'style', 'svg', 'math'].includes(name)) {
+          found.push(`<${name}>`);
+        }
+
+        for (const attribute of Array.from(element.attributes)) {
+          const attributeName = attribute.name.toLowerCase();
+          if (attributeName.startsWith('on') || attributeName === 'style') {
+            found.push(`${name}[${attributeName}]`);
+          }
+
+          // Only the attributes a browser *navigates or loads from*. `srcset` is excluded and checked
+          // separately below, because Angular keeps it — see that assertion.
+          if (
+            ['href', 'src', 'action', 'formaction', 'xlink:href'].includes(attributeName) &&
+            /^\s*(javascript|data|vbscript)\s*:/i.test(attribute.value)
+          ) {
+            found.push(`${name}[${attributeName}]=${attribute.value.slice(0, 20)}`);
+          }
+        }
+      }
+
+      return found;
+    });
+
+    expect(dangerous, 'the rendered page holds something a browser would act on').toEqual([]);
+    expect(consoleErrors, 'the page threw while rendering a hostile body').toEqual([]);
+
+    // ---------------------------------------------------------------------------------------------
+    // **The one thing the render layer does NOT remove, measured rather than assumed.**
+    //
+    // Angular's DOM sanitiser keeps `srcset`, including a `javascript:` candidate inside it, and this
+    // assertion is here to say so rather than to be quietly dropped from the list above. It was found
+    // by writing this test: the first version failed on `img[srcset]=javascript:…`.
+    //
+    // **It is not script execution**, which the counter above has already established: a `srcset`
+    // candidate is parsed as an image URL, `javascript:` is not a valid one, and the browser simply
+    // fails to load it. What it *is* is a second URL on an element the shop renders, which is exactly
+    // why the server's allow-list refuses the attribute (`HtmlSanitiser.AllowedAttributes`) — so a row
+    // written through the API never carries one, and this can only be reached by a row written around
+    // the API. The residue is one more third-party request from a page an attacker already controls
+    // the images of, which is the residue the sanitiser's own remarks record for `src`.
+    //
+    // Recorded here because an unmeasured second line of defence is a hope, and a measured one with a
+    // known hole is a fact somebody can act on.
+    const keptBySrcset = await page.evaluate(
+      () =>
+        Array.from(document.querySelectorAll('.rich--page img[srcset]')).map((image) =>
+          image.getAttribute('srcset'),
+        ),
+    );
+
+    expect(keptBySrcset).toEqual(['javascript:window.__xss = 1']);
+  });
+
+  /**
+   * The same question asked of the **bytes on the wire**, which is what a crawler and a no-JavaScript
+   * visitor get, and the only half that a stored `<script>` could already have used by the time the
+   * hydrated DOM is inspected.
+   */
+  test('the server-rendered HTML carries no script and no handler', async ({ browser }) => {
+    const context = await browser.newContext({ javaScriptEnabled: false, baseURL: contentPagesURL });
+    const page = await context.newPage();
+
+    try {
+      await page.goto('/hostile');
+
+      // The body region's markup, read off the parsed document rather than sliced out of
+      // `page.content()`. **Scoped, because the document around it legitimately carries scripts** — the
+      // application's own bundle tags — so a whole-document assertion would be asserting the wrong
+      // thing and would have to be weakened until it proved nothing. And read through the DOM because
+      // slicing the HTML text was worse than weak: the first version searched from the first occurrence
+      // of `rich--page`, which is in the inline stylesheet, and failed on the word `<style` in a CSS
+      // block.
+      //
+      // Scripting is off in this context, so nothing has run and the DOM is exactly what the server
+      // sent, parsed. That is the distinction this test exists for: a stored `<script>` would already
+      // have executed by the time the hydrated DOM in the test above is inspected.
+      const region = await page.locator('.rich--page').innerHTML();
+
+      expect(region).toContain('Before.');
+      expect(region).toContain('After.');
+
+      for (const fragment of [
+        '<script',
+        '<iframe',
+        '<form',
+        '<object',
+        '<embed',
+        '<style',
+        'onerror',
+        'onbegin',
+        'onload',
+      ]) {
+        expect(region.toLowerCase(), `the server put "${fragment}" on the wire`).not.toContain(fragment);
+      }
+
+      // **`srcset` is kept, on the wire as well as in the hydrated DOM.** Pinned rather than passed
+      // over: Angular's sanitiser does not strip it, so the one attribute the server's allow-list
+      // refuses is the one that survives this layer. See the previous test for what that is and is not
+      // — the counter there shows nothing executes, because a `srcset` candidate is parsed as an image
+      // URL and `javascript:` is not a valid one.
+      expect(region.toLowerCase()).toContain('srcset');
+
+      // **A `javascript:` href is rewritten rather than removed**, which is Angular's documented
+      // behaviour: the value becomes `unsafe:javascript:…`, a scheme no browser knows, so the link is
+      // inert and the original is still legible to anyone inspecting the page. That is why this cannot
+      // be a plain "does not contain javascript:" — it would fail on the neutralised form and the
+      // obvious way to make it pass would be to delete the check.
+      //
+      // So: every occurrence must be the neutralised one. A bare `javascript:` anywhere still fails.
+      const live = region
+        .toLowerCase()
+        .replaceAll('unsafe:javascript:', '')
+        .replace(/srcset="[^"]*"/g, '');
+
+      expect(live, 'a live javascript: URL reached the server-rendered page').not.toContain('javascript:');
+      expect(region.toLowerCase()).toContain('unsafe:javascript:');
+    } finally {
+      await context.close();
+    }
   });
 });
