@@ -320,8 +320,8 @@ public static class SettingFieldRules
     public const int PhoneMaxLength = 25;
 
     /// <summary>
-    /// How long a multi-line text setting may be \u2014 the postal address and the opening hours. Enough for
-    /// six generous lines, and a bound on a field reachable from a form, which is the point: doc 08 \u00a73.8
+    /// How long a multi-line text setting may be — the postal address and the opening hours. Enough for
+    /// six generous lines, and a bound on a field reachable from a form, which is the point: doc 08 §3.8
     /// gives <c>Value</c> as <c>nvarchar(max)</c>, and "unbounded" on a public-facing value is how a footer
     /// ends up rendering a megabyte.
     /// </summary>
@@ -332,13 +332,13 @@ public static class SettingFieldRules
     /// <para>
     /// <b>This is the whole security control on <c>Contact.MapEmbedUrl</c>, and it is an allow-list.</b>
     /// The storefront puts the value in an <c>&lt;iframe src&gt;</c>, which means whoever can edit settings
-    /// can otherwise frame <i>anything</i> inside a page served from the shop's own origin \u2014 a
+    /// can otherwise frame <i>anything</i> inside a page served from the shop's own origin — a
     /// credential-harvesting form under the shop's address bar, for one. Validating only that the value is
     /// an https URL would not touch that.
     /// </para>
     /// <para>
     /// The two Google hosts are the ones its own "Embed a map" dialogue produces
-    /// (<c>www.google.com/maps/embed?\u2026</c>), plus the country variants a Sri Lankan user's browser is
+    /// (<c>www.google.com/maps/embed?…</c>), plus the country variants a Sri Lankan user's browser is
     /// likely to hand them (<c>www.google.lk</c>). OpenStreetMap is here because it needs no account and
     /// is what a client without a Google Business listing will reach for.
     /// </para>
@@ -395,7 +395,7 @@ public static class SettingFieldRules
             {
                 errors.Add(new ValidationError(
                     field,
-                    "A telephone number is digits, spaces, brackets, hyphens and a leading plus \u2014 for "
+                    "A telephone number is digits, spaces, brackets, hyphens and a leading plus — for "
                     + "example +94 11 234 5678."));
                 return;
             }
@@ -438,7 +438,7 @@ public static class SettingFieldRules
     }
 
     /// <summary>
-    /// A multi-line plain-text setting \u2014 the postal address, the opening hours.
+    /// A multi-line plain-text setting — the postal address, the opening hours.
     /// <para>
     /// <b>Only a length bound and a control-character bound, because the value is never markup.</b> The
     /// storefront splits it on newlines and interpolates each line, so there is nothing here to sanitise:
@@ -487,9 +487,9 @@ public static class SettingFieldRules
     /// <summary>
     /// A map embed address, normalised, or nothing at all.
     /// <para>
-    /// It reuses <see cref="TryNormaliseProfileUrl"/> for everything a URL has to survive \u2014 no
+    /// It reuses <see cref="TryNormaliseProfileUrl"/> for everything a URL has to survive — no
     /// backslashes, no control characters, absolute, <c>http(s)</c> only, no credentials, a computable IDN
-    /// host \u2014 and then adds the one rule that matters here: the host must be in
+    /// host — and then adds the one rule that matters here: the host must be in
     /// <see cref="MapEmbedHosts"/>. Doing it in that order is deliberate: the homograph work is already
     /// done and tested, and comparing a host against an allow-list is only meaningful once the host is the
     /// ASCII one the browser will resolve.
@@ -540,8 +540,8 @@ public static class SettingFieldRules
         {
             errors.Add(new ValidationError(
                 field,
-                "A map address has to be an https address from Google Maps or OpenStreetMap \u2014 in Google "
-                + "Maps use Share \u2192 Embed a map and copy the address out of the src=\"\u2026\" part. Anything "
+                "A map address has to be an https address from Google Maps or OpenStreetMap — in Google "
+                + "Maps use Share → Embed a map and copy the address out of the src=\"…\" part. Anything "
                 + "else is refused, because the map is shown inside the shop's own page."));
         }
     }

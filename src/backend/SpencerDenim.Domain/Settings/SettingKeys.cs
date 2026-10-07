@@ -56,7 +56,7 @@ public static class SettingKeys
         /// <summary>
         /// The shop's telephone number, for display and for a <c>tel:</c> link (GLB-07, GLB-10).
         /// Added by W2-11, because the Contact page's hours-and-address panel is doc 11 P13 step 13's
-        /// "contact details \u2026 edited in <b>Settings</b>" and the storefront had a placeholder constant
+        /// "contact details … edited in <b>Settings</b>" and the storefront had a placeholder constant
         /// there instead (see the TODO on <c>DEFAULT_SITE_CONFIG</c>).
         /// </summary>
         public const string Phone = "Contact.Phone";
@@ -66,8 +66,8 @@ public static class SettingKeys
 
         /// <summary>
         /// The shop's postal address, as plain text with one line per line. <b>Not HTML</b>: the storefront
-        /// splits it and interpolates each line, so there is no markup surface here at all \u2014 which is why
-        /// this is a <c>String</c> and not doc 08 \u00a73.8's <c>Text/HTML</c>.
+        /// splits it and interpolates each line, so there is no markup surface here at all — which is why
+        /// this is a <c>String</c> and not doc 08 §3.8's <c>Text/HTML</c>.
         /// </summary>
         public const string Address = "Contact.Address";
 
@@ -80,7 +80,7 @@ public static class SettingKeys
         /// <b>Checked against a short host allow-list, not merely against being a URL.</b> The storefront
         /// puts this in an <c>&lt;iframe src&gt;</c>, so an arbitrary address would let whoever can edit
         /// settings frame anything inside the shop's own page. Only Google Maps' and OpenStreetMap's embed
-        /// hosts are accepted \u2014 see <c>SettingFieldRules.TryNormaliseMapEmbedUrl</c>.
+        /// hosts are accepted — see <c>SettingFieldRules.TryNormaliseMapEmbedUrl</c>.
         /// </para>
         /// </summary>
         public const string MapEmbedUrl = "Contact.MapEmbedUrl";

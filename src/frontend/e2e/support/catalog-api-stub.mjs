@@ -3446,7 +3446,7 @@ const server = createServer((request, response) => {
       response.end(
         JSON.stringify({
           message:
-            'Thank you \u2014 your message has reached us. Our team reads every enquiry and will be in touch.',
+            'Thank you — your message has reached us. Our team reads every enquiry and will be in touch.',
         }),
       );
     });

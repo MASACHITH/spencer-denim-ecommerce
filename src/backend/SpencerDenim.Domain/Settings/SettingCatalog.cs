@@ -80,7 +80,7 @@ public static class SettingCatalog
             SettingValueType.String,
             Permissions.Settings.Edit,
             "Telephone number",
-            "The shop's telephone number, as you want shoppers to read it \u2014 for example "
+            "The shop's telephone number, as you want shoppers to read it — for example "
             + "+94 11 234 5678. It is shown on the Contact page and in the footer, and tapping it dials."),
 
         new(
@@ -106,7 +106,7 @@ public static class SettingCatalog
             SettingValueType.String,
             Permissions.Settings.Edit,
             "Opening hours",
-            "When the shop is open, one line per line \u2014 for example \u201cMonday to Friday, 9am \u2013 6pm\u201d. "
+            "When the shop is open, one line per line — for example “Monday to Friday, 9am – 6pm”. "
             + "Plain text, not HTML."),
 
         new(
@@ -115,7 +115,7 @@ public static class SettingCatalog
             SettingValueType.String,
             Permissions.Settings.Edit,
             "Map embed address",
-            "The \u201cEmbed a map\u201d address from Google Maps (Share \u2192 Embed a map \u2192 copy the src) or "
+            "The “Embed a map” address from Google Maps (Share → Embed a map → copy the src) or "
             + "from OpenStreetMap. Only those two are accepted. Leave it empty and the Contact page "
             + "shows no map."),
 

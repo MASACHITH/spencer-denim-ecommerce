@@ -62,8 +62,8 @@ internal static class AdminContentEndpoints
                 "GLB-10. The six system pages first, in their seeded order, then any custom pages by "
                 + "title. Unlike GET /api/content/pages this does not hide a draft: on a fresh shop every "
                 + "page is one, and a screen that could not see a draft could not publish it. `hasBody` "
-                + "is false for a page the client has not written yet, which is how all six ship \\u2014 doc 11 "
-                + "P13: they \\u201cstay unpublished until the client supplies the copy\\u201d. Each row carries its "
+                + "is false for a page the client has not written yet, which is how all six ship — doc 11 "
+                + "P13: they “stay unpublished until the client supplies the copy”. Each row carries its "
                 + "rowVersion for an optimistic-concurrency check on the way back.")
             .Produces<IReadOnlyList<AdminContentPageListItemDto>>()
             .Produces(StatusCodes.Status401Unauthorized)
@@ -85,7 +85,7 @@ internal static class AdminContentEndpoints
                 + "is no way to ask for one of the six system keys, because that would allow a second "
                 + "`privacy` page or a custom page claiming the protection against deletion. The address "
                 + "must be a slug, must be free, and must not be one the storefront already answers "
-                + "(/bag, /search, a department listing \\u2014 a page saved there could never be opened).")
+                + "(/bag, /search, a department listing — a page saved there could never be opened).")
             .Accepts<AdminContentPageRequest>("application/json")
             .Produces<ContentPageSavedResponse>(StatusCodes.Status201Created)
             .ProducesValidationProblem()
@@ -97,9 +97,9 @@ internal static class AdminContentEndpoints
             .WithSummary("Edit a page's heading, address, body and SEO fields.")
             .WithDescription(
                 "GLB-10, doc 11 P13 step 12. **A field this body does not carry is left exactly as it is**, "
-                + "and a field it carries as null is cleared \\u2014 two different instructions, and collapsing "
+                + "and a field it carries as null is cleared — two different instructions, and collapsing "
                 + "them is how W1-12 wiped every category image. So a screen may send only what it changed. "
-                + "The body is cleaned with the allow-list sanitiser on save (doc 08 \\u00a73.7) and the response "
+                + "The body is cleaned with the allow-list sanitiser on save (doc 08 §3.7) and the response "
                 + "says what was removed. Send the row version in the If-Match header or the body.")
             .Accepts<AdminContentPageRequest>("application/json")
             .Produces<ContentPageSavedResponse>()
@@ -113,9 +113,9 @@ internal static class AdminContentEndpoints
             .WithSummary("Put a page on the shop, or take it off.")
             .WithDescription(
                 "Its own route rather than a field on the edit form, so that putting a policy page in front "
-                + "of shoppers is a deliberate act with its own StatusChange audit row \\u2014 and never a side "
+                + "of shoppers is a deliberate act with its own StatusChange audit row — and never a side "
                 + "effect of saving a form whose checkbox was stale. Publishing is refused with 409 "
-                + "'alt_text_required' while the body holds an image with no alt text (doc 08 \\u00a73.3, GLB-12).")
+                + "'alt_text_required' while the body holds an image with no alt text (doc 08 §3.3, GLB-12).")
             .Accepts<SetContentPagePublishedRequest>("application/json")
             .Produces(StatusCodes.Status204NoContent)
             .ProducesValidationProblem()
@@ -128,8 +128,8 @@ internal static class AdminContentEndpoints
             .WithSummary("Remove a custom content page.")
             .WithDescription(
                 "A soft delete, which releases the address for reuse. Refused with 409 "
-                + "'system_page_not_deletable' for one of the six built-in pages (doc 11 P13: \\u201cSystem "
-                + "pages cannot be deleted\\u201d) \\u2014 a 409 and not a 403, because the caller does hold the "
+                + "'system_page_not_deletable' for one of the six built-in pages (doc 11 P13: “System "
+                + "pages cannot be deleted”) — a 409 and not a 403, because the caller does hold the "
                 + "permission and nothing about it would change the answer. Send the row version in "
                 + "If-Match.")
             .Produces(StatusCodes.Status204NoContent)
@@ -155,7 +155,7 @@ internal static class AdminContentEndpoints
             .WithSummary("The enquiry inbox, newest first.")
             .WithDescription(
                 "GLB-10, doc 11 P15 step 7. Filter by status with ?status=New|Read|Replied|Spam. The "
-                + "message body is **not** in this payload \\u2014 only a short preview \\u2014 because doc 11 P8 "
+                + "message body is **not** in this payload — only a short preview — because doc 11 P8 "
                 + "records that a customer may paste bank account details into it, and a list is the "
                 + "payload most likely to be cached or screenshotted. `newCount` counts the whole inbox "
                 + "rather than the filter, because it is the badge's number.")
@@ -181,7 +181,7 @@ internal static class AdminContentEndpoints
             .WithDescription(
                 "Doc 11 P15 makes opening the enquiry the thing that marks it Read, so the screen calls "
                 + "this as it opens one. It is a no-op for an enquiry that is already Read, Replied or "
-                + "Spam \\u2014 opening a Spam enquiry to check it really was spam must not reclassify it, and "
+                + "Spam — opening a Spam enquiry to check it really was spam must not reclassify it, and "
                 + "opening a Replied one must not take the reply off it.")
             .Produces(StatusCodes.Status204NoContent)
             .ProducesProblem(StatusCodes.Status404NotFound);
@@ -191,8 +191,8 @@ internal static class AdminContentEndpoints
             .WithName("AdminSetContactEnquiryStatus")
             .WithSummary("Mark an enquiry Replied or Spam (doc 11 P15 step 7).")
             .WithDescription(
-                "Records who moved it and when. **Replying happens outside the system** \\u2014 by email or "
-                + "telephone (doc 11 P15) \\u2014 so there is no reply body here and the API never sends one.")
+                "Records who moved it and when. **Replying happens outside the system** — by email or "
+                + "telephone (doc 11 P15) — so there is no reply body here and the API never sends one.")
             .Accepts<SetContactEnquiryStatusRequest>("application/json")
             .Produces(StatusCodes.Status204NoContent)
             .ProducesValidationProblem()
@@ -204,7 +204,7 @@ internal static class AdminContentEndpoints
             .WithSummary("Delete an enquiry for good (doc 08 §3.7).")
             .WithDescription(
                 "The case this exists for is a customer having pasted card or bank account details into "
-                + "the message: doc 08 \\u00a73.7 says it \\u201cmust be removed rather than merely hidden\\u201d, so this "
+                + "the message: doc 08 §3.7 says it “must be removed rather than merely hidden”, so this "
                 + "is a hard delete with no soft-delete flag to restore from. A reason is required and is "
                 + "audited; the audit row holds **no copy of the message body**. POST rather than DELETE "
                 + "because the reason travels in a body, and a DELETE with a body is not reliably "

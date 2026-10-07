@@ -465,7 +465,7 @@ export class SettingsPage {
       label: 'Opening hours',
       type: 'text',
       multiline: true,
-      placeholder: 'Monday to Friday, 9am \u2013 6pm\nSaturday, 9am \u2013 1pm',
+      placeholder: 'Monday to Friday, 9am – 6pm\nSaturday, 9am – 1pm',
       hint: 'One line per line. Leave it empty to show no hours.',
     },
     {
@@ -473,10 +473,10 @@ export class SettingsPage {
       label: 'Map embed address',
       type: 'url',
       multiline: false,
-      placeholder: 'https://www.google.com/maps/embed?pb=\u2026',
+      placeholder: 'https://www.google.com/maps/embed?pb=…',
       hint:
-        'In Google Maps use Share \u2192 Embed a map, then copy the address out of the src=\"\u2026\" part. ' +
-        'Only Google Maps and OpenStreetMap are accepted, because the map is shown inside the shop\u2019s ' +
+        'In Google Maps use Share → Embed a map, then copy the address out of the src=\"…\" part. ' +
+        'Only Google Maps and OpenStreetMap are accepted, because the map is shown inside the shop’s ' +
         'own page.',
     },
   ];

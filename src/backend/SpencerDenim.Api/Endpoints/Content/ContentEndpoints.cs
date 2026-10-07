@@ -53,12 +53,12 @@ internal static class ContentEndpoints
             .WithName("GetContentPages")
             .WithSummary("Every published content page, for the footer, the sitemap and the router.")
             .WithDescription(
-                "GLB-10. Slug, title and last-modified only \u2014 no bodies, because this list is rendered "
+                "GLB-10. Slug, title and last-modified only — no bodies, because this list is rendered "
                 + "into the footer of every page on the site. An unpublished page is absent: a draft "
                 + "policy must not be linked, must not be crawled and must not be openable. An empty list "
                 + "is a normal answer and the one a fresh shop gives, which is why the payload is an "
-                + "object with a `pages` array rather than a bare array \u2014 the storefront has to tell "
-                + "\u201cnothing is published\u201d from \u201cthis could not be read\u201d, and answers 404 for the "
+                + "object with a `pages` array rather than a bare array — the storefront has to tell "
+                + "“nothing is published” from “this could not be read”, and answers 404 for the "
                 + "first and 503 for the second.")
             .Produces<ContentPageLinksDto>();
 
@@ -66,10 +66,10 @@ internal static class ContentEndpoints
             .WithName("GetContentPage")
             .WithSummary("One published content page.")
             .WithDescription(
-                "GLB-10. The body is already-sanitised HTML (doc 08 \u00a73.7): it was cleaned against the "
+                "GLB-10. The body is already-sanitised HTML (doc 08 §3.7): it was cleaned against the "
                 + "allow-list when it was saved, so what is stored is what is served. A draft, a removed "
-                + "page and a slug that never existed all answer the same 404 \u2014 deliberately "
-                + "indistinguishably, because \u201cthere is a page here you may not see\u201d is itself "
+                + "page and a slug that never existed all answer the same 404 — deliberately "
+                + "indistinguishably, because “there is a page here you may not see” is itself "
                 + "something a draft policy should not disclose.")
             .Produces<ContentPageDto>()
             .ProducesProblem(StatusCodes.Status404NotFound);
@@ -80,8 +80,8 @@ internal static class ContentEndpoints
             .WithDescription(
                 "Saved as a New enquiry with the submitter's address (doc 11 P15 step 6) for staff to "
                 + "answer by email or telephone. **No email is sent and none is promised**: doc 11 P15's "
-                + "notifications are \u201cnone in v1\u201d and there is no mail transport in this build. Spam "
-                + "protection is doc 11 \u00a77 G-06's rate limit plus a honeypot field; a submission that "
+                + "notifications are “none in v1” and there is no mail transport in this build. Spam "
+                + "protection is doc 11 §7 G-06's rate limit plus a honeypot field; a submission that "
                 + "fills the honeypot gets the same answer as one that does not and is not stored.")
             .Produces<ContactEnquiryResponse>()
             .ProducesProblem(StatusCodes.Status429TooManyRequests)
@@ -122,7 +122,7 @@ internal static class ContentEndpoints
     /// <para>
     /// <b>The 404 body never echoes the slug</b>, which it would be natural to do and which would make
     /// this endpoint a reflected-content surface on a public origin: the slug comes straight off the URL.
-    /// The storefront does not need it either \u2014 it knows what it asked for.
+    /// The storefront does not need it either — it knows what it asked for.
     /// </para>
     /// </summary>
     private static async Task<Results<Ok<ContentPageDto>, ProblemHttpResult>> GetPageAsync(
@@ -141,10 +141,10 @@ internal static class ContentEndpoints
     }
 
     /// <summary>
-    /// Records an enquiry (GLB-10, doc 11 P15 steps 5\u20136).
+    /// Records an enquiry (GLB-10, doc 11 P15 steps 5–6).
     /// <para>
-    /// <b>The confirmation promises nothing that cannot happen.</b> No email is sent \u2014 doc 11 P15's
-    /// notifications are explicitly none in v1, and <c>ops.EmailOutbox</c> does not exist \u2014 so the
+    /// <b>The confirmation promises nothing that cannot happen.</b> No email is sent — doc 11 P15's
+    /// notifications are explicitly none in v1, and <c>ops.EmailOutbox</c> does not exist — so the
     /// sentence says the enquiry has arrived and that the shop will be in touch, which is true of a staff
     /// member reading the inbox. Checkout shipped a promise of an email nothing could send and it was a
     /// Major finding.
@@ -196,7 +196,7 @@ internal static class ContentEndpoints
 
         // Saved and Discarded answer identically. See the honeypot note above.
         return TypedResults.Ok(new ContactEnquiryResponse(
-            "Thank you \u2014 your message has reached us. Our team reads every enquiry and will be in touch."));
+            "Thank you — your message has reached us. Our team reads every enquiry and will be in touch."));
     }
 
     /// <summary>
