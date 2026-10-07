@@ -187,8 +187,14 @@ public sealed class OrderExpiryTests(SqlServerDatabaseFixture sqlServer) : BankT
         var mine = due.Where(id => ids.Contains(id)).ToList();
         Assert.Equal(3, mine.Count);
 
-        // Oldest deadline first. These three were placed in order a few milliseconds apart, so their
-        // deadlines are in the same order.
+        // Oldest deadline first — and by id where two deadlines are equal, which is what makes this
+        // assertion possible at all.
+        //
+        // **The first version of this line failed in a full run and passed alone.** Three orders placed
+        // milliseconds apart can share a `PaymentDueAtUtc` to `datetime2(3)`, and the query sorted on that
+        // column alone, so their relative order was whatever the engine returned. The fix was in the query
+        // (a `ThenBy(Id)`), not here: a job whose "oldest first" is only usually true is a job nothing can
+        // assert about, and the id tie-break costs nothing because it is the order the index is already in.
         Assert.Equal(ids, mine);
 
         // And the batch size is a ceiling, which is what stops one bad afternoon's backlog holding stock

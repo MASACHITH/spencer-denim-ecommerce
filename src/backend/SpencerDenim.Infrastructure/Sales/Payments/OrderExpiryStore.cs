@@ -51,8 +51,22 @@ internal sealed class OrderExpiryStore(AppDbContext dbContext) : IOrderExpirySto
                 && order.PaymentDueAtUtc < nowUtc
                 && (order.CaptureLockedUntilUtc == null || order.CaptureLockedUntilUtc < nowUtc))
 
-            // Oldest deadline first, so a backlog is worked in the order the stock was promised away.
+            // Oldest deadline first, so a backlog is worked in the order the stock was promised away —
+            // and then by id, which is not decoration.
+            //
+            // **A full-suite run found this.** Two orders placed milliseconds apart can share a
+            // `PaymentDueAtUtc` to the precision of `datetime2(3)`, and a sort on that column alone then
+            // returns them in whatever order the engine finds them. The job does not care — any order
+            // releases the same stock — but "oldest first" stops being a property anything can rely on or
+            // assert, and a test that did assert it passed in isolation and failed in a full run, which is
+            // the worst way for a non-determinism to announce itself.
+            //
+            // It is free: `IX_Orders_Pending_Due` is a filtered nonclustered index keyed on
+            // `PaymentDueAtUtc`, and every row in it carries the clustered key as its locator, so
+            // `(PaymentDueAtUtc, Id)` is the order the index is already in. `BankQueuePlanTests` asserts
+            // the index is still matched.
             .OrderBy(order => order.PaymentDueAtUtc)
+            .ThenBy(order => order.Id)
             .Take(batchSize)
             .Select(order => order.Id)
             .ToListAsync(cancellationToken);
