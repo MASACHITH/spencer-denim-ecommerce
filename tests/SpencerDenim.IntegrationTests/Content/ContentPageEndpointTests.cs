@@ -40,15 +40,40 @@ public sealed class ContentPageEndpointTests(SqlServerDatabaseFixture sqlServer)
     /// placeholder copy would put words the client never agreed to on their own shop, and this is what
     /// goes red.
     /// </para>
+    /// <para>
+    /// <b>It deletes the rows and runs the real seeder, and the first version of this test did not.</b>
+    /// It called <c>RestoreSystemPagesAsync</c> — which writes the empty body, the unpublished flag, the
+    /// null published date, the slug, the title and the two null SEO fields — and then asserted on
+    /// exactly those seven fields. It was testing its own helper. The W2-11 tester proved it: changing
+    /// the seeder to write <c>&lt;p&gt;We offer a 14-day returns policy on all items.&lt;/p&gt;</c> into
+    /// all six pages left this class 12/12 green and the whole unit suite 1,643/1,643 green, because that
+    /// one assertion was the only one in the repository on a seeded body. This is the vacuous-assertion
+    /// class from W1-03, on the single thing this task exists to protect.
+    /// </para>
+    /// <para>
+    /// So the rows go, <c>CatalogSeedRunner.RunReferenceDataAsync</c> puts them back, and <b>nothing in
+    /// this method has written a value it then asserts</b>. The delete is a hard delete through
+    /// <c>ExecuteDeleteAsync</c> rather than the soft delete the API uses, because the seeder looks for
+    /// what is present with <c>IgnoreQueryFilters</c> and would read a soft-deleted shell as already
+    /// there and insert nothing — which would make this test vacuous in a second, quieter way.
+    /// </para>
     /// </summary>
     [Fact]
     public async Task The_six_system_pages_are_seeded_unpublished_with_no_copy_in_them()
     {
         await using var host = await StartAsync();
 
-        // One database serves the whole run, so the seeded state is restored first: another test in this
-        // class may have published a page, and this test is about the seed rather than about ordering.
-        await RestoreSystemPagesAsync(host);
+        await using (var removing = host.Factory.Services.CreateAsyncScope())
+        {
+            var context = removing.ServiceProvider.GetRequiredService<AppDbContext>();
+
+            await context.ContentPages
+                .IgnoreQueryFilters()
+                .Where(page => page.SystemKey != null)
+                .ExecuteDeleteAsync(Token);
+        }
+
+        await ReseedAsync(host);
 
         await using var scope = host.Factory.Services.CreateAsyncScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -67,8 +92,15 @@ public sealed class ContentPageEndpointTests(SqlServerDatabaseFixture sqlServer)
         foreach (var page in pages)
         {
             Assert.False(page.IsPublished, $"{page.SystemKey} is published, and the client has sent no copy.");
-            Assert.Equal(string.Empty, page.BodyHtml);
+            Assert.True(
+                page.BodyHtml.Length == 0,
+                $"{page.SystemKey} was seeded with {page.BodyHtml.Length} characters of copy: "
+                + "\"" + page.BodyHtml + "\". The client writes these pages; a returns policy, a privacy "
+                + "policy and terms of business carry legal weight and Privacy and Terms need a PDPA "
+                + "review. Delete the copy from HomeContentSeeder.SeedContentPagesAsync.");
             Assert.Null(page.PublishedAtUtc);
+            Assert.Null(page.SeoTitle);
+            Assert.Null(page.SeoDescription);
 
             // A title is a label rather than copy, so it is seeded; the body is what stays empty.
             Assert.False(string.IsNullOrWhiteSpace(page.Title));
