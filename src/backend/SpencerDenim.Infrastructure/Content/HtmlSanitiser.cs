@@ -9,9 +9,9 @@ namespace SpencerDenim.Infrastructure.Content;
 /// <para>
 /// <b>It is an allow-list, in both directions, and that is the only arrangement that is safe.</b> A
 /// block-list has to enumerate every dangerous construct — and it is wrong the day a browser gains one.
-/// This permits exactly {@link AllowedTags} and exactly {@link AllowedAttributes}; everything else is
-/// removed whether or not anybody thought of it. The lists below are the whole security policy of this
-/// feature, written out, because "the sanitiser handles it" is not a statement anyone can check.
+/// This permits exactly <see cref="AllowedTags"/> and exactly <see cref="AllowedAttributes"/>; everything
+/// else is removed whether or not anybody thought of it. The lists below are the whole security policy of
+/// this feature, written out, because "the sanitiser handles it" is not a statement anyone can check.
 /// </para>
 /// <para>
 /// <b>What the allow-list permits.</b>
@@ -29,8 +29,20 @@ namespace SpencerDenim.Infrastructure.Content;
 /// attribute that is not on this list is removed without needing to be recognised as dangerous.
 /// </description></item>
 /// <item><description>
-/// <b>URL schemes:</b> <c>http</c>, <c>https</c>, <c>mailto</c>, and a site-relative path. Nothing else
-/// — so no <c>javascript:</c>, no <c>data:</c>, no <c>vbscript:</c>, no <c>file:</c>.
+/// <b>URL schemes:</b> <c>http</c>, <c>https</c>, <c>mailto</c>, a site-relative path
+/// (<c>/returns</c>), and a <b>protocol-relative</b> one (<c>//cdn.example/x.png</c>), which on an
+/// https page is an https URL. Nothing else — so no <c>javascript:</c>, no <c>data:</c>, no
+/// <c>vbscript:</c>, no <c>file:</c>.
+/// <para>
+/// <b>So a body may link to, and load an image from, any host.</b> That is inherent in GLB-10 — a
+/// client pastes a link and a picture — and it is stated here rather than left to be discovered,
+/// because the residue is real: whoever can edit a page can make every visitor's browser issue a
+/// request to a third party, which leaks the visitor's address and user-agent to it. Closing that means
+/// an image-host allow-list, which the map embed has (<c>SettingFieldRules.MapEmbedHosts</c>) because
+/// it is <i>framed</i> rather than linked, and which is a decision about the shop rather than about
+/// this class. <c>HtmlSanitiserTests.It_accepts_a_link_or_an_image_on_any_http_host</c> pins the
+/// acceptance so it cannot be narrowed by accident, and the W2-11 journal records it for the owner.
+/// </para>
 /// </description></item>
 /// <item><description>
 /// <b>CSS:</b> none at all. <c>AllowedCssProperties</c> is emptied and <c>&lt;style&gt;</c> is not an
@@ -78,7 +90,7 @@ namespace SpencerDenim.Infrastructure.Content;
 /// <c>HtmlSanitizer</c> is not documented as thread-safe for <i>configuration</i>, and its removal
 /// notifications are instance-level events. So this type never shares one: it holds the configuration and
 /// builds a fresh <c>HtmlSanitizer</c> per call, with the per-call event handlers that collect
-/// {@link SanitisedHtml.Removed}. A body is sanitised on a save, measured in a handful per day, so the
+/// <see cref="SanitisedHtml.Removed"/>. A body is sanitised on a save, a handful of times per day, so the
 /// allocation is irrelevant and the alternative is a race on a security control.
 /// </para>
 /// </summary>
