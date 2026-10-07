@@ -1246,7 +1246,7 @@ public sealed class AdminSettingsEndpointTests(SqlServerDatabaseFixture sqlServe
             {
                 whatsApp = (string?)null,
                 facebookUrl = (string?)null,
-                instagramUrl = "https://instagram.com。evil.example/shop",
+                instagramUrl = "https://instagram.com\u3002evil.example/shop",
                 tikTokUrl = (string?)null,
                 rowVersion = await ContactVersionAsync(client),
             });
@@ -1256,7 +1256,7 @@ public sealed class AdminSettingsEndpointTests(SqlServerDatabaseFixture sqlServe
             var stored = await ValueAsync(host, SettingKeys.Social.InstagramUrl);
 
             Assert.Equal("https://instagram.com.evil.example/shop", stored);
-            Assert.DoesNotContain("。", stored!, StringComparison.Ordinal);
+            Assert.DoesNotContain("\u3002", stored!, StringComparison.Ordinal);
         }
         finally
         {
@@ -1300,8 +1300,8 @@ public sealed class AdminSettingsEndpointTests(SqlServerDatabaseFixture sqlServe
     /// them now.
     /// </summary>
     [Theory]
-    [InlineData("https://instagram.com＠evil.example/")]
-    [InlineData("https://instagram.com／evil.example/")]
+    [InlineData("https://instagram.com\uFF20evil.example/")]
+    [InlineData("https://instagram.com\uFF0Fevil.example/")]
     public async Task An_address_the_browser_cannot_parse_is_refused_rather_than_silently_dropped(string url)
     {
         await using var host = await StartAsync();

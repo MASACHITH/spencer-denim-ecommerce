@@ -178,7 +178,7 @@ public sealed class AdminSettingsShapeTests(SqlServerDatabaseFixture sqlServer)
                 [SettingKeys.Contact.Phone] = "+94 11 234 5678",
                 [SettingKeys.Contact.Email] = "shape-test@example.com",
                 [SettingKeys.Contact.Address] = "Shape Test Studio\nColombo 03\nSri Lanka",
-                [SettingKeys.Contact.OpeningHours] = "Monday to Friday, 9am – 6pm\nSaturday, 9am – 1pm",
+                [SettingKeys.Contact.OpeningHours] = "Monday to Friday, 9am \u2013 6pm\nSaturday, 9am \u2013 1pm",
                 [SettingKeys.Contact.MapEmbedUrl] = "https://www.google.com/maps/embed?pb=shape-test",
                 [SettingKeys.Social.FacebookUrl] = "https://www.facebook.com/shape-test",
                 [SettingKeys.Social.InstagramUrl] = "https://www.instagram.com/shape-test",
