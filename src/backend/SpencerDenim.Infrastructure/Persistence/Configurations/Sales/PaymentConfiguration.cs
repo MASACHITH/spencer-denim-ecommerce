@@ -24,6 +24,45 @@ namespace SpencerDenim.Infrastructure.Persistence.Configurations.Sales;
 /// settlement check and the index above, not by this one (§4.2).
 /// </description></item>
 /// </list>
+/// <para>
+/// <b>Doc 08 §3.5's claim that this index "can never block capture recovery or a customer retry" is not
+/// quite true, and W3-03 settled which part.</b> #103's review flagged it; here is the answer, in the
+/// place W4-01 will be standing when it matters.
+/// </para>
+/// <list type="bullet">
+/// <item><description>
+/// <b>Bank transfer: the claim holds.</b> A rejection moves the row to <c>Failed (4)</c>, outside the
+/// filter, so a resubmission's new <c>Pending (1)</c> row cannot collide with it (§3.5 N7). What the index
+/// does constrain is two resubmissions <i>at once</i> — both find no open row, both insert, one is refused
+/// with 2627 — and that is the index enforcing its own rule correctly rather than blocking anything.
+/// <c>BankTransferProofStore.OpenPaymentAsync</c> treats the violation as an expected outcome and re-reads,
+/// so the loser uses the winner's row; <c>OpenPaymentIndexTests</c> proves it over 8 rounds of 4
+/// contenders.
+/// </description></item>
+/// <item><description>
+/// <b>Capture recovery: the claim holds.</b> Recovery updates an existing <c>Capturing (2)</c> row to 3, 4
+/// or 7, none of which is inside the filter, so it never inserts and never enters it.
+/// </description></item>
+/// <item><description>
+/// <b>PayPal: the claim is false, and this is the sequence (W4-01's to handle).</b> §4.2 step 4's PENDING
+/// result moves the row <c>Capturing (2) → Pending (1)</c> — <i>into</i> the filter. A customer retry is
+/// allowed "only when no claim is active", and a claim lapses after <c>CaptureLockHours</c> (3 h) while an
+/// eCheck capture may stay in flight for <c>PendingCaptureMaxDays</c> (5 days). So: capture claimed, lock
+/// lapses at 3 h, customer retries and gets a new <c>Initiated (0)</c> row, the original capture then
+/// resolves PENDING — and the <c>UPDATE</c> that applies a <b>real capture result</b> violates the index.
+/// The failing transaction is the one holding money, which is the worst possible candidate.
+/// <para>
+/// It is unreachable today: nothing captures (W4-01), and doc 08 §9 seeds the PayPal provider disabled.
+/// Three ways out, for whoever builds it — cancel the open retry row inside the apply transaction before
+/// moving Capturing → Pending (which is what §4.2 step 5 already does for the reverse order, and the
+/// cheapest); or hold the capture lock for the whole pending window rather than 3 h (which also stops the
+/// retry being offered); or widen the filter to exclude a row that has ever been Capturing. The first keeps
+/// the index's meaning intact and is the one this note recommends. <b>Do not simply catch 2627 here:</b>
+/// doc 08 §4.2 is explicit that the design never relies on catching a unique violation on the settlement
+/// path, and a swallowed one would discard a capture.
+/// </para>
+/// </description></item>
+/// </list>
 /// </summary>
 internal sealed class PaymentConfiguration : IEntityTypeConfiguration<Payment>
 {
