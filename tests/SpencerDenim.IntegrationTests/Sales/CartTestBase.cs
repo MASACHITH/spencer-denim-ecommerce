@@ -97,6 +97,27 @@ public abstract class CartTestBase(SqlServerDatabaseFixture sqlServer) : IAsyncD
     }
 
     /// <summary>
+    /// The host this suite's clients talk to, created on first use.
+    /// </summary>
+    /// <remarks>
+    /// <b>Exposed so a derived suite can sign a staff user in against the same instance</b> (W3-03: the
+    /// bank-transfer queue is an admin screen acting on orders a shopper placed, and both have to be the
+    /// same shop). <c>MediaTestHost.SignInAsync(factory, permissions)</c> takes a factory for exactly this
+    /// reason. It is a property rather than a second factory because two factories would be two
+    /// <c>AddApplication()</c> containers over one database — which works, and which means an admin
+    /// request and the order it acts on would be served by different hosts, so anything cached per host
+    /// (effective permissions, the settings cache) would silently not be shared.
+    /// </remarks>
+    protected ApiFactory Factory
+    {
+        get
+        {
+            SqlServer.SkipIfUnavailable();
+            return _factory ??= new ApiFactory(SqlServer.ConnectionString, commandInterceptor: CommandCounter);
+        }
+    }
+
+    /// <summary>
     /// A DI scope on the <b>API host's</b> container, which has <c>AddApplication()</c> as well, so a use-case
     /// handler can be called directly. That is how the account-cart branch is exercised at all: there is no
     /// customer authentication yet, so no HTTP request can carry a customer identity (see

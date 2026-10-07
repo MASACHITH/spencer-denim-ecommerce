@@ -96,6 +96,13 @@ internal sealed class BankTransferReviewStore(
                 // 3.2's NOT EXISTS so a second settlement is impossible even if the payment update below
                 // were wrong.
                 //
+                // **PaymentProviderCode is in the claim as well as in ReadOrderAsync, and that is not
+                // belt and braces — it is the lesson from a defect this task's own test found.** The
+                // first version relied on the read alone, the read's projection could not express "no
+                // such row" (see OrderSnapshot), and a PayPal order was approved and paid by the bank
+                // flow. A guard that lives in the atomic statement cannot be defeated by a bug in a
+                // read.
+                //
                 // **The literal 1 in the NOT EXISTS stays a literal.** PaymentConfiguration's remarks
                 // record the measurement: "IsOrderSettlement = 1" implies UX_Payments_OneSettlement's own
                 // filter, so DB28 lets the optimiser seek that index; "IsOrderSettlement = @flag" does not
@@ -112,6 +119,7 @@ internal sealed class BankTransferReviewStore(
                            UpdatedAtUtc = {decision.NowUtc},
                            UpdatedByUserId = {decision.Actor.UserId}
                      WHERE Id = {decision.OrderId}
+                       AND PaymentProviderCode = {PaymentProviderCodes.BankTransfer}
                        AND Status = {(byte)OrderStatus.PendingPayment}
                        AND StockState = {(byte)OrderStockState.Reserved}
                        AND NOT EXISTS (
@@ -183,14 +191,37 @@ internal sealed class BankTransferReviewStore(
                     return new BankTransferDecisionResult.NotFound();
                 }
 
-                // **No claim on the order row, because a rejection does not move the order** (doc 11 P7
-                // step 6b: "the order stays PendingPayment until its due time"). The conditional UPDATE on
-                // the payment below is the whole guard, and it is a complete one: every way the order can
-                // leave PendingPayment closes its open payment in the same transaction — approval makes it
-                // Succeeded, expiry Expired, cancellation Cancelled — so a payment still in Pending means
-                // an order still in PendingPayment. The read above is only so the refusal can say which of
-                // those happened.
-                if (snapshot.Status != OrderStatus.PendingPayment)
+                // **The order row is claimed even though a rejection does not move the order**, and this
+                // is doc 08 §5.3's instruction rather than caution: "paths that start from an existing
+                // order claim the order row first". A rejection starts from one.
+                //
+                // The first version of this method relied on a read plus the payment statement's own
+                // `Status = Pending` guard, and argued the pair was complete because every way an order
+                // leaves PendingPayment closes its open payment. The argument is true and the *window* is
+                // the problem: between the read and the payment UPDATE, an approval can commit. Without an
+                // order-row claim the two paths take their locks in opposite orders, and the losing
+                // rejection would arrive at a row that is now the settling payment and try to make it
+                // Failed — which `CK_Payments_IsOrderSettlement` then refuses, turning a race that should
+                // answer "already approved" into a constraint violation and a 500.
+                //
+                // Claiming the order row makes all three decisions take the same lock in the same order,
+                // so the loser waits and is told what happened. The only thing it writes is the stamp —
+                // the status and the stock state are deliberately untouched (doc 11 P7 step 6b: "the order
+                // stays PendingPayment until its due time"), and the order genuinely did change, because
+                // its payment history did.
+                var claimed = await dbContext.Database.ExecuteSqlInterpolatedAsync(
+                    $"""
+                    UPDATE sales.Orders
+                       SET UpdatedAtUtc = {decision.NowUtc},
+                           UpdatedByUserId = {decision.Actor.UserId}
+                     WHERE Id = {decision.OrderId}
+                       AND PaymentProviderCode = {PaymentProviderCodes.BankTransfer}
+                       AND Status = {(byte)OrderStatus.PendingPayment}
+                       AND StockState = {(byte)OrderStockState.Reserved};
+                    """,
+                    cancellationToken);
+
+                if (claimed != 1)
                 {
                     return await DiagnoseAsync(decision.OrderId, Expecting.Pending, cancellationToken);
                 }
@@ -279,6 +310,7 @@ internal sealed class BankTransferReviewStore(
                            UpdatedAtUtc = {decision.NowUtc},
                            UpdatedByUserId = {decision.Actor.UserId}
                      WHERE Id = {decision.OrderId}
+                       AND PaymentProviderCode = {PaymentProviderCodes.BankTransfer}
                        AND Status IN ({(byte)OrderStatus.Cancelled}, {(byte)OrderStatus.Expired})
                        AND StockState = {(byte)OrderStockState.Released}
                        AND NOT EXISTS (
@@ -861,13 +893,37 @@ internal sealed class BankTransferReviewStore(
         Closed,
     }
 
-    private readonly record struct OrderSnapshot(
+    /// <summary>
+    /// The order, as a read answers it. <b>A record class and deliberately not a <c>record struct</c>.</b>
+    /// </summary>
+    /// <remarks>
+    /// <b>This was a struct, and that was a defect an integration test found.</b>
+    /// <c>FirstOrDefaultAsync</c> over a projection to a value type cannot return null — it returns
+    /// <c>default</c> — so <c>OrderSnapshot?</c> came back with <c>HasValue = true</c> and every field
+    /// zeroed whenever the query matched nothing. The <c>is not { }</c> guard above therefore never fired,
+    /// and a decision aimed at an order that was not a bank-transfer order carried on with
+    /// <c>Status = PendingPayment</c> (0) and <c>StockState = Reserved</c> (0) — the exact two values the
+    /// claim's own predicate was about to look for. A PayPal order was approved and paid.
+    /// <para>
+    /// A reference type makes "no such row" representable, which is the only reliable fix; the provider
+    /// guard was also moved <i>into</i> the claim statements, so the two defences no longer depend on each
+    /// other.
+    /// </para>
+    /// </remarks>
+    private sealed record OrderSnapshot(
         string OrderNumber,
         Guid PublicId,
         OrderStatus Status,
         OrderStockState StockState);
 
-    private readonly record struct PaymentRow(int Id, PaymentStatus Status);
+    /// <summary>One payment row. A class, for the same reason as <see cref="OrderSnapshot"/>.</summary>
+    /// <remarks>
+    /// As a struct, "no reviewable payment" came back as <c>Id = 0, Status = Initiated</c>, so the refusal
+    /// path below was skipped and <see cref="SettleAsync"/> ran a statement against payment 0 — which
+    /// affects no rows, so the outcome was still a refusal, but the <i>wrong</i> one: the staff member was
+    /// told the order's state had changed rather than that there was no transfer to review.
+    /// </remarks>
+    private sealed record PaymentRow(int Id, PaymentStatus Status);
 
     private readonly record struct StockLine(int VariantId, int Quantity);
 }
