@@ -44,7 +44,7 @@ const PAGE_SIZE = 25;
  * likely to be cached, screenshotted into a support ticket or widened into an export later.
  */
 @Component({
-  selector: 'adm-enquiries-page',
+  selector: 'sda-enquiries-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <section class="adm-panel">

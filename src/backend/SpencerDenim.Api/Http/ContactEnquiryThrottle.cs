@@ -25,6 +25,13 @@ namespace SpencerDenim.Api.Http;
 /// script's time. Once the deployment can see real client addresses this is far too loose for one person
 /// and should come down to something like five.
 /// </para>
+/// <para>
+/// <b>Stated plainly, because it is the number somebody will want:</b> 120 per ten minutes is about
+/// <b>17,000 enquiries a day from one address</b>. The W2-11 tester raised it. It is left as it is on
+/// purpose — the brief's instruction on spam protection was doc 11 §7's G-06 measures "and no more", and
+/// a second, slower bucket is more than that says — so it is written here rather than buried in a
+/// journal. A daily cap is the obvious next control and it is the owner's call, not a developer's.
+/// </para>
 /// </summary>
 internal sealed partial class ContactEnquiryThrottle : IContactEnquiryThrottle, IDisposable
 {

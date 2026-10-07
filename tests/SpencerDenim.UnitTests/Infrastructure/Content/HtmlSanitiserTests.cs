@@ -478,6 +478,55 @@ public sealed class HtmlSanitiserTests
         Assert.Contains("levels deep", result.Rejection);
     }
 
+    /// <summary>
+    /// <b>A trailing slash does not make an HTML element self-closing, and reading it as one was a hole
+    /// in the pre-scan.</b>
+    /// <para>
+    /// <c>&lt;b/&gt;</c> opens a <c>b</c> in every browser — the slash is ignored for any element that
+    /// is not void — so counting it as self-closing meant four characters a level with nothing counted
+    /// at all. Found by re-reading the scan rather than by a failing test, which is why this one exists.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void A_trailing_slash_does_not_hide_the_nesting()
+    {
+        var payload = string.Concat(Enumerable.Repeat("<b/>", 9_000));
+
+        Assert.True(_sanitiser.Sanitise(payload).WasRejected);
+    }
+
+    /// <summary>
+    /// The same thing written as an attribute whose value is a slash, which is how a scan that looked
+    /// only at the character before the <c>&gt;</c> could be fooled deliberately.
+    /// </summary>
+    [Fact]
+    public void An_attribute_ending_in_a_slash_does_not_hide_the_nesting()
+    {
+        var payload = string.Concat(Enumerable.Repeat("<b x=/>", 9_000));
+
+        Assert.True(_sanitiser.Sanitise(payload).WasRejected);
+    }
+
+    /// <summary>
+    /// And the false-positive side of the same rule: inside foreign content a trailing slash <i>is</i>
+    /// honoured, so a pasted SVG of three hundred <c>&lt;path/&gt;</c> elements is two levels deep
+    /// rather than three hundred. The SVG is removed either way; what matters is that the page it was
+    /// pasted into is not refused.
+    /// </summary>
+    [Fact]
+    public void A_pasted_svg_of_self_closing_elements_is_not_a_deep_tree()
+    {
+        var payload = "<p>Copy.</p><svg>"
+            + string.Concat(Enumerable.Repeat("<path d=\"M0 0\"/>", 300))
+            + "</svg><p>More copy.</p>";
+
+        var result = _sanitiser.Sanitise(payload);
+
+        Assert.False(result.WasRejected);
+        Assert.Contains("More copy.", result.Html);
+        Assert.DoesNotContain("<svg", result.Html);
+    }
+
     [Fact]
     public void Nesting_through_a_list_is_counted_too()
     {

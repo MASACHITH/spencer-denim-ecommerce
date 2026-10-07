@@ -396,6 +396,22 @@ public sealed class HtmlSanitiser : IHtmlSanitiser
     /// deep, which is why the implied end tags above are modelled: without them, a page of three hundred
     /// unclosed <c>&lt;p&gt;</c> tags — which older editors produce — would count as three hundred deep.
     /// </para>
+    /// <para>
+    /// <b>Where it diverges, and in which direction.</b> A <c>&gt;</c> inside a quoted attribute value, a
+    /// commented-out block and the contents of a raw-text element are all read here as markup when the
+    /// parser would not, so those <i>over</i>-count — a refusal that was not needed, never a parse that
+    /// was not bounded.
+    /// </para>
+    /// <para>
+    /// It can <i>under</i>-count in exactly one shape: mis-nested formatting elements —
+    /// <c>&lt;b&gt;&lt;i&gt;&lt;/b&gt;</c> repeated — where the parser's adoption-agency step rebuilds a
+    /// tree deeper than the tags literally nest while the end tag pops this scan's stack. Two things hold
+    /// there. <see cref="MaxInputLength"/> caps such an input at a few tens of thousands of repeats, which
+    /// is inside the depth the library's own <c>Sanitize</c> was measured to survive (60,000); and
+    /// <see cref="Inspect"/> then measures the real tree and refuses, iteratively, before this class walks
+    /// it. So the uncaught case is slow rather than fatal, which is the distinction the whole guard exists
+    /// to draw.
+    /// </para>
     /// </summary>
     private static int MeasureNesting(string html)
     {
@@ -452,7 +468,16 @@ public sealed class HtmlSanitiser : IHtmlSanitiser
                 continue;
             }
 
-            if (selfClosing || NeverHoldAnything.Contains(name))
+            // **A trailing slash is honoured only inside foreign content, because that is the only place
+            // a browser honours it.** `<b/>` does not close anything in HTML: the parser ignores the
+            // slash and opens a `b`. Reading it as self-closing was a hole in this scan rather than a
+            // nicety — `"<b/>"` repeated is four characters a level, so 400,000 characters of it would
+            // have come through counted as depth zero and reached the parser 100,000 deep. Inside
+            // `<svg>` or `<math>` the slash is real, and modelling that keeps a pasted SVG full of
+            // `<path/>` from being counted as a deep tree and refused.
+            var inForeignContent = open.Contains("svg") || open.Contains("math");
+
+            if ((selfClosing && inForeignContent) || NeverHoldAnything.Contains(name))
             {
                 continue;
             }

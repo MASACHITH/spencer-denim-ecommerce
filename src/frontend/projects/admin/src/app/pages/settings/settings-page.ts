@@ -199,13 +199,22 @@ const LOGO_ACCEPT = 'image/png,image/jpeg,image/webp';
                   <span class="adm-field-error" data-testid="error-whatsApp">{{ message }}</span>
                 }
               </label>
+              <!-- **Bound with 'for'/'id' rather than by wrapping, unlike every other field on this
+                   screen, and for a reason that is not style.** The control here is chosen by an '@if' —
+                   a textarea for the address and the opening hours, an input for the rest — and a label
+                   whose control is inside a control-flow block is a label the template checker cannot
+                   see the association of. It read as "a label component must be associated with a form
+                   element" to '@angular-eslint', and that complaint is right about more than lint: the
+                   wrapping only works because both branches happen to put a control inside, which the
+                   next edit can silently break. An explicit 'for' cannot. -->
               @for (field of contactFields; track field.name) {
-                <label class="adm-field">
+                <label class="adm-field" [attr.for]="'setting-' + field.name">
                   <span class="adm-label">{{ field.label }}</span>
                   @if (field.multiline) {
                     <textarea
                       class="adm-input adm-input--multiline"
                       rows="4"
+                      [id]="'setting-' + field.name"
                       [name]="field.name"
                       autocomplete="off"
                       [placeholder]="field.placeholder"
@@ -218,6 +227,7 @@ const LOGO_ACCEPT = 'image/png,image/jpeg,image/webp';
                     <input
                       class="adm-input"
                       [type]="field.type"
+                      [id]="'setting-' + field.name"
                       [name]="field.name"
                       autocomplete="off"
                       [placeholder]="field.placeholder"
@@ -475,7 +485,7 @@ export class SettingsPage {
       multiline: false,
       placeholder: 'https://www.google.com/maps/embed?pb=…',
       hint:
-        'In Google Maps use Share → Embed a map, then copy the address out of the src=\"…\" part. ' +
+        'In Google Maps use Share → Embed a map, then copy the address out of the src="…" part. ' +
         'Only Google Maps and OpenStreetMap are accepted, because the map is shown inside the shop’s ' +
         'own page.',
     },

@@ -24,7 +24,7 @@ import { CatalogFailure, toCatalogFailure } from '../../core/catalog/admin-catal
  * is a button here rather than a checkbox on the editor — the rule W1-03 established for products.
  */
 @Component({
-  selector: 'adm-content-pages-page',
+  selector: 'sda-content-pages-page',
   imports: [RouterLink],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `

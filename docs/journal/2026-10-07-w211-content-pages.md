@@ -217,6 +217,15 @@ page would be stuck on the shop.
 Mutation proof: raising `MaxNestingDepth` to 100,000 turns the four refusal tests red **and the run
 survives 60,000 levels**, which is the iterative walk proving itself independently of the bound.
 
+**And the first version of the pre-scan had a hole, found by re-reading it rather than by a test.** It
+treated a trailing slash as self-closing, which is wrong for every HTML element that is not void: a
+browser ignores the slash and opens the element. So `"<b/>"` repeated is four characters a level and
+would have been counted as depth zero — 400,000 characters of it reaching the parser 100,000 deep, past
+the 60,000 the library was measured at. `"<b x=/>"` does the same thing deliberately. The slash is now
+honoured only inside `<svg>` or `<math>`, where a browser honours it too, which also stops a pasted SVG
+full of `<path/>` being read as three hundred levels deep and refused. Three tests, two for the hole and
+one for that false positive.
+
 ### Major 2 — the map could not render, and a test held it there
 
 `sandbox=""` applies *every* restriction including scripts, and both permitted providers draw their

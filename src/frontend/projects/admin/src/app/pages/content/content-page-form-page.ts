@@ -32,7 +32,7 @@ const EMPTY_FORM: PageForm = { title: '', slug: '', bodyHtml: '', seoTitle: '', 
  * strict enough that a paste from Word loses something most times.
  */
 @Component({
-  selector: 'adm-content-page-form-page',
+  selector: 'sda-content-page-form-page',
   imports: [RouterLink],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
