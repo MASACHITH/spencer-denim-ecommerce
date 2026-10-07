@@ -74,19 +74,25 @@ guard for every deeper address on the origin.
 | Vitest storefront | **1,385 passed** (1,302 before this task, +83) |
 | Vitest admin | **364 passed** (354 before, +10) |
 | Vitest shared | **24 passed**, unchanged |
-| Playwright, whole suite | **843 passed** |
+| Playwright, whole suite | **862 passed**, 1 pre-existing flake (below) |
 
 New: 105 sanitiser payload cases, 47 content-page write cases, 35 contact-enquiry cases, 11
 reserved-slug cases (which read `app.routes.ts`, so the refusal list cannot drift from the route
 table), 10 admin-model shape cases, 28 integration cases, 27 browser cases in
 `content-pages.e2e.ts`, and 13 rewritten in four existing browser specs.
 
-**One failure in the first full browser run was measured rather than assumed**:
-`admin-products.e2e.ts` → "moves a colour with the buttons and keeps focus on the one pressed" failed
-once in a 13-minute `--workers=1` run and then passed **46 of 46** running its file alone and **5 of 5**
-with `--repeat-each=5 --workers=1`. Nothing in this task touches the product form. It is the
-established harness race (#114/#115) under load, and it is recorded here with the counts rather than
-called flaky.
+**Two single failures across two full browser runs were measured rather than assumed**, and both are
+in `admin-*` specs this task does not touch:
+
+| Run | Failed | Measured in isolation |
+|---|---|---|
+| First (13.2 min) | `admin-products.e2e.ts` → "moves a colour with the buttons and keeps focus on the one pressed" | **46 of 46** running its file alone; **5 of 5** with `--repeat-each=5 --workers=1` |
+| Second (14.5 min) | `admin-catalog.e2e.ts` → "switches to another department's tree" | **8 of 8** with `--repeat-each=8 --workers=1`; **112 of 112** running `admin-catalog`, `admin-products` and `admin-settings` together |
+
+A different test each time, both passing every repeat, neither in code this branch changes. It is the
+established harness race (#114/#115) under a long serial run. Not a cross-worktree port collision
+(#110): `E2E_ADMIN_PORT` was pinned to 4872 in a band scanned free first, so the admin stub was this
+run's own.
 
 Every new test was checked for its ability to fail. The sanitiser's three control surfaces were mutated
 individually: the library's permissive defaults turn 6 red, a widened scheme list 12, an emptied
