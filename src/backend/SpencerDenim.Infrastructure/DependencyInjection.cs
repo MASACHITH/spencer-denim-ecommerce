@@ -179,6 +179,10 @@ public static class DependencyInjection
         // by code. PayPalProvider (W4-01) is one more AddScoped line on this list and nothing else.
         services.AddScoped<IPaymentProvider, BankTransferProvider>();
         services.AddScoped<IPaymentProviderRegistry, PaymentProviderRegistry>();
+
+        // Singleton, because "once" means once for the process: the provider itself is per request, and a
+        // warning that fires per request is noise rather than a signal (see BankDetailsWarningOnce).
+        services.AddSingleton<BankDetailsWarningOnce>();
         services.AddScoped<IBankTransferSettingsReader, BankTransferSettingsReader>();
 
         // Doc 11 P7 steps 3, 6 and 8, and doc 08 §4.1/§4.3: the customer's reference and slip, and the

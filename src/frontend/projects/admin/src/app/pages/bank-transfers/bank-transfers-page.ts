@@ -19,6 +19,8 @@ import {
   BankTransferDecision,
   BankTransferQueueRow,
   BankTransferRefusal,
+  BankTransferShortLine,
+  CLOSED_ORDER_STATUSES,
 } from '../../core/orders/bank-transfer.model';
 
 /** Doc 11 §6.1 has staff working this queue twice a day, so a page holds a sensible day's worth. */
@@ -182,7 +184,7 @@ const PAGE_SIZE = 20;
                     [attr.data-testid]="'refused-' + row.orderNumber"
                   >
                     <p>{{ problem.message }}</p>
-                    @if (problem.shortLines; as short) {
+                    @if (shortLinesFor(problem); as short) {
                       <p>Items no longer available:</p>
                       <ul class="bt__short">
                         @for (line of short; track line.variantId) {
@@ -483,12 +485,53 @@ export class BankTransfersPage {
    * hand (G-13 has no system path in this build).
    *
    * P7's own exception says staff and the job race, exactly one wins, and Accept late payment is for
-   * **"if expiry won"**. The only honest evidence that it won is the server saying so, which is the
-   * `order_expired` refusal. Until then the deadline is a fact to display — `timeLeft` says "Overdue by
-   * 7 min" — and not a reason to take the working button away.
+   * **"if expiry won"**. The only honest evidence that it won is the server saying so. Until then the
+   * deadline is a fact to display — `timeLeft` says "Overdue by 7 min" — and not a reason to take the
+   * working button away.
+   *
+   * **And the order's own status is what answers it, not the last code alone — the second version of this
+   * method was wrong the other way round.** `refusals` holds one slot per row and `decide()` clears it
+   * before each attempt, so a `short_stock` refusal replaces the `order_expired` one that preceded it; with
+   * the decision keyed on the code alone, the screen then went back to offering **Approve** on an order
+   * that had expired and could never be approved. Press Approve, get `order_expired`, press Accept late
+   * payment, get `short_stock`, and the screen offers Approve again: an oscillation pointing staff at an
+   * action that cannot succeed. The server now sends `orderStatus` with that refusal too, and this reads
+   * it.
    */
   protected canAcceptLate(row: BankTransferQueueRow): boolean {
-    return this.refusal(row)?.code === BANK_TRANSFER_REFUSALS.orderExpired;
+    const refused = this.refusal(row);
+
+    if (refused === null) {
+      return false;
+    }
+
+    // Expiry won, said in as many words.
+    if (refused.code === BANK_TRANSFER_REFUSALS.orderExpired) {
+      return true;
+    }
+
+    // And the server saying the order is *not* closed is the way back to Approve, whatever a stale refusal
+    // on screen said a moment ago.
+    if (refused.code === BANK_TRANSFER_REFUSALS.orderNotClosed) {
+      return false;
+    }
+
+    // Every other refusal is answered by the order's state, which is the only thing that cannot go stale.
+    return CLOSED_ORDER_STATUSES.includes(refused.orderStatus ?? '');
+  }
+
+  /**
+   * The short lines to list, and **only** for the refusal that has them.
+   *
+   * Keyed on the code rather than on "the array is present", so the list cannot outlive its reason: a
+   * refusal of a different kind arriving with a `shortLines` field — a proxy rewriting a payload, a future
+   * server sending more than it does today — would otherwise render somebody else's stock figures under
+   * this message.
+   */
+  protected shortLinesFor(
+    refusal: BankTransferRefusal,
+  ): readonly BankTransferShortLine[] | null {
+    return refusal.code === BANK_TRANSFER_REFUSALS.shortStock ? refusal.shortLines : null;
   }
 
   /**

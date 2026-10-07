@@ -129,7 +129,21 @@ public abstract record BankTransferDecisionResult
     /// Doc 11 P7 step 8: a late acceptance whose stock re-check failed, with <b>every</b> short line and
     /// not only the first one found. Nothing was written.
     /// </summary>
-    public sealed record ShortStock(IReadOnlyList<ShortStockLine> Lines) : BankTransferDecisionResult;
+    /// <param name="Lines">Every line that could not be re-acquired.</param>
+    /// <param name="OrderStatus">
+    /// The order's status, which is <c>Expired</c> or <c>Cancelled</c> — the claim above only accepts those
+    /// two.
+    /// <para>
+    /// <b>It is here because a client cannot otherwise tell that the order is closed, and one could not.</b>
+    /// This was the only 409 in the flow carrying no status: the queue screen, having been refused with
+    /// <c>short_stock</c>, forgot that expiry had won and offered <b>Approve</b> again on an order that can
+    /// never be approved — an oscillation steering staff at an action that cannot succeed. The state has to
+    /// travel with the refusal, because the refusal is the only thing the screen is told.
+    /// </para>
+    /// </param>
+    public sealed record ShortStock(
+        IReadOnlyList<ShortStockLine> Lines,
+        OrderStatus OrderStatus) : BankTransferDecisionResult;
 }
 
 /// <summary>

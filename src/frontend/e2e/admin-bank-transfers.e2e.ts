@@ -231,6 +231,12 @@ test.describe('the three decisions (doc 11 P7 steps 6 and 8)', () => {
     await expect(refused).toContainText('0 left, 1 needed');
     await expect(refused).toContainText('Denim jacket');
     await expect(refused).toContainText('1 left, 2 needed');
+
+    // **And the row still offers Accept late payment.** An expired order can never be approved, and a
+    // screen that offers Approve here sends staff round a loop: Approve → order_expired → Accept late →
+    // short_stock → Approve. Measured in the browser because it is a rendering decision.
+    await expect(page.locator('[data-testid="accept-late-SD-2026-000124"]')).toBeVisible();
+    await expect(page.locator('[data-testid="approve-SD-2026-000124"]')).toHaveCount(0);
   });
 
   /**

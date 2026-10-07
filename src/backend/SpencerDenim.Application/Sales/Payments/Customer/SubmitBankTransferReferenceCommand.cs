@@ -2,6 +2,7 @@ using SpencerDenim.Application.Abstractions.Messaging;
 using SpencerDenim.Application.Abstractions.Results;
 using SpencerDenim.Application.Abstractions.Time;
 using SpencerDenim.Application.Sales.Payments.Abstractions;
+using SpencerDenim.Domain.Sales;
 
 namespace SpencerDenim.Application.Sales.Payments.Customer;
 
@@ -31,23 +32,35 @@ public sealed record SubmitBankTransferReferenceCommand(Guid OrderPublicId, stri
 /// payable, with no email in this build to explain any of it. The slip upload opened a row in exactly that
 /// situation and the reference did not, which made the two halves of one panel disagree.
 /// <para>
-/// So both now go through <see cref="IBankTransferProofStore.OpenPaymentAsync"/>, which is still doc 08
-/// §3.5 N7's rule — "while a bank payment is Pending, a new reference updates that record; a new record is
-/// created only after a rejection" — and still one open row, because that method's whole job is to answer
-/// with the single open row, creating it only when none exists and treating a concurrent insert's 2627 as
-/// expected. <b>Clearing</b> a reference is the exception: with no open row there is nothing to clear, so
-/// it answers success without creating a row to hold a null.
+/// So <b>storing</b> a reference goes through <see cref="IBankTransferProofStore.OpenPaymentAsync"/>, which
+/// is still doc 08 §3.5 N7's rule — "while a bank payment is Pending, a new reference updates that record;
+/// a new record is created only after a rejection" — and still one open row, because that method's whole job
+/// is to answer with the single open row, creating it only when none exists and treating a concurrent
+/// insert's 2627 as expected.
+/// </para>
+/// <para>
+/// <b>Clearing is a separate branch, and the first version did not have one — it created a phantom
+/// payment.</b> <see cref="IBankTransferProofStore.OpenPaymentAsync"/> was called unconditionally, so a shopper pressing Save on the empty box
+/// after a rejection — by reflex, or to take back a typo — opened a <c>Pending</c> row with no reference and
+/// no slip, which <b>put the order back in the staff queue</b> showing "None given / None uploaded". Staff
+/// then checked the statement, found nothing, and rejected it again. There was nothing to clear and nothing
+/// to look for; the row was pure noise aimed at the people doing the money. So a null reference now reads
+/// the order and its open row instead: it clears the row if there is one, answers success if there is none
+/// (nothing to clear is not a failure), and still answers 404 when the order cannot be paid at all —
+/// because "saved" about a paid or expired order would be a lie whichever value it carried.
 /// </para>
 /// <para>
 /// <b>No throttle here, and that is deliberate.</b> Doc 08 §3.3 N10 rate-limits <i>uploads</i>, because an
-/// upload costs disk and a row; a reference is one short column on a row that already exists, and rewriting
-/// it a hundred times costs nothing a sane limit would be protecting. What does protect it is that the only
-/// way in is the order's unguessable token, and the only orders it can touch are ones already awaiting
-/// payment. Doc 11 §7 G-41 asks for the order <i>link</i> to be rate-limited, which would cover this route
-/// too and is an architect decision rather than this task's.
+/// upload costs disk and a row. This route writes one short column, and the only row it can create is the
+/// single open payment the order is entitled to — <c>UX_Payments_OneOpen</c> caps it at that, and a
+/// repeated save after that rewrites the same column. What protects it beyond that is that the only way in
+/// is the order's unguessable token, and the only orders it can touch are ones already awaiting payment.
+/// Doc 11 §7 G-41 asks for the order <i>link</i> to be rate-limited, which would cover this route too and
+/// is an architect decision rather than this task's.
 /// </para>
 /// </remarks>
 public sealed class SubmitBankTransferReferenceCommandHandler(
+    IBankTransferReader reader,
     IBankTransferProofStore store,
     IClock clock)
     : ICommandHandler<SubmitBankTransferReferenceCommand, SubmitBankTransferReferenceResult>
@@ -89,20 +102,48 @@ public sealed class SubmitBankTransferReferenceCommandHandler(
 
         var nowUtc = clock.UtcNow.UtcDateTime;
 
-        // The open row, or a new one when the last attempt was rejected — the same call the slip upload
-        // makes, so one panel cannot accept a slip and refuse a reference about the same order.
-        //
-        // null means the order is not PendingPayment: paid, expired, cancelled or not an order at all.
-        // That is the only state in which "this order can no longer be paid" is true.
-        var paymentId = await store.OpenPaymentAsync(command.OrderPublicId, nowUtc, cancellationToken);
+        int paymentId;
 
-        if (paymentId is null)
+        if (reference is null)
         {
-            return new SubmitBankTransferReferenceResult.NotFound();
+            // **Clearing never opens a payment**, for the reason in this class's remarks: a row with no
+            // reference and no slip is a phantom in the staff queue.
+            if (await reader.FindTargetAsync(command.OrderPublicId, cancellationToken)
+                is not { OrderStatus: OrderStatus.PendingPayment })
+            {
+                // No such bank-transfer order, or one that can no longer be paid. Answering "cleared"
+                // here would tell a customer their order is still open when it is not.
+                return new SubmitBankTransferReferenceResult.NotFound();
+            }
+
+            if (await reader.FindOpenPaymentAsync(command.OrderPublicId, cancellationToken)
+                is not { } open)
+            {
+                // Nothing to clear — after a rejection there is no open attempt — and that is a success,
+                // not a failure: what the customer asked for is already true.
+                return new SubmitBankTransferReferenceResult.Saved(null);
+            }
+
+            paymentId = open.PaymentId;
+        }
+        else
+        {
+            // The open row, or a new one when the last attempt was rejected — the same call the slip
+            // upload makes, so one panel cannot accept a slip and refuse a reference about the same order.
+            //
+            // null means the order is not PendingPayment: paid, expired, cancelled or not an order at all.
+            // That is the only state in which "this order can no longer be paid" is true.
+            if (await store.OpenPaymentAsync(command.OrderPublicId, nowUtc, cancellationToken)
+                is not { } opened)
+            {
+                return new SubmitBankTransferReferenceResult.NotFound();
+            }
+
+            paymentId = opened;
         }
 
         var written = await store.SetReferenceAsync(
-            paymentId.Value,
+            paymentId,
             reference,
             nowUtc,
             cancellationToken);

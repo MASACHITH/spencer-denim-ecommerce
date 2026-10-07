@@ -944,6 +944,171 @@ public sealed class AdminBankTransferEndpointTests(SqlServerDatabaseFixture sqlS
         Assert.Equal(1, await PaymentCountAsync(order.PublicId, PaymentStatus.Failed));
     }
 
+    /// <summary>
+    /// The short-stock 409 carries the order's status, which is the one thing the screen cannot work out
+    /// for itself.
+    /// </summary>
+    /// <remarks>
+    /// <b>The red-before for a payload defect that a browser test cannot catch.</b> The stub the browser
+    /// tests run against sends whatever this file says it should, so removing the field from the real
+    /// endpoint leaves them green — this is the test that holds the API to the shape the screen was built
+    /// against. Without the status, a queue refused with <c>short_stock</c> forgot that expiry had won and
+    /// offered Approve again on an order that can never be approved.
+    /// </remarks>
+    [Fact]
+    public async Task A_short_stock_refusal_says_the_order_is_still_closed()
+    {
+        await using var host = await StartAsync();
+        var order = await PlaceOrderAsync(host);
+
+        // Expired with its stock given back, and then sold to somebody else — doc 11 P7 step 8's case.
+        // Done directly because the five-minute job is not something a request test can wait for.
+        using (var scope = sqlServer.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+            var orderId = await db.Orders
+                .Where(candidate => candidate.PublicId == order.PublicId)
+                .Select(candidate => candidate.Id)
+                .SingleAsync(Token);
+
+            Assert.Equal(1, await db.Orders
+                .Where(candidate => candidate.Id == orderId)
+                .ExecuteUpdateAsync(
+                    candidate => candidate
+                        .SetProperty(row => row.Status, OrderStatus.Expired)
+                        .SetProperty(row => row.StockState, OrderStockState.Released)
+                        .SetProperty(row => row.ClosedAtUtc, DateTime.UtcNow),
+                    Token));
+
+            Assert.Equal(1, await db.Payments
+                .Where(candidate => candidate.OrderId == orderId)
+                .ExecuteUpdateAsync(
+                    candidate => candidate.SetProperty(row => row.Status, PaymentStatus.Expired),
+                    Token));
+
+            var variantIds = await db.OrderLines
+                .Where(line => line.OrderId == orderId)
+                .Select(line => line.VariantId)
+                .ToListAsync(Token);
+
+            // The reservation goes back, as an expiry would, and the goods go to a different shopper.
+            Assert.Equal(variantIds.Count, await db.StockLevels
+                .Where(level => variantIds.Contains(level.VariantId))
+                .ExecuteUpdateAsync(
+                    level => level
+                        .SetProperty(row => row.Reserved, 0)
+                        .SetProperty(row => row.OnHand, 0),
+                    Token));
+        }
+
+        using var staff = await host.SignInAsync(Permissions.Orders.Approve);
+
+        var body = await DecideAsync(
+            staff, order.PublicId, "accept-late", HttpStatusCode.Conflict);
+
+        Assert.Equal("short_stock", body.GetProperty("code").GetString());
+
+        // **The status, which is the field that was missing.**
+        Assert.Equal(nameof(OrderStatus.Expired), body.GetProperty("orderStatus").GetString());
+
+        // And the lines are named rather than numbered, which is the other half of the same screen.
+        var line = body.GetProperty("shortLines").EnumerateArray().First();
+        Assert.False(string.IsNullOrWhiteSpace(line.GetProperty("sku").GetString()));
+        Assert.False(string.IsNullOrWhiteSpace(line.GetProperty("productName").GetString()));
+        Assert.True(line.GetProperty("needed").GetInt32() > 0);
+
+        // Nothing was written: still expired, still unpaid.
+        Assert.Equal(OrderStatus.Expired, await StatusAsync(order.PublicId));
+    }
+
+    /// <summary>
+    /// Clearing a reference on an order with no open payment writes nothing, and above all opens nothing.
+    /// </summary>
+    /// <remarks>
+    /// <b>The red-before for a phantom payment aimed at the people doing the money.</b> After a rejection
+    /// there is no open payment and the shopper's reference box is empty, so pressing "Save the reference"
+    /// by reflex — or clearing a typo — sent <c>reference: null</c>, which opened a <c>Pending</c> row with
+    /// no reference and no slip. That <b>put the order back in the staff queue</b> reading "None given /
+    /// None uploaded": staff check the statement, find nothing, reject it again.
+    /// <para>
+    /// <c>UX_Payments_OneOpen</c> capped it at one phantom per cycle, so there was no flood and no money
+    /// effect — which is exactly what would have kept it unnoticed.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task Clearing_a_reference_with_no_open_payment_opens_nothing()
+    {
+        await using var host = await StartAsync();
+        var order = await PlaceOrderAsync(host);
+
+        using var staff = await host.SignInAsync(Permissions.Orders.Approve, Permissions.Orders.View);
+        await DecideAsync(staff, order.PublicId, "reject", HttpStatusCode.OK, "No credit found.");
+
+        // The rejection closed the only attempt, which is the state this is about.
+        Assert.Equal(0, await PaymentCountAsync(order.PublicId, PaymentStatus.Pending));
+
+        // 200, because what the customer asked for is already true — there is nothing to clear.
+        await SetReferenceAsync(host, order.PublicId, null);
+
+        // And nothing was opened: no new payment row, and the order is not back in the staff queue.
+        Assert.Equal(0, await PaymentCountAsync(order.PublicId, PaymentStatus.Pending));
+        Assert.Null(await TryQueueRowAsync(staff, order.OrderNumber));
+
+        // Whitespace is the same request — the handler trims to null — so it must behave the same way.
+        await SetReferenceAsync(host, order.PublicId, "   ");
+
+        Assert.Equal(0, await PaymentCountAsync(order.PublicId, PaymentStatus.Pending));
+        Assert.Null(await TryQueueRowAsync(staff, order.OrderNumber));
+
+        // A real reference still opens the row the customer is entitled to, so this fix did not close the
+        // door MAJOR 3 opened.
+        await SetReferenceAsync(host, order.PublicId, "CBC-554433");
+
+        Assert.Equal(1, await PaymentCountAsync(order.PublicId, PaymentStatus.Pending));
+
+        var queued = await TryQueueRowAsync(staff, order.OrderNumber);
+        Assert.NotNull(queued);
+        Assert.Equal("CBC-554433", queued.Value.GetProperty("payerReference").GetString());
+
+        // And clearing it now *does* clear the open row rather than leaving a stale reference for staff to
+        // match against.
+        await SetReferenceAsync(host, order.PublicId, null);
+
+        using var shopper = host.CreateAnonymousClient();
+        var payload = await OrderPayloadAsync(shopper, order.PublicId);
+
+        Assert.Equal(
+            JsonValueKind.Null,
+            payload.GetProperty("proof").GetProperty("reference").ValueKind);
+        Assert.Equal(1, await PaymentCountAsync(order.PublicId, PaymentStatus.Pending));
+    }
+
+    /// <summary>
+    /// Clearing on an order that can no longer be paid is still a 404, not a cheerful "cleared".
+    /// </summary>
+    [Fact]
+    public async Task Clearing_a_reference_on_an_order_that_cannot_be_paid_is_a_404()
+    {
+        await using var host = await StartAsync();
+        var order = await PlaceOrderAsync(host);
+
+        using var staff = await host.SignInAsync(Permissions.Orders.Approve);
+        await DecideAsync(staff, order.PublicId, "approve", HttpStatusCode.OK);
+
+        using var shopper = host.CreateAnonymousClient();
+
+        using var response = await shopper.PutAsJsonAsync(
+            new Uri($"/api/orders/{order.PublicId:D}/payment-reference", UriKind.Relative),
+            new { reference = (string?)null },
+            JsonOptions,
+            Token);
+
+        // The clearing branch reads the order first for exactly this: answering "cleared" about a paid
+        // order would tell a customer it is still awaiting payment.
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
     [Fact]
     public async Task A_reference_on_an_order_that_cannot_be_paid_is_a_404()
     {

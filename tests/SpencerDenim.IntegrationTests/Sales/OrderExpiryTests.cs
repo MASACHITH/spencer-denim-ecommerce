@@ -195,32 +195,53 @@ public sealed class OrderExpiryTests(SqlServerDatabaseFixture sqlServer) : BankT
             await OrderIdAsync(third.Order.PublicId),
         };
 
-        // Deliberately out of id order, so "oldest deadline first" is a different answer from "by id" and
-        // the assertion below can tell them apart. A minute between them, which is far more than
-        // datetime2(3) can tie on.
-        var epoch = new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc);
-        await SetDeadlineAsync(ids[2], epoch.AddMinutes(1));
-        await SetDeadlineAsync(ids[0], epoch.AddMinutes(2));
-        await SetDeadlineAsync(ids[1], epoch.AddMinutes(3));
+        var originals = new[]
+        {
+            first.Order.PaymentDueAtUtc,
+            second.Order.PaymentDueAtUtc,
+            third.Order.PaymentDueAtUtc,
+        };
 
-        var expected = new[] { ids[2], ids[0], ids[1] };
-        var cutoff = epoch.AddDays(2);
+        try
+        {
+            // Deliberately out of id order, so "oldest deadline first" is a different answer from "by id"
+            // and the assertion below can tell them apart. A minute between them, which is far more than
+            // datetime2(3) can tie on.
+            var epoch = new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+            await SetDeadlineAsync(ids[2], epoch.AddMinutes(1));
+            await SetDeadlineAsync(ids[0], epoch.AddMinutes(2));
+            await SetDeadlineAsync(ids[1], epoch.AddMinutes(3));
 
-        var due = await InScopeAsync(services => services
-            .GetRequiredService<IOrderExpiryStore>()
-            .FindDueOrdersAsync(50, cutoff, Token));
+            var expected = new[] { ids[2], ids[0], ids[1] };
+            var cutoff = epoch.AddDays(2);
 
-        // The whole batch, not a subsequence of it: nothing else in the database is due in 2020.
-        Assert.Equal(expected, due);
+            var due = await InScopeAsync(services => services
+                .GetRequiredService<IOrderExpiryStore>()
+                .FindDueOrdersAsync(50, cutoff, Token));
 
-        // And the batch size is a ceiling, which is what stops one bad afternoon's backlog holding stock
-        // row locks for minutes while live checkouts wait (doc 08 §5.6 step 1). Exactly which two, so this
-        // cannot be satisfied by two of somebody else's orders.
-        var capped = await InScopeAsync(services => services
-            .GetRequiredService<IOrderExpiryStore>()
-            .FindDueOrdersAsync(2, cutoff, Token));
+            // The whole batch, not a subsequence of it: nothing else in the database is due in 2020.
+            Assert.Equal(expected, due);
 
-        Assert.Equal(expected.Take(2), capped);
+            // And the batch size is a ceiling, which is what stops one bad afternoon's backlog holding
+            // stock row locks for minutes while live checkouts wait (doc 08 §5.6 step 1). Exactly which
+            // two, so this cannot be satisfied by two of somebody else's orders.
+            var capped = await InScopeAsync(services => services
+                .GetRequiredService<IOrderExpiryStore>()
+                .FindDueOrdersAsync(2, cutoff, Token));
+
+            Assert.Equal(expected.Take(2), capped);
+        }
+        finally
+        {
+            // **The deadlines go back, and that is not tidiness.** These three orders stay
+            // PendingPayment for the rest of the run, so a 2020 deadline leaves them permanently at the
+            // head of every later `FindDueOrdersAsync` — this test would have fixed its own flake by
+            // handing the next one a biased batch. Controlling your own state includes putting it back.
+            for (var index = 0; index < ids.Length; index++)
+            {
+                await SetDeadlineAsync(ids[index], originals[index]);
+            }
+        }
     }
 
     /// <summary>
@@ -240,23 +261,46 @@ public sealed class OrderExpiryTests(SqlServerDatabaseFixture sqlServer) : BankT
         Assert.Equal(1, moved);
     }
 
+    /// <summary>
+    /// Doc 08 §5.6 step 1: the batch is orders whose own deadline has passed, and nobody else's.
+    /// </summary>
+    /// <remarks>
+    /// <b>Set-controlled for the same reason its neighbour is</b> (#114's family). The first version read
+    /// the batch with a ceiling of 500 and asserted that this order was absent before its deadline and
+    /// present after — which is only sound while fewer than 500 of the shared database's orders are due
+    /// before this one, and this order is the newest, so it is the first to fall off. Giving it a deadline
+    /// nothing else can sit before makes both halves exact, and the deadline goes back afterwards so the
+    /// next test inherits an unbiased batch.
+    /// </remarks>
     [Fact]
     public async Task Only_orders_past_their_own_deadline_are_in_the_batch()
     {
         var (order, _) = await PlaceOrderAsync();
         var orderId = await OrderIdAsync(order.PublicId);
 
-        var due = await InScopeAsync(services => services
-            .GetRequiredService<IOrderExpiryStore>()
-            .FindDueOrdersAsync(500, order.PaymentDueAtUtc.AddSeconds(-1), Token));
+        var deadline = new DateTime(2019, 6, 1, 0, 0, 0, DateTimeKind.Utc);
 
-        Assert.DoesNotContain(orderId, due);
+        try
+        {
+            await SetDeadlineAsync(orderId, deadline);
 
-        var later = await InScopeAsync(services => services
-            .GetRequiredService<IOrderExpiryStore>()
-            .FindDueOrdersAsync(500, order.PaymentDueAtUtc.AddSeconds(1), Token));
+            var due = await InScopeAsync(services => services
+                .GetRequiredService<IOrderExpiryStore>()
+                .FindDueOrdersAsync(500, deadline.AddSeconds(-1), Token));
 
-        Assert.Contains(orderId, later);
+            // Empty, not merely "without this order": nothing in the database is due before 2019.
+            Assert.Empty(due);
+
+            var later = await InScopeAsync(services => services
+                .GetRequiredService<IOrderExpiryStore>()
+                .FindDueOrdersAsync(500, deadline.AddSeconds(1), Token));
+
+            Assert.Equal([orderId], later);
+        }
+        finally
+        {
+            await SetDeadlineAsync(orderId, order.PaymentDueAtUtc);
+        }
     }
 
     [Fact]

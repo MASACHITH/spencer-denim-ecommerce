@@ -319,10 +319,21 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
                      ?payerReference=...&slip=, the typed value goes into the URL instead of the order, and
                      nothing says so. Silent loss of something a shopper just typed about their own money.
 
-                     So the controls are plain buttons with click handlers, which is what every other page
-                     in this shop does: checkout's own Place Order is a button, and there was no <form> in
-                     the storefront before this one. Enter is handled explicitly on the text box, so the
-                     keyboard shortcut survives without a submission that can escape to the browser. -->
+                     So the controls are plain buttons with click handlers, and Enter is handled explicitly
+                     on the text box: the keyboard shortcut survives without a submission that can escape
+                     to the browser.
+
+                     **The first version of this comment also claimed "there was no <form> in the storefront
+                     before this one" and that checkout's Place Order is a button. Both are false, and the
+                     correction is the point.** checkout-page.ts has a <form> whose submit button is
+                     attached from outside by the form= attribute, which is why a grep for (ngSubmit) found
+                     only this file and why I believed the claim when I wrote it. That one is worse than
+                     mine was: a pre-hydration submit puts a shopper's name, phone, address and city into
+                     the query string, loses the form and leaves personal data in history and access logs.
+                     It is W3-02's and filed as issue #123 — not fixed here, and not to be inferred away by
+                     this comment a second time. The lesson is the one this file keeps relearning: a
+                     comment written from what the author intended, rather than from the behaviour in front
+                     of them, is worse than no comment. -->
                 <div class="pay__proof">
                   <h3 class="pay__sub">Tell us about your transfer</h3>
                   <p class="order__muted">

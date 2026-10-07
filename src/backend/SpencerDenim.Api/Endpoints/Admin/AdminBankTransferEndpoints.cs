@@ -242,6 +242,13 @@ internal static class AdminBankTransferEndpoints
             {
                 ["code"] = ShortStockCode,
 
+                // **The same key the `Refused` branch sends, and its absence here was a defect.** A screen
+                // refused with `short_stock` and told nothing else cannot know the order is closed, so it
+                // went back to offering Approve on an expired order. There is no `paymentStatus`: the
+                // decision rolled back before touching the payment, so the one this would report is the
+                // one the caller already has.
+                ["orderStatus"] = shortStock.OrderStatus,
+
                 // **An array of described lines, and deliberately not checkout's shape.**
                 // POST /api/checkout/orders keys its short lines by variant id because its reader is the
                 // shopper's own bag, which can resolve an id to the line the shopper is looking at. This

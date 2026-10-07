@@ -100,7 +100,9 @@ export function bankInstructions(
     dueAtUtc: '2026-10-07T04:30:00Z',
     fields: [
       { label: 'Bank', value: 'Example Bank PLC', copyable: false },
-      { label: 'Branch', value: 'Kollupitiya', copyable: false },
+      // An obviously-fake branch, like every other bank value in this fixture. The *city* in the address
+      // above is a real Colombo suburb on purpose — that is an address, not the shop's bank details.
+      { label: 'Branch', value: 'Example Branch', copyable: false },
       { label: 'Account name', value: 'Example Shop (Pvt) Ltd', copyable: false },
       { label: 'Account number', value: '0000 1111 2222', copyable: true },
     ],
@@ -257,7 +259,7 @@ describe('OrderPage (CHK-04)', () => {
       '0000 1111 2222',
     );
     expect(body).toContain('Example Bank PLC');
-    expect(body).toContain('Kollupitiya');
+    expect(body).toContain('Example Branch');
     expect(body).toContain('Example Shop (Pvt) Ltd');
 
     // The exact amount, and the deadline in Colombo time (04:30 UTC is 10.00 am local).

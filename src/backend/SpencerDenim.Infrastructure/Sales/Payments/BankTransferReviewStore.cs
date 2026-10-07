@@ -373,7 +373,8 @@ internal sealed class BankTransferReviewStore(
                 // Doc 08 §5.7: re-acquire the stock with a conditional deduct per line. Reserved is *not*
                 // touched — the reservation was given back when the order expired or was cancelled — so
                 // this takes from OnHand against what is available now, competing with live shoppers.
-                if (await ReacquireStockAsync(decision, cancellationToken) is { } shortLines)
+                if (await ReacquireStockAsync(decision, snapshot.Status, cancellationToken)
+                    is { } shortLines)
                 {
                     return shortLines;
                 }
@@ -570,6 +571,7 @@ internal sealed class BankTransferReviewStore(
     /// </remarks>
     private async Task<BankTransferDecisionResult?> ReacquireStockAsync(
         BankTransferDecision decision,
+        OrderStatus orderStatus,
         CancellationToken cancellationToken)
     {
         var lines = await ReadLinesAsync(decision.OrderId, cancellationToken);
@@ -627,7 +629,9 @@ internal sealed class BankTransferReviewStore(
                     available.GetValueOrDefault(candidate.VariantId)))
                 .ToList();
 
-            return new BankTransferDecisionResult.ShortStock(shortLines);
+            // The status travels with the refusal: it is the only thing the screen is told, and without
+            // it the screen cannot know the order is closed. See ShortStock's own remarks.
+            return new BankTransferDecisionResult.ShortStock(shortLines, orderStatus);
         }
 
         return null;

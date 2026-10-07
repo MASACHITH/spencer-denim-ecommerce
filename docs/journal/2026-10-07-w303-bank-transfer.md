@@ -525,6 +525,92 @@ and no row at all would lose the one place an order's timeline can be read.
 uncontended machine, against the 856/1/3 measured here. The four non-green tests recorded below are load
 artefacts on this machine, and that is now evidence rather than an inference.
 
+## Round 3: two fixes that shipped the defect they were fixing
+
+Both of round 2's UI-side fixes went wrong in the same way, and the shape is worth naming: **I fixed the
+state the report described and did not walk the states either side of it.**
+
+### MINOR 1 — the new wrong button, one state along
+
+MAJOR 1 keyed Accept late payment on the server's `order_expired` refusal instead of the clock. But
+`refusals` holds one slot per row and `decide()` clears it before each attempt, so pressing Accept late
+payment and getting `short_stock` **replaced** the `order_expired` fact — and `short_stock` was the one 409
+in the flow carrying no `orderStatus`. The screen therefore went back to offering **Approve** on an order
+that had expired and can never be approved: Approve → `order_expired` → Accept late → `short_stock` →
+Approve. An oscillation pointing staff at an action that cannot succeed, on a screen about money.
+
+Two changes, because either alone would leave the other half of the hole: the refusal now **carries the
+order's status** (it is the only thing the screen is told, so the state has to travel with it), and
+`canAcceptLate` reads the **status** rather than only the code — `order_expired` means yes,
+`order_not_closed` means no, and everything else is answered by whether the order is `Expired` or
+`Cancelled`. That last clause is the one that matters: the next refusal code nobody has thought of will not
+bounce the screen back to Approve.
+
+**It also retires a stale claim.** `BANK_TRANSFER_REFUSALS.shortStock` and `.orderNotClosed` were declared
+and never read, while their doc comments said they moved a button. Both are read now — `orderNotClosed` in
+`canAcceptLate`, `shortStock` in `shortLinesFor`, which renders the stock figures only for the refusal that
+has them so a `shortLines` field on some other refusal cannot put somebody else's numbers under this
+message.
+
+**And a lesson about my own browser tests.** Removing `orderStatus` from the real endpoint left the
+Playwright suite green: the browser tests run against the stub, and the stub sends whatever this repo says
+it should. A screen test cannot hold an API to a payload shape. `A_short_stock_refusal_says_the_order_is_still_closed`
+is the test that can, and it goes red for exactly that mutation.
+
+### MINOR 2 — the phantom payment, and a description I gave that the code did not match
+
+I reported that "clearing a reference with no open row answers success rather than creating a row to hold a
+null". **It did not ship that way**: the handler called `OpenPaymentAsync` unconditionally, so a shopper
+pressing Save on the empty box after a rejection — by reflex, or to take back a typo — opened a `Pending`
+payment with no reference and no slip, which **put the order back in the staff queue** reading "None given /
+None uploaded". Staff check the statement, find nothing, reject it again. `UX_Payments_OneOpen` capped it at
+one phantom per cycle, so there was no flood and no money effect, which is exactly what would have kept it
+unnoticed.
+
+Worse than the defect: **I described an intention as a fact in a hand-off**, and it was relayed onward and
+believed. Three of this task's five wrong claims have been of that family — a comment or a report written
+from what I meant rather than from what is in front of me.
+
+Clearing is now its own branch: it reads the order, 404s when it cannot be paid at all (saying "cleared"
+about a paid order is a lie whichever value it carries), clears the open row when there is one, and answers
+success when there is nothing to clear. The route's throttle remark is corrected too — it argued that a
+reference only ever rewrites "a row that already exists", which stopped being true when MAJOR 3 made the
+route able to open one.
+
+### MINOR 3 — a Warning that fired on every page view
+
+`DescribeAsync`'s warning sat on `GET /api/orders/{token}`: unauthenticated, unthrottled (G-41 is owed) and
+re-read on every refresh, so one shopper refreshing produced one Warning per refresh. A shop live without
+bank details would have buried its own log — the failure `ExpireUnpaidOrdersService` guards against one file
+away. Now once per process, through `BankDetailsWarningOnce`: an injected object rather than a static field
+**so the throttle can be tested** (a static one could not be reset, so it would be either untested or
+order-dependent), with three unit tests including 64 simultaneous callers. Once per *order* is the better
+signal and belongs in `ops.AdminAlerts`, which is not this task's table; the log message says it is
+process-wide so nobody reads one line as "one affected order".
+
+### The four comments
+
+1. **The `<form>` claim was still in `order-page.ts`** — I corrected the journal and left the comment a
+   future reader actually hits, which is the worse half of the mistake. It now says both halves were false,
+   names issue #123 and the data a pre-hydration checkout submit leaks, and says plainly that a comment
+   written from intent rather than behaviour is worse than no comment.
+2. The reference route's throttle justification (above).
+3. The two unread refusal constants (above).
+4. `MediaUsageOwnerTypes.Payment` now says it is **synthesised for the 409 and never persisted**, and is
+   not one of doc 08 §3.3's owner types — the first version invited a reader to go looking for rows that do
+   not exist.
+
+### And two corrections to round 2's own claims
+
+- "Every fixture uses obviously-fake values" was **slightly overstated**: `order-page.spec.ts` still used
+  `Kollupitiya` as the *branch*. Fixed. `Kollupitiya` as a **city** in an address fixture is legitimate and
+  stays — that is an address, not the shop's bank details.
+- `Only_orders_past_their_own_deadline_are_in_the_batch` was m-1's shape with a 500 ceiling instead of 50,
+  and m-1's fix had made it worse by leaving three permanently-2020-dated orders at the head of every later
+  batch. Both tests now put their deadlines back in a `finally`, and the sibling asserts an exact set rather
+  than containment. **Controlling your own state includes putting it back** — a test that fixes its own
+  flake by handing the next one a biased batch has moved the problem, not retired it.
+
 ## Measured
 
 | | | W3-02's baseline |
@@ -532,10 +618,10 @@ artefacts on this machine, and that is now evidence rather than an inference.
 | `dotnet build SpencerDenim.sln -c Release --no-incremental` | **0 warnings, 0 errors** | 0 / 0 |
 | `npm run build` (production, budgets enforced) | **0 warnings** | 0 |
 | `dotnet test tests/SpencerDenim.UnitTests` | **1459 passed**, 0 failed | 1306 (+153) |
-| `dotnet test tests/SpencerDenim.IntegrationTests` | **1090 passed**, 0 failed, 0 skipped (13 m 23 s) | 956 |
+| `dotnet test tests/SpencerDenim.IntegrationTests` | **1095 passed**, 0 failed, 0 skipped — on this machine. The tester measured **1089/1** on theirs, failing in `AuditLogEndpointTests`, which is #114's family and provably not this branch's: 8/8 alone, 64/64 beside every W3-03 suite, the file untouched in all three rounds, and its 2026-09-01→09-04 window cannot contain rows this branch stamps today. | 956 |
 | `ng test shared / storefront / admin` | 24 / **1295** / **374** passed, 0 failed | 21 / 1206 / 273 |
 | `ng lint` | all three projects pass | pass |
-| `playwright test --project=chromium` (full suite) | **860 of 860**, clean (5.6 m) — the same figure the tester measured; the earlier 856/1/3 runs are recorded below as the load artefacts they were | — |
+| `playwright test --project=chromium` (full suite) | **860 of 860** on this machine (5.6 m) — but the tester measured **857/3** on a clean one, three different tests again, all passing alone, none in the W3-03 files and one of them on this branch's own round-1 flake list. **#115 is live and this does not close it**; a clean run is one sample, not a property. | — |
 | `playwright test bank-transfer.e2e.ts` | **10 passed**, and 30/30 under `--repeat-each=3 --workers=1` | — |
 | `playwright test admin-bank-transfers.e2e.ts` | **14 passed** | — |
 | `playwright test checkout.e2e.ts` | **50 passed** (two assertions removed, below) | 52 |
@@ -685,9 +771,9 @@ nightly reconciliation is the other half of the signal.
 | 9 | **The placement throttle**, the other half of #107. Not a documented requirement; an owner decision. | Owner |
 | 10 | **`GET /api/admin/media/{publicId}` does not filter by visibility**, so a `Media.View` holder can read a slip's *metadata* (not its bytes — the file route is `Orders.View` and keyed on the order). Pre-existing, found while reading; worth a deliberate decision, and ADM-18's listing must exclude `Visibility = Private` when it lands. | ADM-18 |
 | 11 | ~~**Playwright coverage of the two new screens.**~~ Written and run: 24 tests, four defects found. | — |
-| 12 | **A way to reach an order that has already expired.** The queue lists `Pending` payments, and expiry closes the payment in the same transaction as the order — so an expired order is **not in the queue at all**, and Accept late payment is reachable only when expiry wins *during* a review (the `order_expired` refusal). P7 step 8's real case is money that arrives a day later, and there is no screen on which to find that order. It was equally unreachable before MAJOR 1's fix (the button was offered and the server refused it), so this is a gap rather than a regression — but it is the gap that makes the late-acceptance transaction, which is built and tested, almost unusable. **An "expired, awaiting a decision" filter on this queue, or the order list, is what closes it.** | ADM-09 / W3-04 |
+| 12 | **A way to reach an order that has already expired — filed as #124, and sharper than I first put it.** The queue lists `Pending` payments and expiry closes the payment in the same transaction as the order, so an expired order is **not in the queue at all**: Accept late payment is reachable only when expiry wins *during* a review. The tester added the part that changes its urgency — **pressing Refresh destroys that one route permanently**, because `read()` clears the refusals *and* re-reads, and the row is gone from the queue, so a staff member who gets the `order_expired` refusal and then reloads cannot reach the transaction again from any screen. A one-keystroke trap in front of a money path. And until a view exists, **the 48-hour expiry is a liability rather than a safeguard**: P7 step 8's real case has no entry point, G-13's refund fallback has no system path either, so an order that expires and then pays can only be settled by direct database work. Not a regression (the button was offered and refused before), and the recommendation is not to put the expiry job in front of a live shop without one of the two. | ADM-09 / W3-04, #124 |
 | 13 | **An architect's line on the customer's slip read-back.** P7 says the slip is "shown only to staff with `Orders.View`"; this build also serves it back to the holder of the order's token, which I believe is right — a shopper who uploaded a file should be able to see which file the shop has — but it is a scope deviation and needs ratifying in doc 02 or doc 11 rather than living in a code comment (the tester's m-7). | Architect |
-| 14 | **`checkout-page.ts`' `<form>` with an outside submit button** (`form=`), which natively submits name, phone, address and city into the query string before hydration. Pre-existing, W3-02's, and found only because my own version of the same mistake was reviewed. The coordinator is filing it. | W3-02 |
+| 14 | **`checkout-page.ts`' `<form>` with an outside submit button** (`form=`), which natively submits name, phone, address and city into the query string before hydration, losing the form and leaving personal data in history and access logs. Pre-existing, W3-02's, found only because my own version of the same mistake was reviewed, and now **filed as #123**. The false claim about it is corrected in both the journal and the comment in `order-page.ts`. | W3-02, #123 |
 | 15 | No `progress-data.js` change, no `MEMORY.md`, no `TASKS.md` (doc 14's rule). | owner's session |
 
 ## What I deliberately did not build
@@ -716,10 +802,11 @@ nightly reconciliation is the other half of the signal.
 - **The private volume in a real deployment.** The slip tests use the fixture's temp volumes, which are
   siblings as `MediaStorageRoots` insists. Nothing has checked that Caddy does not mount the private volume,
   because there is no Caddy here (W0-15).
-- **The expiry job on a real timer.** `IOrderExpiryStore` is tested directly, including the races; the
-  hosted service's five-minute loop and its shutdown behaviour are reasoned from
-  `CatalogSeedHostedService`'s recorded lessons and **not** tested. A lifetime test like
-  `CatalogSeedHostedServiceLifetimeTests` is owed.
+- ~~**The expiry job on a real timer.**~~ **Checked by the tester in round 1, and the defect is absent** —
+  recorded here so nobody re-does the work: `ExpireUnpaidOrdersService` owns no `CancellationTokenSource`
+  and overrides neither `StopAsync` nor `Dispose`, and all four of the W3-02-shaped cases pass. The
+  five-minute loop itself is still only reasoned from `CatalogSeedHostedService`'s recorded lessons, which
+  is a smaller gap than the one this entry used to claim.
 - **Query plans at production cardinality.** The plan tests run against tens of rows. That is sound for
   *matching* — which is about implication, not cardinality, and the measured plan is a clustered scan of a
   table with `TableCardinality="0"` where a seek would be cheaper if it were legal — but it says nothing
@@ -727,10 +814,12 @@ nightly reconciliation is the other half of the signal.
 
 ## The full browser run's leftovers, none of them this branch's — and now resolved
 
-**The final run on this machine is 860 of 860.** Before that, two full runs each landed on 856, and the four
-that did not pass were **different tests each time** — the signature of load rather than of a defect. Every
-one passed in isolation, each was re-run that way to check, and both W3-03 files were green throughout. The
-tester's own clean 860/860 on an uncontended machine, and this branch's final clean run, settle it.
+Three full runs here: two at 856 and a final one at 860 of 860. The tester then measured **857/3 on a clean
+machine** — three *different* tests again, all green alone, none in the W3-03 files, one of them already on
+this branch's round-1 list. So the honest reading is not "settled": **this bucket is #115 and it is open.**
+What every run does agree on is that the failures are different each time, they pass in isolation, and
+neither W3-03 file has ever been among them. A clean run is a sample, not a proof — and an earlier version
+of this section read as though one closed the issue.
 
 | Test | First run | Second run | In isolation |
 |---|---|---|---|

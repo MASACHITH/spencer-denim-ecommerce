@@ -102,9 +102,26 @@ export interface BankTransferShortLine {
   readonly available: number;
 }
 
+/**
+ * The order statuses that mean expiry or a cancellation has already won, so the only way to take money for
+ * this order is Accept late payment (doc 08 §4.1's `Expired / Cancelled → Paid`).
+ *
+ * **Named here because the screen has to key its button on the order's state rather than on a clock or on
+ * the last refusal code it happened to see.** Both of those have now been wrong once: the clock offered
+ * Accept late payment on an order that was still payable, and a single refusal slot offered Approve on an
+ * order that had expired, because the `short_stock` refusal that replaced the `order_expired` one carried
+ * no status at all.
+ */
+export const CLOSED_ORDER_STATUSES: readonly string[] = ['Expired', 'Cancelled'];
+
 /** The refusal codes the screen branches on. */
 export const BANK_TRANSFER_REFUSALS = {
   orderExpired: 'order_expired',
+
+  /**
+   * The late acceptance's stock re-check failed. The refusal carries the short lines **and** the order's
+   * status, which is what tells the screen the order is still closed.
+   */
   shortStock: 'short_stock',
 
   /**

@@ -307,6 +307,20 @@ public sealed class PaymentProviderContractTests
             return new SpencerDenim.Application.Sales.Payments.BankTransferOptions();
         }
 
+        // The one-per-process warning gate, which came with the logger below. A fresh one, so a provider
+        // under this test is never silenced by something another test did.
+        if (type == typeof(BankDetailsWarningOnce))
+        {
+            return new BankDetailsWarningOnce();
+        }
+
+        // The one-per-process warning gate, which came with the logger below. A fresh one, so a provider
+        // under this test is never silenced by something another test did.
+        if (type == typeof(BankDetailsWarningOnce))
+        {
+            return new BankDetailsWarningOnce();
+        }
+
         // A logger, which W3-03's review added to the bank provider so an unconfigured shop is not silent
         // (doc 08 §3.5's unenforced "a provider needs valid settings"). NullLogger rather than a spy: what
         // this file proves is the contract, and a provider that logs is still a provider that must answer.

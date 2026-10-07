@@ -707,6 +707,8 @@ const server = createServer(async (request, response) => {
         'This order cannot be paid now, because some of its items have been sold since it expired.',
         'short_stock',
         {
+          // The order is still expired, and the screen cannot know that unless the refusal says so.
+          orderStatus: 'Expired',
           shortLines: [
             {
               variantId: 470,

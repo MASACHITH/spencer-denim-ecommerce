@@ -345,6 +345,10 @@ describe('BankTransfersPage (PAY-01, ADM-09)', () => {
         title: 'Some items are no longer in stock',
         detail: 'Some of its items have been sold since it expired.',
         code: 'short_stock',
+
+        // The status the server now sends with this refusal. Without it the screen cannot know the order
+        // is closed — which is the defect the assertions at the end of this test exist for.
+        orderStatus: 'Expired',
         shortLines: [
           {
             variantId: 470,
@@ -384,6 +388,82 @@ describe('BankTransfersPage (PAY-01, ADM-09)', () => {
     expect(refused).toContain('0 left, 1 needed');
     expect(refused).toContain('Denim jacket');
     expect(refused).toContain('1 left, 2 needed');
+
+    // **And the screen still offers Accept late payment, not Approve.** This is the defect the second
+    // version of `canAcceptLate` shipped: `refusals` holds one slot per row and `decide()` clears it
+    // first, so the `short_stock` refusal replaced the `order_expired` one and a code-only test for
+    // "expiry won" answered no — putting Approve back on an expired order, which can never be approved.
+    // Press it and you get `order_expired` again: an oscillation pointing staff at an action that cannot
+    // succeed.
+    expect(element.querySelector('[data-testid="accept-late-SD-2026-000123"]')).not.toBeNull();
+    expect(element.querySelector('[data-testid="approve-SD-2026-000123"]')).toBeNull();
+  });
+
+  it('keeps Accept late payment after a refusal that only says the order is closed', async () => {
+    await open(page({ rows: [row({ secondsUntilExpiry: -60 })] }));
+
+    element.querySelector<HTMLButtonElement>('[data-testid="approve-SD-2026-000123"]')!.click();
+    await settle();
+
+    answerAntiforgery();
+    await settle();
+
+    // A refusal with a code this screen does not branch on at all, carrying a closed status. The button
+    // has to follow the **order's state** rather than the set of codes somebody thought of: this is what
+    // keeps the next unrecognised 409 from bouncing the screen back to Approve.
+    http.expectOne(`${BankTransferApi.queueUrl}/${ORDER}/approve`).flush(
+      {
+        title: 'This decision could not be applied',
+        detail: 'This order is no longer awaiting a bank transfer.',
+        code: 'order_not_pending',
+        orderStatus: 'Cancelled',
+        paymentStatus: 'Cancelled',
+      },
+      { status: 409, statusText: 'Conflict' },
+    );
+    await settle();
+
+    expect(element.querySelector('[data-testid="accept-late-SD-2026-000123"]')).not.toBeNull();
+    expect(element.querySelector('[data-testid="approve-SD-2026-000123"]')).toBeNull();
+  });
+
+  it('shows short lines only for the refusal that has them', async () => {
+    await open();
+
+    element.querySelector<HTMLButtonElement>('[data-testid="approve-SD-2026-000123"]')!.click();
+    await settle();
+
+    answerAntiforgery();
+    await settle();
+
+    // A `shortLines` field on a refusal that is not about stock. Rendering it would put somebody else's
+    // stock figures under this message, which is why the list is keyed on the code.
+    http.expectOne(`${BankTransferApi.queueUrl}/${ORDER}/approve`).flush(
+      {
+        title: 'This decision could not be applied',
+        detail: 'This order has already been paid.',
+        code: 'order_already_paid',
+        orderStatus: 'Paid',
+        paymentStatus: 'Succeeded',
+        shortLines: [
+          {
+            variantId: 470,
+            sku: 'SKU-470',
+            productName: 'Slim jeans',
+            colourName: 'Indigo',
+            sizeLabel: '32',
+            needed: 1,
+            available: 0,
+          },
+        ],
+      },
+      { status: 409, statusText: 'Conflict' },
+    );
+    await settle();
+
+    const refused = element.querySelector('[data-testid="refused-SD-2026-000123"]')?.textContent ?? '';
+    expect(refused).toContain('already been paid');
+    expect(refused).not.toContain('Slim jeans');
   });
 
   /**
