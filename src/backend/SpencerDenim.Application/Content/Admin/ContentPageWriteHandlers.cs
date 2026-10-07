@@ -318,7 +318,12 @@ public sealed class ContentPageWriteHandlers(
             before,
             after,
             command.Actor,
-            now);
+            now,
+
+            // The body is compared in full and written as a description. Putting the description into
+            // the snapshots instead made two bodies of the same length compare equal, so the save was
+            // skipped and the editor's copy was lost — see ContentAuditTrail.ForChange.
+            ContentAuditTrail.RedactedContentPageFields);
 
         if (audit is null)
         {
@@ -469,15 +474,19 @@ public sealed class ContentPageWriteHandlers(
     }
 
     /// <summary>
-    /// The fields the audit diff is taken over. The body is described, never copied — see
-    /// <see cref="ContentAuditTrail"/>.
+    /// The fields the audit diff is taken over, with their <b>real</b> values.
+    /// <para>
+    /// The body included: it is compared in full and then replaced with a description on the way into
+    /// <c>ops.AuditLogs</c> (<see cref="ContentAuditTrail.RedactedContentPageFields"/>). Describing it
+    /// <i>here</i> is what made a save of two same-length bodies look like a save of nothing.
+    /// </para>
     /// </summary>
     private static Dictionary<string, object?> Snapshot(ContentPage page) =>
         new(StringComparer.Ordinal)
         {
             ["slug"] = page.Slug,
             ["title"] = page.Title,
-            [ContentAuditTrail.BodyField] = ContentAuditTrail.DescribeBody(page.BodyHtml),
+            [ContentAuditTrail.BodyField] = page.BodyHtml,
             ["seoTitle"] = page.SeoTitle,
             ["seoDescription"] = page.SeoDescription,
         };

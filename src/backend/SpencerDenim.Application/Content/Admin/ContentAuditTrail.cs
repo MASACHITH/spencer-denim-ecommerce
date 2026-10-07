@@ -48,7 +48,27 @@ public static class ContentAuditTrail
     /// <summary>
     /// A row describing the fields that differ, or <see langword="null"/> when none do — so a save of a
     /// form nobody edited is not an event.
+    /// <para>
+    /// <b>The comparison is on the real values and the redaction happens afterwards, and that ordering is
+    /// the whole of a defect this caught.</b> The first version put
+    /// <see cref="DescribeBody"/>'s output — a character count — into the snapshots the diff reads. Two
+    /// different bodies of the same length then produced <i>no</i> diff, so the caller concluded nothing
+    /// had changed and never issued a statement: the editor's new copy was assigned to the entity and
+    /// thrown away, and the screen said "Saved". Found by
+    /// <c>A_save_that_does_not_mention_the_seo_fields_leaves_them_alone</c>, whose fixture happened to
+    /// change <c>&lt;p&gt;Old copy.&lt;/p&gt;</c> for <c>&lt;p&gt;New copy.&lt;/p&gt;</c> — sixteen
+    /// characters either way.
+    /// </para>
+    /// <para>
+    /// So callers pass the body itself, this compares it, and the row that goes to
+    /// <c>ops.AuditLogs</c> carries the description instead. One comparison, one redaction, and neither
+    /// can be got right while the other is wrong.
+    /// </para>
     /// </summary>
+    /// <param name="redactedFields">
+    /// Fields whose value must not reach the audit row — the content page's body, and anything else
+    /// later. They are compared normally and then replaced with <see cref="DescribeBody"/>'s summary.
+    /// </param>
     public static AuditLog? ForChange(
         string action,
         string entityType,
@@ -56,7 +76,8 @@ public static class ContentAuditTrail
         IReadOnlyDictionary<string, object?> before,
         IReadOnlyDictionary<string, object?> after,
         AdminActor actor,
-        DateTime occurredAtUtc)
+        DateTime occurredAtUtc,
+        IReadOnlySet<string>? redactedFields = null)
     {
         ArgumentNullException.ThrowIfNull(before);
         ArgumentNullException.ThrowIfNull(after);
@@ -72,14 +93,20 @@ public static class ContentAuditTrail
                 continue;
             }
 
-            changedBefore[field] = beforeValue;
-            changedAfter[field] = afterValue;
+            var redact = redactedFields?.Contains(field) == true;
+
+            changedBefore[field] = redact ? DescribeBody(beforeValue as string) : beforeValue;
+            changedAfter[field] = redact ? DescribeBody(afterValue as string) : afterValue;
         }
 
         return changedAfter.Count == 0
             ? null
             : Row(action, entityType, entityId, changedBefore, changedAfter, actor, occurredAtUtc);
     }
+
+    /// <summary>The fields a content-page row redacts. One set, so the two callers cannot disagree.</summary>
+    public static IReadOnlySet<string> RedactedContentPageFields { get; } =
+        new HashSet<string>(StringComparer.Ordinal) { BodyField };
 
     /// <summary>A row for an event that is not a field diff — a creation, a removal, a status change.</summary>
     public static AuditLog Row(
