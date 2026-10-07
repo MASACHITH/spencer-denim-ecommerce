@@ -20,7 +20,11 @@ using SpencerDenim.Application.Catalog.Sitemap;
 using SpencerDenim.Application.Content.Abstractions;
 using SpencerDenim.Application.Content.Announcements;
 using SpencerDenim.Application.Content.Contracts;
+using SpencerDenim.Application.Content.Admin;
+using SpencerDenim.Application.Content.Admin.Contracts;
+using SpencerDenim.Application.Content.Contact;
 using SpencerDenim.Application.Content.Home;
+using SpencerDenim.Application.Content.Pages;
 using SpencerDenim.Application.Diagnostics.Ping;
 using SpencerDenim.Application.Marketing.Newsletter;
 using SpencerDenim.Application.Sales.Cart;
@@ -49,6 +53,9 @@ public static class DependencyInjection
 
     /// <inheritdoc cref="UncachedHomePage"/>
     private const string UncachedSiteSettings = "site-settings:uncached";
+
+    /// <inheritdoc cref="UncachedHomePage"/>
+    private const string UncachedContentPageLinks = "content-page-links:uncached";
 
     /// <summary>Registers application use-case handlers.</summary>
     public static IServiceCollection AddApplication(this IServiceCollection services)
@@ -194,6 +201,50 @@ public static class DependencyInjection
         services.AddScoped<
             ICommandHandler<SubscribeToNewsletterCommand, NewsletterSubscriptionOutcome>,
             SubscribeToNewsletterCommandHandler>();
+
+        // Content pages and the contact enquiry (W2-11, GLB-10).
+        //
+        // The page *body* read is not cached: one page's body is read only when somebody opens that page,
+        // and a client who has just corrected a typo in their returns policy should see it corrected. The
+        // published-page *list* is, because it is read during the server render of every page on the site
+        // — same decoration-by-hand as the homepage and the site settings above.
+        services.AddScoped<IQueryHandler<GetContentPageQuery, ContentPageDto?>, GetContentPageQueryHandler>();
+        services.AddKeyedScoped<
+            IQueryHandler<GetContentPageLinksQuery, ContentPageLinksDto>,
+            GetContentPageLinksQueryHandler>(UncachedContentPageLinks);
+        services.AddScoped<IQueryHandler<GetContentPageLinksQuery, ContentPageLinksDto>>(provider =>
+            new CachedContentPageLinksQueryHandler(
+                provider.GetRequiredKeyedService<IQueryHandler<GetContentPageLinksQuery, ContentPageLinksDto>>(
+                    UncachedContentPageLinks),
+                provider.GetRequiredService<IContentPageLinksCache>()));
+        services.AddScoped<
+            ICommandHandler<SubmitContactEnquiryCommand, ContactEnquiryResult>,
+            SubmitContactEnquiryCommandHandler>();
+
+        // The admin content screens (ADM-17, GLB-10). The four page writes are one class, because they
+        // share the validation, the sanitising and the audit shape; it is registered once per interface so
+        // each endpoint still asks for the one command it sends.
+        services.AddScoped<ContentPageWriteHandlers>();
+        services.AddScoped<ICommandHandler<CreateContentPageCommand, ContentWriteResult>>(
+            provider => provider.GetRequiredService<ContentPageWriteHandlers>());
+        services.AddScoped<ICommandHandler<UpdateContentPageCommand, ContentWriteResult>>(
+            provider => provider.GetRequiredService<ContentPageWriteHandlers>());
+        services.AddScoped<ICommandHandler<SetContentPagePublishedCommand, ContentWriteResult>>(
+            provider => provider.GetRequiredService<ContentPageWriteHandlers>());
+        services.AddScoped<ICommandHandler<DeleteContentPageCommand, ContentWriteResult>>(
+            provider => provider.GetRequiredService<ContentPageWriteHandlers>());
+
+        services.AddScoped<ContactEnquiryWriteHandlers>();
+        services.AddScoped<ICommandHandler<OpenContactSubmissionCommand, ContactSubmissionWriteOutcome>>(
+            provider => provider.GetRequiredService<ContactEnquiryWriteHandlers>());
+        services.AddScoped<
+            ICommandHandler<SetContactSubmissionStatusCommand, ContactSubmissionWriteOutcome>>(
+            provider => provider.GetRequiredService<ContactEnquiryWriteHandlers>());
+        services.AddScoped<ICommandHandler<DeleteContactSubmissionCommand, ContactSubmissionWriteOutcome>>(
+            provider => provider.GetRequiredService<ContactEnquiryWriteHandlers>());
+        services.AddScoped<
+            IQueryHandler<GetContactSubmissionsQuery, AdminContactSubmissionsDto>,
+            GetContactSubmissionsQueryHandler>();
 
         // The bag and the mini bag (W2-09, CART-01/02). The reads and the writes go through the same two
         // ports, which Infrastructure registers; the merge handler has no caller until ACC-01 gives the

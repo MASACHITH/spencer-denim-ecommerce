@@ -39,6 +39,14 @@ internal sealed class SiteSettingsReader(AppDbContext dbContext, ISettingsStore 
     [
         SettingKeys.Store.LogoAssetId,
         SettingKeys.Contact.WhatsApp,
+
+        // W2-11 (GLB-10): the Contact page's hours-and-address panel and the footer's contact column.
+        SettingKeys.Contact.Phone,
+        SettingKeys.Contact.Email,
+        SettingKeys.Contact.Address,
+        SettingKeys.Contact.OpeningHours,
+        SettingKeys.Contact.MapEmbedUrl,
+
         SettingKeys.Social.FacebookUrl,
         SettingKeys.Social.InstagramUrl,
         SettingKeys.Social.TikTokUrl,
@@ -72,8 +80,62 @@ internal sealed class SiteSettingsReader(AppDbContext dbContext, ISettingsStore 
         return new SiteSettingsDto(
             await ReadLogoAsync(values.GetValueOrDefault(SettingKeys.Store.LogoAssetId), cancellationToken),
             SettingFieldRules.IsAcceptableWhatsAppNumber(whatsApp) ? whatsApp : null,
-            social);
+            social,
+            ReadContact(values));
     }
+
+    /// <summary>
+    /// The <c>Contact</c> group as the storefront draws it (GLB-07, GLB-10).
+    /// <para>
+    /// <b>Every value is re-validated on the way out</b>, by the same functions the write path uses, for
+    /// the reason the type remarks give in full: a row can hold something this build would refuse, written
+    /// by an earlier build or by a database edit, and the browser is what follows the map address. A value
+    /// that fails is simply absent, which renders as nothing.
+    /// </para>
+    /// <para>
+    /// <b>The telephone number and the address are not re-validated the same way, deliberately.</b> There
+    /// is nothing a browser <i>follows</i> in them: they are interpolated as text, and the <c>tel:</c>
+    /// target is built from the digits. Refusing a number the client typed slightly differently would show
+    /// a shopper no telephone number at all, which is strictly worse than showing one with an unusual
+    /// bracket in it. The length and control-character bounds are the write path's and they hold on the
+    /// row.
+    /// </para>
+    /// </summary>
+    private static SiteContactDto ReadContact(IReadOnlyDictionary<string, string?> values)
+    {
+        var map = SettingFieldRules.Clean(values.GetValueOrDefault(SettingKeys.Contact.MapEmbedUrl));
+
+        return new SiteContactDto(
+            SettingFieldRules.Clean(values.GetValueOrDefault(SettingKeys.Contact.Phone)),
+            SettingFieldRules.Clean(values.GetValueOrDefault(SettingKeys.Contact.Email)),
+            Lines(values.GetValueOrDefault(SettingKeys.Contact.Address)),
+            Lines(values.GetValueOrDefault(SettingKeys.Contact.OpeningHours)),
+            SettingFieldRules.TryNormaliseMapEmbedUrl(map, out var normalised) ? normalised : null);
+    }
+
+    /// <summary>
+    /// A multi-line setting as the lines the storefront renders: trimmed, blank lines dropped, and capped.
+    /// <para>
+    /// The cap is not about the column — the write path bounds that — but about what a footer can draw: a
+    /// value that somehow holds two hundred newlines would otherwise become two hundred paragraphs on
+    /// every page of the shop.
+    /// </para>
+    /// </summary>
+    private static List<string> Lines(string? value)
+    {
+        if (SettingFieldRules.Clean(value) is not { } text)
+        {
+            return [];
+        }
+
+        return text
+            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Take(MaxLines)
+            .ToList();
+    }
+
+    /// <summary>How many lines of an address or a set of opening hours the storefront will draw.</summary>
+    private const int MaxLines = 8;
 
     /// <summary>
     /// Resolves the logo reference, answering <see langword="null"/> for every way it can fail to be a

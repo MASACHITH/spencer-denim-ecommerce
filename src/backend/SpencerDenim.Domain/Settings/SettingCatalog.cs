@@ -75,6 +75,51 @@ public static class SettingCatalog
             + "94771234567. No plus sign, no spaces."),
 
         new(
+            SettingKeys.Contact.Phone,
+            SettingKeys.Contact.Group,
+            SettingValueType.String,
+            Permissions.Settings.Edit,
+            "Telephone number",
+            "The shop's telephone number, as you want shoppers to read it \u2014 for example "
+            + "+94 11 234 5678. It is shown on the Contact page and in the footer, and tapping it dials."),
+
+        new(
+            SettingKeys.Contact.Email,
+            SettingKeys.Contact.Group,
+            SettingValueType.String,
+            Permissions.Settings.Edit,
+            "Contact email address",
+            "The address shoppers should write to. Leave it empty and no email address is shown. "
+            + "Nothing is sent from this address by the shop."),
+
+        new(
+            SettingKeys.Contact.Address,
+            SettingKeys.Contact.Group,
+            SettingValueType.String,
+            Permissions.Settings.Edit,
+            "Postal address",
+            "The shop's address, one line per line. Plain text, not HTML."),
+
+        new(
+            SettingKeys.Contact.OpeningHours,
+            SettingKeys.Contact.Group,
+            SettingValueType.String,
+            Permissions.Settings.Edit,
+            "Opening hours",
+            "When the shop is open, one line per line \u2014 for example \u201cMonday to Friday, 9am \u2013 6pm\u201d. "
+            + "Plain text, not HTML."),
+
+        new(
+            SettingKeys.Contact.MapEmbedUrl,
+            SettingKeys.Contact.Group,
+            SettingValueType.String,
+            Permissions.Settings.Edit,
+            "Map embed address",
+            "The \u201cEmbed a map\u201d address from Google Maps (Share \u2192 Embed a map \u2192 copy the src) or "
+            + "from OpenStreetMap. Only those two are accepted. Leave it empty and the Contact page "
+            + "shows no map."),
+
+        new(
             SettingKeys.Social.FacebookUrl,
             SettingKeys.Social.Group,
             SettingValueType.String,

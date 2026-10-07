@@ -329,6 +329,12 @@ public sealed class SeedCounts
 
     public int AnnouncementMessages { get; set; }
 
+    /// <summary>
+    /// <c>content.ContentPages</c> system-page shells (GLB-10, doc 08 §9): six on a fresh database, zero
+    /// afterwards.
+    /// </summary>
+    public int ContentPages { get; set; }
+
     /// <summary><c>ops.Settings</c> rows created because the key had none (ADM-22). Values are always null.</summary>
     public int Settings { get; set; }
 
@@ -346,7 +352,7 @@ public sealed class SeedCounts
         $"products {Products}, variants {Variants}, media assets {MediaAssets}, " +
         $"media placeholders {MediaPlaceholders}, " +
         $"home sections {HomeSections}, home section items {HomeSectionItems}, " +
-        $"announcements {AnnouncementMessages}, settings {Settings}, " +
+        $"announcements {AnnouncementMessages}, content pages {ContentPages}, settings {Settings}, " +
         $"provinces {Sales.Provinces}, districts {Sales.Districts}, " +
         $"delivery methods {Sales.DeliveryMethods}, zone rates {Sales.DeliveryMethodZoneRates}, " +
         $"payment providers {Sales.PaymentProviders}";

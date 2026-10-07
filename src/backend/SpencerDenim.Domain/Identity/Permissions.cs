@@ -70,6 +70,16 @@ public static class Permissions
     public static class Customers
     {
         public const string View = "Customers.View";
+
+        /// <summary>
+        /// Added for GLB-10 (W2-11): doc 08 §3.7's G-06 table and doc 11 P15's permission table both put a
+        /// contact enquiry's <i>status</i> behind <c>Customers.Edit</c> — moving one to Read, Replied or
+        /// Spam — and doc 08 §9 grants Store Manager every <c>Module.Action</c>, so the value has to
+        /// exist. It is the Customers module and not <c>Content.*</c> because an enquiry is customer data
+        /// that happens to arrive through a content page.
+        /// </summary>
+        public const string Edit = "Customers.Edit";
+
         public const string Delete = "Customers.Delete";
     }
 
@@ -99,7 +109,22 @@ public static class Permissions
     public static class Content
     {
         public const string View = "Content.View";
+
+        /// <summary>
+        /// Create a <b>custom</b> content page (GLB-10, W2-11). The six system pages are created by the
+        /// seeder and can be neither created nor deleted, so this permission only ever adds a seventh.
+        /// </summary>
+        public const string Create = "Content.Create";
+
         public const string Edit = "Content.Edit";
+
+        /// <summary>
+        /// Remove a custom content page (GLB-10, doc 11 P13: "System pages cannot be deleted"). A soft
+        /// delete, which releases the slug it held. Doc 11 P13's own permission table names
+        /// <c>Content.View/Create/Edit/Delete</c> for these screens, so both halves exist here rather than
+        /// only the two this build happened to need first.
+        /// </summary>
+        public const string Delete = "Content.Delete";
     }
 
     public static class Media

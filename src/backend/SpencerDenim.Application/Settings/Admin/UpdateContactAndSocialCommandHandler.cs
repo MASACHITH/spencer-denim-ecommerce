@@ -63,6 +63,18 @@ public sealed class UpdateContactAndSocialCommandHandler(
     private static readonly (string Key, string Field)[] Targets =
     [
         (SettingKeys.Contact.WhatsApp, "whatsApp"),
+
+        // W2-11 (GLB-10): the Contact page's hours-and-address panel. Doc 11 P13 step 13 puts these in
+        // Settings, and ADM-22 part 1 deliberately shipped only the two keys the client was blocked on
+        // (see the TODO this removes in DEFAULT_SITE_CONFIG). They join this list rather than getting a
+        // form of their own because they are one strip of one page, filled in from one email from the
+        // client, and SettingCatalog.SaveUnits already makes Contact and Social one save.
+        (SettingKeys.Contact.Phone, "phone"),
+        (SettingKeys.Contact.Email, "email"),
+        (SettingKeys.Contact.Address, "address"),
+        (SettingKeys.Contact.OpeningHours, "openingHours"),
+        (SettingKeys.Contact.MapEmbedUrl, "mapEmbedUrl"),
+
         (SettingKeys.Social.FacebookUrl, "facebookUrl"),
         (SettingKeys.Social.InstagramUrl, "instagramUrl"),
         (SettingKeys.Social.TikTokUrl, "tikTokUrl"),
@@ -90,6 +102,41 @@ public sealed class UpdateContactAndSocialCommandHandler(
             {
                 SettingFieldRules.CheckWhatsAppNumber(errors, field, raw);
                 wanted[key] = SettingFieldRules.Clean(raw);
+                continue;
+            }
+
+            if (field == "phone")
+            {
+                SettingFieldRules.CheckPhoneNumber(errors, field, raw);
+                wanted[key] = SettingFieldRules.Clean(raw);
+                continue;
+            }
+
+            if (field == "email")
+            {
+                SettingFieldRules.CheckEmailAddress(errors, field, raw);
+                wanted[key] = SettingFieldRules.Clean(raw);
+                continue;
+            }
+
+            if (field is "address" or "openingHours")
+            {
+                SettingFieldRules.CheckMultilineText(
+                    errors, field, raw, field == "address" ? "address" : "opening hours");
+                wanted[key] = SettingFieldRules.Clean(raw);
+                continue;
+            }
+
+            if (field == "mapEmbedUrl")
+            {
+                SettingFieldRules.CheckMapEmbedUrl(errors, field, raw);
+
+                // The *normalised* form, for the same reason the social addresses store theirs: the text a
+                // client reads back should say where the frame actually points. See
+                // SettingFieldRules.TryNormaliseProfileUrl for the homograph this closes.
+                wanted[key] = SettingFieldRules.TryNormaliseMapEmbedUrl(raw, out var map)
+                    ? map
+                    : SettingFieldRules.Clean(raw);
                 continue;
             }
 

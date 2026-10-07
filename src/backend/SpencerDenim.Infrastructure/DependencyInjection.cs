@@ -11,6 +11,7 @@ using SpencerDenim.Application.Catalog.Abstractions;
 using SpencerDenim.Application.Catalog.Admin.Abstractions;
 using SpencerDenim.Application.Catalog.Admin.Products.Abstractions;
 using SpencerDenim.Application.Content.Abstractions;
+using SpencerDenim.Application.Content.Admin.Abstractions;
 using SpencerDenim.Application.Marketing.Newsletter;
 using SpencerDenim.Application.Sales.Cart.Abstractions;
 using SpencerDenim.Application.Sales.Payments;
@@ -146,11 +147,22 @@ public static class DependencyInjection
 
         // Content and newsletter (W2-01, HOME-01..10, GLB-03).
         services.AddScoped<IHomeContentReader, HomeContentReader>();
+
+        // Content pages and the contact enquiry (W2-11, GLB-10).
+        //
+        // The sanitiser is a singleton: it holds the allow-list and nothing else, and builds a fresh
+        // HtmlSanitizer per call so its per-call removal handlers cannot race (see HtmlSanitiser).
+        services.AddSingleton<IHtmlSanitiser, HtmlSanitiser>();
+        services.AddScoped<IContentPageReader, ContentPageReader>();
+        services.AddScoped<IAdminContentReader, AdminContentReader>();
+        services.AddScoped<IContentPageStore, ContentPageStore>();
+        services.AddScoped<IContactEnquiryStore, ContactEnquiryStore>();
         services.AddScoped<INewsletterSubscriptions, NewsletterSubscriptions>();
 
         // Doc 08 §3.7's homepage cache. A singleton, because a cache scoped to one request caches
         // nothing at all.
         services.AddSingleton<IHomePageCache, HomePageCache>();
+        services.AddSingleton<IContentPageLinksCache, ContentPageLinksCache>();
 
         // The bag (W2-09, CART-01/02). The store writes with doc 08 §3.5's item-level upserts and the
         // reader reprices every line from the catalogue on each read (doc 08 §6).

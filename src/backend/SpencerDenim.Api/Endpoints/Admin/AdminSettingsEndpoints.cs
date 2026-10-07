@@ -331,7 +331,17 @@ internal static class AdminSettingsEndpoints
 
     /// <summary>The fields the contact-and-social body may carry, in the order they are read.</summary>
     private static readonly string[] ContactAndSocialFields =
-        ["whatsApp", "facebookUrl", "instagramUrl", "tikTokUrl"];
+    [
+        "whatsApp",
+        "phone",
+        "email",
+        "address",
+        "openingHours",
+        "mapEmbedUrl",
+        "facebookUrl",
+        "instagramUrl",
+        "tikTokUrl",
+    ];
 
     /// <summary>The fields the bank body may carry, in the order the screen shows them.</summary>
     private static readonly string[] BankFields =
