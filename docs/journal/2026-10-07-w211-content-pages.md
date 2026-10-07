@@ -124,6 +124,28 @@ declared indexes created under their declared names.
   them until the versioned upgrade step that seeder's own docblock describes is built. Super Admin is
   unaffected.
 
+## The client progress page
+
+`client-progress/progress-data.js`: "Store pages: About, Contact, Returns, Shipping, Privacy & Terms"
+moved from **planned 0%** to **in-progress 85%**, and `lastUpdated` to 2026-10-07. Not `done`: CLAUDE.md
+says done only after it passes testing, and the independent tester has not looked at this yet. The
+remaining 15% is the client's own copy for six pages plus the PDPA review on two of them, which is
+outstanding on their side rather than ours — and that is a conversation for the owner rather than a line
+on a tracker that carries features and percentages only. **Not published**: publishing is the
+owner's own step from their machine (docs/10).
+
+## The bottom-right corner (docs/04 §4)
+
+The standing rule is that anything placed in a viewport corner is checked with
+`document.elementFromPoint` across scroll offsets before it lands. The Contact page adds three
+tappable things (Send message, the WhatsApp call-to-action, the telephone and email links), and the
+answer was to keep them out of the float's column rather than to measure a collision and accept it:
+the actions are left-aligned and `width: fit-content`, so they never enter it at any width.
+`content-pages.e2e.ts` runs the same scan `quick-view.e2e.ts` and `wishlist.e2e.ts` use, over those
+three selectors, at 320x720 and 390x844 — 41 scroll offsets each, asserting the element hit **is** the
+control. Making the submit button full-width makes it fail, which is how the left alignment is known to
+be the thing doing the work.
+
 ## Residues the owner should know about
 
 - **A content page may link to, and load an image from, any `http(s)` host.** That is inherent in
