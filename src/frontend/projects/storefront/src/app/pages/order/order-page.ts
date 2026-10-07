@@ -335,7 +335,6 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
                     <input
                       class="pay__input"
                       id="pay-ref-input"
-                      name="payerReference"
                       type="text"
                       maxlength="100"
                       autocomplete="off"
@@ -368,7 +367,6 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
                     <input
                       class="pay__input"
                       id="pay-slip-input"
-                      name="slip"
                       type="file"
                       [accept]="slipAccept"
                       [attr.aria-disabled]="busy() ? 'true' : null"

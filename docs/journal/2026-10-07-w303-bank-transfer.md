@@ -391,10 +391,10 @@ which is how every other input in this shop is bound.
 | `dotnet build SpencerDenim.sln -c Release --no-incremental` | **0 warnings, 0 errors** | 0 / 0 |
 | `npm run build` (production, budgets enforced) | **0 warnings** | 0 |
 | `dotnet test tests/SpencerDenim.UnitTests` | **1459 passed**, 0 failed | 1306 (+153) |
-| `dotnet test tests/SpencerDenim.IntegrationTests` | see the table below | 956 |
+| `dotnet test tests/SpencerDenim.IntegrationTests` | **1086 passed**, 0 failed, 0 skipped (14 m 31 s) | 956 |
 | `ng test shared / storefront / admin` | 24 / **1295** / **372** passed, 0 failed | 21 / 1206 / 273 |
 | `ng lint` | all three projects pass | pass |
-| `playwright test --project=chromium` (full suite) | **PW_FULL** | — |
+| `playwright test --project=chromium` (full suite) | 860 tests: **856 passed**, 1 failed, 3 flaky — every one of them in another feature's file and every one passing in isolation; both W3-03 files green (see below) | — |
 | `playwright test bank-transfer.e2e.ts` | **10 passed**, and 30/30 under `--repeat-each=3 --workers=1` | — |
 | `playwright test admin-bank-transfers.e2e.ts` | **14 passed** | — |
 | `playwright test checkout.e2e.ts` | **50 passed** (two assertions removed, below) | 52 |
@@ -563,6 +563,34 @@ nightly reconciliation is the other half of the signal.
   *matching* — which is about implication, not cardinality, and the measured plan is a clustered scan of a
   table with `TableCardinality="0"` where a seek would be cheaper if it were legal — but it says nothing
   about speed.
+
+## The full browser run's leftovers, none of them this branch's
+
+Two full-suite runs, before and after the fixes above. Both land on **856 of 860 passing**, and the four
+that do not are **different tests each time** — which is the signature of load rather than of a defect.
+Every one of them passes in isolation, each was re-run that way to check, and both W3-03 files are green in
+both runs.
+
+| Test | First run | Second run | In isolation |
+|---|---|---|---|
+| `search.e2e.ts` — one Escape closes the suggestions | **failed** | passed | passes |
+| `search.e2e.ts` — a submitted search is offered again | passed | flaky | — |
+| `wishlist.e2e.ts` — a surviving opener is still what focus returns to | flaky | passed | — |
+| `quick-view.e2e.ts` — "View full details" carries the choice | passed | **failed** | passes |
+| `admin-catalog.e2e.ts` — reorders with the keyboard alone | passed | flaky | — |
+| `checkout.e2e.ts` — no horizontal scroll at 1280 px | passed | flaky | passes, 44/44 twice |
+
+The search one is the most interesting, because its failure is specific: a **category** suggestion
+(`JeansWomen`) ranked first where the test expects `Test Product 1`. That reads like an ordering race
+between a suggestions read and whatever another worker is doing to the shared stub dataset.
+`git diff origin/main` over `catalog-api-stub.mjs` touches nothing to do with suggestions, search or
+categories — every line this branch adds there is the bank-details switch and the placed order's payment
+block — so it is pre-existing.
+
+**Reported rather than chased.** These are SRCH-01's, WISH-01's, QV-01's, the admin catalogue's and
+CHK-01's tests; rewriting another feature's assertion to make a number green is how a real defect gets
+hidden. Worth someone's half day, with `--repeat-each` **and `--workers=1`** as the first tool, since the
+one thing now known about all six is that they do not reproduce alone.
 
 ## Shared-resource notes
 
