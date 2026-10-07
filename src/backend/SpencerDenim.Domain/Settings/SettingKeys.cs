@@ -5,8 +5,10 @@ namespace SpencerDenim.Domain.Settings;
 /// is the authority for the names; these are the subset with a screen behind them.
 /// <para>
 /// <b>What is deliberately absent, and why that is not an oversight.</b> Doc 08 lists sixteen groups.
-/// <c>Bank.*</c> and <c>Payments.PayPal.*</c> need <c>Settings.Payments</c> and a payments screen
-/// (issue #53, W3); <c>Email.Smtp.*</c>, <c>Security.*</c> and <c>Privacy.RetainInvoiceBillTo</c> need
+/// <c>Bank.*</c> is now here (W3-03, PAY-01): it is the one group doc 11 P7's preconditions make a
+/// prerequisite of taking money at all. <c>Payments.PayPal.*</c> still waits for W4-01 — its keys are
+/// credentials and an FX rate with no provider to use them; <c>Email.Smtp.*</c>, <c>Security.*</c> and
+/// <c>Privacy.RetainInvoiceBillTo</c> need
 /// <c>Settings.Security</c>, the sensitive-change alert and <c>ops.AdminAlerts</c>, none of which exists;
 /// <c>Delivery</c>, the couriers and the delivery methods need <c>sales.DeliveryMethods</c> and friends,
 /// which are tables #53 creates. A key seeded here would be a key a screen offers and nothing honours —
@@ -70,6 +72,56 @@ public static class SettingKeys
         public const string InstagramUrl = "Social.InstagramUrl";
 
         public const string TikTokUrl = "Social.TikTokUrl";
+    }
+
+    /// <summary>
+    /// Group <c>Bank</c> (doc 08 §3.8): where a customer sends a bank transfer, and permission
+    /// <c>Settings.Payments</c> on every key (DB2) — the first group in this build that is not
+    /// <c>Settings.Edit</c>.
+    /// <para>
+    /// <b>Every one of these is empty until the client fills it in, and that is the point.</b> The client
+    /// has not given us their bank details, so inventing an account number would be worse than showing
+    /// nothing: a shopper would transfer real money to a number nobody owns. All five are seeded
+    /// <see langword="null"/> (the <c>Store.LogoAssetId</c> precedent), and
+    /// <c>BankTransferProvider</c> treats an incomplete set as "instructions not available yet" rather
+    /// than printing a half-filled form. Doc 11 P7's preconditions say the same thing from the other side:
+    /// "bank details set by a Super Admin" is a precondition, not an assumption.
+    /// </para>
+    /// </summary>
+    public static class Bank
+    {
+        public const string Group = "Bank";
+
+        /// <summary>The bank's name, e.g. the one printed on the shopper's online-banking payee list.</summary>
+        public const string BankName = "Bank.BankName";
+
+        public const string Branch = "Bank.Branch";
+
+        /// <summary>The name the account is held in, which a branch deposit slip asks for.</summary>
+        public const string AccountName = "Bank.AccountName";
+
+        /// <summary>
+        /// The account number, stored as the client types it.
+        /// <para>
+        /// <b>Deliberately not validated beyond a length and a character allow-list.</b> Sri Lankan bank
+        /// account numbers have no single national format — length and grouping differ by bank — so a
+        /// pattern rule here would refuse a correct number and there would be no way round it from the
+        /// screen. The one thing worth refusing is a value that is not a number at all.
+        /// </para>
+        /// </summary>
+        public const string AccountNumber = "Bank.AccountNumber";
+
+        /// <summary>
+        /// Optional free text shown under the details, e.g. "CDM deposits take one working day to appear".
+        /// <para>
+        /// <b><see cref="SettingValueType.String"/> and not <see cref="SettingValueType.TextHtml"/>.</b>
+        /// Doc 08 §3.8 does not state a type for this key. HTML would need the content-pages sanitiser
+        /// (N10), which belongs to ADM-17 and does not exist, and an unsanitised HTML value rendered on a
+        /// customer-facing order page is stored XSS. It is plain text, rendered with its line breaks
+        /// preserved, and it reaches the page as text and never as markup.
+        /// </para>
+        /// </summary>
+        public const string Instructions = "Bank.Instructions";
     }
 
     /// <summary><c>ops.Settings.Key</c> is <c>varchar(100)</c>.</summary>

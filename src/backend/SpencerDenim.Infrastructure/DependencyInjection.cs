@@ -15,6 +15,7 @@ using SpencerDenim.Application.Marketing.Newsletter;
 using SpencerDenim.Application.Sales.Cart.Abstractions;
 using SpencerDenim.Application.Sales.Checkout;
 using SpencerDenim.Application.Sales.Checkout.Abstractions;
+using SpencerDenim.Application.Sales.Payments.Abstractions;
 using SpencerDenim.Application.Sales.Wishlist.Abstractions;
 using SpencerDenim.Application.Settings.Abstractions;
 using SpencerDenim.Infrastructure.Admin.Auditing;
@@ -29,6 +30,7 @@ using SpencerDenim.Infrastructure.Persistence;
 using SpencerDenim.Infrastructure.Persistence.Interceptors;
 using SpencerDenim.Infrastructure.Persistence.Seeding;
 using SpencerDenim.Infrastructure.Sales;
+using SpencerDenim.Infrastructure.Sales.Payments;
 using SpencerDenim.Infrastructure.Settings;
 using SpencerDenim.Infrastructure.Time;
 
@@ -172,6 +174,19 @@ public static class DependencyInjection
         services.AddScoped<INumberSeriesAllocator, NumberSeriesAllocator>();
         services.AddScoped<IOrderPlacementStore, OrderPlacementStore>();
 
+        // Payments (W3-03, PAY-01/PAY-03). **Registering a provider is the whole act of adding one:** the
+        // registry is built from whatever IPaymentProvider implementations are here, and checkout asks it
+        // by code. PayPalProvider (W4-01) is one more AddScoped line on this list and nothing else.
+        services.AddScoped<IPaymentProvider, BankTransferProvider>();
+        services.AddScoped<IPaymentProviderRegistry, PaymentProviderRegistry>();
+        services.AddScoped<IBankTransferSettingsReader, BankTransferSettingsReader>();
+
+        // Doc 11 P7 steps 3, 6 and 8, and doc 08 §4.1/§4.3: the customer's reference and slip, and the
+        // one transaction behind approve, reject and accept-late.
+        services.AddScoped<IBankTransferReader, BankTransferReader>();
+        services.AddScoped<IBankTransferReviewStore, BankTransferReviewStore>();
+        services.AddScoped<IOrderExpiryStore, OrderExpiryStore>();
+
         services.AddMediaLibrary();
 
         services.AddOptions<SeedOptions>().BindConfiguration(SeedOptions.SectionName);
@@ -187,6 +202,10 @@ public static class DependencyInjection
         services.AddScoped<DemoCatalogueSeeder>();
         services.AddScoped<CatalogSeedRunner>();
         services.AddHostedService<CatalogSeedHostedService>();
+
+        // Doc 08 §4.1/§5.6 and doc 11 P10 flow B: every five minutes, release the stock and the promo use
+        // of orders nobody paid for. Issue #107's real mitigation.
+        services.AddHostedService<ExpireUnpaidOrdersService>();
 
         services.AddHealthChecks()
             .AddCheck<DatabaseHealthCheck>(

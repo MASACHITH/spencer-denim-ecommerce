@@ -4,6 +4,8 @@ using SpencerDenim.Application.Abstractions.Time;
 using SpencerDenim.Application.Sales.Cart.Abstractions;
 using SpencerDenim.Application.Sales.Checkout.Abstractions;
 using SpencerDenim.Application.Sales.Checkout.Contracts;
+using SpencerDenim.Application.Sales.Payments.Abstractions;
+using SpencerDenim.Application.Sales.Payments.Contracts;
 using SpencerDenim.Domain.Sales;
 
 namespace SpencerDenim.Application.Sales.Checkout;
@@ -51,11 +53,14 @@ namespace SpencerDenim.Application.Sales.Checkout;
 /// </description></item>
 /// </list>
 /// <para>
-/// <b>Where this task stops.</b> It places an order and shows its number. The <c>Payments</c> row it
-/// writes is the one doc 08 §4.1 lists as a side effect of "— → PendingPayment", because doc 11 P7's
-/// preconditions require an open bank payment to exist on a PendingPayment order — but <b>nothing about
-/// the money</b> is here: no bank details, no reference to quote, no slip upload, no approval, no expiry
-/// job, no emails. Those are PAY-01/PAY-03, W3-03's steps 2 and 3.
+/// <b>Where the money begins, and why there is none of it in this file (PAY-03).</b> This handler knows
+/// that a payment provider exists, that it has a code and that it answers two questions. It does not know
+/// what a bank transfer <i>is</i>: not the 48 hours, not the <c>Pending</c> status, not the account
+/// details, not the reference. All of that lives behind <see cref="IPaymentProvider"/>, and
+/// <c>CheckoutNamesNoProviderTests</c> is what keeps it there — a convention test asserting that no
+/// identifier in the checkout namespace names a specific gateway. The whole claim of PAY-03 is that
+/// adding a gateway does not edit this file, and a claim like that is worth exactly as much as the test
+/// under it.
 /// </para>
 /// </remarks>
 public sealed class PlaceOrderCommandHandler(
@@ -64,12 +69,9 @@ public sealed class PlaceOrderCommandHandler(
     INumberSeriesAllocator numbers,
     IOrderPlacementStore placements,
     IClock clock,
-    CheckoutOptions options)
+    IPaymentProviderRegistry paymentProviders)
     : ICommandHandler<PlaceOrderCommand, PlaceOrderResult>
 {
-    // The bound value, not IOptions<T>: this project deliberately takes no options package, so
-    // Infrastructure registers the settings object itself (the same convention CatalogOptions follows).
-    private readonly CheckoutOptions _options = options ?? throw new ArgumentNullException(nameof(options));
 
     public async Task<PlaceOrderResult> HandleAsync(
         PlaceOrderCommand command,
@@ -113,11 +115,14 @@ public sealed class PlaceOrderCommandHandler(
         // Non-null from here: the validator reports a missing method and we returned above.
         var deliveryMethod = method!;
 
-        var paymentError = await ValidatePaymentMethodAsync(command.PaymentMethodCode!, cancellationToken);
-        if (paymentError is not null)
+        var choice = await ResolvePaymentProviderAsync(command.PaymentMethodCode!, cancellationToken);
+        if (choice.Error is { } paymentError)
         {
             return PlaceOrderResult.Invalid([paymentError]);
         }
+
+        // Non-null from here: the branch above returns whenever the provider could not be resolved.
+        var paymentProvider = choice.Provider!;
 
         // 3. Where the order is going, and therefore which zone prices it (doc 08 §3.5 R7).
         var destination = await ResolveDestinationAsync(command, deliveryMethod, cancellationToken);
@@ -185,6 +190,24 @@ public sealed class PlaceOrderCommandHandler(
         // this number is simply never used.
         var orderNumber = await numbers.AllocateOrderNumberAsync(placedAt, cancellationToken);
 
+        // The provider's own answer, asked before the transaction opens: doc 08 §5.4 keeps everything that
+        // is not a write out of it, and a provider that has to read its settings (PayPal's exchange rate)
+        // must not do so while this request holds StockLevels row locks.
+        var initiation = await paymentProvider.InitiateAsync(
+            new PaymentInitiationRequest(pricing.GrandTotal, placedAt.UtcDateTime),
+            cancellationToken);
+
+        if (initiation.PaymentDueAtUtc <= placedAt.UtcDateTime)
+        {
+            // A provider that answered with a deadline already past would have its orders expired by the
+            // job before the customer could pay, and the order row would be written with a lie on it.
+            // Loud here rather than quietly unpayable: this is a bug in a provider, not a shopper's input.
+            throw new InvalidOperationException(
+                $"Payment provider '{paymentProvider.Code}' returned a payment due time of "
+                + $"{initiation.PaymentDueAtUtc:O}, which is not after the placement time "
+                + $"{placedAt.UtcDateTime:O}.");
+        }
+
         var placement = BuildPlacement(
             command,
             identity.Id,
@@ -194,7 +217,8 @@ public sealed class PlaceOrderCommandHandler(
             zoneRate,
             lines,
             pricing,
-            placedAt);
+            placedAt,
+            initiation);
 
         // 7. One transaction: reserve, insert, empty the bag.
         var result = await placements.PlaceAsync(placement, cancellationToken);
@@ -278,34 +302,58 @@ public sealed class PlaceOrderCommandHandler(
     /// The chosen payment provider must be one the shop has switched on (doc 11 P6 precondition 2).
     /// </summary>
     /// <remarks>
-    /// <b>And it must be bank transfer, which is a boundary and not a design.</b> PAY-03's
-    /// <c>IPaymentProvider</c> is W3-03's step 2; until it exists, the only initial payment state this
-    /// task knows how to write is doc 08 §4.1's bank-transfer one (<c>Pending</c>, due in 48 h). PayPal
-    /// needs an <c>Initiated</c> row, a USD conversion and a redirect, all of which are W4-01. The row is
-    /// seeded <b>disabled</b> (doc 08 §9) so this branch is unreachable through the UI — the check is here
-    /// so that enabling PayPal in the database before its code exists refuses the checkout instead of
-    /// writing an order nobody can pay for.
+    /// <b>Two different questions, asked in this order (PAY-03).</b>
+    /// <list type="number">
+    /// <item><description>
+    /// <b>Is the provider switched on?</b> <c>sales.PaymentProviders.IsEnabled</c>, which doc 08 §3.5
+    /// makes the shop's own switch and which checkout already reads. A provider the shop has turned off is
+    /// "not available", because that is a decision somebody took.
+    /// </description></item>
+    /// <item><description>
+    /// <b>Does this build have code for it?</b> <see cref="IPaymentProviderRegistry"/>. A provider enabled
+    /// in the database with no implementation behind it must refuse the checkout rather than write an
+    /// order nobody can pay for. Doc 08 §9 seeds the PayPal row <b>disabled</b>, so question 1 already
+    /// stops it — this is the belt for somebody enabling it in SQL before W4-01 lands, and the two
+    /// messages differ so an admin can tell which of the two refused them.
+    /// </description></item>
+    /// </list>
+    /// <para>
+    /// <b>What this method no longer does</b> is compare the code against a literal. It used to read
+    /// <c>code == PaymentProviderCodes.BankTransfer</c>, with a note saying <c>IPaymentProvider</c> would
+    /// replace it.
+    /// </para>
     /// </remarks>
-    private async Task<ValidationError?> ValidatePaymentMethodAsync(
+    private async Task<PaymentChoice> ResolvePaymentProviderAsync(
         string code,
         CancellationToken cancellationToken)
     {
         var enabled = await reader.EnabledPaymentMethodsAsync(cancellationToken);
         var trimmed = code.Trim();
 
+        // Ordinal against the enabled list, as it always was: this compares a value from the request with
+        // values from the same column, and the shopper's radio carries the code the session handed it. The
+        // registry's own lookup is case-insensitive instead, because that one compares a database value
+        // against a compile-time constant.
         if (!enabled.Any(method => string.Equals(method.Code, trimmed, StringComparison.Ordinal)))
         {
-            return new ValidationError(
-                "paymentMethodCode",
-                "That payment method is not available. Choose another.");
+            return new PaymentChoice(
+                null,
+                new ValidationError(
+                    "paymentMethodCode",
+                    "That payment method is not available. Choose another."));
         }
 
-        return string.Equals(trimmed, PaymentProviderCodes.BankTransfer, StringComparison.Ordinal)
-            ? null
-            : new ValidationError(
-                "paymentMethodCode",
-                "That payment method cannot be used yet. Choose bank or online transfer.");
+        return paymentProviders.Find(trimmed) is { } provider
+            ? new PaymentChoice(provider, null)
+            : new PaymentChoice(
+                null,
+                new ValidationError(
+                    "paymentMethodCode",
+                    "That payment method cannot be used yet. Choose another."));
     }
+
+    /// <summary>The chosen provider, or why it cannot be used.</summary>
+    private readonly record struct PaymentChoice(IPaymentProvider? Provider, ValidationError? Error);
 
     /// <summary>
     /// Doc 08 §3.5 R7: a delivery order's district is the address's; a pickup order's is the pickup
@@ -345,7 +393,7 @@ public sealed class PlaceOrderCommandHandler(
             : new Destination(district, null, null);
     }
 
-    private OrderPlacement BuildPlacement(
+    private static OrderPlacement BuildPlacement(
         PlaceOrderCommand command,
         int cartId,
         string orderNumber,
@@ -354,7 +402,8 @@ public sealed class PlaceOrderCommandHandler(
         CheckoutZoneRate rate,
         IReadOnlyList<CheckoutCartLine> lines,
         OrderPricingResult pricing,
-        DateTimeOffset placedAt)
+        DateTimeOffset placedAt,
+        PaymentInitiation payment)
     {
         var district = destination.District!.Value;
         var isPickup = !method.RequiresAddress;
@@ -449,10 +498,10 @@ public sealed class PlaceOrderCommandHandler(
             PlaceOrderValidator.Trimmed(command.PlacedIpAddress),
             placedAt.UtcDateTime,
 
-            // Doc 11 P6: placed time + 48 h for a bank transfer. The window is configuration until
-            // ops.Settings exists (see CheckoutOptions), and nothing in this task enforces it: the
-            // ExpireUnpaidOrders job is W3-03's step 3.
-            placedAt.UtcDateTime.AddHours(_options.BankTransferExpiryHours));
+            // The provider's answer, unexamined. Doc 11 P6's "48 hours" is a bank-transfer fact and lives
+            // in BankTransferProvider; PayPal's window is minutes and lives in its own. Checkout's only
+            // interest in the deadline is the one guard above — that it is in the future.
+            payment);
     }
 
     /// <summary>Where the order is going, or why it cannot be worked out.</summary>

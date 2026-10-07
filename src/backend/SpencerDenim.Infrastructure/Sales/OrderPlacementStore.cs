@@ -250,7 +250,7 @@ internal sealed class OrderPlacementStore(AppDbContext dbContext, ICheckoutReade
             TaxAmount = pricing.TaxAmount,
             GrandTotal = pricing.GrandTotal,
             PlacedAtUtc = placement.PlacedAtUtc,
-            PaymentDueAtUtc = placement.PaymentDueAtUtc,
+            PaymentDueAtUtc = placement.Payment.PaymentDueAtUtc,
             CustomerNote = placement.CustomerNote,
             PlacedIpAddress = placement.PlacedIpAddress,
         };
@@ -305,34 +305,46 @@ internal sealed class OrderPlacementStore(AppDbContext dbContext, ICheckoutReade
     }
 
     /// <summary>
-    /// The open payment row doc 08 §4.1 lists as a placement side effect: bank transfer starts
-    /// <c>Pending</c>.
+    /// The open payment row doc 08 §4.1 lists as a placement side effect, in the state the chosen
+    /// <c>IPaymentProvider</c> asked for.
     /// </summary>
     /// <remarks>
-    /// <b>This is the boundary with W3-03's steps 2 and 3, and it is deliberately exactly one row.</b>
-    /// Doc 11 P7's preconditions are "order PendingPayment with an open bank payment (Pending)", so an
-    /// order placed without this row would be one the bank-transfer flow could not pick up — and
-    /// <c>UX_Payments_OneOpen</c> means the flow cannot create it later without racing itself. Everything
-    /// *after* this row is the next task: no bank details, no reference to quote, no slip upload, no
-    /// approval, no rejection, no expiry.
+    /// <b>Deliberately exactly one row.</b> Doc 11 P7's preconditions are "order PendingPayment with an
+    /// open bank payment (Pending)", so an order placed without this row would be one the bank-transfer
+    /// flow could not pick up — and <c>UX_Payments_OneOpen</c> means the flow cannot create it later
+    /// without racing itself.
     /// <para>
-    /// It is also the only provider-specific line in the placement path, which is where PAY-03's
-    /// <c>IPaymentProvider</c> will replace it: the initial status and the due window are the two things a
-    /// provider decides. PayPal's branch (<c>Initiated</c>, a USD conversion, a redirect) is W4-01's, and
-    /// the use case refuses any provider but bank transfer rather than guessing at it.
+    /// <b>Nothing here is provider-specific any more (PAY-03).</b> It was: the status was the literal
+    /// <c>Pending</c> and the due window was a bank-transfer constant, with a note saying
+    /// <c>IPaymentProvider</c> would replace them. It has. Every value a provider decides arrives on
+    /// <see cref="OrderPlacement.Payment"/>, so PayPal's <c>Initiated</c> row with a USD
+    /// <c>ProviderAmount</c> at a frozen rate is written by this same code — which is what "the next
+    /// gateway plugs in without touching checkout" has to mean to be worth claiming.
+    /// </para>
+    /// <para>
+    /// <b><c>Amount</c> and <c>Currency</c> are <i>not</i> the provider's to decide</b>, and that is the
+    /// line between the two. Doc 08 §3.5 defines <c>Amount</c> as the order's <c>GrandTotal</c> in LKR
+    /// outright; a provider that could change it could take a different sum from the one
+    /// <c>CK_Orders_Totals</c> checked and the shopper agreed to (G-10). What a provider may add is a
+    /// <i>second</i> figure in its own currency — <c>ProviderAmount</c> / <c>ProviderCurrency</c> — which
+    /// is additional information about the same debt rather than a replacement for it.
     /// </para>
     /// </remarks>
     private static Payment BuildPayment(OrderPlacement placement) =>
         new()
         {
             ProviderCode = placement.PaymentProviderCode,
-            Status = PaymentStatus.Pending,
+            Status = placement.Payment.Status,
 
             // 0 until something actually settles the order. CK_Payments_IsOrderSettlement allows 1 only
-            // for statuses 3, 8 and 9, so a Pending row could not claim it anyway.
+            // for statuses 3, 8 and 9, so neither an Initiated nor a Pending row could claim it anyway.
             IsOrderSettlement = false,
             Amount = placement.Pricing.GrandTotal,
             Currency = SalesCurrency.Lkr,
+            ProviderCurrency = placement.Payment.ProviderCurrency,
+            ProviderAmount = placement.Payment.ProviderAmount,
+            ExchangeRate = placement.Payment.ExchangeRate,
+            FxBufferPercent = placement.Payment.FxBufferPercent,
             CreatedAtUtc = placement.PlacedAtUtc,
         };
 

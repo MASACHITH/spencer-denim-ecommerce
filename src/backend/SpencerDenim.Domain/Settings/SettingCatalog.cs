@@ -100,6 +100,56 @@ public static class SettingCatalog
             "TikTok profile",
             "The full address of the shop's TikTok profile. Leave it empty and the footer shows no "
             + "TikTok icon."),
+
+        // Group Bank (doc 08 §3.8, doc 11 P7): the account a customer transfers to. Settings.Payments on
+        // every row, which is the first time this catalogue carries a permission other than Settings.Edit —
+        // and the reason GetAdminSettingsQueryHandler's per-row filter was built before there was anything
+        // for it to filter.
+        new(
+            SettingKeys.Bank.BankName,
+            SettingKeys.Bank.Group,
+            SettingValueType.String,
+            Permissions.Settings.Payments,
+            "Bank name",
+            "The bank a customer transfers to, exactly as it appears in online banking - for example "
+            + "Commercial Bank of Ceylon PLC. Customers cannot pay by bank transfer until the bank name, "
+            + "account name and account number are all filled in."),
+
+        new(
+            SettingKeys.Bank.Branch,
+            SettingKeys.Bank.Group,
+            SettingValueType.String,
+            Permissions.Settings.Payments,
+            "Branch",
+            "The branch the account is held at. Optional: a branch deposit slip asks for it, online "
+            + "banking usually does not."),
+
+        new(
+            SettingKeys.Bank.AccountName,
+            SettingKeys.Bank.Group,
+            SettingValueType.String,
+            Permissions.Settings.Payments,
+            "Account name",
+            "The name the account is held in. A customer's bank may check it against the account number, "
+            + "so it must match the bank's records exactly."),
+
+        new(
+            SettingKeys.Bank.AccountNumber,
+            SettingKeys.Bank.Group,
+            SettingValueType.String,
+            Permissions.Settings.Payments,
+            "Account number",
+            "The account number customers transfer to. Digits, spaces and dashes only. Check it twice: "
+            + "it is shown to every customer who chooses bank transfer."),
+
+        new(
+            SettingKeys.Bank.Instructions,
+            SettingKeys.Bank.Group,
+            SettingValueType.String,
+            Permissions.Settings.Payments,
+            "Extra instructions",
+            "Optional notes shown under the bank details, for example how long a cash-machine deposit "
+            + "takes to appear. Plain text; line breaks are kept."),
     ];
 
     /// <summary>
@@ -148,6 +198,11 @@ public static class SettingCatalog
         [SettingKeys.Store.Group],
 
         [SettingKeys.Contact.Group, SettingKeys.Social.Group],
+
+        // The bank details on their own. They are one form filled in from one message from the client, and
+        // they are guarded by a different permission from every other group — a save unit that spanned both
+        // would hand a Settings.Edit holder a token covering rows they may not write.
+        [SettingKeys.Bank.Group],
     ];
 
     /// <summary>

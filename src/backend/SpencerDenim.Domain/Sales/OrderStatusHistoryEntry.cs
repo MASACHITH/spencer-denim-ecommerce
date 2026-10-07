@@ -16,6 +16,18 @@ namespace SpencerDenim.Domain.Sales;
 /// </summary>
 public sealed class OrderStatusHistoryEntry
 {
+    /// <summary>
+    /// Doc 08 §3.5: <see cref="Note"/> is <c>nvarchar(1000)</c>.
+    /// <para>
+    /// A constant because a writer has to know it. A status change carries a staff member's own words
+    /// (a rejection reason, an approval note), and a transition that threw on its way to the database
+    /// because a note was two characters too long would roll back a decision about money for a reason
+    /// nobody would guess. Callers clip; <c>OrderStatusHistoryEntryConfiguration</c> uses the same value,
+    /// so the two cannot drift.
+    /// </para>
+    /// </summary>
+    public const int NoteMaxLength = 1000;
+
     public long Id { get; set; }
 
     public int OrderId { get; set; }

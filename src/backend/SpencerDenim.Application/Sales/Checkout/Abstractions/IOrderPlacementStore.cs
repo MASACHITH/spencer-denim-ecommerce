@@ -1,3 +1,4 @@
+using SpencerDenim.Application.Sales.Payments.Contracts;
 using SpencerDenim.Domain.Sales;
 
 namespace SpencerDenim.Application.Sales.Checkout.Abstractions;
@@ -12,6 +13,13 @@ namespace SpencerDenim.Application.Sales.Checkout.Abstractions;
 /// the two apart in the types as well means the transaction is as short as it can be — it holds row locks
 /// on <c>StockLevels</c>, which every other shopper's checkout is waiting on — and it means the figures in
 /// the order row are provably the figures the use case compared against the shopper's screen.
+/// <para>
+/// <b><c>Payment</c> is the provider's answer and not this task's guess</b> (PAY-03). It carries the
+/// status the one open payment row opens in and the order's <c>PaymentDueAtUtc</c>, both decided by the
+/// <c>IPaymentProvider</c> the shopper chose — so adding PayPal adds no field here and changes no line of
+/// the placement transaction. It replaced a bare <c>DateTime PaymentDueAtUtc</c>, which could only ever
+/// have meant "48 hours, because bank transfer is the only method".
+/// </para>
 /// </remarks>
 public sealed record OrderPlacement(
     int CartId,
@@ -35,7 +43,7 @@ public sealed record OrderPlacement(
     string? CustomerNote,
     string? PlacedIpAddress,
     DateTime PlacedAtUtc,
-    DateTime PaymentDueAtUtc);
+    PaymentInitiation Payment);
 
 /// <summary>
 /// The catalogue facts an order line keeps, paired with the priced figures. Split from
