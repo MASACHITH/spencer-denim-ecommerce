@@ -1,6 +1,10 @@
 import { Routes } from '@angular/router';
 
 import {
+  isKnownContentPage,
+  isUnconfirmedContentPage,
+} from './core/content/content-page.guards';
+import {
   isKnownCategory,
   isKnownDepartment,
   isMissingCategory,
@@ -30,6 +34,9 @@ const checkoutPage = () =>
 /** The order success page and a guest's order link (CHK-04). */
 const orderPage = () => import('./pages/order/order-page').then((m) => m.OrderPage);
 
+/** A published content page: About, Contact, Returns, Shipping, Privacy, Terms, or a custom one (GLB-10). */
+const contentPage = () => import('./pages/content-page/content-page').then((m) => m.ContentPage);
+
 /** An address the catalogue does not have. Answers a real 404 (see the component). */
 const notFoundPage = () => import('./pages/not-found/not-found-page').then((m) => m.NotFoundPage);
 
@@ -49,10 +56,17 @@ const catalogUnavailablePage = () =>
  *
  * **If you are building one of these pages, delete its entry in the same change.** That is the whole
  * maintenance rule, and it is here rather than only in a journal because this is where someone adding
- * a route will be looking. Each entry is owed by a known task: GLB-10 for `about`, `contact`,
- * `returns`, `shipping`, `privacy` and `terms`; W3-01 for `account`. A leftover entry cannot take
- * effect — the real route is declared above this list and wins — but it says the site has no such
- * page, so the spec fails on one.
+ * a route will be looking. A leftover entry cannot take effect — the real route is declared above this
+ * list and wins — but it says the site has no such page, so the spec fails on one.
+ *
+ * **W2-11 has removed six of the seven**, which is that rule being followed: GLB-10 built `about`,
+ * `contact`, `returns`, `shipping`, `privacy` and `terms`, so the entries claiming the site has no such
+ * addresses go in the same change. They are not replaced by six fixed routes, because a content page's
+ * slug is editable (doc 11 P13 step 12) and six hard-coded paths would be wrong the first time a client
+ * renames one. A single `:slug` route behind a guard over the published-page index serves all six and
+ * any extra page the client creates — see the bottom of the route list.
+ *
+ * `account` is the only one left, and it is W3-01's.
  *
  * **`/wishlist` has been taken out by W2-08**, which is that rule being followed: the page is real, so
  * the entry claiming the site has no such address goes in the same change.
@@ -73,15 +87,7 @@ const catalogUnavailablePage = () =>
  * at — exactly how `/search` survived here through W2-07. The route wins at runtime, so every
  * behavioural test still passed; only the spec below could see it.
  */
-export const UNBUILT_PATHS = [
-  'about',
-  'account',
-  'contact',
-  'privacy',
-  'returns',
-  'shipping',
-  'terms',
-] as const;
+export const UNBUILT_PATHS = ['account'] as const;
 
 export const routes: Routes = [
   {
@@ -222,8 +228,48 @@ export const routes: Routes = [
     loadComponent: catalogUnavailablePage,
   },
 
+  // The content pages (W2-11, GLB-10): About, Contact, Returns, Shipping, Privacy, Terms, and any extra
+  // page the client has created.
+  //
+  // **One `:slug` route rather than six fixed ones**, because a page's slug is editable (doc 11 P13 step
+  // 12) and a hard-coded `/returns` would be wrong the first time a client spells it differently. The
+  // guard answers from the published-page index, which the footer reads anyway, so a scanner's probe
+  // costs no request — the alternative, letting the component resolve every single segment, is one API
+  // call per probe on a public route.
+  //
+  // **Declared after the department routes**, so a department listing is never looked up as a page, and
+  // **before `**`**, so a published page is not swept into the 404.
+  //
+  // An unpublished page is absent from the index, so it falls through to `**` and answers a real 404 —
+  // which is the whole of "a draft must not leak": not linked, not crawled, not openable.
+  //
+  // **`pathMatch: 'full'`, and it is load-bearing** — the same lesson `UNBUILT_PATHS` records having
+  // measured. A route's default is `'prefix'`, so `:slug` matches `/about/x` by consuming `about` and
+  // leaving `x`: the match then fails for want of a child route, but the `canMatch` guard has already
+  // run, so every deeper address on the origin paid for a content-feed lookup it could not use. Caught
+  // by `listing-page.spec.ts`, where `/bogus/thing` left an outstanding `GET /api/content/pages` that
+  // `HttpTestingController.verify()` reported.
+  { path: ':slug', pathMatch: 'full', canMatch: [isKnownContentPage], loadComponent: contentPage },
+
+  // The mirror of the listing's own 503 route (#30), for the single-segment space. The content feed did
+  // not answer, so the storefront cannot say whether this address is a published page: a 404 here would
+  // drop a live policy page out of the index for the length of an API wobble, where a 503 with
+  // `Retry-After` is retried and keeps the URL.
+  //
+  // It costs a 503 on a genuinely mistyped single segment during a content-feed outage, which is the
+  // right way round: the page that exists matters more than the page that does not. The guard is bounded
+  // to one segment, so `/api/...` reached directly, `/.well-known/...` and every deeper address are
+  // outside it by construction — the mistake `isUnconfirmedCatalogue` records having measured.
+  {
+    path: ':slug',
+    pathMatch: 'full',
+    canMatch: [isUnconfirmedContentPage],
+    loadComponent: catalogUnavailablePage,
+  },
+
   // Anything left is an address this site does not have: a mistyped department (`/not-a-dept`), a
-  // mistyped anything (`/bogus/thing`), a scanner's probe, a stale deep link.
+  // mistyped anything (`/bogus/thing`), a scanner's probe, a stale deep link, or a content page that is
+  // not published.
   //
   // It used to redirect to the home page, which is a textbook soft 404 (#28): the wrong page under the
   // wrong URL, answered **200**, so a crawler following a typo or a stale link indexes the home page at

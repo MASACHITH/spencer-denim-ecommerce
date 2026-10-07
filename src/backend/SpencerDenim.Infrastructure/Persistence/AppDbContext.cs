@@ -141,6 +141,12 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
 
     public DbSet<AnnouncementMessage> AnnouncementMessages => Set<AnnouncementMessage>();
 
+    /// <summary><c>content.ContentPages</c> (doc 08 §3.7, GLB-10). Created by W2-11's migration.</summary>
+    public DbSet<ContentPage> ContentPages => Set<ContentPage>();
+
+    /// <summary><c>content.ContactSubmissions</c> (doc 08 §3.7, GLB-10). Created by W2-11's migration.</summary>
+    public DbSet<ContactSubmission> ContactSubmissions => Set<ContactSubmission>();
+
     public DbSet<NewsletterSubscriber> NewsletterSubscribers => Set<NewsletterSubscriber>();
 
     public DbSet<Province> Provinces => Set<Province>();

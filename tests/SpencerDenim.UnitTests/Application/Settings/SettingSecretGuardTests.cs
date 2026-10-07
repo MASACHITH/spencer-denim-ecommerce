@@ -114,7 +114,11 @@ public sealed class SettingSecretGuardTests
             .Order(StringComparer.Ordinal)
             .ToList();
 
-        Assert.Equal(["Logo", "Social", "WhatsAppNumber"], members);
+        // `Contact` joined the three in W2-11 (GLB-10): the Contact page's telephone number, email
+        // address, postal address, opening hours and map, which doc 11 P13 step 13 puts in Settings. It is
+        // a named nested record with five named members of its own, so the guarantee this test exists for
+        // is unchanged — there is still nowhere on this payload for an arbitrary key or value to appear.
+        Assert.Equal(["Contact", "Logo", "Social", "WhatsAppNumber"], members);
 
         // And each is a type that cannot hold arbitrary key/value pairs.
         Assert.Equal(typeof(SiteLogoDto), typeof(SiteSettingsDto).GetProperty("Logo")!.PropertyType);
@@ -122,6 +126,38 @@ public sealed class SettingSecretGuardTests
         Assert.Equal(
             typeof(IReadOnlyList<SiteSocialLinkDto>),
             typeof(SiteSettingsDto).GetProperty("Social")!.PropertyType);
+        Assert.Equal(typeof(SiteContactDto), typeof(SiteSettingsDto).GetProperty("Contact")!.PropertyType);
+    }
+
+    /// <summary>
+    /// The nested contact record is the same kind of allow-list: five named members, none of them a
+    /// dictionary, none of them a key name.
+    /// <para>
+    /// It needs its own assertion rather than riding on the one above, because the member list it protects
+    /// is its own — adding <c>IReadOnlyDictionary&lt;string, string&gt; Extra</c> <i>here</i> would leave
+    /// <see cref="SiteSettingsDto"/>'s four members untouched and so pass that test.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void The_contact_block_has_no_field_a_secret_could_occupy()
+    {
+        var members = typeof(SiteContactDto)
+            .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Select(property => property.Name)
+            .Order(StringComparer.Ordinal)
+            .ToList();
+
+        Assert.Equal(["AddressLines", "Email", "HasAny", "MapEmbedUrl", "OpeningHours", "Phone"], members);
+
+        Assert.Equal(typeof(string), typeof(SiteContactDto).GetProperty("Phone")!.PropertyType);
+        Assert.Equal(typeof(string), typeof(SiteContactDto).GetProperty("Email")!.PropertyType);
+        Assert.Equal(typeof(string), typeof(SiteContactDto).GetProperty("MapEmbedUrl")!.PropertyType);
+        Assert.Equal(
+            typeof(IReadOnlyList<string>),
+            typeof(SiteContactDto).GetProperty("AddressLines")!.PropertyType);
+        Assert.Equal(
+            typeof(IReadOnlyList<string>),
+            typeof(SiteContactDto).GetProperty("OpeningHours")!.PropertyType);
     }
 
     [Fact]
@@ -141,6 +177,16 @@ public sealed class SettingSecretGuardTests
         Assert.Null(SiteSettingsDto.Empty.Logo);
         Assert.Null(SiteSettingsDto.Empty.WhatsAppNumber);
         Assert.Empty(SiteSettingsDto.Empty.Social);
+
+        // The state a fresh shop is in, and the one the storefront falls back to when the payload cannot
+        // be fetched: no address, no telephone number, no hours, no map. Nothing is invented, because a
+        // shopper who drives to an invented address has been actively misled.
+        Assert.Null(SiteSettingsDto.Empty.Contact.Phone);
+        Assert.Null(SiteSettingsDto.Empty.Contact.Email);
+        Assert.Null(SiteSettingsDto.Empty.Contact.MapEmbedUrl);
+        Assert.Empty(SiteSettingsDto.Empty.Contact.AddressLines);
+        Assert.Empty(SiteSettingsDto.Empty.Contact.OpeningHours);
+        Assert.False(SiteSettingsDto.Empty.Contact.HasAny);
     }
 
     // ---- floor 3: the protector -------------------------------------------------------------------

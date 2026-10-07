@@ -10,6 +10,15 @@ public static class AuditActions
     public const string Create = "Create";
     public const string Update = "Update";
     public const string SoftDelete = "SoftDelete";
+
+    /// <summary>
+    /// A row removed <b>for good</b>, with no soft-delete flag to restore from (GLB-10, W2-11). Not in
+    /// doc 08 §3.8's list, and <see cref="SoftDelete"/> would be a lie: the one case this build has is a
+    /// contact enquiry holding card or bank account details, which doc 08 §3.7 says "must be removed
+    /// rather than merely hidden". The audit row names the id and the staff member's reason and carries no
+    /// copy of what was deleted — which is the whole point of the deletion.
+    /// </summary>
+    public const string Delete = "Delete";
     public const string Restore = "Restore";
     public const string StatusChange = "StatusChange";
     public const string Approve = "Approve";

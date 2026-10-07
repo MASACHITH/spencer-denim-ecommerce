@@ -15,11 +15,38 @@ export interface SiteSocialLinkDto {
   readonly url: string;
 }
 
+/**
+ * The shop's contact details, as the API returns them (GLB-07, GLB-10).
+ *
+ * Every field can legitimately be null or empty: doc 11 P13 step 13 puts these in admin Settings, so
+ * until the client fills them in there is nothing here, and that is the normal state rather than an
+ * error state.
+ */
+export interface SiteContactDto {
+  readonly phone: string | null;
+  readonly email: string | null;
+  readonly addressLines: readonly string[];
+  readonly openingHours: readonly string[];
+  /** A Google Maps or OpenStreetMap embed address, already host-checked by the API. */
+  readonly mapEmbedUrl: string | null;
+}
+
 /** `GET /api/site/settings`. Every field can legitimately be null or empty. */
 export interface SiteSettingsDto {
   readonly logo: SiteLogoDto | null;
   readonly whatsAppNumber: string | null;
   readonly social: readonly SiteSocialLinkDto[];
+  /**
+   * The contact details (W2-11).
+   *
+   * **Optional, and the distinction from a write model is the point.** W1-12's lesson is that an
+   * optional field in a *request* model is how a column gets silently cleared — a body that omits a
+   * field is a body telling the API to clear it. This is a *response* model, where optional is simply
+   * the truth about a wire payload: an older API, a proxy that rewrote the body, or a 200 of the wrong
+   * shape all legitimately arrive without it, and `toContact` turns every one of those into "the client
+   * has supplied no contact details", which is a state the storefront already renders correctly.
+   */
+  readonly contact?: SiteContactDto | null;
 }
 
 /** The shop's logo once the storefront has decided it is usable. */
@@ -50,10 +77,54 @@ export interface SiteSocialLink {
  */
 export interface SiteSettings {
   readonly logo: SiteLogo | null;
-  /** Digits only, or null — in which case the caller uses the placeholder in `SITE_CONFIG`. */
+  /** Digits only, or null — in which case nothing is rendered. `SITE_CONFIG` holds no fallback. */
   readonly whatsAppNumber: string | null;
   readonly social: readonly SiteSocialLink[];
+  readonly contact: SiteContact;
 }
+
+/**
+ * The contact details once the storefront has decided they are usable (GLB-07, GLB-10).
+ *
+ * As with the social links, the mapping drops anything that cannot be rendered safely, so a component
+ * binding to this cannot draw an empty line or frame an address the API did not vouch for.
+ */
+export interface SiteContact {
+  /** As the client typed it, for display. Never blank. */
+  readonly phone: string | null;
+  /** The `tel:` target: digits and a leading plus only, built from `phone`. */
+  readonly phoneHref: string | null;
+  readonly email: string | null;
+  readonly addressLines: readonly string[];
+  readonly openingHours: readonly string[];
+  /**
+   * The map's `src`, or null for no map.
+   *
+   * **Re-checked in the browser against the same host allow-list the API applies**, not merely passed
+   * through. This value ends up in an `iframe src` inside a page served from the shop's own origin, and
+   * the rule the project learned from W1-12's banner link is that the side which renders a value is the
+   * side that has to decide it is safe — checking one string on the server and following another here is
+   * the gap that was defeated twice.
+   */
+  readonly mapEmbedUrl: string | null;
+  /** Whether there is anything at all to draw, so a heading with nothing under it is not rendered. */
+  readonly hasAny: boolean;
+}
+
+/**
+ * The only hosts a map may be framed from, mirroring `SettingFieldRules.MapEmbedHosts` on the server.
+ *
+ * Two copies of one list is a cost worth paying here: the alternative is trusting a payload to decide
+ * what gets framed inside the shop's own page, and this list is five strings that change when the
+ * client's mapping provider does.
+ */
+export const MAP_EMBED_HOSTS: readonly string[] = [
+  'www.google.com',
+  'maps.google.com',
+  'www.google.lk',
+  'www.openstreetmap.org',
+  'openstreetmap.org',
+];
 
 /**
  * The networks the footer can draw, in display order, with the icon and the wording each one gets.

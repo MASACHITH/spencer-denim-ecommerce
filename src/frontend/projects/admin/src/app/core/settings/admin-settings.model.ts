@@ -88,6 +88,15 @@ export interface UploadedMediaAsset {
  */
 export interface ContactAndSocialValues {
   readonly whatsApp?: string | null;
+  /** The telephone number as shoppers read it (GLB-10, W2-11). */
+  readonly phone?: string | null;
+  readonly email?: string | null;
+  /** The postal address, one line per line. Plain text, never HTML. */
+  readonly address?: string | null;
+  /** When the shop is open, one line per line. Plain text, never HTML. */
+  readonly openingHours?: string | null;
+  /** Only a Google Maps or OpenStreetMap embed address is accepted; the storefront frames it. */
+  readonly mapEmbedUrl?: string | null;
   readonly facebookUrl?: string | null;
   readonly instagramUrl?: string | null;
   readonly tikTokUrl?: string | null;
@@ -115,6 +124,11 @@ export interface BankDetailValues {
 export const SETTING_KEYS = {
   logoAssetId: 'Store.LogoAssetId',
   whatsApp: 'Contact.WhatsApp',
+  phone: 'Contact.Phone',
+  email: 'Contact.Email',
+  address: 'Contact.Address',
+  openingHours: 'Contact.OpeningHours',
+  mapEmbedUrl: 'Contact.MapEmbedUrl',
   facebookUrl: 'Social.FacebookUrl',
   instagramUrl: 'Social.InstagramUrl',
   tikTokUrl: 'Social.TikTokUrl',

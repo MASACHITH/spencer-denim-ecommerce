@@ -1,11 +1,12 @@
-import { ChangeDetectionStrategy, Component, DestroyRef, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { RouterLink } from '@angular/router';
 import { BRAND, Icon } from '@spencer-denim/shared';
 
+import { CONTENT_PAGE_KEYS, ContentPageLink } from '../../core/content/content-page.model';
 import { ContentApi, newsletterErrorMessage } from '../../core/content/content-api';
+import { ContentPageService } from '../../core/content/content-page.service';
 import { NavigationService } from '../../core/navigation/navigation.service';
-import { SITE_CONFIG } from '../../core/config/site-config';
 import { SiteSettingsService } from '../../core/site-settings/site-settings.service';
 
 /** What the newsletter form is showing (GLB-07). */
@@ -76,9 +77,17 @@ export type NewsletterState = 'idle' | 'sending' | 'done' | 'error';
               {{ newsletterState() === 'error' ? newsletterMessage() : '' }}
             </p>
           }
-          <!-- TODO(GLB-10): link "privacy policy" to the content page once it is published. -->
+          <!--
+            GLB-10's own TODO, answered: the consent wording links to the privacy policy **when the
+            client has published one**, and says the same sentence without a link until then. An
+            unconditional link would be a 404 beside a consent statement on every page of the shop,
+            which is a worse answer to "where is your privacy policy" than no link at all.
+          -->
           <p class="t-small muted">
             We record your IP address as proof of consent. Unsubscribe from any email.
+            @if (privacyPage(); as page) {
+              <a class="site-footer__inline-link" [routerLink]="'/' + page.slug">{{ page.title }}</a>
+            }
           </p>
         </section>
 
@@ -92,43 +101,91 @@ export type NewsletterState = 'idle' | 'sending' | 'done' | 'error';
             </ul>
           </nav>
 
+          <!--
+            GLB-10, W2-11: the policy links come from the published-page index, not from this file.
+
+            **A link appears only once the client has published the page it points at**, and that is the
+            requirement rather than a nicety: all six system pages ship unpublished with empty bodies
+            (doc 11 P13 — their copy is the client's, and Privacy and Terms need a PDPA review), so six
+            hard-coded links would have been six 404s in the footer of every page of the shop on the day
+            it opened. The columns fill in by themselves as the client publishes.
+
+            It is the same argument ADM-22 made about the three placeholder social icons, and the same
+            shape of answer: show what exists, show nothing when nothing does.
+
+            The headings stay even when their list is empty, because 'helpPages()' and 'aboutPages()'
+            never both empty the column — "Track your order" is in Help and the newsletter blurb is
+            above — and a heading over nothing for one deployment is better than a column that appears
+            and disappears as pages are published. The @if is on the list, so an empty 'ul' does not
+            take its margin.
+          -->
           <nav class="site-footer__col" aria-labelledby="footer-help">
             <h2 class="site-footer__heading label" id="footer-help">Help</h2>
             <ul>
-              <li><a routerLink="/contact">Contact us</a></li>
-              <li><a routerLink="/shipping">Delivery &amp; shipping</a></li>
-              <li><a routerLink="/returns">Returns &amp; exchanges</a></li>
+              @for (page of helpPages(); track page.slug) {
+                <li><a [routerLink]="'/' + page.slug">{{ page.title }}</a></li>
+              }
               <li><a routerLink="/account">Track your order</a></li>
             </ul>
           </nav>
 
-          <nav class="site-footer__col" aria-labelledby="footer-about">
-            <h2 class="site-footer__heading label" id="footer-about">About</h2>
-            <ul>
-              <li><a routerLink="/about">About {{ brand }}</a></li>
-              <li><a routerLink="/privacy">Privacy policy</a></li>
-              <li><a routerLink="/terms">Terms &amp; conditions</a></li>
-            </ul>
-          </nav>
+          @if (aboutPages().length > 0) {
+            <nav class="site-footer__col" aria-labelledby="footer-about">
+              <h2 class="site-footer__heading label" id="footer-about">About</h2>
+              <ul>
+                @for (page of aboutPages(); track page.slug) {
+                  <li><a [routerLink]="'/' + page.slug">{{ page.title }}</a></li>
+                }
+              </ul>
+            </nav>
+          }
 
+          <!--
+            GLB-07, ADM-22 part 2 (W2-11): the client's own contact details, from 'ops.Settings', and
+            **nothing at all until they supply them**.
+
+            This column used to fall back to a placeholder email, telephone number, address and opening
+            hours held in 'SITE_CONFIG', on the argument that an empty contact column reads as a broken
+            shop. That argument was wrong, and the comment that made it contradicted the Contact panel's
+            own docblock three files away. A fresh shop published 'hello@' at the real domain, a number
+            that is not the shop's and invented opening hours on *every page*: a shopper emails an address
+            nobody reads, rings a number that is not answered, and the shop never learns they tried. An
+            empty column is a shop that has not finished setting up; an invented number is a shop that
+            loses customers silently. ADM-22 made the same call when it deleted three placeholder social
+            links, for the same reason.
+
+            So the whole column goes when there is nothing in it — heading included, because a 'Contact'
+            heading over empty space is its own small lie — and it comes back field by field as the
+            client fills the settings in. The social list is inside it and counts as content, so a shop
+            with only an Instagram address still gets the column.
+          -->
+          @if (hasContactDetails() || social().length > 0) {
           <section class="site-footer__col" aria-labelledby="footer-contact">
             <h2 class="site-footer__heading label" id="footer-contact">Contact</h2>
-            <address class="site-footer__address">
-              @for (line of contact.addressLines; track line) {
-                <span>{{ line }}</span>
-              }
-              <a class="site-footer__contact-link" [href]="'mailto:' + contact.email">
-                <sd-icon name="mail" size="sm" /> {{ contact.email }}
-              </a>
-              <a class="site-footer__contact-link" [href]="'tel:' + contact.phoneHref">
-                <sd-icon name="phone" size="sm" /> {{ contact.phone }}
-              </a>
-            </address>
-            <ul class="site-footer__hours t-small muted">
-              @for (line of contact.openingHours; track line) {
-                <li>{{ line }}</li>
-              }
-            </ul>
+            @if (contactAddressLines().length > 0 || contactEmail() || contactPhoneHref()) {
+              <address class="site-footer__address">
+                @for (line of contactAddressLines(); track line) {
+                  <span>{{ line }}</span>
+                }
+                @if (contactEmail(); as address) {
+                  <a class="site-footer__contact-link" [href]="'mailto:' + address">
+                    <sd-icon name="mail" size="sm" /> {{ address }}
+                  </a>
+                }
+                @if (contactPhoneHref(); as href) {
+                  <a class="site-footer__contact-link" [href]="'tel:' + href">
+                    <sd-icon name="phone" size="sm" /> {{ contactPhone() }}
+                  </a>
+                }
+              </address>
+            }
+            @if (contactOpeningHours().length > 0) {
+              <ul class="site-footer__hours t-small muted">
+                @for (line of contactOpeningHours(); track line) {
+                  <li>{{ line }}</li>
+                }
+              </ul>
+            }
             <!-- GLB-07, ADM-22. Only the profiles the client has actually given us.
 
                  **The list is empty until then, and that is the correct state.** It used to hold three
@@ -153,6 +210,7 @@ export type NewsletterState = 'idle' | 'sending' | 'done' | 'error';
               </ul>
             }
           </section>
+          }
         </div>
 
         <div class="site-footer__legal t-small muted">
@@ -261,6 +319,12 @@ export type NewsletterState = 'idle' | 'sending' | 'done' | 'error';
       list-style: none;
       margin-top: var(--space-1);
     }
+    /* Inside a sentence, so WCAG 2.2's 2.5.8 exemption for a target "in a block of text" applies and
+       the 44 px floor does not — the same reasoning the content page's own inline links record. It is
+       underlined rather than relying on colour alone (1.4.1). */
+    .site-footer__inline-link {
+      text-decoration: underline;
+    }
     .site-footer__social {
       display: flex;
       gap: var(--space-0-5);
@@ -307,10 +371,62 @@ export class SiteFooter {
   protected readonly brand = BRAND.name;
 
   private readonly navigation = inject(NavigationService);
-  private readonly config = inject(SITE_CONFIG);
+
+  private readonly contentPages = inject(ContentPageService);
+  private readonly siteSettings = inject(SiteSettingsService);
 
   protected readonly navItems = this.navigation.items;
-  protected readonly contact = this.config.contact;
+
+
+  /**
+   * The published content pages, split into the two columns the footer has room for.
+   *
+   * **The split is on `systemKey`, never on the slug**, because a slug is editable (doc 11 P13 step 12)
+   * and a client who renames `returns` to `returns-and-exchanges` must not have the link move column.
+   * A custom page the client creates goes under Help, which is where a shopper looks for "size guide"
+   * and "stores"; a seventh system page added later would need a line here, and
+   * `site-footer.spec.ts` fails if one is unaccounted for.
+   */
+  private readonly publishedPages = this.contentPages.pages;
+
+  protected readonly helpPages = computed(() =>
+    this.pagesFor([CONTENT_PAGE_KEYS.contact, CONTENT_PAGE_KEYS.shipping, CONTENT_PAGE_KEYS.returns], true),
+  );
+
+  protected readonly aboutPages = computed(() =>
+    this.pagesFor([CONTENT_PAGE_KEYS.about, CONTENT_PAGE_KEYS.privacy, CONTENT_PAGE_KEYS.terms], false),
+  );
+
+  /** The privacy policy, for the newsletter consent wording, or null while it is unpublished. */
+  protected readonly privacyPage = computed(
+    () => this.publishedPages().find((page) => page.systemKey === CONTENT_PAGE_KEYS.privacy) ?? null,
+  );
+
+  /**
+   * The client's own contact details, from `ops.Settings` and from nowhere else.
+   *
+   * **There is no fallback, deliberately — see the template.** Each of these used to end in
+   * `?? this.placeholder.…`, which published an invented email, telephone number, address and opening
+   * hours on every page of a shop that had not been set up yet.
+   */
+  protected readonly contactAddressLines = computed(() => this.siteSettings.contact().addressLines);
+
+  protected readonly contactOpeningHours = computed(() => this.siteSettings.contact().openingHours);
+
+  protected readonly contactEmail = computed(() => this.siteSettings.contact().email);
+
+  protected readonly contactPhone = computed(() => this.siteSettings.contact().phone);
+
+  protected readonly contactPhoneHref = computed(() => this.siteSettings.contact().phoneHref);
+
+  /** Whether the client has supplied any contact detail at all. */
+  protected readonly hasContactDetails = computed(
+    () =>
+      this.contactAddressLines().length > 0 ||
+      this.contactOpeningHours().length > 0 ||
+      this.contactEmail() !== null ||
+      this.contactPhoneHref() !== null,
+  );
 
   /**
    * The shop's social profiles, from `ops.Settings` (ADM-22) rather than from `SITE_CONFIG`.
@@ -319,7 +435,7 @@ export class SiteFooter {
    * page; and empty whenever the settings cannot be read, which is the same rendering as "the client has
    * not sent them" — so a failed read costs three icons rather than the page (W2-10's lesson).
    */
-  protected readonly social = inject(SiteSettingsService).social;
+  protected readonly social = this.siteSettings.social;
 
   protected readonly year = new Date().getFullYear();
 
@@ -334,6 +450,34 @@ export class SiteFooter {
 
   protected readonly newsletterEmail = this.email.asReadonly();
   protected readonly newsletterMessage = this.answer.asReadonly();
+
+  /**
+   * The published pages for one column, in the order this file lists their keys.
+   *
+   * @param keys The system keys this column owns, in display order.
+   * @param includeCustom Whether a page with no system key belongs here. Exactly one column may say
+   *   yes, or a custom page would appear twice.
+   */
+  private pagesFor(keys: readonly string[], includeCustom: boolean): readonly ContentPageLink[] {
+    const published = this.publishedPages();
+
+    const system = keys
+      .map((key) => published.find((page) => page.systemKey === key))
+      .filter((page): page is ContentPageLink => page !== undefined);
+
+    if (!includeCustom) {
+      return system;
+    }
+
+    // `[...]` then `sort`, not `toSorted`: this project's TypeScript lib target predates ES2023, and
+    // `sort` mutates, so the copy is what keeps it off the signal's own array.
+    const custom = [...published.filter((page) => page.systemKey === null)].sort(
+      (left: ContentPageLink, right: ContentPageLink) =>
+        left.title.localeCompare(right.title, 'en-GB'),
+    );
+
+    return [...system, ...custom];
+  }
 
   protected onNewsletterInput(event: Event): void {
     this.email.set((event.target as HTMLInputElement).value);

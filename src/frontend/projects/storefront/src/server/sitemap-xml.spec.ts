@@ -173,27 +173,160 @@ describe('SitemapDocument', () => {
 
   let said: [string, string][] = [];
 
-  function document(fetchJson: (url: string, timeoutMs: number) => Promise<unknown>): SitemapDocument {
+  /**
+   * A `SitemapDocument` whose two feeds are stubbed separately.
+   *
+   * **The second parameter is what the second feed cost this file, and it has a default for a
+   * reason.** Before W2-11 the document fetched one URL and a stub could answer one body; it now
+   * fetches the catalogue and the published-page list together, so a stub that answered both with the
+   * catalogue made `asContentPages` throw — which is the vetting doing its job, and fifteen tests
+   * going red was how it said so. Defaulting the content feed to an empty published-page list keeps
+   * every test that is about the catalogue about the catalogue, and an empty list is a fresh shop: all
+   * six system pages ship unpublished (doc 11 P13 — their copy is the client's).
+   */
+  function document(
+    fetchCatalog: (url: string, timeoutMs: number) => Promise<unknown>,
+    fetchContent: () => Promise<unknown> = () => Promise.resolve(contentPayload()),
+  ): SitemapDocument {
     said = [];
-    return new SitemapDocument(fetchJson, now, (level, message) => said.push([level, message]));
+
+    return new SitemapDocument(
+      (url, timeoutMs) =>
+        url.includes('/api/content/pages') ? fetchContent() : fetchCatalog(url, timeoutMs),
+      now,
+      (level, message) => said.push([level, message]),
+    );
   }
 
   const headers = { host: 'localhost:4420' };
 
   /**
+   * The content API's published-page list (GLB-10), as `SitemapDocument` fetches it.
+   *
+   * Empty by default, because that is a fresh shop: all six system pages ship unpublished with empty
+   * bodies (doc 11 P13 — their copy is the client's), so the sitemap holds the catalogue and the three
+   * static paths and nothing else.
+   */
+  function contentPayload(
+    pages: readonly { slug: string; updatedAtUtc: string | null }[] = [],
+  ): unknown {
+    return { pages };
+  }
+
+
+
+  /**
    * It asks the **internal** feed, not `/api`. Doc 03 §4 routes `/api` from the public origin, and this
    * is the heaviest read in the system, so the one consumer that needs it is this process.
    */
-  it('asks the internal catalogue feed', async () => {
+  it('asks the internal catalogue feed, and the public content feed', async () => {
     const asked: string[] = [];
-    await document((url) => {
-      asked.push(url);
-      return Promise.resolve(payload());
-    }).answer(headers);
+    await document(
+      (url) => {
+        asked.push(url);
+        return Promise.resolve(payload());
+      },
+      () => {
+        asked.push('/api/content/pages');
+        return Promise.resolve(contentPayload());
+      },
+    ).answer(headers);
 
-    expect(asked).toHaveLength(1);
-    expect(asked[0]).toContain('/internal/catalog/sitemap');
-    expect(asked[0]).not.toContain('/api/');
+    expect(asked).toHaveLength(2);
+
+    // The catalogue stays on the internal prefix: doc 03 §4 routes `/api` from the public origin, and
+    // this is the heaviest read in the system, so the one consumer that needs it is this process.
+    const catalogUrl = asked.find((url) => url.includes('/internal/catalog/sitemap'));
+    expect(catalogUrl).toBeDefined();
+    expect(catalogUrl).not.toContain('/api/');
+
+    // The published-page list is on `/api`, deliberately and without widening anything: it is already
+    // a public endpoint — the footer in every visitor's browser reads it — it is six rows, and the API
+    // caches it for sixty seconds. Putting a second copy behind `/internal` would be two endpoints
+    // answering one question, which is how the two come to disagree.
+    expect(asked.some((url) => url.endsWith('/api/content/pages'))).toBe(true);
+  });
+
+  /**
+   * GLB-10, GLB-11: a published content page is in the sitemap at `/{slug}`.
+   *
+   * **An unpublished one cannot be, and the reason is worth stating here rather than only in the
+   * reader.** The filter lives in `IContentPageReader`, which the footer and the route guard also go
+   * through, so there is no path by which this document could be handed a draft to publish. A draft
+   * privacy policy that a crawler indexes is the sharpest form of the leak this feature prevents.
+   */
+  it('lists the published content pages', async () => {
+    const answer = await document(
+      () => Promise.resolve(payload()),
+      () =>
+        Promise.resolve(
+          contentPayload([
+            { slug: 'returns', updatedAtUtc: '2026-10-02T09:30:00Z' },
+            { slug: 'size-guide', updatedAtUtc: null },
+          ]),
+        ),
+    ).answer(headers);
+
+    expect(answer.body).toContain('<loc>http://localhost:4420/returns</loc>');
+    expect(answer.body).toContain('<lastmod>2026-10-02</lastmod>');
+    expect(answer.body).toContain('<loc>http://localhost:4420/size-guide</loc>');
+  });
+
+  /**
+   * A slug that is not a slug is dropped rather than escaped into a `<loc>`.
+   *
+   * `CK_ContentPages_Slug` means no row can hold one, so this is the same belt-and-braces the product
+   * and category lists get — and the sitemap is the wrong place to find out that something else let a
+   * bad slug through.
+   */
+  it('drops a content page whose slug is not a slug', async () => {
+    const answer = await document(
+      () => Promise.resolve(payload()),
+      () =>
+        Promise.resolve(
+          contentPayload([
+            { slug: 'Returns Policy', updatedAtUtc: null },
+            { slug: '../../etc/passwd', updatedAtUtc: null },
+            { slug: 'terms', updatedAtUtc: null },
+          ]),
+        ),
+    ).answer(headers);
+
+    expect(answer.body).not.toContain('Returns Policy');
+    expect(answer.body).not.toContain('passwd');
+    expect(answer.body).toContain('<loc>http://localhost:4420/terms</loc>');
+  });
+
+  /**
+   * The content feed failing fails the rebuild, which is the uniform treatment and a deliberate
+   * trade-off rather than an oversight.
+   *
+   * Carrying on with whatever answered would publish a sitemap silently missing either the catalogue
+   * or the policy pages, with nothing in the document to say which. Failing instead hands it to the
+   * machinery that already exists: the last good document is served, the staleness is logged once, and
+   * only a shop that never built one answers 503.
+   */
+  it('keeps the last good document when the content feed stops answering', async () => {
+    let contentFails = false;
+    const sitemap = document(
+      () => Promise.resolve(payload()),
+      () =>
+        contentFails
+          ? Promise.reject(new Error('content feed down'))
+          : Promise.resolve(contentPayload([{ slug: 'returns', updatedAtUtc: null }])),
+    );
+
+    const first = await sitemap.answer(headers);
+    expect(first.status).toBe(200);
+    expect(first.body).toContain('/returns');
+
+    contentFails = true;
+    clock += (CACHE_SECONDS + 1) * 1000;
+
+    const stale = await sitemap.answer(headers);
+    expect(stale.status).toBe(200);
+    expect(stale.body).toContain('/returns');
+    expect(said.some(([level]) => level === 'error')).toBe(true);
   });
 
   it('serves the catalogue it was given', async () => {

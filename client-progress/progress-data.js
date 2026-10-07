@@ -17,7 +17,7 @@ const progressData = {
     endDate: "2026-10-15"
   },
 
-  lastUpdated: "2026-10-06",
+  lastUpdated: "2026-10-07",
 
   milestones: [
     { week: "Week 0", title: "Setup & design", start: "2026-09-15", end: "2026-09-18" },
@@ -61,7 +61,7 @@ const progressData = {
         { name: "Category listings with filters & sorting", status: "done", progress: 100 },
         { name: "Product cards with quick view", status: "done", progress: 100 },
         { name: "Search", status: "in-progress", progress: 90 },
-        { name: "Store pages: About, Contact, Returns, Shipping, Privacy & Terms", status: "planned", progress: 0 }
+        { name: "Store pages: About, Contact, Returns, Shipping, Privacy & Terms", status: "in-progress", progress: 85 }
       ]
     },
     {

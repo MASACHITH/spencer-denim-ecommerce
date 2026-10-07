@@ -731,12 +731,42 @@ test.describe('an address this site does not have (#28)', () => {
   // was in flight, so each has a route of its own and must **not** redirect home.
   // `app.routes.spec.ts` holds the same property on the list itself, and the bag's own address is
   // asserted directly above.
-  for (const path of ['/account', '/about', '/contact', '/privacy', '/terms', '/returns', '/shipping']) {
+  //
+  // **The six content-page addresses left this list in W2-11 (GLB-10)**, and the reasoning above is
+  // what released them: the redirect was the price of the shell linking to an address with no page,
+  // and the footer now links a content page only once it is published. So an unpublished one is no
+  // longer linked from anywhere and is free to answer the honest thing. See the loop below.
+  for (const path of ['/account']) {
     test(`${path} still reaches the home page while its page is unbuilt`, async ({ request }) => {
       const response = await request.get(path);
 
       expect(response.status()).toBe(200);
       expect(new URL(response.url()).pathname).toBe('/');
+    });
+  }
+
+  /**
+   * **The content pages (GLB-10, W2-11): a real 404 while unpublished, and `noindex` with it.**
+   *
+   * All six ship unpublished with empty bodies — doc 11 P13: the copy is the client's, and Privacy and
+   * Terms need a PDPA review — so on the day the shop opens these are addresses it does not have. The
+   * home page at HTTP 200 for them would be #28 itself, which is what this whole file is about; and the
+   * `noindex` matters as much as the status, because a crawler that reads the body of an error page
+   * takes the meta tag at its word.
+   *
+   * This is also the half of the leak that is visible from outside: a draft policy page must not be
+   * servable, and the status is the only place that can be proved.
+   */
+  for (const path of ['/about', '/contact', '/privacy', '/terms', '/returns', '/shipping']) {
+    test(`${path} is a real 404 with noindex while it is unpublished`, async ({ request }) => {
+      const response = await request.get(path);
+
+      expect(response.status()).toBe(404);
+      expect(new URL(response.url()).pathname).toBe(path);
+
+      const html = await response.text();
+      expect(html).toContain('We could not find that page');
+      expect(html).toContain('noindex');
     });
   }
 

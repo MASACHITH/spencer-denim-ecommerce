@@ -254,7 +254,7 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* ---- Admin-written rich text (PDP-05, GLB-10 content pages next) ----
+/* ---- Admin-written rich text (PDP-05, GLB-10 content pages) ----
    Content injected with [innerHTML] carries no _ngcontent attribute, so a component's own scoped
    styles can never reach it. These live here rather than behind ::ng-deep, which is deprecated.
    Only the handful of elements a product description actually uses. */
@@ -263,6 +263,64 @@
 .rich ol { padding-left: var(--space-3); list-style: revert; }
 .rich li + li { padding-top: var(--space-0-5); }
 .rich strong { font-weight: var(--weight-medium); color: var(--color-text); }
+
+/* ---- A content page's body (GLB-10, W2-11) ----
+   The note above said "GLB-10 content pages next", and this is that. A policy page uses more of the
+   sanitiser's allow-list than a product description does: headings, tables, images, figures and
+   quotations. These rules are here for the reason that note gives, and W2-11 learned it the hard way —
+   `content-pages.e2e.ts` measured `overflow-x` on a table inside the body and got the empty string,
+   because the component's `.page__body table` selector carried an _ngcontent attribute the injected
+   table does not have. The body therefore renders unstyled under a component's own styles, however
+   carefully they are written.
+   There are no classes to hook, deliberately: the sanitiser's allow-list does not permit `class`, so a
+   client cannot reach into the theme. Every element it *does* permit needs a rule here or it renders
+   with the browser's default. */
+.rich--page { line-height: 1.7; }
+.rich--page > * + * { margin-top: var(--space-2); }
+.rich--page h2 { font-size: var(--text-h3); margin-top: var(--space-5); }
+.rich--page h3 { font-size: var(--text-h4); margin-top: var(--space-4); }
+.rich--page h4 { font-size: var(--text-body); font-weight: var(--weight-semibold); margin-top: var(--space-3); }
+.rich--page a { color: var(--color-primary); text-decoration: underline; }
+.rich--page img { max-width: 100%; height: auto; display: block; }
+.rich--page figure { margin: 0; }
+.rich--page figcaption {
+  color: var(--color-text-muted);
+  font-size: var(--text-small);
+  padding-top: var(--space-0-5);
+}
+.rich--page blockquote {
+  border-left: 2px solid var(--color-border);
+  padding-left: var(--space-2);
+  color: var(--color-text-muted);
+}
+.rich--page hr { border: 0; border-top: 1px solid var(--color-border); }
+
+/* A shipping page is mostly a table of zones and fees, and a wide one must not make the whole document
+   scroll sideways (GLB-09: no horizontal scroll at any of the eight widths). The wrapper the body would
+   need for that cannot be added — the allow-list permits no markup around the table — so the table
+   itself scrolls, which `display: block` plus `overflow-x: auto` gives it. */
+.rich--page table {
+  display: block;
+  overflow-x: auto;
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-small);
+}
+.rich--page th,
+.rich--page td {
+  border: 1px solid var(--color-border);
+  padding: var(--space-1) var(--space-1-5);
+  text-align: left;
+  vertical-align: top;
+}
+.rich--page th { background: var(--color-bg-alt); font-weight: var(--weight-semibold); }
+.rich--page caption {
+  caption-side: bottom;
+  color: var(--color-text-muted);
+  font-size: var(--text-small);
+  padding-top: var(--space-1);
+  text-align: left;
+}
 
 /* ---- Homepage section chrome (HOME-01..10) ----
    Eight components draw a heading, an optional standfirst and an optional "view all" in the same

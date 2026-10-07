@@ -19,23 +19,24 @@ namespace SpencerDenim.Api.Endpoints.Admin;
 /// <summary>
 /// The settings screen (ADM-22) and the shop's branding (GLB-02).
 /// <para>
-/// <b>Permissions.</b> Every route is behind <c>Settings.Edit</c>, which is the permission doc 08 §3.8
-/// names for the <c>Store</c>, <c>Contact</c> and <c>Social</c> groups. The read then filters again, per
-/// row, against the caller's effective permissions — so when <c>Bank.*</c> and <c>Email.Smtp.*</c> arrive
-/// with #53 and W3, a <c>Settings.Edit</c> holder reaching this route does not start seeing them. The API is
-/// the security boundary (doc 03 §3a); the admin UI's hiding is convenience.
+/// <b>Permissions.</b> The routes do <i>not</i> share one guard. The read is behind
+/// <c>RequireAnySettingsPermission()</c>; <c>store-logo</c> and <c>contact-social</c> are behind
+/// <c>Settings.Edit</c>, the permission doc 08 §3.8 names for the <c>Store</c>, <c>Contact</c> and
+/// <c>Social</c> groups; and <c>bank</c> is behind <c>Settings.Payments</c>. The read then filters
+/// again, per row, against the caller's effective permissions, so a <c>Settings.Edit</c> holder
+/// reaching this route does not start seeing <c>Bank.*</c> — and when <c>Email.Smtp.*</c> arrives with
+/// W3-06 it will not change that. The API is the security boundary (doc 03 §3a); the admin UI's hiding
+/// is convenience.
 /// </para>
 /// <para>
-/// <b>The converse is a limitation #53 will meet, and it is written down rather than left to be found.</b>
-/// The route guard is a single permission, so a caller holding <i>only</i> <c>Settings.Payments</c> — a
-/// custom role somebody could build — could not reach this screen at all, not even to read the group that is
-/// theirs. No such role exists today: docs/02's Store Manager holds <c>Settings.Edit</c> and not
-/// <c>Settings.Payments</c>, and a Super Admin holds everything through GrantsAll. Inventing a "holds any
-/// settings permission" policy for a caller who does not exist would be a security-shaped abstraction with
-/// nothing able to test it, so this guard is what has to widen when the payments group lands — the per-row
-/// filter in the read model already does the rest.
+/// <b>This paragraph used to describe the single-permission guard as a limitation W3-03 would meet, and
+/// it was right.</b> It predicted that a caller holding <i>only</i> <c>Settings.Payments</c> could not
+/// reach the screen at all, not even to read the group that was theirs, and said the guard "is what has
+/// to widen when the payments group lands". W3-03 landed it and widened it, which is why the read now
+/// takes any settings permission rather than one. The reasoning is kept rather than deleted because it
+/// is the argument for <i>why</i> the read's guard and the writes' guards differ — not an oversight, but
+/// a per-group boundary that the per-row filter in the read model completes.
 /// </para>
-/// <para>
 /// <b>Antiforgery</b> is validated by hand on every mutating route, as <c>AdminAuthEndpoints.Logout</c>,
 /// <c>AdminMediaEndpoints</c> and <c>AdminCatalogEndpoints</c> do, so the refusal is a problem document a
 /// client can read rather than an empty 400.
@@ -331,7 +332,17 @@ internal static class AdminSettingsEndpoints
 
     /// <summary>The fields the contact-and-social body may carry, in the order they are read.</summary>
     private static readonly string[] ContactAndSocialFields =
-        ["whatsApp", "facebookUrl", "instagramUrl", "tikTokUrl"];
+    [
+        "whatsApp",
+        "phone",
+        "email",
+        "address",
+        "openingHours",
+        "mapEmbedUrl",
+        "facebookUrl",
+        "instagramUrl",
+        "tikTokUrl",
+    ];
 
     /// <summary>The fields the bank body may carry, in the order the screen shows them.</summary>
     private static readonly string[] BankFields =

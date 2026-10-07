@@ -80,6 +80,39 @@ export const routes: Routes = [
     loadComponent: () => import('./pages/settings/settings-page').then((m) => m.SettingsPage),
   },
   {
+    // ADM-17 / GLB-10 (W2-11). Like every other admin route the guard only asks for a session: the API
+    // is the security boundary (doc 03 §3a), and a user without Content.View is shown the refusal rather
+    // than bounced from a page that then cannot explain itself.
+    path: 'content/pages',
+    title: `Content pages — ${BRAND.adminName}`,
+    canActivate: [adminSessionGuard],
+    loadComponent: () =>
+      import('./pages/content/content-pages-page').then((m) => m.ContentPagesPage),
+  },
+  {
+    path: 'content/pages/new',
+    title: `Add a content page — ${BRAND.adminName}`,
+    canActivate: [adminSessionGuard],
+    loadComponent: () =>
+      import('./pages/content/content-page-form-page').then((m) => m.ContentPageFormPage),
+  },
+  {
+    path: 'content/pages/:id',
+    title: `Edit content page — ${BRAND.adminName}`,
+    canActivate: [adminSessionGuard],
+    loadComponent: () =>
+      import('./pages/content/content-page-form-page').then((m) => m.ContentPageFormPage),
+  },
+  {
+    // GLB-10 (W2-11). Behind Customers.* on the API, not Content.*: doc 08 §3.7's G-06 resolution puts
+    // a contact enquiry in the Customers module, because it is customer data that happens to arrive
+    // through a content page.
+    path: 'enquiries',
+    title: `Contact enquiries — ${BRAND.adminName}`,
+    canActivate: [adminSessionGuard],
+    loadComponent: () => import('./pages/enquiries/enquiries-page').then((m) => m.EnquiriesPage),
+  },
+  {
     path: 'audit-log',
     title: `Audit log — ${BRAND.adminName}`,
     canActivate: [adminSessionGuard],

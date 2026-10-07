@@ -409,6 +409,130 @@ public sealed class HomeContentSeederTests(SqlServerDatabaseFixture sqlServer)
         }
     }
 
+    /// <summary>
+    /// <b>A deployment does not put Contact back on the shop after the client has taken it off.</b>
+    /// <para>
+    /// Contact is the one system page seeded published (owner decision, W2-11), which means there is now
+    /// a way for the seeder to disagree with the client about a page's state — and the disagreement is
+    /// the dangerous direction: a client who takes the contact form down, perhaps because nobody is
+    /// reading the inbox that week, must not find it live again on the next deployment, with no audit
+    /// entry and nothing on any screen saying why.
+    /// </para>
+    /// <para>
+    /// <b>This is worth more than the change it guards.</b> The protection is not new code — the seeder
+    /// only ever inserts keys that are absent — but it is now carrying a decision it did not carry
+    /// before, and "it happens to work because of how the query is written" is exactly the kind of
+    /// property that a later refactor breaks for free. The announcement test above exists because the
+    /// same thing went wrong once already, in the shape where a deleted placeholder came back.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task Contact_stays_off_the_shop_once_the_client_takes_it_off()
+    {
+        sqlServer.SkipIfUnavailable();
+
+        using var scope = sqlServer.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var seeder = scope.ServiceProvider.GetRequiredService<HomeContentSeeder>();
+
+        var contact = await dbContext.ContentPages
+            .IgnoreQueryFilters()
+            .SingleAsync(page => page.SystemKey == ContentPageKeys.Contact, Token);
+
+        var wasPublished = contact.IsPublished;
+        var wasPublishedAt = contact.PublishedAtUtc;
+
+        contact.IsPublished = false;
+        await dbContext.SaveChangesAsync(Token);
+
+        try
+        {
+            await seeder.SeedAsync(Token);
+
+            dbContext.ChangeTracker.Clear();
+
+            var after = await dbContext.ContentPages
+                .IgnoreQueryFilters()
+                .SingleAsync(page => page.SystemKey == ContentPageKeys.Contact, Token);
+
+            Assert.False(
+                after.IsPublished,
+                "a deployment put the contact page back on the shop after the client took it off");
+
+            // And no duplicate shell beside it, which is the other way "insert what is missing" can go
+            // wrong: a second Contact row would be refused by UX_ContentPages_SystemKey, so a seeder
+            // that tried would fail the whole reference-data step on startup.
+            Assert.Equal(
+                1,
+                await dbContext.ContentPages
+                    .IgnoreQueryFilters()
+                    .CountAsync(page => page.SystemKey == ContentPageKeys.Contact, Token));
+        }
+        finally
+        {
+            var restore = await dbContext.ContentPages
+                .IgnoreQueryFilters()
+                .SingleAsync(page => page.SystemKey == ContentPageKeys.Contact, Token);
+
+            restore.IsPublished = wasPublished;
+            restore.PublishedAtUtc = wasPublishedAt;
+            await dbContext.SaveChangesAsync(Token);
+        }
+    }
+
+    /// <summary>
+    /// The same protection from the other side: a page the client has <i>published</i> stays published,
+    /// so the five that ship as drafts are not quietly taken off the shop again by a deployment.
+    /// </summary>
+    [Fact]
+    public async Task A_page_the_client_published_stays_on_the_shop_through_a_reseed()
+    {
+        sqlServer.SkipIfUnavailable();
+
+        using var scope = sqlServer.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var seeder = scope.ServiceProvider.GetRequiredService<HomeContentSeeder>();
+
+        var shipping = await dbContext.ContentPages
+            .IgnoreQueryFilters()
+            .SingleAsync(page => page.SystemKey == ContentPageKeys.Shipping, Token);
+
+        var wasPublished = shipping.IsPublished;
+        var wasPublishedAt = shipping.PublishedAtUtc;
+        var wasBody = shipping.BodyHtml;
+
+        shipping.IsPublished = true;
+        shipping.PublishedAtUtc = new DateTime(2026, 3, 1, 0, 0, 0, DateTimeKind.Utc);
+        shipping.BodyHtml = "<p>The client's own delivery copy.</p>";
+        await dbContext.SaveChangesAsync(Token);
+
+        try
+        {
+            await seeder.SeedAsync(Token);
+
+            dbContext.ChangeTracker.Clear();
+
+            var after = await dbContext.ContentPages
+                .IgnoreQueryFilters()
+                .SingleAsync(page => page.SystemKey == ContentPageKeys.Shipping, Token);
+
+            Assert.True(after.IsPublished, "a deployment took a published page off the shop");
+            Assert.Equal("<p>The client's own delivery copy.</p>", after.BodyHtml);
+            Assert.Equal(new DateTime(2026, 3, 1, 0, 0, 0, DateTimeKind.Utc), after.PublishedAtUtc);
+        }
+        finally
+        {
+            var restore = await dbContext.ContentPages
+                .IgnoreQueryFilters()
+                .SingleAsync(page => page.SystemKey == ContentPageKeys.Shipping, Token);
+
+            restore.IsPublished = wasPublished;
+            restore.PublishedAtUtc = wasPublishedAt;
+            restore.BodyHtml = wasBody;
+            await dbContext.SaveChangesAsync(Token);
+        }
+    }
+
     private static async Task<(int Sections, int Items, int Announcements)> CountsAsync(AppDbContext dbContext) =>
         (await dbContext.HomeSections.CountAsync(Token),
             await dbContext.HomeSectionItems.CountAsync(Token),

@@ -1,7 +1,7 @@
 import AxeBuilder from '@axe-core/playwright';
 import { Page, expect, test } from '@playwright/test';
 
-import { apiURL } from '../playwright.config';
+import { brandingApiURL, brandingURL } from '../playwright.config';
 import { edgesWithoutRing, horizontalOverflow, undersized } from './support/measure';
 
 /**
@@ -18,6 +18,13 @@ import { edgesWithoutRing, horizontalOverflow, undersized } from './support/meas
  * measured here.
  */
 test.describe.configure({ mode: 'serial' });
+
+// **Its own storefront and its own stub.** This spec switches the logo, the social addresses and the
+// WhatsApp number in a stub process, and the shell reads those settings on every page of every other
+// spec — so on the shared pair it was changing the shop under tests in other files. `mode: 'serial'`
+// above orders this file's own tests and does nothing about that. See `brandingURL` in
+// `playwright.config.ts` for the measurements. (W2-11.)
+test.use({ baseURL: brandingURL });
 
 /** docs/04 §4 and the project's non-negotiable list. */
 const BREAKPOINTS = [320, 375, 390, 768, 1024, 1280, 1440, 1920] as const;
@@ -70,13 +77,13 @@ async function useSettings(
     query.set('delay', String(options.delayMs));
   }
 
-  const switched = await page.request.get(`${apiURL}/__test__/site-settings?${query}`);
+  const switched = await page.request.get(`${brandingApiURL}/__test__/site-settings?${query}`);
   expect(switched.ok(), 'the stub refused the settings switch').toBe(true);
 
   // The browser's own /api calls go to the same stub, so the hydrated page agrees with the server.
   await page.route('**/api/**', async (route) => {
     const url = new URL(route.request().url());
-    const response = await route.fetch({ url: `${apiURL}${url.pathname}${url.search}` });
+    const response = await route.fetch({ url: `${brandingApiURL}${url.pathname}${url.search}` });
     await route.fulfill({ response });
   });
 }
@@ -96,7 +103,7 @@ test.afterEach(async ({ page, request }) => {
   // page does not wait for.
   await page.unrouteAll({ behavior: 'ignoreErrors' });
 
-  await request.get(`${apiURL}/__test__/site-settings?logo=none&social=none`);
+  await request.get(`${brandingApiURL}/__test__/site-settings?logo=none&social=none`);
 });
 
 test.describe('the header wordmark and logo (GLB-02)', () => {
@@ -457,17 +464,66 @@ test.describe('the WhatsApp button (GLB-08, ADM-22)', () => {
   });
 
   /**
-   * **And the button is still there when nothing is configured**, which is a deliberate difference from the
-   * social links. An unset social address hides one icon in the footer; GLB-08's floating button is on every
-   * page, and removing it over a setting nobody has filled in would take a scoped feature off the shop. The
-   * placeholder number in `SITE_CONFIG` predates this task and is flagged in the journal as the thing to
-   * replace with the client's real one.
+   * **And there is no button at all when nothing is configured**, which reverses what this test used to
+   * assert (W2-11).
+   *
+   * It read "keeps its documented placeholder number", on the argument that GLB-08's float is site-wide
+   * and removing it over an unset setting would take a scoped feature off the shop. The number was
+   * `+94 77 000 0000`, which is not this shop's — so every page of a fresh shop carried a float that
+   * opens a chat with nobody, and the Contact page carried four links to it. A button that reaches nobody
+   * is not the feature; a shopper who messages it concludes the shop does not answer. It was the last
+   * invented value left in the bundle after the address, email, telephone and opening hours came out, and
+   * the W2-11 tester found it there.
+   *
+   * The landmark goes with it: a named `complementary` region with nothing in it is a worse defect than
+   * the one it was added to fix (#65), because a screen-reader user navigating by region arrives at an
+   * empty "Chat with us".
    */
-  test('keeps its documented placeholder number when nothing is configured', async ({ page }) => {
-    await useSettings(page, 'none', 'none');
+  test('renders no button at all when nothing is configured', async ({ page }) => {
+    // `whatsApp: 'none'` rather than an omitted parameter: the stub's default shop *has* a number now,
+    // because the corner-occlusion scans in three other files need the float to exist to be measuring
+    // anything. See DEFAULT_WHATSAPP in the stub.
+    await useSettings(page, 'none', 'none', { whatsApp: 'none' });
     await page.goto('/');
 
-    await expect(page.locator('sd-whatsapp-button a')).toHaveAttribute('href', /^https:\/\/wa\.me\/\d{7,15}\?/);
+    await expect(page.locator('sd-whatsapp-button')).toHaveCount(1);
+    await expect(page.locator('sd-whatsapp-button a')).toHaveCount(0);
+    await expect(page.locator('.wa-float')).toHaveCount(0);
+
+    // No landmark either, and nothing anywhere on the page that looks like a wa.me link.
+    await expect(page.locator('sd-whatsapp-button[role="complementary"]')).toHaveCount(0);
+    await expect(page.locator('a[href*="wa.me"]')).toHaveCount(0);
+
+    // Named, not inferred: what must never come back is this number specifically. An assertion about
+    // emptiness would pass again the moment somebody introduced a different invented value.
+    expect(await page.content()).not.toContain('94770000000');
+  });
+
+  /**
+   * The mobile menu's row goes the same way, and the `@if` wraps the `<li>` rather than the `<a>` so the
+   * list does not keep an empty item's spacing.
+   */
+  test('drops the WhatsApp row from the mobile menu when nothing is configured', async ({ page }) => {
+    await useSettings(page, 'none', 'none', { whatsApp: 'none' });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/');
+
+    await page.click('[data-testid="menu-toggle"]');
+
+    await expect(page.locator('.m-nav__link', { hasText: 'Chat on WhatsApp' })).toHaveCount(0);
+    await expect(page.locator('.m-nav__link', { hasText: 'Wishlist' })).toBeVisible();
+  });
+
+  test('keeps the WhatsApp row in the mobile menu once a number is set', async ({ page }) => {
+    await useSettings(page, 'none', 'none', { whatsApp: '94771234567' });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/');
+
+    await page.click('[data-testid="menu-toggle"]');
+
+    const row = page.locator('.m-nav__link', { hasText: 'Chat on WhatsApp' });
+    await expect(row).toBeVisible();
+    await expect(row).toHaveAttribute('href', /^https:\/\/wa\.me\/94771234567\?/);
   });
 });
 

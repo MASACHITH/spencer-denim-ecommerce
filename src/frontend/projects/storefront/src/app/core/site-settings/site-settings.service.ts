@@ -5,7 +5,9 @@ import { Observable, catchError, map, of, tap, timeout } from 'rxjs';
 import { BRAND } from '@spencer-denim/shared';
 
 import {
+  MAP_EMBED_HOSTS,
   SOCIAL_NETWORKS,
+  SiteContact,
   SiteLogo,
   SiteSettings,
   SiteSettingsDto,
@@ -21,10 +23,21 @@ import { ServerHandover } from '../platform/server-handover';
  * That equivalence is the point: there is no second rendering for "we could not find out", so the
  * failure path has already been looked at by everyone who has looked at the normal one.
  */
+export const EMPTY_SITE_CONTACT: SiteContact = {
+  phone: null,
+  phoneHref: null,
+  email: null,
+  addressLines: [],
+  openingHours: [],
+  mapEmbedUrl: null,
+  hasAny: false,
+};
+
 export const EMPTY_SITE_SETTINGS: SiteSettings = {
   logo: null,
   whatsAppNumber: null,
   social: [],
+  contact: EMPTY_SITE_CONTACT,
 };
 
 /**
@@ -71,6 +84,14 @@ export class SiteSettingsService {
   /** The configured WhatsApp number, or null when the client has not set one. */
   readonly whatsAppNumber: Signal<string | null> = computed(() => this.source().whatsAppNumber);
 
+  /**
+   * The shop's contact details (GLB-07, GLB-10) — only what the client has actually supplied.
+   *
+   * Nothing here has a placeholder: an invented address is worse than none, because a shopper can
+   * drive to it. See `EMPTY_SITE_CONTACT`.
+   */
+  readonly contact: Signal<SiteContact> = computed(() => this.source().contact);
+
   private load(): Observable<SiteSettings> {
     const handedOver = this.handover.take<SiteSettings>(SITE_SETTINGS_HANDOVER);
     if (handedOver) {
@@ -108,7 +129,114 @@ export function toSiteSettings(payload: SiteSettingsDto | null | undefined): Sit
     logo: toLogo(payload.logo),
     whatsAppNumber: toWhatsAppNumber(payload.whatsAppNumber),
     social: toSocialLinks(payload.social),
+    contact: toContact(payload.contact),
   };
+}
+
+/**
+ * The contact details worth drawing (GLB-07, GLB-10).
+ *
+ * Every field is checked for the type it is supposed to be rather than trusted because the request
+ * succeeded — the same reason `toSocialLinks` does: a `200 {"oops":true}` never reaches `catchError`.
+ */
+export function toContact(payload: SiteSettingsDto['contact']): SiteContact {
+  if (typeof payload !== 'object' || payload === null) {
+    return EMPTY_SITE_CONTACT;
+  }
+
+  const phone = text(payload.phone);
+  const email = text(payload.email);
+  const addressLines = lines(payload.addressLines);
+  const openingHours = lines(payload.openingHours);
+  const mapEmbedUrl = toMapEmbedUrl(payload.mapEmbedUrl);
+
+  return {
+    phone,
+    phoneHref: toPhoneHref(phone),
+    email,
+    addressLines,
+    openingHours,
+    mapEmbedUrl,
+    hasAny:
+      phone !== null ||
+      email !== null ||
+      addressLines.length > 0 ||
+      openingHours.length > 0 ||
+      mapEmbedUrl !== null,
+  };
+}
+
+/** A non-blank string, or null. Two spellings of "not given" in one field is one too many. */
+function text(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const trimmed = value.trim();
+
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+/** The lines the template draws: strings only, trimmed, blanks dropped, capped as the API caps them. */
+function lines(value: unknown): readonly string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((line) => text(line))
+    .filter((line): line is string => line !== null)
+    .slice(0, 8);
+}
+
+/**
+ * The `tel:` target: digits with at most one leading plus.
+ *
+ * Built here rather than taken from the payload, because a `tel:` href and a displayed number are two
+ * different strings and the API deliberately stores only the one a person reads. A browser is lenient
+ * about punctuation in a `tel:`, but not every dialler is.
+ */
+export function toPhoneHref(phone: string | null): string | null {
+  if (phone === null) {
+    return null;
+  }
+
+  const digits = phone.replace(/[^\d]/g, '');
+  if (digits.length < 7) {
+    return null;
+  }
+
+  return phone.trimStart().startsWith('+') ? `+${digits}` : digits;
+}
+
+/**
+ * The map's `src`, or null.
+ *
+ * **The host allow-list is applied again here, in the browser's own parser.** The API checks it on write
+ * and on read; this is the third place, and it is the one that matters most, because this is the value
+ * that becomes an `iframe src` inside a page on the shop's own origin. `isExternalHttpUrl`'s reasoning
+ * applies in full — a control character, a backslash, credentials in the authority or a non-http scheme
+ * all fail before the host is even considered — and then the host has to be one of
+ * {@link MAP_EMBED_HOSTS}, over https only.
+ */
+export function toMapEmbedUrl(value: unknown): string | null {
+  const normalised = normaliseExternalHttpUrl(value);
+  if (normalised === null) {
+    return null;
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(normalised);
+  } catch {
+    return null;
+  }
+
+  if (parsed.protocol !== 'https:') {
+    return null;
+  }
+
+  return MAP_EMBED_HOSTS.includes(parsed.hostname.toLowerCase()) ? parsed.href : null;
 }
 
 /**

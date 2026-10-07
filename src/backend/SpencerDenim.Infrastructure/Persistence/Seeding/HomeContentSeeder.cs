@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using SpencerDenim.Application.Abstractions.Time;
 using SpencerDenim.Domain.Content;
 
 namespace SpencerDenim.Infrastructure.Persistence.Seeding;
@@ -25,7 +26,7 @@ namespace SpencerDenim.Infrastructure.Persistence.Seeding;
 /// any row in it at all, this step does nothing.
 /// </para>
 /// </summary>
-public sealed class HomeContentSeeder(AppDbContext dbContext)
+public sealed class HomeContentSeeder(AppDbContext dbContext, IClock clock)
 {
     public async Task<HomeContentSeedCounts> SeedAsync(CancellationToken cancellationToken)
     {
@@ -37,8 +38,102 @@ public sealed class HomeContentSeeder(AppDbContext dbContext)
         counts.SectionItems = await SeedDepartmentTilesAsync(cancellationToken)
             + await SeedBenefitsAsync(cancellationToken);
         counts.Announcements = await SeedAnnouncementsAsync(cancellationToken);
+        counts.ContentPages = await SeedContentPagesAsync(cancellationToken);
 
         return counts;
+    }
+
+    /// <summary>
+    /// GLB-10, doc 08 §9: the six system pages. Five of them "unpublished until the client's copy
+    /// (privacy and terms need PDPA review)", and Contact on the shop from the start — see
+    /// <see cref="ContentPageKeys.Seeds"/> and the paragraph on the publish flag below.
+    /// <para>
+    /// <b>Keyed on <c>SystemKey</c></b>, which is the one field staff cannot change, so re-running this
+    /// after the client has written About, renamed its slug, retitled it and published it leaves every one
+    /// of those alone. A row that has been <i>soft-deleted</i> is also left alone, because the query
+    /// ignores the soft-delete filter when it looks for what is present: a system page cannot be deleted
+    /// through the API at all, so a deleted one is a deliberate data fix and putting it back on the next
+    /// deployment would undo it silently.
+    /// </para>
+    /// <para>
+    /// <b>The bodies are empty and nothing in this repository writes them.</b> Doc 11 P13 is explicit that
+    /// the copy is the client's; a returns policy, a privacy policy and terms of business carry legal
+    /// weight, and inventing them would put words the client never agreed to on their own shop. The
+    /// <i>titles</i> are seeded, because a title is a label rather than copy and a page with no heading
+    /// cannot be found on the admin list.
+    /// </para>
+    /// <para>
+    /// <b>Contact is the one that is published on install, and it is published with an empty body</b>
+    /// (owner decision, W2-11; see <see cref="ContentPageKeys.Seeds"/>). Its content is the enquiry form
+    /// and the <c>Contact.*</c> settings rather than copy, so there is nothing whose absence makes it
+    /// wrong — and leaving it unpublished would give a fresh shop no contact route at all, now that the
+    /// WhatsApp float correctly hides itself until a number is set. The empty body is <i>not</i> relaxed
+    /// for it: published and empty is exactly the intended state.
+    /// </para>
+    /// <para>
+    /// <b>The publish flag decides what a new row looks like and nothing else.</b> The query above has
+    /// already excluded every key that exists, so a client who takes Contact off the shop is not a
+    /// "missing" page to be fixed on the next deployment — the same protection an edited heading or a
+    /// rewritten body has. That is the half worth testing, and
+    /// <c>HomeContentSeederTests</c> does.
+    /// </para>
+    /// </summary>
+    private async Task<int> SeedContentPagesAsync(CancellationToken cancellationToken)
+    {
+        var existing = await dbContext.ContentPages
+            .IgnoreQueryFilters()
+            .Where(page => page.SystemKey != null)
+            .Select(page => page.SystemKey!)
+            .ToListAsync(cancellationToken);
+
+        // Case-insensitively, to match the database collation (Latin1_General_100_CI_AS_SC). An ordinal
+        // set here would read `About` as missing next to a stored `about` and then be refused by
+        // UX_ContentPages_SystemKey on save — which is the failure SettingCatalog.ByKey documents.
+        var present = existing.ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var takenSlugs = (await dbContext.ContentPages
+                .IgnoreQueryFilters()
+                .Select(page => page.Slug)
+                .ToListAsync(cancellationToken))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var utcNow = clock.UtcNow.UtcDateTime;
+
+        var added = 0;
+        foreach (var seed in ContentPageKeys.Seeds)
+        {
+            if (!present.Add(seed.SystemKey))
+            {
+                continue;
+            }
+
+            // A custom page the client created on the slug this shell wants. The shell still has to exist
+            // — it is the row the footer and the storefront expect — so it takes a suffixed slug rather
+            // than being skipped, and staff can rename either of them afterwards. Without this the insert
+            // was refused by UX_ContentPages_Slug and the whole reference-data seed failed on startup.
+            var slug = takenSlugs.Contains(seed.Slug) ? seed.Slug + "-page" : seed.Slug;
+            takenSlugs.Add(slug);
+
+            dbContext.ContentPages.Add(new ContentPage
+            {
+                SystemKey = seed.SystemKey,
+                Slug = slug,
+                Title = seed.Title,
+                BodyHtml = string.Empty,
+                IsPublished = seed.PublishedOnInstall,
+
+                // Stamped for the page that starts on the shop, because that page did go on the shop —
+                // at install. Leaving it null beside IsPublished = true would be an inconsistent row,
+                // and SetPublished assigns with `??=`, so the first unpublish-and-republish would then
+                // record a date months after the page was actually first visible.
+                PublishedAtUtc = seed.PublishedOnInstall ? utcNow : null,
+            });
+            added++;
+        }
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        return added;
     }
 
     private async Task<int> SeedSectionsAsync(CancellationToken cancellationToken)
@@ -220,4 +315,10 @@ public sealed class HomeContentSeedCounts
     public int SectionItems { get; set; }
 
     public int Announcements { get; set; }
+
+    /// <summary>
+    /// <c>content.ContentPages</c> shells created because the system key had none (GLB-10). Bodies are
+    /// always empty and the pages are always unpublished.
+    /// </summary>
+    public int ContentPages { get; set; }
 }

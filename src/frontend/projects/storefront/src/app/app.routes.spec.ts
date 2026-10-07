@@ -59,15 +59,14 @@ describe('the storefront route table (#28)', () => {
     // (CART-01) and W2-08 the wishlist page (WISH-01), so each has a route of its own. All three are
     // still linked from the shell; what changed is that the link now goes to a page, which is why the
     // test below checks the list against the route table rather than against this list.
-    const linkedFromTheShell = [
-      'about',
-      'account',
-      'contact',
-      'privacy',
-      'returns',
-      'shipping',
-      'terms',
-    ];
+    //
+    // **The six content pages are not here any more either (W2-11, GLB-10)**, and they left in a
+    // different way from the rest: they did not gain six routes, they gained one `:slug` route behind
+    // a guard, because a page's slug is editable (doc 11 P13 step 12). They are also no longer
+    // unconditionally linked from the shell — the footer draws a policy link only once the page is
+    // published, which on a fresh shop is none of them. So there is nothing for this list to hold:
+    // an address the shell does not link cannot be a broken link in the footer.
+    const linkedFromTheShell = ['account'];
 
     for (const path of linkedFromTheShell) {
       expect(UNBUILT_PATHS).toContain(path);
@@ -118,6 +117,47 @@ describe('the storefront route table (#28)', () => {
     for (const route of guarded) {
       expect(routes.indexOf(route)).toBeLessThan(catchAll);
     }
+  });
+
+  /**
+   * GLB-10's content pages, and the three properties the ordering has to have.
+   *
+   * The route itself is `:slug`, which matches any single segment, so **where** it sits is the whole
+   * of its correctness: behind `:department` so a department listing is never looked up as a page,
+   * ahead of `**` so a published page is not swept into the 404, and paired with a 503 sibling so an
+   * address the content feed could not be asked about is not called missing (#30).
+   */
+  describe('the content pages (GLB-10)', () => {
+    const contentRoutes = routes.filter(
+      (route) => route.path === ':slug' && route.canMatch !== undefined,
+    );
+
+    it('declares exactly two guarded :slug routes: the page and the 503', () => {
+      // Two rather than three, unlike the listing: the "missing" verdict needs no route of its own,
+      // because a single segment that is not a page falls through to the catch-all, which is already
+      // a real 404 with `noindex`. A third route would be a second implementation of that page.
+      expect(contentRoutes).toHaveLength(2);
+    });
+
+    it('matches them after the department routes and before the catch-all', () => {
+      const lastDepartmentRoute = Math.max(
+        ...routes
+          .filter((route) => route.path?.startsWith(':department') === true)
+          .map((route) => routes.indexOf(route)),
+      );
+
+      for (const route of contentRoutes) {
+        expect(routes.indexOf(route)).toBeGreaterThan(lastDepartmentRoute);
+        expect(routes.indexOf(route)).toBeLessThan(declared.indexOf('**'));
+      }
+    });
+
+    it('loads a real component rather than redirecting, so a page can answer 404 itself', () => {
+      for (const route of contentRoutes) {
+        expect(route.redirectTo).toBeUndefined();
+        expect(route.loadComponent).toBeDefined();
+      }
+    });
   });
 
   /**

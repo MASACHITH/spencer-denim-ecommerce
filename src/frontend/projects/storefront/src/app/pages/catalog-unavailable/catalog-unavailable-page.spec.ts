@@ -12,6 +12,7 @@ import { RouterTestingHarness } from '@angular/router/testing';
 import { routes } from '../../app.routes';
 import { CategoryNodeDto, DepartmentDto } from '../../core/navigation/catalog-departments.model';
 import { NavigationService } from '../../core/navigation/navigation.service';
+import { primeContentPages } from '../../core/content/content-pages.testing';
 import { PageReload } from '../../core/platform/page-reload';
 
 function node(name: string, slug: string): CategoryNodeDto {
@@ -107,6 +108,13 @@ describe('a listing the storefront could not look up (#30)', () => {
     http = TestBed.inject(HttpTestingController);
     TestBed.inject(NavigationService);
     answer(http.expectOne('/api/catalog/departments'));
+
+    // GLB-10: a **single-segment** address waits on the published-page index too, so it is primed for
+    // the same reason the departments feed is — the guards cannot settle until it has answered, and
+    // the harness does not resolve until the guards have. An empty live index is a fresh shop, so
+    // `/not-a-department` is genuinely not a page and the catch-all's 404 is the honest answer rather
+    // than the 503 this file is about.
+    primeContentPages(http);
 
     harness = await RouterTestingHarness.create(url);
     await TestBed.inject(ApplicationRef).whenStable();

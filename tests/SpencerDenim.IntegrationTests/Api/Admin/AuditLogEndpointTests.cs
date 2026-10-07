@@ -109,43 +109,59 @@ public sealed class AuditLogEndpointTests(SqlServerDatabaseFixture sqlServer)
         const string password = "Correct-Password-1!";
         await using var factory = new ApiFactory(sqlServer.ConnectionString);
         await CreateStaffUserWithRoleAsync(factory, email, password, permissions: [Permissions.AuditLog.View]);
+        // **The ids are deliberately far outside the range any real row can hold**, and that is a repair
+        // rather than a decoration. The marker narrows the *assertions*, but every filter here is read
+        // off page one of 50 — so a filter that other tests also match (`userId=20`, `entityId=100`) can
+        // crowd the marked rows off that page as `ops.AuditLogs` grows, and rows are never deleted
+        // (doc 08 §1.6). W2-11 added twenty-eight tests that write audit rows and tipped it over:
+        // `userId=20` began returning fifty newer rows from a real staff user who happened to be given
+        // that id. The marker survives, but the page it is on does not.
+        //
+        // A user id and an entity id nothing else will ever use make every filter below effectively
+        // unique to this test, so the page size stops mattering.
         var marker = UniqueMarker();
         await SeedAuditLogsAsync(factory, marker, entries:
         [
-            (new DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc), "Product", "100", "Update", 20, "a@example.com"),
-            (new DateTime(2026, 8, 15, 0, 0, 0, DateTimeKind.Utc), "Product", "101", "Update", 21, "b@example.com"),
-            (new DateTime(2026, 9, 1, 0, 0, 0, DateTimeKind.Utc), "Order", "100", "Approve", 20, "a@example.com"),
+            (new DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc), "Product", "900100", "Update", 900020, "a@example.com"),
+            (new DateTime(2026, 8, 15, 0, 0, 0, DateTimeKind.Utc), "Product", "900101", "Update", 900021, "b@example.com"),
+            (new DateTime(2026, 9, 1, 0, 0, 0, DateTimeKind.Utc), "Order", "900100", "Approve", 900020, "a@example.com"),
         ]);
         using var client = CreateClient(factory);
 
         using var login = await client.PostAsJsonAsync(LoginUrl, new { email, password }, TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.OK, login.StatusCode);
 
-        // entityType=Product narrows to the two Product rows.
-        var byEntityType = await GetFilteredAsync(client, "entityType=Product");
-        Assert.Equal(2, ItemsWithMarker(byEntityType, marker).Count);
+        // entityType=Product narrows to the two Product rows. Narrowed by the unique user id too,
+        // because every product test in the assembly writes real `Product` rows and this filter would
+        // otherwise be reading page one of all of them.
+        var byEntityType = await GetFilteredAsync(client, "entityType=Product&userId=900020");
+        Assert.Single(ItemsWithMarker(byEntityType, marker));
+
+        var byEntityTypeOnly = await GetFilteredAsync(client, "entityType=Product&userId=900021");
+        Assert.Single(ItemsWithMarker(byEntityTypeOnly, marker));
 
         // entityId=100 across all entity types narrows to Product/100 and Order/100.
-        var byEntityId = await GetFilteredAsync(client, "entityId=100");
+        var byEntityId = await GetFilteredAsync(client, "entityId=900100");
         Assert.Equal(2, ItemsWithMarker(byEntityId, marker).Count);
 
         // entityType + entityId together narrow to exactly one row.
-        var byBoth = await GetFilteredAsync(client, "entityType=Product&entityId=100");
+        var byBoth = await GetFilteredAsync(client, "entityType=Product&entityId=900100");
         var bothItems = ItemsWithMarker(byBoth, marker);
         Assert.Single(bothItems);
         Assert.Equal("Update", bothItems[0].GetProperty("action").GetString());
 
         // userId=20 narrows to the two rows acted by user 20.
-        var byUser = await GetFilteredAsync(client, "userId=20");
+        var byUser = await GetFilteredAsync(client, "userId=900020");
         Assert.Equal(2, ItemsWithMarker(byUser, marker).Count);
 
-        // action=Approve narrows to one row.
-        var byAction = await GetFilteredAsync(client, "action=Approve");
+        // action=Approve narrows to one row. Narrowed by the unique user id for the same reason.
+        var byAction = await GetFilteredAsync(client, "action=Approve&userId=900020");
         var actionItems = ItemsWithMarker(byAction, marker);
         Assert.Single(actionItems);
         Assert.Equal("Order", actionItems[0].GetProperty("entityType").GetString());
 
-        // A date range covering only August excludes the September row.
+        // A date range covering only August excludes the September row. The dates are in the past and no
+        // other test writes rows there, so this one needs no narrowing.
         var byRange = await GetFilteredAsync(client, "fromUtc=2026-08-01&toUtc=2026-08-31T23:59:59Z");
         Assert.Equal(2, ItemsWithMarker(byRange, marker).Count);
 

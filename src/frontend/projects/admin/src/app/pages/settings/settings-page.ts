@@ -199,6 +199,52 @@ const LOGO_ACCEPT = 'image/png,image/jpeg,image/webp';
                   <span class="adm-field-error" data-testid="error-whatsApp">{{ message }}</span>
                 }
               </label>
+              <!-- **Bound with 'for'/'id' rather than by wrapping, unlike every other field on this
+                   screen, and for a reason that is not style.** The control here is chosen by an '@if' —
+                   a textarea for the address and the opening hours, an input for the rest — and a label
+                   whose control is inside a control-flow block is a label the template checker cannot
+                   see the association of. It read as "a label component must be associated with a form
+                   element" to '@angular-eslint', and that complaint is right about more than lint: the
+                   wrapping only works because both branches happen to put a control inside, which the
+                   next edit can silently break. An explicit 'for' cannot. -->
+              @for (field of contactFields; track field.name) {
+                <label class="adm-field" [attr.for]="'setting-' + field.name">
+                  <span class="adm-label">{{ field.label }}</span>
+                  @if (field.multiline) {
+                    <textarea
+                      class="adm-input adm-input--multiline"
+                      rows="4"
+                      [id]="'setting-' + field.name"
+                      [name]="field.name"
+                      autocomplete="off"
+                      [placeholder]="field.placeholder"
+                      [attr.aria-invalid]="fieldError(field.name) ? 'true' : null"
+                      [ngModel]="form()[field.name]"
+                      (ngModelChange)="patch(field.name, $event)"
+                      [attr.data-testid]="'field-' + field.name"
+                    ></textarea>
+                  } @else {
+                    <input
+                      class="adm-input"
+                      [type]="field.type"
+                      [id]="'setting-' + field.name"
+                      [name]="field.name"
+                      autocomplete="off"
+                      [placeholder]="field.placeholder"
+                      [attr.aria-invalid]="fieldError(field.name) ? 'true' : null"
+                      [ngModel]="form()[field.name]"
+                      (ngModelChange)="patch(field.name, $event)"
+                      [attr.data-testid]="'field-' + field.name"
+                    />
+                  }
+                  <span class="adm-panel__hint">{{ field.hint }}</span>
+                  @if (fieldError(field.name); as message) {
+                    <span class="adm-field-error" [attr.data-testid]="'error-' + field.name">
+                      {{ message }}
+                    </span>
+                  }
+                </label>
+              }
               }
 
               <!-- Only the boxes whose group the server actually sent.
@@ -374,6 +420,14 @@ const LOGO_ACCEPT = 'image/png,image/jpeg,image/webp';
       background-size: 16px 16px;
       border: 1px solid var(--adm-border, #d6d6d6);
     }
+    /* The address and the opening hours are multi-line (GLB-10, W2-11). 'resize: vertical' only, so a
+       staff member can grow the box without being able to drag it wider than the panel. */
+    .adm-input--multiline {
+      min-height: 5.5rem;
+      resize: vertical;
+      font: inherit;
+      line-height: 1.5;
+    }
   `,
 })
 export class SettingsPage {
@@ -381,6 +435,61 @@ export class SettingsPage {
   protected readonly brand = BRAND.name;
 
   protected readonly accept = LOGO_ACCEPT;
+
+  /**
+   * The Contact page's own details (GLB-10, W2-11, doc 11 P13 step 13), as data for the same reason the
+   * social boxes are: the template cannot then spell a field name differently from the API, which is
+   * the pairing `AdminSettingsShapeTests` pins on the server side.
+   *
+   * **Every hint says what the shop does when the box is empty**, because that is the question a client
+   * filling this screen in actually has, and the answer is always "nothing is shown" rather than
+   * "a placeholder appears". Nothing on the Contact page is invented.
+   */
+  protected readonly contactFields = [
+    {
+      name: 'phone' as const,
+      label: 'Telephone number',
+      type: 'tel',
+      multiline: false,
+      placeholder: '+94 11 234 5678',
+      hint: 'As you want shoppers to read it. Tapping it dials. Leave it empty to show no number.',
+    },
+    {
+      name: 'email' as const,
+      label: 'Contact email address',
+      type: 'email',
+      multiline: false,
+      placeholder: 'hello@yourshop.lk',
+      hint: 'Where shoppers write to. The shop never sends email from this address.',
+    },
+    {
+      name: 'address' as const,
+      label: 'Postal address',
+      type: 'text',
+      multiline: true,
+      placeholder: 'Your shop\nColombo 03\nSri Lanka',
+      hint: 'One line per line. Leave it empty and the Contact page shows no address at all.',
+    },
+    {
+      name: 'openingHours' as const,
+      label: 'Opening hours',
+      type: 'text',
+      multiline: true,
+      placeholder: 'Monday to Friday, 9am – 6pm\nSaturday, 9am – 1pm',
+      hint: 'One line per line. Leave it empty to show no hours.',
+    },
+    {
+      name: 'mapEmbedUrl' as const,
+      label: 'Map embed address',
+      type: 'url',
+      multiline: false,
+      placeholder: 'https://www.google.com/maps/embed?pb=…',
+      hint:
+        'In Google Maps use Share → Embed a map, then copy the address out of the src="…" part. ' +
+        'Only Google Maps and OpenStreetMap are accepted, because the map is shown inside the shop’s ' +
+        'own page.',
+    },
+  ];
 
   /** The three social boxes, as data, so the template cannot spell a field name differently from the API. */
   protected readonly socialFields = [
@@ -862,6 +971,11 @@ export function toForm(settings: AdminSettings): ContactAndSocialValues {
 
   for (const [field, key] of [
     ['whatsApp', SETTING_KEYS.whatsApp],
+    ['phone', SETTING_KEYS.phone],
+    ['email', SETTING_KEYS.email],
+    ['address', SETTING_KEYS.address],
+    ['openingHours', SETTING_KEYS.openingHours],
+    ['mapEmbedUrl', SETTING_KEYS.mapEmbedUrl],
     ['facebookUrl', SETTING_KEYS.facebookUrl],
     ['instagramUrl', SETTING_KEYS.instagramUrl],
     ['tikTokUrl', SETTING_KEYS.tikTokUrl],

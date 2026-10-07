@@ -84,7 +84,14 @@ public sealed class DefaultRoleDefinitionsTests
             Permissions.Categories.Edit,
             Permissions.Categories.Delete,
             Permissions.Content.View,
+
+            // W2-11 (GLB-10): doc 08 §9 grants this role "Content.*", and doc 11 P13's own permission
+            // table names Content.View/Create/Edit/Delete for the content-page screens. The two new values
+            // exist because GLB-10 added the first screen that can create and remove a page.
+            Permissions.Content.Create,
             Permissions.Content.Edit,
+            Permissions.Content.Delete,
+
             Permissions.Media.View,
             Permissions.Media.Create,
             Permissions.Media.Edit,
@@ -96,6 +103,33 @@ public sealed class DefaultRoleDefinitionsTests
         };
 
         Assert.Equal(expected, contentEditor.Permissions);
+
+        // Doc 08 §3.7's G-06 resolution: a contact enquiry is customer data, governed by the Customers
+        // module. A Content Editor can rewrite the Contact page and cannot read a single enquiry, which is
+        // the division that decision makes — stated here because it is the kind of thing a later change
+        // "tidies up" by granting the role one more permission.
+        Assert.DoesNotContain(Permissions.Customers.View, contentEditor.Permissions);
+        Assert.DoesNotContain(Permissions.Customers.Edit, contentEditor.Permissions);
+        Assert.DoesNotContain(Permissions.Customers.Delete, contentEditor.Permissions);
+    }
+
+    /// <summary>
+    /// Doc 08 §9 gives Order Staff <c>Customers.View</c> and nothing else from that module, so they can
+    /// <i>read</i> an enquiry and cannot move its status (GLB-10, doc 11 P15 step 7).
+    /// <para>
+    /// Written down because it reads like an oversight and is not one: the seeded list is doc 08's, and
+    /// widening a default role is N13's "explicit, idempotent, versioned seeder step", not a line somebody
+    /// adds while building an inbox. It is flagged in the W2-11 journal as a question for the owner.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void Order_Staff_can_read_an_enquiry_and_cannot_move_its_status()
+    {
+        var orderStaff = DefaultRoleDefinitions.OrderStaff;
+
+        Assert.Contains(Permissions.Customers.View, orderStaff.Permissions);
+        Assert.DoesNotContain(Permissions.Customers.Edit, orderStaff.Permissions);
+        Assert.DoesNotContain(Permissions.Customers.Delete, orderStaff.Permissions);
     }
 
     [Fact]

@@ -85,11 +85,16 @@ import { StorefrontCounts } from '../../core/storefront-counts.service';
             <sd-icon name="heart" size="sm" /> <span>Wishlist ({{ wishlistCount() }})</span>
           </a>
         </li>
-        <li>
-          <a class="m-nav__link" [href]="whatsApp()" rel="noopener" target="_blank">
-            <sd-icon name="whatsapp" size="sm" /> <span>Chat on WhatsApp</span>
-          </a>
-        </li>
+        <!-- Only when the client has set 'Contact.WhatsApp' (W2-11). A row in the menu that opens a
+             chat with nobody is worse than one row fewer, and the @if wraps the <li> rather than the
+             <a> so the list does not keep an empty item's spacing. -->
+        @if (whatsApp(); as href) {
+          <li>
+            <a class="m-nav__link" [href]="href" rel="noopener" target="_blank">
+              <sd-icon name="whatsapp" size="sm" /> <span>Chat on WhatsApp</span>
+            </a>
+          </li>
+        }
       </ul>
     </sd-drawer>
   `,

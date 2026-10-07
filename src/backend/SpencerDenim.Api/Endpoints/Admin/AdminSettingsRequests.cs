@@ -48,12 +48,29 @@ public sealed record SetStoreLogoRequest(Guid? LogoAssetPublicId, string? RowVer
 /// </para>
 /// </summary>
 /// <param name="WhatsApp">Digits only, international form. Blank or absent clears it.</param>
+/// <param name="Phone">
+/// The telephone number as shoppers should read it, e.g. <c>+94 11 234 5678</c> (GLB-10, W2-11). Shown on
+/// the Contact page and in the footer; the browser strips the punctuation for the <c>tel:</c> link.
+/// </param>
+/// <param name="Email">The address shoppers write to. Nothing is ever sent from it by the shop.</param>
+/// <param name="Address">The postal address, one line per line. Plain text, never HTML.</param>
+/// <param name="OpeningHours">When the shop is open, one line per line. Plain text, never HTML.</param>
+/// <param name="MapEmbedUrl">
+/// The Contact page's map. <b>Only an https address on a Google Maps or OpenStreetMap embed host is
+/// accepted</b>, because the storefront puts it in an <c>&lt;iframe src&gt;</c> inside the shop's own page
+/// — see <c>SettingFieldRules.MapEmbedHosts</c>.
+/// </param>
 /// <param name="FacebookUrl">A full http(s) address. Blank or absent hides the icon.</param>
 /// <param name="InstagramUrl"><inheritdoc cref="FacebookUrl" path="/node()"/></param>
 /// <param name="TikTokUrl"><inheritdoc cref="FacebookUrl" path="/node()"/></param>
 /// <param name="RowVersion">The group's token from the read model.</param>
 public sealed record UpdateContactAndSocialRequest(
     string? WhatsApp,
+    string? Phone,
+    string? Email,
+    string? Address,
+    string? OpeningHours,
+    string? MapEmbedUrl,
     string? FacebookUrl,
     string? InstagramUrl,
     string? TikTokUrl,
