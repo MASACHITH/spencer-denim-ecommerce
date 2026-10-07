@@ -83,6 +83,18 @@ export const FAILURE_BACKOFF_SECONDS = 10;
  */
 export const STATIC_PATHS = ['/', '/new-arrivals', '/sale'] as const;
 
+/**
+ * The storefront content API's published-page list, as far as this module cares (GLB-10).
+ *
+ * **Why the sitemap fetches it rather than taking the pages from the catalogue feed.** A content page
+ * is not a catalogue fact, and `CatalogSitemapDto` says in its own documentation that it carries
+ * "catalogue facts rather than addresses". Folding six policy pages into it would make that docblock
+ * wrong, which this project treats as worse than a second fetch.
+ */
+interface ApiContentPages {
+  readonly pages: readonly { readonly slug: string; readonly updatedAtUtc: string | null }[];
+}
+
 /** One address in the document. */
 export interface SitemapEntry {
   readonly path: string;
@@ -97,6 +109,18 @@ interface ApiSitemap {
   readonly productsTruncated?: boolean;
   readonly departmentsTruncated?: boolean;
   readonly categoriesTruncated?: boolean;
+  /**
+   * The published content pages (GLB-10), fetched separately and attached to the snapshot so the
+   * renderer sees one object. Absent on a snapshot built before this field existed, which is why
+   * {@link sitemapEntries} treats it as optional rather than required.
+   */
+  readonly contentPages?: readonly ApiContentPage[];
+}
+
+/** One published content page. */
+interface ApiContentPage {
+  readonly slug: string;
+  readonly lastModifiedUtc: string | null;
 }
 
 /** Which of the API's three caps were reached. All three are reported; see the DTO for why. */
@@ -167,6 +191,20 @@ export function sitemapEntries(payload: ApiSitemap): SitemapEntry[] {
     }
 
     entries.push({ path: `/product/${product.slug}`, lastModified: toDate(product.lastModifiedUtc) });
+  }
+
+  // The published content pages (GLB-10). `/{slug}`, the shape `app.routes.ts` declares for them.
+  //
+  // **Only published ones can be here, because the feed only answers with published ones** — the filter
+  // is in `IContentPageReader`, where the footer's list and the router's guard read it too, rather than
+  // being repeated here. An unpublished policy page in a sitemap is the sharpest form of the leak this
+  // feature has to prevent: a draft a crawler indexes is worse than one nobody can find.
+  for (const page of payload.contentPages ?? []) {
+    if (!isSlug(page.slug)) {
+      continue;
+    }
+
+    entries.push({ path: `/${page.slug}`, lastModified: toDate(page.lastModifiedUtc) });
   }
 
   return entries;
@@ -298,11 +336,19 @@ export class SitemapDocument {
 
   private async build(): Promise<void> {
     try {
-      const payload = await this.fetchJson(
-        `${apiInternalUrl()}/internal/catalog/sitemap`,
-        FETCH_TIMEOUT_MS,
-      );
-      const sitemap = asSitemap(payload);
+      // **Both feeds, and a failure of either fails the rebuild.** The alternative — carrying on with
+      // whatever answered — would publish a sitemap that silently omits either the catalogue or the
+      // policy pages, with nothing in the document to say which. Failing the rebuild instead hands the
+      // decision to the machinery that already exists for it: the last good document is served for up
+      // to STALE_SECONDS, the staleness is logged once, and only a shop that has never built one
+      // answers 503. The cost is that the content feed, which is a six-row query, can now hold the
+      // sitemap stale; it is a far smaller surface than the catalogue scan beside it.
+      const [catalogPayload, contentPayload] = await Promise.all([
+        this.fetchJson(`${apiInternalUrl()}/internal/catalog/sitemap`, FETCH_TIMEOUT_MS),
+        this.fetchJson(`${apiInternalUrl()}/api/content/pages`, FETCH_TIMEOUT_MS),
+      ]);
+
+      const sitemap = { ...asSitemap(catalogPayload), contentPages: asContentPages(contentPayload) };
 
       this.snapshot = { sitemap, caps: capsOf(sitemap), builtAt: this.now() };
       this.lastFailureAt = null;
@@ -468,6 +514,30 @@ function asSitemap(payload: unknown): ApiSitemap {
     departmentsTruncated: candidate.departmentsTruncated === true,
     categoriesTruncated: candidate.categoriesTruncated === true,
   };
+}
+
+/**
+ * The content API's answer, vetted before it is believed — the same treatment `asSitemap` gets, for
+ * #30's `garbage` reason: a proxy or a bad deploy answers 200 with something else entirely, and the
+ * stakes here are a published document.
+ *
+ * It maps `updatedAtUtc` to the `lastModifiedUtc` the entry builder uses, so the sitemap's own
+ * vocabulary stays one word for one idea rather than two spellings of it.
+ */
+function asContentPages(payload: unknown): readonly ApiContentPage[] {
+  if (typeof payload !== 'object' || payload === null) {
+    throw new Error('the content API answered with something that is not an object');
+  }
+
+  const pages = (payload as ApiContentPages).pages;
+  if (!Array.isArray(pages)) {
+    throw new Error('the content API answered without a pages list');
+  }
+
+  return pages.map((page) => ({
+    slug: typeof page?.slug === 'string' ? page.slug : '',
+    lastModifiedUtc: typeof page?.updatedAtUtc === 'string' ? page.updatedAtUtc : null,
+  }));
 }
 
 async function fetchJsonOverHttp(url: string, timeoutMs: number): Promise<unknown> {
