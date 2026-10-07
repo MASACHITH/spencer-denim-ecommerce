@@ -15,7 +15,8 @@ export interface AdminContentPageListItem {
   readonly slug: string;
   readonly title: string;
   readonly isPublished: boolean;
-  /** False for a page the client has not written yet, which is how all six system pages ship. */
+  /** False for a page the client has not written yet, which is how all six system pages ship — Contact
+   * included, since it ships published *and* empty: its content is the form and the Settings values. */
   readonly hasBody: boolean;
   /** Above zero means publishing will be refused (doc 08 §3.3, GLB-12). */
   readonly imagesMissingAltText: number;

@@ -81,10 +81,16 @@ test.describe('an unpublished page does not leak (GLB-10)', () => {
   /**
    * **The defining constraint of this task, on the wire.**
    *
-   * All six system pages ship unpublished with empty bodies — doc 11 P13: their copy is the client's,
-   * and Privacy and Terms need a PDPA review. So on the day the shop opens, `/privacy` is an address the
-   * shop does not have, and it must answer a **real 404** rather than the home page at 200, which is
-   * #28's own defect, and rather than a 503, which would tell a crawler to come back.
+   * All six system pages ship with empty bodies, and five of them ship unpublished — doc 11 P13: their
+   * copy is the client's, and Privacy and Terms need a PDPA review. So on the day the shop opens,
+   * `/privacy` is an address the shop does not have, and it must answer a **real 404** rather than the
+   * home page at 200, which is #28's own defect, and rather than a 503, which would tell a crawler to
+   * come back.
+   *
+   * Contact is the exception in the seed — it ships *on* the shop, because its content is the form and
+   * the settings rather than copy (W2-11) — but it is in this loop all the same, because what the loop
+   * measures is the behaviour of an unpublished page and the stub is holding all six unpublished for it.
+   * The state is named by the `beforeEach`, not inherited from the seeder.
    */
   for (const slug of ['about', 'contact', 'returns', 'shipping', 'privacy', 'terms']) {
     test(`/${slug} answers a real 404 while it is unpublished`, async ({ page }) => {

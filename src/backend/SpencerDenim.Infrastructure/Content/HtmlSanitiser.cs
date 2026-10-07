@@ -423,6 +423,29 @@ public sealed class HtmlSanitiser : IHtmlSanitiser
     /// the standard's own list, which is why it includes oddities like <c>nobr</c> and <c>listing</c> —
     /// a list that leaves one out is a list with a hole in exactly this shape.
     /// </para>
+    /// <para>
+    /// <b>And this list does not close the exception completely — do not read it as exhaustive.</b> The
+    /// standard has a second way back into HTML parsing inside foreign content: an <i>integration
+    /// point</i> — <c>&lt;svg&gt;&lt;foreignObject&gt;</c>, <c>&lt;svg&gt;&lt;desc&gt;</c>,
+    /// <c>&lt;svg&gt;&lt;title&gt;</c>, <c>&lt;math&gt;&lt;annotation-xml
+    /// encoding="text/html"&gt;</c>, <c>&lt;math&gt;&lt;mtext&gt;</c>, <c>&lt;math&gt;&lt;mi&gt;</c> —
+    /// which is not a breakout element, so this pop never fires and <c>svg</c> stays on the scan's
+    /// stack. Followed by a non-breakout self-closing element such as <c>&lt;q/&gt;</c> or
+    /// <c>&lt;section/&gt;</c>, the real tree is as deep as the run is long while the scan reads about
+    /// two.
+    /// </para>
+    /// <para>
+    /// <b>Measured, and left alone deliberately.</b> At the 400 KB cap the worst case —
+    /// <c>&lt;svg&gt;&lt;foreignObject&gt;</c> + <c>&lt;section/&gt;</c> × 39,000 — takes <b>8.8
+    /// seconds</b>, returns an empty body and does not crash, against the 41 seconds <i>accepted</i>
+    /// that the breakout hole cost before this list existed. Closing it means modelling the
+    /// integration-point rules too, which is a second faithful slice of the HTML parsing algorithm
+    /// inside a pre-scan that is documented as an approximation and whose errors
+    /// <see cref="Inspect"/> catches. 8.8 seconds of one core on a 400 KB request an editor had to paste
+    /// is a nuisance, not an outage, so the owner's call was to record it rather than code it (W2-11
+    /// journal, "Three residuals"). If it ever does need closing, the place is this scan's model of
+    /// foreign content — not another entry on the list below.
+    /// </para>
     /// </summary>
     private static readonly HashSet<string> BreaksOutOfForeignContent = new(StringComparer.OrdinalIgnoreCase)
     {

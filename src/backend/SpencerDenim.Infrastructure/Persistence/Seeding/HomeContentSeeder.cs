@@ -44,8 +44,9 @@ public sealed class HomeContentSeeder(AppDbContext dbContext, IClock clock)
     }
 
     /// <summary>
-    /// GLB-10, doc 08 §9: the six system pages, "unpublished until the client's copy (privacy and terms
-    /// need PDPA review)".
+    /// GLB-10, doc 08 §9: the six system pages. Five of them "unpublished until the client's copy
+    /// (privacy and terms need PDPA review)", and Contact on the shop from the start — see
+    /// <see cref="ContentPageKeys.Seeds"/> and the paragraph on the publish flag below.
     /// <para>
     /// <b>Keyed on <c>SystemKey</c></b>, which is the one field staff cannot change, so re-running this
     /// after the client has written About, renamed its slug, retitled it and published it leaves every one

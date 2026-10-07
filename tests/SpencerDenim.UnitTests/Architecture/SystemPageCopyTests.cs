@@ -8,7 +8,7 @@ namespace SpencerDenim.UnitTests.Architecture;
 /// goes red when something does (GLB-10, doc 11 P13).
 /// <para>
 /// <b>Why it reads source rather than a database.</b> The guarantee already has an integration test —
-/// <c>ContentPageEndpointTests.The_six_system_pages_are_seeded_unpublished_with_no_copy_in_them</c>,
+/// <c>ContentPageEndpointTests.The_system_pages_are_seeded_with_no_copy_and_only_contact_on_the_shop</c>,
 /// which now deletes the rows and runs the real seeder. But the W2-11 tester showed how little that was
 /// worth on its own: it changed the seeder to write <c>&lt;p&gt;We offer a 14-day returns policy on all
 /// items.&lt;/p&gt;</c> into all six pages and <b>the entire unit suite stayed green</b>, 1,643/1,643,

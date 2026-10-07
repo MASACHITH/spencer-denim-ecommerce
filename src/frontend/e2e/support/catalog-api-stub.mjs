@@ -3432,9 +3432,10 @@ const server = createServer((request, response) => {
 
   // GLB-10, W2-11: the published-page index and one page's body.
   //
-  // The default is **nothing published**, which is the state of a fresh shop: all six system pages ship
-  // unpublished with empty bodies (doc 11 P13 — the copy is the client's). `/__test__/content-pages`
-  // switches the set, so a test names a state and this file owns what that state's bytes are.
+  // The default is **nothing published**. That is a deliberate test baseline rather than a claim about
+  // the seeder: a real fresh shop ships five pages unpublished and Contact *on* the shop (W2-11), and
+  // "nothing published" is the state most of these tests are about — a page that is not there yet.
+  // `/__test__/content-pages` switches the set, so a test names a state and this file owns its bytes.
   if (url.pathname === '/__test__/content-pages') {
     contentPagesState = url.searchParams.get('state') ?? 'none';
     contentPagesStatus = Number(url.searchParams.get('status') ?? 0);
