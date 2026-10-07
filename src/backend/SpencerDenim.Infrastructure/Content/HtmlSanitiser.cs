@@ -387,6 +387,52 @@ public sealed class HtmlSanitiser : IHtmlSanitiser
     };
 
     /// <summary>
+    /// HTML start tags that <b>end foreign content</b>: inside <c>&lt;svg&gt;</c> or
+    /// <c>&lt;math&gt;</c>, meeting one of these makes the parser pop back out to HTML and parse from
+    /// there (HTML standard, "any other start tag" in the foreign-content insertion mode).
+    /// <para>
+    /// <b>This list is the fix for a denial of service that the foreign-content exception below
+    /// created.</b> That exception honours a trailing slash inside <c>&lt;svg&gt;</c>, because a browser
+    /// does too. But <c>&lt;svg&gt;&lt;div/&gt;</c> is not foreign content at all: the <c>div</c> breaks
+    /// the parser out, the slash stops meaning anything, and real elements nest one inside the next —
+    /// while this scan still had <c>svg</c> on its stack and went on skipping every tag. Measured by the
+    /// W2-11 tester against the real <c>Sanitise</c>:
+    /// </para>
+    /// <list type="bullet">
+    /// <item><description>
+    /// <c>&lt;svg&gt;</c> + <c>&lt;div/&gt;</c> × 66,000 — 396 KB, read by the scan as one level deep,
+    /// built by the parser 66,000 deep, and <b>accepted after 41 seconds</b> of one core.
+    /// </description></item>
+    /// <item><description>
+    /// <c>&lt;svg&gt;</c> + <c>&lt;b/&gt;</c> × 90,000 — refused, but only after <b>44 seconds</b>.
+    /// </description></item>
+    /// <item><description>
+    /// The control, <c>&lt;b&gt;</c> × 133,330 with no <c>&lt;svg&gt;</c> in front of it — refused in
+    /// <b>3 milliseconds</b>.
+    /// </description></item>
+    /// </list>
+    /// <para>
+    /// So a five-character prefix turned a 3 ms refusal into 42 seconds at 100% CPU, and the read path
+    /// multiplied it: <c>AdminContentReader</c> re-sanitises every row on every content-list load, so one
+    /// poisoned row taxed every admin list view by the same 42 seconds — again making the screen that
+    /// would clear the row the screen that cannot be opened. Reachable with <c>Content.Edit</c>, which is
+    /// the role doc 08 §3.7's G-06 split deliberately keeps least trusted.
+    /// </para>
+    /// <para>
+    /// Popping here is not an approximation of the parser: it is what the parser does. The elements are
+    /// the standard's own list, which is why it includes oddities like <c>nobr</c> and <c>listing</c> —
+    /// a list that leaves one out is a list with a hole in exactly this shape.
+    /// </para>
+    /// </summary>
+    private static readonly HashSet<string> BreaksOutOfForeignContent = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "b", "big", "blockquote", "body", "br", "center", "code", "dd", "div", "dl", "dt", "em", "embed",
+        "h1", "h2", "h3", "h4", "h5", "h6", "head", "hr", "i", "img", "li", "listing", "menu", "meta",
+        "nobr", "ol", "p", "pre", "ruby", "s", "small", "span", "strong", "strike", "sub", "sup", "table",
+        "tt", "u", "ul", "var", "font",
+    };
+
+    /// <summary>
     /// A conservative reading of how deeply <paramref name="html"/> nests elements.
     /// <para>
     /// <b>It does not have to be exact, and it is not.</b> It is a filter in front of the parser, and
@@ -475,9 +521,24 @@ public sealed class HtmlSanitiser : IHtmlSanitiser
             // have come through counted as depth zero and reached the parser 100,000 deep. Inside
             // `<svg>` or `<math>` the slash is real, and modelling that keeps a pasted SVG full of
             // `<path/>` from being counted as a deep tree and refused.
-            var inForeignContent = open.Contains("svg") || open.Contains("math");
+            var foreignAt = open.FindIndex(static open => open is "svg" or "math");
 
-            if ((selfClosing && inForeignContent) || NeverHoldAnything.Contains(name))
+            // ...but an HTML element that breaks the parser out of foreign content ends that exception at
+            // the same moment the parser ends it, and takes the foreign subtree off this stack the way
+            // the parser takes it off its own. Without this, `<svg>` in front of 66,000 `<div/>` was read
+            // as one level deep and cost 41 seconds of CPU on a save that then succeeded. See
+            // BreaksOutOfForeignContent for the measurements.
+            //
+            // Recomputed per tag rather than tracked, because an end tag can close the `<svg>` from
+            // anywhere and a flag would then be stale — and the stack is at most MaxNestingDepth long,
+            // so the scan is still linear in the input.
+            if (foreignAt >= 0 && BreaksOutOfForeignContent.Contains(name))
+            {
+                open.RemoveRange(foreignAt, open.Count - foreignAt);
+                foreignAt = -1;
+            }
+
+            if ((selfClosing && foreignAt >= 0) || NeverHoldAnything.Contains(name))
             {
                 continue;
             }

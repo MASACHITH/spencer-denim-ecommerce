@@ -508,6 +508,100 @@ public sealed class HtmlSanitiserTests
     }
 
     /// <summary>
+    /// <b>An HTML element inside <c>&lt;svg&gt;</c> ends the foreign-content exception, because it ends
+    /// the parser's.</b>
+    /// <para>
+    /// The exception honouring a trailing slash inside <c>&lt;svg&gt;</c> opened the same hole it was
+    /// added to close. <c>&lt;svg&gt;&lt;div/&gt;</c> is not foreign content: the <c>div</c> breaks the
+    /// parser out to HTML, the slash stops meaning anything, and the elements nest for real — while the
+    /// scan still had <c>svg</c> on its stack and went on skipping. Found by the W2-11 tester, who
+    /// measured it against the real <c>Sanitise</c>: <b>396 KB of <c>&lt;svg&gt;&lt;div/&gt;…</c> was
+    /// accepted after 41 seconds</b> of one core, read as one level deep and built 66,000 deep, where
+    /// the same payload without the five-character <c>&lt;svg&gt;</c> prefix is refused in 3 ms.
+    /// </para>
+    /// <para>
+    /// <b>Each case asserts the clock as well as the verdict</b>, and that is the point: before the fix
+    /// the first of these was refused too — forty-four seconds later. A verdict-only test would have
+    /// passed against the defect. The bound is 5 seconds against a measured 41, so it is a margin of
+    /// eight rather than a tight timing assertion that a loaded machine could trip.
+    /// </para>
+    /// </summary>
+    [Theory]
+    [InlineData("svg", "div", 66_000)]
+    [InlineData("svg", "b", 90_000)]
+    [InlineData("svg", "span", 50_000)]
+    [InlineData("math", "div", 40_000)]
+    [InlineData("math", "b", 40_000)]
+    public void An_html_element_inside_foreign_content_ends_the_self_closing_exception(
+        string foreign,
+        string breakout,
+        int levels)
+    {
+        var payload = $"<{foreign}>" + string.Concat(Enumerable.Repeat($"<{breakout}/>", levels));
+
+        Assert.True(payload.Length <= HtmlSanitiser.MaxInputLength, "the payload must reach the scan");
+
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var result = _sanitiser.Sanitise(payload);
+        clock.Stop();
+
+        Assert.True(result.WasRejected);
+        Assert.Contains("levels deep", result.Rejection);
+
+        Assert.True(
+            clock.Elapsed < TimeSpan.FromSeconds(5),
+            $"<{foreign}> + <{breakout}/> x {levels:N0} took {clock.Elapsed.TotalSeconds:N1}s. It is "
+            + "refused, but the refusal has to come from the lexical scan rather than from the parse: "
+            + "this payload cost 41 seconds of CPU before BreaksOutOfForeignContent existed, and the "
+            + "admin content list re-sanitises every stored body on every load.");
+    }
+
+    /// <summary>
+    /// <c>&lt;math&gt;&lt;p/&gt;</c> × 40,000 is accepted, and that is <b>correct</b> rather than a gap.
+    /// <para>
+    /// <c>p</c> breaks out of foreign content and then closes the previous <c>p</c>, so forty thousand of
+    /// them are forty thousand siblings — one level deep, which is exactly what a browser builds. Written
+    /// down because it was in the first version of the theory above as an expected refusal, and the test
+    /// failing is what made me check: the refusal would have been wrong, and asserting it would have
+    /// pinned a false positive against every real page that pastes unclosed paragraphs.
+    /// </para>
+    /// <para>
+    /// The clock still matters here, because "flat" has to mean cheap: forty thousand siblings are linear
+    /// work, not the quadratic nesting the guard exists for.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void A_breakout_element_that_closes_its_own_kind_is_flat_and_cheap()
+    {
+        var payload = "<math>" + string.Concat(Enumerable.Repeat("<p/>", 40_000));
+
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var result = _sanitiser.Sanitise(payload);
+        clock.Stop();
+
+        Assert.False(result.WasRejected);
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(5), $"it took {clock.Elapsed.TotalSeconds:N1}s");
+    }
+
+    /// <summary>
+    /// The control the tester used, and the one that matters most here: the same shape with no
+    /// <c>&lt;svg&gt;</c> in front of it was always refused immediately. Keeping both means the test
+    /// above is measuring the prefix rather than the machine.
+    /// </summary>
+    [Fact]
+    public void The_same_payload_without_the_foreign_prefix_is_refused_just_as_fast()
+    {
+        var payload = string.Concat(Enumerable.Repeat("<div/>", 66_000));
+
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var result = _sanitiser.Sanitise(payload);
+        clock.Stop();
+
+        Assert.True(result.WasRejected);
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(5));
+    }
+
+    /// <summary>
     /// And the false-positive side of the same rule: inside foreign content a trailing slash <i>is</i>
     /// honoured, so a pasted SVG of three hundred <c>&lt;path/&gt;</c> elements is two levels deep
     /// rather than three hundred. The SVG is removed either way; what matters is that the page it was
@@ -525,6 +619,26 @@ public sealed class HtmlSanitiserTests
         Assert.False(result.WasRejected);
         Assert.Contains("More copy.", result.Html);
         Assert.DoesNotContain("<svg", result.Html);
+    }
+
+    /// <summary>
+    /// And the breakout rule must not swallow the case above. <c>&lt;path&gt;</c>, <c>&lt;circle&gt;</c>
+    /// and <c>&lt;g&gt;</c> are not on the standard's breakout list, so a real SVG stays foreign content
+    /// and its slashes stay meaningful — which is the whole reason the exception exists, and the thing
+    /// that would quietly break if somebody widened <c>BreaksOutOfForeignContent</c> to "anything that
+    /// looks like HTML".
+    /// </summary>
+    [Theory]
+    [InlineData("path")]
+    [InlineData("circle")]
+    [InlineData("rect")]
+    [InlineData("g")]
+    [InlineData("use")]
+    public void A_real_svg_element_does_not_break_out(string element)
+    {
+        var payload = "<svg>" + string.Concat(Enumerable.Repeat($"<{element}/>", 1_000)) + "</svg>";
+
+        Assert.False(_sanitiser.Sanitise(payload).WasRejected);
     }
 
     [Fact]
