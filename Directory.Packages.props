@@ -26,6 +26,21 @@
     -->
     <PackageVersion Include="SkiaSharp" Version="4.152.1" />
     <PackageVersion Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="4.152.1" />
+    <!--
+      The allow-list HTML sanitiser doc 08 §3.7/§3.8 requires for content-page bodies (GLB-10) and for
+      every ValueType 2 setting. MIT, and parser-based: it is AngleSharp's HTML5 parser plus an
+      allow-list walk over the resulting DOM, which is the only approach that survives a malformed or
+      nested payload. A hand-written one over regular expressions is the documented wrong answer to
+      this problem, and a stored-XSS surface on a public page is not the place to find out why.
+    -->
+    <PackageVersion Include="HtmlSanitizer" Version="9.2.1039" />
+    <!--
+      HtmlSanitizer's own HTML5 parser, listed explicitly because `HtmlSanitiser` uses it directly to
+      count the images a cleaned body holds (doc 08 §3.3's alt-text rule needs that number). A
+      transitive dependency that source code calls is a dependency, and pinning it here is what stops a
+      future HtmlSanitizer bump moving it silently. MIT.
+    -->
+    <PackageVersion Include="AngleSharp" Version="1.7.2" />
   </ItemGroup>
 
   <ItemGroup Label="Application">

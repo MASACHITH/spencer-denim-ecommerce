@@ -1,0 +1,317 @@
+using Ganss.Xss;
+using SpencerDenim.Application.Content.Abstractions;
+
+namespace SpencerDenim.Infrastructure.Content;
+
+/// <summary>
+/// The allow-list HTML sanitiser of doc 08 §3.7/§3.8 (GLB-10, ADM-17), used for every content-page body
+/// and for every <c>ops.Settings</c> value of type <c>Text/HTML</c>.
+/// <para>
+/// <b>It is an allow-list, in both directions, and that is the only arrangement that is safe.</b> A
+/// block-list has to enumerate every dangerous construct — and it is wrong the day a browser gains one.
+/// This permits exactly {@link AllowedTags} and exactly {@link AllowedAttributes}; everything else is
+/// removed whether or not anybody thought of it. The lists below are the whole security policy of this
+/// feature, written out, because "the sanitiser handles it" is not a statement anyone can check.
+/// </para>
+/// <para>
+/// <b>What the allow-list permits.</b>
+/// </para>
+/// <list type="bullet">
+/// <item><description>
+/// <b>Elements:</b> <c>p br strong b em i u s sub sup</c> · <c>h2 h3 h4</c> · <c>ul ol li</c> ·
+/// <c>blockquote hr</c> · <c>a</c> · <c>img figure figcaption</c> · <c>table thead tbody tfoot tr th td
+/// caption</c> · <c>dl dt dd</c>.
+/// </description></item>
+/// <item><description>
+/// <b>Attributes:</b> <c>href title</c> (on a link) · <c>src alt width height</c> (on an image) ·
+/// <c>colspan rowspan scope</c> (on a cell) · <c>dir lang</c>. Nothing else — so no <c>style</c>, no
+/// <c>class</c>, no <c>id</c>, no <c>data-*</c>, no <c>target</c>, and no event handler, because an
+/// attribute that is not on this list is removed without needing to be recognised as dangerous.
+/// </description></item>
+/// <item><description>
+/// <b>URL schemes:</b> <c>http</c>, <c>https</c>, <c>mailto</c>, and a site-relative path. Nothing else
+/// — so no <c>javascript:</c>, no <c>data:</c>, no <c>vbscript:</c>, no <c>file:</c>.
+/// </description></item>
+/// <item><description>
+/// <b>CSS:</b> none at all. <c>AllowedCssProperties</c> is emptied and <c>&lt;style&gt;</c> is not an
+/// allowed element, so a body cannot carry a stylesheet, an <c>@import</c>, or a property whose value is
+/// a URL.
+/// </description></item>
+/// <item><description>
+/// <b>Comments</b> are removed, so markup hidden inside one cannot be revived by a later edit that
+/// changes how the surrounding text is parsed.
+/// </description></item>
+/// </list>
+/// <para>
+/// <b>Three decisions inside that list that are easy to get wrong.</b>
+/// </para>
+/// <list type="number">
+/// <item><description>
+/// <b><c>h1</c> is not allowed.</b> The page's single <c>h1</c> is its title, rendered by the storefront
+/// outside the body; a second one is an accessibility defect (GLB-12) rather than a security one, and the
+/// cheapest place to prevent it is here. A pasted <c>&lt;h1&gt;</c> is kept as text inside its parent
+/// rather than thrown away, so no copy is lost.
+/// </description></item>
+/// <item><description>
+/// <b><c>target</c> is not allowed</b>, so every link opens in the same tab. It is not on the list
+/// because <c>target="_blank"</c> without <c>rel="noopener"</c> is reverse tabnabbing, and the fix —
+/// allowing <c>rel</c> as well and hoping an editor types it — is worse than not offering the attribute.
+/// </description></item>
+/// <item><description>
+/// <b><c>iframe</c> is not allowed</b>, including for a map. GLB-10 asks for a map on the Contact page
+/// and it is <i>not</i> page body: it is the setting <c>Contact.MapEmbedUrl</c>, whose host is checked
+/// against a short allow-list of its own (<c>SettingFieldRules.TryNormaliseMapEmbedUrl</c>). An editor
+/// who could paste an arbitrary <c>&lt;iframe&gt;</c> into a body could frame anything on the shop's own
+/// origin.
+/// </description></item>
+/// </list>
+/// <para>
+/// <b>Why a library and not a hand-written pass.</b> The attacks this has to survive are mostly parser
+/// confusion — <c>&lt;scr&lt;script&gt;ipt&gt;</c>, an unclosed attribute, <c>&lt;svg/onload=…&gt;</c>, a
+/// comment that ends early in one parsing mode and not another — so the only correct shape is "parse the
+/// document the way a browser would, then walk the resulting tree against the allow-list".
+/// <c>HtmlSanitizer</c> is AngleSharp's HTML5 parser plus that walk, is MIT, and is the library this
+/// problem has. A regular-expression pass over the same input is the documented wrong answer.
+/// </para>
+/// <para>
+/// <b>It is registered as a singleton and that is safe only because of how it is used here.</b> Ganss's
+/// <c>HtmlSanitizer</c> is not documented as thread-safe for <i>configuration</i>, and its removal
+/// notifications are instance-level events. So this type never shares one: it holds the configuration and
+/// builds a fresh <c>HtmlSanitizer</c> per call, with the per-call event handlers that collect
+/// {@link SanitisedHtml.Removed}. A body is sanitised on a save, measured in a handful per day, so the
+/// allocation is irrelevant and the alternative is a race on a security control.
+/// </para>
+/// </summary>
+public sealed class HtmlSanitiser : IHtmlSanitiser
+{
+    /// <summary>Every element a body may contain. See the type remarks for why each group is here.</summary>
+    public static IReadOnlySet<string> AllowedTags { get; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        // Text and inline emphasis.
+        "p", "br", "strong", "b", "em", "i", "u", "s", "sub", "sup",
+
+        // Headings below the page's own h1.
+        "h2", "h3", "h4",
+
+        // Lists.
+        "ul", "ol", "li", "dl", "dt", "dd",
+
+        // Blocks.
+        "blockquote", "hr",
+
+        // Links.
+        "a",
+
+        // Images, with the caption markup that makes one accessible.
+        "img", "figure", "figcaption",
+
+        // Tables — a shipping page is mostly a table of zones and fees.
+        "table", "caption", "thead", "tbody", "tfoot", "tr", "th", "td",
+    };
+
+    /// <summary>
+    /// Every attribute a body may carry. Ganss's allow-list is global rather than per element, so
+    /// <c>href</c> is permitted anywhere it is meaningful and ignored everywhere it is not — which is a
+    /// property of HTML, not a hole: <c>&lt;p href="…"&gt;</c> does nothing in any browser.
+    /// </summary>
+    public static IReadOnlySet<string> AllowedAttributes { get; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "href", "title", "src", "alt", "width", "height", "colspan", "rowspan", "scope", "dir", "lang",
+    };
+
+    /// <summary>
+    /// The only URL schemes a <c>href</c> or <c>src</c> may use. A scheme-relative or site-relative path
+    /// is also accepted — that is <c>Ganss</c>'s <c>AllowDataAttributes</c>-independent handling of a
+    /// relative URI, and a relative path cannot name a scheme at all, which is the property that matters.
+    /// </summary>
+    public static IReadOnlySet<string> AllowedSchemes { get; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "http", "https", "mailto",
+    };
+
+    /// <summary>
+    /// Disallowed elements whose <b>contents are not copy</b>, so they are removed with everything inside
+    /// them rather than unwrapped.
+    /// <para>
+    /// <b>This is not the security control and must not be read as one.</b> The allow-list above is: every
+    /// one of these elements is already absent from <see cref="AllowedTags"/> and so is removed whatever
+    /// this list says. What this list changes is only <i>what happens to the characters inside</i>.
+    /// </para>
+    /// <para>
+    /// <b>It exists because <c>KeepChildNodes</c> is a single global switch and the right answer differs
+    /// by element.</b> For <c>&lt;div&gt;</c>, <c>&lt;span&gt;</c> and <c>&lt;h1&gt;</c> the contents are
+    /// the client's sentences, and deleting them is the silent-data-loss defect this project has shipped
+    /// three times. For <c>&lt;script&gt;</c> the "contents" are source code: unwrapping it put
+    /// <c>alert(1)</c> on a public page as visible text — safe, and still a visible defect on a page a
+    /// client published. For <c>&lt;math&gt;</c> and <c>&lt;svg&gt;</c> it is worse than cosmetic: those
+    /// switch the parser into foreign-content mode, which is the engine of every mXSS payload, and
+    /// unwrapping their children hands the serialiser a tree that was never HTML — measured, on
+    /// <c>&lt;math&gt;&lt;mtext&gt;&lt;table&gt;&lt;mglyph&gt;&lt;style&gt;&lt;img src=x
+    /// onerror=alert(1)&gt;</c>, which survived with its handler intact until this list existed. So the
+    /// handler on <c>RemovingTag</c> empties these elements before the sanitiser decides what to keep,
+    /// which leaves nothing for <c>KeepChildNodes</c> to preserve.
+    /// </para>
+    /// </summary>
+    private static readonly HashSet<string> ContentsAreNotCopy = new(StringComparer.OrdinalIgnoreCase)
+    {
+        // Raw-text and escapable-raw-text elements: what is inside them is code, not text.
+        "script", "style", "template", "noscript", "xmp", "noframes", "noembed", "textarea", "title",
+
+        // Foreign content, which changes how the parser reads everything inside it.
+        "svg", "math",
+
+        // Embedded content and framing.
+        "iframe", "frame", "frameset", "object", "embed", "applet", "canvas", "picture", "source",
+        "track", "audio", "video",
+
+        // Form controls whose inner text is a value or a label for something that is being removed.
+        "select", "option", "optgroup", "datalist",
+
+        // Document structure that a paste can carry in.
+        "head", "html",
+    };
+
+    public SanitisedHtml Sanitise(string? html)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+        {
+            return SanitisedHtml.Empty;
+        }
+
+        var removed = new List<string>();
+        var sanitiser = Build(removed);
+
+        var cleaned = sanitiser.Sanitize(html).Trim();
+        var inspection = Inspect(cleaned);
+
+        // A body of only whitespace or only empty tags reads as "nothing", and an empty string is what the
+        // rest of the system already means by that (an unpublished shell). Without this, a paste that was
+        // entirely script left a body of "\n\n" that is not empty to any `string.IsNullOrEmpty` check.
+        return new SanitisedHtml(
+            inspection.RendersNothing ? string.Empty : cleaned,
+            Distinct(removed),
+            inspection.Images,
+            inspection.ImagesMissingAlt);
+    }
+
+    /// <summary>
+    /// A fresh sanitiser, configured from the lists above, with the handlers that report what it took out.
+    /// </summary>
+    private static HtmlSanitizer Build(List<string> removed)
+    {
+        var sanitiser = new HtmlSanitizer(new HtmlSanitizerOptions
+        {
+            AllowedTags = new HashSet<string>(AllowedTags, StringComparer.OrdinalIgnoreCase),
+            AllowedAttributes = new HashSet<string>(AllowedAttributes, StringComparer.OrdinalIgnoreCase),
+            AllowedSchemes = new HashSet<string>(AllowedSchemes, StringComparer.OrdinalIgnoreCase),
+
+            // No CSS at all, so there is no property whose value could be a URL. There is also no at-rule
+            // to filter and no class to filter, because `style` is not an allowed element and `style` and
+            // `class` are not allowed attributes: CSS cannot reach the sanitiser's CSS stage in the first
+            // place. This empties the property set anyway, so the guarantee does not depend on remembering
+            // that argument.
+            AllowedCssProperties = new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+            UriAttributes = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "href", "src" },
+        })
+        {
+            // `false`, so `data-anything` is not a blanket exception to the attribute allow-list.
+            AllowDataAttributes = false,
+
+            // Keep the *text* of a disallowed element rather than deleting it with its contents. A client
+            // who pastes <h1>Our story</h1><div>…</div> keeps both sentences; they simply lose the h1 and
+            // the div. The alternative silently eats copy, which is the shape of defect this project has
+            // shipped three times, and it buys nothing: the danger is in the element and its attributes,
+            // not in the characters a person typed.
+            KeepChildNodes = true,
+        };
+
+        sanitiser.RemovingTag += (_, e) =>
+        {
+            var name = e.Tag.NodeName.ToLowerInvariant();
+            removed.Add($"<{name}>");
+
+            if (!ContentsAreNotCopy.Contains(name))
+            {
+                return;
+            }
+
+            // Emptied *here*, inside the event the library raises before it acts: its removal step keeps
+            // the children only `if (KeepChildNodes && tag.HasChildNodes)`, so an element with none left
+            // is removed outright. See ContentsAreNotCopy for why the answer differs by element.
+            while (e.Tag.FirstChild is { } child)
+            {
+                e.Tag.RemoveChild(child);
+            }
+        };
+
+        sanitiser.RemovingAttribute += (_, e) => removed.Add(e.Attribute.Name.ToLowerInvariant());
+        sanitiser.RemovingStyle += (_, e) => removed.Add($"style: {e.Style.Name.ToLowerInvariant()}");
+        sanitiser.RemovingComment += (_, _) => removed.Add("an HTML comment");
+        sanitiser.RemovingCssClass += (_, e) => removed.Add($"class: {e.CssClass}");
+
+        return sanitiser;
+    }
+
+    /// <summary>What a reader of the cleaned body would find in it.</summary>
+    /// <param name="RendersNothing">
+    /// No text and nothing visual: whitespace, or structural tags with nothing inside them.
+    /// </param>
+    /// <param name="Images">
+    /// How many <c>&lt;img&gt;</c> elements survived <b>with a URL still on them</b>.
+    /// </param>
+    /// <param name="ImagesMissingAlt">How many of those have no non-blank <c>alt</c>.</param>
+    private readonly record struct Inspection(bool RendersNothing, int Images, int ImagesMissingAlt);
+
+    /// <summary>
+    /// Reads the counts off the <b>cleaned</b> markup, in one parse.
+    /// <para>
+    /// Cleaned rather than input, deliberately, and on two counts. An <c>&lt;img&gt;</c> the allow-list
+    /// removed is not on the page, so it is not an accessibility problem; and an <c>&lt;img&gt;</c> whose
+    /// <c>src</c> was removed for naming a forbidden scheme is not a <i>public image</i> either — doc 08
+    /// §3.3's rule is about images a visitor is served. Counting those would refuse to publish a page over
+    /// an image that is not on it, and would tell the editor the wrong thing to fix: the removal report
+    /// already says the <c>src</c> went.
+    /// </para>
+    /// <para>
+    /// The parse is AngleSharp's, which is the parser the sanitiser itself used, so the two cannot
+    /// disagree about what an element is.
+    /// </para>
+    /// </summary>
+    private static Inspection Inspect(string cleanedHtml)
+    {
+        if (cleanedHtml.Length == 0)
+        {
+            return new Inspection(true, 0, 0);
+        }
+
+        var document = new AngleSharp.Html.Parser.HtmlParser().ParseDocument("<body>" + cleanedHtml + "</body>");
+        var body = document.Body;
+
+        if (body is null)
+        {
+            return new Inspection(true, 0, 0);
+        }
+
+        var images = body
+            .QuerySelectorAll("img")
+            .Where(image => !string.IsNullOrWhiteSpace(image.GetAttribute("src")))
+            .ToList();
+
+        var missing = images.Count(image => string.IsNullOrWhiteSpace(image.GetAttribute("alt")));
+
+        var rendersNothing = string.IsNullOrWhiteSpace(body.TextContent)
+            && images.Count == 0
+            && body.QuerySelectorAll("hr, br").Length == 0;
+
+        return new Inspection(rendersNothing, images.Count, missing);
+    }
+
+    /// <summary>
+    /// The removal report, de-duplicated and capped. A paste of a whole web page can remove hundreds of
+    /// attributes, and "we removed onclick (247 times)" helps nobody more than "we removed onclick" does.
+    /// </summary>
+    private static List<string> Distinct(List<string> removed) =>
+        removed.Count == 0
+            ? []
+            : removed.Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.Ordinal).Take(20).ToList();
+}
