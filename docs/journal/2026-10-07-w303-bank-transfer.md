@@ -618,10 +618,10 @@ process-wide so nobody reads one line as "one affected order".
 | `dotnet build SpencerDenim.sln -c Release --no-incremental` | **0 warnings, 0 errors** | 0 / 0 |
 | `npm run build` (production, budgets enforced) | **0 warnings** | 0 |
 | `dotnet test tests/SpencerDenim.UnitTests` | **1459 passed**, 0 failed | 1306 (+153) |
-| `dotnet test tests/SpencerDenim.IntegrationTests` | **1095 passed**, 0 failed, 0 skipped — on this machine. The tester measured **1089/1** on theirs, failing in `AuditLogEndpointTests`, which is #114's family and provably not this branch's: 8/8 alone, 64/64 beside every W3-03 suite, the file untouched in all three rounds, and its 2026-09-01→09-04 window cannot contain rows this branch stamps today. | 956 |
+| `dotnet test tests/SpencerDenim.IntegrationTests` | **1093 passed**, 0 failed, 0 skipped (13 m 16 s) — on this machine. The tester measured **1089/1** on theirs, failing in `AuditLogEndpointTests`, which is #114's family and provably not this branch's: 8/8 alone, 64/64 beside every W3-03 suite, the file untouched in all three rounds, and its 2026-09-01→09-04 window cannot contain rows this branch stamps today. | 956 |
 | `ng test shared / storefront / admin` | 24 / **1295** / **374** passed, 0 failed | 21 / 1206 / 273 |
 | `ng lint` | all three projects pass | pass |
-| `playwright test --project=chromium` (full suite) | **860 of 860** on this machine (5.6 m) — but the tester measured **857/3** on a clean one, three different tests again, all passing alone, none in the W3-03 files and one of them on this branch's own round-1 flake list. **#115 is live and this does not close it**; a clean run is one sample, not a property. | — |
+| `playwright test --project=chromium` (full suite) | **860 of 860, 0 failed** — but with **3 flaky** (green on retry): `quick-view`, `search`'s `/about` redirect and `storefront-shell`'s drawer focus. *Different tests again*, none in the W3-03 files. The tester measured 857/3 on a clean machine and an earlier run here was clean; across five full runs the only stable facts are that the set changes every time, every one passes alone, and neither W3-03 file has ever been among them. **#115 is open and none of these runs closes it.** | — |
 | `playwright test bank-transfer.e2e.ts` | **10 passed**, and 30/30 under `--repeat-each=3 --workers=1` | — |
 | `playwright test admin-bank-transfers.e2e.ts` | **14 passed** | — |
 | `playwright test checkout.e2e.ts` | **50 passed** (two assertions removed, below) | 52 |
