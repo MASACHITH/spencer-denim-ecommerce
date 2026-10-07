@@ -706,7 +706,28 @@ const server = createServer(async (request, response) => {
         'Some items are no longer in stock',
         'This order cannot be paid now, because some of its items have been sold since it expired.',
         'short_stock',
-        { shortLines: { 470: 0, 471: 1 } },
+        {
+          shortLines: [
+            {
+              variantId: 470,
+              sku: 'SKU-470',
+              productName: 'Slim jeans',
+              colourName: 'Indigo',
+              sizeLabel: '32',
+              needed: 1,
+              available: 0,
+            },
+            {
+              variantId: 471,
+              sku: 'SKU-471',
+              productName: 'Denim jacket',
+              colourName: 'Washed blue',
+              sizeLabel: 'M',
+              needed: 2,
+              available: 1,
+            },
+          ],
+        },
       );
     }
 

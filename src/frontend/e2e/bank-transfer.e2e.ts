@@ -241,9 +241,9 @@ test.describe('the pay panel (doc 11 P7 step 1)', () => {
     // And it really is the order's total rather than two empty strings agreeing.
     expect(summaryTotal).toContain(String(Math.trunc(total)).slice(0, 2));
 
-    await expect(page.locator('[data-testid="pay-account-number"]')).toHaveText('8001 2345 6789');
-    await expect(page.locator('[data-testid="pay-panel"]')).toContainText('Commercial Bank of Ceylon PLC');
-    await expect(page.locator('[data-testid="pay-panel"]')).toContainText('Kollupitiya');
+    await expect(page.locator('[data-testid="pay-account-number"]')).toHaveText('0000 1111 2222');
+    await expect(page.locator('[data-testid="pay-panel"]')).toContainText('Example Bank PLC');
+    await expect(page.locator('[data-testid="pay-panel"]')).toContainText('Example Branch');
     await expect(page.locator('[data-testid="pay-notes"]')).toContainText('Cash-machine deposits');
 
     // The deadline, as a date and time rather than a ticking countdown: a figure counted down in the

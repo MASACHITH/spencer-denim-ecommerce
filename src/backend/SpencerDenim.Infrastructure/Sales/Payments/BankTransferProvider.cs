@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Logging;
+
 using SpencerDenim.Application.Sales.Payments;
 using SpencerDenim.Application.Sales.Payments.Abstractions;
 using SpencerDenim.Application.Sales.Payments.Contracts;
@@ -16,9 +18,10 @@ namespace SpencerDenim.Infrastructure.Sales.Payments;
 /// and <c>IPaymentProvider</c> deliberately does not declare them (see that interface).
 /// </para>
 /// </summary>
-internal sealed class BankTransferProvider(
+internal sealed partial class BankTransferProvider(
     IBankTransferSettingsReader settings,
-    BankTransferOptions options) : IPaymentProvider
+    BankTransferOptions options,
+    ILogger<BankTransferProvider> logger) : IPaymentProvider
 {
     public string Code => PaymentProviderCodes.BankTransfer;
 
@@ -73,6 +76,13 @@ internal sealed class BankTransferProvider(
 
         if (await settings.ReadAsync(cancellationToken) is not { } bank)
         {
+            // **Warned, not only degraded.** Doc 08 §3.5 says enabling a provider requires valid settings
+            // and nothing enforces it, so a fresh deployment happily takes bank-transfer orders that
+            // nobody can pay: the order page says the details are coming, which is honest to the shopper
+            // and silent to everybody who could fix it. There is no ops.AdminAlerts table in this build
+            // (it is not this task's), so the log is the channel there is — at Warning, naming the keys,
+            // on the one code path that proves a real customer has hit it.
+            LogDetailsNotSet(logger, request.OrderNumber);
             return null;
         }
 
@@ -107,4 +117,13 @@ internal sealed class BankTransferProvider(
             // takes them.
             AcceptsProof: true);
     }
+
+    [LoggerMessage(
+        EventId = 3305,
+        Level = LogLevel.Warning,
+        Message = "Order {OrderNumber} is awaiting a bank transfer, but the shop's bank details are not "
+            + "set, so the customer has been told the details are still coming and cannot pay. Fill in "
+            + "Settings.Payments: Bank.BankName, Bank.AccountName and Bank.AccountNumber (doc 08 §3.5, "
+            + "doc 11 P7's precondition).")]
+    private static partial void LogDetailsNotSet(ILogger logger, string orderNumber);
 }

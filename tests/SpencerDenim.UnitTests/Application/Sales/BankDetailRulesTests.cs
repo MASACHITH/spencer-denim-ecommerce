@@ -16,8 +16,8 @@ namespace SpencerDenim.UnitTests.Application.Sales;
 public sealed class BankDetailRulesTests
 {
     [Theory]
-    [InlineData("8001234567890")]
-    [InlineData("8001 2345 6789")]
+    [InlineData("0000111122220")]
+    [InlineData("0000 1111 2222")]
     [InlineData("8001-2345-6789")]
     [InlineData("001 002 3456 789")]
     [InlineData("12345678901234567890123456789012345678")]
@@ -82,8 +82,8 @@ public sealed class BankDetailRulesTests
         var errors = new List<ValidationError>();
 
         Assert.Equal(
-            "Commercial Bank of Ceylon PLC",
-            BankDetailRules.CleanText(errors, "bankName", "  Commercial Bank of Ceylon PLC  ", "bank name", 120));
+            "Example Bank PLC",
+            BankDetailRules.CleanText(errors, "bankName", "  Example Bank PLC  ", "bank name", 120));
 
         Assert.Null(BankDetailRules.CleanText(errors, "branch", "   ", "branch", 120));
         Assert.Empty(errors);

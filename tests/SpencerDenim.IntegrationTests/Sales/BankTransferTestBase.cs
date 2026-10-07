@@ -147,10 +147,10 @@ public abstract class BankTransferTestBase(SqlServerDatabaseFixture sqlServer) :
 
     /// <summary>Sets the five <c>Bank.*</c> settings, so the provider has details to describe.</summary>
     protected async Task SetBankDetailsAsync(
-        string? bankName = "Commercial Bank of Ceylon PLC",
-        string? branch = "Kollupitiya",
-        string? accountName = "Spencer Denim Industries (Pvt) Ltd",
-        string? accountNumber = "8001 2345 6789",
+        string? bankName = "Example Bank PLC",
+        string? branch = "Example Branch",
+        string? accountName = "Example Shop (Pvt) Ltd",
+        string? accountNumber = "0000 1111 2222",
         string? instructions = "Cash-machine deposits can take a working day to appear.")
     {
         var values = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)

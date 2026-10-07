@@ -141,7 +141,7 @@ public sealed class ReviewBankTransferCommandHandler(
                 refused.PaymentStatus?.ToString()),
 
             BankTransferDecisionResult.ShortStock shortStock => new ReviewBankTransferResult.ShortStock(
-                shortStock.AvailableByVariantId),
+                shortStock.Lines),
 
             _ => throw new InvalidOperationException($"Unhandled decision outcome {outcome.GetType().Name}."),
         };
@@ -175,6 +175,5 @@ public abstract record ReviewBankTransferResult
         string? PaymentStatus) : ReviewBankTransferResult;
 
     /// <summary>409. A late acceptance refused by the stock re-check, with every short line.</summary>
-    public sealed record ShortStock(IReadOnlyDictionary<int, int> AvailableByVariantId)
-        : ReviewBankTransferResult;
+    public sealed record ShortStock(IReadOnlyList<ShortStockLine> Lines) : ReviewBankTransferResult;
 }

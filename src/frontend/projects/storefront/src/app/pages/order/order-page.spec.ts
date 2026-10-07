@@ -99,10 +99,10 @@ export function bankInstructions(
     amountLkr: 9_184,
     dueAtUtc: '2026-10-07T04:30:00Z',
     fields: [
-      { label: 'Bank', value: 'Commercial Bank of Ceylon PLC', copyable: false },
+      { label: 'Bank', value: 'Example Bank PLC', copyable: false },
       { label: 'Branch', value: 'Kollupitiya', copyable: false },
-      { label: 'Account name', value: 'Spencer Denim Industries (Pvt) Ltd', copyable: false },
-      { label: 'Account number', value: '8001 2345 6789', copyable: true },
+      { label: 'Account name', value: 'Example Shop (Pvt) Ltd', copyable: false },
+      { label: 'Account number', value: '0000 1111 2222', copyable: true },
     ],
     notes: 'Cash-machine deposits can take a working day to appear.',
     redirectUrl: null,
@@ -254,11 +254,11 @@ describe('OrderPage (CHK-04)', () => {
       'SD-2026-000123',
     );
     expect(element.querySelector('[data-testid="pay-account-number"]')?.textContent?.trim()).toBe(
-      '8001 2345 6789',
+      '0000 1111 2222',
     );
-    expect(body).toContain('Commercial Bank of Ceylon PLC');
+    expect(body).toContain('Example Bank PLC');
     expect(body).toContain('Kollupitiya');
-    expect(body).toContain('Spencer Denim Industries (Pvt) Ltd');
+    expect(body).toContain('Example Shop (Pvt) Ltd');
 
     // The exact amount, and the deadline in Colombo time (04:30 UTC is 10.00 am local).
     expect(element.querySelector('[data-testid="pay-amount"]')?.textContent).toContain('9,184');
@@ -465,7 +465,7 @@ describe('OrderPage (CHK-04)', () => {
       await settle();
       const second = region.textContent ?? '';
 
-      expect(copied).toEqual(['8001 2345 6789', '8001 2345 6789']);
+      expect(copied).toEqual(['0000 1111 2222', '0000 1111 2222']);
 
       // The same sentence both times, and **not the same string** — the trailing space is invisible and is
       // what makes the second one a change a screen reader will read.

@@ -66,10 +66,10 @@ describe('SettingsPage (ADM-22)', () => {
    */
   function payloadWithBank(values: Partial<Record<string, string | null>> = {}): AdminSettings {
     const bank = {
-      [SETTING_KEYS.bankName]: 'Commercial Bank of Ceylon PLC',
-      [SETTING_KEYS.branch]: 'Kollupitiya',
-      [SETTING_KEYS.accountName]: 'Spencer Denim Industries (Pvt) Ltd',
-      [SETTING_KEYS.accountNumber]: '8001 2345 6789',
+      [SETTING_KEYS.bankName]: 'Example Bank PLC',
+      [SETTING_KEYS.branch]: 'Example Branch',
+      [SETTING_KEYS.accountName]: 'Example Shop (Pvt) Ltd',
+      [SETTING_KEYS.accountNumber]: '0000 1111 2222',
       [SETTING_KEYS.instructions]: 'CDM deposits take a working day.',
       ...values,
     } as Record<string, string | null>;
@@ -545,10 +545,10 @@ describe('SettingsPage (ADM-22)', () => {
     it('fills the boxes from the payload', async () => {
       await open(payloadWithBank());
 
-      expect(field('bankName').value).toBe('Commercial Bank of Ceylon PLC');
-      expect(field('branch').value).toBe('Kollupitiya');
-      expect(field('accountName').value).toBe('Spencer Denim Industries (Pvt) Ltd');
-      expect(field('accountNumber').value).toBe('8001 2345 6789');
+      expect(field('bankName').value).toBe('Example Bank PLC');
+      expect(field('branch').value).toBe('Example Branch');
+      expect(field('accountName').value).toBe('Example Shop (Pvt) Ltd');
+      expect(field('accountNumber').value).toBe('0000 1111 2222');
     });
 
     /**
@@ -575,10 +575,10 @@ describe('SettingsPage (ADM-22)', () => {
       // All five, not just the edited one — and the unedited four carry the values the server sent rather
       // than null.
       expect(saved.request.body).toEqual({
-        bankName: 'Commercial Bank of Ceylon PLC',
+        bankName: 'Example Bank PLC',
         branch: 'Bambalapitiya',
-        accountName: 'Spencer Denim Industries (Pvt) Ltd',
-        accountNumber: '8001 2345 6789',
+        accountName: 'Example Shop (Pvt) Ltd',
+        accountNumber: '0000 1111 2222',
         instructions: 'CDM deposits take a working day.',
         rowVersion: 'bank-rv-1',
       });
@@ -656,7 +656,7 @@ describe('SettingsPage (ADM-22)', () => {
       // Present and empty, which the server reads as "clear it" — as distinct from absent, which it reads
       // as "leave it alone". Those are two different instructions and the form has to express both.
       expect((saved.request.body as Record<string, unknown>)['branch']).toBe('');
-      expect((saved.request.body as Record<string, unknown>)['accountNumber']).toBe('8001 2345 6789');
+      expect((saved.request.body as Record<string, unknown>)['accountNumber']).toBe('0000 1111 2222');
 
       saved.flush(null, { status: 204, statusText: 'No Content' });
       fixture.detectChanges();

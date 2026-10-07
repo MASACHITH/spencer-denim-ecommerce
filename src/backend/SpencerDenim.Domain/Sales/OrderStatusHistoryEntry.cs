@@ -13,6 +13,17 @@ namespace SpencerDenim.Domain.Sales;
 /// writes a history row for every System transition (expiry, auto-deliver, a verified webhook), which is
 /// why <see cref="ChangedByUserId"/> is nullable and <see cref="Source"/> is not.
 /// </para>
+/// <para>
+/// <b>Equal <see cref="FromStatus"/> and <see cref="ToStatus"/> mean "an event on this order that did not
+/// move it", and the <see cref="Note"/> says which.</b> A reviewer was right to raise an eyebrow at a
+/// "status history" row where no status changed, so the convention is written down rather than left to be
+/// inferred: a rejected bank transfer (doc 11 P7 step 6b) is required to appear in the order's history and
+/// deliberately leaves the order <c>PendingPayment</c>, because the customer may transfer again before the
+/// deadline. The alternatives were worse. <see langword="null"/> <see cref="FromStatus"/> means "came from
+/// nowhere" and belongs to placement's first row; <c>sales.PaymentEvents</c> is the <i>provider</i> event
+/// log, with an idempotency key and a verbatim payload, and a staff decision is not a provider event;
+/// writing no row at all would lose the one place an order's own timeline can be read.
+/// </para>
 /// </summary>
 public sealed class OrderStatusHistoryEntry
 {

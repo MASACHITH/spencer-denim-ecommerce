@@ -152,9 +152,19 @@ internal sealed class BankTransferReviewStore(
                     return await DiagnoseAsync(decision.OrderId, Expecting.Pending, cancellationToken);
                 }
 
-                var invoiceNumber = await IssueInvoiceAsync(decision, cancellationToken);
-
+                // **Stock first, then the number series — the same order the late acceptance uses.** The
+                // first version allocated the invoice number here and deducted afterwards, so the two
+                // paths took `sales.NumberSeries` and `inventory.StockLevels` in opposite orders: two
+                // decisions in flight on a shared variant could each hold the row the other wanted, which
+                // is a 1205 that `EnableRetryOnFailure` would absorb silently rather than a deadlock
+                // anybody would see. Doc 08 §5.3 fixes an order precisely so this cannot arise, and the
+                // series belongs at the end of it.
+                //
+                // It is also the safer end: allocating last means a statement that throws between the two
+                // consumes no invoice number, which is what keeps the series gapless.
                 await DeductStockAsync(decision, cancellationToken);
+
+                var invoiceNumber = await IssueInvoiceAsync(decision, cancellationToken);
 
                 await WriteHistoryAsync(
                     decision,
@@ -195,20 +205,27 @@ internal sealed class BankTransferReviewStore(
                 // is doc 08 §5.3's instruction rather than caution: "paths that start from an existing
                 // order claim the order row first". A rejection starts from one.
                 //
-                // The first version of this method relied on a read plus the payment statement's own
-                // `Status = Pending` guard, and argued the pair was complete because every way an order
-                // leaves PendingPayment closes its open payment. The argument is true and the *window* is
-                // the problem: between the read and the payment UPDATE, an approval can commit. Without an
-                // order-row claim the two paths take their locks in opposite orders, and the losing
-                // rejection would arrive at a row that is now the settling payment and try to make it
-                // Failed — which `CK_Payments_IsOrderSettlement` then refuses, turning a race that should
-                // answer "already approved" into a constraint violation and a 500.
+                // **What the claim buys, stated accurately — an earlier version of this comment overstated
+                // it and a tester was right to take it apart.** It said a losing rejection would set the
+                // settling payment to Failed and violate `CK_Payments_IsOrderSettlement`, giving a 500.
+                // It would not: that constraint is `IsOrderSettlement = 0 OR Status IN (3, 8, 9)`, the
+                // rejection's UPDATE never touches the flag, and it matches only a row still at Pending —
+                // a row at Pending already has the flag clear, or it would be violating the constraint
+                // where it sits. The statement's own `AND Status = Pending` is the protection, and it is
+                // sufficient for correctness: the loser simply updates nothing.
                 //
-                // Claiming the order row makes all three decisions take the same lock in the same order,
-                // so the loser waits and is told what happened. The only thing it writes is the stamp —
-                // the status and the stock state are deliberately untouched (doc 11 P7 step 6b: "the order
-                // stays PendingPayment until its due time"), and the order genuinely did change, because
-                // its payment history did.
+                // What the claim adds is smaller and still worth having. It is doc 08 §5.3's instruction
+                // — "paths that start from an existing order claim the order row first", and a rejection
+                // starts from one — so all three decisions take the same locks in the same order, which
+                // is how 1205s are avoided rather than retried. And it makes the loser *wait* for the
+                // winner's commit instead of racing it, so the refusal it reports is diagnosed from
+                // settled state: "this order has already been paid" rather than an answer derived from a
+                // read that was already stale. A 0-row update with a stale diagnosis is not a wrong write,
+                // but it is a wrong sentence on a screen about somebody's money.
+                //
+                // The only thing it writes is the stamp — the status and the stock state are deliberately
+                // untouched (doc 11 P7 step 6b: "the order stays PendingPayment until its due time"), and
+                // the order genuinely did change, because its payment history did.
                 var claimed = await dbContext.Database.ExecuteSqlInterpolatedAsync(
                     $"""
                     UPDATE sales.Orders
@@ -327,9 +344,18 @@ internal sealed class BankTransferReviewStore(
                 // Doc 08 §4.3 N7: the Expired row itself settles, or a Pending row the customer created by
                 // resubmitting after a rejection. Latest first, because a resubmission is the later row and
                 // is the one the money arrived against.
+                //
+                // **`Cancelled` is in the list because the claim above accepts a cancelled order.** Doc 08
+                // §4.1 specifies `Cancelled → Paid` and doc 11 P10 is where it comes from: a customer
+                // cancels, their transfer arrives anyway, and staff choose to honour it. Without this
+                // status the claim would succeed, no payment would be found, and the whole transaction
+                // would roll back with `payment_not_reviewable` — a specified path answering "there is
+                // nothing to review" about an order with a payment row sitting right there. Nothing writes
+                // a `Cancelled` payment yet (customer cancel is W3-04), so this is latent today and would
+                // have been silently wrong the day it landed.
                 var payment = await FindReviewablePaymentAsync(
                     decision.OrderId,
-                    [PaymentStatus.Pending, PaymentStatus.Expired],
+                    [PaymentStatus.Pending, PaymentStatus.Expired, PaymentStatus.Cancelled],
                     cancellationToken);
 
                 if (payment is not { } latest)
@@ -584,15 +610,22 @@ internal sealed class BankTransferReviewStore(
                 row => Math.Max(0, row.Available + deducted.GetValueOrDefault(row.VariantId)));
 
             var shortLines = lines
-                .Where(candidate => available.GetValueOrDefault(candidate.VariantId) < candidate.Quantity)
-                .ToDictionary(
-                    candidate => candidate.VariantId,
-                    candidate => available.GetValueOrDefault(candidate.VariantId));
+                .Where(candidate =>
+                    candidate.VariantId == line.VariantId
 
-            // The line that actually failed is always reported, even if a concurrent restock has since
-            // made it look sufficient: it is the reason the acceptance was refused, and a staff member
-            // told "nothing is wrong" after a refusal will simply press the button again.
-            shortLines.TryAdd(line.VariantId, available.GetValueOrDefault(line.VariantId));
+                    // The line that actually failed is always reported, even if a concurrent restock has
+                    // since made it look sufficient: it is the reason the acceptance was refused, and a
+                    // staff member told "nothing is wrong" after a refusal will simply press again.
+                    || available.GetValueOrDefault(candidate.VariantId) < candidate.Quantity)
+                .Select(candidate => new ShortStockLine(
+                    candidate.VariantId,
+                    candidate.Sku,
+                    candidate.ProductName,
+                    candidate.ColourName,
+                    candidate.SizeLabel,
+                    candidate.Quantity,
+                    available.GetValueOrDefault(candidate.VariantId)))
+                .ToList();
 
             return new BankTransferDecisionResult.ShortStock(shortLines);
         }
@@ -701,12 +734,29 @@ internal sealed class BankTransferReviewStore(
         var lines = await dbContext.OrderLines
             .AsNoTracking()
             .Where(line => line.OrderId == orderId)
-            .Select(line => new { line.VariantId, line.Quantity })
+            .Select(line => new
+            {
+                line.VariantId,
+                line.Quantity,
+                line.Sku,
+                line.ProductName,
+                line.ColourName,
+                line.SizeLabel,
+            })
             .ToListAsync(cancellationToken);
 
+        // Grouped by variant, because two lines of one order can name the same variant and the stock
+        // statements have to move its row once. The description comes from the first of them: they are
+        // placement-time snapshots of the same variant, so they agree.
         return lines
             .GroupBy(line => line.VariantId)
-            .Select(group => new StockLine(group.Key, group.Sum(line => line.Quantity)))
+            .Select(group => new StockLine(
+                group.Key,
+                group.Sum(line => line.Quantity),
+                group.First().Sku,
+                group.First().ProductName,
+                group.First().ColourName,
+                group.First().SizeLabel))
             .OrderBy(line => line.VariantId)
             .ToList();
     }
@@ -768,7 +818,8 @@ internal sealed class BankTransferReviewStore(
             (_, Expecting.Closed) when snapshot.Status is not (OrderStatus.Expired or OrderStatus.Cancelled)
                 => (
                     BankTransferRefusalCodes.OrderNotClosed,
-                    "This order is not expired or cancelled, so there is no late payment to accept."),
+                    "This order is not expired or cancelled, so there is no late payment to accept. It is "
+                    + "still awaiting payment, so Approve is the action."),
 
             _ => (
                 BankTransferRefusalCodes.OrderNotPending,
@@ -925,7 +976,13 @@ internal sealed class BankTransferReviewStore(
     /// </remarks>
     private sealed record PaymentRow(int Id, PaymentStatus Status);
 
-    private readonly record struct StockLine(int VariantId, int Quantity);
+    private readonly record struct StockLine(
+        int VariantId,
+        int Quantity,
+        string Sku,
+        string ProductName,
+        string ColourName,
+        string SizeLabel);
 }
 
 /// <summary>

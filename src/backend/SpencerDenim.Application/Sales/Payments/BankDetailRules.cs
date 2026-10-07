@@ -31,7 +31,7 @@ public static class BankDetailRules
     /// <remarks>
     /// A space and a hyphen are kept rather than stripped, because an account number is <b>copied by a
     /// shopper into online banking</b> and showing it in the grouping their bank prints is what stops a
-    /// transposed digit. Storing <c>8001 2345 6789</c> and showing <c>800123456789</c> would be the shop
+    /// transposed digit. Storing <c>0000 1111 2222</c> and showing <c>000011112222</c> would be the shop
     /// deciding it knows the format better than the client does.
     /// </remarks>
     private const string AccountNumberSeparators = " -";

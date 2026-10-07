@@ -402,12 +402,21 @@ export class SettingsPage {
    *
    * The names match the request body's exactly, which is also what makes `fieldError` work: the API
    * returns its validation errors keyed by the field name it refused.
+   *
+   * **The placeholders are obviously fake, and the first version's were not.** They read "Commercial Bank
+   * of Ceylon PLC", "Kollupitiya", "Spencer Denim Industries (Pvt) Ltd" and "8001 2345 6789" — a real Sri
+   * Lankan bank, the client's own legal entity and a plausibly-formatted account number, rendered in the
+   * production bundle on the one screen where a Super Admin types the real values, with real values in the
+   * sections above and below. At a glance that reads as data rather than as a hint, and the thing it would
+   * be mistaken for is where a shopper's money goes. The social fields two lists up have always said
+   * `yourshop`; this is the same convention, which is why the shape is kept (the spacing in an account
+   * number is the hint that matters) while the identity is not.
    */
   protected readonly bankFields = [
     {
       name: 'bankName' as const,
       label: 'Bank name',
-      placeholder: 'Commercial Bank of Ceylon PLC',
+      placeholder: 'Example Bank PLC',
       hint: 'Exactly as it appears in online banking, so a customer can find it in their payee list.',
       wide: true,
       multiline: false,
@@ -415,7 +424,7 @@ export class SettingsPage {
     {
       name: 'branch' as const,
       label: 'Branch (optional)',
-      placeholder: 'Kollupitiya',
+      placeholder: 'Your branch',
       hint: 'A branch deposit slip asks for it; online banking usually does not.',
       wide: false,
       multiline: false,
@@ -423,7 +432,7 @@ export class SettingsPage {
     {
       name: 'accountName' as const,
       label: 'Account name',
-      placeholder: 'Spencer Denim Industries (Pvt) Ltd',
+      placeholder: 'Your Company (Pvt) Ltd',
       hint: "The name the account is held in. A customer's bank may check it against the number.",
       wide: true,
       multiline: false,
@@ -431,7 +440,7 @@ export class SettingsPage {
     {
       name: 'accountNumber' as const,
       label: 'Account number',
-      placeholder: '8001 2345 6789',
+      placeholder: '0000 0000 0000',
       hint: 'Digits, spaces and dashes. Type the spacing your bank prints — customers copy it.',
       wide: false,
       multiline: false,

@@ -257,6 +257,40 @@ public sealed class MediaService(
                 .ToList());
         }
 
+        // **A customer's payment slip, checked the same way and for a sharper reason** (PAY-01, doc 11 P7
+        // step 3). `sales.Payments.ProofAssetId` is the *only* reference a slip has: attaching one writes
+        // no usage row, deliberately, because the slip belongs to one payment and the media library's
+        // "used in…" panel is not where staff look for it. So without this check the guard above found
+        // nothing and a `Media.Delete` holder — Store Manager holds it alongside `Orders.View` — could
+        // soft-delete the evidence an approval is made on, with `MediaRetention` purging the bytes 30 days
+        // later and nothing on the order saying it had happened. A tester proved it end to end: 204, the
+        // queue's slip link gone, and both read-back routes 404.
+        //
+        // A direct read of the foreign key rather than a usage row, which is the argument the poster
+        // comment above makes and it applies more strongly here: a slip is a shopper's own document, and a
+        // guard that depends on a row having been written correctly is not the guard to put in front of
+        // it. It also protects the slips already attached before this check existed.
+        var usedAsProof = await dbContext.Payments
+            .AnyAsync(payment => payment.ProofAssetId == asset.Id, cancellationToken);
+
+        if (usedAsProof)
+        {
+            var payments = await dbContext.Payments
+                .AsNoTracking()
+                .Where(payment => payment.ProofAssetId == asset.Id)
+                .Select(payment => new { payment.Id, payment.Order!.OrderNumber, payment.CreatedAtUtc })
+                .ToListAsync(cancellationToken);
+
+            return new MediaDeleteOutcome.InUse(payments
+                .Select(payment => new MediaUsageDto(
+                    MediaUsageOwnerTypes.Payment,
+                    payment.Id.ToString(CultureInfo.InvariantCulture),
+                    MediaUsageRoles.PaymentSlip,
+                    payment.OrderNumber,
+                    payment.CreatedAtUtc))
+                .ToList());
+        }
+
         // Doc 08 §3.3: "An owner's save rewrites its usage rows in the same transaction." A soft delete
         // is such a save, so the rows this asset *owns* — what it uses, today only a video's poster —
         // go with it, in the same SaveChangesAsync below.

@@ -183,18 +183,22 @@ const PAGE_SIZE = 20;
                   >
                     <p>{{ problem.message }}</p>
                     @if (problem.shortLines; as short) {
-                      <p>
-                        Items no longer available:
-                        @for (line of shortList(short); track line.variantId) {
-                          <span>variant {{ line.variantId }} ({{ line.available }} left)</span>
+                      <p>Items no longer available:</p>
+                      <ul class="bt__short">
+                        @for (line of short; track line.variantId) {
+                          <li>
+                            <strong>{{ line.productName }}</strong>
+                            — {{ line.colourName }} / {{ line.sizeLabel }} ({{ line.sku }}):
+                            {{ line.available }} left, {{ line.needed }} needed
+                          </li>
                         }
-                      </p>
+                      </ul>
                     }
                   </div>
                 }
 
                 <label class="adm-field adm-field--wide">
-                  <span class="adm-label" [attr.for]="'note-' + row.orderNumber">
+                  <span class="adm-label">
                     Note (required when rejecting)
                   </span>
                   <input
@@ -361,6 +365,15 @@ const PAGE_SIZE = 20;
        here. A class rather than the data-testid, which is a test hook and not a styling one.
        (No backticks in this block: it is a template literal, and one would end it. That is the mistake
        this comment was written with on the first attempt.) */
+    /* The short-stock list. A list rather than a run of spans, because it is a list — and the spans
+       ran together into one sentence with no separator at narrow widths. */
+    .bt__short {
+      margin: 0.25rem 0 0;
+      padding-left: 1.25rem;
+    }
+    .bt__short li {
+      margin-bottom: 0.25rem;
+    }
     .bt__outcome:focus {
       outline: var(--focus-width) solid var(--color-primary);
       outline-offset: 2px;
@@ -456,15 +469,26 @@ export class BankTransfersPage {
   /**
    * Whether this row's button should read **Accept late payment** rather than **Approve**.
    *
-   * Doc 11 P7 step 8. The row is in the queue because its payment is still Pending, so normally Approve is
-   * the action — but the deadline can pass while the screen is open, and once the expiry job has run
-   * Approve is refused with `order_expired`. Two things put the right button there: a deadline that has
-   * passed, and a refusal that already said so.
+   * Doc 11 P7 step 8, and **keyed on the order's state rather than on the clock — the first version was
+   * keyed on the clock and that was a dead end staff could not get out of.**
+   *
+   * A row is in this queue because its payment is still `Pending`, which means the order is still
+   * `PendingPayment` with its stock `Reserved`: approvable, whatever the deadline says. The expiry job
+   * runs every five minutes over `TOP (50)`, so an order whose deadline passed a minute ago — or twenty
+   * minutes ago with a backlog, or indefinitely if the sweep is failing — is overdue **and perfectly
+   * payable**. Offering only Accept late payment there asked the server for something it refuses with
+   * `order_not_closed` ("this order is not expired or cancelled"), and since the clock stays past zero
+   * however many times Refresh is pressed, the screen could not offer Approve again. Meanwhile the stock
+   * sits reserved and sellable to somebody else, and a transfer that has arrived has to be refunded by
+   * hand (G-13 has no system path in this build).
+   *
+   * P7's own exception says staff and the job race, exactly one wins, and Accept late payment is for
+   * **"if expiry won"**. The only honest evidence that it won is the server saying so, which is the
+   * `order_expired` refusal. Until then the deadline is a fact to display — `timeLeft` says "Overdue by
+   * 7 min" — and not a reason to take the working button away.
    */
   protected canAcceptLate(row: BankTransferQueueRow): boolean {
-    return (
-      this.refusal(row)?.code === BANK_TRANSFER_REFUSALS.orderExpired || row.secondsUntilExpiry <= 0
-    );
+    return this.refusal(row)?.code === BANK_TRANSFER_REFUSALS.orderExpired;
   }
 
   /**
@@ -497,12 +521,6 @@ export class BankTransfersPage {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     })}`;
-  }
-
-  protected shortList(
-    lines: Readonly<Record<string, number>>,
-  ): readonly { variantId: string; available: number }[] {
-    return Object.entries(lines).map(([variantId, available]) => ({ variantId, available }));
   }
 
   protected decide(row: BankTransferQueueRow, decision: BankTransferDecision): void {

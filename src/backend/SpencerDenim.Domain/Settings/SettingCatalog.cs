@@ -111,9 +111,11 @@ public static class SettingCatalog
             SettingValueType.String,
             Permissions.Settings.Payments,
             "Bank name",
-            "The bank a customer transfers to, exactly as it appears in online banking - for example "
-            + "Commercial Bank of Ceylon PLC. Customers cannot pay by bank transfer until the bank name, "
-            + "account name and account number are all filled in."),
+            // No example bank here. A named real bank in help text that renders beside the box a Super
+            // Admin types the real one into is a value mistakable for data, which is the MAJOR 4 criterion.
+            "The bank a customer transfers to, exactly as it appears in online banking. Customers cannot "
+            + "pay by bank transfer until the bank name, account name and account number are all filled "
+            + "in."),
 
         new(
             SettingKeys.Bank.Branch,

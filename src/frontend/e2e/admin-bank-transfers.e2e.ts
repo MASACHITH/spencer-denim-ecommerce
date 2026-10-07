@@ -100,16 +100,25 @@ test.describe('the queue (doc 11 P7 step 4)', () => {
   });
 
   /**
-   * Doc 11 P7 step 8: an overdue row offers the action that will actually work.
+   * Doc 11 P7 step 8 — **and the first version of this test asserted the defect**, with a comment claiming
+   * the overdue row offered "the action that will actually work".
+   *
+   * Every row in this queue has a `Pending` payment, so every one is still `PendingPayment` with stock
+   * reserved, so every one is approvable whatever its deadline says. The expiry job runs every five
+   * minutes over `TOP (50)`: an overdue row is normally minutes from being swept, longer with a backlog,
+   * and never if the sweep is failing. The old screen offered only Accept late payment there, the server
+   * refused it with `order_not_closed`, and because the clock never goes back under zero, Refresh could
+   * not get staff out of the dead end — while the reserved stock stayed sellable to somebody else.
    */
-  test('offers Accept late payment on an overdue row and Approve on a live one', async ({ page }) => {
+  test('offers Approve on every queued row, however overdue', async ({ page }) => {
     await openQueue(page);
 
-    await expect(page.locator('[data-testid="approve-SD-2026-000123"]')).toBeVisible();
-    await expect(page.locator('[data-testid="accept-late-SD-2026-000123"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="time-left-SD-2026-000124"]')).toContainText('Overdue by');
 
-    await expect(page.locator('[data-testid="accept-late-SD-2026-000124"]')).toBeVisible();
-    await expect(page.locator('[data-testid="approve-SD-2026-000124"]')).toHaveCount(0);
+    for (const number of ['SD-2026-000123', 'SD-2026-000124']) {
+      await expect(page.locator(`[data-testid="approve-${number}"]`)).toBeVisible();
+      await expect(page.locator(`[data-testid="accept-late-${number}"]`)).toHaveCount(0);
+    }
   });
 
   /**
@@ -204,16 +213,24 @@ test.describe('the three decisions (doc 11 P7 steps 6 and 8)', () => {
 
   test('names every short line when a late acceptance is refused', async ({ page }) => {
     await openQueue(page);
-    await armOutcome(page, 'short');
 
+    // Accept late payment is reached the only way it can be reached now: the server refuses the approval
+    // because expiry has won, and *that* is what puts the button there.
+    await armOutcome(page, 'expired');
+    await page.locator('[data-testid="approve-SD-2026-000124"]').click();
+    await expect(page.locator('[data-testid="accept-late-SD-2026-000124"]')).toBeVisible();
+
+    await armOutcome(page, 'short');
     await page.locator('[data-testid="accept-late-SD-2026-000124"]').click();
 
     const refused = page.locator('[data-testid="refused-SD-2026-000124"]');
 
     // Both, not just the first: a staff member told about one of two will press the button again and be
     // told about the other (doc 11 P7 step 8).
-    await expect(refused).toContainText('variant 470 (0 left)');
-    await expect(refused).toContainText('variant 471 (1 left)');
+    await expect(refused).toContainText('Slim jeans');
+    await expect(refused).toContainText('0 left, 1 needed');
+    await expect(refused).toContainText('Denim jacket');
+    await expect(refused).toContainText('1 left, 2 needed');
   });
 
   /**
@@ -272,10 +289,10 @@ test.describe('the bank details form (PAY-01, doc 11 P7 preconditions)', () => {
   test('saves the bank details and keeps the grouping that was typed', async ({ page }) => {
     await openSettings(page);
 
-    await page.locator('[data-testid="field-bankName"]').fill('Commercial Bank of Ceylon PLC');
-    await page.locator('[data-testid="field-branch"]').fill('Kollupitiya');
-    await page.locator('[data-testid="field-accountName"]').fill('Spencer Denim Industries (Pvt) Ltd');
-    await page.locator('[data-testid="field-accountNumber"]').fill('8001 2345 6789');
+    await page.locator('[data-testid="field-bankName"]').fill('Example Bank PLC');
+    await page.locator('[data-testid="field-branch"]').fill('Example Branch');
+    await page.locator('[data-testid="field-accountName"]').fill('Example Shop (Pvt) Ltd');
+    await page.locator('[data-testid="field-accountNumber"]').fill('0000 1111 2222');
 
     await page.locator('[data-testid="save-bank"]').click();
 
@@ -285,7 +302,7 @@ test.describe('the bank details form (PAY-01, doc 11 P7 preconditions)', () => {
     // a shopper copies into online banking.
     await page.reload();
     await expect(page.getByRole('heading', { level: 2, name: 'Bank transfer' })).toBeVisible();
-    await expect(page.locator('[data-testid="field-accountNumber"]')).toHaveValue('8001 2345 6789');
+    await expect(page.locator('[data-testid="field-accountNumber"]')).toHaveValue('0000 1111 2222');
   });
 
   test('shows the API message against the account-number box it refused', async ({ page }) => {
@@ -316,6 +333,12 @@ test.describe('the screen itself', () => {
    */
   test('has no sideways scroll and no undersized or buried control at any width', async ({ page }) => {
     await openQueue(page);
+
+    // Accept late payment is measured too, and it only exists once the server has refused an approval as
+    // expired — so this arranges that state rather than quietly dropping the control from the sweep.
+    await armOutcome(page, 'expired');
+    await page.locator('[data-testid="approve-SD-2026-000124"]').click();
+    await expect(page.locator('[data-testid="accept-late-SD-2026-000124"]')).toBeVisible();
 
     // Every clause as its own clause. `undersized` returns [] both when everything passes and when the
     // selector matched nothing (#80), so a renamed test id would make this pass silently.

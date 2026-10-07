@@ -8,6 +8,7 @@ import {
   BankTransferDecisionResult,
   BankTransferQueuePage,
   BankTransferRefusal,
+  BankTransferShortLine,
 } from './bank-transfer.model';
 
 /**
@@ -79,10 +80,14 @@ export function toBankTransferRefusal(error: unknown): BankTransferRefusal | nul
   const text = (key: string): string | null =>
     typeof body[key] === 'string' ? (body[key] as string) : null;
 
-  const shortLines =
-    body['shortLines'] !== null && typeof body['shortLines'] === 'object'
-      ? (body['shortLines'] as Record<string, number>)
-      : null;
+  // An array of described lines (the API's own shape since the ids-only version proved unusable on
+  // screen). Checked rather than cast through: a problem document is the one payload most likely to
+  // arrive in an unexpected shape, because every layer in front of it can produce one.
+  const shortLines = Array.isArray(body['shortLines'])
+    ? (body['shortLines'] as BankTransferShortLine[]).filter(
+        (line) => line !== null && typeof line === 'object',
+      )
+    : null;
 
   return {
     code: text('code') ?? 'conflict',

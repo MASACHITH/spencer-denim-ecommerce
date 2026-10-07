@@ -162,6 +162,25 @@ public sealed class OrderExpiryTests(SqlServerDatabaseFixture sqlServer) : BankT
         Assert.Equal(OrderStatus.Expired, (await ReadOrderAsync(order.PublicId)).Status);
     }
 
+    /// <summary>
+    /// Doc 08 §5.6 step 1: the batch is the earliest deadlines first, and the batch size is a ceiling.
+    /// </summary>
+    /// <remarks>
+    /// <b>This test was red in a full run and green alone, and the reason is #114's family.</b> It placed
+    /// three orders and filtered the batch down to its own three — but <c>FindDueOrdersAsync</c> returns
+    /// the <b>50 earliest</b> deadlines, the assembly shares one database, orders are never deleted (doc 08
+    /// §1.6), and the neighbouring suites leave dozens of unpaid orders behind. Three orders placed last
+    /// have the <i>latest</i> deadlines of all of them, so they fell off <c>TOP (50)</c> and the filtered
+    /// list came back empty. The second half had the same disease the other way round: asserting the
+    /// capped read returned two rows was satisfied by any two orders in the database, so it would have
+    /// passed with the feature deleted.
+    /// <para>
+    /// The fix is to control the set rather than to filter it. These three orders are given deadlines in
+    /// 2020, a <c>nowUtc</c> cutoff days after them, and nothing else in the database can be due before
+    /// that: a neighbour's unpaid order is 48 hours after whenever it was placed, which is this decade. So
+    /// the batch <i>is</i> these three, in a known order, and the ceiling can be asserted exactly.
+    /// </para>
+    /// </remarks>
     [Fact]
     public async Task The_batch_read_finds_due_orders_oldest_deadline_first_and_stops_at_the_batch_size()
     {
@@ -176,34 +195,49 @@ public sealed class OrderExpiryTests(SqlServerDatabaseFixture sqlServer) : BankT
             await OrderIdAsync(third.Order.PublicId),
         };
 
+        // Deliberately out of id order, so "oldest deadline first" is a different answer from "by id" and
+        // the assertion below can tell them apart. A minute between them, which is far more than
+        // datetime2(3) can tie on.
+        var epoch = new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        await SetDeadlineAsync(ids[2], epoch.AddMinutes(1));
+        await SetDeadlineAsync(ids[0], epoch.AddMinutes(2));
+        await SetDeadlineAsync(ids[1], epoch.AddMinutes(3));
+
+        var expected = new[] { ids[2], ids[0], ids[1] };
+        var cutoff = epoch.AddDays(2);
+
         var due = await InScopeAsync(services => services
             .GetRequiredService<IOrderExpiryStore>()
-            .FindDueOrdersAsync(50, DateTime.UtcNow.AddHours(49), Token));
+            .FindDueOrdersAsync(50, cutoff, Token));
 
-        // **Asserted as a subsequence, not as the whole list.** The assembly shares one database and
-        // orders are never deleted (doc 08 §1.6), so every unpaid order a neighbouring test placed is also
-        // due. A test that expected exactly these three would be an assertion about test ordering, which
-        // is the mistake this suite has made and fixed twice.
-        var mine = due.Where(id => ids.Contains(id)).ToList();
-        Assert.Equal(3, mine.Count);
-
-        // Oldest deadline first — and by id where two deadlines are equal, which is what makes this
-        // assertion possible at all.
-        //
-        // **The first version of this line failed in a full run and passed alone.** Three orders placed
-        // milliseconds apart can share a `PaymentDueAtUtc` to `datetime2(3)`, and the query sorted on that
-        // column alone, so their relative order was whatever the engine returned. The fix was in the query
-        // (a `ThenBy(Id)`), not here: a job whose "oldest first" is only usually true is a job nothing can
-        // assert about, and the id tie-break costs nothing because it is the order the index is already in.
-        Assert.Equal(ids, mine);
+        // The whole batch, not a subsequence of it: nothing else in the database is due in 2020.
+        Assert.Equal(expected, due);
 
         // And the batch size is a ceiling, which is what stops one bad afternoon's backlog holding stock
-        // row locks for minutes while live checkouts wait (doc 08 §5.6 step 1).
+        // row locks for minutes while live checkouts wait (doc 08 §5.6 step 1). Exactly which two, so this
+        // cannot be satisfied by two of somebody else's orders.
         var capped = await InScopeAsync(services => services
             .GetRequiredService<IOrderExpiryStore>()
-            .FindDueOrdersAsync(2, DateTime.UtcNow.AddHours(49), Token));
+            .FindDueOrdersAsync(2, cutoff, Token));
 
-        Assert.Equal(2, capped.Count);
+        Assert.Equal(expected.Take(2), capped);
+    }
+
+    /// <summary>
+    /// Moves one order's deadline, which is the one thing <see cref="ExpireAsync"/> deliberately does not
+    /// do: the job's own tests move the clock instead, so the deadline stays the fixture's.
+    /// </summary>
+    private async Task SetDeadlineAsync(int orderId, DateTime dueAtUtc)
+    {
+        using var scope = CreateScope();
+
+        var moved = await scope.ServiceProvider.GetRequiredService<AppDbContext>().Orders
+            .Where(candidate => candidate.Id == orderId)
+            .ExecuteUpdateAsync(
+                candidate => candidate.SetProperty(row => row.PaymentDueAtUtc, dueAtUtc),
+                Token);
+
+        Assert.Equal(1, moved);
     }
 
     [Fact]

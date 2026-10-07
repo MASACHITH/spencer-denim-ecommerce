@@ -80,12 +80,39 @@ export interface BankTransferRefusal {
   readonly orderStatus: string | null;
   readonly paymentStatus: string | null;
 
-  /** For a refused late acceptance: variant id to the quantity actually available. */
-  readonly shortLines: Readonly<Record<string, number>> | null;
+  /** For a refused late acceptance: every line that could not be re-acquired, named. */
+  readonly shortLines: readonly BankTransferShortLine[] | null;
+}
+
+/**
+ * One line a late acceptance could not re-acquire.
+ *
+ * **Named rather than numbered.** The API used to send variant id to quantity available, and the screen
+ * rendered "variant 470 (0 left)" — an internal id, to a staff member deciding whether to refund somebody,
+ * on a screen with no order-detail page to resolve it in. `needed` matters as much as `available`: one of
+ * two short is a problem and one of one is not.
+ */
+export interface BankTransferShortLine {
+  readonly variantId: number;
+  readonly sku: string;
+  readonly productName: string;
+  readonly colourName: string;
+  readonly sizeLabel: string;
+  readonly needed: number;
+  readonly available: number;
 }
 
 /** The refusal codes the screen branches on. */
 export const BANK_TRANSFER_REFUSALS = {
   orderExpired: 'order_expired',
   shortStock: 'short_stock',
+
+  /**
+   * Accept late payment was pressed on an order that is still open.
+   *
+   * Named here rather than left to the generic path because it is the code that says **expiry has not
+   * won**: the order is still `PendingPayment` with its stock reserved, so Approve is the action and the
+   * screen has to offer it again. A refusal that only the generic path knows about cannot move a button.
+   */
+  orderNotClosed: 'order_not_closed',
 } as const;

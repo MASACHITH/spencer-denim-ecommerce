@@ -332,9 +332,21 @@ public sealed class BankTransferReviewTests(SqlServerDatabaseFixture sqlServer) 
         var result = await AcceptLateAsync(orderId);
 
         var shortStock = Assert.IsType<BankTransferDecisionResult.ShortStock>(result);
-        Assert.Equal(2, shortStock.AvailableByVariantId.Count);
-        Assert.Equal(0, shortStock.AvailableByVariantId[variantIds[0]]);
-        Assert.Equal(1, shortStock.AvailableByVariantId[variantIds[1]]);
+        Assert.Equal(2, shortStock.Lines.Count);
+
+        var first = shortStock.Lines.Single(line => line.VariantId == variantIds[0]);
+        var second = shortStock.Lines.Single(line => line.VariantId == variantIds[1]);
+
+        Assert.Equal(0, first.Available);
+        Assert.Equal(1, second.Available);
+
+        // **Named, so a staff member can act on it.** The refusal used to carry variant ids alone, which
+        // on a screen with no order-detail page is a dead end. Every field is a placement-time snapshot
+        // off sales.OrderLines, so this is the name the customer bought under.
+        Assert.False(string.IsNullOrWhiteSpace(first.Sku));
+        Assert.False(string.IsNullOrWhiteSpace(first.ProductName));
+        Assert.True(first.Needed > 0);
+        Assert.True(second.Needed > 0);
 
         // **Nothing was written.** The order is still Expired, no invoice number was issued, the payment
         // is still Expired, and — the one a partial deduction would break — the stock is exactly as the
@@ -514,12 +526,20 @@ public sealed class BankTransferReviewTests(SqlServerDatabaseFixture sqlServer) 
             var orderId = await OrderIdAsync(order.PublicId);
             var before = await StockAsync(variantId);
 
-            // **This race is why the payment update carries its own status guard**, and no sequential test
-            // can show it. Reject deliberately does not claim the order row (doc 11 P7 step 6b: a
-            // rejection does not move the order), so its only protection in the window between reading
-            // the open payment and updating it is `AND Status = Pending` on the statement itself. Without
-            // that, an approval committing inside the window leaves the settling payment set to Failed
-            // while the order is Paid — a paid order with no money against it.
+            // **This race is why the payment update carries its own status guard.** In the window between
+            // reading the open payment and updating it, an approval can commit; without
+            // `AND Status = Pending` on the statement itself the rejection would set the row that now
+            // settles the order to Failed, leaving a paid order with no money against it.
+            //
+            // **Two things this comment used to claim are wrong, and both are corrected here.** It said
+            // "reject deliberately does not claim the order row" — the shipped code claims it, and the
+            // comment was left behind by the fix. And it is not true that no sequential test can show the
+            // guard: a tester reverted the claim and ran this test 48 rounds without a single red, because
+            // approve does six statements before committing and so reject almost always reaches its UPDATE
+            // first. What this test does establish is that **exactly one decision applies** under real
+            // contention, whichever wins, and that the rows agree with the winner afterwards; the claim's
+            // own contribution is lock ordering and a refusal diagnosed from settled state, which the
+            // store's comment now states without overstating.
             var approve = Task.Run(() => ApproveAsync(orderId), Token);
             var reject = Task.Run(() => RejectAsync(orderId, "No credit found."), Token);
 
@@ -561,6 +581,64 @@ public sealed class BankTransferReviewTests(SqlServerDatabaseFixture sqlServer) 
         }
     }
 
+    /// <summary>
+    /// The other half of the provider guard: an order that <i>is</i> a bank transfer whose payment row is
+    /// not.
+    /// </summary>
+    /// <remarks>
+    /// <b>This shape is where the payment-row filter is the only thing standing in the way.</b> The order
+    /// claim passes (the order really is a bank-transfer order), so what has to refuse is
+    /// <c>FindReviewablePaymentAsync</c>'s <c>ProviderCode = BankTransfer</c> — and if it did not, the
+    /// settle statement's own provider guard would refuse behind it, which is the belt the order-level
+    /// guard has.
+    /// <para>
+    /// Not reachable today (nothing creates a PayPal payment row) and written for the day W4-01 does:
+    /// a captured PayPal payment sitting on an order whose provider column says otherwise is precisely the
+    /// mixed row an approval must not settle.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task A_payment_row_from_another_provider_is_not_settled_by_the_bank_flow()
+    {
+        var (order, variantId) = await PlaceOrderAsync();
+        var orderId = await OrderIdAsync(order.PublicId);
+
+        var before = await StockAsync(variantId);
+        var seriesBefore = await InvoiceSeriesNextValueAsync();
+
+        using (var scope = CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+            var moved = await db.Payments
+                .Where(candidate => candidate.OrderId == orderId)
+                .ExecuteUpdateAsync(
+                    candidate => candidate.SetProperty(
+                        row => row.ProviderCode,
+                        PaymentProviderCodes.PayPal),
+                    Token);
+
+            // The arrangement, asserted: a no-op update would leave a bank payment behind and this test
+            // would be checking the ordinary approval path while claiming to check the guard.
+            Assert.Equal(1, moved);
+        }
+
+        var outcome = await ApproveAsync(orderId);
+
+        // Refused rather than NotFound: the order exists and is a bank-transfer order, so the honest
+        // answer names what is wrong with it rather than pretending the token is unknown.
+        var refused = Assert.IsType<BankTransferDecisionResult.Refused>(outcome);
+        Assert.Equal(BankTransferRefusalCodes.PaymentNotReviewable, refused.Code);
+
+        // And nothing moved — rows, stock and the invoice series.
+        var row = await ReadOrderAsync(order.PublicId);
+        Assert.Equal(OrderStatus.PendingPayment, row.Status);
+        Assert.Equal(OrderStockState.Reserved, row.StockState);
+        Assert.Null(row.InvoiceNumber);
+        Assert.Equal(before, await StockAsync(variantId));
+        Assert.Equal(seriesBefore, await InvoiceSeriesNextValueAsync());
+    }
+
     [Fact]
     public async Task A_PayPal_order_cannot_be_approved_through_the_bank_flow()
     {
@@ -596,6 +674,9 @@ public sealed class BankTransferReviewTests(SqlServerDatabaseFixture sqlServer) 
                     .SingleAsync(Token));
         }
 
+        var seriesBefore = await InvoiceSeriesNextValueAsync();
+        var paymentBefore = (await ReadOrderAsync(order.PublicId)).Payments.Single().Status;
+
         try
         {
             // NotFound, not Refused: the same answer a token naming nothing gets, so the admin API cannot
@@ -604,9 +685,16 @@ public sealed class BankTransferReviewTests(SqlServerDatabaseFixture sqlServer) 
             Assert.IsType<BankTransferDecisionResult.NotFound>(await RejectAsync(orderId));
             Assert.IsType<BankTransferDecisionResult.NotFound>(await AcceptLateAsync(orderId));
 
+            // **Asserted on the rows and the series, not only on the result type.** A tester's mutation
+            // made exactly this point: the defect this test was written for did not return a wrong result
+            // type, it paid an order — so what must be checked is that nothing moved.
             var row = await ReadOrderAsync(order.PublicId);
             Assert.Equal(OrderStatus.PendingPayment, row.Status);
+            Assert.Equal(OrderStockState.Reserved, row.StockState);
             Assert.Null(row.InvoiceNumber);
+            Assert.Null(row.PaidAtUtc);
+            Assert.Equal(paymentBefore, row.Payments.Single().Status);
+            Assert.Equal(seriesBefore, await InvoiceSeriesNextValueAsync());
         }
         finally
         {

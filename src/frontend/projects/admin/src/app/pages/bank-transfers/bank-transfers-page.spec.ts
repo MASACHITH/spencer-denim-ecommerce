@@ -132,9 +132,83 @@ describe('BankTransfersPage (PAY-01, ADM-09)', () => {
       'Overdue by 11 min',
     );
 
-    // And an overdue row offers the action that will actually work (doc 11 P7 step 8).
+    // **And it still offers Approve, which is the action that works.** The first version of this test
+    // asserted the opposite, with a comment claiming it offered "the action that will actually work" — it
+    // did not. A row is in this queue because its payment is still Pending, so the order is still
+    // PendingPayment with its stock reserved and the server approves it happily; the expiry job sweeps
+    // every five minutes over TOP (50), so "overdue" and "payable" overlap by minutes normally and by much
+    // longer with a backlog or a failing sweep. Offering only Accept late payment asked the server for
+    // something it refuses with `order_not_closed`, and the clock never goes back under zero, so Refresh
+    // could not get staff out of it. Doc 11 P7's exception is explicit: Accept late payment is for "if
+    // expiry won", and only the server can say that it did.
+    expect(element.querySelector('[data-testid="approve-SD-2026-000123"]')).not.toBeNull();
+    expect(element.querySelector('[data-testid="accept-late-SD-2026-000123"]')).toBeNull();
+  });
+
+  it('keeps Approve available on a row that is hours overdue', async () => {
+    await open(page({ rows: [row({ secondsUntilExpiry: -6 * 60 * 60 })] }));
+
+    // Six hours past the deadline is not evidence that expiry has won — a failing sweep looks exactly
+    // like this — and the stock is still reserved to this order all the while.
+    expect(element.querySelector('[data-testid="time-left-SD-2026-000123"]')?.textContent).toContain(
+      'Overdue by 6 h',
+    );
+    expect(element.querySelector('[data-testid="approve-SD-2026-000123"]')).not.toBeNull();
+  });
+
+  it('offers Approve again when Accept late payment is refused as not closed', async () => {
+    await open(page({ rows: [row({ secondsUntilExpiry: -11 * 60 })] }));
+
+    // The way back out of the dead end, in one test: whatever puts an Accept-late button on screen, a
+    // server that says "this order is not expired or cancelled" has said Approve is the action — so the
+    // screen has to offer it, and `order_not_closed` is named in BANK_TRANSFER_REFUSALS for that reason.
+    element.querySelector<HTMLButtonElement>('[data-testid="approve-SD-2026-000123"]')!.click();
+    await settle();
+
+    answerAntiforgery();
+    await settle();
+
+    http.expectOne(`${BankTransferApi.queueUrl}/${ORDER}/approve`).flush(
+      {
+        title: 'This decision could not be applied',
+        status: 409,
+        code: 'order_expired',
+        orderStatus: 'Expired',
+        paymentStatus: 'Expired',
+        detail: 'This order expired before the transfer was approved.',
+      },
+      { status: 409, statusText: 'Conflict' },
+    );
+    await settle();
+
     expect(element.querySelector('[data-testid="accept-late-SD-2026-000123"]')).not.toBeNull();
-    expect(element.querySelector('[data-testid="approve-SD-2026-000123"]')).toBeNull();
+
+    element.querySelector<HTMLButtonElement>('[data-testid="accept-late-SD-2026-000123"]')!.click();
+    await settle();
+
+    answerAntiforgery();
+    await settle();
+
+    http.expectOne(`${BankTransferApi.queueUrl}/${ORDER}/accept-late`).flush(
+      {
+        title: 'This decision could not be applied',
+        status: 409,
+        code: 'order_not_closed',
+        orderStatus: 'PendingPayment',
+        paymentStatus: 'Pending',
+        detail:
+          'This order is not expired or cancelled, so there is no late payment to accept. It is still '
+          + 'awaiting payment, so Approve is the action.',
+      },
+      { status: 409, statusText: 'Conflict' },
+    );
+    await settle();
+
+    expect(element.querySelector('[data-testid="approve-SD-2026-000123"]')).not.toBeNull();
+    expect(element.querySelector('[data-testid="accept-late-SD-2026-000123"]')).toBeNull();
+    expect(element.querySelector('[data-testid="refused-SD-2026-000123"]')?.textContent).toContain(
+      'Approve is the action',
+    );
   });
 
   it('approves and reports the invoice number', async () => {
@@ -239,6 +313,27 @@ describe('BankTransfersPage (PAY-01, ADM-09)', () => {
   it('names every short line when a late acceptance is refused', async () => {
     await open(page({ rows: [row({ secondsUntilExpiry: -60 })] }));
 
+    // **Accept late payment is reached the only way it can be reached: the server said expiry won.** This
+    // test used to rely on a past deadline putting the button there, which was the dead end MAJOR 1
+    // records — an overdue row is still approvable, so the clock cannot be the trigger.
+    element.querySelector<HTMLButtonElement>('[data-testid="approve-SD-2026-000123"]')!.click();
+    await settle();
+
+    answerAntiforgery();
+    await settle();
+
+    http.expectOne(`${BankTransferApi.queueUrl}/${ORDER}/approve`).flush(
+      {
+        title: 'This decision could not be applied',
+        detail: 'This order expired before the transfer was approved.',
+        code: 'order_expired',
+        orderStatus: 'Expired',
+        paymentStatus: 'Expired',
+      },
+      { status: 409, statusText: 'Conflict' },
+    );
+    await settle();
+
     element.querySelector<HTMLButtonElement>('[data-testid="accept-late-SD-2026-000123"]')!.click();
     await settle();
 
@@ -250,7 +345,26 @@ describe('BankTransfersPage (PAY-01, ADM-09)', () => {
         title: 'Some items are no longer in stock',
         detail: 'Some of its items have been sold since it expired.',
         code: 'short_stock',
-        shortLines: { '470': 0, '471': 1 },
+        shortLines: [
+          {
+            variantId: 470,
+            sku: 'SKU-470',
+            productName: 'Slim jeans',
+            colourName: 'Indigo',
+            sizeLabel: '32',
+            needed: 1,
+            available: 0,
+          },
+          {
+            variantId: 471,
+            sku: 'SKU-471',
+            productName: 'Denim jacket',
+            colourName: 'Washed blue',
+            sizeLabel: 'M',
+            needed: 2,
+            available: 1,
+          },
+        ],
       },
       { status: 409, statusText: 'Conflict' },
     );
@@ -261,8 +375,15 @@ describe('BankTransfersPage (PAY-01, ADM-09)', () => {
 
     // Both, not just the first: a staff member told about one of two will press the button again and be
     // told about the other (doc 11 P7 step 8).
-    expect(refused).toContain('variant 470 (0 left)');
-    expect(refused).toContain('variant 471 (1 left)');
+    //
+    // And **named**: the product, the colour and size, the SKU, and both figures. An internal variant id
+    // is not something anybody can act on, which is what this assertion used to settle for.
+    expect(refused).toContain('Slim jeans');
+    expect(refused).toContain('Indigo / 32');
+    expect(refused).toContain('SKU-470');
+    expect(refused).toContain('0 left, 1 needed');
+    expect(refused).toContain('Denim jacket');
+    expect(refused).toContain('1 left, 2 needed');
   });
 
   /**

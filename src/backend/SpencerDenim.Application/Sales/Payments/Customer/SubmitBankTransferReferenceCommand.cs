@@ -22,11 +22,22 @@ public sealed record SubmitBankTransferReferenceCommand(Guid OrderPublicId, stri
 /// Writes the customer's reference on to the order's open bank payment.
 /// </summary>
 /// <remarks>
-/// <b>It updates the open row and never creates one.</b> Doc 08 §3.5 N7 is explicit, and the difference
-/// matters: a reference is a correction to an attempt in progress, so creating a second <c>Pending</c> row
-/// for it would both violate <c>UX_Payments_OneOpen</c> and tell staff there were two transfers to look
-/// for. Opening a row after a rejection is the <i>slip upload's</i> job, where the customer is submitting
-/// new evidence rather than editing old evidence — see <see cref="IBankTransferProofStore.OpenPaymentAsync"/>.
+/// <b>It writes to the order's open row, and opens one when there is none — which is the fix to a defect
+/// the first version shipped.</b> That version required an open row and answered 404 without one, with a
+/// remark arguing that a reference only ever corrects an attempt in progress. Doc 11 P7 step 6b says
+/// otherwise: after a rejection the order <i>stays</i> <c>PendingPayment</c> and the customer may transfer
+/// again. There is no open row then, so the shopper saw the pay panel, an empty reference box, and
+/// <i>"This order can no longer be paid"</i> when they pressed Save — about an order that was perfectly
+/// payable, with no email in this build to explain any of it. The slip upload opened a row in exactly that
+/// situation and the reference did not, which made the two halves of one panel disagree.
+/// <para>
+/// So both now go through <see cref="IBankTransferProofStore.OpenPaymentAsync"/>, which is still doc 08
+/// §3.5 N7's rule — "while a bank payment is Pending, a new reference updates that record; a new record is
+/// created only after a rejection" — and still one open row, because that method's whole job is to answer
+/// with the single open row, creating it only when none exists and treating a concurrent insert's 2627 as
+/// expected. <b>Clearing</b> a reference is the exception: with no open row there is nothing to clear, so
+/// it answers success without creating a row to hold a null.
+/// </para>
 /// <para>
 /// <b>No throttle here, and that is deliberate.</b> Doc 08 §3.3 N10 rate-limits <i>uploads</i>, because an
 /// upload costs disk and a row; a reference is one short column on a row that already exists, and rewriting
@@ -37,7 +48,6 @@ public sealed record SubmitBankTransferReferenceCommand(Guid OrderPublicId, stri
 /// </para>
 /// </remarks>
 public sealed class SubmitBankTransferReferenceCommandHandler(
-    IBankTransferReader reader,
     IBankTransferProofStore store,
     IClock clock)
     : ICommandHandler<SubmitBankTransferReferenceCommand, SubmitBankTransferReferenceResult>
@@ -77,15 +87,24 @@ public sealed class SubmitBankTransferReferenceCommandHandler(
             ]);
         }
 
-        if (await reader.FindOpenPaymentAsync(command.OrderPublicId, cancellationToken) is not { } payment)
+        var nowUtc = clock.UtcNow.UtcDateTime;
+
+        // The open row, or a new one when the last attempt was rejected — the same call the slip upload
+        // makes, so one panel cannot accept a slip and refuse a reference about the same order.
+        //
+        // null means the order is not PendingPayment: paid, expired, cancelled or not an order at all.
+        // That is the only state in which "this order can no longer be paid" is true.
+        var paymentId = await store.OpenPaymentAsync(command.OrderPublicId, nowUtc, cancellationToken);
+
+        if (paymentId is null)
         {
             return new SubmitBankTransferReferenceResult.NotFound();
         }
 
         var written = await store.SetReferenceAsync(
-            payment.PaymentId,
+            paymentId.Value,
             reference,
-            clock.UtcNow.UtcDateTime,
+            nowUtc,
             cancellationToken);
 
         // False means the payment stopped being Pending between the read above and the statement — a staff

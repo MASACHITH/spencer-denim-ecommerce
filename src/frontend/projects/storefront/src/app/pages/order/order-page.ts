@@ -331,7 +331,7 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
                   </p>
 
                   <label class="pay__field">
-                    <span class="pay__label" for="pay-ref-input">Your bank's reference</span>
+                    <span class="pay__label">Your bank's reference</span>
                     <input
                       class="pay__input"
                       id="pay-ref-input"
@@ -361,7 +361,7 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
                   </div>
 
                   <label class="pay__field">
-                    <span class="pay__label" for="pay-slip-input">
+                    <span class="pay__label">
                       A photo or PDF of your slip (up to 5 MB)
                     </span>
                     <input
@@ -397,10 +397,27 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
               <!-- A real state, not an error: doc 11 P7 makes "bank details set by a Super Admin" a
                    precondition, and the shop can be live before the client sends them. Half a form is
                    worse than none — a shopper who saw a bank name and an empty account number might
-                   transfer to whatever they found. -->
+                   transfer to whatever they found.
+
+                   **"We will be in touch" used to be here, and it was a promise nothing can keep.**
+                   Nothing in this build contacts a customer: ops.EmailOutbox and the templates are W3-06,
+                   and this branch is reached precisely when the shop has not finished setting itself up,
+                   so the one thing that would make the sentence true is the thing that is missing. A
+                   reviewer was right that a three-phrase blocklist in the tests is a canary and not a
+                   property — the property is that this page only ever says what the system can do, and
+                   that has to be held line by line.
+
+                   The deadline is named here as well. It applies whether or not the shop has filled its
+                   details in: this order is released if nothing arrives by then, and a shopper who cannot
+                   see a deadline cannot act on it. -->
               <p class="pay__lead" data-testid="pay-pending-details">
-                We are confirming the payment details for this order and will be in touch. Keep this
-                page's address — it is the link to your order — and nothing has been charged.
+                We are still confirming the payment details for this order, so there is nothing to transfer
+                to yet. Nothing has been charged. Keep this page's address — it is the link to your order,
+                and the details will appear here once they are set.
+              </p>
+              <p class="pay__lead" data-testid="pay-pending-due">
+                Please check back before <strong>{{ dueAt(placed) }}</strong>: if no payment reaches us by
+                then, the order is released and the items go back on sale.
               </p>
             }
           </section>

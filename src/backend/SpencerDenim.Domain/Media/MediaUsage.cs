@@ -38,6 +38,18 @@ public static class MediaUsageOwnerTypes
     public const string MediaAsset = "MediaAsset";
 
     /// <summary>
+    /// A customer's payment slip (<c>sales.Payments.ProofAssetId</c>, PAY-01, doc 11 P7 step 3).
+    /// </summary>
+    /// <remarks>
+    /// <b>The one owner type whose reference is checked directly rather than through a usage row</b>, for
+    /// the reason <c>MediaService.DeleteAsync</c> gives about a video's poster: <c>ProofAssetId</c> is a
+    /// real foreign key, so reading it is both cheaper and safer than trusting that a usage row was
+    /// written. This constant exists so the 409's "used in…" list can say what is holding the file, in the
+    /// same shape every other owner uses. <see cref="MediaUsage.OwnerId"/> is the payment's id.
+    /// </remarks>
+    public const string Payment = "Payment";
+
+    /// <summary>
     /// One tile, banner or hero of the homepage (<c>content.HomeSectionItems</c>).
     /// <para>
     /// The <b>item</b>, which is what doc 08 §3.3 enumerates, not the section it sits in. A section id
@@ -77,4 +89,9 @@ public static class MediaUsageRoles
 
     /// <summary>The shop's logo (GLB-02, ADM-22): <c>Store.LogoAssetId</c>'s image.</summary>
     public const string Logo = "Logo";
+
+    /// <summary>
+    /// The customer's proof of a bank transfer (PAY-01): <c>sales.Payments.ProofAssetId</c>'s image or PDF.
+    /// </summary>
+    public const string PaymentSlip = "PaymentSlip";
 }

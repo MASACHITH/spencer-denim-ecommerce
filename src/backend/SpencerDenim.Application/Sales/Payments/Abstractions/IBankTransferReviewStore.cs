@@ -126,13 +126,34 @@ public abstract record BankTransferDecisionResult
         PaymentStatus? PaymentStatus) : BankTransferDecisionResult;
 
     /// <summary>
-    /// Doc 11 P7 step 8: a late acceptance whose stock re-check failed, with <b>every</b> short line —
-    /// variant id to the quantity actually available — and not only the first one found. Nothing was
-    /// written.
+    /// Doc 11 P7 step 8: a late acceptance whose stock re-check failed, with <b>every</b> short line and
+    /// not only the first one found. Nothing was written.
     /// </summary>
-    public sealed record ShortStock(IReadOnlyDictionary<int, int> AvailableByVariantId)
-        : BankTransferDecisionResult;
+    public sealed record ShortStock(IReadOnlyList<ShortStockLine> Lines) : BankTransferDecisionResult;
 }
+
+/// <summary>
+/// One line a late acceptance could not re-acquire, in terms a staff member can act on.
+/// </summary>
+/// <remarks>
+/// <b>Named, not numbered.</b> The first version carried variant id to quantity available, and a refusal
+/// then read "variant 470 (0 left)" — an internal id, on a screen with no order-detail page to look it up
+/// in, to somebody deciding whether to refund a customer's money. Every field here is already on
+/// <c>sales.OrderLines</c> as a placement-time snapshot, so naming the item costs nothing extra: no join,
+/// and the name shown is the name the customer bought under rather than whatever the catalogue says today.
+/// <para>
+/// <see cref="Needed"/> as well as <see cref="Available"/>, because "1 left" is not actionable on its own —
+/// one of two is short and one of one is not.
+/// </para>
+/// </remarks>
+public sealed record ShortStockLine(
+    int VariantId,
+    string Sku,
+    string ProductName,
+    string ColourName,
+    string SizeLabel,
+    int Needed,
+    int Available);
 
 /// <summary>The refusal codes a client may branch on. Stable strings, not message text.</summary>
 public static class BankTransferRefusalCodes

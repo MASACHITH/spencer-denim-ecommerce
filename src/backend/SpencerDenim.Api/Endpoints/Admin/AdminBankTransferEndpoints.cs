@@ -242,12 +242,12 @@ internal static class AdminBankTransferEndpoints
             {
                 ["code"] = ShortStockCode,
 
-                // Keyed by variant id as a string, the shape POST /api/checkout/orders already uses for
-                // its own short-lines payload, so a client has one way of reading "what is short".
-                ["shortLines"] = shortStock.AvailableByVariantId.ToDictionary(
-                    entry => entry.Key.ToString(CultureInfo.InvariantCulture),
-                    entry => entry.Value,
-                    StringComparer.Ordinal),
+                // **An array of described lines, and deliberately not checkout's shape.**
+                // POST /api/checkout/orders keys its short lines by variant id because its reader is the
+                // shopper's own bag, which can resolve an id to the line the shopper is looking at. This
+                // reader is a staff member on a queue screen with no order-detail page, so an id is a
+                // dead end: the refusal has to say which item, in the words the customer bought it under.
+                ["shortLines"] = shortStock.Lines,
             }),
 
         _ => throw new InvalidOperationException($"Unhandled review result {result.GetType().Name}."),

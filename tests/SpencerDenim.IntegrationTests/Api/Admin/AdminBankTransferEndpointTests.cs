@@ -363,10 +363,10 @@ public sealed class AdminBankTransferEndpointTests(SqlServerDatabaseFixture sqlS
                 BankSettingsUrl,
                 $$"""
                 {
-                  "bankName": "Commercial Bank of Ceylon PLC",
-                  "branch": "Kollupitiya",
-                  "accountName": "Spencer Denim Industries (Pvt) Ltd",
-                  "accountNumber": "8001 2345 6789",
+                  "bankName": "Example Bank PLC",
+                  "branch": "Example Branch",
+                  "accountName": "Example Shop (Pvt) Ltd",
+                  "accountNumber": "0000 1111 2222",
                   "instructions": "CDM deposits take a working day.",
                   "rowVersion": {{JsonSerializer.Serialize(await BankVersionAsync(payments))}}
                 }
@@ -374,7 +374,7 @@ public sealed class AdminBankTransferEndpointTests(SqlServerDatabaseFixture sqlS
 
             Assert.Equal(HttpStatusCode.NoContent, saved.StatusCode);
 
-            Assert.Equal("8001 2345 6789", await SettingValueAsync(SettingKeys.Bank.AccountNumber));
+            Assert.Equal("0000 1111 2222", await SettingValueAsync(SettingKeys.Bank.AccountNumber));
         }
         finally
         {
@@ -406,10 +406,10 @@ public sealed class AdminBankTransferEndpointTests(SqlServerDatabaseFixture sqlS
                 BankSettingsUrl,
                 $$"""
                 {
-                  "bankName": "Commercial Bank of Ceylon PLC",
-                  "branch": "Kollupitiya",
-                  "accountName": "Spencer Denim Industries (Pvt) Ltd",
-                  "accountNumber": "8001 2345 6789",
+                  "bankName": "Example Bank PLC",
+                  "branch": "Example Branch",
+                  "accountName": "Example Shop (Pvt) Ltd",
+                  "accountNumber": "0000 1111 2222",
                   "instructions": "CDM deposits take a working day.",
                   "rowVersion": {{JsonSerializer.Serialize(await BankVersionAsync(client))}}
                 }
@@ -432,11 +432,11 @@ public sealed class AdminBankTransferEndpointTests(SqlServerDatabaseFixture sqlS
             Assert.Equal(HttpStatusCode.NoContent, changed.StatusCode);
 
             Assert.Equal("Bambalapitiya", await SettingValueAsync(SettingKeys.Bank.Branch));
-            Assert.Equal("Commercial Bank of Ceylon PLC", await SettingValueAsync(SettingKeys.Bank.BankName));
+            Assert.Equal("Example Bank PLC", await SettingValueAsync(SettingKeys.Bank.BankName));
             Assert.Equal(
-                "Spencer Denim Industries (Pvt) Ltd",
+                "Example Shop (Pvt) Ltd",
                 await SettingValueAsync(SettingKeys.Bank.AccountName));
-            Assert.Equal("8001 2345 6789", await SettingValueAsync(SettingKeys.Bank.AccountNumber));
+            Assert.Equal("0000 1111 2222", await SettingValueAsync(SettingKeys.Bank.AccountNumber));
             Assert.Equal(
                 "CDM deposits take a working day.",
                 await SettingValueAsync(SettingKeys.Bank.Instructions));
@@ -454,7 +454,7 @@ public sealed class AdminBankTransferEndpointTests(SqlServerDatabaseFixture sqlS
 
             Assert.Equal(HttpStatusCode.NoContent, cleared.StatusCode);
             Assert.Null(await SettingValueAsync(SettingKeys.Bank.Branch));
-            Assert.Equal("8001 2345 6789", await SettingValueAsync(SettingKeys.Bank.AccountNumber));
+            Assert.Equal("0000 1111 2222", await SettingValueAsync(SettingKeys.Bank.AccountNumber));
         }
         finally
         {
@@ -715,10 +715,10 @@ public sealed class AdminBankTransferEndpointTests(SqlServerDatabaseFixture sqlS
                     field => field.GetProperty("value").GetString()!,
                     StringComparer.Ordinal);
 
-            Assert.Equal("Commercial Bank of Ceylon PLC", fields["Bank"]);
-            Assert.Equal("Kollupitiya", fields["Branch"]);
-            Assert.Equal("Spencer Denim Industries (Pvt) Ltd", fields["Account name"]);
-            Assert.Equal("8001 2345 6789", fields["Account number"]);
+            Assert.Equal("Example Bank PLC", fields["Bank"]);
+            Assert.Equal("Example Branch", fields["Branch"]);
+            Assert.Equal("Example Shop (Pvt) Ltd", fields["Account name"]);
+            Assert.Equal("0000 1111 2222", fields["Account number"]);
         }
         finally
         {
@@ -819,6 +819,129 @@ public sealed class AdminBankTransferEndpointTests(SqlServerDatabaseFixture sqlS
         Assert.Equal(
             JsonValueKind.Null,
             cleared.GetProperty("proof").GetProperty("reference").ValueKind);
+    }
+
+    /// <summary>
+    /// Doc 08 §3.3: an asset may be deleted "only with no usages". A customer's payment slip is a usage.
+    /// </summary>
+    /// <remarks>
+    /// <b>The red-before for a defect a tester proved end to end.</b> A slip is referenced only by
+    /// <c>sales.Payments.ProofAssetId</c> and attaching one writes no <c>MediaUsages</c> row, so the media
+    /// library's delete guard found nothing: <c>DELETE /api/admin/media/{id}</c> answered 204, the queue's
+    /// slip link went null, both read-back routes 404'd, and <c>MediaRetention</c> would purge the bytes
+    /// 30 days later. Nothing on the order recorded that the evidence an approval is made on had gone.
+    /// <para>
+    /// <b>Reachable by a default role</b>, which is what makes it a Major rather than a note: Store
+    /// Manager holds <c>Media.Delete</c> alongside <c>Orders.View</c>, so the person most likely to be
+    /// tidying the media library is the person looking at this queue.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task A_payment_slip_cannot_be_deleted_through_the_media_library()
+    {
+        await using var host = await StartAsync();
+        var order = await PlaceOrderAsync(host);
+
+        using var shopper = host.CreateAnonymousClient();
+        var slip = await UploadSlipAsync(
+            shopper, order.PublicId, TestImages.UniqueJpeg(660, 980), "evidence.jpg");
+
+        var slipPublicId = slip.GetProperty("slipPublicId").GetGuid();
+
+        using var librarian = await host.SignInAsync(Permissions.Media.Delete, Permissions.Media.View);
+
+        using var refused = await librarian.DeleteAsync(
+            new Uri($"/api/admin/media/{slipPublicId:D}", UriKind.Relative),
+            Token);
+
+        Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode);
+
+        var body = await ReadBodyAsync(refused);
+        Assert.Equal("in_use", body.GetProperty("code").GetString());
+
+        // And the refusal says what is holding it, in the same shape every other owner uses — so the
+        // "used in…" panel can tell an operator which order to go and look at.
+        var usage = body.GetProperty("usages").EnumerateArray().Single();
+        Assert.Equal("Payment", usage.GetProperty("ownerType").GetString());
+        Assert.Equal("PaymentSlip", usage.GetProperty("usageRole").GetString());
+        Assert.Equal(order.OrderNumber, usage.GetProperty("ownerLabel").GetString());
+
+        // The asset is untouched, which is the part that matters: not soft-deleted, and still served to
+        // both of the parties doc 08 §3.3 allows.
+        Assert.False(await IsDeletedAsync(slipPublicId));
+
+        using var customerCopy = await shopper.GetAsync(
+            new Uri($"/api/orders/{order.PublicId:D}/payment-slip", UriKind.Relative),
+            Token);
+        Assert.Equal(HttpStatusCode.OK, customerCopy.StatusCode);
+
+        using var staff = await host.SignInAsync(Permissions.Orders.View);
+        using var staffCopy = await staff.GetAsync(
+            new Uri($"{QueueUrl}/{order.PublicId:D}/slip", UriKind.Relative),
+            Token);
+        Assert.Equal(HttpStatusCode.OK, staffCopy.StatusCode);
+    }
+
+    /// <summary>
+    /// Doc 11 P7 step 6b: after a rejection the order stays <c>PendingPayment</c> and the customer may
+    /// transfer again.
+    /// </summary>
+    /// <remarks>
+    /// <b>The red-before for a defect that misled the shopper.</b> The reference route required an already
+    /// open payment row, and a rejection closes the only one there was, so pressing Save after a rejection
+    /// answered 404 and the order page rendered <i>"This order can no longer be paid"</i> about an order
+    /// that was still payable — while the slip upload, two controls lower on the same panel, worked. With
+    /// no email in this build, nothing else would have told them.
+    /// <para>
+    /// Both halves of the panel are exercised, because the defect was precisely that the two halves
+    /// disagreed, and the row count is asserted because the fix must not buy this with a second open
+    /// payment: two open rows tell staff to look for two transfers.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task A_rejection_leaves_the_order_payable_through_both_halves_of_the_panel()
+    {
+        await using var host = await StartAsync();
+        var order = await PlaceOrderAsync(host);
+
+        using var staff = await host.SignInAsync(Permissions.Orders.Approve);
+        await DecideAsync(staff, order.PublicId, "reject", HttpStatusCode.OK, "The amount is short.");
+
+        using var shopper = host.CreateAnonymousClient();
+
+        // Still awaiting payment, which is what makes the rest of this test meaningful.
+        var afterRejection = await OrderPayloadAsync(shopper, order.PublicId);
+        Assert.Equal(
+            nameof(OrderStatus.PendingPayment),
+            afterRejection.GetProperty("status").GetString());
+
+        // The reference: 200, and kept.
+        await SetReferenceAsync(host, order.PublicId, "CBC-998877");
+
+        var withReference = await OrderPayloadAsync(shopper, order.PublicId);
+        Assert.Equal(
+            "CBC-998877",
+            withReference.GetProperty("proof").GetProperty("reference").GetString());
+
+        // The slip: also 200, and on to the row the reference just opened rather than a third one.
+        await UploadSlipAsync(
+            shopper, order.PublicId, TestImages.UniqueJpeg(640, 960), "second-try.jpg");
+
+        var withSlip = await OrderPayloadAsync(shopper, order.PublicId);
+        Assert.Equal(
+            "second-try.jpg",
+            withSlip.GetProperty("proof").GetProperty("slipFileName").GetString());
+        Assert.Equal(
+            "CBC-998877",
+            withSlip.GetProperty("proof").GetProperty("reference").GetString());
+
+        // One open row, not two — UX_Payments_OneOpen would refuse a second, and the queue would otherwise
+        // show the same order twice.
+        Assert.Equal(1, await PaymentCountAsync(order.PublicId, PaymentStatus.Pending));
+
+        // And the rejected attempt is still there, because staff have to be able to read back what they
+        // refused and why.
+        Assert.Equal(1, await PaymentCountAsync(order.PublicId, PaymentStatus.Failed));
     }
 
     [Fact]
@@ -1218,6 +1341,16 @@ public sealed class AdminBankTransferEndpointTests(SqlServerDatabaseFixture sqlS
             .FirstAsync(Token);
     }
 
+    /// <summary>How many of this order's payments sit in one status.</summary>
+    private async Task<int> PaymentCountAsync(Guid publicId, PaymentStatus status)
+    {
+        using var scope = sqlServer.CreateScope();
+        return await scope.ServiceProvider.GetRequiredService<AppDbContext>().Payments
+            .AsNoTracking()
+            .Where(payment => payment.Order!.PublicId == publicId && payment.Status == status)
+            .CountAsync(Token);
+    }
+
     private async Task<string?> SettingValueAsync(string key)
     {
         using var scope = sqlServer.CreateScope();
@@ -1251,10 +1384,10 @@ public sealed class AdminBankTransferEndpointTests(SqlServerDatabaseFixture sqlS
     }
 
     private async Task SetBankDetailsAsync(
-        string? bankName = "Commercial Bank of Ceylon PLC",
-        string? branch = "Kollupitiya",
-        string? accountName = "Spencer Denim Industries (Pvt) Ltd",
-        string? accountNumber = "8001 2345 6789",
+        string? bankName = "Example Bank PLC",
+        string? branch = "Example Branch",
+        string? accountName = "Example Shop (Pvt) Ltd",
+        string? accountNumber = "0000 1111 2222",
         string? instructions = "CDM deposits can take a working day to appear.")
     {
         var values = new (string Key, string? Value)[]
