@@ -113,23 +113,42 @@ internal sealed class ContactEnquiryStore(AppDbContext dbContext) : IContactEnqu
         // two statements against two tables, so the explicit transaction is what makes them one event:
         // without it, ExecuteDeleteAsync commits on its own and a failure on the audit insert would leave
         // a permanent deletion of customer data with no trail (issue #59).
-        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        //
+        // **Inside CreateExecutionStrategy().ExecuteAsync, and that is not optional.** The context is
+        // configured with EnableRetryOnFailure (doc 03's resilience), and a retrying strategy refuses a
+        // user-initiated transaction outright: "The configured execution strategy
+        // 'SqlServerRetryingExecutionStrategy' does not support user-initiated transactions." The first
+        // version of this method opened one directly and every delete answered **500** — caught by
+        // `ContactEnquiryEndpointTests.Deleting_removes_the_row_and_audits_the_reason_without_the_message`,
+        // and invisible to a unit test, because a fake store has no execution strategy. `CartStore`,
+        // `NumberSeriesAllocator`, `ProductWriteStore` and `StaffUserRoleManagementStore` all wrap their
+        // transactions the same way for the same reason.
+        //
+        // The whole block is the retriable unit, which is correct here: a retry re-reads nothing and
+        // re-issues both statements, and the delete is idempotent — a second attempt that finds the row
+        // already gone answers false rather than failing.
+        var strategy = dbContext.Database.CreateExecutionStrategy();
 
-        var removed = await dbContext.ContactSubmissions
-            .Where(submission => submission.Id == submissionId)
-            .ExecuteDeleteAsync(cancellationToken);
-
-        if (removed == 0)
+        return await strategy.ExecuteAsync(async () =>
         {
-            await transaction.RollbackAsync(cancellationToken);
-            return false;
-        }
+            await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
 
-        // The enlisted audit row. AuditLogWriter.Enlist added it to this same scoped AppDbContext, so this
-        // save writes it inside the transaction opened above.
-        await dbContext.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
+            var removed = await dbContext.ContactSubmissions
+                .Where(submission => submission.Id == submissionId)
+                .ExecuteDeleteAsync(cancellationToken);
 
-        return true;
+            if (removed == 0)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return false;
+            }
+
+            // The enlisted audit row. AuditLogWriter.Enlist added it to this same scoped AppDbContext, so
+            // this save writes it inside the transaction opened above.
+            await dbContext.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+
+            return true;
+        });
     }
 }
