@@ -69,15 +69,24 @@ guard for every deeper address on the origin.
 
 | Suite | Result |
 |---|---|
-| xUnit unit | **1,619 passed**, 0 failed |
+| xUnit unit | **1,629 passed**, 0 failed, 14 s |
 | xUnit integration (real SQL Server) | **1,057 passed**, 0 failed, ~16 min |
-| Vitest storefront | **1,302 passed** before the two new specs, **+83** in them |
-| Vitest admin / shared | **354** / **24** passed, unchanged |
-| Playwright `content-pages.e2e.ts` | **27 passed** |
+| Vitest storefront | **1,385 passed** (1,302 before this task, +83) |
+| Vitest admin | **364 passed** (354 before, +10) |
+| Vitest shared | **24 passed**, unchanged |
+| Playwright, whole suite | **843 passed** |
 
-New: 91 sanitiser payload cases, 47 content-page write cases, 35 contact-enquiry cases, 11
-reserved-slug cases (which read `app.routes.ts`, so the refusal list cannot drift from the route table),
-28 integration cases, 27 browser cases.
+New: 105 sanitiser payload cases, 47 content-page write cases, 35 contact-enquiry cases, 11
+reserved-slug cases (which read `app.routes.ts`, so the refusal list cannot drift from the route
+table), 10 admin-model shape cases, 28 integration cases, 27 browser cases in
+`content-pages.e2e.ts`, and 13 rewritten in four existing browser specs.
+
+**One failure in the first full browser run was measured rather than assumed**:
+`admin-products.e2e.ts` → "moves a colour with the buttons and keeps focus on the one pressed" failed
+once in a 13-minute `--workers=1` run and then passed **46 of 46** running its file alone and **5 of 5**
+with `--repeat-each=5 --workers=1`. Nothing in this task touches the product form. It is the
+established harness race (#114/#115) under load, and it is recorded here with the counts rather than
+called flaky.
 
 Every new test was checked for its ability to fail. The sanitiser's three control surfaces were mutated
 individually: the library's permissive defaults turn 6 red, a widened scheme list 12, an emptied
@@ -114,6 +123,24 @@ declared indexes created under their declared names.
   never touches an existing role (doc 08 §9, N13). On `SpencerDenim_Dev` a Store Manager will not have
   them until the versioned upgrade step that seeder's own docblock describes is built. Super Admin is
   unaffected.
+
+## Residues the owner should know about
+
+- **A content page may link to, and load an image from, any `http(s)` host.** That is inherent in
+  GLB-10 — a client pastes a link and a picture — and it is what the scheme allow-list exists to
+  permit. The consequence is that whoever can edit a content page can make every visitor's browser
+  issue a request to a third party, which leaks the visitor's address and user-agent to it. Closing it
+  means an image-host allow-list, which is a decision about the shop rather than about the sanitiser:
+  the media library is the supported way to put a picture on a page, and an allow-list would also
+  refuse a CDN a client may legitimately use. Stated in `HtmlSanitiserTests` beside the two cases that
+  prove it is accepted.
+- **`<plaintext>` is not in the code-bearing list**, so pasting one turns the rest of the body into
+  visible text rather than dropping it. That is the better of the two outcomes — showing is honest,
+  dropping is data loss — and it is noted so the next reader does not take the omission for an
+  oversight.
+- **A single mistyped segment answers 503 rather than 404 during a content-feed outage.** That is the
+  deliberate side of #30 and the right way round — a live policy page matters more than a typo — but it
+  does mean a scanner's probes get 503 for the length of an outage.
 
 ## Not done, deliberately
 
