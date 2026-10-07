@@ -174,15 +174,31 @@ internal static class AdminContentEndpoints
             .Produces<AdminContactSubmissionDto>()
             .ProducesProblem(StatusCodes.Status404NotFound);
 
+        // `Customers.View`, not `Customers.Edit`, and the difference is a defect this fixes.
+        //
+        // Doc 11 P15 makes *reading* the enquiry the thing that marks it Read, so the permission to read
+        // one has to be enough to record that it was read. With `Customers.Edit` here, `Order Staff` —
+        // which holds `Customers.View` and not `Customers.Edit` (doc 08 §9) — could open every enquiry
+        // and never clear one: the screen fires this as it opens, the answer was 403, and the screen
+        // swallowed it deliberately ("they can read the message, which is what they came for"). So the
+        // New badge counted the same messages for ever, nothing on the screen said why, and the one
+        // role most likely to be answering enquiries was the one it happened to. Found by the W2-11
+        // tester.
+        //
+        // Replied and Spam stay behind `Customers.Edit` below, which is the line that matters: those
+        // are claims a staff member makes about what they did, and they are stamped with who and when.
+        // "I opened it" is not a claim of that kind.
         enquiries.MapPost("/{submissionId:int}/read", MarkEnquiryReadAsync)
-            .RequirePermission(Permissions.Customers.Edit)
+            .RequirePermission(Permissions.Customers.View)
             .WithName("AdminMarkContactEnquiryRead")
             .WithSummary("Mark a New enquiry as Read (doc 11 P15 step 7).")
             .WithDescription(
                 "Doc 11 P15 makes opening the enquiry the thing that marks it Read, so the screen calls "
-                + "this as it opens one. It is a no-op for an enquiry that is already Read, Replied or "
-                + "Spam — opening a Spam enquiry to check it really was spam must not reclassify it, and "
-                + "opening a Replied one must not take the reply off it.")
+                + "this as it opens one, and it needs only `Customers.View` for that reason — a role "
+                + "that may read an enquiry must be able to clear its New badge. It is a no-op for an "
+                + "enquiry that is already Read, Replied or Spam — opening a Spam enquiry to check it "
+                + "really was spam must not reclassify it, and opening a Replied one must not take the "
+                + "reply off it.")
             .Produces(StatusCodes.Status204NoContent)
             .ProducesProblem(StatusCodes.Status404NotFound);
 

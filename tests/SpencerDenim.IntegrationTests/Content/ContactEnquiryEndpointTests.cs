@@ -221,6 +221,38 @@ public sealed class ContactEnquiryEndpointTests(SqlServerDatabaseFixture sqlServ
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
+    /// <summary>
+    /// <b>And marking one Read needs only <c>Customers.View</c>, which is the permission to read it.</b>
+    /// <para>
+    /// This was <c>Customers.Edit</c>, and the W2-11 tester found what that cost. <c>Order Staff</c>
+    /// holds <c>Customers.View</c> and not <c>Customers.Edit</c> (doc 08 §9), the enquiries screen fires
+    /// this request as it opens a message, and the screen swallows a failure on purpose — so that role
+    /// could read every enquiry and never clear one. The New badge counted the same messages for ever
+    /// and nothing said why. Doc 11 P15 makes reading the thing that marks it Read, so the permission to
+    /// read has to be enough to record it.
+    /// </para>
+    /// <para>
+    /// The test signs in with <c>Customers.View</c> <i>alone</i>, which is the whole point: granting it
+    /// alongside <c>Customers.Edit</c> would pass against either rule and prove nothing.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task Marking_one_read_needs_only_Customers_View()
+    {
+        await using var host = await StartAsync();
+        var id = await SubmitAsync(host, "Perm " + Guid.NewGuid().ToString("N")[..8]);
+
+        using var reader = await host.SignInAsync(Permissions.Customers.View);
+
+        using var response = await PostAsync(reader, $"{InboxUrl}{id}/read", null);
+
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+
+        // And it really moved, rather than answering 204 and doing nothing.
+        var enquiry = await GetJsonAsync(reader, $"{InboxUrl}{id}");
+        Assert.Equal("Read", enquiry.GetProperty("status").GetString());
+    }
+
     [Fact]
     public async Task Deleting_needs_Customers_Delete()
     {

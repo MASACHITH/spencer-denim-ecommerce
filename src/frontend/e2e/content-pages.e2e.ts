@@ -1,7 +1,7 @@
 import { Page, expect, test } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 
-import { apiURL } from '../playwright.config';
+import { contentPagesApiURL, contentPagesURL } from '../playwright.config';
 import { horizontalOverflow, undersized, unreachable } from './support/measure';
 
 /**
@@ -16,26 +16,43 @@ import { horizontalOverflow, undersized, unreachable } from './support/measure';
  *
  * The content comes from `support/catalog-api-stub.mjs`, whose `/__test__/content-pages` switch names a
  * published set so a test names a *state* and that file owns what the state's bytes are.
+ *
+ * **It runs on its own pair of servers, serially, and both halves of that are load-bearing.**
+ * `/__test__/content-pages` and `/__test__/site-settings` set module-level variables in one stub
+ * process, and `fullyParallel` is on. On the main pair, a test here that published all six pages
+ * published them for every test running at that moment in every other file — the W2-11 tester measured
+ * the full suite at 856/7 and then 859/4 with a *different* set of failures, against 863/0 at
+ * `--workers=1`, and no product defect behind any of it. So the pair isolates this file from the rest
+ * of the suite (`contentPagesURL`, declared in `playwright.config.ts` with the reasoning), and the
+ * serial mode isolates these tests from each other.
+ *
+ * The cost of serial mode is that a failure skips the tests after it, which is a real loss in a file
+ * this size and is the reason to say so here: when one of these fails, re-run the file alone before
+ * concluding anything about the ones that did not run.
  */
+test.describe.configure({ mode: 'serial' });
+
+// Every test in this file talks to its own storefront, not the shared one.
+test.use({ baseURL: contentPagesURL });
 
 /** docs/04 §4 and the project's non-negotiable list. */
 const BREAKPOINTS = [320, 375, 390, 768, 1024, 1280, 1440, 1920] as const;
 
 /** Sets which pages the stub reports as published. The switch is reset by every test that uses it. */
 async function publish(page: Page, state: 'none' | 'all' | 'contact' | 'custom'): Promise<void> {
-  const response = await page.request.get(`${apiURL}/__test__/content-pages?state=${state}`);
+  const response = await page.request.get(`${contentPagesApiURL}/__test__/content-pages?state=${state}`);
   expect(response.ok(), 'the content-pages switch did not answer').toBe(true);
 }
 
 /** Fails the content feed, so the storefront cannot say whether an address is a page (#30). */
 async function failContentFeed(page: Page): Promise<void> {
-  const response = await page.request.get(`${apiURL}/__test__/content-pages?state=all&status=500`);
+  const response = await page.request.get(`${contentPagesApiURL}/__test__/content-pages?state=all&status=500`);
   expect(response.ok()).toBe(true);
 }
 
 /** Sets which contact details the stub reports, for the Contact page's own panel. */
 async function contactDetails(page: Page, state: 'none' | 'set' | 'map' | 'evil'): Promise<void> {
-  const response = await page.request.get(`${apiURL}/__test__/site-settings?contact=${state}`);
+  const response = await page.request.get(`${contentPagesApiURL}/__test__/site-settings?contact=${state}`);
   expect(response.ok()).toBe(true);
 }
 
@@ -48,7 +65,7 @@ async function contactDetails(page: Page, state: 'none' | 'set' | 'map' | 'evil'
 async function useStubApi(page: Page): Promise<void> {
   await page.route('**/api/**', async (route) => {
     const url = new URL(route.request().url());
-    const response = await route.fetch({ url: `${apiURL}${url.pathname}${url.search}` });
+    const response = await route.fetch({ url: `${contentPagesApiURL}${url.pathname}${url.search}` });
     await route.fulfill({ response });
   });
 }
@@ -347,13 +364,46 @@ test.describe('the contact form (GLB-10)', () => {
     const confirmation = page.locator('[data-testid="contact-sent"]');
     await expect(confirmation).toBeVisible();
 
-    const wholePage = (await page.locator('body').textContent()) ?? '';
-    for (const promise of ['email you', 'emailed', 'e-mailed', 'check your inbox', 'confirmation email']) {
-      expect(wholePage.toLowerCase(), `the page promises "${promise}"`).not.toContain(promise);
+    // **Nothing in this system sends an email**, so nothing on this page may say one is coming (the
+    // brief's own words, after checkout shipped a promise nothing could keep and it was a Major
+    // finding).
+    //
+    // The first version of this list held five needles and **none of them matched "we will send you an
+    // email"**, which is the most natural phrasing of the very failure it exists to prevent — found by
+    // the W2-11 tester. So it now matches on the phrases a person would actually write, in both the
+    // "we send" and the "you receive" directions, plus the Sinhala-English "mail you" that is common
+    // here. Each needle is lower-case and the page text is lower-cased once.
+    const wholePage = ((await page.locator('body').textContent()) ?? '').toLowerCase();
+    for (const promise of [
+      'email you',
+      'emailed',
+      'e-mailed',
+      'mail you',
+      'send you an email',
+      'send you a mail',
+      'sending you an email',
+      'will send an email',
+      'send a confirmation',
+      'confirmation email',
+      'confirmation has been sent',
+      'check your inbox',
+      'check your email',
+      'in your inbox',
+      'reply by email',
+      'respond by email',
+      'an email is on its way',
+      'you will hear from us by email',
+    ]) {
+      expect(wholePage, `the page promises "${promise}"`).not.toContain(promise);
     }
 
+    // And the one that cannot be written as a phrase: a reply time. Nothing measures it and nobody
+    // agreed to it.
+    expect(wholePage).not.toMatch(/within \d+ (working )?(hour|day)/);
+    expect(wholePage).not.toContain('within one working day');
+
     // The enquiry really reached the API, which is the half a jsdom test cannot see.
-    const submissions = await (await page.request.get(`${apiURL}/__test__/contact-submissions`)).json();
+    const submissions = await (await page.request.get(`${contentPagesApiURL}/__test__/contact-submissions`)).json();
     expect(submissions.at(-1)).toMatchObject({ name: 'Nimal Perera', discarded: false });
   });
 
@@ -441,9 +491,36 @@ test.describe('the contact form (GLB-10)', () => {
 
     const map = page.locator('iframe.contact__map');
     await expect(map).toHaveCount(1);
-    await expect(map).toHaveAttribute('sandbox', '');
+
+    // **'allow-scripts', and this assertion used to read `toHaveAttribute('sandbox', '')`.** An empty
+    // sandbox blocks script, and both permitted map providers draw their tiles with script, so the
+    // frame rendered as a blank bordered box and this test locked that in. The W2-11 tester measured
+    // it against the live endpoints: 0 tiles with `sandbox=""`, 7 Google tiles and 1 OSM tile with
+    // `allow-scripts`.
+    //
+    // It is asserted as an exact value rather than with `toContain`, because the risk runs both ways:
+    // too few tokens and the map is blank, too many and a frame on the shop's own page gains
+    // same-origin access, top-level navigation or a form. A real provider cannot be loaded here — the
+    // e2e run has no network and the stub serves the URL — so what this can prove is the policy, and
+    // the rendering evidence lives in the component's comment with the numbers behind it.
+    await expect(map).toHaveAttribute('sandbox', 'allow-scripts');
     await expect(map).toHaveAttribute('referrerpolicy', 'no-referrer');
     await expect(map).toHaveAttribute('title', /map/i);
+
+    // The tokens that must not appear, named one by one, because `allow-scripts` plus any of these is
+    // a different and much worse thing than `allow-scripts` on its own.
+    const sandbox = (await map.getAttribute('sandbox'))?.split(/\s+/) ?? [];
+    for (const forbidden of [
+      'allow-same-origin',
+      'allow-top-navigation',
+      'allow-top-navigation-by-user-activation',
+      'allow-forms',
+      'allow-popups',
+      'allow-modals',
+      'allow-downloads',
+    ]) {
+      expect(sandbox, `the map frame must not be granted ${forbidden}`).not.toContain(forbidden);
+    }
   });
 
   /**
@@ -503,6 +580,27 @@ test.describe('the contact form (GLB-10)', () => {
         await unreachable(page, '.contact__submit'),
         `the submit button cannot be brought on screen at ${width}px`,
       ).toEqual([]);
+
+      // **The fourth question, which none of the three above asks: is anything too *tall*.**
+      //
+      // 44px is a floor and every check here was a floor, so a control stretched to twice its height
+      // passed all of them. One was: from 768px up, the subject input sat in a grid row beside a field
+      // with a two-line hint and absorbed the spare height, measuring 71-103px against its siblings'
+      // 48. It is a layout defect that looks like a rendering accident and reads as one in a
+      // screenshot, so it needs a number. Raised by the W2-11 tester.
+      //
+      // The textarea is excluded by selector rather than by a height allowance: it is *meant* to be
+      // 10rem, and an allowance wide enough for it would be wide enough to hide this.
+      const tooTall = await page.evaluate(() =>
+        Array.from(document.querySelectorAll('.contact__input:not(.contact__textarea)'))
+          .map((element) => ({
+            id: element.id,
+            height: Math.round((element as HTMLElement).getBoundingClientRect().height),
+          }))
+          .filter((measured) => measured.height > 60),
+      );
+
+      expect(tooTall, `a single-line field is stretched at ${width}px`).toEqual([]);
     }
   });
 

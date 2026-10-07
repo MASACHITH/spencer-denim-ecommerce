@@ -360,6 +360,63 @@ public sealed class HtmlSanitiserTests
     public void The_allow_lists_hold_what_a_body_needs() =>
         Assert.All(NeededTags, tag => Assert.Contains(tag, HtmlSanitiser.AllowedTags));
 
+    /// <summary>
+    /// <b>A CDN's <c>&lt;picture&gt;</c> keeps its image.</b>
+    /// <para>
+    /// This is the likeliest real paste in the whole feature — every modern editor and every image CDN
+    /// emits <c>&lt;picture&gt;&lt;source …&gt;&lt;img …&gt;&lt;/picture&gt;</c> — and
+    /// <c>&lt;picture&gt;</c> was on the list of elements whose contents are deleted rather than
+    /// unwrapped, so the image inside it disappeared and the editor was told only that a
+    /// <c>&lt;picture&gt;</c> had been removed. Silent loss of the thing they were trying to add.
+    /// Raised by the W2-11 tester.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void A_picture_element_keeps_the_image_inside_it()
+    {
+        var result = _sanitiser.Sanitise(
+            """
+            <figure>
+              <picture>
+                <source srcset="/media/hero.avif" type="image/avif">
+                <source srcset="/media/hero.webp" type="image/webp">
+                <img src="/media/hero.jpg" alt="Our studio in Colombo" width="1200" height="800">
+              </picture>
+              <figcaption>Our studio</figcaption>
+            </figure>
+            """);
+
+        Assert.Contains("/media/hero.jpg", result.Html);
+        Assert.Contains("Our studio in Colombo", result.Html);
+        Assert.Equal(1, result.ImageCount);
+        Assert.Equal(0, result.ImagesMissingAltText);
+
+        // The wrapper and the alternatives still go, with the attribute that was smuggling a second URL.
+        Assert.DoesNotContain("<picture", result.Html);
+        Assert.DoesNotContain("<source", result.Html);
+        Assert.DoesNotContain("srcset", result.Html);
+    }
+
+    /// <summary>
+    /// The removal report says when it has stopped listing, rather than ending at twenty and reading as
+    /// the whole answer — an editor who fixed the twenty things on it would otherwise believe they were
+    /// done.
+    /// </summary>
+    [Fact]
+    public void A_removal_report_longer_than_the_cap_says_how_much_it_is_not_showing()
+    {
+        // Thirty distinct disallowed attributes on one element, so the report has thirty kinds of thing
+        // to name and room for twenty.
+        var attributes = string.Join(
+            ' ',
+            Enumerable.Range(0, 30).Select(index => $"onx{index}=\"alert({index})\""));
+
+        var result = _sanitiser.Sanitise($"<p {attributes}>Copy.</p>");
+
+        Assert.Equal(21, result.Removed.Count);
+        Assert.Contains("and 10 more kinds of thing not allowed in a page", result.Removed);
+    }
+
     // ---------------------------------------------------------------------------------------------
     // Nesting depth. These are availability tests rather than allow-list tests, and they are in this
     // class because the thing being bounded is this class's parse.

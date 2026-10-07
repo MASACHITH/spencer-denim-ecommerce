@@ -14,7 +14,7 @@ export interface SiteConfig {
  * **The contact details are gone from here, and that is W2-11's correction to itself.** This file used
  * to hold an email, a telephone number, a three-line address and two lines of opening hours, and the
  * footer fell back to them whenever the matching setting was unset — which is the state of a fresh shop.
- * So a freshly installed Colombo Wardrobe published `hello@` at the shop's own domain, `+94 77 000 0000`
+ * So a freshly installed shop published `hello@` at its own real domain, `+94 77 000 0000`
  * and "Monday to Friday, 9am – 6pm" on **every page**, where a shopper would email an address nobody
  * reads and ring a number that is not the shop's, and the shop would never learn they tried. The W2-11
  * tester found it; the Contact page already did the right thing, and the footer's docblock had argued

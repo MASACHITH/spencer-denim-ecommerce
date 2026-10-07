@@ -184,7 +184,15 @@ public sealed class HtmlSanitiser : IHtmlSanitiser
         "svg", "math",
 
         // Embedded content and framing.
-        "iframe", "frame", "frameset", "object", "embed", "applet", "canvas", "picture", "source",
+        //
+        // `picture` is deliberately **not** here, though it was. It is not an allowed tag either way, so
+        // it is removed regardless; the question this list answers is what happens to its children, and
+        // a <picture> wraps the <img> that is the whole point of it. Listing it deleted the image —
+        // which is the likeliest real paste in this feature, because every CDN and every modern editor
+        // emits <picture><source …><img …></picture>. With it absent, KeepChildNodes unwraps the
+        // picture, the <source> elements are removed with their (empty) contents, and the <img>
+        // survives with its src and alt. Raised by the W2-11 tester.
+        "iframe", "frame", "frameset", "object", "embed", "applet", "canvas", "source",
         "track", "audio", "video",
 
         // Form controls whose inner text is a value or a label for something that is being removed.
@@ -580,8 +588,34 @@ public sealed class HtmlSanitiser : IHtmlSanitiser
     /// The removal report, de-duplicated and capped. A paste of a whole web page can remove hundreds of
     /// attributes, and "we removed onclick (247 times)" helps nobody more than "we removed onclick" does.
     /// </summary>
-    private static List<string> Distinct(List<string> removed) =>
-        removed.Count == 0
-            ? []
-            : removed.Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.Ordinal).Take(20).ToList();
+    private static List<string> Distinct(List<string> removed)
+    {
+        if (removed.Count == 0)
+        {
+            return [];
+        }
+
+        var distinct = removed
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Order(StringComparer.Ordinal)
+            .ToList();
+
+        if (distinct.Count <= ReportCap)
+        {
+            return distinct;
+        }
+
+        // Said, rather than silently dropped. A capped list that does not say it was capped reads as the
+        // whole answer, and an editor who fixed the twenty things on it would believe they were done.
+        var capped = distinct.Take(ReportCap).ToList();
+        capped.Add(
+            "and "
+            + (distinct.Count - ReportCap).ToString(CultureInfo.InvariantCulture)
+            + " more kinds of thing not allowed in a page");
+
+        return capped;
+    }
+
+    /// <summary>How many kinds of removal the report names before it starts counting them.</summary>
+    private const int ReportCap = 20;
 }

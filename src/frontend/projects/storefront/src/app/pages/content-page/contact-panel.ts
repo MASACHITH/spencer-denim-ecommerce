@@ -1,4 +1,12 @@
-import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  Injector,
+  afterNextRender,
+  computed,
+  inject,
+  signal,
+} from '@angular/core';
 import { DOCUMENT } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 
@@ -67,9 +75,16 @@ const MESSAGE_MAX = 4000;
                pressing Enter again, and the confirmation is what receives focus. -->
           <div class="contact__done" id="contact-sent" data-testid="contact-sent" tabindex="-1">
             <p class="contact__done-title">{{ confirmation() }}</p>
+            <!--
+              **No reply time, and that is a correction to this file.** It read "We usually reply within
+              one working day", which is a service-level commitment the client never made, on the
+              component whose own docblock says nothing here is hardcoded — and nothing in this system
+              sends anything, so there is no process behind the promise at all. Raised by the W2-11
+              tester. WhatsApp is still offered because it is a real route to a real person; what is
+              gone is the claim about how fast anybody answers.
+            -->
             <p class="t-small muted">
-              We usually reply within one working day. If it is urgent, WhatsApp is the fastest way to
-              reach us.
+              If it is urgent, WhatsApp is the fastest way to reach us.
             </p>
             <button class="btn btn--secondary contact__again" type="button" (click)="startAgain()">
               Send another message
@@ -300,17 +315,34 @@ const MESSAGE_MAX = 4000;
 
           @if (contact().mapEmbedUrl; as map) {
             <!--
-              'sandbox' with nothing in it, so the frame can neither run script nor navigate the top
-              window; a map embed needs neither. 'referrerpolicy' so the shop's own addresses are not
-              handed to the map provider on every page view, and 'loading="lazy"' so a page on a phone
-              does not pay for a map nobody scrolled to. The 'src' has been through the host allow-list
-              three times by this point — on write, on read, and in 'toMapEmbedUrl' here.
+              'sandbox="allow-scripts"', and the one token is the whole point.
+
+              **This said 'sandbox=""' and the map could not render.** An empty sandbox applies *every*
+              restriction, scripts included, and both providers the host allow-list permits — Google
+              Maps and OpenStreetMap — draw their tiles with JavaScript. So a visitor got a blank 20rem
+              bordered box, on a feature named in GLB-10's own scope line, and an e2e test asserted the
+              empty value and locked it in. Measured by the W2-11 tester against the live endpoints:
+              with 'sandbox=""', 0 images and 0 tiles from either provider and no body text at all; with
+              'allow-scripts', 36 images and 7 tiles and "Map data ©2026" from Google, 1 tile and
+              "© OpenStreetMap contributors" from OSM.
+
+              'allow-scripts' alone, and nothing else. Without 'allow-same-origin' the frame runs in an
+              opaque origin, so the provider's script reaches neither this page nor its own cookies and
+              storage; without 'allow-top-navigation' it cannot move the shop's address bar; without
+              'allow-forms' and 'allow-popups' it can neither submit nor open anything. That leaves a
+              map that draws itself and can do nothing else, which is what a map embed needs.
+
+              'referrerpolicy' so the shop's own addresses are not handed to the map provider on every
+              page view, and 'loading="lazy"' so a page on a phone does not pay for a map nobody
+              scrolled to. The 'src' has been through the host allow-list three times by this point — on
+              write, on read, and in 'toMapEmbedUrl' here — which is what makes 'allow-scripts' safe to
+              grant: the script that runs is Google's or OpenStreetMap's, not an editor's.
             -->
             <iframe
               class="contact__map"
               [src]="map"
               title="Map of the shop's location"
-              sandbox=""
+              sandbox="allow-scripts"
               referrerpolicy="no-referrer"
               loading="lazy"
             ></iframe>
@@ -364,6 +396,14 @@ const MESSAGE_MAX = 4000;
          lets a long unbroken value in an input push the column wider than the page. The checkout form
          records the same fix for the same reason (GLB-09: no horizontal scroll). */
       min-width: 0;
+      /* 'align-content: start', because a grid container's default is 'stretch' and it stretches the
+         implicit rows to fill whatever height the cell has. From 768px up, "What is it about?" shares a
+         row with "Order number", which carries a two-line hint underneath it — so the subject field's
+         cell was as tall as its neighbour and the *input* absorbed the difference: measured at 71-103px
+         against 48 for every sibling. Nothing looked broken enough to notice, and the tap-target scan
+         could not see it, because a control being too tall is not a question that scan asks. Raised by
+         the W2-11 tester. */
+      align-content: start;
     }
     .contact__label {
       font-weight: 600;
@@ -494,6 +534,7 @@ export class ContactPanel {
   private readonly config = inject(SITE_CONFIG);
   private readonly siteSettings = inject(SiteSettingsService);
   private readonly document = inject(DOCUMENT);
+  private readonly injector = inject(Injector);
 
   protected readonly MESSAGE_MAX = MESSAGE_MAX;
 
@@ -632,18 +673,26 @@ export class ContactPanel {
    * Through `DOCUMENT` rather than the global, because this component renders on the server too and
    * there is no global `document` there.
    *
-   * **`setTimeout(0)` and not `queueMicrotask`, which is what the first version used and what did not
-   * work.** A signal write schedules change detection as a task, not a microtask, so a microtask runs
-   * *before* the view has been re-rendered and the element it is looking for does not exist yet. Focus
-   * then stayed on `<body>` — the exact harm the re-homing exists to prevent, arrived at by trying to
-   * prevent it. Measured by `content-pages.e2e.ts`, which reads `document.activeElement` after the
-   * form is replaced; a jsdom test would not have caught it, because `fixture.detectChanges()` is
-   * synchronous there.
+   * **Not `queueMicrotask`, which is what the first version used and what did not work.** A signal
+   * write schedules change detection as a task, not a microtask, so a microtask runs *before* the view
+   * has been re-rendered and the element it is looking for does not exist yet. Focus then stayed on
+   * `<body>` — the exact harm the re-homing exists to prevent, arrived at by trying to prevent it.
+   * Measured by `content-pages.e2e.ts`, which reads `document.activeElement` after the form is
+   * replaced; a jsdom test would not have caught it, because `fixture.detectChanges()` is synchronous
+   * there.
+   *
+   * **And not `setTimeout(0)` either, which is what replaced it.** That waits for *a* task rather than
+   * for *this* render, so on a slow phone or under a loaded CPU the callback can still win the race and
+   * the bug comes back intermittently — which is the worst form for it to take, because it passes in
+   * every test run that matters. `afterNextRender` is the API that means what this needs: run once the
+   * DOM reflects the change. Raised by the W2-11 tester.
+   *
+   * The injector is passed explicitly because this runs from a form submission, which is not an
+   * injection context.
    */
   private focusAfterRender(elementId: string): void {
-    setTimeout(() => {
-      const target = this.document.getElementById(elementId);
-      target?.focus();
-    }, 0);
+    afterNextRender(() => this.document.getElementById(elementId)?.focus(), {
+      injector: this.injector,
+    });
   }
 }

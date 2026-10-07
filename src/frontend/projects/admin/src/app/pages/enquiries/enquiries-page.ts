@@ -1,4 +1,12 @@
-import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  Injector,
+  afterNextRender,
+  computed,
+  inject,
+  signal,
+} from '@angular/core';
 import { DOCUMENT } from '@angular/common';
 
 import { AdminContentApi } from '../../core/content/admin-content-api';
@@ -290,6 +298,7 @@ const PAGE_SIZE = 25;
 export class EnquiriesPage {
   private readonly api = inject(AdminContentApi);
   private readonly document = inject(DOCUMENT);
+  private readonly injector = inject(Injector);
 
   protected readonly statuses = ENQUIRY_STATUSES;
   protected readonly settable = SETTABLE_ENQUIRY_STATUSES;
@@ -357,6 +366,12 @@ export class EnquiriesPage {
 
           // A failed mark-as-read is not worth interrupting the staff member for: they can read the
           // message, which is what they came for, and the badge count is the only thing that is wrong.
+          //
+          // **It used to hide something worse than a transient failure.** The endpoint required
+          // `Customers.Edit`, which `Order Staff` does not have, so for that role every open answered
+          // 403, this handler ate it, and the New badge never cleared — on the screen that role is
+          // most likely to live in. The endpoint now requires `Customers.View`, the permission to read
+          // the message at all, so this is back to covering only what it claims to cover.
           error: () => undefined,
         });
       },
@@ -395,7 +410,7 @@ export class EnquiriesPage {
 
     const reason = this.reason().trim();
     if (reason.length < 3) {
-      this.said.set('Say why this message is being deleted. It is recorded in the audit log.');
+      this.say('Say why this message is being deleted. It is recorded in the audit log.');
       return;
     }
 
@@ -444,15 +459,57 @@ export class EnquiriesPage {
     this.said.set(failure.message);
   }
 
+  /**
+   * Moves focus onto something the change just created, <b>after the view has caught up</b>.
+   *
+   * **Both of these used `queueMicrotask` and neither of them worked.** A signal write schedules change
+   * detection as a *task*; a microtask runs before it, so `getElementById` found nothing and focus
+   * stayed where it was — which for `focusDetail` means on the row button, with the panel it just
+   * opened never announced, and for `focusStatus` means on a control that is about to be replaced. The
+   * contact form two projects away hit the same thing and was fixed with `setTimeout(0)`; the W2-11
+   * tester pointed out that this is the load-sensitive version of the same idea, because it races the
+   * scheduler rather than waiting for it, and that `afterNextRender` is the API that actually means
+   * "once the DOM reflects this".
+   *
+   * It needs the injector explicitly: these run from an event handler, which is not an injection
+   * context.
+   */
   private focusDetail(submissionId: number): void {
-    queueMicrotask(() => {
-      this.document.getElementById(`enquiry-detail-${submissionId}`)?.focus();
-    });
+    this.focusAfterRender(() =>
+      this.document.getElementById(`enquiry-detail-${submissionId}`),
+    );
   }
 
   private focusStatus(): void {
-    queueMicrotask(() => {
-      this.document.querySelector<HTMLElement>('[data-testid="enquiry-status"]')?.focus();
-    });
+    this.focusAfterRender(() =>
+      this.document.querySelector<HTMLElement>('[data-testid="enquiry-status"]'),
+    );
+  }
+
+  private focusAfterRender(find: () => HTMLElement | null): void {
+    afterNextRender(() => find()?.focus(), { injector: this.injector });
+  }
+
+  /**
+   * Puts a sentence in the live region, <b>and makes it speak even when it is the same sentence</b>.
+   *
+   * `role="status"` announces a *change*. Setting the region to the text it already holds is not one, so
+   * a staff member who pressed Delete twice with a reason too short to accept was told why once and then
+   * got silence — on the second press, which is the one where they are already confused. ADM-22 hit this
+   * and fixed it by giving the save two genuinely different sentences ("…saving", then the result); this
+   * path has no in-progress state to describe, so there is no second true sentence to use.
+   *
+   * So the region is emptied and the sentence put back once the view has caught up, which is a real
+   * mutation of real text. **Not a counter or a zero-width character:** a screen reader reads what is
+   * there, and "(2)" tells the listener nothing about their message.
+   */
+  private say(message: string): void {
+    if (this.said() !== message) {
+      this.said.set(message);
+      return;
+    }
+
+    this.said.set('');
+    afterNextRender(() => this.said.set(message), { injector: this.injector });
   }
 }
