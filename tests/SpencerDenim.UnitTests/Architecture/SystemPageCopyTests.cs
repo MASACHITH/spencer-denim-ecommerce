@@ -75,8 +75,14 @@ public sealed class SystemPageCopyTests
 
     /// <summary>
     /// And the seed definitions carry no body to assign. <see cref="ContentPageKeys.Seeds"/> is a system
-    /// key, a slug and a title; a fourth field holding copy is the other way this could arrive, and it
-    /// would read as data rather than as a decision.
+    /// key, a slug, a title and a boolean; a field holding copy is the other way this could arrive, and
+    /// it would read as data rather than as a decision.
+    /// <para>
+    /// The property list is asserted whole rather than "does not contain Body", because the name of the
+    /// field is the part nobody can predict — <c>Body</c>, <c>Html</c>, <c>DefaultCopy</c>,
+    /// <c>Placeholder</c>. What can be predicted is that **a boolean cannot carry a returns policy**, so
+    /// the list is the check and <c>PublishedOnInstall</c> is on it by name.
+    /// </para>
     /// </summary>
     [Fact]
     public void A_seed_definition_has_nowhere_to_put_copy()
@@ -89,7 +95,43 @@ public sealed class SystemPageCopyTests
             .ToList();
 
         Assert.NotNull(properties);
-        Assert.Equal(["Slug", "SystemKey", "Title"], properties);
+        Assert.Equal(["PublishedOnInstall", "Slug", "SystemKey", "Title"], properties);
+
+        // Named, because the point is the *type*: nothing here can hold a sentence.
+        Assert.All(
+            typeof(ContentPageKeys).Assembly
+                .GetType("SpencerDenim.Domain.Content.ContentPageSeed")!
+                .GetProperties()
+                .Where(property => property.Name == "PublishedOnInstall"),
+            property => Assert.Equal(typeof(bool), property.PropertyType));
+    }
+
+    /// <summary>
+    /// <b>Contact ships on the shop; the other five do not.</b> The owner's decision in W2-11, as a test,
+    /// because it is a decision rather than a default and the next reader needs to see which way round it
+    /// goes.
+    /// <para>
+    /// The reasoning, so this test is not just a restatement of the data: Contact's content is the enquiry
+    /// form plus the <c>Contact.*</c> settings, so nothing about it is wrong for want of copy — while an
+    /// unpublished Contact page would leave a brand-new shop with <b>no contact route at all</b>, now
+    /// that the WhatsApp float correctly hides itself until a number is set. The other five are the
+    /// client's words, two of them needing a PDPA review, so publishing them empty would put a blank
+    /// returns policy on a live shop.
+    /// </para>
+    /// <para>
+    /// Asserted as "exactly one, and it is Contact" rather than per page, so adding a seventh seed that is
+    /// published by default fails here and has to argue for itself.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void Contact_is_the_only_page_that_ships_on_the_shop()
+    {
+        var published = ContentPageKeys.Seeds
+            .Where(seed => seed.PublishedOnInstall)
+            .Select(seed => seed.SystemKey)
+            .ToList();
+
+        Assert.Equal([ContentPageKeys.Contact], published);
     }
 
     /// <summary>

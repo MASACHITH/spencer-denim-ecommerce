@@ -190,11 +190,25 @@ public static class ContentPageKeys
     /// <summary>
     /// The six, in the order the admin list shows them: the two the shop introduces itself with, the two
     /// about buying, then the two legal ones that need a PDPA review (doc 08 §9).
+    /// <para>
+    /// <b>Contact is the one that ships on the shop, and it still ships with an empty body</b> (owner
+    /// decision, W2-11). The other five are waiting for the client's words — a returns policy, a privacy
+    /// policy and terms of business are theirs to write and Privacy and Terms need a PDPA review — so
+    /// publishing them would put words the client never agreed to on their own shop.
+    /// </para>
+    /// <para>
+    /// Contact has nothing to wait for: its content <i>is</i> the enquiry form plus whatever the client
+    /// has typed into the five <c>Contact.*</c> settings, so there is no copy whose absence makes it
+    /// wrong. And leaving it unpublished costs more than it saves — a fresh shop would have **no contact
+    /// route at all**, because the WhatsApp float now correctly hides itself until
+    /// <c>Contact.WhatsApp</c> is set. An empty-bodied Contact page is a working contact form; an
+    /// unpublished one is a shop a customer cannot reach.
+    /// </para>
     /// </summary>
     public static IReadOnlyList<ContentPageSeed> Seeds { get; } =
     [
         new(About, About, "About us"),
-        new(Contact, Contact, "Contact us"),
+        new(Contact, Contact, "Contact us", PublishedOnInstall: true),
         new(Returns, Returns, "Returns and exchanges"),
         new(Shipping, Shipping, "Delivery and shipping"),
         new(Privacy, Privacy, "Privacy policy"),
@@ -220,4 +234,23 @@ public static class ContentPageKeys
 /// The heading it starts with, in the shop's own voice. A title is a label rather than copy, so seeding
 /// one is not writing the client's words for them — the <i>body</i> is what stays empty.
 /// </param>
-public sealed record ContentPageSeed(string SystemKey, string Slug, string Title);
+/// <param name="PublishedOnInstall">
+/// Whether a brand-new shop has this page <b>on the shop</b> already. True for Contact alone; see
+/// <see cref="ContentPageKeys.Seeds"/> for why.
+/// <para>
+/// <b>It is a flag, not a place to put copy</b>, and that distinction is the one this record exists to
+/// hold: <c>SystemPageCopyTests</c> asserts the property list, so a field capable of carrying the
+/// client's words cannot be added here without a test failing. A boolean cannot carry a returns policy.
+/// </para>
+/// <para>
+/// It only decides what a <i>new</i> row looks like. Once the row exists the seeder never touches it
+/// again, so a client who takes Contact off the shop keeps it off through every later deployment —
+/// which <c>HomeContentSeederTests</c> proves, because it is the half of this decision that could go
+/// wrong silently.
+/// </para>
+/// </param>
+public sealed record ContentPageSeed(
+    string SystemKey,
+    string Slug,
+    string Title,
+    bool PublishedOnInstall = false);

@@ -371,7 +371,7 @@ Writing it measured two things worth recording:
 
 ---
 
-## Round three: two findings, and four notes for whoever owns this next
+## Round three: two findings, four notes, and the Contact decision
 
 ### M1 was not closed — the exception I added for SVG was the same vector
 
@@ -413,7 +413,7 @@ what a browser builds. The test failing is what made me check; asserting the ref
 false positive against every page that pastes unclosed paragraphs. Five more tests pin the case the
 exception exists for — `path`, `circle`, `rect`, `g`, `use` do not break out.
 
-### The WhatsApp number was the last invented value in the bundle
+### The WhatsApp number was the last invented value a shopper could see
 
 `whatsAppUrl` fell back to `94770000000` and so could never return null, so a fresh shop carried a
 floating button on **every page** and four links on the Contact page, all opening a chat with nobody.
@@ -426,8 +426,15 @@ It now returns `string | null`, and null is the point of the signature: "there i
 a state every caller has to handle. The float, the mobile-menu row and the panel's "WhatsApp is the
 fastest way" sentence all hide; the panel's two links already did. The float also **drops its landmark**
 when it has no button, because a named `complementary` region with nothing in it is a worse defect than
-the one the landmark was added to fix (#65). A grep of `dist/` now finds no invented value in either
-bundle.
+the one the landmark was added to fix (#65).
+
+**One string survives a grep of `dist/`, and it is correct.** `Monday to Friday, 9am – 6pm` is still in
+`dist/admin`, from `settings-page.ts`: it is the **input placeholder** on the opening-hours field, showing
+the client the format expected in a box that is empty. It is admin-only — never in the storefront bundle,
+never stored, never rendered to a shopper — and a format hint inside an empty field is categorically
+different from the shop stating it as fact, which is what M4 was about. It is written down here because it
+*will* surface in anybody's future grep for the placeholder strings, and finding it with no explanation
+would read as a miss.
 
 One thing that fix made load-bearing: **the stub's shop now has a WhatsApp number unless a test asks for
 none.** `quick-view`, `wishlist` and `content-pages` scan the bottom-right corner with `elementFromPoint`
@@ -448,7 +455,7 @@ in it. A content-pages occlusion test caught exactly that, which is why the swit
    worker count, so on a 16–32-core runner 25% could re-oversubscribe them. Whoever owns CI should
    consider an absolute cap as well as the percentage.
 
-### Two residuals, recorded rather than coded
+### Three residuals, recorded rather than coded
 
 - **M3's guard covers the seeder only.** Both tests read `HomeContentSeeder` and the seeded rows, so copy
   written out-of-band — by a migration, or a data fix — is caught by neither. That is arguably outside the
@@ -460,3 +467,73 @@ in it. A content-pages occlusion test caught exactly that, which is why the swit
   neutralised to `unsafe:`. Correctly a residue — and the note to carry forward is that **any future
   image-host allow-list must cover `srcset` too**, because the two layers disagree about whether the
   attribute exists at all.
+- **HTML integration points are the remaining edge of the self-closing exception, and the pop does not
+  reach them.** This is the third residual and the one a reader is most likely to assume away, because
+  the breakout list looks exhaustive and is not.
+
+  An *integration point* re-enters HTML parsing **inside** foreign content without being a breakout
+  element, so `BreaksOutOfForeignContent` never fires and `svg`/`math` stays on the scan's stack:
+  `<svg><foreignObject>`, `<svg><desc>`, `<svg><title>`, `<math><annotation-xml
+  encoding="text/html">`, `<math><mtext>` and `<math><mi>`, each followed by a **non**-breakout
+  self-closing element such as `<q/>` or `<section/>`. At n=300 the real parsed depth is 302 while the
+  scan reads about 2.
+
+  **What it costs, measured at the full 400 KB cap:** `<svg><foreignObject>` + `<section/>` × 39,000 is
+  the worst case at **8,777 ms**, with empty output and no crash. Round two's numbers for the same class
+  of payload were 41 s accepted and 121 s refused, so this is a 5–14× reduction and the headline vector
+  — the one a Content Editor could use to take the API down, and to make the admin content list
+  unopenable — is gone.
+
+  **Recorded rather than coded, deliberately.** Closing it means modelling the integration-point rules as
+  well as the breakout list, which is a second faithful slice of the HTML parsing algorithm living in a
+  lexical pre-scan whose own docblock already says it is an approximation and need not be exact. The
+  cost/benefit flipped once the result was "slow, bounded, and it refuses" rather than "fast, unbounded,
+  and it accepts": 8.8 seconds of one core on a 400 KB request is a nuisance an editor can cause by
+  pasting nonsense, not an outage. What matters is that the next reader knows **where the exception's
+  edge actually is** instead of assuming the pop closed everything — and that if this ever needs closing,
+  the place is the pre-scan's model of foreign content, not another entry on the breakout list.
+
+---
+
+## Contact ships published
+
+Owner decision, after round three. **Contact is seeded with `IsPublished = true` and an empty body**; the
+other five stay drafts.
+
+The reasoning, because it is the opposite of the rule the rest of this task follows. Contact has nothing
+to wait for: its content *is* the enquiry form plus whatever the client has typed into the five
+`Contact.*` settings, so there is no copy whose absence makes it wrong. And leaving it unpublished costs
+more than it saves — now that the WhatsApp float correctly hides itself until a number is set, a brand-new
+shop with Contact unpublished would have **no contact route at all**. An empty-bodied Contact page is a
+working contact form; an unpublished one is a shop a customer cannot reach. The tester measured the
+published page as finished rather than broken at every width: 200, no horizontal overflow, the form
+renders, every invented detail gone.
+
+**The empty body is not relaxed for it.** Published and empty is exactly the intended state, and both
+guards still assert the body of all six is empty.
+
+`ContentPageSeed` carries a `PublishedOnInstall` flag rather than the seeder special-casing a key, so the
+decision sits beside the page it applies to. `SystemPageCopyTests` asserts the record's property list
+whole — now `PublishedOnInstall`, `Slug`, `SystemKey`, `Title` — and asserts that flag is a `bool`,
+because **a boolean cannot carry a returns policy**: that is what keeps this from becoming a door for
+seeded copy. A new test asserts "exactly one page ships on the shop and it is Contact", so a seventh seed
+published by default has to argue for itself.
+
+`PublishedAtUtc` is stamped for it, from `IClock` like the sibling `DemoCatalogueSeeder`. Null beside
+`IsPublished = true` would be an inconsistent row, and `ContentPage.SetPublished` assigns with `??=`, so
+the first unpublish-and-republish would otherwise record a date months after the page was first visible.
+
+**The re-seed rule needed proving, not changing.** The seeder only ever inserts keys that are absent, so a
+client who takes Contact off the shop keeps it off — but that is now carrying a decision it was not
+carrying before, and "it happens to work because of how the query is written" is exactly what a later
+refactor breaks for free. The announcement protection a few sections up exists because that went wrong
+once already. So there are two tests, in both directions: Contact stays off once the client takes it off
+(and gains no duplicate shell), and a page the client published stays published with its copy and its
+original publish date. **Mutation proof:** making the seeder enforce the seed on existing rows turns both
+red.
+
+One rename came with it. The fixture that put all six pages into the draft state was called
+`RestoreSystemPagesAsync`, which was misleading in round two — the seed test asserted the seven fields it
+had just written — and became wrong outright here, because drafting Contact is no longer restoring
+anything. It is `DraftEverySystemPageAsync` now, and its own docblock says it is a fixture rather than a
+restore, and points at the test that does assert the seed.

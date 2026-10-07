@@ -32,7 +32,8 @@ public sealed class ContentPageEndpointTests(SqlServerDatabaseFixture sqlServer)
     // ---- the seeded shells -----------------------------------------------------------------------
 
     /// <summary>
-    /// Doc 08 §9 and doc 11 P13: six system pages, <b>unpublished, with empty bodies</b>.
+    /// Doc 08 §9 and doc 11 P13: six system pages with <b>empty bodies</b>, five of them unpublished and
+    /// <b>Contact on the shop</b> (owner decision, W2-11).
     /// <para>
     /// <b>This is the task's defining constraint, as a test.</b> A returns policy, a privacy policy and
     /// terms of business are the client's own words and carry legal weight — Privacy and Terms need a
@@ -42,7 +43,7 @@ public sealed class ContentPageEndpointTests(SqlServerDatabaseFixture sqlServer)
     /// </para>
     /// <para>
     /// <b>It deletes the rows and runs the real seeder, and the first version of this test did not.</b>
-    /// It called <c>RestoreSystemPagesAsync</c> — which writes the empty body, the unpublished flag, the
+    /// It called the helper now named <c>DraftEverySystemPageAsync</c> — which writes the empty body, the unpublished flag, the
     /// null published date, the slug, the title and the two null SEO fields — and then asserted on
     /// exactly those seven fields. It was testing its own helper. The W2-11 tester proved it: changing
     /// the seeder to write <c>&lt;p&gt;We offer a 14-day returns policy on all items.&lt;/p&gt;</c> into
@@ -57,9 +58,17 @@ public sealed class ContentPageEndpointTests(SqlServerDatabaseFixture sqlServer)
     /// what is present with <c>IgnoreQueryFilters</c> and would read a soft-deleted shell as already
     /// there and insert nothing — which would make this test vacuous in a second, quieter way.
     /// </para>
+    /// <para>
+    /// <b>The publish state is asserted per page, by name, as the intent rather than as whatever the
+    /// seeder says.</b> Contact goes on the shop because its content is the form and the
+    /// <c>Contact.*</c> settings, and because an unpublished one would leave a fresh shop with no contact
+    /// route at all. Its <b>body stays empty</b>, which is the part not relaxed: published and empty is
+    /// the intended state, and a test that read the flag off the seeder would have nothing to say if
+    /// somebody published Privacy next.
+    /// </para>
     /// </summary>
     [Fact]
-    public async Task The_six_system_pages_are_seeded_unpublished_with_no_copy_in_them()
+    public async Task The_system_pages_are_seeded_with_no_copy_and_only_contact_on_the_shop()
     {
         await using var host = await StartAsync();
 
@@ -91,20 +100,42 @@ public sealed class ContentPageEndpointTests(SqlServerDatabaseFixture sqlServer)
 
         foreach (var page in pages)
         {
-            Assert.False(page.IsPublished, $"{page.SystemKey} is published, and the client has sent no copy.");
+            // **Empty for all six, Contact included.** The publish decision below does not relax this:
+            // Contact's content is the enquiry form and the settings, not copy.
             Assert.True(
                 page.BodyHtml.Length == 0,
                 $"{page.SystemKey} was seeded with {page.BodyHtml.Length} characters of copy: "
                 + "\"" + page.BodyHtml + "\". The client writes these pages; a returns policy, a privacy "
                 + "policy and terms of business carry legal weight and Privacy and Terms need a PDPA "
                 + "review. Delete the copy from HomeContentSeeder.SeedContentPagesAsync.");
-            Assert.Null(page.PublishedAtUtc);
+
             Assert.Null(page.SeoTitle);
             Assert.Null(page.SeoDescription);
 
             // A title is a label rather than copy, so it is seeded; the body is what stays empty.
             Assert.False(string.IsNullOrWhiteSpace(page.Title));
+
+            var onTheShop = page.SystemKey == ContentPageKeys.Contact;
+
+            Assert.Equal(onTheShop, page.IsPublished);
+
+            if (onTheShop)
+            {
+                // Stamped, because the page really did go on the shop — at install. Null beside
+                // IsPublished = true would be an inconsistent row, and SetPublished assigns with `??=`.
+                Assert.NotNull(page.PublishedAtUtc);
+            }
+            else
+            {
+                Assert.Null(page.PublishedAtUtc);
+            }
         }
+
+        // Said once more as a whole, so "everything is published" and "nothing is" both fail here rather
+        // than only inside the loop's per-page message.
+        Assert.Equal(
+            [ContentPageKeys.Contact],
+            pages.Where(page => page.IsPublished).Select(page => page.SystemKey));
     }
 
     /// <summary>
@@ -154,7 +185,7 @@ public sealed class ContentPageEndpointTests(SqlServerDatabaseFixture sqlServer)
             // later test's GET /api/content/pages/about answer 404 — a failure in a test about the
             // sanitiser, caused by a test about the seeder, which is exactly the kind of coupling the
             // shared database makes easy and cheap to miss.
-            await RestoreSystemPagesAsync(host);
+            await DraftEverySystemPageAsync(host);
         }
     }
 
@@ -172,7 +203,7 @@ public sealed class ContentPageEndpointTests(SqlServerDatabaseFixture sqlServer)
     public async Task An_unpublished_page_is_absent_from_the_list_and_answers_404_by_slug()
     {
         await using var host = await StartAsync();
-        await RestoreSystemPagesAsync(host);
+        await DraftEverySystemPageAsync(host);
         using var client = host.CreateAnonymousClient();
 
         var list = await GetJsonAsync(client, PublicPagesUrl);
@@ -202,7 +233,7 @@ public sealed class ContentPageEndpointTests(SqlServerDatabaseFixture sqlServer)
     public async Task A_draft_and_a_slug_that_never_existed_answer_the_same_404()
     {
         await using var host = await StartAsync();
-        await RestoreSystemPagesAsync(host);
+        await DraftEverySystemPageAsync(host);
         using var client = host.CreateAnonymousClient();
 
         using var draft = await client.GetAsync(new Uri($"{PublicPagesUrl}/privacy", UriKind.Relative), Token);
@@ -283,7 +314,7 @@ public sealed class ContentPageEndpointTests(SqlServerDatabaseFixture sqlServer)
             new Uri($"{PublicPagesUrl}/about", UriKind.Relative), Token);
         Assert.Equal(HttpStatusCode.NotFound, afterwards.StatusCode);
 
-        await RestoreSystemPagesAsync(host);
+        await DraftEverySystemPageAsync(host);
     }
 
     // ---- the sanitiser on the write path ---------------------------------------------------------
@@ -348,7 +379,7 @@ public sealed class ContentPageEndpointTests(SqlServerDatabaseFixture sqlServer)
         }
         finally
         {
-            await RestoreSystemPagesAsync(host);
+            await DraftEverySystemPageAsync(host);
         }
     }
 
@@ -494,7 +525,24 @@ public sealed class ContentPageEndpointTests(SqlServerDatabaseFixture sqlServer)
     /// because no endpoint can clear it and none should.
     /// </para>
     /// </summary>
-    private static async Task RestoreSystemPagesAsync(MediaTestHost host)
+    /// <summary>
+    /// Puts all six system pages into the draft state this class's leak tests need: empty body, off the
+    /// shop, original slug and title, no SEO fields.
+    /// <para>
+    /// <b>It is a fixture, not a restore of the seed, and the name used to say otherwise.</b> It was
+    /// <c>RestoreSystemPagesAsync</c>, which was already misleading — the seed test asserted the seven
+    /// fields this helper had just written, and that was round two's Major 3 — and it became wrong
+    /// outright in round three, because Contact is now seeded <i>published</i> (owner decision, W2-11).
+    /// A helper that drafts Contact is not restoring anything; it is setting up the "nothing is on the
+    /// shop" case, which several tests here need and which is no longer the shop's starting state.
+    /// </para>
+    /// <para>
+    /// The seed itself is asserted by
+    /// <c>The_system_pages_are_seeded_with_no_copy_and_only_contact_on_the_shop</c>, which deletes the
+    /// rows and runs the real seeder and never calls this.
+    /// </para>
+    /// </summary>
+    private static async Task DraftEverySystemPageAsync(MediaTestHost host)
     {
         await using var scope = host.Factory.Services.CreateAsyncScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();

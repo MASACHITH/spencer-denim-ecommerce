@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using SpencerDenim.Application.Abstractions.Time;
 using SpencerDenim.Domain.Content;
 
 namespace SpencerDenim.Infrastructure.Persistence.Seeding;
@@ -25,7 +26,7 @@ namespace SpencerDenim.Infrastructure.Persistence.Seeding;
 /// any row in it at all, this step does nothing.
 /// </para>
 /// </summary>
-public sealed class HomeContentSeeder(AppDbContext dbContext)
+public sealed class HomeContentSeeder(AppDbContext dbContext, IClock clock)
 {
     public async Task<HomeContentSeedCounts> SeedAsync(CancellationToken cancellationToken)
     {
@@ -60,6 +61,21 @@ public sealed class HomeContentSeeder(AppDbContext dbContext)
     /// <i>titles</i> are seeded, because a title is a label rather than copy and a page with no heading
     /// cannot be found on the admin list.
     /// </para>
+    /// <para>
+    /// <b>Contact is the one that is published on install, and it is published with an empty body</b>
+    /// (owner decision, W2-11; see <see cref="ContentPageKeys.Seeds"/>). Its content is the enquiry form
+    /// and the <c>Contact.*</c> settings rather than copy, so there is nothing whose absence makes it
+    /// wrong — and leaving it unpublished would give a fresh shop no contact route at all, now that the
+    /// WhatsApp float correctly hides itself until a number is set. The empty body is <i>not</i> relaxed
+    /// for it: published and empty is exactly the intended state.
+    /// </para>
+    /// <para>
+    /// <b>The publish flag decides what a new row looks like and nothing else.</b> The query above has
+    /// already excluded every key that exists, so a client who takes Contact off the shop is not a
+    /// "missing" page to be fixed on the next deployment — the same protection an edited heading or a
+    /// rewritten body has. That is the half worth testing, and
+    /// <c>HomeContentSeederTests</c> does.
+    /// </para>
     /// </summary>
     private async Task<int> SeedContentPagesAsync(CancellationToken cancellationToken)
     {
@@ -79,6 +95,8 @@ public sealed class HomeContentSeeder(AppDbContext dbContext)
                 .Select(page => page.Slug)
                 .ToListAsync(cancellationToken))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var utcNow = clock.UtcNow.UtcDateTime;
 
         var added = 0;
         foreach (var seed in ContentPageKeys.Seeds)
@@ -101,12 +119,19 @@ public sealed class HomeContentSeeder(AppDbContext dbContext)
                 Slug = slug,
                 Title = seed.Title,
                 BodyHtml = string.Empty,
-                IsPublished = false,
+                IsPublished = seed.PublishedOnInstall,
+
+                // Stamped for the page that starts on the shop, because that page did go on the shop —
+                // at install. Leaving it null beside IsPublished = true would be an inconsistent row,
+                // and SetPublished assigns with `??=`, so the first unpublish-and-republish would then
+                // record a date months after the page was actually first visible.
+                PublishedAtUtc = seed.PublishedOnInstall ? utcNow : null,
             });
             added++;
         }
 
         await dbContext.SaveChangesAsync(cancellationToken);
+
         return added;
     }
 
