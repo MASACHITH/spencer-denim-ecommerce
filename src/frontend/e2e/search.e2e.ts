@@ -454,12 +454,25 @@ test.describe('the rest of the site still resolves', () => {
     });
   }
 
-  for (const path of ['/account', '/about', '/privacy']) {
+  for (const path of ['/account']) {
     test(`${path} still goes to the home page`, async ({ page }) => {
       await page.goto(path);
 
       await expect(page).toHaveURL('/');
       await expect(page.locator('sd-home-page')).toHaveCount(1);
+    });
+  }
+
+  // `/about` and `/privacy` left that list in W2-11 (GLB-10): they are content-page addresses now, and
+  // unpublished ones answer a real 404. What this block is about is unchanged — `search` is a
+  // single-segment route and must not shadow, or be shadowed by, the other single-segment routes.
+  for (const path of ['/about', '/privacy']) {
+    test(`${path} is its own address rather than the search page`, async ({ page }) => {
+      const response = await page.goto(path);
+
+      expect(response?.status()).toBe(404);
+      await expect(page).toHaveURL(path);
+      await expect(page.locator('sd-search-page')).toHaveCount(0);
     });
   }
 

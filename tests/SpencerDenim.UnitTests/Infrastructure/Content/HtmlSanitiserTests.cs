@@ -82,7 +82,59 @@ public sealed class HtmlSanitiserTests
         // Namespaced and template content.
         { "<math><mtext><table><mglyph><style><img src=x onerror=alert(1)>", "onerror" },
         { "<template><script>alert(1)</script></template>", "<script" },
+
+        // **Vectors aimed at KeepChildNodes specifically**, which is the one permissive thing in this
+        // configuration: a disallowed element is unwrapped rather than deleted, so an attribute value
+        // that closes its own element early could in principle have its contents promoted into the
+        // document. Each of these relies on the parser re-reading a quoted string as markup.
+        { "<noscript><p title=\"</noscript><img src=x onerror=alert(1)>\">", "onerror" },
+        { "<noembed><img src=x onerror=alert(1)></noembed>", "onerror" },
+        { "<noframes><img src=x onerror=alert(1)></noframes>", "onerror" },
+        { "<xmp><img src=x onerror=alert(1)></xmp>", "onerror" },
+        { "<textarea><img src=x onerror=alert(1)></textarea>", "onerror" },
+        { "<title><img src=x onerror=alert(1)></title>", "onerror" },
+        { "<svg><style><img src=x onerror=alert(1)></style></svg>", "onerror" },
+        { "<form><div></div><input name=x onfocus=alert(1) autofocus></form>", "onfocus" },
+        { "<select><option><img src=x onerror=alert(1)></option></select>", "onerror" },
+
+        // A `style` attribute on an element that *is* allowed, with a URL in it: the CSS stage is never
+        // reached, because the attribute is not on the allow-list at all.
+        { "<p style=\"background-image:url('javascript:alert(1)')\">x</p>", "javascript" },
+        { "<a href=\"#\" style=\"behavior:url(evil.htc)\">x</a>", "behavior" },
     };
+
+    /// <summary>
+    /// <b>What the allow-list deliberately accepts, and the cost of accepting it.</b>
+    /// <para>
+    /// These two were written as payloads and are not ones. They are kept as a <i>test of the
+    /// acceptance</i> rather than deleted, because the acceptance is a decision somebody should be able
+    /// to find: a content page may link to, and load an image from, any <c>http(s)</c> host. That is
+    /// inherent in GLB-10 — a client pastes a link and a picture — and it is what the scheme allow-list
+    /// exists to permit.
+    /// </para>
+    /// <para>
+    /// <b>The residue is real and is not closed here.</b> Whoever can edit a content page can make every
+    /// visitor's browser issue a request to a third party, which leaks the visitor's address and
+    /// user-agent to it. Closing that means an image-host allow-list — which the map embed has, because
+    /// it is framed rather than linked — and that is a decision about the shop rather than about the
+    /// sanitiser: the media library is the supported way to put a picture on a page, and an allow-list
+    /// would also refuse the CDN a client may legitimately use. Recorded in the W2-11 journal for the
+    /// owner.
+    /// </para>
+    /// </summary>
+    [Theory]
+    // A protocol-relative URL is an https URL on an https page, so it is accepted like any other.
+    [InlineData("<img src=\"//cdn.example/x.png\" alt=\"A shirt\">", "cdn.example")]
+    [InlineData("<a href=\"https://cdn.example/brochure.pdf\">Our brochure</a>", "cdn.example")]
+    // A doubled scheme is not an attack, it is a typo: the host becomes "https", which resolves to
+    // nothing. Kept so nobody adds a rule against a string that was never dangerous.
+    [InlineData("<a href=\"https://https://evil.example\">x</a>", "href=")]
+    public void It_accepts_a_link_or_an_image_on_any_http_host(string input, string mustContain)
+    {
+        var result = _sanitiser.Sanitise(input);
+
+        Assert.Contains(mustContain, result.Html, StringComparison.OrdinalIgnoreCase);
+    }
 
     [Theory]
     [MemberData(nameof(Dangerous))]

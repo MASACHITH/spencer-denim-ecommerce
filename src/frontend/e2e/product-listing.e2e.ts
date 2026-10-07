@@ -165,7 +165,8 @@ test.describe('addresses that are not a department', () => {
    * used to render the listing's not-found state at HTTP 200 — the copy told a shopper that a
    * *department* no longer existed when they had clicked "Bag".
    */
-  for (const path of ['/account', '/about', '/privacy', '/terms', '/contact']) {
+  // `/account` is the last entry in `UNBUILT_PATHS` (W3-01's), so it still redirects home.
+  for (const path of ['/account']) {
     test(`${path} goes to the home page`, async ({ page }) => {
       const response = await page.goto(path);
 
@@ -178,6 +179,31 @@ test.describe('addresses that are not a department', () => {
       await expect(page.locator('sd-listing-page')).toHaveCount(0);
       await expect(page.locator('sd-home-page')).toHaveCount(1);
       await expect(page.getByText('could not find that page')).toHaveCount(0);
+    });
+  }
+
+  /**
+   * **The content pages left that list in W2-11 (GLB-10), and the answer they give changed.**
+   *
+   * They used to redirect home, which was the price of fixing #28 before GLB-10 landed: the shell
+   * linked to all of them on every page, and a 404 on a link in your own footer is worse than a soft
+   * 404. Both halves of that are gone now — they are real pages, and the footer links one only once it
+   * is published — so an unpublished one is an address the shop genuinely does not have and answers a
+   * **real 404**. The home page at HTTP 200 for an address that is not the home page is #28 itself.
+   *
+   * What has not changed is the thing this describe block exists for: it must not be *this listing's*
+   * not-found state, which told a shopper a department had gone when they clicked "Privacy policy".
+   */
+  for (const path of ['/about', '/privacy', '/terms', '/contact']) {
+    test(`${path} is a real 404 while the client has published nothing`, async ({ page }) => {
+      const response = await page.goto(path);
+
+      expect(response?.status()).toBe(404);
+      await expect(page).toHaveURL(path);
+
+      await expect(page.locator('sd-listing-page')).toHaveCount(0);
+      await expect(page.locator('sd-home-page')).toHaveCount(0);
+      await expect(page.getByText('could not find that page')).toHaveCount(1);
     });
   }
 

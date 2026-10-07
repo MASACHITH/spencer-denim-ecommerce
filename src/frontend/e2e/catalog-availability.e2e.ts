@@ -214,12 +214,34 @@ test.describe('addresses that are not listings are never a 503', () => {
   });
 
   /** And the unbuilt pages the shell links to still go home, outage or not (#28). */
-  for (const path of ['/account', '/about', '/privacy']) {
+  for (const path of ['/account']) {
     test(`${path} still reaches the home page during an outage`, async ({ request }) => {
       const response = await request.get(`${liveOnlyCatalogueURL}${path}`);
 
       expect(response.status()).toBe(200);
       expect(new URL(response.url()).pathname).toBe('/');
+    });
+  }
+
+  /**
+   * **A content page's answer does not depend on the catalogue (GLB-10, W2-11), which is this file's
+   * own thesis applied to a second feed.**
+   *
+   * `/about` and `/privacy` are content-page addresses now. The catalogue is unhealthy in this fixture
+   * and the **content** feed is not, so the honest answer is the one a healthy content feed gives — a
+   * real 404 while the page is unpublished — and in particular **not a 503**, which is what this block
+   * exists to prevent an address that is not a listing from being answered with.
+   *
+   * The mirror case, a content page during a *content* outage, is in `content-pages.e2e.ts`: there the
+   * 503 is correct, because then the storefront genuinely cannot say whether the page exists.
+   */
+  for (const path of ['/about', '/privacy']) {
+    test(`${path} is a 404 during a catalogue outage, never a 503`, async ({ request }) => {
+      const response = await request.get(`${liveOnlyCatalogueURL}${path}`);
+
+      expect(response.status()).toBe(404);
+      expect(response.headers()['retry-after']).toBeUndefined();
+      expect(new URL(response.url()).pathname).toBe(path);
     });
   }
 
