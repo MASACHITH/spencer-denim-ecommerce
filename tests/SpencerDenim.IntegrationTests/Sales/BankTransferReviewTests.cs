@@ -582,6 +582,77 @@ public sealed class BankTransferReviewTests(SqlServerDatabaseFixture sqlServer) 
     }
 
     /// <summary>
+    /// Doc 08 §4.1's <c>Cancelled → Paid</c> (doc 11 P10): a customer cancels, their transfer arrives
+    /// anyway, and staff choose to honour it.
+    /// </summary>
+    /// <remarks>
+    /// <b>The red-before for a specified path that was unreachable.</b> The late acceptance looked for
+    /// <c>[Pending, Expired]</c> payments, and a cancelled order's payment is <c>Cancelled (5)</c>, so the
+    /// order claim succeeded, no payment was found, and the whole transaction rolled back reporting
+    /// <c>payment_not_reviewable</c> — "there is nothing to review" about an order with a payment row
+    /// sitting right there.
+    /// <para>
+    /// Nothing writes a cancelled order or a cancelled payment yet (customer cancel is W3-04), so the state
+    /// is arranged by hand — which is the only way to reach it and exactly why it is worth a test now
+    /// rather than when the cancel path lands on top of it.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task A_late_payment_is_accepted_on_a_cancelled_order()
+    {
+        var (order, variantId) = await PlaceOrderAsync(quantity: 1, onHand: 3);
+        var orderId = await OrderIdAsync(order.PublicId);
+
+        // Cancelled with its stock given back, which is what doc 08 §4.1 says a cancellation leaves
+        // behind, and the payment cancelled with it.
+        using (var scope = CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+            Assert.Equal(1, await db.Orders
+                .Where(candidate => candidate.Id == orderId)
+                .ExecuteUpdateAsync(
+                    candidate => candidate
+                        .SetProperty(row => row.Status, OrderStatus.Cancelled)
+                        .SetProperty(row => row.StockState, OrderStockState.Released)
+                        .SetProperty(row => row.ClosedAtUtc, DateTime.UtcNow),
+                    Token));
+
+            Assert.Equal(1, await db.Payments
+                .Where(candidate => candidate.OrderId == orderId)
+                .ExecuteUpdateAsync(
+                    candidate => candidate.SetProperty(row => row.Status, PaymentStatus.Cancelled),
+                    Token));
+
+            // The reservation goes back too, so the re-acquire below is taking real stock rather than
+            // stock this order is still holding.
+            Assert.Equal(1, await db.StockLevels
+                .Where(level => level.VariantId == variantId)
+                .ExecuteUpdateAsync(
+                    level => level.SetProperty(row => row.Reserved, 0),
+                    Token));
+        }
+
+        var before = await StockAsync(variantId);
+
+        var applied = Assert.IsType<BankTransferDecisionResult.Applied>(await AcceptLateAsync(orderId));
+        Assert.NotNull(applied.InvoiceNumber);
+
+        var row = await ReadOrderAsync(order.PublicId);
+        Assert.Equal(OrderStatus.Paid, row.Status);
+        Assert.Equal(OrderStockState.Committed, row.StockState);
+        Assert.Equal(applied.InvoiceNumber, row.InvoiceNumber);
+
+        // The cancelled payment is the one that settles: it is the money that arrived.
+        var payment = row.Payments.Single();
+        Assert.Equal(PaymentStatus.Succeeded, payment.Status);
+        Assert.True(payment.IsOrderSettlement);
+
+        // And the goods are taken from OnHand again (doc 08 §5.7), because the cancellation gave them back.
+        Assert.Equal(before.OnHand - 1, (await StockAsync(variantId)).OnHand);
+    }
+
+    /// <summary>
     /// The other half of the provider guard: an order that <i>is</i> a bank transfer whose payment row is
     /// not.
     /// </summary>

@@ -487,7 +487,10 @@ fake ones. Checked against the built bundle: no occurrence remains.
 - **m-2, `Cancelled → Paid`.** Specified in P7's exceptions and P10, and unreachable: the late acceptance
   looked for `[Pending, Expired]` payments while a cancelled order's payment is `Cancelled`, so the claim
   succeeded, no payment was found, and the whole thing rolled back saying there was nothing to review.
-  Latent until W3-04 lands cancel, then silently wrong. Fixed in the status list.
+  Latent until W3-04 lands cancel, then silently wrong. Fixed in the status list, and
+  `A_late_payment_is_accepted_on_a_cancelled_order` now covers it end to end — the state is arranged by
+  hand because nothing writes a cancelled order yet, which is exactly why it is worth a test before the
+  cancel path lands on top of it.
 - **m-3, the lock order.** Approve took `NumberSeries` before `StockLevels`; the late acceptance the
   reverse. Two decisions on a shared variant could each hold what the other wanted — a 1205 that
   `EnableRetryOnFailure` would absorb without anybody seeing it. Approve now deducts first and allocates
@@ -529,7 +532,7 @@ artefacts on this machine, and that is now evidence rather than an inference.
 | `dotnet build SpencerDenim.sln -c Release --no-incremental` | **0 warnings, 0 errors** | 0 / 0 |
 | `npm run build` (production, budgets enforced) | **0 warnings** | 0 |
 | `dotnet test tests/SpencerDenim.UnitTests` | **1459 passed**, 0 failed | 1306 (+153) |
-| `dotnet test tests/SpencerDenim.IntegrationTests` | **1089 passed**, 0 failed, 0 skipped (13 m 39 s) | 956 |
+| `dotnet test tests/SpencerDenim.IntegrationTests` | **1090 passed**, 0 failed, 0 skipped (13 m 23 s) | 956 |
 | `ng test shared / storefront / admin` | 24 / **1295** / **374** passed, 0 failed | 21 / 1206 / 273 |
 | `ng lint` | all three projects pass | pass |
 | `playwright test --project=chromium` (full suite) | **860 of 860**, clean (5.6 m) — the same figure the tester measured; the earlier 856/1/3 runs are recorded below as the load artefacts they were | — |
@@ -544,9 +547,9 @@ artefacts on this machine, and that is now evidence rather than an inference.
 
 | Suite | Tests | What they are about |
 |---|---|---|
-| `BankTransferReviewTests` | 14 | approve / reject / accept-late, every assertion read off the rows; approve-vs-expire and approve-vs-reject races, 8 and 8 rounds; two staff approving at once, 6 × 4; invoice numbers gapless across refusals |
+| `BankTransferReviewTests` | 16 | approve / reject / accept-late, every assertion read off the rows; approve-vs-expire and approve-vs-reject races, 8 and 8 rounds; two staff approving at once, 6 × 4; invoice numbers gapless across refusals; a cancelled order accepted late; a payment row from another provider refused |
 | `OrderExpiryTests` | 9 | the claim's full guard including the capture lock, not-yet-due, already-paid, twice, the batch read's order and ceiling, two instances racing 6 × 4 |
-| `AdminBankTransferEndpointTests` | 25 | permissions (`Orders.View` reads and cannot approve), the queue's shape and order, the three decisions' statuses and 409 codes, #47's malformed bodies in two environments, the bank settings' absent-≠-null, the slip end to end |
+| `AdminBankTransferEndpointTests` | 27 | permissions (`Orders.View` reads and cannot approve), the queue's shape and order, the three decisions' statuses and 409 codes, #47's malformed bodies in two environments, the bank settings' absent-≠-null, the slip end to end |
 | `OpenPaymentIndexTests` | 4 | #103's open question, 8 × 4 contenders, plus the filter text read from `sys.indexes` |
 | `BankQueuePlanTests` | 4 | DB28, read off SHOWPLAN |
 | `PaymentProviderContractTests` | 10 | doc 03 §3c's contract over every registered provider |
@@ -577,6 +580,9 @@ Each applied to `BankTransferReviewStore`, the suite run, the file restored and 
 | the slip guard's `ProofAssetId` check never matches | **1 red** — the red-before of the slip-deletion defect |
 | the payment-row `ProviderCode` filter dropped | **1 red** |
 | the provider guard dropped from the snapshot read **and** all three claims | **1 red** |
+| the late acceptance's payment statuses back to `[Pending, Expired]` | **1 red** — the red-before of m-2 |
+| the expiry batch ordered by newest deadline first | **1 red** — the red-before of m-1's rewrite |
+| `canAcceptLate` back to the clock (`secondsUntilExpiry <= 0`) | **4 red** — the red-before of MAJOR 1 |
 
 **The masked ones are reported rather than papered over**, because "my test cannot see this" is more useful
 than silence:
