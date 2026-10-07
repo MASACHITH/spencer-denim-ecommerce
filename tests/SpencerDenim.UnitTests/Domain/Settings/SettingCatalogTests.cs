@@ -127,11 +127,18 @@ public sealed class SettingCatalogTests
     }
 
     /// <summary>
-    /// The keys this slice is meant to populate, named explicitly. A key quietly dropped from the catalogue
-    /// would leave the settings screen with one box fewer and no test to notice.
+    /// Every key this build populates, named explicitly. A key quietly dropped from the catalogue would
+    /// leave the settings screen with one box fewer and no test to notice — and a key quietly <i>added</i>
+    /// is a row a screen offers that nothing may honour, which is the other half of why this list is
+    /// written out rather than counted.
     /// </summary>
+    /// <remarks>
+    /// Five keys when ADM-22 shipped; ten since W3-03 added the <c>Bank</c> group, which doc 11 P7 makes a
+    /// precondition of taking money at all. The test's name no longer counts them, because a name that
+    /// counts is a name that has to be renamed.
+    /// </remarks>
     [Fact]
-    public void The_five_keys_this_slice_populates_are_all_there_and_nothing_else_is()
+    public void The_keys_this_build_populates_are_all_there_and_nothing_else_is()
     {
         string[] expected =
         [
@@ -140,9 +147,79 @@ public sealed class SettingCatalogTests
             SettingKeys.Social.FacebookUrl,
             SettingKeys.Social.InstagramUrl,
             SettingKeys.Social.TikTokUrl,
+            SettingKeys.Bank.BankName,
+            SettingKeys.Bank.Branch,
+            SettingKeys.Bank.AccountName,
+            SettingKeys.Bank.AccountNumber,
+            SettingKeys.Bank.Instructions,
         ];
 
         Assert.Equal(expected.Order(StringComparer.Ordinal), SettingCatalog.All.Select(d => d.Key).Order(StringComparer.Ordinal));
+    }
+
+    /// <summary>
+    /// Every <c>Bank.*</c> key needs <c>Settings.Payments</c> (doc 08 §3.8 DB2), and <b>no default role
+    /// holds it</b>.
+    /// </summary>
+    /// <remarks>
+    /// The second half is what makes the first half worth asserting: these are the first keys in the
+    /// catalogue that are not <c>Settings.Edit</c>, so they are the first whose read model filter and
+    /// absent-not-null save path are actually exercised. If a future seeded role picked up
+    /// <c>Settings.Payments</c>, the client's bank account number would become editable by whoever holds
+    /// that role, and this test is where that decision has to be made rather than noticed.
+    /// </remarks>
+    [Fact]
+    public void Every_bank_key_needs_settings_payments_and_no_default_role_has_it()
+    {
+        var bank = SettingCatalog.All
+            .Where(definition => definition.GroupKey == SettingKeys.Bank.Group)
+            .ToList();
+
+        Assert.Equal(5, bank.Count);
+
+        foreach (var definition in bank)
+        {
+            Assert.Equal(Permissions.Settings.Payments, definition.RequiredPermission);
+
+            // None of them is a secret: an account number is printed on every order page by design, so
+            // encrypting it would be theatre (and CK_Settings_IsSecret would then demand ValueType 7).
+            Assert.False(definition.IsSecret);
+            Assert.Equal(SettingValueType.String, definition.ValueType);
+        }
+
+        var holders = DefaultRoleDefinitions.All
+            .Where(role => role.Permissions.Contains(Permissions.Settings.Payments))
+            .Select(role => role.Name)
+            .ToList();
+
+        Assert.True(
+            holders.Count == 0,
+            "No seeded role may hold Settings.Payments: doc 08 §9 gives it to nobody, so only a GrantsAll "
+            + "Super Admin can set the shop's bank details. Roles that now hold it: "
+            + string.Join(", ", holders));
+    }
+
+    /// <summary>
+    /// <b>The instructions are plain text, not HTML.</b>
+    /// </summary>
+    /// <remarks>
+    /// Doc 08 §3.8 states no type for this key, and <see cref="SettingValueType.TextHtml"/> would be the
+    /// obvious reading of "instructions". It must not be: that type is sanitised on save with the
+    /// content-pages allow-list sanitiser (N10), which belongs to ADM-17 and does not exist in this build —
+    /// so an HTML value would reach a public order page unsanitised, which is stored XSS. The order page
+    /// interpolates it as text and keeps its line breaks with CSS.
+    /// </remarks>
+    [Fact]
+    public void The_bank_instructions_are_plain_text_because_there_is_no_sanitiser()
+    {
+        var instructions = SettingCatalog.Find(SettingKeys.Bank.Instructions);
+
+        Assert.NotNull(instructions);
+        Assert.Equal(SettingValueType.String, instructions.ValueType);
+        Assert.NotEqual(SettingValueType.TextHtml, instructions.ValueType);
+
+        // And nothing else in the catalogue is TextHtml either, for the same reason.
+        Assert.DoesNotContain(SettingValueType.TextHtml, SettingCatalog.All.Select(d => d.ValueType));
     }
 
     [Fact]
@@ -206,7 +283,7 @@ public sealed class SettingCatalogTests
     [Fact]
     public void Groups_are_listed_once_each_in_catalogue_order()
     {
-        Assert.Equal(["Store", "Contact", "Social"], SettingCatalog.Groups);
+        Assert.Equal(["Store", "Contact", "Social", "Bank"], SettingCatalog.Groups);
     }
 
     [Fact]
@@ -218,14 +295,28 @@ public sealed class SettingCatalogTests
             [SettingKeys.Social.FacebookUrl, SettingKeys.Social.InstagramUrl, SettingKeys.Social.TikTokUrl],
             SettingCatalog.KeysIn(SettingKeys.Social.Group));
 
+        Assert.Equal(
+            [
+                SettingKeys.Bank.BankName,
+                SettingKeys.Bank.Branch,
+                SettingKeys.Bank.AccountName,
+                SettingKeys.Bank.AccountNumber,
+                SettingKeys.Bank.Instructions,
+            ],
+            SettingCatalog.KeysIn(SettingKeys.Bank.Group));
+
         // A group nobody has defined is an empty list, not an exception: the read model iterates groups.
-        Assert.Empty(SettingCatalog.KeysIn("Bank"));
+        // `Bank` used to be this example and is now a real group, so the next unbuilt one takes its place
+        // (doc 08 §3.8's `Payments.PayPal`, which W4-01 adds).
+        Assert.Empty(SettingCatalog.KeysIn("Payments.PayPal"));
     }
 
     [Fact]
     public void Find_answers_null_for_a_key_this_build_does_not_know()
     {
-        Assert.Null(SettingCatalog.Find("Bank.AccountNumber"));
+        // `Bank.AccountNumber` used to be the example of a key this build does not know. W3-03 added it,
+        // so an unbuilt group takes its place: doc 08 §3.8's `Payments.PayPal.ClientId`, which W4-01 adds.
+        Assert.Null(SettingCatalog.Find("Payments.PayPal.ClientId"));
         Assert.Null(SettingCatalog.Find(null));
         Assert.Null(SettingCatalog.Find("Store.Logo"));
     }

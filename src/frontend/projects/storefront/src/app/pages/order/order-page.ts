@@ -7,6 +7,7 @@ import {
   inject,
   signal,
 } from '@angular/core';
+import { HttpErrorResponse } from '@angular/common/http';
 import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
 import { Meta, Title } from '@angular/platform-browser';
 import { ActivatedRoute, RouterLink } from '@angular/router';
@@ -16,6 +17,8 @@ import { formatLkr } from '../../core/catalog/money';
 import { CheckoutApi, checkoutErrorMessage, checkoutFailure } from '../../core/checkout/checkout-api';
 import {
   OrderConfirmationDto,
+  OrderPaymentFieldDto,
+  OrderPaymentProofDto,
   formatColomboDateTime,
 } from '../../core/checkout/checkout.model';
 import { RobotsMeta } from '../../core/platform/robots-meta';
@@ -26,6 +29,15 @@ const HANDOVER_KEY = 'order';
 
 /** A token that names no order gets a real 404, the same as a mistyped product slug. */
 const NOT_FOUND_STATUS = 404;
+
+/**
+ * The largest slip this page will send.
+ *
+ * Doc 08 §3.3's own figure, and the server enforces it three times over (the endpoint's body limit,
+ * `MediaOptions.MaxBytesFor` and `CK_MediaAssets_SizeBytes`). Checking it here as well saves a shopper on
+ * a mobile connection from uploading five megabytes to be told no.
+ */
+const MAX_SLIP_BYTES = 5 * 1024 * 1024;
 
 /**
  * The order success page, and a guest's order link (CHK-04, doc 11 P6 steps 10–11).
@@ -54,12 +66,20 @@ const NOT_FOUND_STATUS = 404;
  * 201</b> — and it is asserted there. A shopper whose request was retried sees one success page for one
  * order, which is the truth and needs no explaining.
  *
- * **No bank details, no reference to quote, no "upload your slip", no countdown.** Doc 11 P6 step 10
- * puts all of that on this page for a bank transfer, and all of it is doc 11 P7 — PAY-01, W3-03's step 3.
- * What this page can say truthfully today is that the order exists, that it is waiting for payment, and
- * when the hold lapses. It says exactly that and promises nothing it does not have. **It also does not
- * claim an email has been sent**, because nothing sends one: `ops.EmailOutbox` and ACC-03's templates are
- * W3-06.
+ * **The bank-transfer panel is doc 11 P7 steps 1 and 3**, and it only appears when the server has
+ * something true to put in it. The account to pay into, the exact amount, the reference to quote and the
+ * deadline all come from the payload — the shop's details are read live, which is correct for a shopper
+ * who has not paid yet. If the shop has not filled its bank details in, the panel says the details are
+ * being confirmed rather than printing an empty account number somebody might transfer money to.
+ *
+ * **It still does not claim an email has been sent**, because nothing sends one: `ops.EmailOutbox` and
+ * ACC-03's templates are W3-06. The order's own link is what a shopper is told to keep, and the panel
+ * repeats that beside the deadline.
+ *
+ * **No countdown that ticks.** The deadline is a date and time in Colombo, not "47 hours left": a ticking
+ * figure would be rendered from the browser's clock, and a device with the wrong date would quietly tell a
+ * shopper the wrong deadline for their own money. The staff queue is where a live figure belongs, and
+ * there the server computes it.
  */
 @Component({
   selector: 'sd-order-page',
@@ -216,13 +236,7 @@ const NOT_FOUND_STATUS = 404;
                 <dt>Payment</dt>
                 <dd>
                   <span class="order__block">{{ placed.paymentMethodName }}</span>
-                  <!-- What is true today and nothing more: the order is held until this time. The account
-                       to pay into, the reference to quote and the slip upload are doc 11 P7 (W3-03 step 3)
-                       and are not promised here. -->
-                  <span class="order__block order__muted">
-                    Awaiting payment. We hold your items until
-                    {{ dueAt(placed) }}.
-                  </span>
+                  <span class="order__block order__muted">{{ paymentState(placed) }}</span>
                 </dd>
               </div>
               @if (placed.customerNote) {
@@ -236,6 +250,189 @@ const NOT_FOUND_STATUS = 404;
             <a class="link" routerLink="/">Continue shopping</a>
           </aside>
         </div>
+
+        @if (awaitingPayment(placed)) {
+          <section class="order__panel pay" aria-labelledby="pay-title" data-testid="pay-panel">
+            <h2 class="order__panel-title" id="pay-title">How to pay</h2>
+
+            <p class="sr-only" role="status" data-testid="pay-announcement">{{ announcement() }}</p>
+
+            @if (placed.payment; as how) {
+              <p class="pay__lead">
+                Transfer <strong data-testid="pay-amount">{{ money(how.amountLkr) }}</strong> to the
+                account below by <strong data-testid="pay-due">{{ dueAt(placed) }}</strong>, quoting your
+                order number as the reference. We hold your items until then.
+              </p>
+
+              <dl class="pay__details">
+                @if (how.reference) {
+                  <div class="pay__detail">
+                    <dt>Reference to quote</dt>
+                    <dd>
+                      <span class="pay__value" data-testid="pay-reference">{{ how.reference }}</span>
+                      <button
+                        class="link pay__copy"
+                        type="button"
+                        (click)="copy(how.reference, 'the reference')"
+                        data-testid="copy-reference"
+                      >
+                        Copy
+                      </button>
+                    </dd>
+                  </div>
+                }
+
+                @for (field of how.fields; track field.label) {
+                  <div class="pay__detail">
+                    <dt>{{ field.label }}</dt>
+                    <dd>
+                      <span class="pay__value" [attr.data-testid]="fieldTestId(field)">
+                        {{ field.value }}
+                      </span>
+                      @if (field.copyable) {
+                        <button
+                          class="link pay__copy"
+                          type="button"
+                          (click)="copy(field.value, field.label.toLowerCase())"
+                          [attr.data-testid]="'copy-' + fieldTestId(field)"
+                        >
+                          Copy
+                        </button>
+                      }
+                    </dd>
+                  </div>
+                }
+              </dl>
+
+              @if (how.notes) {
+                <!-- Interpolated, so it is text whatever it holds. The value is a settings field a staff
+                     user types and this is a public page; there is no HTML sanitiser in this build, and
+                     an unsanitised value rendered as markup here would be stored XSS. -->
+                <p class="pay__notes" data-testid="pay-notes">{{ how.notes }}</p>
+              }
+
+              @if (how.acceptsProof) {
+                <!-- **Not a <form>, and the first version was one — a browser test caught what that costs.**
+                     A native submit button inside a form with no action submits to the page's own URL, and
+                     before Angular hydrates there is no (ngSubmit) handler to stop it: a shopper who types
+                     a reference on a slow connection and presses Save navigates to
+                     ?payerReference=...&slip=, the typed value goes into the URL instead of the order, and
+                     nothing says so. Silent loss of something a shopper just typed about their own money.
+
+                     So the controls are plain buttons with click handlers, and Enter is handled explicitly
+                     on the text box: the keyboard shortcut survives without a submission that can escape
+                     to the browser.
+
+                     **The first version of this comment also claimed "there was no <form> in the storefront
+                     before this one" and that checkout's Place Order is a button. Both are false, and the
+                     correction is the point.** checkout-page.ts has a <form> whose submit button is
+                     attached from outside by the form= attribute, which is why a grep for (ngSubmit) found
+                     only this file and why I believed the claim when I wrote it. That one is worse than
+                     mine was: a pre-hydration submit puts a shopper's name, phone, address and city into
+                     the query string, loses the form and leaves personal data in history and access logs.
+                     It is W3-02's and filed as issue #123 — not fixed here, and not to be inferred away by
+                     this comment a second time. The lesson is the one this file keeps relearning: a
+                     comment written from what the author intended, rather than from the behaviour in front
+                     of them, is worse than no comment. -->
+                <div class="pay__proof">
+                  <h3 class="pay__sub">Tell us about your transfer</h3>
+                  <p class="order__muted">
+                    Optional, and it helps us find your payment faster. We check our bank statement either
+                    way.
+                  </p>
+
+                  <label class="pay__field">
+                    <span class="pay__label">Your bank's reference</span>
+                    <input
+                      class="pay__input"
+                      id="pay-ref-input"
+                      type="text"
+                      maxlength="100"
+                      autocomplete="off"
+                      [value]="reference()"
+                      (input)="setReference($event)"
+                      (keydown.enter)="saveReference()"
+                      data-testid="reference-input"
+                    />
+                  </label>
+
+                  <div class="pay__actions">
+                    <!-- aria-disabled, never disabled: disabling the control under the shopper's own
+                         finger throws focus to <body> (issue #109), and saveReference refuses while a
+                         write is in flight so the button is inert either way. -->
+                    <button
+                      class="btn btn--secondary"
+                      type="button"
+                      [attr.aria-disabled]="busy() ? 'true' : null"
+                      (click)="saveReference()"
+                      data-testid="save-reference"
+                    >
+                      {{ busy() ? 'Saving…' : 'Save the reference' }}
+                    </button>
+                  </div>
+
+                  <label class="pay__field">
+                    <span class="pay__label">
+                      A photo or PDF of your slip (up to 5 MB)
+                    </span>
+                    <input
+                      class="pay__input"
+                      id="pay-slip-input"
+                      type="file"
+                      [accept]="slipAccept"
+                      [attr.aria-disabled]="busy() ? 'true' : null"
+                      (change)="onSlipChosen($event)"
+                      data-testid="slip-input"
+                      #slipInput
+                    />
+                  </label>
+
+                  @if (placed.proof; as sent) {
+                    @if (sent.slipFileName) {
+                      <p class="pay__sent" data-testid="slip-current">
+                        We have <strong>{{ sent.slipFileName }}</strong> for this order.
+                        <a class="link" [href]="slipUrl()" target="_blank" rel="noopener">
+                          Open your copy
+                        </a>
+                        · Uploading another one replaces it.
+                      </p>
+                    }
+                  }
+
+                  @if (problem(); as message) {
+                    <p class="pay__error" role="alert" data-testid="pay-error">{{ message }}</p>
+                  }
+                </div>
+              }
+            } @else {
+              <!-- A real state, not an error: doc 11 P7 makes "bank details set by a Super Admin" a
+                   precondition, and the shop can be live before the client sends them. Half a form is
+                   worse than none — a shopper who saw a bank name and an empty account number might
+                   transfer to whatever they found.
+
+                   **"We will be in touch" used to be here, and it was a promise nothing can keep.**
+                   Nothing in this build contacts a customer: ops.EmailOutbox and the templates are W3-06,
+                   and this branch is reached precisely when the shop has not finished setting itself up,
+                   so the one thing that would make the sentence true is the thing that is missing. A
+                   reviewer was right that a three-phrase blocklist in the tests is a canary and not a
+                   property — the property is that this page only ever says what the system can do, and
+                   that has to be held line by line.
+
+                   The deadline is named here as well. It applies whether or not the shop has filled its
+                   details in: this order is released if nothing arrives by then, and a shopper who cannot
+                   see a deadline cannot act on it. -->
+              <p class="pay__lead" data-testid="pay-pending-details">
+                We are still confirming the payment details for this order, so there is nothing to transfer
+                to yet. Nothing has been charged. Keep this page's address — it is the link to your order,
+                and the details will appear here once they are set.
+              </p>
+              <p class="pay__lead" data-testid="pay-pending-due">
+                Please check back before <strong>{{ dueAt(placed) }}</strong>: if no payment reaches us by
+                then, the order is released and the items go back on sale.
+              </p>
+            }
+          </section>
+        }
       } @else if (error(); as message) {
         <div class="order__empty">
           <h1 class="order__title">We could not load your order</h1>
@@ -295,6 +492,133 @@ const NOT_FOUND_STATUS = 404;
       padding: var(--space-1-5);
       border: 1px solid var(--color-sale);
       color: var(--color-sale);
+    }
+    /* The pay panel. Its own block rather than reusing .order__facts, because these values are copied
+       rather than read: an account number has to be selectable as one run of characters, and the copy
+       button has to be a full-height control at 320 px (GLB-09's 44 px floor). */
+    /* min-width: 0 on every grid level of this panel, and it is the fix the measurement pointed at.
+       A grid item's default min-width is auto, which means min-content — and a file input's min-content
+       is the width of its button plus its filename text, which does not shrink. That forced this panel to
+       362px inside a 320px viewport, and because the panel is a sibling in the page's own grid every
+       other panel stretched with it: the browser test reported 74px of overflow and named
+       h2.order__panel-title as an offender, which is a heading that is entirely innocent.
+       W3-02's round 3 records the inverse of this lesson - dropping a min-width: 0 and having to gate it
+       with a re-measure - so both directions are now written down. */
+    .pay {
+      display: grid;
+      gap: var(--space-2);
+      min-width: 0;
+    }
+    .pay__lead {
+      max-width: 60ch;
+    }
+    /* minmax(min(100%, 16rem), 1fr) and not minmax(16rem, 1fr).
+       The second form makes 16rem a hard floor, so at 320 px the track is wider than the column it is in
+       and the page scrolls sideways — which is what a browser test measured as 74 px of overflow on this
+       page, against the project's own non-negotiable. min(100%, ...) lets the single track shrink to the
+       container when the container is the smaller of the two. */
+    .pay__details {
+      display: grid;
+      gap: var(--space-1-5);
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
+      margin: 0;
+      min-width: 0;
+    }
+    .pay__detail dt {
+      font-size: var(--text-small);
+      color: var(--color-text-muted);
+    }
+    .pay__detail dd {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: var(--space-1);
+      margin: 0;
+      min-width: 0;
+    }
+    .pay__value {
+      font-size: var(--text-body);
+      letter-spacing: 0.02em;
+      /* An account number can be longer than a narrow column, and a shopper copying it by hand needs it
+         whole rather than widening the page. */
+      overflow-wrap: anywhere;
+      user-select: all;
+    }
+    /* **A 44 px tap target in both directions, and the width half is not decoration.** The shared
+       button.link rule gives these controls min-height: var(--tap) and nothing about width, which is
+       right for a link-shaped button sitting inside a sentence and wrong for one standing on its own: at
+       320 px the browser tests measured this button at 40x44, because "Copy" is simply narrower than a
+       finger. justify-content: center keeps the label in the middle of the box the min-width creates
+       rather than hard against its left edge.
+
+       Fixed here rather than in base.css: widening every link-button in the shop would stretch the ones
+       that genuinely are words in a sentence, and that is a change for whoever owns the design system. It
+       is written up in the journal as a trap any short-labelled button.link will fall into. */
+    .pay__copy {
+      flex: none;
+      justify-content: center;
+      min-width: var(--tap);
+    }
+    /* The shop's own note, with its line breaks kept. It arrives as text and is interpolated as text. */
+    .pay__notes {
+      max-width: 60ch;
+      white-space: pre-line;
+      color: var(--color-text-muted);
+    }
+    .pay__proof {
+      display: grid;
+      gap: var(--space-1-5);
+      padding-top: var(--space-2);
+      border-top: 1px solid var(--color-border);
+      min-width: 0;
+    }
+    .pay__sub {
+      font-size: var(--text-h3);
+    }
+    .pay__field {
+      display: grid;
+      gap: 0.375rem;
+      max-width: min(36rem, 100%);
+      min-width: 0;
+    }
+    .pay__label {
+      font-size: var(--text-small);
+      color: var(--color-text-muted);
+    }
+    /* max-width: 100% is load-bearing for the file input specifically: a file control has a wide
+       intrinsic size that does not shrink with its container, and it was the larger part of the 74 px of
+       overflow a browser test found at 320 px. A text input would have shrunk on its own. */
+    .pay__input {
+      width: 100%;
+      max-width: 100%;
+      min-width: 0;
+      min-height: var(--tap);
+      padding: 0 var(--space-1);
+      font: inherit;
+      color: var(--color-text);
+      background-color: var(--color-surface);
+      border: 1px solid var(--color-border);
+    }
+    .pay__actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--space-1);
+    }
+    .pay__sent {
+      color: var(--color-text-muted);
+    }
+    .pay__error {
+      padding: var(--space-1-5);
+      border: 1px solid var(--color-sale);
+      color: var(--color-sale);
+    }
+    /* The write controls say aria-disabled rather than disabled, so a press does not throw the shopper's
+       focus to the document body. That leaves the unavailable look to be drawn here. Opacity only: a
+       control that cannot be hovered cannot show a cursor, and the press is already a no-op.
+       (No backticks in this block: it is a template literal, and one would end it.) */
+    .pay [aria-disabled='true'] {
+      opacity: 0.6;
+      cursor: progress;
     }
     .order__empty {
       display: grid;
@@ -449,6 +773,10 @@ export class OrderPage {
    */
   private readonly response = inject(RESPONSE_INIT, { optional: true });
 
+  private readonly writing = signal(false);
+  private readonly payProblem = signal<string | null>(null);
+  private readonly said = signal('');
+
   constructor() {
     inject(Title).setTitle(brandPageTitle('Your order'));
     inject(Meta).updateTag({
@@ -481,6 +809,206 @@ export class OrderPage {
   protected readonly isLoading = this.loading.asReadonly();
   protected readonly error = this.failure.asReadonly();
   protected readonly notFound = computed(() => this.missing() && this.current() === null);
+
+  /** What the media endpoint takes for a slip. Checked on the server by file signature, not by name. */
+  protected readonly slipAccept = 'image/jpeg,image/png,image/webp,application/pdf';
+
+  /**
+   * The reference box's contents.
+   *
+   * Seeded from the payload and then owned by the shopper: a re-read after a save must not reset what
+   * they have started typing next, which is `SettingsPage.applySettings`' lesson in a smaller form.
+   */
+  protected readonly reference = signal('');
+
+  protected readonly busy = this.writing.asReadonly();
+  protected readonly problem = this.payProblem.asReadonly();
+  protected readonly announcement = this.said.asReadonly();
+
+  /**
+   * Whether this order is still waiting for money, and so whether the pay panel belongs on screen.
+   *
+   * **Read off the status, not off `payment`.** The two are different questions and conflating them is
+   * how a paid order would show a "transfer this amount" panel for as long as the shop's bank details
+   * were unset: `payment` is null for a paid order *and* for an order whose details are not filled in,
+   * and only one of those should put the panel on screen.
+   */
+  protected awaitingPayment(order: OrderConfirmationDto): boolean {
+    return order.status === 'PendingPayment';
+  }
+
+  /** The sentence beside "Payment" in the details list. */
+  protected paymentState(order: OrderConfirmationDto): string {
+    if (!this.awaitingPayment(order)) {
+      return order.status === 'Paid'
+        ? 'Paid. Thank you — we are getting your order ready.'
+        : `This order is ${order.status.toLowerCase()}.`;
+    }
+
+    return `Awaiting payment. We hold your items until ${this.dueAt(order)}.`;
+  }
+
+  /** A stable test id per detail, from its label. */
+  protected fieldTestId(field: OrderPaymentFieldDto): string {
+    return `pay-${field.label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+  }
+
+  protected slipUrl(): string {
+    return this.api.paymentSlipUrl(this.token());
+  }
+
+  /**
+   * Copies a value and says so.
+   *
+   * **`navigator.clipboard` is not always there** — it needs a secure context, and it is absent during
+   * server-side rendering and in a plain-http preview. A failure is announced as "could not copy, select
+   * it instead" rather than being swallowed, because the shopper is about to retype an account number and
+   * silence would have them believe it was on the clipboard.
+   */
+  protected copy(value: string, what: string): void {
+    const clipboard = globalThis.navigator?.clipboard;
+
+    if (!clipboard) {
+      this.announce(`We could not copy ${what}. Select it and copy it yourself.`);
+      return;
+    }
+
+    clipboard.writeText(value).then(
+      () => this.announce(`Copied ${what}.`),
+      () => this.announce(`We could not copy ${what}. Select it and copy it yourself.`),
+    );
+  }
+
+  /**
+   * Keeps the reference box and the signal in step.
+   *
+   * [value] plus (input) rather than ngModel, which is how every other input in this shop is bound: the
+   * reference box used to live in a form, and taking the form away took ngModel with it (ngModel outside
+   * a form needs standalone options, and reaching for them would be keeping a dependency for nothing).
+   */
+  protected setReference(event: Event): void {
+    this.reference.set((event.target as HTMLInputElement).value);
+  }
+
+  protected saveReference(): void {
+    // The guard the `disabled` attribute would have provided, which is why nothing here is disabled.
+    if (this.writing()) {
+      return;
+    }
+
+    const value = this.reference().trim();
+
+    this.beginWrite(value.length === 0 ? 'Removing your reference…' : 'Saving your reference…');
+
+    this.api
+      .setPaymentReference(this.token(), value.length === 0 ? null : value)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: () => {
+          this.writing.set(false);
+          this.announce(
+            value.length === 0
+              ? 'Your reference was removed.'
+              : 'Your reference is saved. We will look for it on our statement.',
+          );
+          this.read();
+        },
+        error: (error: unknown) => this.failWrite(error),
+      });
+  }
+
+  protected onSlipChosen(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+
+    this.payProblem.set(null);
+
+    // The box carries `aria-disabled` rather than `disabled`, so the guard it would have provided has to
+    // be here — and the box is cleared so no filename is left on screen implying a file was taken.
+    if (this.writing()) {
+      input.value = '';
+      return;
+    }
+
+    if (!file) {
+      return;
+    }
+
+    // Checked here as well as on the server, because being refused after a slow upload on a Sri Lankan
+    // mobile connection is a worse experience than a sentence before it starts. The server's check is the
+    // one that matters: it reads the file's signature, so a renamed file does not get through.
+    if (file.size > MAX_SLIP_BYTES) {
+      this.payProblem.set('That file is larger than 5 MB. A photo of the slip is usually well under it.');
+      input.value = '';
+      return;
+    }
+
+    this.beginWrite('Sending your slip…');
+
+    this.api
+      .uploadPaymentSlip(this.token(), file)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (uploaded) => {
+          this.writing.set(false);
+          input.value = '';
+          this.announce(`We have your slip, ${uploaded.fileName}.`);
+          this.read();
+        },
+        error: (error: unknown) => {
+          input.value = '';
+          this.failWrite(error);
+        },
+      });
+  }
+
+  private beginWrite(message: string): void {
+    this.writing.set(true);
+    this.payProblem.set(null);
+    this.announce(message);
+  }
+
+  private failWrite(error: unknown): void {
+    this.writing.set(false);
+    this.said.set('');
+    this.payProblem.set(this.payMessage(error));
+  }
+
+  /**
+   * What to tell a shopper about a refused reference or slip.
+   *
+   * The server's own sentence wherever there is one: it says what to do next. The two cases worth
+   * recognising are a 404 — which for these routes means the order can no longer be paid, not that it
+   * does not exist — and a 429, which is doc 08 §3.3 N10's limit.
+   */
+  private payMessage(error: unknown): string {
+    if (error instanceof HttpErrorResponse) {
+      const body = (error.error ?? null) as Record<string, unknown> | null;
+      const detail = typeof body?.['detail'] === 'string' ? (body['detail'] as string) : null;
+
+      if (error.status === 404) {
+        return 'This order can no longer be paid. If you have already transferred the money, get in '
+          + 'touch and we will sort it out.';
+      }
+
+      if (detail !== null) {
+        return detail;
+      }
+    }
+
+    return checkoutErrorMessage(error);
+  }
+
+  /**
+   * Puts a sentence in the live region, **re-firing an identical one**.
+   *
+   * `role="status"` announces a change, and setting a region to the text it already holds is not a change
+   * — so copying the account number twice would be read out once and then never again. A trailing space
+   * is invisible and makes it a change. Same fix as `CartStore.announce`, same defect (ADM-22).
+   */
+  private announce(sentence: string): void {
+    this.said.update((previous) => (previous === sentence ? `${sentence} ` : sentence));
+  }
 
   protected money(amount: number): string {
     return formatLkr(amount);
@@ -521,6 +1049,7 @@ export class OrderPage {
           this.missing.set(false);
           this.current.set(order);
           this.handover.give(HANDOVER_KEY, order);
+          this.seedReference(order.proof);
         },
         error: (error: unknown) => {
           this.loading.set(false);
@@ -541,4 +1070,23 @@ export class OrderPage {
         },
       });
   }
+
+  /**
+   * Puts the stored reference into the box, **without overwriting what the shopper is typing**.
+   *
+   * The box is seeded once, from the first payload that has a value for it. A re-read follows every save,
+   * and that response can land after the shopper has started correcting the value again — setting it from
+   * the server then would silently wipe those keystrokes, which is the defect `SettingsPage` records at
+   * length under `keepUnsavedEdits`.
+   */
+  private seedReference(proof: OrderPaymentProofDto | null): void {
+    if (this.referenceSeeded) {
+      return;
+    }
+
+    this.referenceSeeded = true;
+    this.reference.set(proof?.reference ?? '');
+  }
+
+  private referenceSeeded = false;
 }

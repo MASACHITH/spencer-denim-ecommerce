@@ -212,9 +212,55 @@ function freshState() {
       'Social.FacebookUrl': null,
       'Social.InstagramUrl': null,
       'Social.TikTokUrl': null,
+
+      // PAY-01 / doc 11 P7's preconditions. Seeded null, like the real seeder: the client fills them in.
+      'Bank.BankName': null,
+      'Bank.Branch': null,
+      'Bank.AccountName': null,
+      'Bank.AccountNumber': null,
+      'Bank.Instructions': null,
     },
     logo: null,
     uploads: new Map(),
+
+    // PAY-01 / ADM-09 (W3-03): doc 11 P7 step 4's queue. Two rows, deliberately different — one with a
+    // reference and a slip and most of its window left, one overdue with neither — because the screen
+    // renders a different action and a different pill for each, and a fixture of two identical rows would
+    // exercise one of them twice.
+    bankTransfers: [
+      {
+        orderPublicId: '44444444-4444-4444-8444-444444444444',
+        orderNumber: 'SD-2026-000123',
+        customerName: 'Nimali Perera',
+        customerEmail: 'nimali@example.com',
+        amountLkr: 15596.6,
+        currency: 'LKR',
+        payerReference: 'CBC-778812',
+        slipAssetPublicId: '66666666-6666-4666-8666-666666666666',
+        slipContentType: 'image/jpeg',
+        placedAtUtc: '2026-10-05T04:30:00Z',
+        paymentDueAtUtc: '2026-10-07T04:30:00Z',
+        secondsUntilExpiry: 19 * 60 * 60,
+      },
+      {
+        orderPublicId: '55555555-5555-4555-8555-555555555555',
+        orderNumber: 'SD-2026-000124',
+        customerName: 'Ruwan Jayasuriya',
+        customerEmail: 'ruwan@example.com',
+        amountLkr: 4290,
+        currency: 'LKR',
+        payerReference: null,
+        slipAssetPublicId: null,
+        slipContentType: null,
+        placedAtUtc: '2026-10-04T06:00:00Z',
+        paymentDueAtUtc: '2026-10-06T06:00:00Z',
+        secondsUntilExpiry: -37 * 60,
+      },
+    ],
+
+    // What the next decision answers. A fixture switch rather than a payload, so a test names a *state*
+    // and this file owns what that state's bytes are — the rule the site-settings switch follows.
+    bankTransferOutcome: 'ok',
 
     // ADM-10 (W1-03). Its own module, because this file is already a thousand lines about ADM-11.
     ...freshProductState(),
@@ -238,12 +284,42 @@ function settingsPayload(state) {
       keys: ['Social.FacebookUrl', 'Social.InstagramUrl', 'Social.TikTokUrl'],
       types: {},
     },
+
+    // PAY-01. Its own group and its own save unit, because it is the one group guarded by a different
+    // permission (Settings.Payments) — see SettingCatalog.SaveUnits.
+    {
+      groupKey: 'Bank',
+      keys: [
+        'Bank.BankName',
+        'Bank.Branch',
+        'Bank.AccountName',
+        'Bank.AccountNumber',
+        'Bank.Instructions',
+      ],
+      types: {},
+      permission: 'Settings.Payments',
+    },
   ];
 
-  const unitFor = (groupKey) =>
-    groupKey === 'Store'
-      ? ['Store.LogoAssetId']
-      : ['Contact.WhatsApp', 'Social.FacebookUrl', 'Social.InstagramUrl', 'Social.TikTokUrl'];
+  const bankKeys = [
+    'Bank.BankName',
+    'Bank.Branch',
+    'Bank.AccountName',
+    'Bank.AccountNumber',
+    'Bank.Instructions',
+  ];
+
+  const unitFor = (groupKey) => {
+    if (groupKey === 'Store') {
+      return ['Store.LogoAssetId'];
+    }
+
+    if (groupKey === 'Bank') {
+      return bankKeys;
+    }
+
+    return ['Contact.WhatsApp', 'Social.FacebookUrl', 'Social.InstagramUrl', 'Social.TikTokUrl'];
+  };
 
   const tokenFor = (groupKey) =>
     Buffer.from(unitFor(groupKey).map((key) => `${key}=${state.settings[key] ?? ''}`).join('|')).toString('base64');
@@ -258,7 +334,7 @@ function settingsPayload(state) {
         value: state.settings[key],
         isSecret: false,
         hasValue: Boolean(state.settings[key]),
-        requiredPermission: 'Settings.Edit',
+        requiredPermission: group.permission ?? 'Settings.Edit',
         description: `What ${key} is for.`,
         updatedAtUtc: null,
       })),
@@ -539,6 +615,130 @@ const server = createServer(async (request, response) => {
   }
 
   // ---- settings (ADM-22, GLB-02) -------------------------------------------------------------
+  // ---- PAY-01 / ADM-09: doc 11 P7 step 4's queue and its three decisions -------------------------
+
+  // Test-only, and named so. `outcome=expired|short|paid` makes the next decision answer the 409 the real
+  // API answers in that state, which is how the screen's Accept-late branch and its short-line list are
+  // reachable at all.
+  if (path === '/__test__/bank-transfer-outcome') {
+    state.bankTransferOutcome = url.searchParams.get('outcome') ?? 'ok';
+    return json(response, 200, { outcome: state.bankTransferOutcome });
+  }
+
+  if (path === '/api/admin/orders/bank-transfers' && request.method === 'GET') {
+    const page = Math.max(1, Number(url.searchParams.get('page') ?? '1'));
+    const pageSize = Math.max(1, Number(url.searchParams.get('pageSize') ?? '20'));
+
+    return json(response, 200, {
+      rows: state.bankTransfers.slice((page - 1) * pageSize, page * pageSize),
+      page,
+      pageSize,
+      totalCount: state.bankTransfers.length,
+    });
+  }
+
+  const slipRoute = /^\/api\/admin\/orders\/bank-transfers\/([^/]+)\/slip$/.exec(path);
+  if (slipRoute && request.method === 'GET') {
+    // The real route streams the private file as an attachment. The stub only has to be openable; the
+    // headers are what the e2e asserts, because they are the part that keeps a stranger's bank document
+    // out of a browser's cache and out of the page.
+    response.writeHead(200, {
+      'Content-Type': 'image/jpeg',
+      'Content-Disposition': 'attachment',
+      'X-Content-Type-Options': 'nosniff',
+      'Cache-Control': 'no-store, no-cache, private',
+    });
+
+    return response.end('slip-bytes');
+  }
+
+  const decision = /^\/api\/admin\/orders\/bank-transfers\/([^/]+)\/(approve|reject|accept-late)$/.exec(path);
+  if (decision && request.method === 'POST') {
+    const [, orderPublicId, action] = decision;
+    const body = await readBody(request);
+
+    if (body === undefined || body === null) {
+      return problem(response, 400, 'Malformed JSON', 'The request body is not valid JSON.', 'malformed_json');
+    }
+
+    const row = state.bankTransfers.find((candidate) => candidate.orderPublicId === orderPublicId);
+    if (!row) {
+      return json(response, 404, { title: 'Not found', status: 404 });
+    }
+
+    // The same refusal the API makes, so the screen's own guard is not the only thing tested.
+    if (action === 'reject' && (body.note === null || body.note === undefined || String(body.note).trim() === '')) {
+      return json(response, 400, {
+        title: 'One or more fields are invalid.',
+        status: 400,
+        errors: { note: ['Say why the transfer is being rejected.'] },
+      });
+    }
+
+    if (state.bankTransferOutcome === 'expired' && action === 'approve') {
+      return problem(
+        response,
+        409,
+        'This decision could not be applied',
+        'This order expired before the transfer was approved, so its items have been released. If the '
+          + 'money has arrived, use Accept late payment and the stock will be re-checked.',
+        'order_expired',
+        { orderStatus: 'Expired', paymentStatus: 'Expired' },
+      );
+    }
+
+    if (state.bankTransferOutcome === 'paid') {
+      return problem(
+        response,
+        409,
+        'This decision could not be applied',
+        'This order has already been paid. Somebody else approved it, or the payment was confirmed '
+          + 'another way.',
+        'order_already_paid',
+        { orderStatus: 'Paid', paymentStatus: 'Succeeded' },
+      );
+    }
+
+    if (state.bankTransferOutcome === 'short' && action === 'accept-late') {
+      return problem(
+        response,
+        409,
+        'Some items are no longer in stock',
+        'This order cannot be paid now, because some of its items have been sold since it expired.',
+        'short_stock',
+        {
+          // The order is still expired, and the screen cannot know that unless the refusal says so.
+          orderStatus: 'Expired',
+          shortLines: [
+            {
+              variantId: 470,
+              sku: 'SKU-470',
+              productName: 'Slim jeans',
+              colourName: 'Indigo',
+              sizeLabel: '32',
+              needed: 1,
+              available: 0,
+            },
+            {
+              variantId: 471,
+              sku: 'SKU-471',
+              productName: 'Denim jacket',
+              colourName: 'Washed blue',
+              sizeLabel: 'M',
+              needed: 2,
+              available: 1,
+            },
+          ],
+        },
+      );
+    }
+
+    return json(response, 200, {
+      orderNumber: row.orderNumber,
+      invoiceNumber: action === 'reject' ? null : 'INV-2026-000045',
+    });
+  }
+
   if (path === '/api/admin/settings' && request.method === 'GET') {
     return json(response, 200, settingsPayload(state));
   }
@@ -623,6 +823,63 @@ const server = createServer(async (request, response) => {
 
     state.settings['Store.LogoAssetId'] = wanted;
     state.logo = wanted === null ? null : state.uploads.get(wanted);
+
+    return noContent(response);
+  }
+
+  if (path === '/api/admin/settings/bank' && request.method === 'PUT') {
+    const body = await readBody(request);
+    if (body === undefined || body === null) {
+      return problem(response, 400, 'Malformed JSON', 'The request body is not valid JSON.', 'malformed_json');
+    }
+
+    if (body.rowVersion !== settingsToken(state, 'Bank')) {
+      return problem(
+        response,
+        409,
+        'This change cannot be applied',
+        'Somebody else changed the bank details while you were editing them.',
+        'stale_row_version',
+      );
+    }
+
+    // The API's one real format rule, mirrored — so the screen's error display for this field is actually
+    // exercised rather than assumed. Without it the field error could stop rendering and every browser
+    // test would still pass, which is the gap that let W1-12's antiforgery header go unchecked for 246
+    // tests.
+    if (
+      body.accountNumber !== null
+      && body.accountNumber !== undefined
+      && String(body.accountNumber).trim() !== ''
+      && !/^[0-9 -]+$/.test(String(body.accountNumber))
+    ) {
+      return json(response, 400, {
+        title: 'One or more fields are invalid.',
+        status: 400,
+        errors: {
+          accountNumber: [
+            'An account number can only hold digits, spaces and dashes. Enter the bank name in the bank '
+              + 'name box and anything else in the instructions.',
+          ],
+        },
+      });
+    }
+
+    // **Only the fields the body carried.** A key the request omits is a key left alone — the W1-12 rule,
+    // and the one this group makes real. A stub that assigned all five from `body` would let the screen
+    // start sending nulls and no browser test would notice.
+    for (const [field, key] of [
+      ['bankName', 'Bank.BankName'],
+      ['branch', 'Bank.Branch'],
+      ['accountName', 'Bank.AccountName'],
+      ['accountNumber', 'Bank.AccountNumber'],
+      ['instructions', 'Bank.Instructions'],
+    ]) {
+      if (Object.hasOwn(body, field)) {
+        const value = body[field];
+        state.settings[key] = value === null || String(value).trim() === '' ? null : String(value).trim();
+      }
+    }
 
     return noContent(response);
   }

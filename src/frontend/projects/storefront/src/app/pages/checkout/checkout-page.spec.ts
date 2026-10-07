@@ -174,6 +174,12 @@ function confirmation(): OrderConfirmationDto {
     placedAtUtc: '2026-10-05T04:30:00Z',
     paymentDueAtUtc: '2026-10-07T04:30:00Z',
     isDuplicateSubmission: false,
+
+    // The checkout page redirects on success and never renders either of these; they are here because
+    // the contract has them. `OrderPage` is where the pay block is exercised, with a fixture that holds
+    // real values in every field.
+    payment: null,
+    proof: null,
   };
 }
 

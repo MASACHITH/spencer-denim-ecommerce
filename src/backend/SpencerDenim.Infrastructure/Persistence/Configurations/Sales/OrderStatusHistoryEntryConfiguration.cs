@@ -40,7 +40,7 @@ internal sealed class OrderStatusHistoryEntryConfiguration : IEntityTypeConfigur
         // rather than deleted, so a constraint adds a cascade path and buys nothing.
         builder.Property(entry => entry.ChangedByUserId);
 
-        builder.Property(entry => entry.Note).HasMaxLength(1000);
+        builder.Property(entry => entry.Note).HasMaxLength(OrderStatusHistoryEntry.NoteMaxLength);
         builder.Property(entry => entry.OccurredAtUtc).HasDefaultValueSql("sysutcdatetime()").IsRequired();
 
         // Doc 08 §3.5: IX (OrderId, OccurredAtUtc) — one order's timeline in order. It also satisfies DB7 for

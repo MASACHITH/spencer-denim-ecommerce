@@ -1,6 +1,9 @@
 using SpencerDenim.Application.Abstractions.Messaging;
 using SpencerDenim.Application.Sales.Checkout.Abstractions;
 using SpencerDenim.Application.Sales.Checkout.Contracts;
+using SpencerDenim.Application.Sales.Payments.Abstractions;
+using SpencerDenim.Application.Sales.Payments.Contracts;
+using SpencerDenim.Domain.Sales;
 
 namespace SpencerDenim.Application.Sales.Checkout;
 
@@ -27,8 +30,32 @@ namespace SpencerDenim.Application.Sales.Checkout;
 /// </remarks>
 public sealed record GetOrderQuery(Guid PublicId);
 
-/// <summary>Reads the order. One call, because the whole payload is a projection of two tables.</summary>
-public sealed class GetOrderQueryHandler(ICheckoutReader reader)
+/// <summary>
+/// Reads the order, and asks its payment provider what the customer has to do next (PAY-01, PAY-03,
+/// doc 11 P7 step 1).
+/// </summary>
+/// <remarks>
+/// <b>The order comes from the snapshot and the instructions come from the provider, and the two must not
+/// be confused.</b> Everything about the order — its lines, its prices, its totals — is read from
+/// <c>sales.Orders</c> and <c>sales.OrderLines</c> and is frozen; the bank details are read live from
+/// <c>ops.Settings</c>, because they are the shop's current account and not a fact about this order. Doc 11
+/// P7's last exception turns on exactly that distinction: when a Super Admin changes the bank details,
+/// "orders already placed keep the instructions they were emailed" — the <i>email</i> is the snapshot, and
+/// there are no emails yet (W3-06). So this page shows the live details, which is the right answer for a
+/// shopper who has not paid yet and the wrong one for a shopper who paid into the old account. G-16's
+/// process rule covers the gap: the previous account stays able to receive funds for 48 hours after a
+/// change.
+/// <para>
+/// <b>Three reads and not one, and only for an unpaid order.</b> A <c>Paid</c>, <c>Expired</c> or
+/// <c>Cancelled</c> order has nothing for the customer to do, so neither the provider nor the proof is
+/// asked for and the payload is exactly what it was before this task. That keeps the order page's cost
+/// unchanged for every order except the ones that are waiting for money.
+/// </para>
+/// </remarks>
+public sealed class GetOrderQueryHandler(
+    ICheckoutReader reader,
+    IOrderPaymentProofReader proofs,
+    IPaymentProviderRegistry providers)
     : IQueryHandler<GetOrderQuery, OrderConfirmationDto?>
 {
     public async Task<OrderConfirmationDto?> HandleAsync(
@@ -40,8 +67,67 @@ public sealed class GetOrderQueryHandler(ICheckoutReader reader)
         // Guid.Empty is a parse failure wearing a value's clothes: a client that sends `publicId=`
         // or a non-GUID gets the default, and looking it up would be a pointless query that could in
         // principle match a row written with a default. Refused without asking the database.
-        return query.PublicId == Guid.Empty
-            ? null
-            : await reader.FindOrderAsync(query.PublicId, cancellationToken);
+        if (query.PublicId == Guid.Empty)
+        {
+            return null;
+        }
+
+        var order = await reader.FindOrderAsync(query.PublicId, cancellationToken);
+
+        if (order is null || order.Status != nameof(OrderStatus.PendingPayment))
+        {
+            return order;
+        }
+
+        var provider = providers.Find(order.PaymentMethodCode);
+
+        if (provider is null)
+        {
+            // An order placed by a provider this build no longer has code for. The order is still readable
+            // — it is the shopper's receipt — and the page simply has no instructions to print, which is the
+            // same state as bank details that are not set yet.
+            return order;
+        }
+
+        var instructions = await provider.DescribeAsync(
+            new PaymentInstructionsRequest(
+                order.OrderNumber,
+                order.GrandTotal,
+                order.PaymentDueAtUtc,
+
+                // No absolute order link. Doc 11 P7 step 1 lists one because the instructions are an
+                // *email*; on this page the link is the page, and the API has no configured storefront
+                // origin to build one from. Inventing one from the request's own Host header would put a
+                // forgeable value into a payload, which is the hole W1-01 round 3 closed for IP addresses.
+                OrderUrl: null),
+            cancellationToken);
+
+        var proof = await proofs.FindAsync(query.PublicId, cancellationToken);
+
+        return order with
+        {
+            Payment = instructions is null
+                ? null
+                : new OrderPaymentInstructionsDto(
+                    instructions.ProviderCode,
+                    instructions.Reference,
+                    instructions.AmountLkr,
+                    instructions.DueAtUtc,
+                    instructions.Fields
+                        .Select(field => new OrderPaymentFieldDto(field.Label, field.Value, field.Copyable))
+                        .ToList(),
+                    instructions.Notes,
+                    instructions.RedirectUrl,
+                    instructions.AcceptsProof),
+
+            Proof = proof is null
+                ? null
+                : new OrderPaymentProofDto(
+                    proof.Reference,
+                    proof.FilePublicId,
+                    proof.FileName,
+                    proof.ContentType,
+                    proof.SubmittedAtUtc),
+        };
     }
 }

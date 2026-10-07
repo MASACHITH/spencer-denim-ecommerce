@@ -19,6 +19,24 @@ public static class EndpointAuthorizationExtensions
     }
 
     /// <summary>
+    /// Lets any holder of a <c>Settings.*</c> permission reach this endpoint, for the settings <b>read</b>
+    /// alone (ADM-22 + W3-03).
+    /// </summary>
+    /// <remarks>
+    /// <b>Not a general-purpose "any of these".</b> <c>GET /api/admin/settings</c> returns a list of groups
+    /// filtered per row against the caller's own permissions (doc 08 §3.8 DB2), so the route guard is not
+    /// what decides what they see — and a single permission on it would shut a caller holding only
+    /// <c>Settings.Payments</c> out of the screen entirely. Every settings <i>write</i> stays on
+    /// <see cref="RequirePermission"/> with the one permission its group needs.
+    /// </remarks>
+    public static RouteHandlerBuilder RequireAnySettingsPermission(this RouteHandlerBuilder builder)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+
+        return builder.RequireAuthorization(PermissionPolicy.ReadAnySettingsGroup);
+    }
+
+    /// <summary>
     /// Lets a signed-in staff user reach this endpoint while their account still has a forced password change
     /// pending (issue #17, doc 11 P14 step 3). Every other authorized admin endpoint answers 403
     /// <c>password_change_required</c> until the password is changed. Only for the endpoints needed to get

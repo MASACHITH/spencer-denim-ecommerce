@@ -77,6 +77,72 @@ public sealed class MediaService(
         return result.Outcome;
     }
 
+    /// <summary>
+    /// Doc 11 P7 step 3's slip: an image through the hardened image pipeline, or a PDF stored verbatim,
+    /// both private.
+    /// </summary>
+    /// <remarks>
+    /// <b>The signature decides, and nothing else does.</b> The filename, the extension and the browser's
+    /// own content type are all attacker-controlled; the first thirty-two bytes are not. An image is handed
+    /// to <see cref="StoreImageAsync"/> with <see cref="MediaVisibility.Private"/> rather than being
+    /// stored verbatim, deliberately: that path strips EXIF, and a phone photograph of a deposit slip
+    /// carries the GPS coordinates of where it was taken. A PDF cannot go through it — nothing here parses
+    /// PDF and nothing should — so it is stored as it arrived.
+    /// </remarks>
+    public async Task<MediaUploadOutcome> UploadPaymentSlipAsync(
+        UploadPaymentSlipRequest request,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        if (!storage.IsConfigured)
+        {
+            return StorageNotConfigured();
+        }
+
+        var content = request.File.Content;
+
+        if (content.Length <= 0)
+        {
+            return new MediaUploadOutcome.Rejected(
+                MediaUploadRejection.Empty,
+                "The file you chose is empty.");
+        }
+
+        Span<byte> header = stackalloc byte[MediaFileSignature.RequiredBytes];
+        content.Position = 0;
+        var read = content.ReadAtLeast(header, header.Length, throwOnEndOfStream: false);
+        var kind = MediaFileSignature.Detect(header[..read]);
+
+        if (MediaFileSignature.IsImage(kind))
+        {
+            // The library's own image path, with Private forced. It already skips renditions for a private
+            // asset and already strips metadata; the only thing this call adds is that the visibility is
+            // not a choice the caller made.
+            var result = await StoreImageAsync(
+                new UploadImageRequest(
+                    request.File,
+                    MediaVisibility.Private,
+                    AltText: null,
+                    Title: null,
+                    request.UploadedByUserId),
+                cancellationToken);
+
+            return result.Outcome;
+        }
+
+        if (kind == MediaFileKind.Pdf)
+        {
+            return await StorePdfSlipAsync(request, cancellationToken);
+        }
+
+        return new MediaUploadOutcome.Rejected(
+            MediaUploadRejection.UnsupportedType,
+            $"The file is {MediaFileSignature.Describe(kind)}. A payment slip has to be a photo (JPEG, PNG "
+            + "or WebP) or a PDF. The check is on the file's contents, not its name, so renaming it will "
+            + "not help.");
+    }
+
     public async Task<MediaUploadOutcome> UploadVideoAsync(
         UploadVideoRequest request,
         CancellationToken cancellationToken)
@@ -188,6 +254,40 @@ public sealed class MediaService(
                     MediaUsageRoles.Poster,
                     video.OriginalFileName,
                     video.CreatedAtUtc))
+                .ToList());
+        }
+
+        // **A customer's payment slip, checked the same way and for a sharper reason** (PAY-01, doc 11 P7
+        // step 3). `sales.Payments.ProofAssetId` is the *only* reference a slip has: attaching one writes
+        // no usage row, deliberately, because the slip belongs to one payment and the media library's
+        // "used in…" panel is not where staff look for it. So without this check the guard above found
+        // nothing and a `Media.Delete` holder — Store Manager holds it alongside `Orders.View` — could
+        // soft-delete the evidence an approval is made on, with `MediaRetention` purging the bytes 30 days
+        // later and nothing on the order saying it had happened. A tester proved it end to end: 204, the
+        // queue's slip link gone, and both read-back routes 404.
+        //
+        // A direct read of the foreign key rather than a usage row, which is the argument the poster
+        // comment above makes and it applies more strongly here: a slip is a shopper's own document, and a
+        // guard that depends on a row having been written correctly is not the guard to put in front of
+        // it. It also protects the slips already attached before this check existed.
+        var usedAsProof = await dbContext.Payments
+            .AnyAsync(payment => payment.ProofAssetId == asset.Id, cancellationToken);
+
+        if (usedAsProof)
+        {
+            var payments = await dbContext.Payments
+                .AsNoTracking()
+                .Where(payment => payment.ProofAssetId == asset.Id)
+                .Select(payment => new { payment.Id, payment.Order!.OrderNumber, payment.CreatedAtUtc })
+                .ToListAsync(cancellationToken);
+
+            return new MediaDeleteOutcome.InUse(payments
+                .Select(payment => new MediaUsageDto(
+                    MediaUsageOwnerTypes.Payment,
+                    payment.Id.ToString(CultureInfo.InvariantCulture),
+                    MediaUsageRoles.PaymentSlip,
+                    payment.OrderNumber,
+                    payment.CreatedAtUtc))
                 .ToList());
         }
 
@@ -364,6 +464,88 @@ public sealed class MediaService(
     }
 
     // ------------------------------------------------------------------- video
+
+    /// <summary>
+    /// A PDF slip, stored byte for byte on the private volume (doc 08 §3.3: "PDF only when
+    /// Visibility = Private").
+    /// </summary>
+    /// <remarks>
+    /// <b>Nothing parses it, and that is a security decision rather than a shortcut.</b> A PDF is a
+    /// programmable container; every library that opens one is a parser running over a stranger's bytes on
+    /// the server. The only things this method needs are the signature (already checked), the length and a
+    /// SHA-256, none of which requires understanding the file. It is never rendered on the server, and the
+    /// serving endpoint sends it with <c>Content-Disposition: attachment</c> and
+    /// <c>X-Content-Type-Options: nosniff</c> so a browser cannot be talked into treating it as something
+    /// else.
+    /// <para>
+    /// <b>The width, height and rendition set stay null</b>, which is what makes a <c>Document</c> row
+    /// distinguishable from an image row that failed to decode.
+    /// </para>
+    /// </remarks>
+    private async Task<MediaUploadOutcome> StorePdfSlipAsync(
+        UploadPaymentSlipRequest request,
+        CancellationToken cancellationToken)
+    {
+        var maxBytes = _media.MaxBytesFor(MediaVisibility.Private, MediaAssetType.Document);
+        var content = request.File.Content;
+        var length = content.Length;
+
+        if (length > maxBytes)
+        {
+            return new MediaUploadOutcome.Rejected(
+                MediaUploadRejection.TooLarge,
+                $"The slip is {Megabytes(length)} MB. The limit is {Megabytes(maxBytes)} MB.");
+        }
+
+        content.Position = 0;
+        var checksum = await SHA256.HashDataAsync(content, cancellationToken);
+
+        if (_media.DeduplicateByChecksum
+            && await FindDuplicateAsync(
+                checksum,
+                MediaAssetType.Document,
+                MediaVisibility.Private,
+                cancellationToken) is { } existing)
+        {
+            return new MediaUploadOutcome.Duplicate(ToDto(existing));
+        }
+
+        var asset = new MediaAsset
+        {
+            PublicId = Guid.NewGuid(),
+            MediaType = MediaAssetType.Document,
+            Visibility = MediaVisibility.Private,
+            Status = MediaAssetStatus.Processing,
+            OriginalFileName = SanitiseFileName(request.File.FileName, ".pdf"),
+            ContentType = MediaFileSignature.ContentTypeFor(MediaFileKind.Pdf)!,
+            SizeBytes = length,
+            Checksum = checksum,
+            UploadedByUserId = request.UploadedByUserId,
+        };
+
+        asset.StorageKey = MediaStorageKey.ForOriginal(MediaVisibility.Private, asset.PublicId, ".pdf");
+
+        dbContext.MediaAssets.Add(asset);
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        var written = new List<string>();
+
+        try
+        {
+            content.Position = 0;
+            await storage.WriteAsync(asset.StorageKey, content, cancellationToken);
+            written.Add(asset.StorageKey);
+
+            return await PublishAsync(asset, written, cancellationToken) is { } winner
+                ? new MediaUploadOutcome.Duplicate(ToDto(winner))
+                : new MediaUploadOutcome.Created(ToDto(asset));
+        }
+        catch (Exception exception)
+        {
+            await FailAsync(asset, written, exception, cancellationToken);
+            throw;
+        }
+    }
 
     private async Task<VideoStoreResult> StoreVideoAsync(
         UploadVideoRequest request,

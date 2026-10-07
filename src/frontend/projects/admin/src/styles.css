@@ -107,6 +107,31 @@ textarea.adm-input {
   gap: var(--space-1);
 }
 
+/*
+ * A link that is a control.
+ *
+ * **Added because a browser test caught a 135x20 px download link at 320 px** — under GLB-09's 44 px
+ * floor and under WCAG 2.2 SC 2.5.8's 24 px. The link had `class="link"`, which is the *storefront's*
+ * vocabulary (`base.css` gives `button.link` the tap height for exactly this reason) and is **not defined
+ * anywhere in the admin application**, so the class did nothing at all.
+ *
+ * A shared rule rather than one in the component that needed it, for the reason W3-02's round 3 records:
+ * writing the 44 px rule locally cost that component 587 bytes of its own style budget, and the fix there
+ * was almost entirely deletion once the shared class was found. The next admin screen with a link-shaped
+ * control should use this and not rediscover the floor.
+ *
+ * `inline-flex` with `align-items: center` and not a bare `min-height`: a bare one leaves the label at the
+ * top of a 44 px box, which looks like a mistake and puts the text outside the middle of the target.
+ */
+.adm-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--tap);
+  color: var(--color-text);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 .adm-btn,
 .adm-btn--primary,
 .adm-btn--danger {

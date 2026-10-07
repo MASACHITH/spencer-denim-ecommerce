@@ -36,6 +36,26 @@ public interface IMediaService
     /// </summary>
     Task<MediaUploadOutcome> UploadVideoAsync(UploadVideoRequest request, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Stores a customer's bank slip on the <b>private</b> volume: a JPEG, PNG or WebP, or a PDF, up to
+    /// 5 MB, checked by signature (PAY-01, doc 08 §3.3 N10).
+    /// </summary>
+    /// <remarks>
+    /// <b>An image slip goes through the same pipeline as a library image</b>, which matters more here
+    /// than it does for a product photo: that path strips EXIF, and a photograph of a deposit slip taken
+    /// on a phone carries the GPS coordinates of wherever it was taken. A PDF is stored byte for byte —
+    /// nothing on this server parses one, and doc 03 §3b's "no server-side conversion" applies for the
+    /// same reason it does to video.
+    /// <para>
+    /// <b>Neither path writes renditions</b>, because a private asset has no public delivery form, and
+    /// neither is reachable from <c>/media</c>: the files live on the volume Caddy does not mount
+    /// (doc 03 §4), and <c>PublicMediaFiles</c> refuses a private key with a bare 404.
+    /// </para>
+    /// </remarks>
+    Task<MediaUploadOutcome> UploadPaymentSlipAsync(
+        UploadPaymentSlipRequest request,
+        CancellationToken cancellationToken);
+
     /// <summary>One asset with its "used in…" list, or null when there is no such asset.</summary>
     Task<MediaAssetDetailDto?> GetAsync(Guid publicId, CancellationToken cancellationToken);
 

@@ -38,6 +38,25 @@ public static class MediaUsageOwnerTypes
     public const string MediaAsset = "MediaAsset";
 
     /// <summary>
+    /// A customer's payment slip (<c>sales.Payments.ProofAssetId</c>, PAY-01, doc 11 P7 step 3).
+    /// </summary>
+    /// <remarks>
+    /// <b>Never persisted, and not one of doc 08 §3.3's owner types.</b> Every other constant here names a
+    /// value that is written to <c>media.MediaUsages</c>; this one is <i>synthesised</i> at the moment a
+    /// delete is refused, so the 409's "used in…" list can say what is holding the file in the same shape
+    /// every other owner uses. No row with this <c>OwnerType</c> exists in the database, and nothing
+    /// queries for one — a reader who assumes otherwise, as the first version of this comment invited them
+    /// to, would go looking for rows that are not there.
+    /// <para>
+    /// The reference is checked directly instead, for the reason <c>MediaService.DeleteAsync</c> gives
+    /// about a video's poster: <c>sales.Payments.ProofAssetId</c> is a real foreign key, so reading it is
+    /// cheaper and safer than trusting that a usage row was written, and it also covers the slips attached
+    /// before the check existed. <see cref="MediaUsage.OwnerId"/> carries the payment's id.
+    /// </para>
+    /// </remarks>
+    public const string Payment = "Payment";
+
+    /// <summary>
     /// One tile, banner or hero of the homepage (<c>content.HomeSectionItems</c>).
     /// <para>
     /// The <b>item</b>, which is what doc 08 §3.3 enumerates, not the section it sits in. A section id
@@ -77,4 +96,9 @@ public static class MediaUsageRoles
 
     /// <summary>The shop's logo (GLB-02, ADM-22): <c>Store.LogoAssetId</c>'s image.</summary>
     public const string Logo = "Logo";
+
+    /// <summary>
+    /// The customer's proof of a bank transfer (PAY-01): <c>sales.Payments.ProofAssetId</c>'s image or PDF.
+    /// </summary>
+    public const string PaymentSlip = "PaymentSlip";
 }

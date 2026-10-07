@@ -2764,7 +2764,19 @@ function handlePlaceOrder(request, response) {
       placedAtUtc: placedAt.toISOString(),
       paymentDueAtUtc: dueAt.toISOString(),
       isDuplicateSubmission: false,
+
+      // PAY-01 / doc 11 P7 step 1. Whether this shop has its bank details is read **once, here**, from
+      // the arming bag, and kept on the order — see `bagsWithoutBankDetails`.
+      bankDetailsSet: !(token && bagsWithoutBankDetails.has(token)),
+      proof: emptyProof(),
     };
+
+    // After the order exists, because the instructions carry its number — and the first version called a
+    // helper that read it back out of `placedOrders` one line before the order was put there, so the
+    // reference was null.
+    order.payment = order.bankDetailsSet
+      ? bankInstructions(order.orderNumber, dueAt, totals.grandTotal)
+      : null;
 
     placedOrders.set(publicId, order);
     placedByCheckoutKey.set(checkoutKey, publicId);
@@ -2779,6 +2791,134 @@ function handlePlaceOrder(request, response) {
     response.setHeader('Location', `/api/orders/${publicId}`);
     response.end(JSON.stringify(order));
   });
+}
+
+/** Doc 11 P7 step 3: the customer's bank reference, on the order's open payment. */
+function handleSetReference(request, response, token) {
+  readJsonBody(request, response, (body) => {
+    if (!placedOrders.has(token)) {
+      response.statusCode = 404;
+      response.end(JSON.stringify({ title: 'Not found', status: 404 }));
+      return;
+    }
+
+    const value = typeof body?.reference === 'string' ? body.reference.trim() : null;
+    const current = orderProofs.get(token) ?? emptyProof();
+    const next = { ...current, reference: value && value.length > 0 ? value : null };
+
+    orderProofs.set(token, next);
+    response.end(JSON.stringify(next));
+  });
+}
+
+/**
+ * Doc 11 P7 step 3: the slip.
+ *
+ * The body is multipart and nothing here parses it — the stub only needs to know a file arrived, and the
+ * real signature check is the server's. The filename is taken from the Content-Disposition of the first
+ * part by a deliberately crude read, because the page shows it back and the test asserts that.
+ */
+function handleUploadSlip(request, response, token) {
+  const chunks = [];
+
+  request.on('data', (chunk) => chunks.push(chunk));
+  request.on('end', () => {
+    if (!placedOrders.has(token)) {
+      response.statusCode = 404;
+      response.end(JSON.stringify({ title: 'Not found', status: 404 }));
+      return;
+    }
+
+    const body = Buffer.concat(chunks).toString('latin1');
+    const named = /filename="([^"]*)"/.exec(body);
+    const fileName = named ? named[1] : 'slip.jpg';
+
+    const current = orderProofs.get(token) ?? emptyProof();
+    const uploaded = {
+      ...current,
+      slipPublicId: '66666666-6666-4666-8666-666666666666',
+      slipFileName: fileName,
+      slipContentType: fileName.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg',
+      slipUploadedAtUtc: new Date().toISOString(),
+    };
+
+    orderProofs.set(token, uploaded);
+
+    response.end(JSON.stringify({
+      slipPublicId: uploaded.slipPublicId,
+      fileName: uploaded.slipFileName,
+      contentType: uploaded.slipContentType,
+      uploadedAtUtc: uploaded.slipUploadedAtUtc,
+    }));
+  });
+}
+
+/**
+ * Bags whose next order is placed in a shop that has **not** filled its bank details in (PAY-01, doc 11
+ * P7's unmet precondition).
+ *
+ * **Keyed by the requesting bag, and the first version was not — which cost a real failure.** The bank
+ * details genuinely are a property of the shop rather than of a visitor, so a module-level flag looked
+ * like the honest model; the flag was set to `false` by one test and read by another running at the same
+ * time, and the second saw a shop with no bank details and no pay panel. `fullyParallel` is on, and
+ * `test.describe.configure({ mode: 'serial' })` serialises **one describe**, not the file — which is the
+ * assumption that was wrong.
+ *
+ * So the switch is per bag and is read **once, at placement**, after which the order itself remembers the
+ * answer. That is `checkoutStockFaults`' shape exactly, and the comment there says why: a single flag is
+ * consumed by whichever request arrives first and two tests end up testing each other.
+ */
+const bagsWithoutBankDetails = new Set();
+
+/** The reference and slip a customer has sent, by order token. Doc 11 P7 step 3. */
+const orderProofs = new Map();
+
+function emptyProof() {
+  return {
+    reference: null,
+    slipPublicId: null,
+    slipFileName: null,
+    slipContentType: null,
+    slipUploadedAtUtc: null,
+  };
+}
+
+/**
+ * Doc 11 P7 step 1's instructions, as the real `BankTransferProvider` builds them.
+ *
+ * The figures come from the order rather than being constants, so a test that asserts the amount on the
+ * page against the amount in the summary is asserting the same number twice from one source — which is
+ * what makes "the panel shows the exact amount" a real assertion rather than two literals agreeing.
+ */
+function bankInstructions(reference, dueAt, amount) {
+  return {
+    providerCode: 'BankTransfer',
+    reference,
+    amountLkr: amount,
+    dueAtUtc: dueAt.toISOString(),
+    fields: [
+      { label: 'Bank', value: 'Example Bank PLC', copyable: false },
+      { label: 'Branch', value: 'Example Branch', copyable: false },
+      { label: 'Account name', value: 'Example Shop (Pvt) Ltd', copyable: false },
+      { label: 'Account number', value: '0000 1111 2222', copyable: true },
+    ],
+    notes: 'Cash-machine deposits can take a working day to appear.',
+    redirectUrl: null,
+    acceptsProof: true,
+  };
+}
+
+/** Re-renders an order's payment block from the current fixture state. */
+function withPayment(order) {
+  const proof = orderProofs.get(order.publicId) ?? emptyProof();
+
+  return {
+    ...order,
+    payment: order.bankDetailsSet
+      ? bankInstructions(order.orderNumber, new Date(order.paymentDueAtUtc), order.grandTotal)
+      : null,
+    proof,
+  };
 }
 
 /**
@@ -2836,6 +2976,65 @@ function handleCheckout(request, response, url) {
     return true;
   }
 
+  // Test-only, and deliberately named so: `set=no` makes the next order from **this bag** one placed in a
+  // shop whose bank details are not filled in — doc 11 P7's precondition unmet, and a state the order page
+  // has to render honestly. Per bag rather than global, for the reason `bagsWithoutBankDetails` gives.
+  if (url.pathname === '/__test__/bank-details') {
+    const token = readCartCookie(request);
+
+    if (!token) {
+      response.statusCode = 400;
+      response.end(JSON.stringify({ title: 'No bag to arm the switch on', status: 400 }));
+      return true;
+    }
+
+    const unset = url.searchParams.get('set') === 'no';
+
+    if (unset) {
+      bagsWithoutBankDetails.add(token);
+    } else {
+      bagsWithoutBankDetails.delete(token);
+    }
+
+    response.end(JSON.stringify({ token, bankDetailsSet: !unset }));
+    return true;
+  }
+
+  const reference = /^\/api\/orders\/([^/]+)\/payment-reference$/.exec(url.pathname);
+  if (reference && request.method === 'PUT') {
+    handleSetReference(request, response, decodeURIComponent(reference[1]));
+    return true;
+  }
+
+  const slip = /^\/api\/orders\/([^/]+)\/payment-slip$/.exec(url.pathname);
+  if (slip) {
+    const token = decodeURIComponent(slip[1]);
+
+    if (request.method === 'POST') {
+      handleUploadSlip(request, response, token);
+      return true;
+    }
+
+    if (request.method === 'GET') {
+      // The real route streams the private file as an attachment. The stub only has to be openable, and
+      // the headers are what `bank-transfer.e2e.ts` asserts.
+      const stored = orderProofs.get(token);
+
+      if (!stored?.slipPublicId) {
+        response.statusCode = 404;
+        response.end(JSON.stringify({ title: 'Not found', status: 404 }));
+        return true;
+      }
+
+      response.setHeader('Content-Type', stored.slipContentType);
+      response.setHeader('Content-Disposition', 'attachment');
+      response.setHeader('X-Content-Type-Options', 'nosniff');
+      response.setHeader('Cache-Control', 'no-store, no-cache, private');
+      response.end('slip-bytes');
+      return true;
+    }
+  }
+
   const order = /^\/api\/orders\/(.*)$/.exec(url.pathname);
   if (order) {
     cartNoStore(response);
@@ -2849,7 +3048,9 @@ function handleCheckout(request, response, url) {
       return true;
     }
 
-    response.end(JSON.stringify(placedOrders.get(raw)));
+    // Rendered from the current fixture state rather than returned as stored, so a reference saved or a
+    // slip uploaded a moment ago is on the next read — which is exactly what the page relies on.
+    response.end(JSON.stringify(withPayment(placedOrders.get(raw))));
     return true;
   }
 

@@ -6,7 +6,9 @@ import {
   CheckoutSessionDto,
   CheckoutTotalsDto,
   OrderConfirmationDto,
+  OrderPaymentProofDto,
   PlaceOrderRequest,
+  SlipUploadedDto,
 } from './checkout.model';
 import { ValidationProblemDetails } from '../catalog/catalog.model';
 
@@ -55,6 +57,42 @@ export class CheckoutApi {
     return this.http.get<OrderConfirmationDto>(
       `${CheckoutApi.orderUrl}/${encodeURIComponent(publicId)}`,
     );
+  }
+
+  /**
+   * The bank reference the customer is quoting for their transfer (PAY-01, doc 11 P7 step 3).
+   *
+   * An empty box clears it, which a customer who mistyped it needs — so `null` is sent rather than `''`,
+   * because the API reads blank as "clear" and a missing field as "leave alone".
+   */
+  setPaymentReference(publicId: string, reference: string | null): Observable<OrderPaymentProofDto> {
+    return this.http.put<OrderPaymentProofDto>(
+      `${CheckoutApi.orderUrl}/${encodeURIComponent(publicId)}/payment-reference`,
+      { reference: reference === null || reference.trim().length === 0 ? null : reference.trim() },
+    );
+  }
+
+  /**
+   * Uploads the payment slip, replacing whatever the order already holds (doc 11 P7 step 3).
+   *
+   * **No antiforgery token and no `Content-Type` header.** There is no customer session for a forged
+   * request to ride on (ACC-01 is W3-01) and the order's token is the only credential there is; and the
+   * browser has to set the multipart boundary itself, so setting the type by hand here would produce a
+   * body the server cannot parse.
+   */
+  uploadPaymentSlip(publicId: string, file: File): Observable<SlipUploadedDto> {
+    const form = new FormData();
+    form.append('file', file, file.name);
+
+    return this.http.post<SlipUploadedDto>(
+      `${CheckoutApi.orderUrl}/${encodeURIComponent(publicId)}/payment-slip`,
+      form,
+    );
+  }
+
+  /** Where the customer's own slip downloads from. A GET the browser follows. */
+  paymentSlipUrl(publicId: string): string {
+    return `${CheckoutApi.orderUrl}/${encodeURIComponent(publicId)}/payment-slip`;
   }
 }
 

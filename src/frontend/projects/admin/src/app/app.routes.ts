@@ -30,6 +30,16 @@ export const routes: Routes = [
       import('./pages/change-password/change-password-page').then((m) => m.ChangePasswordPage),
   },
   {
+    // PAY-01 / ADM-09 (W3-03): doc 11 P7 step 4's queue. Same guard rule as every other admin route — the
+    // API is the security boundary (doc 03 §3a), and a user without Orders.View is shown the refusal
+    // rather than bounced from a page that then cannot explain itself.
+    path: 'orders/bank-transfers',
+    title: `Bank transfers — ${BRAND.adminName}`,
+    canActivate: [adminSessionGuard],
+    loadComponent: () =>
+      import('./pages/bank-transfers/bank-transfers-page').then((m) => m.BankTransfersPage),
+  },
+  {
     // ADM-11 (W1-12). Like every other admin route the guard only asks for a session: the API is the
     // security boundary (doc 03 §3a), and a user without Categories.View is shown the refusal rather than
     // bounced from a page that then cannot explain itself.

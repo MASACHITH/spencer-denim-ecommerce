@@ -93,6 +93,24 @@ export interface ContactAndSocialValues {
   readonly tikTokUrl?: string | null;
 }
 
+/**
+ * The bank account customers transfer to (PAY-01, doc 11 P7).
+ *
+ * **Optional for the same reason {@link ContactAndSocialValues}' fields are, and here it matters more.**
+ * These five keys need `Settings.Payments`, which no default role holds, so a Store Manager's settings
+ * screen genuinely does not receive them. A field this object omitted is one the API leaves alone; a field
+ * it carries as `null` is one the API clears. Making them required and filling the gaps with `null` would
+ * mean the first save by any caller who cannot read the group wipes the shop's bank account number — and
+ * every order placed afterwards would show a customer no account to pay into.
+ */
+export interface BankDetailValues {
+  readonly bankName?: string | null;
+  readonly branch?: string | null;
+  readonly accountName?: string | null;
+  readonly accountNumber?: string | null;
+  readonly instructions?: string | null;
+}
+
 /** The settings keys this screen edits, so the template and the mapping cannot disagree about a name. */
 export const SETTING_KEYS = {
   logoAssetId: 'Store.LogoAssetId',
@@ -100,6 +118,11 @@ export const SETTING_KEYS = {
   facebookUrl: 'Social.FacebookUrl',
   instagramUrl: 'Social.InstagramUrl',
   tikTokUrl: 'Social.TikTokUrl',
+  bankName: 'Bank.BankName',
+  branch: 'Bank.Branch',
+  accountName: 'Bank.AccountName',
+  accountNumber: 'Bank.AccountNumber',
+  instructions: 'Bank.Instructions',
 } as const;
 
 /** Doc 08 §3.8's group names. */
@@ -107,4 +130,5 @@ export const SETTING_GROUPS = {
   store: 'Store',
   contact: 'Contact',
   social: 'Social',
+  bank: 'Bank',
 } as const;

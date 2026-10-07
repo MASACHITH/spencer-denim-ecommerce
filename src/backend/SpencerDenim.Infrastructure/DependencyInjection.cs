@@ -13,8 +13,9 @@ using SpencerDenim.Application.Catalog.Admin.Products.Abstractions;
 using SpencerDenim.Application.Content.Abstractions;
 using SpencerDenim.Application.Marketing.Newsletter;
 using SpencerDenim.Application.Sales.Cart.Abstractions;
-using SpencerDenim.Application.Sales.Checkout;
+using SpencerDenim.Application.Sales.Payments;
 using SpencerDenim.Application.Sales.Checkout.Abstractions;
+using SpencerDenim.Application.Sales.Payments.Abstractions;
 using SpencerDenim.Application.Sales.Wishlist.Abstractions;
 using SpencerDenim.Application.Settings.Abstractions;
 using SpencerDenim.Infrastructure.Admin.Auditing;
@@ -29,6 +30,7 @@ using SpencerDenim.Infrastructure.Persistence;
 using SpencerDenim.Infrastructure.Persistence.Interceptors;
 using SpencerDenim.Infrastructure.Persistence.Seeding;
 using SpencerDenim.Infrastructure.Sales;
+using SpencerDenim.Infrastructure.Sales.Payments;
 using SpencerDenim.Infrastructure.Settings;
 using SpencerDenim.Infrastructure.Time;
 
@@ -79,18 +81,18 @@ public static class DependencyInjection
         // than for IOptions<T>. IOptions<T> is itself a singleton, so this is the same instance.
         services.AddSingleton(provider => provider.GetRequiredService<IOptions<CatalogOptions>>().Value);
 
-        // Checkout's two settings, which belong in ops.Settings and have no table to live in yet
-        // (ADM-22 — see CheckoutOptions). Bound and validated here, and exposed as the bare value for
+        // The one bank-transfer setting that belongs in ops.Settings and has no table to live in yet
+        // (ADM-22 — see BankTransferOptions). Bound and validated here, and exposed as the bare value for
         // the same reason CatalogOptions is.
-        services.AddOptions<CheckoutOptions>()
-            .BindConfiguration(CheckoutOptions.SectionName)
+        services.AddOptions<BankTransferOptions>()
+            .BindConfiguration(BankTransferOptions.SectionName)
             .Validate(
                 options => options.BankTransferExpiryHours > 0,
-                "Checkout:BankTransferExpiryHours must be greater than zero: an order placed with a payment "
+                "Orders:BankTransferExpiryHours must be greater than zero: an order placed with a payment "
                 + "deadline in the past would be expired by the first run of the expiry job.")
             .ValidateOnStart();
 
-        services.AddSingleton(provider => provider.GetRequiredService<IOptions<CheckoutOptions>>().Value);
+        services.AddSingleton(provider => provider.GetRequiredService<IOptions<BankTransferOptions>>().Value);
 
         services.AddScoped<AuditAndSoftDeleteInterceptor>();
 
@@ -172,6 +174,31 @@ public static class DependencyInjection
         services.AddScoped<INumberSeriesAllocator, NumberSeriesAllocator>();
         services.AddScoped<IOrderPlacementStore, OrderPlacementStore>();
 
+        // Payments (W3-03, PAY-01/PAY-03). **Registering a provider is the whole act of adding one:** the
+        // registry is built from whatever IPaymentProvider implementations are here, and checkout asks it
+        // by code. PayPalProvider (W4-01) is one more AddScoped line on this list and nothing else.
+        services.AddScoped<IPaymentProvider, BankTransferProvider>();
+        services.AddScoped<IPaymentProviderRegistry, PaymentProviderRegistry>();
+
+        // Singleton, because "once" means once for the process: the provider itself is per request, and a
+        // warning that fires per request is noise rather than a signal (see BankDetailsWarningOnce).
+        services.AddSingleton<BankDetailsWarningOnce>();
+        services.AddScoped<IBankTransferSettingsReader, BankTransferSettingsReader>();
+
+        // Doc 11 P7 steps 3, 6 and 8, and doc 08 §4.1/§4.3: the customer's reference and slip, and the
+        // one transaction behind approve, reject and accept-late.
+        services.AddScoped<IBankTransferReader, BankTransferReader>();
+
+        // The same class behind a provider-neutral port, so the order page can ask "has the
+        // customer sent us anything about paying" without naming a gateway (PAY-03). Resolved
+        // through the registered IBankTransferReader rather than registered twice, so one request
+        // gets one instance and one DbContext.
+        services.AddScoped<IOrderPaymentProofReader>(provider =>
+            (BankTransferReader)provider.GetRequiredService<IBankTransferReader>());
+        services.AddScoped<IBankTransferReviewStore, BankTransferReviewStore>();
+        services.AddScoped<IOrderExpiryStore, OrderExpiryStore>();
+        services.AddScoped<IBankTransferProofStore, BankTransferProofStore>();
+
         services.AddMediaLibrary();
 
         services.AddOptions<SeedOptions>().BindConfiguration(SeedOptions.SectionName);
@@ -187,6 +214,10 @@ public static class DependencyInjection
         services.AddScoped<DemoCatalogueSeeder>();
         services.AddScoped<CatalogSeedRunner>();
         services.AddHostedService<CatalogSeedHostedService>();
+
+        // Doc 08 §4.1/§5.6 and doc 11 P10 flow B: every five minutes, release the stock and the promo use
+        // of orders nobody paid for. Issue #107's real mitigation.
+        services.AddHostedService<ExpireUnpaidOrdersService>();
 
         services.AddHealthChecks()
             .AddCheck<DatabaseHealthCheck>(

@@ -191,6 +191,76 @@ export interface OrderConfirmationDto {
   readonly paymentDueAtUtc: string;
   /** True when this response replayed an earlier identical submission rather than placing anything. */
   readonly isDuplicateSubmission: boolean;
+
+  /**
+   * How to pay, as the order's own payment provider describes it (PAY-03, doc 11 P7 step 1).
+   *
+   * **Null for three ordinary reasons, and the page has to tell them apart by looking at `status`**: the
+   * order is no longer awaiting payment, so there is nothing to do; the provider does not describe itself;
+   * or — the one worth knowing about — the shop has not filled its bank details in yet. Doc 11 P7 makes
+   * "bank details set by a Super Admin" a precondition of the whole process, and the shop can be
+   * deployed before they arrive.
+   */
+  readonly payment: OrderPaymentInstructionsDto | null;
+
+  /** What the customer has already sent about this payment, or null when there is nothing to attach to. */
+  readonly proof: OrderPaymentProofDto | null;
+}
+
+/** The customer-facing "how to pay" (doc 11 P7 step 1). */
+export interface OrderPaymentInstructionsDto {
+  readonly providerCode: string;
+
+  /**
+   * The reference the customer must quote — the order number, for a bank transfer.
+   *
+   * Its own field rather than something the page infers from `orderNumber`, because it is the only thing
+   * tying an anonymous credit on a bank statement to an order, and a provider that identified the payment
+   * itself would send null.
+   */
+  readonly reference: string | null;
+  readonly amountLkr: number;
+  readonly dueAtUtc: string;
+
+  /** Bank, branch, account name, account number — in the order to print them. */
+  readonly fields: readonly OrderPaymentFieldDto[];
+
+  /** The shop's own extra note. **Plain text, never markup** — it is rendered as text. */
+  readonly notes: string | null;
+
+  /** Where to go to pay, for a provider that redirects. Always null for a bank transfer. */
+  readonly redirectUrl: string | null;
+
+  /** Whether this provider takes a customer-entered reference and a slip. */
+  readonly acceptsProof: boolean;
+}
+
+/** One labelled payment detail. */
+export interface OrderPaymentFieldDto {
+  readonly label: string;
+  readonly value: string;
+
+  /** True for the values a shopper retypes into online banking, where a typo costs them money. */
+  readonly copyable: boolean;
+}
+
+/** What the customer has already sent about their transfer (doc 11 P7 step 3). */
+export interface OrderPaymentProofDto {
+  readonly reference: string | null;
+
+  /** The slip's token. It identifies the file; the download route is keyed on the order. */
+  readonly slipPublicId: string | null;
+  readonly slipFileName: string | null;
+  readonly slipContentType: string | null;
+  readonly slipUploadedAtUtc: string | null;
+}
+
+/** What `POST /api/orders/{token}/payment-slip` answers. */
+export interface SlipUploadedDto {
+  readonly slipPublicId: string;
+  readonly fileName: string;
+  readonly contentType: string;
+  readonly uploadedAtUtc: string;
 }
 
 /** The delivery address a shopper typed. */

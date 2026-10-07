@@ -58,3 +58,32 @@ public sealed record UpdateContactAndSocialRequest(
     string? InstagramUrl,
     string? TikTokUrl,
     string? RowVersion);
+
+/// <summary>
+/// The bank account customers transfer to (PAY-01, doc 11 P7's preconditions; <c>Settings.Payments</c>).
+/// <para>
+/// <b>This record is the OpenAPI shape only; the endpoint reads the body as a <c>JsonObject</c>.</b> That
+/// is the ADM-22 pattern and it is load-bearing here: absent and <see langword="null"/> have to mean
+/// different things. A screen whose caller cannot read the <c>Bank</c> group never receives these fields
+/// and therefore never sends them, and a record binding would turn that silence into "clear the shop's
+/// account number" — W1-12's blocker, on the one group where it costs real money.
+/// </para>
+/// </summary>
+/// <param name="BankName">
+/// Required before a shopper is shown anything. Absent leaves it alone; null clears it.
+/// </param>
+/// <param name="Branch">Optional: a deposit slip asks for it, online banking does not.</param>
+/// <param name="AccountName">Required before a shopper is shown anything.</param>
+/// <param name="AccountNumber">
+/// Required before a shopper is shown anything. Digits, spaces and dashes — the grouping the client types
+/// is kept, because a shopper copies it into online banking.
+/// </param>
+/// <param name="Instructions">Optional plain text under the details. Line breaks are kept; markup is not.</param>
+/// <param name="RowVersion">The group's token from the read model.</param>
+public sealed record UpdateBankDetailsRequest(
+    string? BankName,
+    string? Branch,
+    string? AccountName,
+    string? AccountNumber,
+    string? Instructions,
+    string? RowVersion);
