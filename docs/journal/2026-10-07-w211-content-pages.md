@@ -69,30 +69,23 @@ guard for every deeper address on the origin.
 
 | Suite | Result |
 |---|---|
-| xUnit unit | **1,643 passed**, 0 failed, 10 s |
-| xUnit integration (real SQL Server) | **1,057 passed**, 0 failed, ~16 min |
-| Vitest storefront | **1,385 passed** (1,302 before this task, +83) |
+| xUnit unit | **1,679 passed**, 0 failed, 11 s |
+| xUnit integration, real SQL Server | **1,058 passed**, 0 failed, 14 m 41 s |
+| Vitest storefront | **1,389 passed** (53 files) |
 | Vitest admin | **385 passed** (354 before, +31) |
 | Vitest shared | **24 passed**, unchanged |
-| Playwright, whole suite | **862 passed**, 1 pre-existing flake (below) |
+| Playwright, whole suite | **865 passed, 0 failed** at `--workers=1` and at `--workers=2`; **864/1** at the capped default, the one being the known `admin-catalog` flake |
 
-New: 108 sanitiser cases (105 payloads it must refuse plus 3 it deliberately accepts), 47 content-page write cases, 35 contact-enquiry cases, 11
-reserved-slug cases (which read `app.routes.ts`, so the refusal list cannot drift from the route
-table), 10 admin-model shape cases, 28 integration cases, 27 browser cases in
-`content-pages.e2e.ts`, and 13 rewritten in four existing browser specs.
+New: **121** sanitiser cases, 50 content-page write cases, 35 contact-enquiry cases, 12
+system-page-copy cases, 11 reserved-slug
+cases (which read `app.routes.ts`, so the refusal list cannot drift from the route table), 10
+admin-model shape cases, 28 integration cases, 27 browser cases in `content-pages.e2e.ts`, and 13
+rewritten in four existing browser specs. Of the sanitiser's 121, **105 are the payload table** — not
+the 108 an earlier version of this entry claimed, which the tester counted correctly — and 16 are the
+nesting bound round two added.
 
-**Two single failures across two full browser runs were measured rather than assumed**, and both are
-in `admin-*` specs this task does not touch:
-
-| Run | Failed | Measured in isolation |
-|---|---|---|
-| First (13.2 min) | `admin-products.e2e.ts` → "moves a colour with the buttons and keeps focus on the one pressed" | **46 of 46** running its file alone; **5 of 5** with `--repeat-each=5 --workers=1` |
-| Second (14.5 min) | `admin-catalog.e2e.ts` → "switches to another department's tree" | **8 of 8** with `--repeat-each=8 --workers=1`; **112 of 112** running `admin-catalog`, `admin-products` and `admin-settings` together |
-
-A different test each time, both passing every repeat, neither in code this branch changes. It is the
-established harness race (#114/#115) under a long serial run. Not a cross-worktree port collision
-(#110): `E2E_ADMIN_PORT` was pinned to 4872 in a band scanned free first, so the admin stub was this
-run's own.
+The browser-run numbers in the table above were superseded by round two — see **Major 5** below for
+what they were measuring and what they are now.
 
 Every new test was checked for its ability to fail. The sanitiser's three control surfaces were mutated
 individually: the library's permissive defaults turn 6 red, a widened scheme list 12, an emptied
