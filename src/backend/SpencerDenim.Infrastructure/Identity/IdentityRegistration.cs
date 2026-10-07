@@ -146,6 +146,7 @@ public static class IdentityRegistration
 
         // Scoped, not singleton: they depend on ports that read AppDbContext (scoped).
         services.AddScoped<IAuthorizationHandler, PermissionAuthorizationHandler>();
+        services.AddScoped<IAuthorizationHandler, AnyPermissionAuthorizationHandler>();
         services.AddScoped<IAuthorizationHandler, PasswordChangeCompletedHandler>();
         services.AddScoped<IAuthorizationHandler, TwoFactorEnrolmentCompletedHandler>();
         foreach (var permission in PermissionCatalog.All)
@@ -156,6 +157,20 @@ public static class IdentityRegistration
                     .AddRequirements(new PermissionRequirement(permission))
                     .RequireAdminAccountGates()));
         }
+
+        // The one endpoint any settings permission opens: the settings read. Its payload filters per row
+        // against the caller's own permissions, so the route guard only has to let a settings holder in at
+        // all — and a caller holding just Settings.Payments (the Bank.* keys, W3-03) must be able to reach
+        // the screen to read the one group that is theirs. ADM-22 recorded this as the widening its
+        // successor owed; see AnyPermissionRequirement.
+        services.AddAuthorization(options =>
+            options.AddPolicy(PermissionPolicy.ReadAnySettingsGroup, policy => policy
+                .AddRequirements(new AnyPermissionRequirement(
+                    Permissions.Settings.View,
+                    Permissions.Settings.Edit,
+                    Permissions.Settings.Payments,
+                    Permissions.Settings.Security))
+                .RequireAdminAccountGates()));
 
         services.AddAntiforgery(options =>
         {

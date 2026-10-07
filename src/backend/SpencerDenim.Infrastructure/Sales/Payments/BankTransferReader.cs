@@ -185,6 +185,23 @@ internal sealed class BankTransferReader(AppDbContext dbContext) : IBankTransfer
             .Select(payment => new CustomerBankPayment(
                 payment.OrderId,
                 payment.Id,
-                payment.ProofAssetId))
+                payment.ProofAssetId,
+                payment.PayerReference,
+
+                // A soft-deleted asset is a slip the customer has already replaced. It stays on disk for
+                // the retention window (doc 08 §8.4) but it is not the current file, and showing it back
+                // would tell them the wrong one is with the shop.
+                payment.ProofAsset != null && !payment.ProofAsset.IsDeleted
+                    ? payment.ProofAsset.PublicId
+                    : null,
+                payment.ProofAsset != null && !payment.ProofAsset.IsDeleted
+                    ? payment.ProofAsset.OriginalFileName
+                    : null,
+                payment.ProofAsset != null && !payment.ProofAsset.IsDeleted
+                    ? payment.ProofAsset.ContentType
+                    : null,
+                payment.ProofAsset != null && !payment.ProofAsset.IsDeleted
+                    ? payment.ProofAsset.CreatedAtUtc
+                    : null))
             .FirstOrDefaultAsync(cancellationToken);
 }

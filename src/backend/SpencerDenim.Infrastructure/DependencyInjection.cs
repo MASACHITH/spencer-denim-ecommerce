@@ -186,6 +186,7 @@ public static class DependencyInjection
         services.AddScoped<IBankTransferReader, BankTransferReader>();
         services.AddScoped<IBankTransferReviewStore, BankTransferReviewStore>();
         services.AddScoped<IOrderExpiryStore, OrderExpiryStore>();
+        services.AddScoped<IBankTransferProofStore, BankTransferProofStore>();
 
         services.AddMediaLibrary();
 

@@ -94,6 +94,7 @@ app.MapAdminProductEndpoints();
 app.MapContentEndpoints();
 app.MapSiteSettingsEndpoints();
 app.MapAdminSettingsEndpoints();
+app.MapAdminBankTransferEndpoints();
 app.MapCartEndpoints();
 app.MapWishlistEndpoints();
 app.MapCheckoutEndpoints();

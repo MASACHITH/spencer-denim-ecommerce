@@ -6,6 +6,7 @@ using SpencerDenim.Application.Sales.Checkout;
 using SpencerDenim.Application.Sales.Checkout.Abstractions;
 using SpencerDenim.Application.Sales.Checkout.Contracts;
 using SpencerDenim.Domain.Sales;
+using SpencerDenim.UnitTests.Support;
 
 namespace SpencerDenim.UnitTests.Application.Sales;
 
@@ -149,7 +150,11 @@ public sealed class PlaceOrderCommandHandlerTests
             new ThrowingNumberSeriesAllocator(),
             placements ?? new StubPlacementStore(OrderPlacementResult.DuplicateSubmission),
             new FixedClock(new DateTimeOffset(2026, 10, 6, 9, 0, 0, TimeSpan.Zero)),
-            new CheckoutOptions());
+
+            // PAY-03: the handler takes a registry, not a bank-transfer setting. These race tests never
+            // reach the provider — they all refuse before the initiation call — but the registry has to be
+            // real enough to resolve the provider code the command carries.
+            new StubPaymentProviderRegistry());
 
         return handler.HandleAsync(
             new PlaceOrderCommand(

@@ -24,6 +24,9 @@ using SpencerDenim.Application.Content.Home;
 using SpencerDenim.Application.Diagnostics.Ping;
 using SpencerDenim.Application.Marketing.Newsletter;
 using SpencerDenim.Application.Sales.Cart;
+using SpencerDenim.Application.Sales.Payments.Admin;
+using SpencerDenim.Application.Sales.Payments.Contracts;
+using SpencerDenim.Application.Sales.Payments.Customer;
 using SpencerDenim.Application.Sales.Wishlist;
 using SpencerDenim.Application.Sales.Wishlist.Contracts;
 using SpencerDenim.Application.Sales.Checkout;
@@ -234,6 +237,25 @@ public static class DependencyInjection
         services.AddScoped<IQueryHandler<GetCheckoutQuery, CheckoutView>, GetCheckoutQueryHandler>();
         services.AddScoped<IQueryHandler<GetOrderQuery, OrderConfirmationDto?>, GetOrderQueryHandler>();
         services.AddScoped<ICommandHandler<PlaceOrderCommand, PlaceOrderResult>, PlaceOrderCommandHandler>();
+
+        // Payments (W3-03, PAY-01 / ADM-09). The staff queue of doc 11 P7 step 4 and the one handler
+        // behind its three decisions.
+        services.AddScoped<
+            IQueryHandler<GetBankTransferQueueQuery, BankTransferQueuePage>,
+            GetBankTransferQueueQueryHandler>();
+
+        services.AddScoped<
+            ICommandHandler<ReviewBankTransferCommand, ReviewBankTransferResult>,
+            ReviewBankTransferCommandHandler>();
+
+        services.AddScoped<
+            ICommandHandler<SubmitBankTransferReferenceCommand, SubmitBankTransferReferenceResult>,
+            SubmitBankTransferReferenceCommandHandler>();
+
+        // Settings (ADM-22 + W3-03): the bank details a customer transfers to, under Settings.Payments.
+        services.AddScoped<
+            ICommandHandler<UpdateBankDetailsCommand, SettingsWriteResult>,
+            UpdateBankDetailsCommandHandler>();
 
         return services;
     }

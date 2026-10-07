@@ -85,6 +85,19 @@ public sealed record BankTransferTarget(
 /// <param name="PaymentId">The open <c>Pending</c> bank row. A re-upload replaces its proof asset.</param>
 /// <param name="ProofAssetId">
 /// The slip currently on the payment, so a replacement can soft-delete it (doc 08 §3.3 N10: "at most one
-/// current file per payment").
+/// current file per payment"). The internal id, never returned to a client.
 /// </param>
-public sealed record CustomerBankPayment(int OrderId, int PaymentId, int? ProofAssetId);
+/// <param name="PayerReference">The reference the customer typed, so the page can show it back.</param>
+/// <param name="ProofPublicId">The slip's token, which is what a client may hold.</param>
+/// <param name="ProofFileName">What the customer called the file.</param>
+/// <param name="ProofContentType">Image or PDF, so a page knows what to draw before fetching it.</param>
+/// <param name="ProofUploadedAtUtc">When it arrived.</param>
+public sealed record CustomerBankPayment(
+    int OrderId,
+    int PaymentId,
+    int? ProofAssetId,
+    string? PayerReference = null,
+    Guid? ProofPublicId = null,
+    string? ProofFileName = null,
+    string? ProofContentType = null,
+    DateTime? ProofUploadedAtUtc = null);

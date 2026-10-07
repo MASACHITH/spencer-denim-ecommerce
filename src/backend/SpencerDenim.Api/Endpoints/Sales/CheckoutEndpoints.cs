@@ -1,3 +1,5 @@
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
 using SpencerDenim.Api.Http;
@@ -6,6 +8,7 @@ using SpencerDenim.Application.Abstractions.Results;
 using SpencerDenim.Application.Sales.Cart;
 using SpencerDenim.Application.Sales.Checkout;
 using SpencerDenim.Application.Sales.Checkout.Contracts;
+using SpencerDenim.Application.Sales.Payments.Customer;
 
 namespace SpencerDenim.Api.Endpoints.Sales;
 
@@ -61,6 +64,25 @@ internal static class CheckoutEndpoints
                 "CHK-04. The success page and a guest's order link read the same endpoint, so the page "
                 + "survives a reload. A token that matches no order answers 404 and says nothing else.")
             .Produces<OrderConfirmationDto>()
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
+        // Doc 11 P7 step 3: the customer's own bank reference, on the order they reached by its token.
+        // Beside GetOrder rather than inside /api/checkout, for the same reason GetOrder is: a shopper
+        // whose bag has moved on — or who opens their link next week — is still looking at this order, and
+        // nothing here reads the cart cookie.
+        endpoints.MapPut("/api/orders/{publicId:guid}/payment-reference", SetPaymentReferenceAsync)
+            .WithTags("Checkout")
+            .WithName("SetOrderPaymentReference")
+            .WithSummary("The bank reference the customer is quoting for their transfer (PAY-01).")
+            .WithDescription(
+                "Doc 11 P7 step 3. Updates the order's open bank payment, never creating a second one "
+                + "(doc 08 \u00a73.5 N7). Sending null or an empty string clears it, which a customer who "
+                + "mistyped it needs. A token that matches no order, or an order that can no longer be "
+                + "paid, answers 404 and says nothing else \u2014 the token never expires and is a guest's only "
+                + "credential, so a stranger must not learn that it names a real order.")
+            .Accepts<SetPaymentReferenceRequest>("application/json")
+            .Produces<OrderPaymentProofDto>()
+            .ProducesValidationProblem()
             .ProducesProblem(StatusCodes.Status404NotFound);
 
         return endpoints;
@@ -201,6 +223,75 @@ internal static class CheckoutEndpoints
     }
 
     /// <summary>One sentence per blocker, in the order the use case put them.</summary>
+    /// <summary>
+    /// Doc 11 P7 step 3's reference, written on to the order's open bank payment.
+    /// </summary>
+    /// <remarks>
+    /// <b>No antiforgery token and no authentication, deliberately and consistently with the rest of this
+    /// file.</b> There is no customer sign-in anywhere in this build (ACC-01 is W3-01) and a guest's order
+    /// link is the only credential there is, so there is no session for a forged request to ride on — which
+    /// is the thing antiforgery protects. What a cross-site form <i>could</i> do is write a reference on to
+    /// an order whose token the attacker already knows, and knowing the token is already enough to read the
+    /// whole order. The admin's own decisions are where antiforgery matters and every one of them has it.
+    /// <para>
+    /// <b>The body is read as a <c>JsonObject</c></b>, the pattern <c>AdminSettingsEndpoints</c>
+    /// established: <c>{"reference": 123}</c> then names the field instead of answering "malformed JSON",
+    /// which is issue #47's family.
+    /// </para>
+    /// </remarks>
+    private static async Task<IResult> SetPaymentReferenceAsync(
+        HttpContext httpContext,
+        ICommandHandler<SubmitBankTransferReferenceCommand, SubmitBankTransferReferenceResult> handler,
+        Guid publicId,
+        CancellationToken cancellationToken)
+    {
+        NoStore(httpContext.Response);
+
+        var (body, problem) = await AdminWriteRequest.ReadJsonAsync<JsonObject>(
+            httpContext.Request,
+            cancellationToken);
+
+        if (problem is not null)
+        {
+            return problem;
+        }
+
+        string? reference = null;
+
+        if (body!.TryGetPropertyValue("reference", out var node) && node is not null)
+        {
+            if (node.GetValueKind() != JsonValueKind.String)
+            {
+                return ToValidationProblem(
+                [
+                    new ValidationError(
+                        "reference",
+                        "Send the reference as text, or as null to clear it."),
+                ]);
+            }
+
+            reference = node.GetValue<string>();
+        }
+
+        var result = await handler.HandleAsync(
+            new SubmitBankTransferReferenceCommand(publicId, reference),
+            cancellationToken);
+
+        return result switch
+        {
+            SubmitBankTransferReferenceResult.Saved saved => TypedResults.Ok(
+                new OrderPaymentProofDto(saved.Reference, null, null, null, null)),
+
+            SubmitBankTransferReferenceResult.Invalid invalid => ToValidationProblem(invalid.Errors),
+
+            // A bare 404, the same answer GetOrder gives: "no such order", "that is a PayPal order" and
+            // "that order can no longer be paid" must be indistinguishable.
+            SubmitBankTransferReferenceResult.NotFound => TypedResults.NotFound(),
+
+            _ => throw new InvalidOperationException($"Unhandled result {result.GetType().Name}."),
+        };
+    }
+
     private static string BlockedDetail(IReadOnlyList<CheckoutBlocker> blockers) =>
         string.Join(
             ' ',
@@ -277,3 +368,16 @@ public sealed record PlaceOrderRequest(
     string? PaymentMethodCode,
     decimal? ExpectedGrandTotal,
     string? CustomerNote);
+
+/// <summary>
+/// The bank reference a customer quotes for their transfer (PAY-01, doc 11 P7 step 3).
+/// </summary>
+/// <remarks>
+/// <b>The OpenAPI shape only; the endpoint reads the body as a <c>JsonObject</c>.</b> One field, and
+/// nullable because that is the truth about what JSON can send (issue #47): a non-nullable
+/// <see langword="string"/> binds a missing property to null anyway and the useful answer names the field.
+/// </remarks>
+/// <param name="Reference">
+/// What the customer's bank gave them. Null or blank clears it, which a customer who mistyped it needs.
+/// </param>
+public sealed record SetPaymentReferenceRequest(string? Reference);

@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using SpencerDenim.Application.Sales.Checkout.Abstractions;
+using SpencerDenim.Application.Sales.Payments.Contracts;
 using SpencerDenim.Domain.Sales;
 using SpencerDenim.Infrastructure.Persistence;
 using SpencerDenim.IntegrationTests.Infrastructure;
@@ -274,7 +275,12 @@ public sealed class CheckoutPlacementStoreTests(SqlServerDatabaseFixture sqlServ
             null,
             null,
             placedAt,
-            placedAt.AddHours(48));
+
+            // PAY-03: the provider's answer, which placement copies verbatim. Spelled out rather than
+            // taken from BankTransferProvider, so this fixture states what a bank transfer's opening row
+            // is and a change to the provider shows up here as a failing assertion rather than silently
+            // changing what the test exercises.
+            new PaymentInitiation(PaymentStatus.Pending, placedAt.AddHours(48)));
     }
 
     private sealed record OrderLineSnapshotSeed(

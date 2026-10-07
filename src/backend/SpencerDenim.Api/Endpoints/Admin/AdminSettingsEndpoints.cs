@@ -8,6 +8,7 @@ using SpencerDenim.Api.Authorization;
 using SpencerDenim.Api.Http;
 using SpencerDenim.Application.Abstractions.Messaging;
 using SpencerDenim.Application.Abstractions.Results;
+using SpencerDenim.Application.Sales.Payments.Admin;
 using SpencerDenim.Application.Settings;
 using SpencerDenim.Application.Settings.Admin;
 using SpencerDenim.Application.Settings.Contracts;
@@ -61,7 +62,7 @@ internal static class AdminSettingsEndpoints
         var api = endpoints.MapGroup("/api/admin/settings").WithTags("Admin Settings");
 
         api.MapGet("/", GetAsync)
-            .RequirePermission(Permissions.Settings.Edit)
+            .RequireAnySettingsPermission()
             .WithName("AdminGetSettings")
             .WithSummary("The settings this user may read, group by group.")
             .WithDescription(
@@ -103,7 +104,76 @@ internal static class AdminSettingsEndpoints
             .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status500InternalServerError);
 
+        api.MapPut("/bank", UpdateBankDetailsAsync)
+            .RequirePermission(Permissions.Settings.Payments)
+            .WithName("AdminUpdateBankDetails")
+            .WithSummary("The bank account customers transfer to (PAY-01, doc 11 P7).")
+            .WithDescription(
+                "Settings.Payments only, which no default role holds \u2014 a Super Admin sets these. Bank "
+                + "name, account name and account number are what a transfer needs: until all three are "
+                + "filled in, the order page tells shoppers the details are being confirmed rather than "
+                + "showing a half-filled form. A field the body leaves out is not written, so a screen "
+                + "that cannot read this group cannot clear it; send null to clear one deliberately.")
+            .Accepts<UpdateBankDetailsRequest>("application/json")
+            .Produces(StatusCodes.Status204NoContent)
+            .ProducesValidationProblem()
+            .Produces(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status500InternalServerError);
+
         return endpoints;
+    }
+
+    private static async Task<IResult> UpdateBankDetailsAsync(
+        HttpContext httpContext,
+        IAntiforgery antiforgery,
+        ICommandHandler<UpdateBankDetailsCommand, SettingsWriteResult> handler,
+        CancellationToken cancellationToken)
+    {
+        if (await AdminWriteRequest.ValidateAntiforgeryAsync(httpContext, antiforgery) is { } forged)
+        {
+            return forged;
+        }
+
+        var (body, problem) = await AdminWriteRequest.ReadJsonAsync<JsonObject>(
+            httpContext.Request, cancellationToken);
+        if (problem is not null)
+        {
+            return problem;
+        }
+
+        // Presence, not just value \u2014 the same reading as contact-and-social and for a sharper reason.
+        // These five keys need Settings.Payments, which no default role holds, so a Store Manager's screen
+        // genuinely does not receive them; if absent meant null their first save would wipe the shop's bank
+        // account number, and every order placed afterwards would show a customer no account to pay into.
+        var fields = new Dictionary<string, string?>(StringComparer.Ordinal);
+
+        foreach (var field in BankFields)
+        {
+            if (ReadString(body!, field, out var value, out var present) is { } badField)
+            {
+                return badField;
+            }
+
+            if (present)
+            {
+                fields[field] = value;
+            }
+        }
+
+        if (ReadString(body!, "rowVersion", out var rowVersion, out _) is { } badVersion)
+        {
+            return badVersion;
+        }
+
+        var result = await handler.HandleAsync(
+            new UpdateBankDetailsCommand(
+                fields,
+                AdminWriteRequest.RowVersion(httpContext.Request, rowVersion),
+                AdminWriteRequest.Actor(httpContext)),
+            cancellationToken);
+
+        return ToHttp(result);
     }
 
     private static async Task<IResult> GetAsync(
@@ -262,6 +332,10 @@ internal static class AdminSettingsEndpoints
     /// <summary>The fields the contact-and-social body may carry, in the order they are read.</summary>
     private static readonly string[] ContactAndSocialFields =
         ["whatsApp", "facebookUrl", "instagramUrl", "tikTokUrl"];
+
+    /// <summary>The fields the bank body may carry, in the order the screen shows them.</summary>
+    private static readonly string[] BankFields =
+        ["bankName", "branch", "accountName", "accountNumber", "instructions"];
 
     /// <summary>
     /// Reads one optional string property, telling <i>absent</i> from <i>null</i>.
