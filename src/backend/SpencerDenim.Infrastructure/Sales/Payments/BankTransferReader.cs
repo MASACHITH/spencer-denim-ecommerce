@@ -10,7 +10,8 @@ namespace SpencerDenim.Infrastructure.Sales.Payments;
 /// <summary>
 /// The bank-transfer flow's reads (doc 11 P7 steps 3 and 4).
 /// </summary>
-internal sealed class BankTransferReader(AppDbContext dbContext) : IBankTransferReader
+internal sealed class BankTransferReader(AppDbContext dbContext)
+    : IBankTransferReader, IOrderPaymentProofReader
 {
     /// <summary>
     /// A page of the queue, oldest first, with the time left on every row.
@@ -159,6 +160,31 @@ internal sealed class BankTransferReader(AppDbContext dbContext) : IBankTransfer
             order.StockState,
             payment?.Id,
             payment?.Status);
+    }
+
+    /// <summary>
+    /// <see cref="IOrderPaymentProofReader.FindAsync"/>: the same read as
+    /// <see cref="FindOpenPaymentAsync"/>, projected to the neutral shape the order page takes.
+    /// </summary>
+    /// <remarks>
+    /// Bank transfer is the only provider that takes evidence, so it is the only implementation — but the
+    /// order page asks the <i>port</i>, so adding PayPal adds nothing here and changes nothing there.
+    /// </remarks>
+    public async Task<OrderPaymentProof?> FindAsync(
+        Guid orderPublicId,
+        CancellationToken cancellationToken)
+    {
+        if (await FindOpenPaymentAsync(orderPublicId, cancellationToken) is not { } payment)
+        {
+            return null;
+        }
+
+        return new OrderPaymentProof(
+            payment.PayerReference,
+            payment.ProofPublicId,
+            payment.ProofFileName,
+            payment.ProofContentType,
+            payment.ProofUploadedAtUtc);
     }
 
     public async Task<PaymentSlipFile?> FindSlipAsync(

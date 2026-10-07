@@ -54,7 +54,7 @@ public sealed record GetOrderQuery(Guid PublicId);
 /// </remarks>
 public sealed class GetOrderQueryHandler(
     ICheckoutReader reader,
-    IBankTransferReader payments,
+    IOrderPaymentProofReader proofs,
     IPaymentProviderRegistry providers)
     : IQueryHandler<GetOrderQuery, OrderConfirmationDto?>
 {
@@ -102,7 +102,7 @@ public sealed class GetOrderQueryHandler(
                 OrderUrl: null),
             cancellationToken);
 
-        var proof = await payments.FindOpenPaymentAsync(query.PublicId, cancellationToken);
+        var proof = await proofs.FindAsync(query.PublicId, cancellationToken);
 
         return order with
         {
@@ -123,11 +123,11 @@ public sealed class GetOrderQueryHandler(
             Proof = proof is null
                 ? null
                 : new OrderPaymentProofDto(
-                    proof.PayerReference,
-                    proof.ProofPublicId,
-                    proof.ProofFileName,
-                    proof.ProofContentType,
-                    proof.ProofUploadedAtUtc),
+                    proof.Reference,
+                    proof.FilePublicId,
+                    proof.FileName,
+                    proof.ContentType,
+                    proof.SubmittedAtUtc),
         };
     }
 }

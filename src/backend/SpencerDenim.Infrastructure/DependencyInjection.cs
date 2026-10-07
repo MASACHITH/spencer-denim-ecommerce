@@ -13,7 +13,7 @@ using SpencerDenim.Application.Catalog.Admin.Products.Abstractions;
 using SpencerDenim.Application.Content.Abstractions;
 using SpencerDenim.Application.Marketing.Newsletter;
 using SpencerDenim.Application.Sales.Cart.Abstractions;
-using SpencerDenim.Application.Sales.Checkout;
+using SpencerDenim.Application.Sales.Payments;
 using SpencerDenim.Application.Sales.Checkout.Abstractions;
 using SpencerDenim.Application.Sales.Payments.Abstractions;
 using SpencerDenim.Application.Sales.Wishlist.Abstractions;
@@ -81,18 +81,18 @@ public static class DependencyInjection
         // than for IOptions<T>. IOptions<T> is itself a singleton, so this is the same instance.
         services.AddSingleton(provider => provider.GetRequiredService<IOptions<CatalogOptions>>().Value);
 
-        // Checkout's two settings, which belong in ops.Settings and have no table to live in yet
-        // (ADM-22 — see CheckoutOptions). Bound and validated here, and exposed as the bare value for
+        // The one bank-transfer setting that belongs in ops.Settings and has no table to live in yet
+        // (ADM-22 — see BankTransferOptions). Bound and validated here, and exposed as the bare value for
         // the same reason CatalogOptions is.
-        services.AddOptions<CheckoutOptions>()
-            .BindConfiguration(CheckoutOptions.SectionName)
+        services.AddOptions<BankTransferOptions>()
+            .BindConfiguration(BankTransferOptions.SectionName)
             .Validate(
                 options => options.BankTransferExpiryHours > 0,
-                "Checkout:BankTransferExpiryHours must be greater than zero: an order placed with a payment "
+                "Orders:BankTransferExpiryHours must be greater than zero: an order placed with a payment "
                 + "deadline in the past would be expired by the first run of the expiry job.")
             .ValidateOnStart();
 
-        services.AddSingleton(provider => provider.GetRequiredService<IOptions<CheckoutOptions>>().Value);
+        services.AddSingleton(provider => provider.GetRequiredService<IOptions<BankTransferOptions>>().Value);
 
         services.AddScoped<AuditAndSoftDeleteInterceptor>();
 
@@ -184,6 +184,13 @@ public static class DependencyInjection
         // Doc 11 P7 steps 3, 6 and 8, and doc 08 §4.1/§4.3: the customer's reference and slip, and the
         // one transaction behind approve, reject and accept-late.
         services.AddScoped<IBankTransferReader, BankTransferReader>();
+
+        // The same class behind a provider-neutral port, so the order page can ask "has the
+        // customer sent us anything about paying" without naming a gateway (PAY-03). Resolved
+        // through the registered IBankTransferReader rather than registered twice, so one request
+        // gets one instance and one DbContext.
+        services.AddScoped<IOrderPaymentProofReader>(provider =>
+            (BankTransferReader)provider.GetRequiredService<IBankTransferReader>());
         services.AddScoped<IBankTransferReviewStore, BankTransferReviewStore>();
         services.AddScoped<IOrderExpiryStore, OrderExpiryStore>();
         services.AddScoped<IBankTransferProofStore, BankTransferProofStore>();

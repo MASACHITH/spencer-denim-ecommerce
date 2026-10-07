@@ -1,4 +1,4 @@
-using SpencerDenim.Application.Sales.Checkout;
+using SpencerDenim.Application.Sales.Payments;
 using SpencerDenim.Application.Sales.Payments.Abstractions;
 using SpencerDenim.Application.Sales.Payments.Contracts;
 using SpencerDenim.Domain.Sales;
@@ -18,7 +18,7 @@ namespace SpencerDenim.Infrastructure.Sales.Payments;
 /// </summary>
 internal sealed class BankTransferProvider(
     IBankTransferSettingsReader settings,
-    CheckoutOptions options) : IPaymentProvider
+    BankTransferOptions options) : IPaymentProvider
 {
     public string Code => PaymentProviderCodes.BankTransfer;
 
@@ -34,8 +34,8 @@ internal sealed class BankTransferProvider(
     /// that must be null for anything that was never converted.
     /// <para>
     /// <b>The window is read per call, not captured at construction.</b> It is configuration today
-    /// (<see cref="CheckoutOptions"/>) and an <c>ops.Settings</c> key tomorrow; reading it here means the
-    /// move is a change to the port behind this line and not to its callers.
+    /// (<see cref="BankTransferOptions"/>) and an <c>ops.Settings</c> key tomorrow; reading it here means
+    /// the move is a change to the port behind this line and not to its callers.
     /// </para>
     /// </remarks>
     public ValueTask<PaymentInitiation> InitiateAsync(

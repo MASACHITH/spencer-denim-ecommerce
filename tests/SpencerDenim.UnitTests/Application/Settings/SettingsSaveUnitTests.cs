@@ -21,9 +21,16 @@ namespace SpencerDenim.UnitTests.Application.Settings;
 public sealed class SettingsSaveUnitTests
 {
     /// <summary>
-    /// The two forms ADM-22's first slice ships: the logo on its own, and the contact number with the three
-    /// social addresses.
+    /// The three forms the screen shows: the logo on its own, the contact number with the three social
+    /// addresses, and the bank details on their own.
     /// </summary>
+    /// <remarks>
+    /// <b>The bank details are their own save unit because they are guarded by a different permission.</b>
+    /// A unit spanning <c>Bank</c> and any <c>Settings.Edit</c> group would hand a Store Manager a
+    /// concurrency token covering rows they may not write — and the token is published for every row in the
+    /// unit on purpose (so two readers with different permissions get the same token), which is precisely
+    /// what would then leak the existence of the bank rows to a caller the read model hides them from.
+    /// </remarks>
     [Fact]
     public void The_save_units_are_the_forms_the_screen_shows()
     {
@@ -31,8 +38,37 @@ public sealed class SettingsSaveUnitTests
             [
                 new[] { SettingKeys.Store.Group },
                 new[] { SettingKeys.Contact.Group, SettingKeys.Social.Group },
+                new[] { SettingKeys.Bank.Group },
             ],
             SettingCatalog.SaveUnits);
+    }
+
+    /// <summary>
+    /// No save unit mixes permissions, which is the rule the bank group makes real.
+    /// </summary>
+    /// <remarks>
+    /// A unit is a unit of <i>concurrency</i> and a group is a unit of <i>permission</i>; a unit spanning
+    /// two permissions would publish one token over rows two different callers may write, so neither could
+    /// save without the other's rows. Asserted over the catalogue rather than over the three known units,
+    /// so a fourth form cannot be added wrongly.
+    /// </remarks>
+    [Fact]
+    public void No_save_unit_spans_two_permissions()
+    {
+        foreach (var unit in SettingCatalog.SaveUnits)
+        {
+            var permissions = SettingCatalog.All
+                .Where(definition => unit.Contains(definition.GroupKey, StringComparer.OrdinalIgnoreCase))
+                .Select(definition => definition.RequiredPermission)
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+
+            Assert.True(
+                permissions.Count <= 1,
+                $"The save unit [{string.Join(", ", unit)}] spans the permissions "
+                + $"[{string.Join(", ", permissions)}]. A form's concurrency token covers every row in its "
+                + "unit, so a caller who may write only some of them could never save.");
+        }
     }
 
     /// <summary>
@@ -102,6 +138,8 @@ public sealed class SettingsSaveUnitTests
             SettingCatalog.KeysIn(SettingKeys.Store.Group),
             SettingCatalog.KeysInSaveUnitFor(SettingKeys.Store.Group));
 
-        Assert.Empty(SettingCatalog.KeysInSaveUnitFor("Bank"));
+        // `Bank` used to be the undeclared example and now has a unit of its own, so an unbuilt group takes
+        // its place (doc 08 §3.8's `Payments.PayPal`, which W4-01 adds).
+        Assert.Empty(SettingCatalog.KeysInSaveUnitFor("Payments.PayPal"));
     }
 }
