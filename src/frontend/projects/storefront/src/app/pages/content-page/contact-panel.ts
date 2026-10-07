@@ -83,9 +83,11 @@ const MESSAGE_MAX = 4000;
               tester. WhatsApp is still offered because it is a real route to a real person; what is
               gone is the claim about how fast anybody answers.
             -->
-            <p class="t-small muted">
-              If it is urgent, WhatsApp is the fastest way to reach us.
-            </p>
+            @if (whatsApp()) {
+              <p class="t-small muted">
+                If it is urgent, WhatsApp is the fastest way to reach us.
+              </p>
+            }
             <button class="btn btn--secondary contact__again" type="button" (click)="startAgain()">
               Send another message
             </button>

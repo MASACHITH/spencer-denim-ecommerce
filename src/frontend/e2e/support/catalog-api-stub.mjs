@@ -2429,10 +2429,33 @@ let siteSettingsStatus = Number(process.env.E2E_SITE_SETTINGS_STATUS ?? 0);
 /** How long `/api/site/settings` holds its answer, in ms. 0 means answer at once. */
 let siteSettingsDelayMs = 0;
 
+/**
+ * **The stub's shop has a WhatsApp number unless a test says otherwise, and that changed in W2-11.**
+ *
+ * It used to default to null, and it did not matter: the storefront fell back to a placeholder number so
+ * the floating button existed either way. It does not any more — an unset number renders no button at
+ * all. Several specs need the float to be *there*: `quick-view`, `wishlist` and `content-pages` scan the
+ * bottom-right corner with `elementFromPoint` precisely because the float owns it (docs/04 §4, owner
+ * decision 2026-10-06), and with no number those scans would pass by measuring a corner with nothing in
+ * it — the vacuous shape this suite keeps finding.
+ *
+ * So an absent `whatsApp` parameter means "a shop that has one", and `whatsApp=none` is how a test asks
+ * for the unconfigured state. `site-branding.e2e.ts` is the file that asks.
+ */
+const DEFAULT_WHATSAPP = '94771234567';
+
+function whatsAppFrom(value) {
+  if (value === null || value === undefined) {
+    return DEFAULT_WHATSAPP;
+  }
+
+  return value === 'none' || value === '' ? null : value;
+}
+
 let siteSettings = buildSiteSettings(
   process.env.E2E_SITE_LOGO ?? 'none',
   process.env.E2E_SITE_SOCIAL ?? 'none',
-  process.env.E2E_SITE_WHATSAPP ?? null,
+  whatsAppFrom(process.env.E2E_SITE_WHATSAPP ?? null),
 );
 
 /* ===========================================================================================
@@ -3242,7 +3265,7 @@ const server = createServer((request, response) => {
     siteSettings = buildSiteSettings(
       url.searchParams.get('logo') ?? 'none',
       url.searchParams.get('social') ?? 'none',
-      url.searchParams.get('whatsApp'),
+      whatsAppFrom(url.searchParams.get('whatsApp')),
       url.searchParams.get('contact') ?? 'none',
     );
 

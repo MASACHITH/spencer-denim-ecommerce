@@ -28,12 +28,22 @@ import { SiteSettingsService } from '../../core/site-settings/site-settings.serv
   // place (that is the page) and it cannot be nested inside the footer component's own `<footer>`
   // from here. A named complementary landmark is the honest description — a site-wide way to get in
   // touch, beside the page rather than part of it — and it costs one entry in a landmark list.
-  host: { role: 'complementary', 'aria-label': 'Chat with us' },
+  //
+  // Both attributes are bound rather than fixed, because the button is not always there: a shop whose
+  // client has not set `Contact.WhatsApp` renders no link, and a named landmark with nothing in it is a
+  // worse defect than the one this fixes — a screen-reader user navigating by region arrives at an empty
+  // "Chat with us".
+  host: {
+    '[attr.role]': 'url() ? "complementary" : null',
+    '[attr.aria-label]': 'url() ? "Chat with us" : null',
+  },
   template: `
-    <a class="wa-float" [href]="url()" target="_blank" rel="noopener">
-      <sd-icon name="whatsapp" />
-      <span class="sr-only">Chat with us on WhatsApp</span>
-    </a>
+    @if (url(); as href) {
+      <a class="wa-float" [href]="href" target="_blank" rel="noopener">
+        <sd-icon name="whatsapp" />
+        <span class="sr-only">Chat with us on WhatsApp</span>
+      </a>
+    }
   `,
   styles: `
     /* **Bottom-right is a stated owner decision now, not just where this landed** (docs/04 §4,
@@ -82,8 +92,15 @@ export class WhatsappButton {
   private readonly number = inject(SiteSettingsService).whatsAppNumber;
 
   /**
-   * The deep link, from the admin setting `Contact.WhatsApp` when the client has set one and from
-   * `SITE_CONFIG`'s documented placeholder otherwise (ADM-22).
+   * The deep link from the admin setting `Contact.WhatsApp`, or null when the client has not set one
+   * (ADM-22 part 2, W2-11).
+   *
+   * **Null means no button**, and that is a reversal. This used to fall back to a placeholder number, so
+   * a fresh shop put a floating button on every page that opened a chat with nobody — the argument being
+   * that GLB-08 says the button is site-wide. It does, but a button that reaches nobody is not that
+   * feature, and the shopper who messages it concludes the shop does not answer. ADM-22 made the same
+   * call about three placeholder social links; W2-11 made it about the address, email, telephone and
+   * opening hours; this is the last of them.
    *
    * A computed rather than a value read once in the constructor: the settings arrive from an HTTP call,
    * so reading them at construction time would capture the empty initial value and never update — which
