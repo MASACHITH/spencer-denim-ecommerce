@@ -252,12 +252,24 @@ part is not.
   `Initiated (0)` row, the original capture then resolves PENDING — and the `UPDATE` that violates the index
   is **the one applying a real capture result**. The failing transaction is the one holding money.
 
-Unreachable today (nothing captures; doc 08 §9 seeds the PayPal row disabled). The sequence and three ways
-out are written into `PaymentConfiguration`'s remarks where W4-01 will be standing, with a note **not** to
-solve it by catching 2627 — doc 08 §4.2 is explicit that the design never relies on catching a unique
-violation on the settlement path, and a swallowed one would discard a capture. The recommended fix is to
-cancel the open retry row inside the apply transaction before moving `Capturing → Pending`, which is what
-§4.2 step 5 already does for the reverse order.
+**And there is a second, easier sequence, which review caught and this note had missed — it is the worse
+one.** Once the PENDING result is applied the row sits at `Pending (1)` *inside* the filter and §4.2 step 4
+says the capture lock is **cleared**, so "a retry is allowed only when no claim is active" is satisfied
+immediately: no three-hour wait is needed. The retry's own `INSERT` of an `Initiated (0)` row collides at
+once, and step 5 only cancels an *abandoned* `Initiated` row, which this is not. What the index refuses here
+is **the buyer's retry**, for up to five days, with nothing on screen able to explain it.
+
+That changes the recommendation. "Cancel the open retry row inside the apply transaction" fixes the first
+sequence and does **nothing** for this one, where the retry arrives after the apply. What covers both: make
+the **retry path** close or reuse an open `Pending` row rather than insert beside it — the retry is the
+transaction that knows it is a retry — and hold the capture lock for the whole pending window rather than
+3 h, which also stops the first sequence arising at all because the retry is never offered while a capture
+is in flight.
+
+Both sequences are unreachable today (nothing captures; doc 08 §9 seeds the PayPal row disabled), and both
+are written into `PaymentConfiguration`'s remarks where W4-01 will be standing, with the instruction **not**
+to solve it by catching 2627 — doc 08 §4.2 is explicit that the design never relies on catching a unique
+violation on the settlement path, and a swallowed one would discard a capture.
 
 **Architect: doc 08 §3.5's sentence should be narrowed.** It is right about recovery and about the bank
 flow; it is wrong about a PayPal retry, and the wrongness is on the money path.
@@ -293,24 +305,35 @@ The test also now asserts its own arrangement (`ExecuteUpdate` affected 1 row, a
 `PayPal`), because a fixture that silently did nothing would have made the three assertions below it test the
 bank path against a bank order — a test passing for the wrong reason.
 
-### 2. Reject took no order-row lock, against doc 08 §5.3
+### 2. Reject took no order-row lock, against doc 08 §5.3 — and **this section was overstated**
 
-My first version argued that a read plus the payment statement's own `Status = Pending` guard was complete,
-because every way an order leaves `PendingPayment` closes its open payment. The argument is true and the
-**window** is the problem: between the read and the payment `UPDATE`, an approval can commit. Without an
-order-row claim the two paths take their locks in opposite orders, and the losing rejection arrives at a row
-that is now the settling payment and tries to make it `Failed` — which
-`CK_Payments_IsOrderSettlement` then refuses, turning a race that should answer "already approved" into a
-constraint violation and a 500.
+**Corrected after review, and the correction matters more than the original claim.** What I wrote here, and
+in the store's own comment, was that without an order-row claim a losing rejection would set the row that
+now settles the order to `Failed` and so violate `CK_Payments_IsOrderSettlement`, turning a race into a 500.
+**That cannot happen.** The constraint is `IsOrderSettlement = 0 OR Status IN (3, 8, 9)`; the rejection's
+`UPDATE` never touches the flag and matches only a row still at `Pending`; and a row at `Pending` already
+has the flag clear, or it would be violating the constraint where it sits. The statement's own
+`AND Status = Pending` is the protection, and for correctness it is sufficient — the loser updates nothing.
 
-Doc 08 §5.3 already said what to do: "paths that start from an existing order claim the order row first". A
-rejection starts from one. It now claims it with a conditional `UPDATE` that writes only the stamp — the
-status and stock state are deliberately untouched (P7 step 6b: "the order stays PendingPayment until its due
-time") — so all three decisions take the same lock in the same order and the loser waits and is told what
-happened.
+What the claim actually buys is smaller and still worth having:
 
-`Approving_and_rejecting_at_once_applies_exactly_one_of_them` is the test that made me look, and it is the
-one no sequential test could replace.
+- **Lock ordering.** Doc 08 §5.3 says "paths that start from an existing order claim the order row first",
+  and a rejection starts from one. Without it, approve and reject take the order row and the payment row in
+  opposite orders, which is a 1205 waiting for two staff on one order — avoided by design rather than
+  retried.
+- **A refusal diagnosed from settled state.** The loser now *waits* for the winner's commit instead of
+  racing it, so what the screen says is "this order has already been paid" rather than a sentence derived
+  from a read that was already stale. A 0-row update with a stale diagnosis is not a wrong write, but it is
+  a wrong sentence about somebody's money.
+
+**And the test story was wrong too.** This section said
+`Approving_and_rejecting_at_once_applies_exactly_one_of_them` was "the one no sequential test could
+replace". A tester reverted the claim and ran it 48 rounds without a red — mechanically expected, because
+approve executes six statements before committing, so reject almost always reaches its `UPDATE` first. That
+test establishes that **exactly one decision applies** under real contention and that the rows agree with
+the winner; it does not cover the claim. The claim has **no red-before**, which is now recorded in the
+mutation table instead of being implied here. The test's own comment, which still said "reject deliberately
+does not claim the order row", is corrected in place.
 
 ## Four more defects, found only in a browser
 
@@ -365,8 +388,13 @@ navigates to `?payerReference=...&slip=`, the reference the shopper just typed g
 instead of onto the order, and nothing tells them. Silent loss of something a shopper typed about their own
 money, on a slow connection — which is exactly the connection a 320 px device tends to be on.
 
-There was no other `<form>` in the storefront — checkout's Place Order is a button with a click handler —
-so this was my deviation from the shop's own convention, not the shop's. It is now a `<div>` with
+**I claimed there was no other `<form>` in the storefront, and that was false.** `checkout-page.ts` has
+one, with its submit button attached from outside by the `form=` attribute, which is why a grep for
+`(ngSubmit)` found only mine. So the storefront had the same trap in a worse place: before hydration a
+native submit puts a shopper's name, phone, address and city into the query string, loses the checkout form,
+and leaves personal data in browser history and access logs. That one is W3-02's and pre-existing; the
+coordinator is filing it. The lesson for me is narrower and sharper: I asserted a negative about a codebase
+from one grep, it was relayed onwards as fact, and the worse instance went unexamined because of it. It is now a `<div>` with
 `(click)="saveReference()"` and an explicit `(keydown.enter)`, which keeps the keyboard shortcut, cannot
 escape to the browser, and takes `FormsModule` out of the page. `[value]` + `(input)` replaces `ngModel`,
 which is how every other input in this shop is bound.
@@ -384,6 +412,116 @@ which is how every other input in this shop is bound.
   element is the gate, the same one `home-page.e2e.ts` uses: nothing on this page looks different when it
   hydrates, so there is no rendered state to wait for.
 
+## Round 2: what the tester's review changed
+
+Four Majors, and every one of them is something a client or a shopper would have met.
+
+### MAJOR 1 — a payable order could not be approved from the queue
+
+`canAcceptLate` was keyed on the clock: any row past its deadline offered **only** Accept late payment,
+which the server refuses with `order_not_closed` because the order is still open. The clock never goes back
+under zero, so Refresh could not get staff out of the dead end — and the row's stock stayed reserved to an
+order nobody could approve, sellable to the next shopper, after which Accept late payment would fail its
+stock re-check and the money would have to be refunded by hand (G-13, which has no system path here).
+
+Every row in this queue has a `Pending` payment, so every one is still `PendingPayment` with stock
+`Reserved`: approvable, whatever the deadline says. The expiry job sweeps `TOP (50)` every five minutes —
+normally minutes of overlap, twenty with a 200-order backlog, and **indefinitely if the sweep is failing**.
+P7's exception says Accept late payment is for "if expiry won", and the only honest evidence of that is the
+server's `order_expired` refusal, which is now the trigger. `order_not_closed` is named in
+`BANK_TRANSFER_REFUSALS` so the way back out is a behaviour with a test rather than an accident.
+
+**A unit spec and a browser test asserted the defect, each with a comment claiming the opposite** ("offers
+the action that will actually work"). Both are rewritten with the reasoning in them, and two tests added.
+That is the second time in this task a confident comment on the money path was wrong; the pattern is a
+comment written from intent rather than from the behaviour in front of it.
+
+### MAJOR 2 — a `Media.Delete` holder destroyed a customer's payment slip
+
+A slip is referenced only by `sales.Payments.ProofAssetId`, and attaching one writes no `MediaUsages` row,
+so the library's "no usages" guard found nothing: `DELETE` answered 204, the queue's link went null, both
+read-back routes 404'd, and `MediaRetention` would purge the bytes 30 days later with nothing on the order
+to say the evidence an approval is made on had been removed. **Reachable by a default role** — Store Manager
+holds `Media.Delete` alongside `Orders.View`.
+
+**This branch is what made it reachable**: before it, no `Visibility = Private` asset existed. My journal
+flagged the *read* half of this hole and not the delete half, which is the more expensive one.
+
+The guard now reads `ProofAssetId` directly, which is the argument the `PosterAssetId` precedent already
+makes — a real foreign key beats trusting that a usage row was written — and it also covers slips attached
+before the check existed. The 409 names the order, so the "used in…" panel can tell an operator where to
+look.
+
+### MAJOR 3 — after a rejection the shopper was told the order could no longer be paid
+
+The reference route required an already-open payment row. A rejection closes the only one there was, so Save
+answered 404 and the page rendered *"This order can no longer be paid"* about an order doc 11 P7 step 6b
+keeps `PendingPayment` — while the slip upload, two controls lower on the same panel, opened a row and
+worked. The shopper saw the pay panel, their "We have slip.jpg" line gone, an empty reference box, and that
+sentence; with no email in this build, nothing else would have told them.
+
+Both halves now go through `OpenPaymentAsync`. It is still §3.5 N7's rule and still one open row — asserted
+by counting rows, because a fix that bought this with a second open payment would put the same order in the
+queue twice.
+
+### MAJOR 4 — invented bank details in the production admin bundle
+
+The placeholders read `Commercial Bank of Ceylon PLC`, `Kollupitiya`, `Spencer Denim Industries (Pvt) Ltd`
+and `8001 2345 6789`: a real Sri Lankan bank, the client's own legal entity and a plausibly-formatted
+account number, rendered in `dist/admin` on the one screen where a Super Admin types the real values, with
+real values in the sections above and below. The criterion I was given was explicit — not in a seeder, a
+default, **or a placeholder that could render** — and I had read it as being about stored data.
+
+They now follow the convention the same file's social fields have always used (`yourshop`), the catalogue's
+help text no longer names a real bank, and every fixture that asserted the fabricated values uses obviously
+fake ones. Checked against the built bundle: no occurrence remains.
+
+### The Minors, and what each one actually was
+
+- **m-1, the red suite.** `The_batch_read_finds_due_orders…` filtered a `TOP (50)` batch down to its own
+  three orders — which are the newest in a database nothing deletes from, so they have the *latest*
+  deadlines and fall off the batch. Measured 1085/1 in a full run, 9/9 alone. The capped half was vacuous
+  the same way: "two rows came back" was satisfied by anybody's orders. Both halves now control the set
+  (2020 deadlines, a cutoff nothing else can fall inside) rather than filtering it. This is #114's family
+  and the third time this suite has made the mistake.
+- **m-2, `Cancelled → Paid`.** Specified in P7's exceptions and P10, and unreachable: the late acceptance
+  looked for `[Pending, Expired]` payments while a cancelled order's payment is `Cancelled`, so the claim
+  succeeded, no payment was found, and the whole thing rolled back saying there was nothing to review.
+  Latent until W3-04 lands cancel, then silently wrong. Fixed in the status list.
+- **m-3, the lock order.** Approve took `NumberSeries` before `StockLevels`; the late acceptance the
+  reverse. Two decisions on a shared variant could each hold what the other wanted — a 1205 that
+  `EnableRetryOnFailure` would absorb without anybody seeing it. Approve now deducts first and allocates
+  last, which is one order for both paths and the end of the transaction where a throw costs no invoice
+  number.
+- **m-4, "variant 470 (0 left)".** An internal id, to a staff member deciding whether to refund somebody,
+  on a screen with no order-detail page to resolve it in. The refusal now names the product, colour, size
+  and SKU with both figures ("0 left, 1 needed"), from `sales.OrderLines`' placement-time snapshot — no
+  join, and the words the customer bought under. Deliberately **not** checkout's id-keyed shape: its reader
+  is the shopper's own bag, which can resolve an id; this reader cannot.
+- **m-5, a provider enabled without settings.** Doc 08 §3.5 says enabling one requires valid settings and
+  nothing enforces it, so a fresh deployment takes bank orders nobody can pay. There is no
+  `ops.AdminAlerts` in this build, so the provider logs a Warning naming the three keys, on the one path
+  that proves a real customer has hit it.
+- **m-6, "we will be in touch".** A promise nothing in this build can keep, in the branch reached precisely
+  when the shop is not finished setting itself up — and that branch never mentioned the 48-hour deadline
+  either. Both fixed. The reviewer's wider point stands: a three-phrase blocklist in the tests is a canary,
+  not a property, and "this page only says what the system can do" has to be held line by line.
+- **m-7, the customer's slip read-back**, is a scope deviation from P7 ("shown only to staff with
+  `Orders.View`") that I believe is right — a shopper who uploaded a file should be able to see which file
+  the shop has — but it needs an architect's line in doc 02 or doc 11 rather than only a comment in
+  `PaymentSlipEndpoints`. **Owed, and not mine to grant.**
+
+Nits taken: the dead `for` attributes on `<span>`s inside wrapping labels are gone (the wrapper is the
+association; `for` on a span is invalid and did nothing — I found three of the four), and
+`OrderStatusHistoryEntry` now states the convention a reviewer rightly queried: equal `FromStatus` and
+`ToStatus` mean "an event on this order that did not move it", with the note saying which. The alternatives
+were worse — `sales.PaymentEvents` is the *provider* log, with an idempotency key and a verbatim payload,
+and no row at all would lose the one place an order's timeline can be read.
+
+**One number from the review worth keeping**: the tester got a clean **860/860** Playwright run on an
+uncontended machine, against the 856/1/3 measured here. The four non-green tests recorded below are load
+artefacts on this machine, and that is now evidence rather than an inference.
+
 ## Measured
 
 | | | W3-02's baseline |
@@ -391,10 +529,10 @@ which is how every other input in this shop is bound.
 | `dotnet build SpencerDenim.sln -c Release --no-incremental` | **0 warnings, 0 errors** | 0 / 0 |
 | `npm run build` (production, budgets enforced) | **0 warnings** | 0 |
 | `dotnet test tests/SpencerDenim.UnitTests` | **1459 passed**, 0 failed | 1306 (+153) |
-| `dotnet test tests/SpencerDenim.IntegrationTests` | **1086 passed**, 0 failed, 0 skipped (14 m 31 s) | 956 |
-| `ng test shared / storefront / admin` | 24 / **1295** / **372** passed, 0 failed | 21 / 1206 / 273 |
+| `dotnet test tests/SpencerDenim.IntegrationTests` | **1089 passed**, 0 failed, 0 skipped (13 m 39 s) | 956 |
+| `ng test shared / storefront / admin` | 24 / **1295** / **374** passed, 0 failed | 21 / 1206 / 273 |
 | `ng lint` | all three projects pass | pass |
-| `playwright test --project=chromium` (full suite) | 860 tests: **856 passed**, 1 failed, 3 flaky — every one of them in another feature's file and every one passing in isolation; both W3-03 files green (see below) | — |
+| `playwright test --project=chromium` (full suite) | **860 of 860**, clean (5.6 m) — the same figure the tester measured; the earlier 856/1/3 runs are recorded below as the load artefacts they were | — |
 | `playwright test bank-transfer.e2e.ts` | **10 passed**, and 30/30 under `--repeat-each=3 --workers=1` | — |
 | `playwright test admin-bank-transfers.e2e.ts` | **14 passed** | — |
 | `playwright test checkout.e2e.ts` | **50 passed** (two assertions removed, below) | 52 |
@@ -414,7 +552,7 @@ which is how every other input in this shop is bound.
 | `PaymentProviderContractTests` | 10 | doc 03 §3c's contract over every registered provider |
 | `CheckoutNamesNoProviderTests` | 3 | PAY-03's claim, as a test |
 | `BankDetailRulesTests` | 18 | what the bank fields accept, which is the interesting half |
-| `bank-transfers-page.spec.ts` | 12 | the queue screen: rows, time left, decisions, 409 → Accept late, short lines, `aria-disabled`, announcements |
+| `bank-transfers-page.spec.ts` | 13 | the queue screen: rows, time left, decisions, 409 → Accept late, the way back out of `order_not_closed`, named short lines, `aria-disabled`, announcements |
 | `settings-page.spec.ts` (bank) | 7 | the W1-12 body assertions on the group where it costs money |
 | `order-page.spec.ts` (pay panel) | 8 | the details, the reference, the slip, the not-set state, a paid order |
 | `bank-transfer.e2e.ts` | 10 | the pay panel in a real browser: the details, the amount against the summary's own string, the reference, the slip round trip, the details-not-set state, no email claimed, overflow / tap size / reachability / occlusion at all eight widths, axe |
@@ -433,18 +571,32 @@ Each applied to `BankTransferReviewStore`, the suite run, the file restored and 
 | `OrderSnapshot` back to a `record struct` | **1 red** — this is the red-before of defect 1 |
 | the approve claim drops `AND Status = 0` | **green — masked** |
 | the reject payment statement drops `AND Status = Pending` | **green — masked** |
+| the three claims drop `AND PaymentProviderCode` | **green — masked**, found by the tester |
+| reject's order claim removed entirely | **green — no red-before**, found by the tester |
+| creating no payment row when none is open | **1 red** — the red-before of the rejection-then-reference defect |
+| the slip guard's `ProofAssetId` check never matches | **1 red** — the red-before of the slip-deletion defect |
+| the payment-row `ProviderCode` filter dropped | **1 red** |
+| the provider guard dropped from the snapshot read **and** all three claims | **1 red** |
 
-**The two masked ones are reported rather than papered over**, because "my test cannot see this" is more
-useful than silence:
+**The masked ones are reported rather than papered over**, because "my test cannot see this" is more useful
+than silence:
 
 - The approve claim's `Status = 0` is **redundant given the other two guards**. `StockState = 0` and the
   settlement `NOT EXISTS` each catch every reachable state the status guard would: `Paid` implies
   `StockState = 1`, `Expired`/`Cancelled` imply `2`, and there is no reachable `(Status ≠ 0, StockState = 0)`
   combination. It stays because doc 08 §4.1 specifies it and because the redundancy depends on invariants
   elsewhere.
-- The reject statement's own `Status = Pending` is now masked **by the order claim in front of it** (defect
-  2's fix). It was load-bearing before that claim existed, and the race test is what established the window
-  rather than the statement.
+- Of reject's pair, **the statement guard is the protection and the order claim is the belt** — the reverse
+  of what this file said before review. `AND Status = Pending` on the payment statement is what makes a
+  losing rejection a no-op; the claim adds lock ordering and a fresh diagnosis.
+- **`AND PaymentProviderCode` in the three claims is belt behind the snapshot read.** A tester removed it
+  from all three and the 52 payment tests stayed green; removing it from the read *and* the claims turns
+  `A_PayPal_order_cannot_be_approved_through_the_bank_flow` red. So the single-line removal is masked by
+  design — the read refuses first — and the claims are there because a guard on the statement that writes is
+  worth having even when a read in front of it already refused. What has changed is that the PayPal test now
+  asserts **rows, stock and `NumberSeries`** rather than a result type, and a second test covers the shape
+  the read cannot catch: a payment row whose `ProviderCode` belongs to another provider on an order whose
+  does not.
 
 ## Things in the brief, or in the documents, that are wrong
 
@@ -526,8 +678,11 @@ nightly reconciliation is the other half of the signal.
 | 8 | **Rate limiting the order link** (G-41), which would cover the reference route too. Nothing limits `GET /api/orders/{token}`. | Architect, then whoever |
 | 9 | **The placement throttle**, the other half of #107. Not a documented requirement; an owner decision. | Owner |
 | 10 | **`GET /api/admin/media/{publicId}` does not filter by visibility**, so a `Media.View` holder can read a slip's *metadata* (not its bytes — the file route is `Orders.View` and keyed on the order). Pre-existing, found while reading; worth a deliberate decision, and ADM-18's listing must exclude `Visibility = Private` when it lands. | ADM-18 |
-| 11 | **Playwright coverage of the two new screens.** Not written: see below. | this task's tester, or a follow-up |
-| 12 | No `progress-data.js` change, no `MEMORY.md`, no `TASKS.md` (doc 14's rule). | owner's session |
+| 11 | ~~**Playwright coverage of the two new screens.**~~ Written and run: 24 tests, four defects found. | — |
+| 12 | **A way to reach an order that has already expired.** The queue lists `Pending` payments, and expiry closes the payment in the same transaction as the order — so an expired order is **not in the queue at all**, and Accept late payment is reachable only when expiry wins *during* a review (the `order_expired` refusal). P7 step 8's real case is money that arrives a day later, and there is no screen on which to find that order. It was equally unreachable before MAJOR 1's fix (the button was offered and the server refused it), so this is a gap rather than a regression — but it is the gap that makes the late-acceptance transaction, which is built and tested, almost unusable. **An "expired, awaiting a decision" filter on this queue, or the order list, is what closes it.** | ADM-09 / W3-04 |
+| 13 | **An architect's line on the customer's slip read-back.** P7 says the slip is "shown only to staff with `Orders.View`"; this build also serves it back to the holder of the order's token, which I believe is right — a shopper who uploaded a file should be able to see which file the shop has — but it is a scope deviation and needs ratifying in doc 02 or doc 11 rather than living in a code comment (the tester's m-7). | Architect |
+| 14 | **`checkout-page.ts`' `<form>` with an outside submit button** (`form=`), which natively submits name, phone, address and city into the query string before hydration. Pre-existing, W3-02's, and found only because my own version of the same mistake was reviewed. The coordinator is filing it. | W3-02 |
+| 15 | No `progress-data.js` change, no `MEMORY.md`, no `TASKS.md` (doc 14's rule). | owner's session |
 
 ## What I deliberately did not build
 
@@ -564,12 +719,12 @@ nightly reconciliation is the other half of the signal.
   table with `TableCardinality="0"` where a seek would be cheaper if it were legal — but it says nothing
   about speed.
 
-## The full browser run's leftovers, none of them this branch's
+## The full browser run's leftovers, none of them this branch's — and now resolved
 
-Two full-suite runs, before and after the fixes above. Both land on **856 of 860 passing**, and the four
-that do not are **different tests each time** — which is the signature of load rather than of a defect.
-Every one of them passes in isolation, each was re-run that way to check, and both W3-03 files are green in
-both runs.
+**The final run on this machine is 860 of 860.** Before that, two full runs each landed on 856, and the four
+that did not pass were **different tests each time** — the signature of load rather than of a defect. Every
+one passed in isolation, each was re-run that way to check, and both W3-03 files were green throughout. The
+tester's own clean 860/860 on an uncontended machine, and this branch's final clean run, settle it.
 
 | Test | First run | Second run | In isolation |
 |---|---|---|---|

@@ -44,22 +44,35 @@ namespace SpencerDenim.Infrastructure.Persistence.Configurations.Sales;
 /// or 7, none of which is inside the filter, so it never inserts and never enters it.
 /// </description></item>
 /// <item><description>
-/// <b>PayPal: the claim is false, and this is the sequence (W4-01's to handle).</b> §4.2 step 4's PENDING
-/// result moves the row <c>Capturing (2) → Pending (1)</c> — <i>into</i> the filter. A customer retry is
-/// allowed "only when no claim is active", and a claim lapses after <c>CaptureLockHours</c> (3 h) while an
-/// eCheck capture may stay in flight for <c>PendingCaptureMaxDays</c> (5 days). So: capture claimed, lock
-/// lapses at 3 h, customer retries and gets a new <c>Initiated (0)</c> row, the original capture then
-/// resolves PENDING — and the <c>UPDATE</c> that applies a <b>real capture result</b> violates the index.
-/// The failing transaction is the one holding money, which is the worst possible candidate.
+/// <b>PayPal: the claim is false, and there are two sequences, not one (W4-01's to handle).</b> §4.2 step
+/// 4's PENDING result moves the row <c>Capturing (2) → Pending (1)</c> — <i>into</i> the filter — and an
+/// eCheck capture may stay pending for <c>PendingCaptureMaxDays</c> (5 days).
 /// <para>
-/// It is unreachable today: nothing captures (W4-01), and doc 08 §9 seeds the PayPal provider disabled.
-/// Three ways out, for whoever builds it — cancel the open retry row inside the apply transaction before
-/// moving Capturing → Pending (which is what §4.2 step 5 already does for the reverse order, and the
-/// cheapest); or hold the capture lock for the whole pending window rather than 3 h (which also stops the
-/// retry being offered); or widen the filter to exclude a row that has ever been Capturing. The first keeps
-/// the index's meaning intact and is the one this note recommends. <b>Do not simply catch 2627 here:</b>
-/// doc 08 §4.2 is explicit that the design never relies on catching a unique violation on the settlement
-/// path, and a swallowed one would discard a capture.
+/// <b>The easy one, and the worse one.</b> Once that PENDING result is applied the row sits at
+/// <c>Pending (1)</c> inside the filter and the capture lock is <i>cleared</i> — §4.2 step 4 says so — so
+/// "a retry is allowed only when no claim is active" is satisfied <b>immediately</b>: no three-hour wait.
+/// The retry's own <c>INSERT</c> of an <c>Initiated (0)</c> row then collides at once, and §4.2 step 5 only
+/// cancels an <i>abandoned</i> <c>Initiated</c> row, which this is not. What the index refuses here is the
+/// <b>buyer's retry</b>, for five days, with nothing on screen able to explain it.
+/// </para>
+/// <para>
+/// <b>The hard one</b> runs the other way round: capture claimed, the lock lapses after
+/// <c>CaptureLockHours</c> (3 h), the customer retries and gets a new <c>Initiated (0)</c> row, and the
+/// original capture then resolves PENDING — so the <c>UPDATE</c> applying a <b>real capture result</b> is
+/// the transaction that violates the index. The failing transaction is the one holding money.
+/// </para>
+/// <para>
+/// Both are unreachable today: nothing captures (W4-01), and doc 08 §9 seeds the PayPal provider disabled.
+/// <b>A fix has to cover both, and this is where an earlier version of this note was wrong</b> — it
+/// described only the second and recommended cancelling the open retry row inside the apply transaction,
+/// which does nothing for the first, where the retry arrives after the apply. What covers both: make the
+/// <b>retry path</b> close or reuse an open <c>Pending</c> row rather than insert beside it (the retry is
+/// the transaction that knows it is a retry), and hold the capture lock for the whole pending window rather
+/// than 3 h — which also stops the second sequence arising at all, since the retry is never offered while
+/// the capture is in flight. Widening the filter to exclude a row that has ever been <c>Capturing</c>
+/// remains the blunt option and costs the index its meaning.
+/// <b>Do not simply catch 2627 here:</b> doc 08 §4.2 is explicit that the design never relies on catching a
+/// unique violation on the settlement path, and a swallowed one would discard a capture.
 /// </para>
 /// </description></item>
 /// </list>

@@ -1,4 +1,8 @@
 using System.Reflection;
+
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+
 using SpencerDenim.Application.Sales.Payments.Abstractions;
 using SpencerDenim.Application.Sales.Payments.Contracts;
 using SpencerDenim.Domain.Sales;
@@ -301,6 +305,15 @@ public sealed class PaymentProviderContractTests
         if (type == typeof(SpencerDenim.Application.Sales.Payments.BankTransferOptions))
         {
             return new SpencerDenim.Application.Sales.Payments.BankTransferOptions();
+        }
+
+        // A logger, which W3-03's review added to the bank provider so an unconfigured shop is not silent
+        // (doc 08 §3.5's unenforced "a provider needs valid settings"). NullLogger rather than a spy: what
+        // this file proves is the contract, and a provider that logs is still a provider that must answer.
+        if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(ILogger<>))
+        {
+            return Activator.CreateInstance(
+                typeof(NullLogger<>).MakeGenericType(type.GetGenericArguments()))!;
         }
 
         throw new NotSupportedException(

@@ -302,8 +302,21 @@ test.describe('the pay panel (doc 11 P7 step 1)', () => {
 
     // And nothing has been charged, which is the other thing a shopper needs to hear.
     await expect(page.locator('[data-testid="pay-pending-details"]')).toContainText(
-      'nothing has been charged',
+      'Nothing has been charged',
     );
+
+    // **The deadline is on this branch too, which it was not before review.** The 48 hours apply whether
+    // or not the shop has filled its details in: the order is released if nothing arrives, and a shopper
+    // who cannot see a deadline cannot act on it.
+    const due = page.locator('[data-testid="pay-pending-due"]');
+    await expect(due).toHaveCount(1);
+    await expect(due).toContainText('released');
+
+    // **And no promise anybody can keep.** "We will be in touch" used to be here; nothing in this build
+    // contacts a customer, and this is the branch reached when the shop is least able to.
+    const body = (await page.locator('body').textContent())!.toLowerCase();
+    expect(body).not.toContain('be in touch');
+    expect(body).not.toContain('we have emailed');
   });
 });
 
