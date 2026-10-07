@@ -69,14 +69,14 @@ guard for every deeper address on the origin.
 
 | Suite | Result |
 |---|---|
-| xUnit unit | **1,629 passed**, 0 failed, 14 s |
+| xUnit unit | **1,643 passed**, 0 failed, 10 s |
 | xUnit integration (real SQL Server) | **1,057 passed**, 0 failed, ~16 min |
 | Vitest storefront | **1,385 passed** (1,302 before this task, +83) |
-| Vitest admin | **364 passed** (354 before, +10) |
+| Vitest admin | **385 passed** (354 before, +31) |
 | Vitest shared | **24 passed**, unchanged |
 | Playwright, whole suite | **862 passed**, 1 pre-existing flake (below) |
 
-New: 105 sanitiser payload cases, 47 content-page write cases, 35 contact-enquiry cases, 11
+New: 108 sanitiser cases (105 payloads it must refuse plus 3 it deliberately accepts), 47 content-page write cases, 35 contact-enquiry cases, 11
 reserved-slug cases (which read `app.routes.ts`, so the refusal list cannot drift from the route
 table), 10 admin-model shape cases, 28 integration cases, 27 browser cases in
 `content-pages.e2e.ts`, and 13 rewritten in four existing browser specs.
