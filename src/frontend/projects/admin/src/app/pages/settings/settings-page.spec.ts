@@ -57,6 +57,47 @@ describe('SettingsPage (ADM-22)', () => {
     };
   }
 
+  /**
+   * The same, plus the `Bank` group — which needs `Settings.Payments` and so is **absent** from the
+   * payload most admins receive.
+   *
+   * Every bank value is non-null, because a fixture with nulls in it lets a dropped field round-trip null
+   * to null unnoticed, and the account number is the field where that costs the client real money.
+   */
+  function payloadWithBank(values: Partial<Record<string, string | null>> = {}): AdminSettings {
+    const bank = {
+      [SETTING_KEYS.bankName]: 'Commercial Bank of Ceylon PLC',
+      [SETTING_KEYS.branch]: 'Kollupitiya',
+      [SETTING_KEYS.accountName]: 'Spencer Denim Industries (Pvt) Ltd',
+      [SETTING_KEYS.accountNumber]: '8001 2345 6789',
+      [SETTING_KEYS.instructions]: 'CDM deposits take a working day.',
+      ...values,
+    } as Record<string, string | null>;
+
+    const base = payload(values);
+
+    return {
+      ...base,
+      groups: [
+        ...base.groups,
+        {
+          groupKey: 'Bank',
+          rowVersion: 'bank-rv-1',
+          settings: Object.keys(bank).map((key) => ({
+            key,
+            valueType: 'String' as const,
+            value: bank[key] ?? null,
+            isSecret: false,
+            hasValue: Boolean(bank[key]),
+            requiredPermission: 'Settings.Payments',
+            description: `What ${key} is for.`,
+            updatedAtUtc: null,
+          })),
+        },
+      ],
+    };
+  }
+
   async function open(settings: AdminSettings = payload()): Promise<void> {
     fixture = TestBed.createComponent(SettingsPage);
     element = fixture.nativeElement as HTMLElement;
@@ -487,14 +528,210 @@ describe('SettingsPage (ADM-22)', () => {
     expect(element.querySelector('[data-testid="page-error"]')?.textContent).toContain('permission');
     expect(element.querySelector('[data-testid="page-error"] button')).toBeNull();
   });
+
+  // ---- the bank details (PAY-01, doc 11 P7) ------------------------------------------------------
+
+  describe('bank details', () => {
+    it('shows no bank panel when the server did not send the group', async () => {
+      await open(payload());
+
+      // `Settings.Payments` is held by no default role, so a Store Manager receives no Bank group — and a
+      // box they can type into and never save would be worse than no box. The screen asks the payload,
+      // which is the same question the server answers.
+      expect(element.querySelector('[data-testid="field-accountNumber"]')).toBeNull();
+      expect(element.querySelector('[data-testid="save-bank"]')).toBeNull();
+    });
+
+    it('fills the boxes from the payload', async () => {
+      await open(payloadWithBank());
+
+      expect(field('bankName').value).toBe('Commercial Bank of Ceylon PLC');
+      expect(field('branch').value).toBe('Kollupitiya');
+      expect(field('accountName').value).toBe('Spencer Denim Industries (Pvt) Ltd');
+      expect(field('accountNumber').value).toBe('8001 2345 6789');
+    });
+
+    /**
+     * **The W1-12 test for this group, on the field where it costs the client money.**
+     *
+     * The blocker was a form model that had never listed three columns, so every save cleared them, and
+     * 1,571 passing backend tests could not see it: the API stores what it is handed and the thing that
+     * was wrong was what the client sent. So this asserts the **body**.
+     */
+    it('sends every bank field the server sent, on every save', async () => {
+      await open(payloadWithBank());
+
+      await type('branch', 'Bambalapitiya');
+
+      element.querySelector<HTMLButtonElement>('[data-testid="save-bank"]')!.click();
+      fixture.detectChanges();
+
+      controller.expectOne((request) => request.url.includes('antiforgery')).flush({ token: 't' });
+      fixture.detectChanges();
+
+      const saved = controller.expectOne(AdminSettingsApi.bankUrl);
+      expect(saved.request.method).toBe('PUT');
+
+      // All five, not just the edited one — and the unedited four carry the values the server sent rather
+      // than null.
+      expect(saved.request.body).toEqual({
+        bankName: 'Commercial Bank of Ceylon PLC',
+        branch: 'Bambalapitiya',
+        accountName: 'Spencer Denim Industries (Pvt) Ltd',
+        accountNumber: '8001 2345 6789',
+        instructions: 'CDM deposits take a working day.',
+        rowVersion: 'bank-rv-1',
+      });
+
+      saved.flush(null, { status: 204, statusText: 'No Content' });
+      fixture.detectChanges();
+
+      controller.expectOne(AdminSettingsApi.settingsUrl).flush(payloadWithBank());
+      fixture.detectChanges();
+    });
+
+    /**
+     * And the other half: a group the server did **not** send is a group the save does not mention.
+     *
+     * `toBankForm` leaves an absent key out of the form entirely, so `JSON.stringify` drops it and the API
+     * leaves that setting alone. This is the test that fails if somebody "tidies" the optional fields into
+     * required ones with null defaults — which is what W1-12's blocker was.
+     */
+    it('omits from the body every bank key the server did not send', async () => {
+      // A payload holding only the account number: the shape a narrower read model would produce.
+      const partial = payloadWithBank();
+      const bankGroup = partial.groups.find((group) => group.groupKey === 'Bank')!;
+
+      const narrowed: AdminSettings = {
+        ...partial,
+        groups: [
+          ...partial.groups.filter((group) => group.groupKey !== 'Bank'),
+          {
+            ...bankGroup,
+            settings: bankGroup.settings.filter(
+              (setting) => setting.key === SETTING_KEYS.accountNumber,
+            ),
+          },
+        ],
+      };
+
+      await open(narrowed);
+
+      await type('accountNumber', '9002 3456 7890');
+
+      element.querySelector<HTMLButtonElement>('[data-testid="save-bank"]')!.click();
+      fixture.detectChanges();
+
+      controller.expectOne((request) => request.url.includes('antiforgery')).flush({ token: 't' });
+      fixture.detectChanges();
+
+      const saved = controller.expectOne(AdminSettingsApi.bankUrl);
+
+      // One field and the token. No `bankName: null`, which would tell the API to clear the shop's bank.
+      expect(saved.request.body).toEqual({
+        accountNumber: '9002 3456 7890',
+        rowVersion: 'bank-rv-1',
+      });
+
+      saved.flush(null, { status: 204, statusText: 'No Content' });
+      fixture.detectChanges();
+
+      controller.expectOne(AdminSettingsApi.settingsUrl).flush(narrowed);
+      fixture.detectChanges();
+    });
+
+    it('sends null for a box the admin emptied, because clearing one has to be sayable', async () => {
+      await open(payloadWithBank());
+
+      await type('branch', '');
+
+      element.querySelector<HTMLButtonElement>('[data-testid="save-bank"]')!.click();
+      fixture.detectChanges();
+
+      controller.expectOne((request) => request.url.includes('antiforgery')).flush({ token: 't' });
+      fixture.detectChanges();
+
+      const saved = controller.expectOne(AdminSettingsApi.bankUrl);
+
+      // Present and empty, which the server reads as "clear it" — as distinct from absent, which it reads
+      // as "leave it alone". Those are two different instructions and the form has to express both.
+      expect((saved.request.body as Record<string, unknown>)['branch']).toBe('');
+      expect((saved.request.body as Record<string, unknown>)['accountNumber']).toBe('8001 2345 6789');
+
+      saved.flush(null, { status: 204, statusText: 'No Content' });
+      fixture.detectChanges();
+
+      controller.expectOne(AdminSettingsApi.settingsUrl).flush(payloadWithBank());
+      fixture.detectChanges();
+    });
+
+    it('marks Save unavailable with aria-disabled rather than disabled', async () => {
+      await open(payloadWithBank());
+
+      const save = element.querySelector<HTMLButtonElement>('[data-testid="save-bank"]')!;
+      save.click();
+      fixture.detectChanges();
+
+      // Issue #109: disabling the button under the admin's own finger throws their focus to <body>.
+      expect(save.getAttribute('aria-disabled')).toBe('true');
+      expect(save.hasAttribute('disabled')).toBe(false);
+
+      controller.expectOne((request) => request.url.includes('antiforgery')).flush({ token: 't' });
+      fixture.detectChanges();
+
+      controller
+        .expectOne(AdminSettingsApi.bankUrl)
+        .flush(null, { status: 204, statusText: 'No Content' });
+
+      fixture.detectChanges();
+      controller.expectOne(AdminSettingsApi.settingsUrl).flush(payloadWithBank());
+      fixture.detectChanges();
+    });
+
+    it('shows the API message against the field it refused', async () => {
+      await open(payloadWithBank());
+
+      await type('accountNumber', 'to be confirmed');
+
+      element.querySelector<HTMLButtonElement>('[data-testid="save-bank"]')!.click();
+      fixture.detectChanges();
+
+      controller.expectOne((request) => request.url.includes('antiforgery')).flush({ token: 't' });
+      fixture.detectChanges();
+
+      controller.expectOne(AdminSettingsApi.bankUrl).flush(
+        {
+          title: 'One or more fields are invalid.',
+          errors: {
+            accountNumber: ['An account number can only hold digits, spaces and dashes.'],
+          },
+        },
+        { status: 400, statusText: 'Bad Request' },
+      );
+
+      fixture.detectChanges();
+
+      expect(element.querySelector('[data-testid="error-accountNumber"]')?.textContent).toContain(
+        'digits, spaces and dashes',
+      );
+      expect(field('accountNumber').getAttribute('aria-invalid')).toBe('true');
+    });
+  });
 });
 
 /**
  * The mapping from payload to form values, on its own.
  *
- * A key the server did not send stays null, which is correct: a caller who could not read `Social.*` would
- * otherwise have the three addresses cleared by their next save of the WhatsApp number. No such caller exists
- * today — both groups are `Settings.Edit` — which is exactly why the mapping is written to survive one.
+ * **This header said the opposite of the test under it, and W3-03 corrected it.** It read "a key the server
+ * did not send stays null, which is correct" — and the test below is called "omits a key the server did not
+ * send, rather than sending null for it", because a null in a `PUT` body tells the API to *clear* the key.
+ * The sentence was left over from the version `toForm` had before ADM-22's round 1 fixed it, and it is
+ * exactly the hazard this project keeps finding: a wrong comment stops the next reader checking.
+ *
+ * What is true: a key the payload did not carry is **absent** from the form, so `JSON.stringify` drops it
+ * and the API leaves that setting alone. A caller who cannot read a group therefore cannot clear it — and
+ * that caller now exists, because W3-03's `Bank.*` keys need `Settings.Payments`, which no default role
+ * holds. The mapping is no longer written to survive a hypothetical.
  */
 describe('toForm (ADM-22)', () => {
   it('reads each value by key', async () => {

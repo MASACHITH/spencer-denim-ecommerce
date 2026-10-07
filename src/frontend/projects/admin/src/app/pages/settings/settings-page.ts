@@ -15,6 +15,7 @@ import { AdminSettingsApi } from '../../core/settings/admin-settings-api';
 import {
   AdminLogo,
   AdminSettings,
+  BankDetailValues,
   ContactAndSocialValues,
   SETTING_GROUPS,
   SETTING_KEYS,
@@ -248,7 +249,81 @@ const LOGO_ACCEPT = 'image/png,image/jpeg,image/webp';
           </section>
         }
 
-        @if (!canEditStore() && !canEditContact()) {
+        @if (canEditBank()) {
+          <section class="adm-panel" aria-labelledby="bank-title">
+            <h2 class="adm-panel__title" id="bank-title">Bank transfer</h2>
+            <p class="adm-panel__hint">
+              Where customers send the money. Until the bank name, account name and account number are
+              all filled in, a customer who chooses bank transfer is told the details are being confirmed
+              — which is better than showing half of them. Check the account number twice: every customer
+              who chooses bank transfer sees it.
+            </p>
+
+            <form class="adm-fields" (ngSubmit)="saveBankDetails()" novalidate>
+              @for (field of bankFields; track field.name) {
+                <div class="adm-field" [class.adm-field--wide]="field.wide">
+                  <!-- An explicit for/id pair rather than a wrapping label. The control differs by
+                       field (one of them is a textarea), and a label that wraps an @if is a label the
+                       template linter cannot associate with anything — which is also a fair description
+                       of what a screen reader has to work out. No backticks in this comment: the whole
+                       template is a template literal and one would end it. -->
+                  <label class="adm-label" [attr.for]="'bank-' + field.name">{{ field.label }}</label>
+                  @if (field.multiline) {
+                    <textarea
+                      class="adm-input"
+                      rows="3"
+                      [id]="'bank-' + field.name"
+                      [name]="field.name"
+                      autocomplete="off"
+                      [placeholder]="field.placeholder"
+                      [attr.aria-invalid]="fieldError(field.name) ? 'true' : null"
+                      [attr.aria-describedby]="'bank-hint-' + field.name"
+                      [ngModel]="bankForm()[field.name]"
+                      (ngModelChange)="patchBank(field.name, $event)"
+                      [attr.data-testid]="'field-' + field.name"
+                    ></textarea>
+                  } @else {
+                    <input
+                      class="adm-input"
+                      type="text"
+                      [id]="'bank-' + field.name"
+                      [name]="field.name"
+                      autocomplete="off"
+                      [placeholder]="field.placeholder"
+                      [attr.aria-invalid]="fieldError(field.name) ? 'true' : null"
+                      [attr.aria-describedby]="'bank-hint-' + field.name"
+                      [ngModel]="bankForm()[field.name]"
+                      (ngModelChange)="patchBank(field.name, $event)"
+                      [attr.data-testid]="'field-' + field.name"
+                    />
+                  }
+                  <span class="adm-panel__hint" [id]="'bank-hint-' + field.name">{{ field.hint }}</span>
+                  @if (fieldError(field.name); as message) {
+                    <span class="adm-field-error" [attr.data-testid]="'error-' + field.name">
+                      {{ message }}
+                    </span>
+                  }
+                </div>
+              }
+
+              <div class="adm-actions adm-field--wide">
+                <!-- aria-disabled, not disabled: disabling the button under the admin's own finger throws
+                     their focus to <body>. saveBankDetails refuses a second write while one is in flight,
+                     so the control is inert either way. -->
+                <button
+                  class="adm-btn--primary"
+                  type="submit"
+                  [attr.aria-disabled]="busy() ? 'true' : null"
+                  data-testid="save-bank"
+                >
+                  {{ busy() ? 'Saving…' : 'Save bank details' }}
+                </button>
+              </div>
+            </form>
+          </section>
+        }
+
+        @if (!canEditStore() && !canEditContact() && !canEditBank()) {
           <p class="adm-state" data-testid="nothing-to-edit">
             There are no settings you can change here.
           </p>
@@ -322,6 +397,55 @@ export class SettingsPage {
     { name: 'tikTokUrl' as const, label: 'TikTok profile', placeholder: 'https://www.tiktok.com/@yourshop' },
   ];
 
+  /**
+   * The five bank boxes, as data, so the template cannot spell a field name differently from the API.
+   *
+   * The names match the request body's exactly, which is also what makes `fieldError` work: the API
+   * returns its validation errors keyed by the field name it refused.
+   */
+  protected readonly bankFields = [
+    {
+      name: 'bankName' as const,
+      label: 'Bank name',
+      placeholder: 'Commercial Bank of Ceylon PLC',
+      hint: 'Exactly as it appears in online banking, so a customer can find it in their payee list.',
+      wide: true,
+      multiline: false,
+    },
+    {
+      name: 'branch' as const,
+      label: 'Branch (optional)',
+      placeholder: 'Kollupitiya',
+      hint: 'A branch deposit slip asks for it; online banking usually does not.',
+      wide: false,
+      multiline: false,
+    },
+    {
+      name: 'accountName' as const,
+      label: 'Account name',
+      placeholder: 'Spencer Denim Industries (Pvt) Ltd',
+      hint: "The name the account is held in. A customer's bank may check it against the number.",
+      wide: true,
+      multiline: false,
+    },
+    {
+      name: 'accountNumber' as const,
+      label: 'Account number',
+      placeholder: '8001 2345 6789',
+      hint: 'Digits, spaces and dashes. Type the spacing your bank prints — customers copy it.',
+      wide: false,
+      multiline: false,
+    },
+    {
+      name: 'instructions' as const,
+      label: 'Extra instructions (optional)',
+      placeholder: 'Cash-machine deposits can take a working day to appear.',
+      hint: 'Shown under the details on the order page. Plain text; line breaks are kept.',
+      wide: true,
+      multiline: true,
+    },
+  ];
+
   private readonly api = inject(AdminSettingsApi);
   private readonly fileInput = viewChild<ElementRef<HTMLInputElement>>('logoFile');
 
@@ -331,6 +455,7 @@ export class SettingsPage {
   private readonly problem = signal<CatalogFailure | null>(null);
   private readonly logoProblem = signal<string | null>(null);
   private readonly values = signal<ContactAndSocialValues>(EMPTY_FORM);
+  private readonly bankValues = signal<BankDetailValues>(EMPTY_BANK_FORM);
   private readonly said = signal('');
 
   /**
@@ -341,7 +466,7 @@ export class SettingsPage {
    * Deliberately not a signal: nothing renders from it, and it is only ever read inside the subscription
    * callbacks that apply a payload.
    */
-  private readonly editedSinceWrite = new Set<keyof ContactAndSocialValues>();
+  private readonly editedSinceWrite = new Set<string>();
 
   protected readonly settings = this.loaded.asReadonly();
   protected readonly loading = this.isLoading.asReadonly();
@@ -349,6 +474,7 @@ export class SettingsPage {
   protected readonly failure = this.problem.asReadonly();
   protected readonly logoError = this.logoProblem.asReadonly();
   protected readonly form = this.values.asReadonly();
+  protected readonly bankForm = this.bankValues.asReadonly();
   protected readonly announcement = this.said.asReadonly();
 
   /**
@@ -378,6 +504,15 @@ export class SettingsPage {
 
   /** <inheritdoc cref="hasContact" /> — for the three social boxes. */
   protected readonly hasSocial = computed(() => this.hasGroup(SETTING_GROUPS.social));
+
+  /**
+   * Whether the server sent the `Bank` group, and so whether the bank panel belongs on screen.
+   *
+   * **The first group in this build that most admins will not see.** It needs `Settings.Payments`, which
+   * only a Super Admin holds, so a Store Manager opening this screen gets the logo and the contact panels
+   * and no bank panel at all — which is the read model's per-row filter working, not a bug.
+   */
+  protected readonly canEditBank = computed(() => this.hasGroup(SETTING_GROUPS.bank));
 
   constructor() {
     this.load();
@@ -461,6 +596,20 @@ export class SettingsPage {
     }
 
     this.values.set(fromServer as ContactAndSocialValues);
+
+    const bankFromServer: Record<string, string | null> = { ...toBankForm(settings) };
+
+    if (keepUnsavedEdits) {
+      const currentBank = this.bankValues() as Record<string, string | null | undefined>;
+
+      for (const field of this.editedSinceWrite) {
+        if (field in bankFromServer) {
+          bankFromServer[field] = currentBank[field] ?? null;
+        }
+      }
+    }
+
+    this.bankValues.set(bankFromServer as BankDetailValues);
     this.logoAltText.set(settings.logo?.altText?.trim() || BRAND.name);
   }
 
@@ -472,6 +621,15 @@ export class SettingsPage {
     this.values.update((current) => ({ ...current, [field]: value }));
 
     // The message about this field is now about a value nobody is looking at any more.
+    this.problem.update((current) =>
+      current?.kind === 'validation' && current.fieldErrors?.[field] ? null : current,
+    );
+  }
+
+  protected patchBank<K extends keyof BankDetailValues>(field: K, value: BankDetailValues[K]): void {
+    this.editedSinceWrite.add(field);
+    this.bankValues.update((current) => ({ ...current, [field]: value }));
+
     this.problem.update((current) =>
       current?.kind === 'validation' && current.fieldErrors?.[field] ? null : current,
     );
@@ -495,6 +653,25 @@ export class SettingsPage {
     // the API is told to clear (W1-12's blocker).
     this.api.updateContactAndSocial(this.values(), group).subscribe({
       next: () => this.afterWrite('Contact and social settings saved.'),
+      error: (error: unknown) => this.afterFailure(error),
+    });
+  }
+
+  protected saveBankDetails(): void {
+    const group = this.groupVersion(SETTING_GROUPS.bank);
+    if (group === null || this.isBusy()) {
+      return;
+    }
+
+    this.beforeWrite('Saving the bank details…');
+
+    // Only the fields the server sent, which is what `toBankForm` produced. A field this object omits is a
+    // field the API leaves alone (W1-12).
+    this.api.updateBankDetails(this.bankValues(), group).subscribe({
+      next: () =>
+        this.afterWrite(
+          'Bank details saved. Customers who choose bank transfer will see them on their order.',
+        ),
       error: (error: unknown) => this.afterFailure(error),
     });
   }
@@ -651,6 +828,9 @@ export class SettingsPage {
 /** Before the payload arrives, the screen is writing nothing — so it carries no fields at all. */
 const EMPTY_FORM: ContactAndSocialValues = {};
 
+/** <inheritdoc cref="EMPTY_FORM" /> */
+const EMPTY_BANK_FORM: BankDetailValues = {};
+
 /**
  * The form's values, read out of the payload by key — **only the keys the payload contained**.
  *
@@ -683,6 +863,35 @@ export function toForm(settings: AdminSettings): ContactAndSocialValues {
   }
 
   return form as ContactAndSocialValues;
+}
+
+/**
+ * The bank form's values, read out of the payload by key — **only the keys the payload contained**.
+ *
+ * Exactly {@link toForm}'s rule, and the group it matters most on: these five keys need
+ * `Settings.Payments`, so an admin who cannot read them receives none of them, and a request carrying five
+ * nulls would clear the shop's bank account number on their first save of anything.
+ */
+export function toBankForm(settings: AdminSettings): BankDetailValues {
+  const byKey = new Map(
+    settings.groups.flatMap((group) => group.settings.map((setting) => [setting.key, setting.value] as const)),
+  );
+
+  const form: Record<string, string | null> = {};
+
+  for (const [field, key] of [
+    ['bankName', SETTING_KEYS.bankName],
+    ['branch', SETTING_KEYS.branch],
+    ['accountName', SETTING_KEYS.accountName],
+    ['accountNumber', SETTING_KEYS.accountNumber],
+    ['instructions', SETTING_KEYS.instructions],
+  ] as const) {
+    if (byKey.has(key)) {
+      form[field] = byKey.get(key) ?? null;
+    }
+  }
+
+  return form as BankDetailValues;
 }
 
 /** Re-exported for the spec, which asserts the preview is drawn from what the server sent. */

@@ -3,7 +3,12 @@ import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 
 import { AdminAuthApi } from '../auth/admin-auth-api';
-import { AdminSettings, ContactAndSocialValues, UploadedMediaAsset } from './admin-settings.model';
+import {
+  AdminSettings,
+  BankDetailValues,
+  ContactAndSocialValues,
+  UploadedMediaAsset,
+} from './admin-settings.model';
 
 /**
  * `/api/admin/settings` and the one media call this screen makes (ADM-22, GLB-02).
@@ -16,6 +21,7 @@ export class AdminSettingsApi {
   static readonly settingsUrl = '/api/admin/settings';
   static readonly storeLogoUrl = '/api/admin/settings/store-logo';
   static readonly contactSocialUrl = '/api/admin/settings/contact-social';
+  static readonly bankUrl = '/api/admin/settings/bank';
   static readonly imagesUrl = '/api/admin/media/images';
 
   private readonly http = inject(HttpClient);
@@ -63,6 +69,17 @@ export class AdminSettingsApi {
   /** The WhatsApp number and the three social addresses. Every field, every save — PUT replaces. */
   updateContactAndSocial(values: ContactAndSocialValues, rowVersion: string): Observable<void> {
     return this.put(AdminSettingsApi.contactSocialUrl, { ...values, rowVersion });
+  }
+
+  /**
+   * The bank details a customer transfers to (PAY-01, doc 11 P7's preconditions).
+   *
+   * **Only the fields the screen was given.** `Settings.Payments` is held by no default role, so this is
+   * the first group whose boxes a given admin may genuinely not have on screen — and a `PUT` carrying a
+   * field it never received would tell the API to clear the client's bank account number.
+   */
+  updateBankDetails(values: BankDetailValues, rowVersion: string): Observable<void> {
+    return this.put(AdminSettingsApi.bankUrl, { ...values, rowVersion });
   }
 
   private put(url: string, body: unknown): Observable<void> {
