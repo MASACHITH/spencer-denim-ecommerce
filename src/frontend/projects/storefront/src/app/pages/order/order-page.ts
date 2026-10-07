@@ -10,7 +10,6 @@ import {
 import { HttpErrorResponse } from '@angular/common/http';
 import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
 import { Meta, Title } from '@angular/platform-browser';
-import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { BRAND, brandPageTitle } from '@spencer-denim/shared';
 
@@ -84,7 +83,7 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
  */
 @Component({
   selector: 'sd-order-page',
-  imports: [FormsModule, RouterLink],
+  imports: [RouterLink],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="container order">
@@ -313,7 +312,18 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
               }
 
               @if (how.acceptsProof) {
-                <form class="pay__proof" (ngSubmit)="saveReference()" novalidate>
+                <!-- **Not a <form>, and the first version was one — a browser test caught what that costs.**
+                     A native submit button inside a form with no action submits to the page's own URL, and
+                     before Angular hydrates there is no (ngSubmit) handler to stop it: a shopper who types
+                     a reference on a slow connection and presses Save navigates to
+                     ?payerReference=...&slip=, the typed value goes into the URL instead of the order, and
+                     nothing says so. Silent loss of something a shopper just typed about their own money.
+
+                     So the controls are plain buttons with click handlers, which is what every other page
+                     in this shop does: checkout's own Place Order is a button, and there was no <form> in
+                     the storefront before this one. Enter is handled explicitly on the text box, so the
+                     keyboard shortcut survives without a submission that can escape to the browser. -->
+                <div class="pay__proof">
                   <h3 class="pay__sub">Tell us about your transfer</h3>
                   <p class="order__muted">
                     Optional, and it helps us find your payment faster. We check our bank statement either
@@ -329,8 +339,9 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
                       type="text"
                       maxlength="100"
                       autocomplete="off"
-                      [ngModel]="reference()"
-                      (ngModelChange)="reference.set($event)"
+                      [value]="reference()"
+                      (input)="setReference($event)"
+                      (keydown.enter)="saveReference()"
                       data-testid="reference-input"
                     />
                   </label>
@@ -341,8 +352,9 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
                          write is in flight so the button is inert either way. -->
                     <button
                       class="btn btn--secondary"
-                      type="submit"
+                      type="button"
                       [attr.aria-disabled]="busy() ? 'true' : null"
+                      (click)="saveReference()"
                       data-testid="save-reference"
                     >
                       {{ busy() ? 'Saving…' : 'Save the reference' }}
@@ -381,7 +393,7 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
                   @if (problem(); as message) {
                     <p class="pay__error" role="alert" data-testid="pay-error">{{ message }}</p>
                   }
-                </form>
+                </div>
               }
             } @else {
               <!-- A real state, not an error: doc 11 P7 makes "bank details set by a Super Admin" a
@@ -458,18 +470,33 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
     /* The pay panel. Its own block rather than reusing .order__facts, because these values are copied
        rather than read: an account number has to be selectable as one run of characters, and the copy
        button has to be a full-height control at 320 px (GLB-09's 44 px floor). */
+    /* min-width: 0 on every grid level of this panel, and it is the fix the measurement pointed at.
+       A grid item's default min-width is auto, which means min-content — and a file input's min-content
+       is the width of its button plus its filename text, which does not shrink. That forced this panel to
+       362px inside a 320px viewport, and because the panel is a sibling in the page's own grid every
+       other panel stretched with it: the browser test reported 74px of overflow and named
+       h2.order__panel-title as an offender, which is a heading that is entirely innocent.
+       W3-02's round 3 records the inverse of this lesson - dropping a min-width: 0 and having to gate it
+       with a re-measure - so both directions are now written down. */
     .pay {
       display: grid;
       gap: var(--space-2);
+      min-width: 0;
     }
     .pay__lead {
       max-width: 60ch;
     }
+    /* minmax(min(100%, 16rem), 1fr) and not minmax(16rem, 1fr).
+       The second form makes 16rem a hard floor, so at 320 px the track is wider than the column it is in
+       and the page scrolls sideways — which is what a browser test measured as 74 px of overflow on this
+       page, against the project's own non-negotiable. min(100%, ...) lets the single track shrink to the
+       container when the container is the smaller of the two. */
     .pay__details {
       display: grid;
       gap: var(--space-1-5);
-      grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
       margin: 0;
+      min-width: 0;
     }
     .pay__detail dt {
       font-size: var(--text-small);
@@ -481,6 +508,7 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
       align-items: center;
       gap: var(--space-1);
       margin: 0;
+      min-width: 0;
     }
     .pay__value {
       font-size: var(--text-body);
@@ -490,8 +518,20 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
       overflow-wrap: anywhere;
       user-select: all;
     }
+    /* **A 44 px tap target in both directions, and the width half is not decoration.** The shared
+       button.link rule gives these controls min-height: var(--tap) and nothing about width, which is
+       right for a link-shaped button sitting inside a sentence and wrong for one standing on its own: at
+       320 px the browser tests measured this button at 40x44, because "Copy" is simply narrower than a
+       finger. justify-content: center keeps the label in the middle of the box the min-width creates
+       rather than hard against its left edge.
+
+       Fixed here rather than in base.css: widening every link-button in the shop would stretch the ones
+       that genuinely are words in a sentence, and that is a change for whoever owns the design system. It
+       is written up in the journal as a trap any short-labelled button.link will fall into. */
     .pay__copy {
       flex: none;
+      justify-content: center;
+      min-width: var(--tap);
     }
     /* The shop's own note, with its line breaks kept. It arrives as text and is interpolated as text. */
     .pay__notes {
@@ -504,6 +544,7 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
       gap: var(--space-1-5);
       padding-top: var(--space-2);
       border-top: 1px solid var(--color-border);
+      min-width: 0;
     }
     .pay__sub {
       font-size: var(--text-h3);
@@ -511,13 +552,20 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
     .pay__field {
       display: grid;
       gap: 0.375rem;
-      max-width: 36rem;
+      max-width: min(36rem, 100%);
+      min-width: 0;
     }
     .pay__label {
       font-size: var(--text-small);
       color: var(--color-text-muted);
     }
+    /* max-width: 100% is load-bearing for the file input specifically: a file control has a wide
+       intrinsic size that does not shrink with its container, and it was the larger part of the 74 px of
+       overflow a browser test found at 320 px. A text input would have shrunk on its own. */
     .pay__input {
+      width: 100%;
+      max-width: 100%;
+      min-width: 0;
       min-height: var(--tap);
       padding: 0 var(--space-1);
       font: inherit;
@@ -803,6 +851,17 @@ export class OrderPage {
       () => this.announce(`Copied ${what}.`),
       () => this.announce(`We could not copy ${what}. Select it and copy it yourself.`),
     );
+  }
+
+  /**
+   * Keeps the reference box and the signal in step.
+   *
+   * [value] plus (input) rather than ngModel, which is how every other input in this shop is bound: the
+   * reference box used to live in a form, and taking the form away took ngModel with it (ngModel outside
+   * a form needs standalone options, and reaching for them would be keeping a dependency for nothing).
+   */
+  protected setReference(event: Event): void {
+    this.reference.set((event.target as HTMLInputElement).value);
   }
 
   protected saveReference(): void {

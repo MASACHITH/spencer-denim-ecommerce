@@ -427,12 +427,17 @@ test.describe('checkout (CHK-01..04)', () => {
       await expect(page.locator('[data-order-number]')).toHaveText(/^SD-\d{4}-\d{6}$/);
       await expect(page.locator('h1')).toContainText('order is placed');
 
-      // CHK-04 says the order number, and nothing about money that is not built: no bank details, no
-      // reference to quote, no slip upload, and no claim that an email has been sent.
+      // CHK-04 says the order number and that the order is awaiting payment.
+      //
+      // **The three `not.toContain` assertions that used to be here are gone, and that is W3-03 landing.**
+      // They read "no account number, no upload, no 'we have emailed'" and were a correct boundary marker
+      // for a page that genuinely had nothing true to say about money. Doc 11 P7 is now built, so the
+      // first two describe exactly what the page must show, and asserting their absence would hold the
+      // feature out of it. `bank-transfer.e2e.ts` asserts the panel positively, in the browser, and keeps
+      // the third assertion — nothing sends an email (`ops.EmailOutbox` is W3-06), so nothing may claim
+      // one was sent.
       const body = (await page.locator('body').textContent())?.toLowerCase() ?? '';
       expect(body).toContain('awaiting payment');
-      expect(body).not.toContain('account number');
-      expect(body).not.toContain('upload');
       expect(body).not.toContain('we have emailed');
     });
 

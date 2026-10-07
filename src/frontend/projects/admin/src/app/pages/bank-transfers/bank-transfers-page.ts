@@ -2,10 +2,13 @@ import {
   ChangeDetectionStrategy,
   Component,
   ElementRef,
+  Injector,
+  afterNextRender,
   computed,
   inject,
   signal,
   viewChild,
+  viewChildren,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
@@ -134,7 +137,7 @@ const PAGE_SIZE = 20;
                            programmable container; the API serves it as an attachment with nosniff, so
                            nothing renders it inside the admin's own session. -->
                       <a
-                        class="link"
+                        class="adm-link"
                         [href]="slipUrl(row)"
                         target="_blank"
                         rel="noopener"
@@ -150,9 +153,25 @@ const PAGE_SIZE = 20;
               </dl>
 
               @if (outcome(row); as done) {
-                <!-- The decided row stays where it is, with its outcome, rather than vanishing from under
-                     the staff member's focus. It leaves on the next Refresh, which they ask for. -->
-                <p class="adm-state" role="status" [attr.data-testid]="'done-' + row.orderNumber">
+                <!-- **The row stays, and that is necessary and not sufficient.**
+                     Keeping the row on screen was the first half of issue #109's second rule, and a
+                     browser test proved the first version of this still dropped focus to <body>: the
+                     action bar the staff member had just pressed is replaced by this message, so the
+                     focused node is destroyed whether or not its row survives. The comment that used to
+                     sit here said the row keeping its place solved it, which was wrong — and a wrong
+                     comment is worse than none, because it stops the next reader checking.
+                     So the message itself takes the focus. tabindex="-1" makes it focusable without
+                     putting it in the tab order, and it is the honest place to land: it is about what just
+                     happened, and it is where the control used to be.
+                     (No backticks anywhere in this template: it is a template literal and one would end
+                     it. Two of this file's comments were written with them before the build said so.) -->
+                <p
+                  class="adm-state bt__outcome"
+                  role="status"
+                  tabindex="-1"
+                  [attr.data-testid]="'done-' + row.orderNumber"
+                  #outcomeMessage
+                >
                   {{ done }}
                 </p>
               } @else {
@@ -310,7 +329,11 @@ const PAGE_SIZE = 20;
     .bt__facts {
       display: grid;
       gap: 0.75rem;
-      grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+      /* min(100%, 14rem) rather than a bare 14rem: the bare form is a hard floor, so a track wider than
+         its container scrolls the page sideways. This one happens to fit at 320 px and the order page's
+         16rem version did not — same pattern, measured 74 px of overflow there. Written the safe way in
+         both places rather than left to the arithmetic. */
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
       margin: 0;
     }
     .bt__facts dt {
@@ -330,11 +353,32 @@ const PAGE_SIZE = 20;
       opacity: 0.6;
       cursor: progress;
     }
+    /* The outcome message is focusable so a decision can hand it the focus, and it needs a ring: a focus
+       that lands somewhere invisible leaves a keyboard user's next Tab starting from a place they cannot
+       see. It is :focus and NOT :focus-visible, which is the whole point — base.css's global rule is
+       :focus-visible, and Chrome does not grant that to an element focused by script (the lesson W3-02's
+       round 2 recorded about a button and a programmatic focus), so the global rule would never fire
+       here. A class rather than the data-testid, which is a test hook and not a styling one.
+       (No backticks in this block: it is a template literal, and one would end it. That is the mistake
+       this comment was written with on the first attempt.) */
+    .bt__outcome:focus {
+      outline: var(--focus-width) solid var(--color-primary);
+      outline-offset: 2px;
+    }
   `,
 })
 export class BankTransfersPage {
   private readonly api = inject(BankTransferApi);
+  private readonly injector = inject(Injector);
   private readonly refreshButton = viewChild<ElementRef<HTMLButtonElement>>('refreshButton');
+
+  /**
+   * The outcome messages currently on screen, one per decided row.
+   *
+   * <c>viewChildren</c> rather than <c>viewChild</c> because several rows can be decided before the next
+   * Refresh, and the one to focus is the one that has just appeared.
+   */
+  private readonly outcomeMessages = viewChildren<ElementRef<HTMLElement>>('outcomeMessage');
 
   private readonly queueRows = signal<readonly BankTransferQueueRow[]>([]);
   private readonly totalCount = signal(0);
@@ -506,6 +550,11 @@ export class BankTransfersPage {
         // and the count line above already tells them the queue has shrunk.
         this.outcomes.update((current) => new Map(current).set(row.orderPublicId, message));
         this.announce(message);
+
+        // **And the focus is re-homed, because keeping the row is not enough.** The action bar that held
+        // the pressed button is replaced by the outcome message, so the focused node goes either way; a
+        // browser test caught the first version of this leaving focus on <body>.
+        this.focusOutcome(row);
       },
       error: (error: unknown) => {
         this.isBusy.set(false);
@@ -556,6 +605,31 @@ export class BankTransfersPage {
    */
   private announce(sentence: string): void {
     this.said.update((previous) => (previous === sentence ? `${sentence} ` : sentence));
+  }
+
+  /**
+   * Moves focus to a decided row's outcome message, once the view holds it.
+   *
+   * <b><c>afterNextRender</c>, and the two cheaper things both fail.</b> A straight <c>focus()</c> finds
+   * nothing: the signal write a line earlier is what makes the message exist and change detection has not
+   * run yet. A <c>queueMicrotask</c> was the first attempt and **a browser test caught it still leaving
+   * focus on <c>&lt;body&gt;</c>** — the microtask queue is where change detection is *scheduled*, so the
+   * callback can run before the render rather than after it. <c>afterNextRender</c> is the one that means
+   * what it says, and <c>security-page.ts</c> uses it for the same job.
+   */
+  private focusOutcome(row: BankTransferQueueRow): void {
+    const testId = `done-${row.orderNumber}`;
+
+    afterNextRender(
+      () => {
+        const target = this.outcomeMessages()
+          .map((message) => message.nativeElement)
+          .find((element) => element.dataset['testid'] === testId);
+
+        target?.focus();
+      },
+      { injector: this.injector },
+    );
   }
 
   private clearRefusal(row: BankTransferQueueRow): void {
