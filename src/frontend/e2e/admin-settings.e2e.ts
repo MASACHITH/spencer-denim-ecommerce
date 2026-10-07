@@ -493,7 +493,15 @@ test.describe('the settings screen is usable and accessible', () => {
       nodes.map((node) => `${node.tagName.toLowerCase()}:${node.textContent?.trim()}`),
     );
 
-    expect(headings).toEqual(['h1:Settings', 'h2:Logo', 'h2:Contact and social']);
+    // W3-03 (PAY-01) adds the third panel: the bank details a shopper is told to transfer to. The list is
+    // exhaustive on purpose — a panel appearing without a heading, or out of order, is the defect this
+    // test exists for — so a new panel is expected to come back here and say so.
+    expect(headings).toEqual([
+      'h1:Settings',
+      'h2:Logo',
+      'h2:Contact and social',
+      'h2:Bank transfer',
+    ]);
   });
 
   test('every control is reachable and labelled', async ({ page }) => {

@@ -24,17 +24,23 @@ const COLOMBO = 1;
 const STANDARD = 1;
 
 /**
- * Waits until Angular has taken the page over.
+ * Waits until the application has bootstrapped.
  *
- * **A click before this point is a click into static HTML.** The order page is server-rendered, so the
+ * **An interaction before this point goes into static HTML.** The order page is server-rendered, so the
  * reference box and the Save button are on screen — and actionable, as far as Playwright is concerned —
- * before any handler of theirs exists. This showed up as a flake on the second half of the reference test,
- * after a `page.reload()`: the fill typed into the DOM, the click hit a button nobody was listening to,
- * and the assertion waited five seconds for an announcement that was never going to come.
+ * before any handler of theirs exists. `ng-version` on the root element is the moment Angular bootstrapped,
+ * which is `home-page.e2e.ts`' gate and the same reasoning: nothing on this page *looks* different when it
+ * hydrates, so there is no rendered state to wait for and the framework's own marker is the honest signal.
  *
- * `ng-version` on the root element is the moment the application bootstrapped, which is `home-page.e2e.ts`'
- * gate and the same reasoning: nothing on this page *looks* different when it hydrates, so there is no
- * rendered state to wait for and the framework's own marker is the honest signal.
+ * **It is a first-order gate and not a guarantee, which is worth being explicit about.** Bootstrapped is
+ * not the same as *this component has hydrated and is listening*, and a fill that lands in between is
+ * written into the DOM and then overwritten by the component's first change detection, which puts the
+ * server's value back. That is a real flake this file hit, it survived adding this gate, and the place it
+ * is dealt with is the interaction itself — see the retry in the reference test. A property worth asserting
+ * is "clearing the reference removes it", not "the first click after a reload is the one that does it".
+ *
+ * (`__ngContext__` on the bound input looked like the exact signal. Probed: it never appears on a
+ * server-rendered element in a production build, so it is not available as a gate here.)
  */
 async function hydrated(page: Page): Promise<void> {
   await page.waitForFunction(() => !!document.querySelector('sd-root')?.hasAttribute('ng-version'));
@@ -316,10 +322,29 @@ test.describe('the reference and the slip (doc 11 P7 step 3)', () => {
     await hydrated(page);
     await expect(page.locator('[data-testid="reference-input"]')).toHaveValue('CBC-778812');
 
-    await page.locator('[data-testid="reference-input"]').fill('');
-    await page.locator('[data-testid="save-reference"]').click();
+    // **Bounded retry, which is `accessibility.e2e.ts`' pattern and for the same reason.** Clearing the box
+    // immediately after a reload races the component's hydration: the empty value is written into the DOM,
+    // the first change detection writes the saved reference back over it, and the click then saves the old
+    // value again — the announcement reads "saved" and the test fails having proved nothing about clearing.
+    // Each attempt is harmless (it either re-saves the same reference or removes it), and what is asserted
+    // is the property that matters: clearing the box and saving removes the reference.
+    const announcement = page.locator('[data-testid="pay-announcement"]');
+    let removed = false;
 
-    await expect(page.locator('[data-testid="pay-announcement"]')).toContainText('reference was removed');
+    for (let attempt = 0; attempt < 5 && !removed; attempt += 1) {
+      await page.locator('[data-testid="reference-input"]').fill('');
+      await page.locator('[data-testid="save-reference"]').click();
+
+      try {
+        await expect(announcement).toContainText('reference was removed', { timeout: 3_000 });
+        removed = true;
+      } catch {
+        // Lost to hydration on a loaded runner. Try again — a bound rather than a while-true, so a page
+        // that genuinely cannot clear a reference fails on the assertion below with a diagnosis.
+      }
+    }
+
+    expect(removed, 'clearing the reference was never reported back to the shopper').toBe(true);
 
     await page.reload();
     await expect(page.locator('[data-testid="reference-input"]')).toHaveValue('');

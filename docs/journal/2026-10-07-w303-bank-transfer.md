@@ -312,6 +312,78 @@ happened.
 `Approving_and_rejecting_at_once_applies_exactly_one_of_them` is the test that made me look, and it is the
 one no sequential test could replace.
 
+## Four more defects, found only in a browser
+
+The jsdom specs asserted the DOM and the outgoing bodies and passed throughout. None of these four is
+visible there, which is the argument for the browser tests in one paragraph.
+
+### 1. The queue's slip link rendered 135x20 px
+
+`class="link"` is the **storefront's** vocabulary. The admin app has no such rule, so the link fell back to
+an anchor's defaults and failed `undersized()` on height at every width. Fixed with a shared `.adm-link`
+rule (`inline-flex`, `align-items: center`, `min-height: var(--tap)`) rather than a one-off, because the
+next admin page to want a link-shaped control will want the same thing. jsdom cannot see this: it has no
+layout, so a 20 px tall link and a 44 px one are the same DOM.
+
+### 2. Focus landed on `<body>` after an approval
+
+My own comment said the row survives a decision so focus survives with it. **The comment was wrong**: the
+action bar is replaced by the outcome message, and the button that had focus is gone with it. A keyboard
+user who approves an order is dropped to the top of the document.
+
+The outcome paragraph is now focusable (`tabindex="-1"`) and takes focus in `afterNextRender`. A
+`queueMicrotask` attempt still lost it, which is worth writing down: the microtask queue is where change
+detection is *scheduled*, not where it has finished. The `:focus` ring is explicit because Chrome does not
+grant `:focus-visible` to programmatic focus.
+
+### 3. The order page overflowed 74 px at 320 px
+
+Grid items default to `min-width: auto`, which is min-content, and **a file input's min-content does not
+shrink**. The pay panel therefore forced a 362 px minimum on a 320 px viewport — one of the project's
+non-negotiables, broken on the page a shopper reads in order to pay.
+
+`minmax(min(100%, 16rem), 1fr)` and a `max-width` were not enough. The fix is `min-width: 0` at every level
+(`.pay`, `.pay__details`, `.pay__proof`, `.pay__field`, `.pay__detail dd`) plus explicit width bounds on
+`.pay__input`. What made it findable was teaching the assertion to name the widest offenders instead of
+reporting "74": the message pointed at `h2.order__panel-title` at 362 px, which is what proved the minimum
+came from the panel's own grid rather than from the heading.
+
+### 4. The Copy button measured 40x44 px
+
+The shared `button.link` rule sets `min-height: var(--tap)` and says nothing about width — right for a
+control that is a word inside a sentence, wrong for one standing on its own next to a value. "Copy" is
+simply narrower than a finger. Fixed locally on `.pay__copy` (`min-width: var(--tap)`,
+`justify-content: center`); **widening every link-button in the shop is a design-system decision and not
+mine to take**, but any short-labelled `button.link` elsewhere in the storefront has the same defect today,
+and that is worth someone's time.
+
+### And one shopper-visible flaw the flake pointed at
+
+The proof controls were inside a `<form>` with `type="submit"` and `(ngSubmit)`. Before Angular hydrates
+there is no `ngSubmit` handler, so a click on Save is a **native** submit to the page's own URL: the browser
+navigates to `?payerReference=...&slip=`, the reference the shopper just typed goes into the query string
+instead of onto the order, and nothing tells them. Silent loss of something a shopper typed about their own
+money, on a slow connection — which is exactly the connection a 320 px device tends to be on.
+
+There was no other `<form>` in the storefront — checkout's Place Order is a button with a click handler —
+so this was my deviation from the shop's own convention, not the shop's. It is now a `<div>` with
+`(click)="saveReference()"` and an explicit `(keydown.enter)`, which keeps the keyboard shortcut, cannot
+escape to the browser, and takes `FormsModule` out of the page. `[value]` + `(input)` replaces `ngModel`,
+which is how every other input in this shop is bound.
+
+### Two lessons about the test harness itself
+
+- **`test.describe.configure({ mode: 'serial' })` serialises one describe, not the file.** The stub's
+  bank-details switch was module-level — the bank details really are a property of the shop, so that looked
+  like the honest model — and one test turning it off made a test running beside it see a shop with no bank
+  details. It is now keyed on the requesting bag and read once at placement, which is
+  `checkoutStockFaults`' shape and `checkoutStockFaults`' reason. A fixture switch keyed on the bag has to
+  be armed **after** the first add-to-bag, which is why `placeAnOrder` grew an `afterBag` hook.
+- **A server-rendered control is actionable before it is alive.** The reference test's second half (after a
+  `page.reload()`) typed into the DOM and clicked a button nobody was listening to. `ng-version` on the root
+  element is the gate, the same one `home-page.e2e.ts` uses: nothing on this page looks different when it
+  hydrates, so there is no rendered state to wait for.
+
 ## Measured
 
 | | | W3-02's baseline |
@@ -322,6 +394,10 @@ one no sequential test could replace.
 | `dotnet test tests/SpencerDenim.IntegrationTests` | see the table below | 956 |
 | `ng test shared / storefront / admin` | 24 / **1295** / **372** passed, 0 failed | 21 / 1206 / 273 |
 | `ng lint` | all three projects pass | pass |
+| `playwright test --project=chromium` (full suite) | **PW_FULL** | — |
+| `playwright test bank-transfer.e2e.ts` | **10 passed**, and 30/30 under `--repeat-each=3 --workers=1` | — |
+| `playwright test admin-bank-transfers.e2e.ts` | **14 passed** | — |
+| `playwright test checkout.e2e.ts` | **50 passed** (two assertions removed, below) | 52 |
 | `dotnet ef migrations has-pending-model-changes` | **no new migration in this branch** | — |
 
 `TEST_SQL_CONNECTION` was LocalDB throughout (doc 06; #74).
@@ -341,6 +417,8 @@ one no sequential test could replace.
 | `bank-transfers-page.spec.ts` | 12 | the queue screen: rows, time left, decisions, 409 → Accept late, short lines, `aria-disabled`, announcements |
 | `settings-page.spec.ts` (bank) | 7 | the W1-12 body assertions on the group where it costs money |
 | `order-page.spec.ts` (pay panel) | 8 | the details, the reference, the slip, the not-set state, a paid order |
+| `bank-transfer.e2e.ts` | 10 | the pay panel in a real browser: the details, the amount against the summary's own string, the reference, the slip round trip, the details-not-set state, no email claimed, overflow / tap size / reachability / occlusion at all eight widths, axe |
+| `admin-bank-transfers.e2e.ts` | 14 | the queue in a real browser: oldest first, time left, approve, reject with and without a note, a 409 turning into Accept late, short lines, focus after a decision, the same eight widths, axe |
 
 ### Mutation proofs
 
@@ -466,16 +544,14 @@ nightly reconciliation is the other half of the signal.
 
 ## What I could not verify
 
-- **Playwright.** No e2e was written or run for the queue screen or the pay panel. Both are covered by
-  jsdom specs (12 and 8) that assert the DOM and the outgoing bodies, and the backend paths by 25 endpoint
-  tests — but **nothing has measured either screen in a real browser**, which means the project's two
-  non-negotiables for a new screen are unmeasured on them: no horizontal scroll at 320/375/390/768/1024/
-  1280/1440/1920 px, and every control clearing 44 px. The queue's row is a grid specifically so five short
-  facts do not become a five-column table at 320 px, and the copy button is `class="link"` which `base.css`
-  gives `min-height: var(--tap)` — both are reasoned, neither is measured. `e2e/support/measure.ts`'s
-  `undersized()` and `unreachable()` are the tools, and #80 means every call site needs a non-zero
-  `locator.count()` first. **This is the biggest gap in the task and the first thing I would do next.**
-- **axe** over either screen.
+- ~~**Playwright.**~~ **Closed.** This was written up as the biggest gap in the task and it is now covered:
+  24 browser tests over the two screens, both measuring horizontal overflow, `undersized`, `unreachable`,
+  occlusion and axe (serious + critical) at all eight project widths. They found four layout and focus
+  defects and pointed at a fifth that loses a shopper's typed reference — see the section above. Every call
+  site asserts a non-zero `locator.count()` first, because #80 means `undersized()` returns `[]` for
+  "nothing matched" too.
+- **A second browser engine.** Everything above is Chromium. `--project=chromium` is what the project runs
+  and Firefox/WebKit are not installed here, so neither screen has been checked in them.
 - **The private volume in a real deployment.** The slip tests use the fixture's temp volumes, which are
   siblings as `MediaStorageRoots` insists. Nothing has checked that Caddy does not mount the private volume,
   because there is no Caddy here (W0-15).
