@@ -77,7 +77,7 @@ export interface SiteSocialLink {
  */
 export interface SiteSettings {
   readonly logo: SiteLogo | null;
-  /** Digits only, or null — in which case the caller uses the placeholder in `SITE_CONFIG`. */
+  /** Digits only, or null — in which case nothing is rendered. `SITE_CONFIG` holds no fallback. */
   readonly whatsAppNumber: string | null;
   readonly social: readonly SiteSocialLink[];
   readonly contact: SiteContact;

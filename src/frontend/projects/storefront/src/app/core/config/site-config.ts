@@ -1,32 +1,28 @@
 import { InjectionToken } from '@angular/core';
 import { BRAND } from '@spencer-denim/shared';
 
-export interface SiteContact {
-  readonly email: string;
-  /** For display. */
-  readonly phone: string;
-  /** For `tel:`, digits and a leading `+` only. */
-  readonly phoneHref: string;
-  readonly addressLines: readonly string[];
-  readonly openingHours: readonly string[];
-}
-
 export interface SiteConfig {
   /** WhatsApp number in international form without `+` or spaces, as `wa.me` wants it. */
   readonly whatsAppNumber: string;
   /** Pre-filled first message. */
   readonly whatsAppMessage: string;
-  readonly contact: SiteContact;
 }
 
 /**
- * Placeholder contact details (GLB-07, GLB-08).
+ * The last build-time constants the storefront shell has (GLB-07, GLB-08).
  *
- * TODO(ADM-22 part 2): the email, phone, address and opening hours become admin settings too. Doc 08
- * §3.8 already names their keys (`Contact.Phone`, `Contact.Email`, `Contact.Address`,
- * `Contact.OpeningHours`, `Contact.MapEmbedUrl`); this slice built only the two the client was actually
- * blocked on — the WhatsApp number and the social addresses — and the rest are rows away.
- * Every value still here is a placeholder awaiting the client's real details (docs/04 §4 decision 8).
+ * **The contact details are gone from here, and that is W2-11's correction to itself.** This file used
+ * to hold an email, a telephone number, a three-line address and two lines of opening hours, and the
+ * footer fell back to them whenever the matching setting was unset — which is the state of a fresh shop.
+ * So a freshly installed Colombo Wardrobe published `hello@` at the shop's own domain, `+94 77 000 0000`
+ * and "Monday to Friday, 9am – 6pm" on **every page**, where a shopper would email an address nobody
+ * reads and ring a number that is not the shop's, and the shop would never learn they tried. The W2-11
+ * tester found it; the Contact page already did the right thing, and the footer's docblock had argued
+ * against itself in writing.
+ *
+ * It is also exactly the call ADM-22 made when it deleted three placeholder social links: there is no
+ * placeholder value for this shop's telephone number that is not a lie. The five `Contact.*` settings
+ * (doc 08 §3.8) are now the only source, and an unset one renders nothing anywhere.
  *
  * **`social` is gone, and that is the point of ADM-22's first slice.** It held three links to
  * `facebook.com`, `instagram.com` and `tiktok.com` — the networks' front pages, not this shop's
@@ -42,22 +38,15 @@ export interface SiteConfig {
  * in the journal as the thing to replace with the client's real one — not quietly dropped as part of a
  * task about logos.
  *
- * The address block names the **shop**, not the registered company (W1-15, docs/02 §I2): this is the
- * footer a shopper reads, and it is shown beside the shop's own email and phone number. The registered
- * name, the registered address and the VAT number are a separate value the client has not supplied, and
- * the first thing that will need them is invoices (W3, issue #53) — where they belong in admin settings
- * the client fills in, captured per invoice, rather than in a constant here.
+ * What the client types into `Contact.Address` is the **shop's** address, not the registered company's
+ * (W1-15, docs/02 §I2): it is the footer a shopper reads, beside the shop's own email and telephone
+ * number. The registered name, the registered address and the VAT number are separate values, and the
+ * first thing that will need them is invoices (W3, issue #53) — captured per invoice, from settings the
+ * client fills in, and never from a constant here.
  */
 export const DEFAULT_SITE_CONFIG: SiteConfig = {
   whatsAppNumber: '94770000000',
   whatsAppMessage: `Hello ${BRAND.name}, I have a question about`,
-  contact: {
-    email: `hello@${BRAND.domain}`,
-    phone: '+94 77 000 0000',
-    phoneHref: '+94770000000',
-    addressLines: [BRAND.name, 'Colombo', 'Sri Lanka'],
-    openingHours: ['Monday to Friday, 9am – 6pm', 'Saturday, 9am – 1pm'],
-  },
 };
 
 export const SITE_CONFIG = new InjectionToken<SiteConfig>('SITE_CONFIG', {

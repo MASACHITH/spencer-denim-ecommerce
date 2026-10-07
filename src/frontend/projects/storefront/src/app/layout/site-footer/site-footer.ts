@@ -7,7 +7,6 @@ import { CONTENT_PAGE_KEYS, ContentPageLink } from '../../core/content/content-p
 import { ContentApi, newsletterErrorMessage } from '../../core/content/content-api';
 import { ContentPageService } from '../../core/content/content-page.service';
 import { NavigationService } from '../../core/navigation/navigation.service';
-import { SITE_CONFIG } from '../../core/config/site-config';
 import { SiteSettingsService } from '../../core/site-settings/site-settings.service';
 
 /** What the newsletter form is showing (GLB-07). */
@@ -141,40 +140,52 @@ export type NewsletterState = 'idle' | 'sending' | 'done' | 'error';
             </nav>
           }
 
+          <!--
+            GLB-07, ADM-22 part 2 (W2-11): the client's own contact details, from 'ops.Settings', and
+            **nothing at all until they supply them**.
+
+            This column used to fall back to a placeholder email, telephone number, address and opening
+            hours held in 'SITE_CONFIG', on the argument that an empty contact column reads as a broken
+            shop. That argument was wrong, and the comment that made it contradicted the Contact panel's
+            own docblock three files away. A fresh shop published 'hello@' at the real domain, a number
+            that is not the shop's and invented opening hours on *every page*: a shopper emails an address
+            nobody reads, rings a number that is not answered, and the shop never learns they tried. An
+            empty column is a shop that has not finished setting up; an invented number is a shop that
+            loses customers silently. ADM-22 made the same call when it deleted three placeholder social
+            links, for the same reason.
+
+            So the whole column goes when there is nothing in it — heading included, because a 'Contact'
+            heading over empty space is its own small lie — and it comes back field by field as the
+            client fills the settings in. The social list is inside it and counts as content, so a shop
+            with only an Instagram address still gets the column.
+          -->
+          @if (hasContactDetails() || social().length > 0) {
           <section class="site-footer__col" aria-labelledby="footer-contact">
             <h2 class="site-footer__heading label" id="footer-contact">Contact</h2>
-            <!--
-              GLB-07, ADM-22 part 2 (W2-11): the client's own details when they have supplied them, and
-              the documented placeholder in 'SITE_CONFIG' only until then.
-
-              **The placeholder is kept here and not on the Contact page**, and the asymmetry is
-              deliberate. The footer is on every page and an empty contact column would read as a broken
-              shop; the Contact page is where somebody goes *for* these details, and showing them an
-              invented address there is the one place it could actually send a person to the wrong
-              building. So the footer degrades to a documented placeholder (flagged in 'SITE_CONFIG' as
-              the thing to replace with the client's real details, docs/04 §4 decision 8) and the Contact
-              page shows nothing at all. Both are replaced by the same settings the moment they are set.
-            -->
-            <address class="site-footer__address">
-              @for (line of contactAddressLines(); track line) {
-                <span>{{ line }}</span>
-              }
-              @if (contactEmail(); as address) {
-                <a class="site-footer__contact-link" [href]="'mailto:' + address">
-                  <sd-icon name="mail" size="sm" /> {{ address }}
-                </a>
-              }
-              @if (contactPhoneHref(); as href) {
-                <a class="site-footer__contact-link" [href]="'tel:' + href">
-                  <sd-icon name="phone" size="sm" /> {{ contactPhone() }}
-                </a>
-              }
-            </address>
-            <ul class="site-footer__hours t-small muted">
-              @for (line of contactOpeningHours(); track line) {
-                <li>{{ line }}</li>
-              }
-            </ul>
+            @if (contactAddressLines().length > 0 || contactEmail() || contactPhoneHref()) {
+              <address class="site-footer__address">
+                @for (line of contactAddressLines(); track line) {
+                  <span>{{ line }}</span>
+                }
+                @if (contactEmail(); as address) {
+                  <a class="site-footer__contact-link" [href]="'mailto:' + address">
+                    <sd-icon name="mail" size="sm" /> {{ address }}
+                  </a>
+                }
+                @if (contactPhoneHref(); as href) {
+                  <a class="site-footer__contact-link" [href]="'tel:' + href">
+                    <sd-icon name="phone" size="sm" /> {{ contactPhone() }}
+                  </a>
+                }
+              </address>
+            }
+            @if (contactOpeningHours().length > 0) {
+              <ul class="site-footer__hours t-small muted">
+                @for (line of contactOpeningHours(); track line) {
+                  <li>{{ line }}</li>
+                }
+              </ul>
+            }
             <!-- GLB-07, ADM-22. Only the profiles the client has actually given us.
 
                  **The list is empty until then, and that is the correct state.** It used to hold three
@@ -199,6 +210,7 @@ export type NewsletterState = 'idle' | 'sending' | 'done' | 'error';
               </ul>
             }
           </section>
+          }
         </div>
 
         <div class="site-footer__legal t-small muted">
@@ -359,15 +371,12 @@ export class SiteFooter {
   protected readonly brand = BRAND.name;
 
   private readonly navigation = inject(NavigationService);
-  private readonly config = inject(SITE_CONFIG);
 
   private readonly contentPages = inject(ContentPageService);
   private readonly siteSettings = inject(SiteSettingsService);
 
   protected readonly navItems = this.navigation.items;
 
-  /** The documented placeholder contact details, used only where a setting is unset (see the template). */
-  private readonly placeholder = this.config.contact;
 
   /**
    * The published content pages, split into the two columns the footer has room for.
@@ -393,29 +402,30 @@ export class SiteFooter {
     () => this.publishedPages().find((page) => page.systemKey === CONTENT_PAGE_KEYS.privacy) ?? null,
   );
 
-  /** The client's own contact details, falling back to the placeholder only in the footer. */
-  protected readonly contactAddressLines = computed(() => {
-    const lines = this.siteSettings.contact().addressLines;
+  /**
+   * The client's own contact details, from `ops.Settings` and from nowhere else.
+   *
+   * **There is no fallback, deliberately — see the template.** Each of these used to end in
+   * `?? this.placeholder.…`, which published an invented email, telephone number, address and opening
+   * hours on every page of a shop that had not been set up yet.
+   */
+  protected readonly contactAddressLines = computed(() => this.siteSettings.contact().addressLines);
 
-    return lines.length > 0 ? lines : this.placeholder.addressLines;
-  });
+  protected readonly contactOpeningHours = computed(() => this.siteSettings.contact().openingHours);
 
-  protected readonly contactOpeningHours = computed(() => {
-    const hours = this.siteSettings.contact().openingHours;
+  protected readonly contactEmail = computed(() => this.siteSettings.contact().email);
 
-    return hours.length > 0 ? hours : this.placeholder.openingHours;
-  });
+  protected readonly contactPhone = computed(() => this.siteSettings.contact().phone);
 
-  protected readonly contactEmail = computed(
-    () => this.siteSettings.contact().email ?? this.placeholder.email,
-  );
+  protected readonly contactPhoneHref = computed(() => this.siteSettings.contact().phoneHref);
 
-  protected readonly contactPhone = computed(
-    () => this.siteSettings.contact().phone ?? this.placeholder.phone,
-  );
-
-  protected readonly contactPhoneHref = computed(
-    () => this.siteSettings.contact().phoneHref ?? this.placeholder.phoneHref,
+  /** Whether the client has supplied any contact detail at all. */
+  protected readonly hasContactDetails = computed(
+    () =>
+      this.contactAddressLines().length > 0 ||
+      this.contactOpeningHours().length > 0 ||
+      this.contactEmail() !== null ||
+      this.contactPhoneHref() !== null,
   );
 
   /**
