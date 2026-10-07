@@ -103,8 +103,11 @@ code-bearing-element list 2.
 
 **Migration.** Snapshot diff against `origin/main` is 156 insertions and **0 deletions**.
 `has-pending-model-changes` clean after a rebuild. Up → Down → Up verified on a throwaway database
-created with `Latin1_General_100_CI_AS_SC` (49 tables after `Down`, 51 after `Up`), with all seven
-declared indexes created under their declared names.
+created with `Latin1_General_100_CI_AS_SC` (49 tables after `Down`, 51 after `Up`), with all five
+declared indexes created under their declared names. (Five, not the seven an earlier version of this
+entry claimed: the migration declares `UX_ContentPages_Slug`, `UX_ContentPages_SystemKey`,
+`IX_ContentPages_Published_Title`, `IX_ContactSubmissions_Status_Created` and
+`IX_ContactSubmissions_CreatedAtUtc`. The two primary keys are not indexes I declared.)
 
 ## Decisions worth knowing
 
@@ -177,3 +180,189 @@ be the thing doing the work.
   date-keyed purge needs exists, because adding one to a large table later is the expensive half.
 - **A rich-text editor.** See above.
 - **The client's copy**, for all six pages. That is the point.
+
+---
+
+## Round two: what the tester found, and what it cost
+
+Verdict was **FAIL** — four Major product findings, one Major test-integrity finding, nine minors. Every
+one of them was real. The sanitiser itself survived 143 payloads over two rounds with nothing getting
+through, including the DOMPurify `form/math/mtext/mglyph/style` bypass, foster-parented tables, null
+bytes in tag *and* attribute names, `javascript&colon;`, a fullwidth colon and zero-width prefixes. The
+things that failed were the parts around it.
+
+### Major 1 — a content-page save terminated the API process
+
+`Inspect()` read `body.TextContent`, and walking a DOM that way recurses once per level. **A body of
+`"<b>"` repeated 8,500 times is 25,501 characters**, inside the 200,000 a page may hold and inside any
+length check that could be written, and it overflowed the stack. A stack overflow in .NET cannot be
+caught: the runtime terminates the process and every request in flight with it. Measured: 8,000 levels
+cleaned in 556 ms, 8,500 killed the host, while the library's own `Sanitize` survived 60,000. So the
+failure was entirely mine, in the wrapper.
+
+The length check in `CheckBody` could never have caught it, and the docblock there now says so: the cost
+of walking a tree is set by its **shape**, not its size, and three characters buy a level. The bound is
+therefore on depth, it is lexical, and it runs before the parser. The walk is now iterative with its own
+stack and re-measures the real depth of the real tree, so an input the lexical pre-scan reads as
+shallower than the parser builds it is still refused one step later.
+
+**It was a read-path defect too, and that is the half worth remembering.** `AdminContentReader`
+re-sanitises the stored body on every content list and detail read, so a row written outside the API —
+the support script, data fix or restore that `IHtmlSanitiser`'s own remarks call out — terminated the
+process on every attempt to open the one screen a staff member could have used to repair it, for
+everyone including the owner. Reading such a row now reports zero images; publishing it is refused with
+`body_not_readable`, because a gate that cannot check must not pass; unpublishing still works, or the
+page would be stuck on the shop.
+
+Mutation proof: raising `MaxNestingDepth` to 100,000 turns the four refusal tests red **and the run
+survives 60,000 levels**, which is the iterative walk proving itself independently of the bound.
+
+### Major 2 — the map could not render, and a test held it there
+
+`sandbox=""` applies *every* restriction including scripts, and both permitted providers draw their
+tiles with JavaScript. The comment above it said "a map embed needs neither", which was simply false.
+Measured by the tester against the live endpoints: 0 images and 0 tiles from either provider with
+`sandbox=""`; 36 images, 7 tiles and "Map data ©2026" from Google and 1 tile and "© OpenStreetMap
+contributors" from OSM with `allow-scripts`. And `content-pages.e2e.ts` asserted the empty value, so the
+defect had a test defending it.
+
+Now `sandbox="allow-scripts"` and nothing else, asserted as an exact value with each dangerous token
+named individually, because the risk runs both ways: too few tokens and the map is blank, too many and a
+frame on the shop's own page gains same-origin access, top-level navigation or a form. What makes
+`allow-scripts` safe to grant is that the `src` host has been through the allow-list three times, so the
+script that runs is Google's or OpenStreetMap's.
+
+### Major 3 — the task's defining guarantee had no test that could fail
+
+`The_six_system_pages_are_seeded_unpublished_with_no_copy_in_them` called `RestoreSystemPagesAsync`
+first, and that helper writes the empty body, the unpublished flag, the null published date, the slug,
+the title and both null SEO fields — **exactly the seven fields the test then asserted**. It tested its
+own helper. The tester proved it by changing the seeder to write a 14-day returns policy into all six
+pages: the class stayed 12/12 green and the whole unit suite stayed 1,643/1,643 green, because that one
+assertion was the only one in the repository on a seeded body. So an agent inventing a returns policy, a
+privacy policy or terms — legal text needing a PDPA review, the thing this whole task is organised
+around — shipped green. This is W1-03's vacuous-assertion class, on the one constraint that mattered
+most.
+
+Two fixes, because one was not enough. The integration test now hard-deletes the system rows and runs
+`CatalogSeedRunner`, so nothing in the method writes a value it then asserts; hard-deleted rather than
+soft-deleted because the seeder looks for what is present with `IgnoreQueryFilters` and would read a
+soft-deleted shell as already there and insert nothing — vacuous again, more quietly. And
+`SystemPageCopyTests` puts the signal in the **fast** suite, where a developer actually works: it reads
+the seeder's source and allows exactly one right-hand side for a body assignment, `string.Empty`, which
+is an allow-list rather than a hunt for policy phrases, so plain text or a constant held elsewhere
+cannot slip past.
+
+### Major 4 — a fresh shop published an invented address, email, phone and opening hours
+
+On every page: `Colombo` / `Sri Lanka`, `hello@` at the real domain, `+94 77 000 0000`, "Monday to
+Friday, 9am – 6pm". **This branch added those fallbacks**, and the footer's own comment argued for them
+while the Contact panel's docblock three files away argued against them — "a shopper can drive to an
+invented address". The second argument is the right one, and it is also exactly the call ADM-22 made
+when it *deleted* three placeholder social links: there is no placeholder value for this shop's
+telephone number that is not a lie. A shopper emails an address nobody reads, rings a number that is not
+answered, and the shop never learns they tried.
+
+The placeholder block is gone from `SITE_CONFIG` entirely rather than left unused for somebody to wire
+back up, and the `TODO(ADM-22 part 2)` the tester correctly pointed out was still there verbatim is
+replaced by what actually happened. Each field renders only when set; the `<address>` and the opening
+hours go when empty; the whole column including its heading goes when there is nothing in it, because a
+"Contact" heading over empty space is its own small lie and an empty `<address>` is an accessibility
+defect rather than a neutral blank. The social list lives in that column and counts as content, so a
+shop with only an Instagram address still gets it. The new tests name the exact placeholder strings
+rather than asserting emptiness, so a *different* invented value cannot pass them.
+
+### Major 5 — the suite was non-deterministic on demand
+
+`fullyParallel` is on, and all 21 tests in `content-pages.e2e.ts` mutate module-level state in the
+shared stub. The tester measured the full suite at 856/7 and then 859/4 **with a different set of
+failures**, against 863 passed / 0 failed at `--workers=1`, and reproduced interference between
+`content-pages.e2e.ts` and `site-branding.e2e.ts` on demand. No product regression was hidden by any of
+it — but my report had blamed #114/#115, which is wrong: those are established `admin-*` harness races
+and these were storefront specs.
+
+The spec now has its own pair of servers and runs serially. That is the config's sixth pair's reasoning
+applied a second time and the convention it already set — a stub with a runtime switch gets its own
+process, and the spec that turns the switch runs serially against it. Keying the switches to a cookie so
+state could be per-test would have to survive the **server** render, which is where the storefront reads
+both feeds, so the cookie would need forwarding by the SSR server: a bigger change to the shell than the
+problem justifies. The cost of serial mode is that a failure skips the tests after it, which the file's
+own docblock now warns about.
+
+**And that was not enough on its own.** With content-pages isolated, the suite still scored 863 passed /
+2 failed in parallel against 865/0 at `--workers=1`, with both failures in `product-page.e2e.ts` and
+`search.e2e.ts` — specs that pass 159/159 on their own and render the header and footer from
+`/api/site/settings`. The last writer left on the shared stub was `site-branding.e2e.ts` (ADM-22), which
+switches the logo, the social addresses and the WhatsApp number and was already `mode: 'serial'` — which
+orders its own tests and does nothing about the files running beside it. So it moved onto an eighth pair
+as well, and **the main pair now has no test that writes to it**. Both runs after that were 865/0.
+
+### The test the tester wrote that the repository did not have
+
+Every content-page fixture here was already-clean HTML, because the API cleans on save — so **nothing
+exercised the render layer against hostile input**, which is the layer `IHtmlSanitiser`'s remarks say
+exists for exactly the support-script case. The tester stood up nine raw unsanitised bodies through the
+real SSR server and real hydrated Chromium and measured 0 rendering dangerously. That fixture is now in
+the repository, on the dedicated stub, checking both the hydrated DOM and the bytes a crawler gets with
+scripting off — the second because a stored `<script>` would already have run by the time the hydrated
+DOM is inspected.
+
+Writing it measured two things worth recording:
+
+- **Angular keeps `srcset`**, including a `javascript:` candidate, in the server render and in the
+  browser. Nothing executes — a `srcset` candidate is parsed as an image URL and `javascript:` is not a
+  valid one, and the counter the payloads increment stays at zero — but it is the one attribute the
+  server's allow-list refuses that survives this layer. Pinned with the reasoning rather than filtered
+  out of the assertion.
+- **A `javascript:` href is rewritten to `unsafe:javascript:` rather than removed.** So the check cannot
+  be a plain "does not contain `javascript:`": it would fail on the neutralised form, and the obvious
+  way to make it pass would be to delete the check.
+
+### The minors, and the two that were really defects
+
+- **`focusDetail` and `focusStatus` never fired.** Both used `queueMicrotask`, which runs before the
+  render the signal write scheduled, so `getElementById` found nothing. The contact form had the same
+  bug and was fixed with `setTimeout(0)`; the tester pointed out that this races the scheduler rather
+  than waiting for it, so all three now use `afterNextRender`.
+- **`Order Staff` could read every enquiry and never clear one.** Marking Read required
+  `Customers.Edit`, which that role does not have; the screen fires the request as it opens a message
+  and swallows the failure on purpose, so the New badge counted the same messages for ever and nothing
+  said why — on the screen that role is most likely to live in. Doc 11 P15 makes *reading* the thing
+  that marks it Read, so the permission to read has to be enough to record it. Replied and Spam stay
+  behind `Customers.Edit`: those are claims a staff member makes about what they did.
+- **`<picture>` lost its `<img>`** — the likeliest real paste in the feature, since every CDN and editor
+  emits `<picture><source><img></picture>`.
+- **"We usually reply within one working day"** was a service level the client never agreed to, on the
+  component whose docblock says nothing is hardcoded, for a system that sends nothing.
+- **The no-email guard held five needles and none matched "we will send you an email"**, the most
+  natural phrasing of the failure it exists to prevent.
+- **The subject input measured 71–103px against its siblings' 48** from 768px up: a grid container
+  stretches its implicit rows and its row-mate carries a two-line hint. Every tap-target check was a
+  floor, so none of them could see a control that is too *tall*; the e2e now asks that question too.
+- **A delete refused twice for the same reason announced once.** `role="status"` announces a change, and
+  setting a region to the text it already holds is not one. ADM-22 fixed its version by giving the save
+  two genuinely different sentences; this path has no in-progress state to describe, so the region is
+  emptied and the sentence put back after the render — not a counter, because a screen reader reads it.
+- **The removal report stopped at twenty without saying so**, so an editor who fixed those twenty would
+  believe they were done.
+- **The sanitiser's docblock claimed it cleans every `Text/HTML` settings value.** It does not; no
+  settings path calls it. A security control believed to cover a field it never sees is worse than one
+  whose scope is written down.
+
+### Corrections to my own report
+
+- My test counts were wrong three ways. The sanitiser table was **105** cases, not 108 or 91.
+- One mutation proof was understated: emptying the code-bearing list turns **7** red, not 2.
+- The migration declares **5** indexes, not 7 (corrected above).
+- `playwright.config.ts`'s defaults include 4432/4433, so overriding every port variable is mandatory
+  rather than good practice: a bare `npx playwright test` would seize ports that are not this session's.
+
+### Still not fixed, knowingly
+
+- The contact rate limit is 120 per ten minutes per address, which is ~17,000 a day from one address.
+  The brief's instruction on spam protection was docs/11 §7 G-06 "and no more", and a second slower
+  bucket is more than that says. Worth the owner's decision rather than mine.
+- `srcset` surviving the render layer (above). The server refuses it, so only an out-of-band row carries
+  one, and the residue is one more third-party request from a page whose images the attacker already
+  controls.
+- The residues in the section above all still stand.

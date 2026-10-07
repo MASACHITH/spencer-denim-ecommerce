@@ -1,7 +1,7 @@
 import AxeBuilder from '@axe-core/playwright';
 import { Page, expect, test } from '@playwright/test';
 
-import { apiURL } from '../playwright.config';
+import { brandingApiURL, brandingURL } from '../playwright.config';
 import { edgesWithoutRing, horizontalOverflow, undersized } from './support/measure';
 
 /**
@@ -18,6 +18,13 @@ import { edgesWithoutRing, horizontalOverflow, undersized } from './support/meas
  * measured here.
  */
 test.describe.configure({ mode: 'serial' });
+
+// **Its own storefront and its own stub.** This spec switches the logo, the social addresses and the
+// WhatsApp number in a stub process, and the shell reads those settings on every page of every other
+// spec — so on the shared pair it was changing the shop under tests in other files. `mode: 'serial'`
+// above orders this file's own tests and does nothing about that. See `brandingURL` in
+// `playwright.config.ts` for the measurements. (W2-11.)
+test.use({ baseURL: brandingURL });
 
 /** docs/04 §4 and the project's non-negotiable list. */
 const BREAKPOINTS = [320, 375, 390, 768, 1024, 1280, 1440, 1920] as const;
@@ -70,13 +77,13 @@ async function useSettings(
     query.set('delay', String(options.delayMs));
   }
 
-  const switched = await page.request.get(`${apiURL}/__test__/site-settings?${query}`);
+  const switched = await page.request.get(`${brandingApiURL}/__test__/site-settings?${query}`);
   expect(switched.ok(), 'the stub refused the settings switch').toBe(true);
 
   // The browser's own /api calls go to the same stub, so the hydrated page agrees with the server.
   await page.route('**/api/**', async (route) => {
     const url = new URL(route.request().url());
-    const response = await route.fetch({ url: `${apiURL}${url.pathname}${url.search}` });
+    const response = await route.fetch({ url: `${brandingApiURL}${url.pathname}${url.search}` });
     await route.fulfill({ response });
   });
 }
@@ -96,7 +103,7 @@ test.afterEach(async ({ page, request }) => {
   // page does not wait for.
   await page.unrouteAll({ behavior: 'ignoreErrors' });
 
-  await request.get(`${apiURL}/__test__/site-settings?logo=none&social=none`);
+  await request.get(`${brandingApiURL}/__test__/site-settings?logo=none&social=none`);
 });
 
 test.describe('the header wordmark and logo (GLB-02)', () => {
