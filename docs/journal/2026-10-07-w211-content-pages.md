@@ -69,20 +69,21 @@ guard for every deeper address on the origin.
 
 | Suite | Result |
 |---|---|
-| xUnit unit | **1,691 passed**, 0 failed, 9 s |
-| xUnit integration, real SQL Server | **1,058 passed**, 0 failed, 15 m 15 s |
+| xUnit unit | **1,692 passed**, 0 failed, 8 s |
+| xUnit integration, real SQL Server | **1,060 passed**, 0 failed, 12 m 23 s |
 | Vitest storefront | **1,397 passed** (54 files) |
 | Vitest admin | **385 passed** (354 before, +31) |
 | Vitest shared | **24 passed**, unchanged |
-| Playwright, whole suite | **867 passed, 0 failed** at `--workers=2`. At the capped default, run alongside the SQL integration suite, 866/1 — `search.e2e.ts`'s suggestions overlay, which then passed **246 of 246** on its own with `--repeat-each=3 --workers=1`. |
+| Playwright, whole suite | **867 passed, 0 failed** at the committed `workers: '25%'` on an idle machine, 6.1 min. (Measured once at 866/1 while the SQL suite was running beside it — `search.e2e.ts`'s suggestions overlay, which then passed **246 of 246** on its own at `--repeat-each=3 --workers=1`. That is the load sensitivity the cap is about, and the reason not to measure the browser suite and the database suite at the same time.) |
 
-New: **121** sanitiser cases, 50 content-page write cases, 35 contact-enquiry cases, 12
+New: **138** sanitiser cases, 50 content-page write cases, 35 contact-enquiry cases, 14
 system-page-copy cases, 11 reserved-slug
 cases (which read `app.routes.ts`, so the refusal list cannot drift from the route table), 10
 admin-model shape cases, 28 integration cases, 27 browser cases in `content-pages.e2e.ts`, and 13
-rewritten in four existing browser specs. Of the sanitiser's 121, **105 are the payload table** — not
-the 108 an earlier version of this entry claimed, which the tester counted correctly — and 16 are the
-nesting bound round two added.
+rewritten in four existing browser specs. Of the sanitiser's 138, **105 are the payload table** — not
+the 108 an earlier version of this entry claimed, which the tester counted correctly — 16 are the nesting
+bound round two added, and 17 are round three's breakout cases and the two residual-shaped ones beside
+them.
 
 The browser-run numbers in the table above were superseded by round two — see **Major 5** below for
 what they were measuring and what they are now.
