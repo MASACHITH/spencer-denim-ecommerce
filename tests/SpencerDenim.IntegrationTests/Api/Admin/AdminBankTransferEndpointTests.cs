@@ -941,6 +941,37 @@ public sealed class AdminBankTransferEndpointTests(SqlServerDatabaseFixture sqlS
             body.GetProperty("paymentDueAtUtc").GetDateTime());
     }
 
+    /// <summary>
+    /// How far down the descending list to start.
+    /// </summary>
+    /// <remarks>
+    /// The <c>BankTransferTestBase</c> suites take the <b>top</b> few descending variants and call
+    /// <c>SetStockAsync</c> on them, which zeroes <c>Reserved</c>; the checkout concurrency suite takes up
+    /// to six. Starting twelve down keeps this class's orders out of both bands, so neither suite's
+    /// arrangement and this one's reservations can meet.
+    /// </remarks>
+    private const int VariantBandOffset = 12;
+
+    /// <summary>
+    /// One in-stock variant for this suite's orders, taken from the <b>high</b> end of the catalogue and
+    /// below the band the other payment suites arrange.
+    /// </summary>
+    /// <remarks>
+    /// <b>This method took the <i>lowest</i> id and that broke four <c>CartStaleItemTests</c> in a full
+    /// run while passing alone</b> — the exact failure W3-02's journal records and the exact reason
+    /// <c>CheckoutTestBase.CheckoutVariantIdsAsync</c> exists. Every other suite asks
+    /// <c>InStockVariantIdsAsync</c>, which hands out the lowest ids, and the cart suites read the
+    /// <i>seeded</i> stock of those same rows; an order is never deleted (doc 08 §1.6) and holds its
+    /// reservation for ever, so twenty orders placed here left a permanent <c>Reserved</c> on the rows
+    /// <c>CartStaleItemTests.WithStockAsync</c> then set <c>OnHand</c> on — which either violates
+    /// <c>CK_StockLevels_ReservedLeOnHand</c> or quietly changes the <c>Available</c> it is measuring.
+    /// <para>
+    /// This class does not extend <c>CheckoutTestBase</c> (it needs a <c>MediaTestHost</c> for the private
+    /// slip volume), so it had its own helper — and the helper reintroduced the defect the base was
+    /// rewritten to remove. Descending plus an offset is the fix; no stock is set and none is restored,
+    /// because this suite only ever consumes reservations the way a real shopper does.
+    /// </para>
+    /// </remarks>
     private async Task<int> InStockVariantIdAsync()
     {
         using var scope = sqlServer.CreateScope();
@@ -951,7 +982,8 @@ public sealed class AdminBankTransferEndpointTests(SqlServerDatabaseFixture sqlS
             .Where(variant =>
                 variant.Product!.Department!.IsActive && variant.Product!.PrimaryCategory!.IsActive)
             .Where(variant => variant.StockLevel != null && variant.StockLevel.Available > 2)
-            .OrderBy(variant => variant.Id)
+            .OrderByDescending(variant => variant.Id)
+            .Skip(VariantBandOffset)
             .Select(variant => variant.Id)
             .FirstAsync(Token);
     }

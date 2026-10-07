@@ -128,7 +128,14 @@ public sealed class AdminSettingsEndpointTests(SqlServerDatabaseFixture sqlServe
     public async Task Every_seeded_key_arrives_with_the_facts_the_screen_needs()
     {
         await using var host = await StartAsync();
-        using var client = await host.SignInAsync(Permissions.Settings.Edit);
+
+        // **Both settings permissions, because the catalogue now spans two** (W3-03): the `Bank.*` keys
+        // need Settings.Payments and the rest need Settings.Edit. This assertion is "every seeded key
+        // arrives", so the caller has to be one who may read every seeded key — and the test below is the
+        // one that proves a caller who may not read a group does not get it.
+        using var client = await host.SignInAsync(
+            Permissions.Settings.Edit,
+            Permissions.Settings.Payments);
 
         var byKey = await ReadSettingsAsync(client);
 
@@ -143,6 +150,54 @@ public sealed class AdminSettingsEndpointTests(SqlServerDatabaseFixture sqlServe
         Assert.False(string.IsNullOrWhiteSpace(logo.GetProperty("description").GetString()));
 
         Assert.Equal("String", byKey[SettingKeys.Contact.WhatsApp].GetProperty("valueType").GetString());
+
+        // And the bank keys arrive with the permission doc 08 §3.8 DB2 gives them, which is what the read
+        // model filters on per row.
+        var accountNumber = byKey[SettingKeys.Bank.AccountNumber];
+        Assert.Equal("String", accountNumber.GetProperty("valueType").GetString());
+        Assert.Equal(Permissions.Settings.Payments, accountNumber.GetProperty("requiredPermission").GetString());
+        Assert.False(accountNumber.GetProperty("isSecret").GetBoolean());
+    }
+
+    /// <summary>
+    /// A caller with only <c>Settings.Edit</c> gets everything but the bank group, and a caller with only
+    /// <c>Settings.Payments</c> gets the bank group and nothing else.
+    /// </summary>
+    /// <remarks>
+    /// <b>The per-row filter, in both directions, against real rows.</b> ADM-22 built it with nothing to
+    /// filter and said so; these are the first keys in the catalogue carrying a different permission, so
+    /// this is the first time either direction is exercised. The second half also covers the widening
+    /// W3-03 made to the route guard: before it, a caller holding only <c>Settings.Payments</c> got a 403
+    /// from the route and could not reach the screen at all.
+    /// </remarks>
+    [Fact]
+    public async Task Each_settings_permission_sees_exactly_its_own_groups()
+    {
+        await using var host = await StartAsync();
+
+        using var editor = await host.SignInAsync(Permissions.Settings.Edit);
+        var editorKeys = await ReadSettingsAsync(editor);
+
+        Assert.Equal(
+            SettingCatalog.All
+                .Where(definition => definition.RequiredPermission == Permissions.Settings.Edit)
+                .Select(definition => definition.Key)
+                .Order(StringComparer.Ordinal),
+            editorKeys.Keys.Order(StringComparer.Ordinal));
+
+        using var payments = await host.SignInAsync(Permissions.Settings.Payments);
+        var paymentsKeys = await ReadSettingsAsync(payments);
+
+        Assert.Equal(
+            SettingCatalog.All
+                .Where(definition => definition.RequiredPermission == Permissions.Settings.Payments)
+                .Select(definition => definition.Key)
+                .Order(StringComparer.Ordinal),
+            paymentsKeys.Keys.Order(StringComparer.Ordinal));
+
+        // Neither list is empty, so neither half of this can pass vacuously.
+        Assert.NotEmpty(editorKeys);
+        Assert.NotEmpty(paymentsKeys);
     }
 
     /// <summary>
@@ -166,44 +221,53 @@ public sealed class AdminSettingsEndpointTests(SqlServerDatabaseFixture sqlServe
 
     /// <summary>
     /// Doc 08 §3.8 DB2: a group whose <c>RequiredPermission</c> the caller lacks is <b>absent</b>, not
-    /// empty. An empty <c>Bank</c> group would confirm to a Store Manager that bank details exist.
-    /// <para>
-    /// No <c>Bank</c> key is seeded, so the row is inserted directly for the duration of the test — which is
-    /// the only way to prove the filter before #53 lands, and the point of building it now.
-    /// </para>
+    /// empty. An empty <c>Bank</c> group would confirm to a Store Manager that bank details exist and tell
+    /// them exactly which five keys to go looking for another way.
     /// </summary>
+    /// <remarks>
+    /// <b>This test used to insert a <c>Bank.AccountNumber</c> row by hand and delete it in a
+    /// <c>finally</c>, and W3-03 had to change that before it did damage.</b> No bank key was seeded when
+    /// ADM-22 wrote it, so inserting a stand-in was the only way to prove the filter — and that was the
+    /// right call at the time. Now the key is seeded: the insert would hit the primary key, and the
+    /// <c>finally</c> would <b>delete a seeded row</b>, which the next test would find missing and every
+    /// save of it would answer <c>NotSeeded</c> (a 500) until somebody re-ran the seeder.
+    /// <para>
+    /// It is a better test for the change. It now proves the filter against the real group, with a real
+    /// value in it, which is the thing the shop actually has to hide — and the value is restored to null in
+    /// the <c>finally</c> rather than the row being removed.
+    /// </para>
+    /// </remarks>
     [Fact]
     public async Task A_group_the_caller_may_not_read_is_absent_rather_than_empty()
     {
         await using var host = await StartAsync();
         using var client = await host.SignInAsync(Permissions.Settings.Edit);
 
-        await InsertRowAsync(host, new Setting
-        {
-            Key = "Bank.AccountNumber",
-            GroupKey = "Bank",
-            ValueType = SettingValueType.String,
-            Value = "8001234567",
-            RequiredPermission = Permissions.Settings.Payments,
-            Description = "Inserted by AdminSettingsEndpointTests.",
-        });
-
         try
         {
+            await WriteDirectlyAsync(host, SettingKeys.Bank.AccountNumber, "8001234567");
+
             var body = await GetJsonAsync(client, SettingsUrl);
 
             var groups = body.GetProperty("groups").EnumerateArray()
                 .Select(group => group.GetProperty("groupKey").GetString())
                 .ToList();
 
-            Assert.DoesNotContain("Bank", groups);
+            Assert.DoesNotContain(SettingKeys.Bank.Group, groups);
 
             // And the value is nowhere in the payload at all, including in a field nobody thought to check.
             Assert.DoesNotContain("8001234567", body.GetRawText(), StringComparison.Ordinal);
+
+            // The caller who may read it does get it, so this is a statement about the permission rather
+            // than about the row being unreadable by everybody.
+            using var payments = await host.SignInAsync(Permissions.Settings.Payments);
+            var allowed = await GetJsonAsync(payments, SettingsUrl);
+
+            Assert.Contains("8001234567", allowed.GetRawText(), StringComparison.Ordinal);
         }
         finally
         {
-            await DeleteRowAsync(host, "Bank.AccountNumber");
+            await WriteDirectlyAsync(host, SettingKeys.Bank.AccountNumber, null);
         }
     }
 
