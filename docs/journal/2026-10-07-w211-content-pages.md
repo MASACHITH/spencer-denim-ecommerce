@@ -67,14 +67,18 @@ guard for every deeper address on the origin.
 
 ## Tests
 
+**Measured on the merged tree, after the rebase onto W3-03 (`c8b8c81`).** The figures include bank
+transfer's own tests, which is why they are higher than this branch alone; the pre-rebase numbers were
+unit 1,692 · integration 1,060 · Vitest 1,397/385/24 · Playwright 867.
+
 | Suite | Result |
 |---|---|
-| xUnit unit | **1,692 passed**, 0 failed, 8 s |
-| xUnit integration, real SQL Server | **1,060 passed**, 0 failed, 12 m 23 s |
-| Vitest storefront | **1,397 passed** (54 files) |
-| Vitest admin | **385 passed** (354 before, +31) |
+| xUnit unit | **1,726 passed**, 0 failed, 8 s |
+| xUnit integration, real SQL Server | **1,124 passed**, 0 failed, 13 m 38 s |
+| Vitest storefront | **1,404 passed** (54 files) |
+| Vitest admin | **407 passed** (32 files) |
 | Vitest shared | **24 passed**, unchanged |
-| Playwright, whole suite | **867 passed, 0 failed** at the committed `workers: '25%'` on an idle machine, 6.1 min. (Measured once at 866/1 while the SQL suite was running beside it — `search.e2e.ts`'s suggestions overlay, which then passed **246 of 246** on its own at `--repeat-each=3 --workers=1`. That is the load sensitivity the cap is about, and the reason not to measure the browser suite and the database suite at the same time.) |
+| Playwright, whole suite | **891 passed, 0 failed** at the committed `workers: '25%'` on an idle machine, 6.2 min. (Measured once at 866/1 while the SQL suite was running beside it — `search.e2e.ts`'s suggestions overlay, which then passed **246 of 246** on its own at `--repeat-each=3 --workers=1`. That is the load sensitivity the cap is about, and the reason not to measure the browser suite and the database suite at the same time.) |
 
 New: **138** sanitiser cases, 50 content-page write cases, 35 contact-enquiry cases, 14
 system-page-copy cases, 11 reserved-slug
@@ -543,3 +547,55 @@ One rename came with it. The fixture that put all six pages into the draft state
 had just written — and became wrong outright here, because drafting Contact is no longer restoring
 anything. It is `DraftEverySystemPageAsync` now, and its own docblock says it is a fixture rather than a
 restore, and points at the test that does assert the seed.
+
+---
+
+## The rebase onto W3-03
+
+`main` moved to `c8b8c81` (bank transfer, PAY-01/PAY-03) while this was finishing, and GitHub **will not
+compute checks for a conflicting PR** — so #127 reported `DIRTY` with zero checks rather than a failure.
+Rebased onto it; merge base was `006a0c9`.
+
+**The migration needed nothing.** Bank transfer added none at all, so
+`20261007055218_ContentPagesAndContactSubmissions` is still the latest and nothing was renumbered or
+regenerated. Verified three ways on the merged tree, because `AppDbContextModelSnapshot.cs` merges without
+conflict and a wrong merge there is silent: `has-pending-model-changes` clean after a full rebuild, the
+snapshot diff against `origin/main` still **156 insertions and 0 deletions**, and `grep '^-'` over that
+diff empty.
+
+**Two conflicts in 36 replayed commits**, both resolved by keeping both sides:
+
+- `Program.cs` — both throttles and all three endpoint registrations.
+- `SettingCatalogTests.cs` — three regions. Both of bank transfer's tests and mine now stand side by
+  side, and I took **main's** test name: it had renamed
+  `The_ten_keys_this_build_populates_…` to drop the count, with the reasoning "a name that counts is a
+  name that has to be renamed", and my side was about to add the eleventh. The `<remarks>` arithmetic is
+  corrected to five → ten → fifteen.
+
+**The other twelve overlapping files auto-merged, and each was read rather than assumed.** Both settings
+groups survive whole: 15 catalogue definitions (Store 1, Contact 6, Social 3, Bank 5), both request
+records, 9 contact-and-social fields beside 5 bank fields, three settings panels in the order
+`admin-settings.e2e.ts` asserts exhaustively (Logo, Contact and social, Bank transfer), both admin route
+sets, and both stub blocks — bank transfer's `Example Bank PLC` fixture beside my contact settings and
+the `whatsAppFrom` helper. Bank transfer's widening of the `GET /` guard to
+`RequireAnySettingsPermission()` is intact; my changes never touched that line.
+
+**Every deletion in `git diff origin/main HEAD` was inspected** and each is a widening of the same thing:
+`ContactAndSocialFields` 4 → 9, `buildSiteSettings(logo, social, whatsApp)` → `(…, contact)`, the settings
+payload's member list `["logo","social","whatsAppNumber"]` → `["contact","logo","social","whatsAppNumber"]`.
+Nothing of main's was lost.
+
+**One thing found that is not mine to fix**, reported to the coordinator rather than edited: the
+`AdminSettingsEndpoints` summary still opens "Every route is behind `Settings.Edit`" and says the guard
+"is what has to widen when the payments group lands". Bank transfer widened both, so that paragraph now
+describes the pre-W3-03 world — and it is **identical on `origin/main`**, so this is a pre-existing
+defect rather than a rebase casualty. It is a security docblock, which is the worst kind to leave stale;
+rewriting another task's reasoning without asking is worse.
+
+**And the WhatsApp hiding interacts with bank transfer in one way worth recording.** On main, an unset
+`Contact.WhatsApp` still produced a float, because the storefront fell back to the placeholder — so the
+corner scans in `quick-view`, `wishlist`, `content-pages` and now `bank-transfer.e2e.ts` were all
+measuring a real float by accident. After this branch an unset number means **no float**, which would
+have turned all of them into scans of an empty corner. The stub's default shop therefore has a WhatsApp
+number, and `whatsApp=none` is how a test asks for the unconfigured state — the reason that default is
+load-bearing rather than convenience.
