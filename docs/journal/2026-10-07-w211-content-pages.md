@@ -429,13 +429,18 @@ fastest way" sentence all hide; the panel's two links already did. The float als
 when it has no button, because a named `complementary` region with nothing in it is a worse defect than
 the one the landmark was added to fix (#65).
 
-**One string survives a grep of `dist/`, and it is correct.** `Monday to Friday, 9am – 6pm` is still in
-`dist/admin`, from `settings-page.ts`: it is the **input placeholder** on the opening-hours field, showing
-the client the format expected in a box that is empty. It is admin-only — never in the storefront bundle,
-never stored, never rendered to a shopper — and a format hint inside an empty field is categorically
-different from the shop stating it as fact, which is what M4 was about. It is written down here because it
-*will* surface in anybody's future grep for the placeholder strings, and finding it with no explanation
-would read as a miss.
+**A grep of `dist/` is not empty, and what it finds is correct.** `dist/admin` holds the settings form's
+**input placeholders** — `+94 11 234 5678`, `hello@yourshop.lk`, `Your shop\nColombo 03\nSri Lanka`,
+`Monday to Friday, 9am – 6pm`, the map-embed URL shape — each an `attr.placeholder` on a box that is
+**empty**, showing the client the format expected. They are admin-only: `grep -rl` over `dist/storefront`
+finds none of them, and none is stored or rendered to a shopper. A format hint inside an empty field is
+categorically different from the shop stating it as fact, which is what M4 was about.
+
+Written down because it *will* surface in anybody's future grep for the placeholder strings, and finding
+it with no explanation would read as a miss. Re-verified on the merged tree after the W3-03 rebase, where
+bank transfer's own `Example Bank PLC` / `0000 0000 0000` turn out to be the same thing in the same file —
+two tasks arriving independently at the same convention, which is the most reassuring way to find one.
+Neither task's real-looking strings reach the storefront bundle.
 
 One thing that fix made load-bearing: **the stub's shop now has a WhatsApp number unless a test asks for
 none.** `quick-view`, `wishlist` and `content-pages` scan the bottom-right corner with `elementFromPoint`
