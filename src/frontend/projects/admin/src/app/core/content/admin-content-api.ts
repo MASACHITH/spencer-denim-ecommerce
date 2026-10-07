@@ -28,7 +28,10 @@ export class AdminContentApi {
   private readonly auth = inject(AdminAuthApi);
 
   pages(): Observable<readonly AdminContentPageListItem[]> {
-    return this.http.get<readonly AdminContentPageListItem[]>(`${AdminContentApi.pagesUrl}/`);
+    // No trailing slash, matching `AdminSettingsApi`. The API maps the collection root as `MapGet("/")`
+    // on the group, which ASP.NET Core matches with or without it; using the same spelling as every
+    // other admin client keeps one form in the network tab and one form in the logs.
+    return this.http.get<readonly AdminContentPageListItem[]>(AdminContentApi.pagesUrl);
   }
 
   page(pageId: number): Observable<AdminContentPage> {
@@ -38,7 +41,7 @@ export class AdminContentApi {
   /** Creates a custom page. It is always a draft; there is no way to ask for a system key. */
   createPage(values: ContentPageValues): Observable<ContentPageSaved> {
     return this.auth.withAntiforgeryToken((token) =>
-      this.http.post<ContentPageSaved>(`${AdminContentApi.pagesUrl}/`, values, {
+      this.http.post<ContentPageSaved>(AdminContentApi.pagesUrl, values, {
         headers: { 'X-XSRF-TOKEN': token },
       }),
     );
@@ -88,7 +91,7 @@ export class AdminContentApi {
       query.set('status', status);
     }
 
-    return this.http.get<AdminContactEnquiries>(`${AdminContentApi.enquiriesUrl}/?${query}`);
+    return this.http.get<AdminContactEnquiries>(`${AdminContentApi.enquiriesUrl}?${query}`);
   }
 
   enquiry(submissionId: number): Observable<AdminContactEnquiry> {

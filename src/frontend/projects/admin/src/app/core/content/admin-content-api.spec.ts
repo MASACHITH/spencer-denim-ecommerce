@@ -36,7 +36,7 @@ describe('AdminContentApi (ADM-17, GLB-10)', () => {
   it('reads the pages with no token, because a read is not a write', () => {
     api.pages().subscribe();
 
-    const request = http.expectOne(`${AdminContentApi.pagesUrl}/`);
+    const request = http.expectOne(AdminContentApi.pagesUrl);
     expect(request.request.method).toBe('GET');
     expect(request.request.headers.has('X-XSRF-TOKEN')).toBe(false);
 
@@ -117,7 +117,7 @@ describe('AdminContentApi (ADM-17, GLB-10)', () => {
     api.enquiries('Spam', 25, 25).subscribe();
 
     const request = http.expectOne(
-      (candidate) => candidate.url.startsWith(`${AdminContentApi.enquiriesUrl}/`),
+      (candidate) => candidate.url.startsWith(AdminContentApi.enquiriesUrl),
     );
 
     expect(request.request.urlWithParams).toContain('status=Spam');
@@ -132,7 +132,7 @@ describe('AdminContentApi (ADM-17, GLB-10)', () => {
     api.enquiries(null, 0, 25).subscribe();
 
     const request = http.expectOne(
-      (candidate) => candidate.url.startsWith(`${AdminContentApi.enquiriesUrl}/`),
+      (candidate) => candidate.url.startsWith(AdminContentApi.enquiriesUrl),
     );
 
     expect(request.request.urlWithParams).not.toContain('status=');
@@ -176,7 +176,7 @@ describe('AdminContentApi (ADM-17, GLB-10)', () => {
 
     grantToken();
 
-    const request = http.expectOne(`${AdminContentApi.pagesUrl}/`);
+    const request = http.expectOne(AdminContentApi.pagesUrl);
     expect(request.request.method).toBe('POST');
 
     // There is no `systemKey` in `ContentPageValues` at all, which is the point: a create that could
