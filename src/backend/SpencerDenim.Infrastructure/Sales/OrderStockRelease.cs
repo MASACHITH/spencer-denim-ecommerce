@@ -14,7 +14,18 @@ namespace SpencerDenim.Infrastructure.Sales;
 /// loop would be a second chance for one of them to drift — a lock order, a row-count check or a merge of
 /// duplicate variants done differently in one of two places is a deadlock or an oversell that only one of
 /// the two paths can produce. It was extracted from <c>OrderExpiryStore</c> rather than written again;
-/// <c>OrderExpiryTests</c> and <c>OrderCancellationTests</c> both prove it.
+/// <c>OrderExpiryTests</c> and <c>OrderCancellationTests</c> both run it.
+/// <para>
+/// <b>"Both run it" and not "both prove it", because two of the three are not observable by a test and
+/// saying otherwise was wrong.</b> The row-count check is tested on both paths. The <b>lock order</b> and
+/// the <b>duplicate-variant merge</b> are not, and cannot easily be: measured in this branch, reversing
+/// the sort and deleting the <c>GroupBy</c> each leave all of <c>OrderCancellationTests</c> and
+/// <c>OrderExpiryTests</c> green — reversing the sort changes no figure, and two statements of 2 and 1
+/// reach the same <c>Reserved</c> as one statement of 3. Both exist to prevent a deadlock, and a deadlock
+/// needs an interleaving with another writer that a test cannot compel. So what makes them safe is that
+/// there is <i>one</i> copy of this loop and not two, which is the whole argument for the extraction; the
+/// tests are not the thing holding them up.
+/// </para>
 /// <para>
 /// <b>The sort is doc 08 §5.3's lock order</b>, shared with placement, approval and every admin stock
 /// change, so two of them can never take the same two rows in opposite orders. Duplicate variants in one

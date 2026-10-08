@@ -437,13 +437,29 @@ public sealed class OrderCancellationTests(SqlServerDatabaseFixture sqlServer)
     }
 
     /// <summary>
-    /// The cancel transaction honours doc 08 §5.6 step 3 line by line, including a duplicated variant.
+    /// The cancel transaction gives back everything this order was holding (doc 08 §5.6 step 3).
     /// </summary>
     /// <remarks>
-    /// Two lines of the same variant are merged before the release (doc 08 §5.3), so the release is one
-    /// statement for three units and not two statements for two and one. Checkout cannot produce such an
-    /// order — the bag merges by variant — so this asserts the <i>release</i> rather than a reachable
-    /// order shape, and the quantity is what proves the merge happened at all.
+    /// <b>This says nothing about doc 08 §5.3's duplicate-variant merge, and its first version claimed it
+    /// did.</b> That version described "two lines of the same variant merged before the release" on a
+    /// fixture that has one line of quantity three — <c>PlaceOrderAsync(quantity: 3)</c> puts one bag item
+    /// in, so there is no duplicate to merge — and said "the quantity is what proves the merge happened at
+    /// all", which it cannot.
+    /// <para>
+    /// <b>And no functional test can prove that merge, which is worth stating rather than leaving as a
+    /// claim somebody re-reads as coverage.</b> Measured: deleting the <c>GroupBy</c> from
+    /// <c>OrderStockRelease</c> entirely leaves all of <c>OrderCancellationTests</c> and
+    /// <c>OrderExpiryTests</c> green. It has to, because two statements of 2 and 1 reach the same
+    /// <c>Reserved</c> as one statement of 3 and each still affects exactly one row. The merge exists to
+    /// stop one release taking the same stock row twice with a third writer able to get between — a
+    /// deadlock, not a wrong figure — and a deadlock is produced by an interleaving a test cannot compel.
+    /// The thing that protects it is that there is now <i>one</i> copy of the loop rather than two, which
+    /// is the extraction's real argument.
+    /// </para>
+    /// <para>
+    /// What this does assert is doc 08 §5.9's half-invariant that a cancel owns: after the cancel this
+    /// order holds nothing, and the variant's <c>Reserved</c> is back to where it started.
+    /// </para>
     /// </remarks>
     [Fact]
     public async Task A_cancel_leaves_this_order_holding_nothing()
