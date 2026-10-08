@@ -30,14 +30,46 @@ export const routes: Routes = [
       import('./pages/change-password/change-password-page').then((m) => m.ChangePasswordPage),
   },
   {
-    // PAY-01 / ADM-09 (W3-03): doc 11 P7 step 4's queue. Same guard rule as every other admin route — the
-    // API is the security boundary (doc 03 §3a), and a user without Orders.View is shown the refusal
-    // rather than bounced from a page that then cannot explain itself.
+    // ADM-09 (W3-04): the order list, which is doc 11 P9 step 1 and doc 11 §6.6's "a customer phones about
+    // an order". Like every other admin route the guard only asks for a session: the API is the security
+    // boundary (doc 03 §3a), and a user without Orders.View is shown the refusal rather than bounced from
+    // a page that then cannot explain itself.
+    path: 'orders',
+    title: `Orders — ${BRAND.adminName}`,
+    canActivate: [adminSessionGuard],
+    loadComponent: () => import('./pages/orders/orders-list-page').then((m) => m.OrdersListPage),
+  },
+  {
+    // PAY-01 / ADM-09 (W3-03): doc 11 P7 step 4's queue. **Declared before `orders/:orderPublicId`**,
+    // because Angular matches routes in order and `bank-transfers` would otherwise be read as an order
+    // token — which the `:orderPublicId` route would then fetch and 404 on.
     path: 'orders/bank-transfers',
     title: `Bank transfers — ${BRAND.adminName}`,
     canActivate: [adminSessionGuard],
     loadComponent: () =>
       import('./pages/bank-transfers/bank-transfers-page').then((m) => m.BankTransfersPage),
+  },
+  {
+    // ADM-09 / ADM-22 (W3-04): the couriers the client fills in. Also before `orders/:orderPublicId`.
+    path: 'orders/couriers',
+    title: `Couriers — ${BRAND.adminName}`,
+    canActivate: [adminSessionGuard],
+    loadComponent: () => import('./pages/orders/couriers-page').then((m) => m.CouriersPage),
+  },
+  {
+    // ADM-09 (W3-04). The order detail, and issue #124's route to an order that has already expired: the
+    // bank queue cannot reach one, and this page is reached by searching the number the customer quotes.
+    path: 'orders/:orderPublicId',
+    title: `Order — ${BRAND.adminName}`,
+    canActivate: [adminSessionGuard],
+    loadComponent: () => import('./pages/orders/order-detail-page').then((m) => m.OrderDetailPage),
+  },
+  {
+    // ADM-09 (W3-04), doc 11 P9 step 3's invoice and packing copy.
+    path: 'orders/:orderPublicId/invoice',
+    title: `Invoice — ${BRAND.adminName}`,
+    canActivate: [adminSessionGuard],
+    loadComponent: () => import('./pages/orders/order-invoice-page').then((m) => m.OrderInvoicePage),
   },
   {
     // ADM-11 (W1-12). Like every other admin route the guard only asks for a session: the API is the
