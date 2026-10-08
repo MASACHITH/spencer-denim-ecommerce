@@ -16,6 +16,7 @@ using SpencerDenim.Application.Marketing.Newsletter;
 using SpencerDenim.Application.Sales.Cart.Abstractions;
 using SpencerDenim.Application.Sales.Payments;
 using SpencerDenim.Application.Sales.Checkout.Abstractions;
+using SpencerDenim.Application.Sales.Orders.Abstractions;
 using SpencerDenim.Application.Sales.Payments.Abstractions;
 using SpencerDenim.Application.Sales.Wishlist.Abstractions;
 using SpencerDenim.Application.Settings.Abstractions;
@@ -31,6 +32,7 @@ using SpencerDenim.Infrastructure.Persistence;
 using SpencerDenim.Infrastructure.Persistence.Interceptors;
 using SpencerDenim.Infrastructure.Persistence.Seeding;
 using SpencerDenim.Infrastructure.Sales;
+using SpencerDenim.Infrastructure.Sales.Orders;
 using SpencerDenim.Infrastructure.Sales.Payments;
 using SpencerDenim.Infrastructure.Settings;
 using SpencerDenim.Infrastructure.Time;
@@ -211,6 +213,15 @@ public static class DependencyInjection
         services.AddScoped<IOrderExpiryStore, OrderExpiryStore>();
         services.AddScoped<IBankTransferProofStore, BankTransferProofStore>();
 
+        // The admin orders screen (W3-04, ADM-09, doc 11 P9): the list and the detail, the four fulfilment
+        // transitions, the couriers the client fills in, and the two settings groups an invoice and the
+        // auto-deliver job read.
+        services.AddScoped<IAdminOrderReader, AdminOrderReader>();
+        services.AddScoped<IOrderFulfilmentStore, OrderFulfilmentStore>();
+        services.AddScoped<ICourierAdminStore, CourierAdminStore>();
+        services.AddScoped<IOrderSettingsReader, OrderSettingsReader>();
+        services.AddScoped<IAutoDeliverStore, AutoDeliverStore>();
+
         services.AddMediaLibrary();
 
         services.AddOptions<SeedOptions>().BindConfiguration(SeedOptions.SectionName);
@@ -230,6 +241,10 @@ public static class DependencyInjection
         // Doc 08 §4.1/§5.6 and doc 11 P10 flow B: every five minutes, release the stock and the promo use
         // of orders nobody paid for. Issue #107's real mitigation.
         services.AddHostedService<ExpireUnpaidOrdersService>();
+
+        // Doc 11 P9 step 8 and doc 08 §4.1 D4: once a day, close orders that shipped more than
+        // Orders.AutoDeliverAfterDays ago. **Never a store pickup order** (G-18).
+        services.AddHostedService<AutoDeliverShippedService>();
 
         services.AddHealthChecks()
             .AddCheck<DatabaseHealthCheck>(

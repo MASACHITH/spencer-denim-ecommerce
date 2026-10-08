@@ -28,6 +28,8 @@ using SpencerDenim.Application.Content.Pages;
 using SpencerDenim.Application.Diagnostics.Ping;
 using SpencerDenim.Application.Marketing.Newsletter;
 using SpencerDenim.Application.Sales.Cart;
+using SpencerDenim.Application.Sales.Orders.Admin;
+using SpencerDenim.Application.Sales.Orders.Contracts;
 using SpencerDenim.Application.Sales.Payments.Admin;
 using SpencerDenim.Application.Sales.Payments.Contracts;
 using SpencerDenim.Application.Sales.Payments.Customer;
@@ -306,6 +308,31 @@ public static class DependencyInjection
         services.AddScoped<
             ICommandHandler<SubmitBankTransferSlipCommand, SubmitBankTransferSlipResult>,
             SubmitBankTransferSlipCommandHandler>();
+
+        // The admin orders screen (W3-04, ADM-09, doc 11 P9).
+        services.AddScoped<
+            IQueryHandler<GetAdminOrderListQuery, AdminOrderListPage>,
+            GetAdminOrderListQueryHandler>();
+
+        services.AddScoped<
+            IQueryHandler<GetAdminOrderQuery, AdminOrderDetailDto?>,
+            GetAdminOrderQueryHandler>();
+
+        services.AddScoped<
+            IQueryHandler<GetOrderInvoiceQuery, OrderInvoiceDto?>,
+            GetOrderInvoiceQueryHandler>();
+
+        services.AddScoped<
+            IQueryHandler<ListCouriersQuery, IReadOnlyList<AdminCourierDto>>,
+            ListCouriersQueryHandler>();
+
+        services.AddScoped<
+            ICommandHandler<TransitionOrderCommand, TransitionOrderResult>,
+            TransitionOrderCommandHandler>();
+
+        services.AddScoped<
+            ICommandHandler<SaveCourierCommand, SaveCourierResult>,
+            SaveCourierCommandHandler>();
 
         // Settings (ADM-22 + W3-03): the bank details a customer transfers to, under Settings.Payments.
         services.AddScoped<
