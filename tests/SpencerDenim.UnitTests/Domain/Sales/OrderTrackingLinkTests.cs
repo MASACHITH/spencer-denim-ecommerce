@@ -62,10 +62,13 @@ public sealed class OrderTrackingLinkTests
     /// <remarks>
     /// <b>This is the one behavioural difference from the private method it replaced</b>, which W3-06
     /// called "strictly safer and unreachable": the old version guarded only the template, so a null
-    /// number with a template reached <c>Uri.EscapeDataString(null)</c> and threw. Unreachable is right
-    /// for the caller it had — <c>AdminOrderReader.ReadDispatchAsync</c> returns before the call when
-    /// <c>TrackingNumber</c> is null — but it is a property of this method now, and the dispatch email is
-    /// a second caller that passes <c>dispatch?.TrackingNumber</c>, which is null on every pickup order.
+    /// number with a template reached <c>Uri.EscapeDataString(null)</c> and threw, and a blank one built
+    /// a link ending <c>%20%20</c>. <b>Unreachable checks out</b> for both callers today —
+    /// <c>AdminOrderReader.ReadDispatchAsync</c> returns before the call when <c>TrackingNumber</c> is
+    /// null, and <c>OrderFulfilmentStore</c> only reaches it inside <c>if (dispatch is { } details)</c>
+    /// with <c>OrderDispatchDetails.TrackingNumber</c> non-nullable. It is pinned anyway, because
+    /// unreachable is a property of two call sites and not of this method, and this method is now in the
+    /// Domain where a third caller costs nothing.
     /// </remarks>
     [Theory]
     [InlineData(null)]
