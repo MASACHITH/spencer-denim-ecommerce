@@ -297,17 +297,20 @@ Run on this machine, `TEST_SQL_CONNECTION` pointed at `(localdb)\MSSQLLocalDB`.
 |---|---|---|---|
 | xUnit unit | 1,726 / 0 | **1,808 / 0** | 82 |
 | xUnit integration | 1,124 | **1,192 / 0** (whole assembly green at 1,191 before the rename test was added) | 68 |
-| Vitest shared / storefront / admin | 1,404 / 407 / 24 | 1,404 / **444** / 24 | 37 |
-| Playwright (chromium) | 891 / 0 | **920 total**: 919 passed, 1 pre-existing failure — see below | 29 |
+| Vitest — shared | 24 | 24 | — |
+| Vitest — storefront | 1,404 | 1,404 | — |
+| Vitest — admin | 407 | **444 / 0** | 37 |
+| Playwright (chromium) | 891 / 0 | **920 / 0** | 29 |
 
 **The whole-assembly integration run looked hung at 16 minutes with 3 s of CPU and no SQL session, and was
 not**: it finished green at 21 m 8 s. Worth knowing before somebody kills one. (An attempt to kill it was
 refused by the permission system, which turned out to be the right answer.)
 
-The Vitest figures in the brief were in the order *shared / storefront / admin*; on this machine the three
-projects report **1,404 (shared), 432 (admin, was 407), 24 (storefront)** — the brief's second and third
-numbers appear to be the other way round, since the admin project is the one this task added 25 tests to
-and 407 + 25 = 432.
+**The three Vitest projects are listed separately because a single "1,404 / 407 / 24" is ambiguous and I
+got it wrong first.** Measured one project at a time on this machine: `shared` is **24**, `storefront` is
+**1,404** and `admin` is **407** before this task — so the brief's three figures are all correct, in the
+order *storefront / admin / shared*, which is neither alphabetical nor the order `npm run test:ci` runs
+them in (`shared`, `storefront`, `admin`). Worth writing down per project from now on.
 
 Ports: every `E2E_*_PORT` was overridden into **4820–4836**, scanned free first. `4502` (`charon-svc`) and
 `4767` (`PanGPS`) were identified by PID and left alone; nothing was killed.
