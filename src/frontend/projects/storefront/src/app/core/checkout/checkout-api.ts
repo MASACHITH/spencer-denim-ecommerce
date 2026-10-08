@@ -99,9 +99,11 @@ export class CheckoutApi {
    * session for an antiforgery token to protect, exactly as `setPaymentReference` and the slip upload
    * already reason.
    *
-   * A 404 means "this order can no longer be cancelled", which is deliberately the same answer as "no
-   * such order": the token never expires and is a guest's only credential, so a stranger holding a
-   * guessed GUID must not learn that it names a real order.
+   * A 404 means "this order can no longer be cancelled", deliberately the same answer as "no such
+   * order" — one refusal contract across the guest routes, and no sentence that could read as having
+   * changed something. It is not hiding anything: `GET /api/orders/{token}` answers 200 with the whole
+   * order for a real token in any status, so a token holder already knows it is real and what state it
+   * is in. Which is why the page re-reads straight afterwards and shows the real state.
    */
   cancelOrder(publicId: string): Observable<CancelOrderDto> {
     return this.http.post<CancelOrderDto>(

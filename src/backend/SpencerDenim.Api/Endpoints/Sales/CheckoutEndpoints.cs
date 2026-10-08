@@ -99,10 +99,13 @@ internal static class CheckoutEndpoints
                 + "and no reason — P10 asks the staff member for a reason and the customer only to "
                 + "press the button; the order's history records that the customer decided. A token that "
                 + "matches no order, an order that is already paid, one that has expired and one that is "
-                + "already cancelled all answer **404 and say nothing else**: the token never expires and "
-                + "is a guest's only credential, so a stranger must not learn that a guessed token names a "
-                + "real order, nor what state it is in. A **paid** order is never cancelled — doc 11 "
-                + "P10 refunds one instead. No email is sent and none is owed (§7 G-14).")
+                + "already cancelled all answer **404 and say nothing else**, so there is one refusal "
+                + "contract across the guest routes and no sentence that could read as having changed "
+                + "something. It is **not** a confidentiality measure, and this description used to claim "
+                + "it was: `GET /api/orders/{token}` answers 200 with the whole order for a real token in "
+                + "any status, so a token holder already learns both that it is real and what state it is "
+                + "in. A **paid** order is never cancelled — doc 11 P10 refunds one instead. No email is "
+                + "sent and none is owed (§7 G-14).")
             .Produces<CancelOrderDto>()
             .ProducesProblem(StatusCodes.Status404NotFound);
 

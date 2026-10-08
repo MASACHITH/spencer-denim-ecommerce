@@ -68,11 +68,20 @@ public sealed class CancelOwnOrderCommandHandler(IOrderCancellationStore store, 
         {
             CancelOrderOutcome.Applied applied => new CancelOwnOrderResult.Cancelled(applied.OrderNumber),
 
-            // **One answer for "no such order" and "that order cannot be cancelled", and it is the
-            // narrower one of the two.** The token never expires (doc 11 §7 G-41) and is a guest's only
-            // credential, so a stranger holding a guessed GUID must not learn that it names a real order
-            // — which is exactly the rule `GET /api/orders/{token}` and the payment-reference route
-            // already follow, and the reason their refusals are bare 404s with no body.
+            // **One answer for "no such order" and "that order cannot be cancelled", and the reason is
+            // consistency rather than confidentiality.** The first version of this comment said the 404
+            // exists so "a stranger holding a guessed GUID must not learn that it names a real order".
+            // It cannot do that, and W3-04b's tester checked: `GET /api/orders/{token}` answers **200
+            // with the whole order** for a real token in *any* status and 404 only for an unknown one, so
+            // one GET already settles both "is it real" and "what state is it in" — with the customer's
+            // name, address and telephone number attached. Timing says the same thing about this route
+            // on its own: measured in-process, a refusal on a real token takes a median 2.71 ms against
+            // 1.96 ms for an unknown one, which is a usable oracle and discloses nothing GET does not.
+            //
+            // So what the bare 404 is actually for: one refusal contract across the guest routes (the
+            // payment-reference route answers the same way), and no sentence that could be read as
+            // having changed something. What protects a guest order is that the token is unguessable,
+            // plus the rate limit and expiring link doc 11 §7 G-41 still owes — not this status code.
             //
             // The cost is real and is worth stating: a shopper whose press lost the race to the expiry
             // sweep is told "this order can no longer be cancelled" rather than "it expired a minute
