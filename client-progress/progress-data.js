@@ -17,7 +17,7 @@ const progressData = {
     endDate: "2026-10-15"
   },
 
-  lastUpdated: "2026-10-07",
+  lastUpdated: "2026-10-08",
 
   milestones: [
     { week: "Week 0", title: "Setup & design", start: "2026-09-15", end: "2026-09-18" },
@@ -102,15 +102,15 @@ const progressData = {
         { name: "Product management (images & video)", status: "done", progress: 100 },
         { name: "Category management", status: "done", progress: 100 },
         { name: "Inventory", status: "in-progress", progress: 25 },
-        { name: "Order management & payment approval", status: "planned", progress: 0 },
+        { name: "Order management & payment approval", status: "done", progress: 100 },
         { name: "Promo codes & sale campaigns", status: "planned", progress: 0 },
         { name: "Customers", status: "planned", progress: 0 },
         { name: "Review moderation", status: "planned", progress: 0 },
         { name: "Newsletter subscriber list", status: "planned", progress: 0 },
-        { name: "Homepage & content management", status: "in-progress", progress: 35 },
+        { name: "Homepage & content management", status: "in-progress", progress: 65 },
         { name: "Dashboard", status: "planned", progress: 0 },
         { name: "Reports & traffic", status: "planned", progress: 0 },
-        { name: "Settings", status: "in-progress", progress: 35 }
+        { name: "Settings", status: "in-progress", progress: 70 }
       ]
     },
     {
@@ -126,6 +126,26 @@ const progressData = {
 
   // Newest first.
   updates: [
+    {
+      date: "2026-10-08",
+      title: "An order can now be cancelled, which puts the stock straight back on sale",
+      text: "A customer who changes their mind an hour after ordering is a normal part of retail, and until today there was no way to deal with it. The order simply sat there until its 48-hour payment deadline passed, and for those two days the items on it were unavailable to everybody else. Now, as long as the order has not been paid for, you open it and press Cancel, type the reason in your own words, and the items go back on sale immediately. The reason and your name are saved against the order, so in a month's time anyone can see why it was closed and who closed it. The customer can also cancel it themselves from the order link we send them, which saves them telephoning you and saves you doing anything at all. A paid order cannot be cancelled this way, because once money has arrived the right answer is to return it, and that is handled as a refund rather than a cancellation. There is one more thing worth knowing: if you cancel an order and the customer's bank transfer then turns up the next morning anyway, you can still accept it. The order comes back to life, the shop re-checks that the items are still in stock, and tells you if any of them have since sold.",
+    },
+    {
+      date: "2026-10-08",
+      title: "The Orders screen is finished \u2014 you can now run the shop day to day",
+      text: "Until today you could take an order and take the payment, but there was no screen to manage what happened next. That is now built and tested. There is an Orders list with one search box: type an order number, part of one, just the digits, or the customer's email or telephone, and it finds the order. You can filter by status, and the list of orders waiting to be posted comes up oldest first so nothing sits forgotten. Opening an order shows everything on it \u2014 each item with its code, colour, size and price, the customer's details, the delivery address or the collection point, the full money breakdown, the payment and any slip they uploaded, and a dated history of every step with the name of whoever did it. From there you press Start processing, then Mark as shipped once you have chosen the courier and entered the tracking number, then Mark as delivered. Collection orders follow the same path with Ready for collection and Mark as collected instead. You can also print an invoice or packing copy.",
+    },
+    {
+      date: "2026-10-08",
+      title: "A late payment is no longer a problem we have to fix by hand",
+      text: "Worth explaining because it was a real risk. An unpaid order releases its stock after the deadline so it is not held for ever \u2014 but if the customer then transferred the money a day late, that order had dropped off every screen and the only way to settle it was for us to edit the database directly. Now you search the order number the customer quotes from their bank statement, open it, and press Accept late payment. The shop re-checks that the items are still in stock and tells you exactly which ones are not if any have sold, so you are never committing to send something you no longer have.",
+    },
+    {
+      date: "2026-10-08",
+      title: "Three more things to add when you are ready, and why the shop shows nothing until you do",
+      text: "Your couriers are now set up from a screen in the admin panel \u2014 the name and the tracking-link format each one uses. Until you add at least one, Mark as shipped cannot be used, and the screen says so rather than giving you a button that does nothing. The same applies to the details that go on an invoice: your registered company name, address, business registration number and VAT number. There is a screen for those too, and an invoice prints only what you have entered \u2014 no invented address, because an invoice is a legal document and a wrong one is worse than an incomplete one. With your bank details, that is three short forms standing between the shop and taking real orders, and all three are built and waiting.",
+    },
     {
       date: "2026-10-07",
       title: "Your shop can now take money",
