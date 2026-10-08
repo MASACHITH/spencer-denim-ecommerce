@@ -402,6 +402,103 @@ describe('OrderPage (CHK-04)', () => {
     expect(region.textContent).toContain('Cancel this order?');
   });
 
+  /**
+   * #109, arriving by node removal rather than by `[disabled]`.
+   *
+   * **Both presses in the cancel flow destroy the control that was pressed.** The first swaps the whole
+   * branch of the template, so "Cancel this order" is removed; the applied cancel turns `canCancel` false
+   * and removes the panel, so "Yes, cancel it" is removed. A destroyed focused node sends focus to
+   * `<body>`, which is what a Chromium probe measured on this page before the re-homing existed — twice,
+   * once after each press — and which the admin order detail already solves with the same method.
+   *
+   * **And the live region has to survive**, which it did not: it lived inside the pay panel, so a
+   * successful cancel moved the order off `PendingPayment` and took the region away with it. The
+   * announcement was written into a node the re-read then removed, so the one thing this page can tell a
+   * screen-reader user about the most destructive action it offers went nowhere. That is the same defect
+   * the refusal message had, one block further down, in the same screen.
+   */
+  it('keeps the live region and re-homes focus when a cancel destroys the control pressed', async () => {
+    await open(order());
+
+    const ask = element.querySelector<HTMLElement>('[data-testid="cancel-order"]')!;
+    ask.focus();
+    expect(document.activeElement).toBe(ask);
+
+    ask.click();
+    await settle();
+    await fixture.whenStable();
+
+    // The button is gone, so focus cannot still be on it — and it is on the sentence rather than on
+    // `<body>`.
+    expect(ask.isConnected).toBe(false);
+    expect(document.activeElement).toBe(element.querySelector('[data-testid="pay-announcement"]'));
+
+    const confirm = element.querySelector<HTMLElement>('[data-testid="cancel-confirm"]')!;
+    confirm.focus();
+    confirm.click();
+    await settle();
+
+    cancelRequest().flush({ orderNumber: 'SD-2026-000123' });
+    await settle();
+
+    orderRequest().flush(
+      order({ status: 'Cancelled', statusLabel: 'Cancelled', payment: null, canCancel: false }),
+    );
+    await settle();
+    await fixture.whenStable();
+
+    // **The region is still on the page**, although the pay panel and the cancel panel are not — which
+    // is the assertion that would have failed before it was moved out of the pay panel.
+    const region = element.querySelector('[data-testid="pay-announcement"]');
+
+    expect(element.querySelector('[data-testid="pay-panel"]')).toBeNull();
+    expect(element.querySelector('[data-testid="cancel-panel"]')).toBeNull();
+    expect(region).not.toBeNull();
+    expect(region!.textContent).toContain('is cancelled');
+
+    expect(confirm.isConnected).toBe(false);
+    expect(document.activeElement).toBe(region);
+  });
+
+  /** Keeping the order removes "Keep my order", which is the same removal in the other direction. */
+  it('re-homes focus when Keep my order destroys the button pressed', async () => {
+    await open(order());
+
+    element.querySelector<HTMLElement>('[data-testid="cancel-order"]')!.click();
+    await settle();
+
+    const keep = element.querySelector<HTMLElement>('[data-testid="cancel-keep"]')!;
+    keep.focus();
+    keep.click();
+    await settle();
+    await fixture.whenStable();
+
+    expect(keep.isConnected).toBe(false);
+    expect(document.activeElement).toBe(element.querySelector('[data-testid="pay-announcement"]'));
+  });
+
+  /**
+   * **Nothing is re-homed when nothing was lost**, which is the half that makes the rule safe.
+   *
+   * The reference box survives every re-read, and yanking the caret out of it mid-sentence would be a
+   * worse defect than the one being fixed — so the node is checked for `isConnected` first.
+   */
+  it('leaves focus alone when the control pressed is still there', async () => {
+    await open(order());
+
+    const box = element.querySelector<HTMLElement>('[data-testid="pay-reference-input"]')
+      ?? element.querySelector<HTMLElement>('input[type="text"]')!;
+
+    box.focus();
+
+    element.querySelector<HTMLElement>('[data-testid="cancel-order"]')!.click();
+    await settle();
+    await fixture.whenStable();
+
+    expect(box.isConnected).toBe(true);
+    expect(document.activeElement).toBe(box);
+  });
+
   it('asks for the order before the first change detection', () => {
     create();
     orderRequest().flush(order());

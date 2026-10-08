@@ -2,11 +2,14 @@ import {
   ChangeDetectionStrategy,
   Component,
   DestroyRef,
+  Injector,
   RESPONSE_INIT,
+  afterNextRender,
   computed,
   inject,
   signal,
 } from '@angular/core';
+import { DOCUMENT } from '@angular/common';
 import { HttpErrorResponse } from '@angular/common/http';
 import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
 import { Meta, Title } from '@angular/platform-browser';
@@ -251,11 +254,27 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
           </aside>
         </div>
 
+        <!-- **Outside the pay panel, which is the same defect as the refusal message one block down.**
+             It used to be inside @if (awaitingPayment(placed)), and every sentence the cancel flow
+             announces is written here - so a successful cancel moved the order off PendingPayment, the
+             panel went, and the live region went with it: "Order SD-... is cancelled" was set into a node
+             that the re-read then removed, and a shopper using a screen reader was told nothing by the
+             most destructive thing this page can do. Measured in Chromium: after a cancel the page held
+             no [data-testid="pay-announcement"] at all.
+
+             tabindex="-1" so rehomeFocusIfLost can put focus on the sentence without putting it in the
+             tab order - the same rule, the same testid and the same reason as the admin screens' own
+             order-said region (#109). -->
+        <p
+          class="sr-only"
+          role="status"
+          tabindex="-1"
+          data-testid="pay-announcement"
+        >{{ announcement() }}</p>
+
         @if (awaitingPayment(placed)) {
           <section class="order__panel pay" aria-labelledby="pay-title" data-testid="pay-panel">
             <h2 class="order__panel-title" id="pay-title">How to pay</h2>
-
-            <p class="sr-only" role="status" data-testid="pay-announcement">{{ announcement() }}</p>
 
             @if (placed.payment; as how) {
               <p class="pay__lead">
@@ -869,6 +888,15 @@ export class OrderPage {
   private readonly payProblem = signal<string | null>(null);
   private readonly said = signal('');
 
+  /**
+   * For <see cref="rehomeFocusIfLost"/>, which is the only thing on this page that touches the DOM.
+   *
+   * `DOCUMENT` rather than the global, so server-side rendering has something to inject — the callback
+   * that reads it runs under `afterNextRender` and therefore only in a browser.
+   */
+  private readonly document = inject(DOCUMENT);
+  private readonly injector = inject(Injector);
+
   constructor() {
     inject(Title).setTitle(brandPageTitle('Your order'));
     inject(Meta).updateTag({
@@ -1037,16 +1065,29 @@ export class OrderPage {
       return;
     }
 
+    const focused = this.focusedNow();
+
     this.cancelFailure.set(null);
     this.askingCancel.set(true);
     this.announce('Cancel this order? Choose "Yes, cancel it", or "Keep my order".');
+
+    // **The press destroys the button that was pressed.** Revealing the question swaps the whole branch
+    // of the template, so "Cancel this order" is removed and the shopper's focus falls to `<body>` —
+    // which is #109 arriving by node removal rather than by `[disabled]`, and was measured in Chromium
+    // on this very control before this line existed.
+    this.rehomeFocusIfLost(focused);
   }
 
   /** Second thoughts about the second thoughts. */
   protected keepOrder(): void {
+    const focused = this.focusedNow();
+
     this.askingCancel.set(false);
     this.cancelFailure.set(null);
     this.announce('Your order is still with us.');
+
+    // The same removal in the other direction: "Keep my order" is the node that goes.
+    this.rehomeFocusIfLost(focused);
   }
 
   /**
@@ -1066,6 +1107,10 @@ export class OrderPage {
       return;
     }
 
+    // Captured before the request, not after the answer: by then the panel may already be gone and
+    // `document.activeElement` would be `<body>` whatever had focus when the shopper pressed.
+    const focused = this.focusedNow();
+
     this.beginWrite('Cancelling your order...');
 
     this.api
@@ -1076,7 +1121,10 @@ export class OrderPage {
           this.writing.set(false);
           this.askingCancel.set(false);
           this.announce(`Order ${cancelled.orderNumber} is cancelled. The items are back on sale.`);
-          this.read();
+
+          // Re-homed after the re-read has rendered, because that is the render that removes the panel:
+          // an applied cancel turns `canCancel` false, and "Yes, cancel it" is the node that had focus.
+          this.read(() => this.rehomeFocusIfLost(focused));
         },
         error: (error: unknown) => {
           this.writing.set(false);
@@ -1091,10 +1139,52 @@ export class OrderPage {
           );
 
           // Re-read either way: the refusal rolled nothing back, and the order's state on screen is the
-          // one thing that must not be guessed from a failure.
-          this.read();
+          // one thing that must not be guessed from a failure. A refusal takes the panel away just as
+          // often as an applied cancel does, so the focus is re-homed on this path too.
+          this.read(() => this.rehomeFocusIfLost(focused));
         },
       });
+  }
+
+  /**
+   * Whatever has focus right now, or <code>null</code> on the server.
+   *
+   * Read before the signal write that removes the node, because afterwards there is nothing to compare.
+   */
+  private focusedNow(): HTMLElement | null {
+    return (this.document.activeElement as HTMLElement | null) ?? null;
+  }
+
+  /**
+   * Puts focus on the live region's sentence when the node that had it has gone.
+   *
+   * **The same rule and the same reason as `OrdersListPage.rehomeFocusIfLost`**, which this page did not
+   * have: cancelling destroys the control that was pressed — twice, once when the question replaces the
+   * button and once when the applied cancel removes the whole panel — and a destroyed focused node sends
+   * focus to `<body>`, which is #109 (six instances on this project) arriving by removal rather than by
+   * `[disabled]`.
+   *
+   * **Necessary and not sufficient**: re-homing unconditionally would be its own defect, because the
+   * reference box survives every re-read and yanking the caret out of it mid-sentence is worse than the
+   * thing being fixed. So the node is checked for `isConnected` and left alone when it is still there.
+   *
+   * **`afterNextRender`, not `queueMicrotask`.** A signal write schedules change detection as a *task*; a
+   * microtask runs before it, so the check would run against the old DOM and every node would still look
+   * connected. It is also what keeps this off the server, where there is no focus to move.
+   */
+  private rehomeFocusIfLost(focused: HTMLElement | null): void {
+    afterNextRender(
+      () => {
+        if (focused !== null && focused.isConnected) {
+          return;
+        }
+
+        this.document
+          .querySelector<HTMLElement>('[data-testid="pay-announcement"]')
+          ?.focus({ preventScroll: true });
+      },
+      { injector: this.injector },
+    );
   }
 
   protected onSlipChosen(event: Event): void {
@@ -1214,7 +1304,16 @@ export class OrderPage {
     this.read();
   }
 
-  private read(): void {
+  /**
+   * Re-reads the order.
+   *
+   * <param name="then">
+   * Run once the answer has been applied to the signals, so a caller can schedule work against the DOM
+   * the re-read produces — focus re-homing, which has to happen after the render that removed the node.
+   * It runs on the failure path too: a read that failed still changed the screen.
+   * </param>
+   */
+  private read(then?: () => void): void {
     const token = this.token();
 
     this.loading.set(true);
@@ -1235,6 +1334,8 @@ export class OrderPage {
           // the panel, so "Cancel order SD-...? This cannot be undone" about an order that is now paid or
           // cancelled would be a question with no true answer.
           this.askingCancel.set(false);
+
+          then?.();
         },
         error: (error: unknown) => {
           this.loading.set(false);
@@ -1248,10 +1349,13 @@ export class OrderPage {
               this.response.status = NOT_FOUND_STATUS;
             }
 
+            then?.();
             return;
           }
 
           this.failure.set(checkoutErrorMessage(error));
+
+          then?.();
         },
       });
   }
