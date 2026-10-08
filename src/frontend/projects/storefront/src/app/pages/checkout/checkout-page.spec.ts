@@ -181,6 +181,10 @@ function confirmation(): OrderConfirmationDto {
     // real values in every field.
     payment: null,
     proof: null,
+
+    // Doc 11 P10 flow A (W3-04b). A freshly placed order satisfies all four of step 2's guards, which is
+    // what the server answers for the order this page has just created.
+    canCancel: true,
   };
 }
 

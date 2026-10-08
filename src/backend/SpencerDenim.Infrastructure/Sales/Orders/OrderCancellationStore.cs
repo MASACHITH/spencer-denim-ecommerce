@@ -126,6 +126,15 @@ internal sealed class OrderCancellationStore(AppDbContext dbContext, IAuditLogWr
         // above is for the *message*, never for the decision — which is `DiagnoseAsync`'s rule in
         // `OrderFulfilmentStore` and `BankTransferReviewStore` before it.
         //
+        // **Measured, so the next reader does not have to guess: `Status` and `StockState` are mutually
+        // redundant here and neither can be mutation-proved alone.** Deleting either one leaves
+        // `OrderCancellationTests` at 15/15; deleting both turns 4 of the 15 red. That is because no
+        // reachable state has one without the other — every path that moves `Status` out of
+        // PendingPayment moves `StockState` in the same statement — so each is a sufficient guard by
+        // itself. They both stay because doc 08 §4.1's table names both, and because the day a path
+        // writes one without the other is exactly the day the surviving guard is the one that matters.
+        // What is *not* claimed is that a test would catch their removal one at a time.
+        //
         // The settlement guard is doc 11 P10 step 2's and doc 08 §4.1's own ("no settlement payment"),
         // and **no path in this build can reach the state it guards** — which is said plainly rather than
         // dressed up, because the first version of this comment claimed §4.2 step 3.3's savepoint

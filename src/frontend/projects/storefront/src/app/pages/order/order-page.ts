@@ -434,6 +434,18 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
           </section>
         }
 
+        <!-- **Outside the panel below, and that is a defect this page's own spec found.** The refusal
+             message used to live inside the Cancel panel, which is drawn on canCancel - and a refused
+             cancel is followed by a re-read that almost always turns canCancel false, because the order
+             has moved. So the panel disappeared, taking the explanation with it, and a shopper whose
+             press lost the race to the expiry sweep was told nothing at all.
+
+             Before the panel rather than after it, so a screen reader meets the explanation before the
+             controls it is about. -->
+        @if (cancelProblem(); as message) {
+          <p class="order__error pay__lead" role="alert" data-testid="cancel-error">{{ message }}</p>
+        }
+
         @if (placed.canCancel) {
           <!-- Doc 11 P10 flow A, the customer's half. **Two steps, because this is irreversible for
                them**: the first press reveals the confirmation, the second one fires. It is an inline
@@ -489,10 +501,6 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
                   Yes, cancel it
                 </button>
               </div>
-            }
-
-            @if (cancelProblem(); as message) {
-              <p class="order__error" role="alert" data-testid="cancel-error">{{ message }}</p>
             }
 
             <!-- Nothing promises an email, because nothing sends one: ops.EmailOutbox is W3-06's, and doc
@@ -1078,7 +1086,7 @@ export class OrderPage {
           this.cancelFailure.set(
             error instanceof HttpErrorResponse && error.status === 404
               ? 'This order can no longer be cancelled - it may already have been paid, or the hold may '
-                + 'have lapsed. We have reloaded it below so you can see where it stands.'
+                + 'have lapsed. We have reloaded it, so this page now shows where it stands.'
               : checkoutErrorMessage(error),
           );
 
