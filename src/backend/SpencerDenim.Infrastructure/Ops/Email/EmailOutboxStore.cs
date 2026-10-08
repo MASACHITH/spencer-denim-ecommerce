@@ -215,9 +215,12 @@ internal sealed class EmailOutboxStore(AppDbContext dbContext) : IEmailOutboxSto
     /// </summary>
     /// <remarks>
     /// <b>The guard is this claim and no other.</b> <c>Status = 1 AND AttemptCount = @attempt</c> means
-    /// "only if the row is still the one I claimed": a lease that expired and was reclaimed by another
+    /// "only if the row is still the one I claimed". A lease that expired and was reclaimed by another
     /// sender has a higher counter, so this statement affects nothing rather than overwriting that
-    /// sender's work. A 0-row result is therefore a real signal and the caller logs it.
+    /// sender's work — and the 0 rows are returned to the caller, which logs them, because a message sent
+    /// twice is the one failure this whole class is arranged to make visible. The status alone would not
+    /// be enough: the row would be back at <c>Sending</c> under the second sender's lease, and this
+    /// statement would happily stamp it Sent while that send was still in the air.
     /// <para>
     /// <b><c>TransportOverrideProtected</c> is NULLed</b> — doc 08 §3.8 R5: it is cleared "on any terminal
     /// status (Sent, Dead, Cancelled)". Nothing writes it in this build (the dual-send is the settings
@@ -232,17 +235,16 @@ internal sealed class EmailOutboxStore(AppDbContext dbContext) : IEmailOutboxSto
     /// those templates has to remember to come and find.
     /// </para>
     /// </remarks>
-    public async Task MarkSentAsync(
-        long id,
-        string templateCode,
+    public async Task<bool> MarkSentAsync(
+        EmailOutboxClaim claim,
         DateTime nowUtc,
         CancellationToken cancellationToken)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(templateCode);
+        ArgumentNullException.ThrowIfNull(claim);
 
-        if (EmailOutboxMessage.BodyIsClearedOnSend(templateCode))
+        if (EmailOutboxMessage.BodyIsClearedOnSend(claim.TemplateCode))
         {
-            await dbContext.Database.ExecuteSqlInterpolatedAsync(
+            return await dbContext.Database.ExecuteSqlInterpolatedAsync(
                 $"""
                 UPDATE ops.EmailOutbox
                    SET Status = {(byte)EmailOutboxStatus.Sent},
@@ -252,15 +254,14 @@ internal sealed class EmailOutboxStore(AppDbContext dbContext) : IEmailOutboxSto
                        TransportOverrideProtected = NULL,
                        BodyHtml = NULL,
                        BodyText = NULL
-                 WHERE Id = {id}
-                   AND Status = {(byte)EmailOutboxStatus.Sending};
+                 WHERE Id = {claim.Id}
+                   AND Status = {(byte)EmailOutboxStatus.Sending}
+                   AND AttemptCount = {claim.AttemptCount};
                 """,
-                cancellationToken);
-
-            return;
+                cancellationToken) == 1;
         }
 
-        await dbContext.Database.ExecuteSqlInterpolatedAsync(
+        return await dbContext.Database.ExecuteSqlInterpolatedAsync(
             $"""
             UPDATE ops.EmailOutbox
                SET Status = {(byte)EmailOutboxStatus.Sent},
@@ -268,13 +269,23 @@ internal sealed class EmailOutboxStore(AppDbContext dbContext) : IEmailOutboxSto
                    LockedUntilUtc = NULL,
                    LastError = NULL,
                    TransportOverrideProtected = NULL
-             WHERE Id = {id}
-               AND Status = {(byte)EmailOutboxStatus.Sending};
+             WHERE Id = {claim.Id}
+               AND Status = {(byte)EmailOutboxStatus.Sending}
+               AND AttemptCount = {claim.AttemptCount};
             """,
-            cancellationToken);
+            cancellationToken) == 1;
     }
 
-    public async Task<bool> MarkFailedAsync(
+    /// <summary>
+    /// Records a failed attempt, under the same "still the row I claimed" guard as
+    /// <see cref="MarkSentAsync"/>.
+    /// </summary>
+    /// <remarks>
+    /// <b>Which branch is taken is decided by <see cref="EmailBackoff"/> and not by this class</b>, from
+    /// the counter the claim's own <c>OUTPUT</c> returned — so the ladder is in one place and the two
+    /// statements here are only ever "write the next attempt time" or "write the end".
+    /// </remarks>
+    public async Task<EmailFailureOutcome> MarkFailedAsync(
         EmailOutboxClaim claim,
         string failure,
         DateTime nowUtc,
@@ -289,7 +300,7 @@ internal sealed class EmailOutboxStore(AppDbContext dbContext) : IEmailOutboxSto
         {
             // The ladder is exhausted. Terminal: no sweep claims a Dead row, because 4 is outside
             // IX_EmailOutbox_Due's filter, and v1 has no screen that could retry it (doc 11 §7 G-42).
-            await dbContext.Database.ExecuteSqlInterpolatedAsync(
+            var killed = await dbContext.Database.ExecuteSqlInterpolatedAsync(
                 $"""
                 UPDATE ops.EmailOutbox
                    SET Status = {(byte)EmailOutboxStatus.Dead},
@@ -297,14 +308,15 @@ internal sealed class EmailOutboxStore(AppDbContext dbContext) : IEmailOutboxSto
                        LastError = {clipped},
                        TransportOverrideProtected = NULL
                  WHERE Id = {claim.Id}
-                   AND Status = {(byte)EmailOutboxStatus.Sending};
+                   AND Status = {(byte)EmailOutboxStatus.Sending}
+                   AND AttemptCount = {claim.AttemptCount};
                 """,
                 cancellationToken);
 
-            return true;
+            return killed == 1 ? EmailFailureOutcome.Dead : EmailFailureOutcome.NotOurs;
         }
 
-        await dbContext.Database.ExecuteSqlInterpolatedAsync(
+        var deferred = await dbContext.Database.ExecuteSqlInterpolatedAsync(
             $"""
             UPDATE ops.EmailOutbox
                SET Status = {(byte)EmailOutboxStatus.Failed},
@@ -312,11 +324,12 @@ internal sealed class EmailOutboxStore(AppDbContext dbContext) : IEmailOutboxSto
                    NextAttemptAtUtc = {nowUtc.Add(wait)},
                    LastError = {clipped}
              WHERE Id = {claim.Id}
-               AND Status = {(byte)EmailOutboxStatus.Sending};
+               AND Status = {(byte)EmailOutboxStatus.Sending}
+               AND AttemptCount = {claim.AttemptCount};
             """,
             cancellationToken);
 
-        return false;
+        return deferred == 1 ? EmailFailureOutcome.Retrying : EmailFailureOutcome.NotOurs;
     }
 
     /// <summary>

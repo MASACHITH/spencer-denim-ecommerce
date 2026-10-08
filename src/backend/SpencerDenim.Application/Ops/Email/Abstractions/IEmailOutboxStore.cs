@@ -72,16 +72,41 @@ public interface IEmailOutboxStore
     /// (doc 08 §3.8 R5) — and the body destroyed if the template is one of the two whose link carries a
     /// single-use token (G-03).
     /// </summary>
-    Task MarkSentAsync(long id, string templateCode, DateTime nowUtc, CancellationToken cancellationToken);
+    /// <returns>
+    /// <see langword="false"/> when the row was no longer the one that was claimed — a lease that expired
+    /// and was reclaimed while this send was still in flight. The send happened; the row belongs to
+    /// somebody else, and the caller logs it, because it is the one shape in which a customer can receive
+    /// the same message twice.
+    /// </returns>
+    Task<bool> MarkSentAsync(EmailOutboxClaim claim, DateTime nowUtc, CancellationToken cancellationToken);
 
     /// <summary>
     /// The attempt failed: either back to <c>Failed</c> with <c>NextAttemptAtUtc</c> on the next rung of
     /// <c>EmailBackoff</c>, or to <c>Dead</c> when the ladder is exhausted.
     /// </summary>
-    /// <returns><see langword="true"/> when the message is now <c>Dead</c>.</returns>
-    Task<bool> MarkFailedAsync(
+    Task<EmailFailureOutcome> MarkFailedAsync(
         EmailOutboxClaim claim,
         string failure,
         DateTime nowUtc,
         CancellationToken cancellationToken);
+}
+
+/// <summary>What recording a failed attempt did to the row.</summary>
+public enum EmailFailureOutcome
+{
+    /// <summary>Back on the ladder: <c>Failed</c>, with the next attempt due after the next rung's wait.</summary>
+    Retrying = 1,
+
+    /// <summary>
+    /// Out of attempts: <c>Dead</c>, and nothing will claim it again. Doc 11 §4 (G-37) owes this an
+    /// <c>EmailDeliveryFailed</c> dashboard alert, which needs <c>ops.AdminAlerts</c>.
+    /// </summary>
+    Dead = 2,
+
+    /// <summary>
+    /// The row was no longer the one that was claimed, so nothing was written. Same cause as a
+    /// <see langword="false"/> from <see cref="IEmailOutboxStore.MarkSentAsync"/>: an expired lease that
+    /// another sender picked up.
+    /// </summary>
+    NotOurs = 3,
 }

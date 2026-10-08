@@ -221,23 +221,37 @@ internal sealed partial class SendEmailsService(
             // §3.8 keeps this table out of the audit log precisely because its contents are sensitive,
             // and a LastError holding a rendered email would put the thing we are careful about into the
             // column we are not.
-            var isDead = await store.MarkFailedAsync(
+            var outcome = await store.MarkFailedAsync(
                 claim,
                 $"{exception.GetType().Name}: {exception.Message}",
                 clock.UtcNow.UtcDateTime,
                 stoppingToken);
 
-            if (isDead)
+            switch (outcome)
             {
-                LogMessageDead(logger, claim.TemplateCode, claim.RelatedEntityId, claim.Id, exception);
-                return SendOutcome.Dead;
-            }
+                case EmailFailureOutcome.Dead:
+                    LogMessageDead(logger, claim.TemplateCode, claim.RelatedEntityId, claim.Id, exception);
+                    return SendOutcome.Dead;
 
-            LogMessageFailed(logger, claim.Id, claim.TemplateCode, claim.AttemptCount, claim.MaxAttempts);
-            return SendOutcome.Failed;
+                case EmailFailureOutcome.NotOurs:
+                    LogLeaseLost(logger, claim.Id, claim.AttemptCount);
+                    return SendOutcome.Failed;
+
+                default:
+                    LogMessageFailed(
+                        logger, claim.Id, claim.TemplateCode, claim.AttemptCount, claim.MaxAttempts);
+                    return SendOutcome.Failed;
+            }
         }
 
-        await store.MarkSentAsync(claim.Id, claim.TemplateCode, clock.UtcNow.UtcDateTime, stoppingToken);
+        if (!await store.MarkSentAsync(claim, clock.UtcNow.UtcDateTime, stoppingToken))
+        {
+            // The message went out, but the row had already been reclaimed by another sender — so that
+            // sender will send it again and the customer gets two. This is the only way a duplicate can
+            // happen, it is logged with the row id so it can be matched to the other sender's line, and
+            // the fix if it ever repeats is a longer `Email:LeaseMinutes`, not a change here.
+            LogLeaseLost(logger, claim.Id, claim.AttemptCount);
+        }
 
         return SendOutcome.Sent;
     }
@@ -323,6 +337,14 @@ internal sealed partial class SendEmailsService(
         string? orderPublicId,
         long messageId,
         Exception exception);
+
+    [LoggerMessage(
+        EventId = 3408,
+        Level = LogLevel.Warning,
+        Message = "Email {MessageId} was handled on attempt {AttemptCount}, but its row had already been "
+            + "reclaimed by another sender, so the result could not be recorded against it. The message "
+            + "may reach the customer twice. Lengthen Email__LeaseMinutes if this repeats.")]
+    private static partial void LogLeaseLost(ILogger logger, long messageId, short attemptCount);
 
     [LoggerMessage(
         EventId = 3405,

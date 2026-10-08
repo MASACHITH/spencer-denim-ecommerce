@@ -401,24 +401,27 @@ public sealed class SendEmailsServiceTests
             return Task.FromResult<IReadOnlyList<EmailOutboxClaim>>(Queue.Take(batchSize).ToList());
         }
 
-        public Task MarkSentAsync(
-            long id,
-            string templateCode,
+        public Task<bool> MarkSentAsync(
+            EmailOutboxClaim claim,
             DateTime nowUtc,
             CancellationToken cancellationToken)
         {
-            Sent.Add((id, templateCode));
-            return Task.CompletedTask;
+            Sent.Add((claim.Id, claim.TemplateCode));
+            return Task.FromResult(true);
         }
 
-        public Task<bool> MarkFailedAsync(
+        public Task<EmailFailureOutcome> MarkFailedAsync(
             EmailOutboxClaim claim,
             string failure,
             DateTime nowUtc,
             CancellationToken cancellationToken)
         {
             Failed.Add((claim.Id, failure));
-            return Task.FromResult(EmailBackoff.DelayAfter(claim.AttemptCount, claim.MaxAttempts) is null);
+
+            return Task.FromResult(
+                EmailBackoff.DelayAfter(claim.AttemptCount, claim.MaxAttempts) is null
+                    ? EmailFailureOutcome.Dead
+                    : EmailFailureOutcome.Retrying);
         }
     }
 }
