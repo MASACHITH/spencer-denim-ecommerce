@@ -305,15 +305,25 @@ Run on this machine, `TEST_SQL_CONNECTION` pointed at `(localdb)\MSSQLLocalDB`.
 | Suite | Before (main) | After round 1 | **After round 2** | New |
 |---|---|---|---|---|
 | xUnit unit | 1,726 / 0 | 1,808 / 0 | **1,812 / 0** | 86 (and 7 deleted: see item 7) |
-| xUnit integration | 1,124 | 1,192 / 0 | **see below** | 73 |
+| xUnit integration | 1,124 | 1,192 / 0 | **1,216 / 0** | 92 |
 | Vitest — shared | 24 | 24 | 24 | — |
 | Vitest — storefront | 1,404 | 1,404 | **1,407 / 0** | 3 |
 | Vitest — admin | 407 | 444 / 0 | **459 / 0** | 52 |
-| Playwright (chromium) | 891 / 0 | 920 / 0 | **see below** | 33 |
+| Playwright (chromium) | 891 / 0 | 920 / 0 | **928 / 0** | 37 |
 
 **The whole-assembly integration run looked hung at 16 minutes with 3 s of CPU and no SQL session, and was
 not**: it finished green at 21 m 8 s. Worth knowing before somebody kills one. (An attempt to kill it was
-refused by the permission system, which turned out to be the right answer.)
+refused by the permission system, which turned out to be the right answer.) Round 2's two runs were
+**16 m 0 s** and **15 m 54 s**, both 1,216 / 0, and both showed the same profile: the two `dotnet`
+processes sitting on about 1.5 s of CPU while `sqlservr` does the work. The check that settles it is
+`MAX(last_request_end_time)` in `sys.dm_exec_sessions` against the server clock, not CPU time.
+
+**Round 2's Playwright run found two defects in the four tests it was added to run** — the exhaustive
+heading list, which exists to catch exactly the new panel it caught, and my own re-use of `openSettings` to
+check that a save had persisted, which reseeds the stub's state cookie and so read every field back blank.
+The second is the one worth remembering: the assertion was right and the fixture was wrong, and the easy
+"fix" — asserting the boxes instead of re-reading — would have deleted the only part of the test that
+proved anything.
 
 **The three Vitest projects are listed separately because a single "1,404 / 407 / 24" is ambiguous and I
 got it wrong first.** Measured one project at a time on this machine: `shared` is **24**, `storefront` is
@@ -321,7 +331,7 @@ got it wrong first.** Measured one project at a time on this machine: `shared` i
 order *storefront / admin / shared*, which is neither alphabetical nor the order `npm run test:ci` runs
 them in (`shared`, `storefront`, `admin`). Worth writing down per project from now on.
 
-Ports: every `E2E_*_PORT` was overridden into **4820–4836**, scanned free first. `4502` (`charon-svc`) and
+Ports: every one of the **seventeen** `E2E_*_PORT` variables was overridden — round 1 into **4820–4836**, round 2 into **4860–4876** — the whole band scanned free first each time. Overriding is not optional here: two of the config's defaults are **4432/4433**, which this machine's protected list covers.  `4502` (`charon-svc`) and
 `4767` (`PanGPS`) were identified by PID and left alone; nothing was killed.
 
 ## Round 2: the tester's verdict, and what it changed
@@ -335,7 +345,7 @@ eight of NBSP, ZWSP, BOM, soft hyphen, tab, word joiner, LRM and ideographic spa
 ### Blocker 1 — I made the integration suite flaky and reported a number that was not reproducible
 
 `SettingsSchemaAndSeedTests.The_seeder_creates_every_catalogued_key_with_no_invented_value` asserted a
-**global** property of the shared, deliberately-mutated `ops.Settings` table. Four classes in this assembly
+**global** property of the shared, deliberately-mutated `ops.Settings` table. Several classes in this assembly
 set a settings value and restore it, and the classes **interleave** — so it failed about one run in three.
 
 Measured, before and after, with the tester's four-class filter: **2 failures in 6 batches → 0 in 6.**
@@ -411,6 +421,74 @@ sweep now measures the transition buttons **before** pressing one: it clicked St
 `start-processing`, `ready-for-collection`, `mark-delivered`, `accept-late` and `refusal-reload` were never
 measured at 320 px — a sweep with the audit done and the subject missing.
 
+### The second member of blocker 1's family, which the review did not name and I found looking for it
+
+The blocker was one test asserting a settings value nothing in it had written. Sweeping for the *shape*
+rather than the instance turned up another of mine: `AutoDeliverShippedTests.The_window_is_read_from_the_
+settings_row` opened by asserting that an unwritten read of `Orders.AutoDeliverAfterDays` answers the seeded
+7 — and `AdminSettingsEndpointTests.RestoreAsync` nulls **every** catalogued key in its `finally`, thirty-three
+times per run, from a class that interleaves with this one.
+
+It now writes two different values and asserts both. Two rather than one on purpose: a reader that returned
+a constant would pass a single-value test whenever that constant was the value written, and mutation
+confirms it — pinning the reader to a hard-coded 14 turns the two-value test red.
+
+The same sweep found two more things worth recording:
+
+- **`RestoreAsync` put every key back to null**, which was correct while every key was seeded empty. W3-04
+  added the first key the seeder gives a *value*, so the restore was leaving the database in a state the
+  seeder never produces, and handing the auto-deliver job's own tests a window of null. It now restores
+  `SettingDefinition.SeedValue`.
+- **The sequential-execution falsehood is in thirteen files**, not one. Two of them are in
+  `AdminSettingsEndpointTests` — the file whose restore semantics blocker 1 turned on — and those are
+  corrected, with the rule that actually holds: because classes interleave, a `finally` stops this class
+  leaving a mess but cannot stop a neighbour making one mid-test, so no test may assert a settings value it
+  did not itself write. **The other eleven are other tasks' files** and I have deliberately not touched
+  them; the list is in "What is owed, and by whom", because each needs a judgement about whether that
+  particular fixture is actually safe, and a sweeping comment edit across catalog, content and sales tests
+  from this branch would be a change nobody reviewed for the thing it claims.
+
+### The settings form had no server-side test at all, which is exactly #126's pairing
+
+Decision 5 shipped with six Vitest specs, and issue #126 says in as many words that Playwright never starts
+this API — so what existed proved only what the screen *sends*. Ten tests now cover the endpoint against
+real SQL Server: the round trip read back from the database rather than the payload (W1-12's blocker was a
+field that never reached the request, which a round trip through the same read model cannot see), the
+absent-versus-null guarantee over a fixture **filled first** (against empty rows that bug is invisible), the
+window's range and its own bounds on the wire, the over-long refusals all named in one response, a stale
+token as a 409 that writes nothing including the fields not in conflict, one audit row per changed key and
+none for a key re-sent unchanged, and the form and `IOrderSettingsReader` agreeing *through the database*.
+
+That last one is the test I would keep if I could keep one: the write path and the reader are different code
+with different key lists, and the only failure that reaches a client — a form that saves and an invoice that
+still prints nothing — is invisible to either half alone.
+
+**The route was also missing from `Routes()`**, the helper the file's two authorisation tests enumerate. So
+neither "refuses an anonymous caller" nor "refuses a signed-in caller without `Settings.Edit`" covered the
+newest write route in the file. Added, and mutation-proved by deleting the endpoint's `RequirePermission`:
+both tests go red, which is what makes the new line load-bearing rather than decorative.
+
+### Decision 6's other half: which unrendered fields are dead, and which are owed
+
+The review asked which of finding 6's remaining unrendered fields I judge genuinely dead rather than owed.
+Eight are still unrendered after `cancelReason` and the refund's `completedAtUtc` went in.
+
+**Genuinely dead on this screen:**
+
+| Field | Why |
+|---|---|
+| `totals.itemsOriginalTotal`, `totals.itemsListTotal` | Derivable from three figures the panel already shows (`itemsSubtotal`, `markdownDiscountTotal`, `campaignDiscountTotal`). A fourth and fifth number that must add up is a number that can be made to disagree, and the reduction a staff member is asked about is already on screen as an amount. |
+| `delivery.zone` | An internal pricing band. The screen shows the district, which is what staff and the courier use, and the delivery fee the zone explains. |
+| `payment.slipContentType` | A MIME type. The screen links the slip and the browser decides how to open it; printing `image/jpeg` beside it is noise. |
+| `lines[].productCode` | The SKU already identifies the variant uniquely and is shown with name, colour and size. The product code is what a *packing slip* wants, and a packing slip is not in ADM-09's deliverable list. |
+
+**Owed, and I can name the task:**
+
+| Field | To whom, and why |
+|---|---|
+| `lines[].promoDiscountAllocated` | **W3-05's partial refund.** It is the per-line share of a promo code's discount, and a line refunded at its `lineSubtotal` rather than its `lineTotal` refunds money the shop never took. This is the one on the list I would call a real gap rather than a tidy-up. |
+| `lines[].unitOriginalPrice`, `lines[].unitListPrice` | The answer to a price dispute — "the site said Rs. X that day" — cheapest as a struck-through figure beside the unit price. It belongs with whatever next renders line-level price detail, and it is not urgent while the two discount totals are shown. |
+
 ### Three corrections the tester made to its own brief, recorded because they matter
 
 1. **ADM-12 is ✅ in scope** at doc 02 line 117 — a different *task*, not out of scope. The check meant (no
@@ -435,6 +513,7 @@ measured at 320 px — a sweep with the audit done and the subject missing.
 | 7 | **`inventory.InventoryMovements`** (#108). Unchanged by this task — none of these four transitions touches stock. | W1-05 / ADM-12 |
 | 8 | **ADM-12's inventory screen** is explicitly *not* this task and is untouched. | ADM-12 |
 | 9 | No `progress-data.js` change, no `MEMORY.md`, no `TASKS.md` (doc 14's rule). | owner's session |
+| 10 | **Eleven test files still say the integration assembly "runs its classes sequentially", and it does not** (measured). A wrong comment about the harness is why #114's family keeps being diagnosed as a fixture leak, so it is worth fixing — but each file needs a judgement about whether *that* fixture is actually safe, and a sweeping comment edit across another task's catalog, content and sales tests from this branch would be a change nobody reviewed for the thing it claims. The files: `AdminAuthEndpointTests`, `AdminBankTransferEndpointTests`, `AdminCatalogEndpointTests`, `UserEndpointTests`, `CatalogRenditionTests`, `CatalogSitemapTests`, `CatalogVisibilityTests`, `SizeGuideContentTests`, `HomeEndpointTests`, `BankTransferTestBase`, `CheckoutEndpointTests`, `SalesSchemaTestBase`, `WishlistSchemaTests`. The two in `AdminSettingsEndpointTests` are corrected here, because that is the file blocker 1 turned on. | #114 |
 
 ## What I deliberately did not build
 
