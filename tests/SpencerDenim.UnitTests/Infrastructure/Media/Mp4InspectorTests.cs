@@ -92,8 +92,28 @@ public sealed class Mp4InspectorTests
     }
 
     /// <summary>
-    /// Ten thousand eight-byte boxes: the walk is budgeted, so this costs a bounded amount of work instead
+    /// Ten thousand eight-byte boxes: the walk is capped, so this costs a bounded amount of work instead
     /// of turning one request into a CPU spike on a two-core machine.
+    /// <para>
+    /// <b>The cap that fires here is <c>MaxChildrenPerBox</c> (512), not <c>BoxBudget</c> (4,096)</b>,
+    /// which the name of this case reads as. The file has no <c>moov</c> at all, so the top-level
+    /// <c>ReadBoxes</c> loop stops on its child cap after 512 <c>free</c> boxes with 3,584 of the budget
+    /// still unspent, and <c>TryInspect</c> returns null for want of a <c>moov</c>. Checked twice over:
+    /// in the loop condition on <c>ReadBoxes</c>, and by measuring — 10,000 boxes against 40,000 costs
+    /// <b>0.98–1.02x</b>, and 1,000 against 4,000 costs <b>1.00x</b>, so the cost does not move with the
+    /// box count in either range.
+    /// </para>
+    /// <para>
+    /// <b>The five-second bound stays, and it is deliberately not converted to a ratio (#134.)</b> Every
+    /// other absolute timing bound in this suite became a ratio, because each was asserting a cost. This
+    /// one cannot: the work is bounded by a <i>counter</i> in production code, so the cost is flat in the
+    /// input by construction and a scaling ratio here would be 1.00x for any pair of counts above 512 —
+    /// an assertion that cannot fail, which is the defect being fixed rather than a fix for it. What the
+    /// clock is doing is what <c>A_zero_length_box_does_not_hang_the_walk</c>'s <c>Task.Delay</c> does
+    /// one case up: proving the walk <i>returns at all</i>. Liveness is not a budget, and it has no
+    /// shape to measure. Nor is it the #134 failure mode: the call is <b>0.021 ms</b> here, measured, a
+    /// margin of some <b>234,000x</b>, where the sanitiser case that was going red on CI had six.
+    /// </para>
     /// </summary>
     [Fact]
     public void Thousands_of_tiny_boxes_are_bounded_by_the_budget()
