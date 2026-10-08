@@ -1883,6 +1883,100 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                     b.ToTable("MediaUsages", "media");
                 });
 
+            modelBuilder.Entity("SpencerDenim.Domain.Ops.EmailOutboxMessage", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<short>("AttemptCount")
+                        .HasColumnType("smallint");
+
+                    b.Property<string>("BodyHtml")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("BodyText")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2(3)")
+                        .HasDefaultValueSql("sysutcdatetime()");
+
+                    b.Property<string>("DeduplicationKey")
+                        .HasColumnType("varchar(150)");
+
+                    b.Property<string>("LastError")
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
+
+                    b.Property<DateTime?>("LockedUntilUtc")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<short>("MaxAttempts")
+                        .HasColumnType("smallint");
+
+                    b.Property<DateTime>("NextAttemptAtUtc")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<string>("RelatedEntityId")
+                        .HasColumnType("varchar(100)");
+
+                    b.Property<string>("RelatedEntityType")
+                        .HasColumnType("varchar(40)");
+
+                    b.Property<DateTime?>("SentAtUtc")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<byte>("Status")
+                        .HasColumnType("tinyint");
+
+                    b.Property<string>("Subject")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<string>("TemplateCode")
+                        .IsRequired()
+                        .HasColumnType("varchar(50)");
+
+                    b.Property<string>("ToEmail")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("ToName")
+                        .HasMaxLength(120)
+                        .HasColumnType("nvarchar(120)");
+
+                    b.Property<string>("TransportOverrideProtected")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DeduplicationKey")
+                        .IsUnique()
+                        .HasDatabaseName("UX_EmailOutbox_Dedup")
+                        .HasFilter("[DeduplicationKey] IS NOT NULL");
+
+                    b.HasIndex("LockedUntilUtc")
+                        .HasDatabaseName("IX_EmailOutbox_Stuck")
+                        .HasFilter("[Status] = 1");
+
+                    b.HasIndex("NextAttemptAtUtc")
+                        .HasDatabaseName("IX_EmailOutbox_Due")
+                        .HasFilter("[Status] IN (0, 3)");
+
+                    b.ToTable("EmailOutbox", "ops", t =>
+                        {
+                            t.HasCheckConstraint("CK_EmailOutbox_Attempts", "[AttemptCount] >= 0 AND [MaxAttempts] >= 1");
+
+                            t.HasCheckConstraint("CK_EmailOutbox_Status", "[Status] BETWEEN 0 AND 5");
+                        });
+                });
+
             modelBuilder.Entity("SpencerDenim.Domain.Reference.District", b =>
                 {
                     b.Property<int>("Id")
