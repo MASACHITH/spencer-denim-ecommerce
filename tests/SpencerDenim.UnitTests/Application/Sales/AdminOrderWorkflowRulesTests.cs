@@ -1,3 +1,4 @@
+using SpencerDenim.Application.Sales.Orders.Abstractions;
 using SpencerDenim.Application.Sales.Orders.Admin;
 using SpencerDenim.Application.Sales.Orders.Contracts;
 using SpencerDenim.Domain.Sales;
@@ -11,6 +12,60 @@ namespace SpencerDenim.UnitTests.Application.Sales;
 /// </summary>
 public sealed class AdminOrderWorkflowRulesTests
 {
+    /// <summary>
+    /// <b>Doc 08 §4.1 G-09, as a test: <c>Cancelled</c> is never the System's.</b>
+    /// </summary>
+    /// <remarks>
+    /// §4.1's own words for <c>PendingPayment → Cancelled</c> are "<c>Orders.Edit</c>; customer (own
+    /// order). <b>Never the System</b> (G-09)" — a denied PayPal capture only shortens
+    /// <c>PaymentDueAtUtc</c> and the order then reaches <b>Expired</b>, because doc 11 P10's rule is that
+    /// Expired means nobody paid in time and Cancelled means a person decided. The reports rest on that
+    /// distinction.
+    /// <para>
+    /// <b>This asserts the <i>shape</i> of the API rather than a behaviour</b>, which is the only place
+    /// the rule can be made structural: <see cref="OrderCancelledBy"/> has two members and no
+    /// <c>SystemJob</c>, so a future job has nothing to pass. A test of a cancel's <i>source</i> would
+    /// pass against an enum that had grown a third member nobody had used yet.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void A_cancellation_can_only_be_a_customer_or_a_staff_member_and_never_the_system()
+    {
+        Assert.Equal(
+            [OrderCancelledBy.Customer, OrderCancelledBy.Staff],
+            Enum.GetValues<OrderCancelledBy>().OrderBy(member => member).ToArray());
+
+        // And each one maps on to the history source of the same name, so the timeline says who. The
+        // numeric values are asserted because OrderStatusHistory.Source is a persisted byte: a
+        // renumbering would silently relabel every row ever written.
+        Assert.Equal((int)OrderStatusChangeSource.Customer, (int)OrderCancelledBy.Customer);
+        Assert.Equal((int)OrderStatusChangeSource.Staff, (int)OrderCancelledBy.Staff);
+    }
+
+    /// <summary>
+    /// The refusal codes a client branches on are distinct, and none of them is a message.
+    /// </summary>
+    /// <remarks>
+    /// Two codes with the same string would collapse two different remedies into one — "the order is
+    /// paid, speak to us about a refund" and "a payment is being processed, try again shortly" — and the
+    /// screens would then draw the wrong sentence for one of them. Snake-case lower is the convention
+    /// every other refusal code in this project follows.
+    /// </remarks>
+    [Fact]
+    public void The_cancel_refusal_codes_are_distinct_and_stable()
+    {
+        string[] codes =
+        [
+            CancelOrderRefusalCodes.WrongStatus,
+            CancelOrderRefusalCodes.CaptureInProgress,
+            CancelOrderRefusalCodes.PayPalPending,
+            CancelOrderRefusalCodes.PaymentSettling,
+        ];
+
+        Assert.Equal(codes.Length, codes.Distinct(StringComparer.Ordinal).Count());
+        Assert.All(codes, code => Assert.Matches("^[a-z][a-z_]*[a-z]$", code));
+    }
+
     /// <summary>
     /// <b>Doc 11 P9 step 1, as a test.</b> "Opens <b>Orders</b>, filter <b>Paid</b> (oldest first)": the
     /// oldest paid order is the one a customer has been waiting longest for, and a newest-first list
