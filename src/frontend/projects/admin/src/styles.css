@@ -166,9 +166,22 @@ textarea.adm-input {
   border-color: var(--color-sale);
 }
 
+/*
+ * `aria-disabled` looks the same as `disabled`, and `base.css` makes the same argument for the storefront's
+ * own `.btn`: a control that says it is unavailable has to look unavailable, or the only people who know
+ * are the ones using a screen reader.
+ *
+ * **Which the admin screens need because `[disabled]` is the thing they must not use.** Issue #109, six
+ * instances: `[disabled]` on a button whose state changes under the user throws focus to `<body>`, so the
+ * pattern here is `aria-disabled` plus refusing the activation in the handler. Playwright's
+ * `toBeDisabled()` honours it, which is why the browser tests did not have to change shape.
+ */
 .adm-btn:disabled,
 .adm-btn--primary:disabled,
-.adm-btn--danger:disabled {
+.adm-btn--danger:disabled,
+.adm-btn[aria-disabled='true'],
+.adm-btn--primary[aria-disabled='true'],
+.adm-btn--danger[aria-disabled='true'] {
   opacity: 0.5;
   cursor: not-allowed;
 }

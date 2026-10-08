@@ -141,9 +141,10 @@ public sealed class SettingCatalogTests
     /// </summary>
     /// <remarks>
     /// Five keys when ADM-22 shipped; ten once W2-11 completed the <c>Contact</c> group; fifteen since
-    /// W3-03 added the <c>Bank</c> group, which doc 11 P7 makes a precondition of taking money at all.
-    /// The test's name does not count them, because a name that counts is a name that has to be renamed —
-    /// and this list has now been renamed past twice in two weeks.
+    /// W3-03 added the <c>Bank</c> group, which doc 11 P7 makes a precondition of taking money at all; and
+    /// twenty since W3-04 added the four <c>Store.*</c> legal keys an invoice prints and the <c>Orders</c>
+    /// group's auto-deliver window. The test's name does not count them, because a name that counts is a
+    /// name that has to be renamed — and this list has now been renamed past three times in two weeks.
     /// </remarks>
     [Fact]
     public void The_keys_this_build_populates_are_all_there_and_nothing_else_is()
@@ -165,6 +166,11 @@ public sealed class SettingCatalogTests
             SettingKeys.Bank.AccountName,
             SettingKeys.Bank.AccountNumber,
             SettingKeys.Bank.Instructions,
+            SettingKeys.Store.LegalName,
+            SettingKeys.Store.Address,
+            SettingKeys.Store.BRNumber,
+            SettingKeys.Store.VatNumber,
+            SettingKeys.Orders.AutoDeliverAfterDays,
         ];
 
         Assert.Equal(expected.Order(StringComparer.Ordinal), SettingCatalog.All.Select(d => d.Key).Order(StringComparer.Ordinal));
@@ -326,13 +332,27 @@ public sealed class SettingCatalogTests
     [Fact]
     public void Groups_are_listed_once_each_in_catalogue_order()
     {
-        Assert.Equal(["Store", "Contact", "Social", "Bank"], SettingCatalog.Groups);
+        // `Store` appears once although W3-04 added four more keys to it further down the list: Groups is
+        // distinct, and that is what the "once each" in the name is about.
+        Assert.Equal(["Store", "Contact", "Social", "Bank", "Orders"], SettingCatalog.Groups);
     }
 
     [Fact]
     public void Keys_in_a_group_are_the_keys_whose_group_it_is()
     {
-        Assert.Equal([SettingKeys.Store.LogoAssetId], SettingCatalog.KeysIn(SettingKeys.Store.Group));
+        Assert.Equal(
+            [
+                SettingKeys.Store.LogoAssetId,
+                SettingKeys.Store.LegalName,
+                SettingKeys.Store.Address,
+                SettingKeys.Store.BRNumber,
+                SettingKeys.Store.VatNumber,
+            ],
+            SettingCatalog.KeysIn(SettingKeys.Store.Group));
+
+        Assert.Equal(
+            [SettingKeys.Orders.AutoDeliverAfterDays],
+            SettingCatalog.KeysIn(SettingKeys.Orders.Group));
 
         Assert.Equal(
             [SettingKeys.Social.FacebookUrl, SettingKeys.Social.InstagramUrl, SettingKeys.Social.TikTokUrl],

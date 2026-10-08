@@ -4,6 +4,7 @@ using SpencerDenim.Application.Catalog;
 using SpencerDenim.Application.Sales.Cart.Contracts;
 using SpencerDenim.Application.Sales.Checkout.Abstractions;
 using SpencerDenim.Application.Sales.Checkout.Contracts;
+using SpencerDenim.Application.Sales.Orders.Contracts;
 using SpencerDenim.Domain.Catalog;
 using SpencerDenim.Domain.Media;
 using SpencerDenim.Domain.Reference;
@@ -380,6 +381,14 @@ internal sealed class CheckoutReader(AppDbContext dbContext, IOptions<CatalogOpt
             row.OrderNumber,
             row.PublicId,
             row.Status.ToString(),
+
+            // The shopper's own wording, from the one function the admin screens use. Doc 11 P9's pickup
+            // variant: `Shipped` reads as "Ready for collection" and `Delivered` as "Collected" for an
+            // order the customer collects. The page printed `status.toLowerCase()` before this, so a
+            // pickup customer read "This order is shipped."
+            OrderStatusLabels.For(
+                row.Status,
+                string.Equals(row.DeliveryMethodCode, DeliveryMethod.PickupCode, StringComparison.Ordinal)),
             row.Email,
             row.FirstName,
             row.LastName,

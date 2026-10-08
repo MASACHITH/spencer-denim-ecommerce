@@ -67,6 +67,22 @@ async function openSettings(page: Page): Promise<void> {
   await expect(page.getByRole('heading', { level: 2, name: 'Logo' })).toBeVisible();
 }
 
+/**
+ * Opens the settings screen **again**, keeping the state this test has already written.
+ *
+ * <b>Not <c>openSettings</c>.</b> That helper seeds a fresh random `e2e_state` cookie, which is exactly
+ * right for starting a test and exactly wrong for checking that a save persisted: it hands the stub a new,
+ * empty state, so every field reads back blank and the test fails for a reason that has nothing to do with
+ * the screen. This was a real mistake in the first version of the invoice round-trip test, and the browser
+ * run is what found it.
+ */
+async function reopenSettings(page: Page): Promise<void> {
+  await page.goto(`${adminURL}/settings`);
+
+  await expect(page.getByRole('heading', { level: 1, name: 'Settings' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 2, name: 'Logo' })).toBeVisible();
+}
+
 test.describe('the logo panel (GLB-02)', () => {
   test('says there is no logo, and the storefront is showing the name as text', async ({ page }) => {
     await openSettings(page);
@@ -493,14 +509,17 @@ test.describe('the settings screen is usable and accessible', () => {
       nodes.map((node) => `${node.tagName.toLowerCase()}:${node.textContent?.trim()}`),
     );
 
-    // W3-03 (PAY-01) adds the third panel: the bank details a shopper is told to transfer to. The list is
-    // exhaustive on purpose — a panel appearing without a heading, or out of order, is the defect this
-    // test exists for — so a new panel is expected to come back here and say so.
+    // W3-03 (PAY-01) added the third panel: the bank details a shopper is told to transfer to. W3-04 added
+    // the fourth: the company's registered details as an invoice prints them, and the auto-deliver window.
+    // The list is exhaustive on purpose — a panel appearing without a heading, or out of order, is the
+    // defect this test exists for — so a new panel is expected to come back here and say so. It did, and
+    // this test is how the new panel was noticed in a browser at all.
     expect(headings).toEqual([
       'h1:Settings',
       'h2:Logo',
       'h2:Contact and social',
       'h2:Bank transfer',
+      'h2:Invoice and fulfilment',
     ]);
   });
 
@@ -662,5 +681,120 @@ test.describe('the settings screen is usable and accessible', () => {
 
     // The Remove button is a destructive action, so it has to be a real target rather than a thin link.
     expect(await undersized(page, '[data-testid="logo-remove"]')).toEqual([]);
+  });
+
+  // ---- W3-04: the invoice and fulfilment form ------------------------------------------------
+
+  /**
+   * **The form ADM-09 needed, measured at every breakpoint.**
+   *
+   * It arrived in W3-04's second round with six Vitest specs and ten integration tests, and no browser
+   * measurement at all - so the project's non-negotiable responsive rule had never been applied to it. A
+   * sweep is the only thing that can catch a field that renders off-screen or a Save button under the
+   * floor, because neither the specs (no layout) nor the integration tests (no browser) can see it.
+   */
+  test('the invoice form fits every breakpoint with real tap targets', async ({ page }) => {
+    const fields = [
+      '[data-testid="field-legalName"]',
+      '[data-testid="field-registeredAddress"]',
+      '[data-testid="field-brNumber"]',
+      '[data-testid="field-vatNumber"]',
+      '[data-testid="field-autoDeliverAfterDays"]',
+      '[data-testid="save-invoice"]',
+    ];
+
+    for (const width of BREAKPOINTS) {
+      await page.setViewportSize({ width, height: 900 });
+      await openSettings(page);
+
+      expect(
+        await horizontalOverflow(page),
+        `horizontal overflow at ${width}px with the invoice form on screen`,
+      ).toBeLessThanOrEqual(0);
+
+      // #80: each selector is guarded on its own. A compound selector's guard is satisfied by its first
+      // clause while a later one silently matches nothing, and `undersized` answers [] for "nothing
+      // matched" as well as for "everything is big enough" - so an unguarded sweep over six fields is a
+      // sweep that cannot fail.
+      for (const selector of fields) {
+        const rendered = await page.evaluate(
+          (one) =>
+            [...document.querySelectorAll<HTMLElement>(one)].filter(
+              (element) => element.getClientRects().length > 0,
+            ).length,
+          selector,
+        );
+
+        expect(
+          rendered,
+          `nothing rendered matches "${selector}" at ${width}px, so measuring it could not fail`,
+        ).toBeGreaterThan(0);
+
+        expect(await undersized(page, selector), `${selector} at ${width}px`).toEqual([]);
+      }
+    }
+  });
+
+  /**
+   * The round trip, through the screen: type, save, re-read, and the values are the ones the server now
+   * holds rather than the ones left in the boxes.
+   */
+  test('saving the invoice details sends them and shows what came back', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await openSettings(page);
+
+    await page.locator('[data-testid="field-legalName"]').fill('A Registered Company (Pvt) Ltd');
+    await page.locator('[data-testid="field-registeredAddress"]').fill('No. 1, Example Road\nColombo 00100');
+    await page.locator('[data-testid="field-brNumber"]').fill('PV-00000');
+    await page.locator('[data-testid="field-autoDeliverAfterDays"]').fill('10');
+
+    const saved = page.waitForResponse(
+      (response: Response) =>
+        response.url().includes('/api/admin/settings/invoice-and-fulfilment')
+        && response.request().method() === 'PUT',
+    );
+
+    await page.locator('[data-testid="save-invoice"]').click();
+    expect((await saved).status()).toBe(204);
+
+    // Re-opened rather than re-read from the boxes: the screen re-reads after a save, and a form that kept
+    // showing what was typed would hide a field the server never stored. `reopenSettings` keeps this
+    // test's own stub state — see its remarks for what using `openSettings` here cost.
+    await reopenSettings(page);
+
+    await expect(page.locator('[data-testid="field-legalName"]')).toHaveValue(
+      'A Registered Company (Pvt) Ltd',
+    );
+    await expect(page.locator('[data-testid="field-brNumber"]')).toHaveValue('PV-00000');
+    await expect(page.locator('[data-testid="field-autoDeliverAfterDays"]')).toHaveValue('10');
+  });
+
+  /**
+   * The window's refusal reaches the field rather than a banner, because a figure a staff member cannot
+   * see refused beside the box is a figure they retype unchanged.
+   */
+  test('a window outside the range is refused against its own field', async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 900 });
+    await openSettings(page);
+
+    await page.locator('[data-testid="field-autoDeliverAfterDays"]').fill('0');
+    await page.locator('[data-testid="save-invoice"]').click();
+
+    const error = page.locator('[data-testid="error-autoDeliverAfterDays"]');
+    await expect(error).toBeVisible();
+
+    // And the refusal itself does not push the narrowest viewport sideways.
+    expect(await horizontalOverflow(page), 'horizontal overflow at 320px with a field error').toBeLessThanOrEqual(0);
+  });
+
+  /**
+   * The seeded window is on screen when the page opens, which is what tells a staff member the system is
+   * already closing orders after seven days rather than not at all.
+   */
+  test('the seeded auto-deliver window is shown rather than an empty box', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await openSettings(page);
+
+    await expect(page.locator('[data-testid="field-autoDeliverAfterDays"]')).toHaveValue('7');
   });
 });

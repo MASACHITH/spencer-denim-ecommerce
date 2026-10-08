@@ -8,6 +8,7 @@ using SpencerDenim.Api.Authorization;
 using SpencerDenim.Api.Http;
 using SpencerDenim.Application.Abstractions.Messaging;
 using SpencerDenim.Application.Abstractions.Results;
+using SpencerDenim.Application.Sales.Orders.Admin;
 using SpencerDenim.Application.Sales.Payments.Admin;
 using SpencerDenim.Application.Settings;
 using SpencerDenim.Application.Settings.Admin;
@@ -122,7 +123,84 @@ internal static class AdminSettingsEndpoints
             .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status500InternalServerError);
 
+        api.MapPut("/invoice-and-fulfilment", UpdateInvoiceAndFulfilmentAsync)
+            .RequirePermission(Permissions.Settings.Edit)
+            .WithName("AdminUpdateInvoiceAndFulfilmentSettings")
+            .WithSummary("The company's invoice details and the auto-deliver window (ADM-09, doc 08 §3.8).")
+            .WithDescription(
+                "The registered name, address, BR number and VAT number an invoice prints, and how many "
+                + "days after dispatch the system closes an order nobody has confirmed. **Nothing is "
+                + "invented for an unset value**: an invoice prints no line at all rather than a "
+                + "placeholder, because it is a legal document. The registered name is the company's, not "
+                + "the shop's \u2014 everything a shopper reads is the shop's name. A field the body "
+                + "leaves out is not written; send null to clear one deliberately. Emptying the "
+                + "auto-deliver window stops the job rather than defaulting it, so staff then confirm "
+                + "every delivery by hand.")
+            .Accepts<UpdateInvoiceAndFulfilmentSettingsRequest>("application/json")
+            .Produces(StatusCodes.Status204NoContent)
+            .ProducesValidationProblem()
+            .Produces(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status500InternalServerError);
+
         return endpoints;
+    }
+
+    /// <summary>
+    /// ADM-09's invoice details and the auto-deliver window.
+    /// </summary>
+    /// <remarks>
+    /// The same body reader as the bank group's, and for the same reason: presence, not just value. These
+    /// are <c>Settings.Edit</c> so every caller who reaches the form receives every box — but a screen that
+    /// omitted one would still clear it if absent meant null, and that is the defect four of this project's
+    /// own have been.
+    /// </remarks>
+    private static async Task<IResult> UpdateInvoiceAndFulfilmentAsync(
+        HttpContext httpContext,
+        IAntiforgery antiforgery,
+        ICommandHandler<UpdateInvoiceAndFulfilmentSettingsCommand, SettingsWriteResult> handler,
+        CancellationToken cancellationToken)
+    {
+        if (await AdminWriteRequest.ValidateAntiforgeryAsync(httpContext, antiforgery) is { } forged)
+        {
+            return forged;
+        }
+
+        var (body, problem) = await AdminWriteRequest.ReadJsonAsync<JsonObject>(
+            httpContext.Request, cancellationToken);
+        if (problem is not null)
+        {
+            return problem;
+        }
+
+        var fields = new Dictionary<string, string?>(StringComparer.Ordinal);
+
+        foreach (var field in InvoiceAndFulfilmentFields)
+        {
+            if (ReadString(body!, field, out var value, out var present) is { } badField)
+            {
+                return badField;
+            }
+
+            if (present)
+            {
+                fields[field] = value;
+            }
+        }
+
+        if (ReadString(body!, "rowVersion", out var rowVersion, out _) is { } badVersion)
+        {
+            return badVersion;
+        }
+
+        var result = await handler.HandleAsync(
+            new UpdateInvoiceAndFulfilmentSettingsCommand(
+                fields,
+                AdminWriteRequest.RowVersion(httpContext.Request, rowVersion),
+                AdminWriteRequest.Actor(httpContext)),
+            cancellationToken);
+
+        return ToHttp(result);
     }
 
     private static async Task<IResult> UpdateBankDetailsAsync(
@@ -345,6 +423,19 @@ internal static class AdminSettingsEndpoints
     ];
 
     /// <summary>The fields the bank body may carry, in the order the screen shows them.</summary>
+    /// <summary>
+    /// ADM-09's five, in the order the form shows them. One list, so the reader and the handler cannot
+    /// disagree about the set of fields a request may carry.
+    /// </summary>
+    private static readonly string[] InvoiceAndFulfilmentFields =
+    [
+        "legalName",
+        "registeredAddress",
+        "brNumber",
+        "vatNumber",
+        "autoDeliverAfterDays",
+    ];
+
     private static readonly string[] BankFields =
         ["bankName", "branch", "accountName", "accountNumber", "instructions"];
 

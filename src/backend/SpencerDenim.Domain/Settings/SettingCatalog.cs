@@ -22,13 +22,30 @@ namespace SpencerDenim.Domain.Settings;
 /// </para>
 /// </param>
 /// <param name="Description">What a staff user is told the key is for, in full, on the settings screen.</param>
+/// <param name="SeedValue">
+/// What the seeder writes into a <b>missing</b> row, in invariant culture, or <see langword="null"/> for the
+/// overwhelming majority of keys — which hold information only the client has.
+/// <para>
+/// <b>It is applied on insert and never on realign</b>, which is <c>SettingsSeeder</c>'s whole asymmetry:
+/// the metadata is this codebase's and is brought back into line every run, the value is the client's and
+/// is never touched again. A seed value that was re-applied would be W1-12's defect with a longer fuse — a
+/// deployment silently resetting a number somebody deliberately changed.
+/// </para>
+/// <para>
+/// <b>Only use it for a value this project's own documents state</b>, such as doc 08 §3.8's
+/// <c>AutoDeliverAfterDays (7)</c>. A client fact with a plausible-looking default is the defect this
+/// project has shipped twice: a courier name, a bank, an address. Those stay <see langword="null"/> and
+/// render as nothing.
+/// </para>
+/// </param>
 public sealed record SettingDefinition(
     string Key,
     string GroupKey,
     SettingValueType ValueType,
     string RequiredPermission,
     string Label,
-    string? Description)
+    string? Description,
+    string? SeedValue = null)
 {
     /// <summary>How long a <see cref="Label"/> may be to still read as a name rather than a sentence.</summary>
     public const int LabelMaxLength = 60;
@@ -197,6 +214,66 @@ public static class SettingCatalog
             "Extra instructions",
             "Optional notes shown under the bank details, for example how long a cash-machine deposit "
             + "takes to appear. Plain text; line breaks are kept."),
+
+        // Group Store, part two (W3-04, ADM-09): the seller's details an invoice has to carry (doc 08
+        // §3.5 InvoiceSellerSnapshotJson, §4.1). Every one of them is **null until the client fills it
+        // in**, and the invoice prints nothing at all for an unset value — see InvoiceSellerDetails. A
+        // default here would be an invented registered address on a legal document, which is strictly
+        // worse than a gap somebody can see and ask about.
+        new(
+            SettingKeys.Store.LegalName,
+            SettingKeys.Store.Group,
+            SettingValueType.String,
+            Permissions.Settings.Edit,
+            "Registered company name",
+            // No example company. The shop's own client name as help text beside the box the real one is
+            // typed into is a value mistakable for data, which is what W3-03 was marked Major for.
+            "The registered name of the company that issues invoices. This is the only place the company "
+            + "name is used — everything a shopper reads is the shop's name. Invoices print nothing here "
+            + "until it is filled in."),
+
+        new(
+            SettingKeys.Store.Address,
+            SettingKeys.Store.Group,
+            SettingValueType.String,
+            Permissions.Settings.Edit,
+            "Registered address",
+            "The company's registered address as it should appear on an invoice, one line per line. This "
+            + "is not the contact address shoppers write to, which is under Contact. Invoices print "
+            + "nothing here until it is filled in."),
+
+        new(
+            SettingKeys.Store.BRNumber,
+            SettingKeys.Store.Group,
+            SettingValueType.String,
+            Permissions.Settings.Edit,
+            "Business registration number",
+            "The company's business registration number, for the invoice header. Invoices print nothing "
+            + "here until it is filled in."),
+
+        new(
+            SettingKeys.Store.VatNumber,
+            SettingKeys.Store.Group,
+            SettingValueType.String,
+            Permissions.Settings.Edit,
+            "VAT registration number",
+            "The company's VAT registration number, for the invoice header. Prices already include VAT, "
+            + "so an invoice shows no VAT line — this is the registration number only. Invoices print "
+            + "nothing here until it is filled in."),
+
+        // Group Orders (doc 08 §3.8, doc 11 P9 step 8). The one key with a seeded value in this build,
+        // because 7 is a figure the documents state rather than one only the client knows.
+        new(
+            SettingKeys.Orders.AutoDeliverAfterDays,
+            SettingKeys.Orders.Group,
+            SettingValueType.Int,
+            Permissions.Settings.Edit,
+            "Mark delivered after",
+            "How many days after dispatch a shipped order is marked Delivered automatically, if nobody "
+            + "does it by hand. Store pickup orders are never marked automatically: an order nobody has "
+            + "collected has not been delivered. Between 1 and 90 days.",
+            SeedValue: SettingKeys.Orders.AutoDeliverAfterDaysDefault.ToString(
+                System.Globalization.CultureInfo.InvariantCulture)),
     ];
 
     /// <summary>
@@ -240,9 +317,13 @@ public static class SettingCatalog
     /// </summary>
     public static IReadOnlyList<IReadOnlyList<string>> SaveUnits { get; } =
     [
-        // The logo on its own: changing it changes every page instantly, so it is a deliberate act with its
-        // own audit row rather than a field that rides along with a form.
-        [SettingKeys.Store.Group],
+        // Store and Orders together (W3-04). Two forms on the settings screen share this token — the logo,
+        // which has its own command because changing it changes every page instantly, and the invoice and
+        // fulfilment form below it. They are one unit because the screen re-reads after every save, so a
+        // wider token costs a staff user nothing, and because `KeysInSaveUnitFor` is what keeps the token
+        // a form is handed identical to the one its save compares. Splitting them would mean declaring the
+        // same relationship twice, which is the shape of the defect this list was created to end.
+        [SettingKeys.Store.Group, SettingKeys.Orders.Group],
 
         [SettingKeys.Contact.Group, SettingKeys.Social.Group],
 

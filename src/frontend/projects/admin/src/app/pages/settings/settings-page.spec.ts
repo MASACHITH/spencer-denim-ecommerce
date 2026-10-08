@@ -98,6 +98,85 @@ describe('SettingsPage (ADM-22)', () => {
     };
   }
 
+
+  /**
+   * The ordinary payload plus the `Orders` group and the four `Store.*` legal keys, which is what ADM-09's
+   * invoice form needs.
+   *
+   * **Every value is non-null**, because a fixture of nulls lets a dropped field round-trip null to null
+   * unnoticed — the reason W1-12's blocker survived 1,571 passing tests — and a registered address is a
+   * field where losing it costs the client a legal document.
+   */
+  function payloadWithInvoice(values: Partial<Record<string, string | null>> = {}): AdminSettings {
+    const invoice = {
+      [SETTING_KEYS.legalName]: 'A Registered Company (Pvt) Ltd',
+      [SETTING_KEYS.storeAddress]: 'A registered address\nA city',
+      [SETTING_KEYS.brNumber]: 'BR-0000',
+      [SETTING_KEYS.vatNumber]: 'VAT-0000',
+      [SETTING_KEYS.autoDeliverAfterDays]: '7',
+      ...values,
+    } as Record<string, string | null>;
+
+    const base = payload(values);
+    const legalKeys = [
+      SETTING_KEYS.legalName,
+      SETTING_KEYS.storeAddress,
+      SETTING_KEYS.brNumber,
+      SETTING_KEYS.vatNumber,
+    ];
+
+    return {
+      ...base,
+      groups: [
+        // The legal keys join the group the logo is already in, which is what the server sends: one
+        // group, one save unit, one token.
+        {
+          ...base.groups[0],
+          settings: [
+            ...base.groups[0].settings,
+            ...legalKeys.map((key) => ({
+              key,
+              valueType: 'String' as const,
+              value: invoice[key] ?? null,
+              isSecret: false,
+              hasValue: Boolean(invoice[key]),
+              requiredPermission: 'Settings.Edit',
+              description: `What ${key} is for.`,
+              updatedAtUtc: null,
+            })),
+          ],
+        },
+        ...base.groups.slice(1),
+        {
+          groupKey: 'Orders',
+
+          // The same token the Store group publishes, because they are one save unit
+          // (SettingCatalog.SaveUnits). Publishing two would be ADM-22's 409-on-every-save.
+          rowVersion: base.groups[0].rowVersion,
+          settings: [
+            {
+              key: SETTING_KEYS.autoDeliverAfterDays,
+              valueType: 'Int' as const,
+              value: invoice[SETTING_KEYS.autoDeliverAfterDays] ?? null,
+              isSecret: false,
+              hasValue: Boolean(invoice[SETTING_KEYS.autoDeliverAfterDays]),
+              requiredPermission: 'Settings.Edit',
+              description: 'How long before an order is closed.',
+              updatedAtUtc: null,
+            },
+          ],
+        },
+      ],
+    };
+  }
+
+  /** Presses ADM-09's own Save, which is not the first form on the page. */
+  async function clickSaveInvoice(): Promise<void> {
+    (element.querySelector('[data-testid="save-invoice"]') as HTMLButtonElement).click();
+    fixture.detectChanges();
+    await fixture.whenStable();
+  }
+
   async function open(settings: AdminSettings = payload()): Promise<void> {
     fixture = TestBed.createComponent(SettingsPage);
     element = fixture.nativeElement as HTMLElement;
@@ -717,6 +796,150 @@ describe('SettingsPage (ADM-22)', () => {
       expect(field('accountNumber').getAttribute('aria-invalid')).toBe('true');
     });
   });
+
+  /**
+   * ADM-09's own settings form.
+   *
+   * **It exists because the invoice is ADM-09's deliverable and these five keys could be set from no
+   * screen at all** — not even read-only, because this screen renders named forms rather than a generic
+   * key list. An invoice that cannot be completed short of SQL is not a deliverable.
+   */
+  describe('invoice and fulfilment (ADM-09)', () => {
+    it('is absent for a caller who does not receive the Orders group', async () => {
+      await open(payload());
+
+      // A group a caller may not read is absent from the payload, not empty (doc 08 §3.8 DB2), so the
+      // form is absent too rather than drawn over nothing.
+      expect(element.querySelector('[data-testid="save-invoice"]')).toBeNull();
+      expect(element.querySelector('[data-testid="field-legalName"]')).toBeNull();
+    });
+
+    it('shows the company details the server sent', async () => {
+      await open(payloadWithInvoice());
+
+      expect(field('legalName').value).toBe('A Registered Company (Pvt) Ltd');
+      expect(field('brNumber').value).toBe('BR-0000');
+      expect(field('vatNumber').value).toBe('VAT-0000');
+      expect(field('autoDeliverAfterDays').value).toBe('7');
+    });
+
+    /**
+     * **No placeholder on any box.** A `placeholder` renders, and W3-03 shipped a real bank's name and the
+     * client's own legal name as placeholder text — both Major findings. A registered name and a
+     * registered address have no obviously-fake shape the way an account number does, so the boxes are
+     * empty and the hint says what belongs in them.
+     */
+    it('offers no example company name or address anywhere', async () => {
+      await open(
+        payloadWithInvoice({ [SETTING_KEYS.legalName]: null, [SETTING_KEYS.storeAddress]: null }),
+      );
+
+      for (const name of ['legalName', 'registeredAddress', 'brNumber', 'vatNumber']) {
+        expect(field(name).getAttribute('placeholder'), name).toBeNull();
+      }
+
+      // And the hint says what an empty one means for the document, which is the honest substitute.
+      expect(element.textContent).toContain('prints nothing at all for a detail that is empty');
+    });
+
+    it('sends every field it was given, and sends an emptied box as empty', async () => {
+      await open(payloadWithInvoice());
+
+      await type('legalName', 'A Renamed Company (Pvt) Ltd');
+      await type('vatNumber', '');
+      await clickSaveInvoice();
+
+      const saved = writeTo(AdminSettingsApi.invoiceAndFulfilmentUrl);
+
+      expect(saved.request.method).toBe('PUT');
+      expect(saved.request.body).toEqual({
+        legalName: 'A Renamed Company (Pvt) Ltd',
+        registeredAddress: 'A registered address\nA city',
+        brNumber: 'BR-0000',
+        vatNumber: '',
+        autoDeliverAfterDays: '7',
+        rowVersion: 'store-rv-1',
+      });
+
+      saved.flush(null);
+      fixture.detectChanges();
+      await fixture.whenStable();
+
+      controller.expectOne(AdminSettingsApi.settingsUrl).flush(payloadWithInvoice());
+    });
+
+    /**
+     * **A key the server did not send is not written.**
+     *
+     * The rule that keeps holding when a permission changes: a `PUT` carrying a field the screen never
+     * received would tell the API to clear it, which is the shape that wiped every category image behind
+     * 1,571 passing tests.
+     */
+    it('omits a key the server did not send, rather than sending null', async () => {
+      // Rebuilt rather than mutated: `groups` is `readonly`, which is the contract saying out loud that a
+      // payload is what the server sent and not a thing to edit in place.
+      const full = payloadWithInvoice();
+      const narrowed: AdminSettings = {
+        ...full,
+        groups: full.groups.map((group, index) =>
+          index === 0
+            ? {
+                ...group,
+                settings: group.settings.filter(
+                  (setting) => setting.key !== SETTING_KEYS.vatNumber,
+                ),
+              }
+            : group,
+        ),
+      };
+
+      await open(narrowed);
+
+      await type('legalName', 'A Renamed Company (Pvt) Ltd');
+      await clickSaveInvoice();
+
+      const saved = writeTo(AdminSettingsApi.invoiceAndFulfilmentUrl);
+      const body = saved.request.body as Record<string, unknown>;
+
+      expect('vatNumber' in body).toBe(false);
+      expect(body['legalName']).toBe('A Renamed Company (Pvt) Ltd');
+
+      saved.flush(null);
+      fixture.detectChanges();
+      await fixture.whenStable();
+
+      controller.expectOne(AdminSettingsApi.settingsUrl).flush(narrowed);
+    });
+
+    it('shows the API’s message against the box it refused', async () => {
+      await open(payloadWithInvoice());
+
+      await type('autoDeliverAfterDays', '0');
+      await clickSaveInvoice();
+
+      writeTo(AdminSettingsApi.invoiceAndFulfilmentUrl).flush(
+        {
+          title: 'One or more fields are invalid.',
+          errors: {
+            autoDeliverAfterDays: [
+              'Use between 1 and 90 days. Nought would mark an order delivered the moment it ships.',
+            ],
+          },
+        },
+        { status: 400, statusText: 'Bad Request' },
+      );
+
+      fixture.detectChanges();
+      await fixture.whenStable();
+      fixture.detectChanges();
+
+      expect(
+        element.querySelector('[data-testid="error-autoDeliverAfterDays"]')?.textContent,
+      ).toContain('between 1 and 90');
+      expect(field('autoDeliverAfterDays').getAttribute('aria-invalid')).toBe('true');
+    });
+  });
+
 });
 
 /**

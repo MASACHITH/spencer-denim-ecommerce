@@ -483,7 +483,16 @@ public sealed class SettingsRoundTripTests
     public async Task A_group_the_caller_cannot_read_is_absent_from_the_read_model()
     {
         var store = new FakeSettingsStore();
-        store.Rows[SettingKeys.Store.LogoAssetId].RequiredPermission = Permissions.Settings.Payments;
+
+        // **Every key in the group, not just one of it.** The read model's filter is per *row* (the column
+        // is per row), so a group is absent only when the caller can read none of its rows — and W3-04
+        // added four more Store.* keys beside the logo. Flipping one of six and asserting the group was
+        // gone would be a test that had quietly stopped testing anything: it passed while the group was
+        // one key wide and would have gone green again for the wrong reason.
+        foreach (var key in SettingCatalog.KeysIn(SettingKeys.Store.Group))
+        {
+            store.Rows[key].RequiredPermission = Permissions.Settings.Payments;
+        }
 
         var settings = await ReadAsync(store, Permissions.Settings.Edit);
 

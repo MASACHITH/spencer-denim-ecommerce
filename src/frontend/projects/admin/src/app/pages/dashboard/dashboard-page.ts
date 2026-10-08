@@ -15,7 +15,9 @@ import { AdminAuthApi } from '../../core/auth/admin-auth-api';
       <p class="panel__lead">The admin panel is being built. More dashboards arrive in the next milestones.</p>
       <sd-api-status />
       <nav class="panel__nav" aria-label="Admin sections">
+        <a class="panel__link" routerLink="/orders">Orders</a>
         <a class="panel__link" routerLink="/orders/bank-transfers">Bank transfers</a>
+        <a class="panel__link" routerLink="/orders/couriers">Couriers</a>
         <a class="panel__link" routerLink="/products">Products</a>
         <a class="panel__link" routerLink="/catalog">Departments and categories</a>
         <a class="panel__link" routerLink="/settings">Settings</a>

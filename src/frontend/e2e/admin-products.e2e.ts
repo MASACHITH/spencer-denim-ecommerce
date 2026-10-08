@@ -351,7 +351,13 @@ test.describe('moving rows with the buttons', () => {
     await down.focus();
     await page.keyboard.press('Enter');
 
-    expect(await names()).toEqual(['Jet Black', 'Indigo Rinse']);
+    // **`expect.poll`, not a bare `expect(await names())`, and that was a real race rather than tidying.**
+    // A reorder is a signal write, so Angular schedules the re-render as a *task*; a one-shot assertion on
+    // the next line reads the inputs before that task has run. It passed in isolation and failed in the
+    // whole-suite run, where every test is competing with sixteen other web servers for the CPU — which
+    // reads exactly like a product defect (the live region said the colour had moved while the inputs
+    // still showed the old order) and is not one. W3-04's browser suite is what pushed it over.
+    await expect.poll(names).toEqual(['Jet Black', 'Indigo Rinse']);
     await expect(page.getByTestId('colour-down-1')).toBeFocused();
     await expect(page.getByTestId('announcement')).toContainText('position 2 of 2');
   });
@@ -362,12 +368,14 @@ test.describe('moving rows with the buttons', () => {
     await page.getByTestId('colour-up-1').focus();
     await page.keyboard.press('Alt+ArrowUp');
 
-    const names = await page
-      .getByTestId('colour-list')
-      .locator('[data-testid^="colour-name-"]')
-      .evaluateAll((inputs) => inputs.map((input) => (input as HTMLInputElement).value));
+    const names = () =>
+      page
+        .getByTestId('colour-list')
+        .locator('[data-testid^="colour-name-"]')
+        .evaluateAll((inputs) => inputs.map((input) => (input as HTMLInputElement).value));
 
-    expect(names).toEqual(['Jet Black', 'Indigo Rinse']);
+    // Polled, for the reason the test above records: the read would otherwise race the re-render.
+    await expect.poll(names).toEqual(['Jet Black', 'Indigo Rinse']);
   });
 
   /**

@@ -243,8 +243,40 @@ public sealed class SettingsSchemaAndSeedTests(SqlServerDatabaseFixture sqlServe
 
     // ---- the seeder -------------------------------------------------------------------------------
 
+    /// <summary>
+    /// The seeder creates every catalogued key, with the metadata doc 08 §3.8 gives it.
+    /// </summary>
+    /// <remarks>
+    /// <b>Metadata only, and the value assertion is a separate, self-contained test — because this one was
+    /// flaky and the flakiness was mine.</b> It used to assert that every row's <i>value</i> equalled its
+    /// catalogued seed value, which is a global property of a shared, deliberately-mutated table. It failed
+    /// about one run in three and passed twenty times alone.
+    /// <para>
+    /// <b>And its failure message was right all along.</b> "A test that left one behind is a neighbour's
+    /// fixture" described the actual mechanism: <c>AdminSettingsEndpointTests.RestoreAsync</c> was setting
+    /// every catalogued key to NULL, including the one key the seeder gives a value, and the NULL then
+    /// persisted for the whole run. Classes in this assembly do <b>not</b> interleave — four timed probe
+    /// classes, zero overlap — so the non-determinism was xUnit varying class <b>order</b>: this test fails
+    /// if and only if it is ordered after that class. A W3-04 round-2 version of this remark called the
+    /// message misleading and drew the lesson that a message should describe the weakest explanation. The
+    /// lesson is a good one; this was the wrong example for it, and the original author had it right.
+    /// </para>
+    /// <para>
+    /// <b>The leak also hid behind the assertion's own wording.</b> It reported the offending value with
+    /// <c>holds ""</c>, and <c>$"{null}"</c> interpolates as the empty string — so a NULL row and an empty
+    /// row read identically, and a leak that wrote NULL presented as the theory's <c>("")</c> case. An
+    /// assertion message that cannot tell its two failure causes apart costs the next reader the diagnosis.
+    /// </para>
+    /// <para>
+    /// <b>The split stands, for a plainer reason than the one first given.</b> The metadata half is global
+    /// and safe <i>because</i> classes are serialised and only this class touches a settings row's
+    /// metadata. The value half is a Theory inside a rolled-back transaction because a value is what the
+    /// rest of the assembly legitimately changes, and a test should not depend on the restore discipline of
+    /// six other classes even when that discipline is currently sound.
+    /// </para>
+    /// </remarks>
     [Fact]
-    public async Task The_seeder_creates_every_catalogued_key_with_a_null_value()
+    public async Task The_seeder_creates_every_catalogued_key_with_the_metadata_doc_08_specifies()
     {
         sqlServer.SkipIfUnavailable();
         await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, Token);
@@ -264,14 +296,88 @@ public sealed class SettingsSchemaAndSeedTests(SqlServerDatabaseFixture sqlServe
             Assert.Equal(definition.RequiredPermission, row.RequiredPermission);
             Assert.Equal(definition.Description, row.Description);
         }
+    }
 
-        // No placeholder values. A seeded social address would be the exact defect this task removes: an icon
-        // on a live shop that does not go to the shop.
-        Assert.All(
-            SettingCatalog.All.Select(definition => rows[definition.Key]),
-            row => Assert.True(
-                row.Value is null || row.Key == SettingKeys.Store.LogoAssetId,
-                $"{row.Key} was seeded with a value; settings values belong to the client."));
+    /// <summary>
+    /// <b>The seeder writes a missing key's catalogued seed value and invents nothing else.</b>
+    /// </summary>
+    /// <remarks>
+    /// <b>It owns the rows it touches, which is this class's own idiom and the fix for the race above.</b>
+    /// Each key is deleted and re-seeded <i>inside a transaction that is always rolled back</i>, so no
+    /// other connection ever observes the row missing or changed — a plain delete-and-restore would trade a
+    /// wide race for a narrow one, and <c>AutoDeliverShippedTests.The_window_is_read_from_the_settings_row</c>
+    /// is a real reader of one of these keys. A concurrent reader blocks for the few milliseconds the
+    /// exclusive lock is held, which is correct behaviour rather than a wrong answer.
+    /// <para>
+    /// <b>What this test proves, exactly: the seeder <i>honours</i> the catalogue.</b> Both halves are
+    /// driven — a key doc 08 §3.8 gives a default (<c>Orders.AutoDeliverAfterDays (7)</c>) comes back with
+    /// it, and a key that holds a client fact comes back <see langword="null"/> — so a seeder that wrote
+    /// nothing, or that wrote the wrong thing, is caught. Verified by mutation: making the seeder ignore
+    /// <c>SeedValue</c> turns the <c>AutoDeliverAfterDays</c> case red.
+    /// </para>
+    /// <para>
+    /// <b>What it does <i>not</i> prove, and said so because the first version of this remark implied
+    /// otherwise: that the catalogue is right.</b> Giving <c>Store.LegalName</c> a seed value makes this
+    /// test pass — it would faithfully assert the invented address — and the guard for that is the unit
+    /// test <c>AdminOrderWorkflowRulesTests.Nothing_that_holds_a_client_fact_is_seeded_with_a_value</c>,
+    /// which pins the whole set of keys allowed to carry one. Also verified by mutation. The two together
+    /// are the complete rule; either alone has a hole, and the hole in this one is the dangerous
+    /// direction.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData("Orders.AutoDeliverAfterDays")]
+    [InlineData("Store.LegalName")]
+    [InlineData("Store.Address")]
+    [InlineData("Bank.AccountNumber")]
+    [InlineData("Social.FacebookUrl")]
+    public async Task The_seeder_writes_a_missing_keys_catalogued_seed_value(string key)
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, Token);
+
+        var definition = SettingCatalog.Find(key);
+        Assert.NotNull(definition);
+
+        using var scope = sqlServer.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var seeder = scope.ServiceProvider.GetRequiredService<SettingsSeeder>();
+
+        // `CreateExecutionStrategy`, because `EnableRetryOnFailure` refuses a hand-rolled transaction
+        // outright — the same hoop every store in this solution jumps through.
+        var strategy = dbContext.Database.CreateExecutionStrategy();
+
+        await strategy.ExecuteAsync(async () =>
+        {
+            dbContext.ChangeTracker.Clear();
+
+            await using var transaction = await dbContext.Database.BeginTransactionAsync(Token);
+
+            var deleted = await dbContext.Settings
+                .Where(setting => setting.Key == key)
+                .ExecuteDeleteAsync(Token);
+
+            Assert.Equal(1, deleted);
+
+            var counts = await seeder.SeedAsync(Token);
+
+            Assert.Equal(1, counts.Inserted);
+
+            dbContext.ChangeTracker.Clear();
+            var row = await dbContext.Settings.AsNoTracking()
+                .SingleAsync(setting => setting.Key == key, Token);
+
+            Assert.True(
+                string.Equals(row.Value, definition.SeedValue, StringComparison.Ordinal),
+                $"the seeder wrote \"{row.Value}\" into {key} and its catalogued seed value is "
+                + $"\"{definition.SeedValue}\". A settings value belongs to the client, so only a figure "
+                + "one of this project's own documents states may be seeded — doc 08 §3.8's "
+                + "AutoDeliverAfterDays (7) is the only one today.");
+
+            // Rolled back whatever happened, so this test leaves the shared table exactly as it found it
+            // and cannot be the neighbour it used to accuse others of being.
+            await transaction.RollbackAsync(Token);
+        });
     }
 
     /// <summary>

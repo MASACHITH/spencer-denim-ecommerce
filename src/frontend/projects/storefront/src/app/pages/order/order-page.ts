@@ -837,12 +837,20 @@ export class OrderPage {
     return order.status === 'PendingPayment';
   }
 
-  /** The sentence beside "Payment" in the details list. */
+  /**
+   * The sentence beside "Payment" in the details list.
+   *
+   * **The wording comes from the server, not from `status.toLowerCase()`.** Doc 11 P9's pickup variant
+   * says `Shipped` is shown to staff *and customer* as "Ready for collection", so a pickup customer was
+   * reading "This order is shipped." — unreachable until ADM-09 made the transition pressable, and found
+   * in its review. `statusLabel` is rendered by the same `OrderStatusLabels.For` the two admin screens
+   * use, so a shopper, a staff list and a staff detail cannot describe one order three ways.
+   */
   protected paymentState(order: OrderConfirmationDto): string {
     if (!this.awaitingPayment(order)) {
       return order.status === 'Paid'
         ? 'Paid. Thank you — we are getting your order ready.'
-        : `This order is ${order.status.toLowerCase()}.`;
+        : `This order is ${order.statusLabel.toLowerCase()}.`;
     }
 
     return `Awaiting payment. We hold your items until ${this.dueAt(order)}.`;

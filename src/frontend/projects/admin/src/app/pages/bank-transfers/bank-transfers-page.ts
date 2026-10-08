@@ -14,6 +14,7 @@ import { FormsModule } from '@angular/forms';
 
 import { CatalogFailure, toCatalogFailure } from '../../core/catalog/admin-catalog-api';
 import { BankTransferApi, toBankTransferRefusal } from '../../core/orders/bank-transfer-api';
+import { money as formatMoney } from '../../core/orders/order-formatting';
 import {
   BANK_TRANSFER_REFUSALS,
   BankTransferDecision,
@@ -123,7 +124,7 @@ const PAGE_SIZE = 20;
                 <div><dt>Email</dt><dd>{{ row.customerEmail }}</dd></div>
                 <div>
                   <dt>Amount</dt>
-                  <dd [attr.data-testid]="'amount-' + row.orderNumber">{{ money(row.amountLkr) }}</dd>
+                  <dd [attr.data-testid]="'amount-' + row.orderNumber">{{ money(row.amountLkr, row.currency) }}</dd>
                 </div>
                 <div>
                   <dt>Their reference</dt>
@@ -558,12 +559,16 @@ export class BankTransfersPage {
     return hours === 0 ? `${Math.max(1, minutes)} min left` : `${hours} h ${minutes} min left`;
   }
 
-  /** Rs. 15,596.60 — the shop's own currency, formatted the way the storefront formats it. */
-  protected money(amount: number): string {
-    return `Rs. ${amount.toLocaleString('en-LK', {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    })}`;
+  /**
+   * The row's amount in the row's own currency.
+   *
+   * **Delegated to the shared formatter and given the row's `currency`**, which this screen had been
+   * carrying and ignoring. It is `LKR` for every bank transfer by check constraint, so nothing on
+   * screen changes — but a second copy of "assume Rs." is a second place to be wrong, and the orders
+   * screens found the first one.
+   */
+  protected money(amount: number, currency: string): string {
+    return formatMoney(amount, currency);
   }
 
   protected decide(row: BankTransferQueueRow, decision: BankTransferDecision): void {

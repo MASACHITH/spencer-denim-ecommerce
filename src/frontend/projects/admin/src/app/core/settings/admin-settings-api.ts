@@ -6,6 +6,7 @@ import { AdminAuthApi } from '../auth/admin-auth-api';
 import {
   AdminSettings,
   BankDetailValues,
+  InvoiceAndFulfilmentValues,
   ContactAndSocialValues,
   UploadedMediaAsset,
 } from './admin-settings.model';
@@ -22,6 +23,7 @@ export class AdminSettingsApi {
   static readonly storeLogoUrl = '/api/admin/settings/store-logo';
   static readonly contactSocialUrl = '/api/admin/settings/contact-social';
   static readonly bankUrl = '/api/admin/settings/bank';
+  static readonly invoiceAndFulfilmentUrl = '/api/admin/settings/invoice-and-fulfilment';
   static readonly imagesUrl = '/api/admin/media/images';
 
   private readonly http = inject(HttpClient);
@@ -80,6 +82,19 @@ export class AdminSettingsApi {
    */
   updateBankDetails(values: BankDetailValues, rowVersion: string): Observable<void> {
     return this.put(AdminSettingsApi.bankUrl, { ...values, rowVersion });
+  }
+
+  /**
+   * The company's invoice details and the auto-deliver window (ADM-09, doc 08 §3.8).
+   *
+   * **Only the fields the screen was given**, the same rule as the bank group's: a `PUT` carrying a field
+   * it never received would tell the API to clear it.
+   */
+  updateInvoiceAndFulfilment(
+    values: InvoiceAndFulfilmentValues,
+    rowVersion: string,
+  ): Observable<void> {
+    return this.put(AdminSettingsApi.invoiceAndFulfilmentUrl, { ...values, rowVersion });
   }
 
   private put(url: string, body: unknown): Observable<void> {
