@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using SpencerDenim.Application.Sales.Orders.Abstractions;
 using SpencerDenim.Application.Settings;
 using SpencerDenim.Application.Settings.Abstractions;
 using SpencerDenim.Domain.Auditing;
@@ -19,10 +20,17 @@ namespace SpencerDenim.IntegrationTests.Api.Admin;
 /// <summary>
 /// The ADM-22 settings endpoints and GLB-02's logo, end to end against a real SQL Server (doc 06 §4).
 /// <para>
-/// <b>Every test puts the five settings rows back.</b> The fixture's database is shared by the whole
-/// assembly (classes run sequentially — see <c>AssemblyInfo.cs</c>), and the storefront tests read the same
-/// rows, so a logo left set or a social address left behind would fail somebody else's test with no clue
-/// where it came from. The restore is in a <c>finally</c> and it clears the <c>MediaUsages</c> rows too.
+/// <b>Every test puts the settings rows back.</b> The fixture's database is shared by the whole assembly
+/// and its classes <b>interleave</b> — measured; see <c>AssemblyInfo.cs</c>, where an earlier version of
+/// this remark's "classes run sequentially" is corrected. The storefront tests read the same rows, so a
+/// logo left set or a social address left behind would fail somebody else's test with no clue where it came
+/// from. The restore is in a <c>finally</c> and it clears the <c>MediaUsages</c> rows too.
+/// <para>
+/// <b>What the restore cannot buy, and what that means for an assertion here.</b> Because classes
+/// interleave, a <c>finally</c> keeps this class from leaving a mess behind but cannot stop a neighbour
+/// making one mid-test. So no test in this file may assert a settings value it did not itself write — the
+/// defect W3-04's review found twice, once in <c>SettingsSchemaAndSeedTests</c> and once in
+/// <c>AutoDeliverShippedTests</c>. Fixing the interleaving properly is #114's.
 /// </para>
 /// <para>
 /// A real <see cref="MediaTestHost"/> rather than a database-only fixture, because the logo path is a real
@@ -36,6 +44,7 @@ public sealed class AdminSettingsEndpointTests(SqlServerDatabaseFixture sqlServe
     private const string SettingsUrl = "/api/admin/settings";
     private const string StoreLogoUrl = "/api/admin/settings/store-logo";
     private const string ContactSocialUrl = "/api/admin/settings/contact-social";
+    private const string InvoiceUrl = "/api/admin/settings/invoice-and-fulfilment";
     private const string SiteSettingsUrl = "/api/site/settings";
     private const string ImagesUrl = "/api/admin/media/images";
 
@@ -692,6 +701,404 @@ public sealed class AdminSettingsEndpointTests(SqlServerDatabaseFixture sqlServe
         Assert.True(errors.TryGetProperty("facebookUrl", out _));
         Assert.True(errors.TryGetProperty("instagramUrl", out _));
         Assert.False(errors.TryGetProperty("tikTokUrl", out _));
+    }
+
+    // ---- W3-04: the invoice details and the auto-deliver window ---------------------------------
+
+    /// <summary>
+    /// <b>The pairing issue #126 asks for.</b> Playwright never starts this API, so the six Vitest specs
+    /// over this form prove only what the screen <i>sends</i>; what the server does with it is provable
+    /// only here, against a real SQL Server.
+    /// </summary>
+    [Fact]
+    public async Task Saving_the_invoice_details_and_the_window_stores_every_field()
+    {
+        await using var host = await StartAsync();
+        using var client = await host.SignInAsync(Permissions.Settings.Edit);
+
+        try
+        {
+            var (status, _) = await PutAsync(client, InvoiceUrl, new
+            {
+                legalName = "Spencer Denim Industries (Pvt) Ltd",
+                registeredAddress = "No. 1, Example Road\nColombo 00100",
+                brNumber = "PV-00000",
+                vatNumber = "VAT-00000",
+                autoDeliverAfterDays = "10",
+                rowVersion = await InvoiceVersionAsync(client),
+            });
+
+            Assert.Equal(HttpStatusCode.NoContent, status);
+
+            // Read from the database rather than from the payload, for W1-12's reason: the blocker there
+            // was a field that never reached the request at all, and a round trip through the same read
+            // model could not have seen it.
+            Assert.Equal("Spencer Denim Industries (Pvt) Ltd", await ValueAsync(host, SettingKeys.Store.LegalName));
+            Assert.Equal("No. 1, Example Road\nColombo 00100", await ValueAsync(host, SettingKeys.Store.Address));
+            Assert.Equal("PV-00000", await ValueAsync(host, SettingKeys.Store.BRNumber));
+            Assert.Equal("VAT-00000", await ValueAsync(host, SettingKeys.Store.VatNumber));
+            Assert.Equal("10", await ValueAsync(host, SettingKeys.Orders.AutoDeliverAfterDays));
+        }
+        finally
+        {
+            await RestoreAsync(host);
+        }
+    }
+
+    /// <summary>
+    /// <b>Absent is not null, over a fixture that holds real data.</b> This is the GLB-10 / W1-12 defect
+    /// class: PUT replaces, so a handler that read a missing field as <see langword="null"/> would clear
+    /// four legal keys because a screen sent one. The fixture is filled first on purpose - against empty
+    /// rows the bug is invisible.
+    /// </summary>
+    [Fact]
+    public async Task A_field_the_invoice_request_omits_is_left_alone_rather_than_cleared()
+    {
+        await using var host = await StartAsync();
+        using var client = await host.SignInAsync(Permissions.Settings.Edit);
+
+        try
+        {
+            await PutAsync(client, InvoiceUrl, new
+            {
+                legalName = "A Registered Company (Pvt) Ltd",
+                registeredAddress = "No. 2, Example Road",
+                brNumber = "PV-11111",
+                vatNumber = "VAT-11111",
+                autoDeliverAfterDays = "9",
+                rowVersion = await InvoiceVersionAsync(client),
+            });
+
+            // One field, by itself, with the other five absent from the JSON entirely.
+            var (status, _) = await PutRawAsync(
+                client,
+                InvoiceUrl,
+                $"{{\"brNumber\":\"PV-22222\",\"rowVersion\":\"{await InvoiceVersionAsync(client)}\"}}");
+
+            Assert.Equal(HttpStatusCode.NoContent, status);
+
+            Assert.Equal("PV-22222", await ValueAsync(host, SettingKeys.Store.BRNumber));
+            Assert.Equal("A Registered Company (Pvt) Ltd", await ValueAsync(host, SettingKeys.Store.LegalName));
+            Assert.Equal("No. 2, Example Road", await ValueAsync(host, SettingKeys.Store.Address));
+            Assert.Equal("VAT-11111", await ValueAsync(host, SettingKeys.Store.VatNumber));
+            Assert.Equal("9", await ValueAsync(host, SettingKeys.Orders.AutoDeliverAfterDays));
+        }
+        finally
+        {
+            await RestoreAsync(host);
+        }
+    }
+
+    /// <summary>
+    /// An explicit null <i>does</i> clear, and the cleared value is <see langword="null"/> rather than
+    /// <c>""</c> - which is what makes the invoice print no line at all instead of an empty one, and what
+    /// makes the auto-deliver job skip the pass instead of reading a number out of an empty string.
+    /// </summary>
+    [Fact]
+    public async Task A_blank_invoice_field_clears_it_as_null_rather_than_an_empty_string()
+    {
+        await using var host = await StartAsync();
+        using var client = await host.SignInAsync(Permissions.Settings.Edit);
+
+        try
+        {
+            await PutAsync(client, InvoiceUrl, new
+            {
+                legalName = "A Registered Company (Pvt) Ltd",
+                vatNumber = "VAT-33333",
+                autoDeliverAfterDays = "5",
+                rowVersion = await InvoiceVersionAsync(client),
+            });
+
+            await PutAsync(client, InvoiceUrl, new
+            {
+                vatNumber = (string?)null,
+                autoDeliverAfterDays = "   ",
+                rowVersion = await InvoiceVersionAsync(client),
+            });
+
+            Assert.Null(await ValueAsync(host, SettingKeys.Store.VatNumber));
+            Assert.Null(await ValueAsync(host, SettingKeys.Orders.AutoDeliverAfterDays));
+
+            // And the reader agrees that a cleared window means "do not run", rather than falling back to
+            // a number no screen could show.
+            await using var scope = host.Factory.Services.CreateAsyncScope();
+            Assert.Null(await scope.ServiceProvider
+                .GetRequiredService<IOrderSettingsReader>()
+                .ReadAutoDeliverAfterDaysAsync(Token));
+        }
+        finally
+        {
+            await RestoreAsync(host);
+        }
+    }
+
+    /// <summary>
+    /// The window's range, on the wire. <b>Nought is refused for its own reason</b> (doc 08 section 4.1
+    /// G-18): it would mark an order delivered the moment it shipped and hand out a Verified buyer badge
+    /// for goods still in the van.
+    /// </summary>
+    [Theory]
+    [InlineData("0")]
+    [InlineData("-1")]
+    [InlineData("91")]
+    [InlineData("7.5")]
+    [InlineData("seven")]
+    [InlineData("+7")]
+    public async Task A_window_outside_the_range_is_refused_and_nothing_is_written(string value)
+    {
+        await using var host = await StartAsync();
+        using var client = await host.SignInAsync(Permissions.Settings.Edit);
+
+        try
+        {
+            await PutAsync(client, InvoiceUrl, new
+            {
+                autoDeliverAfterDays = "8",
+                rowVersion = await InvoiceVersionAsync(client),
+            });
+
+            var (status, body) = await PutAsync(client, InvoiceUrl, new
+            {
+                autoDeliverAfterDays = value,
+                rowVersion = await InvoiceVersionAsync(client),
+            });
+
+            Assert.Equal(HttpStatusCode.BadRequest, status);
+            Assert.True(
+                body.GetProperty("errors").TryGetProperty("autoDeliverAfterDays", out _),
+                "The refusal must name the field the form can show it against.");
+
+            // The refused value is not half-written. A validation pass that returned errors *and* saved
+            // would leave the job running on a figure the screen had just rejected.
+            Assert.Equal("8", await ValueAsync(host, SettingKeys.Orders.AutoDeliverAfterDays));
+        }
+        finally
+        {
+            await RestoreAsync(host);
+        }
+    }
+
+    /// <summary>
+    /// The bounds themselves are accepted, because an off-by-one here is a figure the client cannot set.
+    /// </summary>
+    [Theory]
+    [InlineData("1")]
+    [InlineData("90")]
+    public async Task The_window_bounds_are_accepted_on_the_wire(string value)
+    {
+        await using var host = await StartAsync();
+        using var client = await host.SignInAsync(Permissions.Settings.Edit);
+
+        try
+        {
+            var (status, _) = await PutAsync(client, InvoiceUrl, new
+            {
+                autoDeliverAfterDays = value,
+                rowVersion = await InvoiceVersionAsync(client),
+            });
+
+            Assert.Equal(HttpStatusCode.NoContent, status);
+            Assert.Equal(value, await ValueAsync(host, SettingKeys.Orders.AutoDeliverAfterDays));
+        }
+        finally
+        {
+            await RestoreAsync(host);
+        }
+    }
+
+    /// <summary>
+    /// Over-long legal details are refused per field in one response, and nothing is written.
+    /// </summary>
+    [Fact]
+    public async Task Over_long_invoice_details_are_each_named_in_one_response()
+    {
+        await using var host = await StartAsync();
+        using var client = await host.SignInAsync(Permissions.Settings.Edit);
+
+        var (status, body) = await PutAsync(client, InvoiceUrl, new
+        {
+            legalName = new string('a', 201),
+            registeredAddress = new string('b', 401),
+            brNumber = new string('c', 41),
+            vatNumber = new string('d', 41),
+            rowVersion = await InvoiceVersionAsync(client),
+        });
+
+        Assert.Equal(HttpStatusCode.BadRequest, status);
+
+        var errors = body.GetProperty("errors");
+
+        // All four in one response: a form that has to be submitted four times to learn four mistakes is
+        // the defect this project has already fixed twice.
+        Assert.True(errors.TryGetProperty("legalName", out _));
+        Assert.True(errors.TryGetProperty("registeredAddress", out _));
+        Assert.True(errors.TryGetProperty("brNumber", out _));
+        Assert.True(errors.TryGetProperty("vatNumber", out _));
+
+        Assert.Null(await ValueAsync(host, SettingKeys.Store.LegalName));
+    }
+
+    /// <summary>
+    /// A stale token is a 409 and writes nothing - <b>including the fields that are not in conflict</b>,
+    /// because the save unit is the unit of concurrency.
+    /// </summary>
+    [Fact]
+    public async Task An_invoice_save_with_a_stale_row_version_is_a_409_and_writes_nothing()
+    {
+        await using var host = await StartAsync();
+        using var client = await host.SignInAsync(Permissions.Settings.Edit);
+
+        try
+        {
+            var stale = await InvoiceVersionAsync(client);
+
+            await PutAsync(client, InvoiceUrl, new
+            {
+                legalName = "The First Writer (Pvt) Ltd",
+                rowVersion = stale,
+            });
+
+            var (status, body) = await PutAsync(client, InvoiceUrl, new
+            {
+                legalName = "The Second Writer (Pvt) Ltd",
+                brNumber = "PV-99999",
+                rowVersion = stale,
+            });
+
+            Assert.Equal(HttpStatusCode.Conflict, status);
+            Assert.Equal(SettingsConflictCodes.StaleRowVersion, body.GetProperty("code").GetString());
+
+            Assert.Equal("The First Writer (Pvt) Ltd", await ValueAsync(host, SettingKeys.Store.LegalName));
+            Assert.Null(await ValueAsync(host, SettingKeys.Store.BRNumber));
+        }
+        finally
+        {
+            await RestoreAsync(host);
+        }
+    }
+
+    /// <summary>
+    /// One audit row per changed key and none for a key re-sent unchanged (doc 08 section 3.8). The
+    /// settings screen's own history is how a client later asks why their invoices say what they say.
+    /// </summary>
+    [Fact]
+    public async Task One_audit_row_is_written_per_changed_invoice_key()
+    {
+        await using var host = await StartAsync();
+        using var client = await host.SignInAsync(Permissions.Settings.Edit);
+
+        try
+        {
+            await PutAsync(client, InvoiceUrl, new
+            {
+                legalName = "An Audited Company (Pvt) Ltd",
+                brNumber = "PV-44444",
+                autoDeliverAfterDays = "6",
+                rowVersion = await InvoiceVersionAsync(client),
+            });
+
+            var mark = await AuditCountAsync(host);
+
+            // The same legal name again, one changed registration number, and the same window.
+            var (status, _) = await PutAsync(client, InvoiceUrl, new
+            {
+                legalName = "An Audited Company (Pvt) Ltd",
+                brNumber = "PV-55555",
+                autoDeliverAfterDays = "6",
+                rowVersion = await InvoiceVersionAsync(client),
+            });
+
+            Assert.Equal(HttpStatusCode.NoContent, status);
+
+            var rows = await AuditRowsAsync(host, mark);
+
+            Assert.Single(rows);
+            Assert.Contains(SettingKeys.Store.BRNumber, rows[0].EntityId, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            await RestoreAsync(host);
+        }
+    }
+
+    /// <summary>
+    /// Re-sending every field unchanged is a 204 that writes nothing, so <c>UpdatedAtUtc</c> keeps meaning
+    /// "when this value last changed" rather than "when somebody last pressed Save".
+    /// </summary>
+    [Fact]
+    public async Task An_invoice_save_that_changes_nothing_writes_no_audit_row()
+    {
+        await using var host = await StartAsync();
+        using var client = await host.SignInAsync(Permissions.Settings.Edit);
+
+        try
+        {
+            await PutAsync(client, InvoiceUrl, new
+            {
+                legalName = "An Unchanged Company (Pvt) Ltd",
+                rowVersion = await InvoiceVersionAsync(client),
+            });
+
+            var mark = await AuditCountAsync(host);
+
+            var (status, _) = await PutAsync(client, InvoiceUrl, new
+            {
+                legalName = "An Unchanged Company (Pvt) Ltd",
+                rowVersion = await InvoiceVersionAsync(client),
+            });
+
+            Assert.Equal(HttpStatusCode.NoContent, status);
+            Assert.Empty(await AuditRowsAsync(host, mark));
+        }
+        finally
+        {
+            await RestoreAsync(host);
+        }
+    }
+
+    /// <summary>
+    /// <b>The form and the invoice reader agree, through the database.</b> They are different code with
+    /// different key lists, and the one failure that would reach a client - a form that saves and an
+    /// invoice that still prints nothing - is invisible to either half on its own.
+    /// </summary>
+    [Fact]
+    public async Task What_the_form_saves_is_what_the_invoice_reader_reads()
+    {
+        await using var host = await StartAsync();
+        using var client = await host.SignInAsync(Permissions.Settings.Edit);
+
+        try
+        {
+            await PutAsync(client, InvoiceUrl, new
+            {
+                legalName = "A Printing Company (Pvt) Ltd",
+                registeredAddress = "No. 3, Example Road\n\nColombo 00300\n",
+                brNumber = "PV-66666",
+                vatNumber = "VAT-66666",
+                rowVersion = await InvoiceVersionAsync(client),
+            });
+
+            await using var scope = host.Factory.Services.CreateAsyncScope();
+            var seller = await scope.ServiceProvider
+                .GetRequiredService<IOrderSettingsReader>()
+                .ReadInvoiceSellerAsync(Token);
+
+            Assert.Equal("A Printing Company (Pvt) Ltd", seller.LegalName);
+            Assert.Equal("PV-66666", seller.BRNumber);
+            Assert.Equal("VAT-66666", seller.VatNumber);
+
+            // The blank line a textarea leaves behind is dropped rather than printed as an empty line on a
+            // legal document.
+            Assert.Equal(["No. 3, Example Road", "Colombo 00300"], seller.AddressLines);
+
+            // And the warning the screen shows before printing clears once both are present.
+            Assert.True(seller.IsComplete);
+        }
+        finally
+        {
+            await RestoreAsync(host);
+        }
     }
 
     // ---- concurrency, antiforgery and malformed bodies ------------------------------------------
@@ -1634,6 +2041,11 @@ public sealed class AdminSettingsEndpointTests(SqlServerDatabaseFixture sqlServe
         yield return (HttpMethod.Get, SettingsUrl);
         yield return (HttpMethod.Put, StoreLogoUrl);
         yield return (HttpMethod.Put, ContactSocialUrl);
+
+        // W3-04's. It was missing from this list until its own tests were written, which meant neither
+        // "refuses an anonymous caller" nor "refuses a signed-in caller without Settings.Edit" covered the
+        // newest write route in the file - the exact gap this helper exists to close.
+        yield return (HttpMethod.Put, InvoiceUrl);
     }
 
     private async Task<MediaTestHost> StartAsync(string environment = "Testing")
@@ -1666,6 +2078,25 @@ public sealed class AdminSettingsEndpointTests(SqlServerDatabaseFixture sqlServe
 
     private static async Task<string> ContactVersionAsync(HttpClient client) =>
         await GroupVersionAsync(client, SettingKeys.Contact.Group);
+
+    /// <summary>
+    /// The token the invoice form sends: the <c>Store</c> group's, because <c>Store</c> and <c>Orders</c>
+    /// are <b>one save unit</b> (<c>SettingCatalog.SaveUnits</c>) and the read model publishes one token
+    /// per unit.
+    /// </summary>
+    /// <remarks>
+    /// Asserted rather than assumed - publishing a per-group token and comparing a per-form one is the
+    /// mismatch that made every valid ADM-22 save a 409, so this file states which token is which.
+    /// </remarks>
+    private static async Task<string> InvoiceVersionAsync(HttpClient client)
+    {
+        var store = await GroupVersionAsync(client, SettingKeys.Store.Group);
+        var orders = await GroupVersionAsync(client, SettingKeys.Orders.Group);
+
+        Assert.Equal(store, orders);
+
+        return store;
+    }
 
     private static async Task<string> GroupVersionAsync(HttpClient client, string groupKey)
     {
@@ -1913,9 +2344,16 @@ public sealed class AdminSettingsEndpointTests(SqlServerDatabaseFixture sqlServe
     /// <summary>
     /// Puts the five settings rows back to NULL and clears their usage rows.
     /// <para>
-    /// The assembly's database is shared and its classes run sequentially, so a logo left set would be a
-    /// failure in somebody else's test with no clue where it came from. The cache is evicted too, because the
+    /// The assembly's database is shared and its classes interleave, so a logo left set would be a failure
+    /// in somebody else's test with no clue where it came from. The cache is evicted too, because the
     /// restore does not go through a use case.
+    /// </para>
+    /// <para>
+    /// <b>Back to the catalogue's resting value, not unconditionally to null.</b> Null was right while every
+    /// key was seeded empty; W3-04 added <c>Orders.AutoDeliverAfterDays</c>, which the seeder writes with
+    /// doc 08 section 3.8's 7, so nulling it left the database in a state the seeder never produces and
+    /// handed the auto-deliver job's own tests a window of null. <c>SettingDefinition.SeedValue</c> is the
+    /// one place that knows the resting value, so this reads it rather than repeating it.
     /// </para>
     /// </summary>
     private static async Task RestoreAsync(MediaTestHost host)
@@ -1934,6 +2372,20 @@ public sealed class AdminSettingsEndpointTests(SqlServerDatabaseFixture sqlServe
                     .SetProperty(setting => setting.UpdatedAtUtc, (DateTime?)null)
                     .SetProperty(setting => setting.UpdatedByUserId, (int?)null),
                 Token);
+
+        // Then the few the seeder gives a value. One statement each, because there are one or two of them
+        // and a CASE expression here would be the kind of cleverness that outlives the reason for it.
+        foreach (var definition in SettingCatalog.All.Where(item => item.SeedValue is not null))
+        {
+            var key = definition.Key;
+            var value = definition.SeedValue;
+
+            await dbContext.Settings
+                .Where(setting => setting.Key == key)
+                .ExecuteUpdateAsync(
+                    update => update.SetProperty(setting => setting.Value, value),
+                    Token);
+        }
 
         await dbContext.MediaUsages
             .Where(usage => usage.OwnerType == MediaUsageOwnerTypes.Setting)

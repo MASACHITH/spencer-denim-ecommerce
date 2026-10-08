@@ -149,17 +149,35 @@ public sealed class AutoDeliverShippedTests(SqlServerDatabaseFixture sqlServer)
     }
 
     /// <summary>
-    /// The window comes from <c>ops.Settings</c>, and the seeded value is doc 08 §3.8's seven.
+    /// The window comes from <c>ops.Settings</c> rather than from a constant in the job.
     /// </summary>
+    /// <remarks>
+    /// <b>Two written values, and no assertion about the resting one.</b> An earlier version of this test
+    /// opened by asserting that an unwritten read answers doc 08 §3.8's seven — an assertion about a row
+    /// nothing in the test had written, in a table four other classes in this assembly deliberately mutate
+    /// and one of them (<c>AdminSettingsEndpointTests</c>) nulls <i>every</i> catalogued key in its
+    /// <c>finally</c>. Classes in this assembly interleave (measured — see <c>AssemblyInfo.cs</c>), so that
+    /// opening line could read null and fail for a reason that had nothing to do with the job. It is the
+    /// same defect the review found in <c>SettingsSchemaAndSeedTests</c>, in a second place.
+    /// <para>
+    /// The seeded seven keeps two race-free homes and does not need a third here: the unit test
+    /// <c>AdminOrderWorkflowRulesTests</c> pins the catalogue's <c>SeedValue</c>, and
+    /// <c>SettingsSchemaAndSeedTests.The_seeder_writes_a_missing_keys_catalogued_seed_value</c> pins what
+    /// the seeder does with it inside a rolled-back transaction.
+    /// </para>
+    /// <para>
+    /// Two different values rather than one, because a reader that returned a hard-coded number would pass
+    /// a single-value test whenever that number was the one written.
+    /// </para>
+    /// </remarks>
     [Fact]
     public async Task The_window_is_read_from_the_settings_row()
     {
-        Assert.Equal(
-            SettingKeys.Orders.AutoDeliverAfterDaysDefault,
-            await ReadWindowAsync());
-
         await SetAutoDeliverDaysAsync("14");
         Assert.Equal(14, await ReadWindowAsync());
+
+        await SetAutoDeliverDaysAsync("3");
+        Assert.Equal(3, await ReadWindowAsync());
     }
 
     /// <summary>
