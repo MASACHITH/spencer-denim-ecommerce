@@ -111,7 +111,7 @@ describe('CouriersPage (ADM-09)', () => {
     const text = element.textContent ?? '';
 
     // The only example allowed is the placeholder itself — a shape, not a value. A sample like
-    // `https://somecourier.lk/track?no={trackingNumber}` would be an invented carrier's address rendered
+    // `https://example.invalid/track?no={trackingNumber}` would be an invented carrier's address rendered
     // beside the box the real one is typed into, which is the criterion both of this project's Major
     // findings about invented client data turned on.
     expect(text).toContain('{trackingNumber}');

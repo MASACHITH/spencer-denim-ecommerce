@@ -67,9 +67,15 @@ public sealed class SaveCourierCommandHandler(ICourierAdminStore store, IClock c
     /// The one thing a template must contain, shown to the staff member as the shape to copy.
     /// <para>
     /// <b>It is the placeholder alone and not a sample URL.</b> A sample like
-    /// <c>https://somecourier.lk/track?no={trackingNumber}</c> would be an invented carrier's address
+    /// <c>https://example.invalid/track?no={trackingNumber}</c> would be an invented carrier's address
     /// rendered beside the box the real one is typed into — a value mistakable for data, which is the
-    /// criterion both of this project's Major findings about invented client data turned on.
+    /// criterion both of this project's Major findings about invented client data turned on. Even in this
+    /// comment the host is <c>.invalid</c>, which RFC 2606 reserves, rather than something that reads like
+    /// a carrier somebody might go and look up.
+    ///
+    /// <b>The accepted convention is an obviously-fake <i>shape</i></b> — W3-03's <c>0000 0000 0000</c>
+    /// for an account number. A URL has no equivalent that is both fake-looking and a valid URL, so what
+    /// is shown is the placeholder token on its own: no scheme, no host, nothing to mistake.
     /// </para>
     /// </summary>
     public static string TemplateExample => Courier.TrackingNumberPlaceholder;
