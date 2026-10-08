@@ -80,20 +80,46 @@ public sealed class OrderEmailComposerTests
     /// banking app is a different number from <c>Rs. 12,430.00</c>.
     /// </remarks>
     [Theory]
+    [InlineData("Bank: Example Bank PLC")]
+    [InlineData("Branch: Kollupitiya")]
+    [InlineData("Account name: Example Shop (Pvt) Ltd")]
+    [InlineData("Account number: 0012 3456 7890")]
+    [InlineData("Amount to transfer: Rs. 12,430.00")]
+    [InlineData("Reference to quote: SD-2026-000123")]
+    [InlineData("Pay before: Sunday 11 October 2026 at 2:03 pm")]
+    [InlineData("Upload your payment slip: " + Origin + "/order/7f3a1c90-2b44-4d6e-9f11-0c5e8a6d3b22")]
+    public void The_bank_instructions_carry_every_field_P7_step_1_names(string expected)
+    {
+        var email = Composer().BankTransferInstructions(Header(), Instructions());
+
+        Assert.Contains(expected, email.Text, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// And the HTML part carries the same values.
+    /// </summary>
+    /// <remarks>
+    /// <b>Split from the theory above because the two parts need different assertions, and the first
+    /// version of this test made the mistake of using one.</b> Asserting a bare value against the HTML
+    /// proved nothing for two of the eight: the order number and the amount are also in the title and
+    /// the preheader, so a mutation that dropped the reference row entirely left that theory green. The
+    /// text part has no decoration, so a labelled pair there is the structure; the HTML part is then
+    /// checked for the values, which is all it can usefully be asked.
+    /// </remarks>
+    [Theory]
     [InlineData("Example Bank PLC")]
     [InlineData("Kollupitiya")]
     [InlineData("Example Shop (Pvt) Ltd")]
     [InlineData("0012 3456 7890")]
     [InlineData("Rs. 12,430.00")]
-    [InlineData("SD-2026-000123")]
+    [InlineData("Reference to quote")]
     [InlineData("Sunday 11 October 2026 at 2:03 pm")]
     [InlineData(Origin + "/order/7f3a1c90-2b44-4d6e-9f11-0c5e8a6d3b22")]
-    public void The_bank_instructions_carry_every_field_P7_step_1_names(string expected)
+    public void The_html_part_carries_the_same_bank_details(string expected)
     {
         var email = Composer().BankTransferInstructions(Header(), Instructions());
 
         Assert.Contains(expected, email.Html, StringComparison.Ordinal);
-        Assert.Contains(expected, email.Text, StringComparison.Ordinal);
     }
 
     /// <summary>

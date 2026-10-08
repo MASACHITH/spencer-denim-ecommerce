@@ -132,7 +132,16 @@ public sealed class EmailOutboxSendingTests(SqlServerDatabaseFixture sqlServer)
         // rather than one pass, because what is being measured is that no row is handed out twice across
         // *every* claim any of them ever makes — which is the invariant, and which a single pass of two
         // large batches would satisfy trivially by one sender taking everything.
-        for (var round = 0; round < 10 && ids.Except(claimed).Any(); round++)
+        var rounds = 0;
+
+        // The bound is generous rather than tight. `READPAST` means a sender that finds a row locked
+        // skips it and comes back, so the number of rounds it takes is a property of the engine's timing
+        // under whatever else the suite is doing — not of the code under test. A tight bound would turn
+        // "the machine was busy" into a failure about concurrency, which is the shape of a test that
+        // fails for a reason nobody can act on. Twenty-four rows claimed four at a time by three senders
+        // needs two rounds when nothing interferes; fifty is the ceiling that stops a genuine livelock
+        // hanging the suite.
+        for (; rounds < 50 && ids.Except(claimed).Any(); rounds++)
         {
             var batches = await Task.WhenAll(
                 ClaimAsync(batchSize: 4),
@@ -145,8 +154,17 @@ public sealed class EmailOutboxSendingTests(SqlServerDatabaseFixture sqlServer)
             }
         }
 
-        Assert.Equal(claimed.Count, claimed.Distinct().Count());
-        Assert.All(ids, id => Assert.Contains(id, claimed));
+        // **The invariant.** Named in the message, with the offenders, because a bare count comparison
+        // tells whoever reads the failure nothing about which row went out twice.
+        var duplicates = claimed.GroupBy(id => id).Where(group => group.Count() > 1).Select(group => group.Key);
+        Assert.Empty(duplicates);
+
+        var unclaimed = ids.Except(claimed).ToList();
+        Assert.True(
+            unclaimed.Count == 0,
+            $"After {rounds} round(s) of three concurrent senders, {unclaimed.Count} of {ids.Count} "
+            + $"message(s) were never claimed: {string.Join(", ", unclaimed)}. "
+            + $"{claimed.Count} claim(s) were made in all.");
     }
 
     /// <summary>

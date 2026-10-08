@@ -123,8 +123,9 @@ public sealed class SmtpOptions
     /// The display name beside <see cref="FromAddress"/>, or null to send the address alone.
     /// <para>
     /// <b>It is not defaulted to the shop's name.</b> A From name is part of what lands in a stranger's
-    /// inbox and belongs to whoever owns the mailbox; the shop's name is in the subject and the signature
-    /// of every message either way.
+    /// inbox and belongs to whoever owns the mailbox. The shop's name <i>heads and signs</i> every message
+    /// either way (<c>EmailBody.Html</c> and <c>EmailBody.Text</c>) — it is deliberately not in any
+    /// subject line, which carries the order number instead.
     /// </para>
     /// </summary>
     public string? FromName { get; set; }

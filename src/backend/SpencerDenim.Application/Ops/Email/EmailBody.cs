@@ -19,9 +19,10 @@ namespace SpencerDenim.Application.Ops.Email;
 /// <b>Inline styles, one column, no images and no web fonts.</b> A mail client is not a browser: there is
 /// no stylesheet, <c>&lt;style&gt;</c> is stripped by several of them, and a remote image is blocked by
 /// most until the reader asks for it — so a message whose meaning depended on one would arrive blank. The
-/// shop's logo is a <c>Store.LogoAssetId</c> setting the client has not filled in (doc 08 §3.8), and
-/// there is no absolute media origin configured to serve it from, so there is nothing to embed and
-/// nothing is invented. The layout is a 600-pixel container that collapses to the viewport, which is what
+/// shop's logo is a <c>Store.LogoAssetId</c> setting (doc 08 §3.8) that may be unset, and
+/// <c>Catalog:MediaBaseUrl</c> is a <i>relative</i> path by default (<c>/media</c>), which is no use in a
+/// message a mail client renders from a stranger's inbox — so there is nothing to embed and nothing is
+/// invented. The layout is a 600-pixel container that collapses to the viewport, which is what
 /// makes it readable on a telephone.
 /// </para>
 /// <para>
@@ -62,8 +63,8 @@ public static class EmailBody
 
         // The meridiem is written out rather than taken from the format string: `tt` under the invariant
         // culture gives "PM", and a shop's email saying "2:03 PM" reads as machine output. Hard-coded
-        // English is correct here — the storefront is English-only (doc 02), and these bodies are English
-        // throughout.
+        // English is correct here: doc 02 §J puts multi-language in a future phase, and every other
+        // string in these bodies is English too.
         var meridiem = local.Hour < 12 ? "am" : "pm";
 
         return string.Create(

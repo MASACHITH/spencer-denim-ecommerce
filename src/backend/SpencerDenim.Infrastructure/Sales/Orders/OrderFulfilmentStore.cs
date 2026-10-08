@@ -25,8 +25,11 @@ namespace SpencerDenim.Infrastructure.Sales.Orders;
 /// </para>
 /// <para>
 /// <b>No <c>sp_getapplock</c>, no <c>Serializable</c>, no rowversion.</b> Doc 08 §4.2 names neither of the
-/// first two on this path (§3.6's promo limit and the reference-data seeder are the only two places an
-/// application lock belongs), and §4.1's own note says the transitions deliberately do <i>not</i> rely on
+/// first two on this path (the two places doc 08 names an application lock are §3.6's promo per-customer
+/// limit and §3.1 DB4 rule 4's <c>sp_getapplock 'rbac:grants-all'</c>; <b>this sentence used to name "the
+/// reference-data seeder", which holds no applock anywhere</b> — W3-04b's tester corrected the same wrong
+/// wording on <see cref="IOrderFulfilmentStore"/>, in <c>BankTransferReviewStore</c> and in
+/// <c>OrderCancellationStore</c>, and this fourth copy was missed), and §4.1's own note says the transitions deliberately do <i>not</i> rely on
 /// the admin ETag: a stale admin edit is rejected by a token, a lost race between two transitions is
 /// rejected by a row count, and those are different guarantees. Every transaction here is
 /// <c>ReadCommitted</c>, the same as checkout's and the bank review's.
