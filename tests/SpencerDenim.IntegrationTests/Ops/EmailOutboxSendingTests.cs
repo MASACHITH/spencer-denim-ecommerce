@@ -451,6 +451,50 @@ public sealed class EmailOutboxSendingTests(SqlServerDatabaseFixture sqlServer)
     }
 
     /// <summary>
+    /// The claim takes the <b>oldest due first</b>, and breaks a tie on <c>Id</c>.
+    /// </summary>
+    /// <remarks>
+    /// <b>Added by W3-06's tester, because reversing the <c>ORDER BY</c> left all 55 of these tests
+    /// green.</b> The ordering is one of the two reasons <c>ClaimAsync</c> is a CTE rather than doc 08's
+    /// bare <c>UPDATE TOP (20)</c> — the store's remarks argue it at length and the mutation list did not
+    /// cover it. It is not cosmetic: the queue is only ever full in the one situation this whole class is
+    /// built for, a mail server that has been refusing for an afternoon, and in that situation
+    /// newest-first starves the oldest rows. The bank-transfer instructions nobody has received yet are
+    /// the oldest rows.
+    /// <para>
+    /// The last two rows share an instant — a placement queues exactly such a pair, because
+    /// <c>NextAttemptAtUtc</c> is <c>datetime2(3)</c> — and are asserted in <c>Id</c> order.
+    /// <b>That half of the assertion does not discriminate, and saying so is the point:</b> dropping
+    /// <c>, Id</c> from the <c>ORDER BY</c> leaves this test green, because the engine happens to return
+    /// tied rows in clustered order from this plan. The tie-break is there so that "oldest first" is a
+    /// guarantee of the statement rather than of the plan the optimiser chose today; no test can prove
+    /// it, and this one does not claim to.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task The_claim_takes_the_oldest_due_first_and_breaks_a_tie_on_the_row_id()
+    {
+        await ResetAsync();
+
+        // Inserted newest-first, so row order on the clustered index is the opposite of due order and a
+        // claim that ignored the ORDER BY would return the newest.
+        var newest = await InsertAsync(nextAttemptAtUtc: Now.AddMinutes(-1));
+        var sameInstantSecond = await InsertAsync(nextAttemptAtUtc: Now.AddMinutes(-30));
+        var sameInstantFirst = await InsertAsync(nextAttemptAtUtc: Now.AddMinutes(-30));
+
+        var claimed = await ClaimAsync(batchSize: 2);
+
+        Assert.Equal(
+            [Math.Min(sameInstantFirst, sameInstantSecond), Math.Max(sameInstantFirst, sameInstantSecond)],
+            claimed.Select(row => row.Id));
+
+        Assert.DoesNotContain(newest, claimed.Select(row => row.Id));
+
+        // And it is next, not skipped.
+        Assert.Equal([newest], (await ClaimAsync(batchSize: 2)).Select(row => row.Id));
+    }
+
+    /// <summary>
     /// <c>CountDueAsync</c> counts what a claim would take, which is what the "cannot send" warning
     /// reports.
     /// </summary>

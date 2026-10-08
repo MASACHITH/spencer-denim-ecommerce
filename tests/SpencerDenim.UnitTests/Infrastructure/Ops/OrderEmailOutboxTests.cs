@@ -1,3 +1,4 @@
+using System.Reflection;
 using SpencerDenim.Application.Ops.Email;
 using SpencerDenim.Application.Ops.Email.Abstractions;
 using SpencerDenim.Application.Ops.Email.Contracts;
@@ -156,6 +157,75 @@ public sealed class OrderEmailOutboxTests
     public void Only_the_token_bearing_templates_lose_their_body_on_send(string templateCode, bool expected)
     {
         Assert.Equal(expected, EmailOutboxMessage.BodyIsClearedOnSend(templateCode));
+    }
+
+    /// <summary>
+    /// The G-03 rule is keyed on two string literals that <b>nothing in this build can produce</b>, and
+    /// this is what stops that going quiet when W3-01 arrives.
+    /// </summary>
+    /// <remarks>
+    /// <b>The theory above asserts the rule against values no producer writes.</b>
+    /// <c>EmailOutboxMessage.BodyClearedOnSend</c> holds the literals <c>"PasswordReset"</c> and
+    /// <c>"EmailConfirmation"</c>; <c>EmailTemplateCodes</c> declares neither, because neither template
+    /// exists. So if W3-01 declares <c>EmailTemplateCodes.PasswordReset = "PasswordResetLink"</c> — any
+    /// value but the literal — the privacy rule doc 08 §3.8 G-03 states ("the body must not sit in the
+    /// outbox table or in a backup") silently stops applying to the one template it was written for, and
+    /// every case of the theory above still passes. That is the shape of defect this suite has shipped
+    /// several times, and a comment cannot catch it.
+    /// <para>
+    /// Two assertions, both aimed at the hand-off. The first pins the declared set, so a task adding a
+    /// template code has to come here and read this remark. The second is <i>vacuous today and
+    /// load-bearing the moment either constant is declared</i>: whatever value W3-01 gives it, the rule
+    /// has to classify it. Together they mean the rule cannot be left behind silently.
+    /// </para>
+    /// <para>
+    /// The right fix when W3-01 lands is to declare the two codes in <c>EmailTemplateCodes</c> and have
+    /// <c>BodyClearedOnSend</c> read those constants instead of its own literals. Added by W3-06's tester.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Every_declared_template_code_is_accounted_for_by_the_body_destruction_rule()
+    {
+        var declared = typeof(EmailTemplateCodes)
+            .GetFields(BindingFlags.Public | BindingFlags.Static)
+            .Where(field => field is { IsLiteral: true } && field.FieldType == typeof(string))
+            .ToDictionary(field => field.Name, field => (string)field.GetRawConstantValue()!, StringComparer.Ordinal);
+
+        // Doc 08 §3.8's five order codes, plus the cancellation, which is doc 11 §7 G-14's recommendation
+        // and not in doc 08's list (see EmailTemplateCodes). A task that adds a seventh fails here.
+        Assert.Equal(
+            [
+                nameof(EmailTemplateCodes.BankTransferInstructions),
+                nameof(EmailTemplateCodes.OrderCancelled),
+                nameof(EmailTemplateCodes.OrderExpired),
+                nameof(EmailTemplateCodes.OrderPlaced),
+                nameof(EmailTemplateCodes.OrderShipped),
+                nameof(EmailTemplateCodes.PaymentConfirmed),
+            ],
+            declared.Keys.Order(StringComparer.Ordinal));
+
+        // None of the six loses its body on send: the record of what the shop told a customer about
+        // their order survives until the thirty-day purge.
+        foreach (var (name, code) in declared)
+        {
+            Assert.False(
+                EmailOutboxMessage.BodyIsClearedOnSend(code),
+                $"{name} (\"{code}\") is an order email and must keep its body until the thirty-day rule.");
+        }
+
+        // And the day either token-bearing template is declared, G-03 must cover whatever value it was
+        // given — not the literal this rule happens to hold today.
+        foreach (var name in new[] { "PasswordReset", "EmailConfirmation" })
+        {
+            if (declared.TryGetValue(name, out var code))
+            {
+                Assert.True(
+                    EmailOutboxMessage.BodyIsClearedOnSend(code),
+                    $"{name} is declared as \"{code}\", which EmailOutboxMessage.BodyClearedOnSend does "
+                    + "not match, so doc 08 §3.8 G-03's immediate body destruction would not apply to it. "
+                    + "Make BodyClearedOnSend read EmailTemplateCodes rather than its own literals.");
+            }
+        }
     }
 
     private sealed class CapturingWriter : IEmailOutboxWriter

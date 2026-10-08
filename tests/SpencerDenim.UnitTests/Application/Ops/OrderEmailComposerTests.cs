@@ -580,6 +580,78 @@ public sealed class OrderEmailComposerTests
     }
 
     /// <summary>
+    /// The shop's <b>own</b> staff-entered values are escaped too — the bank details and the payment
+    /// note, in the one email where a rewritten body costs somebody money.
+    /// </summary>
+    /// <remarks>
+    /// <b>Added by W3-06's tester, because three of the four escaping sites were untested.</b>
+    /// <c>EmailBody</c>'s class remark says "every interpolated value is HTML-escaped" and
+    /// <see cref="A_product_name_holding_markup_is_escaped"/> proved it for one site: the items table,
+    /// which calls <c>Escape</c> inline. Deleting the <c>Escape</c> from <c>EmailBody.DetailRow</c> or
+    /// from <c>EmailBody.Paragraph</c> left all 1,906 unit tests green.
+    /// <para>
+    /// Both carry values a staff member typed into an admin screen that already ships: every
+    /// <c>Bank.*</c> key behind <c>Settings.Payments</c> reaches <c>DetailRow</c> as a
+    /// <c>PaymentInstructionField</c>, <c>Bank.Instructions</c> reaches <c>Paragraph</c> as the note, and
+    /// the courier name, tracking number, pickup address and opening hours behind <c>Settings.Edit</c>
+    /// reach <c>DetailRow</c> in the dispatch email. Doc 08 §3.8 calls <c>Bank.Instructions</c> plain
+    /// text and never markup; this is what makes that true of the email rather than of the intention.
+    /// An anchor injected into "how to pay" is not a cosmetic bug.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void The_shops_own_bank_details_and_note_are_escaped_in_the_html_part()
+    {
+        var hostile = Instructions(notes: "Deposits take <b>a day</b> & may <script>alert(1)</script>") with
+        {
+            Fields =
+            [
+                new PaymentInstructionField("Bank", "Example <b>Bank</b> & Co PLC"),
+                new PaymentInstructionField(
+                    "Account name",
+                    "Example Shop <a href=\"https://evil.example\">pay here instead</a>"),
+            ],
+        };
+
+        var email = Composer().BankTransferInstructions(Header(), hostile);
+
+        // The field values: escaped, and no live markup left.
+        Assert.Contains("Example &lt;b&gt;Bank&lt;/b&gt; &amp; Co PLC", email.Html, StringComparison.Ordinal);
+        Assert.Contains("&lt;a href=", email.Html, StringComparison.Ordinal);
+        Assert.DoesNotContain("<a href=\"https://evil.example\"", email.Html, StringComparison.Ordinal);
+
+        // The note, which goes through a different helper.
+        Assert.Contains("&lt;script&gt;alert(1)&lt;/script&gt;", email.Html, StringComparison.Ordinal);
+        Assert.DoesNotContain("<script>", email.Html, StringComparison.Ordinal);
+        Assert.DoesNotContain("<b>a day</b>", email.Html, StringComparison.Ordinal);
+
+        // And the text part carries them as typed, because it is not HTML.
+        Assert.Contains("Example <b>Bank</b> & Co PLC", email.Text, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A courier name and a pickup address are escaped in the dispatch email, for the same reason: both
+    /// are staff-entered and both reach the body through <c>EmailBody.DetailRow</c>.
+    /// </summary>
+    [Fact]
+    public void A_staff_entered_courier_and_pickup_address_are_escaped()
+    {
+        var dispatch = Composer().OrderShipped(new ShippedOrderEmailFacts(
+            Header(), false, "Pronto <b>Lanka</b> & Sons", "PC-99881", null, null, null, null));
+
+        Assert.Contains("Pronto &lt;b&gt;Lanka&lt;/b&gt; &amp; Sons", dispatch.Html, StringComparison.Ordinal);
+        Assert.DoesNotContain("<b>Lanka</b>", dispatch.Html, StringComparison.Ordinal);
+
+        var pickup = Composer().OrderShipped(new ShippedOrderEmailFacts(
+            Header(), true, null, null, null,
+            "Kollupitiya <i>Store</i>", "14 Galle Road & Lane", "9am–7pm <br>daily"));
+
+        Assert.Contains("Kollupitiya &lt;i&gt;Store&lt;/i&gt;", pickup.Html, StringComparison.Ordinal);
+        Assert.Contains("14 Galle Road &amp; Lane", pickup.Html, StringComparison.Ordinal);
+        Assert.DoesNotContain("<br>daily", pickup.Html, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// An order with no first name greets the customer without inventing one.
     /// </summary>
     [Fact]
