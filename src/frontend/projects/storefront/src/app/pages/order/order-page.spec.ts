@@ -651,7 +651,11 @@ describe('OrderPage (CHK-04)', () => {
    * different questions, and conflating them is how a paid order would keep asking for money.
    */
   it('shows no pay panel once the order is paid', async () => {
-    await open(order({ status: 'Paid', payment: null, proof: null }));
+    // `canCancel: false`, as the server sends it for a paid order (doc 11 P10's table: refunded,
+    // never cancelled). Without it this fixture drew the Cancel panel, so the page under test said
+    // "You have not paid for this order" on an order the fixture called Paid - a contradiction no
+    // assertion here looked at, in a state the reader cannot produce.
+    await open(order({ status: 'Paid', payment: null, proof: null, canCancel: false }));
 
     expect(element.querySelector('[data-testid="pay-panel"]')).toBeNull();
     expect(text()).toContain('Paid.');
@@ -677,6 +681,7 @@ describe('OrderPage (CHK-04)', () => {
         statusLabel: 'Ready for collection',
         payment: null,
         proof: null,
+        canCancel: false,
       }),
     );
 
@@ -686,7 +691,7 @@ describe('OrderPage (CHK-04)', () => {
 
   it('tells a delivery customer their order is shipped', async () => {
     await open(
-      order({ status: 'Shipped', statusLabel: 'Shipped', payment: null, proof: null }),
+      order({ status: 'Shipped', statusLabel: 'Shipped', payment: null, proof: null, canCancel: false }),
     );
 
     expect(text()).toContain('This order is shipped.');
@@ -695,7 +700,13 @@ describe('OrderPage (CHK-04)', () => {
   /** And "Collected" rather than "delivered" once a pickup order has been handed over. */
   it('tells a pickup customer their order was collected, not delivered', async () => {
     await open(
-      order({ status: 'Delivered', statusLabel: 'Collected', payment: null, proof: null }),
+      order({
+        status: 'Delivered',
+        statusLabel: 'Collected',
+        payment: null,
+        proof: null,
+        canCancel: false,
+      }),
     );
 
     expect(text()).toContain('This order is collected.');
