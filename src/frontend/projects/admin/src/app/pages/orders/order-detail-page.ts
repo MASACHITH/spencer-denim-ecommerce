@@ -338,9 +338,9 @@ import { CatalogFailure, toCatalogFailure } from '../../core/catalog/admin-catal
                 <dt>Quantity</dt>
                 <dd>{{ line.quantity }}</dd>
                 <dt>Unit price</dt>
-                <dd>{{ cash(line.unitPrice) }}</dd>
+                <dd>{{ cash(line.unitPrice, detail.money.currency) }}</dd>
                 <dt>Line total</dt>
-                <dd>{{ cash(line.lineTotal) }}</dd>
+                <dd>{{ cash(line.lineTotal, detail.money.currency) }}</dd>
                 @if (line.refundedQuantity > 0) {
                   <dt>Refunded</dt>
                   <dd>{{ line.refundedQuantity }} of {{ line.quantity }}</dd>
@@ -352,32 +352,32 @@ import { CatalogFailure, toCatalogFailure } from '../../core/catalog/admin-catal
 
         <dl class="order-money" data-testid="order-money">
           <dt>Items</dt>
-          <dd>{{ cash(detail.money.itemsSubtotal) }}</dd>
+          <dd>{{ cash(detail.money.itemsSubtotal, detail.money.currency) }}</dd>
           @if (detail.money.markdownDiscountTotal > 0) {
             <dt>Markdown</dt>
-            <dd>−{{ cash(detail.money.markdownDiscountTotal) }}</dd>
+            <dd>−{{ cash(detail.money.markdownDiscountTotal, detail.money.currency) }}</dd>
           }
           @if (detail.money.campaignDiscountTotal > 0) {
             <dt>Sale campaign</dt>
-            <dd>−{{ cash(detail.money.campaignDiscountTotal) }}</dd>
+            <dd>−{{ cash(detail.money.campaignDiscountTotal, detail.money.currency) }}</dd>
           }
           @if (detail.money.promoCodeText) {
             <dt>Promo code {{ detail.money.promoCodeText }}</dt>
-            <dd>−{{ cash(detail.money.promoDiscountAmount) }}</dd>
+            <dd>−{{ cash(detail.money.promoDiscountAmount, detail.money.currency) }}</dd>
           }
           <dt>Delivery</dt>
-          <dd>{{ cash(detail.money.deliveryFeeAmount) }}</dd>
+          <dd>{{ cash(detail.money.deliveryFeeAmount, detail.money.currency) }}</dd>
           @if (detail.money.deliveryDiscountAmount > 0) {
             <dt>Delivery discount</dt>
-            <dd>−{{ cash(detail.money.deliveryDiscountAmount) }}</dd>
+            <dd>−{{ cash(detail.money.deliveryDiscountAmount, detail.money.currency) }}</dd>
           }
           <dt class="order-money__total">Total</dt>
           <dd class="order-money__total" data-testid="order-total">
-            {{ cash(detail.money.grandTotal) }}
+            {{ cash(detail.money.grandTotal, detail.money.currency) }}
           </dd>
           @if (detail.money.refundedAmount > 0) {
             <dt>Refunded</dt>
-            <dd>{{ cash(detail.money.refundedAmount) }}</dd>
+            <dd>{{ cash(detail.money.refundedAmount, detail.money.currency) }}</dd>
           }
         </dl>
       </section>
@@ -454,7 +454,16 @@ import { CatalogFailure, toCatalogFailure } from '../../core/catalog/admin-catal
               </p>
               <dl class="order-facts">
                 <dt>Amount</dt>
-                <dd>{{ cash(payment.amount) }}</dd>
+                <dd>{{ cash(payment.amount, payment.currency) }}</dd>
+                @if (payment.providerAmount !== null && payment.providerCurrency) {
+                  <!-- The foreign figure, which is the one allowed to differ from LKR (doc 08 §3.5 D1)
+                       and the one doc 11 P10 step 6 has staff read out. Gated on its presence, so it is
+                       absent for every payment this build can create and appears the day PayPal ships. -->
+                  <dt>Charged by the provider</dt>
+                  <dd [attr.data-testid]="'provider-amount-' + payment.createdAtUtc">
+                    {{ cash(payment.providerAmount, payment.providerCurrency) }}
+                  </dd>
+                }
                 <dt>Opened</dt>
                 <dd>{{ when(payment.createdAtUtc) }}</dd>
                 @if (payment.payerReference) {
@@ -497,8 +506,12 @@ import { CatalogFailure, toCatalogFailure } from '../../core/catalog/admin-catal
           <ul class="order-lines" data-testid="order-refunds">
             @for (refund of detail.refunds; track refund.createdAtUtc) {
               <li class="order-line">
-                <p class="order-line__name">{{ cash(refund.amount) }} — {{ refund.status }}</p>
+                <p class="order-line__name">{{ cash(refund.amount, refund.currency) }} — {{ refund.status }}</p>
                 <dl class="order-facts">
+                  @if (refund.providerAmount !== null) {
+                    <dt>Sent by the provider</dt>
+                    <dd>{{ cash(refund.providerAmount, 'USD') }}</dd>
+                  }
                   <dt>How</dt>
                   <dd>{{ refund.method }}</dd>
                   <dt>Why</dt>
@@ -732,8 +745,16 @@ export class OrderDetailPage {
     return this.route.snapshot.paramMap.get('orderPublicId') ?? '';
   }
 
-  protected cash(amount: number): string {
-    return money(amount);
+  /**
+   * An amount in **the currency the row carries**, never an assumed one.
+   *
+   * Every money contract on this screen has a `currency`, and the payment's and the refund's are their
+   * own rather than the order's — doc 08 §3.5 gives them one because a PayPal capture is taken in USD
+   * (D1). They are `LKR` by check constraint today; the figure that actually differs is
+   * `providerAmount` / `providerCurrency`, rendered beside them where it exists.
+   */
+  protected cash(amount: number, currency: string): string {
+    return money(amount, currency);
   }
 
   protected left(seconds: number): string {

@@ -21,6 +21,8 @@ function payment(overrides: Partial<AdminOrderPayment> = {}): AdminOrderPayment 
     isOrderSettlement: true,
     amount: 15_596.6,
     currency: 'LKR',
+    providerAmount: null,
+    providerCurrency: null,
     payerReference: 'CBC-778812',
     slipPublicId: '66666666-6666-4666-8666-666666666666',
     slipContentType: 'image/jpeg',
@@ -499,6 +501,81 @@ describe('OrderDetailPage (ADM-09)', () => {
     await open();
 
     expect(element.querySelector('[data-testid="awaiting-review"]')).toBeNull();
+  });
+
+  /**
+   * <b>The currency the row carries, not an assumed symbol.</b>
+   *
+   * `money()` prefixed `Rs.` unconditionally while every money contract on this screen supplies a
+   * `currency` — doc 08 §3.5 gives them one because a PayPal capture is taken in USD (D1). The symbol is
+   * LKR-only by check constraint today, so this test drives the path with a widened value: that is what
+   * makes it able to fail, since a fixture using LKR everywhere would agree with a hard-coded `Rs.`.
+   */
+  it('formats an amount in the currency the row carries', async () => {
+    await open(
+      detail({
+        money: { ...detail().money, currency: 'USD', grandTotal: 53.55 },
+        payments: [payment({ amount: 53.55, currency: 'USD' })],
+      }),
+    );
+
+    // Doc 11 P10 step 6's own wording — "USD 53.55" — which is what a staff member reads out.
+    expect(element.querySelector('[data-testid="order-total"]')?.textContent).toContain('USD 53.55');
+    expect(element.querySelector('[data-testid="order-payments"]')?.textContent).toContain('USD 53.55');
+    expect(element.querySelector('[data-testid="order-total"]')?.textContent).not.toContain('Rs.');
+  });
+
+  /**
+   * <b>The foreign figure is the one that genuinely differs, and it reached no screen.</b>
+   *
+   * `Payments.Currency` is LKR by check constraint; doc 08 §3.5 puts the amount the provider was actually
+   * asked for in `ProviderAmount` / `ProviderCurrency`, and doc 11 P10 step 6 tells staff to read it out.
+   * It is null for every payment this build can create, so the panel shows it only when it is there.
+   */
+  it('shows what the provider was charged, and only when there is one', async () => {
+    await open(detail());
+    expect(element.textContent).not.toContain('Charged by the provider');
+
+    await open(
+      detail({
+        payments: [payment({ providerAmount: 53.55, providerCurrency: 'USD' })],
+      }),
+    );
+
+    const payments = element.querySelector('[data-testid="order-payments"]')?.textContent ?? '';
+
+    expect(payments).toContain('Charged by the provider');
+    expect(payments).toContain('USD 53.55');
+
+    // The LKR amount is still there beside it: both are facts about the same payment and a staff member
+    // reconciling a statement needs the rupee figure as well.
+    expect(payments).toContain('Rs. 15,596.60');
+  });
+
+  it('shows what a refund actually sent back when the provider sent it', async () => {
+    await open(
+      detail({
+        refunds: [
+          {
+            amount: 15_596.6,
+            currency: 'LKR',
+            providerAmount: 53.55,
+            method: 'ProviderApi',
+            status: 'Completed',
+            reason: 'Customer changed their mind.',
+            restockItems: true,
+            createdByUserEmail: 'staff@example.com',
+            createdAtUtc: '2026-10-09T09:00:00Z',
+            completedAtUtc: '2026-10-09T09:05:00Z',
+          },
+        ],
+      }),
+    );
+
+    const refunds = element.querySelector('[data-testid="order-refunds"]')?.textContent ?? '';
+
+    expect(refunds).toContain('Sent by the provider');
+    expect(refunds).toContain('USD 53.55');
   });
 
   it('says the customer’s details were removed when they have been', async () => {

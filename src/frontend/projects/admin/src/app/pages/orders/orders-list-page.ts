@@ -176,7 +176,9 @@ const PAGE_SIZE = 25;
                 }
               </dd>
               <dt>Total</dt>
-              <dd [attr.data-testid]="'total-' + row.orderNumber">{{ cash(row.grandTotal) }}</dd>
+              <dd [attr.data-testid]="'total-' + row.orderNumber">
+                {{ cash(row.grandTotal, row.currency) }}
+              </dd>
               <dt>Placed</dt>
               <dd>{{ when(row.placedAtUtc) }}</dd>
               <dt>Delivery</dt>
@@ -359,8 +361,9 @@ export class OrdersListPage {
     this.load(1);
   }
 
-  protected cash(amount: number): string {
-    return money(amount);
+  /** The row's own currency, never an assumed one — see `money`. */
+  protected cash(amount: number, currency: string): string {
+    return money(amount, currency);
   }
 
   protected left(seconds: number): string {

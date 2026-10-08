@@ -365,6 +365,11 @@ function orderDetail(state, order) {
         isOrderSettlement: order.status !== 'Expired',
         amount: order.grandTotal,
         currency: 'LKR',
+
+        // Null, as every payment this build can create is: a bank transfer is taken in rupees and
+        // BankTransferProvider is the only provider. The screen renders these only when set.
+        providerAmount: null,
+        providerCurrency: null,
         payerReference: 'CBC-778812',
         slipPublicId: '66666666-6666-4666-8666-666666666666',
         slipContentType: 'image/jpeg',

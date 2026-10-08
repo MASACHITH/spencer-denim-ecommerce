@@ -423,6 +423,11 @@ internal sealed class AdminOrderReader(AppDbContext dbContext) : IAdminOrderRead
                 payment.IsOrderSettlement,
                 payment.Amount,
                 payment.Currency,
+
+                // The foreign figure, which is the one that is allowed to differ from LKR (doc 08 §3.5).
+                // Null for every payment this build can create; the screen renders it only when set.
+                payment.ProviderAmount,
+                payment.ProviderCurrency,
                 payment.PayerReference,
                 payment.ProofAsset != null && !payment.ProofAsset.IsDeleted
                     && payment.ProofAsset.Status == MediaAssetStatus.Ready
@@ -460,6 +465,7 @@ internal sealed class AdminOrderReader(AppDbContext dbContext) : IAdminOrderRead
             .Select(refund => new AdminOrderRefundDto(
                 refund.Amount,
                 refund.Currency,
+                refund.ProviderAmount,
                 refund.Method.ToString(),
                 refund.Status.ToString(),
                 refund.Reason,

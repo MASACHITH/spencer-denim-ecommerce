@@ -216,7 +216,27 @@ public sealed record AdminOrderLineDto(
 /// <param name="Status">The payment status name (doc 08 §4.3).</param>
 /// <param name="IsOrderSettlement">Whether this is the one row that settles the order.</param>
 /// <param name="Amount">LKR, equal to the order's grand total.</param>
-/// <param name="Currency">LKR.</param>
+/// <param name="Currency">
+/// <c>LKR</c>, and <c>CK_Payments_Currency</c> pins it there. It travels anyway so no screen hard-codes a
+/// symbol beside a figure — which is a defect this screen shipped and the tester caught.
+/// </param>
+/// <param name="ProviderAmount">
+/// What the provider was actually asked for, in <paramref name="ProviderCurrency"/>, or
+/// <see langword="null"/>.
+/// <para>
+/// <b>This is the field that genuinely differs from LKR, and it reached no screen.</b> Doc 08 §3.5 makes
+/// <c>Currency</c> LKR by check constraint and puts the foreign figure here — <c>USD</c> for PayPal (D1),
+/// <see langword="null"/> for a bank transfer — and doc 11 P10 step 6 tells staff to read a refund's
+/// amount out to the customer as "USD 53.55". The refund decision is made on this number, so the screen
+/// that will carry that decision has to show it.
+/// </para>
+/// <para>
+/// Null for every payment this build can create, because <c>BankTransferProvider</c> is the only provider
+/// and a bank transfer is taken in rupees. The screen renders it only when it is there, so today nothing
+/// appears and the day W4-01 ships it does — which is the opposite of a field nothing reads.
+/// </para>
+/// </param>
+/// <param name="ProviderCurrency"><c>USD</c> for PayPal, <see langword="null"/> for a bank transfer.</param>
 /// <param name="PayerReference">The bank reference the customer typed, or the PayPal payer id.</param>
 /// <param name="SlipPublicId">
 /// The uploaded slip's token, or <see langword="null"/>. It is a <b>private</b> asset and this token only
@@ -240,6 +260,8 @@ public sealed record AdminOrderPaymentDto(
     bool IsOrderSettlement,
     decimal Amount,
     string Currency,
+    decimal? ProviderAmount,
+    string? ProviderCurrency,
     string? PayerReference,
     Guid? SlipPublicId,
     string? SlipContentType,
@@ -254,7 +276,12 @@ public sealed record AdminOrderPaymentDto(
 
 /// <summary>One refund recorded against the order (doc 08 §3.5).</summary>
 /// <param name="Amount">LKR that went back.</param>
-/// <param name="Currency">LKR.</param>
+/// <param name="Currency"><c>LKR</c>, pinned by <c>CK_Refunds_Currency</c>. See the payment's.</param>
+/// <param name="ProviderAmount">
+/// The foreign amount that actually went back (doc 08 §3.5: "the USD that actually went back for a PayPal
+/// refund, D1"), or <see langword="null"/>. Doc 11 §6.6 step 2 has staff reading a refund's amount, date
+/// and reference out to a customer; this is the amount for a PayPal one.
+/// </param>
 /// <param name="Method">How the money physically travelled.</param>
 /// <param name="Status">Pending, Completed or Failed.</param>
 /// <param name="Reason">
@@ -271,6 +298,7 @@ public sealed record AdminOrderPaymentDto(
 public sealed record AdminOrderRefundDto(
     decimal Amount,
     string Currency,
+    decimal? ProviderAmount,
     string Method,
     string Status,
     string Reason,

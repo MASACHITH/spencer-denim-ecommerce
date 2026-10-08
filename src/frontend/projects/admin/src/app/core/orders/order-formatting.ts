@@ -7,13 +7,34 @@
  * kind of difference nobody notices until a client does.
  */
 
-/** Rs. 15,596.60 — the shop's own currency, formatted the way the storefront formats it. */
-export function money(amount: number): string {
-  return `Rs. ${amount.toLocaleString('en-LK', {
+/**
+ * `Rs. 15,596.60`, or `USD 53.55` for anything that is not the shop's own currency.
+ *
+ * **The currency is a parameter and not a constant, which was a defect rather than a precaution.** The
+ * first version wrote `Rs.` unconditionally while every contract it renders carries a `currency` field
+ * — `AdminOrderMoney`, `AdminOrderPayment` and `AdminOrderRefund` all have one, and doc 08 §3.5 gives
+ * them one *because* a PayPal capture is taken in USD (D1). A hard-coded symbol beside a field whose
+ * whole purpose is to say which currency it is, is a wrong number waiting for a schema change.
+ *
+ * **Today every one of those fields is `LKR` by check constraint** (`CK_Payments_Currency`,
+ * `CK_Refunds_Currency`, `CK_Orders_Currency`), so nothing on screen changes. The figure that actually
+ * differs is `providerAmount` / `providerCurrency` — the USD PayPal was asked for and the USD a refund
+ * returned — and those are rendered separately, where they exist. See `AdminOrderPayment`.
+ *
+ * `USD 53.55` rather than `$53.55` is doc 11 P10 step 6's own wording, which is what a staff member
+ * reads out to a customer.
+ */
+export function money(amount: number, currency: string): string {
+  const figure = amount.toLocaleString('en-LK', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
-  })}`;
+  });
+
+  return currency === LKR ? `Rs. ${figure}` : `${currency} ${figure}`;
 }
+
+/** The shop's own currency. `SalesCurrency.Lkr` on the server; `char(3)` on every money row. */
+const LKR = 'LKR';
 
 /**
  * "4 h 12 min left", or "overdue by 11 min" once the deadline has passed.

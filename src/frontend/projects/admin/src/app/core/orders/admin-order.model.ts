@@ -192,7 +192,20 @@ export interface AdminOrderPayment {
   readonly status: string;
   readonly isOrderSettlement: boolean;
   readonly amount: number;
+
+  /** `LKR`, pinned by `CK_Payments_Currency`. Carried so no screen hard-codes a symbol beside a figure. */
   readonly currency: string;
+
+  /**
+   * What the provider was actually asked for, in `providerCurrency`, or null.
+   *
+   * **This is the field that genuinely differs from LKR.** `currency` is LKR by check constraint; doc 08
+   * §3.5 puts the foreign figure here (USD for PayPal, D1) and doc 11 P10 step 6 has staff reading it out
+   * as "USD 53.55". Null for every payment this build can create, so the screen shows it only when set.
+   */
+  readonly providerAmount: number | null;
+  readonly providerCurrency: string | null;
+
   readonly payerReference: string | null;
 
   /** The slip's token, or null. It identifies the file; the download route is keyed on the order. */
@@ -212,6 +225,10 @@ export interface AdminOrderPayment {
 export interface AdminOrderRefund {
   readonly amount: number;
   readonly currency: string;
+
+  /** The foreign amount that actually went back (doc 08 §3.5, D1), or null. */
+  readonly providerAmount: number | null;
+
   readonly method: string;
   readonly status: string;
   readonly reason: string;

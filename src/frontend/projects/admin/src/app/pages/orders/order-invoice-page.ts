@@ -137,8 +137,8 @@ import { CatalogFailure, toCatalogFailure } from '../../core/catalog/admin-catal
                 <td>{{ line.productName }} · {{ line.colourName }} · {{ line.sizeLabel }}</td>
                 <td>{{ line.sku }}</td>
                 <td class="invoice__right">{{ line.quantity }}</td>
-                <td class="invoice__right">{{ cash(line.unitPrice) }}</td>
-                <td class="invoice__right">{{ cash(line.lineTotal) }}</td>
+                <td class="invoice__right">{{ cash(line.unitPrice, doc.money.currency) }}</td>
+                <td class="invoice__right">{{ cash(line.lineTotal, doc.money.currency) }}</td>
               </tr>
             }
           </tbody>
@@ -146,19 +146,19 @@ import { CatalogFailure, toCatalogFailure } from '../../core/catalog/admin-catal
 
         <dl class="invoice__totals">
           <dt>Items</dt>
-          <dd>{{ cash(doc.money.itemsSubtotal) }}</dd>
+          <dd>{{ cash(doc.money.itemsSubtotal, doc.money.currency) }}</dd>
           @if (doc.money.promoCodeText) {
             <dt>Promo code {{ doc.money.promoCodeText }}</dt>
-            <dd>−{{ cash(doc.money.promoDiscountAmount) }}</dd>
+            <dd>−{{ cash(doc.money.promoDiscountAmount, doc.money.currency) }}</dd>
           }
           <dt>Delivery</dt>
-          <dd>{{ cash(doc.money.deliveryFeeAmount) }}</dd>
+          <dd>{{ cash(doc.money.deliveryFeeAmount, doc.money.currency) }}</dd>
           @if (doc.money.deliveryDiscountAmount > 0) {
             <dt>Delivery discount</dt>
-            <dd>−{{ cash(doc.money.deliveryDiscountAmount) }}</dd>
+            <dd>−{{ cash(doc.money.deliveryDiscountAmount, doc.money.currency) }}</dd>
           }
           <dt class="invoice__total">Total</dt>
-          <dd class="invoice__total" data-testid="invoice-total">{{ cash(doc.money.grandTotal) }}</dd>
+          <dd class="invoice__total" data-testid="invoice-total">{{ cash(doc.money.grandTotal, doc.money.currency) }}</dd>
         </dl>
 
         <!-- No VAT line: prices are VAT-inclusive (doc 08 D2). Said on the document, because a customer
@@ -302,8 +302,9 @@ export class OrderInvoicePage {
     return this.route.snapshot.paramMap.get('orderPublicId') ?? '';
   }
 
-  protected cash(amount: number): string {
-    return money(amount);
+  /** The invoice's own currency, never an assumed one — see `money`. */
+  protected cash(amount: number, currency: string): string {
+    return money(amount, currency);
   }
 
   protected day(utc: string): string {
