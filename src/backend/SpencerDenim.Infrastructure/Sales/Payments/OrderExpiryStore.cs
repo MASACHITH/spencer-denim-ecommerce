@@ -182,9 +182,10 @@ internal sealed class OrderExpiryStore(AppDbContext dbContext, IOrderEmailOutbox
                 //
                 // The null guard is not defensive padding: `ReadForEmailAsync` projects to a record
                 // class, so "no such row" is representable — the lesson `BankTransferReviewStore`'s own
-                // OrderSnapshot records at length. It cannot happen here (the claim matched the row one
-                // statement earlier), and if it ever did, expiring the order without an email is the
-                // right outcome and queueing a message addressed to an empty string is not.
+                // OrderSnapshot records at length. It cannot happen here, because `ReadForEmailAsync`
+                // runs immediately after a claim that matched this very row; and if it ever did, expiring
+                // the order without an email is the right outcome, while queueing a message addressed to
+                // an empty string is not.
                 if (snapshot is { } order)
                 {
                     emails.EnlistOrderExpired(new OrderEmailHeader(

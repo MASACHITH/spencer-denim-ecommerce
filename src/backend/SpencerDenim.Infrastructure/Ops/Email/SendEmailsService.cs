@@ -144,9 +144,10 @@ internal sealed partial class SendEmailsService(
                     break;
                 }
 
-                // The clock is re-read per message, not reused from the batch: a batch of twenty against
-                // a slow mail server can take long enough that the backoff of the last one would be
-                // measured from a stale instant, and NextAttemptAtUtc has to be in the real future.
+                // `SendOneAsync` re-reads the clock for each message rather than taking `now` from this
+                // sweep: a batch of twenty against a slow mail server can take long enough that the
+                // backoff of the last one would be measured from a stale instant, and
+                // `NextAttemptAtUtc` has to be in the real future.
                 var outcome = await SendOneAsync(store, transport, claim, stoppingToken);
 
                 switch (outcome)
@@ -159,6 +160,12 @@ internal sealed partial class SendEmailsService(
                         break;
                     case SendOutcome.Dead:
                         dead++;
+                        break;
+
+                    case SendOutcome.Cancelled:
+                        // Counted in none of the three, deliberately: the host is stopping, the message
+                        // still holds its lease, and a later sweep releases it. Reporting it as a failure
+                        // would put a number in the log for something that did not happen.
                         break;
                 }
             }

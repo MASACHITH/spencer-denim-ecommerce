@@ -9,7 +9,7 @@ using SpencerDenim.IntegrationTests.Sales;
 namespace SpencerDenim.IntegrationTests.Ops;
 
 /// <summary>
-/// The four statements <c>SendEmails</c> runs, against a real SQL Server: the claim of doc 08 §3.8, the
+/// The five statements <c>SendEmails</c> runs, against a real SQL Server: the claim of doc 08 §3.8, the
 /// lease, the <see cref="EmailBackoff"/> ladder and the terminal <c>Dead</c> status.
 /// <para>
 /// <b>Nothing here sends anything</b> — there is no transport in this suite at all. What is under test is
@@ -110,10 +110,10 @@ public sealed class EmailOutboxSendingTests(SqlServerDatabaseFixture sqlServer)
     /// </summary>
     /// <remarks>
     /// <b>This is the test that makes "concurrent senders cannot send the same row twice" a measurement
-    /// rather than a claim.</b> The two claims run on separate scopes — separate <c>AppDbContext</c>s and
-    /// therefore separate connections — against the real engine, which is the only place the
-    /// <c>UPDLOCK, READPAST</c> behaviour exists. An intersection of one row would be a customer getting
-    /// their bank details twice.
+    /// rather than a claim.</b> Each of the three claims runs on a scope of its own — a separate
+    /// <c>AppDbContext</c> and therefore a separate connection — against the real engine, which is the
+    /// only place the <c>UPDLOCK, READPAST</c> behaviour exists. One row handed out twice would be a
+    /// customer getting their bank details twice.
     /// </remarks>
     [Fact]
     public async Task No_message_is_ever_claimed_twice_however_many_senders_race_for_it()

@@ -28,7 +28,7 @@ public sealed record EmailOutboxClaim(
     string? RelatedEntityId);
 
 /// <summary>
-/// The four statements <c>SendEmails</c> runs against <c>ops.EmailOutbox</c> (doc 08 §3.8).
+/// The five statements <c>SendEmails</c> runs against <c>ops.EmailOutbox</c> (doc 08 §3.8).
 /// </summary>
 /// <remarks>
 /// <b>Every one of them is set-based and conditional, which is doc 08 §5.2's argument applied to a

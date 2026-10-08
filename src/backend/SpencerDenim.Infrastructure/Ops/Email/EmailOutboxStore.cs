@@ -32,6 +32,12 @@ namespace SpencerDenim.Infrastructure.Ops.Email;
 /// mail server — which doc 08 §10.3 forbids outright ("Calls to PayPal and SMTP are never made inside a
 /// retried transaction"). The lease is what covers the gap instead.
 /// </para>
+/// <para>
+/// <b>Doc 08 §10.3's retry still applies, and the claim has to ask for it by name.</b> EF wraps its own
+/// single operations in the execution strategy automatically, which covers every statement here except
+/// one; it cannot wrap a raw <c>DbCommand</c>, so <see cref="ClaimAsync"/> does it explicitly. Without
+/// that, a 1205 between contending senders reaches the sweep as an exception and costs a whole cycle.
+/// </para>
 /// </remarks>
 internal sealed class EmailOutboxStore(AppDbContext dbContext) : IEmailOutboxStore
 {
@@ -138,6 +144,30 @@ internal sealed class EmailOutboxStore(AppDbContext dbContext) : IEmailOutboxSto
             return [];
         }
 
+        // **The one statement in this class that has to name the execution strategy.** Doc 08 §10.3 puts
+        // `EnableRetryOnFailure(3)` on the context; EF applies it by itself to a single operation with no
+        // user transaction open, which every other statement in this class is, but it cannot apply it to
+        // a raw `DbCommand` — and this one has to be raw in order to read its own `OUTPUT` rows. Without
+        // this, senders contending for one small table can hand a 1205 (deadlock victim) or a lock
+        // timeout straight out to the sweep, which catches it, logs "the email sweep could not run" and
+        // waits a whole cycle over a fault EF already classifies as transient.
+        //
+        // **A retry is safe because the claim is atomic.** If the first attempt committed and only its
+        // answer was lost, the retry sees those rows at `Sending` and claims a different batch; the first
+        // batch comes back through `ReleaseExpiredLeasesAsync` when its lease runs out. What a retry
+        // cannot do is send anything twice, which is the only outcome that would not be acceptable.
+        var strategy = dbContext.Database.CreateExecutionStrategy();
+
+        return await strategy.ExecuteAsync(() =>
+            ClaimOnceAsync(batchSize, nowUtc, leaseUntilUtc, cancellationToken));
+    }
+
+    private async Task<IReadOnlyList<EmailOutboxClaim>> ClaimOnceAsync(
+        int batchSize,
+        DateTime nowUtc,
+        DateTime leaseUntilUtc,
+        CancellationToken cancellationToken)
+    {
         var connection = dbContext.Database.GetDbConnection();
         var openedHere = false;
 

@@ -274,6 +274,25 @@ public sealed class OrderEmailComposerTests
     }
 
     /// <summary>
+    /// The second and later lines of a delivery address are indented in the text part, not given a bare
+    /// colon.
+    /// </summary>
+    /// <remarks>
+    /// The first line carries the label and the rest continue it, so writing them as
+    /// <c>": 14 Galle Road"</c> is how a plain-text part comes to look machine-made. Small, and the text
+    /// part is the one a shopper on a text-only client actually reads.
+    /// </remarks>
+    [Fact]
+    public void A_continued_address_line_is_indented_rather_than_given_a_bare_colon()
+    {
+        var text = Composer().OrderPlaced(Placed()).Text;
+
+        Assert.Contains("Delivering to: Nimal Perera", text, StringComparison.Ordinal);
+        Assert.Contains("  14 Galle Road", text, StringComparison.Ordinal);
+        Assert.DoesNotContain(": 14 Galle Road", text, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// A pickup order's placement email names the store and no delivery address, because a pickup order
     /// has none (<c>CK_Orders_ShipAddress</c>).
     /// </summary>

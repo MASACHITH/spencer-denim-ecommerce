@@ -321,8 +321,8 @@ test suite that can send mail to a real address.
 
 | Suite | Before (main) | After | New |
 |---|---|---|---|
-| Unit | 1,814 | **1,904** | 90 |
-| Integration | 1,236 | **INTEGRATION_TOTAL** | 52 |
+| Unit | 1,814 | **1,905** | 91 |
+| Integration | 1,236 | **1,286** | 52 (50 of them in `IntegrationTests.Ops`) |
 | Vitest | 24 / 1,417 / 465 | unchanged | — |
 | Playwright | 935 / 0 | unchanged | — |
 
@@ -332,7 +332,7 @@ payload. **That is deliberate** — see "What is owed", item 1.
 
 ### Mutation testing
 
-Every new test was proved to fail against a mutation of the code it covers. 23 mutations, 21 killed:
+Every new test was proved to fail against a mutation of the code it covers. 24 mutations, 22 killed:
 
 | Mutation | Killed by |
 |---|---|
@@ -357,6 +357,7 @@ Every new test was proved to fail against a mutation of the code it covers. 23 m
 | M19 email a rejected transfer | `Rejecting_a_transfer_queues_nothing` |
 | M21 put the raw template in the dispatch email | `Dispatching_an_order_queues_the_shipped_email_with_a_real_tracking_link` |
 | M23 remove every guard from the cancel claim | `A_refused_cancellation_queues_nothing` |
+| M24 give a continued address line a bare colon | `A_continued_address_line_is_indented_rather_than_given_a_bare_colon` |
 
 **Two mutations survived, and both are non-viable rather than test holes** — said plainly, because
 explaining a survivor away is how yesterday's real hole got through:
@@ -376,6 +377,26 @@ ladder walk stepped an hour per pass and reported five attempts for a six-rung l
 wait is four hours. A third — the first version of the field theory — asserted bare values against the
 HTML part and **survived M4**, because the order number and the amount are also in the title and the
 preheader; it is now a labelled-pair assertion against the text part, which has no decoration.
+
+### One failure, once, and what was done about it
+
+`No_message_is_ever_claimed_twice_…` went red in **one** full-suite run and green in four runs of its own
+class and in the two full runs either side of it. It was not called flaky and it was not re-run until it
+passed. Two things came out of looking at it, and both are changes rather than explanations:
+
+- **The test's round bound was 10 and is now 50**, with the unclaimed row ids in the failure message.
+  `READPAST` means a sender that finds a row locked skips it and comes back, so how many rounds twenty-four
+  rows take is a property of the engine's timing under whatever else the suite is doing. A bound that tight
+  turns "the machine was busy" into a failure about concurrency.
+- **`ClaimAsync` now names the execution strategy.** It is the one statement in `EmailOutboxStore` that has
+  to: EF applies `EnableRetryOnFailure` to its own single operations automatically, but it cannot wrap the
+  raw `DbCommand` the claim needs in order to read its own `OUTPUT` rows. Without it a 1205 between
+  contending senders reached the sweep as an exception and cost a whole cycle — which is also the most
+  likely thing that happened in that run. A retry is safe because the claim is atomic: a retry after a lost
+  answer claims a different batch and the first comes back through the lease.
+
+Neither is a proof of the cause, and that is said plainly. What can be said is that the suite has since run
+clean twice end to end, and that the failure mode the fix addresses is one the code genuinely had.
 
 ## What is owed, and by whom
 
