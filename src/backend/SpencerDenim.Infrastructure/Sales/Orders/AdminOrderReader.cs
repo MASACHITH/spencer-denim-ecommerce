@@ -543,9 +543,13 @@ internal sealed class AdminOrderReader(AppDbContext dbContext) : IAdminOrderRead
             : null;
 
         return new AdminOrderDispatchDto(
-            // Null when the courier row has gone, which is also when `template` is null — so the screen
-            // selects nothing and shows the snapshotted name, rather than selecting a different carrier.
-            template is null && order.CourierId is null ? null : order.CourierId,
+            // **The order's own column, with no cleverness on top of it.** The first version wrote
+            // `template is null && order.CourierId is null ? null : order.CourierId`, which is `order
+            // .CourierId` with extra words and a comment claiming it handled a deleted courier — it did
+            // not, and could not: `FK_Orders_Couriers_CourierId` is `NoAction`, so the row cannot be
+            // deleted while an order points at it. A null here is an order that never had a courier,
+            // or one whose column was cleared deliberately. A wrong comment is worse than none.
+            order.CourierId,
             order.CourierName,
             order.TrackingNumber,
             BuildTrackingUrl(template, order.TrackingNumber),
