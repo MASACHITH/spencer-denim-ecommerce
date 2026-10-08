@@ -239,12 +239,22 @@ public sealed class AdminOrderEndpointTests(SqlServerDatabaseFixture sqlServer)
         // The whole number, a prefix of it, and the digits alone.
         var digits = order.OrderNumber.Split('-')[^1];
 
+        // The year-and-sequence part, which is what somebody quotes when they read the number off a
+        // screen and skip the prefix; and the same number typed with spaces, which is how it is read
+        // aloud. Both missed before review: ten digits read as a telephone number, and a spaced term
+        // matched no stored value because the series writes dashes.
+        var yearAndSequence = string.Join('-', order.OrderNumber.Split('-')[1..]);
+
         foreach (var term in new[]
         {
             order.OrderNumber,
             order.OrderNumber[..^3],
             digits,
             digits.TrimStart('0'),
+            yearAndSequence,
+            order.OrderNumber.Replace('-', ' '),
+            yearAndSequence.Replace('-', ' '),
+            order.OrderNumber.ToLowerInvariant(),
         })
         {
             var rows = (await ListAsync(client, $"?search={Uri.EscapeDataString(term)}"))
@@ -303,10 +313,12 @@ public sealed class AdminOrderEndpointTests(SqlServerDatabaseFixture sqlServer)
     /// <b>A <c>%</c> in the search box finds nothing rather than everything.</b>
     /// </summary>
     /// <remarks>
-    /// EF translates <c>EndsWith</c> to <c>LIKE '%' + @p</c> and does not escape the parameter, so an
-    /// unescaped wildcard would be a free table scan that also matched rows the typist did not mean.
-    /// Asserted on the wire because the escaping happens in the Application layer and the translation
-    /// happens in EF — only the pair can be measured.
+    /// <b>And this is the only test that can see it, which is why it carries the whole guarantee.</b> The
+    /// Application layer does <i>not</i> escape the term — it used to carry two helpers that did, and they
+    /// were dead code justified by a false claim about EF. EF 10.0.12 escapes the value itself at run time
+    /// and emits an explicit <c>ESCAPE</c> clause, measured with <c>ToQueryString()</c>:
+    /// <c>LIKE @text_startswith ESCAPE '\'</c>. So the behaviour is the framework's, a unit test cannot
+    /// observe it, and an assertion on the wire is the only kind that would notice EF changing its mind.
     /// </remarks>
     [Fact]
     public async Task A_wildcard_in_the_search_box_is_not_a_wildcard()

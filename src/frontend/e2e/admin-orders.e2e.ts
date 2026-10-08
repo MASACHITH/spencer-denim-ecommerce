@@ -632,13 +632,65 @@ test.describe('the screens themselves', () => {
     await measureAtEveryWidth(page, clauses);
   });
 
-  test('the order detail has no sideways scroll and no undersized or buried control', async ({ page }) => {
+  /**
+   * **The transition buttons are measured <i>before</i> anything is pressed, which the first version of
+   * this test did not do.**
+   *
+   * It clicked Start processing and then swept — so `start-processing` itself, and every other control
+   * that only exists in a particular status, was never measured at 320 px. A sweep that silently drops
+   * the controls it is about is the W1-03 lesson with the audit done and the subject missing.
+   */
+  test('the order detail measures its transition buttons before any are pressed', async ({ page }) => {
+    await openDetail(page, '44444444-4444-4444-8444-444444444444', PAID_ORDER);
+
+    await measureAtEveryWidth(page, [
+      '[data-testid="start-processing"]',
+      '[data-testid="internal-note"]',
+      '[data-testid="save-note"]',
+      '[data-testid="print-invoice"]',
+    ]);
+  });
+
+  /** The pickup order's own action, which only exists while it is Processing. */
+  test('the pickup detail measures Ready for collection and Mark as collected', async ({ page }) => {
+    await openDetail(page, '55555555-5555-4555-8555-555555555555', PICKUP_ORDER);
+
+    await measureAtEveryWidth(page, ['[data-testid="ready-for-collection"]']);
+
+    await page.locator('[data-testid="ready-for-collection"]').click();
+    await expect(page.locator('[data-testid="mark-delivered"]')).toBeVisible();
+
+    await measureAtEveryWidth(page, ['[data-testid="mark-delivered"]']);
+  });
+
+  /** Accept late payment and its reason box, which only exist on an expired order. */
+  test('the expired detail measures Accept late payment and its reason box', async ({ page }) => {
+    await openDetail(page, EXPIRED_TOKEN, EXPIRED_ORDER);
+
+    await measureAtEveryWidth(page, [
+      '[data-testid="accept-late"]',
+      '[data-testid="accept-late-note"]',
+    ]);
+  });
+
+  /** The refusal's own Reload control, which only exists after a refused transition. */
+  test('the refusal’s reload control is measured too', async ({ page }) => {
+    await openDetail(page, '44444444-4444-4444-8444-444444444444', PAID_ORDER);
+    await armOutcome(page, 'wrong-status');
+
+    await page.locator('[data-testid="start-processing"]').click();
+    await expect(page.locator('[data-testid="refusal-reload"]')).toBeVisible();
+
+    await measureAtEveryWidth(page, ['[data-testid="refusal-reload"]']);
+  });
+
+  test('the dispatch form has no sideways scroll and no undersized or buried control', async ({ page }) => {
     await addCourier(page, 'xunit-measure-carrier');
     await page.goto(`${adminURL}/orders/44444444-4444-4444-8444-444444444444`);
     await expect(page.locator('[data-testid="order-number"]')).toContainText(PAID_ORDER);
 
-    // Start processing first, so the dispatch form's controls are on the screen and in the sweep rather
-    // than quietly dropped from it.
+    // Start processing, so the dispatch form's controls are on the screen. The transition buttons that
+    // this destroys are measured by the test above, before it is pressed.
     await page.locator('[data-testid="start-processing"]').click();
     await expect(page.locator('[data-testid="submit-dispatch"]')).toBeVisible();
 
@@ -646,9 +698,6 @@ test.describe('the screens themselves', () => {
       '[data-testid="courier"]',
       '[data-testid="tracking-number"]',
       '[data-testid="submit-dispatch"]',
-      '[data-testid="internal-note"]',
-      '[data-testid="save-note"]',
-      '[data-testid="print-invoice"]',
     ]);
   });
 

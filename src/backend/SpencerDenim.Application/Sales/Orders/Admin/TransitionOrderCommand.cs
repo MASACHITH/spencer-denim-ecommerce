@@ -95,10 +95,30 @@ public sealed record TransitionOrderCommand(
 /// <para>
 /// <b>Which refusal a caller gets does not depend on whether the submitted value would have changed
 /// anything.</b> ADM-22 shipped a one-bit oracle of that shape, so the order of decisions here is fixed:
-/// 404 for an unknown token, then the <i>shape</i> of the request (is a tracking number present, is a
-/// courier allowed for this method), then the transaction's own state guard. Nothing before the state
-/// guard reads the order's status, and nothing after it reveals a value — a refusal says where the order
-/// is, which a caller with <c>Orders.Edit</c> can read from the detail screen anyway.
+/// 404 for an unknown token, then the <i>shape</i> of the request, then the transaction's own state guard.
+/// </para>
+/// <para>
+/// <b>What the refusals do disclose, stated in full rather than softened.</b> A holder of
+/// <c>Orders.Edit</c> <i>without</i> <c>Orders.View</c> — not a combination any default role has (doc 08
+/// §9), but expressible — learns two things from refusals alone:
+/// </para>
+/// <list type="bullet">
+/// <item><description>
+/// the order's <b>status</b>, from the state guard's refusal; and
+/// </description></item>
+/// <item><description>
+/// the order's <b>delivery method</b>, one step earlier and before any state is read, because
+/// <see cref="TransitionOrderCommandHandler.Validate"/> reads <see cref="AdminOrderTarget.IsPickup"/> to
+/// decide which transition a request even means. An earlier version of this remark mentioned only the
+/// status, which understated it.
+/// </description></item>
+/// </list>
+/// <para>
+/// Neither is an escalation: the same caller can <i>change</i> the order, which is strictly more than
+/// reading two facts about it, and both facts are on the detail screen that <c>Orders.View</c> opens.
+/// Collapsing the two refusals into one would cost a staff member the sentence that tells them what to do
+/// next, which is the thing these refusals exist for. It is recorded here so the trade is visible rather
+/// than discovered.
 /// </para>
 /// </remarks>
 public sealed class TransitionOrderCommandHandler(
@@ -262,8 +282,13 @@ public sealed class TransitionOrderCommandHandler(
                 {
                     errors.Add(new ValidationError(
                         "trackingNumber",
-                        "Use letters, digits and dashes only. The column cannot store other characters "
-                        + "and would turn them into question marks, which breaks the tracking link."));
+                        // The message says what is refused, not a narrower rule than the check applies:
+                        // the check is "printable ASCII", and an earlier version said "letters, digits and
+                        // dashes only" while happily accepting a slash. A staff member told a rule the
+                        // box does not enforce will not trust the next message either.
+                        "Use ordinary letters, digits and punctuation. A character outside that \u2014 a "
+                        + "non-breaking space pasted from an email, for instance \u2014 cannot be stored "
+                        + "and would become a question mark, which breaks the tracking link."));
                 }
 
                 break;

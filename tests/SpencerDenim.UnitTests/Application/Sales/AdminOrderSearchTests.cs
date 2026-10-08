@@ -118,6 +118,59 @@ public sealed class AdminOrderSearchTests
         Assert.Equal(expected, term.Value);
     }
 
+    /// <summary>
+    /// <b>The two shapes a staff member actually types that used to miss.</b>
+    /// </summary>
+    /// <remarks>
+    /// Both found in review. <c>SD 2026 000123</c> matched no stored value, because the series writes
+    /// dashes and the term had spaces. <c>2026-000123</c> is ten digits, so it was read as a telephone
+    /// number — and a staff member who quotes the part after the prefix is the ordinary case, not an
+    /// exotic one.
+    /// </remarks>
+    [Theory]
+    [InlineData("SD 2026 000123", "SD-2026-000123", null)]
+    [InlineData("sd-2026-000123", "SD-2026-000123", null)]
+    [InlineData("SD_2026_000123", "SD-2026-000123", null)]
+    [InlineData("INV 2026 000045", "INV-2026-000045", null)]
+    [InlineData("2026-000123", "2026-000123", "2026-000123")]
+    [InlineData("2026 000123", "2026-000123", "2026-000123")]
+    [InlineData("  2026-123  ", "2026-123", "2026-123")]
+    public void A_document_number_is_normalised_to_the_shape_the_series_writes(
+        string raw,
+        string expectedValue,
+        string? expectedSuffix)
+    {
+        var term = AdminOrderSearch.Classify(raw);
+
+        Assert.NotNull(term);
+        Assert.Equal(AdminOrderSearchKind.NumberOrName, term.Kind);
+        Assert.Equal(expectedValue, term.Value);
+
+        // A term carrying the prefix is a prefix of the stored value; one without it is the stored
+        // value's tail, which is what the suffix is for.
+        Assert.Equal(expectedSuffix, term.SequenceSuffix);
+    }
+
+    /// <summary>
+    /// <b>And a telephone number is still a telephone number</b>, which is the other side of the same
+    /// boundary and the reason the year group is in the shape at all.
+    /// </summary>
+    /// <remarks>
+    /// <c>2026000123</c> — ten digits with no separator — is <i>deliberately</i> still read as a telephone
+    /// number: nothing in the term distinguishes it, and guessing the other way would make every ten-digit
+    /// telephone search scan the order-number index for nothing. Asserted so the loss is a decision rather
+    /// than a surprise.
+    /// </remarks>
+    [Theory]
+    [InlineData("0771234567")]
+    [InlineData("+94 77 123 4567")]
+    [InlineData("077-123-4567")]
+    [InlineData("2026000123")]
+    public void A_separatorless_run_of_digits_is_still_a_telephone_number(string raw)
+    {
+        Assert.Equal(AdminOrderSearchKind.Phone, AdminOrderSearch.Classify(raw)!.Kind);
+    }
+
     [Theory]
     [InlineData("Perera")]
     [InlineData("nimal perera")]
@@ -146,44 +199,17 @@ public sealed class AdminOrderSearchTests
         Assert.Equal(AdminOrderSearch.MaxLength, term.Value.Length);
     }
 
-    /// <summary>
-    /// <b><c>LIKE</c>'s own wildcards are escaped, and this is a correctness and a performance matter at
-    /// once.</b>
-    /// </summary>
-    /// <remarks>
-    /// EF translates <c>EndsWith</c> to <c>LIKE '%' + @p</c> and does <i>not</i> escape the parameter, so
-    /// a <c>%</c> typed into the search box would otherwise be a free table scan that also matched rows
-    /// the typist did not mean. Backslash is escaped first, because it is the escape character.
-    /// </remarks>
-    [Theory]
-    [InlineData("100%", "100\\%")]
-    [InlineData("a_b", "a\\_b")]
-    [InlineData("a[b", "a\\[b")]
-    [InlineData("a\\b", "a\\\\b")]
-    [InlineData("%_[\\", "\\%\\_\\[\\\\")]
-    [InlineData("SD-2026-000123", "SD-2026-000123")]
-    public void Like_wildcards_are_escaped(string raw, string expected)
-    {
-        var term = AdminOrderSearch.Classify(raw);
-
-        Assert.NotNull(term);
-        Assert.Equal(expected, term.LikeEscaped());
-    }
-
-    /// <summary>
-    /// The padded suffix is escaped too, although it can only be digits.
-    /// </summary>
-    /// <remarks>
-    /// <b>Asserted because "this value can never contain a wildcard" is exactly the kind of claim that
-    /// stops being true without anybody noticing</b> — and a wrong comment is worse than none, because it
-    /// stops the next reader checking.
-    /// </remarks>
-    [Fact]
-    public void The_sequence_suffix_is_escaped_and_is_null_when_there_is_none()
-    {
-        Assert.Equal("000123", AdminOrderSearch.Classify("123")!.SequenceSuffixEscaped());
-        Assert.Null(AdminOrderSearch.Classify("Perera")!.SequenceSuffixEscaped());
-    }
+    // **Two tests over seven cases stood here, asserting `LikeEscaped()` and `SequenceSuffixEscaped()`.**
+    //
+    // Both methods were dead — nothing in production ever called them — so the tests could not fail for
+    // any reason a user would notice, which is the shape this project has shipped five of. Worse, the
+    // comment above them stated a falsehood: that EF does not escape a `LIKE` parameter. It does, at run
+    // time, with an explicit `ESCAPE` clause — measured with `ToQueryString()` on EF 10.0.12.
+    //
+    // What a wildcard in the search box actually does is now asserted where it can be seen:
+    // `AdminOrderEndpointTests.A_wildcard_in_the_search_box_is_not_a_wildcard`, on the wire against real
+    // SQL Server. A unit test cannot observe EF's translation, so a unit test was never the right place
+    // for this guarantee.
 
     /// <summary>
     /// The order-number prefix comes from the Domain's own constant, not a copy of it.

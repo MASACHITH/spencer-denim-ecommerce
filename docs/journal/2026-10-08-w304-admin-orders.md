@@ -78,10 +78,19 @@ Which index each classification can use is written on the reader:
   prevent;
 - an email **prefix** seeks `IX_Orders_EmailNormalized`; a telephone **suffix** scans `IX_Orders_Phone`.
 
-`LIKE`'s own wildcards are escaped, because EF translates `EndsWith` to `LIKE '%' + @p` and does **not**
-escape the parameter — a `%` typed into the box would otherwise be a free table scan that also matched
-rows the typist did not mean. There is an integration test on the wire for it, because the escaping is in
-the Application layer and the translation is in EF and only the pair can be measured.
+A `%` typed into the box finds nothing rather than everything, and **that is EF's doing, not this
+code's** — which an earlier version of this paragraph had backwards. It said the Application layer escaped
+the term because "EF does not escape the parameter". EF 10.0.12 does, at run time, with an explicit
+`ESCAPE` clause (measured with `ToQueryString()`: `LIKE @text_startswith ESCAPE '\'`), so the two helpers
+that did the escaping were dead code justified by a falsehood — and wiring them up as the comment implied
+would have **double-escaped** every term. They are gone, with the two unit tests over seven cases that
+asserted a method production never called. The guarantee is pinned by
+`AdminOrderEndpointTests.A_wildcard_in_the_search_box_is_not_a_wildcard`, on the wire, which is the only
+place it can be seen.
+
+**The lesson is about the sweep, not the escaping.** My end-of-task grep checked every *schema* claim I had
+made against the configuration and caught five. It did not check *framework* claims, and this is the one it
+missed.
 
 **The name match is case-insensitive because the collation is, and the first version forced it with
 `UPPER(FirstName + ' ' + LastName)`.** That is strictly worse: non-sargable against any future index on
@@ -222,7 +231,7 @@ every save.
 |---|---|---|
 | 1 | **A 403 on the order list blew the screen up with a `TypeError`** instead of showing the refusal. `isEmpty()` answers `-1 === 0`, which is false, so the list branch rendered the page's rows over a null. The null branch is now explicit. | `orders-list-page.spec.ts` |
 | 2 | **The two new routes' signal `input.required` was never populated**, because `withComponentInputBinding()` is not in this application's router configuration. The three existing form pages already read `route.snapshot.paramMap`; the new ones now do too, rather than changing every route's behaviour for one screen. | the browser suite |
-| 3 | **The couriers screen's active checkbox was 20 px**, which GLB-09's floor refuses — the shared `.adm-check` rule. It is now a 24 px box (WCAG 2.2 SC 2.5.8's own minimum) inside a 44 px label that is the control, and both are asserted. | the breakpoint sweep |
+| 3 | **The couriers screen's active checkbox was 20 px**, which GLB-09's floor refuses — it was using the shared `.adm-check` rule. **The shared rule is still 20 px** (`styles.css:94`); the 24 px lives in `couriers-page.ts` as `.couriers-check`, local to this screen. An earlier version of this row said the shared rule "is now a 24 px box", which it is not — the component's own comment was right and the journal was wrong, which is the fourth time in this task a comment outran what I had actually changed. The other two screens with a checkbox are fine by construction, because they wrap the input in a 44 px label. Whether the shared rule should move to 24 px is a question for whoever owns `styles.css`; changing it would touch every admin screen's checkbox and is not this task's to decide. | the breakpoint sweep |
 | 4 | **The no-promised-email sweep read the customer's "Email" field label as a promise.** It matches promise-shaped phrases now, not the bare word. The field is a staff member's way of telephoning somebody and refusing the word would be refusing the panel. | the browser suite |
 | 5 | Four column facts in my own first draft were wrong against the schema: `Couriers.TrackingUrlTemplate` is `nvarchar(500)` not 300, `Couriers.Phone` is `varchar(20)` not `nvarchar(30)`, the check constraint is `CK_Couriers_TrackingUrlTemplate` not `CK_Couriers_TrackingTemplate`, and the delivery snapshot's column is `DeliveryMethodCode` with **no** `Delivery_` prefix. Three of the four were in comments, which is the worse half: a wrong comment stops the next reader checking. Found by grepping my own new files for every column length, index and constraint name I had claimed and checking each against the configuration — worth doing again at the end of any task that quotes the schema. | reading the configuration |
 | 6 | `varchar` columns **substitute `?` for a non-ASCII character rather than erroring**, so a pasted tracking number with a non-breaking space in it would be stored as a number that 404s at the courier with nothing saying so. Both `TrackingNumber` and `Couriers.Phone` now refuse one. | reading the configuration |

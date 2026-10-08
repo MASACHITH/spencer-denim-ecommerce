@@ -140,8 +140,11 @@ public sealed class SaveCourierCommandHandler(ICourierAdminStore store, IClock c
         {
             errors.Add(new ValidationError(
                 "phone",
-                "Use digits, spaces, brackets, + and - only. The column cannot store other characters and "
-                + "would turn them into question marks."));
+                // What is refused, not a narrower rule than the check applies: the check is "printable
+                // ASCII", and an earlier version listed four characters while accepting any of them.
+                "Use ordinary digits and punctuation. A character outside that \u2014 a non-breaking space "
+                + "pasted from an email, for instance \u2014 cannot be stored and would become a question "
+                + "mark."));
         }
 
         if (errors.Count > 0)

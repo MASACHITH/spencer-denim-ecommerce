@@ -41,6 +41,11 @@ import { CatalogFailure, toCatalogFailure } from '../../core/catalog/admin-catal
  * destroy it. Accept late payment posts to the route W3-03 already built and tested, and the short lines
  * it returns when the stock re-check refuses are rendered with product, colour, size and SKU.
  *
+ * **Doc 11 §6.6 step 2 is why the refund shows two dates.** It tells staff to read a refund's amount, the
+ * date it was sent and its reference out to a customer on the telephone — and `completedAtUtc` is the date
+ * it was sent, which is not the same as `createdAtUtc`: a `Pending` refund has been recorded and the money
+ * has not moved. Showing only one would have a staff member reading out the wrong date, confidently.
+ *
  * **Nothing here promises an email, a notification or an acknowledgement.** `ops.EmailOutbox` is specified
  * (doc 08 §3.8) and unbuilt; W3-06 owns it. Doc 11 P9 step 5 queues `OrderShipped` and nothing can send
  * it, so the dispatch panel says in words that the customer is not told — which is also doc 11 P9's own
@@ -95,6 +100,18 @@ import { CatalogFailure, toCatalogFailure } from '../../core/catalog/admin-catal
           }
           <dt>Stock</dt>
           <dd>{{ detail.stockState }}</dd>
+          @if (detail.cancelReason) {
+            <!-- Doc 02 ADM-09's "cancel… status". It is null on every order today because nothing
+                 cancels one yet (that is W3-05's), and a field nothing reads is a field nobody notices
+                 breaking — so it is rendered now, beside the status it explains, rather than the day the
+                 writer lands and somebody wonders why the reason never shows. -->
+            <dt>Why it was cancelled</dt>
+            <dd data-testid="cancel-reason">{{ detail.cancelReason }}</dd>
+          }
+          @if (detail.closedAtUtc) {
+            <dt>Closed</dt>
+            <dd>{{ when(detail.closedAtUtc) }}</dd>
+          }
         </dl>
 
         @if (detail.dispatch; as dispatch) {
@@ -255,6 +272,27 @@ import { CatalogFailure, toCatalogFailure } from '../../core/catalog/admin-catal
             is still available the order is paid with today's date and a new invoice number; if anything
             has sold, nothing changes and you are told which items.
           </p>
+
+          <!-- **Its own box, and that was a defect.** This used to send whatever was in the internal-note
+               textarea below as the reason — which is kept with the payment, audited, and read back to a
+               customer who asks why their money was taken a week late. A staff member writing a note to
+               themselves about a telephone call had no way to know it was about to become the reason a
+               payment was accepted. Two different pieces of writing; two boxes. -->
+          <label class="adm-field adm-field--wide">
+            <span class="adm-label">Why you are accepting it (optional)</span>
+            <textarea
+              class="adm-input"
+              rows="2"
+              maxlength="500"
+              [value]="acceptLateNote()"
+              data-testid="accept-late-note"
+              (input)="typeAcceptLateNote($event)"
+            ></textarea>
+            <span class="adm-panel__hint">
+              Kept with the payment and in the order's history, and read back if the customer asks. The
+              internal note further down is separate and is not sent.
+            </span>
+          </label>
         }
 
         @if (detail.actions.canMarkShipped || detail.actions.canEditDispatch) {
@@ -522,8 +560,16 @@ import { CatalogFailure, toCatalogFailure } from '../../core/catalog/admin-catal
                   <dd>{{ refund.restockItems ? 'Yes' : 'No' }}</dd>
                   <dt>By</dt>
                   <dd>{{ refund.createdByUserEmail ?? 'the payment provider' }}</dd>
-                  <dt>When</dt>
+                  <dt>Recorded</dt>
                   <dd>{{ when(refund.createdAtUtc) }}</dd>
+                  <dt>Money sent</dt>
+                  <dd data-testid="refund-completed">
+                    @if (refund.completedAtUtc) {
+                      {{ when(refund.completedAtUtc) }}
+                    } @else {
+                      <span class="adm-muted">not yet — this refund is still {{ refund.status }}</span>
+                    }
+                  </dd>
                 </dl>
               </li>
             }
@@ -687,6 +733,16 @@ export class OrderDetailPage {
   protected readonly courierId = signal('');
   protected readonly trackingNumber = signal('');
   protected readonly internalNote = signal('');
+
+  /**
+   * The reason for accepting a late payment, which is <b>not</b> the internal note.
+   *
+   * It reaches `Payments.ApprovalNote` and the order's history row, is audited, and is what staff read
+   * back to a customer who asks why their money was taken a week after the deadline. Sending the internal
+   * note instead — which is what this screen did — meant a note somebody wrote to themselves about a
+   * telephone call silently became a statement about money.
+   */
+  protected readonly acceptLateNote = signal('');
   protected readonly dispatchError = signal<string | null>(null);
 
   /**
@@ -842,6 +898,10 @@ export class OrderDetailPage {
     this.trackingNumber.set((event.target as HTMLInputElement | null)?.value ?? '');
   }
 
+  protected typeAcceptLateNote(event: Event): void {
+    this.acceptLateNote.set((event.target as HTMLTextAreaElement | null)?.value ?? '');
+  }
+
   protected typeNote(event: Event): void {
     this.internalNote.set((event.target as HTMLTextAreaElement | null)?.value ?? '');
   }
@@ -951,7 +1011,9 @@ export class OrderDetailPage {
       return;
     }
 
-    const note = this.internalNote().trim();
+    // **The accept-late box, not the internal note.** See `acceptLateNote` for what sending the wrong one
+    // cost.
+    const note = this.acceptLateNote().trim();
 
     this.begin();
 
@@ -1010,6 +1072,10 @@ export class OrderDetailPage {
         this.courierId.set(this.courierIdFor(detail));
         this.trackingNumber.set(detail.dispatch?.trackingNumber ?? '');
         this.internalNote.set(detail.internalNote ?? '');
+
+        // Cleared on a re-read: it is a reason for one decision, not a field of the order, and leaving it
+        // filled in after a successful acceptance would invite it being sent again with the next one.
+        this.acceptLateNote.set('');
 
         then?.();
       },

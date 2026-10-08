@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.RegularExpressions;
 using SpencerDenim.Domain.Sales;
 
 namespace SpencerDenim.Application.Sales.Orders;
@@ -19,7 +20,7 @@ namespace SpencerDenim.Application.Sales.Orders;
 /// recorded on the member.
 /// </para>
 /// </remarks>
-public static class AdminOrderSearch
+public static partial class AdminOrderSearch
 {
     /// <summary>
     /// The longest term accepted. Anything longer is truncated rather than refused — the box is a search,
@@ -66,6 +67,26 @@ public static class AdminOrderSearch
                 null);
         }
 
+        // **The canonical document-number form, computed before anything else is decided.** The series
+        // writes `SD-2026-000123`; a staff member reads it off a screen and types `SD 2026 000123`, or
+        // quotes the part after the prefix as `2026-000123`. Both used to miss — the spaced one matched no
+        // stored value because the stored one has dashes, and the prefix-less one is ten digits and so was
+        // read as a telephone number. Both were found in review, and both are exactly what the one search
+        // box exists to catch.
+        var canonical = Separators().Replace(term.ToUpperInvariant(), "-").Trim('-');
+
+        if (DocumentNumberShape().IsMatch(canonical))
+        {
+            // With a prefix, the stored value starts with what was typed, so a seekable prefix match does
+            // it. Without one, the stored value *ends* with it — see SequenceSuffix for what that costs.
+            var hasPrefix = char.IsAsciiLetter(canonical[0]);
+
+            return new AdminOrderSearchTerm(
+                AdminOrderSearchKind.NumberOrName,
+                canonical,
+                hasPrefix ? null : canonical);
+        }
+
         var digits = new string(term.Where(char.IsAsciiDigit).ToArray());
 
         // Only digits, and enough of them to be a telephone number rather than part of an order number.
@@ -103,6 +124,39 @@ public static class AdminOrderSearch
     /// type. Exposed from the Domain's own constant so the two cannot drift.
     /// </summary>
     public static string OrderNumberPrefix => DocumentNumber.OrderNumberPrefix;
+
+    /// <summary>
+    /// Runs of the things people type between a document number's parts, collapsed to the one the series
+    /// actually writes.
+    /// </summary>
+    /// <remarks>
+    /// Spaces, underscores, en dashes and hyphens. <b>Not a full stop</b>, which would fold an email
+    /// address's domain, and <b>not a plus</b>, which is how a telephone number starts.
+    /// </remarks>
+    [GeneratedRegex(@"[\s_\-\u2013\u2014]+", RegexOptions.CultureInvariant)]
+    private static partial Regex Separators();
+
+    /// <summary>
+    /// A document number, or the start of one: an optional letter prefix, a four-digit year, and the
+    /// sequence.
+    /// </summary>
+    /// <remarks>
+    /// <b>The year group is what tells a document number from a telephone number, and the ambiguity it
+    /// leaves is worth naming.</b> `2026-000123` is ten digits; so is a mobile number. What separates them
+    /// here is the <i>separator</i> plus a leading `19`/`20`, so `2026-000123` is a document number and
+    /// `0771234567` is a telephone number. A bare `2026000123` with no separator at all is still read as a
+    /// telephone number, and that is a deliberate loss: nothing in the term distinguishes it, and guessing
+    /// wrong in the other direction would make every ten-digit telephone search scan the order-number
+    /// index for nothing.
+    /// <para>
+    /// The sequence is <c>1,8</c> rather than exactly six, because a prefix of a number is a legitimate
+    /// thing to type and <c>DocumentNumber.SequenceDigits</c> is a minimum width rather than a cap.
+    /// </para>
+    /// </remarks>
+    [GeneratedRegex(
+        @"^(?:[A-Z]{2,4}-)?(?:19|20)[0-9]{2}-[0-9]{1,8}$",
+        RegexOptions.CultureInvariant)]
+    private static partial Regex DocumentNumberShape();
 }
 
 /// <summary>Which column a term should be matched against.</summary>
@@ -131,46 +185,46 @@ public enum AdminOrderSearchKind
 /// telephone number.
 /// </param>
 /// <param name="SequenceSuffix">
-/// For a digits-only term short enough to be a sequence number, the zero-padded six digits an order or
-/// invoice number ends with — so "123" finds <c>SD-2026-000123</c>. <see langword="null"/> otherwise, and
-/// a reader must not invent one: padding an arbitrary string would match orders at random.
+/// The tail of the document number this term identifies, when the term is not a prefix of one.
+/// <para>
+/// Two shapes reach it. A digits-only term short enough to be a sequence number is zero-padded to the
+/// series' width, so "123" finds <c>SD-2026-000123</c>. A term that carries the year but not the letter
+/// prefix is itself the tail, so "2026-000123" finds the same order — which it did not before, because ten
+/// digits read as a telephone number.
+/// </para>
+/// <para>
+/// <see langword="null"/> otherwise, and a reader must not invent one: padding an arbitrary string would
+/// match orders at random. A suffix cannot be seeked — see the reader's remarks for what that costs and why
+/// it is still the right trade.
+/// </para>
 /// </param>
 public sealed record AdminOrderSearchTerm(
     AdminOrderSearchKind Kind,
     string Value,
     string? SequenceSuffix)
 {
-    /// <summary>
-    /// The term with SQL <c>LIKE</c>'s own wildcards escaped, for the one predicate that cannot be
-    /// expressed without <c>LIKE</c>.
-    /// </summary>
-    /// <remarks>
-    /// <b>It exists because <c>%</c> in a search box is otherwise a free table scan</b> — and, with
-    /// <c>[</c> and <c>_</c>, a way to match rows the typist did not mean. EF translates
-    /// <c>EndsWith</c> to <c>LIKE '%' + @p</c> and does <i>not</i> escape the parameter, so a term is
-    /// escaped here and the <c>LIKE</c> is written out with an explicit <c>ESCAPE</c> clause. Backslash is
-    /// the escape character and is therefore escaped first.
-    /// </remarks>
-    public string LikeEscaped() => Value
-        .Replace("\\", "\\\\", StringComparison.Ordinal)
-        .Replace("%", "\\%", StringComparison.Ordinal)
-        .Replace("_", "\\_", StringComparison.Ordinal)
-        .Replace("[", "\\[", StringComparison.Ordinal);
-
-    /// <summary>
-    /// The sequence suffix, escaped the same way.
-    /// </summary>
-    /// <remarks>
-    /// It is all ASCII digits by construction, so there is nothing for the escaper to find — and it is
-    /// escaped anyway, because "this value can never contain a wildcard" is exactly the kind of comment
-    /// that stops being true without anybody noticing. A wrong comment is worse than none.
-    /// </remarks>
-    public string? SequenceSuffixEscaped() => SequenceSuffix is null
-        ? null
-        : SequenceSuffix.Replace("\\", "\\\\", StringComparison.Ordinal)
-            .Replace("%", "\\%", StringComparison.Ordinal)
-            .Replace("_", "\\_", StringComparison.Ordinal)
-            .Replace("[", "\\[", StringComparison.Ordinal);
+    // **There was a `LikeEscaped()` and a `SequenceSuffixEscaped()` here, and both have gone.**
+    //
+    // They were dead — `AdminOrderReader.Filter` passes the raw value to `StartsWith` / `EndsWith` /
+    // `Contains` and never called either — and the comments justifying them stated a falsehood about EF:
+    // that it translates `EndsWith` to `LIKE '%' + @p` *without* escaping the parameter. The tester
+    // measured EF 10.0.12's actual output with `ToQueryString()`:
+    //
+    //     DECLARE @text_startswith varchar(20) = 'SD-\%%';
+    //     WHERE [o].[OrderNumber] LIKE @text_startswith ESCAPE '\'
+    //
+    // EF escapes the value itself, at run time, and emits an explicit `ESCAPE`. So the behaviour was
+    // always right, the reasoning was wrong, and *wiring the helpers up as those comments implied* would
+    // have double-escaped every term — a search for `100%` would then have matched nothing.
+    //
+    // The guarantee still holds and is still pinned, by the one test that can see it:
+    // `AdminOrderEndpointTests.A_wildcard_in_the_search_box_is_not_a_wildcard` asserts on the wire, against
+    // real SQL Server, that `%` and `_` find nothing. Two unit tests over seven cases asserted a method
+    // production never called, which is the "test that cannot fail" shape wearing a useful-looking hat.
+    //
+    // The lesson worth keeping: my own grep sweep at the end of this task checked every *schema* claim I
+    // had made against the configuration, and caught five. It did not check *framework* claims, and this
+    // is the one it missed.
 
     /// <summary>The term upper-cased with the invariant culture, for a case-insensitive name comparison.</summary>
     public string Upper() => Value.ToUpperInvariant();

@@ -578,6 +578,156 @@ describe('OrderDetailPage (ADM-09)', () => {
     expect(refunds).toContain('USD 53.55');
   });
 
+  /**
+   * <b>Accepting a late payment sends its own reason, not the internal note.</b>
+   *
+   * This screen used to send whatever was in the internal-note textarea as the accept-late reason — which
+   * reaches `Payments.ApprovalNote`, is audited, and is read back to a customer who asks why their money
+   * was taken a week late. A staff member writing a note to themselves about a telephone call had no way
+   * to know it was about to become a statement about money.
+   */
+  it('sends the accept-late reason, and never the internal note', async () => {
+    await open(
+      detail({
+        status: 'Expired',
+        statusLabel: 'Expired',
+        internalNote: 'Rang the customer; they said they paid on Tuesday.',
+        payments: [payment({ status: 'Expired', isOrderSettlement: false })],
+        actions: {
+          ...detail().actions,
+          canMarkDelivered: false,
+          canEditDispatch: false,
+          canAcceptLatePayment: true,
+        },
+      }),
+    );
+
+    // The internal note is on screen and filled in, which is what made the old coupling invisible.
+    expect(
+      element.querySelector<HTMLTextAreaElement>('[data-testid="internal-note"]')!.value,
+    ).toContain('paid on Tuesday');
+
+    const reason = element.querySelector<HTMLTextAreaElement>('[data-testid="accept-late-note"]')!;
+    reason.value = 'Credit on the statement dated the 9th.';
+    reason.dispatchEvent(new Event('input'));
+    await settle();
+
+    click('accept-late');
+    await settle();
+
+    answerAntiforgery();
+    await settle();
+
+    const request = http.expectOne(`/api/admin/orders/bank-transfers/${ORDER}/accept-late`);
+
+    expect(request.request.body).toEqual({ note: 'Credit on the statement dated the 9th.' });
+
+    request.flush({ orderNumber: 'SD-2026-000123', invoiceNumber: 'INV-2026-000046' });
+    await settle();
+
+    http.expectOne(`${AdminOrderApi.ordersUrl}/${ORDER}`).flush(detail());
+    await settle();
+  });
+
+  it('sends null when no accept-late reason was given', async () => {
+    await open(
+      detail({
+        status: 'Expired',
+        statusLabel: 'Expired',
+        internalNote: 'Rang the customer; they said they paid on Tuesday.',
+        payments: [payment({ status: 'Expired', isOrderSettlement: false })],
+        actions: {
+          ...detail().actions,
+          canMarkDelivered: false,
+          canEditDispatch: false,
+          canAcceptLatePayment: true,
+        },
+      }),
+    );
+
+    click('accept-late');
+    await settle();
+
+    answerAntiforgery();
+    await settle();
+
+    const request = http.expectOne(`/api/admin/orders/bank-transfers/${ORDER}/accept-late`);
+
+    // Null, not the internal note's text — which is the whole point.
+    expect(request.request.body).toEqual({ note: null });
+
+    request.flush({ orderNumber: 'SD-2026-000123', invoiceNumber: 'INV-2026-000046' });
+    await settle();
+
+    http.expectOne(`${AdminOrderApi.ordersUrl}/${ORDER}`).flush(detail());
+    await settle();
+  });
+
+  /**
+   * <b>Doc 02 ADM-09's "cancel… status", rendered before anything can write it.</b>
+   *
+   * `cancelReason` is null on every order today, because nothing cancels one yet (W3-05's). A field
+   * nothing reads is a field nobody notices breaking — my own words about the dispatch, which had exactly
+   * that defect — so it is on the screen now, beside the status it explains.
+   */
+  it('shows why an order was cancelled, and nothing when it was not', async () => {
+    await open(detail());
+    expect(element.querySelector('[data-testid="cancel-reason"]')).toBeNull();
+
+    await open(
+      detail({
+        status: 'Cancelled',
+        statusLabel: 'Cancelled',
+        cancelReason: 'Customer rang and asked us not to send it.',
+        closedAtUtc: '2026-10-06T06:00:00Z',
+        actions: { ...detail().actions, canMarkDelivered: false, canEditDispatch: false },
+      }),
+    );
+
+    expect(element.querySelector('[data-testid="cancel-reason"]')?.textContent).toContain(
+      'asked us not to send it',
+    );
+  });
+
+  /**
+   * <b>Doc 11 §6.6 step 2: staff read a refund's amount, the date it was sent and its reference out to a
+   * customer.</b>
+   *
+   * `completedAtUtc` is the date it was sent and it reached no screen — and it is not `createdAtUtc`: a
+   * `Pending` refund has been recorded and the money has not moved. Showing only one date would have a
+   * staff member reading out the wrong one, confidently.
+   */
+  it('shows when a refund’s money actually went, and says so when it has not', async () => {
+    const refund = {
+      amount: 15_596.6,
+      currency: 'LKR',
+      providerAmount: null,
+      method: 'ManualBankTransfer',
+      status: 'Completed',
+      reason: 'Out of stock after the order expired. Ref OUT-0001.',
+      restockItems: false,
+      createdByUserEmail: 'staff@example.com',
+      createdAtUtc: '2026-10-09T09:00:00Z',
+      completedAtUtc: '2026-10-10T11:30:00Z',
+    };
+
+    await open(detail({ refunds: [refund] }));
+
+    const sent = element.querySelector('[data-testid="refund-completed"]')?.textContent ?? '';
+
+    // The 10th in Colombo, which the 9th's `createdAtUtc` is not — so this cannot pass by accidentally
+    // rendering the recorded date instead.
+    expect(sent).toContain('Oct 10, 2026');
+    expect(sent).not.toContain('Oct 9');
+
+    // A refund that has been recorded and not sent says so rather than showing the recorded date twice.
+    await open(detail({ refunds: [{ ...refund, status: 'Pending', completedAtUtc: null }] }));
+
+    expect(element.querySelector('[data-testid="refund-completed"]')?.textContent).toContain(
+      'not yet',
+    );
+  });
+
   it('says the customer’s details were removed when they have been', async () => {
     await open(
       detail({
