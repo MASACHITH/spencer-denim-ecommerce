@@ -249,20 +249,30 @@ public sealed class SettingsSchemaAndSeedTests(SqlServerDatabaseFixture sqlServe
     /// <remarks>
     /// <b>Metadata only, and the value assertion is a separate, self-contained test — because this one was
     /// flaky and the flakiness was mine.</b> It used to assert that every row's <i>value</i> equalled its
-    /// catalogued seed value, which is a global property of a shared, deliberately-mutated table: four
-    /// classes in this assembly set a settings value and restore it, and the classes interleave (the
-    /// assembly-level <c>DisableTestParallelization</c> does not have the effect its comment claims — see
-    /// <c>AssemblyInfo.cs</c>). It failed about one run in three against a four-class filter and passed
-    /// twenty times alone, which is #114's family exactly.
+    /// catalogued seed value, which is a global property of a shared, deliberately-mutated table. It failed
+    /// about one run in three and passed twenty times alone.
     /// <para>
-    /// Worse, its failure message said "a test that left one behind is a neighbour's fixture", so the next
-    /// person would have hunted a leak instead of a race. The lesson is narrower than "don't assert global
-    /// state": it is that a message must describe the <i>weakest</i> explanation for the failure, not the
-    /// one the author had in mind.
+    /// <b>And its failure message was right all along.</b> "A test that left one behind is a neighbour's
+    /// fixture" described the actual mechanism: <c>AdminSettingsEndpointTests.RestoreAsync</c> was setting
+    /// every catalogued key to NULL, including the one key the seeder gives a value, and the NULL then
+    /// persisted for the whole run. Classes in this assembly do <b>not</b> interleave — four timed probe
+    /// classes, zero overlap — so the non-determinism was xUnit varying class <b>order</b>: this test fails
+    /// if and only if it is ordered after that class. A W3-04 round-2 version of this remark called the
+    /// message misleading and drew the lesson that a message should describe the weakest explanation. The
+    /// lesson is a good one; this was the wrong example for it, and the original author had it right.
     /// </para>
     /// <para>
-    /// The metadata half stays global and is safe to: the only tests that touch a settings row's metadata
-    /// are the two in <i>this</i> class, and a class's own tests are serialised with each other.
+    /// <b>The leak also hid behind the assertion's own wording.</b> It reported the offending value with
+    /// <c>holds ""</c>, and <c>$"{null}"</c> interpolates as the empty string — so a NULL row and an empty
+    /// row read identically, and a leak that wrote NULL presented as the theory's <c>("")</c> case. An
+    /// assertion message that cannot tell its two failure causes apart costs the next reader the diagnosis.
+    /// </para>
+    /// <para>
+    /// <b>The split stands, for a plainer reason than the one first given.</b> The metadata half is global
+    /// and safe <i>because</i> classes are serialised and only this class touches a settings row's
+    /// metadata. The value half is a Theory inside a rolled-back transaction because a value is what the
+    /// rest of the assembly legitimately changes, and a test should not depend on the restore discipline of
+    /// six other classes even when that discipline is currently sound.
     /// </para>
     /// </remarks>
     [Fact]

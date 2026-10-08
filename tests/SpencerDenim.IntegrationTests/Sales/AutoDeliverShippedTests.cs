@@ -155,11 +155,13 @@ public sealed class AutoDeliverShippedTests(SqlServerDatabaseFixture sqlServer)
     /// <b>Two written values, and no assertion about the resting one.</b> An earlier version of this test
     /// opened by asserting that an unwritten read answers doc 08 §3.8's seven — an assertion about a row
     /// nothing in the test had written, in a table several other classes in this assembly deliberately
-    /// mutate (seven files pair <c>SettingKeys.</c> with <c>ExecuteUpdateAsync</c>, two of them shared bases)
-    /// and one of them (<c>AdminSettingsEndpointTests</c>) nulls <i>every</i> catalogued key in its
-    /// <c>finally</c>. Classes in this assembly interleave (measured — see <c>AssemblyInfo.cs</c>), so that
-    /// opening line could read null and fail for a reason that had nothing to do with the job. It is the
-    /// same defect the review found in <c>SettingsSchemaAndSeedTests</c>, in a second place.
+    /// mutate (7 files pair <c>SettingKeys.</c> with <c>ExecuteUpdateAsync</c>, two of them shared bases),
+    /// and one of them was nulling <i>every</i> catalogued key in its <c>finally</c> — including this one,
+    /// whose seeded value is not null. Classes here do <b>not</b> interleave (measured; see
+    /// <c>AssemblyInfo.cs</c>, where a W3-04 claim to the contrary is corrected): the restore left a NULL
+    /// that persisted, so this line failed in whichever runs were ordered after that class. Either way it
+    /// was an assertion about state the test did not own, which is the same defect the review found in
+    /// <c>SettingsSchemaAndSeedTests</c>, in a second place.
     /// <para>
     /// The seeded seven keeps two race-free homes and does not need a third here: the unit test
     /// <c>AdminOrderWorkflowRulesTests</c> pins the catalogue's <c>SeedValue</c>, and

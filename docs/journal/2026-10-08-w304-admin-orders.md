@@ -345,21 +345,46 @@ eight of NBSP, ZWSP, BOM, soft hyphen, tab, word joiner, LRM and ideographic spa
 ### Blocker 1 — I made the integration suite flaky and reported a number that was not reproducible
 
 `SettingsSchemaAndSeedTests.The_seeder_creates_every_catalogued_key_with_no_invented_value` asserted a
-**global** property of the shared, deliberately-mutated `ops.Settings` table. Several classes in this assembly
-set a settings value and restore it, and the classes **interleave** — so it failed about one run in three.
+**global** property of the shared, deliberately-mutated `ops.Settings` table — so it failed about one run in
+three.
 
 Measured, before and after, with the tester's four-class filter: **2 failures in 6 batches → 0 in 6.**
 
-Two things made it worse than an ordinary race:
+### The fix was right. My diagnosis was wrong, and it reached four files before review caught it
 
-- **The failure message lied about the cause.** It said "a test that left one behind is a neighbour's
-  fixture", so the next person would have hunted a leak. The lesson is narrower than "do not assert global
-  state": a message has to describe the *weakest* explanation for the failure, not the one the author had
-  in mind.
-- **`AssemblyInfo.cs` claimed "the assembly runs sequentially".** It does not — measured — and a wrong
-  comment about the harness is why #114's family keeps being diagnosed as a leak. Corrected, with the rule
-  that actually holds written down. Turning parallelism off properly (`xunit.runner.json`'s
-  `parallelizeTestCollections`) is a harness-wide decision with a runtime cost and belongs with #114.
+I wrote that the classes **interleave**, and called it measured. **They do not.** The reviewer ran four
+timed probe classes — two taking `SqlServerDatabaseFixture`, one without it to rule the fixture out — each
+occupying three seconds, and logged **zero overlap**: strictly one after another, and no `xunit.runner.json`
+anywhere to override the assembly attribute. `[assembly: CollectionBehavior(DisableTestParallelization =
+true)]` works on xunit.v3 3.2.2 in this assembly, and **the comment I replaced was correct.**
+
+What actually happened was a **permanent leak, not a window.** Round-1 `RestoreAsync` set *every* catalogued
+key to NULL, including `Orders.AutoDeliverAfterDays`, whose `SeedValue` is `"7"` — so the NULL survived for
+the rest of the run. Measured four runs each way:
+
+| `RestoreAsync` | resting value of `Orders.AutoDeliverAfterDays`, four runs |
+|---|---|
+| round-1 (null everything) | `7`, `7`, `7`, **`<NULL>`** |
+| round-2 (null, then re-apply `SeedValue`) | `7`, `7`, `7` |
+
+The non-determinism was **xUnit varying class order**, which is permitted and expected: the assertion fails
+if and only if it is ordered *after* `AdminSettingsEndpointTests`. That is precisely the one-run-in-three
+rate, and precisely why it passed twenty times alone.
+
+Three things follow, and I had all three the wrong way round:
+
+- **The original failure message was correct.** "A test that left one behind is a neighbour's fixture"
+  described the real mechanism. My round-2 remark called it misleading and drew the lesson that *a message
+  must describe the weakest explanation for the failure* — a good lesson, attached to the wrong example. The
+  lesson that actually applies here is the opposite one: **I trusted my own reconstruction over a message
+  written by somebody who had seen the failure.**
+- **The assertion could not tell its two causes apart.** It reported the value with `holds ""`, and
+  `$"{null}"` interpolates as the empty string — so a NULL row and an empty row read identically, and a leak
+  that wrote NULL presented as the Theory's `("")` case. That is what sent me looking for a race.
+- **A false "measured" claim is worse than an unexamined one**, because it survives review by borrowing the
+  authority of a measurement. It reached `AssemblyInfo.cs`, both new test remarks and this journal, and it
+  made the rewritten `SettingsSchemaAndSeedTests` safe for the *opposite* of its stated reason: its global
+  metadata assertion is safe **because** classes are serialised. All four are corrected.
 
 The fix splits the test: the **metadata** loop stays global (nothing outside that class touches metadata),
 and the **seed value** became a Theory that deletes one key and re-seeds it **inside a rolled-back
@@ -426,8 +451,10 @@ measured at 320 px — a sweep with the audit done and the subject missing.
 The blocker was one test asserting a settings value nothing in it had written. Sweeping for the *shape*
 rather than the instance turned up another of mine: `AutoDeliverShippedTests.The_window_is_read_from_the_
 settings_row` opened by asserting that an unwritten read of `Orders.AutoDeliverAfterDays` answers the seeded
-7 — and `AdminSettingsEndpointTests.RestoreAsync` nulls **every** catalogued key in its `finally`, thirty-three
-times per run, from a class that interleaves with this one.
+7 — and `AdminSettingsEndpointTests.RestoreAsync` was nulling **every** catalogued key in its `finally`,
+33 times per run, including this one, whose seeded value is not null. Because classes are serialised the
+NULL did not race this test; it **persisted**, so the line failed in whichever runs were ordered after that
+class.
 
 It now writes two different values and asserts both. Two rather than one on purpose: a reader that returned
 a constant would pass a single-value test whenever that constant was the value written, and mutation
@@ -441,9 +468,11 @@ The same sweep found two more things worth recording:
   `SettingDefinition.SeedValue`.
 - **The sequential-execution falsehood is in thirteen files**, not one. Two of them are in
   `AdminSettingsEndpointTests` — the file whose restore semantics blocker 1 turned on — and those are
-  corrected, with the rule that actually holds: because classes interleave, a `finally` stops this class
-  leaving a mess but cannot stop a neighbour making one mid-test, so no test may assert a settings value it
-  did not itself write. **The other eleven are other tasks' files** and I have deliberately not touched
+  corrected — to say that classes **are** serialised, that the attribute works, and that the round-1 restore
+  was therefore not a race but a value every later class read. The rule that holds is narrower than the one
+  I wrote: a test restores to the **catalogue's** resting value rather than to a guessed one, and an
+  assertion over a shared table should still own what it asserts so that it stays honest if parallelism is
+  ever turned on. **The other eleven are other tasks' files** and I have deliberately not touched
   them; the list is in "What is owed, and by whom", because each needs a judgement about whether that
   particular fixture is actually safe, and a sweeping comment edit across catalog, content and sales tests
   from this branch would be a change nobody reviewed for the thing it claims.
@@ -499,6 +528,42 @@ Eight are still unrendered after `cancelReason` and the refund's `completedAtUtc
    Leaving a neighbour's test alone was the right call; **my stated reason for leaving it was wrong**, and
    that is the more useful half.
 
+## Round 3: what the review corrected, recorded because I got it wrong
+
+The verdict was **PASS after one comment-only correction**, and the correction was my own diagnosis rather
+than any code. It is written up in full under blocker 1 above. Four further corrections to what I reported,
+each verified here rather than taken:
+
+1. **The branch was 1 behind `origin/main`, not 0.** `8467023` landed while I was measuring (board only:
+   `TASKS.md` and `client-progress/`, conflict-free), so both integration runs were measured without it.
+2. **`928 / 0` was the *second* Playwright run; the first was `926 / 2`.** The two failures were
+   `product-listing.e2e.ts:696` and `search.e2e.ts:647`, both other tasks' storefront tests, both green
+   133/133 in isolation. **And `search.e2e.ts:661` carries the exact one-shot shape I diagnosed for the
+   reorder family** — `expect(await box.evaluate(element => element === document.activeElement)).toBe(true)`
+   read immediately after `box.press('Escape')`, with focus moving asynchronously after the key event. I
+   checked the line rather than taking it. So that family has at least two more members than the two named
+   in "Two latent races in other tasks' browser tests", my 37 new browser tests push the suite further over
+   whatever its tipping point is, and **`928 / 0` should be read as a best case rather than a steady state.**
+3. **Two things I reported had never landed in the branch.** The parse-versus-range distinction in the
+   window Theory existed only in my hand-back; it is now a remark on the test, with the measurement that
+   establishes it. The restore count and the file count *had* landed but spelled as words
+   ("thirty-three", "seven files"), so a grep for `33` found nothing — which is the same lesson as owed item
+   10, in a third costume. Both now carry the numeral. **A measurement that exists only in a report is the
+   same defect as a comment that describes intent.**
+4. **`bank-transfers-page.ts` was already fixed in round 2** — line 127 is
+   `money(row.amountLkr, row.currency)`. I listed it as an open oddity; the residual oddity is the field
+   *name*, which encodes LKR while the currency travels beside it, and that is W3-03's to rename.
+
+And one of my suggestions was refused, correctly: `An_unusable_window_answers_null` keeps its name, because
+"unusable" covers both the parse guard and the range guard and its remarks single out only `0`.
+
+**On `promoDiscountAllocated`** (my decision-6 answer): the reviewer checked the semantics rather than
+taking them and confirmed the money reading — a per-line refund computed on `lineSubtotal` hands back the
+customer's promo share as well. It cannot arise today, because v1 refunds in full from the settlement
+payment, so the right filing is a **constraint on W3-05's refund transaction** rather than a bug: *a line's
+refundable amount is `lineTotal`, never `lineSubtotal`*. That is **#129**, and it is the one field on my
+list nobody should call dead.
+
 ## What is owed, and by whom
 
 | # | Owed | By |
@@ -513,7 +578,7 @@ Eight are still unrendered after `cancelReason` and the refund's `completedAtUtc
 | 7 | **`inventory.InventoryMovements`** (#108). Unchanged by this task — none of these four transitions touches stock. | W1-05 / ADM-12 |
 | 8 | **ADM-12's inventory screen** is explicitly *not* this task and is untouched. | ADM-12 |
 | 9 | No `progress-data.js` change, no `MEMORY.md`, no `TASKS.md` (doc 14's rule). | owner's session |
-| 10 | **Eleven test files still say the integration assembly "runs its classes sequentially", and it does not** (measured). A wrong comment about the harness is why #114's family keeps being diagnosed as a fixture leak, so it is worth fixing — but each file needs a judgement about whether *that* fixture is actually safe, and a sweeping comment edit across another task's catalog, content and sales tests from this branch would be a change nobody reviewed for the thing it claims. The files: `AdminAuthEndpointTests`, `AdminBankTransferEndpointTests`, `AdminCatalogEndpointTests`, `UserEndpointTests`, `CatalogRenditionTests`, `CatalogSitemapTests`, `CatalogVisibilityTests`, `SizeGuideContentTests`, `HomeEndpointTests`, `BankTransferTestBase`, `CheckoutEndpointTests`, `SalesSchemaTestBase`, `WishlistSchemaTests`. The two in `AdminSettingsEndpointTests` are corrected here, because that is the file blocker 1 turned on. | #114 |
+| 10 | **If parallelism is ever enabled, the dangerous thing is a fixture that mutates seeded *reference* data, and my round-2 inventory looked in the wrong place.** The premise I filed this under inverts — the assembly **does** run its classes one after another, measured, so the thirteen comments saying so are **correct** and actioning my previous version of this row would have replaced true statements with false ones across three other tasks' tests. The conclusion stands for a stronger reason: the eleven stay untouched because there is nothing wrong with them. **The real item, rebuilt from the pattern rather than from a grep for the words "sequential" and "parallel":** `SalesReferenceDataTests.Running_the_seeder_again_changes_nothing_it_has_already_written` sets `DeliveryMethods.IsEnabled = false` for **STANDARD** and the Colombo zone fee to **555**, restoring in a `finally` — and `PlaceOrderAsync`, the base fixture of at least six classes, places orders through Standard/Colombo and asserts their totals. Harmless while classes are serialised; the single most dangerous fixture in the assembly the day they are not. My word-grep could not have found it, because it says nothing about parallelism — it *does* something unsafe. That is round-1 defect #8's lesson in a new costume: **a grep sweep is only as good as its grep**, and the second time I have paid for it in this task. The pattern to sweep for is a test mutating a row it did not create in `DeliveryMethods`, `DeliveryMethodZoneRates`, `Districts`, `PickupLocations`, `PaymentProviders` or `ops.Settings`; today that is `SalesReferenceDataTests` (reference data, the unsafe one), `CheckoutTestBase`, `AdminOrderTestBase`, `BankTransferTestBase`, `AdminBankTransferEndpointTests`, `AdminOrderEndpointTests`, `AdminSettingsEndpointTests`, `AdminSettingsShapeTests` and `SettingsSchemaAndSeedTests`. | #114 |
 
 ## What I deliberately did not build
 

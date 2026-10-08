@@ -20,17 +20,21 @@ namespace SpencerDenim.IntegrationTests.Api.Admin;
 /// <summary>
 /// The ADM-22 settings endpoints and GLB-02's logo, end to end against a real SQL Server (doc 06 §4).
 /// <para>
-/// <b>Every test puts the settings rows back.</b> The fixture's database is shared by the whole assembly
-/// and its classes <b>interleave</b> — measured; see <c>AssemblyInfo.cs</c>, where an earlier version of
-/// this remark's "classes run sequentially" is corrected. The storefront tests read the same rows, so a
-/// logo left set or a social address left behind would fail somebody else's test with no clue where it came
-/// from. The restore is in a <c>finally</c> and it clears the <c>MediaUsages</c> rows too.
+/// <b>Every test puts the settings rows back.</b> The fixture's database is shared by the whole assembly,
+/// whose classes <b>run strictly one after another</b> — measured with four timed probe classes, zero
+/// overlap, no <c>xunit.runner.json</c> to override the assembly attribute (see <c>AssemblyInfo.cs</c>).
+/// The storefront tests read the same rows, so a logo left set or a social address left behind would fail
+/// somebody else's test with no clue where it came from. The restore is in a <c>finally</c> and it clears
+/// the <c>MediaUsages</c> rows too.
 /// <para>
-/// <b>What the restore cannot buy, and what that means for an assertion here.</b> Because classes
-/// interleave, a <c>finally</c> keeps this class from leaving a mess behind but cannot stop a neighbour
-/// making one mid-test. So no test in this file may assert a settings value it did not itself write — the
-/// defect W3-04's review found twice, once in <c>SettingsSchemaAndSeedTests</c> and once in
-/// <c>AutoDeliverShippedTests</c>. Fixing the interleaving properly is #114's.
+/// <b>Serialisation makes the restore sufficient, and that is exactly why getting it wrong is expensive.</b>
+/// Nothing runs between this class's mutation and its <c>finally</c>, so a correct restore is airtight — and
+/// an *incorrect* one is not a window that might be missed but a value every later class reads. W3-04's
+/// round-1 restore set every catalogued key to NULL, including the one key the seeder gives a value, and so
+/// broke a later class's assertion in whichever runs happened to order it afterwards. The fix is below: put
+/// each key back to <c>SettingDefinition.SeedValue</c>, which is the only place that knows what "back"
+/// means. An earlier version of this remark said classes interleave and called it measured; they do not,
+/// and #114 is about unsafe fixtures rather than about this attribute.
 /// </para>
 /// <para>
 /// A real <see cref="MediaTestHost"/> rather than a database-only fixture, because the logo path is a real
@@ -838,6 +842,18 @@ public sealed class AdminSettingsEndpointTests(SqlServerDatabaseFixture sqlServe
     /// G-18): it would mark an order delivered the moment it shipped and hand out a Verified buyer badge
     /// for goods still in the van.
     /// </summary>
+    /// <remarks>
+    /// <b>Two different guards are being exercised here, and the cases are not interchangeable.</b> Only
+    /// <c>"0"</c> and <c>"91"</c> reach the range comparison. <c>"-1"</c> never does: the handler parses
+    /// with <see cref="NumberStyles.None"/>, which forbids a leading sign, so a negative is refused by the
+    /// *parse* — as are <c>"7.5"</c>, <c>"seven"</c> and <c>"+7"</c>. Measured, by widening the range to
+    /// plus or minus a thousand: the <c>"0"</c> and <c>"91"</c> cases went red and <c>"-1"</c> stayed green.
+    /// <para>
+    /// All six stay, because each is something a staff member can actually type and every one of them must
+    /// be refused against this field. But a reader who assumed <c>"-1"</c> proved the lower bound would be
+    /// wrong, and the lower bound would be unguarded if <c>"0"</c> were ever removed.
+    /// </para>
+    /// </remarks>
     [Theory]
     [InlineData("0")]
     [InlineData("-1")]
@@ -2344,16 +2360,22 @@ public sealed class AdminSettingsEndpointTests(SqlServerDatabaseFixture sqlServe
     /// <summary>
     /// Puts the five settings rows back to NULL and clears their usage rows.
     /// <para>
-    /// The assembly's database is shared and its classes interleave, so a logo left set would be a failure
-    /// in somebody else's test with no clue where it came from. The cache is evicted too, because the
-    /// restore does not go through a use case.
+    /// The assembly's database is shared and its classes run one after another, so a logo left set would be
+    /// a failure in somebody else's test — and, because nothing interleaves, in *every* test that happens to
+    /// be ordered afterwards rather than in an unlucky few. The cache is evicted too, because the restore
+    /// does not go through a use case.
     /// </para>
     /// <para>
     /// <b>Back to the catalogue's resting value, not unconditionally to null.</b> Null was right while every
     /// key was seeded empty; W3-04 added <c>Orders.AutoDeliverAfterDays</c>, which the seeder writes with
-    /// doc 08 section 3.8's 7, so nulling it left the database in a state the seeder never produces and
-    /// handed the auto-deliver job's own tests a window of null. <c>SettingDefinition.SeedValue</c> is the
-    /// one place that knows the resting value, so this reads it rather than repeating it.
+    /// doc 08 section 3.8's 7, so nulling it left the database in a state the seeder never produces.
+    /// <para>
+    /// <b>Not a window — a permanent leak</b>, which is the sharper way to say it and was measured four runs
+    /// each way: with the round-1 form the key's resting value was 7, 7, 7, NULL; with this form, 7, 7, 7.
+    /// Once nulled it stayed nulled for the remainder of the run, so a later class asserting its resting
+    /// value failed in whichever runs xUnit happened to order it afterwards. <c>SettingDefinition.SeedValue</c>
+    /// is the one place that knows the resting value, so this reads it rather than repeating it.
+    /// </para>
     /// </para>
     /// </summary>
     private static async Task RestoreAsync(MediaTestHost host)
