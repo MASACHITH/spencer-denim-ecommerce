@@ -15,11 +15,14 @@ namespace SpencerDenim.Application.Sales.Orders.Abstractions;
 /// not both see <c>Processing</c>; the second affects 0 rows and is told where the order actually is.
 /// </para>
 /// <para>
-/// <b>No <c>sp_getapplock</c> and no <c>Serializable</c>.</b> Doc 08 §4.2 names neither on this path — it
-/// names an application lock in exactly two places, the promo per-customer limit (§3.6) and the
-/// reference-data seeder, and neither is here. An applock would add a second, weaker gate beside the one
-/// the database already enforces, and <c>Serializable</c> would turn a lost race from "0 rows, here is
-/// why" into a deadlock to retry.
+/// <b>No <c>sp_getapplock</c> and no <c>Serializable</c>.</b> Doc 08 §4.2 names neither on this path, and
+/// the two places doc 08 does name an application lock are the promo per-customer limit (§3.6) and the
+/// last-Super-Admin guard (§3.1 DB4 rule 4, <c>sp_getapplock 'rbac:grants-all'</c>) — neither is here.
+/// (Corrected by W3-04b's tester: this used to say "§4.2 names an application lock in exactly two
+/// places", which §4.2 does not, and to name "the reference-data seeder", which holds no applock in doc 08
+/// or in the code. The wording had been copied into three files before anybody checked it.)
+/// An applock would add a second, weaker gate beside the one the database already enforces, and
+/// <c>Serializable</c> would turn a lost race from "0 rows, here is why" into a deadlock to retry.
 /// </para>
 /// <para>
 /// <b>Orders never move backwards and this interface cannot express it.</b> There is no

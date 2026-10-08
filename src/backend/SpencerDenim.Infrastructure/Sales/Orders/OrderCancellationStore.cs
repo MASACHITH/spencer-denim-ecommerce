@@ -17,10 +17,12 @@ namespace SpencerDenim.Infrastructure.Sales.Orders;
 /// <para>
 /// <b>The claim is the lock.</b> One conditional <c>UPDATE</c> on <c>sales.Orders</c> carrying all four of
 /// doc 11 P10 step 2's guards, and the row count is the concurrency control (doc 08 §4.1, §5.2). No
-/// <c>sp_getapplock</c>, no <c>Serializable</c> and no rowversion — doc 08 §4.2 names an application lock
-/// in exactly two places, the promo per-customer limit (§3.6) and the reference-data seeder, and neither
-/// is here. The transaction is <c>ReadCommitted</c>, the same as expiry's, the bank review's and
-/// fulfilment's.
+/// <c>sp_getapplock</c>, no <c>Serializable</c> and no rowversion — the two places doc 08 names an
+/// application lock are the promo per-customer limit (§3.6) and the last-Super-Admin guard (§3.1 DB4
+/// rule 4, <c>sp_getapplock 'rbac:grants-all'</c>), and neither is here. (§4.2 names none at all, and
+/// there is no reference-data-seeder applock: this sentence said both, having been copied from
+/// <c>IOrderFulfilmentStore</c> where it was already wrong.)
+/// The transaction is <c>ReadCommitted</c>, the same as expiry's, the bank review's and fulfilment's.
 /// </para>
 /// <para>
 /// <b>Racing the expiry sweep is the case this shape exists for.</b> A customer presses Cancel in the
