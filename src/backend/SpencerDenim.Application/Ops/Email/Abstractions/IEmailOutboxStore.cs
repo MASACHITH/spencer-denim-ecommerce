@@ -32,11 +32,22 @@ public sealed record EmailOutboxClaim(
 /// </summary>
 /// <remarks>
 /// <b>Every one of them is set-based and conditional, which is doc 08 §5.2's argument applied to a
-/// queue.</b> Two senders racing for one message do not both read "Pending": the second waits on the row's
-/// update lock, re-evaluates the claim's own <c>WHERE</c> against the row as the first left it, and
-/// matches nothing. So a message is sent once however many hosts are running, and no lease table and no
-/// leader election is needed — which is the same conclusion <c>ExpireUnpaidOrders</c> reached about
-/// <c>ops.JobLeases</c>, a table doc 08 §3.8 specifies and no migration creates.
+/// queue.</b> Two senders racing for one message do not both read "Pending": the first holds an update
+/// lock on it for the length of its own statement, and the second — which asks for <c>READPAST</c> —
+/// <i>skips</i> that row rather than queueing behind it, takes the next due one instead, and comes back
+/// for the skipped one on a later sweep by which time it is <c>Sending</c> and outside the claim's
+/// <c>Status IN (0, 3)</c>. So a message is sent once however many hosts are running, and no lease table
+/// and no leader election is needed — which is the same conclusion <c>ExpireUnpaidOrders</c> reached
+/// about <c>ops.JobLeases</c>, a table doc 08 §3.8 specifies and no migration creates.
+/// <para>
+/// <b>This paragraph said the opposite until W3-06's tester measured it</b> ("the second waits on the
+/// row's update lock and re-evaluates the predicate"), which is what a claim <i>without</i>
+/// <c>READPAST</c> would do and is the mechanism this one is written to avoid — see
+/// <c>EmailOutboxStore.ClaimAsync</c>. Both arrangements are exactly-once; only one of them is the one
+/// in the code, and a reader who believed the lock alone carried the guarantee would be free to drop the
+/// hint. Measured over 900 contention runs (3, 6 and 8 concurrent senders, batches of 2 to 20): no row
+/// claimed twice, no row lost, no deadlock, and never more than three rounds.
+/// </para>
 /// </remarks>
 public interface IEmailOutboxStore
 {

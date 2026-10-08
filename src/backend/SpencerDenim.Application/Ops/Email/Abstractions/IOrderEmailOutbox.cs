@@ -4,7 +4,11 @@ using SpencerDenim.Application.Sales.Payments.Contracts;
 namespace SpencerDenim.Application.Ops.Email.Abstractions;
 
 /// <summary>
-/// The six order emails of doc 11 §4.1, each enlisted into the caller's own transaction.
+/// The six order emails, each enlisted into the caller's own transaction: doc 11 §4.1's five, and
+/// <see cref="EnlistOrderCancelled"/>, which is <b>not</b> one of §4.1's — §4.4 lists "order cancelled"
+/// among the events with no notification in v1. (This summary read "the six order emails of doc 11 §4.1",
+/// which attributes the cancellation email to the document that excludes it, in the same file whose
+/// member remark below flags it as a scope increase. Corrected by W3-06's tester.)
 /// </summary>
 /// <remarks>
 /// <b>Why this sits between the stores and <see cref="IEmailOutboxWriter"/>.</b> The writer takes a

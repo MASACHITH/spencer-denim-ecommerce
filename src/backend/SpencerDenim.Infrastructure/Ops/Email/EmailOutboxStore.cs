@@ -13,12 +13,17 @@ namespace SpencerDenim.Infrastructure.Ops.Email;
 /// <remarks>
 /// <b>The claim is the only thing standing between two senders, and it is enough</b> —
 /// <c>ExpireUnpaidOrders</c>'s conclusion about <c>ops.JobLeases</c> applied to a queue. That table is in
-/// doc 08 §3.8 and in no migration, and none is needed here: <c>UPDATE TOP (20) … OUTPUT</c> with
-/// <c>Status IN (0, 3)</c> in its <c>WHERE</c> means SQL Server takes an update lock on each qualifying
-/// row and re-evaluates the predicate against the row as it now is, so of any number of senders racing
-/// for one message exactly one gets it and the others get a different batch or an empty one. A job lease
+/// doc 08 §3.8 and in no migration, and none is needed here: <c>UPDATE TOP (20) … OUTPUT</c> takes an
+/// update lock on each row it selects and holds it to the end of its own statement, and a second sender
+/// asks for <c>READPAST</c> and therefore <i>skips</i> every row the first is holding rather than queueing
+/// behind it — so of any number of senders racing for one message exactly one gets it and the others get
+/// a different batch or an empty one. The skipped row is not lost: by the next sweep it is
+/// <c>Sending</c>, outside the claim's <c>Status IN (0, 3)</c>, and it comes back through
+/// <see cref="ReleaseExpiredLeasesAsync"/> if its sender died. A job lease
 /// would make the <i>job</i> run once; the claim makes each <i>message</i> send once, which is the
-/// invariant that matters when the thing being sent is somebody's bank details.
+/// invariant that matters when the thing being sent is somebody's bank details. Measured by W3-06's
+/// tester over 900 contention runs (3, 6 and 8 concurrent senders, batches of 2 to 20): no row claimed
+/// twice, no row lost, no deadlock, never more than three rounds.
 /// <para>
 /// <b>Raw ADO rather than EF for the claim, for <c>NumberSeriesAllocator</c>'s reason.</b> The claimed
 /// rows are in the statement's <c>OUTPUT</c> result set: <c>ExecuteSqlInterpolated</c> returns a row count

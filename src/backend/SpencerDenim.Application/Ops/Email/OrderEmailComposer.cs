@@ -9,7 +9,10 @@ namespace SpencerDenim.Application.Ops.Email;
 public sealed record ComposedEmail(string Subject, string Html, string Text);
 
 /// <summary>
-/// Turns the facts of an order into the six customer emails of doc 11 §4.1.
+/// Turns the facts of an order into six customer emails: doc 11 §4.1's five, and
+/// <see cref="OrderCancelled"/>, which is <b>not</b> one of §4.1's — §4.4 lists "order cancelled" among
+/// the events with no notification in v1, and that method's own remark says so. (This line read "the six
+/// customer emails of doc 11 §4.1". Corrected by W3-06's tester.)
 /// </summary>
 /// <remarks>
 /// <b>It is pure, and that is what makes it testable without a mailbox.</b> Nothing here reads a

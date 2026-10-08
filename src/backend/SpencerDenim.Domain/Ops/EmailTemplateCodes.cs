@@ -5,7 +5,10 @@ namespace SpencerDenim.Domain.Ops;
 /// constraint</b> — doc 08 lists the codes in the column's notes and pins nothing in the database, so a
 /// template added by a later task is a new constant here and not a migration.
 /// <para>
-/// <b>Only the six order emails are declared.</b> Doc 08 lists sixteen codes; the ten that are not here
+/// <b>Only the six order emails are declared.</b> Doc 08 lists sixteen codes, five of which are declared
+/// here — <see cref="OrderCancelled"/> is the sixth and is <i>not</i> one of doc 08's — so the eleven
+/// below are the rest of doc 08's list (this said "the ten that are not here" and then named eleven: the
+/// arithmetic counted six declared codes against a list that holds five of them. W3-06's tester). They
 /// belong to tasks that are not built — <c>Welcome</c>, <c>EmailConfirmation</c>, <c>AccountExists</c>,
 /// <c>PasswordReset</c> and <c>StaffEmailChanged</c> are W3-01's and P14's,
 /// <c>SensitiveSettingsChanged</c> needs <c>ops.AdminAlerts</c> and the dual-send of doc 08 §3.8 N2,

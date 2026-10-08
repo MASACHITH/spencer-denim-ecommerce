@@ -188,9 +188,13 @@ internal sealed class BankTransferReviewStore(
                     $$"""{"decision":"approve","payment":{{open.Id}},"invoiceNumber":{{Json(invoiceNumber)}}}""");
 
                 // Doc 11 P7 step 6a: "**Payment confirmed** email queued". Enlisted into this unit of
-                // work, so it commits with the approval — and with the invoice number, which was issued
-                // four statements ago inside this same transaction and would otherwise be a figure the
-                // email claimed and the database had rolled back.
+                // work, so it commits with the approval — and with the invoice number that
+                // `IssueInvoiceAsync` allocated above, inside this same transaction, which would
+                // otherwise be a figure the email claimed and the database had rolled back.
+                //
+                // (This named a distance — "four statements ago" — where the journal's own narrative said
+                // three and the count is three. A distance in a comment is wrong the first time anything
+                // is inserted between the two lines, so it names the call instead. W3-06's tester.)
                 QueuePaymentConfirmed(snapshot, invoiceNumber, decision.NowUtc, wasLatePayment: false);
 
                 await dbContext.SaveChangesAsync(cancellationToken);

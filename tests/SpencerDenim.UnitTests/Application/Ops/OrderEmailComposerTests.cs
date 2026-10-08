@@ -225,15 +225,23 @@ public sealed class OrderEmailComposerTests
     /// Doc 11 §4.1's <c>OrderPlaced</c> content: order number, items with colour, size and quantity,
     /// prices, delivery method and address, total, payment method.
     /// </summary>
+    /// <remarks>
+    /// <b>The district case is labelled, and it was not.</b> It read <c>[InlineData("Colombo")]</c>,
+    /// which <i>cannot fail</i>: <c>EmailBody.Text</c> signs every message with the shop's name, and the
+    /// shop's name begins with that word. The district could have been dropped from the email entirely
+    /// and this theory would have stayed green — the eighth test on this project that asserted a value
+    /// something else in the output guaranteed. The labelled pair is the file's own rule, applied here by
+    /// W3-06's tester.
+    /// </remarks>
     [Theory]
-    [InlineData("SD-2026-000123")]
+    [InlineData("Order number: SD-2026-000123")]
     [InlineData("2 × Relaxed Linen Blend Shirt, Beige / M")]
-    [InlineData("Rs. 11,980.00")]
-    [InlineData("Standard delivery")]
+    [InlineData("Items: Rs. 11,980.00")]
+    [InlineData("Delivery method: Standard delivery")]
     [InlineData("14 Galle Road")]
-    [InlineData("Colombo")]
-    [InlineData("Bank / online transfer")]
-    [InlineData("Rs. 12,430.00")]
+    [InlineData("District: Colombo")]
+    [InlineData("Payment method: Bank / online transfer")]
+    [InlineData("Total: Rs. 12,430.00")]
     public void The_placement_email_carries_what_doc_11_lists(string expected)
     {
         var email = Composer().OrderPlaced(Placed());
