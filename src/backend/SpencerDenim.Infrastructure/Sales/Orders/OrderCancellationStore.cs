@@ -126,11 +126,20 @@ internal sealed class OrderCancellationStore(AppDbContext dbContext, IAuditLogWr
         // above is for the *message*, never for the decision — which is `DiagnoseAsync`'s rule in
         // `OrderFulfilmentStore` and `BankTransferReviewStore` before it.
         //
-        // The settlement guard is §4.1's own ("no settlement payment"), and it is not merely `Status = 1`
-        // spelled differently: `UX_Payments_OneSettlement` stops a *second* settlement, not a settlement
-        // beside an order still reading PendingPayment, which doc 08 §4.2 step 3.3's savepoint
-        // fall-through is the one path that could produce. Cheap, and it is the difference between
-        // cancelling an unpaid order and cancelling one whose money arrived.
+        // The settlement guard is doc 11 P10 step 2's and doc 08 §4.1's own ("no settlement payment"),
+        // and **no path in this build can reach the state it guards** — which is said plainly rather than
+        // dressed up, because the first version of this comment claimed §4.2 step 3.3's savepoint
+        // fall-through could produce it and that is false: that path ends with the payment in status 7
+        // CapturedRequiresRefund, which is not a settlement. Checked against the schema:
+        // `CK_Payments_IsOrderSettlement` allows the flag only on a payment in Succeeded,
+        // PartiallyRefunded or Refunded, and every path that puts a payment in one of those moves the
+        // order in the same transaction. So the reachable shape is a *Succeeded settlement beside a
+        // PendingPayment order*, which nothing writes today.
+        //
+        // It stays for two reasons. It costs one `NOT EXISTS` on an indexed column, and it is the guard
+        // that would matter the moment a provider settled a payment in a transaction separate from the
+        // order's status — which is exactly what a webhook does. `OrderCancellationTests` reaches the
+        // state with a fixture, so the guard is proved rather than assumed.
         var claimed = await dbContext.Database.ExecuteSqlInterpolatedAsync(
             $"""
             UPDATE sales.Orders
