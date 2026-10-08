@@ -1,12 +1,5 @@
-import {
-  ChangeDetectionStrategy,
-  Component,
-  effect,
-  inject,
-  input,
-  signal,
-} from '@angular/core';
-import { RouterLink } from '@angular/router';
+import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
+import { ActivatedRoute, RouterLink } from '@angular/router';
 import { BRAND } from '@spencer-denim/shared';
 
 import { AdminOrderApi } from '../../core/orders/admin-order-api';
@@ -282,13 +275,11 @@ import { CatalogFailure, toCatalogFailure } from '../../core/catalog/admin-catal
   `,
 })
 export class OrderInvoicePage {
-  /** The order's public token, from the route. */
-  readonly orderPublicId = input.required<string>();
-
   /** The shop a customer bought from, from the one place it is written down. */
   protected readonly shop = BRAND.name;
 
   private readonly api = inject(AdminOrderApi);
+  private readonly route = inject(ActivatedRoute);
 
   protected readonly invoice = signal<OrderInvoice | null>(null);
   protected readonly isLoading = signal(true);
@@ -297,9 +288,18 @@ export class OrderInvoicePage {
   private loaded = '';
 
   constructor() {
-    // An effect rather than a constructor read: the token is a signal input, and the router reuses this
+    // `ActivatedRoute` rather than a signal `input`, for the reason `OrderDetailPage` records in full:
+    // `withComponentInputBinding()` is not in this application's router configuration, so a route input
+    // would never be populated. Subscribed rather than read once, because the router reuses this
     // component when a staff member opens a second invoice.
-    effect(() => this.ensureLoaded(this.orderPublicId()));
+    this.route.paramMap.subscribe((params) =>
+      this.ensureLoaded(params.get('orderPublicId') ?? ''),
+    );
+  }
+
+  /** The order's public token, from the route. */
+  protected orderPublicId(): string {
+    return this.route.snapshot.paramMap.get('orderPublicId') ?? '';
   }
 
   protected cash(amount: number): string {

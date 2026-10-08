@@ -137,7 +137,13 @@ import { CatalogFailure, toCatalogFailure } from '../../core/catalog/admin-catal
               (input)="type($event, sortOrder)"
             />
           </label>
-          <span class="adm-check">
+          <!-- A 44 px control around a 24 px box, and the label is the control. The shared adm-check
+               input is 20 px square, which the browser suite measured and GLB-09's floor refuses; a
+               44 px native checkbox renders as an outsized glyph, so the box is 24 px — WCAG 2.2
+               SC 2.5.8's own minimum — inside a label that fills the 44 px row. The for attribute makes
+               the label part of the control, so tapping anywhere on that row toggles it, and the browser
+               test measures the label because that is what a person aims at. -->
+          <span class="couriers-check">
             <input
               type="checkbox"
               id="courier-active"
@@ -145,7 +151,9 @@ import { CatalogFailure, toCatalogFailure } from '../../core/catalog/admin-catal
               data-testid="courier-active"
               (change)="toggleActive($event)"
             />
-            <label for="courier-active">Available for new dispatches</label>
+            <label for="courier-active" data-testid="courier-active-field">
+              Available for new dispatches
+            </label>
           </span>
         </div>
 
@@ -253,6 +261,28 @@ import { CatalogFailure, toCatalogFailure } from '../../core/catalog/admin-catal
     code {
       font-size: var(--text-small);
       overflow-wrap: anywhere;
+    }
+    .couriers-check {
+      display: flex;
+      align-items: center;
+      gap: var(--space-1);
+      min-height: var(--tap);
+      min-width: 0;
+    }
+    .couriers-check input[type='checkbox'] {
+      /* 24 px, not the shared 20: WCAG 2.2 SC 2.5.8's floor, and the label beside it carries the
+         project's 44 px. */
+      width: 24px;
+      height: 24px;
+      flex: 0 0 auto;
+      margin: 0;
+      cursor: pointer;
+    }
+    .couriers-check label {
+      display: flex;
+      align-items: center;
+      min-height: var(--tap);
+      cursor: pointer;
     }
   `,
 })

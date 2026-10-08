@@ -4,13 +4,11 @@ import {
   Injector,
   afterNextRender,
   computed,
-  effect,
   inject,
-  input,
   signal,
 } from '@angular/core';
 import { DOCUMENT } from '@angular/common';
-import { RouterLink } from '@angular/router';
+import { ActivatedRoute, RouterLink } from '@angular/router';
 
 import { AdminOrderApi, toOrderTransitionRefusal } from '../../core/orders/admin-order-api';
 import {
@@ -610,10 +608,8 @@ import { CatalogFailure, toCatalogFailure } from '../../core/catalog/admin-catal
   `,
 })
 export class OrderDetailPage {
-  /** The order's public token, from the route. */
-  readonly orderPublicId = input.required<string>();
-
   private readonly api = inject(AdminOrderApi);
+  private readonly route = inject(ActivatedRoute);
   private readonly document = inject(DOCUMENT);
   private readonly injector = inject(Injector);
 
@@ -649,12 +645,24 @@ export class OrderDetailPage {
   private loaded = '';
 
   constructor() {
-    // **An effect rather than a constructor read, because the token is a signal input.**
-    // `input.required` is not readable in the constructor at all — and, just as importantly, the router
-    // reuses this component when a staff member moves from one order to another, so a one-off read would
-    // leave the second order showing the first one's data. `ensureLoaded` is idempotent per token, so the
-    // effect re-running for any other reason costs nothing.
-    effect(() => this.ensureLoaded(this.orderPublicId()));
+    // **`ActivatedRoute`, not a signal `input`, and that is the project's convention rather than
+    // preference.** The three existing form pages (`product-form-page`, `user-form-page`,
+    // `content-page-form-page`) all read `route.snapshot.paramMap`, because `withComponentInputBinding()`
+    // is not in this application's router configuration — a route input would simply never be populated,
+    // which is what the browser suite found. Turning it on globally for one screen is a change to every
+    // route's behaviour for no gain.
+    //
+    // Subscribed rather than read from the snapshot once, because the router reuses this component when a
+    // staff member moves from one order to another: a one-off read would leave the second order showing
+    // the first one's data. `ensureLoaded` is idempotent per token.
+    this.route.paramMap.subscribe((params) =>
+      this.ensureLoaded(params.get('orderPublicId') ?? ''),
+    );
+  }
+
+  /** The order's public token, from the route. */
+  protected orderPublicId(): string {
+    return this.route.snapshot.paramMap.get('orderPublicId') ?? '';
   }
 
   protected cash(amount: number): string {
