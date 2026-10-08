@@ -302,14 +302,14 @@ would be exactly the sort of change that hides something.
 
 Run on this machine, `TEST_SQL_CONNECTION` pointed at `(localdb)\MSSQLLocalDB`.
 
-| Suite | Before (main) | After | New |
-|---|---|---|---|
-| xUnit unit | 1,726 / 0 | **1,808 / 0** | 82 |
-| xUnit integration | 1,124 | **1,192 / 0**, 0 skipped (18 m 5 s, whole assembly) | 68 |
-| Vitest — shared | 24 | 24 | — |
-| Vitest — storefront | 1,404 | 1,404 | — |
-| Vitest — admin | 407 | **444 / 0** | 37 |
-| Playwright (chromium) | 891 / 0 | **920 / 0** | 29 |
+| Suite | Before (main) | After round 1 | **After round 2** | New |
+|---|---|---|---|---|
+| xUnit unit | 1,726 / 0 | 1,808 / 0 | **1,812 / 0** | 86 (and 7 deleted: see item 7) |
+| xUnit integration | 1,124 | 1,192 / 0 | **see below** | 73 |
+| Vitest — shared | 24 | 24 | 24 | — |
+| Vitest — storefront | 1,404 | 1,404 | **1,407 / 0** | 3 |
+| Vitest — admin | 407 | 444 / 0 | **459 / 0** | 52 |
+| Playwright (chromium) | 891 / 0 | 920 / 0 | **see below** | 33 |
 
 **The whole-assembly integration run looked hung at 16 minutes with 3 s of CPU and no SQL session, and was
 not**: it finished green at 21 m 8 s. Worth knowing before somebody kills one. (An attempt to kill it was
@@ -324,6 +324,103 @@ them in (`shared`, `storefront`, `admin`). Worth writing down per project from n
 Ports: every `E2E_*_PORT` was overridden into **4820–4836**, scanned free first. `4502` (`charon-svc`) and
 `4767` (`PanGPS`) were identified by PID and left alone; nothing was killed.
 
+## Round 2: the tester's verdict, and what it changed
+
+**FAIL, two blockers, four decisions and three "also fix".** The core held — every illegal transition
+refused twice from every status, the row-count control verified *sufficient* rather than asserted, the
+pickup exclusion really in both auto-deliver statements, #124 surviving a reload, nothing invented reaching
+either bundle (the tester rebuilt and grepped them). The tester also extended the non-ASCII refusal to all
+eight of NBSP, ZWSP, BOM, soft hyphen, tab, word joiner, LRM and ideographic space.
+
+### Blocker 1 — I made the integration suite flaky and reported a number that was not reproducible
+
+`SettingsSchemaAndSeedTests.The_seeder_creates_every_catalogued_key_with_no_invented_value` asserted a
+**global** property of the shared, deliberately-mutated `ops.Settings` table. Four classes in this assembly
+set a settings value and restore it, and the classes **interleave** — so it failed about one run in three.
+
+Measured, before and after, with the tester's four-class filter: **2 failures in 6 batches → 0 in 6.**
+
+Two things made it worse than an ordinary race:
+
+- **The failure message lied about the cause.** It said "a test that left one behind is a neighbour's
+  fixture", so the next person would have hunted a leak. The lesson is narrower than "do not assert global
+  state": a message has to describe the *weakest* explanation for the failure, not the one the author had
+  in mind.
+- **`AssemblyInfo.cs` claimed "the assembly runs sequentially".** It does not — measured — and a wrong
+  comment about the harness is why #114's family keeps being diagnosed as a leak. Corrected, with the rule
+  that actually holds written down. Turning parallelism off properly (`xunit.runner.json`'s
+  `parallelizeTestCollections`) is a harness-wide decision with a runtime cost and belongs with #114.
+
+The fix splits the test: the **metadata** loop stays global (nothing outside that class touches metadata),
+and the **seed value** became a Theory that deletes one key and re-seeds it **inside a rolled-back
+transaction** — so no other connection ever sees the row missing. A plain delete-and-restore would have
+traded a wide race for a narrow one, and `AutoDeliverShippedTests` is a real reader of one of those keys.
+
+**And mutation showed my replacement was tautological in the dangerous direction.** Giving
+`Store.LegalName` a seed value makes the integration test pass — it faithfully asserts the invented
+address. What that test proves is that the seeder *honours* the catalogue; the guard for the catalogue
+being right is the unit test `Nothing_that_holds_a_client_fact_is_seeded_with_a_value`. Both halves are now
+mutation-proved separately and each test's remarks say which half it owns and names the other.
+
+### Blocker 2 — defect class #1 was not swept
+
+`enquiries-page.ts` had the identical shape the orders list had: `isEmpty()` answers `-1 === 0` over a
+null, so a refused first read rendered the list branch over a null and threw
+`TypeError: Cannot read properties of null (reading 'items')` instead of showing the server's sentence.
+Pre-existing from GLB-10, with **no failed-read test on that screen at all**.
+
+Fixed, with two specs — a refused first read (which draws neither the list nor the empty state, because
+"No enquiries yet" is a different and false thing to tell somebody who was just refused) and a later read
+that fails, which keeps the rows on screen. Mutation reproduces the tester's exact `TypeError`.
+
+### The four decisions
+
+| # | What | What I did |
+|---|---|---|
+| 3 | `money()` prefixed `Rs.` unconditionally while every contract supplies a `currency` | Every call site passes the currency it has, including the bank queue, which was carrying `row.currency` and ignoring it. **And the sharper form:** `Currency` is LKR by check constraint, so the field that genuinely differs is `ProviderAmount`/`ProviderCurrency` — the USD PayPal was asked for, which doc 11 P10 step 6 has staff read out, and which reached no screen. Both on the contract now and rendered **gated on presence**. |
+| 4 | The storefront printed `status.toLowerCase()`, so a pickup customer read "This order is shipped." | `OrderConfirmationDto` carries `statusLabel`, rendered by the same `OrderStatusLabels.For` the admin screens use. Three storefront specs, two integration tests pinning it on a real pickup order through the real reader (#126's pairing). **And the claim is corrected in all four places it had spread to:** the shopper's page shows one sentence beside `Payment`, not a timeline. |
+| 5 | The five new settings keys could be set from **no screen at all** — and "readable on the settings screen" was wrong, because that screen renders named forms | One command handler, one endpoint, one form, built on `UpdateBankDetailsCommandHandler` down to the order of its checks. Six specs including the absent-vs-null guarantee over a fixture holding real data. Found on the way: the invoice address collided with `Contact.Address` on its DOM id and its error field, so the request field is `registeredAddress`. |
+| 6 | `cancelReason` and the refund's `completedAtUtc` reached no screen | Both render. `completedAtUtc` is the date §6.6 step 2 has staff read out and is **not** `createdAtUtc` — a `Pending` refund has been recorded and the money has not moved. `cancelReason` is null today, which is exactly why it goes in now rather than the day W3-05 populates it. |
+
+### Also fixed
+
+- **7. `LikeEscaped()` / `SequenceSuffixEscaped()` were dead code justified by a falsehood.** Nothing called
+  either, and three comments plus this journal asserted that EF does *not* escape a `LIKE` parameter. It
+  does, at run time, with an explicit `ESCAPE` clause — so **wiring them up as the comments implied would
+  have double-escaped every term**. Deleted, with the two unit tests over seven cases that asserted a method
+  production never called. The guarantee stays where it can be seen: on the wire.
+- **8.** The journal said the shared `.adm-check` rule "is now a 24 px box". It is still 20 px; the 24 px is
+  local to `couriers-page.ts`. Corrected.
+- **9.** The oracle disclosure now names both facts a refusal leaks to an `Orders.Edit` holder without
+  `Orders.View`: the status, and — one step earlier, before any state is read — the **delivery method**,
+  because `Validate` reads `IsPickup` to decide what a request means.
+
+### The nit that mattered most
+
+**Accept late payment was sending the internal-note textarea's text as its audited reason.** That value
+reaches `Payments.ApprovalNote` and the order's history, and is what staff read back to a customer asking
+why their money was taken a week late — so a note somebody wrote to themselves about a telephone call
+silently became a statement about money. It has its own box now, labelled, with the screen saying the
+internal note is separate and is not sent. Two mutation-proved specs.
+
+The others: the search finds `SD 2026 000123` and `2026-000123` (separators normalised; a year group tells
+a document number from a telephone number), with the remaining ambiguity — a bare `2026000123`, which is
+also the shape of a telephone number — asserted as a deliberate loss rather than left to be discovered.
+Two ASCII messages stopped claiming a narrower rule than the check applies. And the detail's breakpoint
+sweep now measures the transition buttons **before** pressing one: it clicked Start processing first, so
+`start-processing`, `ready-for-collection`, `mark-delivered`, `accept-late` and `refusal-reload` were never
+measured at 320 px — a sweep with the audit done and the subject missing.
+
+### Three corrections the tester made to its own brief, recorded because they matter
+
+1. **ADM-12 is ✅ in scope** at doc 02 line 117 — a different *task*, not out of scope. The check meant (no
+   scope creep) passes.
+2. 20 commits, not 21.
+3. **The `admin-catalog` timeout is pre-existing (#88), not caused by my poll.** Measured at
+   `--workers=1 --repeat-each=6`: unpolled 4 failures in 7 batches, polled 3 in 7 — ~10% either way.
+   Leaving a neighbour's test alone was the right call; **my stated reason for leaving it was wrong**, and
+   that is the more useful half.
+
 ## What is owed, and by whom
 
 | # | Owed | By |
@@ -331,9 +428,9 @@ Ports: every `E2E_*_PORT` was overridden into **4820–4836**, scanned free firs
 | 1 | **`Orders.Refund` and the refund screen.** Doc 02 ADM-09 says "cancel/refund **status**", which this build shows — `sales.Refunds` is read and rendered on the detail — but nothing *writes* one. So doc 11 §7 G-13 ("money received on an order that was never paid") still has no system path, and the short-stock refusal still says "refund the money received instead" while offering no button. W3-03's journal owed this to W3-04; I have not built it, and I would rather say so than ship a half-path over money. The detail's internal note is the honest place to record what was done by hand. | W3-05 / ADM-09 |
 | 2 | **Cancelling an unpaid order** (doc 11 P10 flow A, `Orders.Edit` and the customer's own). W3-03's journal owed this here too. Not built: it releases stock and a promo use, and it belongs with the refund transaction rather than bolted on to a fulfilment screen. | W3-05 / ADM-09 |
 | 3 | **`InvoiceSellerSnapshotJson`.** Doc 08 §4.1 wants the seller's details frozen on to the order when the number is issued. The four keys now exist, so the blocker is gone — but the column is still null on every order ever paid, and the invoice reads the **live** settings instead. That is right for every invoice from now on and wrong for a reprint of an old one after the client changes their registration details. One statement in `BankTransferReviewStore.IssueInvoiceAsync`, owed to whoever next touches that transaction. | W3-05 / W4-01 |
-| 4 | **A write screen for the four `Store.*` legal keys and `Orders.AutoDeliverAfterDays`.** They are in the catalogue, seeded, and **readable** on the settings screen — the read model is generic — but there is no write handler for them, so today they can only be set with SQL. The save unit and the token are already declared, so this is one command handler and one form. I did not build it because the invoice and the job both work without it (one prints nothing, the other uses the seeded 7) and the brief's order of value put the invoice fifth. | ADM-22 |
+| 4 | ~~A write screen for the four `Store.*` legal keys and `Orders.AutoDeliverAfterDays`.~~ **Built in round 2** (tester's decision 5). And the note above was wrong twice: they were not "readable on the settings screen" — that screen renders named forms, so they appeared nowhere — and an invoice that cannot be completed short of SQL is not a deliverable, so it was never ADM-22's to wait for. | — |
 | 5 | **`ops.EmailOutbox`.** Doc 11 P9 step 5's `OrderShipped` is specified and unbuilt. Nothing here claims otherwise. | W3-06 |
-| 5a | **The shopper cannot see their tracking number anywhere.** This is the one that matters most to a customer, and it is worth stating plainly: the public order DTO has no courier or tracking field and the storefront's order page renders neither — I grepped for it. Doc 11 P9 step 6 assumes the customer gets the tracking link from the dispatch email *or* from their order page; the email is W3-06 and the order page's link is **ACC-02** ("live order status + courier tracking link", doc 02 line 97). So from today staff can dispatch an order, and the number the courier gave them lives only in the admin panel. It is not ADM-09's to add — a change to the public order contract and the storefront page is ACC-02's — but whoever schedules next should know that shipping this screen without one of those two leaves the customer with "Shipped" and nothing to do about it. | ACC-02 / W3-06 |
+| 5a | **The shopper cannot see their tracking number anywhere.** *(Confirmed by the tester, scheduled as its own piece of work — estimate half a day: three nullable members on `OrderConfirmationDto`, populated in `ICheckoutReader`'s projection reusing `BuildTrackingUrl`'s substitution so the template never reaches the public contract, one `<dt>/<dd>` gated on status ≥ Shipped and `!isPickup`, plus one integration test pinning the three fields on a real shipped row. **Not started, on instruction.**)* This is the one that matters most to a customer, and it is worth stating plainly: the public order DTO has no courier or tracking field and the storefront's order page renders neither — I grepped for it. Doc 11 P9 step 6 assumes the customer gets the tracking link from the dispatch email *or* from their order page; the email is W3-06 and the order page's link is **ACC-02** ("live order status + courier tracking link", doc 02 line 97). So from today staff can dispatch an order, and the number the courier gave them lives only in the admin panel. It is not ADM-09's to add — a change to the public order contract and the storefront page is ACC-02's — but whoever schedules next should know that shipping this screen without one of those two leaves the customer with "Shipped" and nothing to do about it. | ACC-02 / W3-06 |
 | 6 | **`ops.JobLeases`.** `AutoDeliverShippedService` waits one interval before its first sweep, so **a host that restarts more often than once a day never reaches one**. That is a real limitation and it is written on the method. A persisted "last run" is the proper fix; until then the staff button is the primary path and the job is the safety net, which is the order doc 11 P9 step 8 puts them in. | W3-06 / Architect |
 | 7 | **`inventory.InventoryMovements`** (#108). Unchanged by this task — none of these four transitions touches stock. | W1-05 / ADM-12 |
 | 8 | **ADM-12's inventory screen** is explicitly *not* this task and is untouched. | ADM-12 |
