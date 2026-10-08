@@ -108,6 +108,18 @@ internal sealed class OrderCancellationStore(AppDbContext dbContext, IAuditLogWr
         // so no order can hold a PayPal payment outside a fixture. The guard goes in now because it is the
         // half that protects money: without it, a shopper could cancel an order whose capture is about to
         // land and the shop would be holding a payment for a closed order.
+        //
+        // **And the capture-lock clause in the claim below does not cover this case**, which is why this
+        // is a separate check rather than redundant with it: doc 08 §4.2 step 4 says a PENDING capture
+        // *clears* the lock and extends `PaymentDueAtUtc` instead, so a PayPal PENDING order has no lock
+        // for the claim to refuse.
+        //
+        // **It is a read-then-check and the claim is not**, which is the one place this file departs from
+        // §5.2's rule, so it is said rather than left to be found. A PayPal payment appearing between this
+        // read and the claim would not be refused. That cannot happen in this build — nothing creates
+        // one — and the fix when W4-01 does is to add the clause to the claim as a `NOT EXISTS` over
+        // `ProviderCode = 'PayPal' AND Status = 1`, plus a branch in `DiagnoseAsync` so the refusal still
+        // names the right cause. Doing that now would be three places for a state nothing can produce.
         if (snapshot.HasPayPalPendingPayment)
         {
             return Refused(
