@@ -61,7 +61,7 @@ const progressData = {
         { name: "Category listings with filters & sorting", status: "done", progress: 100 },
         { name: "Product cards with quick view", status: "done", progress: 100 },
         { name: "Search", status: "in-progress", progress: 90 },
-        { name: "Store pages: About, Contact, Returns, Shipping, Privacy & Terms", status: "in-progress", progress: 85 }
+        { name: "Store pages: About, Contact, Returns, Shipping, Privacy & Terms", status: "in-progress", progress: 90 }
       ]
     },
     {
@@ -77,12 +77,12 @@ const progressData = {
     {
       name: "Wishlist, Bag & Checkout",
       features: [
-        { name: "Wishlist", status: "planned", progress: 0 },
+        { name: "Wishlist", status: "done", progress: 100 },
         { name: "Shopping bag & mini bag", status: "done", progress: 100 },
         { name: "Promo codes", status: "planned", progress: 0 },
         { name: "Checkout & guest checkout", status: "done", progress: 100 },
         { name: "Delivery options", status: "done", progress: 100 },
-        { name: "Bank transfer payment", status: "planned", progress: 0 },
+        { name: "Bank transfer payment", status: "done", progress: 100 },
         { name: "PayPal payment", status: "planned", progress: 0 },
         { name: "Order confirmation page", status: "done", progress: 100 }
       ]
@@ -99,7 +99,7 @@ const progressData = {
       name: "Admin Panel",
       features: [
         { name: "Admin login with user roles & permissions", status: "in-progress", progress: 80 },
-        { name: "Product management (images & video)", status: "in-progress", progress: 75 },
+        { name: "Product management (images & video)", status: "done", progress: 100 },
         { name: "Category management", status: "done", progress: 100 },
         { name: "Inventory", status: "in-progress", progress: 25 },
         { name: "Order management & payment approval", status: "planned", progress: 0 },
@@ -126,6 +126,26 @@ const progressData = {
 
   // Newest first.
   updates: [
+    {
+      date: "2026-10-07",
+      title: "Your shop can now take money",
+      text: "This is the milestone the whole build was heading for. A customer places their order and immediately sees your bank details, the exact amount to transfer, the order number to quote as the reference, and a deadline. They can type in their bank reference and upload a photograph or PDF of their deposit slip. On your side there is a new screen \u2014 Orders, bank transfers awaiting approval \u2014 listing every order waiting on payment, oldest first, with the amount, the reference, the slip and how long is left. You check your bank statement and press Approve, Reject, or Accept a late payment. Approving does everything in one go: the order becomes paid, the stock is committed, an invoice number is issued, and the whole decision is recorded with your name against it. Rejecting keeps the order alive so the customer can transfer again. And unpaid orders now release their stock automatically rather than holding it for ever.",
+    },
+    {
+      date: "2026-10-07",
+      title: "Your bank details are yours to enter, and to change",
+      text: "We have deliberately not typed your account details into the shop. There is a screen in the admin panel where you enter the bank name, branch, account name, account number and any instructions you want the customer to see \u2014 and change them later whenever you like. Until you fill them in, the shop simply shows nothing rather than inventing a placeholder, because a wrong account number on a live page is worse than an empty one. The same applies to your address, telephone, email, opening hours and WhatsApp number: every one of them now appears only once you have set it. Nothing on the shop states a contact detail we made up.",
+    },
+    {
+      date: "2026-10-07",
+      title: "The store pages are built and waiting for your words",
+      text: "About, Contact, Returns, Shipping, Privacy and Terms all exist now, each editable from the admin panel with its own page title and description for Google. Five of them are deliberately switched off until you send us the copy \u2014 and Privacy and Terms need a proper data-protection review before they go live, which is not something we should write for you. The Contact page is switched on already, because it needs no copy at all: it is the enquiry form plus whichever of your contact details you have entered. Messages from it arrive in a new inbox in the admin panel, where staff can mark them read, replied or spam. You reply by phone or email as you prefer \u2014 the shop does not send email yet.",
+    },
+    {
+      date: "2026-10-07",
+      title: "Product management and the wishlist are finished and tested",
+      text: "Both passed their testing and are live in the build. You can add products with photographs and video, colours and sizes, prices and discounts, badges, material and care details, related products and the text Google shows \u2014 and put each one on the shop or take it off. A product with no photograph cannot be published, and the shop tells you exactly what is missing rather than letting a broken product through. Shoppers can save items with the heart on any card or product page, see them all on a wishlist page at today's prices, and move one into the bag choosing a size as they go.",
+    },
     {
       date: "2026-10-06",
       title: "A customer can now place an order from start to finish",
