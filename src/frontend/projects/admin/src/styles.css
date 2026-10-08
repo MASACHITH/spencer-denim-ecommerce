@@ -178,7 +178,10 @@ textarea.adm-input {
  */
 .adm-btn:disabled,
 .adm-btn--primary:disabled,
-.adm-btn--danger:disabled {
+.adm-btn--danger:disabled,
+.adm-btn[aria-disabled='true'],
+.adm-btn--primary[aria-disabled='true'],
+.adm-btn--danger[aria-disabled='true'] {
   opacity: 0.5;
   cursor: not-allowed;
 }

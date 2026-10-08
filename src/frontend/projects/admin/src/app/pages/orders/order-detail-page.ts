@@ -95,6 +95,35 @@ import { CatalogFailure, toCatalogFailure } from '../../core/catalog/admin-catal
           <dd>{{ detail.stockState }}</dd>
         </dl>
 
+        @if (detail.dispatch; as dispatch) {
+          <!-- The dispatch as it stands, which the list also shows. The *name* is the order's snapshot
+               (doc 11 P9: the courier's name is copied into the order), so a rename does not rewrite a
+               past dispatch note; the *link* is rendered from the courier's current template (doc 08
+               §3.5), so editing a template changes the link on older orders too. Both facts are on the
+               screen, because a staff member on the telephone reads one and clicks the other. -->
+          <dl class="order-facts" data-testid="order-dispatch">
+            <dt>Courier</dt>
+            <dd>{{ dispatch.courierName }}</dd>
+            <dt>Tracking number</dt>
+            <dd>
+              @if (dispatch.trackingUrl) {
+                <a
+                  class="adm-link"
+                  [href]="dispatch.trackingUrl"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  data-testid="tracking-link"
+                >
+                  {{ dispatch.trackingNumber }}
+                </a>
+              } @else {
+                {{ dispatch.trackingNumber }}
+                <span class="adm-muted">(this courier has no online tracking)</span>
+              }
+            </dd>
+          </dl>
+        }
+
         <div class="adm-actions">
           @if (detail.invoiceNumber) {
             <a
@@ -207,6 +236,17 @@ import { CatalogFailure, toCatalogFailure } from '../../core/catalog/admin-catal
           }
         </div>
 
+        @if (awaitingReview()) {
+          <!-- The decision itself lives on the bank-transfer queue behind Orders.Approve (doc 11 P7
+               step 4), and is not duplicated here: one screen owns approving money. What this screen
+               owes a staff member who reached the order by its number is the way there. -->
+          <p class="adm-panel__hint" data-testid="awaiting-review">
+            A bank transfer on this order is waiting to be reviewed. Approving or rejecting it happens on
+            <a class="adm-link" routerLink="/orders/bank-transfers">Bank transfers awaiting approval</a>,
+            which needs the Orders.Approve permission.
+          </p>
+        }
+
         @if (detail.actions.canAcceptLatePayment) {
           <p class="adm-panel__hint" data-testid="accept-late-hint">
             The money arrived after the deadline. Accepting re-checks stock for every item: if everything
@@ -223,16 +263,23 @@ import { CatalogFailure, toCatalogFailure } from '../../core/catalog/admin-catal
             <div class="adm-fields">
               <label class="adm-field">
                 <span class="adm-label">Courier</span>
+                <!-- The selection is on each option rather than a value binding on the select, and that
+                     is a defect this screen's own spec found. Angular applies an element's own property
+                     bindings before refreshing its children, so on the first render the select's value
+                     was written while the option list was still empty — and a select whose value names no
+                     option resets to the empty one. The form came up unselected on every order that
+                     already had a courier, which is the one case the correction form exists for. -->
                 <select
                   class="adm-input"
                   name="courierId"
-                  [value]="courierId()"
                   data-testid="courier"
                   (change)="pickCourier($event)"
                 >
-                  <option value="">Choose a courier…</option>
+                  <option value="" [selected]="courierId() === ''">Choose a courier…</option>
                   @for (courier of activeCouriers(); track courier.id) {
-                    <option [value]="courier.id">{{ courier.name }}</option>
+                    <option [value]="courier.id" [selected]="courierId() === asText(courier.id)">
+                      {{ courier.name }}
+                    </option>
                   }
                 </select>
               </label>
@@ -628,6 +675,27 @@ export class OrderDetailPage {
   protected readonly dispatchError = signal<string | null>(null);
 
   /**
+   * Whether a bank transfer on this order is still waiting for a staff decision.
+   *
+   * **It is derived from the payments rather than given its own flag**, because it is not an action this
+   * screen performs: approving money is the bank-transfer queue's, behind `Orders.Approve` (doc 11 P7
+   * step 4), and duplicating the decision would mean two screens that have to agree about it. What this
+   * screen owes is the route — a staff member who found the order by the number the customer quoted
+   * should not have to know the queue exists.
+   */
+  protected readonly awaitingReview = computed(() => {
+    const detail = this.order();
+
+    return (
+      detail !== null
+      && detail.status === 'PendingPayment'
+      && detail.payments.some(
+        (payment) => payment.providerCode === 'BankTransfer' && payment.status === 'Pending',
+      )
+    );
+  });
+
+  /**
    * Only the couriers a new dispatch may choose, **plus the one this order already has**.
    *
    * The second half matters when correcting a tracking number on an order shipped with a carrier that has
@@ -731,6 +799,16 @@ export class OrderDetailPage {
       default:
         return `by ${source}`;
     }
+  }
+
+  /**
+   * A courier id as the select's own value spells it.
+   *
+   * The signal holds the value as text, because that is what a `<select>` reports from the DOM; the
+   * comparison has to be made in the same vocabulary or every option is unselected.
+   */
+  protected asText(courierId: number): string {
+    return String(courierId);
   }
 
   protected pickCourier(event: Event): void {

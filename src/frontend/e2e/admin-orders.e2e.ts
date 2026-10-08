@@ -319,6 +319,21 @@ test.describe('the order detail and doc 11 P9’s workflow', () => {
 
     await expect(page.locator('[data-testid="order-status"]')).toContainText('Shipped');
     await expect(page.locator('[data-testid="order-said"]')).toContainText('shipped');
+
+    // The dispatch is on the screen, with the link rendered from the courier's current template
+    // (doc 08 §3.5) — and the order's own snapshotted name beside it.
+    const dispatch = page.locator('[data-testid="order-dispatch"]');
+    await expect(dispatch).toContainText('xunit-e2e-carrier');
+    await expect(dispatch).toContainText('TRACK-E2E-1');
+    await expect(page.locator('[data-testid="tracking-link"]')).toHaveAttribute(
+      'href',
+      'https://track.example.test/TRACK-E2E-1',
+    );
+
+    // And the correction form comes up with that courier already selected, which is what the dispatch's
+    // id is on the contract for.
+    await page.reload();
+    await expect(page.locator('[data-testid="courier"]')).toHaveValue(/^\d+$/);
   });
 
   /**
