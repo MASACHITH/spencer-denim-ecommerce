@@ -27,6 +27,12 @@ namespace SpencerDenim.Domain.Settings;
 /// touched. The logo is an image a client uploads; the name is part of the build. See the journal entry
 /// for 2026-10-02.
 /// </para>
+/// <para>
+/// <b><see cref="Store.LegalName"/> is a different fact and is here.</b> It is not the shop's name under
+/// another name: the shop a customer sees is Colombo Wardrobe, and the party that issues an invoice is the
+/// registered company that commissioned it. A legal document names the second, so that one is a row the
+/// client fills in — and it stays unset, and prints as nothing, until they do.
+/// </para>
 /// </summary>
 public static class SettingKeys
 {
@@ -41,6 +47,93 @@ public static class SettingKeys
         /// falls back to the text wordmark for exactly as long as it stays null.
         /// </summary>
         public const string LogoAssetId = "Store.LogoAssetId";
+
+        /// <summary>
+        /// The client company's registered name, as it must appear on an invoice (W3-04, ADM-09).
+        /// <para>
+        /// <b>This is the one place in the system where the <i>company</i> is meant rather than the
+        /// shop.</b> Everything a shopper reads says Colombo Wardrobe (docs/02 §I2), which is why the
+        /// shop's name is a build-time constant and not a settings row; an invoice is a legal document
+        /// and the party issuing it is the registered company. The two are different facts about the
+        /// same business and this key holds the second one.
+        /// </para>
+        /// <para>
+        /// <b>Seeded null, and the invoice prints nothing for it rather than a placeholder.</b> Doc 08
+        /// §4.1 wants the seller's details frozen on to the order at issue; an invented address or
+        /// registration number on a legal document is worse than a blank, so an unset key renders as
+        /// absent. See <c>InvoiceSellerDetails</c>.
+        /// </para>
+        /// </summary>
+        public const string LegalName = "Store.LegalName";
+
+        /// <summary>The business registration number. Seeded null; printed only when set.</summary>
+        public const string BRNumber = "Store.BRNumber";
+
+        /// <summary>
+        /// The VAT registration number. Seeded null; printed only when set.
+        /// <para>
+        /// An invoice shows <b>no VAT line</b> (doc 08 D2, doc 11 P9): prices are VAT-inclusive, so this
+        /// is the seller's registration number in the header and never a tax calculation.
+        /// </para>
+        /// </summary>
+        public const string VatNumber = "Store.VatNumber";
+
+        /// <summary>
+        /// The company's registered address, one line per line, as plain text.
+        /// <para>
+        /// <b>Not <see cref="Contact.Address"/>.</b> That one is where a shopper writes to and is shown
+        /// on the Contact page; this one is the registered address on an invoice. They are usually the
+        /// same string and are not the same fact, and reusing the contact address on an invoice would
+        /// make a shop that moves its counter reissue its legal identity.
+        /// </para>
+        /// </summary>
+        public const string Address = "Store.Address";
+    }
+
+    /// <summary>
+    /// Group <c>Orders</c> (doc 08 §3.8): how long an order waits and how long a dispatch waits.
+    /// <para>
+    /// <b>One of doc 08's three keys.</b> <c>BankTransferExpiryHours</c> is still read from configuration
+    /// (<c>Orders__BankTransferExpiryHours</c>) and moving it is owed to ADM-22 — W3-03's journal lists it
+    /// — and <c>PayPalExpiryMinutes</c> has no provider to expire. <see cref="AutoDeliverAfterDays"/> is
+    /// here because doc 11 P9 step 8's job has nothing else to read.
+    /// </para>
+    /// </summary>
+    public static class Orders
+    {
+        public const string Group = "Orders";
+
+        /// <summary>
+        /// How many days after dispatch a Shipped order is marked Delivered if nobody does it by hand
+        /// (doc 11 P9 step 8, doc 08 §4.1 D4). Seeded <b>7</b>, which is doc 08 §3.8's own default.
+        /// <para>
+        /// <b>Never applied to a Store pickup order</b> (doc 08 §4.1 G-18): for a pickup, Shipped means
+        /// "ready for collection", so an uncollected parcel would otherwise be recorded as delivered and
+        /// earn a "Verified buyer" badge for goods still on the shelf. The exclusion is in the job's
+        /// statement, not in this value.
+        /// </para>
+        /// <para>
+        /// <b>Seeded rather than left null, unlike every other key in this build.</b> The others hold
+        /// information only the client has; this one holds a number doc 11 P9 states, and a null would
+        /// stop the job rather than ask a question. <see cref="AutoDeliverAfterDaysMin"/> and
+        /// <see cref="AutoDeliverAfterDaysMax"/> bound what a staff user may type; <b>0 is not
+        /// accepted</b>, because "mark it delivered the moment it ships" is the badge defect G-18 is
+        /// about, chosen deliberately.
+        /// </para>
+        /// </summary>
+        public const string AutoDeliverAfterDays = "Orders.AutoDeliverAfterDays";
+
+        /// <summary>Doc 08 §3.8's seeded default for <see cref="AutoDeliverAfterDays"/>.</summary>
+        public const int AutoDeliverAfterDaysDefault = 7;
+
+        /// <summary>One day. Lower than this is "deliver it as it ships", which G-18 refuses.</summary>
+        public const int AutoDeliverAfterDaysMin = 1;
+
+        /// <summary>
+        /// 90 days. Above this the job is no longer a safety net and the figure is almost certainly a typo
+        /// — and an order that sits Shipped for three months is a question for staff, not for a job.
+        /// </summary>
+        public const int AutoDeliverAfterDaysMax = 90;
     }
 
     /// <summary>Group <c>Contact</c> (doc 08 §3.8): how a shopper reaches the shop (GLB-07, GLB-08).</summary>

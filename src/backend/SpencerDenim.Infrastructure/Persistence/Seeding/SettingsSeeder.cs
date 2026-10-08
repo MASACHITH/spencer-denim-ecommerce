@@ -52,10 +52,17 @@ public sealed class SettingsSeeder(AppDbContext dbContext)
                     GroupKey = definition.GroupKey,
                     ValueType = definition.ValueType,
 
-                    // Null, always. The client has not uploaded a logo and has not sent their profile
-                    // addresses, and a seeded placeholder would be the exact thing this task exists to
-                    // remove: a social icon on a live shop pointing somewhere that is not the shop.
-                    Value = null,
+                    // The catalogue's seed value, which is null for every key that holds information only
+                    // the client has — a logo, their profile addresses, their bank, their registered
+                    // address. A seeded placeholder there would be the exact thing this task exists to
+                    // remove: a social icon on a live shop pointing somewhere that is not the shop, or an
+                    // invented registered address on an invoice.
+                    //
+                    // It is non-null only where one of this project's own documents states the number, and
+                    // today that is doc 08 §3.8's `AutoDeliverAfterDays (7)` alone. **It is applied here,
+                    // on insert, and nowhere in `Realign`** — see SettingDefinition.SeedValue: a seed value
+                    // re-applied on every deployment would reset a figure somebody deliberately changed.
+                    Value = definition.SeedValue,
                     IsSecret = definition.IsSecret,
                     RequiredPermission = definition.RequiredPermission,
                     Description = definition.Description,
