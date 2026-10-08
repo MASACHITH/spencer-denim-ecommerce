@@ -304,11 +304,18 @@ import { CatalogFailure, toCatalogFailure } from '../../core/catalog/admin-catal
               <label class="adm-field">
                 <span class="adm-label">Courier</span>
                 <!-- The selection is on each option rather than a value binding on the select, and that
-                     is a defect this screen's own spec found. Angular applies an element's own property
-                     bindings before refreshing its children, so on the first render the select's value
-                     was written while the option list was still empty — and a select whose value names no
-                     option resets to the empty one. The form came up unselected on every order that
-                     already had a courier, which is the one case the correction form exists for. -->
+                     is a defect this screen's own spec found.
+
+                     What was measured: with a value binding on the select, the DOM value came back empty
+                     on the first render even though the signal held a matching id, and moving the binding
+                     on to each option fixed it. The explanation that fits is that an element's own
+                     property bindings are applied before its children are refreshed, so the value was
+                     written while the option list was still empty and a select whose value names no
+                     option resets to the empty one — but the measurement is the part to trust, and the
+                     spec is what holds it.
+
+                     The consequence either way: the form came up unselected on every order that already
+                     had a courier, which is the one case the correction form exists for. -->
                 <select
                   class="adm-input"
                   name="courierId"

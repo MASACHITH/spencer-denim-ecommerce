@@ -263,9 +263,13 @@ describe('CouriersPage (ADM-09)', () => {
     expect(first).toContain('name');
 
     // **The mutation is watched rather than sampled, and the thing watched for is that there is one at
-    // all.** Angular flushes `afterNextRender` inside the same change-detection pass, so reading the DOM
-    // afterwards always finds the sentence back — a test that only compared before and after would pass
-    // against a component that never cleared the region, which is exactly the test-that-cannot-fail shape.
+    // all.**
+    //
+    // What was measured: reading the DOM after `settle()` always found the sentence back, and reading it
+    // after a bare `detectChanges()` did too — so a before/after comparison would pass against a
+    // component that never cleared the region, which is exactly the test-that-cannot-fail shape. The
+    // explanation that fits is that `afterNextRender` is flushed within the same change-detection pass;
+    // the measurement is the part to trust.
     //
     // Without the clear-and-restore, setting a signal to the value it already holds produces **no DOM
     // mutation whatsoever**, so the observer records nothing: and no mutation is precisely the silence a

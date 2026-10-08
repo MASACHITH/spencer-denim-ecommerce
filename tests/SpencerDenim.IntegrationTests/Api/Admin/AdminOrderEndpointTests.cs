@@ -337,6 +337,67 @@ public sealed class AdminOrderEndpointTests(SqlServerDatabaseFixture sqlServer)
     }
 
     /// <summary>
+    /// <b>EF escapes a <c>LIKE</c> parameter itself, and this pins it rather than asserting it in a
+    /// comment.</b>
+    /// </summary>
+    /// <remarks>
+    /// The search relies on the framework for this, and the Application layer deliberately does nothing:
+    /// it used to carry two escaping helpers that nothing called, justified by a comment saying EF does
+    /// <i>not</i> escape. It does. So the dependency is on EF's behaviour, and a dependency on a
+    /// framework's behaviour belongs in a test that reads the generated SQL — not in prose that nobody
+    /// re-checks when the package version moves.
+    /// <para>
+    /// <c>ToQueryString()</c> does not execute anything, so this costs a scope and no round trip. It
+    /// asserts the two halves the search needs: the wildcard is in the <b>parameter</b> rather than
+    /// concatenated into the text, and an explicit <c>ESCAPE</c> clause is emitted — without which a
+    /// <c>%</c> inside the parameter would still be a wildcard.
+    /// </para>
+    /// <para>
+    /// <b>This is the check my own end-of-task sweep did not make.</b> That sweep verified every schema
+    /// claim I had written and caught five; it never looked at framework claims, and item 7 of the
+    /// tester's verdict is the one it missed.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task Ef_escapes_a_like_parameter_itself_which_is_what_the_search_relies_on()
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, Token);
+
+        using var scope = sqlServer.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        // The two translations AdminOrderReader.Filter actually produces, with a term carrying every
+        // wildcard a staff member could type.
+        const string term = "SD-%_[";
+
+        var startsWith = dbContext.Orders
+            .Where(order => order.OrderNumber.StartsWith(term))
+            .ToQueryString();
+
+        var endsWith = dbContext.Orders
+            .Where(order => order.OrderNumber.EndsWith(term))
+            .ToQueryString();
+
+        foreach (var sql in new[] { startsWith, endsWith })
+        {
+            Assert.Contains("LIKE", sql, StringComparison.Ordinal);
+
+            // An explicit ESCAPE clause. Without it the backslashes EF puts in the parameter would be
+            // literal backslashes and the wildcards would still be wildcards.
+            Assert.Contains("ESCAPE", sql, StringComparison.Ordinal);
+
+            // And the escaping is in the *parameter*, not concatenated into the statement — so the term
+            // never reaches the SQL text and the plan is shared across searches.
+            Assert.DoesNotContain("'SD-%_[", sql, StringComparison.Ordinal);
+        }
+
+        // The declared parameter carries the escaped form, which is the half that makes the wildcard
+        // inert. Asserted on the StartsWith translation, where EF appends its own trailing '%'.
+        Assert.Contains(@"SD-\%\_\[", startsWith, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// <b>Doc 11 P9 step 1 on the wire: the Paid filter comes back oldest first, and says so.</b>
     /// </summary>
     [Fact]
