@@ -8,6 +8,7 @@ using SpencerDenim.Application.Abstractions.Results;
 using SpencerDenim.Application.Sales.Cart;
 using SpencerDenim.Application.Sales.Checkout;
 using SpencerDenim.Application.Sales.Checkout.Contracts;
+using SpencerDenim.Application.Sales.Orders.Customer;
 using SpencerDenim.Application.Sales.Payments.Customer;
 
 namespace SpencerDenim.Api.Endpoints.Sales;
@@ -83,6 +84,26 @@ internal static class CheckoutEndpoints
             .Accepts<SetPaymentReferenceRequest>("application/json")
             .Produces<OrderPaymentProofDto>()
             .ProducesValidationProblem()
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
+        // Doc 11 P10 flow A, step 1's customer half: "Opens the order (account or order link) and clicks
+        // Cancel order". Beside GetOrder for the same reason the reference route is: a shopper who opens
+        // their link next week is still looking at this order, and nothing here reads the cart cookie.
+        endpoints.MapPost("/api/orders/{publicId:guid}/cancel", CancelOrderAsync)
+            .WithTags("Checkout")
+            .WithName("CancelOwnOrder")
+            .WithSummary("The shopper cancels their own unpaid order (doc 11 P10 flow A).")
+            .WithDescription(
+                "Doc 11 P10 step 3, in one transaction: the order becomes Cancelled with the closed time, "
+                + "its open payment becomes Cancelled, and the items go back on sale. It takes no body "
+                + "and no reason — P10 asks the staff member for a reason and the customer only to "
+                + "press the button; the order's history records that the customer decided. A token that "
+                + "matches no order, an order that is already paid, one that has expired and one that is "
+                + "already cancelled all answer **404 and say nothing else**: the token never expires and "
+                + "is a guest's only credential, so a stranger must not learn that a guessed token names a "
+                + "real order, nor what state it is in. A **paid** order is never cancelled — doc 11 "
+                + "P10 refunds one instead. No email is sent and none is owed (§7 G-14).")
+            .Produces<CancelOrderDto>()
             .ProducesProblem(StatusCodes.Status404NotFound);
 
         return endpoints;
@@ -220,6 +241,48 @@ internal static class CheckoutEndpoints
         // A bare 404 with no body. "No such order" and "that order is not yours" must be the same answer:
         // telling them apart would confirm that a guessed token names a real order.
         return order is null ? TypedResults.NotFound() : TypedResults.Ok(order);
+    }
+
+    /// <summary>
+    /// Doc 11 P10 flow A: the shopper's own Cancel order.
+    /// </summary>
+    /// <remarks>
+    /// <b>No antiforgery token and no authentication, deliberately and consistently with the rest of this
+    /// file.</b> There is no customer sign-in anywhere in this build (ACC-01 is W3-01) and a guest's order
+    /// link is the only credential there is, so there is no session for a forged request to ride on —
+    /// which is the thing antiforgery protects. <b>And the sharper question, asked rather than assumed:</b>
+    /// what a cross-site form <i>could</i> do here is cancel an order whose token the attacker already
+    /// knows — and knowing the token is already enough to read the whole order, including the customer's
+    /// name, address and telephone number. So this route gives away no capability the existing
+    /// <c>payment-reference</c> route does not. It is still the most destructive thing a token can do, and
+    /// the mitigations that would matter are the ones doc 11 §7 G-41 asks for on the order <i>link</i> —
+    /// rate limiting, and an expiring link — which are an architect decision rather than this task's.
+    /// <para>
+    /// <b>No body at all.</b> Nothing is read from the request, so there is nothing for issue #47's
+    /// malformed-JSON family to go wrong with; a client that sends a body is not refused for it.
+    /// </para>
+    /// </remarks>
+    private static async Task<IResult> CancelOrderAsync(
+        HttpContext httpContext,
+        ICommandHandler<CancelOwnOrderCommand, CancelOwnOrderResult> handler,
+        Guid publicId,
+        CancellationToken cancellationToken)
+    {
+        NoStore(httpContext.Response);
+
+        var result = await handler.HandleAsync(new CancelOwnOrderCommand(publicId), cancellationToken);
+
+        return result switch
+        {
+            CancelOwnOrderResult.Cancelled cancelled => TypedResults.Ok(
+                new CancelOrderDto(cancelled.OrderNumber)),
+
+            // A bare 404, the same answer GetOrder and the reference route give. "No such order", "that
+            // order is paid" and "that order expired a minute ago" must be indistinguishable.
+            CancelOwnOrderResult.NotCancellable => TypedResults.NotFound(),
+
+            _ => throw new InvalidOperationException($"Unhandled result {result.GetType().Name}."),
+        };
     }
 
     /// <summary>One sentence per blocker, in the order the use case put them.</summary>

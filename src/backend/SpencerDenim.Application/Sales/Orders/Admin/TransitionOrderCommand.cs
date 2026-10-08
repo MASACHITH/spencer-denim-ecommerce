@@ -50,6 +50,24 @@ public enum OrderTransitionKind
     /// backwards.
     /// </summary>
     SetInternalNote,
+
+    /// <summary>
+    /// Doc 11 P10 flow A: cancels an <b>unpaid</b> order, with a reason (W3-04b).
+    /// </summary>
+    /// <remarks>
+    /// <b>It is not a backwards move and it is not a refund.</b> <c>PendingPayment → Cancelled</c> is a
+    /// forward edge in doc 08 §4.1's own diagram, into a closing state with exactly one documented way
+    /// out (<c>Cancelled → Paid</c>, <c>Orders.Approve</c>'s accept-late, which W3-03 already built). Doc
+    /// 11 P10's table is equally explicit that a <b>paid</b> order is never cancelled — it is refunded —
+    /// and the transaction's own <c>Status = 0</c> guard makes that structural rather than a rule somebody
+    /// has to remember.
+    /// <para>
+    /// It goes to <c>IOrderCancellationStore</c> rather than <c>IOrderFulfilmentStore</c>, because the
+    /// latter's remarks correctly say it touches no stock and therefore has no lock order to honour, and
+    /// cancel releases stock.
+    /// </para>
+    /// </remarks>
+    Cancel,
 }
 
 /// <summary>
@@ -69,6 +87,12 @@ public enum OrderTransitionKind
 /// <see cref="OrderTransitionKind.SetInternalNote"/> it <b>is</b> the new note, and
 /// <see langword="null"/> clears it.
 /// </param>
+/// <param name="CancelReason">
+/// For <see cref="OrderTransitionKind.Cancel"/>: why, which goes to <c>Orders.CancelReason</c> and on to
+/// the order's history row. <b>Required</b> — doc 11 P10 step 1 says the staff member "clicks Cancel and
+/// enters a reason", and cancelling is irreversible for the customer, so the screen asks for the reason
+/// rather than offering a blank one. <see langword="null"/> for every other act.
+/// </param>
 /// <param name="Actor">Who is acting, for the history row and the audit row.</param>
 public sealed record TransitionOrderCommand(
     Guid OrderPublicId,
@@ -76,7 +100,8 @@ public sealed record TransitionOrderCommand(
     int? CourierId,
     string? TrackingNumber,
     string? Note,
-    AdminActor Actor);
+    AdminActor Actor,
+    string? CancelReason = null);
 
 /// <summary>
 /// Validates a staff act and hands it to the one transaction that applies it.
@@ -124,9 +149,20 @@ public sealed record TransitionOrderCommand(
 public sealed class TransitionOrderCommandHandler(
     IAdminOrderReader reader,
     IOrderFulfilmentStore store,
+    IOrderCancellationStore cancellations,
     IClock clock)
     : ICommandHandler<TransitionOrderCommand, TransitionOrderResult>
 {
+    /// <summary><c>Orders.CancelReason</c> is <c>nvarchar(500)</c> (doc 08 §3.5, checked against
+    /// <c>OrderConfiguration</c>: <c>HasMaxLength(500)</c>).
+    /// <para>
+    /// Refused rather than clipped: the reason is the shop's record of why somebody's order was closed and
+    /// is read back to the customer if they ask, so a sentence silently cut in half is a worse answer than
+    /// being asked to shorten it. The <i>history</i> note clips, because it is a derived sentence.
+    /// </para>
+    /// </summary>
+    public const int CancelReasonMaxLength = 500;
+
     /// <summary>
     /// <c>Orders.TrackingNumber</c> is <c>varchar(60)</c> (doc 08 §3.5).
     /// <para>
@@ -172,6 +208,25 @@ public sealed class TransitionOrderCommandHandler(
             string.IsNullOrWhiteSpace(command.Note) ? null : command.Note.Trim(),
             clock.UtcNow.UtcDateTime);
 
+        // **Doc 11 P10 flow A, answered here rather than in the switch below**, because
+        // `IOrderCancellationStore` has its own result type: cancel can be refused for reasons no
+        // fulfilment transition has (a capture in flight, a settlement already on the order), and
+        // collapsing the two outcome types into one would mean inventing a code for a state the other
+        // store cannot be in.
+        if (command.Kind == OrderTransitionKind.Cancel)
+        {
+            return Translate(
+                await cancellations.CancelAsync(
+                    new OrderCancellation(
+                        command.OrderPublicId,
+                        OrderCancelledBy.Staff,
+                        command.Actor,
+                        command.CancelReason!.Trim(),
+                        transition.NowUtc),
+                    cancellationToken),
+                target.IsPickup);
+        }
+
         var dispatch = command.Kind is OrderTransitionKind.MarkShipped or OrderTransitionKind.UpdateDispatch
             ? new OrderDispatchDetails(command.CourierId!.Value, command.TrackingNumber!.Trim())
             : null;
@@ -197,6 +252,11 @@ public sealed class TransitionOrderCommandHandler(
 
             OrderTransitionKind.SetInternalNote =>
                 await store.SetInternalNoteAsync(transition, transition.Note, cancellationToken),
+
+            // Cancel never reaches here: it is answered above, because its store speaks a different result
+            // type. Listed so that adding a member to the enum stays a compile-time decision.
+            OrderTransitionKind.Cancel => throw new InvalidOperationException(
+                "Cancel is handled before this switch."),
 
             _ => throw new ArgumentOutOfRangeException(
                 nameof(command),
@@ -314,6 +374,27 @@ public sealed class TransitionOrderCommandHandler(
 
                 break;
 
+            case OrderTransitionKind.Cancel:
+
+                // **Required, not optional** (doc 11 P10 step 1). A confirmation step is the obvious place
+                // for a mistake and cancelling is irreversible for the customer, so the shop's record of
+                // why has to be a sentence somebody typed rather than a blank the screen allowed through.
+                if (string.IsNullOrWhiteSpace(command.CancelReason))
+                {
+                    errors.Add(new ValidationError(
+                        "cancelReason",
+                        "Say why this order is being cancelled. It is kept on the order and read back to "
+                        + "the customer if they ask."));
+                }
+                else if (command.CancelReason.Trim().Length > CancelReasonMaxLength)
+                {
+                    errors.Add(new ValidationError(
+                        "cancelReason",
+                        $"Keep the reason to {CancelReasonMaxLength} characters or fewer."));
+                }
+
+                break;
+
             case OrderTransitionKind.SetInternalNote:
                 if (command.Note is { Length: > InternalNoteMaxLength })
                 {
@@ -341,6 +422,36 @@ public sealed class TransitionOrderCommandHandler(
 
         return errors;
     }
+
+    /// <summary>
+    /// One <see cref="CancelOrderOutcome"/> as this file's result type.
+    /// </summary>
+    /// <remarks>
+    /// <b>Field for field, with no re-wording.</b> The store's sentences are written for the person
+    /// reading them and its codes are what the screen branches on; a translation that improved either
+    /// would be a second vocabulary to keep in step. The only thing added is the status <i>label</i> for
+    /// an applied cancel, which the store does not compute because its caller knows whether the order is a
+    /// pickup one.
+    /// </remarks>
+    private static TransitionOrderResult Translate(CancelOrderOutcome outcome, bool isPickup) =>
+        outcome switch
+        {
+            CancelOrderOutcome.Applied applied => new TransitionOrderResult.Applied(
+                applied.OrderNumber,
+                OrderStatus.Cancelled.ToString(),
+                OrderStatusLabels.For(OrderStatus.Cancelled, isPickup)),
+
+            CancelOrderOutcome.NotFound => new TransitionOrderResult.NotFound(),
+
+            CancelOrderOutcome.Refused refused => new TransitionOrderResult.Refused(
+                refused.Code,
+                refused.Message,
+                refused.Status.ToString(),
+                refused.StatusLabel),
+
+            _ => throw new InvalidOperationException(
+                $"Unhandled cancellation outcome {outcome.GetType().Name}."),
+        };
 
     /// <summary>
     /// Whether every character of <paramref name="value"/> survives a <c>varchar</c> column.

@@ -218,6 +218,10 @@ public static class DependencyInjection
         // auto-deliver job read.
         services.AddScoped<IAdminOrderReader, AdminOrderReader>();
         services.AddScoped<IOrderFulfilmentStore, OrderFulfilmentStore>();
+
+        // W3-04b / doc 11 P10 flow A: cancelling an unpaid order, for staff and for the shopper's own
+        // order link. Its own store rather than a member of IOrderFulfilmentStore, which touches no stock.
+        services.AddScoped<IOrderCancellationStore, OrderCancellationStore>();
         services.AddScoped<ICourierAdminStore, CourierAdminStore>();
         services.AddScoped<IOrderSettingsReader, OrderSettingsReader>();
         services.AddScoped<IAutoDeliverStore, AutoDeliverStore>();

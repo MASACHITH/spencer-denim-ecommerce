@@ -101,6 +101,22 @@ public sealed record OrderDeliveryDto(
 /// can show it back rather than offering an empty form to somebody who filled it in yesterday.
 /// <see langword="null"/> when there is no open payment to attach anything to.
 /// </param>
+/// <param name="CanCancel">
+/// Whether the shopper may cancel this order right now (doc 11 P10 flow A, W3-04b).
+/// <para>
+/// <b>Sent by the server rather than inferred from <paramref name="Status"/>.</b> Doc 11 P10 step 2 has
+/// four guards, and two of them — a capture in flight and a payment that has already settled — are states
+/// the page cannot see at all. A screen that showed the button for every <c>PendingPayment</c> order would
+/// be offering a shopper an action the server will refuse, which is the dead-control shape this project
+/// has already paid for. It is a convenience and <b>never</b> the boundary: the transaction's own
+/// conditional <c>UPDATE</c> re-decides all four under the order row's lock, so a client that ignored this
+/// is simply refused.
+/// </para>
+/// <para>
+/// It is <see langword="false"/> for a paid order, because doc 11 P10's table says a paid order is
+/// refunded and never cancelled — and this build has no refund path, so the page must not offer one.
+/// </para>
+/// </param>
 public sealed record OrderConfirmationDto(
     string OrderNumber,
     Guid PublicId,
@@ -127,7 +143,22 @@ public sealed record OrderConfirmationDto(
     DateTime PaymentDueAtUtc,
     bool IsDuplicateSubmission = false,
     OrderPaymentInstructionsDto? Payment = null,
-    OrderPaymentProofDto? Proof = null);
+    OrderPaymentProofDto? Proof = null,
+    bool CanCancel = false);
+
+/// <summary>
+/// What <c>POST /api/orders/{token}/cancel</c> answers (doc 11 P10 flow A).
+/// </summary>
+/// <param name="OrderNumber">
+/// The order's number, so the page can say which order it closed.
+/// <para>
+/// <b>And nothing else.</b> No status, no label, no stock figures: the page re-reads the order from
+/// <c>GET /api/orders/{token}</c> immediately afterwards, which is the one projection that decides what a
+/// shopper is told about their own order — and a second, smaller description of the same row would be a
+/// second thing that could disagree with it.
+/// </para>
+/// </param>
+public sealed record CancelOrderDto(string OrderNumber);
 
 /// <summary>
 /// The customer-facing "how to pay", built by the order's <c>IPaymentProvider</c> (PAY-03, doc 11 P7
