@@ -244,19 +244,29 @@ public sealed class SettingsSchemaAndSeedTests(SqlServerDatabaseFixture sqlServe
     // ---- the seeder -------------------------------------------------------------------------------
 
     /// <summary>
-    /// The seeder creates every catalogued key, with its metadata and with <b>no invented value</b>.
+    /// The seeder creates every catalogued key, with the metadata doc 08 §3.8 gives it.
     /// </summary>
     /// <remarks>
-    /// <b>One key is seeded with a value and it is the only one allowed to be.</b> W3-04 added
-    /// <c>Orders.AutoDeliverAfterDays</c>, which doc 08 §3.8 states as <c>(7)</c> — a figure this
-    /// project's own documents give, not a fact only the client has. Everything else stays null, because a
-    /// seeded social address, bank account or registered address would be a value on a live shop that is
-    /// not the shop's. The assertion is driven by <c>SettingDefinition.SeedValue</c> rather than by a list
-    /// of exceptions, so a future key with a plausible-looking default is caught by the unit test that
-    /// pins which keys may carry one.
+    /// <b>Metadata only, and the value assertion is a separate, self-contained test — because this one was
+    /// flaky and the flakiness was mine.</b> It used to assert that every row's <i>value</i> equalled its
+    /// catalogued seed value, which is a global property of a shared, deliberately-mutated table: four
+    /// classes in this assembly set a settings value and restore it, and the classes interleave (the
+    /// assembly-level <c>DisableTestParallelization</c> does not have the effect its comment claims — see
+    /// <c>AssemblyInfo.cs</c>). It failed about one run in three against a four-class filter and passed
+    /// twenty times alone, which is #114's family exactly.
+    /// <para>
+    /// Worse, its failure message said "a test that left one behind is a neighbour's fixture", so the next
+    /// person would have hunted a leak instead of a race. The lesson is narrower than "don't assert global
+    /// state": it is that a message must describe the <i>weakest</i> explanation for the failure, not the
+    /// one the author had in mind.
+    /// </para>
+    /// <para>
+    /// The metadata half stays global and is safe to: the only tests that touch a settings row's metadata
+    /// are the two in <i>this</i> class, and a class's own tests are serialised with each other.
+    /// </para>
     /// </remarks>
     [Fact]
-    public async Task The_seeder_creates_every_catalogued_key_with_no_invented_value()
+    public async Task The_seeder_creates_every_catalogued_key_with_the_metadata_doc_08_specifies()
     {
         sqlServer.SkipIfUnavailable();
         await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, Token);
@@ -276,23 +286,88 @@ public sealed class SettingsSchemaAndSeedTests(SqlServerDatabaseFixture sqlServe
             Assert.Equal(definition.RequiredPermission, row.RequiredPermission);
             Assert.Equal(definition.Description, row.Description);
         }
+    }
 
-        // No placeholder values. A seeded social address would be the exact defect this task removes: an icon
-        // on a live shop that does not go to the shop.
-        //
-        // `Store.LogoAssetId` is excluded because another test in this assembly sets it and this one does
-        // not own it; everything else must hold exactly its catalogued seed value, which is null for every
-        // key that carries a client fact.
-        foreach (var definition in SettingCatalog.All.Where(
-            candidate => candidate.Key != SettingKeys.Store.LogoAssetId))
+    /// <summary>
+    /// <b>The seeder writes a missing key's catalogued seed value and invents nothing else.</b>
+    /// </summary>
+    /// <remarks>
+    /// <b>It owns the rows it touches, which is this class's own idiom and the fix for the race above.</b>
+    /// Each key is deleted and re-seeded <i>inside a transaction that is always rolled back</i>, so no
+    /// other connection ever observes the row missing or changed — a plain delete-and-restore would trade a
+    /// wide race for a narrow one, and <c>AutoDeliverShippedTests.The_window_is_read_from_the_settings_row</c>
+    /// is a real reader of one of these keys. A concurrent reader blocks for the few milliseconds the
+    /// exclusive lock is held, which is correct behaviour rather than a wrong answer.
+    /// <para>
+    /// <b>What this test proves, exactly: the seeder <i>honours</i> the catalogue.</b> Both halves are
+    /// driven — a key doc 08 §3.8 gives a default (<c>Orders.AutoDeliverAfterDays (7)</c>) comes back with
+    /// it, and a key that holds a client fact comes back <see langword="null"/> — so a seeder that wrote
+    /// nothing, or that wrote the wrong thing, is caught. Verified by mutation: making the seeder ignore
+    /// <c>SeedValue</c> turns the <c>AutoDeliverAfterDays</c> case red.
+    /// </para>
+    /// <para>
+    /// <b>What it does <i>not</i> prove, and said so because the first version of this remark implied
+    /// otherwise: that the catalogue is right.</b> Giving <c>Store.LegalName</c> a seed value makes this
+    /// test pass — it would faithfully assert the invented address — and the guard for that is the unit
+    /// test <c>AdminOrderWorkflowRulesTests.Nothing_that_holds_a_client_fact_is_seeded_with_a_value</c>,
+    /// which pins the whole set of keys allowed to carry one. Also verified by mutation. The two together
+    /// are the complete rule; either alone has a hole, and the hole in this one is the dangerous
+    /// direction.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData("Orders.AutoDeliverAfterDays")]
+    [InlineData("Store.LegalName")]
+    [InlineData("Store.Address")]
+    [InlineData("Bank.AccountNumber")]
+    [InlineData("Social.FacebookUrl")]
+    public async Task The_seeder_writes_a_missing_keys_catalogued_seed_value(string key)
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, Token);
+
+        var definition = SettingCatalog.Find(key);
+        Assert.NotNull(definition);
+
+        using var scope = sqlServer.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var seeder = scope.ServiceProvider.GetRequiredService<SettingsSeeder>();
+
+        // `CreateExecutionStrategy`, because `EnableRetryOnFailure` refuses a hand-rolled transaction
+        // outright — the same hoop every store in this solution jumps through.
+        var strategy = dbContext.Database.CreateExecutionStrategy();
+
+        await strategy.ExecuteAsync(async () =>
         {
+            dbContext.ChangeTracker.Clear();
+
+            await using var transaction = await dbContext.Database.BeginTransactionAsync(Token);
+
+            var deleted = await dbContext.Settings
+                .Where(setting => setting.Key == key)
+                .ExecuteDeleteAsync(Token);
+
+            Assert.Equal(1, deleted);
+
+            var counts = await seeder.SeedAsync(Token);
+
+            Assert.Equal(1, counts.Inserted);
+
+            dbContext.ChangeTracker.Clear();
+            var row = await dbContext.Settings.AsNoTracking()
+                .SingleAsync(setting => setting.Key == key, Token);
+
             Assert.True(
-                string.Equals(rows[definition.Key].Value, definition.SeedValue, StringComparison.Ordinal),
-                $"{definition.Key} holds \"{rows[definition.Key].Value}\" and its catalogued seed value "
-                + $"is \"{definition.SeedValue}\". Settings values belong to the client, so only a figure "
-                + "this project's own documents state may be seeded — and a test that left one behind is "
-                + "a neighbour's fixture.");
-        }
+                string.Equals(row.Value, definition.SeedValue, StringComparison.Ordinal),
+                $"the seeder wrote \"{row.Value}\" into {key} and its catalogued seed value is "
+                + $"\"{definition.SeedValue}\". A settings value belongs to the client, so only a figure "
+                + "one of this project's own documents states may be seeded — doc 08 §3.8's "
+                + "AutoDeliverAfterDays (7) is the only one today.");
+
+            // Rolled back whatever happened, so this test leaves the shared table exactly as it found it
+            // and cannot be the neighbour it used to accuse others of being.
+            await transaction.RollbackAsync(Token);
+        });
     }
 
     /// <summary>

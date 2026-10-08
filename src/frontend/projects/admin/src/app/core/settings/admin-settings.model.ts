@@ -120,6 +120,32 @@ export interface BankDetailValues {
   readonly instructions?: string | null;
 }
 
+/**
+ * The company's details an invoice prints, and the auto-deliver window (ADM-09, doc 08 §3.8 groups `Store`
+ * and `Orders`).
+ *
+ * **Optional for the same reason {@link BankDetailValues}' fields are.** A field this object omits is one
+ * the API leaves alone; a field it carries as `null` is one the API clears. Reading absent as null is the
+ * shape that wiped every category image behind 1,571 passing tests.
+ *
+ * **`legalName` is the company's, not the shop's.** A shopper reads `BRAND.name`; an invoice names the
+ * registered company that issues it (docs/02 §I2). They are different facts about the same business.
+ */
+export interface InvoiceAndFulfilmentValues {
+  readonly legalName?: string | null;
+
+  /**
+   * Named `registeredAddress`, not `address`: `Contact.Address` already owns that name on the same
+   * screen, and two boxes called "address" on one page collided on their DOM id and their error field.
+   */
+  readonly registeredAddress?: string | null;
+  readonly brNumber?: string | null;
+  readonly vatNumber?: string | null;
+
+  /** Whole days as digits, 1–90. Empty stops the job rather than defaulting it. */
+  readonly autoDeliverAfterDays?: string | null;
+}
+
 /** The settings keys this screen edits, so the template and the mapping cannot disagree about a name. */
 export const SETTING_KEYS = {
   logoAssetId: 'Store.LogoAssetId',
@@ -137,6 +163,11 @@ export const SETTING_KEYS = {
   accountName: 'Bank.AccountName',
   accountNumber: 'Bank.AccountNumber',
   instructions: 'Bank.Instructions',
+  legalName: 'Store.LegalName',
+  storeAddress: 'Store.Address',
+  brNumber: 'Store.BRNumber',
+  vatNumber: 'Store.VatNumber',
+  autoDeliverAfterDays: 'Orders.AutoDeliverAfterDays',
 } as const;
 
 /** Doc 08 §3.8's group names. */
@@ -145,4 +176,12 @@ export const SETTING_GROUPS = {
   contact: 'Contact',
   social: 'Social',
   bank: 'Bank',
+
+  /**
+   * ADM-09's own group. It shares a **save unit** with `Store` (`SettingCatalog.SaveUnits`), so the token
+   * the invoice form sends is the one the logo form sends — which is deliberate: `KeysInSaveUnitFor` is
+   * what makes the token a form is handed identical to the one its save compares, and publishing two
+   * tokens for one unit is the mismatch that made every valid ADM-22 save a 409.
+   */
+  orders: 'Orders',
 } as const;

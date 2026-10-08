@@ -318,6 +318,10 @@ public sealed class PlaceOrderCommandHandlerTests
                 WinningOrderNumber,
                 Guid.Parse("bbbbbbbb-cccc-dddd-eeee-ffffffffffff"),
                 nameof(OrderStatus.PendingPayment),
+
+                // The shopper's own wording, which the reader now renders with OrderStatusLabels so a
+                // pickup order does not read as "shipped" (doc 11 P9's pickup variant).
+                "Awaiting payment",
                 "nimali@example.com",
                 "Nimali",
                 "Perera",

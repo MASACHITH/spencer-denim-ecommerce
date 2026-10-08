@@ -334,6 +334,13 @@ public static class DependencyInjection
             ICommandHandler<SaveCourierCommand, SaveCourierResult>,
             SaveCourierCommandHandler>();
 
+        // ADM-09's own settings form: the four Store.* legal keys an invoice prints and the auto-deliver
+        // window. It lands with ADM-09 rather than ADM-22 because an invoice that cannot be completed
+        // short of SQL is not a deliverable.
+        services.AddScoped<
+            ICommandHandler<UpdateInvoiceAndFulfilmentSettingsCommand, SettingsWriteResult>,
+            UpdateInvoiceAndFulfilmentSettingsCommandHandler>();
+
         // Settings (ADM-22 + W3-03): the bank details a customer transfers to, under Settings.Payments.
         services.AddScoped<
             ICommandHandler<UpdateBankDetailsCommand, SettingsWriteResult>,

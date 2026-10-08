@@ -40,7 +40,11 @@ namespace SpencerDenim.Application.Sales.Orders.Abstractions;
 /// <b>Nothing here queues an email and nothing claims one was sent.</b> <c>ops.EmailOutbox</c> is
 /// specified (doc 08 §3.8) and unbuilt; W3-06 owns it. Doc 11 P9 step 5 queues <c>OrderShipped</c> with the
 /// tracking link and step 8 queues nothing — so the one email this flow owes is the dispatch notice, and
-/// the honest route today is the shopper's own order page, which already shows a status timeline.
+/// the honest route today is the shopper's own order page — which shows <b>one sentence</b> beside
+/// <c>Payment</c>, not a timeline. An earlier version of this remark said "a status timeline" and that was
+/// simply wrong about another page; it is the wrong-comment class, and a confidently-stated fact about
+/// somebody else's screen is the version of it that travels furthest. What that sentence now says is at
+/// least correct for a pickup order, which it was not before this task.
 /// </para>
 /// </summary>
 public interface IOrderFulfilmentStore

@@ -104,3 +104,35 @@ public sealed record UpdateBankDetailsRequest(
     string? AccountNumber,
     string? Instructions,
     string? RowVersion);
+
+/// <summary>
+/// The company's details as they appear on an invoice, and the auto-deliver window (ADM-09 / ADM-22,
+/// doc 08 §3.8 groups <c>Store</c> and <c>Orders</c>).
+/// </summary>
+/// <remarks>
+/// <b>For the OpenAPI document only.</b> The body is read as a <c>JsonObject</c> so that an absent field
+/// can be told from a null one, which this group needs as much as the bank group does: a save that did not
+/// mention a field has silently cleared it four times in this project.
+/// </remarks>
+/// <param name="LegalName">
+/// The registered company name. <b>Not the shop's name</b> — a shopper reads <c>StoreBrand.Name</c>
+/// (docs/02 §I2); an invoice names the company that issues it.
+/// </param>
+/// <param name="RegisteredAddress">
+/// The registered address, one line per line. <b>Named <c>registeredAddress</c> rather than <c>address</c>,
+/// because <c>Contact.Address</c> already owns that name on the same screen</b> — two boxes called
+/// "address" on one page collided on their DOM id and their error field, which the settings spec caught.
+/// </param>
+/// <param name="BrNumber">The business registration number.</param>
+/// <param name="VatNumber">The VAT registration number. No VAT line is calculated from it (doc 08 D2).</param>
+/// <param name="AutoDeliverAfterDays">
+/// Whole days, as digits, between 1 and 90. Empty stops the system closing orders by itself.
+/// </param>
+/// <param name="RowVersion">The save unit's concurrency token, as the screen read it.</param>
+public sealed record UpdateInvoiceAndFulfilmentSettingsRequest(
+    string? LegalName,
+    string? RegisteredAddress,
+    string? BrNumber,
+    string? VatNumber,
+    string? AutoDeliverAfterDays,
+    string? RowVersion);

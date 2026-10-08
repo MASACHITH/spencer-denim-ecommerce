@@ -140,6 +140,7 @@ function confirmation(): OrderConfirmationDto {
     orderNumber: 'SD-2026-000123',
     publicId: '22222222-2222-4222-8222-222222222222',
     status: 'PendingPayment',
+    statusLabel: 'Awaiting payment',
     email: 'nimali@example.com',
     firstName: 'Nimali',
     lastName: 'Perera',

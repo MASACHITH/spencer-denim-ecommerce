@@ -52,6 +52,25 @@ public sealed record OrderDeliveryDto(
 /// <param name="Status">
 /// The order status as a name (<c>PendingPayment</c>, <c>Paid</c>, <c>Expired</c>). What the page says
 /// about the money follows from this and from <paramref name="Payment"/>.
+/// <para>
+/// <b>It is the machine value and not what the page should print.</b> See
+/// <paramref name="StatusLabel"/>.
+/// </para>
+/// </param>
+/// <param name="StatusLabel">
+/// What the shopper should read, which is <b>not</b> the status name lower-cased.
+/// <para>
+/// <b>Doc 11 P9's pickup variant is explicit that <c>Shipped</c> is shown to staff <i>and customer</i> as
+/// "Ready for collection"</b>, and <c>Delivered</c> on an order the customer walked in and took is the
+/// wrong verb. The page used to print <c>status.toLowerCase()</c>, so a pickup customer read "This order
+/// is shipped." — which nothing could reach until ADM-09 made the transition pressable, and which W3-04's
+/// own review caught.
+/// </para>
+/// <para>
+/// Rendered by the same <c>OrderStatusLabels.For</c> the two admin screens use, on the server, so the
+/// three cannot disagree about one order's wording. That is what the admin contract's own remarks already
+/// claimed; sending it here is what makes the claim true.
+/// </para>
 /// </param>
 /// <param name="PaymentDueAtUtc">
 /// When the hold lapses (<c>Orders.PaymentDueAtUtc</c>). Shown so a shopper knows the items are held, and
@@ -86,6 +105,7 @@ public sealed record OrderConfirmationDto(
     string OrderNumber,
     Guid PublicId,
     string Status,
+    string StatusLabel,
     string Email,
     string FirstName,
     string? LastName,

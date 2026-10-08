@@ -16,6 +16,7 @@ import {
   AdminLogo,
   AdminSettings,
   BankDetailValues,
+  InvoiceAndFulfilmentValues,
   ContactAndSocialValues,
   SETTING_GROUPS,
   SETTING_KEYS,
@@ -369,7 +370,78 @@ const LOGO_ACCEPT = 'image/png,image/jpeg,image/webp';
           </section>
         }
 
-        @if (!canEditStore() && !canEditContact() && !canEditBank()) {
+        @if (canEditInvoice()) {
+          <section class="adm-panel" aria-labelledby="invoice-title">
+            <h2 class="adm-panel__title" id="invoice-title">Invoice and fulfilment</h2>
+            <p class="adm-panel__hint">
+              The company's registered details, as they appear on an invoice. <strong>An invoice prints
+              nothing at all for a detail that is empty</strong> — no line, no placeholder — because it is
+              a legal document and an invented address on one is worse than a gap. This is the
+              <em>company</em> name, not the shop's: a customer reads the shop's name everywhere else.
+            </p>
+
+            <form class="adm-fields" (ngSubmit)="saveInvoiceAndFulfilment()" novalidate>
+              @for (field of invoiceFields; track field.name) {
+                <div class="adm-field" [class.adm-field--wide]="field.wide">
+                  <!-- An explicit for/id pair rather than a wrapping label, for the reason the bank form
+                       above records: the control differs by field. No backticks in this comment; the whole
+                       template is a template literal and one would end it. -->
+                  <label class="adm-label" [attr.for]="'invoice-' + field.name">{{ field.label }}</label>
+                  @if (field.multiline) {
+                    <textarea
+                      class="adm-input"
+                      rows="3"
+                      [id]="'invoice-' + field.name"
+                      [name]="field.name"
+                      autocomplete="off"
+                      [attr.aria-invalid]="fieldError(field.name) ? 'true' : null"
+                      [attr.aria-describedby]="'invoice-hint-' + field.name"
+                      [ngModel]="invoiceForm()[field.name]"
+                      (ngModelChange)="patchInvoice(field.name, $event)"
+                      [attr.data-testid]="'field-' + field.name"
+                    ></textarea>
+                  } @else {
+                    <input
+                      class="adm-input"
+                      type="text"
+                      [id]="'invoice-' + field.name"
+                      [name]="field.name"
+                      autocomplete="off"
+                      [attr.inputmode]="field.numeric ? 'numeric' : null"
+                      [attr.aria-invalid]="fieldError(field.name) ? 'true' : null"
+                      [attr.aria-describedby]="'invoice-hint-' + field.name"
+                      [ngModel]="invoiceForm()[field.name]"
+                      (ngModelChange)="patchInvoice(field.name, $event)"
+                      [attr.data-testid]="'field-' + field.name"
+                    />
+                  }
+                  <span class="adm-panel__hint" [id]="'invoice-hint-' + field.name">{{ field.hint }}</span>
+                  @if (fieldError(field.name); as message) {
+                    <span class="adm-field-error" [attr.data-testid]="'error-' + field.name">
+                      {{ message }}
+                    </span>
+                  }
+                </div>
+              }
+
+              <div class="adm-actions adm-field--wide">
+                <!-- aria-disabled, not disabled: disabling the button under the admin's own finger throws
+                     their focus to <body>. saveInvoiceAndFulfilment refuses a second write while one is in
+                     flight, so the control is inert either way. -->
+                <button
+                  class="adm-btn--primary"
+                  type="submit"
+                  [attr.aria-disabled]="busy() ? 'true' : null"
+                  data-testid="save-invoice"
+                >
+                  {{ busy() ? 'Saving…' : 'Save invoice details' }}
+                </button>
+              </div>
+            </form>
+          </section>
+        }
+
+        @if (!canEditStore() && !canEditContact() && !canEditBank() && !canEditInvoice()) {
           <p class="adm-state" data-testid="nothing-to-edit">
             There are no settings you can change here.
           </p>
@@ -521,6 +593,64 @@ export class SettingsPage {
    * `yourshop`; this is the same convention, which is why the shape is kept (the spacing in an account
    * number is the hint that matters) while the identity is not.
    */
+  /**
+   * ADM-09's five, in the order the form shows them.
+   *
+   * **No placeholder on any of them, and that is the point rather than an omission.** A `placeholder`
+   * renders, and W3-03 shipped a real bank's name and the client's own legal name as placeholder text —
+   * both Major findings. The bank form above uses obviously-fake shapes because an account number has
+   * one; a registered company name and a registered address do not, so these boxes are empty and the hint
+   * below each one says what belongs in it. The only example anywhere is the auto-deliver window's `7`,
+   * which doc 08 §3.8 states.
+   */
+  protected readonly invoiceFields = [
+    {
+      name: 'legalName' as const,
+      label: 'Registered company name',
+      hint: 'The company that issues invoices, exactly as it is registered. Not the shop name a customer '
+        + 'sees. Invoices print nothing here until it is filled in.',
+      wide: true,
+      multiline: false,
+      numeric: false,
+    },
+    {
+      name: 'registeredAddress' as const,
+      label: 'Registered address',
+      hint: 'One line per line, as it should appear on an invoice. This is not the contact address '
+        + 'shoppers write to, which is under Contact above.',
+      wide: true,
+      multiline: true,
+      numeric: false,
+    },
+    {
+      name: 'brNumber' as const,
+      label: 'Business registration number (optional)',
+      hint: 'Printed in the invoice header when it is filled in.',
+      wide: false,
+      multiline: false,
+      numeric: false,
+    },
+    {
+      name: 'vatNumber' as const,
+      label: 'VAT registration number (optional)',
+      hint: 'Prices already include VAT, so an invoice shows no VAT line — this is the registration '
+        + 'number only.',
+      wide: false,
+      multiline: false,
+      numeric: false,
+    },
+    {
+      name: 'autoDeliverAfterDays' as const,
+      label: 'Mark delivered after',
+      hint: 'Whole days between 1 and 90 — 7 is the default. Store pickup orders are never marked '
+        + 'automatically: an order nobody has collected has not been delivered. Leave it empty to stop '
+        + 'the system closing orders by itself, and staff then confirm every delivery by hand.',
+      wide: false,
+      multiline: false,
+      numeric: true,
+    },
+  ];
+
   protected readonly bankFields = [
     {
       name: 'bankName' as const,
@@ -586,6 +716,11 @@ export class SettingsPage {
    */
   private readonly editedSinceWrite = new Set<string>();
 
+  /**
+   * ADM-09's five, holding **only the keys the server sent** — see `toInvoiceForm`.
+   */
+  private readonly invoiceValues = signal<InvoiceAndFulfilmentValues>({});
+
   protected readonly settings = this.loaded.asReadonly();
   protected readonly loading = this.isLoading.asReadonly();
   protected readonly busy = this.isBusy.asReadonly();
@@ -593,6 +728,7 @@ export class SettingsPage {
   protected readonly logoError = this.logoProblem.asReadonly();
   protected readonly form = this.values.asReadonly();
   protected readonly bankForm = this.bankValues.asReadonly();
+  protected readonly invoiceForm = this.invoiceValues.asReadonly();
   protected readonly announcement = this.said.asReadonly();
 
   /**
@@ -631,6 +767,15 @@ export class SettingsPage {
    * and no bank panel at all — which is the read model's per-row filter working, not a bug.
    */
   protected readonly canEditBank = computed(() => this.hasGroup(SETTING_GROUPS.bank));
+
+  /**
+   * Whether the invoice form has anything to show.
+   *
+   * Keyed on the **Orders** group rather than on Store, because Store is also the logo's: a caller who
+   * received Store but not Orders would otherwise be offered a form whose last box is not there. Both are
+   * `Settings.Edit` today, so in practice they arrive together.
+   */
+  protected readonly canEditInvoice = computed(() => this.hasGroup(SETTING_GROUPS.orders));
 
   constructor() {
     this.load();
@@ -728,6 +873,20 @@ export class SettingsPage {
     }
 
     this.bankValues.set(bankFromServer as BankDetailValues);
+
+    const invoiceFromServer: Record<string, string | null> = { ...toInvoiceForm(settings) };
+
+    if (keepUnsavedEdits) {
+      const currentInvoice = this.invoiceValues() as Record<string, string | null | undefined>;
+
+      for (const field of this.editedSinceWrite) {
+        if (field in invoiceFromServer) {
+          invoiceFromServer[field] = currentInvoice[field] ?? null;
+        }
+      }
+    }
+
+    this.invoiceValues.set(invoiceFromServer as InvoiceAndFulfilmentValues);
     this.logoAltText.set(settings.logo?.altText?.trim() || BRAND.name);
   }
 
@@ -747,6 +906,18 @@ export class SettingsPage {
   protected patchBank<K extends keyof BankDetailValues>(field: K, value: BankDetailValues[K]): void {
     this.editedSinceWrite.add(field);
     this.bankValues.update((current) => ({ ...current, [field]: value }));
+
+    this.problem.update((current) =>
+      current?.kind === 'validation' && current.fieldErrors?.[field] ? null : current,
+    );
+  }
+
+  protected patchInvoice<K extends keyof InvoiceAndFulfilmentValues>(
+    field: K,
+    value: InvoiceAndFulfilmentValues[K],
+  ): void {
+    this.editedSinceWrite.add(field);
+    this.invoiceValues.update((current) => ({ ...current, [field]: value }));
 
     this.problem.update((current) =>
       current?.kind === 'validation' && current.fieldErrors?.[field] ? null : current,
@@ -790,6 +961,29 @@ export class SettingsPage {
         this.afterWrite(
           'Bank details saved. Customers who choose bank transfer will see them on their order.',
         ),
+      error: (error: unknown) => this.afterFailure(error),
+    });
+  }
+
+  /**
+   * Saves the company's invoice details and the auto-deliver window (ADM-09).
+   *
+   * The token comes from the **Orders** group, falling back to Store: they are one save unit
+   * (`SettingCatalog.SaveUnits`), so either entry publishes the same token — which is the invariant that
+   * keeps this from being ADM-22's 409-on-every-save.
+   */
+  protected saveInvoiceAndFulfilment(): void {
+    const group = this.groupVersion(SETTING_GROUPS.orders) ?? this.groupVersion(SETTING_GROUPS.store);
+    if (group === null || this.isBusy()) {
+      return;
+    }
+
+    this.beforeWrite('Saving the invoice details…');
+
+    // Only the fields the server sent, which is what `toInvoiceForm` produced. A field this object omits
+    // is a field the API leaves alone (W1-12).
+    this.api.updateInvoiceAndFulfilment(this.invoiceValues(), group).subscribe({
+      next: () => this.afterWrite('Invoice details saved. New invoices will print them.'),
       error: (error: unknown) => this.afterFailure(error),
     });
   }
@@ -1015,6 +1209,35 @@ export function toBankForm(settings: AdminSettings): BankDetailValues {
   }
 
   return form as BankDetailValues;
+}
+
+/**
+ * The invoice form's values, read out of the payload by key — **only the keys the payload contained**.
+ *
+ * Exactly {@link toBankForm}'s rule. These five are `Settings.Edit`, so in practice every caller who
+ * reaches the form receives all of them — but the rule is not "the ones this caller happens to get", it is
+ * "never turn an absence into a null", and that is the one that keeps holding when a permission changes.
+ */
+export function toInvoiceForm(settings: AdminSettings): InvoiceAndFulfilmentValues {
+  const byKey = new Map(
+    settings.groups.flatMap((group) => group.settings.map((setting) => [setting.key, setting.value] as const)),
+  );
+
+  const form: Record<string, string | null> = {};
+
+  for (const [field, key] of [
+    ['legalName', SETTING_KEYS.legalName],
+    ['registeredAddress', SETTING_KEYS.storeAddress],
+    ['brNumber', SETTING_KEYS.brNumber],
+    ['vatNumber', SETTING_KEYS.vatNumber],
+    ['autoDeliverAfterDays', SETTING_KEYS.autoDeliverAfterDays],
+  ] as const) {
+    if (byKey.has(key)) {
+      form[field] = byKey.get(key) ?? null;
+    }
+  }
+
+  return form as InvoiceAndFulfilmentValues;
 }
 
 /** Re-exported for the spec, which asserts the preview is drawn from what the server sent. */

@@ -37,8 +37,10 @@ namespace SpencerDenim.Infrastructure.Sales.Orders;
 /// </para>
 /// <para>
 /// <b>No email, and nothing claims one was sent.</b> <c>ops.EmailOutbox</c> does not exist (W3-06); doc 11
-/// P9 step 5's <c>OrderShipped</c> is specified and unbuilt. The shopper's own order page already shows a
-/// status timeline, which is the honest route.
+/// P9 step 5's <c>OrderShipped</c> is specified and unbuilt. The shopper's own order page shows <b>one
+/// sentence</b> about the order's state — not a timeline, which an earlier version of this remark claimed
+/// — and no tracking number at all, because the public contract has no such field (ACC-02's). So there is
+/// no honest route to the customer today, which is a fact worth stating here rather than softening.
 /// </para>
 /// </summary>
 internal sealed class OrderFulfilmentStore(AppDbContext dbContext, IAuditLogWriter auditLog)

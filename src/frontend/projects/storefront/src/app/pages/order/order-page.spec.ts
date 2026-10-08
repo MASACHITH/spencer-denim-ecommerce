@@ -44,6 +44,7 @@ function order(overrides: Partial<OrderConfirmationDto> = {}): OrderConfirmation
     orderNumber: 'SD-2026-000123',
     publicId: TOKEN,
     status: 'PendingPayment',
+    statusLabel: 'Awaiting payment',
     email: 'nimali@example.com',
     firstName: 'Nimali',
     lastName: 'Perera',
@@ -309,6 +310,50 @@ describe('OrderPage (CHK-04)', () => {
     expect(element.querySelector('[data-testid="pay-panel"]')).toBeNull();
     expect(text()).toContain('Paid.');
     expect(text()).not.toContain('Awaiting payment');
+  });
+
+  /**
+   * **Doc 11 P9's pickup variant, and the defect it caught.**
+   *
+   * The page printed `status.toLowerCase()`, so a store-pickup customer whose parcel was sitting on the
+   * counter read **"This order is shipped."** Doc 11 P9 is explicit that `Shipped` is shown to staff *and
+   * customer* as "Ready for collection". Nothing could reach this until ADM-09 made the transition
+   * pressable; W3-04's review is what found it.
+   *
+   * The wording comes from the server (`statusLabel`), rendered by the same `OrderStatusLabels.For` the
+   * two admin screens use — so this fixture supplies a label that differs from the status, which is what
+   * makes the test able to fail.
+   */
+  it('tells a pickup customer their order is ready for collection, not shipped', async () => {
+    await open(
+      order({
+        status: 'Shipped',
+        statusLabel: 'Ready for collection',
+        payment: null,
+        proof: null,
+      }),
+    );
+
+    expect(text()).toContain('This order is ready for collection.');
+    expect(text()).not.toContain('shipped');
+  });
+
+  it('tells a delivery customer their order is shipped', async () => {
+    await open(
+      order({ status: 'Shipped', statusLabel: 'Shipped', payment: null, proof: null }),
+    );
+
+    expect(text()).toContain('This order is shipped.');
+  });
+
+  /** And "Collected" rather than "delivered" once a pickup order has been handed over. */
+  it('tells a pickup customer their order was collected, not delivered', async () => {
+    await open(
+      order({ status: 'Delivered', statusLabel: 'Collected', payment: null, proof: null }),
+    );
+
+    expect(text()).toContain('This order is collected.');
+    expect(text()).not.toContain('delivered');
   });
 
   it('sends the typed reference, and sends null for an emptied box', async () => {

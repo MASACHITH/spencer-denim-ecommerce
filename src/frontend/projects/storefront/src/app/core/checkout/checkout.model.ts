@@ -170,6 +170,16 @@ export interface OrderConfirmationDto {
   readonly orderNumber: string;
   readonly publicId: string;
   readonly status: string;
+
+  /**
+   * What the shopper should read, which is **not** the status name lower-cased.
+   *
+   * Doc 11 P9's pickup variant: `Shipped` is shown to staff *and customer* as "Ready for collection", and
+   * `Delivered` on an order the customer collected is "Collected". The page printed
+   * `status.toLowerCase()` and a pickup customer read "This order is shipped."; the server now renders the
+   * wording with the same function the two admin screens use, so the three cannot disagree.
+   */
+  readonly statusLabel: string;
   readonly email: string;
   readonly firstName: string;
   readonly lastName: string | null;

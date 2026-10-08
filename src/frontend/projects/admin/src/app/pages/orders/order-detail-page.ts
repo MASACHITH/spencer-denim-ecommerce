@@ -44,8 +44,10 @@ import { CatalogFailure, toCatalogFailure } from '../../core/catalog/admin-catal
  * **Nothing here promises an email, a notification or an acknowledgement.** `ops.EmailOutbox` is specified
  * (doc 08 §3.8) and unbuilt; W3-06 owns it. Doc 11 P9 step 5 queues `OrderShipped` and nothing can send
  * it, so the dispatch panel says in words that the customer is not told — which is also doc 11 P9's own
- * instruction about a corrected tracking number. The shopper's own order page already shows a status
- * timeline, which is the honest route.
+ * instruction about a corrected tracking number. **There is no honest route to the customer today:** the
+ * shopper's own order page shows one sentence about the order's state — not a timeline, which an earlier
+ * version of this comment claimed — and no tracking number, because the public contract has no such
+ * field. That is ACC-02's, and the screen says nothing that implies otherwise.
  */
 @Component({
   selector: 'sda-order-detail-page',

@@ -562,6 +562,60 @@ public sealed class OrderFulfilmentTests(SqlServerDatabaseFixture sqlServer) : A
         Assert.StartsWith("Processing started", history.Note, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// <b>The shopper's own order page is told "Ready for collection", not "Shipped".</b>
+    /// </summary>
+    /// <remarks>
+    /// Doc 11 P9's pickup variant says <c>Shipped</c> is shown to staff <i>and customer</i> as "Ready for
+    /// collection". The storefront printed <c>status.toLowerCase()</c>, so a pickup customer whose parcel
+    /// was on the counter read "This order is shipped." — unreachable until this task made the transition
+    /// pressable. The label is now rendered on the server by the same <c>OrderStatusLabels.For</c> the two
+    /// admin screens use.
+    /// <para>
+    /// <b>Pinned here because issue #126 means the browser suite cannot see it.</b> Playwright never starts
+    /// the .NET API, so the storefront spec asserts the screen against a fixture it was handed; this is the
+    /// test that proves the API actually sends the right wording for a real pickup order.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task The_public_order_tells_a_pickup_customer_it_is_ready_for_collection()
+    {
+        var order = await PaidOrderAsync();
+        await MakePickupAsync(order.OrderId);
+
+        Assert.Equal("Paid", await PublicStatusLabelAsync(order.PublicId));
+
+        await ShipAsync(order.OrderId, pickup: true);
+        Assert.Equal("Ready for collection", await PublicStatusLabelAsync(order.PublicId));
+
+        Assert.IsType<OrderTransitionResult.Applied>(await MarkDeliveredAsync(order.OrderId));
+        Assert.Equal("Collected", await PublicStatusLabelAsync(order.PublicId));
+    }
+
+    /// <summary>And a delivery order still reads as shipped, which is the other half of the rule.</summary>
+    [Fact]
+    public async Task The_public_order_tells_a_delivery_customer_it_is_shipped()
+    {
+        var order = await PaidOrderAsync();
+        await ShipAsync(order.OrderId);
+
+        Assert.Equal("Shipped", await PublicStatusLabelAsync(order.PublicId));
+
+        Assert.IsType<OrderTransitionResult.Applied>(await MarkDeliveredAsync(order.OrderId));
+        Assert.Equal("Delivered", await PublicStatusLabelAsync(order.PublicId));
+    }
+
+    /// <summary>The label on the public order contract, read through the real reader.</summary>
+    private Task<string?> PublicStatusLabelAsync(Guid publicId) =>
+        InScopeAsync(async services =>
+        {
+            var order = await services
+                .GetRequiredService<SpencerDenim.Application.Sales.Checkout.Abstractions.ICheckoutReader>()
+                .FindOrderAsync(publicId, Token);
+
+            return order?.StatusLabel;
+        });
+
     /// <summary>Whether an audit row for this order records the act, inside the committed transaction.</summary>
     private async Task AssertAuditedAsync(Guid publicId, string action, string what)
     {
