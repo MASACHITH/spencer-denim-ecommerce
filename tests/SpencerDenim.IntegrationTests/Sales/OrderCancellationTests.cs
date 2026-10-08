@@ -180,8 +180,10 @@ public sealed class OrderCancellationTests(SqlServerDatabaseFixture sqlServer)
 
         // The second call finds `StockState = Released`, so its claim affects no rows. Without that guard
         // the release statement would run again and `Reserved` would go negative — which
-        // CK_StockLevels_ReservedLeOnHand refuses, so the symptom would be an exception rather than a
-        // silent oversell. Either way it must not happen.
+        // CK_StockLevels_Reserved refuses ([Reserved] >= 0), so the symptom would be an exception rather
+        // than a silent oversell. Either way it must not happen. (The constraint name was checked against
+        // StockLevelConfiguration; an earlier version of this comment named CK_StockLevels_ReservedLeOnHand,
+        // which is the *other* one — [Reserved] <= [OnHand] — and would not be the one to fire.)
         var refused = Assert.IsType<CancelOrderOutcome.Refused>(
             await CancelAsync(order.PublicId, OrderCancelledBy.Customer, reason: null));
 

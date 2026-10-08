@@ -397,8 +397,14 @@ describe('OrderDetailPage (ADM-09)', () => {
    * #109: destroying the focused node throws focus to the document body.
    *
    * A successful cancel removes the form that was pressed, so there is nothing left to focus — and the
-   * screen has to put focus somewhere a screen reader will read, which is the live region. `queueMicrotask`
-   * is too early for this; the component uses `afterNextRender`.
+   * screen has to put focus somewhere a screen reader will read, which is the live region.
+   *
+   * It re-uses `rehomeFocusIfLost`, which every other action on this screen already goes through, so what
+   * this test adds is that the *cancel* path reaches it — and that is worth its own test precisely because
+   * cancel is the only action here that destroys the control that was pressed rather than replacing it
+   * with another. The scheduling is `afterNextRender`; I have not measured whether a microtask would be
+   * too early on this screen, and the reason to use `afterNextRender` is that the node's removal happens
+   * in a render rather than in a task.
    */
   it('re-homes focus when the cancel it applied destroys the control that was pressed', async () => {
     await open(unpaid());
