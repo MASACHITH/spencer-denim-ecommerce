@@ -241,11 +241,20 @@ Run on this machine, `TEST_SQL_CONNECTION` pointed at `(localdb)\MSSQLLocalDB`.
 | Suite | Before (`e884d22`) | **After** | New |
 |---|---|---|---|
 | xUnit unit | 1,812 / 0 | **1,814 / 0** | 2 |
-| xUnit integration | 1,216 / 0 | **see the hand-back** | 17 |
+| xUnit integration | 1,216 / 0 | **1,233 / 0** | 17 |
 | Vitest — shared | 24 | **24** | — |
 | Vitest — storefront | 1,407 | **1,413 / 0** | 6 |
 | Vitest — admin | 459 | **465 / 0** | 6 |
 | Playwright (chromium) | 928 / 0 | **935 / 0** | 7 |
+
+The whole-assembly integration run took **16 m 40 s** and looked hung for most of it, which is what W3-04's
+journal already warns about: the two `dotnet` processes sat on a few seconds of CPU while `sqlservr` did the
+work. The check that settles it is `MAX(last_request_end_time)` in `sys.dm_exec_sessions` against the server
+clock, and it was 60 ms behind the clock every time it was looked at. Nothing was killed.
+
+My run's database (`SpencerDenim_Test_79c4fb18…`) was dropped by the fixture at the end. The **seven**
+`SpencerDenim_Test_*`, the **eight** `SpencerDenim_W113_*`, `SpencerDenim_W103_Tester` and
+`SpencerDenim_Dev` that remain are not mine and were not touched.
 
 **The whole Playwright suite was 935/0 on its first run**, which is worth recording because W3-04's journal
 says 928/0 "should be read as a best case rather than a steady state" — none of the four latent one-shot
