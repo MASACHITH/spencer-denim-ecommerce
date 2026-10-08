@@ -14,6 +14,18 @@ namespace SpencerDenim.Application.Sales.Checkout.Abstractions;
 /// on <c>StockLevels</c>, which every other shopper's checkout is waiting on — and it means the figures in
 /// the order row are provably the figures the use case compared against the shopper's screen.
 /// <para>
+/// <b>The last two members are for the emails the placement transaction queues</b> (W3-06, doc 11 P6
+/// step 9: "the order, … and the queued emails"), and both are the <i>provider's</i> answers rather than
+/// checkout's — which is why neither is named after a gateway and
+/// <c>CheckoutNamesNoProviderTests</c> still passes. <c>PaymentMethodName</c> is the display name from
+/// <c>sales.PaymentProviders</c>, so the confirmation email says "Bank / online transfer" rather than a
+/// code. <c>Instructions</c> is <c>IPaymentProvider.DescribeAsync</c>'s answer, asked <b>before</b> the
+/// transaction opens because it reads settings and doc 08 §5.4 keeps every read out of a transaction that
+/// holds <c>StockLevels</c> row locks. It is <see langword="null"/> when the provider cannot say — for a
+/// bank transfer, when the shop's bank details are not set — and the store then queues no instructions
+/// email at all, because an email telling a customer to transfer money to a blank account number is
+/// worse than none.
+/// <para>
 /// <b><c>Payment</c> is the provider's answer and not this task's guess</b> (PAY-03). It carries the
 /// status the one open payment row opens in and the order's <c>PaymentDueAtUtc</c>, both decided by the
 /// <c>IPaymentProvider</c> the shopper chose — so adding PayPal adds no field here and changes no line of
@@ -43,7 +55,9 @@ public sealed record OrderPlacement(
     string? CustomerNote,
     string? PlacedIpAddress,
     DateTime PlacedAtUtc,
-    PaymentInitiation Payment);
+    PaymentInitiation Payment,
+    string PaymentMethodName,
+    PaymentInstructions? Instructions);
 
 /// <summary>
 /// The catalogue facts an order line keeps, paired with the priced figures. Split from

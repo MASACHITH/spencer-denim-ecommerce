@@ -280,7 +280,18 @@ public sealed class CheckoutPlacementStoreTests(SqlServerDatabaseFixture sqlServ
             // taken from BankTransferProvider, so this fixture states what a bank transfer's opening row
             // is and a change to the provider shows up here as a failing assertion rather than silently
             // changing what the test exercises.
-            new PaymentInitiation(PaymentStatus.Pending, placedAt.AddHours(48)));
+            new PaymentInitiation(PaymentStatus.Pending, placedAt.AddHours(48)),
+
+            // W3-06: the display name the confirmation email prints, and the provider's instructions.
+            //
+            // **`null` instructions, deliberately, and it is the state this fixture should be in.** It
+            // means "the provider could not say how to pay", which for a bank transfer is an unset
+            // `Bank.*` settings group — the shop's real state today. So the placement transaction queues
+            // `OrderPlaced` and no instructions email, and every assertion in this file about the order
+            // row is unaffected. `OrderPlacementEmailTests` is where the two-email case is exercised,
+            // through the real checkout endpoint with the bank details set.
+            "Bank / online transfer",
+            null);
     }
 
     private sealed record OrderLineSnapshotSeed(

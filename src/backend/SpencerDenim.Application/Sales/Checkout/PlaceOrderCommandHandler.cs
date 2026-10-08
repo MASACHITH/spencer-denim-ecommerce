@@ -208,6 +208,24 @@ public sealed class PlaceOrderCommandHandler(
                 + $"{placedAt.UtcDateTime:O}.");
         }
 
+        // What the customer is told to do next, asked of the provider **before** the transaction opens,
+        // for the same reason InitiateAsync is: doc 08 §5.4 keeps every read out of the transaction that
+        // holds StockLevels row locks, and this one reads the shop's bank details out of ops.Settings.
+        //
+        // It travels on to the placement because the transaction queues the emails (doc 11 P6 step 9), and
+        // one of them is the instructions. Null is a real answer — for a bank transfer it means the shop's
+        // bank details are not set — and the store queues no instructions email in that case.
+        //
+        // `OrderUrl: null` here, as on the order page: the link in the email is built inside the store,
+        // which is where the order's PublicId is generated, and `PaymentInstructions` carries no URL.
+        var instructions = await paymentProvider.DescribeAsync(
+            new PaymentInstructionsRequest(
+                orderNumber,
+                pricing.GrandTotal,
+                initiation.PaymentDueAtUtc,
+                OrderUrl: null),
+            cancellationToken);
+
         var placement = BuildPlacement(
             command,
             identity.Id,
@@ -218,7 +236,9 @@ public sealed class PlaceOrderCommandHandler(
             lines,
             pricing,
             placedAt,
-            initiation);
+            initiation,
+            choice.DisplayName!,
+            instructions);
 
         // 7. One transaction: reserve, insert, empty the bag.
         var result = await placements.PlaceAsync(placement, cancellationToken);
@@ -334,9 +354,13 @@ public sealed class PlaceOrderCommandHandler(
         // values from the same column, and the shopper's radio carries the code the session handed it. The
         // registry's own lookup is case-insensitive instead, because that one compares a database value
         // against a compile-time constant.
-        if (!enabled.Any(method => string.Equals(method.Code, trimmed, StringComparison.Ordinal)))
+        var match = enabled.FirstOrDefault(
+            method => string.Equals(method.Code, trimmed, StringComparison.Ordinal));
+
+        if (match is null)
         {
             return new PaymentChoice(
+                null,
                 null,
                 new ValidationError(
                     "paymentMethodCode",
@@ -344,16 +368,27 @@ public sealed class PlaceOrderCommandHandler(
         }
 
         return paymentProviders.Find(trimmed) is { } provider
-            ? new PaymentChoice(provider, null)
+            ? new PaymentChoice(provider, match.DisplayName, null)
             : new PaymentChoice(
+                null,
                 null,
                 new ValidationError(
                     "paymentMethodCode",
                     "That payment method cannot be used yet. Choose another."));
     }
 
-    /// <summary>The chosen provider, or why it cannot be used.</summary>
-    private readonly record struct PaymentChoice(IPaymentProvider? Provider, ValidationError? Error);
+    /// <summary>The chosen provider and its display name, or why it cannot be used.</summary>
+    /// <param name="DisplayName">
+    /// <c>sales.PaymentProviders.DisplayName</c> for the chosen code, taken from the list this method has
+    /// already read rather than re-read later. Non-null whenever <paramref name="Provider"/> is: the
+    /// match below is what produces it. It is on the order's emails, so a customer reads "Bank / online
+    /// transfer" and not a code — and it comes from the row the shop can edit rather than from a literal
+    /// in this file, which is also what keeps this type's name clear of PAY-03's rule.
+    /// </param>
+    private readonly record struct PaymentChoice(
+        IPaymentProvider? Provider,
+        string? DisplayName,
+        ValidationError? Error);
 
     /// <summary>
     /// Doc 08 §3.5 R7: a delivery order's district is the address's; a pickup order's is the pickup
@@ -403,7 +438,9 @@ public sealed class PlaceOrderCommandHandler(
         IReadOnlyList<CheckoutCartLine> lines,
         OrderPricingResult pricing,
         DateTimeOffset placedAt,
-        PaymentInitiation payment)
+        PaymentInitiation payment,
+        string paymentMethodName,
+        PaymentInstructions? instructions)
     {
         var district = destination.District!.Value;
         var isPickup = !method.RequiresAddress;
@@ -501,7 +538,13 @@ public sealed class PlaceOrderCommandHandler(
             // The provider's answer, unexamined. Doc 11 P6's "48 hours" is a bank-transfer fact and lives
             // in BankTransferProvider; PayPal's window is minutes and lives in its own. Checkout's only
             // interest in the deadline is the one guard above — that it is in the future.
-            payment);
+            payment,
+
+            // Likewise unexamined: the display name the shop set on the provider row, and whatever the
+            // provider had to say about paying. Checkout does not read either one; the placement
+            // transaction puts them into the emails it queues (doc 11 P6 step 9).
+            paymentMethodName,
+            instructions);
     }
 
     /// <summary>Where the order is going, or why it cannot be worked out.</summary>

@@ -1,5 +1,7 @@
 using System.Data;
 using Microsoft.EntityFrameworkCore;
+using SpencerDenim.Application.Ops.Email.Abstractions;
+using SpencerDenim.Application.Ops.Email.Contracts;
 using SpencerDenim.Application.Sales.Checkout.Abstractions;
 using SpencerDenim.Domain.Sales;
 using SpencerDenim.Infrastructure.Persistence;
@@ -41,8 +43,18 @@ namespace SpencerDenim.Infrastructure.Sales;
 /// orders in <c>StockState = 0</c>, which reads the order lines and not the ledger. What is lost is the
 /// audit trail of individual movements, and it is in the task report as owed by W1-05.
 /// </para>
+/// <para>
+/// <b>It does now write the emails</b> (W3-06, doc 11 P6 step 9's "and the queued emails"):
+/// <c>OrderPlaced</c> for every order, and the payment instructions when the provider has any to give.
+/// Both are rows in <c>ops.EmailOutbox</c> added to this same unit of work, so they commit with the order
+/// or not at all — see <see cref="QueueEmails"/>, which also records why an unset bank account queues no
+/// instructions email.
+/// </para>
 /// </summary>
-internal sealed class OrderPlacementStore(AppDbContext dbContext, ICheckoutReader reader) : IOrderPlacementStore
+internal sealed class OrderPlacementStore(
+    AppDbContext dbContext,
+    ICheckoutReader reader,
+    IOrderEmailOutbox emails) : IOrderPlacementStore
 {
 
     public async Task<OrderPlacementResult> PlaceAsync(
@@ -120,6 +132,18 @@ internal sealed class OrderPlacementStore(AppDbContext dbContext, ICheckoutReade
 
             dbContext.Orders.Add(order);
 
+            // Doc 11 P6 step 9: the transaction saves "the order, the order lines …, the payment record,
+            // the status history (source Customer) **and the queued emails**". Enlisted here and saved by
+            // the SaveChangesAsync below, so the messages and the order commit together — the whole point
+            // of the outbox pattern (doc 08 §3.8). A rollback takes the messages with it, and
+            // `DetachAll()` on every exit stops a retried attempt re-adding them.
+            //
+            // **Deliberately after `Orders.Add` and before the save**, not after the commit: a shopper
+            // whose order committed and whose confirmation was queued "just afterwards" by a process that
+            // then died would have an order nobody ever told them about, which is exactly what this
+            // pattern exists to make impossible.
+            QueueEmails(placement, order);
+
             try
             {
                 await dbContext.SaveChangesAsync(cancellationToken);
@@ -188,6 +212,96 @@ internal sealed class OrderPlacementStore(AppDbContext dbContext, ICheckoutReade
              WHERE VariantId = {variantId} AND OnHand - Reserved >= {quantity};
             """,
             cancellationToken);
+
+    /// <summary>
+    /// Doc 11 P6 step 10's two emails: <c>OrderPlaced</c> always, and the payment instructions when the
+    /// provider had any to give.
+    /// </summary>
+    /// <remarks>
+    /// <b>The second email is queued only when <c>placement.Instructions</c> is non-null, and that is the
+    /// decision this method exists to make visible.</b> For a bank transfer the provider answers null
+    /// exactly when the shop's <c>Bank.*</c> settings are unset (<c>BankTransferProvider.DescribeAsync</c>),
+    /// which is the state this shop is in until the client sends their account details. An email headed
+    /// "How to pay" with an empty account number is not a degraded email, it is a wrong one — a customer
+    /// could transfer money nowhere — so nothing is queued and the shopper has the order link, where the
+    /// page already says the details are being confirmed (W3-03). It is the same rule W3-04's invoice
+    /// follows for the store's unset legal details: print nothing rather than something plausible.
+    /// <para>
+    /// <b>Doc 11 P6 step 10 also makes this per payment method</b> — "Bank transfer: … Sends Order placed
+    /// and Bank transfer instructions. PayPal: … Sends Order placed" — and the condition above expresses
+    /// that without naming a gateway: a provider that redirects rather than giving out account details
+    /// has no instructions to post, so PayPal will answer with a <c>RedirectUrl</c> that belongs on a page
+    /// and not in an email. <b>That is the one thing W4-01 must check here</b> rather than inherit: today
+    /// null-or-not is a faithful reading of P6 step 10, and the day a second provider returns non-null
+    /// instructions it will need a rule about which of them are worth emailing.
+    /// </para>
+    /// </remarks>
+    private void QueueEmails(OrderPlacement placement, Order order)
+    {
+        var header = new OrderEmailHeader(
+            placement.OrderNumber,
+            order.PublicId,
+            new OrderEmailAddressee(placement.Email, placement.FirstName, placement.LastName),
+            placement.PlacedAtUtc);
+
+        emails.EnlistOrderPlaced(new PlacedOrderEmailFacts(
+            header,
+
+            // The order's own line order (1-based, oldest first), not the variant-sorted copy the
+            // reservation loop made: the email reads like the bag the shopper filled.
+            placement.Lines
+                .OrderBy(line => line.LineNumber)
+                .Select(line => new OrderEmailLine(
+                    line.ProductName,
+                    line.ColourName,
+                    line.SizeLabel,
+                    line.Priced.Quantity,
+                    line.Priced.LineTotal))
+                .ToList(),
+            new OrderEmailTotals(
+                placement.Pricing.ItemsSubtotal,
+                placement.Pricing.PromoDiscountAmount,
+                placement.Pricing.DeliveryFeeAmount,
+                placement.Pricing.DeliveryDiscountAmount,
+                placement.Pricing.GrandTotal),
+            new OrderEmailDelivery(
+                placement.Delivery.DeliveryMethodName,
+                placement.Delivery.DeliveryMethodCode == DeliveryMethod.PickupCode,
+                placement.Delivery.PickupLocationName,
+                AddressLines(placement.ShipAddress),
+                placement.DeliveryDistrictName),
+            placement.PaymentMethodName,
+            placement.Payment.PaymentDueAtUtc));
+
+        if (placement.Instructions is { } instructions)
+        {
+            emails.EnlistPaymentInstructions(header, instructions);
+        }
+    }
+
+    /// <summary>
+    /// The delivery address as lines, skipping every part the shopper did not give.
+    /// </summary>
+    /// <remarks>
+    /// Empty for a pickup order, whose <c>Ship_*</c> columns are all null by design
+    /// (<c>CK_Orders_ShipAddress</c>, and <see cref="BuildOrder"/>'s own note about not recording a parcel
+    /// that is not being shipped). The phone number is <b>not</b> included: it is on the order for the
+    /// courier and for staff, and printing it back to the customer in an email adds nothing while putting
+    /// one more piece of personal data into a table that is backed up nightly.
+    /// </remarks>
+    private static List<string> AddressLines(AddressSnapshot address) =>
+        new[]
+        {
+            address.RecipientName,
+            address.Line1,
+            address.Line2,
+            address.City,
+            address.PostalCode,
+            address.Landmark,
+        }
+        .Where(part => !string.IsNullOrWhiteSpace(part))
+        .Select(part => part!.Trim())
+        .ToList();
 
     /// <summary>
     /// The order, its lines, its first status-history row and its payment row, as doc 08 §4.1's

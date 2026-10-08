@@ -7,6 +7,7 @@ using SpencerDenim.Domain.Content;
 using SpencerDenim.Domain.Inventory;
 using SpencerDenim.Domain.Marketing;
 using SpencerDenim.Domain.Media;
+using SpencerDenim.Domain.Ops;
 using SpencerDenim.Domain.Reference;
 using SpencerDenim.Domain.Sales;
 using SpencerDenim.Domain.Settings;
@@ -48,8 +49,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public const string MigrationsHistoryTable = "__EFMigrationsHistory";
 
     /// <summary>
-    /// Doc 08 §1.2's operational schema: the migrations history table, <c>AuditLogs</c> and
-    /// <c>Settings</c>. The same string as <see cref="MigrationsHistorySchema"/> and kept separate from
+    /// Doc 08 §1.2's operational schema: the migrations history table, <c>AuditLogs</c>,
+    /// <c>Settings</c> and <c>EmailOutbox</c>. The same string as <see cref="MigrationsHistorySchema"/> and kept separate from
     /// it — one names where EF records its own bookkeeping, the other names a module's tables, and a
     /// future decision to move the history table must not silently move <c>ops.Settings</c> with it.
     /// </summary>
@@ -196,6 +197,16 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
 
     /// <summary><c>ops.Settings</c> (doc 08 §3.8, ADM-22). Created by W1-16's migration.</summary>
     public DbSet<Setting> Settings => Set<Setting>();
+
+    /// <summary>
+    /// <c>ops.EmailOutbox</c> (doc 08 §3.8, ACC-03). Created by W3-06's migration.
+    /// <para>
+    /// Rows are added through <c>IEmailOutboxWriter.Enlist</c> inside the business transaction that the
+    /// message is about, never saved on their own; the <c>SendEmails</c> job reads and updates them with
+    /// set-based statements. This set exists so both sides compile against one mapping.
+    /// </para>
+    /// </summary>
+    public DbSet<EmailOutboxMessage> EmailOutbox => Set<EmailOutboxMessage>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {

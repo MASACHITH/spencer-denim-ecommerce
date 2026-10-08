@@ -2,6 +2,8 @@ using System.Data;
 using System.Globalization;
 using Microsoft.EntityFrameworkCore;
 using SpencerDenim.Application.Abstractions.Auditing;
+using SpencerDenim.Application.Ops.Email.Abstractions;
+using SpencerDenim.Application.Ops.Email.Contracts;
 using SpencerDenim.Application.Sales.Orders.Abstractions;
 using SpencerDenim.Application.Sales.Orders.Contracts;
 using SpencerDenim.Domain.Auditing;
@@ -36,14 +38,22 @@ namespace SpencerDenim.Infrastructure.Sales.Orders;
 /// reused rather than reimplemented.
 /// </para>
 /// <para>
-/// <b>No email, and nothing claims one was sent.</b> <c>ops.EmailOutbox</c> does not exist (W3-06); doc 11
-/// P9 step 5's <c>OrderShipped</c> is specified and unbuilt. The shopper's own order page shows <b>one
-/// sentence</b> about the order's state — not a timeline, which an earlier version of this remark claimed
-/// — and no tracking number at all, because the public contract has no such field (ACC-02's). So there is
-/// no honest route to the customer today, which is a fact worth stating here rather than softening.
+/// <b>One email, and only one.</b> Doc 11 P9 step 5's <c>OrderShipped</c> is queued by
+/// <see cref="MarkShippedAsync"/> (W3-06), with the courier and the tracking link or with the pickup
+/// wording (§7 G-35). The other three transitions queue nothing, which is doc 11 P9's own instruction:
+/// "No email on Processing or Delivered" (§7 G-14), and a corrected tracking number sends no second
+/// message either — whoever corrects it telephones the customer, which is the exception P9 records.
+/// </para>
+/// <para>
+/// <b>The shopper's own order page still shows no tracking number</b>, because the public contract has no
+/// such field: that is ACC-02's, and it is the reason the dispatch email matters as much as it does. A
+/// customer whose address is wrong has nowhere else to read the number from.
 /// </para>
 /// </summary>
-internal sealed class OrderFulfilmentStore(AppDbContext dbContext, IAuditLogWriter auditLog)
+internal sealed class OrderFulfilmentStore(
+    AppDbContext dbContext,
+    IAuditLogWriter auditLog,
+    IOrderEmailOutbox emails)
     : IOrderFulfilmentStore
 {
     public Task<OrderTransitionResult> StartProcessingAsync(
@@ -133,6 +143,7 @@ internal sealed class OrderFulfilmentStore(AppDbContext dbContext, IAuditLogWrit
                 }
 
                 string? courierName = null;
+                string? trackingUrl = null;
 
                 if (dispatch is { } details)
                 {
@@ -140,11 +151,22 @@ internal sealed class OrderFulfilmentStore(AppDbContext dbContext, IAuditLogWrit
                     // this press cannot be written on to an order. The name is copied, which is doc 11
                     // P9's own instruction ("courier name is copied into the order") and what keeps a past
                     // dispatch note readable after a rename.
-                    courierName = await dbContext.Couriers
+                    //
+                    // **The template is read and used here, and is still not copied on to the order.**
+                    // Doc 08 §3.5 says a tracking link is rendered from the courier's *current* template,
+                    // so the order keeps the name and the number only. The link below is built from the
+                    // template as it is at dispatch, which is the only reading available to a message
+                    // that is about to be sent — and the one place where a later template edit does not
+                    // reach, unlike the admin screen's link (doc 11 P9's "editing a template changes the
+                    // link on older orders too").
+                    var courier = await dbContext.Couriers
                         .AsNoTracking()
-                        .Where(courier => courier.Id == details.CourierId && courier.IsActive)
-                        .Select(courier => courier.Name)
+                        .Where(candidate => candidate.Id == details.CourierId && candidate.IsActive)
+                        .Select(candidate => new { candidate.Name, candidate.TrackingUrlTemplate })
                         .FirstOrDefaultAsync(cancellationToken);
+
+                    courierName = courier?.Name;
+                    trackingUrl = OrderTrackingLink.Build(courier?.TrackingUrlTemplate, details.TrackingNumber);
 
                     if (courierName is null)
                     {
@@ -203,6 +225,33 @@ internal sealed class OrderFulfilmentStore(AppDbContext dbContext, IAuditLogWrit
                     dispatch is null
                         ? null
                         : $$"""{"courierId":{{dispatch.CourierId}},"courierName":{{Json(courierName)}},"trackingNumber":{{Json(dispatch.TrackingNumber)}}}""");
+
+                // Doc 11 P9 step 5: "queues **Order shipped** email with the tracking link built from
+                // the courier's template", and the pickup variant "with pickup wording, location and
+                // hours". Enlisted into this unit of work, so the message commits with the dispatch — a
+                // customer is never told a parcel is on its way by a transaction that rolled back.
+                var pickup = snapshot.IsPickup
+                    ? await ReadPickupAsync(transition.OrderId, cancellationToken)
+                    : null;
+
+                emails.EnlistOrderShipped(new ShippedOrderEmailFacts(
+                    new OrderEmailHeader(
+                        snapshot.OrderNumber,
+                        snapshot.PublicId,
+                        new OrderEmailAddressee(snapshot.Email, snapshot.FirstName, snapshot.LastName),
+                        transition.NowUtc),
+                    snapshot.IsPickup,
+                    courierName,
+                    dispatch?.TrackingNumber,
+                    trackingUrl,
+
+                    // The location's name comes from the order's own snapshot (doc 08 §3.5
+                    // `Orders.Delivery`) — what the shopper chose — while the address and the hours are
+                    // read live, because the order does not keep them. Any of the three may be absent,
+                    // and the message prints only what it has.
+                    pickup?.OrderName ?? pickup?.Name,
+                    pickup?.Address,
+                    pickup?.OpeningHours));
 
                 await dbContext.SaveChangesAsync(cancellationToken);
 
@@ -558,7 +607,13 @@ internal sealed class OrderFulfilmentStore(AppDbContext dbContext, IAuditLogWrit
                 order.OrderNumber,
                 order.PublicId,
                 order.Status,
-                order.Delivery.DeliveryMethodCode == DeliveryMethod.PickupCode))
+                order.Delivery.DeliveryMethodCode == DeliveryMethod.PickupCode,
+
+                // For the email only (W3-06). Three more columns on a projection that already reads this
+                // row, rather than a second query inside a transaction that holds the order's lock.
+                order.Email,
+                order.FirstName,
+                order.LastName))
             .FirstOrDefaultAsync(cancellationToken);
 
     /// <summary>
@@ -703,5 +758,46 @@ internal sealed class OrderFulfilmentStore(AppDbContext dbContext, IAuditLogWrit
         string OrderNumber,
         Guid PublicId,
         OrderStatus Status,
-        bool IsPickup);
+        bool IsPickup,
+        string Email,
+        string FirstName,
+        string? LastName);
+
+    /// <summary>
+    /// Where a pickup order is collected from: the name on the order, plus the location's current address
+    /// and opening hours.
+    /// </summary>
+    /// <param name="OrderName">
+    /// <c>Orders.Delivery.PickupLocationName</c> — the name as it was when the shopper chose it.
+    /// Preferred over <paramref name="Name"/> for the reason the courier name is copied on to an order: a
+    /// shop that renames a branch has not changed where this parcel is.
+    /// </param>
+    private sealed record PickupSnapshot(
+        string? OrderName,
+        string? Name,
+        string? Address,
+        string? OpeningHours);
+
+    /// <summary>
+    /// The pickup location behind one order, or <see langword="null"/> when the order names none.
+    /// </summary>
+    /// <remarks>
+    /// <b>Every column is null-guarded, because the navigation is optional.</b>
+    /// <c>Orders.PickupLocationId</c> is nullable and a location can be deactivated, so a pickup order
+    /// with no readable location still gets its email — it has the order number and the wording that says
+    /// it is ready — rather than the dispatch being refused for the sake of a line of an address. The
+    /// method is called only on the pickup branch, so a courier dispatch pays nothing for it.
+    /// </remarks>
+    private async Task<PickupSnapshot?> ReadPickupAsync(int orderId, CancellationToken cancellationToken) =>
+        await dbContext.Orders
+            .AsNoTracking()
+            .Where(order => order.Id == orderId)
+            .Select(order => new PickupSnapshot(
+                order.Delivery.PickupLocationName,
+                order.PickupLocation == null ? null : order.PickupLocation.Name,
+                order.PickupLocation == null
+                    ? null
+                    : order.PickupLocation.AddressLine + ", " + order.PickupLocation.City,
+                order.PickupLocation == null ? null : order.PickupLocation.OpeningHours))
+            .FirstOrDefaultAsync(cancellationToken);
 }

@@ -2,6 +2,8 @@ using System.Data;
 using System.Globalization;
 using Microsoft.EntityFrameworkCore;
 using SpencerDenim.Application.Abstractions.Auditing;
+using SpencerDenim.Application.Ops.Email.Abstractions;
+using SpencerDenim.Application.Ops.Email.Contracts;
 using SpencerDenim.Application.Sales.Checkout.Abstractions;
 using SpencerDenim.Application.Sales.Payments.Abstractions;
 using SpencerDenim.Domain.Auditing;
@@ -60,8 +62,11 @@ namespace SpencerDenim.Infrastructure.Sales.Payments;
 /// therefore null on every order ever placed, so there is nothing to restore and no branch that could run.
 /// </description></item>
 /// <item><description>
-/// <b>No email.</b> <c>ops.EmailOutbox</c> does not exist (W3-06); P7's <c>PaymentConfirmed</c> is
-/// specified and unbuilt. Nothing here claims one was sent.
+/// <b>No email on a rejection, and that is doc 11's instruction rather than an omission.</b> P7's
+/// notification list says "No email on rejection" and §7 G-14 leaves the question with the client. So
+/// <c>ApproveAsync</c> and <c>AcceptLateAsync</c> queue <c>PaymentConfirmed</c> (W3-06) and
+/// <c>RejectAsync</c> queues nothing — the order is still PendingPayment with time left on it, and the
+/// customer finds out by looking at their order or by trying again, which is what P7 step 6b describes.
 /// </description></item>
 /// <item><description>
 /// <b>No <c>InvoiceSellerSnapshotJson</c>.</b> Doc 08 §4.1 wants the store's legal name, address and
@@ -77,7 +82,8 @@ namespace SpencerDenim.Infrastructure.Sales.Payments;
 internal sealed class BankTransferReviewStore(
     AppDbContext dbContext,
     INumberSeriesAllocator numbers,
-    IAuditLogWriter auditLog) : IBankTransferReviewStore
+    IAuditLogWriter auditLog,
+    IOrderEmailOutbox emails) : IBankTransferReviewStore
 {
     public async Task<BankTransferDecisionResult> ApproveAsync(
         BankTransferDecision decision,
@@ -180,6 +186,12 @@ internal sealed class BankTransferReviewStore(
                     snapshot,
                     AuditActions.Approve,
                     $$"""{"decision":"approve","payment":{{open.Id}},"invoiceNumber":{{Json(invoiceNumber)}}}""");
+
+                // Doc 11 P7 step 6a: "**Payment confirmed** email queued". Enlisted into this unit of
+                // work, so it commits with the approval — and with the invoice number, which was issued
+                // four statements ago inside this same transaction and would otherwise be a figure the
+                // email claimed and the database had rolled back.
+                QueuePaymentConfirmed(snapshot, invoiceNumber, decision.NowUtc, wasLatePayment: false);
 
                 await dbContext.SaveChangesAsync(cancellationToken);
 
@@ -395,6 +407,12 @@ internal sealed class BankTransferReviewStore(
                     snapshot,
                     AuditActions.Approve,
                     $$"""{"decision":"acceptLate","payment":{{latest.Id}},"invoiceNumber":{{Json(invoiceNumber)}}}""");
+
+                // Doc 11 P7 step 8 and P10 step 11: a late acceptance has "the same effects as step 6a",
+                // and §4.1 lists `PaymentConfirmed` for "approval, PayPal capture, late acceptance". The
+                // message says so in different words, because the customer's last message from us said
+                // the order had expired — see `PaymentConfirmedEmailFacts.WasLatePayment`.
+                QueuePaymentConfirmed(snapshot, invoiceNumber, decision.NowUtc, wasLatePayment: true);
 
                 await dbContext.SaveChangesAsync(cancellationToken);
 
@@ -702,7 +720,14 @@ internal sealed class BankTransferReviewStore(
                 order.OrderNumber,
                 order.PublicId,
                 order.Status,
-                order.StockState))
+                order.StockState,
+
+                // For the email only (W3-06). Four more columns on a projection that already reads this
+                // row, rather than a second query inside a transaction that holds the order's lock.
+                order.Email,
+                order.FirstName,
+                order.LastName,
+                order.GrandTotal))
             .FirstOrDefaultAsync(cancellationToken);
 
     /// <summary>
@@ -936,6 +961,33 @@ internal sealed class BankTransferReviewStore(
             : text[..OrderStatusHistoryEntry.NoteMaxLength];
     }
 
+    /// <summary>
+    /// Doc 11 §4.1's <c>PaymentConfirmed</c>: "Payment received, amount, invoice number, what happens
+    /// next".
+    /// </summary>
+    /// <remarks>
+    /// <b>The amount is the order's <c>GrandTotal</c>, not the payment row's.</b> They are the same
+    /// figure by construction — doc 08 §3.5 defines <c>Payments.Amount</c> as the order's grand total in
+    /// LKR, and <c>OrderPlacementStore</c> writes it from the one pricing result <c>CK_Orders_Totals</c>
+    /// checked — and the order is the record of what the customer agreed to, which is what a receipt
+    /// should repeat back. (There is no USD line: that is PayPal's and W4-01's, and this flow is reached
+    /// only by an order whose <c>PaymentProviderCode</c> the claim pinned to the bank provider.)
+    /// </remarks>
+    private void QueuePaymentConfirmed(
+        OrderSnapshot snapshot,
+        string invoiceNumber,
+        DateTime nowUtc,
+        bool wasLatePayment) =>
+        emails.EnlistPaymentConfirmed(new PaymentConfirmedEmailFacts(
+            new OrderEmailHeader(
+                snapshot.OrderNumber,
+                snapshot.PublicId,
+                new OrderEmailAddressee(snapshot.Email, snapshot.FirstName, snapshot.LastName),
+                nowUtc),
+            snapshot.GrandTotal,
+            invoiceNumber,
+            wasLatePayment));
+
     /// <summary>A JSON string literal, or <c>null</c>, for the audit row's <c>AfterJson</c> (CK ISJSON).</summary>
     private static string Json(string? value) =>
         value is null ? "null" : System.Text.Json.JsonSerializer.Serialize(value);
@@ -971,7 +1023,11 @@ internal sealed class BankTransferReviewStore(
         string OrderNumber,
         Guid PublicId,
         OrderStatus Status,
-        OrderStockState StockState);
+        OrderStockState StockState,
+        string Email,
+        string FirstName,
+        string? LastName,
+        decimal GrandTotal);
 
     /// <summary>One payment row. A class, for the same reason as <see cref="OrderSnapshot"/>.</summary>
     /// <remarks>
