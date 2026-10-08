@@ -632,14 +632,13 @@ export class OrderDetailPage {
    *
    * The second half matters when correcting a tracking number on an order shipped with a carrier that has
    * since been deactivated: without it the select would silently drop the current value, the form would
-   * come up empty, and saving would move the order to a different courier by accident.
+   * come up empty, and saving would move the order to a different courier by accident. Keyed on the
+   * dispatch's **id** rather than its name, for the reason `courierIdFor` records.
    */
   protected readonly activeCouriers = computed(() => {
-    const current = this.order()?.dispatch?.courierName;
+    const current = this.order()?.dispatch?.courierId ?? null;
 
-    return this.couriers().filter(
-      (courier) => courier.isActive || (current !== undefined && courier.name === current),
-    );
+    return this.couriers().filter((courier) => courier.isActive || courier.id === current);
   });
 
   private loaded = '';
@@ -924,24 +923,18 @@ export class OrderDetailPage {
   }
 
   /**
-   * The id of the courier this order shipped with, matched by the **snapshotted name**.
+   * The id of the courier this order shipped with, from the dispatch itself.
    *
-   * The order keeps `CourierName` as a snapshot and the detail contract does not publish `CourierId` —
-   * deliberately, because the name is what a past dispatch note has to keep reading. The match is by name
-   * because `UX_Couriers_Name` makes it unique; a courier renamed since the dispatch therefore comes up
-   * unselected, which is the honest outcome: the staff member picks again rather than having a different
-   * carrier chosen for them.
+   * **Not matched on the snapshotted name, which is what the first version did.** The name is a
+   * placement-time snapshot by design — a past dispatch note has to keep reading the same after a rename
+   * — so matching it against the live list came up empty the moment somebody renamed a carrier, leaving
+   * the correction form unselected on an order that plainly had a courier. A null id means the row has
+   * actually been deleted, and the form is then unselected for a reason the staff member can act on.
    */
   private courierIdFor(detail: AdminOrderDetail): string {
-    const name = detail.dispatch?.courierName;
+    const courierId = detail.dispatch?.courierId;
 
-    if (name === undefined) {
-      return '';
-    }
-
-    const match = this.couriers().find((courier) => courier.name === name);
-
-    return match === undefined ? '' : String(match.id);
+    return courierId === undefined || courierId === null ? '' : String(courierId);
   }
 
   private refresh(): void {

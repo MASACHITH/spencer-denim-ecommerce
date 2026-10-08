@@ -714,11 +714,19 @@ async function measureAtEveryWidth(page: Page, clauses: readonly string[]): Prom
 
       // Not buried. A control can clear 44 px, be inside the viewport, and still be under something —
       // the W1-03 defect that passed a 44 px sweep with 17 controls under an opaque sticky bar.
+      //
+      // **It scrolls the control into view itself**, and that is not redundant: `elementFromPoint`
+      // answers `null` for a point outside the viewport, so probing a control below the fold would read
+      // as "not covered" — which is the one case this check exists for, because a sticky bar only buries
+      // what has been scrolled under it. `unreachable` above happens to scroll too, so relying on that
+      // would make this check silently depend on the order of two clauses.
       const covered = await page.evaluate((selector) => {
         const element = document.querySelector<HTMLElement>(selector);
         if (!element) {
           return 'missing';
         }
+
+        element.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
 
         const box = element.getBoundingClientRect();
         const x = box.left + (box.width / 2);

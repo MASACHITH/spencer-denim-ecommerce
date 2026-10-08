@@ -248,6 +248,15 @@ export interface AdminOrderHistoryEntry {
 
 /** The dispatch, once there is one. */
 export interface AdminOrderDispatch {
+  /**
+   * Which courier row the order points at, or null when that row has been deleted.
+   *
+   * **The correction form selects by this, not by the name.** Matching on the name worked until somebody
+   * renamed a carrier, and then the form came up with nothing selected on an order that plainly had a
+   * courier — inviting a staff member to pick whichever one looked right.
+   */
+  readonly courierId: number | null;
+
   /** The snapshot taken when the order shipped, so a rename does not rewrite a past dispatch note. */
   readonly courierName: string;
   readonly trackingNumber: string;

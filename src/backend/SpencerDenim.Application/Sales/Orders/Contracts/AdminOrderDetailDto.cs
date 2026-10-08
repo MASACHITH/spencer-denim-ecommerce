@@ -316,9 +316,20 @@ public sealed record AdminOrderHistoryDto(
     DateTime OccurredAtUtc);
 
 /// <summary>The dispatch, once there is one.</summary>
+/// <param name="CourierId">
+/// Which courier row the order points at, or <see langword="null"/> when that row has been deleted.
+/// <para>
+/// <b>It is here so the correction form can select the right courier without matching on the name.</b>
+/// The first version matched <see cref="CourierName"/> against the live list, which worked until somebody
+/// renamed a carrier — and then the form came up with nothing selected on an order that plainly had a
+/// courier, inviting a staff member to pick whichever one looked right. GLB-11 keeps internal ids out of
+/// <i>URLs</i>, not out of bodies, and <see cref="AdminCourierDto.Id"/> already travels the same way.
+/// </para>
+/// </param>
 /// <param name="CourierName">
 /// The <b>snapshot</b> taken when the order shipped (doc 11 P9: "courier name is copied into the order").
-/// A renamed or deleted courier does not rewrite a past dispatch note.
+/// A renamed or deleted courier does not rewrite a past dispatch note, which is why this is the field the
+/// screen <i>displays</i> and <see cref="CourierId"/> is only the one it selects by.
 /// </param>
 /// <param name="TrackingNumber">What the courier gave.</param>
 /// <param name="TrackingUrl">
@@ -331,6 +342,7 @@ public sealed record AdminOrderHistoryDto(
 /// </param>
 /// <param name="ShippedAtUtc">When it went.</param>
 public sealed record AdminOrderDispatchDto(
+    int? CourierId,
     string CourierName,
     string TrackingNumber,
     string? TrackingUrl,

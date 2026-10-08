@@ -543,6 +543,9 @@ internal sealed class AdminOrderReader(AppDbContext dbContext) : IAdminOrderRead
             : null;
 
         return new AdminOrderDispatchDto(
+            // Null when the courier row has gone, which is also when `template` is null — so the screen
+            // selects nothing and shows the snapshotted name, rather than selecting a different carrier.
+            template is null && order.CourierId is null ? null : order.CourierId,
             order.CourierName,
             order.TrackingNumber,
             BuildTrackingUrl(template, order.TrackingNumber),

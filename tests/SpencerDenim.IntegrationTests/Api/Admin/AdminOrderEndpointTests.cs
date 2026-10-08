@@ -635,6 +635,7 @@ public sealed class AdminOrderEndpointTests(SqlServerDatabaseFixture sqlServer)
         var detail = await DetailAsync(editor, order.PublicId);
         var dispatch = detail.GetProperty("dispatch");
 
+        Assert.Equal(courierId, dispatch.GetProperty("courierId").GetInt32());
         Assert.Equal("xunit-endpoint-carrier", dispatch.GetProperty("courierName").GetString());
         Assert.Equal("TRACK-ENDPOINT-1", dispatch.GetProperty("trackingNumber").GetString());
 
@@ -646,6 +647,71 @@ public sealed class AdminOrderEndpointTests(SqlServerDatabaseFixture sqlServer)
 
         var delivered = await TransitionAsync(editor, order.PublicId, "mark-delivered", HttpStatusCode.OK);
         Assert.Equal(nameof(OrderStatus.Delivered), delivered.GetProperty("status").GetString());
+    }
+
+    /// <summary>
+    /// <b>A renamed courier keeps the order's snapshotted name and still carries its id.</b>
+    /// </summary>
+    /// <remarks>
+    /// Doc 11 P9: the courier's name is copied into the order, so a rename must not rewrite a past
+    /// dispatch note. The <i>id</i> travels beside it because the correction form selects by it — the
+    /// first version matched on the name against the live list, which came up empty the moment somebody
+    /// renamed a carrier and left the form unselected on an order that plainly had a courier.
+    /// </remarks>
+    [Fact]
+    public async Task A_renamed_courier_keeps_the_orders_snapshot_and_still_carries_its_id()
+    {
+        await using var host = await StartAsync();
+        var order = await PlaceOrderAsync(host);
+
+        using var approver = await host.SignInAsync(Permissions.Orders.Approve);
+        await ApproveAsync(approver, order.PublicId);
+
+        using var settings = await host.SignInAsync(Permissions.Settings.Edit, Permissions.Orders.View);
+        var courierId = await CreateCourierAsync(settings, $"xunit-before-{Guid.NewGuid():N}"[..24]);
+
+        using var editor = await host.SignInAsync(Permissions.Orders.Edit, Permissions.Orders.View);
+        await TransitionAsync(editor, order.PublicId, "start-processing", HttpStatusCode.OK);
+        await TransitionAsync(
+            editor,
+            order.PublicId,
+            "mark-shipped",
+            HttpStatusCode.OK,
+            new { courierId, trackingNumber = "TRACK-RENAME" });
+
+        var shippedWith = (await DetailAsync(editor, order.PublicId))
+            .GetProperty("dispatch")
+            .GetProperty("courierName")
+            .GetString();
+
+        using var renamed = await settings.PutAsJsonAsync(
+            new Uri($"{CouriersUrl}/{courierId}", UriKind.Relative),
+            new
+            {
+                name = $"xunit-after-{Guid.NewGuid():N}"[..24],
+                trackingUrlTemplate = "https://track.example.test/{trackingNumber}",
+                phone = (string?)null,
+                isActive = true,
+                sortOrder = 0,
+            },
+            JsonOptions,
+            Token);
+
+        Assert.Equal(HttpStatusCode.OK, renamed.StatusCode);
+
+        var dispatch = (await DetailAsync(editor, order.PublicId)).GetProperty("dispatch");
+
+        // The snapshot is unchanged, which is what a past dispatch note has to do.
+        Assert.Equal(shippedWith, dispatch.GetProperty("courierName").GetString());
+
+        // And the id still points at the row, so the correction form comes up with the right carrier
+        // selected rather than blank.
+        Assert.Equal(courierId, dispatch.GetProperty("courierId").GetInt32());
+
+        // The link is rendered from the courier's *current* template either way (doc 08 §3.5).
+        Assert.Equal(
+            "https://track.example.test/TRACK-RENAME",
+            dispatch.GetProperty("trackingUrl").GetString());
     }
 
     /// <summary>

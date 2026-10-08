@@ -416,6 +416,7 @@ function orderDetail(state, order) {
       order.trackingNumber === null
         ? null
         : {
+            courierId: courier ? courier.id : null,
             courierName: order.courierName,
             trackingNumber: order.trackingNumber,
             trackingUrl:
