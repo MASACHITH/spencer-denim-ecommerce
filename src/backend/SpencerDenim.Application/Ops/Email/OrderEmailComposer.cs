@@ -480,11 +480,26 @@ public sealed class OrderEmailComposer(EmailOptions options)
         text.AppendLine();
     }
 
+    /// <summary>
+    /// The same labelled pairs in the plain-text part, one per line.
+    /// </summary>
+    /// <remarks>
+    /// <b>A row with no label is indented, not given a bare colon.</b> The second and later lines of a
+    /// delivery address carry no label — the first says "Delivering to" and the rest continue it — and
+    /// writing them as <c>": 14 Galle Road"</c> is how a text part comes to look machine-made. The HTML
+    /// part has the same shape and renders an empty cell, which is simply blank.
+    /// </remarks>
     private static void AppendTextRows(StringBuilder text, IEnumerable<(string Label, string Value)> rows)
     {
         foreach (var (label, value) in rows)
         {
-            text.AppendLine(CultureInfo.InvariantCulture, $"{label}: {value}");
+            // Built first, then appended: a conditional of two interpolated strings is a `string`, and
+            // `AppendLine(IFormatProvider, …)` takes an interpolated-string *handler* rather than one.
+            var line = label.Length == 0
+                ? string.Create(CultureInfo.InvariantCulture, $"  {value}")
+                : string.Create(CultureInfo.InvariantCulture, $"{label}: {value}");
+
+            text.AppendLine(line);
         }
 
         text.AppendLine();
