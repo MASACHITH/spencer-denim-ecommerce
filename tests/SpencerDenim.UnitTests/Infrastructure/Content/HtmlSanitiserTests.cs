@@ -1,4 +1,5 @@
 using SpencerDenim.Infrastructure.Content;
+using SpencerDenim.UnitTests.Support;
 
 namespace SpencerDenim.UnitTests.Infrastructure.Content;
 
@@ -520,10 +521,25 @@ public sealed class HtmlSanitiserTests
     /// the same payload without the five-character <c>&lt;svg&gt;</c> prefix is refused in 3 ms.
     /// </para>
     /// <para>
-    /// <b>Each case asserts the clock as well as the verdict</b>, and that is the point: before the fix
+    /// <b>Each case asserts the cost as well as the verdict</b>, and that is the point: before the fix
     /// the first of these was refused too — forty-four seconds later. A verdict-only test would have
-    /// passed against the defect. The bound is 5 seconds against a measured 41, so it is a margin of
-    /// eight rather than a tight timing assertion that a loaded machine could trip.
+    /// passed against the defect.
+    /// </para>
+    /// <para>
+    /// <b>The cost is asserted against the control rather than against a clock (#134).</b> It used to be
+    /// <c>clock.Elapsed &lt; 5s</c>, which was the wrong instrument twice over: it fails when the runner
+    /// is slow, and it would pass the 41-second defect outright on a machine nine times faster. What the
+    /// defect actually was is a <i>ratio</i> — a five-character prefix turning a 3 ms refusal into 41
+    /// seconds, about 13,000x — so the assertion is now the same payload with the prefix against the
+    /// same payload without it, both measured in this process. That is machine-independent: a slow
+    /// runner makes both halves slow together.
+    /// </para>
+    /// <para>
+    /// <b>Measured</b> on the developer machine, Release, three repeats of all five rows: the ratio is
+    /// <b>0.98–1.01x</b>. The prefix is free, because the scan pops out of foreign content and does the
+    /// identical work. The bound of 10 is therefore about 10x clear of every reading taken and still some
+    /// 1,300x inside the defect it exists to catch. <c>TimingShapeTests</c> proves this bound trips, at
+    /// this setting, on work that is quadratic in the same input.
     /// </para>
     /// </summary>
     [Theory]
@@ -537,23 +553,31 @@ public sealed class HtmlSanitiserTests
         string breakout,
         int levels)
     {
-        var payload = $"<{foreign}>" + string.Concat(Enumerable.Repeat($"<{breakout}/>", levels));
+        var run = string.Concat(Enumerable.Repeat($"<{breakout}/>", levels));
+        var prefixed = $"<{foreign}>" + run;
 
-        Assert.True(payload.Length <= HtmlSanitiser.MaxInputLength, "the payload must reach the scan");
+        Assert.True(prefixed.Length <= HtmlSanitiser.MaxInputLength, "the payload must reach the scan");
 
-        var clock = System.Diagnostics.Stopwatch.StartNew();
-        var result = _sanitiser.Sanitise(payload);
-        clock.Stop();
+        var result = _sanitiser.Sanitise(prefixed);
 
         Assert.True(result.WasRejected);
         Assert.Contains("levels deep", result.Rejection);
 
+        // The control has to be refused too, or the comparison below is between a refusal and an accept
+        // and the ratio means nothing. This is the three-millisecond half of the original measurement.
         Assert.True(
-            clock.Elapsed < TimeSpan.FromSeconds(5),
-            $"<{foreign}> + <{breakout}/> x {levels:N0} took {clock.Elapsed.TotalSeconds:N1}s. It is "
-            + "refused, but the refusal has to come from the lexical scan rather than from the parse: "
-            + "this payload cost 41 seconds of CPU before BreaksOutOfForeignContent existed, and the "
-            + "admin content list re-sanitises every stored body on every load.");
+            _sanitiser.Sanitise(run).WasRejected,
+            $"<{breakout}/> x {levels:N0} with no prefix must be refused, or it is not a control");
+
+        TimingShape.AssertWithin(
+            10,
+            () => _sanitiser.Sanitise(run),
+            () => _sanitiser.Sanitise(prefixed),
+            $"<{foreign}> must not change what <{breakout}/> x {levels:N0} costs. It is refused either "
+            + "way, but the refusal has to come from the lexical scan rather than from the parse: this "
+            + "payload cost 41 seconds of CPU against the control's 3 ms before "
+            + "BreaksOutOfForeignContent existed, and the admin content list re-sanitises every stored "
+            + "body on every load.");
     }
 
     /// <summary>
@@ -566,39 +590,89 @@ public sealed class HtmlSanitiserTests
     /// pinned a false positive against every real page that pastes unclosed paragraphs.
     /// </para>
     /// <para>
-    /// The clock still matters here, because "flat" has to mean cheap: forty thousand siblings are linear
-    /// work, not the quadratic nesting the guard exists for.
+    /// The cost still matters here, because "flat" has to mean cheap. It used to be asserted as
+    /// <c>clock.Elapsed &lt; 5s</c>, and <b>this is the assertion #134 was filed about</b>: it began
+    /// failing the backend job consistently at 6.7 s and 5.5 s on a GitHub hosted runner against 1–2 s
+    /// here, on branches touching no sanitiser file.
+    /// </para>
+    /// <para>
+    /// <b>The old text said these forty thousand siblings are "linear work". They are not — I measured
+    /// it, and that is the more interesting half of #134.</b> Doubling the run multiplies the cost by
+    /// <b>3.29x</b> (10k→20k), <b>3.56x</b> (20k→40k) and <b>3.80x</b> (40k→80k), converging on 4,
+    /// which is quadratic. Subtracting the ~65 ms fixed cost per call puts the variable part at
+    /// 4.0–4.6x. Absolute readings, Release, minimum of nine samples: 71 ms, 234 ms, 835 ms, 3,171 ms.
+    /// So the CI failure was never purely a slow machine: at 40,000 the quadratic cost is already most of
+    /// the way to a five-second budget, and a slower runner only had to finish the job.
+    /// </para>
+    /// <para>
+    /// That cost is in the <i>accept</i> path — parse, clean and serialise a wide flat tree — not in
+    /// the pre-scan, and it is the same shape as a residual <see cref="HtmlSanitiser"/> already records
+    /// and the owner already accepted (8.8 seconds at the 400 KB cap, W2-11 journal, "Three residuals").
+    /// <b>Nothing here is a fix for it</b>; it is noted on #134 rather than quietly absorbed.
+    /// </para>
+    /// <para>
+    /// <b>So this asserts the shape rather than the seconds, at a bound the measurement supports:</b>
+    /// doubling the run may cost no more than 6x, against 3.29–3.56x measured. Linear work comes in at
+    /// 2x and a bound of 2 would be red on main, so claiming linearity here would be a convenient lie.
+    /// What the bound still catches is a step up to cubic or worse — the shape a genuinely deep tree
+    /// has, and the shape the 41-second defect had. <c>TimingShapeTests</c> proves the bound trips at
+    /// this setting on work that grows as the fourth power, and does not trip on linear or quadratic
+    /// work, so it is a bound that can fail rather than a round number.
     /// </para>
     /// </summary>
     [Fact]
     public void A_breakout_element_that_closes_its_own_kind_is_flat_and_cheap()
     {
-        var payload = "<math>" + string.Concat(Enumerable.Repeat("<p/>", 40_000));
+        // The verdict is what this test was written for, and it is asserted at every size the cost
+        // assertion below measures: if the scan ever started reading a run of <p/> as nested, the payload
+        // would be refused and the cost would collapse to an instant refusal — which a ratio on its own
+        // would read as an improvement.
+        foreach (var levels in new[] { 10_000, 20_000, 40_000 })
+        {
+            Assert.False(
+                _sanitiser.Sanitise(FlatParagraphs(levels)).WasRejected,
+                $"<math> + <p/> x {levels:N0} is {levels:N0} siblings one level deep, not a deep tree");
+        }
 
-        var clock = System.Diagnostics.Stopwatch.StartNew();
-        var result = _sanitiser.Sanitise(payload);
-        clock.Stop();
-
-        Assert.False(result.WasRejected);
-        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(5), $"it took {clock.Elapsed.TotalSeconds:N1}s");
+        TimingShape.AssertDoublingWithin(
+            6,
+            levels =>
+            {
+                var payload = FlatParagraphs(levels);
+                return () => _sanitiser.Sanitise(payload);
+            },
+            10_000,
+            "a flat run of siblings must not cost more steeply than the quadratic the accept path "
+            + "already measures. Steeper than that is the signature of a tree being built as deep as the "
+            + "run is long, which is what BreaksOutOfForeignContent exists to stop.");
     }
+
+    private static string FlatParagraphs(int levels) =>
+        "<math>" + string.Concat(Enumerable.Repeat("<p/>", levels));
 
     /// <summary>
     /// The control the tester used, and the one that matters most here: the same shape with no
     /// <c>&lt;svg&gt;</c> in front of it was always refused immediately. Keeping both means the test
     /// above is measuring the prefix rather than the machine.
+    /// <para>
+    /// <b>It is now measured there rather than here (#134).</b> This case used to carry its own
+    /// <c>clock.Elapsed &lt; 5s</c>, and that assertion could not fail for any reason worth knowing: the
+    /// refusal is purely lexical and costs <b>0.10 ms</b> on this machine, measured, so the bound had a
+    /// margin of roughly <b>50,000x</b> and a runner slow enough to trip it would have failed the whole
+    /// job elsewhere first. The comparison it was reaching for needs <i>both</i> payloads in one process,
+    /// which only the theory above can do — so the theory takes this payload as its baseline, and this
+    /// case keeps the verdict, which is what it can prove on its own.
+    /// </para>
     /// </summary>
     [Fact]
     public void The_same_payload_without_the_foreign_prefix_is_refused_just_as_fast()
     {
         var payload = string.Concat(Enumerable.Repeat("<div/>", 66_000));
 
-        var clock = System.Diagnostics.Stopwatch.StartNew();
         var result = _sanitiser.Sanitise(payload);
-        clock.Stop();
 
         Assert.True(result.WasRejected);
-        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(5));
+        Assert.Contains("levels deep", result.Rejection);
     }
 
     /// <summary>
