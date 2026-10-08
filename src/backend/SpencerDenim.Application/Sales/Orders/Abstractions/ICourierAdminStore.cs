@@ -51,7 +51,7 @@ public interface ICourierAdminStore
 /// <param name="TrackingUrlTemplate">
 /// A URL containing <c>{trackingNumber}</c>, or <see langword="null"/> for a courier with no online
 /// tracking. <b>Validated in the use case and checked again by the database</b>
-/// (<c>CK_Couriers_TrackingTemplate</c>), because a template without the placeholder would send every
+/// (<c>CK_Couriers_TrackingUrlTemplate</c>), because a template without the placeholder would send every
 /// customer to the courier's home page.
 /// </param>
 /// <param name="Phone">Who to ring about a parcel, or <see langword="null"/>.</param>

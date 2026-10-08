@@ -26,7 +26,7 @@ namespace SpencerDenim.Application.Sales.Orders.Contracts;
 /// <param name="TrackingUrlTemplate">
 /// A URL containing <c>{trackingNumber}</c>, or <see langword="null"/> for a courier with no online
 /// tracking — then the number is shown as text. The placeholder is checked in the database
-/// (<c>CK_Couriers_TrackingTemplate</c>), because a template without it would send every customer to the
+/// (<c>CK_Couriers_TrackingUrlTemplate</c>), because a template without it would send every customer to the
 /// courier's home page.
 /// </param>
 /// <param name="Phone">Who to ring about a parcel.</param>

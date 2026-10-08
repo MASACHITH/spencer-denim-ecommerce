@@ -224,7 +224,7 @@ every save.
 | 2 | **The two new routes' signal `input.required` was never populated**, because `withComponentInputBinding()` is not in this application's router configuration. The three existing form pages already read `route.snapshot.paramMap`; the new ones now do too, rather than changing every route's behaviour for one screen. | the browser suite |
 | 3 | **The couriers screen's active checkbox was 20 px**, which GLB-09's floor refuses — the shared `.adm-check` rule. It is now a 24 px box (WCAG 2.2 SC 2.5.8's own minimum) inside a 44 px label that is the control, and both are asserted. | the breakpoint sweep |
 | 4 | **The no-promised-email sweep read the customer's "Email" field label as a promise.** It matches promise-shaped phrases now, not the bare word. The field is a staff member's way of telephoning somebody and refusing the word would be refusing the panel. | the browser suite |
-| 5 | Four column facts in my own first draft were wrong against the schema: `Couriers.TrackingUrlTemplate` is `nvarchar(500)` not 300, `Couriers.Phone` is `varchar(20)` not `nvarchar(30)`, the check constraint is `CK_Couriers_TrackingUrlTemplate`, and the delivery snapshot's column is `DeliveryMethodCode` with **no** `Delivery_` prefix. Two of them were in comments, which is the worse half: a wrong comment stops the next reader checking. | reading the configuration |
+| 5 | Four column facts in my own first draft were wrong against the schema: `Couriers.TrackingUrlTemplate` is `nvarchar(500)` not 300, `Couriers.Phone` is `varchar(20)` not `nvarchar(30)`, the check constraint is `CK_Couriers_TrackingUrlTemplate` not `CK_Couriers_TrackingTemplate`, and the delivery snapshot's column is `DeliveryMethodCode` with **no** `Delivery_` prefix. Three of the four were in comments, which is the worse half: a wrong comment stops the next reader checking. Found by grepping my own new files for every column length, index and constraint name I had claimed and checking each against the configuration — worth doing again at the end of any task that quotes the schema. | reading the configuration |
 | 6 | `varchar` columns **substitute `?` for a non-ASCII character rather than erroring**, so a pasted tracking number with a non-breaking space in it would be stored as a number that 404s at the courier with nothing saying so. Both `TrackingNumber` and `Couriers.Phone` now refuse one. | reading the configuration |
 
 ## A test I deleted rather than let pass vacuously
@@ -260,9 +260,19 @@ Run on this machine, `TEST_SQL_CONNECTION` pointed at `(localdb)\MSSQLLocalDB`.
 | Suite | Before (main) | After | New |
 |---|---|---|---|
 | xUnit unit | 1,726 / 0 | **1,808 / 0** | 82 |
-| xUnit integration | 1,124 | **see below** | 67 |
+| xUnit integration | 1,124 | **1,191 / 0** (21 m 8 s, whole assembly) | 67 |
 | Vitest shared / storefront / admin | 1,404 / 407 / 24 | 1,404 / **432** / 24 | 25 |
-| Playwright (chromium) | 891 / 0 | **920 / 0** | 29 |
+| Playwright (chromium) | 891 / 0 | **920 total**: 919 passed, 1 pre-existing failure — see below | 29 |
+
+The one Playwright failure is `admin-products.e2e.ts` → "moves a colour with the buttons and keeps focus
+on the one pressed", on a screen this task does not touch. It passed **5/5** with `--workers=1
+--repeat-each=5` in isolation. It is not dismissed as flaky on that alone, because this branch *does*
+touch something that screen uses: `styles.css` now gives `.adm-btn[aria-disabled='true']` the same
+`opacity` and `cursor` as `:disabled`, and the reorder buttons are `.adm-btn` with `aria-disabled`.
+Neither property affects focusability, and the test asserts focus — but the honest statement is that it
+was measured in isolation and not reproduced, and the second whole-suite run's result is in the report.
+**The whole-assembly integration run also looked hung at 16 minutes with 3 s of CPU and no SQL session,
+and was not**: it finished green at 21 m 8 s. Worth knowing before somebody kills one.
 
 The Vitest figures in the brief were in the order *shared / storefront / admin*; on this machine the three
 projects report **1,404 (shared), 432 (admin, was 407), 24 (storefront)** — the brief's second and third
