@@ -37,9 +37,10 @@ public sealed record ComposedEmail(string Subject, string Html, string Text);
 /// dispatch transaction. A promise about an email the shop has no template for would not be.)
 /// </description></item>
 /// <item><description>
-/// <b>The shop is "Colombo Wardrobe"</b>, read from <see cref="EmailBody.ShopName"/>, and
-/// <c>BrandNameConventionTests</c> fails the build if any of these strings spells it out. The client
-/// company's name belongs on an invoice, not in a shopper's inbox.
+/// <b>The shop names itself</b> from <see cref="EmailBody.ShopName"/>, and
+/// <c>BrandNameConventionTests</c> fails the build if any string here spells that name out — including
+/// this sentence, which is why it does not. The client company's name belongs on an invoice, not in a
+/// shopper's inbox.
 /// </description></item>
 /// </list>
 /// </remarks>

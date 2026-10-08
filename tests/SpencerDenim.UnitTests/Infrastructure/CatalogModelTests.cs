@@ -154,6 +154,20 @@ public sealed class CatalogModelTests
             // deliberately applied to the *cleaned* markup rather than the paste, because the cleaned
             // markup is what is stored.
             $"{nameof(SpencerDenim.Domain.Content.ContentPage)}.{nameof(SpencerDenim.Domain.Content.ContentPage.BodyHtml)}",
+
+            // ACC-03 (W3-06), doc 08 §3.8: `ops.EmailOutbox.BodyHtml` / `BodyText` are listed there as
+            // nvarchar(max), and the *input* is not bounded the way a content page's is — because there is
+            // no person to tell. These bodies are rendered by the server from an order, so their length is
+            // the order's: a bag of forty lines produces a longer message than a bag of one, and a cap
+            // would mean an order so large that the shop could not tell the customer about it. Both
+            // columns are emptied rather than sized: doc 08 §8.4 NULLs them after thirty days, and §3.8's
+            // G-03 rule NULLs them the moment a token-bearing message is sent.
+            //
+            // `TransportOverrideProtected` is a Data Protection ciphertext whose length depends on the key
+            // ring rather than on the plaintext — the same argument `ops.Settings.Value` makes above.
+            $"{nameof(SpencerDenim.Domain.Ops.EmailOutboxMessage)}.{nameof(SpencerDenim.Domain.Ops.EmailOutboxMessage.BodyHtml)}",
+            $"{nameof(SpencerDenim.Domain.Ops.EmailOutboxMessage)}.{nameof(SpencerDenim.Domain.Ops.EmailOutboxMessage.BodyText)}",
+            $"{nameof(SpencerDenim.Domain.Ops.EmailOutboxMessage)}.{nameof(SpencerDenim.Domain.Ops.EmailOutboxMessage.TransportOverrideProtected)}",
         ];
 
         var offenders = Model.GetEntityTypes()

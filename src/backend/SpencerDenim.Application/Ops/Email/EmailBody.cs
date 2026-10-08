@@ -37,8 +37,9 @@ public static class EmailBody
 {
     /// <summary>
     /// The shop's name, read from the one constant that holds it (<see cref="StoreBrand"/>). Every
-    /// customer-facing string in these emails is "Colombo Wardrobe" and never the client company's name
-    /// — they are two different things (<c>CLAUDE.md</c>, docs/02 §I2).
+    /// customer-facing string in these emails is the shop's name and never the client company's —
+    /// they are two different things (<c>CLAUDE.md</c>, docs/02 §I2), and
+    /// <c>BrandNameConventionTests</c> fails the build if either is written out here.
     /// </summary>
     public static string ShopName => StoreBrand.Name;
 
@@ -59,9 +60,15 @@ public static class EmailBody
     {
         var local = ColomboTime.ToLocal(new DateTimeOffset(instantUtc, TimeSpan.Zero));
 
+        // The meridiem is written out rather than taken from the format string: `tt` under the invariant
+        // culture gives "PM", and a shop's email saying "2:03 PM" reads as machine output. Hard-coded
+        // English is correct here — the storefront is English-only (doc 02), and these bodies are English
+        // throughout.
+        var meridiem = local.Hour < 12 ? "am" : "pm";
+
         return string.Create(
             CultureInfo.InvariantCulture,
-            $"{local:dddd d MMMM yyyy} at {local:h:mm tt} (Sri Lanka time)");
+            $"{local:dddd d MMMM yyyy} at {local:h:mm} {meridiem} (Sri Lanka time)");
     }
 
     /// <summary>Escapes a value for an HTML body. Null becomes an empty string, never "null".</summary>

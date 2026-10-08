@@ -86,7 +86,14 @@ internal sealed partial class SendEmailsService(
         }
     }
 
-    private async Task SweepAsync(CancellationToken stoppingToken)
+    /// <summary>
+    /// One pass. <b><c>internal</c> rather than <c>private</c> so the unit suite can run a sweep
+    /// directly</b>, against a fake <see cref="IEmailTransport"/> and a fake
+    /// <see cref="IEmailOutboxStore"/> — which is the only way to prove the ladder, the dead status and
+    /// the unconfigured-SMTP behaviour without a mail server and without waiting for a timer. It is not a
+    /// test-only member: it is the whole job, and <see cref="ExecuteAsync"/> is the loop around it.
+    /// </summary>
+    internal async Task SweepAsync(CancellationToken stoppingToken)
     {
         try
         {
