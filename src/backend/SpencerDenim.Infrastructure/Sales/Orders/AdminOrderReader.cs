@@ -172,13 +172,15 @@ internal sealed class AdminOrderReader(AppDbContext dbContext) : IAdminOrderRead
     /// <para>
     /// <b>The name match is case-insensitive because the database's collation is, and that is deliberate
     /// rather than accidental.</b> Every database this project creates is
-    /// <c>Latin1_General_100_CI_AS_SC</c> (doc 08 §1.3, and <c>TestDatabaseMigrator</c> asserts it), so
+    /// <c>Latin1_General_100_CI_AS_SC</c> — doc 08 §1.1's DB23, a week-0 decision;
+    /// <c>SqlServerDatabaseFixture</c> creates every test database with it and
+    /// <c>CollationSpikeTests</c> reads it back off <c>sys.columns</c> — so
     /// <c>CHARINDEX</c> over these columns ignores case without being asked. Forcing it with
     /// <c>UPPER(FirstName + ' ' + LastName)</c> was the first version and is strictly worse: it makes the
     /// predicate non-sargable against any future index on the name, it is one more expression per row, and
     /// it would not actually protect against a column-level collation change — the <i>term</i> would still
     /// be compared under the column's collation. A database with a case-sensitive collation would change
-    /// this search's behaviour, and the collation assertion in the test harness is what catches that.
+    /// this search's behaviour, and <c>CollationSpikeTests</c> is what catches that.
     /// </para>
     /// <para>
     /// The name is matched with <c>Contains</c> on the <i>joined</i> name, because a caller may give a
