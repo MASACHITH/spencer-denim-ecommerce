@@ -612,12 +612,24 @@ public sealed class HtmlSanitiserTests
     /// </para>
     /// <para>
     /// <b>So this asserts the shape rather than the seconds, at a bound the measurement supports:</b>
-    /// doubling the run may cost no more than 6x, against 3.29–3.56x measured. Linear work comes in at
-    /// 2x and a bound of 2 would be red on main, so claiming linearity here would be a convenient lie.
-    /// What the bound still catches is a step up to cubic or worse — the shape a genuinely deep tree
-    /// has, and the shape the 41-second defect had. <c>TimingShapeTests</c> proves the bound trips at
-    /// this setting on work that grows as the fourth power, and does not trip on linear or quadratic
-    /// work, so it is a bound that can fail rather than a round number.
+    /// doubling 10,000 to 20,000 may cost no more than 6x. Linear work comes in at 2x and a bound of 2
+    /// would be red on main, so claiming linearity here would be a convenient lie. What the bound still
+    /// catches is a step up to cubic or worse — the shape a genuinely deep tree has, and the shape the
+    /// 41-second defect had. <c>TimingShapeTests</c> proves the bound trips at this setting on work that
+    /// grows as the fourth power, and does not trip on linear or quadratic work, so it is a bound that
+    /// can fail rather than a round number.
+    /// </para>
+    /// <para>
+    /// <b>Measured</b> at exactly this setting, Release: idle, six readings, <b>3.13–3.60x</b>; with all
+    /// eight cores saturated by spin loops, sixteen readings, <b>2.73–4.23x</b> (fifteen of them at or
+    /// below 3.88x). Saturation roughly doubled the absolute times and moved the ratio by a tenth, which
+    /// is the whole claim being made for a ratio over a clock. <b>So the real margin is 1.4x at the worst
+    /// reading taken, and that is thin — say so rather than discover it in CI.</b> Two things keep it
+    /// honest instead of raising the number: the bound sits between the quadratic this path measures (4)
+    /// and the cubic it must still refuse (8), so there is nowhere looser to go that still discriminates;
+    /// and the ~65 ms fixed cost per call deflates a 10,000-to-20,000 reading, so a faster parser would
+    /// push these readings up toward 4.0–4.6x rather than down. <b>If this ever does go red, the fix is
+    /// the quadratic accept path, not a bigger bound</b> — raising it is what #134 is a complaint about.
     /// </para>
     /// </summary>
     [Fact]
