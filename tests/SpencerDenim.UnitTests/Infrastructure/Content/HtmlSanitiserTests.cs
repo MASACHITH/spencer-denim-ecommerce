@@ -599,15 +599,21 @@ public sealed class HtmlSanitiserTests
     /// <b>The old text said these forty thousand siblings are "linear work". They are not — I measured
     /// it, and that is the more interesting half of #134.</b> Doubling the run multiplies the cost by
     /// <b>3.29x</b> (10k→20k), <b>3.56x</b> (20k→40k) and <b>3.80x</b> (40k→80k), converging on 4,
-    /// which is quadratic. Subtracting the ~65 ms fixed cost per call puts the variable part at
-    /// 4.0–4.6x. Absolute readings, Release, minimum of nine samples: 71 ms, 234 ms, 835 ms, 3,171 ms.
-    /// So the CI failure was never purely a slow machine: at 40,000 the quadratic cost is already most of
-    /// the way to a five-second budget, and a slower runner only had to finish the job.
+    /// which is quadratic. Absolute readings, Release, minimum of nine samples: 71 ms, 234 ms, 835 ms,
+    /// 3,171 ms. The multiples climb across that range rather than sitting at 4 because there is a
+    /// per-call cost that does not grow with the run — n = 5,000 and n = 10,000 come out at 70 ms and
+    /// 74 ms, so most of a reading at ten thousand is overhead — and it deflates the smaller ratios.
+    /// <b>I am not quoting a figure for it</b>: the obvious estimates disagree with each other by enough
+    /// to matter, and every multiple in this docblock is a raw measured one instead. What is not in
+    /// doubt is the trend, and so: the CI failure was never purely a slow machine. At 40,000 the
+    /// quadratic cost is already most of the way to a five-second budget, and a slower runner only had
+    /// to finish the job.
     /// </para>
     /// <para>
     /// That cost is in the <i>accept</i> path — parse, clean and serialise a wide flat tree — not in
-    /// the pre-scan, and it is the same shape as a residual <see cref="HtmlSanitiser"/> already records
-    /// and the owner already accepted (8.8 seconds at the 400 KB cap, W2-11 journal, "Three residuals").
+    /// the pre-scan. It is not the same shape as the residual <see cref="HtmlSanitiser"/> already records
+    /// — that one is a deep tree, this one is a wide flat one — but it is the same category of thing,
+    /// an accept-path parse costing seconds at the cap, which the owner has already weighed and accepted (8.8 seconds at the 400 KB cap, W2-11 journal, "Three residuals").
     /// <b>Nothing here is a fix for it</b>; it is noted on #134 rather than quietly absorbed.
     /// </para>
     /// <para>
@@ -627,8 +633,8 @@ public sealed class HtmlSanitiserTests
     /// reading taken, and that is thin — say so rather than discover it in CI.</b> Two things keep it
     /// honest instead of raising the number: the bound sits between the quadratic this path measures (4)
     /// and the cubic it must still refuse (8), so there is nowhere looser to go that still discriminates;
-    /// and the ~65 ms fixed cost per call deflates a 10,000-to-20,000 reading, so a faster parser would
-    /// push these readings up toward 4.0–4.6x rather than down. <b>If this ever does go red, the fix is
+    /// and that flat per-call cost deflates a 10,000-to-20,000 reading most of all, so a faster parser
+    /// would push these readings up toward 4 rather than down. <b>If this ever does go red, the fix is
     /// the quadratic accept path, not a bigger bound</b> — raising it is what #134 is a complaint about.
     /// </para>
     /// </summary>

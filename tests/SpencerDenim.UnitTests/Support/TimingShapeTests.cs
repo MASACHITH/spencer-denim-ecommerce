@@ -60,10 +60,11 @@ public sealed class TimingShapeTests
     [Fact]
     public void The_doubling_guard_does_not_trip_on_work_that_grows_quadratically()
     {
-        // This is not slack: the sanitiser's accept path is itself quadratic, measured at 3.41-3.56x per
-        // doubling (#134, and the docblock on the sanitiser case says so). A bound that refused
-        // quadratic work would be red on main, so the bound that ships has to sit above it — and this
-        // case is the honest record of that, next to the one below which shows what it still catches.
+        // This is not slack: the sanitiser's accept path is itself quadratic, measured at 2.73-4.23x per
+        // doubling at the size that ships (#134, and the docblock on the sanitiser case carries the full
+        // spread). A bound that refused quadratic work would be red on main, so the bound that ships has
+        // to sit above it — and this case is the honest record of that, next to the one below, which
+        // shows what the bound still catches.
         var multiple = TimingShape.AssertDoublingWithin(
             DoublingBound,
             GrowingAs(2),
