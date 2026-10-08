@@ -502,9 +502,14 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
                 there.
               </p>
               <div class="pay__actions">
+                <!-- aria-disabled while a cancel is in flight, like every other write control here. The
+                     request cannot be recalled, so the honest answer to this press is to refuse it -
+                     without the guard it set the panel back to "Cancel this order" and announced "Your
+                     order is still with us." about an order that was being cancelled as it said so. -->
                 <button
                   class="btn btn--secondary"
                   type="button"
+                  [attr.aria-disabled]="busy() ? 'true' : null"
                   data-testid="cancel-keep"
                   (click)="keepOrder()"
                 >
@@ -1080,6 +1085,12 @@ export class OrderPage {
 
   /** Second thoughts about the second thoughts. */
   protected keepOrder(): void {
+    // The guard the `disabled` attribute would have provided. A cancel already on the wire cannot be
+    // recalled, so telling the shopper "Your order is still with us." would be false as it was said.
+    if (this.writing()) {
+      return;
+    }
+
     const focused = this.focusedNow();
 
     this.askingCancel.set(false);

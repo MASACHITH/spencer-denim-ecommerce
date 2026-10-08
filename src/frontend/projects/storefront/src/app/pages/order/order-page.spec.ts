@@ -460,6 +460,49 @@ describe('OrderPage (CHK-04)', () => {
     expect(document.activeElement).toBe(region);
   });
 
+  /**
+   * **"Keep my order" is refused while the cancel is on the wire**, which it was not.
+   *
+   * The request cannot be recalled, so the press had no truthful effect — it put the panel back to
+   * "Cancel this order" and announced "Your order is still with us." about an order that was being
+   * cancelled as it said so. A screen-reader user heard the false sentence and then the true one.
+   */
+  it('refuses Keep my order while the cancel is in flight, and says nothing untrue', async () => {
+    await open(order());
+
+    element.querySelector<HTMLElement>('[data-testid="cancel-order"]')!.click();
+    await settle();
+
+    element.querySelector<HTMLElement>('[data-testid="cancel-confirm"]')!.click();
+    await settle();
+
+    const keep = element.querySelector<HTMLElement>('[data-testid="cancel-keep"]')!;
+
+    expect(keep.getAttribute('aria-disabled')).toBe('true');
+    expect(keep.hasAttribute('disabled')).toBe(false);
+
+    keep.click();
+    await settle();
+
+    // The question is still being asked, and nothing claims the order was kept.
+    expect(element.querySelector('[data-testid="cancel-confirm-question"]')).not.toBeNull();
+    expect(element.querySelector('[data-testid="pay-announcement"]')?.textContent).not.toContain(
+      'still with us',
+    );
+
+    cancelRequest().flush({ orderNumber: 'SD-2026-000123' });
+    await settle();
+
+    orderRequest().flush(
+      order({ status: 'Cancelled', statusLabel: 'Cancelled', payment: null, canCancel: false }),
+    );
+    await settle();
+
+    expect(element.querySelector('[data-testid="pay-announcement"]')?.textContent).toContain(
+      'is cancelled',
+    );
+  });
+
   /** Keeping the order removes "Keep my order", which is the same removal in the other direction. */
   it('re-homes focus when Keep my order destroys the button pressed', async () => {
     await open(order());
