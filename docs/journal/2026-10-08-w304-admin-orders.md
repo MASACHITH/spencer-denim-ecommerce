@@ -226,6 +226,10 @@ every save.
 | 4 | **The no-promised-email sweep read the customer's "Email" field label as a promise.** It matches promise-shaped phrases now, not the bare word. The field is a staff member's way of telephoning somebody and refusing the word would be refusing the panel. | the browser suite |
 | 5 | Four column facts in my own first draft were wrong against the schema: `Couriers.TrackingUrlTemplate` is `nvarchar(500)` not 300, `Couriers.Phone` is `varchar(20)` not `nvarchar(30)`, the check constraint is `CK_Couriers_TrackingUrlTemplate` not `CK_Couriers_TrackingTemplate`, and the delivery snapshot's column is `DeliveryMethodCode` with **no** `Delivery_` prefix. Three of the four were in comments, which is the worse half: a wrong comment stops the next reader checking. Found by grepping my own new files for every column length, index and constraint name I had claimed and checking each against the configuration — worth doing again at the end of any task that quotes the schema. | reading the configuration |
 | 6 | `varchar` columns **substitute `?` for a non-ASCII character rather than erroring**, so a pasted tracking number with a non-breaking space in it would be stored as a number that 404s at the courier with nothing saying so. Both `TrackingNumber` and `Couriers.Phone` now refuse one. | reading the configuration |
+| 7 | **The dispatch was on the contract and on no screen.** The courier name and the tracking link came back from the API and the detail rendered neither — the list showed them, the detail had only the correction form. A field nothing reads is a field nobody will notice breaking. | `order-detail-page.spec.ts` |
+| 8 | **The courier select came up unselected on every order that already had one.** Angular applies an element's own property bindings before refreshing its children, so the select's value was written while the option list was still empty — and a select whose value names no option resets to the empty one. The selection is now on each `<option>`. | `order-detail-page.spec.ts` |
+| 9 | **A redundant expression with a comment claiming it did something.** `ReadDispatchAsync` wrote `template is null && order.CourierId is null ? null : order.CourierId`, which is `order.CourierId`, and said it handled a deleted courier — which `FK_Orders_Couriers_CourierId` (`NoAction`) makes impossible. | reading my own diff |
+| 10 | **The courier was selected by matching the order's snapshotted name against the live list**, which came up empty the moment somebody renamed a carrier — on an order that plainly had a courier, inviting a staff member to pick whichever looked right. The dispatch now carries the courier's id. | thinking about a rename |
 
 ## A test I deleted rather than let pass vacuously
 
@@ -253,6 +257,38 @@ the guard turns it red.
 | A staff **Mark as delivered** against the **auto-deliver job** | Exactly one (`^` asserted, not "at least one"); one history row. Which one is deliberately not asserted — either is correct |
 | A courier **deactivated** between the form's read and the press | Refused with `courier_unavailable`, nothing written |
 
+## Two latent races in other tasks' browser tests
+
+The whole Playwright suite came back with **exactly one failure, in a different test each run**:
+
+| Run | `styles.css` `aria-disabled` hunk | Failure |
+|---|---|---|
+| 1 | on | `admin-products.e2e.ts` → "moves a colour with the buttons and keeps focus on the one pressed" |
+| 2 | on | the same test |
+| 3 | off | `admin-catalog.e2e.ts` → "reorders with the keyboard alone, keeping focus on the row that moved" |
+
+A different reorder test, in a different file, of the same shape — which rules out this branch's one CSS
+change (the products file also passed **3/3** on its own with the hunk on) and names the real mechanism:
+
+> A reorder is a signal write, so Angular schedules the re-render as a **task**. Both tests then read the
+> DOM with `expect(await …)`, which is a **one-shot** assertion with no retry. Under the whole suite's load
+> — seventeen web servers competing with the browsers — the read happens before the render. And it reads
+> exactly like a product defect: the live region said the colour had moved while the inputs still showed
+> the old order.
+
+W3-04's 29 new tests are what pushed it over; the race was there before.
+
+**The products one is fixed** (`await expect.poll(names).toEqual(…)`), which is a two-line change that
+makes the assertion wait for the thing it is asserting. It has since passed 46/46 on its own and 118/118
+twice across the three admin files.
+
+**The catalog one is measured, diagnosed and deliberately left alone.** The same change there turned the
+failure into a 30-second timeout on the test's final `waitForResponse`: polling after `Alt+ArrowDown`
+changes the timing of the `Alt+ArrowUp` → `Enter` → Save sequence that follows, and whether `Save order` is
+still offered at that point depends on whether the staged order has returned to the server's. Reverting it
+put the file back to 118/118. That test needs its owner, and a one-line "fix" from a neighbouring task
+would be exactly the sort of change that hides something.
+
 ## Test numbers
 
 Run on this machine, `TEST_SQL_CONNECTION` pointed at `(localdb)\MSSQLLocalDB`.
@@ -260,19 +296,13 @@ Run on this machine, `TEST_SQL_CONNECTION` pointed at `(localdb)\MSSQLLocalDB`.
 | Suite | Before (main) | After | New |
 |---|---|---|---|
 | xUnit unit | 1,726 / 0 | **1,808 / 0** | 82 |
-| xUnit integration | 1,124 | **1,191 / 0** (21 m 8 s, whole assembly) | 67 |
-| Vitest shared / storefront / admin | 1,404 / 407 / 24 | 1,404 / **432** / 24 | 25 |
+| xUnit integration | 1,124 | **1,192 / 0** (whole assembly green at 1,191 before the rename test was added) | 68 |
+| Vitest shared / storefront / admin | 1,404 / 407 / 24 | 1,404 / **444** / 24 | 37 |
 | Playwright (chromium) | 891 / 0 | **920 total**: 919 passed, 1 pre-existing failure — see below | 29 |
 
-The one Playwright failure is `admin-products.e2e.ts` → "moves a colour with the buttons and keeps focus
-on the one pressed", on a screen this task does not touch. It passed **5/5** with `--workers=1
---repeat-each=5` in isolation. It is not dismissed as flaky on that alone, because this branch *does*
-touch something that screen uses: `styles.css` now gives `.adm-btn[aria-disabled='true']` the same
-`opacity` and `cursor` as `:disabled`, and the reorder buttons are `.adm-btn` with `aria-disabled`.
-Neither property affects focusability, and the test asserts focus — but the honest statement is that it
-was measured in isolation and not reproduced, and the second whole-suite run's result is in the report.
-**The whole-assembly integration run also looked hung at 16 minutes with 3 s of CPU and no SQL session,
-and was not**: it finished green at 21 m 8 s. Worth knowing before somebody kills one.
+**The whole-assembly integration run looked hung at 16 minutes with 3 s of CPU and no SQL session, and was
+not**: it finished green at 21 m 8 s. Worth knowing before somebody kills one. (An attempt to kill it was
+refused by the permission system, which turned out to be the right answer.)
 
 The Vitest figures in the brief were in the order *shared / storefront / admin*; on this machine the three
 projects report **1,404 (shared), 432 (admin, was 407), 24 (storefront)** — the brief's second and third
