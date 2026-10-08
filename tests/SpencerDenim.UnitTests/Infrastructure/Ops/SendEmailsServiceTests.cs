@@ -22,6 +22,9 @@ public sealed class SendEmailsServiceTests
 {
     private static CancellationToken Token => TestContext.Current.CancellationToken;
 
+    /// <summary>The instant every sweep below runs at, so an assertion about a time is exact.</summary>
+    private static readonly DateTime SweepClock = new(2026, 10, 9, 8, 33, 0, DateTimeKind.Utc);
+
     /// <summary>
     /// <b>The behaviour that matters today: an unconfigured SMTP queues and does not send.</b>
     /// </summary>
@@ -286,11 +289,43 @@ public sealed class SendEmailsServiceTests
 
         var job = new SendEmailsService(
             provider.GetRequiredService<IServiceScopeFactory>(),
-            new FixedClock(new DateTimeOffset(2026, 10, 9, 8, 33, 0, TimeSpan.Zero)),
+            new FixedClock(new DateTimeOffset(SweepClock, TimeSpan.Zero)),
             options,
             NullLogger<SendEmailsService>.Instance);
 
         await job.SweepAsync(TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>
+    /// The sweep claims with a lease of <c>Email:LeaseMinutes</c> ahead of its own clock, and a batch of
+    /// <c>Email:BatchSize</c>.
+    /// </summary>
+    /// <remarks>
+    /// <b>Added by W3-06's tester, because replacing <c>now.AddMinutes(options.LeaseMinutes)</c> with
+    /// <c>now</c> left all 1,920 tests green.</b> That mutant takes a lease that has <i>already</i>
+    /// expired, so the very next sweep's <c>ReleaseExpiredLeasesAsync</c> puts the row back in the queue
+    /// while the first sender's SMTP conversation is still in the air — and a second sender sends the
+    /// same message. <c>EmailOptions.LeaseMinutes</c>' own remark names that as the one failure the field
+    /// exists to prevent, and the options validator only checks the figure is positive, never that
+    /// anything uses it.
+    /// <para>
+    /// Both figures are asserted here rather than left to the integration suite, whose
+    /// <c>ClaimAsync</c> helper passes its own lease and therefore proves only the store's pass-through.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task The_sweep_claims_its_batch_under_a_lease_of_the_configured_length()
+    {
+        var store = new FakeStore();
+        store.Queue.Add(Claim(1));
+
+        await SweepAsync(store, new FakeTransport());
+
+        var claim = Assert.NotNull(store.LastClaim);
+
+        Assert.Equal(20, claim.BatchSize);
+        Assert.Equal(SweepClock, claim.NowUtc);
+        Assert.Equal(SweepClock.AddMinutes(5), claim.LeaseUntilUtc);
     }
 
     private static EmailOutboxClaim Claim(
@@ -384,6 +419,9 @@ public sealed class SendEmailsServiceTests
             return Task.FromResult(Released);
         }
 
+        /// <summary>The arguments of the last claim, so a test can assert the batch and the lease.</summary>
+        public (int BatchSize, DateTime NowUtc, DateTime LeaseUntilUtc)? LastClaim { get; private set; }
+
         public Task<IReadOnlyList<EmailOutboxClaim>> ClaimAsync(
             int batchSize,
             DateTime nowUtc,
@@ -391,6 +429,7 @@ public sealed class SendEmailsServiceTests
             CancellationToken cancellationToken)
         {
             ClaimCalls++;
+            LastClaim = (batchSize, nowUtc, leaseUntilUtc);
             Calls.Add("claim");
 
             if (ThrowOnClaim is { } exception)
