@@ -146,6 +146,11 @@ const PAGE_SIZE = 25;
 
     @if (isLoading()) {
       <p class="adm-muted">Loading orders…</p>
+    } @else if (page() === null) {
+      <!-- A failed read, with the refusal already shown above. The null check is a defect this screen's
+           own spec found: isEmpty() answers -1 === 0, which is false, so without this branch the list
+           rendered the page's rows over a null and a 403 blew the screen up with a TypeError instead of
+           showing the server's sentence. -->
     } @else if (isEmpty()) {
       <p class="adm-muted" data-testid="orders-empty">{{ emptyMessage() }}</p>
     } @else {
@@ -557,15 +562,19 @@ export class OrdersListPage {
   }
 
   /**
-   * Puts a sentence in the live region, **and makes it speak even when it is the same sentence**.
+   * Puts a sentence in the live region, **and makes it speak even when it is the same sentence** (ADM-22).
    *
-   * `role="status"` announces a *change*. Setting the region to the text it already holds is not one, so a
-   * staff member who pressed Search twice on a term that finds nothing would be told once and then get
-   * silence — on the second press, which is the one where they are already confused (ADM-22's defect).
+   * `role="status"` announces a *change*. Setting the region to the text it already holds is not one, so
+   * the region is emptied and the sentence put back once the view has caught up, which is a real mutation
+   * of real text. **Not a counter or a zero-width character:** a screen reader reads what is there, and
+   * "(2)" tells the listener nothing about their order.
    *
-   * So the region is emptied and the sentence put back once the view has caught up, which is a real
-   * mutation of real text. **Not a counter or a zero-width character:** a screen reader reads what is
-   * there, and "(2)" tells the listener nothing about their order.
+   * **On this screen the re-fire path is currently unreachable, and that is worth saying rather than
+   * claiming coverage it does not have.** Every action here announces an in-progress sentence and then a
+   * result sentence, so consecutive announcements always differ — which is the same resolution ADM-22
+   * itself reached ("gave the save two genuinely different sentences"). The guard stays because the next
+   * action added to this screen may not have an in-progress state, and because the couriers screen's
+   * validation path does reach it and is tested there.
    */
   private announce(message: string): void {
     if (this.said() !== message) {

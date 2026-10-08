@@ -113,7 +113,9 @@ public sealed class AdminSettingsEndpointTests(SqlServerDatabaseFixture sqlServe
             .Select(group => group.GetProperty("groupKey").GetString())
             .ToList();
 
-        Assert.Equal(["Store", "Contact", "Social"], groups);
+        // `Bank` is absent for a Settings.Edit holder and that is the point of the filter (doc 08 §3.8
+        // DB2); `Orders` arrived with W3-04 and is Settings.Edit, so it is here.
+        Assert.Equal(["Store", "Contact", "Social", "Orders"], groups);
 
         foreach (var group in body.GetProperty("groups").EnumerateArray())
         {

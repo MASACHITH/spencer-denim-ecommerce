@@ -243,8 +243,20 @@ public sealed class SettingsSchemaAndSeedTests(SqlServerDatabaseFixture sqlServe
 
     // ---- the seeder -------------------------------------------------------------------------------
 
+    /// <summary>
+    /// The seeder creates every catalogued key, with its metadata and with <b>no invented value</b>.
+    /// </summary>
+    /// <remarks>
+    /// <b>One key is seeded with a value and it is the only one allowed to be.</b> W3-04 added
+    /// <c>Orders.AutoDeliverAfterDays</c>, which doc 08 §3.8 states as <c>(7)</c> — a figure this
+    /// project's own documents give, not a fact only the client has. Everything else stays null, because a
+    /// seeded social address, bank account or registered address would be a value on a live shop that is
+    /// not the shop's. The assertion is driven by <c>SettingDefinition.SeedValue</c> rather than by a list
+    /// of exceptions, so a future key with a plausible-looking default is caught by the unit test that
+    /// pins which keys may carry one.
+    /// </remarks>
     [Fact]
-    public async Task The_seeder_creates_every_catalogued_key_with_a_null_value()
+    public async Task The_seeder_creates_every_catalogued_key_with_no_invented_value()
     {
         sqlServer.SkipIfUnavailable();
         await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, Token);
@@ -267,11 +279,20 @@ public sealed class SettingsSchemaAndSeedTests(SqlServerDatabaseFixture sqlServe
 
         // No placeholder values. A seeded social address would be the exact defect this task removes: an icon
         // on a live shop that does not go to the shop.
-        Assert.All(
-            SettingCatalog.All.Select(definition => rows[definition.Key]),
-            row => Assert.True(
-                row.Value is null || row.Key == SettingKeys.Store.LogoAssetId,
-                $"{row.Key} was seeded with a value; settings values belong to the client."));
+        //
+        // `Store.LogoAssetId` is excluded because another test in this assembly sets it and this one does
+        // not own it; everything else must hold exactly its catalogued seed value, which is null for every
+        // key that carries a client fact.
+        foreach (var definition in SettingCatalog.All.Where(
+            candidate => candidate.Key != SettingKeys.Store.LogoAssetId))
+        {
+            Assert.True(
+                string.Equals(rows[definition.Key].Value, definition.SeedValue, StringComparison.Ordinal),
+                $"{definition.Key} holds \"{rows[definition.Key].Value}\" and its catalogued seed value "
+                + $"is \"{definition.SeedValue}\". Settings values belong to the client, so only a figure "
+                + "this project's own documents state may be seeded — and a test that left one behind is "
+                + "a neighbour's fixture.");
+        }
     }
 
     /// <summary>
