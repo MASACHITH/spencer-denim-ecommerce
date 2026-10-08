@@ -38,7 +38,7 @@ sends one.
 | 3. Print the invoice / packing copy | ✅ | `OrderInvoicePage`, `GetOrderInvoiceQuery` |
 | 4. Select the courier, enter the tracking number | ✅ | the detail's dispatch form |
 | 5. Processing → Shipped, `ShippedAtUtc`, **queue `OrderShipped`** | ⚠️ **transition yes, email no** | `MarkShippedAsync`. `ops.EmailOutbox` is W3-06; nothing promises one |
-| 6. Customer follows the link / their order page | — | the shopper's order page already shows a timeline (W3-02) |
+| 6. Customer follows the link / their order page | ❌ **neither route exists** | the shopper's order page shows a status timeline (W3-02) and **no courier and no tracking number** — the public order contract has no such field. ACC-02's, and item 5a below |
 | 7. Courier delivers | — | outside the system |
 | 8. Mark as delivered, or **auto after 7 days** | ✅ | `MarkDeliveredAsync`, `AutoDeliverShippedService` + `AutoDeliverStore` |
 | 9. Delivered enables a Verified buyer review | — | P12's, not this task's |
