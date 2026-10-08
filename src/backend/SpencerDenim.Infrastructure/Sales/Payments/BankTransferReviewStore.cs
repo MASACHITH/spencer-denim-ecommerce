@@ -25,9 +25,11 @@ namespace SpencerDenim.Infrastructure.Sales.Payments;
 /// </para>
 /// <para>
 /// <b>There is no <c>sp_getapplock</c> here and no <c>Serializable</c>, deliberately.</b> Doc 08 names an
-/// application lock in exactly two places — the promo per-customer limit (§3.6) and the reference-data
-/// seeder — and neither is on this path; §4.1 and §5.5 specify conditional <c>UPDATE</c>s and row counts,
-/// and §5.2 explains at length why that is stronger here than an isolation level. An applock on the order
+/// application lock in two places — the promo per-customer limit (§3.6) and the last-Super-Admin guard
+/// (§3.1 DB4 rule 4, <c>sp_getapplock 'rbac:grants-all'</c>) — and neither is on this path. (It used to
+/// say "the reference-data seeder", which holds no applock anywhere; corrected by W3-04b's tester.)
+/// §4.1 and §5.5 specify conditional <c>UPDATE</c>s and row counts, and §5.2 explains at length why
+/// that is stronger here than an isolation level. An applock on the order
 /// would add a second, weaker gate beside the one the database already enforces, and <c>Serializable</c>
 /// would turn the lost race from "0 rows, here is why" into a deadlock to retry. Every transaction below
 /// is <c>ReadCommitted</c>, the same as checkout's.

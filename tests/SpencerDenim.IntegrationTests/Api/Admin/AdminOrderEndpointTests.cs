@@ -1193,6 +1193,209 @@ public sealed class AdminOrderEndpointTests(SqlServerDatabaseFixture sqlServer)
         sortOrder = 0,
     };
 
+    /// <summary>
+    /// Doc 11 P10 flow A on the wire: <c>Orders.Edit</c> cancels an unpaid order, with a reason.
+    /// </summary>
+    /// <remarks>
+    /// <b>The reason is required and a blank one is a 400 naming the field.</b> Doc 11 P10 step 1 has the
+    /// staff member "enter a reason", cancelling is irreversible for the customer, and the reason is what
+    /// is read back to them if they ask — so the screen asking for it is not enough, because the screen is
+    /// not the boundary.
+    /// </remarks>
+    [Fact]
+    public async Task Cancelling_an_unpaid_order_needs_a_reason_and_closes_it()
+    {
+        await using var host = await StartAsync();
+        var order = await PlaceOrderAsync(host);
+
+        using var editor = await host.SignInAsync(Permissions.Orders.Edit, Permissions.Orders.View);
+
+        // Doc 11 P10 step 2's guards, as the screen sees them.
+        var offered = await DetailAsync(editor, order.PublicId);
+        Assert.True(offered.GetProperty("actions").GetProperty("canCancel").GetBoolean());
+
+        // A body with no reason, a null one and a blank one are all refused, and each names the field
+        // rather than answering "malformed JSON" (issue #47's family).
+        foreach (var body in new object[]
+        {
+            new { note = (string?)null },
+            new { cancelReason = (string?)null },
+            new { cancelReason = "   " },
+        })
+        {
+            var refused = await TransitionAsync(
+                editor,
+                order.PublicId,
+                "cancel",
+                HttpStatusCode.BadRequest,
+                body);
+
+            Assert.True(refused.GetProperty("errors").TryGetProperty("cancelReason", out _));
+        }
+
+        // And nothing was written by any of the three.
+        var untouched = await DetailAsync(editor, order.PublicId);
+        Assert.Equal("PendingPayment", untouched.GetProperty("status").GetString());
+        Assert.Null(untouched.GetProperty("cancelReason").GetString());
+
+        var applied = await TransitionAsync(
+            editor,
+            order.PublicId,
+            "cancel",
+            HttpStatusCode.OK,
+            new { cancelReason = "The customer telephoned to cancel." });
+
+        Assert.Equal("Cancelled", applied.GetProperty("status").GetString());
+        Assert.Equal("Cancelled", applied.GetProperty("statusLabel").GetString());
+
+        var detail = await DetailAsync(editor, order.PublicId);
+
+        Assert.Equal("Cancelled", detail.GetProperty("status").GetString());
+        Assert.Equal("Released", detail.GetProperty("stockState").GetString());
+        Assert.Equal(
+            "The customer telephoned to cancel.",
+            detail.GetProperty("cancelReason").GetString());
+        Assert.NotNull(detail.GetProperty("closedAtUtc").GetString());
+
+        // The panel is gone, and that is the assertion that matters on this screen: a Cancel form left on
+        // a cancelled order is a control that can only ever fail.
+        Assert.False(detail.GetProperty("actions").GetProperty("canCancel").GetBoolean());
+
+        // The timeline says who, which is doc 11 P10 step 3's record.
+        var closing = detail.GetProperty("history").EnumerateArray()
+            .Last(entry => entry.GetProperty("toStatus").GetString() == "Cancelled");
+
+        Assert.Equal("Staff", closing.GetProperty("source").GetString());
+        Assert.NotNull(closing.GetProperty("changedByUserEmail").GetString());
+
+        // A second attempt is a 409 carrying the order's current state, not a 400 and not a 500: nothing
+        // is wrong with the request, the world moved.
+        var again = await TransitionAsync(
+            editor,
+            order.PublicId,
+            "cancel",
+            HttpStatusCode.Conflict,
+            new { cancelReason = "Again." });
+
+        Assert.Equal("order_not_cancellable", again.GetProperty("code").GetString());
+        Assert.Equal("Cancelled", again.GetProperty("orderStatus").GetString());
+    }
+
+    /// <summary>
+    /// <b>A cancelled order can still take the transfer that arrives the next day, and there is a control
+    /// for it.</b> Doc 08 §4.1's <c>Cancelled → Paid</c> edge, end to end through the screens.
+    /// </summary>
+    /// <remarks>
+    /// <b>This is the gap W3-04b opened and did not close.</b> Cancelling closes the order's open bank
+    /// payment to <c>Cancelled</c> (doc 08 §4.3), and <c>AdminOrderActions.CanAcceptLatePayment</c> looked
+    /// only for <c>Expired</c> or <c>Pending</c> — so the one documented edge out of <c>Cancelled</c> had
+    /// no button anywhere and a shop could cancel an order and then be unable to accept the money that
+    /// turned up. The money transaction was never the problem: <c>AcceptLateAsync</c> claims on
+    /// <c>Status IN (5,6)</c> and already took a <c>Cancelled</c> payment, which W3-03 put in its list
+    /// deliberately and marked latent.
+    /// <para>
+    /// <b>Both ends on one row, which is the point.</b> A test that only asserted the flag would pass
+    /// against a transaction that refused, and a test that only pressed the route would pass against a
+    /// screen with nothing on it. This asserts the flag, then presses the action it offers, then asserts
+    /// the order is paid with an invoice number and its stock taken again.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task A_cancelled_order_offers_accept_late_payment_and_applies_it()
+    {
+        await using var host = await StartAsync();
+        var order = await PlaceOrderAsync(host);
+
+        using var editor = await host.SignInAsync(Permissions.Orders.Edit, Permissions.Orders.View);
+
+        await TransitionAsync(
+            editor,
+            order.PublicId,
+            "cancel",
+            HttpStatusCode.OK,
+            new { cancelReason = "The customer telephoned to cancel." });
+
+        var cancelled = await DetailAsync(editor, order.PublicId);
+
+        Assert.Equal(nameof(OrderStatus.Cancelled), cancelled.GetProperty("status").GetString());
+
+        // The payment this flag has to recognise. It is `Cancelled`, not `Expired` and not `Pending`.
+        var closed = cancelled.GetProperty("payments").EnumerateArray().Last();
+        Assert.Equal(nameof(PaymentStatus.Cancelled), closed.GetProperty("status").GetString());
+
+        // The screen offers it, which is the half that was missing.
+        Assert.True(
+            cancelled.GetProperty("actions").GetProperty("canAcceptLatePayment").GetBoolean(),
+            "a cancelled bank-transfer order must offer Accept late payment (doc 08 §4.1 Cancelled → Paid)");
+
+        // And the action behind it applies, which is the half that already worked.
+        using var approver = await host.SignInAsync(Permissions.Orders.Approve);
+        using var accepted = await approver.PostAsJsonAsync(
+            new Uri($"/api/admin/orders/bank-transfers/{order.PublicId:D}/accept-late", UriKind.Relative),
+            new { note = "The transfer arrived the day after they cancelled." },
+            JsonOptions,
+            Token);
+
+        Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
+
+        var paid = await DetailAsync(editor, order.PublicId);
+
+        Assert.Equal(nameof(OrderStatus.Paid), paid.GetProperty("status").GetString());
+        Assert.Equal(nameof(OrderStockState.Committed), paid.GetProperty("stockState").GetString());
+        Assert.NotNull(paid.GetProperty("invoiceNumber").GetString());
+        Assert.Null(paid.GetProperty("closedAtUtc").GetString());
+
+        // The flag goes out again once there is nothing left to accept, so the control cannot be pressed
+        // twice — the other half of every one of these flags.
+        Assert.False(paid.GetProperty("actions").GetProperty("canAcceptLatePayment").GetBoolean());
+        Assert.False(paid.GetProperty("actions").GetProperty("canCancel").GetBoolean());
+    }
+
+    /// <summary>
+    /// <b>A paid order offers no Cancel, and refuses one if asked.</b>
+    /// </summary>
+    /// <remarks>
+    /// Doc 11 P10's table: a paid order is refunded, never cancelled — and <c>Orders.Refund</c> is unbuilt
+    /// (W3-05), refunds being manual for v1 and recorded in the order's internal note. So the only honest
+    /// screen is one that offers nothing here, and the refusal has to say what to do instead because there
+    /// is no button for it.
+    /// </remarks>
+    [Fact]
+    public async Task A_paid_order_offers_no_cancel_and_refuses_one()
+    {
+        await using var host = await StartAsync();
+        var order = await PlaceOrderAsync(host);
+
+        using var approver = await host.SignInAsync(Permissions.Orders.Approve);
+        await ApproveAsync(approver, order.PublicId);
+
+        using var editor = await host.SignInAsync(Permissions.Orders.Edit, Permissions.Orders.View);
+
+        var detail = await DetailAsync(editor, order.PublicId);
+        Assert.Equal("Paid", detail.GetProperty("status").GetString());
+        Assert.False(detail.GetProperty("actions").GetProperty("canCancel").GetBoolean());
+
+        var refused = await TransitionAsync(
+            editor,
+            order.PublicId,
+            "cancel",
+            HttpStatusCode.Conflict,
+            new { cancelReason = "They changed their mind." });
+
+        Assert.Equal("order_not_cancellable", refused.GetProperty("code").GetString());
+        Assert.Equal("Paid", refused.GetProperty("orderStatus").GetString());
+        Assert.Contains(
+            "refunded instead",
+            refused.GetProperty("detail").GetString()!,
+            StringComparison.OrdinalIgnoreCase);
+
+        // Still paid, still committed: a refusal must change nothing, and the thing that must not change
+        // here is stock on an order whose money the shop has.
+        var after = await DetailAsync(editor, order.PublicId);
+        Assert.Equal("Paid", after.GetProperty("status").GetString());
+        Assert.Equal("Committed", after.GetProperty("stockState").GetString());
+    }
+
     /// <summary>Every admin route this file guards, with a method that reaches it.</summary>
     private static IEnumerable<(HttpMethod Method, string Path)> AdminRoutes()
     {
@@ -1213,6 +1416,7 @@ public sealed class AdminOrderEndpointTests(SqlServerDatabaseFixture sqlServer)
             "mark-delivered",
             "dispatch",
             "internal-note",
+            "cancel",
         })
         {
             yield return (HttpMethod.Post, $"{OrderUrl(order)}/{segment}");

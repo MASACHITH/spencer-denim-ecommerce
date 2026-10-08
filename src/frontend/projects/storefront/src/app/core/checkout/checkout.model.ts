@@ -215,6 +215,19 @@ export interface OrderConfirmationDto {
 
   /** What the customer has already sent about this payment, or null when there is nothing to attach to. */
   readonly proof: OrderPaymentProofDto | null;
+
+  /**
+   * Whether the shopper may cancel this order right now (doc 11 P10 flow A).
+   *
+   * **Sent by the server rather than inferred from `status`.** Doc 11 P10 step 2 has four guards and two
+   * of them — a capture in flight, and a payment that has already settled the order — are states this
+   * page cannot see at all. Showing the button for every `PendingPayment` order would offer a shopper an
+   * action the server will refuse.
+   *
+   * False for a paid order: doc 11 P10's table says a paid order is refunded, never cancelled, and this
+   * build has no refund path, so the page must not offer one.
+   */
+  readonly canCancel: boolean;
 }
 
 /** The customer-facing "how to pay" (doc 11 P7 step 1). */
@@ -271,6 +284,17 @@ export interface SlipUploadedDto {
   readonly fileName: string;
   readonly contentType: string;
   readonly uploadedAtUtc: string;
+}
+
+/**
+ * What `POST /api/orders/{token}/cancel` answers (doc 11 P10 flow A).
+ *
+ * **The order number and nothing else.** The page re-reads the order from `GET /api/orders/{token}`
+ * straight afterwards, which is the one projection that decides what a shopper is told about their own
+ * order; a second, smaller description of the same row would be a second thing that could disagree.
+ */
+export interface CancelOrderDto {
+  readonly orderNumber: string;
 }
 
 /** The delivery address a shopper typed. */

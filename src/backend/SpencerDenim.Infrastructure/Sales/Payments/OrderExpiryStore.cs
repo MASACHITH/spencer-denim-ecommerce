@@ -17,6 +17,13 @@ namespace SpencerDenim.Infrastructure.Sales.Payments;
 /// also why the batch read may safely hand the same id to two instances.
 /// </para>
 /// <para>
+/// <b>The release itself is <see cref="OrderStockRelease"/>, shared with cancel.</b> Doc 08 §4.1 gives
+/// <c>PendingPayment → Expired</c> and <c>PendingPayment → Cancelled</c> the same side effect ("As
+/// Expired, reason Cancelled"), so W3-04b extracted this method's loop rather than writing a second one:
+/// the lock order, the duplicate-variant merge and the row-count check are the three things a second copy
+/// would be free to get differently, and each of them is an oversell or a deadlock.
+/// </para>
+/// <para>
 /// <b>What it does not do, and why that is not silently skipped.</b> Doc 08 §5.6 step 4 also writes
 /// <c>Release</c> movements and returns the promo use. <c>inventory.InventoryMovements</c> does not exist
 /// (#108, W1-05) and <c>marketing.PromoCodes</c> does not exist (ADM-13 / W3-05), so
@@ -113,7 +120,17 @@ internal sealed class OrderExpiryStore(AppDbContext dbContext) : IOrderExpirySto
                     return false;
                 }
 
-                await ReleaseStockAsync(orderId, nowUtc, cancellationToken);
+                await OrderStockRelease.ReleaseAsync(
+                    dbContext,
+                    orderId,
+                    nowUtc,
+                    "expiry",
+                    cancellationToken);
+
+                // Doc 08 §5.6 step 4's promo decrement, a no-op while marketing.PromoCodes does not
+                // exist. Called rather than commented out, so the statement lands in one place for both
+                // this job and cancel the day W3-05 creates the table.
+                await OrderStockRelease.ReturnPromoUseAsync(dbContext, orderId, cancellationToken);
 
                 // Doc 08 §4.1: "open payments (0/1) -> Expired". Plural and set-based: UX_Payments_OneOpen
                 // allows at most one today, but the statement is written for the rule rather than for the
@@ -156,57 +173,5 @@ internal sealed class OrderExpiryStore(AppDbContext dbContext) : IOrderExpirySto
                 dbContext.ChangeTracker.Clear();
             }
         });
-    }
-
-    /// <summary>
-    /// Doc 08 §5.6 step 3: give the reservation back, line by line, in ascending <c>VariantId</c>.
-    /// </summary>
-    /// <remarks>
-    /// The sort is doc 08 §5.3's lock order, shared with placement, approval and every admin stock change,
-    /// so two of them can never take the same two rows in opposite orders.
-    /// <para>
-    /// <b>A row count other than 1 throws</b> (§5.6 step 3: "the row count must be 1, otherwise roll back
-    /// and alert"). <c>Reserved &gt;= q</c> can only fail if the reservation this order made at placement
-    /// has already been given back by something else, which means the figures have drifted — and releasing
-    /// stock that was never held would invent inventory. <c>ops.AdminAlerts</c> does not exist, so the
-    /// alert is the exception reaching the job's log, and doc 08 §5.9's nightly reconciliation is the other
-    /// half of the signal. The order stays <c>PendingPayment</c> and the next run tries again, which is the
-    /// right behaviour for a transient cause and a loud one for a persistent one.
-    /// </para>
-    /// </remarks>
-    private async Task ReleaseStockAsync(int orderId, DateTime nowUtc, CancellationToken cancellationToken)
-    {
-        var lines = await dbContext.OrderLines
-            .AsNoTracking()
-            .Where(line => line.OrderId == orderId)
-            .Select(line => new { line.VariantId, line.Quantity })
-            .ToListAsync(cancellationToken);
-
-        var merged = lines
-            .GroupBy(line => line.VariantId)
-            .Select(group => new { VariantId = group.Key, Quantity = group.Sum(line => line.Quantity) })
-            .OrderBy(line => line.VariantId)
-            .ToList();
-
-        foreach (var line in merged)
-        {
-            var affected = await dbContext.Database.ExecuteSqlInterpolatedAsync(
-                $"""
-                UPDATE inventory.StockLevels
-                   SET Reserved = Reserved - {line.Quantity},
-                       UpdatedAtUtc = {nowUtc}
-                 WHERE VariantId = {line.VariantId}
-                   AND Reserved >= {line.Quantity};
-                """,
-                cancellationToken);
-
-            if (affected != 1)
-            {
-                throw new InvalidOperationException(
-                    $"Order {orderId} could not release {line.Quantity} of variant {line.VariantId} on "
-                    + "expiry: the reservation made at placement is no longer there. Stock levels and the "
-                    + "order lines have drifted (doc 08 §5.6, §5.9).");
-            }
-        }
     }
 }

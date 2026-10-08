@@ -86,6 +86,10 @@ function order(overrides: Partial<OrderConfirmationDto> = {}): OrderConfirmation
     // the only kind that can fail when the page stops rendering it.
     payment: bankInstructions(),
     proof: null,
+
+    // Doc 11 P10 flow A. The server decides this from four guards, two of which this page cannot see;
+    // every fixture here is a fresh unpaid order, which is the one state in which it is true.
+    canCancel: true,
     ...overrides,
   };
 }
@@ -196,6 +200,348 @@ describe('OrderPage (CHK-04)', () => {
 
   afterEach(() => TestBed.inject(HttpTestingController).verify());
 
+  /** Doc 11 P10 flow A: the shopper's own Cancel order, confirmed before it fires. */
+  function cancelRequest(): TestRequest {
+    return http.expectOne(
+      (request) =>
+        request.url === `${CheckoutApi.orderUrl}/${TOKEN}/cancel` && request.method === 'POST',
+    );
+  }
+
+  it('offers Cancel this order only when the server says it can be cancelled', async () => {
+    await open(order());
+
+    expect(element.querySelector('[data-testid="cancel-panel"]')).not.toBeNull();
+    expect(element.querySelector('[data-testid="cancel-order"]')).not.toBeNull();
+
+    // Doc 11 P10's table: a paid order is refunded, never cancelled — and there is no refund path in this
+    // build, so the page must offer nothing rather than a control that can only fail.
+    await open(order({ status: 'Paid', statusLabel: 'Paid', payment: null, canCancel: false }));
+
+    expect(element.querySelector('[data-testid="cancel-panel"]')).toBeNull();
+  });
+
+  /**
+   * **Two presses, because this is irreversible for them.**
+   *
+   * The first reveals the question and sends nothing — `http.verify()` in `afterEach` is what proves the
+   * "sends nothing" half. A single press that fired would mean one stray tap on a phone closed somebody's
+   * order and put their items back on sale.
+   */
+  it('asks before it cancels, and the first press sends nothing', async () => {
+    await open(order());
+
+    element.querySelector<HTMLElement>('[data-testid="cancel-order"]')!.click();
+    await settle();
+
+    expect(element.querySelector('[data-testid="cancel-confirm-question"]')?.textContent).toContain(
+      'SD-2026-000123',
+    );
+    expect(element.querySelector('[data-testid="cancel-confirm"]')).not.toBeNull();
+    expect(element.querySelector('[data-testid="cancel-keep"]')).not.toBeNull();
+
+    // And "Keep my order" really keeps it: the question goes away and still nothing is sent.
+    element.querySelector<HTMLElement>('[data-testid="cancel-keep"]')!.click();
+    await settle();
+
+    expect(element.querySelector('[data-testid="cancel-confirm-question"]')).toBeNull();
+    expect(element.querySelector('[data-testid="cancel-order"]')).not.toBeNull();
+  });
+
+  it('cancels on the second press and re-reads the order from the server', async () => {
+    await open(order());
+
+    element.querySelector<HTMLElement>('[data-testid="cancel-order"]')!.click();
+    await settle();
+
+    element.querySelector<HTMLElement>('[data-testid="cancel-confirm"]')!.click();
+    await settle();
+
+    const request = cancelRequest();
+
+    // No body: doc 11 P10 asks the staff member for a reason and the customer only to press the button.
+    expect(request.request.body).toBeNull();
+
+    request.flush({ orderNumber: 'SD-2026-000123' });
+    await settle();
+
+    // **It re-reads rather than redrawing from what it sent**, which is the only way the page can show
+    // the order's real state — and `statusLabel` is the server's wording, which the page prints instead of
+    // `status.toLowerCase()`.
+    orderRequest().flush(
+      order({
+        status: 'Cancelled',
+        statusLabel: 'Cancelled',
+        payment: null,
+        proof: null,
+        canCancel: false,
+      }),
+    );
+    await settle();
+
+    expect(element.querySelector('[data-testid="cancel-panel"]')).toBeNull();
+    expect(element.querySelector('[data-testid="pay-panel"]')).toBeNull();
+    expect(text()).toContain('This order is cancelled.');
+  });
+
+  /**
+   * A 404 is the ordinary refusal on this route, and it means "this order can no longer be cancelled".
+   *
+   * The page cannot be told which of the reasons applies — the token never expires and is a guest's only
+   * credential, so "no such order" and "that order is already paid" are deliberately the same answer — so
+   * the sentence has to cover them all, and the page re-reads to show where the order actually is.
+   */
+  it('explains a refused cancel and reloads the order rather than guessing', async () => {
+    await open(order());
+
+    element.querySelector<HTMLElement>('[data-testid="cancel-order"]')!.click();
+    await settle();
+
+    element.querySelector<HTMLElement>('[data-testid="cancel-confirm"]')!.click();
+    await settle();
+
+    cancelRequest().flush({ title: 'Not found', status: 404 }, { status: 404, statusText: 'Not Found' });
+    await settle();
+
+    orderRequest().flush(order({ status: 'Paid', statusLabel: 'Paid', payment: null, canCancel: false }));
+    await settle();
+
+    // **The panel is gone and the message is not**, which is the point: the re-read turned `canCancel`
+    // false, and the explanation used to live inside the panel — so a shopper whose press lost the race
+    // to the expiry sweep was told nothing at all.
+    expect(element.querySelector('[data-testid="cancel-panel"]')).toBeNull();
+
+    const message = element.querySelector('[data-testid="cancel-error"]')?.textContent ?? '';
+
+    expect(message).toContain('can no longer be cancelled');
+
+    // And the question is not left half-asked over an order that has moved.
+    expect(element.querySelector('[data-testid="cancel-confirm-question"]')).toBeNull();
+  });
+
+  /**
+   * **A second press while the first is in flight sends nothing** (#109's other half).
+   *
+   * The button carries `aria-disabled` rather than `disabled`, because disabling a control under the
+   * shopper's own finger throws focus to `<body>` — so the guard that `disabled` would have provided has
+   * to be in the handler, and this is the test that proves it is. Without it, a shopper on a slow Sri
+   * Lankan mobile connection who taps twice sends two cancels for one order.
+   *
+   * `http.verify()` in `afterEach` is what fails if a second request was made, and the `aria-disabled`
+   * attribute is asserted too: the look and the refusal are two different promises and a screen reader
+   * only hears the first.
+   */
+  it('refuses a second press while the cancel is in flight', async () => {
+    await open(order());
+
+    element.querySelector<HTMLElement>('[data-testid="cancel-order"]')!.click();
+    await settle();
+
+    const confirm = element.querySelector<HTMLElement>('[data-testid="cancel-confirm"]')!;
+
+    confirm.click();
+    await settle();
+
+    expect(confirm.getAttribute('aria-disabled')).toBe('true');
+    expect(confirm.hasAttribute('disabled')).toBe(false);
+
+    confirm.click();
+    confirm.click();
+    await settle();
+
+    // Exactly one, and it is still unanswered.
+    const pending = http.match(
+      (request) =>
+        request.url === `${CheckoutApi.orderUrl}/${TOKEN}/cancel` && request.method === 'POST',
+    );
+
+    expect(pending).toHaveLength(1);
+
+    pending[0].flush({ orderNumber: 'SD-2026-000123' });
+    await settle();
+
+    orderRequest().flush(
+      order({ status: 'Cancelled', statusLabel: 'Cancelled', payment: null, canCancel: false }),
+    );
+    await settle();
+  });
+
+  /**
+   * Every step of the cancel flow is announced, and **the ADM-22 re-fire guard is not reachable from
+   * here**, which is said rather than faked.
+   *
+   * The first version of this test asserted the trailing space the guard appends, and it failed: pressing
+   * Cancel, keeping the order and pressing again puts "Your order is still with us." between the two
+   * identical questions, so the second one *is* a change and the guard is never entered. That is the
+   * same resolution ADM-22 itself reached, and the same one W3-04 reached on the admin orders list — a
+   * test for an unreachable path is a test that cannot fail. The guard's own coverage on this page is
+   * "re-announces an identical sentence when the same thing is copied twice", further down, where the
+   * identical sentence really does arrive twice in a row.
+   */
+  it('announces each step of the cancel flow, and keeping the order says so', async () => {
+    await open(order());
+
+    const region = element.querySelector('[data-testid="pay-announcement"]')!;
+
+    element.querySelector<HTMLElement>('[data-testid="cancel-order"]')!.click();
+    await settle();
+
+    const asked = region.textContent ?? '';
+    expect(asked).toContain('Cancel this order?');
+
+    element.querySelector<HTMLElement>('[data-testid="cancel-keep"]')!.click();
+    await settle();
+
+    const kept = region.textContent ?? '';
+    expect(kept).toContain('still with us');
+    expect(kept).not.toBe(asked);
+
+    element.querySelector<HTMLElement>('[data-testid="cancel-order"]')!.click();
+    await settle();
+
+    expect(region.textContent).toContain('Cancel this order?');
+  });
+
+  /**
+   * #109, arriving by node removal rather than by `[disabled]`.
+   *
+   * **Both presses in the cancel flow destroy the control that was pressed.** The first swaps the whole
+   * branch of the template, so "Cancel this order" is removed; the applied cancel turns `canCancel` false
+   * and removes the panel, so "Yes, cancel it" is removed. A destroyed focused node sends focus to
+   * `<body>`, which is what a Chromium probe measured on this page before the re-homing existed — twice,
+   * once after each press — and which the admin order detail already solves with the same method.
+   *
+   * **And the live region has to survive**, which it did not: it lived inside the pay panel, so a
+   * successful cancel moved the order off `PendingPayment` and took the region away with it. The
+   * announcement was written into a node the re-read then removed, so the one thing this page can tell a
+   * screen-reader user about the most destructive action it offers went nowhere. That is the same defect
+   * the refusal message had, one block further down, in the same screen.
+   */
+  it('keeps the live region and re-homes focus when a cancel destroys the control pressed', async () => {
+    await open(order());
+
+    const ask = element.querySelector<HTMLElement>('[data-testid="cancel-order"]')!;
+    ask.focus();
+    expect(document.activeElement).toBe(ask);
+
+    ask.click();
+    await settle();
+    await fixture.whenStable();
+
+    // The button is gone, so focus cannot still be on it — and it is on the sentence rather than on
+    // `<body>`.
+    expect(ask.isConnected).toBe(false);
+    expect(document.activeElement).toBe(element.querySelector('[data-testid="pay-announcement"]'));
+
+    const confirm = element.querySelector<HTMLElement>('[data-testid="cancel-confirm"]')!;
+    confirm.focus();
+    confirm.click();
+    await settle();
+
+    cancelRequest().flush({ orderNumber: 'SD-2026-000123' });
+    await settle();
+
+    orderRequest().flush(
+      order({ status: 'Cancelled', statusLabel: 'Cancelled', payment: null, canCancel: false }),
+    );
+    await settle();
+    await fixture.whenStable();
+
+    // **The region is still on the page**, although the pay panel and the cancel panel are not — which
+    // is the assertion that would have failed before it was moved out of the pay panel.
+    const region = element.querySelector('[data-testid="pay-announcement"]');
+
+    expect(element.querySelector('[data-testid="pay-panel"]')).toBeNull();
+    expect(element.querySelector('[data-testid="cancel-panel"]')).toBeNull();
+    expect(region).not.toBeNull();
+    expect(region!.textContent).toContain('is cancelled');
+
+    expect(confirm.isConnected).toBe(false);
+    expect(document.activeElement).toBe(region);
+  });
+
+  /**
+   * **"Keep my order" is refused while the cancel is on the wire**, which it was not.
+   *
+   * The request cannot be recalled, so the press had no truthful effect — it put the panel back to
+   * "Cancel this order" and announced "Your order is still with us." about an order that was being
+   * cancelled as it said so. A screen-reader user heard the false sentence and then the true one.
+   */
+  it('refuses Keep my order while the cancel is in flight, and says nothing untrue', async () => {
+    await open(order());
+
+    element.querySelector<HTMLElement>('[data-testid="cancel-order"]')!.click();
+    await settle();
+
+    element.querySelector<HTMLElement>('[data-testid="cancel-confirm"]')!.click();
+    await settle();
+
+    const keep = element.querySelector<HTMLElement>('[data-testid="cancel-keep"]')!;
+
+    expect(keep.getAttribute('aria-disabled')).toBe('true');
+    expect(keep.hasAttribute('disabled')).toBe(false);
+
+    keep.click();
+    await settle();
+
+    // The question is still being asked, and nothing claims the order was kept.
+    expect(element.querySelector('[data-testid="cancel-confirm-question"]')).not.toBeNull();
+    expect(element.querySelector('[data-testid="pay-announcement"]')?.textContent).not.toContain(
+      'still with us',
+    );
+
+    cancelRequest().flush({ orderNumber: 'SD-2026-000123' });
+    await settle();
+
+    orderRequest().flush(
+      order({ status: 'Cancelled', statusLabel: 'Cancelled', payment: null, canCancel: false }),
+    );
+    await settle();
+
+    expect(element.querySelector('[data-testid="pay-announcement"]')?.textContent).toContain(
+      'is cancelled',
+    );
+  });
+
+  /** Keeping the order removes "Keep my order", which is the same removal in the other direction. */
+  it('re-homes focus when Keep my order destroys the button pressed', async () => {
+    await open(order());
+
+    element.querySelector<HTMLElement>('[data-testid="cancel-order"]')!.click();
+    await settle();
+
+    const keep = element.querySelector<HTMLElement>('[data-testid="cancel-keep"]')!;
+    keep.focus();
+    keep.click();
+    await settle();
+    await fixture.whenStable();
+
+    expect(keep.isConnected).toBe(false);
+    expect(document.activeElement).toBe(element.querySelector('[data-testid="pay-announcement"]'));
+  });
+
+  /**
+   * **Nothing is re-homed when nothing was lost**, which is the half that makes the rule safe.
+   *
+   * The reference box survives every re-read, and yanking the caret out of it mid-sentence would be a
+   * worse defect than the one being fixed — so the node is checked for `isConnected` first.
+   */
+  it('leaves focus alone when the control pressed is still there', async () => {
+    await open(order());
+
+    const box = element.querySelector<HTMLElement>('[data-testid="pay-reference-input"]')
+      ?? element.querySelector<HTMLElement>('input[type="text"]')!;
+
+    box.focus();
+
+    element.querySelector<HTMLElement>('[data-testid="cancel-order"]')!.click();
+    await settle();
+    await fixture.whenStable();
+
+    expect(box.isConnected).toBe(true);
+    expect(document.activeElement).toBe(box);
+  });
+
   it('asks for the order before the first change detection', () => {
     create();
     orderRequest().flush(order());
@@ -305,7 +651,11 @@ describe('OrderPage (CHK-04)', () => {
    * different questions, and conflating them is how a paid order would keep asking for money.
    */
   it('shows no pay panel once the order is paid', async () => {
-    await open(order({ status: 'Paid', payment: null, proof: null }));
+    // `canCancel: false`, as the server sends it for a paid order (doc 11 P10's table: refunded,
+    // never cancelled). Without it this fixture drew the Cancel panel, so the page under test said
+    // "You have not paid for this order" on an order the fixture called Paid - a contradiction no
+    // assertion here looked at, in a state the reader cannot produce.
+    await open(order({ status: 'Paid', payment: null, proof: null, canCancel: false }));
 
     expect(element.querySelector('[data-testid="pay-panel"]')).toBeNull();
     expect(text()).toContain('Paid.');
@@ -331,6 +681,7 @@ describe('OrderPage (CHK-04)', () => {
         statusLabel: 'Ready for collection',
         payment: null,
         proof: null,
+        canCancel: false,
       }),
     );
 
@@ -340,7 +691,7 @@ describe('OrderPage (CHK-04)', () => {
 
   it('tells a delivery customer their order is shipped', async () => {
     await open(
-      order({ status: 'Shipped', statusLabel: 'Shipped', payment: null, proof: null }),
+      order({ status: 'Shipped', statusLabel: 'Shipped', payment: null, proof: null, canCancel: false }),
     );
 
     expect(text()).toContain('This order is shipped.');
@@ -349,7 +700,13 @@ describe('OrderPage (CHK-04)', () => {
   /** And "Collected" rather than "delivered" once a pickup order has been handed over. */
   it('tells a pickup customer their order was collected, not delivered', async () => {
     await open(
-      order({ status: 'Delivered', statusLabel: 'Collected', payment: null, proof: null }),
+      order({
+        status: 'Delivered',
+        statusLabel: 'Collected',
+        payment: null,
+        proof: null,
+        canCancel: false,
+      }),
     );
 
     expect(text()).toContain('This order is collected.');

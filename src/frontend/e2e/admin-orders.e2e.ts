@@ -24,6 +24,10 @@ const PICKUP_ORDER = 'SD-2026-000124';
 const EXPIRED_ORDER = 'SD-2026-000125';
 const EXPIRED_TOKEN = '66666666-6666-4666-8666-666666666666';
 
+/** W3-04b: the only kind of order doc 11 P10 flow A can cancel. */
+const UNPAID_ORDER = 'SD-2026-000126';
+const UNPAID_TOKEN = '77777777-7777-4777-8777-777777777777';
+
 /**
  * **The server has to be this worktree's own before a single answer from it is trusted.**
  *
@@ -405,6 +409,64 @@ test.describe('the order detail and doc 11 P9’s workflow', () => {
   });
 
   /**
+   * Doc 11 P10 flow A: cancel an unpaid order, with a reason.
+   *
+   * **The reason is required and the browser never sends a blank one**, which is the half a jsdom spec
+   * cannot see: the form is a real form, Enter submits it, and the message appears with no request made.
+   */
+  test('cancels an unpaid order, and refuses to do it without a reason', async ({ page }) => {
+    await openDetail(page, UNPAID_TOKEN, UNPAID_ORDER);
+
+    await expect(page.locator('[data-testid="cancel-order"]')).toBeVisible();
+
+    // Pressed with the box empty: a message, and the order has not moved.
+    await page.locator('[data-testid="cancel-order"]').click();
+
+    await expect(page.locator('[data-testid="cancel-error"]')).toContainText('Say why');
+    await expect(page.locator('[data-testid="order-status"]')).toContainText('Awaiting payment');
+
+    await page
+      .locator('[data-testid="cancel-reason-input"]')
+      .fill('Customer telephoned to cancel.');
+    await page.locator('[data-testid="cancel-order"]').click();
+
+    await expect(page.locator('[data-testid="order-status"]')).toContainText('Cancelled');
+    await expect(page.locator('[data-testid="cancel-reason"]')).toContainText(
+      'Customer telephoned to cancel.',
+    );
+
+    // **The form is gone**, which is the assertion that matters: a Cancel form left on a cancelled order
+    // is a control that can only ever fail.
+    await expect(page.locator('[data-testid="cancel-order"]')).toHaveCount(0);
+
+    // And focus is on something real. The applied cancel destroyed the control that was pressed, which
+    // is #109's other half — `aria-disabled` keeps the press from throwing focus to the body, and
+    // `afterNextRender` re-homes it when the node itself goes.
+    expect(await page.evaluate(() => document.activeElement?.tagName)).not.toBe('BODY');
+
+    // **The one edge out of Cancelled still has a control.** Doc 08 §4.1 allows Cancelled → Paid, and
+    // cancelling closed this order's bank payment to Cancelled — which `CanAcceptLatePayment` ignored
+    // until the tester widened it, so a shop could cancel an order and then be unable to accept the
+    // transfer that arrived the next day. `AdminOrderEndpointTests` asserts both ends on a real row.
+    await expect(page.locator('[data-testid="accept-late"]')).toBeVisible();
+  });
+
+  /**
+   * Doc 11 P10's table: a paid order is refunded, never cancelled — and there is no refund screen.
+   */
+  test('offers no cancel on a paid order, and no refund either', async ({ page }) => {
+    await openDetail(page, '44444444-4444-4444-8444-444444444444', PAID_ORDER);
+
+    await expect(page.locator('[data-testid="cancel-order"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="cancel-reason-input"]')).toHaveCount(0);
+
+    // Nothing offers a refund either, because nothing writes one (W3-05). A screen that said "Refund"
+    // and then could not would be worse than the internal note, which is the honest place to record what
+    // was done by hand.
+    await expect(page.getByRole('button', { name: /refund/i })).toHaveCount(0);
+  });
+
+  /**
    * **The internal note is always sent, and an empty box clears it.**
    *
    * The endpoint refuses a body that leaves the field out rather than reading its absence as a clear —
@@ -661,6 +723,25 @@ test.describe('the screens themselves', () => {
     await expect(page.locator('[data-testid="mark-delivered"]')).toBeVisible();
 
     await measureAtEveryWidth(page, ['[data-testid="mark-delivered"]']);
+  });
+
+  /**
+   * The cancel form and its reason box, which only exist on an unpaid order.
+   *
+   * **Measured before anything is pressed**, which is W3-04's own lesson: its first sweep clicked Start
+   * processing and so never measured the controls that only exist beforehand.
+   *
+   * **And each selector is guarded individually.** A compound selector's guard is satisfied by its first
+   * clause while a later one matches nothing (#80), which is why these are two entries rather than one
+   * comma-separated string.
+   */
+  test('the unpaid detail measures the cancel form before it is used', async ({ page }) => {
+    await openDetail(page, UNPAID_TOKEN, UNPAID_ORDER);
+
+    await measureAtEveryWidth(page, [
+      '[data-testid="cancel-order"]',
+      '[data-testid="cancel-reason-input"]',
+    ]);
   });
 
   /** Accept late payment and its reason box, which only exist on an expired order. */

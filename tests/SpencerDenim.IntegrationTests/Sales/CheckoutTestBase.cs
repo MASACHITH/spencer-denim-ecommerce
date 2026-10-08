@@ -493,6 +493,22 @@ public sealed class CheckoutApiClient(HttpClient client)
         return (response, await ReadAsync<OrderConfirmationDto>(response, cancellationToken));
     }
 
+    /// <summary>
+    /// POST the shopper's own Cancel order (doc 11 P10 flow A).
+    /// </summary>
+    /// <remarks>
+    /// <b>No body, no antiforgery header and no cookie</b>, which is the route's own contract: the order's
+    /// token is the only credential there is, and sending anything else here would be testing a request
+    /// the storefront never makes.
+    /// </remarks>
+    public async Task<HttpResponseMessage> CancelOrderAsync(
+        string publicId,
+        CancellationToken cancellationToken) =>
+        await client.PostAsync(
+            new Uri($"{OrderPath}/{publicId}/cancel", UriKind.Relative),
+            content: null,
+            cancellationToken);
+
     /// <summary>The <c>ProblemDetails</c> body of a refused request, as a parsed document.</summary>
     public static async Task<JsonDocument> ProblemAsync(
         HttpResponseMessage response,

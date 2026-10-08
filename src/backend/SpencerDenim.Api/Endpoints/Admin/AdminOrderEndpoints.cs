@@ -31,10 +31,14 @@ namespace SpencerDenim.Api.Endpoints.Admin;
 /// reload cannot destroy, and the route it links to is the one already built and tested.
 /// </para>
 /// <para>
-/// <b>What is deliberately absent.</b> No refund, no cancel: doc 11 P10's refund paths need
-/// <c>Orders.Refund</c> and a <c>sales.Refunds</c> writer, and G-13's "money received on an order that was
-/// never paid" is still owed (W3-03's journal, item 1). The detail screen <i>reads</i> refunds so an
-/// existing one is visible, and offers no button that would write one.
+/// <b>Cancel is here (W3-04b); refund still is not.</b> <c>POST /{token}/cancel</c> is doc 11 P10 flow
+/// A, behind <c>Orders.Edit</c> exactly as P10's "Who can do what" table has it, and it closes an
+/// <b>unpaid</b> order only. Doc 11 P10's refund paths need <c>Orders.Refund</c> and a
+/// <c>sales.Refunds</c> writer, and G-13's "money received on an order that was never paid" is still owed
+/// (W3-03's journal, item 1); refunds stay manual for v1 (owner decision, 2026-10-08) and are recorded in
+/// the order's internal note. The detail screen <i>reads</i> refunds so an existing one is visible, and
+/// offers no button that would write one — and <b>cancel is not allowed to become one</b>: a paid order
+/// is refused with the order's own status rather than closed.
 /// </para>
 /// <para>
 /// <b>Antiforgery is validated by hand</b> on every mutating route, as every other admin endpoint file in
@@ -137,6 +141,19 @@ internal static class AdminOrderEndpoints
             + "reversed. **No new notice is sent to the customer**, so they are still holding a tracking "
             + "link that does not work — doc 11 P9 says to telephone or WhatsApp them the same day and "
             + "record it in the internal note.");
+
+        MapTransition(
+            api,
+            "cancel",
+            OrderTransitionKind.Cancel,
+            "Cancel an unpaid order (doc 11 P10 flow A).",
+            "Only an order **awaiting payment** can be cancelled, and `cancelReason` is **required**: it "
+            + "is kept on the order and read back to the customer if they ask. In one transaction the "
+            + "order becomes Cancelled with the reason and the closed time, its open payment becomes "
+            + "Cancelled, and the items go back on sale. A **paid** order cannot be cancelled — doc 11 "
+            + "P10 refunds one instead, and this build has no refund path, so it answers 409 saying so. "
+            + "No email is sent and none is owed: doc 11 P10's notification list has none for a "
+            + "cancellation (§7 G-14).");
 
         MapTransition(
             api,
@@ -341,7 +358,8 @@ internal static class AdminOrderEndpoints
                 fields.CourierId,
                 fields.TrackingNumber,
                 fields.Note,
-                AdminWriteRequest.Actor(httpContext)),
+                AdminWriteRequest.Actor(httpContext),
+                fields.CancelReason),
             cancellationToken);
 
         NoStore(httpContext.Response);
@@ -488,7 +506,7 @@ internal static class AdminOrderEndpoints
     private static ValidationProblem? ReadBody(
         JsonObject body,
         OrderTransitionKind kind,
-        out (int? CourierId, string? TrackingNumber, string? Note) fields)
+        out (int? CourierId, string? TrackingNumber, string? Note, string? CancelReason) fields)
     {
         fields = default;
 
@@ -497,11 +515,22 @@ internal static class AdminOrderEndpoints
         int? courierId = null;
         string? trackingNumber = null;
         string? note = null;
+        string? cancelReason = null;
 
         if (kind is OrderTransitionKind.MarkShipped or OrderTransitionKind.UpdateDispatch)
         {
             courierId = ReadInt(body, "courierId", errors);
             trackingNumber = ReadOptionalString(body, "trackingNumber", errors, required: true);
+        }
+
+        if (kind == OrderTransitionKind.Cancel)
+        {
+            // `required: true` means the *key* must be present, which is this method's own convention;
+            // whether the sentence is actually non-empty is TransitionOrderCommandHandler's to decide and
+            // to say in words. That is the opposite of the internal note below, where a missing key is
+            // refused precisely so it cannot be read as "clear it" — and the asymmetry is the point:
+            // there is no such thing as cancelling an order for no reason, so there is nothing to clear.
+            cancelReason = ReadOptionalString(body, "cancelReason", errors, required: true);
         }
 
         if (kind == OrderTransitionKind.SetInternalNote)
@@ -530,7 +559,7 @@ internal static class AdminOrderEndpoints
             return ValidationProblem(errors);
         }
 
-        fields = (courierId, trackingNumber, note);
+        fields = (courierId, trackingNumber, note, cancelReason);
         return null;
     }
 

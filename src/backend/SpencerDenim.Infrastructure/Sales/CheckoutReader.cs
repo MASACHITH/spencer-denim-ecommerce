@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using SpencerDenim.Application.Abstractions.Time;
 using SpencerDenim.Application.Catalog;
 using SpencerDenim.Application.Sales.Cart.Contracts;
 using SpencerDenim.Application.Sales.Checkout.Abstractions;
@@ -33,7 +34,10 @@ namespace SpencerDenim.Infrastructure.Sales;
 /// what matters, and those live in one place already.
 /// </para>
 /// </summary>
-internal sealed class CheckoutReader(AppDbContext dbContext, IOptions<CatalogOptions> options) : ICheckoutReader
+internal sealed class CheckoutReader(
+    AppDbContext dbContext,
+    IOptions<CatalogOptions> options,
+    IClock clock) : ICheckoutReader
 {
     private readonly CatalogOptions _options = options.Value;
 
@@ -370,13 +374,52 @@ internal sealed class CheckoutReader(AppDbContext dbContext, IOptions<CatalogOpt
                 order.PaymentProvider!.DisplayName,
                 order.CustomerNote,
                 order.PlacedAtUtc,
-                order.PaymentDueAtUtc))
+                order.PaymentDueAtUtc,
+
+                // Doc 11 P10 step 2's four guards, read so the page can offer Cancel order only when it
+                // will work. Every one is re-decided inside the transaction's conditional UPDATE (doc 08
+                // §5.2); these are what the *screen* needs, and two of them — a capture in flight and a
+                // payment that has already settled — are facts the page has no other way to see.
+                order.StockState,
+                order.CaptureLockedUntilUtc,
+                order.Payments.Any(payment => payment.IsOrderSettlement),
+                order.Payments.Any(payment =>
+                    payment.ProviderCode == PaymentProviderCodes.PayPal
+                    && payment.Status == PaymentStatus.Pending)))
             .FirstOrDefaultAsync(cancellationToken);
 
-        return row is null ? null : ToConfirmation(row, _options.MediaBaseUrl);
+        return row is null
+            ? null
+            : ToConfirmation(row, _options.MediaBaseUrl, clock.UtcNow.UtcDateTime);
     }
 
-    private static OrderConfirmationDto ToConfirmation(OrderRow row, string? mediaBaseUrl) =>
+    /// <summary>
+    /// Whether doc 11 P10 step 2 would let the shopper cancel this order.
+    /// </summary>
+    /// <remarks>
+    /// <b>The same four conditions as <c>OrderCancellationStore</c>'s claim, in the same order</b>:
+    /// <c>PendingPayment</c>, stock <c>Reserved</c>, no active capture lock, no settling payment — plus
+    /// doc 08 §4.1 R1's PayPal <c>PENDING</c> rule, which hands that decision to <c>Orders.Approve</c>
+    /// alone and so is never the customer's.
+    /// <para>
+    /// <b>It is a read model and the claim is the boundary.</b> Two copies of a predicate is the shape this
+    /// project warns about, and the mitigation is the one #126 prescribes rather than a shared expression:
+    /// <c>CheckoutEndpointTests</c> asserts this flag against a real row for each of the states, through
+    /// the real reader, beside the integration tests that assert the <i>transaction</i> refuses the same
+    /// ones. A browser test could not see either.
+    /// </para>
+    /// </remarks>
+    private static bool CanCancel(OrderRow row, DateTime nowUtc) =>
+        row.Status == OrderStatus.PendingPayment
+        && row.StockState == OrderStockState.Reserved
+        && (row.CaptureLockedUntilUtc is null || row.CaptureLockedUntilUtc < nowUtc)
+        && !row.HasSettlementPayment
+        && !row.HasPayPalPendingPayment;
+
+    private static OrderConfirmationDto ToConfirmation(
+        OrderRow row,
+        string? mediaBaseUrl,
+        DateTime nowUtc) =>
         new(
             row.OrderNumber,
             row.PublicId,
@@ -446,7 +489,12 @@ internal sealed class CheckoutReader(AppDbContext dbContext, IOptions<CatalogOpt
             row.PaymentProviderName,
             row.CustomerNote,
             row.PlacedAtUtc,
-            row.PaymentDueAtUtc);
+            row.PaymentDueAtUtc,
+
+            // Named arguments from here on, because the three that follow are optional and only the last
+            // is being set. Positional would mean restating a default — and `IsDuplicateSubmission` is a
+            // fact about a *submission*, which a read of an order by its token can never be.
+            CanCancel: CanCancel(row, nowUtc));
 
     /// <summary>
     /// Builds a <see cref="CheckoutPickupLocation"/> from a location and the district it is in (R7).
@@ -585,7 +633,11 @@ internal sealed class CheckoutReader(AppDbContext dbContext, IOptions<CatalogOpt
         string PaymentProviderName,
         string? CustomerNote,
         DateTime PlacedAtUtc,
-        DateTime PaymentDueAtUtc);
+        DateTime PaymentDueAtUtc,
+        OrderStockState StockState,
+        DateTime? CaptureLockedUntilUtc,
+        bool HasSettlementPayment,
+        bool HasPayPalPendingPayment);
 
     private sealed record OrderLineRow(
         short LineNumber,

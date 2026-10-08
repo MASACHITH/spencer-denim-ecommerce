@@ -2,11 +2,14 @@ import {
   ChangeDetectionStrategy,
   Component,
   DestroyRef,
+  Injector,
   RESPONSE_INIT,
+  afterNextRender,
   computed,
   inject,
   signal,
 } from '@angular/core';
+import { DOCUMENT } from '@angular/common';
 import { HttpErrorResponse } from '@angular/common/http';
 import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
 import { Meta, Title } from '@angular/platform-browser';
@@ -251,11 +254,27 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
           </aside>
         </div>
 
+        <!-- **Outside the pay panel, which is the same defect as the refusal message one block down.**
+             It used to be inside @if (awaitingPayment(placed)), and every sentence the cancel flow
+             announces is written here - so a successful cancel moved the order off PendingPayment, the
+             panel went, and the live region went with it: "Order SD-... is cancelled" was set into a node
+             that the re-read then removed, and a shopper using a screen reader was told nothing by the
+             most destructive thing this page can do. Measured in Chromium: after a cancel the page held
+             no [data-testid="pay-announcement"] at all.
+
+             tabindex="-1" so rehomeFocusIfLost can put focus on the sentence without putting it in the
+             tab order - the same rule, the same testid and the same reason as the admin screens' own
+             order-said region (#109). -->
+        <p
+          class="sr-only"
+          role="status"
+          tabindex="-1"
+          data-testid="pay-announcement"
+        >{{ announcement() }}</p>
+
         @if (awaitingPayment(placed)) {
           <section class="order__panel pay" aria-labelledby="pay-title" data-testid="pay-panel">
             <h2 class="order__panel-title" id="pay-title">How to pay</h2>
-
-            <p class="sr-only" role="status" data-testid="pay-announcement">{{ announcement() }}</p>
 
             @if (placed.payment; as how) {
               <p class="pay__lead">
@@ -431,6 +450,88 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
                 then, the order is released and the items go back on sale.
               </p>
             }
+          </section>
+        }
+
+        <!-- **Outside the panel below, and that is a defect this page's own spec found.** The refusal
+             message used to live inside the Cancel panel, which is drawn on canCancel - and a refused
+             cancel is followed by a re-read that almost always turns canCancel false, because the order
+             has moved. So the panel disappeared, taking the explanation with it, and a shopper whose
+             press lost the race to the expiry sweep was told nothing at all.
+
+             Before the panel rather than after it, so a screen reader meets the explanation before the
+             controls it is about. -->
+        @if (cancelProblem(); as message) {
+          <p class="order__error pay__lead" role="alert" data-testid="cancel-error">{{ message }}</p>
+        }
+
+        @if (placed.canCancel) {
+          <!-- Doc 11 P10 flow A, the customer's half. **Two steps, because this is irreversible for
+               them**: the first press reveals the confirmation, the second one fires. It is an inline
+               confirmation rather than window.confirm or a <dialog> - a native confirm does not exist
+               during server-side rendering, cannot be styled or announced, and is the sort of thing
+               people dismiss by reflex. This way the question is on the page, in the reading order, and
+               "Keep my order" is the button a shopper reaches first.
+
+               Every control says aria-disabled rather than disabled, because disabling a button under the
+               shopper's own finger throws focus to <body> (issue #109), and the handlers refuse the
+               activation instead. -->
+          <section class="order__panel" aria-labelledby="cancel-title" data-testid="cancel-panel">
+            <h2 class="order__panel-title" id="cancel-title">Changed your mind?</h2>
+
+            @if (!confirmingCancel()) {
+              <p class="order__muted pay__lead">
+                You have not paid for this order, so you can cancel it yourself. The items go back on sale
+                straight away.
+              </p>
+              <div class="pay__actions">
+                <button
+                  class="btn btn--secondary"
+                  type="button"
+                  [attr.aria-disabled]="busy() ? 'true' : null"
+                  data-testid="cancel-order"
+                  (click)="askToCancel()"
+                >
+                  Cancel this order
+                </button>
+              </div>
+            } @else {
+              <p class="pay__lead" data-testid="cancel-confirm-question">
+                Cancel order {{ placed.orderNumber }}? This cannot be undone - if you want the items
+                afterwards you would have to order them again, and we cannot promise they will still be
+                there.
+              </p>
+              <div class="pay__actions">
+                <!-- aria-disabled while a cancel is in flight, like every other write control here. The
+                     request cannot be recalled, so the honest answer to this press is to refuse it -
+                     without the guard it set the panel back to "Cancel this order" and announced "Your
+                     order is still with us." about an order that was being cancelled as it said so. -->
+                <button
+                  class="btn btn--secondary"
+                  type="button"
+                  [attr.aria-disabled]="busy() ? 'true' : null"
+                  data-testid="cancel-keep"
+                  (click)="keepOrder()"
+                >
+                  Keep my order
+                </button>
+                <button
+                  class="btn btn--primary"
+                  type="button"
+                  [attr.aria-disabled]="busy() ? 'true' : null"
+                  data-testid="cancel-confirm"
+                  (click)="confirmCancel()"
+                >
+                  Yes, cancel it
+                </button>
+              </div>
+            }
+
+            <!-- Nothing promises an email, because nothing sends one: ops.EmailOutbox is W3-06's, and doc
+                 11 P10's notification list has no email for a cancellation in any case (G-14). -->
+            <p class="order__muted">
+              Nothing is charged and nothing is emailed. This page will show the order as cancelled.
+            </p>
           </section>
         }
       } @else if (error(); as message) {
@@ -614,9 +715,24 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
     }
     /* The write controls say aria-disabled rather than disabled, so a press does not throw the shopper's
        focus to the document body. That leaves the unavailable look to be drawn here. Opacity only: a
-       control that cannot be hovered cannot show a cursor, and the press is already a no-op.
-       (No backticks in this block: it is a template literal, and one would end it.) */
-    .pay [aria-disabled='true'] {
+       control that cannot be hovered cannot show a cursor, and the press is already a no-op. Pointer
+       events stay on, because removing them would stop the control being hit-tested, and
+       document.elementFromPoint is how the occlusion sweep finds it.
+       (No backticks in this block: it is a template literal, and one would end it.)
+
+       **The selector is unscoped, and W3-04b made it so to stay inside a budget.** It used to be
+       .pay [aria-disabled=true]; the cancel panel's controls need the same look, and this component's
+       styles have a 4 kB budget that four new classes for that panel's layout blew by exactly 253 bytes
+       (measured both ways: origin/main builds clean, with them it warned). So the panel reuses
+       order__panel for its grid, pay__lead for its 60ch measure and pay__actions for its button row, and
+       this rule dropped its prefix rather than gaining a second selector - which is also the truer rule,
+       since every aria-disabled control in this component is a busy guard and every one of them should
+       look unavailable. Angular scopes it to this component, so it cannot reach another screen.
+
+       And the line above about backticks is not decoration: the first draft of this very comment quoted
+       those three class names in them, which ended the literal and turned the rest of the file into
+       compile errors about class attributes. The warning was already written here and I still did it. */
+    [aria-disabled='true'] {
       opacity: 0.6;
       cursor: progress;
     }
@@ -777,6 +893,15 @@ export class OrderPage {
   private readonly payProblem = signal<string | null>(null);
   private readonly said = signal('');
 
+  /**
+   * For <see cref="rehomeFocusIfLost"/>, which is the only thing on this page that touches the DOM.
+   *
+   * `DOCUMENT` rather than the global, so server-side rendering has something to inject — the callback
+   * that reads it runs under `afterNextRender` and therefore only in a browser.
+   */
+  private readonly document = inject(DOCUMENT);
+  private readonly injector = inject(Injector);
+
   constructor() {
     inject(Title).setTitle(brandPageTitle('Your order'));
     inject(Meta).updateTag({
@@ -820,6 +945,19 @@ export class OrderPage {
    * they have started typing next, which is `SettingsPage.applySettings`' lesson in a smaller form.
    */
   protected readonly reference = signal('');
+
+  /**
+   * Whether the shopper has pressed "Cancel this order" and is being asked to confirm.
+   *
+   * **Two steps on purpose.** Cancelling is irreversible for them and the items go back on sale, so one
+   * stray press on a phone must not close somebody's order. It resets on every re-read, so a page that
+   * has moved on never comes back with the question half-asked.
+   */
+  private readonly askingCancel = signal(false);
+  private readonly cancelFailure = signal<string | null>(null);
+
+  protected readonly confirmingCancel = this.askingCancel.asReadonly();
+  protected readonly cancelProblem = this.cancelFailure.asReadonly();
 
   protected readonly busy = this.writing.asReadonly();
   protected readonly problem = this.payProblem.asReadonly();
@@ -923,6 +1061,141 @@ export class OrderPage {
         },
         error: (error: unknown) => this.failWrite(error),
       });
+  }
+
+  /** First press: ask (doc 11 P10 flow A, step 1). */
+  protected askToCancel(): void {
+    // The guard the `disabled` attribute would have provided, which is why nothing here is disabled.
+    if (this.writing()) {
+      return;
+    }
+
+    const focused = this.focusedNow();
+
+    this.cancelFailure.set(null);
+    this.askingCancel.set(true);
+    this.announce('Cancel this order? Choose "Yes, cancel it", or "Keep my order".');
+
+    // **The press destroys the button that was pressed.** Revealing the question swaps the whole branch
+    // of the template, so "Cancel this order" is removed and the shopper's focus falls to `<body>` —
+    // which is #109 arriving by node removal rather than by `[disabled]`, and was measured in Chromium
+    // on this very control before this line existed.
+    this.rehomeFocusIfLost(focused);
+  }
+
+  /** Second thoughts about the second thoughts. */
+  protected keepOrder(): void {
+    // The guard the `disabled` attribute would have provided. A cancel already on the wire cannot be
+    // recalled, so telling the shopper "Your order is still with us." would be false as it was said.
+    if (this.writing()) {
+      return;
+    }
+
+    const focused = this.focusedNow();
+
+    this.askingCancel.set(false);
+    this.cancelFailure.set(null);
+    this.announce('Your order is still with us.');
+
+    // The same removal in the other direction: "Keep my order" is the node that goes.
+    this.rehomeFocusIfLost(focused);
+  }
+
+  /**
+   * Second press: cancel it (doc 11 P10 flow A, step 3).
+   *
+   * **Nothing here decides whether it is allowed.** All four of P10 step 2's guards are evaluated inside
+   * the transaction, under the order row's own lock (doc 08 §5.2) - which is what makes this press and the
+   * expiry sweep taking the same order produce exactly one winner and release the stock exactly once.
+   * `canCancel` on the payload decides only whether the panel is drawn.
+   *
+   * **A 404 is the ordinary refusal**, and it is deliberately the same answer as "no such order": the
+   * token never expires and is the only credential there is. So the sentence covers every reason at once
+   * and the page re-reads the order, which is where a shopper holding the link is entitled to the detail.
+   */
+  protected confirmCancel(): void {
+    if (this.writing()) {
+      return;
+    }
+
+    // Captured before the request, not after the answer: by then the panel may already be gone and
+    // `document.activeElement` would be `<body>` whatever had focus when the shopper pressed.
+    const focused = this.focusedNow();
+
+    this.beginWrite('Cancelling your order...');
+
+    this.api
+      .cancelOrder(this.token())
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (cancelled) => {
+          this.writing.set(false);
+          this.askingCancel.set(false);
+          this.announce(`Order ${cancelled.orderNumber} is cancelled. The items are back on sale.`);
+
+          // Re-homed after the re-read has rendered, because that is the render that removes the panel:
+          // an applied cancel turns `canCancel` false, and "Yes, cancel it" is the node that had focus.
+          this.read(() => this.rehomeFocusIfLost(focused));
+        },
+        error: (error: unknown) => {
+          this.writing.set(false);
+          this.askingCancel.set(false);
+          this.said.set('');
+
+          this.cancelFailure.set(
+            error instanceof HttpErrorResponse && error.status === 404
+              ? 'This order can no longer be cancelled - it may already have been paid, or the hold may '
+                + 'have lapsed. We have reloaded it, so this page now shows where it stands.'
+              : checkoutErrorMessage(error),
+          );
+
+          // Re-read either way: the refusal rolled nothing back, and the order's state on screen is the
+          // one thing that must not be guessed from a failure. A refusal takes the panel away just as
+          // often as an applied cancel does, so the focus is re-homed on this path too.
+          this.read(() => this.rehomeFocusIfLost(focused));
+        },
+      });
+  }
+
+  /**
+   * Whatever has focus right now, or <code>null</code> on the server.
+   *
+   * Read before the signal write that removes the node, because afterwards there is nothing to compare.
+   */
+  private focusedNow(): HTMLElement | null {
+    return (this.document.activeElement as HTMLElement | null) ?? null;
+  }
+
+  /**
+   * Puts focus on the live region's sentence when the node that had it has gone.
+   *
+   * **The same rule and the same reason as `OrdersListPage.rehomeFocusIfLost`**, which this page did not
+   * have: cancelling destroys the control that was pressed — twice, once when the question replaces the
+   * button and once when the applied cancel removes the whole panel — and a destroyed focused node sends
+   * focus to `<body>`, which is #109 (six instances on this project) arriving by removal rather than by
+   * `[disabled]`.
+   *
+   * **Necessary and not sufficient**: re-homing unconditionally would be its own defect, because the
+   * reference box survives every re-read and yanking the caret out of it mid-sentence is worse than the
+   * thing being fixed. So the node is checked for `isConnected` and left alone when it is still there.
+   *
+   * **`afterNextRender`, not `queueMicrotask`.** A signal write schedules change detection as a *task*; a
+   * microtask runs before it, so the check would run against the old DOM and every node would still look
+   * connected. It is also what keeps this off the server, where there is no focus to move.
+   */
+  private rehomeFocusIfLost(focused: HTMLElement | null): void {
+    afterNextRender(
+      () => {
+        if (focused !== null && focused.isConnected) {
+          return;
+        }
+
+        this.document
+          .querySelector<HTMLElement>('[data-testid="pay-announcement"]')
+          ?.focus({ preventScroll: true });
+      },
+      { injector: this.injector },
+    );
   }
 
   protected onSlipChosen(event: Event): void {
@@ -1042,7 +1315,16 @@ export class OrderPage {
     this.read();
   }
 
-  private read(): void {
+  /**
+   * Re-reads the order.
+   *
+   * <param name="then">
+   * Run once the answer has been applied to the signals, so a caller can schedule work against the DOM
+   * the re-read produces — focus re-homing, which has to happen after the render that removed the node.
+   * It runs on the failure path too: a read that failed still changed the screen.
+   * </param>
+   */
+  private read(then?: () => void): void {
     const token = this.token();
 
     this.loading.set(true);
@@ -1058,6 +1340,13 @@ export class OrderPage {
           this.current.set(order);
           this.handover.give(HANDOVER_KEY, order);
           this.seedReference(order.proof);
+
+          // **A half-asked question never survives a re-read.** The order's state has just changed under
+          // the panel, so "Cancel order SD-...? This cannot be undone" about an order that is now paid or
+          // cancelled would be a question with no true answer.
+          this.askingCancel.set(false);
+
+          then?.();
         },
         error: (error: unknown) => {
           this.loading.set(false);
@@ -1071,10 +1360,13 @@ export class OrderPage {
               this.response.status = NOT_FOUND_STATUS;
             }
 
+            then?.();
             return;
           }
 
           this.failure.set(checkoutErrorMessage(error));
+
+          then?.();
         },
       });
   }

@@ -30,6 +30,7 @@ using SpencerDenim.Application.Marketing.Newsletter;
 using SpencerDenim.Application.Sales.Cart;
 using SpencerDenim.Application.Sales.Orders.Admin;
 using SpencerDenim.Application.Sales.Orders.Contracts;
+using SpencerDenim.Application.Sales.Orders.Customer;
 using SpencerDenim.Application.Sales.Payments.Admin;
 using SpencerDenim.Application.Sales.Payments.Contracts;
 using SpencerDenim.Application.Sales.Payments.Customer;
@@ -329,6 +330,13 @@ public static class DependencyInjection
         services.AddScoped<
             ICommandHandler<TransitionOrderCommand, TransitionOrderResult>,
             TransitionOrderCommandHandler>();
+
+        // W3-04b / doc 11 P10 flow A: the shopper's own Cancel order, from the guest order link. Its own
+        // handler rather than a kind on the admin command, because it carries no staff actor, no reason
+        // and no permission, and answers one opaque refusal.
+        services.AddScoped<
+            ICommandHandler<CancelOwnOrderCommand, CancelOwnOrderResult>,
+            CancelOwnOrderCommandHandler>();
 
         services.AddScoped<
             ICommandHandler<SaveCourierCommand, SaveCourierResult>,

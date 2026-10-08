@@ -309,8 +309,27 @@ export interface AdminOrderActions {
    * member who got an `order_expired` refusal there and pressed Refresh lost the only route to the
    * transaction for good. Searching the order number the customer quotes reaches this screen, and a
    * reload cannot destroy it.
+   *
+   * **A payment in `Cancelled` counts too.** Cancelling an unpaid order closes its open bank payment to
+   * `Cancelled` (doc 08 §4.3), so after a cancel that is the only bank row on the order — and without it
+   * doc 08 §4.1's `Cancelled → Paid` edge had no control anywhere, which meant a shop that cancelled an
+   * order could not accept the transfer that arrived the next day.
    */
   readonly canAcceptLatePayment: boolean;
+
+  /**
+   * Whether this **unpaid** order can be cancelled right now (doc 11 P10 flow A).
+   *
+   * **Doc 11 P10 step 2's four guards, not just the status**: `PendingPayment`, stock `Reserved`, no
+   * active capture lock, and no payment that has already settled the order — plus doc 08 §4.1 R1's PayPal
+   * `PENDING` rule, which gives that one case to `Orders.Approve` alone and so takes it away from the
+   * `Orders.Edit` holder this screen is for.
+   *
+   * **False on a paid order, and the screen offers no alternative.** Doc 11 P10's table says a paid order
+   * is refunded and never cancelled; `Orders.Refund` is unbuilt (W3-05) and refunds are manual for v1,
+   * recorded in the order's internal note.
+   */
+  readonly canCancel: boolean;
 
   /**
    * Whether any active courier exists.
@@ -421,7 +440,8 @@ export type OrderTransitionSegment =
   | 'ready-for-collection'
   | 'mark-delivered'
   | 'dispatch'
-  | 'internal-note';
+  | 'internal-note'
+  | 'cancel';
 
 /** What a transition answered. */
 export interface OrderTransitionResult {

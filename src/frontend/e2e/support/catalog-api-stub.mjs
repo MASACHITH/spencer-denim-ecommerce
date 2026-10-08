@@ -2899,6 +2899,14 @@ function handlePlaceOrder(request, response) {
       orderNumber: `SD-${placedAt.getFullYear()}-${String(nextOrderSequence++).padStart(6, '0')}`,
       publicId,
       status: 'PendingPayment',
+
+      // **The server renders the wording and this stub has to carry it** (W3-04's decision 4): the page
+      // prints `statusLabel`, not `status.toLowerCase()`, so a stub that omitted it would hand the page
+      // `undefined` and `undefined.toLowerCase()` the moment an order reached any status but
+      // PendingPayment or Paid. Nothing reached one before W3-04b made Cancel pressable, which is how a
+      // missing field in a stub stays invisible - issue #126's own lesson, in the stub rather than in the
+      // screen. The labels are `OrderStatusLabels.For`'s, from the C# contract.
+      statusLabel: 'Awaiting payment',
       email,
       firstName: trimmed(body.firstName),
       lastName: trimmed(body.lastName),
@@ -2952,6 +2960,12 @@ function handlePlaceOrder(request, response) {
       // the arming bag, and kept on the order — see `bagsWithoutBankDetails`.
       bankDetailsSet: !(token && bagsWithoutBankDetails.has(token)),
       proof: emptyProof(),
+
+      // Doc 11 P10 flow A (W3-04b). A freshly placed order satisfies all four of step 2's guards, and the
+      // three the real reader checks beyond the status have no representation here - which is fine and is
+      // issue #126's own reasoning: a browser test cannot observe them, so `CheckoutEndpointTests` pins
+      // this field against real SQL Server for each state instead.
+      canCancel: true,
     };
 
     // After the order exists, because the instructions carry its number — and the first version called a
@@ -2974,6 +2988,31 @@ function handlePlaceOrder(request, response) {
     response.setHeader('Location', `/api/orders/${publicId}`);
     response.end(JSON.stringify(order));
   });
+}
+
+/**
+ * Doc 11 P10 flow A: the shopper cancels their own unpaid order.
+ *
+ * **A 404 for every refusal, which is the API's own rule and not a shortcut here**: the token never
+ * expires and is a guest's only credential (doc 11 7 G-41), so "no such order" and "that order can no
+ * longer be cancelled" must be the same answer.
+ */
+function handleCancelOrder(response, token) {
+  const order = placedOrders.get(token);
+
+  if (!order || !order.canCancel) {
+    response.statusCode = 404;
+    response.end(JSON.stringify({ title: 'Not found', status: 404 }));
+    return;
+  }
+
+  order.status = 'Cancelled';
+  order.statusLabel = 'Cancelled';
+  order.canCancel = false;
+
+  // `withPayment` drops the instructions on its own now that it checks the status, which is
+  // `GetOrderQuery`'s rule - so there is nothing to clear here.
+  response.end(JSON.stringify({ orderNumber: order.orderNumber }));
 }
 
 /** Doc 11 P7 step 3: the customer's bank reference, on the order's open payment. */
@@ -3097,9 +3136,16 @@ function withPayment(order) {
 
   return {
     ...order,
-    payment: order.bankDetailsSet
-      ? bankInstructions(order.orderNumber, new Date(order.paymentDueAtUtc), order.grandTotal)
-      : null,
+
+    // **Null unless the order is still awaiting payment**, which is `GetOrderQuery`'s own rule: it
+    // returns the order unchanged for any other status and never asks the provider to describe itself.
+    // The stub built the instructions for every status until W3-04b, which nothing could see because
+    // nothing could move an order off PendingPayment from the storefront - and the page's own pay panel
+    // is gated the same way, so the mismatch was invisible rather than harmless.
+    payment:
+      order.status === 'PendingPayment' && order.bankDetailsSet
+        ? bankInstructions(order.orderNumber, new Date(order.paymentDueAtUtc), order.grandTotal)
+        : null,
     proof,
   };
 }
@@ -3180,6 +3226,12 @@ function handleCheckout(request, response, url) {
     }
 
     response.end(JSON.stringify({ token, bankDetailsSet: !unset }));
+    return true;
+  }
+
+  const cancel = /^\/api\/orders\/([^/]+)\/cancel$/.exec(url.pathname);
+  if (cancel && request.method === 'POST') {
+    handleCancelOrder(response, decodeURIComponent(cancel[1]));
     return true;
   }
 

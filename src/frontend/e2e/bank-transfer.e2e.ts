@@ -220,6 +220,177 @@ async function offenders(page: Page): Promise<readonly { tag: string; width: num
   });
 }
 
+/**
+ * Doc 11 P10 flow A, the customer's half: cancelling their own unpaid order from the order link.
+ *
+ * The transaction is proved against real SQL Server in `OrderCancellationTests`, and `canCancel` on the
+ * wire in `CheckoutEndpointTests` — issue #126, because Playwright never starts the .NET API. What these
+ * prove is the screen: the two-step confirmation, what a refusal says, and that the controls clear 44 px
+ * and are not buried at 320 px.
+ */
+test.describe('cancelling an unpaid order (doc 11 P10 flow A)', () => {
+  test('asks before it cancels, and the first press changes nothing', async ({ page }) => {
+    await placeAnOrder(page, 81);
+    await hydrated(page);
+
+    await expect(page.locator('[data-testid="cancel-panel"]')).toBeVisible();
+
+    await page.locator('[data-testid="cancel-order"]').click();
+
+    // The question names the order, so a shopper with two links open knows which one they are closing.
+    await expect(page.locator('[data-testid="cancel-confirm-question"]')).toContainText('SD-');
+    await expect(page.locator('[data-testid="cancel-confirm-question"]')).toContainText(
+      'cannot be undone',
+    );
+
+    // Keeping it really keeps it: the pay panel is still there and the order is still awaiting payment.
+    await page.locator('[data-testid="cancel-keep"]').click();
+
+    await expect(page.locator('[data-testid="cancel-confirm-question"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="pay-panel"]')).toBeVisible();
+    await expect(page.locator('[data-testid="cancel-order"]')).toBeVisible();
+  });
+
+  test('cancels on the second press and shows the order as cancelled', async ({ page }) => {
+    await placeAnOrder(page, 82);
+    await hydrated(page);
+
+    await page.locator('[data-testid="cancel-order"]').click();
+
+    const cancelled = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname.endsWith('/cancel')
+        && response.request().method() === 'POST',
+    );
+
+    await page.locator('[data-testid="cancel-confirm"]').click();
+
+    expect((await cancelled).status()).toBe(200);
+
+    // The page re-reads, so this is the server's own wording and the server's own state — not a guess
+    // from what the button sent.
+    await expect(page.locator('[data-testid="cancel-panel"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="pay-panel"]')).toHaveCount(0);
+    await expect(page.locator('body')).toContainText('This order is cancelled.');
+
+    // Nothing promises an email, because nothing sends one — and doc 11 P10's notification list has none
+    // for a cancellation in any case (§7 G-14).
+    const body = (await page.locator('body').textContent())!.toLowerCase();
+
+    expect(body).not.toContain('we have emailed');
+    expect(body).not.toContain('confirmation email');
+    expect(body).not.toContain('sent you an email');
+
+    // A reload still shows it cancelled: the state is the server's, not the page's.
+    await page.reload();
+    await expect(page.locator('body')).toContainText('This order is cancelled.');
+    await expect(page.locator('[data-testid="cancel-order"]')).toHaveCount(0);
+  });
+
+  /**
+   * The refusal has to survive the panel going away, which is the defect this screen's own Vitest spec
+   * found: the message lived inside the Cancel panel, and a refused cancel is followed by a re-read that
+   * almost always turns `canCancel` false.
+   */
+  test('explains a cancel that can no longer be applied', async ({ page }) => {
+    await placeAnOrder(page, 83);
+    await hydrated(page);
+
+    await page.locator('[data-testid="cancel-order"]').click();
+
+    // Cancelled out of band first — the stub then answers 404 to the second attempt, exactly as the API
+    // does for an order that can no longer be cancelled. This is the shape of losing the race to the
+    // expiry sweep, which is the case a shopper actually meets.
+    //
+    // **Posted at `apiURL` and not at a relative path**, which is a mistake worth recording: the page's
+    // own `/api` calls are rewritten on to the stub by `useStubApi`, but that is a *page* route and
+    // `page.request` does not go through it — so a relative path here reached the storefront's SSR
+    // server, which answered 404 and made the test look as though the route were missing.
+    const token = new URL(page.url()).pathname.split('/').pop()!;
+    const out = await page.request.post(`${apiURL}/api/orders/${token}/cancel`);
+
+    expect(out.status(), `cancelling ${token} out of band at ${apiURL}`).toBe(200);
+
+    await page.locator('[data-testid="cancel-confirm"]').click();
+
+    await expect(page.locator('[data-testid="cancel-error"]')).toContainText(
+      'can no longer be cancelled',
+    );
+
+    // The panel is gone and the message is not.
+    await expect(page.locator('[data-testid="cancel-panel"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="cancel-error"]')).toBeVisible();
+  });
+
+  /**
+   * 44 px, on screen, and not buried — the three distinct questions, at every breakpoint.
+   *
+   * **Each selector is guarded individually.** A compound selector's guard is satisfied by its first
+   * clause while a later one matches nothing (#80), so the confirmation's two buttons are measured in
+   * their own pass after the question is open.
+   */
+  test('the cancel controls clear 44 px and are reachable at every width', async ({ page }) => {
+    await placeAnOrder(page, 84);
+    await hydrated(page);
+
+    for (const width of BREAKPOINTS) {
+      await page.setViewportSize({ width, height: 900 });
+
+      expect(await horizontalOverflow(page), `horizontal overflow at ${width}px`).toBe(0);
+
+      for (const clause of ['[data-testid="cancel-order"]']) {
+        await expect(page.locator(clause), `${clause} at ${width}px`).toHaveCount(1);
+        expect(await undersized(page, clause), `tap target ${clause} at ${width}px`).toEqual([]);
+        expect(await unreachable(page, clause), `reachability of ${clause} at ${width}px`).toEqual([]);
+        expect(await buried(page, clause), `${clause} is covered at ${width}px`).toBeNull();
+      }
+    }
+
+    await page.setViewportSize({ width: 320, height: 900 });
+    await page.locator('[data-testid="cancel-order"]').click();
+
+    for (const width of BREAKPOINTS) {
+      await page.setViewportSize({ width, height: 900 });
+
+      expect(await horizontalOverflow(page), `horizontal overflow at ${width}px`).toBe(0);
+
+      for (const clause of ['[data-testid="cancel-confirm"]', '[data-testid="cancel-keep"]']) {
+        await expect(page.locator(clause), `${clause} at ${width}px`).toHaveCount(1);
+        expect(await undersized(page, clause), `tap target ${clause} at ${width}px`).toEqual([]);
+        expect(await unreachable(page, clause), `reachability of ${clause} at ${width}px`).toEqual([]);
+        expect(await buried(page, clause), `${clause} is covered at ${width}px`).toBeNull();
+      }
+    }
+  });
+});
+
+/**
+ * Whether one control is under something else at the point a finger would land.
+ *
+ * **axe does not enforce tap size and `undersized` does not see occlusion.** A control can clear 44 px,
+ * be inside the viewport, and still be under an opaque sticky bar — the W1-03 defect that passed a 44 px
+ * sweep with seventeen controls buried. It scrolls the control into view itself, because
+ * `elementFromPoint` answers null for a point outside the viewport and that would read as "not covered".
+ */
+async function buried(page: Page, selector: string): Promise<string | null> {
+  return page.evaluate((clause) => {
+    const element = document.querySelector<HTMLElement>(clause);
+
+    if (!element) {
+      return 'missing';
+    }
+
+    element.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+
+    const box = element.getBoundingClientRect();
+    const topmost = document.elementFromPoint(box.left + (box.width / 2), box.top + (box.height / 2));
+
+    return topmost === null || element.contains(topmost) || topmost.contains(element)
+      ? null
+      : (topmost as HTMLElement).outerHTML.slice(0, 120);
+  }, selector);
+}
+
 test.describe('the pay panel (doc 11 P7 step 1)', () => {
   test('shows the bank details, the amount and the order number as the reference', async ({ page }) => {
     const { orderNumber, total } = await placeAnOrder(page, 70);

@@ -146,6 +146,7 @@ function detail(overrides: Partial<AdminOrderDetail> = {}): AdminOrderDetail {
       canMarkDelivered: true,
       canEditDispatch: true,
       canAcceptLatePayment: false,
+      canCancel: false,
       couriersConfigured: true,
       blockedReason: null,
     },
@@ -244,6 +245,324 @@ describe('OrderDetailPage (ADM-09)', () => {
 
   afterEach(() => {
     http.verify();
+  });
+
+  /**
+   * Doc 11 P10 flow A: the panel appears only on an unpaid order, and the reason is required.
+   */
+  function unpaid(): AdminOrderDetail {
+    return detail({
+      status: 'PendingPayment',
+      statusLabel: 'Awaiting payment',
+      stockState: 'Reserved',
+      invoiceNumber: null,
+      invoiceIssuedAtUtc: null,
+      paidAtUtc: null,
+      shippedAtUtc: null,
+      deliveredAtUtc: null,
+      dispatch: null,
+      secondsUntilExpiry: 90_000,
+      payments: [payment({ status: 'Pending', isOrderSettlement: false })],
+      actions: {
+        ...detail().actions,
+        canMarkDelivered: false,
+        canEditDispatch: false,
+        canCancel: true,
+      },
+    });
+  }
+
+  it('offers Cancel the order only when the server says it can be cancelled', async () => {
+    // Doc 11 P10's table: a paid order is refunded, never cancelled — and there is no refund screen, so
+    // the honest answer is no control at all rather than one that can only fail.
+    await open();
+
+    expect(element.querySelector('[data-testid="cancel-order"]')).toBeNull();
+    expect(element.querySelector('[data-testid="cancel-reason-input"]')).toBeNull();
+
+    await open(unpaid());
+
+    expect(element.querySelector('[data-testid="cancel-order"]')).not.toBeNull();
+    expect(element.querySelector('[data-testid="cancel-reason-input"]')).not.toBeNull();
+  });
+
+  it('refuses a blank reason without a round trip, and says so again on a second press', async () => {
+    await open(unpaid());
+
+    click('cancel-order');
+    await settle();
+
+    // No request at all: `http.verify()` in afterEach is what proves it, and the message is the thing a
+    // staff member reads.
+    expect(element.querySelector('[data-testid="cancel-error"]')?.textContent).toContain('Say why');
+
+    // ADM-22: the live region has to re-fire an identical sentence, because somebody who pressed twice
+    // needs to hear it both times. The region is cleared and restored inside the same change-detection
+    // pass (afterNextRender), so it is watched rather than sampled — reading it afterwards always finds
+    // the sentence back, and a before/after comparison would pass against a component that never cleared.
+    //
+    // `record.oldValue` with `characterDataOldValue`, which is `couriers-page.spec.ts`' pattern and not a
+    // preference: a callback can batch both mutations, so reading `textContent` inside it sees the
+    // restored sentence twice and the blank never — which is how the first version of this test failed
+    // against a component that was behaving correctly.
+    const said = element.querySelector('[data-testid="order-said"]')!;
+    const oldValues: (string | null)[] = [];
+    const observer = new MutationObserver((records) => {
+      for (const record of records) {
+        oldValues.push(record.oldValue);
+      }
+    });
+    observer.observe(said, {
+      childList: true,
+      characterData: true,
+      characterDataOldValue: true,
+      subtree: true,
+    });
+
+    try {
+      click('cancel-order');
+      await settle();
+    } finally {
+      observer.disconnect();
+    }
+
+    // Without the clear-and-restore, setting a signal to the value it already holds produces **no DOM
+    // mutation whatsoever** — and no mutation is precisely the silence a staff member gets on their
+    // second press.
+    expect(oldValues.length).toBeGreaterThan(0);
+    expect(oldValues).toContain('');
+    expect(said.textContent).toContain('Say why');
+  });
+
+  it('cancels with the reason, and the reason is not the internal note', async () => {
+    await open(unpaid());
+
+    // The internal note is filled in from the server's answer, and a staff member typing in it must not
+    // have that text become the audited reason an order was closed — which is the defect W3-04 shipped on
+    // the accept-late form.
+    const reason = element.querySelector<HTMLTextAreaElement>('[data-testid="cancel-reason-input"]')!;
+    reason.value = 'Customer telephoned to cancel.';
+    reason.dispatchEvent(new Event('input'));
+    await settle();
+
+    click('cancel-order');
+    await settle();
+
+    answerAntiforgery();
+    await settle();
+
+    const request = http.expectOne(`${AdminOrderApi.ordersUrl}/${ORDER}/cancel`);
+
+    expect(request.request.method).toBe('POST');
+    expect(request.request.body).toEqual({ cancelReason: 'Customer telephoned to cancel.' });
+
+    request.flush({
+      orderNumber: 'SD-2026-000123',
+      status: 'Cancelled',
+      statusLabel: 'Cancelled',
+    });
+
+    await settle();
+
+    // It re-reads the order — and **only** the order: `refresh()` calls `read()`, not `ensureLoaded`,
+    // so the courier list is not fetched again. This is the only way the panel can disappear and the
+    // reason can appear beside the status: the screen never redraws from what it sent.
+    http.expectOne(`${AdminOrderApi.ordersUrl}/${ORDER}`).flush(
+      detail({
+        status: 'Cancelled',
+        statusLabel: 'Cancelled',
+        stockState: 'Released',
+        cancelReason: 'Customer telephoned to cancel.',
+        closedAtUtc: '2026-10-08T06:00:00Z',
+        dispatch: null,
+        actions: {
+          ...detail().actions,
+          canMarkDelivered: false,
+          canEditDispatch: false,
+          canCancel: false,
+        },
+      }),
+    );
+
+    await settle();
+
+    expect(element.querySelector('[data-testid="cancel-order"]')).toBeNull();
+    expect(element.querySelector('[data-testid="cancel-reason"]')?.textContent).toContain(
+      'Customer telephoned to cancel.',
+    );
+    expect(element.querySelector('[data-testid="order-status"]')?.textContent).toContain('Cancelled');
+  });
+
+  /**
+   * #109: destroying the focused node throws focus to the document body.
+   *
+   * A successful cancel removes the form that was pressed, so there is nothing left to focus — and the
+   * screen has to put focus somewhere a screen reader will read, which is the live region.
+   *
+   * It re-uses `rehomeFocusIfLost`, which every other action on this screen already goes through, so what
+   * this test adds is that the *cancel* path reaches it — and that is worth its own test precisely because
+   * cancel is the only action here that destroys the control that was pressed rather than replacing it
+   * with another. The scheduling is `afterNextRender`; I have not measured whether a microtask would be
+   * too early on this screen, and the reason to use `afterNextRender` is that the node's removal happens
+   * in a render rather than in a task.
+   */
+  it('re-homes focus when the cancel it applied destroys the control that was pressed', async () => {
+    await open(unpaid());
+
+    const reason = element.querySelector<HTMLTextAreaElement>('[data-testid="cancel-reason-input"]')!;
+    reason.value = 'They changed their mind.';
+    reason.dispatchEvent(new Event('input'));
+    await settle();
+
+    const button = element.querySelector<HTMLElement>('[data-testid="cancel-order"]')!;
+    button.focus();
+    expect(document.activeElement).toBe(button);
+
+    click('cancel-order');
+    await settle();
+
+    answerAntiforgery();
+    await settle();
+
+    http.expectOne(`${AdminOrderApi.ordersUrl}/${ORDER}/cancel`).flush({
+      orderNumber: 'SD-2026-000123',
+      status: 'Cancelled',
+      statusLabel: 'Cancelled',
+    });
+
+    await settle();
+
+    http.expectOne(`${AdminOrderApi.ordersUrl}/${ORDER}`).flush(
+      detail({
+        status: 'Cancelled',
+        statusLabel: 'Cancelled',
+        stockState: 'Released',
+        dispatch: null,
+        actions: {
+          ...detail().actions,
+          canMarkDelivered: false,
+          canEditDispatch: false,
+          canCancel: false,
+        },
+      }),
+    );
+
+    await settle();
+    await fixture.whenStable();
+
+    expect(button.isConnected).toBe(false);
+    expect(document.activeElement).toBe(element.querySelector('[data-testid="order-said"]'));
+  });
+
+  /**
+   * **A second press while the first is in flight sends nothing** (#109's other half).
+   *
+   * The button carries `aria-disabled` rather than `disabled`, so the guard `disabled` would have given
+   * has to be in the handler — and two cancels for one order would be two audit rows and two history
+   * rows for one decision even though the second claim affects no rows.
+   */
+  it('refuses a second press while the cancel is in flight', async () => {
+    await open(unpaid());
+
+    const reason = element.querySelector<HTMLTextAreaElement>('[data-testid="cancel-reason-input"]')!;
+    reason.value = 'Customer rang.';
+    reason.dispatchEvent(new Event('input'));
+    await settle();
+
+    const button = element.querySelector<HTMLElement>('[data-testid="cancel-order"]')!;
+
+    button.click();
+    await settle();
+
+    expect(button.getAttribute('aria-disabled')).toBe('true');
+    expect(button.hasAttribute('disabled')).toBe(false);
+
+    button.click();
+    button.click();
+    await settle();
+
+    answerAntiforgery();
+    await settle();
+
+    const pending = http.match(`${AdminOrderApi.ordersUrl}/${ORDER}/cancel`);
+
+    expect(pending).toHaveLength(1);
+
+    pending[0].flush({
+      orderNumber: 'SD-2026-000123',
+      status: 'Cancelled',
+      statusLabel: 'Cancelled',
+    });
+
+    await settle();
+
+    http.expectOne(`${AdminOrderApi.ordersUrl}/${ORDER}`).flush(
+      detail({
+        status: 'Cancelled',
+        statusLabel: 'Cancelled',
+        stockState: 'Released',
+        dispatch: null,
+        actions: {
+          ...detail().actions,
+          canMarkDelivered: false,
+          canEditDispatch: false,
+          canCancel: false,
+        },
+      }),
+    );
+
+    await settle();
+  });
+
+  it('shows the server’s refusal when somebody else closed the order first', async () => {
+    await open(unpaid());
+
+    const reason = element.querySelector<HTMLTextAreaElement>('[data-testid="cancel-reason-input"]')!;
+    reason.value = 'Customer rang.';
+    reason.dispatchEvent(new Event('input'));
+    await settle();
+
+    click('cancel-order');
+    await settle();
+
+    answerAntiforgery();
+    await settle();
+
+    http.expectOne(`${AdminOrderApi.ordersUrl}/${ORDER}/cancel`).flush(
+      {
+        title: 'This order could not be moved',
+        detail: 'The payment deadline for this order has passed, so it closed on its own.',
+        code: 'order_not_cancellable',
+        orderStatus: 'Expired',
+        orderStatusLabel: 'Expired',
+      },
+      { status: 409, statusText: 'Conflict' },
+    );
+
+    await settle();
+
+    http.expectOne(`${AdminOrderApi.ordersUrl}/${ORDER}`).flush(
+      detail({
+        status: 'Expired',
+        statusLabel: 'Expired',
+        stockState: 'Released',
+        dispatch: null,
+        actions: {
+          ...detail().actions,
+          canMarkDelivered: false,
+          canEditDispatch: false,
+          canCancel: false,
+        },
+      }),
+    );
+
+    await settle();
+
+    const refusal = element.querySelector('[data-testid="order-refusal"]')?.textContent ?? '';
+
+    expect(refusal).toContain('closed on its own');
+    expect(refusal).toContain('Expired');
+    expect(element.querySelector('[data-testid="cancel-order"]')).toBeNull();
   });
 
   it('shows the lines, the address, the money, the payment and the timeline', async () => {
