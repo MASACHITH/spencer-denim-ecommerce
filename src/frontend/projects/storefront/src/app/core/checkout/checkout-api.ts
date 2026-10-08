@@ -3,6 +3,7 @@ import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 
 import {
+  CancelOrderDto,
   CheckoutSessionDto,
   CheckoutTotalsDto,
   OrderConfirmationDto,
@@ -87,6 +88,25 @@ export class CheckoutApi {
     return this.http.post<SlipUploadedDto>(
       `${CheckoutApi.orderUrl}/${encodeURIComponent(publicId)}/payment-slip`,
       form,
+    );
+  }
+
+  /**
+   * Cancels the shopper's own unpaid order (doc 11 P10 flow A).
+   *
+   * **No body and no token.** Doc 11 P10 asks the staff member for a reason and the customer only to
+   * press the button, and the order's own link is the only credential there is — there is no customer
+   * session for an antiforgery token to protect, exactly as `setPaymentReference` and the slip upload
+   * already reason.
+   *
+   * A 404 means "this order can no longer be cancelled", which is deliberately the same answer as "no
+   * such order": the token never expires and is a guest's only credential, so a stranger holding a
+   * guessed GUID must not learn that it names a real order.
+   */
+  cancelOrder(publicId: string): Observable<CancelOrderDto> {
+    return this.http.post<CancelOrderDto>(
+      `${CheckoutApi.orderUrl}/${encodeURIComponent(publicId)}/cancel`,
+      null,
     );
   }
 

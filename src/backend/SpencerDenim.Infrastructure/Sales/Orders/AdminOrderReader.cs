@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using SpencerDenim.Application.Abstractions.Time;
 using SpencerDenim.Application.Sales.Orders;
 using SpencerDenim.Application.Sales.Orders.Abstractions;
 using SpencerDenim.Application.Sales.Orders.Contracts;
@@ -16,7 +17,7 @@ namespace SpencerDenim.Infrastructure.Sales.Orders;
 /// once a screen was written. <c>AdminOrderQueryPlanTests</c> asserts the two that matter.
 /// </para>
 /// </summary>
-internal sealed class AdminOrderReader(AppDbContext dbContext) : IAdminOrderReader
+internal sealed class AdminOrderReader(AppDbContext dbContext, IClock clock) : IAdminOrderReader
 {
     public async Task<AdminOrderListPage> ReadListAsync(
         string? search,
@@ -294,7 +295,8 @@ internal sealed class AdminOrderReader(AppDbContext dbContext) : IAdminOrderRead
                 candidate.ShippedAtUtc,
                 candidate.DeliveredAtUtc,
                 candidate.ClosedAtUtc,
-                candidate.PaymentProviderCode))
+                candidate.PaymentProviderCode,
+                candidate.CaptureLockedUntilUtc))
             .FirstOrDefaultAsync(cancellationToken);
 
         if (order is null)
@@ -623,6 +625,21 @@ internal sealed class AdminOrderReader(AppDbContext dbContext) : IAdminOrderRead
                 payment.ProviderCode == PaymentProviderCodes.BankTransfer
                 && payment.Status is nameof(PaymentStatus.Expired) or nameof(PaymentStatus.Pending));
 
+        // Doc 11 P10 flow A and step 2's guards, for the Orders.Edit holder this screen is for. The four
+        // the transaction claims on, read here so the screen offers the action that will work — and the
+        // PayPal PENDING rule (doc 08 §4.1 R1), which hands that one case to Orders.Approve alone and so
+        // is not this screen's to offer. Nothing in this build can produce a PayPal payment, so that
+        // clause is unreachable; it is here because leaving it out would make the *flag* wrong the day
+        // W4-01 lands, while the transaction stayed right.
+        var canCancel =
+            order.Status == OrderStatus.PendingPayment
+            && order.StockState == OrderStockState.Reserved
+            && (order.CaptureLockedUntilUtc is null || order.CaptureLockedUntilUtc < clock.UtcNow.UtcDateTime)
+            && !payments.Any(payment => payment.IsOrderSettlement)
+            && !payments.Any(payment =>
+                payment.ProviderCode == PaymentProviderCodes.PayPal
+                && payment.Status == nameof(PaymentStatus.Pending));
+
         return new AdminOrderActionsDto(
             canStartProcessing,
             canMarkShipped,
@@ -630,6 +647,7 @@ internal sealed class AdminOrderReader(AppDbContext dbContext) : IAdminOrderRead
             canMarkDelivered,
             canEditDispatch,
             canAcceptLatePayment,
+            canCancel,
             couriersConfigured,
             BlockedReason(order.Status, isPickup, couriersConfigured));
     }
@@ -917,5 +935,10 @@ internal sealed class AdminOrderReader(AppDbContext dbContext) : IAdminOrderRead
         DateTime? ShippedAtUtc,
         DateTime? DeliveredAtUtc,
         DateTime? ClosedAtUtc,
-        string PaymentProviderCode);
+        string PaymentProviderCode,
+
+        // Doc 11 P10 step 2's capture-lock guard, for AdminOrderActions.CanCancel. Nothing in this build
+        // sets it (it is PayPal's, W4-01), so it is null on every order today — read rather than assumed
+        // null, because the flag has to be right the day it is not.
+        DateTime? CaptureLockedUntilUtc);
 }

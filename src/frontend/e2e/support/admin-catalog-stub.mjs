@@ -180,6 +180,7 @@ function adminOrder(overrides) {
     canMarkDelivered: false,
     canEditDispatch: false,
     canAcceptLatePayment: false,
+    canCancel: false,
     couriersConfigured: false,
     blockedReason: null,
     ...(overrides.actions ?? {}),
@@ -265,6 +266,18 @@ function orderDetail(state, order) {
       canEditDispatch:
         !order.isPickup && (order.status === 'Shipped' || order.status === 'Delivered')
         && couriersConfigured,
+
+      // Doc 11 P10 flow A. **Recomputed here rather than taken from the fixture**, for the reason
+      // `blockedReason` is: the *condition* is the thing under test, and the one assertion that matters is
+      // that the panel is gone after a cancel. A stub that kept the fixture's flag would draw the form on
+      // an order it had just closed, and the test would pass.
+      //
+      // Only the status is modelled, which is less than the real reader checks: doc 11 P10 step 2's other
+      // three guards (stock Reserved, no capture lock, no settling payment) have no representation in
+      // this stub's order shape, and issue #126 is exactly why that is acceptable here and not a gap in
+      // coverage - a browser test cannot see them at all, so they are pinned by
+      // `CheckoutEndpointTests` and `OrderCancellationTests` against real SQL Server instead.
+      canCancel: order.status === 'PendingPayment',
       couriersConfigured,
       blockedReason,
     },
@@ -642,6 +655,20 @@ function freshState() {
         customerEmail: 'sanduni@example.com',
         grandTotal: 8750,
         actions: { canAcceptLatePayment: true },
+      }),
+
+      // W3-04b: an order awaiting payment, which is the only kind doc 11 P10 flow A can cancel. The
+      // three above cannot be - which is the point of adding a fourth rather than changing one of them.
+      adminOrder({
+        orderPublicId: '77777777-7777-4777-8777-777777777777',
+        orderNumber: 'SD-2026-000126',
+        status: 'PendingPayment',
+        statusLabel: 'Awaiting payment',
+        customerName: 'Dilani Gunawardena',
+        customerEmail: 'dilani@example.com',
+        grandTotal: 6240,
+        secondsUntilExpiry: 90_000,
+        actions: { canCancel: true },
       }),
     ],
 
@@ -1266,7 +1293,7 @@ const server = createServer(async (request, response) => {
   }
 
   const transitionRoute =
-    /^\/api\/admin\/orders\/([^/]+)\/(start-processing|mark-shipped|ready-for-collection|mark-delivered|dispatch|internal-note)$/.exec(
+    /^\/api\/admin\/orders\/([^/]+)\/(start-processing|mark-shipped|ready-for-collection|mark-delivered|dispatch|internal-note|cancel)$/.exec(
       path,
     );
   if (transitionRoute && request.method === 'POST') {
@@ -1329,11 +1356,37 @@ const server = createServer(async (request, response) => {
       order.internalNote = body.internalNote === null ? null : String(body.internalNote);
     }
 
+    // Doc 11 P10 flow A. **The same refusal the API makes**, so the screen's own guard is not the only
+    // thing tested: `cancelReason` is required, and a body without it is a 400 naming the field rather
+    // than a cancellation with a blank reason on it.
+    if (segment === 'cancel') {
+      const reason = typeof body.cancelReason === 'string' ? body.cancelReason.trim() : '';
+
+      if (reason.length === 0) {
+        return json(response, 400, {
+          title: 'One or more fields are invalid.',
+          status: 400,
+          errors: {
+            cancelReason: [
+              'Say why this order is being cancelled. It is kept on the order and read back to the '
+              + 'customer if they ask.',
+            ],
+          },
+        });
+      }
+
+      order.cancelReason = reason;
+      order.closedAtUtc = '2026-10-08T06:00:00Z';
+      order.secondsUntilExpiry = null;
+      order.stockState = 'Released';
+    }
+
     const moved = {
       'start-processing': ['Processing', 'Processing'],
       'mark-shipped': ['Shipped', 'Shipped'],
       'ready-for-collection': ['Shipped', 'Ready for collection'],
       'mark-delivered': order.isPickup ? ['Delivered', 'Collected'] : ['Delivered', 'Delivered'],
+      cancel: ['Cancelled', 'Cancelled'],
     }[segment];
 
     if (moved) {
@@ -1346,6 +1399,10 @@ const server = createServer(async (request, response) => {
         canMarkReadyForCollection: order.status === 'Processing' && order.isPickup,
         canMarkDelivered: order.status === 'Shipped',
         canEditDispatch: order.status === 'Shipped' && !order.isPickup,
+
+        // Doc 11 P10: Cancelled is a closing state. Nothing may cancel it again, and the one edge out of
+        // it is Orders.Approve's accept-late (doc 08 4.1), which the Expired order above already covers.
+        canCancel: false,
       };
     }
 

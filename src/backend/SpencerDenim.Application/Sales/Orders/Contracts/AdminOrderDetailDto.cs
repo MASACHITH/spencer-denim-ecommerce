@@ -411,6 +411,21 @@ public sealed record AdminOrderDispatchDto(
 /// route that cannot be destroyed by a reload.
 /// </para>
 /// </param>
+/// <param name="CanCancel">
+/// Whether this <b>unpaid</b> order can be cancelled right now (doc 11 P10 flow A, W3-04b).
+/// <para>
+/// <b>It is doc 11 P10 step 2's four guards, not just the status</b>: <c>PendingPayment</c>, stock
+/// <c>Reserved</c>, no active capture lock, and no payment that has already settled the order — plus doc
+/// 08 §4.1 R1's PayPal <c>PENDING</c> rule, which gives that one decision to <c>Orders.Approve</c> alone
+/// and so takes it away from the <c>Orders.Edit</c> holder this screen is for.
+/// </para>
+/// <para>
+/// <b>False on a paid order, and the screen must not offer an alternative.</b> Doc 11 P10's table says a
+/// paid order is refunded and never cancelled, and <c>Orders.Refund</c> is unbuilt (W3-05) — refunds are
+/// manual for v1 and recorded in the order's internal note. So the honest screen offers cancel on an
+/// unpaid order and nothing at all on a paid one.
+/// </para>
+/// </param>
 /// <param name="CouriersConfigured">
 /// Whether any active courier exists at all.
 /// <para>
@@ -432,5 +447,6 @@ public sealed record AdminOrderActionsDto(
     bool CanMarkDelivered,
     bool CanEditDispatch,
     bool CanAcceptLatePayment,
+    bool CanCancel,
     bool CouriersConfigured,
     string? BlockedReason);

@@ -295,6 +295,59 @@ import { CatalogFailure, toCatalogFailure } from '../../core/catalog/admin-catal
           </label>
         }
 
+        @if (detail.actions.canCancel) {
+          <!-- Doc 11 P10 flow A. **The reason is required and the form asks for it**, rather than a bare
+               Cancel button with an optional box beside it: cancelling is irreversible for the customer,
+               the reason is kept on the order and read back to them if they ask, and a confirmation step
+               is the obvious place for a mistake. There is no second "are you sure", because typing a
+               sentence *is* the deliberate act — a dialog on top of it would be a reflex to dismiss.
+
+               It is a form element so Enter in the box submits; the control carries aria-disabled and
+               never the disabled attribute, because disabling a button under the user's finger throws
+               focus to <body> (#109), and the handler refuses the activation instead.
+
+               No backticks in this comment: it is inside a template literal and one would end it, which
+               is a mistake this task made twice in an hour, on two screens. -->
+          <form class="order-cancel" (submit)="submitCancel($event)">
+            <h3 class="adm-label">Cancel this order</h3>
+            <p class="adm-panel__hint">
+              Only an unpaid order can be cancelled. The items go back on sale straight away and the
+              order's open payment is closed. <strong>The customer is not emailed</strong> — tell them
+              yourself.
+            </p>
+            <label class="adm-field adm-field--wide">
+              <span class="adm-label">Why (required)</span>
+              <textarea
+                class="adm-input"
+                rows="2"
+                maxlength="500"
+                [value]="cancelReason()"
+                data-testid="cancel-reason-input"
+                (input)="typeCancelReason($event)"
+              ></textarea>
+              <span class="adm-panel__hint">
+                Kept on the order and read back to the customer if they ask. The internal note further
+                down is separate.
+              </span>
+            </label>
+            @if (cancelError(); as message) {
+              <p class="adm-state adm-state--error" role="alert" data-testid="cancel-error">
+                {{ message }}
+              </p>
+            }
+            <div class="adm-actions">
+              <button
+                class="adm-btn"
+                type="submit"
+                [attr.aria-disabled]="isBusy() ? 'true' : null"
+                data-testid="cancel-order"
+              >
+                Cancel the order
+              </button>
+            </div>
+          </form>
+        }
+
         @if (detail.actions.canMarkShipped || detail.actions.canEditDispatch) {
           <form class="order-dispatch" (submit)="submitDispatch($event, detail)">
             <h3 class="adm-label">
@@ -714,7 +767,8 @@ import { CatalogFailure, toCatalogFailure } from '../../core/catalog/admin-catal
       border: 1px solid var(--color-border);
       font-size: var(--text-small);
     }
-    .order-dispatch {
+    .order-dispatch,
+    .order-cancel {
       display: grid;
       gap: var(--space-1);
       padding-top: var(--space-2);
@@ -751,6 +805,18 @@ export class OrderDetailPage {
    */
   protected readonly acceptLateNote = signal('');
   protected readonly dispatchError = signal<string | null>(null);
+
+  /**
+   * Why this order is being cancelled (doc 11 P10 flow A, step 1: "clicks Cancel and enters a reason").
+   *
+   * **Its own box, not the internal note and not the accept-late note.** All three are staff writing and
+   * all three go somewhere different: this one reaches `Orders.CancelReason`, is rendered under "Why it
+   * was cancelled" and is read back to the customer; the internal note is private; the accept-late note
+   * is about a payment. W3-04 shipped the accept-late form sending the internal note's text as its
+   * audited reason, and that is the defect this separation exists to not repeat.
+   */
+  protected readonly cancelReason = signal('');
+  protected readonly cancelError = signal<string | null>(null);
 
   /**
    * Whether a bank transfer on this order is still waiting for a staff decision.
@@ -909,6 +975,10 @@ export class OrderDetailPage {
     this.acceptLateNote.set((event.target as HTMLTextAreaElement | null)?.value ?? '');
   }
 
+  protected typeCancelReason(event: Event): void {
+    this.cancelReason.set((event.target as HTMLTextAreaElement | null)?.value ?? '');
+  }
+
   protected typeNote(event: Event): void {
     this.internalNote.set((event.target as HTMLTextAreaElement | null)?.value ?? '');
   }
@@ -1006,6 +1076,43 @@ export class OrderDetailPage {
   }
 
   /**
+   * Cancels an unpaid order (doc 11 P10 flow A).
+   *
+   * **The reason is checked here as well as on the server, because a round trip to be told the box is
+   * empty is a round trip.** The server's check is the one that matters: the use case refuses a blank
+   * `cancelReason` with its own sentence, so a client that skipped this is refused rather than obeyed.
+   *
+   * It goes through `act`, so the busy guard, the refusal classifier, the re-read and the focus re-homing
+   * are the same ones every other transition on this screen uses — and the re-homing matters here more
+   * than anywhere: a successful cancel destroys this very form, which is the node that had focus.
+   */
+  protected submitCancel(event: Event): void {
+    event.preventDefault();
+
+    if (this.isBusy()) {
+      return;
+    }
+
+    const reason = this.cancelReason().trim();
+
+    if (reason.length === 0) {
+      this.cancelError.set(
+        'Say why this order is being cancelled. It is kept on the order and read back to the customer if '
+        + 'they ask.',
+      );
+
+      // The message is in an element with role="alert", so it is announced — but the live region is
+      // updated too, because a staff member who pressed the button twice needs to hear it both times
+      // (ADM-22).
+      this.announce(this.cancelError()!);
+      return;
+    }
+
+    this.cancelError.set(null);
+    this.act('cancel', { cancelReason: reason });
+  }
+
+  /**
    * Accepts a bank transfer that arrived after the order expired (doc 11 P7 step 8, issue #124).
    *
    * It posts to the bank-transfer route W3-03 already built, tested and verified. What was missing was a
@@ -1084,6 +1191,11 @@ export class OrderDetailPage {
         // filled in after a successful acceptance would invite it being sent again with the next one.
         this.acceptLateNote.set('');
 
+        // Same rule, and the same reason: a cancel reason is about the one decision. After a *refused*
+        // cancel the box is cleared too, which is deliberate — the refusal means the order has moved, so
+        // whatever the sentence was about is no longer the situation.
+        this.cancelReason.set('');
+
         then?.();
       },
       error: (error: unknown) => {
@@ -1123,6 +1235,7 @@ export class OrderDetailPage {
     this.refusal.set(null);
     this.shortLines.set([]);
     this.dispatchError.set(null);
+    this.cancelError.set(null);
     this.announce('Working…');
   }
 

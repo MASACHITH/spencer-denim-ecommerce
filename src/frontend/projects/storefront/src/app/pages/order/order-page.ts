@@ -433,6 +433,75 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
             }
           </section>
         }
+
+        @if (placed.canCancel) {
+          <!-- Doc 11 P10 flow A, the customer's half. **Two steps, because this is irreversible for
+               them**: the first press reveals the confirmation, the second one fires. It is an inline
+               confirmation rather than window.confirm or a <dialog> - a native confirm does not exist
+               during server-side rendering, cannot be styled or announced, and is the sort of thing
+               people dismiss by reflex. This way the question is on the page, in the reading order, and
+               "Keep my order" is the button a shopper reaches first.
+
+               Every control says aria-disabled rather than disabled, because disabling a button under the
+               shopper's own finger throws focus to <body> (issue #109), and the handlers refuse the
+               activation instead. -->
+          <section class="order__panel" aria-labelledby="cancel-title" data-testid="cancel-panel">
+            <h2 class="order__panel-title" id="cancel-title">Changed your mind?</h2>
+
+            @if (!confirmingCancel()) {
+              <p class="order__muted pay__lead">
+                You have not paid for this order, so you can cancel it yourself. The items go back on sale
+                straight away.
+              </p>
+              <div class="pay__actions">
+                <button
+                  class="btn btn--secondary"
+                  type="button"
+                  [attr.aria-disabled]="busy() ? 'true' : null"
+                  data-testid="cancel-order"
+                  (click)="askToCancel()"
+                >
+                  Cancel this order
+                </button>
+              </div>
+            } @else {
+              <p class="pay__lead" data-testid="cancel-confirm-question">
+                Cancel order {{ placed.orderNumber }}? This cannot be undone - if you want the items
+                afterwards you would have to order them again, and we cannot promise they will still be
+                there.
+              </p>
+              <div class="pay__actions">
+                <button
+                  class="btn btn--secondary"
+                  type="button"
+                  data-testid="cancel-keep"
+                  (click)="keepOrder()"
+                >
+                  Keep my order
+                </button>
+                <button
+                  class="btn btn--primary"
+                  type="button"
+                  [attr.aria-disabled]="busy() ? 'true' : null"
+                  data-testid="cancel-confirm"
+                  (click)="confirmCancel()"
+                >
+                  Yes, cancel it
+                </button>
+              </div>
+            }
+
+            @if (cancelProblem(); as message) {
+              <p class="order__error" role="alert" data-testid="cancel-error">{{ message }}</p>
+            }
+
+            <!-- Nothing promises an email, because nothing sends one: ops.EmailOutbox is W3-06's, and doc
+                 11 P10's notification list has no email for a cancellation in any case (G-14). -->
+            <p class="order__muted">
+              Nothing is charged and nothing is emailed. This page will show the order as cancelled.
+            </p>
+          </section>
+        }
       } @else if (error(); as message) {
         <div class="order__empty">
           <h1 class="order__title">We could not load your order</h1>
@@ -614,9 +683,24 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
     }
     /* The write controls say aria-disabled rather than disabled, so a press does not throw the shopper's
        focus to the document body. That leaves the unavailable look to be drawn here. Opacity only: a
-       control that cannot be hovered cannot show a cursor, and the press is already a no-op.
-       (No backticks in this block: it is a template literal, and one would end it.) */
-    .pay [aria-disabled='true'] {
+       control that cannot be hovered cannot show a cursor, and the press is already a no-op. Pointer
+       events stay on, because removing them would stop the control being hit-tested, and
+       document.elementFromPoint is how the occlusion sweep finds it.
+       (No backticks in this block: it is a template literal, and one would end it.)
+
+       **The selector is unscoped, and W3-04b made it so to stay inside a budget.** It used to be
+       .pay [aria-disabled=true]; the cancel panel's controls need the same look, and this component's
+       styles have a 4 kB budget that four new classes for that panel's layout blew by exactly 253 bytes
+       (measured both ways: origin/main builds clean, with them it warned). So the panel reuses
+       order__panel for its grid, pay__lead for its 60ch measure and pay__actions for its button row, and
+       this rule dropped its prefix rather than gaining a second selector - which is also the truer rule,
+       since every aria-disabled control in this component is a busy guard and every one of them should
+       look unavailable. Angular scopes it to this component, so it cannot reach another screen.
+
+       And the line above about backticks is not decoration: the first draft of this very comment quoted
+       those three class names in them, which ended the literal and turned the rest of the file into
+       compile errors about class attributes. The warning was already written here and I still did it. */
+    [aria-disabled='true'] {
       opacity: 0.6;
       cursor: progress;
     }
@@ -821,6 +905,19 @@ export class OrderPage {
    */
   protected readonly reference = signal('');
 
+  /**
+   * Whether the shopper has pressed "Cancel this order" and is being asked to confirm.
+   *
+   * **Two steps on purpose.** Cancelling is irreversible for them and the items go back on sale, so one
+   * stray press on a phone must not close somebody's order. It resets on every re-read, so a page that
+   * has moved on never comes back with the question half-asked.
+   */
+  private readonly askingCancel = signal(false);
+  private readonly cancelFailure = signal<string | null>(null);
+
+  protected readonly confirmingCancel = this.askingCancel.asReadonly();
+  protected readonly cancelProblem = this.cancelFailure.asReadonly();
+
   protected readonly busy = this.writing.asReadonly();
   protected readonly problem = this.payProblem.asReadonly();
   protected readonly announcement = this.said.asReadonly();
@@ -922,6 +1019,73 @@ export class OrderPage {
           this.read();
         },
         error: (error: unknown) => this.failWrite(error),
+      });
+  }
+
+  /** First press: ask (doc 11 P10 flow A, step 1). */
+  protected askToCancel(): void {
+    // The guard the `disabled` attribute would have provided, which is why nothing here is disabled.
+    if (this.writing()) {
+      return;
+    }
+
+    this.cancelFailure.set(null);
+    this.askingCancel.set(true);
+    this.announce('Cancel this order? Choose "Yes, cancel it", or "Keep my order".');
+  }
+
+  /** Second thoughts about the second thoughts. */
+  protected keepOrder(): void {
+    this.askingCancel.set(false);
+    this.cancelFailure.set(null);
+    this.announce('Your order is still with us.');
+  }
+
+  /**
+   * Second press: cancel it (doc 11 P10 flow A, step 3).
+   *
+   * **Nothing here decides whether it is allowed.** All four of P10 step 2's guards are evaluated inside
+   * the transaction, under the order row's own lock (doc 08 §5.2) - which is what makes this press and the
+   * expiry sweep taking the same order produce exactly one winner and release the stock exactly once.
+   * `canCancel` on the payload decides only whether the panel is drawn.
+   *
+   * **A 404 is the ordinary refusal**, and it is deliberately the same answer as "no such order": the
+   * token never expires and is the only credential there is. So the sentence covers every reason at once
+   * and the page re-reads the order, which is where a shopper holding the link is entitled to the detail.
+   */
+  protected confirmCancel(): void {
+    if (this.writing()) {
+      return;
+    }
+
+    this.beginWrite('Cancelling your order...');
+
+    this.api
+      .cancelOrder(this.token())
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (cancelled) => {
+          this.writing.set(false);
+          this.askingCancel.set(false);
+          this.announce(`Order ${cancelled.orderNumber} is cancelled. The items are back on sale.`);
+          this.read();
+        },
+        error: (error: unknown) => {
+          this.writing.set(false);
+          this.askingCancel.set(false);
+          this.said.set('');
+
+          this.cancelFailure.set(
+            error instanceof HttpErrorResponse && error.status === 404
+              ? 'This order can no longer be cancelled - it may already have been paid, or the hold may '
+                + 'have lapsed. We have reloaded it below so you can see where it stands.'
+              : checkoutErrorMessage(error),
+          );
+
+          // Re-read either way: the refusal rolled nothing back, and the order's state on screen is the
+          // one thing that must not be guessed from a failure.
+          this.read();
+        },
       });
   }
 
@@ -1058,6 +1222,11 @@ export class OrderPage {
           this.current.set(order);
           this.handover.give(HANDOVER_KEY, order);
           this.seedReference(order.proof);
+
+          // **A half-asked question never survives a re-read.** The order's state has just changed under
+          // the panel, so "Cancel order SD-...? This cannot be undone" about an order that is now paid or
+          // cancelled would be a question with no true answer.
+          this.askingCancel.set(false);
         },
         error: (error: unknown) => {
           this.loading.set(false);
