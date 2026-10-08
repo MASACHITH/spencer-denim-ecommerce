@@ -330,6 +330,16 @@ import { CatalogFailure, toCatalogFailure } from '../../core/catalog/admin-catal
                 down is separate.
               </span>
             </label>
+            <!-- **This message is inside the form, which is only safe because nothing on the wire ever
+                 sets it.** cancelError is written by the empty-reason check alone, which makes no request,
+                 so the form is still here to hold it. A *server* refusal goes to the refusal signal
+                 instead, drawn above this panel - because act re-reads on a refusal, canCancel turns
+                 false and this whole form is destroyed, which is exactly how the storefront's refusal
+                 message came to be shown to nobody. Anything added here that can arrive from a response
+                 belongs up there.
+
+                 No backticks in this comment: it is inside a template literal and one would end it.
+                 Which is how this very comment failed to compile on its first try. -->
             @if (cancelError(); as message) {
               <p class="adm-state adm-state--error" role="alert" data-testid="cancel-error">
                 {{ message }}
