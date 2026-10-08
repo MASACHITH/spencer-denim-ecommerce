@@ -677,9 +677,35 @@ function freshState() {
  * version of the real API got this wrong and answered 409 to every valid save; a stub that published a
  * per-group token would let the screen regress to it with every browser test still passing.
  */
+/**
+ * The one catalogued key the real seeder writes a value for (doc 08 section 3.8's 7). Seeded here too, so
+ * the screen opens showing what production shows rather than an empty box.
+ */
+const SEEDED_SETTINGS = { 'Orders.AutoDeliverAfterDays': '7' };
+
 function settingsPayload(state) {
+  for (const [key, value] of Object.entries(SEEDED_SETTINGS)) {
+    if (!Object.hasOwn(state.settings, key)) {
+      state.settings[key] = value;
+    }
+  }
+
   const groups = [
-    { groupKey: 'Store', keys: ['Store.LogoAssetId'], types: { 'Store.LogoAssetId': 'MediaAssetRef' } },
+    // W3-04 added the four legal keys to this group, and `Orders` below. They are **one save unit** with
+    // `Orders` (SettingCatalog.SaveUnits), so the logo form and the invoice form are handed the same token
+    // — which is why `unitFor` spans both groups rather than one.
+    {
+      groupKey: 'Store',
+      keys: [
+        'Store.LogoAssetId',
+        'Store.LegalName',
+        'Store.Address',
+        'Store.BRNumber',
+        'Store.VatNumber',
+      ],
+      types: { 'Store.LogoAssetId': 'MediaAssetRef' },
+    },
+    { groupKey: 'Orders', keys: ['Orders.AutoDeliverAfterDays'], types: {} },
     { groupKey: 'Contact', keys: ['Contact.WhatsApp'], types: {} },
     {
       groupKey: 'Social',
@@ -711,9 +737,18 @@ function settingsPayload(state) {
     'Bank.Instructions',
   ];
 
+  const storeUnit = [
+    'Store.LogoAssetId',
+    'Store.LegalName',
+    'Store.Address',
+    'Store.BRNumber',
+    'Store.VatNumber',
+    'Orders.AutoDeliverAfterDays',
+  ];
+
   const unitFor = (groupKey) => {
-    if (groupKey === 'Store') {
-      return ['Store.LogoAssetId'];
+    if (groupKey === 'Store' || groupKey === 'Orders') {
+      return storeUnit;
     }
 
     if (groupKey === 'Bank') {
@@ -1525,6 +1560,61 @@ const server = createServer(async (request, response) => {
       ['accountName', 'Bank.AccountName'],
       ['accountNumber', 'Bank.AccountNumber'],
       ['instructions', 'Bank.Instructions'],
+    ]) {
+      if (Object.hasOwn(body, field)) {
+        const value = body[field];
+        state.settings[key] = value === null || String(value).trim() === '' ? null : String(value).trim();
+      }
+    }
+
+    return noContent(response);
+  }
+
+  if (path === '/api/admin/settings/invoice-and-fulfilment' && request.method === 'PUT') {
+    const body = await readBody(request);
+    if (body === undefined || body === null) {
+      return problem(response, 400, 'Malformed JSON', 'The request body is not valid JSON.', 'malformed_json');
+    }
+
+    if (body.rowVersion !== settingsToken(state, 'Store')) {
+      return problem(
+        response,
+        409,
+        'This change cannot be applied',
+        'Somebody else changed the shop\u2019s details while you were editing them.',
+        'stale_row_version',
+      );
+    }
+
+    // The window's one real rule, mirrored for the reason the bank group's is: without it the field error
+    // could stop rendering and every browser test would still pass. Nought is refused on its own grounds
+    // (doc 08 section 4.1 G-18), which is why the range is a range and not a length.
+    if (Object.hasOwn(body, 'autoDeliverAfterDays')) {
+      const raw = body.autoDeliverAfterDays;
+      const text = raw === null || raw === undefined ? '' : String(raw).trim();
+
+      if (text !== '' && !/^(?:[1-9]|[1-8][0-9]|90)$/.test(text)) {
+        return json(response, 400, {
+          title: 'One or more fields are invalid.',
+          status: 400,
+          errors: {
+            autoDeliverAfterDays: [
+              'Use between 1 and 90 days. Nought would mark an order delivered the moment it ships, which '
+                + 'would also give the customer a Verified buyer badge for goods still in the van.',
+            ],
+          },
+        });
+      }
+    }
+
+    // **Only the fields the body carried**, the W1-12 rule again. A stub that assigned all five from
+    // `body` would let the screen start sending nulls and clear four legal keys with nothing noticing.
+    for (const [field, key] of [
+      ['legalName', 'Store.LegalName'],
+      ['registeredAddress', 'Store.Address'],
+      ['brNumber', 'Store.BRNumber'],
+      ['vatNumber', 'Store.VatNumber'],
+      ['autoDeliverAfterDays', 'Orders.AutoDeliverAfterDays'],
     ]) {
       if (Object.hasOwn(body, field)) {
         const value = body[field];

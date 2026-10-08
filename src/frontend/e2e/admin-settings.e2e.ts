@@ -663,4 +663,118 @@ test.describe('the settings screen is usable and accessible', () => {
     // The Remove button is a destructive action, so it has to be a real target rather than a thin link.
     expect(await undersized(page, '[data-testid="logo-remove"]')).toEqual([]);
   });
+
+  // ---- W3-04: the invoice and fulfilment form ------------------------------------------------
+
+  /**
+   * **The form ADM-09 needed, measured at every breakpoint.**
+   *
+   * It arrived in W3-04's second round with six Vitest specs and ten integration tests, and no browser
+   * measurement at all - so the project's non-negotiable responsive rule had never been applied to it. A
+   * sweep is the only thing that can catch a field that renders off-screen or a Save button under the
+   * floor, because neither the specs (no layout) nor the integration tests (no browser) can see it.
+   */
+  test('the invoice form fits every breakpoint with real tap targets', async ({ page }) => {
+    const fields = [
+      '[data-testid="field-legalName"]',
+      '[data-testid="field-registeredAddress"]',
+      '[data-testid="field-brNumber"]',
+      '[data-testid="field-vatNumber"]',
+      '[data-testid="field-autoDeliverAfterDays"]',
+      '[data-testid="save-invoice"]',
+    ];
+
+    for (const width of BREAKPOINTS) {
+      await page.setViewportSize({ width, height: 900 });
+      await openSettings(page);
+
+      expect(
+        await horizontalOverflow(page),
+        `horizontal overflow at ${width}px with the invoice form on screen`,
+      ).toBeLessThanOrEqual(0);
+
+      // #80: each selector is guarded on its own. A compound selector's guard is satisfied by its first
+      // clause while a later one silently matches nothing, and `undersized` answers [] for "nothing
+      // matched" as well as for "everything is big enough" - so an unguarded sweep over six fields is a
+      // sweep that cannot fail.
+      for (const selector of fields) {
+        const rendered = await page.evaluate(
+          (one) =>
+            [...document.querySelectorAll<HTMLElement>(one)].filter(
+              (element) => element.getClientRects().length > 0,
+            ).length,
+          selector,
+        );
+
+        expect(
+          rendered,
+          `nothing rendered matches "${selector}" at ${width}px, so measuring it could not fail`,
+        ).toBeGreaterThan(0);
+
+        expect(await undersized(page, selector), `${selector} at ${width}px`).toEqual([]);
+      }
+    }
+  });
+
+  /**
+   * The round trip, through the screen: type, save, re-read, and the values are the ones the server now
+   * holds rather than the ones left in the boxes.
+   */
+  test('saving the invoice details sends them and shows what came back', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await openSettings(page);
+
+    await page.locator('[data-testid="field-legalName"]').fill('A Registered Company (Pvt) Ltd');
+    await page.locator('[data-testid="field-registeredAddress"]').fill('No. 1, Example Road\nColombo 00100');
+    await page.locator('[data-testid="field-brNumber"]').fill('PV-00000');
+    await page.locator('[data-testid="field-autoDeliverAfterDays"]').fill('10');
+
+    const saved = page.waitForResponse(
+      (response: Response) =>
+        response.url().includes('/api/admin/settings/invoice-and-fulfilment')
+        && response.request().method() === 'PUT',
+    );
+
+    await page.locator('[data-testid="save-invoice"]').click();
+    expect((await saved).status()).toBe(204);
+
+    // Re-opened rather than re-read from the boxes: the screen re-reads after a save, and a form that kept
+    // showing what was typed would hide a field the server never stored.
+    await openSettings(page);
+
+    await expect(page.locator('[data-testid="field-legalName"]')).toHaveValue(
+      'A Registered Company (Pvt) Ltd',
+    );
+    await expect(page.locator('[data-testid="field-brNumber"]')).toHaveValue('PV-00000');
+    await expect(page.locator('[data-testid="field-autoDeliverAfterDays"]')).toHaveValue('10');
+  });
+
+  /**
+   * The window's refusal reaches the field rather than a banner, because a figure a staff member cannot
+   * see refused beside the box is a figure they retype unchanged.
+   */
+  test('a window outside the range is refused against its own field', async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 900 });
+    await openSettings(page);
+
+    await page.locator('[data-testid="field-autoDeliverAfterDays"]').fill('0');
+    await page.locator('[data-testid="save-invoice"]').click();
+
+    const error = page.locator('[data-testid="error-autoDeliverAfterDays"]');
+    await expect(error).toBeVisible();
+
+    // And the refusal itself does not push the narrowest viewport sideways.
+    expect(await horizontalOverflow(page), 'horizontal overflow at 320px with a field error').toBeLessThanOrEqual(0);
+  });
+
+  /**
+   * The seeded window is on screen when the page opens, which is what tells a staff member the system is
+   * already closing orders after seven days rather than not at all.
+   */
+  test('the seeded auto-deliver window is shown rather than an empty box', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await openSettings(page);
+
+    await expect(page.locator('[data-testid="field-autoDeliverAfterDays"]')).toHaveValue('7');
+  });
 });

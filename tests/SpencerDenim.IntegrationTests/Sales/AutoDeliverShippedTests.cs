@@ -154,7 +154,8 @@ public sealed class AutoDeliverShippedTests(SqlServerDatabaseFixture sqlServer)
     /// <remarks>
     /// <b>Two written values, and no assertion about the resting one.</b> An earlier version of this test
     /// opened by asserting that an unwritten read answers doc 08 §3.8's seven — an assertion about a row
-    /// nothing in the test had written, in a table four other classes in this assembly deliberately mutate
+    /// nothing in the test had written, in a table several other classes in this assembly deliberately
+    /// mutate (seven files pair <c>SettingKeys.</c> with <c>ExecuteUpdateAsync</c>, two of them shared bases)
     /// and one of them (<c>AdminSettingsEndpointTests</c>) nulls <i>every</i> catalogued key in its
     /// <c>finally</c>. Classes in this assembly interleave (measured — see <c>AssemblyInfo.cs</c>), so that
     /// opening line could read null and fail for a reason that had nothing to do with the job. It is the
