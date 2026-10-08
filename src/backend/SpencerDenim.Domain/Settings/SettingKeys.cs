@@ -29,9 +29,9 @@ namespace SpencerDenim.Domain.Settings;
 /// </para>
 /// <para>
 /// <b><see cref="Store.LegalName"/> is a different fact and is here.</b> It is not the shop's name under
-/// another name: the shop a customer sees is Colombo Wardrobe, and the party that issues an invoice is the
-/// registered company that commissioned it. A legal document names the second, so that one is a row the
-/// client fills in — and it stays unset, and prints as nothing, until they do.
+/// another name: the shop a customer sees is named by <c>StoreBrand.Name</c>, and the party that issues an
+/// invoice is the registered company that commissioned it. A legal document names the second, so that one
+/// is a row the client fills in — and it stays unset, and prints as nothing, until they do.
 /// </para>
 /// </summary>
 public static class SettingKeys
@@ -52,10 +52,10 @@ public static class SettingKeys
         /// The client company's registered name, as it must appear on an invoice (W3-04, ADM-09).
         /// <para>
         /// <b>This is the one place in the system where the <i>company</i> is meant rather than the
-        /// shop.</b> Everything a shopper reads says Colombo Wardrobe (docs/02 §I2), which is why the
-        /// shop's name is a build-time constant and not a settings row; an invoice is a legal document
-        /// and the party issuing it is the registered company. The two are different facts about the
-        /// same business and this key holds the second one.
+        /// shop.</b> Everything a shopper reads carries <c>StoreBrand.Name</c> (docs/02 §I2), which is
+        /// why the shop's name is a build-time constant and not a settings row; an invoice is a legal
+        /// document and the party issuing it is the registered company. The two are different facts about
+        /// the same business and this key holds the second one.
         /// </para>
         /// <para>
         /// <b>Seeded null, and the invoice prints nothing for it rather than a placeholder.</b> Doc 08

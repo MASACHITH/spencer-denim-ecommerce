@@ -21,9 +21,18 @@ namespace SpencerDenim.UnitTests.Application.Settings;
 public sealed class SettingsSaveUnitTests
 {
     /// <summary>
-    /// The three forms the screen shows: the logo on its own, the contact number with the three social
-    /// addresses, and the bank details on their own.
+    /// The three forms the screen shows: the logo and the shop's own details, the contact number with the
+    /// three social addresses, and the bank details on their own.
     /// </summary>
+    /// <remarks>
+    /// <b><c>Store</c> and <c>Orders</c> are one unit since W3-04</b>, and that is a decision rather than a
+    /// convenience. The logo has its own command, because changing it changes every page instantly; the
+    /// invoice's legal details and the auto-deliver window sit on a second form beside it. Both forms read
+    /// the unit's token, which <see cref="SettingCatalog.KeysInSaveUnitFor"/> guarantees is the token their
+    /// save compares — so the one thing that cannot happen is the 409-on-every-save this file is about. The
+    /// cost is that saving one of the two forms makes the other's token stale until the screen re-reads,
+    /// and the screen re-reads after every save.
+    /// </remarks>
     /// <remarks>
     /// <b>The bank details are their own save unit because they are guarded by a different permission.</b>
     /// A unit spanning <c>Bank</c> and any <c>Settings.Edit</c> group would hand a Store Manager a
@@ -36,7 +45,7 @@ public sealed class SettingsSaveUnitTests
     {
         Assert.Equal(
             [
-                new[] { SettingKeys.Store.Group },
+                new[] { SettingKeys.Store.Group, SettingKeys.Orders.Group },
                 new[] { SettingKeys.Contact.Group, SettingKeys.Social.Group },
                 new[] { SettingKeys.Bank.Group },
             ],
@@ -105,9 +114,24 @@ public sealed class SettingsSaveUnitTests
     [Fact]
     public void A_save_units_keys_are_the_keys_of_its_groups()
     {
+        string[] storeAndOrders =
+        [
+            SettingKeys.Store.LogoAssetId,
+            SettingKeys.Store.LegalName,
+            SettingKeys.Store.Address,
+            SettingKeys.Store.BRNumber,
+            SettingKeys.Store.VatNumber,
+            SettingKeys.Orders.AutoDeliverAfterDays,
+        ];
+
+        // Both group names answer with the same set, as with Contact and Social below: the screen may have
+        // read the token from either group entry.
         Assert.Equal(
-            [SettingKeys.Store.LogoAssetId],
-            SettingCatalog.KeysInSaveUnitFor(SettingKeys.Store.Group));
+            storeAndOrders.Order(StringComparer.Ordinal),
+            SettingCatalog.KeysInSaveUnitFor(SettingKeys.Store.Group).Order(StringComparer.Ordinal));
+        Assert.Equal(
+            storeAndOrders.Order(StringComparer.Ordinal),
+            SettingCatalog.KeysInSaveUnitFor(SettingKeys.Orders.Group).Order(StringComparer.Ordinal));
 
         string[] contactAndSocial =
         [
@@ -146,11 +170,12 @@ public sealed class SettingsSaveUnitTests
     public void A_group_with_no_declared_save_unit_is_its_own()
     {
         Assert.Equal(
-            SettingCatalog.KeysIn(SettingKeys.Store.Group),
-            SettingCatalog.KeysInSaveUnitFor(SettingKeys.Store.Group));
+            SettingCatalog.KeysIn(SettingKeys.Bank.Group),
+            SettingCatalog.KeysInSaveUnitFor(SettingKeys.Bank.Group));
 
-        // `Bank` used to be the undeclared example and now has a unit of its own, so an unbuilt group takes
-        // its place (doc 08 §3.8's `Payments.PayPal`, which W4-01 adds).
+        // `Bank` used to be the undeclared example and now has a unit of its own; `Store` was the
+        // fall-through example and W3-04 paired it with `Orders`. An unbuilt group takes their place
+        // (doc 08 §3.8's `Payments.PayPal`, which W4-01 adds).
         Assert.Empty(SettingCatalog.KeysInSaveUnitFor("Payments.PayPal"));
     }
 }
