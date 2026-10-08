@@ -78,26 +78,38 @@ internal sealed class EmailOutboxStore(AppDbContext dbContext) : IEmailOutboxSto
     /// refusing server, and making a shopper wait four hours for a container restart would be the wrong
     /// lesson drawn from the wrong signal. The attempt counter is what bounds a crash loop.
     /// </para>
+    /// <para>
+    /// <b>The statuses are written into the statement text and only the clock is a parameter, which is
+    /// what lets this statement use <c>IX_EmailOutbox_Stuck</c> (DB28).</b> It is the same rule
+    /// <see cref="CountDueAsync"/> and <see cref="ClaimAsync"/> already follow, and it was got wrong here:
+    /// the first version used <c>ExecuteSqlInterpolatedAsync</c>, which turns <i>every</i> interpolation
+    /// hole into a parameter — so <c>WHERE Status = @p</c> could not be proved to imply the index's
+    /// <c>WHERE Status = 1</c> filter and the optimiser listed the index as unmatched and scanned the
+    /// table instead. Measured on 20,003 rows: <b>20,101 logical reads against 18</b>, once every sweep
+    /// for ever, on a table whose rows carry <c>nvarchar(max)</c> bodies. <c>EmailOutboxPlanTests</c>
+    /// reads the plan and the command text, because neither is visible from here.
+    /// </para>
     /// </remarks>
     public async Task<int> ReleaseExpiredLeasesAsync(DateTime nowUtc, CancellationToken cancellationToken) =>
-        await dbContext.Database.ExecuteSqlInterpolatedAsync(
-            $"""
+        await dbContext.Database.ExecuteSqlRawAsync(
+            $$"""
             UPDATE ops.EmailOutbox
                SET Status = CASE
-                              WHEN AttemptCount >= MaxAttempts THEN {(byte)EmailOutboxStatus.Dead}
-                              ELSE {(byte)EmailOutboxStatus.Failed}
+                              WHEN AttemptCount >= MaxAttempts THEN {{(byte)EmailOutboxStatus.Dead}}
+                              ELSE {{(byte)EmailOutboxStatus.Failed}}
                             END,
                    LockedUntilUtc = NULL,
-                   NextAttemptAtUtc = {nowUtc},
-                   LastError = {LeaseExpiredError},
+                   NextAttemptAtUtc = {0},
+                   LastError = {1},
                    TransportOverrideProtected = CASE
                               WHEN AttemptCount >= MaxAttempts THEN NULL
                               ELSE TransportOverrideProtected
                             END
-             WHERE Status = {(byte)EmailOutboxStatus.Sending}
+             WHERE Status = {{(byte)EmailOutboxStatus.Sending}}
                AND LockedUntilUtc IS NOT NULL
-               AND LockedUntilUtc < {nowUtc};
+               AND LockedUntilUtc < {0};
             """,
+            [nowUtc, LeaseExpiredError],
             cancellationToken);
 
     /// <summary>

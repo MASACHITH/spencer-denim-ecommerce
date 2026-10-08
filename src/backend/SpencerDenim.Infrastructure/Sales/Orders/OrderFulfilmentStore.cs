@@ -25,11 +25,16 @@ namespace SpencerDenim.Infrastructure.Sales.Orders;
 /// </para>
 /// <para>
 /// <b>No <c>sp_getapplock</c>, no <c>Serializable</c>, no rowversion.</b> Doc 08 §4.2 names neither of the
-/// first two on this path (the two places doc 08 names an application lock are §3.6's promo per-customer
-/// limit and §3.1 DB4 rule 4's <c>sp_getapplock 'rbac:grants-all'</c>; <b>this sentence used to name "the
-/// reference-data seeder", which holds no applock anywhere</b> — W3-04b's tester corrected the same wrong
-/// wording on <see cref="IOrderFulfilmentStore"/>, in <c>BankTransferReviewStore</c> and in
-/// <c>OrderCancellationStore</c>, and this fourth copy was missed), and §4.1's own note says the transitions deliberately do <i>not</i> rely on
+/// first two on this path. The two places <i>doc 08</i> names an application lock are §3.6's promo
+/// per-customer limit and §3.1 DB4 rule 4's <c>sp_getapplock 'rbac:grants-all'</c>, and neither is here.
+/// (This sentence used to name "the reference-data seeder" as one of doc 08's two, which it is not —
+/// corrected by W3-04b's tester on <see cref="IOrderFulfilmentStore"/>, in <c>BankTransferReviewStore</c>
+/// and in <c>OrderCancellationStore</c>, and this fourth copy was missed. What those three copies and
+/// W3-06's first version of this one then went on to say — that the seeder "holds no applock anywhere" —
+/// is <b>also wrong</b>, and is not repeated here: <c>CatalogSeedHostedService</c> takes an exclusive
+/// <c>sp_getapplock</c> on <c>SpencerDenim:ReferenceDataSeed</c> with owner <c>Session</c> for the whole
+/// reference-data phase. It is simply not one doc 08 specifies. W3-06's tester.)
+/// §4.1's own note says the transitions deliberately do <i>not</i> rely on
 /// the admin ETag: a stale admin edit is rejected by a token, a lost race between two transitions is
 /// rejected by a row count, and those are different guarantees. Every transaction here is
 /// <c>ReadCommitted</c>, the same as checkout's and the bank review's.
