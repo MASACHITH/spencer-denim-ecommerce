@@ -296,7 +296,7 @@ Run on this machine, `TEST_SQL_CONNECTION` pointed at `(localdb)\MSSQLLocalDB`.
 | Suite | Before (main) | After | New |
 |---|---|---|---|
 | xUnit unit | 1,726 / 0 | **1,808 / 0** | 82 |
-| xUnit integration | 1,124 | **1,192 / 0** (whole assembly green at 1,191 before the rename test was added) | 68 |
+| xUnit integration | 1,124 | **1,192 / 0**, 0 skipped (18 m 5 s, whole assembly) | 68 |
 | Vitest — shared | 24 | 24 | — |
 | Vitest — storefront | 1,404 | 1,404 | — |
 | Vitest — admin | 407 | **444 / 0** | 37 |
