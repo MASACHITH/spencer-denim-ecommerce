@@ -475,6 +475,131 @@ public sealed class OrderCancellationTests(SqlServerDatabaseFixture sqlServer)
     }
 
     /// <summary>
+    /// <b>The payment statement closes the <i>open</i> payment and only that one.</b>
+    /// </summary>
+    /// <remarks>
+    /// Doc 08 §4.3 gives cancel exactly two payment edges — <c>Pending → Cancelled</c> and
+    /// <c>Initiated → Cancelled</c> — and the statement's <c>Status IN (0, 1)</c> is what keeps it to
+    /// them. <b>Nothing pinned that clause</b>: widening the <c>WHERE</c> to every status left all fifteen
+    /// of these tests green, which is how this test came to exist. The mutation is not harmless. A
+    /// rejected bank transfer is <c>Failed</c> on an order that is still <c>PendingPayment</c> — reachable
+    /// today, through the bank queue — and rewriting it to <c>Cancelled</c> would destroy the record that
+    /// staff looked at the money and said no. The same clause is what will keep a
+    /// <c>CapturedRequiresRefund</c> row intact when PayPal lands (§4.2 step 3.4, W4-01): captured money
+    /// relabelled as a cancelled payment is money nobody would know to refund.
+    /// </remarks>
+    [Fact]
+    public async Task A_cancel_closes_the_open_payment_and_leaves_a_rejected_one_alone()
+    {
+        var (order, variantId) = await PlaceOrderAsync(quantity: 1, onHand: 3);
+        var orderId = await OrderIdAsync(order.PublicId);
+
+        // Doc 11 P7: staff found no credit, so the payment is Failed and the order has not moved.
+        Assert.IsType<BankTransferDecisionResult.Applied>(
+            await RejectAsync(orderId, "No credit found against that reference."));
+
+        var rejected = await ReadOrderAsync(order.PublicId);
+        Assert.Equal(OrderStatus.PendingPayment, rejected.Status);
+        Assert.Equal(PaymentStatus.Failed, Assert.Single(rejected.Payments).Status);
+
+        var before = await StockAsync(variantId);
+
+        Assert.IsType<CancelOrderOutcome.Applied>(
+            await CancelAsync(order.PublicId, OrderCancelledBy.Staff, "They gave up on the transfer."));
+
+        var row = await ReadOrderAsync(order.PublicId);
+
+        Assert.Equal(OrderStatus.Cancelled, row.Status);
+        Assert.Equal(OrderStockState.Released, row.StockState);
+
+        // **Still Failed.** Doc 08 §4.3 has no `Failed → Cancelled` edge, and the rejection is the record
+        // of a decision a person made about money.
+        Assert.Equal(PaymentStatus.Failed, Assert.Single(row.Payments).Status);
+
+        // And the stock still went back exactly once: the cancel did its own work, it simply left that
+        // row alone.
+        Assert.Equal(before.Reserved - 1, (await StockAsync(variantId)).Reserved);
+    }
+
+    /// <summary>
+    /// <b>A customer pressing Cancel while a staff member approves the transfer.</b> The order row's own
+    /// claim is the only thing standing between "the shop has the money" and "the items are back on
+    /// sale".
+    /// </summary>
+    /// <remarks>
+    /// Both transactions claim <c>Id = @o AND Status = 0 AND StockState = 0</c>, so doc 08 §5.2's
+    /// argument says SQL Server takes an update lock, the loser re-evaluates the predicate against the row
+    /// as the winner left it and affects 0 rows. What that argument has to produce is one of exactly two
+    /// outcomes and never a mixture: <b>Paid and Committed with the stock deducted</b>, or <b>Cancelled
+    /// and Released with the stock given back</b>. The combination worth fearing is a paid order whose
+    /// items somebody else can now buy.
+    /// <para>
+    /// Which one wins is deliberately not asserted — that would be an assertion about scheduling. Six
+    /// rounds, the same number the cancel-versus-expiry race uses.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task Cancel_racing_a_staff_approval_leaves_the_order_wholly_one_or_wholly_the_other()
+    {
+        const int Rounds = 6;
+
+        for (var round = 1; round <= Rounds; round++)
+        {
+            var (order, variantId) = await PlaceOrderAsync(quantity: 1, onHand: 4);
+            var orderId = await OrderIdAsync(order.PublicId);
+            var before = await StockAsync(variantId);
+
+            var cancel = Task.Run(
+                () => CancelAsync(order.PublicId, OrderCancelledBy.Customer, reason: null),
+                Token);
+            var approve = Task.Run(() => ApproveAsync(orderId, "Money is in."), Token);
+
+            var cancelled = await cancel is CancelOrderOutcome.Applied;
+            var paid = await approve is BankTransferDecisionResult.Applied;
+
+            Assert.True(
+                cancelled ^ paid,
+                $"Round {round}: cancelled={cancelled}, paid={paid}. Exactly one must win.");
+
+            var row = await ReadOrderAsync(order.PublicId);
+            var after = await StockAsync(variantId);
+            var payment = Assert.Single(row.Payments);
+
+            if (cancelled)
+            {
+                Assert.Equal(OrderStatus.Cancelled, row.Status);
+                Assert.Equal(OrderStockState.Released, row.StockState);
+                Assert.Equal(PaymentStatus.Cancelled, payment.Status);
+                Assert.False(payment.IsOrderSettlement);
+
+                // Given back, not taken: `Reserved` falls and `OnHand` does not.
+                Assert.Equal(before.Reserved - 1, after.Reserved);
+                Assert.Equal(before.OnHand, after.OnHand);
+                Assert.Null(row.InvoiceNumber);
+            }
+            else
+            {
+                Assert.Equal(OrderStatus.Paid, row.Status);
+                Assert.Equal(OrderStockState.Committed, row.StockState);
+                Assert.Equal(PaymentStatus.Succeeded, payment.Status);
+                Assert.True(payment.IsOrderSettlement);
+
+                // Deducted, not given back (doc 08 §5.5): both figures fall by the quantity.
+                Assert.Equal(before.Reserved - 1, after.Reserved);
+                Assert.Equal(before.OnHand - 1, after.OnHand);
+                Assert.NotNull(row.InvoiceNumber);
+
+                // And the loser left nothing of itself behind on an order the shop has been paid for.
+                Assert.Null(row.CancelReason);
+            }
+
+            Assert.Single(
+                row.StatusHistory,
+                entry => entry.ToStatus is OrderStatus.Cancelled or OrderStatus.Paid);
+        }
+    }
+
+    /// <summary>
     /// Doc 08 §4.1's one edge out of <c>Cancelled</c>, which W3-03 already built: a cancelled order whose
     /// money arrives can still be accepted.
     /// </summary>
