@@ -97,6 +97,11 @@ const PAGE_SIZE = 25;
 
     @if (isLoading()) {
       <p class="adm-muted">Loading…</p>
+    } @else if (inbox() === null) {
+      <!-- A read that failed, with the server's own sentence already shown above. This branch is a
+           defect W3-04's sweep found: isEmpty() answers -1 === 0 over a null, which is false, so without
+           it the list branch rendered the inbox's items over a null and a 403 threw a TypeError instead
+           of showing the refusal. The orders list had the identical shape. -->
     } @else if (isEmpty()) {
       <p class="adm-muted" data-testid="enquiries-empty">
         No enquiries{{ status() ? ' with that status' : '' }} yet.
@@ -321,6 +326,12 @@ export class EnquiriesPage {
    * A computed rather than `inbox()?.items.length === 0` in the template: that expression is
    * `undefined` before the first answer, which reads as "not empty" and so renders the list branch over
    * a null — and `strictTemplates` says so, which is how this was caught.
+   *
+   * <b>It deliberately does not answer "empty" for a null inbox, and the template carries its own null
+   * branch instead.</b> The two states are different things to tell a staff member: "no enquiries yet"
+   * is a fact about the inbox, and "that could not be read" is a fact about the request — folding them
+   * together would show "No enquiries yet" to somebody who had just been refused. The missing branch was
+   * a `TypeError` on every failed first read until W3-04's sweep found it.
    */
   protected readonly isEmpty = computed(() => (this.inbox()?.items.length ?? -1) === 0);
 

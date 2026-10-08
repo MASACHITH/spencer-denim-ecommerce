@@ -263,6 +263,56 @@ describe('EnquiriesPage (GLB-10)', () => {
     expect(document.activeElement?.getAttribute('data-testid')).toBe('enquiry-status');
   });
 
+  /**
+   * <b>A refused first read shows the server's sentence rather than throwing.</b>
+   *
+   * There was no test on this screen for a failed read, and without one the screen threw
+   * `TypeError: Cannot read properties of null (reading 'items')`: `isEmpty()` answers `-1 === 0` over a
+   * null inbox, which is false, so the list branch rendered over the null. W3-04's own order list had the
+   * identical shape and the identical defect, which is how this one was found — the sweep is the reason
+   * there are now two tests rather than one fix.
+   */
+  it('shows the refusal when the inbox cannot be read, instead of throwing', () => {
+    const fixture = TestBed.createComponent(EnquiriesPage);
+    fixture.detectChanges();
+
+    controller
+      .expectOne(listUrl())
+      .flush({ detail: 'Nope.' }, { status: 403, statusText: 'Forbidden' });
+
+    fixture.detectChanges();
+
+    const element = root(fixture);
+
+    expect(element.querySelector('[role="alert"]')?.textContent).toContain('permission');
+
+    // And neither the list nor the empty state is drawn: "No enquiries yet" would be a different and
+    // false statement to somebody who has just been refused.
+    expect(element.querySelector('[data-testid="enquiries"]')).toBeNull();
+    expect(element.querySelector('[data-testid="enquiries-empty"]')).toBeNull();
+  });
+
+  /**
+   * The same for a read that fails after a successful one — the inbox is left on screen rather than
+   * replaced by a blank, because the rows a staff member is reading are still the best information there
+   * is.
+   */
+  it('keeps the rows on screen when a later read fails', () => {
+    const fixture = create([item()]);
+
+    (root(fixture).querySelector('[data-testid="filter-Spam"]') as HTMLButtonElement).click();
+    fixture.detectChanges();
+
+    controller
+      .expectOne(listUrl())
+      .flush({ detail: 'Nope.' }, { status: 500, statusText: 'Server Error' });
+
+    fixture.detectChanges();
+
+    expect(root(fixture).querySelector('[role="alert"]')).not.toBeNull();
+    expect(root(fixture).querySelector('[data-testid="enquiry-7"]')).not.toBeNull();
+  });
+
   /** The filter asks the API rather than filtering in the browser, so paging stays correct. */
   it('asks the API again when the filter changes', () => {
     const fixture = create([item()]);
