@@ -67,6 +67,22 @@ async function openSettings(page: Page): Promise<void> {
   await expect(page.getByRole('heading', { level: 2, name: 'Logo' })).toBeVisible();
 }
 
+/**
+ * Opens the settings screen **again**, keeping the state this test has already written.
+ *
+ * <b>Not <c>openSettings</c>.</b> That helper seeds a fresh random `e2e_state` cookie, which is exactly
+ * right for starting a test and exactly wrong for checking that a save persisted: it hands the stub a new,
+ * empty state, so every field reads back blank and the test fails for a reason that has nothing to do with
+ * the screen. This was a real mistake in the first version of the invoice round-trip test, and the browser
+ * run is what found it.
+ */
+async function reopenSettings(page: Page): Promise<void> {
+  await page.goto(`${adminURL}/settings`);
+
+  await expect(page.getByRole('heading', { level: 1, name: 'Settings' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 2, name: 'Logo' })).toBeVisible();
+}
+
 test.describe('the logo panel (GLB-02)', () => {
   test('says there is no logo, and the storefront is showing the name as text', async ({ page }) => {
     await openSettings(page);
@@ -493,14 +509,17 @@ test.describe('the settings screen is usable and accessible', () => {
       nodes.map((node) => `${node.tagName.toLowerCase()}:${node.textContent?.trim()}`),
     );
 
-    // W3-03 (PAY-01) adds the third panel: the bank details a shopper is told to transfer to. The list is
-    // exhaustive on purpose — a panel appearing without a heading, or out of order, is the defect this
-    // test exists for — so a new panel is expected to come back here and say so.
+    // W3-03 (PAY-01) added the third panel: the bank details a shopper is told to transfer to. W3-04 added
+    // the fourth: the company's registered details as an invoice prints them, and the auto-deliver window.
+    // The list is exhaustive on purpose — a panel appearing without a heading, or out of order, is the
+    // defect this test exists for — so a new panel is expected to come back here and say so. It did, and
+    // this test is how the new panel was noticed in a browser at all.
     expect(headings).toEqual([
       'h1:Settings',
       'h2:Logo',
       'h2:Contact and social',
       'h2:Bank transfer',
+      'h2:Invoice and fulfilment',
     ]);
   });
 
@@ -739,8 +758,9 @@ test.describe('the settings screen is usable and accessible', () => {
     expect((await saved).status()).toBe(204);
 
     // Re-opened rather than re-read from the boxes: the screen re-reads after a save, and a form that kept
-    // showing what was typed would hide a field the server never stored.
-    await openSettings(page);
+    // showing what was typed would hide a field the server never stored. `reopenSettings` keeps this
+    // test's own stub state — see its remarks for what using `openSettings` here cost.
+    await reopenSettings(page);
 
     await expect(page.locator('[data-testid="field-legalName"]')).toHaveValue(
       'A Registered Company (Pvt) Ltd',
