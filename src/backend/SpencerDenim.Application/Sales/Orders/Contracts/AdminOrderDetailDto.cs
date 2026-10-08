@@ -410,6 +410,13 @@ public sealed record AdminOrderDispatchDto(
 /// the transaction for good. The order detail, reached by searching the number the customer quotes, is the
 /// route that cannot be destroyed by a reload.
 /// </para>
+/// <para>
+/// <b>A bank payment in <c>Cancelled</c> counts, which W3-04b's first version missed.</b> Cancelling an
+/// unpaid order closes its open payment to <c>Cancelled</c> (doc 08 §4.3), so after a cancel the order's
+/// only bank row is in that status — and doc 08 §4.1's <c>Cancelled → Paid</c> edge would have had no
+/// control anywhere, leaving a shop that cancelled an order unable to accept the transfer that arrived
+/// the next day. <c>AcceptLateAsync</c> already accepted it: the flag was the only thing in the way.
+/// </para>
 /// </param>
 /// <param name="CanCancel">
 /// Whether this <b>unpaid</b> order can be cancelled right now (doc 11 P10 flow A, W3-04b).

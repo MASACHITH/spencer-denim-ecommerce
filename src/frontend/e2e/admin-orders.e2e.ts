@@ -443,6 +443,12 @@ test.describe('the order detail and doc 11 P9’s workflow', () => {
     // is #109's other half — `aria-disabled` keeps the press from throwing focus to the body, and
     // `afterNextRender` re-homes it when the node itself goes.
     expect(await page.evaluate(() => document.activeElement?.tagName)).not.toBe('BODY');
+
+    // **The one edge out of Cancelled still has a control.** Doc 08 §4.1 allows Cancelled → Paid, and
+    // cancelling closed this order's bank payment to Cancelled — which `CanAcceptLatePayment` ignored
+    // until the tester widened it, so a shop could cancel an order and then be unable to accept the
+    // transfer that arrived the next day. `AdminOrderEndpointTests` asserts both ends on a real row.
+    await expect(page.locator('[data-testid="accept-late"]')).toBeVisible();
   });
 
   /**

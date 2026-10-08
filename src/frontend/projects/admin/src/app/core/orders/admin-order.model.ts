@@ -309,6 +309,11 @@ export interface AdminOrderActions {
    * member who got an `order_expired` refusal there and pressed Refresh lost the only route to the
    * transaction for good. Searching the order number the customer quotes reaches this screen, and a
    * reload cannot destroy it.
+   *
+   * **A payment in `Cancelled` counts too.** Cancelling an unpaid order closes its open bank payment to
+   * `Cancelled` (doc 08 §4.3), so after a cancel that is the only bank row on the order — and without it
+   * doc 08 §4.1's `Cancelled → Paid` edge had no control anywhere, which meant a shop that cancelled an
+   * order could not accept the transfer that arrived the next day.
    */
   readonly canAcceptLatePayment: boolean;
 

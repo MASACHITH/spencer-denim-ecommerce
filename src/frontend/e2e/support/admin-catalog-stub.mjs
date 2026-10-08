@@ -1400,9 +1400,16 @@ const server = createServer(async (request, response) => {
         canMarkDelivered: order.status === 'Shipped',
         canEditDispatch: order.status === 'Shipped' && !order.isPickup,
 
-        // Doc 11 P10: Cancelled is a closing state. Nothing may cancel it again, and the one edge out of
-        // it is Orders.Approve's accept-late (doc 08 4.1), which the Expired order above already covers.
+        // Doc 11 P10: Cancelled is a closing state. Nothing may cancel it again.
         canCancel: false,
+
+        // **And the one edge out of it stays open.** Doc 08 4.1 allows Cancelled -> Paid, and cancelling
+        // closes the order's open bank payment to Cancelled - which the real reader now recognises, so a
+        // transfer that arrives the next day can still be accepted. The stub says so too, because a
+        // screen that offered nothing here was the gap W3-04b left and a stub that kept answering false
+        // would hide its fix.
+        canAcceptLatePayment:
+          order.status === 'Cancelled' && order.paymentProviderCode === 'BankTransfer',
       };
     }
 

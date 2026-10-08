@@ -1282,6 +1282,76 @@ public sealed class AdminOrderEndpointTests(SqlServerDatabaseFixture sqlServer)
     }
 
     /// <summary>
+    /// <b>A cancelled order can still take the transfer that arrives the next day, and there is a control
+    /// for it.</b> Doc 08 §4.1's <c>Cancelled → Paid</c> edge, end to end through the screens.
+    /// </summary>
+    /// <remarks>
+    /// <b>This is the gap W3-04b opened and did not close.</b> Cancelling closes the order's open bank
+    /// payment to <c>Cancelled</c> (doc 08 §4.3), and <c>AdminOrderActions.CanAcceptLatePayment</c> looked
+    /// only for <c>Expired</c> or <c>Pending</c> — so the one documented edge out of <c>Cancelled</c> had
+    /// no button anywhere and a shop could cancel an order and then be unable to accept the money that
+    /// turned up. The money transaction was never the problem: <c>AcceptLateAsync</c> claims on
+    /// <c>Status IN (5,6)</c> and already took a <c>Cancelled</c> payment, which W3-03 put in its list
+    /// deliberately and marked latent.
+    /// <para>
+    /// <b>Both ends on one row, which is the point.</b> A test that only asserted the flag would pass
+    /// against a transaction that refused, and a test that only pressed the route would pass against a
+    /// screen with nothing on it. This asserts the flag, then presses the action it offers, then asserts
+    /// the order is paid with an invoice number and its stock taken again.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task A_cancelled_order_offers_accept_late_payment_and_applies_it()
+    {
+        await using var host = await StartAsync();
+        var order = await PlaceOrderAsync(host);
+
+        using var editor = await host.SignInAsync(Permissions.Orders.Edit, Permissions.Orders.View);
+
+        await TransitionAsync(
+            editor,
+            order.PublicId,
+            "cancel",
+            HttpStatusCode.OK,
+            new { cancelReason = "The customer telephoned to cancel." });
+
+        var cancelled = await DetailAsync(editor, order.PublicId);
+
+        Assert.Equal(nameof(OrderStatus.Cancelled), cancelled.GetProperty("status").GetString());
+
+        // The payment this flag has to recognise. It is `Cancelled`, not `Expired` and not `Pending`.
+        var closed = cancelled.GetProperty("payments").EnumerateArray().Last();
+        Assert.Equal(nameof(PaymentStatus.Cancelled), closed.GetProperty("status").GetString());
+
+        // The screen offers it, which is the half that was missing.
+        Assert.True(
+            cancelled.GetProperty("actions").GetProperty("canAcceptLatePayment").GetBoolean(),
+            "a cancelled bank-transfer order must offer Accept late payment (doc 08 §4.1 Cancelled → Paid)");
+
+        // And the action behind it applies, which is the half that already worked.
+        using var approver = await host.SignInAsync(Permissions.Orders.Approve);
+        using var accepted = await approver.PostAsJsonAsync(
+            new Uri($"/api/admin/orders/bank-transfers/{order.PublicId:D}/accept-late", UriKind.Relative),
+            new { note = "The transfer arrived the day after they cancelled." },
+            JsonOptions,
+            Token);
+
+        Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
+
+        var paid = await DetailAsync(editor, order.PublicId);
+
+        Assert.Equal(nameof(OrderStatus.Paid), paid.GetProperty("status").GetString());
+        Assert.Equal(nameof(OrderStockState.Committed), paid.GetProperty("stockState").GetString());
+        Assert.NotNull(paid.GetProperty("invoiceNumber").GetString());
+        Assert.Null(paid.GetProperty("closedAtUtc").GetString());
+
+        // The flag goes out again once there is nothing left to accept, so the control cannot be pressed
+        // twice — the other half of every one of these flags.
+        Assert.False(paid.GetProperty("actions").GetProperty("canAcceptLatePayment").GetBoolean());
+        Assert.False(paid.GetProperty("actions").GetProperty("canCancel").GetBoolean());
+    }
+
+    /// <summary>
     /// <b>A paid order offers no Cancel, and refuses one if asked.</b>
     /// </summary>
     /// <remarks>

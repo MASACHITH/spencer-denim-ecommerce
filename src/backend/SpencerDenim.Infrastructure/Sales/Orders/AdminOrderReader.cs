@@ -618,12 +618,27 @@ internal sealed class AdminOrderReader(AppDbContext dbContext, IClock clock) : I
         // reach an expired order, so this screen is the route. The order must also still have a bank
         // payment in a state that could settle it — an order whose transfer was never submitted has no
         // money to accept, and offering the button would send a staff member into a refusal.
+        //
+        // **`Cancelled` is in the payment list, and leaving it out was a real gap.** Cancelling an unpaid
+        // order closes its open payment to `Cancelled` (doc 08 §4.3, W3-04b), so after a cancel the only
+        // bank row on the order is in a status this flag used to ignore — and doc 08 §4.1's
+        // `Cancelled → Paid` edge then had no button anywhere, which meant a shop could cancel an order
+        // and be unable to accept the transfer that arrived the next day.
+        //
+        // The widening is a read model catching up with a transaction that was already right:
+        // `BankTransferReviewStore.AcceptLateAsync` claims on `Status IN (5,6) AND StockState = 2` and
+        // then takes the latest payment in `Pending`, `Expired` **or `Cancelled`** — W3-03 put `Cancelled`
+        // in that list deliberately, with a comment saying it was latent until a customer cancel existed.
+        // So this changes no money path, and the flag and the claim now accept exactly the same orders:
+        // `A_cancelled_order_offers_accept_late_payment` asserts both ends on one row.
         var canAcceptLatePayment =
             order.Status is OrderStatus.Expired or OrderStatus.Cancelled
             && order.PaymentProviderCode == PaymentProviderCodes.BankTransfer
             && payments.Any(payment =>
                 payment.ProviderCode == PaymentProviderCodes.BankTransfer
-                && payment.Status is nameof(PaymentStatus.Expired) or nameof(PaymentStatus.Pending));
+                && payment.Status is nameof(PaymentStatus.Expired)
+                    or nameof(PaymentStatus.Pending)
+                    or nameof(PaymentStatus.Cancelled));
 
         // Doc 11 P10 flow A and step 2's guards, for the Orders.Edit holder this screen is for. The four
         // the transaction claims on, read here so the screen offers the action that will work — and the
