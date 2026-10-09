@@ -316,6 +316,11 @@ Every figure measured in this worktree. **Main's own figures were measured first
 | Vitest (shared / storefront / admin) | **24 / 1,417 / 465** | same | **24 / 1,417 / 490** | 25 |
 | Playwright | **935 / 0** | same | **960 / 0** | 25 |
 
+All four were run to completion on the final tree, in this worktree, after the last commit of code:
+unit **1,981/0** (34 s), integration **1,354/0** (19 m 27 s), Vitest **24/1,417/490** all passing,
+Playwright **960/0** (8.6 m). The integration suite's earlier run reported one failure — see below — and
+this is the clean re-run after it was fixed.
+
 Both frontends were rebuilt before the browser run (`npm run build:storefront` **and**
 `npm run build:admin` — `npm run build` is storefront only, and the admin e2e server serves `dist/admin`).
 The browser suite ran with all seventeen `E2E_*_PORT` variables overridden into **4940–4956**, scanned free
