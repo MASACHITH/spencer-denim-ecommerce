@@ -31,9 +31,10 @@ could only report how many rows it touched.
 
 ### The banner is in the admin shell, not on the dashboard
 
-Doc 08 §3.8 calls `ops.AdminAlerts` "the dashboard banner", and **ADM-04's dashboard does not exist**: the
-route at `/` is W0-09's scaffold placeholder — a heading, an API-status panel and a list of links — and
-the client's progress page lists the dashboard as `planned`, 0 %.
+Doc 08 §3.8 calls `ops.AdminAlerts` "the dashboard banner", and **ADM-04's dashboard is not built**: the
+route at `/` exists and is W0-09's scaffold placeholder — a heading, an API-status panel and a list of
+links, with its own docblock saying "Replaced by the full dashboard in a later milestone" — and
+`client-progress/progress-data.js` line 109 lists Dashboard as `status: "planned", progress: 0`.
 
 Putting the banner there would mean a dead email raises a banner a Super Admin sees only if they happen to
 go back to the home screen. Doc 11 §6.1 step 1's whole morning routine *starts* from these banners
