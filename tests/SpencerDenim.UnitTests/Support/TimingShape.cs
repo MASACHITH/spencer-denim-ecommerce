@@ -47,15 +47,54 @@ internal static class TimingShape
     private const double MinimumSampleMilliseconds = 50;
 
     /// <summary>
-    /// How many samples each side of a comparison takes, of which the <b>minimum</b> is kept.
+    /// The fewest samples each side of a comparison takes, of which the <b>minimum</b> is kept.
     /// <para>
     /// The minimum is the right statistic for this, and not because it is optimistic: a garbage
     /// collection, a scheduler pre-emption or another test's thread landing inside a sample can only ever
     /// <i>add</i> time to it. Taking the smallest of several discards those. A mean would carry them
     /// straight into the result.
     /// </para>
+    /// <para>
+    /// <b>Seven is enough only when seven draws contain a clean one.</b> It was a fixed count and the
+    /// tester found what that costs by running the suite pinned to two cores — the count
+    /// <c>ubuntu-latest</c> gives the backend job — with those two cores also carrying spin loops.
+    /// Exactly-quadratic work read anywhere from <b>2.84x</b> to <b>4.79x</b> against a theoretical 4,
+    /// exactly-linear work read up to <b>5.38x</b> against a theoretical 2, and
+    /// <c>TimingShapeTests</c>' quadratic canary went red against the shipped bound of 6 — <b>once in
+    /// six contended full-suite runs</b>, and at the worst load applied, which stretched the suite from
+    /// 23 s to 6 m 32 s. The mins were not wrong in one direction: a clean window landing on one side of
+    /// a ratio and not the other moves the reading either way. So the count is now a floor rather than
+    /// the whole budget: see <see cref="MeasureTogether"/>.
+    /// </para>
+    /// <para>
+    /// <b>How much of that load the runner actually has is not known, and the honest answer matters.</b>
+    /// A seventeen-fold slowdown is well past anything #134 recorded — there the failing case took 6.7 s
+    /// and then 5.5 s against 1–2 s here, so roughly four-fold, with a fifth of that again as
+    /// run-to-run spread. At loads up to <b>seven-fold</b> no canary failed in eight runs. So this is a
+    /// margin that was thinner than it was documented to be rather than one that is known to be
+    /// breached on CI.
+    /// </para>
     /// </summary>
-    private const int Samples = 7;
+    private const int MinimumSamples = 7;
+
+    /// <summary>
+    /// The most samples a side will take while its minimum is still falling. On an idle machine a clean
+    /// window turns up in the first few rounds and sampling stops at <see cref="MinimumSamples"/>, so
+    /// this costs nothing there; on a loaded one it is the budget that buys a clean window instead of
+    /// reporting a dirty one. Capped at three times <see cref="MinimumSamples"/>, because a machine that
+    /// cannot produce a clean window in twenty-one tries will not produce one in two hundred, and a test
+    /// must still finish. The cap is load-bearing: the tester also tried a 250 ms floor with a cap of
+    /// forty, and on two oversubscribed cores not one full-suite run finished in the eleven minutes it
+    /// was given, which is its own kind of CI failure.
+    /// </summary>
+    private const int MaximumSamples = 21;
+
+    /// <summary>
+    /// How many consecutive rounds must fail to improve <i>either</i> side's minimum before sampling
+    /// stops. Both sides have to settle, because the error this is here to remove is one side getting a
+    /// clean window and the other not.
+    /// </summary>
+    private const int RoundsWithoutImprovementToStop = 3;
 
     /// <summary>
     /// Asserts that <paramref name="candidate"/> costs no more than <paramref name="factor"/> times
@@ -79,6 +118,7 @@ internal static class TimingShape
 
         return ratio;
     }
+
 
     /// <summary>
     /// Asserts that doubling the input multiplies the cost by no more than <paramref name="factor"/>,
@@ -131,6 +171,18 @@ internal static class TimingShape
     /// floor. Both sides are still divided by their own repeat count, so the counts cancel out of the
     /// ratio.
     /// </para>
+    /// <para>
+    /// <b>Matched durations are not enough either, and that is the fifth.</b> Equal samples are equally
+    /// likely to be interrupted, which is the point — but on a loaded machine the likelihood is high
+    /// enough that seven draws often contain no clean sample at all, and whether a clean one lands on
+    /// one side or the other is luck. That is an error in <i>both</i> directions and it is large: the
+    /// tester read exactly-linear work at <b>5.38x</b> against a theoretical 2 on two oversubscribed
+    /// cores, and the same work against itself anywhere from <b>0.39x</b> to <b>2.37x</b>. So sampling
+    /// does not stop at a fixed count. It stops when neither side's minimum has improved for
+    /// <see cref="RoundsWithoutImprovementToStop"/> rounds, which on an idle machine is immediately
+    /// after <see cref="MinimumSamples"/> and on a loaded one is however long it takes to see one clean
+    /// window per side, up to <see cref="MaximumSamples"/>.
+    /// </para>
     /// </summary>
     private static (double First, double Second) MeasureTogether(Action first, Action second)
     {
@@ -153,10 +205,25 @@ internal static class TimingShape
 
         var bestFirst = double.MaxValue;
         var bestSecond = double.MaxValue;
-        for (var round = 0; round < Samples; round++)
+        var sinceImprovement = 0;
+
+        for (var round = 0; round < MaximumSamples; round++)
         {
-            bestFirst = Math.Min(bestFirst, TimeRepeats(first, firstRepeats) / firstRepeats);
-            bestSecond = Math.Min(bestSecond, TimeRepeats(second, secondRepeats) / secondRepeats);
+            var firstSample = TimeRepeats(first, firstRepeats) / firstRepeats;
+            var secondSample = TimeRepeats(second, secondRepeats) / secondRepeats;
+
+            // A full percent, not any improvement at all: floating-point noise on the last digit would
+            // otherwise keep resetting the counter and spend the whole budget on every call.
+            var improved = firstSample < bestFirst * 0.99 || secondSample < bestSecond * 0.99;
+
+            bestFirst = Math.Min(bestFirst, firstSample);
+            bestSecond = Math.Min(bestSecond, secondSample);
+
+            sinceImprovement = improved ? 0 : sinceImprovement + 1;
+            if (round + 1 >= MinimumSamples && sinceImprovement >= RoundsWithoutImprovementToStop)
+            {
+                break;
+            }
         }
 
         return (bestFirst, bestSecond);
