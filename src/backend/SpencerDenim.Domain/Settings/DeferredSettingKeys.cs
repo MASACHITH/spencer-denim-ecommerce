@@ -81,9 +81,10 @@ public static class DeferredSettingKeys
             "Store.FaviconAssetId",
             SettingKeyDeferralKind.AwaitingItsFeature,
             "GLB-02's second and third image slots. Nothing reads either: the storefront's favicon is a "
-            + "static asset and PageMetadata builds og:image from the page's own media, not from a "
-            + "settings row. They arrive with the task that makes the shop's icon and default share image "
-            + "client-supplied, which also needs the media-usage wiring Store.LogoAssetId already has."),
+            + "static asset (index.html's link rel=icon) and PageMetadata takes og:image from the page's "
+            + "own image, removing the tag when there is none. They arrive with the task that makes the "
+            + "shop's icon and default share image client-supplied, which also needs the media-usage "
+            + "wiring Store.LogoAssetId already has."),
 
         new(
             "Store.DefaultOgImageAssetId",
@@ -202,7 +203,8 @@ public static class DeferredSettingKeys
         // ---- Email.Smtp ------------------------------------------------------------------------------
         // Seven keys, one reason. ops.EmailOutbox now exists (#133) and so does ops.AdminAlerts (#138),
         // so the tables are no longer the blocker — #113 guessed they were, and that guess is out of date.
-        // Two things still are. The transport reads IOptions<EmailOptions>, i.e. Email__Smtp__*, so a
+        // Two things still are. The transport is handed the bound EmailOptions singleton, i.e.
+        // Email__Smtp__* read once at startup, so a
         // seeded row would not configure anything; and doc 08 §3.8 N2 requires an SMTP change to send its
         // alert twice, once through the new configuration and once through the previous one carried as
         // Data Protection ciphertext in EmailOutbox.TransportOverrideProtected. That dual send does not
@@ -220,10 +222,10 @@ public static class DeferredSettingKeys
         new(
             "Security.StaffLockoutMaxFailures",
             SettingKeyDeferralKind.AwaitingItsFeature,
-            "Applied to Identity's lockout options at startup from AdminSecurityOptions, whose default is "
-            + "doc 08 §3.8's 5. ASP.NET Core Identity reads Lockout.MaxFailedAccessAttempts from the "
-            + "options object once, so a live-editable row needs the options to be rebuilt per sign-in "
-            + "attempt as well as N2's sensitive-change alert, this group being on N2's trigger list."),
+            "Applied to IdentityOptions.Lockout at startup from AdminSecurityOptions, whose default is "
+            + "doc 08 §3.8's 5. The options object is built once and cached by the options system, so a "
+            + "live-editable row needs the value read per sign-in attempt instead, as well as N2's "
+            + "sensitive-change alert — this group is on N2's trigger list."),
 
         new(
             "Security.StaffLockoutMinutes",
@@ -249,8 +251,8 @@ public static class DeferredSettingKeys
         + "payment configuration form for a provider that cannot be enabled.";
 
     private const string SmtpReason =
-        "The transport reads IOptions<EmailOptions> — Email__Smtp__* — so a seeded row would configure "
-        + "nothing. ops.EmailOutbox (#133) and ops.AdminAlerts (#138) now exist, so the tables are no "
+        "The transport is handed the bound EmailOptions singleton — Email__Smtp__*, bound once at "
+        + "startup — so a seeded row would configure nothing. ops.EmailOutbox (#133) and ops.AdminAlerts (#138) now exist, so the tables are no "
         + "longer the blocker; doc 08 §3.8 N2's dual send is, which carries the previous SMTP "
         + "configuration as ciphertext in EmailOutbox.TransportOverrideProtected so that a hijacked SMTP "
         + "change cannot silence its own alert. Making the keys editable first would remove that control.";

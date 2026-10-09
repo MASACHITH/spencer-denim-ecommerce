@@ -114,6 +114,16 @@ the step records its progress in an `ops.Settings` row, so that table has to be 
 | **Marker above this build's version** | Left alone, logged at Warning, nothing granted. Lowering it would make a later upgrade re-offer increments the client may since have removed. |
 | **Marker not a number** | Treated as the baseline: every increment re-offered (idempotent) and the value rewritten. Logged at Warning. Refusing to run would leave the roles short for as long as the bad value sat there. |
 
+**One caveat worth knowing rather than hiding.** If this step is the thing that fails, readiness says "The
+reference data could not be established, so this host cannot take an order: …" plus the exception. For a
+role-claims failure that over-states the problem — the shop *can* take an order; a staff user is short a
+permission. The phase's wording is shared with the rest of the reference data, and
+`FreshDeploymentTests.A_connectable_database_with_no_migrations_applied_is_not_ready` asserts that exact
+phrase is present while the lock-contention test asserts it is absent, so it was left alone rather than
+loosened for one step. In practice everything that can
+throw here — a missing table, an unreachable server, a permission — would already have thrown in
+`SettingsSeeder` one step earlier, where the wording is right.
+
 ### What stops the next three tasks recreating this
 
 `DefaultRoleSeedVersionsTests` asserts that the frozen baseline plus every increment reproduces
@@ -160,7 +170,7 @@ decisions are source rather than prose in a report.
 | `Privacy.RetainInvoiceBillTo` | Nothing reads it; the PDPA anonymisation path is not built. Also needs N2's sensitive-change alert, every `Settings.Security` key being on N2's trigger list. |
 | `Traffic.RawRetentionDays`, `Traffic.BotRetentionDays` | The analytics schema does not exist: no `PageViews` set, no migration creating `analytics.PageViews`. |
 | `Payments.PayPal.*` (11) | No provider (W4-01), credentials not held, and `ClientSecret` is the first `Secret` row — whose write needs N2's alert. |
-| `Email.Smtp.*` (7) | **#113's guess that the email gap explains these is out of date**: `ops.EmailOutbox` (#133) and `ops.AdminAlerts` (#138) both exist now. Two things still block them: the transport reads `IOptions<EmailOptions>`, so a row would configure nothing; and N2's dual send — the previous SMTP configuration carried as ciphertext in `EmailOutbox.TransportOverrideProtected`, so that a hijacked SMTP change cannot silence its own alert — does not exist. Making the keys editable first would **remove** a control. |
+| `Email.Smtp.*` (7) | **#113's guess that the email gap explains these is out of date**: `ops.EmailOutbox` (#133) and `ops.AdminAlerts` (#138) both exist now. Two things still block them: the transport is handed the bound `EmailOptions` singleton (`Email__Smtp__*`, read once at startup), so a row would configure nothing; and N2's dual send — the previous SMTP configuration carried as ciphertext in `EmailOutbox.TransportOverrideProtected`, so that a hijacked SMTP change cannot silence its own alert — does not exist. Making the keys editable first would **remove** a control. |
 | `Security.StaffLockoutMaxFailures`, `StaffLockoutMinutes` | Applied to Identity's lockout options at startup from `AdminSecurityOptions`, defaults 5 and 15 = §3.8's. A live-editable row needs the options rebuilt per sign-in attempt, plus N2. |
 | `Security.CustomerLockoutMaxFailures`, `CustomerLockoutMinutes` | No customer sign-in exists (W3-01, ACC-01). |
 
