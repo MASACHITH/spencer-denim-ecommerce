@@ -51,7 +51,9 @@ public interface IAdminAlertReader
     /// </para>
     /// </remarks>
     /// <param name="alertTypes">
-    /// The types the caller may see. An empty list means "nothing", not "no filter".
+    /// The types the caller may see. An empty list means "nothing", not "no filter" — and the reader
+    /// answers it without running a statement at all, which is the property R10 needs rather than one
+    /// EF's rendering of an empty collection happens to give.
     /// </param>
     /// <param name="take">How many rows to return at most.</param>
     Task<(bool MoreThanTake, IReadOnlyList<AdminAlertRow> Alerts)> GetOpenAsync(

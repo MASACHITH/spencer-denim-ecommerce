@@ -38,8 +38,17 @@ public sealed class AdminAlertsPlanTests(SqlServerDatabaseFixture sqlServer)
     /// The banner's read reaches SQL Server with its alert types as <b>values</b>, not as parameters.
     /// </summary>
     /// <remarks>
-    /// Asserted before the plan, so a failure says <i>why</i> the plan changed rather than only that it
-    /// did — the shape <c>EmailOutboxPlanTests.The_due_count_seeks_the_due_index</c> uses.
+    /// <b>This pins a deliberate choice, not a correctness requirement, and the difference is measured.</b>
+    /// R10 can produce exactly two lists, so as literals they give two stable cached plans; as parameters
+    /// they give one plan compiled for whichever audience asked first. The filtered index is matched
+    /// either way — its filter is on <c>AcknowledgedAtUtc</c>, and the alert type is a residual predicate
+    /// — which a mutation showed by leaving every seek in this file unchanged.
+    /// <para>
+    /// <b>The guard was wrong first.</b> It looked for <c>@__</c>, EF's old parameter prefix; EF Core 10
+    /// names these <c>@types1 … @types7</c>, so the mutant sent seven parameters and the assertion passed.
+    /// It now looks for the literal list and for the absence of any parameter declaration — and both,
+    /// because either one alone would go green on a shape nobody intended.
+    /// </para>
     /// </remarks>
     [Fact]
     public void The_banners_read_sends_its_alert_types_as_literals()
@@ -48,9 +57,14 @@ public sealed class AdminAlertsPlanTests(SqlServerDatabaseFixture sqlServer)
 
         var sql = OpenQueryString(AdminAlertTypes.All);
 
-        Assert.DoesNotContain("@__", sql, StringComparison.Ordinal);
+        Assert.Contains(
+            $"IN ('{AdminAlertTypes.SensitiveSettingsChanged}'",
+            sql,
+            StringComparison.Ordinal);
+
+        Assert.Contains($"'{AdminAlertTypes.EmailDeliveryFailed}'", sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("DECLARE @", sql, StringComparison.Ordinal);
         Assert.DoesNotContain("OPENJSON", sql, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains(AdminAlertTypes.EmailDeliveryFailed, sql, StringComparison.Ordinal);
     }
 
     /// <summary>

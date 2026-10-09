@@ -23,12 +23,19 @@ namespace SpencerDenim.Infrastructure.Ops.Alerts;
 /// instead, which is what the banner needs; see <see cref="IAdminAlertReader"/>.
 /// </para>
 /// <para>
-/// <b><see cref="EF.Constant{T}"/> around the alert types, on purpose.</b> EF renders a parameterised
-/// collection through <c>OPENJSON</c>, which turns this seek into a join against a table-valued function
-/// and makes the plan depend on a cardinality estimate for a list of two or seven constants. There are
-/// exactly two lists R10 can produce, so inlining them costs two cached plans and nothing else.
-/// <c>AdminAlertsPlanTests</c> asserts both the absence of parameters and the index, because neither is
-/// visible from here.
+/// <b><see cref="EF.Constant{T}"/> around the alert types, and <i>not</i> because the index needs it.</b>
+/// Measured, because the first version of this remark guessed and guessed wrong: EF Core 10 renders
+/// <c>types.Contains(…)</c> as one parameter per element — <c>@types1 … @types7</c>, not the
+/// <c>OPENJSON</c> join this comment used to claim — and <c>IX_AdminAlerts_Open</c> is matched either way,
+/// because the predicate that has to imply its filter is <c>AcknowledgedAtUtc IS NULL</c> and the alert
+/// type is only a residual. A mutation proved it: swapping <c>EF.Constant</c> out left every plan in this
+/// file identical.
+/// </para>
+/// <para>
+/// It stays for a smaller and honest reason. R10 can produce exactly two lists, so as literals they give
+/// two stable cached plans; as seven sniffed parameters they give one plan compiled for whichever
+/// audience asked first. <c>AdminAlertsPlanTests</c> pins the literals as the deliberate choice they are,
+/// and pins the seek separately — the two are not the same claim.
 /// </para>
 /// </summary>
 internal sealed class AdminAlertReader(AppDbContext dbContext) : IAdminAlertReader
