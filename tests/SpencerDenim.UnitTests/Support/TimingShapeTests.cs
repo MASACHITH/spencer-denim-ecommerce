@@ -50,7 +50,39 @@ namespace SpencerDenim.UnitTests.Support;
 /// Saturation costs about a tenth on the worst of them, which is the whole claim being made for a ratio
 /// over a clock. None of them is asserted as a range all the same.
 /// </para>
+/// <para>
+/// <b>Those readings were taken on eight cores and they flattered the instrument. The tester took them
+/// on two, which is what <c>ubuntu-latest</c> gives the backend job, and the quadratic case went red.</b>
+/// Pinned to two cores with those cores oversubscribed, exactly-quadratic work read <b>2.84x</b> to
+/// <b>4.79x</b> against a theoretical 4, exactly-linear work read <b>1.24x</b> to <b>5.38x</b> against a
+/// theoretical 2 — 0.62 short of failing the bound of 6 — and the quadratic case that used to sit
+/// below failed once in six contended full-suite runs. <b>That is #134 for a third time</b>, after the 6.79x and the 6.41x above:
+/// a timing assertion red because the machine was busy, and this time on the kind of machine that filed
+/// the issue. The cause was not a bias in either direction but a shortage of samples — seven draws of a
+/// 50 ms window on two contended cores often contain no clean one, and which side gets the clean one is
+/// luck, which moves a ratio both ways.
+/// </para>
+/// <para>
+/// Two things changed rather than a bound: <see cref="TimingShape"/> samples until both sides' minima
+/// stop improving instead of a fixed seven times, and these cases and
+/// <c>HtmlSanitiserTests</c> now share a collection that does not run in parallel with the rest of the
+/// assembly, so a ratio is no longer measured on one of two cores while the other parses forty thousand
+/// siblings. The idle numbers above are unchanged by either, because idle still stops at seven. The red
+/// run was at a load that stretched the suite from 23 s to 6 m 32 s, which is some four times worse than
+/// anything #134 recorded of the runner — so read this as a margin that was thinner than it was
+/// documented to be, not as a failure reproduced on CI.
+/// </para>
+/// <para>
+/// <b>Two of these five cases cannot be checked by moving a bound, and that is worth knowing before
+/// trusting them.</b> Tightening <see cref="DoublingBound"/> to 1.5 and <see cref="RatioBound"/> to 0.5
+/// turns the three one-sided cases red, and the two that assert a throw stay green — they must, since a
+/// tighter bound only makes them throw sooner. So the tightening experiment proves the three shallow
+/// cases read a live number and proves nothing at all about the two steep ones. What those two rest on
+/// is the exponent of the workload, which is why <see cref="GrowingAs"/> computes it rather than
+/// nesting loops by hand.
+/// </para>
 /// </summary>
+[Collection(typeof(MeasuresDurations))]
 public sealed class TimingShapeTests
 {
     /// <summary>
@@ -80,20 +112,22 @@ public sealed class TimingShapeTests
             "linear work must pass the bound, or the guard is strict rather than discriminating.");
     }
 
-    [Fact]
-    public void The_doubling_guard_does_not_trip_on_work_that_grows_quadratically()
-    {
-        // This is not slack: the sanitiser's accept path is itself quadratic, measured at 3.04-3.35x per
-        // doubling at the size that ships (#134, and the docblock on the sanitiser case carries the
-        // spread). A bound that refused quadratic work would be red on main, so the bound that ships has
-        // to sit above it — and this case is the honest record of that, next to the one below, which
-        // shows what the bound still catches.
-        TimingShape.AssertDoublingWithin(
-            DoublingBound,
-            GrowingAs(2),
-            6_000,
-            "quadratic work is below this bound by design; see the case above it.");
-    }
+    // There was a fourth case here, asserting that exactly-quadratic work also stays under
+    // DoublingBound, on the grounds that the sanitiser's accept path is itself quadratic so a bound that
+    // refused quadratic work would be red on main. That reasoning is right and it is kept in the
+    // docblock above and on the sanitiser case; the assertion is not, and the tester removed it.
+    //
+    // Its expected reading is 4 against a bound of 6, so it had 1.5x of margin by construction, and that
+    // is less than this instrument's error on a contended two-core machine. Measured there: 2.84x to
+    // 4.82x across thirteen full-suite runs, a margin at worst of 1.24x, and one run above 6.00x — red,
+    // on work with no defect in it, which is exactly #134. Nothing was lost by removing it that is not
+    // covered better elsewhere. That quadratic work passes a bound of 6 is demonstrated on every single
+    // run by the real subject, HtmlSanitiserTests.A_breakout_element_that_closes_its_own_kind_is_flat_and_cheap,
+    // which measures the same property on a workload whose samples are five times longer and which read
+    // 2.60-3.74x over those same runs — never red. That the helper reads a live number rather than a
+    // constant is shown by the linear and same-shape cases here. That it discriminates at all is shown
+    // by the two cases below, which the tester confirmed by breaking MeasureTogether to report equal
+    // cost always: those two went red and nothing else did.
 
     [Fact]
     public void The_doubling_guard_trips_on_work_that_grows_faster_than_its_bound()
