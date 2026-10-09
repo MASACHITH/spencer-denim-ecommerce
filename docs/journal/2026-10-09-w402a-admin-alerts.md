@@ -14,8 +14,8 @@ visibility rule, and the banner with its acknowledge**.
 forward**: the alert exists because doc 11 §7 G-37 is a live hole in W3-06's shipped order emails, not
 because the dashboard is being started.
 
-The label is **`W4-02a`** everywhere in the source, the tests and this file (30 occurrences across 20
-files). Three things are deliberately *not* renamed:
+The label is **`W4-02a`** everywhere in the source, the tests and this file (**32 occurrences across 20
+files**, counted with `git grep -o`). Three things are deliberately *not* renamed:
 
 - **The git branch stays `feature/W3-07-admin-alerts`.** The owner is squash-merging it, so the branch
   name does not survive; renaming it would only break the worktree every tester and reviewer already has.
@@ -394,30 +394,52 @@ satisfied by its first clause while a later one matches nothing (#80).
 Every figure measured in this worktree. **Main's own figures were measured first, from
 `spencer-denim-ecommerce/` at `924ebfd`, because the brief's unit figure was out of date.**
 
-| Suite | Main (`924ebfd`) | Brief said | After | New |
-|---|---|---|---|---|
-| Unit | **1,925** | 1,818 | **1,981** | 56 |
-| Integration | **1,292** | 1,292 | **1,354** | 62 |
-| Vitest (shared / storefront / admin) | **24 / 1,417 / 465** | same | **24 / 1,417 / 490** | 25 |
-| Playwright | **935 / 0** | same | **960 / 0** | 25 |
+| Suite | Main (`924ebfd`) | Brief said | Round 1 | **Final** | New |
+|---|---|---|---|---|---|
+| Unit | **1,925** | 1,818 | 1,981 | **1,980** | 55 |
+| Integration | **1,292** | 1,292 | 1,354 | **1,357** | 65 |
+| Vitest (shared / storefront / admin) | **24 / 1,417 / 465** | same | 24 / 1,417 / 490 | **24 / 1,417 / 495** | 30 |
+| Playwright | **935 / 0** | same | 960 / 0 | **974 / 1** | 40 |
 
-All four were run to completion on the final tree, in this worktree, after the last commit of code:
-unit **1,981/0** (34 s), integration **1,354/0** (19 m 27 s), Vitest **24/1,417/490** all passing,
-Playwright **960/0** (8.6 m). The integration suite's earlier run reported one failure — see below — and
-this is the clean re-run after it was fixed.
+**The "Final" column is this worktree after the six follow-ups**, each suite run to completion on the tree
+that is being handed over: unit **1,980 / 0** (42 s), integration **1,357 / 0** (27 m 8 s), Vitest admin
+**495 / 0** across 38 files (31 s), Playwright **974 passed and 1 failed of 975** (9.0 m). `shared` and
+`storefront` are untouched by this branch and were not re-run after round 1.
+
+**The unit count went *down* by one**, and that is the note removal. Counted from the diff: **7 unit test
+methods added and 6 removed** — five of the six are the note's (`A_note_longer_than_the_column_is_refused`,
+`A_note_of_exactly_the_columns_width_is_accepted`, `The_length_is_measured_after_trimming`,
+`A_blank_note_is_stored_as_null_rather_than_as_an_empty_string` and the acknowledger's trimmed-note
+assertion) — and because some of them were `[Theory]` rows the **case** count still fell by one while the
+method count rose. The tester's six commits are inside these figures: 13 of the 40 new browser tests
+are the tester's.
+
+**The one browser failure is known issue #88**, `admin-catalog.e2e.ts` → "reorders with the keyboard alone,
+keeping focus on the row that moved", which #88 describes as timing out about 1 run in 4 and which
+W3-04's journal (2026-10-08, "Two latent races in other tasks' browser tests") diagnosed and deliberately
+left to its owner. The failure is at that test's final `waitForResponse`, which is the signature #88 and
+that journal both record. **Measured rather than assumed to be somebody else's**: re-run alone with
+`--repeat-each=6 --workers=1` it was **5 passed, 1 failed**, so it is not only a full-load race; and the
+admin stub serves **no** alerts unless a test asks for some, so on that route the banner renders nothing at
+all — one extra request at page load, before the test touches anything. Nothing on this branch is in its
+path.
 
 Both frontends were rebuilt before the browser run (`npm run build:storefront` **and**
 `npm run build:admin` — `npm run build` is storefront only, and the admin e2e server serves `dist/admin`).
-The browser suite ran with all seventeen `E2E_*_PORT` variables overridden into **4940–4956**, scanned free
-first; nothing on 4432/4433, 4502, 4515, 4767 or 4880–4916 was touched, and no process this task did not
-start was stopped.
+The browser suite ran with all seventeen `E2E_*_PORT` variables overridden into a private band, scanned
+free first — **4940–4956** in round 1 and **5010–5026** for the follow-ups, because the owner asked for a
+band away from both 4940–4956 and 4970–4986. Nothing on 4432/4433, 4502, 4515, 4767 or 4880–4916 was
+touched, no process this task did not start was stopped, and the band is free again.
 
-One database was created and dropped: `SpencerDenim_W307_Plan`, for the `SET STATISTICS IO` measurements
+One database was created and dropped: `SpencerDenim_W307_Plan` (named before the task-ID correction, and
+it is gone, so it is left as the name that actually existed), for the `SET STATISTICS IO` measurements
 above. One `SpencerDenim_Test_*` was dropped as well, and it was mine: I had two integration runs in
 flight at once (the second was started with `--no-build`, so a build failure did not stop it), killed the
 newer one, and the fixture drops its database on dispose rather than on a kill. Nothing belonging to
 `SpencerDenim_Dev`, `SpencerDenim_W113_*`, `SpencerDenim_W103_Tester` or anybody else's
-`SpencerDenim_Test_*` was touched.
+`SpencerDenim_Test_*` was touched. **The follow-up round created no database at all**: the integration run
+makes and drops its own `SpencerDenim_Test_<guid>`, and the eight `SpencerDenim_Test_*` and eight
+`SpencerDenim_W113_*` on the instance at hand-over are other sessions' and were left alone.
 
 ### One test was failing and the full run is what found it
 
@@ -441,7 +463,9 @@ is the step I skipped. `M28` still kills it.
 
 Every new test was proved to fail against a mutation of the code it covers.
 
-**The count: 55 distinct mutations, 53 killed, 2 non-viable, 0 surviving.**
+**The count: 59 distinct mutations, 57 killed, 2 non-viable, 0 surviving.** Counted, not added up:
+`grep -o 'M[0-9]\+[a-c]\?'` over this file gives 59 ids, and the table below has 57 rows — the two
+missing are the two non-viable ones, which are in prose underneath it.
 
 **The first version of this line said "50 mutations, 45 killed, 3 non-viable, 2 survivors" and every one
 of those four numbers was wrong.** It is worth setting out how, because the mutation campaign is the main
@@ -458,8 +482,13 @@ evidence this branch offers for its own test quality and an inflated count costs
 - **Three more (M21, M23, M41) are not in the count either**, and should not be: their first form did not
   compile, so they were rewritten and the rewritten form is what ran.
 
-The six follow-ups added **M45–M54**. The honest final state is therefore 55 ids attempted, 53 killed, and
-M9b and M23c non-viable. Nothing survives.
+The six follow-ups added **M45–M54**, ten more. 49 + 10 = **59 attempted, 57 killed**, with M9b and M23c
+non-viable and nothing surviving.
+
+**And my first correction of this line got it wrong too**, which is the last word this paragraph deserves:
+it said "55 attempted, 53 killed", which is 45 + 10 — the old, double-counted killed figure plus the new
+mutations, instead of the id count plus the new mutations. It is the same mistake as the original, made
+while fixing the original. The numbers above are counted from the file rather than added up.
 
 | Mutation | Killed by |
 |---|---|
@@ -565,7 +594,7 @@ non-viable one, and counting it as non-viable inflated the campaign by one.
 | M48 the order-gone case falls through to "open the order, then telephone" | `does not send anybody to an order that is not there`, the seven-sentence sweep, and the banner spec |
 | M49 a dead `StaffInvite` gets the token-bearing advice | `sends a dead StaffInvite to a Super Admin, not to the invited user`, `sends a dead staff invitation to a Super Admin`, and the sweep |
 | M50 `Welcome` / `AccountExists` get the "has usually expired" advice | `does not claim an expired link for the two that carry no link` and the sweep |
-| M51 the route accepts a note again and drops it | `An_acknowledgement_note_is_refused_by_name_and_nothing_is_acknowledged` |
+| M51 the route accepts a note again and drops it | `An_acknowledgement_note_is_refused_by_name_and_nothing_is_acknowledged` **and** `An_explicit_null_note_is_accepted` — the mutation inverts the test, so the pair that pins "a note is refused, a `null` is not" both fire |
 | M52 the command grows somewhere to put a note back | `The_acknowledge_command_has_no_note_to_carry` |
 | M53 the template code is no longer lifted out of the details | three handler tests, including `An_unreadable_order_id_costs_the_order_and_not_the_template_code` |
 | M54 the audit trail grows its `HasNote` flag back | `Acknowledging_stamps_the_row_and_writes_the_audit_trail` |
