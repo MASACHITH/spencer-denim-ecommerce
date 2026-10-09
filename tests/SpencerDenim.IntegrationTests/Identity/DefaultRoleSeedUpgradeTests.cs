@@ -101,11 +101,23 @@ public sealed class DefaultRoleSeedUpgradeTests(SqlServerDatabaseFixture sqlServ
     }
 
     /// <summary>
-    /// <b>A permission the client removed stays removed</b> (N13). This is the assertion that refuses the
-    /// tempting implementation: anything that reconciled a role against the shipped definition would put
-    /// <c>Orders.Refund</c> back on every deployment, and a shop that had deliberately taken refunds away
-    /// from its Store Managers would silently get them back.
+    /// <b>A permission the client removed stays removed</b> (N13), <b>including on the startup that is
+    /// busy granting a new one</b>.
     /// </summary>
+    /// <remarks>
+    /// <b>The second half is the half that matters, and the first version of this test did not have
+    /// it.</b> With the marker already at the current version there is no pending increment at all, so the
+    /// version gate alone keeps the role untouched — and a mutation that replaced
+    /// <c>increment.AddedPermissions</c> with the role's whole shipped definition passed this test
+    /// unchanged, because the loop it broke never ran. That is precisely the test-that-cannot-fail shape
+    /// this project has shipped eleven times.
+    /// <para>
+    /// So the second half removes a baseline permission <i>and</i> winds the marker back, which is the
+    /// state the client's database will really be in: an older seed version, the client's own edits on top
+    /// of it. The step then has to grant the new permissions and leave the removed one alone in the same
+    /// pass, which is the property "apply only the additions" actually buys.
+    /// </para>
+    /// </remarks>
     [Fact]
     public async Task A_permission_the_client_removed_is_not_put_back()
     {
@@ -143,6 +155,30 @@ public sealed class DefaultRoleSeedUpgradeTests(SqlServerDatabaseFixture sqlServ
                 cancellationToken),
             "Orders.Refund was restored to Store Manager. The step must only apply permissions introduced "
             + "above the recorded version; reinstating one the client removed is what doc 08 N13 forbids.");
+
+        // **Now with an increment pending**, so the step is doing work on this very role in this very
+        // pass, and still must not touch anything but the additions.
+        await AgeToVersionOneAsync(deployment, cancellationToken);
+
+        await StartHostAsync(deployment, cancellationToken);
+
+        foreach (var (roleName, permission) in VersionTwoPairs)
+        {
+            Assert.True(
+                await HoldsAsync(deployment, roleName, permission, cancellationToken),
+                $"'{roleName}' did not get {permission}, so the second half of this test is not "
+                + "exercising a pass that grants anything.");
+        }
+
+        Assert.False(
+            await HoldsAsync(
+                deployment,
+                DefaultRoleDefinitions.StoreManagerName,
+                Permissions.Orders.Refund,
+                cancellationToken),
+            "Orders.Refund came back on the startup that granted version 2's permissions. The step must "
+            + "apply the increment's additions and nothing else — not the role's whole shipped "
+            + "definition, which would undo every edit the client has made (doc 08 N13).");
     }
 
     /// <summary>
