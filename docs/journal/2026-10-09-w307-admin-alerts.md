@@ -285,6 +285,16 @@ because the two are not the same claim.
    same title cleared one after the other would be read out once. Unlike the bank queue there is no
    "…ing" sentence in between to alternate with, so the trailing space is the guarantee here rather than a
    backstop, and the spec asserts it directly.
+5. **The banner's title is not a heading**, and this one was a defect in my own first version. The banner
+   renders above every admin page's `<h1>`, so the `<h2>` it had put a heading in front of the page saying
+   what it was — which is exactly #76 and #20's SH11 ("a screen reader met `H3 Girls, H3 Boys, H3 Baby,
+   H2 Menu, H1 <the page>`"), and `accessibility.e2e.ts` says in as many words why nothing caught it:
+   "axe reports nothing, because nested heading order is a best-practice rule rather than a WCAG failure,
+   which is exactly why it survived." The axe gate was green over it. It is now a `<p>` that names the
+   `region` through `aria-labelledby` — a named landmark is how a screen-reader user finds a banner, so
+   nothing is lost — and `admin-alerts.e2e.ts` asserts that file's own rule (the first heading in DOM
+   order is the `h1`) on three admin screens. An `<h2>` there fails all three; the failure message prints
+   `["H2 10 alerts need attention…","H1 Orders","H2 Show"]`.
 
 Focus moves to the outcome line on `afterNextRender` and **not** `queueMicrotask`; the e2e suite is what
 proves the difference, and it did (see the mutation table).
@@ -303,7 +313,7 @@ Every figure measured in this worktree. **Main's own figures were measured first
 | Unit | **1,925** | 1,818 | **1,980** | 55 |
 | Integration | **1,292** | 1,292 | **1,345** | 53 |
 | Vitest (shared / storefront / admin) | **24 / 1,417 / 465** | same | **24 / 1,417 / 490** | 25 |
-| Playwright | **935 / 0** | same | **957 / 0** | 22 |
+| Playwright | **935 / 0** | same | **960 / 0** | 25 |
 
 Both frontends were rebuilt before the browser run (`npm run build:storefront` **and**
 `npm run build:admin` — `npm run build` is storefront only, and the admin e2e server serves `dist/admin`).
@@ -316,7 +326,7 @@ above. Nothing else was dropped.
 
 ## Mutation testing
 
-Every new test was proved to fail against a mutation of the code it covers. **49 mutations, 44 killed, 3
+Every new test was proved to fail against a mutation of the code it covers. **50 mutations, 45 killed, 3
 non-viable, and 2 survivors that were real holes and are now closed.**
 
 | Mutation | Killed by |
@@ -367,6 +377,7 @@ non-viable, and 2 survivors that were real holes and are now closed.**
 | M41 `orderNumber` dropped from the TypeScript model | `The_alert_payloads_properties_are_exactly_what_the_screen_declares` |
 | M42 `orderNumber` dropped from the Playwright stub | `The_playwright_stub_answers_with_every_field_the_api_sends` **(after the test was narrowed — see below)** |
 | M43 the alert type the banner branches on is renamed | `The_alert_type_the_banner_branches_on_is_the_one_the_server_writes` |
+| M44 the banner's title becomes an `<h2>` again | all three `still says what the page is before anything else` tests, in the browser only — axe is green over it |
 
 ### The two survivors, and what they cost
 
