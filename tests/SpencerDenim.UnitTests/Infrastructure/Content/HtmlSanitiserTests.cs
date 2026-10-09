@@ -1,4 +1,5 @@
 using SpencerDenim.Infrastructure.Content;
+using SpencerDenim.UnitTests.Support;
 
 namespace SpencerDenim.UnitTests.Infrastructure.Content;
 
@@ -18,6 +19,7 @@ namespace SpencerDenim.UnitTests.Infrastructure.Content;
 /// as coverage.
 /// </para>
 /// </summary>
+[Collection(typeof(MeasuresDurations))]
 public sealed class HtmlSanitiserTests
 {
     private readonly HtmlSanitiser _sanitiser = new();
@@ -520,10 +522,25 @@ public sealed class HtmlSanitiserTests
     /// the same payload without the five-character <c>&lt;svg&gt;</c> prefix is refused in 3 ms.
     /// </para>
     /// <para>
-    /// <b>Each case asserts the clock as well as the verdict</b>, and that is the point: before the fix
+    /// <b>Each case asserts the cost as well as the verdict</b>, and that is the point: before the fix
     /// the first of these was refused too — forty-four seconds later. A verdict-only test would have
-    /// passed against the defect. The bound is 5 seconds against a measured 41, so it is a margin of
-    /// eight rather than a tight timing assertion that a loaded machine could trip.
+    /// passed against the defect.
+    /// </para>
+    /// <para>
+    /// <b>The cost is asserted against the control rather than against a clock (#134).</b> It used to be
+    /// <c>clock.Elapsed &lt; 5s</c>, which was the wrong instrument twice over: it fails when the runner
+    /// is slow, and it would pass the 41-second defect outright on a machine nine times faster. What the
+    /// defect actually was is a <i>ratio</i> — a five-character prefix turning a 3 ms refusal into 41
+    /// seconds, about 13,000x — so the assertion is now the same payload with the prefix against the
+    /// same payload without it, both measured in this process. That is machine-independent: a slow
+    /// runner makes both halves slow together.
+    /// </para>
+    /// <para>
+    /// <b>Measured</b> on the developer machine, Release, three repeats of all five rows: the ratio is
+    /// <b>0.98–1.01x</b>. The prefix is free, because the scan pops out of foreign content and does the
+    /// identical work. The bound of 10 is therefore about 10x clear of every reading taken and still some
+    /// 1,300x inside the defect it exists to catch. <c>TimingShapeTests</c> proves this bound trips, at
+    /// this setting, on work that is quadratic in the same input.
     /// </para>
     /// </summary>
     [Theory]
@@ -537,23 +554,31 @@ public sealed class HtmlSanitiserTests
         string breakout,
         int levels)
     {
-        var payload = $"<{foreign}>" + string.Concat(Enumerable.Repeat($"<{breakout}/>", levels));
+        var run = string.Concat(Enumerable.Repeat($"<{breakout}/>", levels));
+        var prefixed = $"<{foreign}>" + run;
 
-        Assert.True(payload.Length <= HtmlSanitiser.MaxInputLength, "the payload must reach the scan");
+        Assert.True(prefixed.Length <= HtmlSanitiser.MaxInputLength, "the payload must reach the scan");
 
-        var clock = System.Diagnostics.Stopwatch.StartNew();
-        var result = _sanitiser.Sanitise(payload);
-        clock.Stop();
+        var result = _sanitiser.Sanitise(prefixed);
 
         Assert.True(result.WasRejected);
         Assert.Contains("levels deep", result.Rejection);
 
+        // The control has to be refused too, or the comparison below is between a refusal and an accept
+        // and the ratio means nothing. This is the three-millisecond half of the original measurement.
         Assert.True(
-            clock.Elapsed < TimeSpan.FromSeconds(5),
-            $"<{foreign}> + <{breakout}/> x {levels:N0} took {clock.Elapsed.TotalSeconds:N1}s. It is "
-            + "refused, but the refusal has to come from the lexical scan rather than from the parse: "
-            + "this payload cost 41 seconds of CPU before BreaksOutOfForeignContent existed, and the "
-            + "admin content list re-sanitises every stored body on every load.");
+            _sanitiser.Sanitise(run).WasRejected,
+            $"<{breakout}/> x {levels:N0} with no prefix must be refused, or it is not a control");
+
+        TimingShape.AssertWithin(
+            10,
+            () => _sanitiser.Sanitise(run),
+            () => _sanitiser.Sanitise(prefixed),
+            $"<{foreign}> must not change what <{breakout}/> x {levels:N0} costs. It is refused either "
+            + "way, but the refusal has to come from the lexical scan rather than from the parse: this "
+            + "payload cost 41 seconds of CPU against the control's 3 ms before "
+            + "BreaksOutOfForeignContent existed, and the admin content list re-sanitises every stored "
+            + "body on every load.");
     }
 
     /// <summary>
@@ -566,39 +591,150 @@ public sealed class HtmlSanitiserTests
     /// pinned a false positive against every real page that pastes unclosed paragraphs.
     /// </para>
     /// <para>
-    /// The clock still matters here, because "flat" has to mean cheap: forty thousand siblings are linear
-    /// work, not the quadratic nesting the guard exists for.
+    /// The cost still matters here. It used to be asserted as <c>clock.Elapsed &lt; 5s</c>, and
+    /// <b>this is the assertion #134 was filed about</b>: it began failing the backend job consistently
+    /// at 6.7 s and 5.5 s on a GitHub hosted runner against 1–2 s here, on branches touching no
+    /// sanitiser file.
+    /// </para>
+    /// <para>
+    /// <b>What is asserted below is the shape of that cost and not its size, and the difference is a
+    /// real hole — the tester measured it rather than arguing about it.</b> An earlier draft of this
+    /// docblock said the cost mattered "because flat has to mean cheap". A ratio cannot say cheap. With
+    /// the accept path made twenty times slower at every size — 1,390 ms then 4,799 ms per call against
+    /// the 75 ms and 236 ms it really costs — the assertion below reads <b>3.45x</b> and passes, while
+    /// the 5 s clock it replaces would have failed on the first call. So the clock is not strictly
+    /// weaker than what replaced it, as #134 claimed when it proposed this: the two instruments catch
+    /// different regressions, and a constant-factor slowdown is now caught by nothing here. That is
+    /// deliberate, because an absolute budget on this payload is what #134 is about, and
+    /// <see cref="HtmlSanitiser"/>'s own cost is tracked on #135 instead — but it is a gap and not a
+    /// clean win, and it should not be rediscovered by someone reading a confident comment.
+    /// </para>
+    /// <para>
+    /// <b>The old text said these forty thousand siblings are "linear work". They are not — I measured
+    /// it, and that is the more interesting half of #134.</b> Doubling the run multiplies the cost by
+    /// <b>3.29x</b> (10k→20k), <b>3.56x</b> (20k→40k) and <b>3.80x</b> (40k→80k), converging on 4,
+    /// which is quadratic. Absolute readings, Release, minimum of nine samples: 71 ms, 234 ms, 835 ms,
+    /// 3,171 ms. The multiples climb across that range rather than sitting at 4 because there is a
+    /// per-call cost that does not grow with the run — n = 5,000 and n = 10,000 come out at 70 ms and
+    /// 74 ms, so most of a reading at ten thousand is overhead — and it deflates the smaller ratios.
+    /// <b>I am not quoting a figure for it</b>: the obvious estimates disagree with each other by enough
+    /// to matter, and every multiple in this docblock is a raw measured one instead. What is not in
+    /// doubt is the trend, and so: the CI failure was never purely a slow machine. At 40,000 the
+    /// quadratic cost is already most of the way to a five-second budget, and a slower runner only had
+    /// to finish the job.
+    /// </para>
+    /// <para>
+    /// That cost is in the <i>accept</i> path — parse, clean and serialise a wide flat tree — not in
+    /// the pre-scan. It is not the same shape as the residual <see cref="HtmlSanitiser"/> already records
+    /// — that one is a deep tree, this one is a wide flat one — but it is the same category of thing,
+    /// an accept-path parse costing seconds at the cap. The owner's acceptance on record covers that
+    /// one and not this one (8.8 seconds at the 400 KB cap, W2-11 journal, "Three residuals"), so this
+    /// is a comparison and not an inherited sign-off. <b>Nothing here is a fix for it</b>; it is noted
+    /// on #134 and filed as #135 rather than quietly absorbed.
+    /// </para>
+    /// <para>
+    /// <b>So this asserts the shape rather than the seconds, at a bound the measurement supports:</b>
+    /// doubling 10,000 to 20,000 may cost no more than 6x. Linear work comes in at 2x and a bound of 2
+    /// would be red on main, so claiming linearity here would be a convenient lie. What the bound still
+    /// catches is a step up to cubic or worse — the shape a genuinely deep tree has, and the shape the
+    /// 41-second defect had. <c>TimingShapeTests</c> proves the bound trips at this setting on work that
+    /// grows as the fourth power, and does not trip on linear or quadratic work, so it is a bound that
+    /// can fail rather than a round number.
+    /// </para>
+    /// <para>
+    /// <b>"Cubic or worse" is the claim, and at cubic it is only just true.</b> The tester made this
+    /// call path super-quadratic for real — an injected term growing as the cube, nothing else changed —
+    /// and this assertion went red at <b>6.59x</b> against the bound of 6.00x (274 ms then 1,809 ms).
+    /// So the assertion is wired to the sanitiser and not only to the helper, which is the thing worth
+    /// knowing; but the margin against a genuinely cubic regression is <b>1.10x</b>, not the 2x that
+    /// comparing 8 with 6 suggests, because the flat per-call cost deflates the reading here the same
+    /// way it deflates the quadratic one. Quartic is caught comfortably. Cubic is caught on a quiet
+    /// machine and should not be relied on to be caught on a loaded one.
+    /// </para>
+    /// <para>
+    /// <b>Measured</b> at exactly this setting, Release, five readings each: idle <b>3.04–3.13x</b>, and
+    /// with all eight cores saturated by spin loops <b>3.15–3.35x</b>. Saturation roughly doubled the
+    /// absolute times and moved the ratio by a tenth, which is the whole claim being made for a ratio
+    /// over a clock. Ten consecutive runs of the whole unit suite under that saturation were green.
+    /// </para>
+    /// <para>
+    /// <b>Eight saturated cores is not the machine this issue is about, and the tester measured the one
+    /// that is.</b> The backend job runs on <c>ubuntu-latest</c>, which is <b>two</b> vCPUs, and it runs
+    /// the unit and integration suites in one job. Pinned to two cores — closer to the runner in the
+    /// shape that matters — and at loads from idle up to a seventeen-fold slowdown, this assertion read
+    /// <b>2.60–3.74x</b> over ten full-suite runs, against the 3.35x worst reading taken here on eight
+    /// idle cores. It stayed green every one of them, so the margin is <b>1.6x</b> rather than 1.8x.
+    /// <b>And the ratio did hold the machine out</b>, which is the claim worth checking rather than
+    /// assuming: across those runs the 10,000 side's own cost moved from 74 ms to 240 ms, a 3.2-fold
+    /// change in how fast the machine was, and the multiple stayed inside 2.60–3.74.
+    /// </para>
+    /// <para>
+    /// What did not stay green at the worst of those loads was <c>TimingShapeTests</c>' own quadratic
+    /// canary, which is a fault in the measurement rather than in this bound and is recorded on
+    /// <see cref="SpencerDenim.UnitTests.Support.TimingShape"/>.
+    /// </para>
+    /// <para>
+    /// <b>The bound is 6 and not larger, deliberately.</b> It sits between the quadratic this path
+    /// measures (4) and the cubic it must still refuse (8), so there is nowhere looser to go that still
+    /// discriminates. The flat per-call cost also deflates a 10,000-to-20,000 reading most of all, so a
+    /// faster parser would push these readings up toward 4 rather than down, and the margin is 1.8x
+    /// rather than comfortable. <b>If this ever does go red, the fix is the quadratic accept path, not a
+    /// bigger bound</b> — raising the number is what #134 is a complaint about.
     /// </para>
     /// </summary>
     [Fact]
     public void A_breakout_element_that_closes_its_own_kind_is_flat_and_cheap()
     {
-        var payload = "<math>" + string.Concat(Enumerable.Repeat("<p/>", 40_000));
+        // The verdict is what this test was written for, and it is asserted at every size the cost
+        // assertion below measures: if the scan ever started reading a run of <p/> as nested, the payload
+        // would be refused and the cost would collapse to an instant refusal — which a ratio on its own
+        // would read as an improvement.
+        foreach (var levels in new[] { 10_000, 20_000, 40_000 })
+        {
+            Assert.False(
+                _sanitiser.Sanitise(FlatParagraphs(levels)).WasRejected,
+                $"<math> + <p/> x {levels:N0} is {levels:N0} siblings one level deep, not a deep tree");
+        }
 
-        var clock = System.Diagnostics.Stopwatch.StartNew();
-        var result = _sanitiser.Sanitise(payload);
-        clock.Stop();
-
-        Assert.False(result.WasRejected);
-        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(5), $"it took {clock.Elapsed.TotalSeconds:N1}s");
+        TimingShape.AssertDoublingWithin(
+            6,
+            levels =>
+            {
+                var payload = FlatParagraphs(levels);
+                return () => _sanitiser.Sanitise(payload);
+            },
+            10_000,
+            "a flat run of siblings must not cost more steeply than the quadratic the accept path "
+            + "already measures. Steeper than that is the signature of a tree being built as deep as the "
+            + "run is long, which is what BreaksOutOfForeignContent exists to stop.");
     }
+
+    private static string FlatParagraphs(int levels) =>
+        "<math>" + string.Concat(Enumerable.Repeat("<p/>", levels));
 
     /// <summary>
     /// The control the tester used, and the one that matters most here: the same shape with no
     /// <c>&lt;svg&gt;</c> in front of it was always refused immediately. Keeping both means the test
     /// above is measuring the prefix rather than the machine.
+    /// <para>
+    /// <b>It is now measured there rather than here (#134).</b> This case used to carry its own
+    /// <c>clock.Elapsed &lt; 5s</c>, and that assertion could not fail for any reason worth knowing: the
+    /// refusal is purely lexical and costs <b>0.10 ms</b> on this machine, measured, so the bound had a
+    /// margin of roughly <b>50,000x</b> and a runner slow enough to trip it would have failed the whole
+    /// job elsewhere first. The comparison it was reaching for needs <i>both</i> payloads in one process,
+    /// which only the theory above can do — so the theory takes this payload as its baseline, and this
+    /// case keeps the verdict, which is what it can prove on its own.
+    /// </para>
     /// </summary>
     [Fact]
     public void The_same_payload_without_the_foreign_prefix_is_refused_just_as_fast()
     {
         var payload = string.Concat(Enumerable.Repeat("<div/>", 66_000));
 
-        var clock = System.Diagnostics.Stopwatch.StartNew();
         var result = _sanitiser.Sanitise(payload);
-        clock.Stop();
 
         Assert.True(result.WasRejected);
-        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(5));
+        Assert.Contains("levels deep", result.Rejection);
     }
 
     /// <summary>
