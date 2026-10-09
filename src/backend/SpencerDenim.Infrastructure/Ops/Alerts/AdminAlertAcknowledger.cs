@@ -100,13 +100,18 @@ internal sealed class AdminAlertAcknowledger(
             return (AcknowledgeAlertOutcome.NotFound, null);
         }
 
-        if (existing.AcknowledgedAtUtc is { } already)
-        {
-            return (
-                AcknowledgeAlertOutcome.AlreadyAcknowledged,
-                new AcknowledgedAlert(existing.Id, existing.AlertType, already));
-        }
-
+        // **There is deliberately no "is it already acknowledged?" branch here.** The read above is for
+        // the two things only a read can answer — does the alert exist, and is its type one this caller
+        // may see (R10) — and the <c>UPDATE</c> below decides whether it is still open, because that is
+        // the only place the answer cannot go stale between being read and being acted on (doc 08 §5.2).
+        //
+        // **A short-circuit here was in the first version and a mutation proved it hid the clause that
+        // matters.** Removing `AND AcknowledgedAtUtc IS NULL` from the statement left every test green:
+        // the sequential tests never reached the statement with an acknowledged row, and the four-way
+        // race test did not reliably interleave its reads, so nothing exercised the one guard standing
+        // between two Super Admins and two audit rows for one alert. With the branch gone, the ordinary
+        // second acknowledgement goes through the statement and the clause is load-bearing in a test that
+        // does not depend on timing.
         var nowUtc = clock.UtcNow.UtcDateTime;
 
         var updated = await dbContext.Database.ExecuteSqlInterpolatedAsync(
@@ -122,8 +127,9 @@ internal sealed class AdminAlertAcknowledger(
 
         if (updated != 1)
         {
-            // Somebody committed between the read and the update. Their time is the answer, so it is read
-            // again rather than guessed at.
+            // Already acknowledged — either before this request arrived or by somebody who committed
+            // while it was in flight. Their time is the answer, so it is read again rather than guessed
+            // at; a 0 from a conditional update says only that the condition no longer held.
             var winner = await ReadAsync(alertId, cancellationToken);
 
             return winner?.AcknowledgedAtUtc is { } winnerTime

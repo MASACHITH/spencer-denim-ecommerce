@@ -49,7 +49,31 @@ internal sealed class AdminAlertReader(AppDbContext dbContext) : IAdminAlertRead
 
         // **One row more than the caller asked for, and the extra row is the whole answer to "are there
         // more".** It costs nothing: it comes off the same seek, from the same page.
-        var fetched = await OpenQuery(alertTypes)
+        var fetched = await OpenPage(alertTypes, take).ToListAsync(cancellationToken);
+
+        return fetched.Count > take
+            ? (true, fetched[..take])
+            : (false, fetched);
+    }
+
+    /// <summary>
+    /// The banner's one query: the open alerts of these types, newest first, with one row more than
+    /// <paramref name="take"/> so the caller can tell whether there are more.
+    /// </summary>
+    /// <remarks>
+    /// <b><c>internal</c> rather than <c>private</c> so <c>AdminAlertsPlanTests</c> can read the SQL this
+    /// reader really sends</b> — the shape <c>SendEmailsService.SweepAsync</c> and
+    /// <c>EmailOutboxStore.KillStrandedExhaustedSql</c> already use. It is not a test-only member: it is
+    /// the whole read, and <see cref="GetOpenAsync"/> is the bounds-checking and the paging around it.
+    /// <para>
+    /// <b>The first version of those plan tests rebuilt this query instead of calling it, and a mutation
+    /// proved what that was worth:</b> replacing <see cref="EF.Constant{T}"/> with a plain collection —
+    /// which turns the seek into an <c>OPENJSON</c> join — left every plan test green, because they were
+    /// measuring a query the test had written.
+    /// </para>
+    /// </remarks>
+    internal IQueryable<AdminAlertRow> OpenPage(IReadOnlyList<string> alertTypes, int take) =>
+        OpenQuery(alertTypes)
             .OrderByDescending(alert => alert.CreatedAtUtc)
             .ThenBy(alert => alert.Id)
             .Take(take + 1)
@@ -61,13 +85,7 @@ internal sealed class AdminAlertReader(AppDbContext dbContext) : IAdminAlertRead
                 alert.CreatedAtUtc,
                 alert.RelatedEntityType,
                 alert.RelatedEntityId,
-                alert.DetailsJson))
-            .ToListAsync(cancellationToken);
-
-        return fetched.Count > take
-            ? (true, fetched[..take])
-            : (false, fetched);
-    }
+                alert.DetailsJson));
 
     /// <summary>
     /// The open alerts of these types.

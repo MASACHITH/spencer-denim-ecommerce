@@ -113,6 +113,17 @@ public sealed class AdminAlertHandlerTests
     /// Six of the seven alert types are written by tasks that do not exist, the column has an
     /// <c>ISJSON</c> check and nothing more (doc 08 §3.8), and a banner that threw on one row's details
     /// would hide every other alert in the shop — which is the opposite of what this table is for.
+    /// <para>
+    /// <b>The last two cases are malformed JSON, which <c>CK_AdminAlerts_DetailsJson</c> makes
+    /// unreachable from this database — and they are here because a mutation survived without them.</b>
+    /// Turning the <c>catch (JsonException)</c> into a catch of something else left every other case
+    /// green: all of them are <i>valid</i> JSON of a shape this method does not want, which the
+    /// <c>ValueKind</c> and <c>TryGetProperty</c> checks handle without the catch ever running. The catch
+    /// guards a narrower thing — SQL Server's <c>ISJSON</c> and <c>System.Text.Json</c> are two parsers
+    /// over one column and they do not have to agree about every input — and this method is Application
+    /// code that can be handed a string by anything. A banner that 500s on one row would hide every
+    /// alert in the shop, so the guard stays and now has a test that reaches it.
+    /// </para>
     /// </remarks>
     [Theory]
     [InlineData(null)]
@@ -124,6 +135,8 @@ public sealed class AdminAlertHandlerTests
     [InlineData("{\"orderPublicId\":\"not-a-guid\"}")]
     [InlineData("{\"orderPublicId\":\"../../etc/passwd\"}")]
     [InlineData("{\"templateCode\":\"OrderPlaced\"}")]
+    [InlineData("{not json at all")]
+    [InlineData("{\"orderPublicId\":")]
     public async Task Details_it_cannot_read_cost_the_link_and_nothing_else(string? detailsJson)
     {
         var reader = new FakeReader([Row(detailsJson)]);

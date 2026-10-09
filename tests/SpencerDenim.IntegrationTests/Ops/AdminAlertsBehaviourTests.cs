@@ -316,13 +316,32 @@ public sealed class AdminAlertsBehaviourTests(SqlServerDatabaseFixture sqlServer
         await ResetAlertsAsync();
         await InsertAlertAsync(AdminAlertTypes.EmailDeliveryFailed, Now);
 
-        using var scope = SqlServer.CreateScope();
-        var reader = scope.ServiceProvider.GetRequiredService<IAdminAlertReader>();
+        // **Counted, not just asserted empty.** EF renders an empty `EF.Constant` collection as a
+        // predicate that matches nothing, so dropping the guard leaves the *answer* right and the
+        // statement run anyway — a mutation proved it. The guard is what makes "no audience" an answer
+        // the database is never asked for, which is the property R10 needs: a reader that runs a
+        // statement for a caller with no audience is a reader one wrong predicate away from returning
+        // every alert in the shop.
+        var counter = new CommandCountingInterceptor();
+
+        var services = new ServiceCollection();
+        services.AddDbContext<AppDbContext>(builder => builder
+            .UseSqlServer(SqlServer.ConnectionString)
+            .AddInterceptors(counter));
+
+        await using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+
+        var reader = new SpencerDenim.Infrastructure.Ops.Alerts.AdminAlertReader(
+            scope.ServiceProvider.GetRequiredService<AppDbContext>());
+
+        counter.Reset();
 
         var (moreThanTake, rows) = await reader.GetOpenAsync([], 10, Token);
 
         Assert.False(moreThanTake);
         Assert.Empty(rows);
+        Assert.Equal(0, counter.Count);
     }
 
     /// <summary>

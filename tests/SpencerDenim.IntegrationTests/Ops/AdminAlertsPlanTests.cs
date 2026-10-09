@@ -3,6 +3,7 @@ using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using SpencerDenim.Domain.Ops;
+using SpencerDenim.Infrastructure.Ops.Alerts;
 using SpencerDenim.Infrastructure.Persistence;
 using SpencerDenim.IntegrationTests.Infrastructure;
 
@@ -263,22 +264,22 @@ public sealed class AdminAlertsPlanTests(SqlServerDatabaseFixture sqlServer)
     /// <summary>How many of them are open — the handful a banner reads.</summary>
     private const int OpenRows = 12;
 
-    /// <summary>The read the banner really runs, as a query string.</summary>
+    /// <summary>
+    /// The read the banner really runs, as a query string.
+    /// </summary>
+    /// <remarks>
+    /// <b>Taken from <c>AdminAlertReader</c> itself, not rebuilt here.</b> The first version of this file
+    /// wrote the query out again, and a mutation showed what that proved: swapping
+    /// <see cref="EF.Constant{T}"/> for a plain collection in the reader — which turns the seek into an
+    /// <c>OPENJSON</c> join — left every test in this file green, because they were all measuring a query
+    /// this file had written. <c>AdminAlertReader.OpenPage</c> is <c>internal</c> for exactly this.
+    /// </remarks>
     private string OpenQueryString(IReadOnlyList<string> alertTypes)
     {
         using var scope = sqlServer.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-        return dbContext.AdminAlerts
-            .AsNoTracking()
-            .Where(alert =>
-                alert.AcknowledgedAtUtc == null
-                && EF.Constant(alertTypes).Contains(alert.AlertType))
-            .OrderByDescending(alert => alert.CreatedAtUtc)
-            .ThenBy(alert => alert.Id)
-            .Take(10)
-            .Select(alert => new { alert.Id, alert.AlertType, alert.Title })
-            .ToQueryString();
+        return new AdminAlertReader(dbContext).OpenPage(alertTypes, 10).ToQueryString();
     }
 
     /// <summary>
