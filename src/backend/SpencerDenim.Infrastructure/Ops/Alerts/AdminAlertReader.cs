@@ -104,14 +104,18 @@ internal sealed class AdminAlertReader(AppDbContext dbContext) : IAdminAlertRead
     /// assert. The lesson is <c>OrderExpiryStore.FindDueOrdersAsync</c>'s and
     /// <c>EmailOutboxStore.ClaimAsync</c>'s before it.
     /// <para>
-    /// <b>The tie-break ascends, which looks wrong beside a descending sort and is the point.</b>
+    /// <b>The tie-break ascends, which looks wrong beside a descending sort and is deliberate.</b>
     /// <c>IX_AdminAlerts_Open</c> is keyed <c>CreatedAtUtc DESC</c> and carries the clustered key as its
-    /// row locator, so its physical order is <c>(CreatedAtUtc DESC, Id ASC)</c> — exactly this. Asking
-    /// for <c>Id DESC</c> instead would be a different order from the index's and would make the
-    /// optimiser sort, which on this shape of table it answers by scanning the clustered index instead
-    /// (measured: <c>AdminAlertsPlanTests</c> went red that way before the tie-break was turned round).
-    /// Among alerts raised in the same millisecond there is no "newer" to prefer; what the banner needs
-    /// is an order two reads agree on.
+    /// row locator, so its physical order is <c>(CreatedAtUtc DESC, Id ASC)</c> — exactly this ordering,
+    /// which therefore needs no sort. Among alerts raised in the same millisecond there is no "newer" to
+    /// prefer anyway; what the banner needs is an order two reads agree on.
+    /// <para>
+    /// <b>It is not a measured saving, and saying so is the point.</b> At the size
+    /// <c>AdminAlertsPlanTests</c> probes — twenty thousand rows, twelve of them open — the optimiser
+    /// seeks this index either way: a mutation that reversed the tie-break left every plan test in that
+    /// file green and was caught only by the ordering assertion. A sort of ten rows is free. This is the
+    /// shape that cannot become expensive as the table grows, not a cost that has been measured away.
+    /// </para>
     /// </para>
     /// </remarks>
     private IQueryable<Domain.Ops.AdminAlert> OpenQuery(IReadOnlyList<string> alertTypes) =>

@@ -240,11 +240,14 @@ says whether they have finished.
 of every other test in that file and is the point: adding the exact total back is the obvious readable
 change and it has to fail loudly rather than quietly cost five thousand reads on every admin page load.
 
-The same measurement turned the tie-break round. `IX_AdminAlerts_Open` is keyed `CreatedAtUtc DESC` and
-carries the clustered key as its locator, so its physical order is `(CreatedAtUtc DESC, Id ASC)`. Asking
-for `Id DESC` — which is what "newest first" looks like when written out — makes the optimiser sort, and
-on this table it answers a sort by scanning. The reader ascends inside a descending sort and
-`AdminAlertReader`'s remarks say why, because it reads like a mistake.
+The tie-break ascends inside the descending sort, because `(CreatedAtUtc DESC, Id ASC)` is the index's own
+physical order and therefore needs no sort. **That is a shape choice and not a measured saving, and the
+first version of the comment claimed otherwise.** I had turned the tie-break round in the same patch that
+widened the probe rows, and then wrote that the plan test "went red that way" — but a mutation that
+reverses only the tie-break leaves every plan test in that file green and is caught only by
+`Alerts_raised_in_the_same_millisecond_are_ordered_by_id`. At twenty thousand rows a sort of ten is free.
+The remark now says exactly that, because the reader ascending inside a descending sort reads like a
+mistake and the next person needs the real reason.
 
 ### `EF.Constant`, and a comment that was wrong
 
