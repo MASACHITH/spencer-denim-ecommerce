@@ -40,12 +40,21 @@ namespace SpencerDenim.Infrastructure.Identity.Seeding;
 /// is precisely when an upgrade step has to keep working.
 /// </para>
 /// <para>
-/// <b>Ordering against role creation is not a hazard.</b> <c>AddHostedService&lt;CatalogSeedHostedService&gt;()</c>
-/// is registered before <c>AddAdminIdentity()</c> (<c>DependencyInjection</c> lines 305 and 338), so on a
-/// fresh database this runs before the roles exist and grants nothing — and then
-/// <see cref="AdminSeedHostedService"/> creates each role from the <i>whole current</i> definition, which
-/// already includes every increment. The invariant that makes any interleaving safe is that role creation
-/// is always complete-at-current and the version marker only governs top-ups of roles that already exist.
+/// <b>Ordering against role creation is not a hazard, and the safety does not come from the order.</b>
+/// What makes every interleaving safe is that role creation is always complete-at-current —
+/// <see cref="AdminSeedHostedService"/> creates a role from the <i>whole current</i> definition, which
+/// already includes every increment — and that the grant below is idempotent per row, with
+/// <c>UX_RoleClaims_Role_Type_Value</c> underneath it, so a role created while this is running costs at
+/// worst a unique violation the reference-data phase already retries. The version marker only ever
+/// governs top-ups of roles that already exist.
+/// <para>
+/// What the order does decide is what a fresh database <i>observes</i>: nothing sets
+/// <c>HostOptions.ServicesStartConcurrently</c>, so hosted services start one at a time in registration
+/// order, and <c>AddHostedService&lt;CatalogSeedHostedService&gt;()</c> comes before
+/// <c>AddAdminIdentity()</c> in <c>DependencyInjection.AddInfrastructure</c> — so on a fresh database this
+/// step runs first, finds no roles and grants nothing, which is the <c>RolesNotPresent</c> line in the
+/// log.
+/// </para>
 /// </para>
 /// </summary>
 public sealed partial class DefaultRoleSeedUpgrader(
