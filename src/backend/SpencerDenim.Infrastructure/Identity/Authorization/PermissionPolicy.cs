@@ -22,4 +22,18 @@ public static class PermissionPolicy
     /// </para>
     /// </summary>
     public const string ReadAnySettingsGroup = PolicyPrefix + "ReadAnySettingsGroup";
+
+    /// <summary>
+    /// The admin alert banner and its acknowledge (doc 08 §3.8 R10, W3-07): <b>any</b> audience R10 names
+    /// may reach the routes, and the use case then decides which alert types that caller sees.
+    /// <para>
+    /// The second endpoint in the project to work this way, and for the same reason as the first:
+    /// R10 gives GrantsAll holders every type and <c>Orders.Approve</c> / <c>Orders.Refund</c> holders
+    /// two of them, so the guard cannot be one permission without shutting an order staff member out of
+    /// the payment alerts that are addressed to them. GrantsAll passes through the bypass in
+    /// <c>EffectivePermissions.Has</c>, which is why only the two order permissions are named.
+    /// See <see cref="AnyPermissionRequirement"/> for why this mechanism is deliberately rare.
+    /// </para>
+    /// </summary>
+    public const string ReadAnyAlertAudience = PolicyPrefix + "ReadAnyAlertAudience";
 }

@@ -54,6 +54,17 @@ internal sealed class EmailOutboxStore(AppDbContext dbContext) : IEmailOutboxSto
         "A sender claimed this message and did not finish — the process stopped, or it lost its database "
         + "connection. The attempt was counted and the message was put back in the queue.";
 
+    /// <summary>
+    /// What <see cref="KillStrandedExhaustedAsync"/> writes into <c>LastError</c>. It says a different
+    /// thing from <see cref="LeaseExpiredError"/>, because the row it is written on is terminal: this
+    /// message is never going out, and whoever reads the row has to know that rather than wait for a
+    /// retry that will not come.
+    /// </summary>
+    internal const string LeaseExpiredExhaustedError =
+        "A sender claimed this message on its last attempt and did not finish — the process stopped, or "
+        + "it lost its database connection. The attempt was counted, no attempt is left, and the message "
+        + "will not be sent.";
+
     public async Task<int> CountDueAsync(DateTime nowUtc, CancellationToken cancellationToken) =>
         await dbContext.EmailOutbox
             .AsNoTracking()
@@ -68,15 +79,119 @@ internal sealed class EmailOutboxStore(AppDbContext dbContext) : IEmailOutboxSto
             .CountAsync(cancellationToken);
 
     /// <summary>
-    /// Puts messages whose lease has expired back on the ladder, or kills the ones that have no attempt
-    /// left.
+    /// Kills the stranded messages that have no attempt left, and answers their ids (doc 11 §4, G-37).
     /// </summary>
     /// <remarks>
-    /// <b>The <c>CASE</c> is not decoration.</b> Without it, a message on its final attempt whose sender
-    /// died would go back to <c>Failed</c>, be reclaimed at once (its <c>NextAttemptAtUtc</c> is already
-    /// in the past), and have its counter pushed past its own ceiling before the failure path noticed.
-    /// The outcome would be the same — dead one attempt later — but the row would spend that time
-    /// claiming a seventh attempt on a six-rung ladder, and the figure an operator reads would be wrong.
+    /// <b>Until W3-07 this was a <c>CASE</c> inside <see cref="ReleaseExpiredLeasesAsync"/>, and that is
+    /// why it is its own statement now.</b> Killing a row and requeueing one are the same <c>UPDATE</c>
+    /// with a different <c>SET</c>, so one statement with a <c>CASE</c> was the shorter way to write it —
+    /// but it could only ever answer <i>how many</i> rows it touched, and doc 11 §4 requires every row
+    /// that reaches <c>Dead</c> to raise an <c>EmailDeliveryFailed</c> alert naming <i>which</i> message
+    /// it was. A sender that died on a message's final attempt therefore produced a dead row nobody was
+    /// told about: the exact silence G-37 exists to end, reached by the one path the failure handler
+    /// cannot see.
+    /// <para>
+    /// <b>Raw ADO rather than EF, for <see cref="ClaimAsync"/>'s reason.</b> The killed ids are in the
+    /// statement's <c>OUTPUT</c> result set, which <c>ExecuteSqlInterpolated</c> discards and
+    /// <c>SqlQuery</c> cannot wrap, because it composes its SQL into a subquery and an <c>UPDATE</c>
+    /// cannot be one.
+    /// </para>
+    /// <para>
+    /// <b>The statuses are literals in the command text and only the clock and the message are
+    /// parameters</b> — the rule DB28 and <c>EmailOutboxPlanTests</c> exist for. A parameterised
+    /// <c>Status = @p</c> cannot be proved to imply <c>IX_EmailOutbox_Stuck</c>'s
+    /// <c>WHERE Status = 1</c> filter, and this statement runs every sweep for ever against a table whose
+    /// rows carry <c>nvarchar(max)</c> bodies: measured at 20,101 logical reads against 18 on 20,003
+    /// rows when it was got wrong.
+    /// </para>
+    /// <para>
+    /// <b><c>NextAttemptAtUtc</c> is left alone</b>, unlike in the requeue: a <c>Dead</c> row has no next
+    /// attempt, and moving the column to "now" would say one was due. <c>TransportOverrideProtected</c>
+    /// <i>is</i> cleared, because doc 08 §3.8 R5 clears it on any terminal status.
+    /// </para>
+    /// </remarks>
+    public async Task<IReadOnlyList<long>> KillStrandedExhaustedAsync(
+        DateTime nowUtc,
+        CancellationToken cancellationToken)
+    {
+        // Named explicitly for ClaimAsync's reason: EF applies the execution strategy to its own single
+        // operations but cannot wrap a raw DbCommand, and this statement has to be raw in order to read
+        // its own OUTPUT rows. A retry is safe because the statement is atomic and conditional — a retry
+        // after a lost answer finds those rows already Dead and kills nothing, so the ids it would have
+        // returned are lost rather than duplicated. That is the direction this pair is arranged to fail
+        // in: DeadEmailAlerts refuses to raise a second alert for a message that already has one, so a
+        // repeat cannot duplicate a banner, and a lost answer costs an alert that the log line beside it
+        // still records.
+        var strategy = dbContext.Database.CreateExecutionStrategy();
+
+        return await strategy.ExecuteAsync(() => KillStrandedExhaustedOnceAsync(nowUtc, cancellationToken));
+    }
+
+    private async Task<IReadOnlyList<long>> KillStrandedExhaustedOnceAsync(
+        DateTime nowUtc,
+        CancellationToken cancellationToken)
+    {
+        var connection = dbContext.Database.GetDbConnection();
+        var openedHere = false;
+
+        if (connection.State != ConnectionState.Open)
+        {
+            await connection.OpenAsync(cancellationToken);
+            openedHere = true;
+        }
+
+        try
+        {
+            await using var command = connection.CreateCommand();
+
+            command.CommandText =
+                $"""
+                UPDATE ops.EmailOutbox
+                   SET Status = {(byte)EmailOutboxStatus.Dead},
+                       LockedUntilUtc = NULL,
+                       LastError = @failure,
+                       TransportOverrideProtected = NULL
+                OUTPUT inserted.Id
+                 WHERE Status = {(byte)EmailOutboxStatus.Sending}
+                   AND LockedUntilUtc IS NOT NULL
+                   AND LockedUntilUtc < @now
+                   AND AttemptCount >= MaxAttempts;
+                """;
+
+            AddParameter(command, "@now", nowUtc);
+            AddParameter(command, "@failure", LeaseExpiredExhaustedError);
+
+            var killed = new List<long>();
+
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                killed.Add(reader.GetInt64(0));
+            }
+
+            return killed;
+        }
+        finally
+        {
+            if (openedHere)
+            {
+                await connection.CloseAsync();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Puts messages whose lease has expired back on the ladder.
+    /// </summary>
+    /// <remarks>
+    /// <b>It requeues and never kills</b> — <c>AND AttemptCount &lt; MaxAttempts</c> — and
+    /// <see cref="KillStrandedExhaustedAsync"/> runs first in the sweep and takes the exhausted ones.
+    /// Without that split a message on its final attempt whose sender died would go back to
+    /// <c>Failed</c>, be reclaimed at once (its <c>NextAttemptAtUtc</c> is already in the past), and have
+    /// its counter pushed past its own ceiling before the failure path noticed. The outcome would be the
+    /// same — dead one attempt later — but the row would spend that time claiming a seventh attempt on a
+    /// six-rung ladder, and the figure an operator reads would be wrong.
     /// <para>
     /// <b>A released message is due immediately rather than one rung further along</b>, because a sender
     /// that stopped is not evidence that the mail server is unwell: the backoff ladder exists for a
@@ -84,35 +199,30 @@ internal sealed class EmailOutboxStore(AppDbContext dbContext) : IEmailOutboxSto
     /// lesson drawn from the wrong signal. The attempt counter is what bounds a crash loop.
     /// </para>
     /// <para>
-    /// <b>The statuses are written into the statement text and only the clock is a parameter, which is
-    /// what lets this statement use <c>IX_EmailOutbox_Stuck</c> (DB28).</b> It is the same rule
-    /// <see cref="CountDueAsync"/> and <see cref="ClaimAsync"/> already follow, and it was got wrong here:
-    /// the first version used <c>ExecuteSqlInterpolatedAsync</c>, which turns <i>every</i> interpolation
-    /// hole into a parameter — so <c>WHERE Status = @p</c> could not be proved to imply the index's
-    /// <c>WHERE Status = 1</c> filter and the optimiser listed the index as unmatched and scanned the
-    /// table instead. Measured on 20,003 rows: <b>20,101 logical reads against 18</b>, once every sweep
-    /// for ever, on a table whose rows carry <c>nvarchar(max)</c> bodies. <c>EmailOutboxPlanTests</c>
-    /// reads the plan and the command text, because neither is visible from here.
+    /// <b>The statuses are written into the statement text and only the clock and the message are
+    /// parameters, which is what lets this statement use <c>IX_EmailOutbox_Stuck</c> (DB28).</b> It is
+    /// the same rule <see cref="CountDueAsync"/> and <see cref="ClaimAsync"/> already follow, and it was
+    /// got wrong here: the first version used <c>ExecuteSqlInterpolatedAsync</c>, which turns
+    /// <i>every</i> interpolation hole into a parameter — so <c>WHERE Status = @p</c> could not be proved
+    /// to imply the index's <c>WHERE Status = 1</c> filter and the optimiser listed the index as
+    /// unmatched and scanned the table instead. Measured on 20,003 rows: <b>20,101 logical reads against
+    /// 18</b>, once every sweep for ever, on a table whose rows carry <c>nvarchar(max)</c> bodies.
+    /// <c>EmailOutboxPlanTests</c> reads the plan and the command text, because neither is visible from
+    /// here.
     /// </para>
     /// </remarks>
     public async Task<int> ReleaseExpiredLeasesAsync(DateTime nowUtc, CancellationToken cancellationToken) =>
         await dbContext.Database.ExecuteSqlRawAsync(
             $$"""
             UPDATE ops.EmailOutbox
-               SET Status = CASE
-                              WHEN AttemptCount >= MaxAttempts THEN {{(byte)EmailOutboxStatus.Dead}}
-                              ELSE {{(byte)EmailOutboxStatus.Failed}}
-                            END,
+               SET Status = {{(byte)EmailOutboxStatus.Failed}},
                    LockedUntilUtc = NULL,
                    NextAttemptAtUtc = {0},
-                   LastError = {1},
-                   TransportOverrideProtected = CASE
-                              WHEN AttemptCount >= MaxAttempts THEN NULL
-                              ELSE TransportOverrideProtected
-                            END
+                   LastError = {1}
              WHERE Status = {{(byte)EmailOutboxStatus.Sending}}
                AND LockedUntilUtc IS NOT NULL
-               AND LockedUntilUtc < {0};
+               AND LockedUntilUtc < {0}
+               AND AttemptCount < MaxAttempts;
             """,
             [nowUtc, LeaseExpiredError],
             cancellationToken);

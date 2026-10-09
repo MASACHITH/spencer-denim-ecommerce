@@ -39,6 +39,8 @@ using SpencerDenim.Infrastructure.Sales.Orders;
 using SpencerDenim.Infrastructure.Sales.Payments;
 using SpencerDenim.Infrastructure.Settings;
 using SpencerDenim.Infrastructure.Time;
+using SpencerDenim.Application.Ops.Alerts.Abstractions;
+using SpencerDenim.Infrastructure.Ops.Alerts;
 
 namespace SpencerDenim.Infrastructure;
 
@@ -148,6 +150,14 @@ public static class DependencyInjection
         services.AddScoped<IEmailOutboxWriter, EmailOutboxWriter>();
         services.AddScoped<IOrderEmailOutbox, OrderEmailOutbox>();
         services.AddScoped<IEmailOutboxStore, EmailOutboxStore>();
+
+        // ops.AdminAlerts (doc 08 §3.8 N2, W3-07). Scoped for the same reason: the acknowledgement writes
+        // its audit row through the request's own AppDbContext so the two commit together, and the
+        // dead-email raiser runs inside the sweep's own scope.
+        services.AddScoped<IAdminAlertWriter, AdminAlertWriter>();
+        services.AddScoped<IAdminAlertReader, AdminAlertReader>();
+        services.AddScoped<IAdminAlertAcknowledger, AdminAlertAcknowledger>();
+        services.AddScoped<IDeadEmailAlerts, DeadEmailAlerts>();
 
         services.AddScoped<AuditAndSoftDeleteInterceptor>();
 

@@ -43,6 +43,8 @@ using SpencerDenim.Application.Settings.Abstractions;
 using SpencerDenim.Application.Settings.Admin;
 using SpencerDenim.Application.Settings.Contracts;
 using SpencerDenim.Application.Settings.Site;
+using SpencerDenim.Application.Ops.Alerts;
+using SpencerDenim.Application.Ops.Alerts.Contracts;
 
 namespace SpencerDenim.Application;
 
@@ -74,6 +76,16 @@ public static class DependencyInjection
         services.AddScoped<
             ICommandHandler<ChangeAdminPasswordCommand, ChangeAdminPasswordResult>,
             ChangeAdminPasswordCommandHandler>();
+
+        // Admin alerts (doc 08 §3.8 N2, doc 11 §7 G-37, W3-07): the admin shell's banner and its
+        // acknowledge. Both compute the caller's R10 visibility from their effective permissions, so both
+        // depend on IEffectivePermissionsProvider, which Infrastructure registers.
+        services.AddScoped<
+            IQueryHandler<GetOpenAdminAlertsQuery, AdminAlertBannerDto>,
+            GetOpenAdminAlertsQueryHandler>();
+        services.AddScoped<
+            ICommandHandler<AcknowledgeAdminAlertCommand, AcknowledgeAdminAlertResult>,
+            AcknowledgeAdminAlertCommandHandler>();
 
         // Staff two-factor authentication (W1-10): the second sign-in step and the user's own enrolment.
         services.AddScoped<

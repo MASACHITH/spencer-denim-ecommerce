@@ -50,7 +50,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
 
     /// <summary>
     /// Doc 08 §1.2's operational schema: the migrations history table, <c>AuditLogs</c>,
-    /// <c>Settings</c> and <c>EmailOutbox</c>. The same string as <see cref="MigrationsHistorySchema"/> and kept separate from
+    /// <c>Settings</c>, <c>EmailOutbox</c> and <c>AdminAlerts</c>. The same string as <see cref="MigrationsHistorySchema"/> and kept separate from
     /// it — one names where EF records its own bookkeeping, the other names a module's tables, and a
     /// future decision to move the history table must not silently move <c>ops.Settings</c> with it.
     /// </summary>
@@ -207,6 +207,16 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     /// </para>
     /// </summary>
     public DbSet<EmailOutboxMessage> EmailOutbox => Set<EmailOutboxMessage>();
+
+    /// <summary>
+    /// <c>ops.AdminAlerts</c> (doc 08 §3.8 N2; ADM-04's banner). Created by W3-07's migration.
+    /// <para>
+    /// Rows are inserted by whatever raised the alert and read by the admin shell's banner through
+    /// <c>IAdminAlertReader</c>; the acknowledgement is a conditional <c>UPDATE</c> so that two Super
+    /// Admins pressing the button together record one acknowledgement (doc 08 §5.2).
+    /// </para>
+    /// </summary>
+    public DbSet<AdminAlert> AdminAlerts => Set<AdminAlert>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {

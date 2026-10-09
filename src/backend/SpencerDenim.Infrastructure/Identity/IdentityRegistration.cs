@@ -172,6 +172,17 @@ public static class IdentityRegistration
                     Permissions.Settings.Security))
                 .RequireAdminAccountGates()));
 
+        // The admin alert banner and its acknowledge (doc 08 §3.8 R10, W3-07). Only the two order
+        // permissions are named: a GrantsAll holder passes any AnyPermissionRequirement through the
+        // bypass in EffectivePermissions.Has, and R10 gives nobody else a path to an alert. The read
+        // model filters per type against the caller's own permissions — see AdminAlertVisibility.
+        services.AddAuthorization(options =>
+            options.AddPolicy(PermissionPolicy.ReadAnyAlertAudience, policy => policy
+                .AddRequirements(new AnyPermissionRequirement(
+                    Permissions.Orders.Approve,
+                    Permissions.Orders.Refund))
+                .RequireAdminAccountGates()));
+
         services.AddAntiforgery(options =>
         {
             options.Cookie.Name = "sd_admin_xsrf";

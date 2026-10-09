@@ -277,11 +277,18 @@ public sealed class SendEmailsServiceTests
     private static async Task SweepAsync(FakeStore store, FakeTransport transport) =>
         await SweepAsync(store, (IEmailTransport)transport);
 
-    private static async Task SweepAsync(IEmailOutboxStore store, IEmailTransport transport)
+    private static async Task SweepAsync(FakeStore store, FakeTransport transport, FakeAlerts alerts) =>
+        await SweepAsync(store, (IEmailTransport)transport, alerts);
+
+    private static async Task SweepAsync(
+        IEmailOutboxStore store,
+        IEmailTransport transport,
+        IDeadEmailAlerts? alerts = null)
     {
         var services = new ServiceCollection();
         services.AddSingleton(store);
         services.AddSingleton(transport);
+        services.AddSingleton(alerts ?? new FakeAlerts());
 
         await using var provider = services.BuildServiceProvider();
 
@@ -382,6 +389,34 @@ public sealed class SendEmailsServiceTests
         }
     }
 
+    /// <summary>
+    /// A fake <see cref="IDeadEmailAlerts"/> that records which rows it was asked to raise a banner for.
+    /// </summary>
+    /// <remarks>
+    /// The real one reads the outbox row back and refuses rows that are not <c>Dead</c>
+    /// (<c>DeadEmailAlerts</c>, proved against a real database in <c>AdminAlertsDeadEmailTests</c>).
+    /// What these unit tests own is the other half: that the <i>job</i> asks, on both paths to Dead and
+    /// on neither other path.
+    /// </remarks>
+    private sealed class FakeAlerts : IDeadEmailAlerts
+    {
+        public Exception? Throw { get; init; }
+
+        public List<long> Raised { get; } = [];
+
+        public Task<bool> RaiseAsync(long outboxMessageId, CancellationToken cancellationToken)
+        {
+            Raised.Add(outboxMessageId);
+
+            if (Throw is { } exception)
+            {
+                throw exception;
+            }
+
+            return Task.FromResult(true);
+        }
+    }
+
     private sealed class FakeStore : IEmailOutboxStore
     {
         public List<EmailOutboxClaim> Queue { get; } = [];
@@ -389,6 +424,11 @@ public sealed class SendEmailsServiceTests
         public int DueCount { get; init; }
 
         public int Released { get; init; }
+
+        /// <summary>Ids <c>KillStrandedExhaustedAsync</c> answers with — a sender that died on a final attempt.</summary>
+        public List<long> StrandedExhausted { get; init; } = [];
+
+        public int KillCalls { get; private set; }
 
         public Exception? ThrowOnClaim { get; init; }
 
@@ -410,6 +450,15 @@ public sealed class SendEmailsServiceTests
             CountDueCalls++;
             Calls.Add("count");
             return Task.FromResult(DueCount);
+        }
+
+        public Task<IReadOnlyList<long>> KillStrandedExhaustedAsync(
+            DateTime nowUtc,
+            CancellationToken cancellationToken)
+        {
+            KillCalls++;
+            Calls.Add("kill");
+            return Task.FromResult<IReadOnlyList<long>>(StrandedExhausted);
         }
 
         public Task<int> ReleaseExpiredLeasesAsync(DateTime nowUtc, CancellationToken cancellationToken)

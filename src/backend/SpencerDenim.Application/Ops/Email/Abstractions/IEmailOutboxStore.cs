@@ -58,11 +58,35 @@ public interface IEmailOutboxStore
     Task<int> CountDueAsync(DateTime nowUtc, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Kills the stranded messages that have no attempt left — a sender died holding its lease on their
+    /// <i>final</i> attempt — and answers their ids.
+    /// <para>
+    /// <b>This is the second of the two ways a row reaches <c>Dead</c></b> (the first is
+    /// <see cref="MarkFailedAsync"/> running out of ladder), and the ids are returned because doc 11 §4
+    /// (G-37) requires <i>every</i> row that reaches <c>Dead</c> to raise an
+    /// <c>EmailDeliveryFailed</c> alert. Until W3-07 it was a branch inside
+    /// <see cref="ReleaseExpiredLeasesAsync"/> that returned nothing but a count, so a customer whose
+    /// final attempt was lost to a restart was never told about and nobody was told either.
+    /// </para>
+    /// <para>
+    /// It runs <b>before</b> <see cref="ReleaseExpiredLeasesAsync"/> in a sweep, which is what stops an
+    /// exhausted row being requeued, reclaimed at once (its next attempt time is already past) and
+    /// spending a seventh attempt on a six-rung ladder before the failure path notices.
+    /// </para>
+    /// </summary>
+    Task<IReadOnlyList<long>> KillStrandedExhaustedAsync(DateTime nowUtc, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Puts messages whose sender's lease has expired back on the ladder, and answers how many.
     /// <para>
     /// A row in <c>Sending</c> is outside <c>IX_EmailOutbox_Due</c>'s filter, so without this a process
     /// killed between the claim and the send would strand its batch for ever — twenty bank-transfer
     /// instructions nobody is waiting to retry.
+    /// </para>
+    /// <para>
+    /// <b>It requeues and never kills.</b> The exhausted rows are
+    /// <see cref="KillStrandedExhaustedAsync"/>'s, because killing a row has to report which rows it
+    /// killed and a requeue only has to report how many.
     /// </para>
     /// </summary>
     Task<int> ReleaseExpiredLeasesAsync(DateTime nowUtc, CancellationToken cancellationToken);

@@ -1883,6 +1883,73 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                     b.ToTable("MediaUsages", "media");
                 });
 
+            modelBuilder.Entity("SpencerDenim.Domain.Ops.AdminAlert", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime?>("AcknowledgedAtUtc")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<int?>("AcknowledgedByUserId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("AcknowledgementNote")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<string>("AlertType")
+                        .IsRequired()
+                        .HasColumnType("varchar(40)");
+
+                    b.Property<long?>("AuditLogId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2(3)")
+                        .HasDefaultValueSql("sysutcdatetime()");
+
+                    b.Property<string>("DetailsJson")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("RelatedEntityId")
+                        .HasColumnType("varchar(100)");
+
+                    b.Property<string>("RelatedEntityType")
+                        .HasColumnType("varchar(40)");
+
+                    b.Property<byte>("Severity")
+                        .HasColumnType("tinyint");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AcknowledgedByUserId")
+                        .HasDatabaseName("IX_AdminAlerts_AcknowledgedBy");
+
+                    b.HasIndex("CreatedAtUtc")
+                        .IsDescending()
+                        .HasDatabaseName("IX_AdminAlerts_Open")
+                        .HasFilter("[AcknowledgedAtUtc] IS NULL");
+
+                    b.ToTable("AdminAlerts", "ops", t =>
+                        {
+                            t.HasCheckConstraint("CK_AdminAlerts_Acknowledged", "([AcknowledgedAtUtc] IS NULL AND [AcknowledgedByUserId] IS NULL AND [AcknowledgementNote] IS NULL) OR ([AcknowledgedAtUtc] IS NOT NULL AND [AcknowledgedByUserId] IS NOT NULL)");
+
+                            t.HasCheckConstraint("CK_AdminAlerts_DetailsJson", "[DetailsJson] IS NULL OR ISJSON([DetailsJson]) = 1");
+
+                            t.HasCheckConstraint("CK_AdminAlerts_Severity", "[Severity] BETWEEN 1 AND 3");
+                        });
+                });
+
             modelBuilder.Entity("SpencerDenim.Domain.Ops.EmailOutboxMessage", b =>
                 {
                     b.Property<long>("Id")
@@ -4024,6 +4091,15 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                         .IsRequired();
 
                     b.Navigation("MediaAsset");
+                });
+
+            modelBuilder.Entity("SpencerDenim.Domain.Ops.AdminAlert", b =>
+                {
+                    b.HasOne("SpencerDenim.Infrastructure.Identity.AppUser", null)
+                        .WithMany()
+                        .HasForeignKey("AcknowledgedByUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("FK_AdminAlerts_AcknowledgedBy_Users");
                 });
 
             modelBuilder.Entity("SpencerDenim.Domain.Reference.District", b =>

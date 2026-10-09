@@ -37,6 +37,24 @@ public static class EndpointAuthorizationExtensions
     }
 
     /// <summary>
+    /// Lets any audience doc 08 §3.8 R10 names reach the admin alert routes (W3-07).
+    /// </summary>
+    /// <remarks>
+    /// <b>The same shape as <see cref="RequireAnySettingsPermission"/>, and no more general than it.</b>
+    /// R10 addresses each alert type to a different audience — every type to a GrantsAll holder, two of
+    /// them to <c>Orders.Approve</c> and <c>Orders.Refund</c> holders — so the read model filters per row
+    /// against the caller's own effective permissions and the route guard only has to admit a caller who
+    /// could hold any alert at all. A single permission on the route would shut an order staff member out
+    /// of the payment alerts doc 11 §4.3 addresses to them.
+    /// </remarks>
+    public static RouteHandlerBuilder RequireAnyAlertAudience(this RouteHandlerBuilder builder)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+
+        return builder.RequireAuthorization(PermissionPolicy.ReadAnyAlertAudience);
+    }
+
+    /// <summary>
     /// Lets a signed-in staff user reach this endpoint while their account still has a forced password change
     /// pending (issue #17, doc 11 P14 step 3). Every other authorized admin endpoint answers 403
     /// <c>password_change_required</c> until the password is changed. Only for the endpoints needed to get
