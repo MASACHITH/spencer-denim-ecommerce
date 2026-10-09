@@ -1,3 +1,4 @@
+import { DOCUMENT } from '@angular/common';
 import { HttpErrorResponse } from '@angular/common/http';
 import {
   ChangeDetectionStrategy,
@@ -236,6 +237,7 @@ export class AlertBanner {
   private readonly router = inject(Router);
   private readonly destroyRef = inject(DestroyRef);
   private readonly injector = inject(Injector);
+  private readonly document = inject(DOCUMENT);
 
   /**
    * The outcome lines currently in the view, so focus can be moved to one by reading the view rather than
@@ -371,7 +373,7 @@ export class AlertBanner {
    * three the banner empties rather than explaining itself on every screen.
    */
   private load(): void {
-    if (this.router.url.startsWith('/login')) {
+    if (this.onSignInPage()) {
       // No session yet, so the call could only ever be a 401. Skipped rather than made and swallowed.
       return;
     }
@@ -427,6 +429,23 @@ export class AlertBanner {
           ?.focus();
       },
       { injector: this.injector },
+    );
+  }
+
+  /**
+   * Whether this is one of the sign-in screens, where there is no session to ask about.
+   *
+   * **The router cannot answer this on the load that matters, and the browser can.** This component is
+   * built during bootstrap, before the initial navigation resolves, so `router.url` is `'/'` the first
+   * time `load()` runs — and a guard that read only the router let the sign-in page fire an
+   * unauthenticated `/api/admin/alerts` on every cold load. Measured in a browser before this line
+   * existed. The router is still read because it is the authority once navigation has started, and
+   * `/admin/` is the base href so the document's path carries it.
+   */
+  private onSignInPage(): boolean {
+    return (
+      this.router.url.startsWith('/login') ||
+      this.document.location?.pathname.includes('/login') === true
     );
   }
 

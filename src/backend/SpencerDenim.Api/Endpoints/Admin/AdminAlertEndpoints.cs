@@ -42,8 +42,10 @@ internal static class AdminAlertEndpoints
             .WithName("AdminGetOpenAlerts")
             .WithSummary("Open admin alerts for the signed-in staff user (doc 08 §3.8 R10).")
             .WithDescription(
-                "Newest first, at most ten, with the total so a banner showing the first few can say how "
-                + "many there are. A Super Admin sees every type; an Orders.Approve or Orders.Refund "
+                "Newest first, at most ten, with a flag saying whether there are more than those ten — "
+                + "not a total, because a count over the same predicate cannot use IX_AdminAlerts_Open "
+                + "(5,020 logical reads against the list's 38 on 20,000 alerts). A Super Admin sees "
+                + "every type; an Orders.Approve or Orders.Refund "
                 + "holder sees PaymentException and CaptureRecoveryFailed only, and anybody else sees an "
                 + "empty list. EmailDeliveryFailed is Super Admins only (doc 11 §7 G-37).")
             .Produces<AdminAlertBannerDto>()

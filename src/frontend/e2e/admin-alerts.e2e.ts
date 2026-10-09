@@ -118,11 +118,28 @@ test.describe('the banner is in the shell (ADM-04 does not exist yet)', () => {
     await expect(page.locator('[data-testid="alert-announcement"]')).toHaveCount(1);
   });
 
-  test('is not on the sign-in page, where there is no session to ask about', async ({ page }) => {
+  /**
+   * **And asks nothing, which is a separate claim from rendering nothing.**
+   *
+   * The banner used to assert only that it was absent here, and it was — while still firing an
+   * unauthenticated `/api/admin/alerts` on every cold load of this page, because the component is built
+   * during bootstrap and `router.url` is `'/'` until the initial navigation resolves. The absence of the
+   * element could not see that; the absence of the request can.
+   */
+  test('is not on the sign-in page, and asks nothing there', async ({ page }) => {
+    const asked: string[] = [];
+    page.on('request', (request) => {
+      if (request.url().includes('/api/admin/alerts')) {
+        asked.push(request.url());
+      }
+    });
+
     await page.goto(`${adminURL}/login`);
 
     await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
     await expect(page.locator('[data-testid="alert-banner"]')).toHaveCount(0);
+
+    expect(asked, `the sign-in page asked for alerts: ${JSON.stringify(asked)}`).toEqual([]);
   });
 });
 
