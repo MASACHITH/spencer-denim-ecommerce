@@ -518,7 +518,7 @@ function orderInvoice(state, order) {
 }
 
 /**
- * `ops.AdminAlerts` as `GET /api/admin/alerts` sends it (doc 08 §3.8 N2, doc 11 §7 G-37, W3-07).
+ * `ops.AdminAlerts` as `GET /api/admin/alerts` sends it (doc 08 §3.8 N2, doc 11 §7 G-37, W4-02a).
  *
  * **Field for field from `AdminAlertDto`**, and `AdminAlertShapeTests` on the API side reads this file to
  * keep it that way. Issue #126: Playwright never starts the .NET API, so a field the real payload carries
@@ -549,7 +549,7 @@ function deadEmailAlert(alertId, overrides = {}) {
 /**
  * The alert sets a test can ask for.
  *
- * **`none` is the default, and that is deliberate.** The banner lives in the admin shell (W3-07), so an
+ * **`none` is the default, and that is deliberate.** The banner lives in the admin shell (W4-02a), so an
  * alert seeded by default would appear on every admin screen and every one of this suite's existing
  * layout, tap-size and no-horizontal-scroll sweeps would silently be measuring a different page. A test
  * that wants the banner asks for it.
@@ -744,7 +744,7 @@ function freshState() {
     // ADM-10 (W1-03). Its own module, because this file is already a thousand lines about ADM-11.
     ...freshProductState(),
 
-    /** Open admin alerts (W3-07). Empty unless a test asks for some — see `alertsFor`. */
+    /** Open admin alerts (W4-02a). Empty unless a test asks for some — see `alertsFor`. */
     alerts: [],
   };
 }
@@ -1142,7 +1142,7 @@ const server = createServer(async (request, response) => {
     return json(response, 200, { outcome: state.bankTransferOutcome });
   }
 
-  // ---- W3-07: ops.AdminAlerts, the shell's banner (doc 08 §3.8 N2, doc 11 §7 G-37) ------------
+  // ---- W4-02a: ops.AdminAlerts, the shell's banner (doc 08 §3.8 N2, doc 11 §7 G-37) ------------
 
   // Test-only, and named so. `set=dead|dead-no-order|many|none` seeds this browser context's alerts;
   // nothing is seeded by default, because the banner is in the shell and would otherwise change every

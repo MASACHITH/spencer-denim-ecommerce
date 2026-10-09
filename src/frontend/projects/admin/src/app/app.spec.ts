@@ -31,7 +31,7 @@ describe('Admin App', () => {
   });
 
   /**
-   * **The alert banner is in the shell, not on the dashboard (W3-07).**
+   * **The alert banner is in the shell, not on the dashboard (W4-02a).**
    *
    * Doc 08 §3.8 calls `ops.AdminAlerts` "the dashboard banner" and ADM-04's dashboard does not exist —
    * `/` is W0-09's scaffold placeholder. Doc 11 §6.1 step 1's morning routine starts from these banners,

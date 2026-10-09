@@ -46,7 +46,7 @@ public sealed class EmailOutboxPlanTests(SqlServerDatabaseFixture sqlServer)
     /// does not list it among the indexes it had to reject.
     /// </summary>
     /// <remarks>
-    /// <b>W3-07 split this statement in two</b> (the kill reports which rows it killed, so doc 11 §4 can
+    /// <b>W4-02a split this statement in two</b> (the kill reports which rows it killed, so doc 11 §4 can
     /// raise an alert for each; the requeue only has to report how many), and both halves keep the same
     /// predicate on <c>Status</c> and <c>LockedUntilUtc</c>. This probe is the requeue.
     /// </remarks>
@@ -75,7 +75,7 @@ public sealed class EmailOutboxPlanTests(SqlServerDatabaseFixture sqlServer)
     }
 
     /// <summary>
-    /// And so does the statement that kills a stranded final attempt (W3-07) — the one whose
+    /// And so does the statement that kills a stranded final attempt (W4-02a) — the one whose
     /// <c>OUTPUT</c> an <c>EmailDeliveryFailed</c> alert is raised from.
     /// </summary>
     /// <remarks>
@@ -168,7 +168,7 @@ public sealed class EmailOutboxPlanTests(SqlServerDatabaseFixture sqlServer)
         Assert.Contains($"Status = {Literal(EmailOutboxStatus.Sending)}", sql, StringComparison.Ordinal);
         Assert.Contains($"SET Status = {Literal(EmailOutboxStatus.Failed)}", sql, StringComparison.Ordinal);
 
-        // W3-07: the requeue no longer kills anything, so it carries no Dead branch at all — and it has
+        // W4-02a: the requeue no longer kills anything, so it carries no Dead branch at all — and it has
         // to say so, or an exhausted row would be put back on a ladder it has run out of.
         Assert.Contains("AttemptCount < MaxAttempts", sql, StringComparison.Ordinal);
         Assert.DoesNotContain("CASE", sql, StringComparison.Ordinal);

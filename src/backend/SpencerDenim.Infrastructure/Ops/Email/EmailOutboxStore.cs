@@ -110,7 +110,7 @@ internal sealed class EmailOutboxStore(AppDbContext dbContext) : IEmailOutboxSto
     /// Kills the stranded messages that have no attempt left, and answers their ids (doc 11 §4, G-37).
     /// </summary>
     /// <remarks>
-    /// <b>Until W3-07 this was a <c>CASE</c> inside <see cref="ReleaseExpiredLeasesAsync"/>, and that is
+    /// <b>Until W4-02a this was a <c>CASE</c> inside <see cref="ReleaseExpiredLeasesAsync"/>, and that is
     /// why it is its own statement now.</b> Killing a row and requeueing one are the same <c>UPDATE</c>
     /// with a different <c>SET</c>, so one statement with a <c>CASE</c> was the shorter way to write it —
     /// but it could only ever answer <i>how many</i> rows it touched, and doc 11 §4 requires every row

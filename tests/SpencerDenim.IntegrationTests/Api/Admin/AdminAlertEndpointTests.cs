@@ -497,7 +497,7 @@ public sealed class AdminAlertEndpointTests(SqlServerDatabaseFixture sqlServer)
         var role = new AppRole
         {
             Name = roleName,
-            Description = "Test role (W3-07 admin alert endpoint tests)",
+            Description = "Test role (W4-02a admin alert endpoint tests)",
             IsSystem = false,
             GrantsAllPermissions = false,
             CreatedAtUtc = DateTime.UtcNow,

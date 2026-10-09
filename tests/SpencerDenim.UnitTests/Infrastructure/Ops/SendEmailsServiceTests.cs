@@ -178,7 +178,7 @@ public sealed class SendEmailsServiceTests
     /// about to be sent.
     /// </para>
     /// <para>
-    /// <b>The kill is before the release</b> (W3-07) because a message on its final attempt whose sender
+    /// <b>The kill is before the release</b> (W4-02a) because a message on its final attempt whose sender
     /// died must not be requeued: its <c>NextAttemptAtUtc</c> is already in the past, so it would be
     /// reclaimed at once and spend a seventh attempt on a six-rung ladder before the failure path noticed.
     /// </para>
@@ -371,7 +371,7 @@ public sealed class SendEmailsServiceTests
     /// §7 G-37) — the hole this whole task exists to close.
     /// </summary>
     /// <remarks>
-    /// Before W3-07 the sweep logged an <c>Error</c> and that was the entire signal, so a customer who
+    /// Before W4-02a the sweep logged an <c>Error</c> and that was the entire signal, so a customer who
     /// never got their bank transfer instructions simply waited and nobody was told.
     /// </remarks>
     [Fact]
@@ -427,7 +427,7 @@ public sealed class SendEmailsServiceTests
     /// </summary>
     /// <remarks>
     /// A sender that died holding its lease on a message's <i>final</i> attempt is killed by
-    /// <c>KillStrandedExhaustedAsync</c>, not by the failure handler — so until W3-07 that row went Dead
+    /// <c>KillStrandedExhaustedAsync</c>, not by the failure handler — so until W4-02a that row went Dead
     /// with nobody told at all, not even by a log line about a dead message. It is the one path to Dead
     /// that is invisible from <c>SendOneAsync</c>.
     /// </remarks>

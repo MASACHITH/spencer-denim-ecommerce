@@ -4,7 +4,7 @@ namespace SpencerDenim.Domain.Ops;
 /// The <c>ops.AdminAlerts.AlertType</c> vocabulary (doc 08 §3.8, <c>varchar(40)</c>).
 /// <para>
 /// <b>All seven are declared and exactly one is written.</b> Only
-/// <see cref="EmailDeliveryFailed"/> has a producer in this build (W3-07, doc 11 §7 G-37); the other six
+/// <see cref="EmailDeliveryFailed"/> has a producer in this build (W4-02a, doc 11 §7 G-37); the other six
 /// belong to the settings task (<see cref="SensitiveSettingsChanged"/>), the PayPal tasks
 /// (<see cref="PaymentException"/>, <see cref="CaptureRecoveryFailed"/>,
 /// <see cref="DashboardRefund"/>), the reconciliation job (<see cref="ReconciliationDrift"/>) and the

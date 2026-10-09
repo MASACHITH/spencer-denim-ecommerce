@@ -209,7 +209,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<EmailOutboxMessage> EmailOutbox => Set<EmailOutboxMessage>();
 
     /// <summary>
-    /// <c>ops.AdminAlerts</c> (doc 08 §3.8 N2; ADM-04's banner). Created by W3-07's migration.
+    /// <c>ops.AdminAlerts</c> (doc 08 §3.8 N2; ADM-04's banner). Created by W4-02a's migration.
     /// <para>
     /// Rows are inserted by whatever raised the alert and read by the admin shell's banner through
     /// <c>IAdminAlertReader</c>; the acknowledgement is a conditional <c>UPDATE</c> so that two Super

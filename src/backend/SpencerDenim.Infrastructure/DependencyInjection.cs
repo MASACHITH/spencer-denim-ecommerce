@@ -151,7 +151,7 @@ public static class DependencyInjection
         services.AddScoped<IOrderEmailOutbox, OrderEmailOutbox>();
         services.AddScoped<IEmailOutboxStore, EmailOutboxStore>();
 
-        // ops.AdminAlerts (doc 08 §3.8 N2, W3-07). Scoped for the same reason: the acknowledgement writes
+        // ops.AdminAlerts (doc 08 §3.8 N2, W4-02a). Scoped for the same reason: the acknowledgement writes
         // its audit row through the request's own AppDbContext so the two commit together, and the
         // dead-email raiser runs inside the sweep's own scope.
         services.AddScoped<IAdminAlertWriter, AdminAlertWriter>();

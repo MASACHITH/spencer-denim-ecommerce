@@ -25,7 +25,7 @@ namespace SpencerDenim.IntegrationTests.Ops;
 /// hazard here is a different one: the alert-type restriction R10 adds. EF Core 10 renders a
 /// parameterised collection as <b>one parameter per element</b> — <c>DECLARE @alertTypes1 varchar(40)</c>
 /// and so on, measured by running the first test below against that mutation, and <i>not</i> the
-/// <c>OPENJSON</c> join this remark claimed until W3-07's tester checked it. The index is matched either
+/// <c>OPENJSON</c> join this remark claimed until W4-02a's tester checked it. The index is matched either
 /// way, because the predicate that has to imply its filter is <c>AcknowledgedAtUtc IS NULL</c> and the
 /// alert type is only a residual; <c>AdminAlertReader</c> wraps the types in <c>EF.Constant</c> for the
 /// smaller reason recorded there, and the first test below pins that choice.

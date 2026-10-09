@@ -1,9 +1,37 @@
-# 2026-10-09 — W3-07: `ops.AdminAlerts`, the `EmailDeliveryFailed` alert and the banner
+# 2026-10-09 — W4-02a: `ops.AdminAlerts`, the `EmailDeliveryFailed` alert and the banner
 
 Branch `feature/W3-07-admin-alerts`, worktree `worktrees/sd-alerts`, cut from `origin/main` at `924ebfd`.
 Scope: **doc 08 §3.8's `ops.AdminAlerts`, doc 11 §4's `EmailDeliveryFailed` alert (§7 G-37), R10's
 visibility rule, and the banner with its acknowledge**.
-**Not pushed, not a PR — the tester goes first.**
+**Not pushed, not a PR.**
+
+## The task ID: this is W4-02a, and the branch name is wrong on purpose
+
+**This work was briefed as "W3-07" and that ID belongs to somebody else's live task.** `TASKS.md:77` has
+**W3-07 = "Customers, newsletter subscribers, settings (ADM-15, ADM-21, ADM-22) — IN PROGRESS"**, and
+`TASKS.md:85` has **W4-02 = "Dashboard widgets (ADM-04–08) — TODO"**. `ops.AdminAlerts` is doc 08 §3.8's
+"ADM-04 dashboard banner", so ADM-04 — and therefore this — is **W4-02's**. It is **W4-02 work pulled
+forward**: the alert exists because doc 11 §7 G-37 is a live hole in W3-06's shipped order emails, not
+because the dashboard is being started.
+
+The label is **`W4-02a`** everywhere in the source, the tests and this file (30 occurrences across 20
+files). Three things are deliberately *not* renamed:
+
+- **The git branch stays `feature/W3-07-admin-alerts`.** The owner is squash-merging it, so the branch
+  name does not survive; renaming it would only break the worktree every tester and reviewer already has.
+- **The early commit-message prefixes stay `W3-07`.** The first fifteen commits and all six of the
+  tester's are already written and a squash-merge replaces the subject line anyway. Commits from the
+  rename onwards say `W4-02a`, so `git log` shows the correction rather than hiding it.
+- **Four files that mention the real W3-07 are untouched**: `TASKS.md:77`,
+  `docs/journal/2026-10-05-w302-checkout.md`, `CatalogOptions.cs` and `AdminSeedHostedService.cs`. None of
+  them is in this branch's diff and all four mean the customers/newsletter/settings task.
+
+**Doc 02's ADM-04 row wants amending.** It reads "Dashboard: KPIs vs previous period · Revenue & Orders
+trend (weekly/monthly, 12 months)" (line 109) and says nothing about a banner, while doc 08 §3.8 calls
+`ops.AdminAlerts` "ADM-04 dashboard banner" and doc 11 §4.3 and §6.1 step 1 are written round opening
+them. Nothing here is outside the baseline — the table and the alert are doc 08's and doc 11's — but the
+feature row does not name the surface, and W4-02 will inherit a banner its own scope line does not
+mention.
 
 Closes the hole W3-06's own report filed against this task (item 2): a message that reached `Dead` was one
 `Error` log line and nothing else, so a customer who never received their bank transfer instructions
@@ -518,7 +546,7 @@ it cannot raise one for a message that is still being retried.
    not added to a missing one.
 4. **Issue #109's instance count is unclear.** The brief says seven; three comments already in the
    repository say six. I have not read the issue, so my comments cite `#109` with no number and say why.
-5. **The live-region and refusal defects are not W3-05's.** W3-07's brief calls them "yesterday's branch";
+5. **The live-region and refusal defects are not W3-05's.** W4-02a's brief calls them "yesterday's branch";
    `TASKS.md` has W3-05 as *Promo codes + sale campaigns*, TODO, and `docs/journal/` has no entry for a
    branch describing those two defects. My comments describe the defects without naming a branch.
 6. **`EF`'s parameterised collections are not rendered through `OPENJSON`** in EF Core 10 for this query —
@@ -528,17 +556,6 @@ it cannot raise one for a message that is still being retried.
    brief's rule — "put the statuses in the command text and prove the plan seeks" — is right for the
    outbox's `Status IN (0,3)` filter and does not transfer to an `IS NULL` filter with no key predicate.
    The response was to remove the query, not to work round it.
-
-## One scope note the owner should see
-
-**Doc 02's ADM-04 row does not mention a banner.** It reads "Dashboard: KPIs vs previous period · Revenue
-& Orders trend (weekly/monthly, 12 months)" and nothing else (line 109). The banner's warrant is doc 08
-§3.8 — which calls `ops.AdminAlerts` "ADM-04 dashboard banner" and describes it as "persistent dashboard
-alerts that must be acknowledged" — together with doc 11 §4.3's table and §6.1 step 1's routine, which is
-written round opening them. Nothing new is being built outside the baseline: the table and the alert are
-doc 08's and doc 11's, and the banner is the surface they already specify. But ADM-04's own scope line
-does not name it, and this task has now put it somewhere ADM-04 is not, so the owner may want doc 02's row
-amended to say so rather than leaving the banner's home implicit.
 
 ## Anything a client or a shopper could still hit
 

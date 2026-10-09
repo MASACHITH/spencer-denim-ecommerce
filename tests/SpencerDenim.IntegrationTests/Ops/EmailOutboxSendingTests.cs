@@ -379,7 +379,7 @@ public sealed class EmailOutboxSendingTests(SqlServerDatabaseFixture sqlServer)
     /// <b>and its id is reported</b> so doc 11 §4 (G-37) can raise an alert for it.
     /// </summary>
     /// <remarks>
-    /// <b>This was a <c>CASE</c> inside <c>ReleaseExpiredLeasesAsync</c> until W3-07, and the id is why
+    /// <b>This was a <c>CASE</c> inside <c>ReleaseExpiredLeasesAsync</c> until W4-02a, and the id is why
     /// it is not any more.</b> The behaviour was already right — without it the row would be reclaimed at
     /// once, its next attempt time being already past, and spend a seventh attempt on a six-rung ladder
     /// before the failure path noticed — but one statement with a <c>CASE</c> could only answer how many
@@ -657,7 +657,7 @@ public sealed class EmailOutboxSendingTests(SqlServerDatabaseFixture sqlServer)
     /// does not change that.</b>
     /// </summary>
     /// <remarks>
-    /// <b>W3-07 set <c>command.Transaction</c> on both raw commands — one of them
+    /// <b>W4-02a set <c>command.Transaction</c> on both raw commands — one of them
     /// <c>ClaimAsync</c>, which is W3-06's merged code and decides which emails get sent — and wrote no
     /// test for it. These two are that test, and they record the opposite of what those lines claim.</b>
     /// <para>

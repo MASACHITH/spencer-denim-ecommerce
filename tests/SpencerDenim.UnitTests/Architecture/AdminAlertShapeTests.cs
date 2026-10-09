@@ -8,7 +8,7 @@ namespace SpencerDenim.UnitTests.Architecture;
 /// <summary>
 /// Pins the alert payloads against the hand-written TypeScript copies in
 /// <c>projects/admin/src/app/core/alerts/admin-alert.model.ts</c> and against the Playwright stub that
-/// answers for them (W3-07).
+/// answers for them (W4-02a).
 /// <para>
 /// <b>Issue #126 is why the stub is in here and not only the model.</b> Playwright never starts the .NET
 /// API: the browser suite runs against Node stubs, so a screen test cannot observe a backend change at

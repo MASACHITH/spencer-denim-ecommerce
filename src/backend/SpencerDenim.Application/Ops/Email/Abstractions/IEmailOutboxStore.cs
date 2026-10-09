@@ -64,7 +64,7 @@ public interface IEmailOutboxStore
     /// <b>This is the second of the two ways a row reaches <c>Dead</c></b> (the first is
     /// <see cref="MarkFailedAsync"/> running out of ladder), and the ids are returned because doc 11 §4
     /// (G-37) requires <i>every</i> row that reaches <c>Dead</c> to raise an
-    /// <c>EmailDeliveryFailed</c> alert. Until W3-07 it was a branch inside
+    /// <c>EmailDeliveryFailed</c> alert. Until W4-02a it was a branch inside
     /// <see cref="ReleaseExpiredLeasesAsync"/> that returned nothing but a count, so a customer whose
     /// final attempt was lost to a restart was never contacted, and no Super Admin was told either.
     /// </para>

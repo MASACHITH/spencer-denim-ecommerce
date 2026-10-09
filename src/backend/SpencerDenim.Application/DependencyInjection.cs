@@ -77,7 +77,7 @@ public static class DependencyInjection
             ICommandHandler<ChangeAdminPasswordCommand, ChangeAdminPasswordResult>,
             ChangeAdminPasswordCommandHandler>();
 
-        // Admin alerts (doc 08 §3.8 N2, doc 11 §7 G-37, W3-07): the admin shell's banner and its
+        // Admin alerts (doc 08 §3.8 N2, doc 11 §7 G-37, W4-02a): the admin shell's banner and its
         // acknowledge. Both compute the caller's R10 visibility from their effective permissions, so both
         // depend on IEffectivePermissionsProvider, which Infrastructure registers.
         services.AddScoped<

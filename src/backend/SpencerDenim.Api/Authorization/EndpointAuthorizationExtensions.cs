@@ -37,7 +37,7 @@ public static class EndpointAuthorizationExtensions
     }
 
     /// <summary>
-    /// Lets any audience doc 08 §3.8 R10 names reach the admin alert routes (W3-07).
+    /// Lets any audience doc 08 §3.8 R10 names reach the admin alert routes (W4-02a).
     /// </summary>
     /// <remarks>
     /// <b>The same shape as <see cref="RequireAnySettingsPermission"/>, and no more general than it.</b>

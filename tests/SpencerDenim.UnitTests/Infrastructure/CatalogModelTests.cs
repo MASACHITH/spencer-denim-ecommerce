@@ -169,7 +169,7 @@ public sealed class CatalogModelTests
             $"{nameof(SpencerDenim.Domain.Ops.EmailOutboxMessage)}.{nameof(SpencerDenim.Domain.Ops.EmailOutboxMessage.BodyText)}",
             $"{nameof(SpencerDenim.Domain.Ops.EmailOutboxMessage)}.{nameof(SpencerDenim.Domain.Ops.EmailOutboxMessage.TransportOverrideProtected)}",
 
-            // W3-07, doc 08 §3.8: `ops.AdminAlerts.DetailsJson` is listed there as nvarchar(max) with a
+            // W4-02a, doc 08 §3.8: `ops.AdminAlerts.DetailsJson` is listed there as nvarchar(max) with a
             // `CK ISJSON` and nothing else, and it is unbounded for doc 08 §1.4's reason rather than for
             // want of a number: a JSON document's length is the shape of whichever alert type wrote it,
             // and six of the seven types are later tasks' — a `ReconciliationDrift` row naming every

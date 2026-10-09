@@ -8,7 +8,7 @@ using SpencerDenim.IntegrationTests.Sales;
 namespace SpencerDenim.IntegrationTests.Ops;
 
 /// <summary>
-/// W3-07's migration against a real SQL Server: <c>ops.AdminAlerts</c> exists with the columns doc 08
+/// W4-02a's migration against a real SQL Server: <c>ops.AdminAlerts</c> exists with the columns doc 08
 /// §3.8 gives it, the index it names, and the constraints it implies.
 /// <para>
 /// <b>The whole column set is asserted, not a sample.</b> An assertion per interesting column proves

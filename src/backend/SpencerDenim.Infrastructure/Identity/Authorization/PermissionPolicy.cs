@@ -24,7 +24,7 @@ public static class PermissionPolicy
     public const string ReadAnySettingsGroup = PolicyPrefix + "ReadAnySettingsGroup";
 
     /// <summary>
-    /// The admin alert banner and its acknowledge (doc 08 §3.8 R10, W3-07): <b>any</b> audience R10 names
+    /// The admin alert banner and its acknowledge (doc 08 §3.8 R10, W4-02a): <b>any</b> audience R10 names
     /// may reach the routes, and the use case then decides which alert types that caller sees.
     /// <para>
     /// The second endpoint in the project to work this way, and for the same reason as the first:
