@@ -22,10 +22,13 @@ namespace SpencerDenim.IntegrationTests.Ops;
 /// </para>
 /// <para>
 /// <b>This filter is <c>AcknowledgedAtUtc IS NULL</c>, which has nothing to parameterise</b>, so the
-/// hazard here is a different one: the alert-type restriction R10 adds. EF renders a parameterised
-/// collection through <c>OPENJSON</c>, which turns the seek into a join against a table-valued function
-/// whose cardinality the optimiser has to guess — so <c>AdminAlertReader</c> wraps the types in
-/// <c>EF.Constant</c>, and the first test below is what makes that visible.
+/// hazard here is a different one: the alert-type restriction R10 adds. EF Core 10 renders a
+/// parameterised collection as <b>one parameter per element</b> — <c>DECLARE @alertTypes1 varchar(40)</c>
+/// and so on, measured by running the first test below against that mutation, and <i>not</i> the
+/// <c>OPENJSON</c> join this remark claimed until W3-07's tester checked it. The index is matched either
+/// way, because the predicate that has to imply its filter is <c>AcknowledgedAtUtc IS NULL</c> and the
+/// alert type is only a residual; <c>AdminAlertReader</c> wraps the types in <c>EF.Constant</c> for the
+/// smaller reason recorded there, and the first test below pins that choice.
 /// </para>
 /// </summary>
 public sealed class AdminAlertsPlanTests(SqlServerDatabaseFixture sqlServer)
@@ -65,10 +68,21 @@ public sealed class AdminAlertsPlanTests(SqlServerDatabaseFixture sqlServer)
         Assert.Contains($"'{AdminAlertTypes.EmailDeliveryFailed}'", sql, StringComparison.Ordinal);
 
         // **No parameter for the alert types**, named rather than "no parameter at all" — which is what
-        // this said first, and it failed on the one parameter the query is *supposed* to have. EF names
-        // a captured collection's elements `@types1 … @types7` (measured), and the paging value is a
-        // parameter by design, so the assertion has to tell the two apart.
-        Assert.DoesNotContain("@types", sql, StringComparison.Ordinal);
+        // this said first, and it failed on the one parameter the query is *supposed* to have. The paging
+        // value is a parameter by design, so the assertion has to tell the two apart.
+        //
+        // **It names `@alertTypes`, because that is what EF really emits and `@types` never fires.** EF
+        // Core 10 names a captured collection's elements after the variable that held it, so dropping
+        // `EF.Constant` here produces `DECLARE @alertTypes1 varchar(40) = …` — measured, by running this
+        // test against that mutation. "@alertTypes1" does not contain the substring "@types", so the
+        // guard this line replaces could not fail for the shape it was written for: only the literals
+        // assertion above it was doing any work, and the claim that there were two independent guards
+        // was wrong.
+        Assert.DoesNotContain("@alertTypes", sql, StringComparison.Ordinal);
+
+        // Kept beside it, and honestly labelled: EF Core 10 does not emit this for a collection, so this
+        // line cannot fail today. It is here for the EF version that changes its mind, which is a real
+        // thing this provider has done before.
         Assert.DoesNotContain("OPENJSON", sql, StringComparison.OrdinalIgnoreCase);
 
         // And the cap really is read as one row more than the caller asked for, which is where
@@ -294,9 +308,9 @@ public sealed class AdminAlertsPlanTests(SqlServerDatabaseFixture sqlServer)
     /// <remarks>
     /// <b>Taken from <c>AdminAlertReader</c> itself, not rebuilt here.</b> The first version of this file
     /// wrote the query out again, and a mutation showed what that proved: swapping
-    /// <see cref="EF.Constant{T}"/> for a plain collection in the reader — which turns the seek into an
-    /// <c>OPENJSON</c> join — left every test in this file green, because they were all measuring a query
-    /// this file had written. <c>AdminAlertReader.OpenPage</c> is <c>internal</c> for exactly this.
+    /// <see cref="EF.Constant{T}"/> for a plain collection in the reader — which turns the seven literals
+    /// into seven parameters — left every test in this file green, because they were all measuring a
+    /// query this file had written. <c>AdminAlertReader.OpenPage</c> is <c>internal</c> for exactly this.
     /// </remarks>
     private string OpenQueryString(IReadOnlyList<string> alertTypes)
     {

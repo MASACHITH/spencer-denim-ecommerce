@@ -75,8 +75,9 @@ internal sealed class AdminAlertReader(AppDbContext dbContext) : IAdminAlertRead
     /// <para>
     /// <b>The first version of those plan tests rebuilt this query instead of calling it, and a mutation
     /// proved what that was worth:</b> replacing <see cref="EF.Constant{T}"/> with a plain collection —
-    /// which turns the seek into an <c>OPENJSON</c> join — left every plan test green, because they were
-    /// measuring a query the test had written.
+    /// which turns the seven literals into seven parameters, not the <c>OPENJSON</c> join this remark
+    /// claimed until it was measured (see the class summary above) — left every plan test green, because
+    /// they were measuring a query the test had written.
     /// </para>
     /// </remarks>
     internal IQueryable<AdminAlertRow> OpenPage(IReadOnlyList<string> alertTypes, int take) =>
