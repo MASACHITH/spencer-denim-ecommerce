@@ -13,7 +13,7 @@ public abstract record AcknowledgeAdminAlertResult
     /// <param name="AcknowledgedAtUtc">
     /// When. Returned so the screen can confirm it in a place that survives the banner disappearing —
     /// acknowledging an alert removes the node the button was in, and a message written into that node
-    /// would never be read (W3-05's two defects).
+    /// would never be read — a defect this project shipped twice last week.
     /// </param>
     public sealed record Acknowledged(int AlertId, string AlertType, DateTime AcknowledgedAtUtc)
         : AcknowledgeAdminAlertResult;

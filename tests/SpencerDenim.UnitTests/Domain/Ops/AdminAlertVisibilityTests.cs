@@ -26,16 +26,42 @@ public sealed class AdminAlertVisibilityTests
 
     private static readonly string[] OrdersRefund = [Permissions.Orders.Refund];
 
-    /// <summary>A Store Manager's grid, as doc 08 §9 describes it: every Module.Action, no GrantsAll.</summary>
-    private static readonly string[] StoreManagerish =
+    /// <summary>
+    /// <b>A Store Manager's grid, as doc 08 §9 gives it</b>: "every <c>Module.Action</c> except
+    /// <c>Users.*</c>, <c>Settings.Payments</c> and <c>Settings.Security</c> … <b>includes
+    /// <c>Orders.Refund</c></b>".
+    /// </summary>
+    /// <remarks>
+    /// <b>The <c>Orders.Refund</c> is the part that matters, and the first version of this fixture left it
+    /// out.</b> A Store Manager therefore <i>is</i> one of R10's audiences — they see
+    /// <c>PaymentException</c> and <c>CaptureRecoveryFailed</c> — and the open question in doc 11 §7 G-37
+    /// is only about <c>EmailDeliveryFailed</c>. A fixture without it would have proved "a Store Manager
+    /// sees nothing", which is both wrong and the opposite of the rule.
+    /// </remarks>
+    private static readonly string[] StoreManager =
     [
         Permissions.Orders.View,
         Permissions.Orders.Edit,
+        Permissions.Orders.Approve,
+        Permissions.Orders.Refund,
         Permissions.Settings.View,
         Permissions.Settings.Edit,
         Permissions.Reports.View,
-        Permissions.Users.View,
         Permissions.AuditLog.View,
+    ];
+
+    /// <summary>
+    /// A Content Editor's grid, as doc 08 §9 gives it: reviews and content, and nothing about an order.
+    /// The staff member R10 gives no path to any alert at all, which is most of them.
+    /// </summary>
+    private static readonly string[] ContentEditor =
+    [
+        Permissions.Content.View,
+        Permissions.Content.Edit,
+        Permissions.Reviews.View,
+        Permissions.Reviews.Approve,
+        Permissions.Media.View,
+        Permissions.Media.Create,
     ];
 
     [Fact]
@@ -93,10 +119,40 @@ public sealed class AdminAlertVisibilityTests
     {
         Assert.True(AdminAlertVisibility.CanSee(AdminAlertTypes.EmailDeliveryFailed, true, None));
 
-        Assert.False(AdminAlertVisibility.CanSee(AdminAlertTypes.EmailDeliveryFailed, false, StoreManagerish));
+        Assert.False(AdminAlertVisibility.CanSee(AdminAlertTypes.EmailDeliveryFailed, false, StoreManager));
+        Assert.False(AdminAlertVisibility.CanSee(AdminAlertTypes.EmailDeliveryFailed, false, ContentEditor));
         Assert.False(AdminAlertVisibility.CanSee(AdminAlertTypes.EmailDeliveryFailed, false, OrdersApprove));
         Assert.False(AdminAlertVisibility.CanSee(AdminAlertTypes.EmailDeliveryFailed, false, OrdersRefund));
         Assert.False(AdminAlertVisibility.CanSee(AdminAlertTypes.EmailDeliveryFailed, false, None));
+    }
+
+    /// <summary>
+    /// <b>A Store Manager sees the two payment alerts and not the dead email</b> — which is G-37's open
+    /// question written as an assertion.
+    /// </summary>
+    /// <remarks>
+    /// Doc 08 §9 gives a Store Manager <c>Orders.Refund</c>, so R10 already addresses the payment alerts
+    /// to them; doc 11 §4.3's table agrees, naming "Super Admins, <c>Orders.Approve</c>,
+    /// <c>Orders.Refund</c>" for those two rows and "Super Admins (GrantsAll)" for
+    /// <c>EmailDeliveryFailed</c>. The decision G-37 leaves to the Architect is one line in
+    /// <see cref="AdminAlertVisibility.OrderStaffTypes"/>, and until it is made this test is what stops it
+    /// being taken by accident.
+    /// </remarks>
+    [Fact]
+    public void A_store_manager_sees_the_payment_alerts_and_not_the_dead_email()
+    {
+        Assert.True(AdminAlertVisibility.CanSee(AdminAlertTypes.PaymentException, false, StoreManager));
+        Assert.True(AdminAlertVisibility.CanSee(AdminAlertTypes.CaptureRecoveryFailed, false, StoreManager));
+
+        Assert.False(AdminAlertVisibility.CanSee(AdminAlertTypes.EmailDeliveryFailed, false, StoreManager));
+        Assert.False(AdminAlertVisibility.CanSee(AdminAlertTypes.SensitiveSettingsChanged, false, StoreManager));
+        Assert.False(AdminAlertVisibility.CanSee(AdminAlertTypes.BreakGlassUsed, false, StoreManager));
+        Assert.False(AdminAlertVisibility.CanSee(AdminAlertTypes.ReconciliationDrift, false, StoreManager));
+        Assert.False(AdminAlertVisibility.CanSee(AdminAlertTypes.DashboardRefund, false, StoreManager));
+
+        Assert.Equal(
+            [AdminAlertTypes.PaymentException, AdminAlertTypes.CaptureRecoveryFailed],
+            AdminAlertVisibility.VisibleTypes(false, StoreManager));
     }
 
     /// <summary>
@@ -106,12 +162,12 @@ public sealed class AdminAlertVisibilityTests
     [Fact]
     public void Everybody_else_sees_nothing()
     {
-        Assert.Empty(AdminAlertVisibility.VisibleTypes(false, StoreManagerish));
+        Assert.Empty(AdminAlertVisibility.VisibleTypes(false, ContentEditor));
         Assert.Empty(AdminAlertVisibility.VisibleTypes(false, None));
 
         foreach (var type in AdminAlertTypes.All)
         {
-            Assert.False(AdminAlertVisibility.CanSee(type, false, StoreManagerish));
+            Assert.False(AdminAlertVisibility.CanSee(type, false, ContentEditor));
         }
     }
 

@@ -44,7 +44,7 @@ public static class AdminAlertTypes
     public const string CaptureRecoveryFailed = "CaptureRecoveryFailed";
 
     /// <summary>
-    /// A nightly stock or promo-usage mismatch that persists (doc 08 §4.4, doc 11 P2/P3). Warning,
+    /// A nightly stock or promo-usage mismatch that persists (doc 08 §5.9, doc 11 P2/P3). Warning,
     /// Super Admins only.
     /// </summary>
     public const string ReconciliationDrift = "ReconciliationDrift";

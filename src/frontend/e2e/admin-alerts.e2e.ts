@@ -153,8 +153,9 @@ test.describe('acknowledging (doc 08 §3.8: audited, and resolves nothing)', () 
    * **The three defects this project has already shipped, in one test.**
    *
    * Issue #109: `[disabled]` on a button whose state changes under the user throws focus to `<body>`.
-   * W3-05: a message written into a node that the same update removes is invisible — a blind customer
-   * pressed Cancel and heard nothing at all. And acknowledging a banner is exactly that shape of update.
+   * And a message written into a node that the same update removes is invisible — a branch last week
+   * shipped that twice and a blind customer pressed Cancel and heard nothing at all. Acknowledging a
+   * banner is exactly that shape of update.
    */
   test('keeps the alert on screen, moves focus to the outcome, and announces it', async ({ page }) => {
     await openWithAlerts(page, 'dead');

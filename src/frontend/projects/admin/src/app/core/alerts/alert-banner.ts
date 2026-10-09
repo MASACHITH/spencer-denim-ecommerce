@@ -47,11 +47,14 @@ interface Cleared {
  *    decided row. Removing the row would destroy the node holding the focus, which is the same harm as
  *    disabling it (issue #109).
  * 2. **Nothing is ever `disabled`.** Every button carries `aria-disabled` and the handler refuses while a
- *    write is in flight (issue #109, seven instances).
+ *    write is in flight (issue #109). The count of instances is left out on purpose: the comments
+ *    already in this repository say six and the brief for this task says seven, and I have not read the
+ *    issue.
  * 3. **The confirmation is written where it survives.** The live region is the component's first child and
- *    is outside every `@if`, so it exists whether or not there are alerts — W3-05 put a refusal inside the
- *    panel its own refusal destroyed and a live region inside a block that success removed, and a blind
- *    customer pressed Cancel and heard nothing at all.
+ *    is outside every `@if`, so it exists whether or not there are alerts. A branch last week put a
+ *    refusal inside the panel its own refusal destroyed, and a live region inside a block that success
+ *    removed — and a blind customer pressed Cancel and heard nothing at all. (Reported to this task by
+ *    the owner; the branch is not named here because I have not checked which one it was.)
  * 4. **An identical announcement re-fires.** `role="status"` announces a *change*, so acknowledging two
  *    alerts in a row would be read out once; the second gets a trailing space (ADM-22).
  *

@@ -197,8 +197,9 @@ describe('AlertBanner (doc 08 §3.8 N2)', () => {
   });
 
   it('writes the confirmation into a live region that the acknowledgement cannot destroy', async () => {
-    // **Rule 3.** W3-05 put a live region inside a block that success removed, and a blind customer
-    // pressed Cancel and heard nothing. The region is the component's first child, outside every `@if`,
+    // **Rule 3.** A branch last week put a live region inside a block that success removed, and a
+    // blind customer pressed Cancel and heard nothing. The region is this component's first child,
+    // outside every `@if`,
     // so it is in the DOM before any alert loads and after the last one is cleared.
     fixture = TestBed.createComponent(AlertBanner);
     element = fixture.nativeElement as HTMLElement;
@@ -239,7 +240,7 @@ describe('AlertBanner (doc 08 §3.8 N2)', () => {
   });
 
   it('never puts `disabled` on a button, and refuses a second press in the handler', async () => {
-    // **Rule 2 (issue #109, seven instances).** The button's state changes under the user, so it carries
+    // **Rule 2 (issue #109).** The button's state changes under the user, so it carries
     // `aria-disabled` and the handler refuses — and it stays focusable the whole time.
     await open();
 

@@ -189,8 +189,8 @@ public sealed class AdminAlertsPlanTests(SqlServerDatabaseFixture sqlServer)
     /// <para>
     /// <b>The shape is the one doc 08 §8.4 produces</b>: acknowledged alerts are kept a year and open ones
     /// are the handful nobody has dealt with yet, so 20,000 acknowledged rows against 12 open ones is what
-    /// the filtered index exists for. 20,003 is also the row count W3-06's tester measured the outbox's
-    /// filtered index at, which is why that figure appears in `AdminAlertReader`'s remarks.
+    /// the filtered index exists for. Twenty thousand is also the order of magnitude W3-06's tester
+    /// measured the outbox's filtered index at (20,003 rows), so the two measurements are comparable.
     /// </para>
     /// <para>
     /// Statistics are updated after the insert, because the optimiser chooses from what it has been told
