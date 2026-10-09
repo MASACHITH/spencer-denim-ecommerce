@@ -455,6 +455,40 @@ public sealed class EmailOutboxSendingTests(SqlServerDatabaseFixture sqlServer)
     }
 
     /// <summary>
+    /// <b>The requeue on its own leaves an exhausted row alone</b>, rather than relying on the kill
+    /// having run first.
+    /// </summary>
+    /// <remarks>
+    /// <b>This test exists because a mutation survived without it.</b> Removing
+    /// <c>AND AttemptCount &lt; MaxAttempts</c> from <c>ReleaseExpiredLeasesAsync</c> changed nothing in
+    /// any other test here: the sweep kills the exhausted rows first, so by the time the requeue runs
+    /// there is none left to requeue, and every assertion stayed green. The clause is still load-bearing
+    /// — it is the only thing standing between a reordered sweep and a message spending a seventh attempt
+    /// on a six-rung ladder — so it needs a test that calls the requeue by itself, which is what this is.
+    /// </remarks>
+    [Fact]
+    public async Task The_requeue_alone_does_not_put_an_exhausted_row_back_on_the_ladder()
+    {
+        await ResetAsync();
+
+        var exhausted = await InsertAsync(
+            status: EmailOutboxStatus.Sending,
+            attemptCount: EmailBackoff.MaxAttempts,
+            lockedUntilUtc: Now.AddMinutes(-1));
+
+        var hasAttemptsLeft = await InsertAsync(
+            status: EmailOutboxStatus.Sending,
+            attemptCount: (short)(EmailBackoff.MaxAttempts - 1),
+            lockedUntilUtc: Now.AddMinutes(-1));
+
+        // The requeue, with no kill in front of it.
+        Assert.Equal(1, await ReleaseAsync());
+
+        Assert.Equal(EmailOutboxStatus.Sending, (await RowAsync(exhausted)).Status);
+        Assert.Equal(EmailOutboxStatus.Failed, (await RowAsync(hasAttemptsLeft)).Status);
+    }
+
+    /// <summary>
     /// Two senders racing to kill one stranded row: exactly one of them is told about it.
     /// </summary>
     /// <remarks>
