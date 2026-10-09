@@ -1,5 +1,7 @@
 using System.Data;
 using Microsoft.EntityFrameworkCore;
+using SpencerDenim.Application.Ops.Email.Abstractions;
+using SpencerDenim.Application.Ops.Email.Contracts;
 using SpencerDenim.Application.Sales.Payments.Abstractions;
 using SpencerDenim.Domain.Sales;
 using SpencerDenim.Infrastructure.Persistence;
@@ -28,12 +30,17 @@ namespace SpencerDenim.Infrastructure.Sales.Payments;
 /// <c>Release</c> movements and returns the promo use. <c>inventory.InventoryMovements</c> does not exist
 /// (#108, W1-05) and <c>marketing.PromoCodes</c> does not exist (ADM-13 / W3-05), so
 /// <c>Orders.PromoCodeId</c> is null on every order ever placed and there is nothing to decrement. The
-/// stock figures themselves are exact; what is missing is the per-movement trail. Doc 11 P7 step 7's
-/// <c>OrderExpired</c> email needs <c>ops.EmailOutbox</c> (W3-06) and is not queued — and nothing anywhere
-/// tells a shopper one was sent.
+/// stock figures themselves are exact; what is missing is the per-movement trail.
+/// </para>
+/// <para>
+/// <b>Doc 11 P7 step 7's <c>OrderExpired</c> email is now queued</b> (W3-06) — in this transaction, after
+/// the claim has succeeded, so an order that was not expired sends nothing and an order that was always
+/// tells its customer. <c>ops.EmailOutbox</c> exists; whether the message leaves the building is
+/// <c>SendEmails</c>'s business, and with no SMTP configured it sits in the queue and says so in the log
+/// rather than being lost.
 /// </para>
 /// </summary>
-internal sealed class OrderExpiryStore(AppDbContext dbContext) : IOrderExpiryStore
+internal sealed class OrderExpiryStore(AppDbContext dbContext, IOrderEmailOutbox emails) : IOrderExpiryStore
 {
     /// <summary>
     /// Doc 08 §5.6 step 1's read.
@@ -120,6 +127,12 @@ internal sealed class OrderExpiryStore(AppDbContext dbContext) : IOrderExpirySto
                     return false;
                 }
 
+                // Read **after** the claim and **before** anything else, so it reads a row this
+                // transaction already holds an exclusive lock on: no new lock, nothing to deadlock
+                // against, and no chance of describing an order somebody else has since changed. It is
+                // only for the email — every decision above was made by the claim's own predicate.
+                var snapshot = await ReadForEmailAsync(orderId, cancellationToken);
+
                 await OrderStockRelease.ReleaseAsync(
                     dbContext,
                     orderId,
@@ -163,6 +176,25 @@ internal sealed class OrderExpiryStore(AppDbContext dbContext) : IOrderExpirySto
                     OccurredAtUtc = nowUtc,
                 });
 
+                // Doc 11 P7 step 7 / P10 flow B: "**Order expired** email". Enlisted into this same unit
+                // of work, so it commits with the expiry and is rolled back with it (doc 08 §3.8's
+                // transactional outbox).
+                //
+                // The null guard is not defensive padding: `ReadForEmailAsync` projects to a record
+                // class, so "no such row" is representable — the lesson `BankTransferReviewStore`'s own
+                // OrderSnapshot records at length. It cannot happen here, because `ReadForEmailAsync`
+                // runs immediately after a claim that matched this very row; and if it ever did, expiring
+                // the order without an email is the right outcome, while queueing a message addressed to
+                // an empty string is not.
+                if (snapshot is { } order)
+                {
+                    emails.EnlistOrderExpired(new OrderEmailHeader(
+                        order.OrderNumber,
+                        order.PublicId,
+                        new OrderEmailAddressee(order.Email, order.FirstName, order.LastName),
+                        nowUtc));
+                }
+
                 await dbContext.SaveChangesAsync(cancellationToken);
                 await transaction.CommitAsync(cancellationToken);
 
@@ -174,4 +206,33 @@ internal sealed class OrderExpiryStore(AppDbContext dbContext) : IOrderExpirySto
             }
         });
     }
+
+    /// <summary>
+    /// The five values the <c>OrderExpired</c> email needs, and nothing else.
+    /// </summary>
+    /// <remarks>
+    /// <b>A record class, not a <c>record struct</c>.</b> <c>FirstOrDefaultAsync</c> over a projection to
+    /// a value type cannot return null — it returns <c>default</c> — so a missing row would arrive as an
+    /// order number of <c>""</c> and an empty email address, and the guard at the call site would never
+    /// fire. <c>BankTransferReviewStore.OrderSnapshot</c> records what that cost there: a PayPal order was
+    /// approved and paid by the bank flow.
+    /// </remarks>
+    private async Task<EmailSnapshot?> ReadForEmailAsync(int orderId, CancellationToken cancellationToken) =>
+        await dbContext.Orders
+            .AsNoTracking()
+            .Where(order => order.Id == orderId)
+            .Select(order => new EmailSnapshot(
+                order.OrderNumber,
+                order.PublicId,
+                order.Email,
+                order.FirstName,
+                order.LastName))
+            .FirstOrDefaultAsync(cancellationToken);
+
+    private sealed record EmailSnapshot(
+        string OrderNumber,
+        Guid PublicId,
+        string Email,
+        string FirstName,
+        string? LastName);
 }

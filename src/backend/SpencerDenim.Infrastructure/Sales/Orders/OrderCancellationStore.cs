@@ -2,6 +2,8 @@ using System.Data;
 using System.Globalization;
 using Microsoft.EntityFrameworkCore;
 using SpencerDenim.Application.Abstractions.Auditing;
+using SpencerDenim.Application.Ops.Email.Abstractions;
+using SpencerDenim.Application.Ops.Email.Contracts;
 using SpencerDenim.Application.Sales.Orders.Abstractions;
 using SpencerDenim.Application.Sales.Orders.Contracts;
 using SpencerDenim.Domain.Auditing;
@@ -44,8 +46,20 @@ namespace SpencerDenim.Infrastructure.Sales.Orders;
 /// (owner decision, 2026-10-08: done by hand as a bank transfer and recorded in the order's internal
 /// note), and this file is not the place they arrive.
 /// </para>
+/// <para>
+/// <b>It now queues an <c>Order cancelled</c> email, and that is a scope increase rather than a gap being
+/// filled.</b> Doc 11 §4.4 lists "order cancelled" among the events with <i>no</i> notification in v1 and
+/// doc 08 §3.8's template list has no such code; doc 11 §7 <b>G-14</b> recommends adding one and leaves
+/// the decision to the client. It is built on the owner's instruction for W3-06 — a shopper who cancels
+/// an order and hears nothing at all is the gap it closes — and it is one template, one composer method
+/// and the one call below, so removing it is a small change if the client says no. The full note is on
+/// <c>EmailTemplateCodes.OrderCancelled</c>.
+/// </para>
 /// </summary>
-internal sealed class OrderCancellationStore(AppDbContext dbContext, IAuditLogWriter auditLog)
+internal sealed class OrderCancellationStore(
+    AppDbContext dbContext,
+    IAuditLogWriter auditLog,
+    IOrderEmailOutbox emails)
     : IOrderCancellationStore
 {
     public Task<CancelOrderOutcome> CancelAsync(
@@ -220,6 +234,23 @@ internal sealed class OrderCancellationStore(AppDbContext dbContext, IAuditLogWr
         await OrderStockRelease.ReturnPromoUseAsync(dbContext, snapshot.OrderId, cancellationToken);
 
         WriteHistory(cancellation, snapshot);
+
+        // Enlisted into this unit of work, so the message and the cancellation commit together or not at
+        // all (doc 08 §3.8's transactional outbox). It is after the claim, so a refused cancel — an order
+        // already paid, already cancelled, or holding a capture lock — returns above and queues nothing.
+        //
+        // **The address and the name come from the snapshot read before the claim, and that is sound
+        // here.** Doc 11 P9 is explicit that after placement only the courier, the tracking number and
+        // the internal note are editable, so an order's email address and name cannot have changed
+        // between that read and this statement. Nothing *else* on the snapshot is used for a decision —
+        // `DiagnoseAsync` re-reads for that, which is this file's own rule.
+        emails.EnlistOrderCancelled(new CancelledOrderEmailFacts(
+            new OrderEmailHeader(
+                snapshot.OrderNumber,
+                snapshot.PublicId,
+                new OrderEmailAddressee(snapshot.Email, snapshot.FirstName, snapshot.LastName),
+                cancellation.NowUtc),
+            cancellation.CancelledBy == OrderCancelledBy.Customer));
 
         if (cancellation.CancelledBy == OrderCancelledBy.Staff && cancellation.Actor is { } actor)
         {
@@ -410,7 +441,13 @@ internal sealed class OrderCancellationStore(AppDbContext dbContext, IAuditLogWr
                 order.Payments.Any(payment => payment.IsOrderSettlement),
                 order.Payments.Any(payment =>
                     payment.ProviderCode == PaymentProviderCodes.PayPal
-                    && payment.Status == PaymentStatus.Pending)))
+                    && payment.Status == PaymentStatus.Pending),
+
+                // For the email only (W3-06). Three more columns on a projection that already reads this
+                // row, rather than a second query inside the transaction.
+                order.Email,
+                order.FirstName,
+                order.LastName))
             .FirstOrDefaultAsync(cancellationToken);
 
     /// <summary>A JSON string literal, or <c>null</c>, for the audit row's <c>AfterJson</c> (CK ISJSON).</summary>
@@ -436,5 +473,8 @@ internal sealed class OrderCancellationStore(AppDbContext dbContext, IAuditLogWr
         bool IsPickup,
         DateTime? CaptureLockedUntilUtc,
         bool HasSettlementPayment,
-        bool HasPayPalPendingPayment);
+        bool HasPayPalPendingPayment,
+        string Email,
+        string FirstName,
+        string? LastName);
 }

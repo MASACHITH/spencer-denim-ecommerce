@@ -13,6 +13,8 @@ using SpencerDenim.Application.Catalog.Admin.Products.Abstractions;
 using SpencerDenim.Application.Content.Abstractions;
 using SpencerDenim.Application.Content.Admin.Abstractions;
 using SpencerDenim.Application.Marketing.Newsletter;
+using SpencerDenim.Application.Ops.Email;
+using SpencerDenim.Application.Ops.Email.Abstractions;
 using SpencerDenim.Application.Sales.Cart.Abstractions;
 using SpencerDenim.Application.Sales.Payments;
 using SpencerDenim.Application.Sales.Checkout.Abstractions;
@@ -26,6 +28,7 @@ using SpencerDenim.Infrastructure.Catalog;
 using SpencerDenim.Infrastructure.Content;
 using SpencerDenim.Infrastructure.Marketing;
 using SpencerDenim.Infrastructure.Media;
+using SpencerDenim.Infrastructure.Ops.Email;
 using SpencerDenim.Infrastructure.Health;
 using SpencerDenim.Infrastructure.Identity;
 using SpencerDenim.Infrastructure.Persistence;
@@ -96,6 +99,55 @@ public static class DependencyInjection
             .ValidateOnStart();
 
         services.AddSingleton(provider => provider.GetRequiredService<IOptions<BankTransferOptions>>().Value);
+
+        // Email (W3-06, ACC-03). Doc 08 §3.8 files the SMTP keys under `Settings.Security`, which needs
+        // the sensitive-change alert, ops.AdminAlerts and the GrantsAll-only permission — none of which
+        // exists — so they are configuration for now, under doc 08's own key names (see EmailOptions).
+        services.AddOptions<EmailOptions>()
+            .BindConfiguration(EmailOptions.SectionName)
+            .Validate(
+                options => options.SweepSeconds > 0,
+                "Email:SweepSeconds must be greater than zero: a PeriodicTimer with a non-positive period "
+                + "throws, which would fault the host on startup.")
+            .Validate(
+                options => options.BatchSize is > 0 and <= 1000,
+                "Email:BatchSize must be between 1 and 1000. It is written into the claim's TOP (n), and "
+                + "a batch large enough to hold one transaction open across a thousand SMTP conversations "
+                + "is not a batch.")
+            .Validate(
+                options => options.LeaseMinutes > 0,
+                "Email:LeaseMinutes must be greater than zero: a lease that has already expired when it is "
+                + "taken would let a second sender send the same message.")
+            .Validate(
+                options => options.UnconfiguredWarningMinutes > 0,
+                "Email:UnconfiguredWarningMinutes must be greater than zero.")
+            .Validate(
+                options => options.Smtp.Port is > 0 and <= 65535,
+                "Email:Smtp:Port must be a valid TCP port.")
+            .Validate(
+                // An absolute http(s) origin or nothing at all. The point is to refuse the two mistakes
+                // that would put a broken link into every email the shop sends — a bare host with no
+                // scheme, and a relative path — at startup rather than in a customer's inbox. Unset is
+                // valid: the emails then carry no links (see EmailOptions.StorefrontBaseUrl).
+                options => IsAbsoluteHttpUrl(options.StorefrontBaseUrl),
+                "Email:StorefrontBaseUrl must be an absolute http or https URL, e.g. "
+                + "https://example.com, or be left unset.")
+            .ValidateOnStart();
+
+        services.AddSingleton(provider => provider.GetRequiredService<IOptions<EmailOptions>>().Value);
+
+        // Pure and stateless over the bound options, so one instance for the process.
+        services.AddSingleton<OrderEmailComposer>();
+
+        // The SMTP boundary. A singleton over the options; it builds a fresh SmtpClient per message,
+        // because SmtpClient is not thread-safe (see SmtpEmailTransport).
+        services.AddSingleton<IEmailTransport, SmtpEmailTransport>();
+
+        // Scoped, because both write through the request's own AppDbContext: that is what makes the
+        // outbox row commit in the same transaction as the order it is about (doc 08 §3.8).
+        services.AddScoped<IEmailOutboxWriter, EmailOutboxWriter>();
+        services.AddScoped<IOrderEmailOutbox, OrderEmailOutbox>();
+        services.AddScoped<IEmailOutboxStore, EmailOutboxStore>();
 
         services.AddScoped<AuditAndSoftDeleteInterceptor>();
 
@@ -250,6 +302,12 @@ public static class DependencyInjection
         // Orders.AutoDeliverAfterDays ago. **Never a store pickup order** (G-18).
         services.AddHostedService<AutoDeliverShippedService>();
 
+        // Doc 11 §1.4's `SendEmails` and doc 08 §3.8: hand the queued messages to the mail server with
+        // the 1/5/15/60/240-minute ladder. With no SMTP configured it claims nothing and says so with a
+        // count — see SendEmailsService, which is the behaviour that matters while the client's mail
+        // credentials are outstanding.
+        services.AddHostedService<SendEmailsService>();
+
         services.AddHealthChecks()
             .AddCheck<DatabaseHealthCheck>(
                 name: "sqlserver",
@@ -271,4 +329,17 @@ public static class DependencyInjection
 
         return services;
     }
+
+    /// <summary>
+    /// Whether a configured base URL is absent or is an absolute http/https origin.
+    /// </summary>
+    /// <remarks>
+    /// <c>Uri.TryCreate</c> with <see cref="UriKind.Absolute"/> accepts <c>mailto:</c> and
+    /// <c>file:</c> too, so the scheme is checked as well — a <c>file:</c> origin in an email would be a
+    /// link every recipient's client silently refused.
+    /// </remarks>
+    private static bool IsAbsoluteHttpUrl(string? value) =>
+        string.IsNullOrWhiteSpace(value)
+        || (Uri.TryCreate(value.Trim(), UriKind.Absolute, out var uri)
+            && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps));
 }

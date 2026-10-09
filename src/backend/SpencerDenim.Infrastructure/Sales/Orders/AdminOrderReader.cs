@@ -562,26 +562,9 @@ internal sealed class AdminOrderReader(AppDbContext dbContext, IClock clock) : I
             order.CourierId,
             order.CourierName,
             order.TrackingNumber,
-            BuildTrackingUrl(template, order.TrackingNumber),
+            OrderTrackingLink.Build(template, order.TrackingNumber),
             shippedAt);
     }
-
-    /// <summary>
-    /// The courier's template with the placeholder replaced, or <see langword="null"/>.
-    /// </summary>
-    /// <remarks>
-    /// <b>The number is URL-escaped before it goes in.</b> The template is a URL and the number lands in
-    /// its query string or path; a number containing <c>&amp;</c> or <c>#</c> would otherwise silently
-    /// truncate the link or add a parameter the courier did not expect. Tracking numbers are validated to
-    /// printable ASCII on the way in, which is not the same as "safe in a URL".
-    /// </remarks>
-    private static string? BuildTrackingUrl(string? template, string trackingNumber) =>
-        string.IsNullOrWhiteSpace(template)
-            ? null
-            : template.Replace(
-                Courier.TrackingNumberPlaceholder,
-                Uri.EscapeDataString(trackingNumber),
-                StringComparison.Ordinal);
 
     /// <summary>
     /// Which actions this order can take right now (doc 08 §4.1, doc 11 P9).
