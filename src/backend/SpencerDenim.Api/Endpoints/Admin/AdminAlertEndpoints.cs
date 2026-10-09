@@ -195,10 +195,17 @@ internal static class AdminAlertEndpoints
     /// <summary>
     /// A staff work list, so it is never stored by a browser or an intermediary.
     /// </summary>
+    /// <remarks>
+    /// <b>The same three lines as <c>AdminBankTransferEndpoints</c> and <c>AdminOrderEndpoints</c>, with
+    /// the same values, deliberately.</b> There are already five private copies of this in
+    /// <c>SpencerDenim.Api</c> and this is a sixth; extracting them is a change to five endpoint files,
+    /// three of which are money paths, and is not this task's. What a sixth copy must not do is differ —
+    /// a `must-revalidate` or a `Pragma` here and not there would be two admin work lists cached
+    /// differently for no reason anybody could find — so the header is byte for byte theirs.
+    /// </remarks>
     private static void NoStore(HttpResponse response)
     {
-        response.Headers.CacheControl = "no-store, no-cache, must-revalidate, private";
-        response.Headers.Pragma = "no-cache";
+        response.Headers.CacheControl = "no-store, no-cache, private";
         response.Headers.Vary = "Cookie";
     }
 }
