@@ -312,7 +312,7 @@ Every figure measured in this worktree. **Main's own figures were measured first
 | Suite | Main (`924ebfd`) | Brief said | After | New |
 |---|---|---|---|---|
 | Unit | **1,925** | 1,818 | **1,980** | 55 |
-| Integration | **1,292** | 1,292 | **1,345** | 53 |
+| Integration | **1,292** | 1,292 | **1,354** | 62 |
 | Vitest (shared / storefront / admin) | **24 / 1,417 / 465** | same | **24 / 1,417 / 490** | 25 |
 | Playwright | **935 / 0** | same | **960 / 0** | 25 |
 
@@ -323,7 +323,24 @@ first; nothing on 4432/4433, 4502, 4515, 4767 or 4880–4916 was touched, and no
 start was stopped.
 
 One database was created and dropped: `SpencerDenim_W307_Plan`, for the `SET STATISTICS IO` measurements
-above. Nothing else was dropped.
+above. One `SpencerDenim_Test_*` was dropped as well, and it was mine: I had two integration runs in
+flight at once (the second was started with `--no-build`, so a build failure did not stop it), killed the
+newer one, and the fixture drops its database on dispose rather than on a kill. Nothing belonging to
+`SpencerDenim_Dev`, `SpencerDenim_W113_*`, `SpencerDenim_W103_Tester` or anybody else's
+`SpencerDenim_Test_*` was touched.
+
+### One test was failing and the full run is what found it
+
+`The_banners_read_sends_its_alert_types_as_literals` asserted `DoesNotContain("DECLARE @")` — "no
+parameters" — and the query has one parameter it is *supposed* to have: `DECLARE @p int = 11` for
+`SELECT TOP(@p)`, the cap plus the extra row `moreThanShown` is read from. The claim I wanted was "no
+parameter **for the alert types**", which EF names `@types1 … @types7`, so the assertion is now on
+`@types` and the paging parameter is asserted *positively* instead — it pins the one-row-more read in the
+SQL, which is invisible in the LINQ.
+
+**It had been red since I rewrote it**, and I had not noticed because the only run I made of it in between
+was with a mutation applied, where it was *expected* to fail. A filtered re-run of the unmutated version
+is the step I skipped. `M28` still kills it.
 
 ## Mutation testing
 

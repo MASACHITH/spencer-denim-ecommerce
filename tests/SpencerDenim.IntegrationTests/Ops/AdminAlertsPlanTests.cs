@@ -63,8 +63,18 @@ public sealed class AdminAlertsPlanTests(SqlServerDatabaseFixture sqlServer)
             StringComparison.Ordinal);
 
         Assert.Contains($"'{AdminAlertTypes.EmailDeliveryFailed}'", sql, StringComparison.Ordinal);
-        Assert.DoesNotContain("DECLARE @", sql, StringComparison.Ordinal);
+
+        // **No parameter for the alert types**, named rather than "no parameter at all" — which is what
+        // this said first, and it failed on the one parameter the query is *supposed* to have. EF names
+        // a captured collection's elements `@types1 … @types7` (measured), and the paging value is a
+        // parameter by design, so the assertion has to tell the two apart.
+        Assert.DoesNotContain("@types", sql, StringComparison.Ordinal);
         Assert.DoesNotContain("OPENJSON", sql, StringComparison.OrdinalIgnoreCase);
+
+        // And the cap really is read as one row more than the caller asked for, which is where
+        // `moreThanShown` comes from. Pinned here because it is invisible in the LINQ.
+        Assert.Contains("DECLARE @p int = 11;", sql, StringComparison.Ordinal);
+        Assert.Contains("SELECT TOP(@p)", sql, StringComparison.Ordinal);
     }
 
     /// <summary>
