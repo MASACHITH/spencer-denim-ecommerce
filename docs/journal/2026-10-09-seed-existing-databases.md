@@ -286,9 +286,20 @@ reported 1,365 total, and 1,365 − 8 = 1,357 matches what main was said to have
 since the last migration" after a rebuild.
 
 Test databases: every one this branch created is a `SpencerDenim_Deploy_<guid>` made and dropped by
-`FreshDeployment`, plus the fixture's own `SpencerDenim_Test_<guid>`. Nothing else was touched —
-`SpencerDenim_Dev`, the `SpencerDenim_W113_*` set, `SpencerDenim_W103_Tester` and the other
-`SpencerDenim_Test_*` databases were left alone.
+`FreshDeployment`, plus the fixture's own `SpencerDenim_Test_<guid>`. A listing of `sys.databases`
+afterwards shows **no `SpencerDenim_Deploy_*` left behind**. Nothing else was touched —
+`SpencerDenim_Dev`, the eight `SpencerDenim_W113_*`, `SpencerDenim_W103_Tester` and the
+`SpencerDenim_Test_*` databases were left alone, including any that an interrupted run of this branch's
+own fixture may have orphaned: they are indistinguishable from other sessions' and dropping one on a guess
+is how somebody else's work disappears.
+
+**Two notes for whoever runs this next.** `--filter-class` passed after `--` is ignored here — the project
+runs under VSTest, so the filter is `--filter "FullyQualifiedName~X"`, and the two classes this branch
+adds plus `FreshDeploymentTests` run in **1 m 15 s** against the 17-plus minutes of the whole assembly.
+And the suite really does look hung: a mid-run check of `sys.dm_exec_sessions` showed every session
+`sleeping`, which is normal — the work is in managed code between queries. Read the wall clock, not the
+appearance; one run of it was stopped here on a misjudgement of elapsed time and had been perfectly
+healthy.
 
 ## 6. Owed, or worth a line in somebody else's issue
 
