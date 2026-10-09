@@ -492,6 +492,17 @@ it cannot raise one for a message that is still being retried.
    outbox's `Status IN (0,3)` filter and does not transfer to an `IS NULL` filter with no key predicate.
    The response was to remove the query, not to work round it.
 
+## One scope note the owner should see
+
+**Doc 02's ADM-04 row does not mention a banner.** It reads "Dashboard: KPIs vs previous period · Revenue
+& Orders trend (weekly/monthly, 12 months)" and nothing else (line 109). The banner's warrant is doc 08
+§3.8 — which calls `ops.AdminAlerts` "ADM-04 dashboard banner" and describes it as "persistent dashboard
+alerts that must be acknowledged" — together with doc 11 §4.3's table and §6.1 step 1's routine, which is
+written round opening them. Nothing new is being built outside the baseline: the table and the alert are
+doc 08's and doc 11's, and the banner is the surface they already specify. But ADM-04's own scope line
+does not name it, and this task has now put it somewhere ADM-04 is not, so the owner may want doc 02's row
+amended to say so rather than leaving the banner's home implicit.
+
 ## Anything a client or a shopper could still hit
 
 - **A dead email still means a customer was not told by the shop.** The alert tells a Super Admin to
