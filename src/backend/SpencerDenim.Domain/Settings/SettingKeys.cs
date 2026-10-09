@@ -4,7 +4,11 @@ namespace SpencerDenim.Domain.Settings;
 /// The <c>ops.Settings</c> keys this milestone populates (ADM-22, GLB-02). Doc 08 §3.8's "Groups" table
 /// is the authority for the names; these are the subset with a screen behind them.
 /// <para>
-/// <b>What is deliberately absent, and why that is not an oversight.</b> Doc 08 lists sixteen groups.
+/// <b>What is deliberately absent, and why that is not an oversight.</b> Doc 08 §3.8's "Groups" table
+/// has fifteen rows — counted from the table; "sixteen" is §3.1's module list, which is a different
+/// thing — and names 59 keys, of which this build seeds 20. <see cref="DeferredSettingKeys"/> is the
+/// per-key record of the other 39 and is machine-checked against the document
+/// (<c>SettingKeySpecificationTests</c>); the paragraphs below are the summary.
 /// <c>Bank.*</c> is now here (W3-03, PAY-01): it is the one group doc 11 P7's preconditions make a
 /// prerequisite of taking money at all. <c>Payments.PayPal.*</c> still waits for W4-01 — its keys are
 /// credentials and an FX rate with no provider to use them; <c>Email.Smtp.*</c>, <c>Security.*</c> and
