@@ -29,7 +29,7 @@ function alert(overrides: Partial<AdminAlert> = {}): AdminAlert {
 }
 
 function banner(overrides: Partial<AdminAlertBanner> = {}): AdminAlertBanner {
-  return { totalOpen: 1, alerts: [alert()], ...overrides };
+  return { moreThanShown: false, alerts: [alert()], ...overrides };
 }
 
 /**
@@ -139,20 +139,32 @@ describe('AlertBanner (doc 08 §3.8 N2)', () => {
   });
 
   it('renders nothing when the list is empty', async () => {
-    await open(banner({ totalOpen: 0, alerts: [] }));
+    await open(banner({ alerts: [] }));
 
     expect(element.querySelector('[data-testid="alert-banner"]')).toBeNull();
   });
 
-  it('says how many there are when it is showing fewer than that', async () => {
-    await open(banner({ totalOpen: 57, alerts: [alert()] }));
+  it('says there are more when the server says it is not showing them all', async () => {
+    await open(banner({ moreThanShown: true, alerts: [alert()] }));
 
-    expect(text()).toContain('57 alerts need attention');
-    expect(text()).toContain('showing the 1 newest');
+    expect(text()).toContain('1 alert needs attention');
+    expect(text()).toContain('more are waiting');
+  });
+
+  it('does not say there are more when it is showing them all', async () => {
+    // The boundary the one-extra-row read exists for: a banner showing every open alert must not send a
+    // Super Admin looking for one that is not there.
+    await open(banner({ moreThanShown: false, alerts: [alert(), alert({ id: 8 })] }));
+
+    expect(text()).toContain('2 alerts need attention');
+    expect(text()).not.toContain('more are waiting');
+
+    await acknowledge(7, { acknowledgedAtUtc: '2026-10-09T04:00:00Z', alreadyAcknowledged: false });
+    await acknowledge(8, { acknowledgedAtUtc: '2026-10-09T04:01:00Z', alreadyAcknowledged: false });
   });
 
   it('sends the typed note, trimmed, and nothing when it is blank', async () => {
-    await open(banner({ totalOpen: 2, alerts: [alert(), alert({ id: 8 })] }));
+    await open(banner({ alerts: [alert(), alert({ id: 8 })] }));
 
     const input = element.querySelector('[data-testid="alert-note-7"]') as HTMLInputElement;
     input.value = '  Rang the customer  ';
@@ -212,7 +224,7 @@ describe('AlertBanner (doc 08 §3.8 N2)', () => {
     // one after the other produce the same sentence twice — which would be read out once. Unlike the bank
     // queue there is no "…ing" sentence in between to alternate with, so the trailing space is the
     // guarantee here and not a backstop.
-    await open(banner({ totalOpen: 2, alerts: [alert(), alert({ id: 8 })] }));
+    await open(banner({ alerts: [alert(), alert({ id: 8 })] }));
 
     await acknowledge(7, { acknowledgedAtUtc: '2026-10-09T04:00:00Z', alreadyAcknowledged: false });
 

@@ -27,7 +27,7 @@ describe('Admin App', () => {
 
     TestBed.inject(HttpTestingController)
       .match(AdminAlertsApi.alertsUrl)
-      .forEach((request) => request.flush({ totalOpen: 0, alerts: [] }));
+      .forEach((request) => request.flush({ moreThanShown: false, alerts: [] }));
   });
 
   /**
@@ -52,7 +52,7 @@ describe('Admin App', () => {
 
     const controller = TestBed.inject(HttpTestingController);
     controller.expectOne(AdminAlertsApi.alertsUrl).flush({
-      totalOpen: 1,
+      moreThanShown: false,
       alerts: [
         {
           id: 7,

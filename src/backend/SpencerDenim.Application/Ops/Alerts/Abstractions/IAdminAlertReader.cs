@@ -32,13 +32,29 @@ public sealed record AdminAlertRow(
 public interface IAdminAlertReader
 {
     /// <summary>
-    /// The open alerts of these types, newest first, and the total number of them.
+    /// The open alerts of these types, newest first, at most <paramref name="take"/> of them, and whether
+    /// there are more.
     /// </summary>
+    /// <remarks>
+    /// <b>"Are there more" rather than "how many", and the reason is measured.</b> A separate
+    /// <c>COUNT(*)</c> over the same predicate cannot be made to use <c>IX_AdminAlerts_Open</c>: SQL
+    /// Server costs it as a clustered scan even when the filter implies the whole predicate, and an index
+    /// hint is the only way to change its mind. Measured on 20,000 alerts (the shape doc 08 §8.4
+    /// produces — acknowledged kept a year, a handful open): the list <b>38 logical reads</b>, the count
+    /// <b>5,020</b>, on every admin page load, for every staff member R10 gives an audience to. So the
+    /// reader asks for one row more than it needs and the extra row is the answer. What a staff member
+    /// loses is a precise number they were not going to act on; doc 11 §6.1 step 6 tells them to open
+    /// every alert, and "there are more" is what says they have not finished.
+    /// <para>
+    /// <c>AdminAlertsPlanTests</c> holds both halves of that measurement, including the count that does
+    /// not seek — because the obvious, readable change is to add one back.
+    /// </para>
+    /// </remarks>
     /// <param name="alertTypes">
     /// The types the caller may see. An empty list means "nothing", not "no filter".
     /// </param>
-    /// <param name="take">How many rows to return; the count covers all of them.</param>
-    Task<(int TotalOpen, IReadOnlyList<AdminAlertRow> Alerts)> GetOpenAsync(
+    /// <param name="take">How many rows to return at most.</param>
+    Task<(bool MoreThanTake, IReadOnlyList<AdminAlertRow> Alerts)> GetOpenAsync(
         IReadOnlyList<string> alertTypes,
         int take,
         CancellationToken cancellationToken);

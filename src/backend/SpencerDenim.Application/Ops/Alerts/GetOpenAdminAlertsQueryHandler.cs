@@ -49,15 +49,15 @@ internal sealed class GetOpenAdminAlertsQueryHandler(
         {
             // Most staff. Answered without touching the database, because there is no set of rows that
             // could be the right answer for somebody R10 gives no path to.
-            return new AdminAlertBannerDto(0, []);
+            return new AdminAlertBannerDto(false, []);
         }
 
-        var (totalOpen, rows) = await reader.GetOpenAsync(
+        var (moreThanShown, rows) = await reader.GetOpenAsync(
             visibleTypes,
             GetOpenAdminAlertsQuery.MaxAlerts,
             cancellationToken);
 
-        return new AdminAlertBannerDto(totalOpen, [.. rows.Select(ToDto)]);
+        return new AdminAlertBannerDto(moreThanShown, [.. rows.Select(ToDto)]);
     }
 
     private static AdminAlertDto ToDto(AdminAlertRow row)

@@ -1,6 +1,7 @@
 using System.Data;
 using System.Data.Common;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using SpencerDenim.Application.Ops.Email.Abstractions;
 using SpencerDenim.Domain.Ops;
 using SpencerDenim.Infrastructure.Persistence;
@@ -60,6 +61,33 @@ internal sealed class EmailOutboxStore(AppDbContext dbContext) : IEmailOutboxSto
     /// message is never going out, and whoever reads the row has to know that rather than wait for a
     /// retry that will not come.
     /// </summary>
+    /// <summary>
+    /// The statement <see cref="KillStrandedExhaustedAsync"/> sends, verbatim.
+    /// </summary>
+    /// <remarks>
+    /// <b>A field rather than a literal inside the method, because it is the only way this statement's
+    /// text can be tested.</b> It runs as a raw <see cref="DbCommand"/> on EF's connection — it has to,
+    /// in order to read its own <c>OUTPUT</c> rows — and an EF <c>DbCommandInterceptor</c> never sees a
+    /// command EF did not create, so the trick <c>EmailOutboxPlanTests</c> uses to capture the requeue's
+    /// SQL cannot capture this one. <c>AdminAlertsPlanTests</c>' sibling in that file reads this field and
+    /// builds its plan probe from it, so the probe and the statement cannot drift: a developer moving a
+    /// status into a parameter — the ordinary, readable change, and exactly how W3-06 shipped the requeue
+    /// — makes those tests red instead of costing 20,101 logical reads a sweep in silence.
+    /// </remarks>
+    internal static readonly string KillStrandedExhaustedSql =
+        $"""
+        UPDATE ops.EmailOutbox
+           SET Status = {(byte)EmailOutboxStatus.Dead},
+               LockedUntilUtc = NULL,
+               LastError = @failure,
+               TransportOverrideProtected = NULL
+        OUTPUT inserted.Id
+         WHERE Status = {(byte)EmailOutboxStatus.Sending}
+           AND LockedUntilUtc IS NOT NULL
+           AND LockedUntilUtc < @now
+           AND AttemptCount >= MaxAttempts;
+        """;
+
     internal const string LeaseExpiredExhaustedError =
         "A sender claimed this message on its last attempt and did not finish — the process stopped, or "
         + "it lost its database connection. The attempt was counted, no attempt is left, and the message "
@@ -144,19 +172,15 @@ internal sealed class EmailOutboxStore(AppDbContext dbContext) : IEmailOutboxSto
         {
             await using var command = connection.CreateCommand();
 
-            command.CommandText =
-                $"""
-                UPDATE ops.EmailOutbox
-                   SET Status = {(byte)EmailOutboxStatus.Dead},
-                       LockedUntilUtc = NULL,
-                       LastError = @failure,
-                       TransportOverrideProtected = NULL
-                OUTPUT inserted.Id
-                 WHERE Status = {(byte)EmailOutboxStatus.Sending}
-                   AND LockedUntilUtc IS NOT NULL
-                   AND LockedUntilUtc < @now
-                   AND AttemptCount >= MaxAttempts;
-                """;
+            // **The ambient transaction, if the caller has one.** A raw `DbCommand` on EF's connection
+            // does not pick one up: `SqlCommand` refuses outright — "BeginExecuteReader requires the
+            // command to have a transaction when the connection assigned to the command is in a pending
+            // local transaction" — so a sweep that ever ran inside one would throw rather than quietly
+            // escape it. Nothing in production opens a transaction around this statement; the plan test
+            // that captures its SQL inside a rolled-back transaction is what found it.
+            command.Transaction = dbContext.Database.CurrentTransaction?.GetDbTransaction();
+
+            command.CommandText = KillStrandedExhaustedSql;
 
             AddParameter(command, "@now", nowUtc);
             AddParameter(command, "@failure", LeaseExpiredExhaustedError);
@@ -307,6 +331,12 @@ internal sealed class EmailOutboxStore(AppDbContext dbContext) : IEmailOutboxSto
         try
         {
             await using var command = connection.CreateCommand();
+
+            // See KillStrandedExhaustedOnceAsync: the same two lines, for the same reason. The claim has
+            // never been called inside a transaction either, and a raw command that silently ran outside
+            // one would be a worse failure here than there — it would claim messages a rolled-back
+            // transaction had decided not to send.
+            command.Transaction = dbContext.Database.CurrentTransaction?.GetDbTransaction();
 
             command.CommandText =
                 $"""

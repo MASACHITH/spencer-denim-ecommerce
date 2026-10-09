@@ -45,6 +45,11 @@ public sealed class EmailOutboxPlanTests(SqlServerDatabaseFixture sqlServer)
     /// The crashed-lease recovery statement's shape seeks <c>IX_EmailOutbox_Stuck</c> — the optimiser
     /// does not list it among the indexes it had to reject.
     /// </summary>
+    /// <remarks>
+    /// <b>W3-07 split this statement in two</b> (the kill reports which rows it killed, so doc 11 §4 can
+    /// raise an alert for each; the requeue only has to report how many), and both halves keep the same
+    /// predicate on <c>Status</c> and <c>LockedUntilUtc</c>. This probe is the requeue.
+    /// </remarks>
     [Fact]
     public async Task The_recovery_statements_shape_seeks_the_stuck_index()
     {
@@ -55,16 +60,44 @@ public sealed class EmailOutboxPlanTests(SqlServerDatabaseFixture sqlServer)
             DECLARE @now datetime2(3) = SYSUTCDATETIME();
 
             UPDATE ops.EmailOutbox
-               SET Status = CASE
-                              WHEN AttemptCount >= MaxAttempts THEN {Literal(EmailOutboxStatus.Dead)}
-                              ELSE {Literal(EmailOutboxStatus.Failed)}
-                            END,
+               SET Status = {Literal(EmailOutboxStatus.Failed)},
                    LockedUntilUtc = NULL,
                    NextAttemptAtUtc = @now,
                    LastError = N'probe'
              WHERE Status = {Literal(EmailOutboxStatus.Sending)}
                AND LockedUntilUtc IS NOT NULL
-               AND LockedUntilUtc < @now;
+               AND LockedUntilUtc < @now
+               AND AttemptCount < MaxAttempts;
+            """);
+
+        Assert.Contains(StuckIndex, plan.UsedIndexes);
+        Assert.DoesNotContain(StuckIndex, plan.UnmatchedIndexes);
+    }
+
+    /// <summary>
+    /// And so does the statement that kills a stranded final attempt (W3-07) — the one whose
+    /// <c>OUTPUT</c> an <c>EmailDeliveryFailed</c> alert is raised from.
+    /// </summary>
+    /// <remarks>
+    /// It runs every sweep for ever, like the requeue beside it, so the same measurement applies: with a
+    /// parameterised status this would scan a table full of <c>nvarchar(max)</c> bodies instead of seeking
+    /// an index that is almost always empty.
+    /// </remarks>
+    [Fact]
+    public async Task The_kill_statements_shape_seeks_the_stuck_index()
+    {
+        sqlServer.SkipIfUnavailable();
+
+        // **The statement itself, not a copy of it.** The two parameters it takes are declared in front
+        // of it so the batch can be given to SHOWPLAN_XML; everything the optimiser reads — the
+        // predicate, the statuses, the OUTPUT clause — is the text `EmailOutboxStore` really sends.
+        // A copy here would go green on its own while the real statement scanned the table.
+        var plan = await PlanForAsync(
+            $"""
+            DECLARE @now datetime2(3) = SYSUTCDATETIME();
+            DECLARE @failure nvarchar(2000) = N'probe';
+
+            {EmailOutboxStore.KillStrandedExhaustedSql}
             """);
 
         Assert.Contains(StuckIndex, plan.UsedIndexes);
@@ -133,8 +166,35 @@ public sealed class EmailOutboxPlanTests(SqlServerDatabaseFixture sqlServer)
 
         // The predicate's status is what decides whether the filtered index can be matched.
         Assert.Contains($"Status = {Literal(EmailOutboxStatus.Sending)}", sql, StringComparison.Ordinal);
-        Assert.Contains($"THEN {Literal(EmailOutboxStatus.Dead)}", sql, StringComparison.Ordinal);
-        Assert.Contains($"ELSE {Literal(EmailOutboxStatus.Failed)}", sql, StringComparison.Ordinal);
+        Assert.Contains($"SET Status = {Literal(EmailOutboxStatus.Failed)}", sql, StringComparison.Ordinal);
+
+        // W3-07: the requeue no longer kills anything, so it carries no Dead branch at all — and it has
+        // to say so, or an exhausted row would be put back on a ladder it has run out of.
+        Assert.Contains("AttemptCount < MaxAttempts", sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("CASE", sql, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// And the kill statement <see cref="EmailOutboxStore.KillStrandedExhaustedAsync"/> really sends
+    /// writes its statuses as literals too, and reads back the ids an alert is raised from.
+    /// </summary>
+    /// <remarks>
+    /// <b>The <c>OUTPUT</c> clause is asserted as well as the literals.</b> It is the whole reason this
+    /// statement exists separately (doc 11 §4, G-37): a kill that reported only a count would leave a
+    /// dead message with no alert and nobody told, which is the defect the statement was split to fix.
+    /// Removing it is the ordinary, readable simplification, and it would leave every other test here
+    /// green.
+    /// </remarks>
+    [Fact]
+    public void The_kill_statement_writes_its_statuses_as_literals_and_outputs_the_ids()
+    {
+        var sql = EmailOutboxStore.KillStrandedExhaustedSql;
+
+        Assert.Contains($"Status = {Literal(EmailOutboxStatus.Sending)}", sql, StringComparison.Ordinal);
+        Assert.Contains($"SET Status = {Literal(EmailOutboxStatus.Dead)}", sql, StringComparison.Ordinal);
+        Assert.Contains("AttemptCount >= MaxAttempts", sql, StringComparison.Ordinal);
+        Assert.Contains("OUTPUT inserted.Id", sql, StringComparison.Ordinal);
+        Assert.Contains("TransportOverrideProtected = NULL", sql, StringComparison.Ordinal);
     }
 
     /// <summary>

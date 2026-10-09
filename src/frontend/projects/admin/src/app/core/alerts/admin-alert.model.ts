@@ -24,9 +24,17 @@ export interface AdminAlert {
   readonly orderNumber: string | null;
 }
 
-/** The banner's payload: what this user may see, and how many there are in all. */
+/** The banner's payload: what this user may see, newest first, and whether there are more. */
 export interface AdminAlertBanner {
-  readonly totalOpen: number;
+  /**
+   * True when this user has more open alerts than `alerts` holds.
+   *
+   * **A flag and not a total, for a measured reason.** A `COUNT(*)` over the same predicate cannot use
+   * `IX_AdminAlerts_Open`: 5,020 logical reads against the list's 38, on 20,000 alerts, on every admin
+   * page load (see `IAdminAlertReader` and `AdminAlertsPlanTests`). Doc 11 §6.1 step 6 tells a Super
+   * Admin to open every alert, and this is what says whether they have finished.
+   */
+  readonly moreThanShown: boolean;
   readonly alerts: AdminAlert[];
 }
 

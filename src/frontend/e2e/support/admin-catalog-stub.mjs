@@ -1158,7 +1158,13 @@ const server = createServer(async (request, response) => {
     // `AdminAlertVisibilityEndpointTests` and against the rule itself in `AdminAlertVisibilityTests`.
     const open = state.alerts.filter((alert) => alert.acknowledgedAtUtc === undefined);
 
-    return json(response, 200, { totalOpen: open.length, alerts: open.slice(0, 10) });
+    // The real reader asks for one row more than the cap and answers "are there more" from the extra
+    // row, because a COUNT(*) over the same predicate cannot use IX_AdminAlerts_Open (5,020 logical
+    // reads against 38 on 20,000 alerts). The stub answers the same shape.
+    return json(response, 200, {
+      moreThanShown: open.length > 10,
+      alerts: open.slice(0, 10),
+    });
   }
 
   const acknowledge = path.match(/^\/api\/admin\/alerts\/(\d+)\/acknowledge$/);

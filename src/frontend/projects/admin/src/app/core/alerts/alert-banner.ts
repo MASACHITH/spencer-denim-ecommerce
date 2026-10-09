@@ -232,7 +232,7 @@ export class AlertBanner {
   private readonly outcomeMessages = viewChildren<ElementRef<HTMLElement>>('outcomeMessage');
 
   protected readonly alerts = signal<AdminAlert[]>([]);
-  protected readonly totalOpen = signal(0);
+  protected readonly moreThanShown = signal(false);
   protected readonly cleared = signal<Map<number, Cleared>>(new Map());
   protected readonly failure = signal<Map<number, string>>(new Map());
 
@@ -263,13 +263,13 @@ export class AlertBanner {
 
   protected heading(): string {
     const shown = this.alerts().length;
-    const total = this.totalOpen();
 
-    if (total > shown) {
-      return `${total} alerts need attention · showing the ${shown} newest`;
-    }
+    const count = shown === 1 ? '1 alert needs attention' : `${shown} alerts need attention`;
 
-    return total === 1 ? '1 alert needs attention' : `${total} alerts need attention`;
+    // "And more are waiting" rather than a number: the API cannot give an exact total without a second
+    // statement that scans the table (see `AdminAlertBanner.moreThanShown`). It still says the one thing
+    // doc 11 §6.1 step 6 needs it to — that there is more to open after these.
+    return this.moreThanShown() ? `${count} · more are waiting after these` : count;
   }
 
   protected severityOf(alert: AdminAlert): string {
@@ -370,14 +370,14 @@ export class AlertBanner {
       .subscribe({
         next: (banner) => {
           this.alerts.set(banner.alerts);
-          this.totalOpen.set(banner.totalOpen);
+          this.moreThanShown.set(banner.moreThanShown);
           this.cleared.set(new Map());
           this.failure.set(new Map());
           this.notes.clear();
         },
         error: () => {
           this.alerts.set([]);
-          this.totalOpen.set(0);
+          this.moreThanShown.set(false);
         },
       });
   }

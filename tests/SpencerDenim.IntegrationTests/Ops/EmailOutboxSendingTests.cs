@@ -375,12 +375,18 @@ public sealed class EmailOutboxSendingTests(SqlServerDatabaseFixture sqlServer)
     }
 
     /// <summary>
-    /// A stranded row with no attempt left goes straight to <c>Dead</c> rather than back on the ladder.
+    /// A stranded row with no attempt left goes straight to <c>Dead</c> rather than back on the ladder,
+    /// <b>and its id is reported</b> so doc 11 §4 (G-37) can raise an alert for it.
     /// </summary>
     /// <remarks>
-    /// The <c>CASE</c> in <c>ReleaseExpiredLeasesAsync</c> is what does this, and without it the row would
-    /// be reclaimed at once — its next attempt time is already past — and spend a seventh attempt on a
-    /// six-rung ladder before the failure path noticed.
+    /// <b>This was a <c>CASE</c> inside <c>ReleaseExpiredLeasesAsync</c> until W3-07, and the id is why
+    /// it is not any more.</b> The behaviour was already right — without it the row would be reclaimed at
+    /// once, its next attempt time being already past, and spend a seventh attempt on a six-rung ladder
+    /// before the failure path noticed — but one statement with a <c>CASE</c> could only answer how many
+    /// rows it touched. Doc 11 §4 requires every row that reaches <c>Dead</c> to raise an
+    /// <c>EmailDeliveryFailed</c> alert naming <i>which</i> message it was, and this is the one path to
+    /// <c>Dead</c> that the failure handler never sees. So a sender that died on a message's final
+    /// attempt produced a dead row that nobody was told about at all.
     /// </remarks>
     [Fact]
     public async Task A_stranded_row_with_no_attempt_left_is_killed_rather_than_requeued()
@@ -390,11 +396,87 @@ public sealed class EmailOutboxSendingTests(SqlServerDatabaseFixture sqlServer)
         var id = await InsertAsync(
             status: EmailOutboxStatus.Sending,
             attemptCount: EmailBackoff.MaxAttempts,
+            lockedUntilUtc: Now.AddMinutes(-1),
+            transportOverrideProtected: "ciphertext-from-a-dual-send");
+
+        var killed = await KillStrandedAsync();
+
+        Assert.Equal([id], killed);
+
+        var row = await RowAsync(id);
+        Assert.Equal(EmailOutboxStatus.Dead, row.Status);
+        Assert.Null(row.LockedUntilUtc);
+        Assert.Contains("no attempt is left", row.LastError!, StringComparison.Ordinal);
+
+        // Doc 08 §3.8 R5: the transport override is cleared on any terminal status, Dead included.
+        Assert.Null(row.TransportOverrideProtected);
+
+        // And the release that follows it in the sweep leaves the dead row alone.
+        await ReleaseAsync();
+        Assert.Equal(EmailOutboxStatus.Dead, (await RowAsync(id)).Status);
+    }
+
+    /// <summary>
+    /// The kill touches nothing else: a live lease, a stranded row that still has attempts, and a row
+    /// that is not <c>Sending</c> at all.
+    /// </summary>
+    /// <remarks>
+    /// <b>The second clause is the one that matters to a shopper.</b> A row with attempts left belongs on
+    /// the ladder, and a kill one predicate too wide would turn every container restart into a pile of
+    /// dead bank-transfer instructions and a banner per customer — while the emails themselves would
+    /// have gone out fine on the next sweep.
+    /// </remarks>
+    [Fact]
+    public async Task The_kill_leaves_every_row_that_is_not_a_stranded_final_attempt()
+    {
+        await ResetAsync();
+
+        var live = await InsertAsync(
+            status: EmailOutboxStatus.Sending,
+            attemptCount: EmailBackoff.MaxAttempts,
+            lockedUntilUtc: Now.AddMinutes(1));
+
+        var hasAttemptsLeft = await InsertAsync(
+            status: EmailOutboxStatus.Sending,
+            attemptCount: (short)(EmailBackoff.MaxAttempts - 1),
             lockedUntilUtc: Now.AddMinutes(-1));
 
-        await ReleaseAsync();
+        var pending = await InsertAsync(status: EmailOutboxStatus.Pending, attemptCount: 0);
 
-        Assert.Equal(EmailOutboxStatus.Dead, (await RowAsync(id)).Status);
+        Assert.Empty(await KillStrandedAsync());
+
+        Assert.Equal(EmailOutboxStatus.Sending, (await RowAsync(live)).Status);
+        Assert.Equal(EmailOutboxStatus.Sending, (await RowAsync(hasAttemptsLeft)).Status);
+        Assert.Equal(EmailOutboxStatus.Pending, (await RowAsync(pending)).Status);
+
+        // The release is what takes the one with attempts left, and it puts it back on the ladder.
+        await ReleaseAsync();
+        Assert.Equal(EmailOutboxStatus.Failed, (await RowAsync(hasAttemptsLeft)).Status);
+    }
+
+    /// <summary>
+    /// Two senders racing to kill one stranded row: exactly one of them is told about it.
+    /// </summary>
+    /// <remarks>
+    /// The ids are what an alert is raised from, so a row reported twice would be a banner raised twice
+    /// for one customer. The statement is conditional on <c>Status = Sending</c>, so the loser's
+    /// <c>UPDATE</c> matches nothing and its <c>OUTPUT</c> is empty.
+    /// </remarks>
+    [Fact]
+    public async Task A_stranded_row_is_reported_to_exactly_one_sender()
+    {
+        await ResetAsync();
+
+        var id = await InsertAsync(
+            status: EmailOutboxStatus.Sending,
+            attemptCount: EmailBackoff.MaxAttempts,
+            lockedUntilUtc: Now.AddMinutes(-1));
+
+        var first = await KillStrandedAsync();
+        var second = await KillStrandedAsync();
+
+        Assert.Equal([id], first);
+        Assert.Empty(second);
     }
 
     /// <summary>
@@ -565,6 +647,14 @@ public sealed class EmailOutboxSendingTests(SqlServerDatabaseFixture sqlServer)
 
         return await scope.ServiceProvider.GetRequiredService<IEmailOutboxStore>()
             .MarkFailedAsync(claim, failure, nowUtc ?? Now, Token);
+    }
+
+    private async Task<IReadOnlyList<long>> KillStrandedAsync(DateTime? nowUtc = null)
+    {
+        using var scope = SqlServer.CreateScope();
+
+        return await scope.ServiceProvider.GetRequiredService<IEmailOutboxStore>()
+            .KillStrandedExhaustedAsync(nowUtc ?? Now, Token);
     }
 
     private async Task<int> ReleaseAsync(DateTime? nowUtc = null)

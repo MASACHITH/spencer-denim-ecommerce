@@ -31,7 +31,7 @@ describe('AdminAlertsApi', () => {
     expect(request.request.params.keys()).toHaveLength(0);
 
     request.flush({
-      totalOpen: 1,
+      moreThanShown: false,
       alerts: [
         {
           id: 7,
@@ -47,7 +47,7 @@ describe('AdminAlertsApi', () => {
       ],
     });
 
-    expect(received!.totalOpen).toBe(1);
+    expect(received!.moreThanShown).toBe(false);
     expect(received!.alerts[0].orderNumber).toBe('SD-2026-000123');
   });
 

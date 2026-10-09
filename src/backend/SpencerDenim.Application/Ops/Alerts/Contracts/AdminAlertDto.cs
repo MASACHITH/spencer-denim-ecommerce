@@ -45,12 +45,18 @@ public sealed record AdminAlertDto(
     string? OrderNumber);
 
 /// <summary>
-/// What the banner needs for one load: the open alerts this user may see, newest first, and how many
-/// there are in all.
+/// What the banner needs for one load: the open alerts this user may see, newest first, and whether there
+/// are more than it is showing.
 /// </summary>
-/// <param name="TotalOpen">
-/// Every open alert this user may see (R10), not just the ones in <paramref name="Alerts"/> — so a banner
-/// showing the first few can say so instead of quietly hiding the rest.
+/// <param name="MoreThanShown">
+/// True when this user has more open alerts than <paramref name="Alerts"/> holds — so a banner showing
+/// the newest few says so instead of quietly hiding the rest.
+/// <para>
+/// <b>A flag and not a total, and the reason is measured.</b> A <c>COUNT(*)</c> over the same predicate
+/// cannot use <c>IX_AdminAlerts_Open</c>: 5,020 logical reads against the list's 38, on 20,000 alerts,
+/// on every admin page load. See <c>IAdminAlertReader</c>. What is lost is a precise number nobody acts
+/// on; doc 11 §6.1 step 6 says to open every alert, and this says whether they have finished.
+/// </para>
 /// </param>
 /// <param name="Alerts">At most <c>GetOpenAdminAlertsQuery.MaxAlerts</c> of them.</param>
-public sealed record AdminAlertBannerDto(int TotalOpen, IReadOnlyList<AdminAlertDto> Alerts);
+public sealed record AdminAlertBannerDto(bool MoreThanShown, IReadOnlyList<AdminAlertDto> Alerts);

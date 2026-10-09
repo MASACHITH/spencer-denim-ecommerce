@@ -84,7 +84,7 @@ public sealed class AdminAlertHandlerTests
 
         var banner = await handler.HandleAsync(new GetOpenAdminAlertsQuery(42), Token);
 
-        Assert.Equal(0, banner.TotalOpen);
+        Assert.False(banner.MoreThanShown);
         Assert.Empty(banner.Alerts);
         Assert.Equal(0, reader.Calls);
     }
@@ -166,16 +166,30 @@ public sealed class AdminAlertHandlerTests
         Assert.Equal(OrderPublicId, banner.Alerts[1].OrderPublicId);
     }
 
+    /// <summary>
+    /// "There are more" is the reader's answer and is passed through, not inferred from the page length.
+    /// </summary>
+    /// <remarks>
+    /// The handler cannot work it out for itself — it does not know the cap the reader was given — and
+    /// inferring it from <c>rows.Count == MaxAlerts</c> would be wrong in the one case that matters:
+    /// exactly ten open alerts and no more.
+    /// </remarks>
     [Fact]
-    public async Task The_total_is_the_readers_and_not_the_page_length()
+    public async Task Whether_there_are_more_is_the_readers_answer_and_is_passed_through()
     {
-        var reader = new FakeReader([Row(null)]) { Total = 57 };
-        var handler = new GetOpenAdminAlertsQueryHandler(Permissions(grantsAll: true), reader);
+        var more = new FakeReader([Row(null)]) { MoreThanTake = true };
+        var handler = new GetOpenAdminAlertsQueryHandler(Permissions(grantsAll: true), more);
 
         var banner = await handler.HandleAsync(new GetOpenAdminAlertsQuery(42), Token);
 
-        Assert.Equal(57, banner.TotalOpen);
+        Assert.True(banner.MoreThanShown);
         Assert.Single(banner.Alerts);
+
+        var exactly = new FakeReader([Row(null)]);
+        banner = await new GetOpenAdminAlertsQueryHandler(Permissions(grantsAll: true), exactly)
+            .HandleAsync(new GetOpenAdminAlertsQuery(42), Token);
+
+        Assert.False(banner.MoreThanShown);
     }
 
     // ------------------------------------------------------------ the acknowledge
@@ -348,9 +362,9 @@ public sealed class AdminAlertHandlerTests
 
         public int AskedTake { get; private set; }
 
-        public int? Total { get; init; }
+        public bool MoreThanTake { get; init; }
 
-        public Task<(int TotalOpen, IReadOnlyList<AdminAlertRow> Alerts)> GetOpenAsync(
+        public Task<(bool MoreThanTake, IReadOnlyList<AdminAlertRow> Alerts)> GetOpenAsync(
             IReadOnlyList<string> alertTypes,
             int take,
             CancellationToken cancellationToken)
@@ -359,7 +373,7 @@ public sealed class AdminAlertHandlerTests
             AskedFor = alertTypes;
             AskedTake = take;
 
-            return Task.FromResult((Total ?? rows.Count, rows));
+            return Task.FromResult((MoreThanTake, rows));
         }
     }
 
