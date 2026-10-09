@@ -17,7 +17,7 @@ const progressData = {
     endDate: "2026-10-15"
   },
 
-  lastUpdated: "2026-10-08",
+  lastUpdated: "2026-10-09",
 
   milestones: [
     { week: "Week 0", title: "Setup & design", start: "2026-09-15", end: "2026-09-18" },
@@ -92,7 +92,7 @@ const progressData = {
       features: [
         { name: "Register & login", status: "planned", progress: 0 },
         { name: "Order history with tracking", status: "planned", progress: 0 },
-        { name: "Order & shipping emails", status: "planned", progress: 0 }
+        { name: "Order & shipping emails", status: "done", progress: 100 }
       ]
     },
     {
@@ -126,6 +126,11 @@ const progressData = {
 
   // Newest first.
   updates: [
+    {
+      date: "2026-10-09",
+      title: "Your customers will now be emailed at every step of their order",
+      text: "This was the biggest thing still missing, and it is worth explaining why. Until today a customer could place an order, see their bank details and reference number on the screen, and then receive nothing at all. If they closed that page, the details they needed in order to pay you were gone. Six emails are now built and tested. When they order, they get a confirmation listing what they bought. Separately they get the payment instructions: your bank, branch, account name and account number, the exact amount, the order number they must quote as the reference, the deadline, and a link back to their order where they can upload a photograph of the transfer slip. When you approve their payment, they are told. If they do not pay in time and the order expires, they are told. If the order is cancelled, they are told. And when you post it, they get the courier name and a link that takes them straight to the courier's tracking page. One point to be clear about: none of these will actually be sent until you give us the email account the shop should send from, which comes with your hosting. Everything is queued and waiting, and nothing is lost in the meantime \u2014 the moment that account is set up, the emails start going out.",
+    },
     {
       date: "2026-10-08",
       title: "An order can now be cancelled, which puts the stock straight back on sale",
