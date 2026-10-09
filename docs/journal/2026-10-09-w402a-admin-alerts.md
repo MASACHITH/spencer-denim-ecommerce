@@ -424,9 +424,14 @@ newer one, and the fixture drops its database on dispose rather than on a kill. 
 `The_banners_read_sends_its_alert_types_as_literals` asserted `DoesNotContain("DECLARE @")` — "no
 parameters" — and the query has one parameter it is *supposed* to have: `DECLARE @p int = 11` for
 `SELECT TOP(@p)`, the cap plus the extra row `moreThanShown` is read from. The claim I wanted was "no
-parameter **for the alert types**", which EF names `@types1 … @types7`, so the assertion is now on
-`@types` and the paging parameter is asserted *positively* instead — it pins the one-row-more read in the
-SQL, which is invisible in the LINQ.
+parameter **for the alert types**", so the assertion is now on that and the paging parameter is asserted
+*positively* instead — it pins the one-row-more read in the SQL, which is invisible in the LINQ.
+
+**And I got the parameter's name wrong in the fix**, which the tester caught: EF names a captured
+collection's elements after the variable, so the text is `@alertTypes1 … @alertTypes7` and my
+`DoesNotContain("@types")` could not have failed for the shape it was written for. It asserts
+`@alertTypes` now. Two guards in a row on the same line, both inert — which is why the `OPENJSON` claim
+underneath them survived three corrections.
 
 **It had been red since I rewrote it**, and I had not noticed because the only run I made of it in between
 was with a mutation applied, where it was *expected* to fail. A filtered re-run of the unmutated version
