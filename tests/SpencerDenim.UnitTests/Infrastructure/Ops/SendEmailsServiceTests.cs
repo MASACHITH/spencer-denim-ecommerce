@@ -167,13 +167,21 @@ public sealed class SendEmailsServiceTests
     }
 
     /// <summary>
-    /// Expired leases are released before anything is claimed.
+    /// Stranded exhausted rows are killed, then expired leases are released, then anything is claimed.
     /// </summary>
     /// <remarks>
-    /// The order is the assertion. A sweep that claimed first and released afterwards would leave a
-    /// crashed sender's batch waiting a whole interval longer for no reason, and — more to the point —
-    /// the release is what puts those rows back inside <c>IX_EmailOutbox_Due</c>'s filter, so claiming
-    /// first means they cannot be in the batch that is about to be sent.
+    /// The order is the assertion, and each step of it is a different defect.
+    /// <para>
+    /// <b>The release is before the claim</b> because a sweep that claimed first would leave a crashed
+    /// sender's batch waiting a whole interval longer for no reason — the release is what puts those rows
+    /// back inside <c>IX_EmailOutbox_Due</c>'s filter, so claiming first means they cannot be in the batch
+    /// about to be sent.
+    /// </para>
+    /// <para>
+    /// <b>The kill is before the release</b> (W4-02a) because a message on its final attempt whose sender
+    /// died must not be requeued: its <c>NextAttemptAtUtc</c> is already in the past, so it would be
+    /// reclaimed at once and spend a seventh attempt on a six-rung ladder before the failure path noticed.
+    /// </para>
     /// </remarks>
     [Fact]
     public async Task Expired_leases_are_released_before_the_claim()
@@ -183,7 +191,7 @@ public sealed class SendEmailsServiceTests
 
         await SweepAsync(store, new FakeTransport());
 
-        Assert.Equal(["release", "claim"], store.Calls);
+        Assert.Equal(["kill", "release", "claim"], store.Calls);
     }
 
     /// <summary>
@@ -277,11 +285,18 @@ public sealed class SendEmailsServiceTests
     private static async Task SweepAsync(FakeStore store, FakeTransport transport) =>
         await SweepAsync(store, (IEmailTransport)transport);
 
-    private static async Task SweepAsync(IEmailOutboxStore store, IEmailTransport transport)
+    private static async Task SweepAsync(FakeStore store, FakeTransport transport, FakeAlerts alerts) =>
+        await SweepAsync(store, (IEmailTransport)transport, alerts);
+
+    private static async Task SweepAsync(
+        IEmailOutboxStore store,
+        IEmailTransport transport,
+        IDeadEmailAlerts? alerts = null)
     {
         var services = new ServiceCollection();
         services.AddSingleton(store);
         services.AddSingleton(transport);
+        services.AddSingleton(alerts ?? new FakeAlerts());
 
         await using var provider = services.BuildServiceProvider();
 
@@ -352,6 +367,161 @@ public sealed class SendEmailsServiceTests
     }
 
     /// <summary>
+    /// <b>A message that runs out of ladder raises the <c>EmailDeliveryFailed</c> alert</b> (doc 11 §4,
+    /// §7 G-37) — the hole this whole task exists to close.
+    /// </summary>
+    /// <remarks>
+    /// Before W4-02a the sweep logged an <c>Error</c> and that was the entire signal, so a customer who
+    /// never got their bank transfer instructions simply waited and nobody was told.
+    /// </remarks>
+    [Fact]
+    public async Task A_message_that_runs_out_of_ladder_raises_the_dead_email_alert()
+    {
+        var store = new FakeStore();
+        store.Queue.Add(Claim(41, attemptCount: EmailBackoff.MaxAttempts));
+
+        var alerts = new FakeAlerts();
+
+        await SweepAsync(store, new FakeTransport { Throw = new InvalidOperationException("550") }, alerts);
+
+        Assert.Equal([41], alerts.Raised);
+    }
+
+    /// <summary>
+    /// <b>And a message that still has an attempt left raises none.</b>
+    /// </summary>
+    /// <remarks>
+    /// The other half of the same rule, and the one that would hurt a shopper if it were wrong: a banner
+    /// telling a Super Admin to telephone a customer whose email is going out in five minutes' time is
+    /// worse than no banner.
+    /// </remarks>
+    [Fact]
+    public async Task A_message_that_will_be_retried_raises_no_alert()
+    {
+        var store = new FakeStore();
+        store.Queue.Add(Claim(41, attemptCount: 1));
+
+        var alerts = new FakeAlerts();
+
+        await SweepAsync(store, new FakeTransport { Throw = new InvalidOperationException("550") }, alerts);
+
+        Assert.Empty(alerts.Raised);
+    }
+
+    [Fact]
+    public async Task A_message_that_sends_raises_no_alert()
+    {
+        var store = new FakeStore();
+        store.Queue.Add(Claim(41, attemptCount: 1));
+
+        var alerts = new FakeAlerts();
+
+        await SweepAsync(store, new FakeTransport(), alerts);
+
+        Assert.Empty(alerts.Raised);
+        Assert.Single(store.Sent);
+    }
+
+    /// <summary>
+    /// <b>The second way a row reaches <c>Dead</c> raises the alert too.</b>
+    /// </summary>
+    /// <remarks>
+    /// A sender that died holding its lease on a message's <i>final</i> attempt is killed by
+    /// <c>KillStrandedExhaustedAsync</c>, not by the failure handler — so until W4-02a that row went Dead
+    /// with nobody told at all, not even by a log line about a dead message. It is the one path to Dead
+    /// that is invisible from <c>SendOneAsync</c>.
+    /// </remarks>
+    [Fact]
+    public async Task A_stranded_message_on_its_final_attempt_raises_the_alert_too()
+    {
+        var store = new FakeStore { StrandedExhausted = [77, 78] };
+        var alerts = new FakeAlerts();
+
+        await SweepAsync(store, new FakeTransport(), alerts);
+
+        Assert.Equal([77, 78], alerts.Raised);
+    }
+
+    /// <summary>
+    /// The exhausted rows are killed <b>before</b> the requeue, and the order is asserted.
+    /// </summary>
+    /// <remarks>
+    /// If the requeue ran first, a message on its final attempt would go back to <c>Failed</c> with an
+    /// attempt time already in the past, be reclaimed at once, and spend a seventh attempt on a six-rung
+    /// ladder before the failure path noticed — and the alert would then name an attempt that never
+    /// happened.
+    /// </remarks>
+    [Fact]
+    public async Task The_kill_runs_before_the_requeue()
+    {
+        var store = new FakeStore { StrandedExhausted = [77] };
+
+        await SweepAsync(store, new FakeTransport(), new FakeAlerts());
+
+        Assert.Equal(["kill", "release", "claim"], store.Calls);
+    }
+
+    /// <summary>
+    /// <b>An alert that cannot be written does not stop the batch.</b>
+    /// </summary>
+    /// <remarks>
+    /// Nineteen other customers' messages are in the same claim, and an alert nobody could record must not
+    /// be the reason they wait another sweep. The sweep still reports its counts, so the failure is one
+    /// message's and not the job's.
+    /// </remarks>
+    [Fact]
+    public async Task An_alert_that_cannot_be_raised_does_not_stop_the_sweep()
+    {
+        var store = new FakeStore();
+        store.Queue.Add(Claim(41, attemptCount: EmailBackoff.MaxAttempts));
+        store.Queue.Add(Claim(42, attemptCount: 1));
+
+        var alerts = new FakeAlerts { Throw = new InvalidOperationException("the alert table is gone") };
+
+        await SweepAsync(
+            store,
+            new FakeTransport { ThrowForEmail = "dead@example.com" },
+            alerts);
+
+        // The dead one was asked for, threw, and the next message still went out.
+        Assert.Equal([41], alerts.Raised);
+        Assert.Equal([42], store.Sent.Select(sent => sent.Id));
+    }
+
+    /// <summary>
+    /// With no SMTP configured nothing is killed, nothing is requeued and no alert is raised.
+    /// </summary>
+    /// <remarks>
+    /// The state the shop is actually in. The queue is left exactly as it was found, which is what stops
+    /// the deploy that has no mail credentials raising a banner per queued message five hours later.
+    /// </remarks>
+    [Fact]
+    public async Task With_no_smtp_configured_no_alert_is_raised()
+    {
+        var store = new FakeStore { DueCount = 3, StrandedExhausted = [77] };
+        var alerts = new FakeAlerts();
+
+        await SweepAsync(store, new FakeTransport { IsConfigured = false }, alerts);
+
+        Assert.Empty(alerts.Raised);
+        Assert.Equal(0, store.KillCalls);
+        Assert.Equal(0, store.ReleaseCalls);
+    }
+
+    /// <summary>A claim shaped like the ones the real statement returns.</summary>
+    private static EmailOutboxClaim Claim(long id, short attemptCount) => new(
+        id,
+        EmailTemplateCodes.BankTransferInstructions,
+        attemptCount >= EmailBackoff.MaxAttempts ? "dead@example.com" : "live@example.com",
+        "Nimali Perera",
+        "How to pay for order SD-2026-000123",
+        "<p>body</p>",
+        "body",
+        attemptCount,
+        EmailBackoff.MaxAttempts,
+        "44444444-4444-4444-8444-444444444444");
+
+    /// <summary>
     /// A transport that records and never connects. <b>It has no address book and no socket</b>, which is
     /// what makes "no test sends to a real address" a property of the code rather than of care.
     /// </summary>
@@ -382,6 +552,34 @@ public sealed class SendEmailsServiceTests
         }
     }
 
+    /// <summary>
+    /// A fake <see cref="IDeadEmailAlerts"/> that records which rows it was asked to raise a banner for.
+    /// </summary>
+    /// <remarks>
+    /// The real one reads the outbox row back and refuses rows that are not <c>Dead</c>
+    /// (<c>DeadEmailAlerts</c>, proved against a real database in <c>AdminAlertsDeadEmailTests</c>).
+    /// What these unit tests own is the other half: that the <i>job</i> asks, on both paths to Dead and
+    /// on neither other path.
+    /// </remarks>
+    private sealed class FakeAlerts : IDeadEmailAlerts
+    {
+        public Exception? Throw { get; init; }
+
+        public List<long> Raised { get; } = [];
+
+        public Task<bool> RaiseAsync(long outboxMessageId, CancellationToken cancellationToken)
+        {
+            Raised.Add(outboxMessageId);
+
+            if (Throw is { } exception)
+            {
+                throw exception;
+            }
+
+            return Task.FromResult(true);
+        }
+    }
+
     private sealed class FakeStore : IEmailOutboxStore
     {
         public List<EmailOutboxClaim> Queue { get; } = [];
@@ -389,6 +587,11 @@ public sealed class SendEmailsServiceTests
         public int DueCount { get; init; }
 
         public int Released { get; init; }
+
+        /// <summary>Ids <c>KillStrandedExhaustedAsync</c> answers with — a sender that died on a final attempt.</summary>
+        public List<long> StrandedExhausted { get; init; } = [];
+
+        public int KillCalls { get; private set; }
 
         public Exception? ThrowOnClaim { get; init; }
 
@@ -410,6 +613,15 @@ public sealed class SendEmailsServiceTests
             CountDueCalls++;
             Calls.Add("count");
             return Task.FromResult(DueCount);
+        }
+
+        public Task<IReadOnlyList<long>> KillStrandedExhaustedAsync(
+            DateTime nowUtc,
+            CancellationToken cancellationToken)
+        {
+            KillCalls++;
+            Calls.Add("kill");
+            return Task.FromResult<IReadOnlyList<long>>(StrandedExhausted);
         }
 
         public Task<int> ReleaseExpiredLeasesAsync(DateTime nowUtc, CancellationToken cancellationToken)

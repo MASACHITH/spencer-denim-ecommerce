@@ -375,12 +375,18 @@ public sealed class EmailOutboxSendingTests(SqlServerDatabaseFixture sqlServer)
     }
 
     /// <summary>
-    /// A stranded row with no attempt left goes straight to <c>Dead</c> rather than back on the ladder.
+    /// A stranded row with no attempt left goes straight to <c>Dead</c> rather than back on the ladder,
+    /// <b>and its id is reported</b> so doc 11 §4 (G-37) can raise an alert for it.
     /// </summary>
     /// <remarks>
-    /// The <c>CASE</c> in <c>ReleaseExpiredLeasesAsync</c> is what does this, and without it the row would
-    /// be reclaimed at once — its next attempt time is already past — and spend a seventh attempt on a
-    /// six-rung ladder before the failure path noticed.
+    /// <b>This was a <c>CASE</c> inside <c>ReleaseExpiredLeasesAsync</c> until W4-02a, and the id is why
+    /// it is not any more.</b> The behaviour was already right — without it the row would be reclaimed at
+    /// once, its next attempt time being already past, and spend a seventh attempt on a six-rung ladder
+    /// before the failure path noticed — but one statement with a <c>CASE</c> could only answer how many
+    /// rows it touched. Doc 11 §4 requires every row that reaches <c>Dead</c> to raise an
+    /// <c>EmailDeliveryFailed</c> alert naming <i>which</i> message it was, and this is the one path to
+    /// <c>Dead</c> that the failure handler never sees. So a sender that died on a message's final
+    /// attempt produced a dead row that nobody was told about at all.
     /// </remarks>
     [Fact]
     public async Task A_stranded_row_with_no_attempt_left_is_killed_rather_than_requeued()
@@ -390,11 +396,121 @@ public sealed class EmailOutboxSendingTests(SqlServerDatabaseFixture sqlServer)
         var id = await InsertAsync(
             status: EmailOutboxStatus.Sending,
             attemptCount: EmailBackoff.MaxAttempts,
+            lockedUntilUtc: Now.AddMinutes(-1),
+            transportOverrideProtected: "ciphertext-from-a-dual-send");
+
+        var killed = await KillStrandedAsync();
+
+        Assert.Equal([id], killed);
+
+        var row = await RowAsync(id);
+        Assert.Equal(EmailOutboxStatus.Dead, row.Status);
+        Assert.Null(row.LockedUntilUtc);
+        Assert.Contains("no attempt is left", row.LastError!, StringComparison.Ordinal);
+
+        // Doc 08 §3.8 R5: the transport override is cleared on any terminal status, Dead included.
+        Assert.Null(row.TransportOverrideProtected);
+
+        // And the release that follows it in the sweep leaves the dead row alone.
+        await ReleaseAsync();
+        Assert.Equal(EmailOutboxStatus.Dead, (await RowAsync(id)).Status);
+    }
+
+    /// <summary>
+    /// The kill touches nothing else: a live lease, a stranded row that still has attempts, and a row
+    /// that is not <c>Sending</c> at all.
+    /// </summary>
+    /// <remarks>
+    /// <b>The second clause is the one that matters to a shopper.</b> A row with attempts left belongs on
+    /// the ladder, and a kill one predicate too wide would turn every container restart into a pile of
+    /// dead bank-transfer instructions and a banner per customer — while the emails themselves would
+    /// have gone out fine on the next sweep.
+    /// </remarks>
+    [Fact]
+    public async Task The_kill_leaves_every_row_that_is_not_a_stranded_final_attempt()
+    {
+        await ResetAsync();
+
+        var live = await InsertAsync(
+            status: EmailOutboxStatus.Sending,
+            attemptCount: EmailBackoff.MaxAttempts,
+            lockedUntilUtc: Now.AddMinutes(1));
+
+        var hasAttemptsLeft = await InsertAsync(
+            status: EmailOutboxStatus.Sending,
+            attemptCount: (short)(EmailBackoff.MaxAttempts - 1),
             lockedUntilUtc: Now.AddMinutes(-1));
 
-        await ReleaseAsync();
+        var pending = await InsertAsync(status: EmailOutboxStatus.Pending, attemptCount: 0);
 
-        Assert.Equal(EmailOutboxStatus.Dead, (await RowAsync(id)).Status);
+        Assert.Empty(await KillStrandedAsync());
+
+        Assert.Equal(EmailOutboxStatus.Sending, (await RowAsync(live)).Status);
+        Assert.Equal(EmailOutboxStatus.Sending, (await RowAsync(hasAttemptsLeft)).Status);
+        Assert.Equal(EmailOutboxStatus.Pending, (await RowAsync(pending)).Status);
+
+        // The release is what takes the one with attempts left, and it puts it back on the ladder.
+        await ReleaseAsync();
+        Assert.Equal(EmailOutboxStatus.Failed, (await RowAsync(hasAttemptsLeft)).Status);
+    }
+
+    /// <summary>
+    /// <b>The requeue on its own leaves an exhausted row alone</b>, rather than relying on the kill
+    /// having run first.
+    /// </summary>
+    /// <remarks>
+    /// <b>This test exists because a mutation survived without it.</b> Removing
+    /// <c>AND AttemptCount &lt; MaxAttempts</c> from <c>ReleaseExpiredLeasesAsync</c> changed nothing in
+    /// any other test here: the sweep kills the exhausted rows first, so by the time the requeue runs
+    /// there is none left to requeue, and every assertion stayed green. The clause is still load-bearing
+    /// — it is the only thing standing between a reordered sweep and a message spending a seventh attempt
+    /// on a six-rung ladder — so it needs a test that calls the requeue by itself, which is what this is.
+    /// </remarks>
+    [Fact]
+    public async Task The_requeue_alone_does_not_put_an_exhausted_row_back_on_the_ladder()
+    {
+        await ResetAsync();
+
+        var exhausted = await InsertAsync(
+            status: EmailOutboxStatus.Sending,
+            attemptCount: EmailBackoff.MaxAttempts,
+            lockedUntilUtc: Now.AddMinutes(-1));
+
+        var hasAttemptsLeft = await InsertAsync(
+            status: EmailOutboxStatus.Sending,
+            attemptCount: (short)(EmailBackoff.MaxAttempts - 1),
+            lockedUntilUtc: Now.AddMinutes(-1));
+
+        // The requeue, with no kill in front of it.
+        Assert.Equal(1, await ReleaseAsync());
+
+        Assert.Equal(EmailOutboxStatus.Sending, (await RowAsync(exhausted)).Status);
+        Assert.Equal(EmailOutboxStatus.Failed, (await RowAsync(hasAttemptsLeft)).Status);
+    }
+
+    /// <summary>
+    /// Two senders racing to kill one stranded row: exactly one of them is told about it.
+    /// </summary>
+    /// <remarks>
+    /// The ids are what an alert is raised from, so a row reported twice would be a banner raised twice
+    /// for one customer. The statement is conditional on <c>Status = Sending</c>, so the loser's
+    /// <c>UPDATE</c> matches nothing and its <c>OUTPUT</c> is empty.
+    /// </remarks>
+    [Fact]
+    public async Task A_stranded_row_is_reported_to_exactly_one_sender()
+    {
+        await ResetAsync();
+
+        var id = await InsertAsync(
+            status: EmailOutboxStatus.Sending,
+            attemptCount: EmailBackoff.MaxAttempts,
+            lockedUntilUtc: Now.AddMinutes(-1));
+
+        var first = await KillStrandedAsync();
+        var second = await KillStrandedAsync();
+
+        Assert.Equal([id], first);
+        Assert.Empty(second);
     }
 
     /// <summary>
@@ -536,6 +652,74 @@ public sealed class EmailOutboxSendingTests(SqlServerDatabaseFixture sqlServer)
     /// arrangement in which the engine's own row locking is the thing under test.
     /// </para>
     /// </remarks>
+    /// <summary>
+    /// <b>Neither raw statement can run inside a caller's transaction, and <c>command.Transaction</c>
+    /// does not change that.</b>
+    /// </summary>
+    /// <remarks>
+    /// <b>W4-02a set <c>command.Transaction</c> on both raw commands — one of them
+    /// <c>ClaimAsync</c>, which is W3-06's merged code and decides which emails get sent — and wrote no
+    /// test for it. These two are that test, and they record the opposite of what those lines claim.</b>
+    /// <para>
+    /// Both methods wrap their raw command in <c>Database.CreateExecutionStrategy()</c>, and doc 08
+    /// §10.3 puts <c>EnableRetryOnFailure</c> on the context, so that strategy is
+    /// <c>SqlServerRetryingExecutionStrategy</c> — which refuses outright when a user transaction is
+    /// already open. The refusal happens in <c>ExecuteAsync</c>, <i>before</i> the command is built, so
+    /// <c>Database.CurrentTransaction</c> is necessarily null by the time the assignment runs and the
+    /// assignment is always a no-op.
+    /// </para>
+    /// <para>
+    /// <b>That is the safe behaviour and it is why these tests assert the throw rather than a
+    /// rollback.</b> Enlisting would mean a claim could be rolled back after the caller had been handed
+    /// the rows and sent the mail — a message sent whose row is back at <c>Pending</c>, which is the
+    /// duplicate send this class exists to prevent. If a later change makes either statement reachable
+    /// inside a transaction, these tests go red and that is the conversation to have.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task The_claim_refuses_to_run_inside_a_callers_transaction()
+    {
+        await ResetAsync();
+
+        await InsertAsync(nextAttemptAtUtc: Now.AddMinutes(-1));
+
+        using var scope = SqlServer.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var store = scope.ServiceProvider.GetRequiredService<IEmailOutboxStore>();
+
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(Token);
+
+        var refusal = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => store.ClaimAsync(20, Now, Now.AddMinutes(5), Token));
+
+        Assert.Contains("does not support user-initiated transactions", refusal.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// And so does the kill, whose <c>OUTPUT</c> an <c>EmailDeliveryFailed</c> alert is raised from.
+    /// </summary>
+    [Fact]
+    public async Task The_kill_refuses_to_run_inside_a_callers_transaction()
+    {
+        await ResetAsync();
+
+        await InsertAsync(
+            status: EmailOutboxStatus.Sending,
+            attemptCount: EmailBackoff.MaxAttempts,
+            lockedUntilUtc: Now.AddMinutes(-1));
+
+        using var scope = SqlServer.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var store = scope.ServiceProvider.GetRequiredService<IEmailOutboxStore>();
+
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(Token);
+
+        var refusal = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => store.KillStrandedExhaustedAsync(Now, Token));
+
+        Assert.Contains("does not support user-initiated transactions", refusal.Message, StringComparison.Ordinal);
+    }
+
     private async Task<IReadOnlyList<EmailOutboxClaim>> ClaimAsync(
         int batchSize = 20,
         DateTime? nowUtc = null)
@@ -565,6 +749,14 @@ public sealed class EmailOutboxSendingTests(SqlServerDatabaseFixture sqlServer)
 
         return await scope.ServiceProvider.GetRequiredService<IEmailOutboxStore>()
             .MarkFailedAsync(claim, failure, nowUtc ?? Now, Token);
+    }
+
+    private async Task<IReadOnlyList<long>> KillStrandedAsync(DateTime? nowUtc = null)
+    {
+        using var scope = SqlServer.CreateScope();
+
+        return await scope.ServiceProvider.GetRequiredService<IEmailOutboxStore>()
+            .KillStrandedExhaustedAsync(nowUtc ?? Now, Token);
     }
 
     private async Task<int> ReleaseAsync(DateTime? nowUtc = null)

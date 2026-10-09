@@ -38,6 +38,23 @@ namespace SpencerDenim.Infrastructure.Ops.Email;
 /// burn the whole six-rung ladder against a host that does not exist and kill every order email the shop
 /// had queued, five hours after it was deployed.
 /// </para>
+/// <para>
+/// <b>Every message that reaches <c>Dead</c> raises an <c>EmailDeliveryFailed</c> alert</b> (doc 11 §4,
+/// §7 G-37), which is what turns "nobody was told" into a banner a Super Admin has to acknowledge. There
+/// are two ways a row gets there and both go through <see cref="IDeadEmailAlerts"/>: the last failed
+/// attempt, and a sender that died holding its lease on a message's <i>final</i> attempt — the second of
+/// which is invisible from the failure handler, which is why
+/// <see cref="IEmailOutboxStore.KillStrandedExhaustedAsync"/> reports the ids it killed instead of only
+/// how many.
+/// </para>
+/// <para>
+/// <b>The <c>Error</c> line is still written beside the alert, and is not redundant.</b> The alert is a
+/// separate statement from the one that killed the row (see <see cref="IDeadEmailAlerts"/>), so a
+/// database that becomes unreachable between them leaves the log line as the whole signal — which is
+/// exactly the behaviour of the build before this one, rather than silence. A log line nobody reads is
+/// also the thing <c>ops.AdminAlerts</c> exists to replace, so the alert is the signal and the line is
+/// the fallback.
+/// </para>
 /// </summary>
 internal sealed partial class SendEmailsService(
     IServiceScopeFactory scopeFactory,
@@ -100,6 +117,7 @@ internal sealed partial class SendEmailsService(
             await using var scope = scopeFactory.CreateAsyncScope();
             var store = scope.ServiceProvider.GetRequiredService<IEmailOutboxStore>();
             var transport = scope.ServiceProvider.GetRequiredService<IEmailTransport>();
+            var alerts = scope.ServiceProvider.GetRequiredService<IDeadEmailAlerts>();
 
             var now = clock.UtcNow.UtcDateTime;
 
@@ -108,6 +126,23 @@ internal sealed partial class SendEmailsService(
                 await ReportUnsendableAsync(store, now, stoppingToken);
                 _consecutiveFailures = 0;
                 return;
+            }
+
+            // **Before the release, because the release no longer kills anything.** A stranded row on
+            // its final attempt is terminal, and doc 11 §4 (G-37) owes it the same alert as a row that
+            // ran out of ladder in front of a live sender.
+            //
+            // **The order reads as the guard and is not one.** What keeps an exhausted row off the
+            // ladder is the requeue's own `AND AttemptCount < MaxAttempts`, which is why
+            // `The_requeue_alone_does_not_put_an_exhausted_row_back_on_the_ladder` calls the requeue by
+            // itself: reversing these two lines changes nothing. Kill first is still the right reading
+            // order for anyone following the sweep, and nothing depends on it — said plainly here
+            // because a comment claiming the ordering is load-bearing invites deleting the clause that
+            // actually is.
+            foreach (var killed in await store.KillStrandedExhaustedAsync(now, stoppingToken))
+            {
+                LogMessageStranded(logger, killed);
+                await RaiseDeadAlertAsync(alerts, killed, stoppingToken);
             }
 
             var released = await store.ReleaseExpiredLeasesAsync(now, stoppingToken);
@@ -148,7 +183,7 @@ internal sealed partial class SendEmailsService(
                 // sweep: a batch of twenty against a slow mail server can take long enough that the
                 // backoff of the last one would be measured from a stale instant, and
                 // `NextAttemptAtUtc` has to be in the real future.
-                var outcome = await SendOneAsync(store, transport, claim, stoppingToken);
+                var outcome = await SendOneAsync(store, transport, alerts, claim, stoppingToken);
 
                 switch (outcome)
                 {
@@ -207,6 +242,7 @@ internal sealed partial class SendEmailsService(
     private async Task<SendOutcome> SendOneAsync(
         IEmailOutboxStore store,
         IEmailTransport transport,
+        IDeadEmailAlerts alerts,
         EmailOutboxClaim claim,
         CancellationToken stoppingToken)
     {
@@ -238,6 +274,7 @@ internal sealed partial class SendEmailsService(
             {
                 case EmailFailureOutcome.Dead:
                     LogMessageDead(logger, claim.TemplateCode, claim.RelatedEntityId, claim.Id, exception);
+                    await RaiseDeadAlertAsync(alerts, claim.Id, stoppingToken);
                     return SendOutcome.Dead;
 
                 case EmailFailureOutcome.NotOurs:
@@ -295,6 +332,40 @@ internal sealed partial class SendEmailsService(
         LogNotConfigured(logger, due);
     }
 
+    /// <summary>
+    /// Raises the <c>EmailDeliveryFailed</c> alert for one dead row, and never lets a failure to raise it
+    /// stop the sweep.
+    /// </summary>
+    /// <remarks>
+    /// <b>Caught here and not left to the sweep's own handler, for the reason one message's failure is
+    /// caught in <see cref="SendOneAsync"/>:</b> nineteen other customers' bank details are in the same
+    /// batch, and an alert that could not be written must not be the reason they wait another thirty
+    /// seconds. What is lost is the banner; what is kept is the <c>Error</c> line beside it, which named
+    /// the same three facts before this alert existed.
+    /// </remarks>
+    private async Task RaiseDeadAlertAsync(
+        IDeadEmailAlerts alerts,
+        long messageId,
+        CancellationToken stoppingToken)
+    {
+        try
+        {
+            await alerts.RaiseAsync(messageId, stoppingToken);
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            // The host is stopping. The row is Dead and has no alert; the Error line above it stands, and
+            // the next sweep does not come back for it — which is said plainly here rather than left for
+            // a reader to infer, because it is the one case where the banner is missing and the row is
+            // not.
+            LogDeadAlertNotRaised(logger, messageId);
+        }
+        catch (Exception exception)
+        {
+            LogDeadAlertFailed(logger, messageId, exception);
+        }
+    }
+
     private enum SendOutcome
     {
         Sent,
@@ -334,16 +405,42 @@ internal sealed partial class SendEmailsService(
         EventId = 3404,
         Level = LogLevel.Error,
         Message = "Email {TemplateCode} for order {OrderPublicId} (outbox row {MessageId}) has failed "
-            + "every attempt and will not be retried, so that customer has not been told. Doc 11 §4 "
-            + "(G-37) asks for an EmailDeliveryFailed dashboard alert here; ops.AdminAlerts does not "
-            + "exist in this build, so this log line is the whole signal. Open the order and contact the "
-            + "customer by telephone (doc 11 §6.1 step 6).")]
+            + "every attempt and will not be retried, so that customer has not been told. An "
+            + "EmailDeliveryFailed alert is raised for it (doc 11 §4, G-37) and shows as a banner to "
+            + "every Super Admin until one of them acknowledges it. Open the order and contact the "
+            + "customer by telephone or WhatsApp (doc 11 §6.1 step 6): there is no resend action in this "
+            + "build (doc 11 §7 G-42).")]
     private static partial void LogMessageDead(
         ILogger logger,
         string templateCode,
         string? orderPublicId,
         long messageId,
         Exception exception);
+
+    [LoggerMessage(
+        EventId = 3409,
+        Level = LogLevel.Error,
+        Message = "Outbox row {MessageId} was claimed on its last attempt by a sender that never "
+            + "finished, so the message will not be sent and that customer has not been told. An "
+            + "EmailDeliveryFailed alert is raised for it (doc 11 §4, G-37). If this repeats without a "
+            + "restart, a sender is losing its database connection mid-batch.")]
+    private static partial void LogMessageStranded(ILogger logger, long messageId);
+
+    [LoggerMessage(
+        EventId = 3410,
+        Level = LogLevel.Error,
+        Message = "Outbox row {MessageId} is Dead and its EmailDeliveryFailed alert could not be "
+            + "written, so no banner will appear for it. The Error line above names the message; act on "
+            + "that one, because nothing will raise this alert later.")]
+    private static partial void LogDeadAlertFailed(ILogger logger, long messageId, Exception exception);
+
+    [LoggerMessage(
+        EventId = 3411,
+        Level = LogLevel.Warning,
+        Message = "Outbox row {MessageId} is Dead and its EmailDeliveryFailed alert was not written "
+            + "because the host is shutting down. No banner will appear for it; the Error line above "
+            + "names the message.")]
+    private static partial void LogDeadAlertNotRaised(ILogger logger, long messageId);
 
     [LoggerMessage(
         EventId = 3408,
