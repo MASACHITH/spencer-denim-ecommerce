@@ -56,12 +56,6 @@ internal sealed class EmailOutboxStore(AppDbContext dbContext) : IEmailOutboxSto
         + "connection. The attempt was counted and the message was put back in the queue.";
 
     /// <summary>
-    /// What <see cref="KillStrandedExhaustedAsync"/> writes into <c>LastError</c>. It says a different
-    /// thing from <see cref="LeaseExpiredError"/>, because the row it is written on is terminal: this
-    /// message is never going out, and whoever reads the row has to know that rather than wait for a
-    /// retry that will not come.
-    /// </summary>
-    /// <summary>
     /// The statement <see cref="KillStrandedExhaustedAsync"/> sends, verbatim.
     /// </summary>
     /// <remarks>
@@ -88,6 +82,12 @@ internal sealed class EmailOutboxStore(AppDbContext dbContext) : IEmailOutboxSto
            AND AttemptCount >= MaxAttempts;
         """;
 
+    /// <summary>
+    /// What <see cref="KillStrandedExhaustedAsync"/> writes into <c>LastError</c>. It says a different
+    /// thing from <see cref="LeaseExpiredError"/>, because the row it is written on is terminal: this
+    /// message is never going out, and whoever reads the row has to know that rather than wait for a
+    /// retry that will not come.
+    /// </summary>
     internal const string LeaseExpiredExhaustedError =
         "A sender claimed this message on its last attempt and did not finish — the process stopped, or "
         + "it lost its database connection. The attempt was counted, no attempt is left, and the message "

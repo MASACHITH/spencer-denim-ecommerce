@@ -130,9 +130,15 @@ internal sealed partial class SendEmailsService(
 
             // **Before the release, because the release no longer kills anything.** A stranded row on
             // its final attempt is terminal, and doc 11 §4 (G-37) owes it the same alert as a row that
-            // ran out of ladder in front of a live sender. The order matters: if the requeue ran first
-            // these rows would be back at Failed with an attempt time in the past and reclaimed for a
-            // seventh attempt on a six-rung ladder.
+            // ran out of ladder in front of a live sender.
+            //
+            // **The order reads as the guard and is not one.** What keeps an exhausted row off the
+            // ladder is the requeue's own `AND AttemptCount < MaxAttempts`, which is why
+            // `The_requeue_alone_does_not_put_an_exhausted_row_back_on_the_ladder` calls the requeue by
+            // itself: reversing these two lines changes nothing. Kill first is still the right reading
+            // order for anyone following the sweep, and nothing depends on it — said plainly here
+            // because a comment claiming the ordering is load-bearing invites deleting the clause that
+            // actually is.
             foreach (var killed in await store.KillStrandedExhaustedAsync(now, stoppingToken))
             {
                 LogMessageStranded(logger, killed);

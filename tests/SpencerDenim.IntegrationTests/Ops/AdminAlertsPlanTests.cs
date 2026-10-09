@@ -150,10 +150,18 @@ public sealed class AdminAlertsPlanTests(SqlServerDatabaseFixture sqlServer)
     /// 11 §6.1 step 6 tells them to open every alert.
     /// <para>
     /// <b>The test asserts the scan rather than the seek</b>, which is the opposite of every other test
-    /// in this file and is deliberate: adding the exact total back is the obvious readable change, and it
-    /// has to fail loudly rather than quietly cost five thousand reads on every admin page load. If a
-    /// future SQL Server learns to seek this, the right response is to delete this test and put the total
-    /// back — not to work around it.
+    /// in this file and is deliberate. If a future SQL Server learns to seek this, the right response is
+    /// to delete this test and put the total back — not to work around it.
+    /// <para>
+    /// <b>It is not the test that stops somebody putting the total back, and it used to say it was.</b>
+    /// This one runs a query string written here, so no change to <c>AdminAlertReader</c> can make it
+    /// red; measured, it also stays green with <c>IX_AdminAlerts_Open</c> dropped from the database,
+    /// because an index that does not exist is not one the plan used. It records a measurement and
+    /// nothing more. The guard is
+    /// <c>AdminAlertsBehaviourTests.The_banners_read_runs_one_statement</c>, which calls the real reader
+    /// and counts its commands — verified by adding a <c>CountAsync</c> back to the reader, which turns
+    /// that test red and leaves this one green.
+    /// </para>
     /// </para>
     /// </remarks>
     [Fact]

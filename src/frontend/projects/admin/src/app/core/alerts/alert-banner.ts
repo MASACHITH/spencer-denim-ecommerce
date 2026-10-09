@@ -40,7 +40,7 @@ interface Cleared {
  * inside a widget and the shell can drop it, or both can keep it, with no change here. What ADM-04 must not
  * do is write a second implementation: two banners would be two wordings of "this does not fix anything".
  *
- * **Four accessibility rules, each of them a defect this project has already paid for.**
+ * **Five accessibility rules, each of them a defect this project has already paid for.**
  *
  * 1. **An acknowledged alert is not torn out from under the focus.** It stays on screen with its outcome
  *    and goes when the next page load re-reads the list — the rule `bank-transfers-page.ts` follows for a
