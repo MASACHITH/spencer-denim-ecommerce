@@ -29,13 +29,17 @@ export class AdminAlertsApi {
   /**
    * Records that this user has seen the alert. It resolves nothing (doc 08 §3.8).
    *
-   * @param note Optional, up to 500 characters. Sent as `null` when blank, never as an empty string.
+   * **The body is empty, and the route takes no fields.** Doc 08 §3.8 gives the table an
+   * `AcknowledgementNote` column and nothing in this build writes it (owner's decision, 2026-10-09);
+   * the route refuses a note rather than dropping one, so there is nothing for this method to send. An
+   * empty object rather than no body at all, because the route reads JSON and answers a named 400 for an
+   * absent one.
    */
-  acknowledge(alertId: number, note: string | null): Observable<AdminAlertAcknowledgement> {
+  acknowledge(alertId: number): Observable<AdminAlertAcknowledgement> {
     return this.auth.withAntiforgeryToken((token) =>
       this.http.post<AdminAlertAcknowledgement>(
         `${AdminAlertsApi.alertsUrl}/${alertId}/acknowledge`,
-        { note },
+        {},
         { headers: { 'X-XSRF-TOKEN': token } },
       ),
     );

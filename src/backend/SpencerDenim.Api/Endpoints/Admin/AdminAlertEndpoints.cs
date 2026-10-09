@@ -59,8 +59,11 @@ internal static class AdminAlertEndpoints
             .WithDescription(
                 "Stamps the row with your user id and the time, and writes an AlertAcknowledged audit "
                 + "row in the same transaction. It does not resolve the underlying issue: nothing is "
-                + "resent, retried or adjusted. An optional note of up to 500 characters is stored on the "
-                + "row. An alert somebody else acknowledged first answers 200 with their time, because "
+                + "resent, retried or adjusted. The body takes no fields: doc 08 §3.8 gives the table "
+                + "an AcknowledgementNote column and nothing in this build writes it (owner's decision, "
+                + "2026-10-09 — ops.AdminAlerts is not in doc 08 §3.1 step 2's anonymisation deletion "
+                + "list), so a request that carries a note is refused rather than having it dropped. An "
+                + "alert somebody else acknowledged first answers 200 with their time, because "
                 + "the banner is shown until one holder clears it; an id you have no path to answers 404, "
                 + "the same as an id that does not exist.")
             .Produces<AdminAlertAcknowledgementDto>()
@@ -104,8 +107,8 @@ internal static class AdminAlertEndpoints
         }
 
         // A JsonObject read by hand rather than a bound record, the pattern AdminSettingsEndpoints
-        // established and AdminBankTransferEndpoints follows: `{"note": 123}` then names the field
-        // instead of answering "malformed JSON", and an absent note is told apart from a null one.
+        // established and AdminBankTransferEndpoints follows: a malformed body then answers a readable
+        // 400 with a code rather than "malformed JSON" or, in Development, a 500 (issue #47).
         var (body, problem) = await AdminWriteRequest.ReadJsonAsync<JsonObject>(
             httpContext.Request,
             cancellationToken);
@@ -115,13 +118,13 @@ internal static class AdminAlertEndpoints
             return problem;
         }
 
-        if (ReadNote(body!, out var note) is { } badNote)
+        if (RejectNote(body!) is { } unwanted)
         {
-            return badNote;
+            return unwanted;
         }
 
         var result = await handler.HandleAsync(
-            new AcknowledgeAdminAlertCommand(alertId, note, AdminWriteRequest.Actor(httpContext)),
+            new AcknowledgeAdminAlertCommand(alertId, AdminWriteRequest.Actor(httpContext)),
             cancellationToken);
 
         NoStore(httpContext.Response);
@@ -130,30 +133,32 @@ internal static class AdminAlertEndpoints
     }
 
     /// <summary>
-    /// Reads the optional note, and names the field when it is the wrong shape.
+    /// Refuses a request that carries an acknowledgement note, and takes no other field.
     /// </summary>
-    private static ValidationProblem? ReadNote(JsonObject body, out string? note)
+    /// <remarks>
+    /// <b>Refused, not ignored.</b> Doc 08 §3.8 defines <c>AcknowledgementNote</c> and the migration
+    /// creates it; nothing in this build writes it (owner's decision, 2026-10-09 — see
+    /// <c>AdminAlertAcknowledger</c>). A route that accepted the field and dropped it would be the shape
+    /// of promise this project has already shipped twice: the caller believes their sentence was kept.
+    /// A <c>null</c> note is accepted, because that is what a client sending "no note" looks like.
+    /// </remarks>
+    private static ValidationProblem? RejectNote(JsonObject body)
     {
-        note = null;
-
         if (!body.TryGetPropertyValue("note", out var value) || value is null)
         {
             return null;
         }
 
-        if (value.GetValueKind() != System.Text.Json.JsonValueKind.String)
-        {
-            return TypedResults.ValidationProblem(
-                new Dictionary<string, string[]>(StringComparer.Ordinal)
-                {
-                    ["note"] = ["The note must be a string, or be left out."],
-                },
-                title: "One or more fields are invalid.");
-        }
-
-        note = value.GetValue<string>();
-
-        return null;
+        return TypedResults.ValidationProblem(
+            new Dictionary<string, string[]>(StringComparer.Ordinal)
+            {
+                ["note"] =
+                [
+                    "This build does not store an acknowledgement note, so one cannot be sent. "
+                    + "Acknowledging records who saw the alert and when.",
+                ],
+            },
+            title: "One or more fields are invalid.");
     }
 
     private static IResult ToHttp(AcknowledgeAdminAlertResult result) => result switch
@@ -179,13 +184,12 @@ internal static class AdminAlertEndpoints
         // security alerts.
         AcknowledgeAdminAlertResult.NotFound => TypedResults.NotFound(),
 
-        AcknowledgeAdminAlertResult.NoteTooLong tooLong => TypedResults.ValidationProblem(
+        // Unreachable from this route, which refuses a note in RejectNote before the handler is
+        // reached. Mapped because the result type declares it and an unhandled case throws.
+        AcknowledgeAdminAlertResult.NoteNotAccepted => TypedResults.ValidationProblem(
             new Dictionary<string, string[]>(StringComparer.Ordinal)
             {
-                ["note"] =
-                [
-                    $"The note must be {tooLong.MaxLength} characters or fewer.",
-                ],
+                ["note"] = ["This build does not store an acknowledgement note."],
             },
             title: "One or more fields are invalid."),
 

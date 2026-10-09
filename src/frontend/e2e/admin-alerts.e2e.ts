@@ -47,7 +47,7 @@ test.beforeAll(async ({ request }) => {
  */
 async function openWithAlerts(
   page: Page,
-  set: 'dead' | 'dead-no-order' | 'many' | 'none',
+  set: 'dead' | 'dead-no-order' | 'dead-staff-invite' | 'dead-order-gone' | 'many' | 'none',
   path = '/orders',
 ): Promise<void> {
   const state = `alerts-${Math.random().toString(36).slice(2)}`;
@@ -171,8 +171,44 @@ test.describe('what it tells a Super Admin they can do (doc 11 §7 G-37, G-42)',
   test('says there is nothing to open for a message that is not about an order', async ({ page }) => {
     await openWithAlerts(page, 'dead-no-order');
 
-    await expect(page.locator('[data-testid="alert-1"]')).toContainText('request a new link');
+    await expect(page.locator('[data-testid="alert-1"]')).toContainText(
+      'Ask the customer to request a fresh link',
+    );
     await expect(page.locator('[data-testid="alert-order-1"]')).toHaveCount(0);
+  });
+
+  /**
+   * **No link to an order that is not in the database.**
+   *
+   * `DeadEmailAlerts` could not resolve the public id, so the alert carries the id and no number. The
+   * link would 404 and there is nobody to telephone, because the customer's name and number live on the
+   * order. The first version offered `Open order 4444…-…` here with advice saying to telephone them.
+   */
+  test('offers no order link when the order it names is not in the database', async ({ page }) => {
+    await openWithAlerts(page, 'dead-order-gone');
+
+    const item = page.locator('[data-testid="alert-1"]');
+
+    await expect(item).toContainText('can no longer be found');
+    await expect(item).toContainText('not in the database');
+    await expect(item).toContainText('Tell the technical owner');
+    await expect(item).not.toContainText('telephone or WhatsApp');
+    await expect(page.locator('[data-testid="alert-order-1"]')).toHaveCount(0);
+  });
+
+  /**
+   * A dead `StaffInvite` goes to a Super Admin, not to the invited user: doc 11 §4 and P14 step 7 say
+   * the Super Admin resets that user's password, and `PasswordReset` is customer-match only (§4.1), so
+   * the invited staff member cannot self-serve at all.
+   */
+  test('sends a dead staff invitation to a Super Admin', async ({ page }) => {
+    await openWithAlerts(page, 'dead-staff-invite');
+
+    const item = page.locator('[data-testid="alert-1"]');
+
+    await expect(item).toContainText('A Super Admin resets');
+    await expect(item).toContainText('set-password link');
+    await expect(item).not.toContainText('Ask the customer');
   });
 
   test('never says acknowledging fixes anything', async ({ page }) => {
@@ -210,7 +246,10 @@ test.describe('acknowledging (doc 08 §3.8: audited, and resolves nothing)', () 
     // Never `disabled`: `aria-disabled` plus a refusal in the handler is the rule (issue #109).
     await expect(button).not.toHaveAttribute('disabled', /.*/);
 
-    await page.locator('[data-testid="alert-note-1"]').fill('Rang the customer');
+    // No note field: doc 08 §3.8's AcknowledgementNote column has no writer in this build (owner's
+    // decision, 2026-10-09), and the route refuses one rather than dropping it.
+    await expect(page.locator('[data-testid="alert-note-1"]')).toHaveCount(0);
+
     await button.click();
 
     const outcome = page.locator('[data-testid="alert-done-1"]');
@@ -283,7 +322,6 @@ test.describe('the banner at every breakpoint', () => {
 
       for (const selector of [
         '[data-testid="alert-ack-1"]',
-        '[data-testid="alert-note-1"]',
         '[data-testid="alert-order-1"]',
       ]) {
         const count = await page.locator(selector).count();

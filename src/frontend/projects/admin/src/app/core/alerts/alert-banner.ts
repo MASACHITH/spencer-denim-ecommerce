@@ -103,13 +103,18 @@ interface Cleared {
               <p class="alerts__title">{{ alert.title }}</p>
               <p class="alerts__advice">{{ adviceFor(alert) }}</p>
 
-              @if (alert.orderPublicId; as orderPublicId) {
+              <!-- Both, not just the id. A public id with no order number is an alert whose order was
+                   not in the database when it was raised (see AdminAlert.orderNumber), so the link would
+                   404 - and alertAdvice says so instead of sending somebody to it. Orders are never
+                   deleted (doc 08 1.6), so the order cannot turn up later either. No backticks in here:
+                   this comment is inside the component's template literal. -->
+              @if (alert.orderPublicId && alert.orderNumber) {
                 <a
                   class="adm-link"
-                  [routerLink]="['/orders', orderPublicId]"
+                  [routerLink]="['/orders', alert.orderPublicId]"
                   [attr.data-testid]="'alert-order-' + alert.id"
                 >
-                  Open order {{ alert.orderNumber ?? orderPublicId }}
+                  Open order {{ alert.orderNumber }}
                 </a>
               }
 
@@ -124,19 +129,12 @@ interface Cleared {
                   {{ outcomeText(outcome) }}
                 </p>
               } @else {
-                <label class="alerts__note" [attr.for]="'alert-note-' + alert.id">
-                  <span class="adm-label">Note (optional)</span>
-                  <input
-                    class="adm-input"
-                    type="text"
-                    [attr.id]="'alert-note-' + alert.id"
-                    [attr.maxlength]="noteMaxLength"
-                    [value]="noteFor(alert.id)"
-                    (input)="noteChanged(alert.id, $event)"
-                    [attr.data-testid]="'alert-note-' + alert.id"
-                  />
-                </label>
-
+                <!-- No note field. Doc 08 §3.8 gives the table an AcknowledgementNote column and
+                     nothing writes it (owner's decision, 2026-10-09): ops.AdminAlerts is not in doc 08
+                     §3.1 step 2's anonymisation deletion list and doc 11 §4 says these rows are never
+                     scrubbed, so a free-text box beside a customer's order number was the one place in
+                     this feature where a telephone number could be pasted into a table nothing can
+                     clean. Nothing read it back either. -->
                 <button
                   class="adm-btn"
                   type="button"
@@ -217,12 +215,6 @@ interface Cleared {
     .alerts__error {
       color: var(--color-sale);
     }
-    .alerts__note {
-      display: grid;
-      gap: var(--space-0-5);
-      width: 100%;
-      max-width: 32rem;
-    }
     .alerts__done:focus-visible {
       outline: 2px solid var(--color-focus, currentColor);
       outline-offset: 2px;
@@ -230,9 +222,6 @@ interface Cleared {
   `,
 })
 export class AlertBanner {
-  /** `ops.AdminAlerts.AcknowledgementNote` is `nvarchar(500)` (doc 08 §3.8). */
-  protected readonly noteMaxLength = 500;
-
   private readonly api = inject(AdminAlertsApi);
   private readonly router = inject(Router);
   private readonly destroyRef = inject(DestroyRef);
@@ -256,8 +245,6 @@ export class AlertBanner {
   private readonly said = signal('');
 
   protected readonly announcement = this.said.asReadonly();
-
-  private readonly notes = new Map<number, string>();
 
   constructor() {
     this.load();
@@ -294,14 +281,6 @@ export class AlertBanner {
     return alertAdvice(alert);
   }
 
-  protected noteFor(alertId: number): string {
-    return this.notes.get(alertId) ?? '';
-  }
-
-  protected noteChanged(alertId: number, event: Event): void {
-    this.notes.set(alertId, (event.target as HTMLInputElement).value);
-  }
-
   protected outcomeText(outcome: Cleared): string {
     const at = colomboTime(outcome.atUtc);
 
@@ -324,10 +303,8 @@ export class AlertBanner {
     this.busy.set(alert.id);
     this.clearFailure(alert.id);
 
-    const typed = (this.notes.get(alert.id) ?? '').trim();
-
     this.api
-      .acknowledge(alert.id, typed.length === 0 ? null : typed)
+      .acknowledge(alert.id)
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
         next: (reply) => {
@@ -387,7 +364,6 @@ export class AlertBanner {
           this.moreThanShown.set(banner.moreThanShown);
           this.cleared.set(new Map());
           this.failure.set(new Map());
-          this.notes.clear();
         },
         error: () => {
           this.alerts.set([]);

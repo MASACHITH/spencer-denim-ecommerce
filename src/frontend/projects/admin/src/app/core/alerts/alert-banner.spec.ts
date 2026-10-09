@@ -24,6 +24,7 @@ function alert(overrides: Partial<AdminAlert> = {}): AdminAlert {
     relatedEntityId: '4821',
     orderPublicId: ORDER,
     orderNumber: 'SD-2026-000123',
+    templateCode: 'BankTransferInstructions',
     ...overrides,
   };
 }
@@ -163,20 +164,25 @@ describe('AlertBanner (doc 08 §3.8 N2)', () => {
     await acknowledge(8, { acknowledgedAtUtc: '2026-10-09T04:01:00Z', alreadyAcknowledged: false });
   });
 
-  it('sends the typed note, trimmed, and nothing when it is blank', async () => {
+  /**
+   * **There is no note field to type into** (owner's decision, 2026-10-09).
+   *
+   * Doc 08 §3.8 gives the table an `AcknowledgementNote` column and nothing writes it:
+   * `ops.AdminAlerts` is not in doc 08 §3.1 step 2's anonymisation deletion list and doc 11 §4 says these
+   * rows are never scrubbed, so a 500-character box beside a customer's order number was the one place
+   * in this feature where a telephone number could be pasted into a table nothing can clean — and
+   * nothing read it back. Asserted as an absence, because a control that came back would come back
+   * silently.
+   */
+  it('offers nowhere to type an acknowledgement note', async () => {
     await open(banner({ alerts: [alert(), alert({ id: 8 })] }));
 
-    const input = element.querySelector('[data-testid="alert-note-7"]') as HTMLInputElement;
-    input.value = '  Rang the customer  ';
-    input.dispatchEvent(new Event('input'));
-    await settle();
+    expect(element.querySelectorAll('input').length).toBe(0);
+    expect(element.querySelectorAll('textarea').length).toBe(0);
+    expect(element.querySelector('[data-testid="alert-note-7"]')).toBeNull();
+    expect(text().toLowerCase()).not.toContain('note');
 
     await acknowledge(7, { acknowledgedAtUtc: '2026-10-09T04:00:00Z', alreadyAcknowledged: false });
-
-    expect(
-      element.querySelector('[data-testid="alert-done-7"]')?.textContent,
-    ).toContain('Acknowledged at');
-
     await acknowledge(8, { acknowledgedAtUtc: '2026-10-09T04:01:00Z', alreadyAcknowledged: false });
   });
 
@@ -303,17 +309,43 @@ describe('AlertBanner (doc 08 §3.8 N2)', () => {
   });
 
   it('shows no order link for a dead email that is not about an order', async () => {
-    await open(banner({ alerts: [alert({ orderPublicId: null, orderNumber: null })] }));
+    await open(banner({
+      alerts: [alert({ orderPublicId: null, orderNumber: null, templateCode: 'PasswordReset' })],
+    }));
 
     expect(element.querySelector('[data-testid="alert-order-7"]')).toBeNull();
-    expect(text()).toContain('request a new link');
+    expect(text()).toContain('Ask the customer to request a fresh link');
   });
 
-  it('falls back to the public id when the order number is missing', async () => {
-    // The order was removed between the message dying and the banner loading. The link still works,
-    // because the route is keyed on the public id.
+  /** A dead `StaffInvite` goes to a Super Admin, not to the invited user (doc 11 §4, P14 step 7). */
+  it('sends a dead staff invitation to a Super Admin', async () => {
+    await open(banner({
+      alerts: [alert({ orderPublicId: null, orderNumber: null, templateCode: 'StaffInvite' })],
+    }));
+
+    expect(text()).toContain('A Super Admin resets');
+    expect(text()).not.toContain('Ask the customer');
+  });
+
+  /**
+   * **No link when the order is not there, and this test replaced one that asserted the opposite.**
+   *
+   * The first version said "falls back to the public id when the order number is missing" and claimed the
+   * link still worked "because the route is keyed on the public id". It does not: a null number means
+   * `DeadEmailAlerts` could not find that order at all, so `/orders/{id}` 404s — and the advice beside it
+   * was telling a Super Admin to open it and telephone the customer whose name and number are on it.
+   * Orders are never deleted (doc 08 §1.6), so the order cannot turn up later either.
+   */
+  it('offers no link, and no telephone call, when the order is not in the database', async () => {
     await open(banner({ alerts: [alert({ orderNumber: null })] }));
 
-    expect(element.querySelector('[data-testid="alert-order-7"]')?.textContent).toContain(ORDER);
+    expect(element.querySelector('[data-testid="alert-order-7"]')).toBeNull();
+    expect(text()).toContain('not in the database');
+    expect(text()).toContain('Tell the technical owner');
+    expect(text()).not.toContain('telephone or WhatsApp');
+
+    // The title still names all three of G-37's facts, which is what the technical owner needs.
+    expect(text()).toContain('BankTransferInstructions');
+    expect(text()).toContain('outbox row 4821');
   });
 });

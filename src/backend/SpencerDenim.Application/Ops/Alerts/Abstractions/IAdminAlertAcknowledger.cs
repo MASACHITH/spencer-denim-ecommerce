@@ -42,7 +42,6 @@ public interface IAdminAlertAcknowledger
     Task<(AcknowledgeAlertOutcome Outcome, AcknowledgedAlert? Alert)> AcknowledgeAsync(
         int alertId,
         IReadOnlyList<string> visibleTypes,
-        string? note,
         AdminActor actor,
         CancellationToken cancellationToken);
 }

@@ -33,6 +33,13 @@ internal sealed class GetOpenAdminAlertsQueryHandler(
     /// <summary><c>DetailsJson</c> key naming that order's number, so the link can say where it goes.</summary>
     private const string OrderNumberKey = "orderNumber";
 
+    /// <summary>
+    /// <c>DetailsJson</c> key naming the outbox template that died. Written by <c>DeadEmailAlert</c>; the
+    /// screen's advice branches on it, because doc 11 §4 gives a dead <c>StaffInvite</c> a different
+    /// remedy from a dead <c>PasswordReset</c>.
+    /// </summary>
+    private const string TemplateCodeKey = "templateCode";
+
     public async Task<AdminAlertBannerDto> HandleAsync(
         GetOpenAdminAlertsQuery query,
         CancellationToken cancellationToken)
@@ -62,7 +69,7 @@ internal sealed class GetOpenAdminAlertsQueryHandler(
 
     private static AdminAlertDto ToDto(AdminAlertRow row)
     {
-        var (orderPublicId, orderNumber) = ReadOrder(row.DetailsJson);
+        var details = ReadDetails(row.DetailsJson);
 
         return new AdminAlertDto(
             row.Id,
@@ -72,12 +79,17 @@ internal sealed class GetOpenAdminAlertsQueryHandler(
             row.CreatedAtUtc,
             row.RelatedEntityType,
             row.RelatedEntityId,
-            orderPublicId,
-            orderNumber);
+            details.OrderPublicId,
+            details.OrderNumber,
+            details.TemplateCode);
     }
 
+    /// <summary>The three things the banner lifts out of an alert's details.</summary>
+    private sealed record AlertDetails(string? OrderPublicId, string? OrderNumber, string? TemplateCode);
+
     /// <summary>
-    /// Lifts the order link out of an alert's details, and answers nulls for anything it cannot read.
+    /// Lifts the order link and the template code out of an alert's details, and answers nulls for
+    /// anything it cannot read.
     /// </summary>
     /// <remarks>
     /// <b>Nothing here throws on a details payload it does not understand.</b> The column is
@@ -91,11 +103,11 @@ internal sealed class GetOpenAdminAlertsQueryHandler(
     /// interpolate into a route unchecked.
     /// </para>
     /// </remarks>
-    private static (string? OrderPublicId, string? OrderNumber) ReadOrder(string? detailsJson)
+    private static AlertDetails ReadDetails(string? detailsJson)
     {
         if (string.IsNullOrWhiteSpace(detailsJson))
         {
-            return (null, null);
+            return new AlertDetails(null, null, null);
         }
 
         try
@@ -104,19 +116,25 @@ internal sealed class GetOpenAdminAlertsQueryHandler(
 
             if (document.RootElement.ValueKind != JsonValueKind.Object)
             {
-                return (null, null);
+                return new AlertDetails(null, null, null);
             }
 
+            var templateCode = ReadString(document.RootElement, TemplateCodeKey);
             var publicId = ReadString(document.RootElement, OrderPublicIdKey);
 
+            // **An unparseable public id costs the order and not the template code.** They are
+            // independent facts, and a details payload with a broken id still tells a Super Admin which
+            // message died.
             return Guid.TryParseExact(publicId, "D", out var parsed)
-                ? (parsed.ToString("D", CultureInfo.InvariantCulture),
-                    ReadString(document.RootElement, OrderNumberKey))
-                : (null, null);
+                ? new AlertDetails(
+                    parsed.ToString("D", CultureInfo.InvariantCulture),
+                    ReadString(document.RootElement, OrderNumberKey),
+                    templateCode)
+                : new AlertDetails(null, null, templateCode);
         }
         catch (JsonException)
         {
-            return (null, null);
+            return new AlertDetails(null, null, null);
         }
     }
 

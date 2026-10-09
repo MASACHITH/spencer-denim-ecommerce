@@ -542,6 +542,7 @@ function deadEmailAlert(alertId, overrides = {}) {
     relatedEntityId: `482${alertId}`,
     orderPublicId: '44444444-4444-4444-8444-444444444444',
     orderNumber: `SD-2026-00012${alertId}`,
+    templateCode: 'BankTransferInstructions',
     ...overrides,
   };
 }
@@ -559,7 +560,22 @@ function alertsFor(name) {
     case 'dead':
       return [deadEmailAlert(1)];
     case 'dead-no-order':
-      return [deadEmailAlert(1, { orderPublicId: null, orderNumber: null })];
+      return [deadEmailAlert(1, { orderPublicId: null, orderNumber: null, templateCode: 'PasswordReset' })];
+    case 'dead-staff-invite':
+      return [deadEmailAlert(1, { orderPublicId: null, orderNumber: null, templateCode: 'StaffInvite' })];
+    // The order the message names is not in the database: the raiser could not resolve the public id, so
+    // the number is null and the public id is not. The link must not be offered for it. The title is the
+    // one `DeadEmailAlert.Title` really writes for this case, so the screen is measured against the
+    // payload it will actually get.
+    case 'dead-order-gone':
+      return [
+        deadEmailAlert(1, {
+          orderNumber: null,
+          title:
+            'Email not delivered: BankTransferInstructions for an order that can no longer be found'
+            + ' (outbox row 4821)',
+        }),
+      ];
     case 'many':
       return Array.from({ length: 12 }, (_, index) => deadEmailAlert(index + 1));
     default:
@@ -1182,18 +1198,25 @@ const server = createServer(async (request, response) => {
 
     const body = await readBody(request);
 
-    if (body !== null && body.note !== null && typeof body.note === 'string' && body.note.length > 500) {
+    // The real route refuses an acknowledgement note rather than dropping one: doc 08 §3.8 gives the
+    // table the column and nothing in this build writes it (owner's decision, 2026-10-09). The stub
+    // refuses it too, so a screen that started sending one would fail here rather than in production.
+    if (body !== null && body !== undefined && body.note !== null && body.note !== undefined) {
       return json(response, 400, {
         type: 'about:blank',
         title: 'One or more fields are invalid.',
         status: 400,
-        errors: { note: ['The note must be 500 characters or fewer.'] },
+        errors: {
+          note: [
+            'This build does not store an acknowledgement note, so one cannot be sent. '
+              + 'Acknowledging records who saw the alert and when.',
+          ],
+        },
       });
     }
 
     const alreadyAcknowledged = alert.acknowledgedAtUtc !== undefined;
     alert.acknowledgedAtUtc = alert.acknowledgedAtUtc ?? '2026-10-09T04:00:00.000Z';
-    alert.note = body === null ? null : (body.note ?? null);
 
     return json(response, 200, {
       alertId: alert.id,

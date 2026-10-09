@@ -90,7 +90,7 @@ public sealed class AdminAlertHandlerTests
     }
 
     [Fact]
-    public async Task The_order_link_is_lifted_out_of_the_details()
+    public async Task The_order_link_and_the_template_code_are_lifted_out_of_the_details()
     {
         var reader = new FakeReader(
             [Row($"{{\"templateCode\":\"OrderPlaced\",\"outboxMessageId\":4821,\"orderPublicId\":\"{OrderPublicId}\",\"orderNumber\":\"SD-2026-000123\"}}")]);
@@ -102,8 +102,58 @@ public sealed class AdminAlertHandlerTests
         var alert = Assert.Single(banner.Alerts);
         Assert.Equal(OrderPublicId, alert.OrderPublicId);
         Assert.Equal("SD-2026-000123", alert.OrderNumber);
+        Assert.Equal("OrderPlaced", alert.TemplateCode);
         Assert.Equal(AdminAlert.EmailOutboxEntityType, alert.RelatedEntityType);
         Assert.Equal("4821", alert.RelatedEntityId);
+    }
+
+    /// <summary>
+    /// <b>An order that could not be found arrives as "public id set, number null"</b>, which is the pair
+    /// the banner reads as "no order to open".
+    /// </summary>
+    /// <remarks>
+    /// <c>DeadEmailAlert</c> writes <c>orderNumber</c> only when <c>DeadEmailAlerts</c> resolved it, so
+    /// this shape is the raiser saying the order was not in the database. It has to survive the mapping
+    /// intact: collapsing it to "no order at all" would lose the fact that a message named one, and
+    /// filling the number in from the id would put a 404 behind a link.
+    /// </remarks>
+    [Fact]
+    public async Task An_order_that_could_not_be_found_keeps_its_id_and_no_number()
+    {
+        var reader = new FakeReader(
+            [Row($"{{\"templateCode\":\"OrderPlaced\",\"outboxMessageId\":4821,\"orderPublicId\":\"{OrderPublicId}\"}}")]);
+
+        var handler = new GetOpenAdminAlertsQueryHandler(Permissions(grantsAll: true), reader);
+
+        var banner = await handler.HandleAsync(new GetOpenAdminAlertsQuery(42), Token);
+
+        var alert = Assert.Single(banner.Alerts);
+        Assert.Equal(OrderPublicId, alert.OrderPublicId);
+        Assert.Null(alert.OrderNumber);
+        Assert.Equal("OrderPlaced", alert.TemplateCode);
+    }
+
+    /// <summary>
+    /// A details payload whose order id is unreadable still yields the template code.
+    /// </summary>
+    /// <remarks>
+    /// They are independent facts. A Super Admin with a broken order id can still be told which message
+    /// died, which is two of G-37's three.
+    /// </remarks>
+    [Fact]
+    public async Task An_unreadable_order_id_costs_the_order_and_not_the_template_code()
+    {
+        var reader = new FakeReader(
+            [Row("{\"templateCode\":\"OrderShipped\",\"orderPublicId\":\"not-a-guid\"}")]);
+
+        var handler = new GetOpenAdminAlertsQueryHandler(Permissions(grantsAll: true), reader);
+
+        var banner = await handler.HandleAsync(new GetOpenAdminAlertsQuery(42), Token);
+
+        var alert = Assert.Single(banner.Alerts);
+        Assert.Null(alert.OrderPublicId);
+        Assert.Null(alert.OrderNumber);
+        Assert.Equal("OrderShipped", alert.TemplateCode);
     }
 
     /// <summary>
@@ -208,86 +258,63 @@ public sealed class AdminAlertHandlerTests
     // ------------------------------------------------------------ the acknowledge
 
     [Fact]
-    public async Task Acknowledging_passes_the_visible_types_the_actor_and_the_trimmed_note()
+    public async Task Acknowledging_passes_the_visible_types_and_the_actor()
     {
         var acknowledger = new FakeAcknowledger();
         var handler = new AcknowledgeAdminAlertCommandHandler(Permissions(grantsAll: true), acknowledger);
 
-        var result = await handler.HandleAsync(
-            new AcknowledgeAdminAlertCommand(7, "  rang the customer  ", Actor), Token);
+        var result = await handler.HandleAsync(new AcknowledgeAdminAlertCommand(7, Actor), Token);
 
         var acknowledged = Assert.IsType<AcknowledgeAdminAlertResult.Acknowledged>(result);
         Assert.Equal(7, acknowledged.AlertId);
 
         Assert.Equal(AdminAlertTypes.All, acknowledger.VisibleTypes);
-        Assert.Equal("rang the customer", acknowledger.Note);
         Assert.Same(Actor, acknowledger.Actor);
     }
 
-    [Theory]
-    [InlineData(null)]
-    [InlineData("")]
-    [InlineData("    ")]
-    public async Task A_blank_note_is_stored_as_null_rather_than_as_an_empty_string(string? note)
-    {
-        var acknowledger = new FakeAcknowledger();
-        var handler = new AcknowledgeAdminAlertCommandHandler(Permissions(grantsAll: true), acknowledger);
-
-        await handler.HandleAsync(new AcknowledgeAdminAlertCommand(7, note, Actor), Token);
-
-        Assert.Null(acknowledger.Note);
-    }
-
     /// <summary>
-    /// A note longer than the column is refused rather than clipped.
+    /// <b>The command carries no acknowledgement note</b>, and nothing between here and the database can
+    /// put one in.
     /// </summary>
     /// <remarks>
-    /// The opposite choice from the outbox's <c>LastError</c>, which is clipped — and the two are right
-    /// for opposite reasons. Nobody writes <c>LastError</c>, and losing it would cost the row's whole
-    /// state; a note is somebody's sentence about a live problem, and silently losing its second half is
-    /// worse than asking for a shorter one.
+    /// Owner's decision, 2026-10-09. Doc 08 §3.8 defines <c>AcknowledgementNote</c> and the migration
+    /// creates it; nothing writes it, because <c>ops.AdminAlerts</c> is not in doc 08 §3.1 step 2's
+    /// anonymisation deletion list and doc 11 §4 says these rows are not scrubbed — so a free-text box
+    /// beside a customer's order number was the one place in this feature where a telephone number could
+    /// be pasted into a table nothing can clean, and nothing read it back.
+    /// <para>
+    /// <b>Asserted by reflection over the command's own shape</b>, not by a behaviour. Behaviour cannot
+    /// see the absence of a field: an acknowledgement with no note looks exactly like one whose note was
+    /// dropped. What this pins is that no caller <i>can</i> supply one, so adding the parameter back is a
+    /// red test rather than a silent re-opening. The route's own refusal is pinned in
+    /// <c>AdminAlertEndpointTests</c>.
+    /// </para>
     /// </remarks>
     [Fact]
-    public async Task A_note_longer_than_the_column_is_refused()
+    public void The_acknowledge_command_has_no_note_to_carry()
     {
-        var acknowledger = new FakeAcknowledger();
-        var handler = new AcknowledgeAdminAlertCommandHandler(Permissions(grantsAll: true), acknowledger);
+        var names = typeof(AcknowledgeAdminAlertCommand)
+            .GetProperties()
+            .Select(property => property.Name)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
 
-        var result = await handler.HandleAsync(
-            new AcknowledgeAdminAlertCommand(7, new string('x', 501), Actor), Token);
-
-        var tooLong = Assert.IsType<AcknowledgeAdminAlertResult.NoteTooLong>(result);
-        Assert.Equal(AdminAlert.AcknowledgementNoteMaxLength, tooLong.MaxLength);
-        Assert.Equal(0, acknowledger.Calls);
-    }
-
-    /// <summary>A note of exactly the column's width is accepted.</summary>
-    [Fact]
-    public async Task A_note_of_exactly_the_columns_width_is_accepted()
-    {
-        var acknowledger = new FakeAcknowledger();
-        var handler = new AcknowledgeAdminAlertCommandHandler(Permissions(grantsAll: true), acknowledger);
-
-        var result = await handler.HandleAsync(
-            new AcknowledgeAdminAlertCommand(7, new string('x', 500), Actor), Token);
-
-        Assert.IsType<AcknowledgeAdminAlertResult.Acknowledged>(result);
+        Assert.Equal(["Actor", "AlertId"], names);
     }
 
     /// <summary>
-    /// Trimming happens before the length check, so 500 characters padded with spaces is accepted.
+    /// And the acknowledger's port takes none either, so no implementation has somewhere to put one.
     /// </summary>
     [Fact]
-    public async Task The_length_is_measured_after_trimming()
+    public void The_acknowledger_port_takes_no_note()
     {
-        var acknowledger = new FakeAcknowledger();
-        var handler = new AcknowledgeAdminAlertCommandHandler(Permissions(grantsAll: true), acknowledger);
+        var parameters = typeof(IAdminAlertAcknowledger)
+            .GetMethod(nameof(IAdminAlertAcknowledger.AcknowledgeAsync))!
+            .GetParameters()
+            .Select(parameter => parameter.Name ?? string.Empty)
+            .ToArray();
 
-        var result = await handler.HandleAsync(
-            new AcknowledgeAdminAlertCommand(7, $"  {new string('x', 500)}  ", Actor), Token);
-
-        Assert.IsType<AcknowledgeAdminAlertResult.Acknowledged>(result);
-        Assert.Equal(500, acknowledger.Note!.Length);
+        Assert.Equal(["alertId", "visibleTypes", "actor", "cancellationToken"], parameters);
     }
 
     /// <summary>
@@ -305,7 +332,7 @@ public sealed class AdminAlertHandlerTests
         var handler = new AcknowledgeAdminAlertCommandHandler(Permissions(grantsAll: true), acknowledger);
 
         var result = await handler.HandleAsync(
-            new AcknowledgeAdminAlertCommand(7, null, AdminActor.Unknown), Token);
+            new AcknowledgeAdminAlertCommand(7, AdminActor.Unknown), Token);
 
         Assert.IsType<AcknowledgeAdminAlertResult.NoActor>(result);
         Assert.Equal(0, acknowledger.Calls);
@@ -319,7 +346,7 @@ public sealed class AdminAlertHandlerTests
             Permissions(grantsAll: false, SpencerDenim.Domain.Identity.Permissions.Settings.Edit),
             acknowledger);
 
-        var result = await handler.HandleAsync(new AcknowledgeAdminAlertCommand(7, null, Actor), Token);
+        var result = await handler.HandleAsync(new AcknowledgeAdminAlertCommand(7, Actor), Token);
 
         Assert.IsType<AcknowledgeAdminAlertResult.NotFound>(result);
         Assert.Equal(0, acknowledger.Calls);
@@ -337,7 +364,7 @@ public sealed class AdminAlertHandlerTests
 
         var handler = new AcknowledgeAdminAlertCommandHandler(Permissions(grantsAll: true), acknowledger);
 
-        var result = await handler.HandleAsync(new AcknowledgeAdminAlertCommand(7, null, Actor), Token);
+        var result = await handler.HandleAsync(new AcknowledgeAdminAlertCommand(7, Actor), Token);
 
         var already = Assert.IsType<AcknowledgeAdminAlertResult.AlreadyAcknowledged>(result);
         Assert.Equal(earlier, already.AcknowledgedAtUtc);
@@ -350,7 +377,7 @@ public sealed class AdminAlertHandlerTests
         var acknowledger = new FakeAcknowledger { Outcome = AcknowledgeAlertOutcome.NotFound };
         var handler = new AcknowledgeAdminAlertCommandHandler(Permissions(grantsAll: true), acknowledger);
 
-        var result = await handler.HandleAsync(new AcknowledgeAdminAlertCommand(7, null, Actor), Token);
+        var result = await handler.HandleAsync(new AcknowledgeAdminAlertCommand(7, Actor), Token);
 
         Assert.IsType<AcknowledgeAdminAlertResult.NotFound>(result);
     }
@@ -400,20 +427,16 @@ public sealed class AdminAlertHandlerTests
 
         public IReadOnlyList<string>? VisibleTypes { get; private set; }
 
-        public string? Note { get; private set; }
-
         public AdminActor? Actor { get; private set; }
 
         public Task<(AcknowledgeAlertOutcome Outcome, AcknowledgedAlert? Alert)> AcknowledgeAsync(
             int alertId,
             IReadOnlyList<string> visibleTypes,
-            string? note,
             AdminActor actor,
             CancellationToken cancellationToken)
         {
             Calls++;
             VisibleTypes = visibleTypes;
-            Note = note;
             Actor = actor;
 
             return Task.FromResult<(AcknowledgeAlertOutcome, AcknowledgedAlert?)>(

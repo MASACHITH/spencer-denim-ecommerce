@@ -518,14 +518,7 @@ public sealed class AdminAlertsBehaviourTests(SqlServerDatabaseFixture sqlServer
         var alertId = await InsertAlertAsync(AdminAlertTypes.EmailDeliveryFailed, Now);
         var userId = await StaffUserIdAsync(DbContext, Token);
 
-        // **The note arrives here already trimmed.** Trimming, and refusing one longer than the
-        // column, is `AcknowledgeAdminAlertCommandHandler`'s — asserted in `AdminAlertHandlerTests` —
-        // and this suite drives the port under it, so a note with spaces round-tripped here would be
-        // testing the wrong layer's rule.
-        var (outcome, acknowledged) = await AcknowledgeAsync(
-            alertId,
-            note: "Rang the customer on 0771234567",
-            userId: userId);
+        var (outcome, acknowledged) = await AcknowledgeAsync(alertId, userId: userId);
 
         Assert.Equal(AcknowledgeAlertOutcome.Acknowledged, outcome);
         Assert.Equal(alertId, acknowledged!.Id);
@@ -533,7 +526,14 @@ public sealed class AdminAlertsBehaviourTests(SqlServerDatabaseFixture sqlServer
         var row = await DbContext.AdminAlerts.AsNoTracking().SingleAsync(alert => alert.Id == alertId, Token);
         Assert.NotNull(row.AcknowledgedAtUtc);
         Assert.Equal(userId, row.AcknowledgedByUserId);
-        Assert.Equal("Rang the customer on 0771234567", row.AcknowledgementNote);
+
+        // **The acknowledgement note stays null, because nothing writes it** (owner's decision,
+        // 2026-10-09). Doc 08 §3.8 defines the column and the migration creates it — `AdminAlertsSchemaTests`
+        // still proves its width and its check constraint — but `ops.AdminAlerts` is not in doc 08 §3.1
+        // step 2's anonymisation deletion list and doc 11 §4 says these rows are never scrubbed, so a
+        // free-text box beside a customer's order number was the one place in this feature where a
+        // telephone number could be pasted into a table nothing can clean.
+        Assert.Null(row.AcknowledgementNote);
 
         var trail = await DbContext.AuditLogs.AsNoTracking()
             .Where(entry => entry.Action == AuditActions.AlertAcknowledged
@@ -545,13 +545,14 @@ public sealed class AdminAlertsBehaviourTests(SqlServerDatabaseFixture sqlServer
         Assert.Equal(userId, entry.UserId);
         Assert.Equal("127.0.0.1", entry.IpAddress);
         Assert.Contains(AdminAlertTypes.EmailDeliveryFailed, entry.AfterJson!, StringComparison.Ordinal);
-        Assert.Contains("\"HasNote\":true", entry.AfterJson!, StringComparison.Ordinal);
 
-        // **The note is not copied into the audit row.** It is free text a staff member typed, the audit
-        // log is not scrubbed by the PDPA routine either (doc 08 §3.1 step 8), and the note is already on
-        // the row this entry points at — so a second copy adds a place for a pasted telephone number to
-        // survive, for no reader's benefit.
-        Assert.DoesNotContain("0771234567", entry.AfterJson!, StringComparison.Ordinal);
+        // **The trail carries the alert type and the time and nothing else.** It had a `HasNote` flag
+        // until the note was removed; the flag went with it rather than reporting `false` on every row
+        // for ever. The audit log is not scrubbed by the PDPA routine either (doc 08 §3.1 step 8), so
+        // what is asserted is the absence: no customer value reaches it from here.
+        Assert.DoesNotContain(CustomerPhone, entry.AfterJson!, StringComparison.Ordinal);
+        Assert.DoesNotContain("HasNote", entry.AfterJson!, StringComparison.Ordinal);
+        Assert.DoesNotContain("Note", entry.AfterJson!, StringComparison.Ordinal);
         Assert.Null(entry.BeforeJson);
     }
 
@@ -571,15 +572,15 @@ public sealed class AdminAlertsBehaviourTests(SqlServerDatabaseFixture sqlServer
 
         var alertId = await InsertAlertAsync(AdminAlertTypes.EmailDeliveryFailed, Now);
 
-        var (first, firstAlert) = await AcknowledgeAsync(alertId, note: "I saw it");
+        var (first, firstAlert) = await AcknowledgeAsync(alertId);
         Assert.Equal(AcknowledgeAlertOutcome.Acknowledged, first);
 
-        var (second, secondAlert) = await AcknowledgeAsync(alertId, note: "I saw it too");
+        var (second, secondAlert) = await AcknowledgeAsync(alertId);
 
         Assert.Equal(AcknowledgeAlertOutcome.AlreadyAcknowledged, second);
 
         var row = await DbContext.AdminAlerts.AsNoTracking().SingleAsync(alert => alert.Id == alertId, Token);
-        Assert.Equal("I saw it", row.AcknowledgementNote);
+        Assert.Null(row.AcknowledgementNote);
 
         // **The second caller is told the time the row really holds**, which is what the screen shows.
         // Compared against the stored value rather than against the winner's own answer: the column is
@@ -657,7 +658,6 @@ public sealed class AdminAlertsBehaviourTests(SqlServerDatabaseFixture sqlServer
         var (outcome, _) = await acknowledger.AcknowledgeAsync(
             alertId,
             AdminAlertTypes.All,
-            "nobody",
             AdminActor.Unknown,
             Token);
 
@@ -693,7 +693,6 @@ public sealed class AdminAlertsBehaviourTests(SqlServerDatabaseFixture sqlServer
             var (outcome, _) = await acknowledger.AcknowledgeAsync(
                 alertId,
                 AdminAlertTypes.All,
-                $"racer {index}",
                 new AdminActor(userId, "racer@example.com", "127.0.0.1", "agent", $"corr-{index}"),
                 Token);
 
@@ -977,7 +976,6 @@ public sealed class AdminAlertsBehaviourTests(SqlServerDatabaseFixture sqlServer
 
     private async Task<(AcknowledgeAlertOutcome Outcome, AcknowledgedAlert? Alert)> AcknowledgeAsync(
         int alertId,
-        string? note = null,
         int? userId = null,
         IReadOnlyList<string>? visibleTypes = null)
     {
@@ -991,7 +989,6 @@ public sealed class AdminAlertsBehaviourTests(SqlServerDatabaseFixture sqlServer
         return await acknowledger.AcknowledgeAsync(
             alertId,
             visibleTypes ?? AdminAlertTypes.All,
-            note,
             new AdminActor(actorId, "super@example.com", "127.0.0.1", "agent", "corr"),
             Token);
     }

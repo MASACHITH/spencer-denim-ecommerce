@@ -39,17 +39,6 @@ internal sealed class AcknowledgeAdminAlertCommandHandler(
             return new AcknowledgeAdminAlertResult.NoActor();
         }
 
-        var note = string.IsNullOrWhiteSpace(command.Note) ? null : command.Note.Trim();
-
-        if (note is not null && note.Length > AdminAlert.AcknowledgementNoteMaxLength)
-        {
-            // Refused rather than clipped: a note is somebody's sentence about a live problem, and
-            // silently losing its last half is worse than asking for a shorter one. (The outbox's
-            // LastError is clipped, for the opposite reason — nobody writes it and losing it would cost
-            // the row's whole state.)
-            return new AcknowledgeAdminAlertResult.NoteTooLong(AdminAlert.AcknowledgementNoteMaxLength);
-        }
-
         var permissions = await permissionsProvider.GetEffectivePermissionsAsync(userId, cancellationToken);
 
         var visibleTypes = AdminAlertVisibility.VisibleTypes(
@@ -64,7 +53,6 @@ internal sealed class AcknowledgeAdminAlertCommandHandler(
         var (outcome, alert) = await acknowledger.AcknowledgeAsync(
             command.AlertId,
             visibleTypes,
-            note,
             command.Actor,
             cancellationToken);
 

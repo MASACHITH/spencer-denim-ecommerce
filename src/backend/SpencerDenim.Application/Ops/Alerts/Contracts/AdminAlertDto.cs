@@ -30,8 +30,22 @@ namespace SpencerDenim.Application.Ops.Alerts.Contracts;
 /// </para>
 /// </param>
 /// <param name="OrderNumber">
-/// That order's number, the one the customer quotes, so the link can name where it goes. Null when the
-/// alert names no order, or when the order has since been removed.
+/// That order's number, the one the customer quotes, so the link can name where it goes.
+/// <para>
+/// <b>Null means the order was not found when the alert was raised</b>, not merely that nobody looked.
+/// <c>DeadEmailAlert</c> writes the number only when <c>DeadEmailAlerts</c> resolved it, and orders are
+/// never deleted (doc 08 §1.6) — so an order that could not be found then cannot appear later, and the
+/// screen may safely treat the pair "<paramref name="OrderPublicId"/> set, this null" as permanent.
+/// </para>
+/// </param>
+/// <param name="TemplateCode">
+/// The <c>ops.EmailOutbox.TemplateCode</c> of the message that died, lifted out of the details.
+/// <para>
+/// <b>The third of G-37's three facts, carried as a field and not only inside
+/// <paramref name="Title"/>.</b> The screen's advice depends on it: doc 11 §4 gives a dead
+/// <c>StaffInvite</c> a different remedy from a dead <c>PasswordReset</c>, and a sentence cannot be
+/// branched on. Null for an alert type that is not about an email — the other six have no producer yet.
+/// </para>
 /// </param>
 public sealed record AdminAlertDto(
     int Id,
@@ -42,7 +56,8 @@ public sealed record AdminAlertDto(
     string? RelatedEntityType,
     string? RelatedEntityId,
     string? OrderPublicId,
-    string? OrderNumber);
+    string? OrderNumber,
+    string? TemplateCode);
 
 /// <summary>
 /// What the banner needs for one load: the open alerts this user may see, newest first, and whether there

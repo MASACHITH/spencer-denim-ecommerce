@@ -21,6 +21,18 @@ namespace SpencerDenim.Infrastructure.Ops.Alerts;
 /// applied to the one write this feature has.
 /// </para>
 /// <para>
+/// <b>Nothing writes <c>AcknowledgementNote</c>, by the owner's decision (2026-10-09).</b> Doc 08 §3.8
+/// defines the column and the migration creates it, so the schema is the document's; what is gone is the
+/// write. The reasoning is the one this class's own audit-trail remark used to make about copying the note
+/// into <c>ops.AuditLogs</c>, and it applies with more force to the alert row itself: doc 08 §3.1 step 2's
+/// anonymisation deletion list names <c>content.ContactSubmissions</c> and <c>ops.EmailOutbox</c> and
+/// <b>not</b> <c>ops.AdminAlerts</c>, and doc 11 §4 says these rows are "<b>not</b> scrubbed by the
+/// anonymisation routine" — so a 500-character free-text box beside a customer's order number was the one
+/// place in this feature where somebody could paste a telephone number into a table nothing can ever
+/// clean. Nothing read it back either. The column comes back the day the PDPA routine covers this table,
+/// or the day a screen reads it; see the journal's "What is owed".
+/// </para>
+/// <para>
 /// <b>The update is conditional on the alert still being open</b> (doc 08 §5.2), so of two Super Admins
 /// pressing the button in the same second exactly one acknowledgement and exactly one audit row are
 /// recorded — and the second is told who got there first rather than being refused, because doc 08 §3.8
@@ -40,7 +52,6 @@ internal sealed class AdminAlertAcknowledger(
     public async Task<(AcknowledgeAlertOutcome Outcome, AcknowledgedAlert? Alert)> AcknowledgeAsync(
         int alertId,
         IReadOnlyList<string> visibleTypes,
-        string? note,
         AdminActor actor,
         CancellationToken cancellationToken)
     {
@@ -67,7 +78,7 @@ internal sealed class AdminAlertAcknowledger(
                 IsolationLevel.ReadCommitted,
                 cancellationToken);
 
-            var result = await AcknowledgeOnceAsync(alertId, visibleTypes, note, actor, userId, cancellationToken);
+            var result = await AcknowledgeOnceAsync(alertId, visibleTypes, actor, userId, cancellationToken);
 
             if (result.Outcome == AcknowledgeAlertOutcome.Acknowledged)
             {
@@ -85,7 +96,6 @@ internal sealed class AdminAlertAcknowledger(
     private async Task<(AcknowledgeAlertOutcome Outcome, AcknowledgedAlert? Alert)> AcknowledgeOnceAsync(
         int alertId,
         IReadOnlyList<string> visibleTypes,
-        string? note,
         AdminActor actor,
         int userId,
         CancellationToken cancellationToken)
@@ -118,8 +128,7 @@ internal sealed class AdminAlertAcknowledger(
             $"""
             UPDATE ops.AdminAlerts
                SET AcknowledgedByUserId = {userId},
-                   AcknowledgedAtUtc = {nowUtc},
-                   AcknowledgementNote = {note}
+                   AcknowledgedAtUtc = {nowUtc}
              WHERE Id = {alertId}
                AND AcknowledgedAtUtc IS NULL;
             """,
@@ -150,10 +159,7 @@ internal sealed class AdminAlertAcknowledger(
             // **No BeforeJson.** The before state of an acknowledgement is "open", which the action name
             // already says; a JSON document repeating it would be noise in a table doc 08 §8.4 keeps for
             // three years.
-            AfterJson = JsonSerializer.Serialize(new AcknowledgementTrail(
-                existing.AlertType,
-                nowUtc,
-                note is not null)),
+            AfterJson = JsonSerializer.Serialize(new AcknowledgementTrail(existing.AlertType, nowUtc)),
             IpAddress = actor.IpAddress,
             UserAgent = actor.UserAgent,
             CorrelationId = actor.CorrelationId,
@@ -188,13 +194,13 @@ internal sealed class AdminAlertAcknowledger(
     private sealed record AlertState(int Id, string AlertType, DateTime? AcknowledgedAtUtc);
 
     /// <summary>
-    /// What the audit row says about the acknowledgement.
+    /// What the audit row says about the acknowledgement: which alert type, and when.
     /// </summary>
-    /// <param name="HasNote">
-    /// Whether a note was left, rather than the note itself. The note is on the alert row the audit row
-    /// points at, and copying free text a staff member typed into a second table — one that is also not
-    /// scrubbed by the PDPA routine (doc 08 §3.1 step 8) — adds a place for a telephone number somebody
-    /// pasted to survive, for no reader's benefit.
-    /// </param>
-    private sealed record AcknowledgementTrail(string AlertType, DateTime AcknowledgedAtUtc, bool HasNote);
+    /// <remarks>
+    /// <b>It carried a <c>HasNote</c> flag until the note was removed</b>, and the flag went with it
+    /// rather than being left to report <c>false</c> on every row for ever. The actor, the address and
+    /// the time are the audit row's own columns; this is the only thing about the alert the trail has to
+    /// add.
+    /// </remarks>
+    private sealed record AcknowledgementTrail(string AlertType, DateTime AcknowledgedAtUtc);
 }

@@ -152,7 +152,8 @@ public sealed class AdminAlertEndpointTests(SqlServerDatabaseFixture sqlServer)
             factory,
             AdminAlertTypes.PaymentException,
             "A payment exception",
-            detailsJson: "{\"orderPublicId\":\"44444444-4444-4444-8444-444444444444\","
+            detailsJson: "{\"templateCode\":\"OrderPlaced\","
+                + "\"orderPublicId\":\"44444444-4444-4444-8444-444444444444\","
                 + "\"orderNumber\":\"SD-2026-000123\"}");
 
         using var client = CreateClient(factory);
@@ -177,14 +178,17 @@ public sealed class AdminAlertEndpointTests(SqlServerDatabaseFixture sqlServer)
                 "relatedEntityId",
                 "relatedEntityType",
                 "severity",
+                "templateCode",
                 "title",
             ],
             alert.EnumerateObject().Select(property => property.Name).Order(StringComparer.Ordinal));
 
-        // The order link really is lifted out of DetailsJson, which is the one transformation between the
-        // row and the screen.
+        // The order link and the template code really are lifted out of DetailsJson, which is the one
+        // transformation between the row and the screen. The template code is what the banner's advice
+        // branches on (doc 11 §4 gives a dead StaffInvite a different remedy from a dead PasswordReset).
         Assert.Equal("44444444-4444-4444-8444-444444444444", alert.GetProperty("orderPublicId").GetString());
         Assert.Equal("SD-2026-000123", alert.GetProperty("orderNumber").GetString());
+        Assert.Equal("OrderPlaced", alert.GetProperty("templateCode").GetString());
 
         // And DetailsJson itself is not on the wire: six of the seven alert types are later tasks' and a
         // screen cannot render a shape it has never met.
@@ -214,10 +218,10 @@ public sealed class AdminAlertEndpointTests(SqlServerDatabaseFixture sqlServer)
         using var client = CreateClient(factory);
         await SignInAsync(client, email);
 
-        using var refused = await AcknowledgeAsync(client, dead, note: null);
+        using var refused = await AcknowledgeAsync(client, dead);
         Assert.Equal(HttpStatusCode.NotFound, refused.StatusCode);
 
-        using var missing = await AcknowledgeAsync(client, int.MaxValue, note: null);
+        using var missing = await AcknowledgeAsync(client, int.MaxValue);
         Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
 
         await using var scope = factory.Services.CreateAsyncScope();
@@ -246,7 +250,7 @@ public sealed class AdminAlertEndpointTests(SqlServerDatabaseFixture sqlServer)
         using var client = CreateClient(factory);
         await SignInAsync(client, email);
 
-        using var response = await AcknowledgeAsync(client, payment, note: "Refunded in the dashboard");
+        using var response = await AcknowledgeAsync(client, payment);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
         var body = await response.Content.ReadFromJsonAsync<JsonElement>(Token);
@@ -263,7 +267,9 @@ public sealed class AdminAlertEndpointTests(SqlServerDatabaseFixture sqlServer)
 
         var row = await dbContext.AdminAlerts.AsNoTracking().SingleAsync(alert => alert.Id == payment, Token);
         Assert.Equal(userId, row.AcknowledgedByUserId);
-        Assert.Equal("Refunded in the dashboard", row.AcknowledgementNote);
+
+        // Nothing writes the note (owner's decision, 2026-10-09) — see `AdminAlertAcknowledger`.
+        Assert.Null(row.AcknowledgementNote);
 
         var trail = await dbContext.AuditLogs
             .AsNoTracking()
@@ -300,23 +306,36 @@ public sealed class AdminAlertEndpointTests(SqlServerDatabaseFixture sqlServer)
         using var client = CreateClient(factory);
         await SignInAsync(client, email);
 
-        using var first = await AcknowledgeAsync(client, payment, note: "I saw it");
+        using var first = await AcknowledgeAsync(client, payment);
         Assert.Equal(HttpStatusCode.OK, first.StatusCode);
 
-        using var second = await AcknowledgeAsync(client, payment, note: "I saw it too");
+        using var second = await AcknowledgeAsync(client, payment);
         Assert.Equal(HttpStatusCode.OK, second.StatusCode);
 
         var body = await second.Content.ReadFromJsonAsync<JsonElement>(Token);
         Assert.True(body.GetProperty("alreadyAcknowledged").GetBoolean());
     }
 
-    /// <summary>A note longer than the column is a named 400, not a 500 and not a clipped row.</summary>
+    /// <summary>
+    /// <b>An acknowledgement note is refused by name, and the alert is not acknowledged either.</b>
+    /// </summary>
+    /// <remarks>
+    /// Owner's decision, 2026-10-09: doc 08 §3.8 defines <c>AcknowledgementNote</c> and the migration
+    /// creates it, and nothing in this build writes it, because <c>ops.AdminAlerts</c> is not in doc 08
+    /// §3.1 step 2's anonymisation deletion list and doc 11 §4 says these rows are never scrubbed.
+    /// <para>
+    /// <b>Refused rather than accepted and dropped, and that is what this test is for.</b> A route that
+    /// took the field and ignored it would be the shape of promise this project has already shipped
+    /// twice — the caller believes their sentence was kept. Both halves are asserted: the 400 names the
+    /// field, and the row is still open afterwards, so a refused request cannot half-apply.
+    /// </para>
+    /// </remarks>
     [Fact]
-    public async Task A_note_longer_than_the_column_is_refused_by_name()
+    public async Task An_acknowledgement_note_is_refused_by_name_and_nothing_is_acknowledged()
     {
         await MigrateAsync();
 
-        var email = UniqueEmail("long-note");
+        var email = UniqueEmail("with-note");
         await using var factory = new ApiFactory(sqlServer.ConnectionString);
         await CreateStaffUserAsync(factory, email, [Permissions.Orders.Approve]);
 
@@ -326,11 +345,43 @@ public sealed class AdminAlertEndpointTests(SqlServerDatabaseFixture sqlServer)
         using var client = CreateClient(factory);
         await SignInAsync(client, email);
 
-        using var response = await AcknowledgeAsync(client, payment, note: new string('x', 501));
+        using var response = await AcknowledgeAsync(client, payment, note: "Rang them on 0771234567");
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
 
         var body = await response.Content.ReadFromJsonAsync<JsonElement>(Token);
-        Assert.Contains("note", body.GetProperty("errors").EnumerateObject().Select(field => field.Name));
+        var errors = body.GetProperty("errors");
+        Assert.Contains("note", errors.EnumerateObject().Select(field => field.Name));
+        Assert.Contains(
+            "does not store an acknowledgement note",
+            errors.GetProperty("note")[0].GetString()!,
+            StringComparison.Ordinal);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var row = await dbContext.AdminAlerts.AsNoTracking().SingleAsync(alert => alert.Id == payment, Token);
+
+        Assert.Null(row.AcknowledgedAtUtc);
+        Assert.Null(row.AcknowledgementNote);
+    }
+
+    /// <summary>An explicit <c>null</c> note is accepted: that is what "no note" looks like on the wire.</summary>
+    [Fact]
+    public async Task An_explicit_null_note_is_accepted()
+    {
+        await MigrateAsync();
+
+        var email = UniqueEmail("null-note");
+        await using var factory = new ApiFactory(sqlServer.ConnectionString);
+        await CreateStaffUserAsync(factory, email, [Permissions.Orders.Approve]);
+
+        await ResetAlertsAsync(factory);
+        var payment = await InsertAlertAsync(factory, AdminAlertTypes.PaymentException, "A payment exception");
+
+        using var client = CreateClient(factory);
+        await SignInAsync(client, email);
+
+        using var response = await AcknowledgeAsync(client, payment, note: null, sendNoteField: true);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
     /// <summary>
@@ -395,10 +446,19 @@ public sealed class AdminAlertEndpointTests(SqlServerDatabaseFixture sqlServer)
         Assert.Equal(HttpStatusCode.OK, login.StatusCode);
     }
 
+    /// <summary>
+    /// Acknowledges through the route, with an empty body unless a test is probing the note refusal.
+    /// </summary>
+    /// <param name="note">The note to send. Only sent when <paramref name="sendNoteField"/> is true.</param>
+    /// <param name="sendNoteField">
+    /// Whether to include the field at all. A route that refuses a field has to be tested both ways: with
+    /// it absent (the normal case) and with it present and null (which must still be accepted).
+    /// </param>
     private static async Task<HttpResponseMessage> AcknowledgeAsync(
         HttpClient client,
         int alertId,
-        string? note)
+        string? note = null,
+        bool sendNoteField = false)
     {
         using var tokenResponse = await client.GetAsync(new Uri(AntiforgeryUrl, UriKind.Relative), Token);
         Assert.Equal(HttpStatusCode.OK, tokenResponse.StatusCode);
@@ -411,7 +471,9 @@ public sealed class AdminAlertEndpointTests(SqlServerDatabaseFixture sqlServer)
             HttpMethod.Post,
             new Uri($"{AlertsUrl}/{alertId}/acknowledge", UriKind.Relative))
         {
-            Content = JsonContent.Create(new { note }),
+            Content = note is null && !sendNoteField
+                ? JsonContent.Create(new { })
+                : JsonContent.Create(new { note }),
         };
 
         request.Headers.Add("X-XSRF-TOKEN", antiforgery);

@@ -29,18 +29,6 @@ public sealed class AdminAlertShapeTests
 
     private const string StubFile = "src/frontend/e2e/support/admin-catalog-stub.mjs";
 
-    /// <summary>
-    /// How much of the stub one payload's fields may be looked for in: the object literal the stub
-    /// answers with, and nothing after it.
-    /// </summary>
-    /// <remarks>
-    /// <b>A character budget rather than a brace match, because the thing being searched is the stub's
-    /// own prose as well as its code</b> — a field name in a nearby comment would answer for a field name
-    /// in the payload, so the window has to be tight. 1,200 characters is comfortably more than any of
-    /// these three literals and comfortably less than the distance to the next one.
-    /// </remarks>
-    private const int BlockLength = 1_200;
-
     /// <summary>A property on a TypeScript interface: <c>readonly severity: number;</c>.</summary>
     private static readonly Regex Property = new(
         @"readonly\s+(?<name>\w+)\??:",
@@ -73,28 +61,101 @@ public sealed class AdminAlertShapeTests
         // an `orderNumber:`, so dropping it from the *alert* fixture left the assertion green. That is
         // issue #80's shape — a guard satisfied by a clause other than the one being checked — and the
         // only fix is to narrow the text being searched.
-        AssertStubBlockHas<AdminAlertDto>(stub, "function deadEmailAlert(");
-        AssertStubBlockHas<AdminAlertBannerDto>(stub, "const open = state.alerts.filter(");
-        AssertStubBlockHas<AdminAlertAcknowledgementDto>(stub, "const alreadyAcknowledged =");
+        AssertStubLiteralHas<AdminAlertDto>(stub, "function deadEmailAlert(", "return {");
+        AssertStubLiteralHas<AdminAlertBannerDto>(stub, "const open = state.alerts.filter(", "json(response, 200, {");
+        AssertStubLiteralHas<AdminAlertAcknowledgementDto>(stub, "const alreadyAcknowledged =", "json(response, 200, {");
     }
 
     /// <summary>
-    /// Every field of <typeparamref name="T"/> appears in the stub between
-    /// <paramref name="from"/> and the next blank-line-separated block.
+    /// Every field of <typeparamref name="T"/> appears in <b>the one object literal</b> the stub answers
+    /// that payload with.
     /// </summary>
-    private static void AssertStubBlockHas<T>(string stub, string from)
+    /// <param name="from">Text that identifies the handler or factory the literal belongs to.</param>
+    /// <param name="opener">
+    /// The text immediately before that literal's opening brace — <c>return {</c> or
+    /// <c>json(response, 200, {</c>. Named rather than guessed at, because the first brace after
+    /// <paramref name="from"/> is often not the right one: <c>deadEmailAlert(alertId, overrides = {})</c>
+    /// has an empty object in its own parameter list.
+    /// </param>
+    /// <remarks>
+    /// <b>Balanced braces, and the character budget this replaced was a hole waiting to open.</b> It
+    /// searched 1,200 characters from the anchor, which left <b>173 characters</b> of margin before the
+    /// next <c>orderNumber:</c> in <c>alertsFor</c> — two lines of added prose and the window would have
+    /// swallowed it, re-opening exactly the defect this test was tightened to catch (a field dropped from
+    /// the alert fixture, answered for by a neighbour's). A brace match has no margin to run out.
+    /// <para>
+    /// <c>${…}</c> inside the fixture's template literals balances like any other pair, so the walk is
+    /// not confused by it; the whole file is checked for brace balance first, so a malformed stub fails
+    /// as itself rather than as a missing field.
+    /// </para>
+    /// </remarks>
+    private static void AssertStubLiteralHas<T>(string stub, string from, string opener)
     {
-        var start = stub.IndexOf(from, StringComparison.Ordinal);
-        Assert.True(start >= 0, $"{StubFile} no longer contains \"{from}\".");
+        var anchor = stub.IndexOf(from, StringComparison.Ordinal);
+        Assert.True(anchor >= 0, $"{StubFile} no longer contains \"{from}\".");
 
-        // Far enough to hold one object literal, near enough that a neighbouring fixture's fields cannot
-        // answer for this one — see BlockLength.
-        var block = stub[start..Math.Min(stub.Length, start + BlockLength)];
+        var openerAt = stub.IndexOf(opener, anchor, StringComparison.Ordinal);
+        Assert.True(openerAt >= 0, $"{StubFile} has no \"{opener}\" after \"{from}\".");
+
+        var open = openerAt + opener.Length - 1;
+        Assert.Equal('{', stub[open]);
+
+        var depth = 0;
+        var close = -1;
+
+        for (var index = open; index < stub.Length; index++)
+        {
+            if (stub[index] == '{')
+            {
+                depth++;
+            }
+            else if (stub[index] == '}' && --depth == 0)
+            {
+                close = index;
+                break;
+            }
+        }
+
+        Assert.True(close > open, $"the object literal after \"{opener}\" in {StubFile} is unbalanced.");
+
+        var literal = stub[open..close];
 
         foreach (var name in CamelCaseProperties<T>())
         {
-            Assert.Contains($"{name}:", block, StringComparison.Ordinal);
+            Assert.Contains($"{name}:", literal, StringComparison.Ordinal);
         }
+    }
+
+    /// <summary>
+    /// The stub's braces balance, so <see cref="AssertStubLiteralHas{T}"/>'s walk means something.
+    /// </summary>
+    /// <remarks>
+    /// Without this, a stray brace would make every literal above run to the end of the file and every
+    /// field assertion pass — the brace match's own version of the character budget's failure mode.
+    /// </remarks>
+    [Fact]
+    public void The_playwright_stubs_braces_balance()
+    {
+        var stub = ReadRepositoryFile(StubFile);
+
+        var depth = 0;
+        var lowest = 0;
+
+        foreach (var character in stub)
+        {
+            if (character == '{')
+            {
+                depth++;
+            }
+            else if (character == '}')
+            {
+                depth--;
+                lowest = Math.Min(lowest, depth);
+            }
+        }
+
+        Assert.Equal(0, depth);
+        Assert.Equal(0, lowest);
     }
 
     /// <summary>

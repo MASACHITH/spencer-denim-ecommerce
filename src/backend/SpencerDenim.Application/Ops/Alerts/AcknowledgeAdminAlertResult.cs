@@ -31,8 +31,17 @@ public abstract record AcknowledgeAdminAlertResult
     /// </summary>
     public sealed record NotFound : AcknowledgeAdminAlertResult;
 
-    /// <summary>The note is longer than the column (doc 08 §3.8: <c>nvarchar(500)</c>).</summary>
-    public sealed record NoteTooLong(int MaxLength) : AcknowledgeAdminAlertResult;
+    /// <summary>
+    /// The request carried an acknowledgement note, and this build stores none.
+    /// </summary>
+    /// <remarks>
+    /// <b>Refused rather than accepted and dropped.</b> A field a route takes and silently does not store
+    /// is the shape of promise this project has already been burned by: the caller believes their sentence
+    /// was kept. Doc 08 §3.8 defines the column and the migration creates it; the owner's decision
+    /// (2026-10-09) is that nothing writes it until the PDPA routine can scrub it, so the honest answer to
+    /// a note is to say so.
+    /// </remarks>
+    public sealed record NoteNotAccepted : AcknowledgeAdminAlertResult;
 
     /// <summary>
     /// The request carries no identified staff user, so there is nobody to record as having seen it.

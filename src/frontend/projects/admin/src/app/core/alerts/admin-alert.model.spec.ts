@@ -11,6 +11,7 @@ function alert(overrides: Partial<AdminAlert> = {}): AdminAlert {
     relatedEntityId: '4821',
     orderPublicId: '44444444-4444-4444-8444-444444444444',
     orderNumber: 'SD-2026-000123',
+    templateCode: 'BankTransferInstructions',
     ...overrides,
   };
 }
@@ -50,12 +51,79 @@ describe('alertAdvice (doc 11 §4, §7 G-37 and G-42)', () => {
     expect(advice.toLowerCase()).not.toContain('send it again from');
   });
 
-  it('says there is nothing to open for a dead email that is not about an order', () => {
-    const advice = alertAdvice(alert({ orderPublicId: null, orderNumber: null }));
+  /**
+   * **The order the message names is not in the database.**
+   *
+   * `DeadEmailAlerts` could not resolve the public id, so the number is null and the id is not. There is
+   * no order to open — the link would 404 — and nobody to telephone, because the customer's name and
+   * number live on the order. The first version of this advice said "Open the order, then telephone or
+   * WhatsApp the customer" directly beneath a title reading "for an order that can no longer be found".
+   */
+  it('does not send anybody to an order that is not there', () => {
+    const advice = alertAdvice(alert({ orderNumber: null }));
 
-    expect(advice).toContain('nothing to');
-    expect(advice).toContain('request a new link');
+    expect(advice).toContain('not in the database');
+    expect(advice).toContain('Tell the technical owner');
     expect(advice).not.toContain('Open the order');
+    expect(advice).not.toContain('telephone or WhatsApp');
+  });
+
+  /**
+   * **Doc 11 §4 carves the account emails out one by one, and the first version of this did not.**
+   *
+   * It said "ask the customer to request a new link themselves" for all of them. Doc 11 gives
+   * `StaffInvite` its own remedy (P14 step 7: a Super Admin resets that user's password, which sends a
+   * fresh set-password link) and `PasswordReset` is customer-match only (§4.1), so an invited staff
+   * member cannot self-serve at all. The "has usually expired" clause is doc 11's about the two
+   * token-bearing templates, not about `Welcome` or `AccountExists`.
+   *
+   * None of these templates exists yet — all five are W3-01's — so none of this is reachable today. It is
+   * committed advice that goes live the day accounts land.
+   */
+  describe('a dead account email (doc 11 §4)', () => {
+    function noOrder(templateCode: string | null): string {
+      return alertAdvice(alert({ orderPublicId: null, orderNumber: null, templateCode }));
+    }
+
+    it('sends a dead StaffInvite to a Super Admin, not to the invited user', () => {
+      const advice = noOrder('StaffInvite');
+
+      expect(advice).toContain('A Super Admin resets');
+      expect(advice).toContain('set-password link');
+      expect(advice).toContain('cannot request one themselves');
+      expect(advice).not.toContain('Ask the customer');
+    });
+
+    it('asks the customer for a fresh link only for the two token-bearing templates', () => {
+      for (const templateCode of ['PasswordReset', 'EmailConfirmation']) {
+        const advice = noOrder(templateCode);
+
+        expect(advice).toContain('Ask the customer to request a fresh link');
+        expect(advice).toContain('single-use token');
+      }
+    });
+
+    it('does not claim an expired link for the two that carry no link', () => {
+      for (const templateCode of ['Welcome', 'AccountExists']) {
+        const advice = noOrder(templateCode);
+
+        expect(advice).toContain('no link in it to re-issue');
+        expect(advice).not.toContain('expired');
+        expect(advice).not.toContain('Ask the customer to request');
+      }
+    });
+
+    it('invents no remedy for a template it has never met, or for a missing template code', () => {
+      for (const templateCode of ['SomethingW301Adds', null]) {
+        const advice = noOrder(templateCode);
+
+        expect(advice).toContain('nothing to open');
+        expect(advice).toContain('template code above');
+        expect(advice).not.toContain('Super Admin resets');
+        expect(advice).not.toContain('Ask the customer');
+        expect(advice).not.toContain('expired');
+      }
+    });
   });
 
   it('does not invent advice for the six alert types nothing raises yet', () => {
@@ -69,14 +137,31 @@ describe('alertAdvice (doc 11 §4, §7 G-37 and G-42)', () => {
     expect(advice).not.toContain('telephone');
   });
 
-  it('never claims that acknowledging fixes anything', () => {
-    for (const type of ['EmailDeliveryFailed', 'PaymentException']) {
-      for (const orderPublicId of ['44444444-4444-4444-8444-444444444444', null]) {
-        const advice = alertAdvice(alert({ alertType: type, orderPublicId }));
+  /**
+   * Every branch of the advice, swept for the two things none of them may say. Enumerated rather than
+   * sampled, because a branch added later is a sentence nobody re-read.
+   */
+  it('never claims that acknowledging fixes anything, on any branch', () => {
+    const everyBranch = [
+      alert(),
+      alert({ orderNumber: null }),
+      alert({ alertType: 'PaymentException' }),
+      ...['StaffInvite', 'PasswordReset', 'EmailConfirmation', 'Welcome', 'AccountExists', null].map(
+        (templateCode) => alert({ orderPublicId: null, orderNumber: null, templateCode }),
+      ),
+    ];
 
-        expect(advice.toLowerCase()).not.toContain('resolve the');
-        expect(advice.toLowerCase()).not.toContain('will be sent');
-      }
+    for (const candidate of everyBranch) {
+      const advice = alertAdvice(candidate).toLowerCase();
+
+      expect(advice).not.toContain('resolve the');
+      expect(advice).not.toContain('will be sent');
+      expect(advice).not.toContain('resend it');
     }
+
+    // The sweep has to actually cover every branch, so the distinct sentences are counted: four order
+    // cases and four account-email cases, with the two token-bearing and the two link-less templates
+    // sharing one sentence each.
+    expect(new Set(everyBranch.map(alertAdvice)).size).toBe(7);
   });
 });

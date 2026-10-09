@@ -64,6 +64,7 @@ describe('Admin App', () => {
           relatedEntityId: '4821',
           orderPublicId: '44444444-4444-4444-8444-444444444444',
           orderNumber: 'SD-2026-000123',
+          templateCode: 'OrderPlaced',
         },
       ],
     });
