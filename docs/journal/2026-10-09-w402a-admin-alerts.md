@@ -102,10 +102,34 @@ name, email and telephone number (`AdminOrderDetailDto.Phone`, rendered as a `te
 exception: only the courier, the tracking number and the internal note are editable after placement, so a
 resend would reach the same dead address anyway.
 
-For a dead **account** email — `PasswordReset`, `EmailConfirmation`, `Welcome` — there is no order, and
-doc 11 §4 says so: those alerts "give staff the outbox row and nothing to resend from". The banner says
-there is nothing to open and to ask the customer to request a new link, because the token in a message
-that has been in the queue for five hours has usually expired.
+**When the order cannot be found, nothing is offered.** `DeadEmailAlerts.ReadOrderAsync` can resolve a
+public id to no order row — `ops.EmailOutbox` has no foreign key to `sales.Orders` by design (doc 08 §3.8)
+— and the title says so: "for an order that can no longer be found". **The first version then rendered
+`Open order 4444…-…` directly beneath it, with advice to open the order and telephone the customer.** The
+link 404s and there is nobody to telephone, because the customer's name and number live on the order. The
+link now needs *both* the id and the number, and the advice sends the technical owner the two facts that
+are true — the template code and the outbox row — because a message queued against an order that is not
+there is a fault in the shop and not in the mail server. Orders are never deleted (doc 08 §1.6), so the
+pair "id set, number null" is permanent and cannot resolve itself later.
+
+**For a dead account email the advice is per template, because doc 11 §4 carves them out one by one.** The
+first version said "ask the customer to request a new link themselves" for all of them, and that is wrong
+twice:
+
+| Template | What doc 11 §4 says to do |
+|---|---|
+| `StaffInvite` | **A Super Admin resets that user's password**, which sends a fresh set-password link (P14 step 7, doc 08 §3.1 `AdminPasswordReset`). The invited staff member cannot self-serve at all: `PasswordReset` is **customer-match only** (§4.1), so asking for one gets them nothing. |
+| `PasswordReset`, `EmailConfirmation` | Ask the customer to request a fresh link. These are the two whose link carries a single-use token, and doc 11's "has usually expired by the time anyone notices" is about these two. |
+| `Welcome`, `AccountExists` | **No link to re-issue at all**, so there is nothing to ask for. The first version's "has usually expired anyway" was over-general and applied doc 11's clause to messages it is not about. |
+
+None of those five templates exists yet — all are W3-01's — and every template the six built order emails
+use takes an order branch, so none of this is reachable today. It was committed wrong advice that would
+have gone live the day accounts land, which is why it was worth fixing before the branch merged rather
+than after.
+
+**The template code is carried as a DTO field** (`templateCode`) rather than only inside the title,
+because the advice has to branch on it and a sentence cannot be branched on. It is G-37's third fact, and
+it was already in `DetailsJson` — the banner now gets it the same way it gets the order link.
 
 **The sentence lives in the screen and not in the row.** `alertAdvice` in `admin-alert.model.ts` is one
 function; the day G-42 lands, it changes once and every alert already in the table starts giving the new
@@ -188,6 +212,39 @@ There is no GrantsAll case at the HTTP layer, and that is deliberate: a GrantsAl
 admin endpoint before enrolling in 2FA (W1-10), so signing one in means driving the whole enrolment flow,
 which is `AdminTwoFactorEndpointTests`' subject. What a Super Admin sees is proved where the rule lives,
 where it is applied, and against the real database.
+
+### No acknowledgement note — owner's decision, 2026-10-09
+
+**I shipped the first and only writer of `AcknowledgementNote`: a 500-character free-text box.** The owner
+asked for it to come out and I agree. The column stays — doc 08 §3.8 defines it, the migration creates it,
+and `AdminAlertsSchemaTests` still proves its width and its half of `CK_AdminAlerts_Acknowledged` — and the
+*write* is gone.
+
+The reasoning is one my own code had already written down and then not followed. `AdminAlertAcknowledger`'s
+audit-trail remark argued against copying the note into `ops.AuditLogs` because that "adds a place for a
+telephone number somebody pasted to survive" — and that applies with more force to the alert row itself:
+
+- **doc 08 §3.1 step 2's anonymisation deletion list names `content.ContactSubmissions` and
+  `ops.EmailOutbox` and not `ops.AdminAlerts`**, and doc 11 §4 says these rows are "**not** scrubbed by the
+  anonymisation routine";
+- **doc 08 §3.1 step 8's acceptance test searches this table** for the customer's email, telephone number
+  and name — so a pasted number here is a PDPA failure with no routine that can clear it;
+- **nothing read it back.** The journal already listed that as owed (item 8): the only screen that would
+  show an acknowledged alert is ADM-04's or an alert history, and neither exists;
+- my own test asserted the round trip with `"Rang the customer on 0771234567"`, which is exactly the
+  sentence a Super Admin following doc 11 §6.1 step 6 would type.
+
+So the whole of what it bought was a field nobody reads, in the one place in this feature where a staff
+member could put a customer's telephone number somewhere permanent, six days before launch.
+
+**The route refuses a note rather than accepting one and dropping it**, which is slightly more than
+"remove the write" and is the point: a field a route takes and silently discards is the shape of promise
+this project has shipped twice — the caller believes their sentence was kept. A `null` note is still
+accepted, because that is what a client sending "no note" looks like on the wire. The Playwright stub
+refuses it too, so a screen that started sending one fails in the browser suite rather than in production.
+
+Two smaller consequences, both taken: `AcknowledgementTrail` lost its `HasNote` flag rather than reporting
+`false` for ever, and `NoteTooLong` became `NoteNotAccepted`.
 
 ### Acknowledging is audited, and resolves nothing
 
@@ -298,7 +355,7 @@ they give two stable cached plans and as seven sniffed parameters they give one 
 audience asked first. The test pins the literals as a deliberate choice and pins the seek separately,
 because the two are not the same claim.
 
-## Four accessibility rules, each one a defect this project has shipped
+## Five accessibility rules, each one a defect this project has shipped
 
 1. **An acknowledged alert is not torn out from under the focus.** It keeps its place with its outcome and
    goes on the next page load — the rule `bank-transfers-page.ts` follows for a decided row. Removing the
@@ -377,8 +434,27 @@ is the step I skipped. `M28` still kills it.
 
 ## Mutation testing
 
-Every new test was proved to fail against a mutation of the code it covers. **50 mutations, 45 killed, 3
-non-viable, and 2 survivors that were real holes and are now closed.**
+Every new test was proved to fail against a mutation of the code it covers.
+
+**The count: 55 distinct mutations, 53 killed, 2 non-viable, 0 surviving.**
+
+**The first version of this line said "50 mutations, 45 killed, 3 non-viable, 2 survivors" and every one
+of those four numbers was wrong.** It is worth setting out how, because the mutation campaign is the main
+evidence this branch offers for its own test quality and an inflated count costs more than it saves:
+
+- **"50" was arithmetic, not a count.** 45 + 3 + 2 happens to make 50; the table and the narrative
+  together document **49** distinct ids (M1–M44 plus the five lettered variants M4b, M9b, M23b, M23c and
+  M33b). The owner's own re-count of 44 missed those five.
+- **"45 killed" and "2 survivors" double-counted.** M16 and M42 survived their first run, the holes they
+  exposed were closed, and they were then re-run and killed — so they were counted in both columns.
+- **"3 non-viable" counted two.** M9b and M23c are genuinely unreachable. The third entry was "M14 in the
+  sweep", which is not a mutation at all: it is the explanation of why M14 needed a test of its own, and
+  M14 itself was killed once it had one.
+- **Three more (M21, M23, M41) are not in the count either**, and should not be: their first form did not
+  compile, so they were rewritten and the rewritten form is what ran.
+
+The six follow-ups added **M45–M54**. The honest final state is therefore 55 ids attempted, 53 killed, and
+M9b and M23c non-viable. Nothing survives.
 
 | Mutation | Killed by |
 |---|---|
@@ -460,19 +536,40 @@ Two more repairs came out of mutations that *did* kill, but only after the test 
   having: `ISJSON` and `System.Text.Json` are two parsers over one column and need not agree about every
   input, and a banner that 500s on one row hides every alert in the shop.
 
-### Three non-viable mutations, said plainly
+### The two non-viable mutations, said plainly
 
 - **M9b — `Guid.TryParse` over a null related id.** Unreachable: the `RelatedEntityType != "Order"` test
   short-circuits in front of it for every row that has no order.
 - **M23c — `IsNullOrWhiteSpace` relaxed to `is null`.** Behaviourally identical *given the catch*:
   `JsonDocument.Parse("")` throws, the catch answers the same nulls. It is belt-and-braces over the catch,
   which is now the tested one.
-- **M14 in the sweep.** Removing the requeue's `AttemptCount < MaxAttempts` is only viable against a caller
-  that runs the requeue alone, because in the sweep the kill takes those rows first. That is exactly why
-  `The_requeue_alone_does_not_put_an_exhausted_row_back_on_the_ladder` exists — the mutation survived
-  until it did.
 
-## The neighbour's code that had to change, and the one latent bug in it
+**M14 was in this list and does not belong in it.** Removing the requeue's `AttemptCount < MaxAttempts` is
+only viable against a caller that runs the requeue alone, because in the sweep the kill takes those rows
+first — which is why `The_requeue_alone_does_not_put_an_exhausted_row_back_on_the_ladder` exists. The
+mutation survived until that test did, and then it was killed. It is a killed mutation with a story, not a
+non-viable one, and counting it as non-viable inflated the campaign by one.
+
+### The six follow-ups' mutations
+
+| Mutation | Killed by |
+|---|---|
+| M45 `orderNumber` dropped from the stub's alert fixture **with six lines of prose added** — the mutation the 1,200-character window would eventually have let through | `The_playwright_stub_answers_with_every_field_the_api_sends` (the brace match has no margin to run out) |
+| M46 `templateCode` dropped from the stub's alert fixture | the same |
+| M47 the banner links on the order id alone, with no number | `offers no link, and no telephone call, when the order is not in the database` |
+| M48 the order-gone case falls through to "open the order, then telephone" | `does not send anybody to an order that is not there`, the seven-sentence sweep, and the banner spec |
+| M49 a dead `StaffInvite` gets the token-bearing advice | `sends a dead StaffInvite to a Super Admin, not to the invited user`, `sends a dead staff invitation to a Super Admin`, and the sweep |
+| M50 `Welcome` / `AccountExists` get the "has usually expired" advice | `does not claim an expired link for the two that carry no link` and the sweep |
+| M51 the route accepts a note again and drops it | `An_acknowledgement_note_is_refused_by_name_and_nothing_is_acknowledged` |
+| M52 the command grows somewhere to put a note back | `The_acknowledge_command_has_no_note_to_carry` |
+| M53 the template code is no longer lifted out of the details | three handler tests, including `An_unreadable_order_id_costs_the_order_and_not_the_template_code` |
+| M54 the audit trail grows its `HasNote` flag back | `Acknowledging_stamps_the_row_and_writes_the_audit_trail` |
+
+**M42 was re-run against the brace match and still dies**, which is what makes M45 meaningful rather than
+a second copy of it: the window and the brace match both catch the plain mutation, and only the brace
+match catches it once the file grows.
+
+## The neighbour's code that had to change, and the bug I reported in it that was not one
 
 `EmailOutboxStore.ReleaseExpiredLeasesAsync` was one statement with a `CASE`: requeue a stranded row, or
 kill it if it had no attempt left. The behaviour was right and the shape was wrong — one statement can
@@ -486,8 +583,12 @@ to seek `IX_EmailOutbox_Stuck`:
 - `KillStrandedExhaustedAsync` → `Dead`, `OUTPUT inserted.Id`, `AND AttemptCount >= MaxAttempts`;
 - `ReleaseExpiredLeasesAsync` → `Failed`, requeued immediately, `AND AttemptCount < MaxAttempts`.
 
-The kill runs first in the sweep, which is what the `CASE` was for: a requeued exhausted row would be
-reclaimed at once (its next attempt time is already past) and spend a seventh attempt on a six-rung ladder.
+The kill runs first in the sweep, and **the guard is the requeue's own `AND AttemptCount < MaxAttempts`,
+not the ordering.** The first version of this paragraph — and the comment in `SendEmailsService.SweepAsync`
+— said the ordering was what stopped an exhausted row being requeued and reclaimed for a seventh attempt.
+The tester reversed the two calls and nothing changed, which is right: the clause is what holds it, and a
+comment crediting the ordering is how somebody deletes the clause. The ordering is still the tidier shape —
+a row the kill has taken is not a row the requeue has to consider — and it is no longer load-bearing.
 
 **The kill statement's text is a field on the store, not a literal inside the method**, and that is not
 tidiness. It runs as a raw `DbCommand` — it has to, to read its own `OUTPUT` — and an EF
@@ -495,14 +596,25 @@ tidiness. It runs as a raw `DbCommand` — it has to, to read its own `OUTPUT` �
 capture the requeue's SQL cannot capture this one. The plan probe is built **from the field**, so the probe
 and the statement cannot drift.
 
-**One latent bug found and fixed in W3-06's code.** Neither raw `DbCommand` in `EmailOutboxStore` assigned
-`command.Transaction`, so either would throw inside an ambient transaction —
-`"BeginExecuteReader requires the command to have a transaction when the connection assigned to the command
-is in a pending local transaction"`. Nothing in production opens one around them; the plan test that
-captures SQL inside a rolled-back transaction is what found it. Both now take
-`dbContext.Database.CurrentTransaction?.GetDbTransaction()`. `ClaimAsync` is W3-06's and was changed too,
-in two lines, because the failure would be worse there: a raw command that silently escaped a transaction
-would claim messages a rolled-back transaction had decided not to send.
+**The "latent bug" I reported in W3-06's code was not one, and the diagnosis was wrong.** I added
+`command.Transaction = dbContext.Database.CurrentTransaction?.GetDbTransaction()` to both of
+`EmailOutboxStore`'s raw commands — one of them `ClaimAsync`, W3-06's merged code, which decides which
+emails get sent — on the reasoning that either "throws inside an ambient transaction", and wrote no test
+for it. **I should not have touched `ClaimAsync` on an untested diagnosis.**
+
+The tester wrote the case and it says the opposite. Both methods wrap their raw command in
+`Database.CreateExecutionStrategy()`, and doc 08 §10.3 puts `EnableRetryOnFailure` on the context, so that
+strategy is `SqlServerRetryingExecutionStrategy` — which refuses a user-initiated transaction in
+`ExecuteAsync`, **before the command is built**. `CurrentTransaction` is therefore necessarily null
+wherever my assignment runs: both assignments are no-ops, and the behaviour inside a caller's transaction
+is unchanged. Measured by the tester: with both deleted, the 120 EmailOutbox / AdminAlert / OrderEmail
+integration tests stay green.
+
+The assignments and the two new tests stay. The refusal is the safe behaviour — enlisting would let a
+claim be rolled back after the caller had been handed the rows and sent the mail, which is the duplicate
+send `EmailOutboxStore` exists to prevent — and the tests pin it, so if a later change makes either
+statement reachable inside a transaction they go red. What changed is the claim: this was a no-op added on
+a wrong diagnosis, not a bug found.
 
 ## The alert is not in the same transaction as the statement that killed the row
 
@@ -530,7 +642,40 @@ it cannot raise one for a message that is still being retried.
 | 5 | **Nothing emails anybody about an alert.** Doc 11 §4.2 pairs **five** of the seven types with a staff email — `SensitiveSettingsChanged`, `BreakGlassUsed`, `PaymentException`, `CaptureRecoveryFailed`, `ReconciliationDrift` — and `EmailDeliveryFailed` and `DashboardRefund` with none. Doc 11 does not say why `EmailDeliveryFailed` has no email; **that is my inference**, and it is that §6.1's escalation rule points the same way ("phone or WhatsApp, not email — a mail problem may be the alert"). Either way, no email is built here, and the five that are specified belong to their own tasks. | the settings, PayPal and reconciliation tasks |
 | 6 | **The banner does not poll.** It reloads on construction and on every navigation. An admin panel that polls every thirty seconds is a change to how often every staff browser talks to the API and doc 02 asks for no such thing; a dead email is acted on in the morning routine. If ADM-04 wants a live count, that is the place to decide it. | ADM-04 |
 | 7 | **`ops.JobLeases` still does not exist** (doc 08 §3.8, in no migration). Unchanged by this task: `SendEmails` needs no lease, for the reason W3-06 recorded. | Architect |
-| 8 | **The acknowledgement note has one writer and no reader.** The banner writes it and nothing displays it afterwards, because the only screen that reads acknowledged alerts would be the dashboard or an alert history, and neither exists. The column, the API field and the audit row's `hasNote` are all honest today; a reader is ADM-04's. | ADM-04 |
+| 8 | **The acknowledgement note has no writer at all** (owner's decision, 2026-10-09 — see above). Doc 08 §3.8's column and its check constraint are created and tested; nothing fills them. **It comes back on either of two conditions**, and the first is the one that matters: the PDPA anonymisation routine covering `ops.AdminAlerts` (doc 08 §3.1 step 2's deletion list naming it, which doc 11 §4 currently says it does not), **or** a screen that reads acknowledged alerts, which would make the note worth something to somebody. Until one of those, a note is customer data in a table nothing can clean, read by nobody. | P17 (anonymisation) + ADM-04 |
+
+## What the tester found, and what it cost
+
+The tester passed the schema, R10 and the PDPA payload as correct, and found six things. All six were
+mine. They are listed here rather than left in the commit log because four of them are the same kind of
+defect this branch's own journal was already claiming to have fixed.
+
+1. **The PDPA test could not see a telephone number — the one value the whole payload design exists to
+   keep out.** `No_column_of_the_alert_holds_the_customers_email_name_or_telephone_number` covered the
+   email and the name and covered the number not at all, for two reasons that happened to cancel:
+   `SqlQuery<int>($"… LIKE '%{order.Phone}%'")` parameterises *inside* the string literal, so the server
+   received `LIKE '%@p0%'` — a search for the text "@p0" — and `order.Phone` was null anyway, because
+   `SalesRowWriter` sets `Ship_Phone` and leaves `Orders.Phone` unset, so a correctly parameterised
+   version would have read `LIKE '%%'` and matched everything. **No leak exists; the finding is that this
+   test could not have told anybody.** It now plants a number in a title and proves the search finds it
+   before concluding that it found none.
+2. **The `OPENJSON` claim survived its own correction three times.** This journal recorded fixing one
+   comment; there were four, and the other three still stated it as fact — including the class summary of
+   the very file whose first test exists to settle it. **And the guard I wrote to replace it never
+   fired**: the comment said EF names the elements `@types1 … @types7` "(measured)", and EF names them
+   after the variable, so the real text is `@alertTypes1` and `DoesNotContain("@types")` could not fail
+   for the shape it was written for. My claim that two independent guards were needed "because either one
+   alone would go green" was wrong — only the literals assertion was working.
+3. **The sign-in page really does fetch alerts.** `load()` guarded on `router.url.startsWith('/login')`
+   and the comment said "skipped rather than made and swallowed". The component is built during bootstrap,
+   before the first navigation resolves, so `router.url` is `'/'` the first time — and the first time is
+   the only one that matters on that page. The guard now reads the document's path too, and the e2e
+   asserts the absence of the *request* rather than of the banner.
+4. **The OpenAPI description still advertised the total I removed on a measurement** — in the one place a
+   client reads.
+5. **Four more comments that say something the code does not**, including "Four accessibility rules" above
+   a list of five, and the sweep's ordering claim (see above).
+6. **The heading rule was asserted on three admin routes and the banner renders above all sixteen.**
 
 ## Corrections to the brief
 
@@ -556,6 +701,24 @@ it cannot raise one for a message that is still being retried.
    brief's rule — "put the statuses in the command text and prove the plan seeks" — is right for the
    outbox's `Status IN (0,3)` filter and does not transfer to an `IS NULL` filter with no key predicate.
    The response was to remove the query, not to work round it.
+
+## The shape test's window was a hole with 173 characters left in it
+
+`AssertStubBlockHas` searched **1,200 characters** from its anchor, which is how M42 was killed after the
+first version searched the whole file. The owner measured the margin: **173 characters** before the next
+`orderNumber:` in `alertsFor`. Two lines of added prose in the stub and the window would have reached a
+neighbour's field again, silently re-opening exactly the defect the narrowing was for — and the test would
+have stayed green while doing it.
+
+It is a **balanced brace match** now, from a named opener (`return {`, `json(response, 200, {`) rather than
+from the first brace after the anchor, because `deadEmailAlert(alertId, overrides = {})` has an empty
+object in its own parameter list. `${…}` inside the fixture's template literals balances like any other
+pair. A second test, `The_playwright_stubs_braces_balance`, checks the whole file first — without it a
+stray brace would make every literal run to the end of the file and every field assertion pass, which is
+the brace match's own version of the failure the budget had.
+
+**Measured**: M45 is M42 with six lines of prose added, and it dies. The character budget would not have
+caught it.
 
 ## Anything a client or a shopper could still hit
 
