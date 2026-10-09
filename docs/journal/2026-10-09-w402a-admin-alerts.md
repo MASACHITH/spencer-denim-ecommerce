@@ -738,6 +738,11 @@ caught it.
 - **A Store Manager cannot see a dead email.** Built as doc 08 §3.8 R10 says, and G-37 records the question
   as open. If the shop runs with one Super Admin on leave, a dead email waits for them — doc 11 §6.1's
   escalation covers it by telephone, and the second Super Admin account exists for exactly this.
+- **An order an email names that is not in the database leaves nobody to contact.** The banner now says so
+  instead of offering a link that 404s, and tells the technical owner — but the shopper in that case has no
+  record in the shop at all, so there is nobody for a Super Admin to ring. It should be unreachable
+  (`ops.EmailOutbox` has no foreign key to `sales.Orders` by design, and orders are never deleted), and
+  the handling exists because "should be unreachable" is not the same as "is".
 - **An acknowledged alert disappears with nowhere to look it up.** The audit trail has it
   (`AlertAcknowledged` on `AdminAlert`/id, visible in ADM-03's audit log viewer), and the alert row itself
   is kept for a year, but no screen lists acknowledged alerts. A Super Admin who clears one by mistake has
