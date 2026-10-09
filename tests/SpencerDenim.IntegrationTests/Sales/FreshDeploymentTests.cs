@@ -499,24 +499,33 @@ public sealed class FreshDeploymentTests(SqlServerDatabaseFixture sqlServer)
 
         while (DateTime.UtcNow < deadline)
         {
-            int settings;
+            bool referenceDataComplete;
             int products;
 
             using (var scope = deployment.Services.CreateScope())
             {
                 var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-                // **`ops.Settings`, not `ref.Districts`, and the difference is the whole test.** The
-                // districts are committed by step 2 of `RunReferenceDataAsync` and the lock is correctly
-                // still held for steps 3 and 4 — the first version of this watched for districts and
-                // reported a held lock that was being held exactly as intended. The settings keys are the
-                // last thing the reference phase writes, so they are the marker for "that phase is done".
-                settings = await db.Settings.CountAsync(cancellationToken);
+                // **A row of `ops.Settings`, not `ref.Districts`, and the difference is the whole test.**
+                // The districts are committed early in `RunReferenceDataAsync` and the lock is correctly
+                // still held for the steps after them — the first version of this watched for districts
+                // and reported a held lock that was being held exactly as intended. So the marker has to
+                // be whatever that phase writes *last*.
+                //
+                // **It used to be the settings count and that stopped being true.** The versioned
+                // default-role permission step (#122) now runs after the settings seeder and commits the
+                // `Seed.Version` row, so `Settings.Count() == SettingCatalog.All.Count` is true only for
+                // the microseconds between the two saves and a 100 ms poll never sees it — this test
+                // failed with "the demo catalogue never took long enough to observe", and that is what it
+                // was telling us. The marker is now that last row itself, which is both later and exact.
+                referenceDataComplete = await db.Settings
+                    .AnyAsync(setting => setting.Key == SettingKeys.Seed.Version, cancellationToken);
+
                 products = await db.Products.CountAsync(cancellationToken);
             }
 
             // The window: reference data complete, demo catalogue not finished.
-            if (settings == SettingCatalog.All.Count && products < DemoProducts && !starting.IsCompleted)
+            if (referenceDataComplete && products < DemoProducts && !starting.IsCompleted)
             {
                 // Given a couple of seconds, because the release is the statement after the one that
                 // committed the settings: a sub-millisecond gap, against a demo phase of about eleven
