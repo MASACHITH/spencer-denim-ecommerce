@@ -652,6 +652,74 @@ public sealed class EmailOutboxSendingTests(SqlServerDatabaseFixture sqlServer)
     /// arrangement in which the engine's own row locking is the thing under test.
     /// </para>
     /// </remarks>
+    /// <summary>
+    /// <b>Neither raw statement can run inside a caller's transaction, and <c>command.Transaction</c>
+    /// does not change that.</b>
+    /// </summary>
+    /// <remarks>
+    /// <b>W3-07 set <c>command.Transaction</c> on both raw commands — one of them
+    /// <c>ClaimAsync</c>, which is W3-06's merged code and decides which emails get sent — and wrote no
+    /// test for it. These two are that test, and they record the opposite of what those lines claim.</b>
+    /// <para>
+    /// Both methods wrap their raw command in <c>Database.CreateExecutionStrategy()</c>, and doc 08
+    /// §10.3 puts <c>EnableRetryOnFailure</c> on the context, so that strategy is
+    /// <c>SqlServerRetryingExecutionStrategy</c> — which refuses outright when a user transaction is
+    /// already open. The refusal happens in <c>ExecuteAsync</c>, <i>before</i> the command is built, so
+    /// <c>Database.CurrentTransaction</c> is necessarily null by the time the assignment runs and the
+    /// assignment is always a no-op.
+    /// </para>
+    /// <para>
+    /// <b>That is the safe behaviour and it is why these tests assert the throw rather than a
+    /// rollback.</b> Enlisting would mean a claim could be rolled back after the caller had been handed
+    /// the rows and sent the mail — a message sent whose row is back at <c>Pending</c>, which is the
+    /// duplicate send this class exists to prevent. If a later change makes either statement reachable
+    /// inside a transaction, these tests go red and that is the conversation to have.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task The_claim_refuses_to_run_inside_a_callers_transaction()
+    {
+        await ResetAsync();
+
+        await InsertAsync(nextAttemptAtUtc: Now.AddMinutes(-1));
+
+        using var scope = SqlServer.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var store = scope.ServiceProvider.GetRequiredService<IEmailOutboxStore>();
+
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(Token);
+
+        var refusal = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => store.ClaimAsync(20, Now, Now.AddMinutes(5), Token));
+
+        Assert.Contains("does not support user-initiated transactions", refusal.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// And so does the kill, whose <c>OUTPUT</c> an <c>EmailDeliveryFailed</c> alert is raised from.
+    /// </summary>
+    [Fact]
+    public async Task The_kill_refuses_to_run_inside_a_callers_transaction()
+    {
+        await ResetAsync();
+
+        await InsertAsync(
+            status: EmailOutboxStatus.Sending,
+            attemptCount: EmailBackoff.MaxAttempts,
+            lockedUntilUtc: Now.AddMinutes(-1));
+
+        using var scope = SqlServer.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var store = scope.ServiceProvider.GetRequiredService<IEmailOutboxStore>();
+
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(Token);
+
+        var refusal = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => store.KillStrandedExhaustedAsync(Now, Token));
+
+        Assert.Contains("does not support user-initiated transactions", refusal.Message, StringComparison.Ordinal);
+    }
+
     private async Task<IReadOnlyList<EmailOutboxClaim>> ClaimAsync(
         int batchSize = 20,
         DateTime? nowUtc = null)
