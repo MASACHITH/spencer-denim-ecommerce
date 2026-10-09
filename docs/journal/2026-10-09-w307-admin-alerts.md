@@ -311,7 +311,7 @@ Every figure measured in this worktree. **Main's own figures were measured first
 
 | Suite | Main (`924ebfd`) | Brief said | After | New |
 |---|---|---|---|---|
-| Unit | **1,925** | 1,818 | **1,980** | 55 |
+| Unit | **1,925** | 1,818 | **1,981** | 56 |
 | Integration | **1,292** | 1,292 | **1,354** | 62 |
 | Vitest (shared / storefront / admin) | **24 / 1,417 / 465** | same | **24 / 1,417 / 490** | 25 |
 | Playwright | **935 / 0** | same | **960 / 0** | 25 |
