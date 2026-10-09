@@ -24,6 +24,12 @@ namespace SpencerDenim.IntegrationTests.Ops;
 public sealed class AdminAlertsBehaviourTests(SqlServerDatabaseFixture sqlServer)
     : SalesSchemaTestBase(sqlServer)
 {
+    /// <summary>
+    /// The telephone number doc 08 §3.1 step 8 searches every table for. A constant because two places
+    /// need the same value: the order it is written onto, and the search that must be able to find it.
+    /// </summary>
+    private const string CustomerPhone = "0771234567";
+
     private static readonly DateTime Now = new(2026, 10, 9, 12, 0, 0, DateTimeKind.Utc);
 
     // ------------------------------------------------------- the dead-email alert
@@ -82,7 +88,17 @@ public sealed class AdminAlertsBehaviourTests(SqlServerDatabaseFixture sqlServer
     {
         var reference = await ReferenceAsync();
         var orderId = await InsertValidOrderAsync(reference);
+
+        // **The order needs a contact telephone number, and the shared writer does not give it one.**
+        // `SalesRowWriter` sets `Ship_Phone` and leaves `Orders.Phone` null, so the value this test used
+        // to interpolate into its search was null — which is half of why it never checked a telephone
+        // number (see PersonalDataHitsAsync for the other half).
+        await DbContext.Database.ExecuteSqlInterpolatedAsync(
+            $"UPDATE sales.Orders SET Phone = {CustomerPhone} WHERE Id = {orderId};",
+            Token);
+
         var order = await DbContext.Orders.AsNoTracking().SingleAsync(row => row.Id == orderId, Token);
+        Assert.Equal(CustomerPhone, order.Phone);
 
         var messageId = await InsertDeadMessageAsync(
             EmailTemplateCodes.OrderPlaced,
@@ -98,24 +114,62 @@ public sealed class AdminAlertsBehaviourTests(SqlServerDatabaseFixture sqlServer
         Assert.Equal("nimali.perera@example.com", message.ToEmail);
         Assert.Equal("Nimali Perera", message.ToName);
 
-        var hits = await DbContext.Database
+        Assert.Equal(0, await PersonalDataHitsAsync(order.Phone));
+
+        // **A positive control, because the search above is a negative and a negative can rot.** The
+        // telephone clause used to be `LIKE '%{order.Phone}%'`, and `SqlQuery` substitutes its parameter
+        // *inside* the string literal: the SQL that reached the server was `LIKE '%@p0%'`, a search for
+        // the literal text "@p0", so this test asserted nothing at all about the one value doc 08 §3.1
+        // step 8 names that no other clause covers — the email is caught by '%@%' and the name by
+        // '%nimali%', and the number by nothing. Planting it in a title proves the search can see it.
+        var planted = await InsertAlertAsync(
+            AdminAlertTypes.EmailDeliveryFailed,
+            Now.AddMinutes(-1),
+            title: $"A probe that should never ship: rang {order.Phone}");
+
+        Assert.Equal(1, await PersonalDataHitsAsync(order.Phone));
+
+        await DbContext.Database.ExecuteSqlInterpolatedAsync(
+            $"DELETE FROM ops.AdminAlerts WHERE Id = {planted};",
+            Token);
+    }
+
+    /// <summary>
+    /// Doc 08 §3.1 step 8's search, over the columns <c>ops.AdminAlerts</c> has: how many rows hold the
+    /// customer's email address, name or telephone number.
+    /// </summary>
+    /// <remarks>
+    /// <b>The pattern is one parameter, not a parameter inside a literal.</b> <c>SqlQuery</c> renders
+    /// <c>LIKE '%{value}%'</c> as <c>LIKE '%@p0%'</c> — the quotes swallow the hole and the predicate
+    /// becomes a search for the text "@p0". The wildcards therefore go into the value.
+    /// </remarks>
+    private async Task<int> PersonalDataHitsAsync(string? phone)
+    {
+        // **A blank number would make the pattern '%%', which matches every row.** That is the shape that
+        // would turn this search from "nothing leaked" into "everything leaked" or, with the clause
+        // written the old way, into nothing at all — so the value is asserted rather than trusted.
+        Assert.False(string.IsNullOrWhiteSpace(phone), "the search needs a telephone number to look for.");
+
+        var phonePattern = $"%{phone}%";
+
+        return await DbContext.Database
             .SqlQuery<int>($"""
                 SELECT COUNT(*) AS [Value]
                   FROM ops.AdminAlerts
                  WHERE Title LIKE '%nimali%'
                     OR Title LIKE '%Perera%'
                     OR Title LIKE '%@%'
-                    OR Title LIKE '%{order.Phone}%'
+                    OR Title LIKE {phonePattern}
                     OR DetailsJson LIKE '%nimali%'
                     OR DetailsJson LIKE '%Perera%'
                     OR DetailsJson LIKE '%@%'
-                    OR DetailsJson LIKE '%{order.Phone}%'
+                    OR DetailsJson LIKE {phonePattern}
                     OR RelatedEntityId LIKE '%nimali%'
+                    OR RelatedEntityId LIKE {phonePattern}
                     OR ISNULL(AcknowledgementNote, '') LIKE '%nimali%'
+                    OR ISNULL(AcknowledgementNote, '') LIKE {phonePattern}
                 """)
             .SingleAsync(Token);
-
-        Assert.Equal(0, hits);
     }
 
     /// <summary>
@@ -830,14 +884,15 @@ public sealed class AdminAlertsBehaviourTests(SqlServerDatabaseFixture sqlServer
     private async Task<int> InsertAlertAsync(
         string alertType,
         DateTime createdAtUtc,
-        bool acknowledged = false)
+        bool acknowledged = false,
+        string? title = null)
     {
         SqlServer.SkipIfUnavailable();
 
         using var scope = SqlServer.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-        var alert = NewAlert(alertType, createdAtUtc, $"A probe raised at {createdAtUtc:O}");
+        var alert = NewAlert(alertType, createdAtUtc, title ?? $"A probe raised at {createdAtUtc:O}");
 
         if (acknowledged)
         {
