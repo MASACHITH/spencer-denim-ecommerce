@@ -8,35 +8,35 @@
  * pins the payload so the two cannot drift apart silently.
  */
 export interface AdminAlert {
-  id: number;
+  readonly id: number;
   /** One of the seven `AdminAlertTypes`. Only `EmailDeliveryFailed` has a producer in this build. */
-  alertType: string;
+  readonly alertType: string;
   /** 1 Info, 2 Warning, 3 Critical — the database's own numbers (doc 08 §3.8). */
-  severity: number;
+  readonly severity: number;
   /** The facts, in one sentence. What can be done about them is {@link alertAdvice}'s. */
-  title: string;
-  createdAtUtc: string;
-  relatedEntityType: string | null;
-  relatedEntityId: string | null;
+  readonly title: string;
+  readonly createdAtUtc: string;
+  readonly relatedEntityType: string | null;
+  readonly relatedEntityId: string | null;
   /** The order to open, when the alert names one. The token `/orders/:orderPublicId` takes. */
-  orderPublicId: string | null;
+  readonly orderPublicId: string | null;
   /** That order's number, so a link can say where it goes. */
-  orderNumber: string | null;
+  readonly orderNumber: string | null;
 }
 
 /** The banner's payload: what this user may see, and how many there are in all. */
 export interface AdminAlertBanner {
-  totalOpen: number;
-  alerts: AdminAlert[];
+  readonly totalOpen: number;
+  readonly alerts: AdminAlert[];
 }
 
 /** What acknowledging answered. */
 export interface AdminAlertAcknowledgement {
-  alertId: number;
-  alertType: string;
-  acknowledgedAtUtc: string;
+  readonly alertId: number;
+  readonly alertType: string;
+  readonly acknowledgedAtUtc: string;
   /** True when somebody else had already cleared it. Not a failure (doc 08 §3.8). */
-  alreadyAcknowledged: boolean;
+  readonly alreadyAcknowledged: boolean;
 }
 
 /** The three severities, as a word a staff member reads. */

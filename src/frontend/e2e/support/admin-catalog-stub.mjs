@@ -517,6 +517,56 @@ function orderInvoice(state, order) {
   };
 }
 
+/**
+ * `ops.AdminAlerts` as `GET /api/admin/alerts` sends it (doc 08 §3.8 N2, doc 11 §7 G-37, W3-07).
+ *
+ * **Field for field from `AdminAlertDto`**, and `AdminAlertShapeTests` on the API side reads this file to
+ * keep it that way. Issue #126: Playwright never starts the .NET API, so a field the real payload carries
+ * and this fixture omits is a field no browser test can miss — a dropped field once left all 860 tests
+ * green.
+ *
+ * **Every field carries a real value.** W1-12's blocker survived 1,571 passing tests because the fixtures
+ * set the columns they cleared to `null`, so `null → null` round-tripped vacuously.
+ */
+function deadEmailAlert(alertId, overrides = {}) {
+  return {
+    // Written as an explicit pair rather than with object shorthand: `AdminAlertShapeTests` reads this
+    // file looking for every field the real DTO sends, spelled `name:`, and a shorthand `id` would make
+    // the one field most likely to be dropped the one field the check cannot see.
+    id: alertId,
+    alertType: 'EmailDeliveryFailed',
+    severity: 2,
+    title: `Email not delivered: BankTransferInstructions for order SD-2026-00012${alertId} (outbox row 482${alertId})`,
+    createdAtUtc: '2026-10-09T03:11:00.000Z',
+    relatedEntityType: 'EmailOutbox',
+    relatedEntityId: `482${alertId}`,
+    orderPublicId: '44444444-4444-4444-8444-444444444444',
+    orderNumber: `SD-2026-00012${alertId}`,
+    ...overrides,
+  };
+}
+
+/**
+ * The alert sets a test can ask for.
+ *
+ * **`none` is the default, and that is deliberate.** The banner lives in the admin shell (W3-07), so an
+ * alert seeded by default would appear on every admin screen and every one of this suite's existing
+ * layout, tap-size and no-horizontal-scroll sweeps would silently be measuring a different page. A test
+ * that wants the banner asks for it.
+ */
+function alertsFor(name) {
+  switch (name) {
+    case 'dead':
+      return [deadEmailAlert(1)];
+    case 'dead-no-order':
+      return [deadEmailAlert(1, { orderPublicId: null, orderNumber: null })];
+    case 'many':
+      return Array.from({ length: 12 }, (_, index) => deadEmailAlert(index + 1));
+    default:
+      return [];
+  }
+}
+
 function freshState() {
   return {
     departments: [
@@ -693,6 +743,9 @@ function freshState() {
 
     // ADM-10 (W1-03). Its own module, because this file is already a thousand lines about ADM-11.
     ...freshProductState(),
+
+    /** Open admin alerts (W3-07). Empty unless a test asks for some — see `alertsFor`. */
+    alerts: [],
   };
 }
 
@@ -1087,6 +1140,63 @@ const server = createServer(async (request, response) => {
   if (path === '/__test__/bank-transfer-outcome') {
     state.bankTransferOutcome = url.searchParams.get('outcome') ?? 'ok';
     return json(response, 200, { outcome: state.bankTransferOutcome });
+  }
+
+  // ---- W3-07: ops.AdminAlerts, the shell's banner (doc 08 §3.8 N2, doc 11 §7 G-37) ------------
+
+  // Test-only, and named so. `set=dead|dead-no-order|many|none` seeds this browser context's alerts;
+  // nothing is seeded by default, because the banner is in the shell and would otherwise change every
+  // other admin screen's layout under the suite's existing measurements.
+  if (path === '/__test__/alerts') {
+    state.alerts = alertsFor(url.searchParams.get('set') ?? 'none');
+    return json(response, 200, { count: state.alerts.length });
+  }
+
+  if (path === '/api/admin/alerts' && request.method === 'GET') {
+    // R10 is the real API's rule and it is not reimplemented here: this stub's SESSION is a GrantsAll
+    // holder, so it sees every type. What R10 actually does is proved against a real SQL Server in
+    // `AdminAlertVisibilityEndpointTests` and against the rule itself in `AdminAlertVisibilityTests`.
+    const open = state.alerts.filter((alert) => alert.acknowledgedAtUtc === undefined);
+
+    return json(response, 200, { totalOpen: open.length, alerts: open.slice(0, 10) });
+  }
+
+  const acknowledge = path.match(/^\/api\/admin\/alerts\/(\d+)\/acknowledge$/);
+
+  if (acknowledge && request.method === 'POST') {
+    const id = Number(acknowledge[1]);
+    const alert = state.alerts.find((candidate) => candidate.id === id);
+
+    if (!alert) {
+      // The real route answers a bare 404 for "no such alert" and for "not a type you may see" alike, so
+      // the id space cannot be walked to learn that an alert exists.
+      response.writeHead(404, { 'Cache-Control': 'no-store' });
+      return response.end();
+    }
+
+    const body = await readBody(request);
+
+    if (body !== null && body.note !== null && typeof body.note === 'string' && body.note.length > 500) {
+      return json(response, 400, {
+        type: 'about:blank',
+        title: 'One or more fields are invalid.',
+        status: 400,
+        errors: { note: ['The note must be 500 characters or fewer.'] },
+      });
+    }
+
+    const alreadyAcknowledged = alert.acknowledgedAtUtc !== undefined;
+    alert.acknowledgedAtUtc = alert.acknowledgedAtUtc ?? '2026-10-09T04:00:00.000Z';
+    alert.note = body === null ? null : (body.note ?? null);
+
+    return json(response, 200, {
+      alertId: alert.id,
+      alertType: alert.alertType,
+      acknowledgedAtUtc: alert.acknowledgedAtUtc,
+
+      // Explicit pair, not shorthand: see deadEmailAlert.
+      alreadyAcknowledged: alreadyAcknowledged,
+    });
   }
 
   if (path === '/api/admin/orders/bank-transfers' && request.method === 'GET') {

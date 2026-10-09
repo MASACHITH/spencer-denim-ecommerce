@@ -168,6 +168,18 @@ public sealed class CatalogModelTests
             $"{nameof(SpencerDenim.Domain.Ops.EmailOutboxMessage)}.{nameof(SpencerDenim.Domain.Ops.EmailOutboxMessage.BodyHtml)}",
             $"{nameof(SpencerDenim.Domain.Ops.EmailOutboxMessage)}.{nameof(SpencerDenim.Domain.Ops.EmailOutboxMessage.BodyText)}",
             $"{nameof(SpencerDenim.Domain.Ops.EmailOutboxMessage)}.{nameof(SpencerDenim.Domain.Ops.EmailOutboxMessage.TransportOverrideProtected)}",
+
+            // W3-07, doc 08 §3.8: `ops.AdminAlerts.DetailsJson` is listed there as nvarchar(max) with a
+            // `CK ISJSON` and nothing else, and it is unbounded for doc 08 §1.4's reason rather than for
+            // want of a number: a JSON document's length is the shape of whichever alert type wrote it,
+            // and six of the seven types are later tasks' — a `ReconciliationDrift` row naming every
+            // drifting variant has no ceiling an author today could choose honestly.
+            //
+            // There is also no person to tell: every writer is a job or a background path, so a refusal
+            // would reach a log and not a form. What bounds it instead is that nothing user-supplied goes
+            // in: doc 08 §3.8 limits it to "keys, entity IDs and amounts", and this build's only writer
+            // (`DeadEmailAlert`) emits four fixed fields.
+            $"{nameof(SpencerDenim.Domain.Ops.AdminAlert)}.{nameof(SpencerDenim.Domain.Ops.AdminAlert.DetailsJson)}",
         ];
 
         var offenders = Model.GetEntityTypes()
