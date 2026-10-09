@@ -186,9 +186,12 @@ own cells, so this is a doc-against-code check and not two copies of a constant.
 
 Nothing is seeded with content. All 20 catalogue keys are seeded `NULL` except
 `Orders.AutoDeliverAfterDays = 7`, which is a figure doc 08 §3.8 states. The one new row this branch adds
-is `Seed.Version`, which is the seeder's own bookkeeping. An integration test asserts the *whole table* on
-a fresh deployment holds a value only for the keys whose default a document states, so a future
-placeholder is a red test rather than a reviewer noticing.
+is `Seed.Version`, which is the seeder's own bookkeeping. Two tests hold the line, and they are deliberately
+different: a unit test asserts the **catalogue** carries a seed value only where doc 08 §3.8's own cell
+states the default (and then that exact value), and an integration test asserts the **whole table** on a
+fresh deployment holds a value only where the catalogue does. The first catches an invented default; the
+second catches anything between the catalogue and the table inventing one. Neither alone is enough — see
+§5.
 
 The empty-handling on the seeded side was checked rather than assumed: `BankTransferProvider` treats an
 incomplete bank set as "instructions not available yet", `InvoiceSellerDetails`/`OrderSettingsReader`
