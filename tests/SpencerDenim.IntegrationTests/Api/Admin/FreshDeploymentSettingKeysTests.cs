@@ -96,11 +96,17 @@ public sealed class FreshDeploymentSettingKeysTests(SqlServerDatabaseFixture sql
     /// documents states arrives filled in.</b>
     /// </summary>
     /// <remarks>
-    /// This is the rule W3-04's invoice, W3-03's bank instructions and the stripped footer contact details
-    /// all paid for: a seeded placeholder is a value mistakable for data. A shopper transferring money to
-    /// an invented account number or an invoice printing an invented registered address is worse than a
-    /// blank somebody can see and ask about. So the assertion is on the whole table at once rather than on
-    /// the keys that happened to be remembered.
+    /// This asserts the <i>seeder</i>: every row whose definition carries no seed value really is null in
+    /// the database, so nothing between the catalogue and the table invents one. It is on the whole table
+    /// at once rather than on the keys that happened to be remembered.
+    /// <para>
+    /// <b>It deliberately does not police the catalogue, and cannot.</b> The expected set is computed from
+    /// <c>SettingDefinition.SeedValue</c>, so a plausible-looking default added to the catalogue would
+    /// make both sides of the comparison agree — a mutation giving <c>Bank.BankName</c> a bank name passed
+    /// this test unchanged. That half is
+    /// <c>SettingKeySpecificationTests.A_seeded_value_exists_only_where_doc_08_states_the_default</c>,
+    /// which takes the permitted values from doc 08 §3.8's own cells.
+    /// </para>
     /// </remarks>
     [Fact]
     public async Task Only_the_keys_whose_default_a_document_states_are_seeded_with_a_value()

@@ -173,6 +173,53 @@ public sealed class SettingKeySpecificationTests
     }
 
     /// <summary>
+    /// <b>A seeded key carries a value only where doc 08 §3.8 states the default, and then that exact
+    /// value.</b>
+    /// </summary>
+    /// <remarks>
+    /// <b>This is the invented-data rule, asserted against the document rather than against itself.</b>
+    /// The companion integration test compares the rows on a fresh deployment with
+    /// <see cref="SettingDefinition.SeedValue"/>, which is the right check for the seeder and <i>cannot</i>
+    /// catch a placeholder: a mutation that gave <c>Bank.BankName</c> a plausible bank name passed it,
+    /// because the expected set was computed from the same catalogue that had just been mutated. Here the
+    /// permitted set comes from §3.8's own parenthesised defaults, so a value this project's documents do
+    /// not state is a red build.
+    /// <para>
+    /// The cost of getting this wrong is specific: an invented bank account number on a live shop is a
+    /// customer transferring real money to a number nobody owns, and an invented registered address on an
+    /// invoice is a false statement on a legal document. W3-03, W3-04 and the stripped footer contact
+    /// details all paid for this rule.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void A_seeded_value_exists_only_where_doc_08_states_the_default()
+    {
+        var documented = SpecifiedDefaults();
+
+        var seededWithAValue = SettingCatalog.All
+            .Where(definition => definition.SeedValue is not null)
+            .ToList();
+
+        foreach (var definition in seededWithAValue)
+        {
+            Assert.True(
+                documented.TryGetValue(definition.Key, out var expected),
+                $"{definition.Key} is seeded with '{definition.SeedValue}' and doc 08 §3.8 states no "
+                + "default for it. A seeded value the documents do not state is a value mistakable for "
+                + "data: a bank account number nobody owns, a registered address on an invoice. Leave it "
+                + "null and let the screen handle empty.");
+
+            Assert.Equal(expected, definition.SeedValue);
+        }
+
+        // One today, and the test says which, so a second one arriving is a decision somebody made rather
+        // than a line that slipped in.
+        Assert.Equal(
+            [SettingKeys.Orders.AutoDeliverAfterDays],
+            seededWithAValue.Select(definition => definition.Key).ToList());
+    }
+
+    /// <summary>
     /// <b>No deferred key is running on a figure that differs from doc 08 §3.8's own default.</b>
     /// <para>
     /// This is the half of #113 that would have been a defect rather than an omission: "anything reading a
