@@ -66,7 +66,7 @@ public interface IEmailOutboxStore
     /// (G-37) requires <i>every</i> row that reaches <c>Dead</c> to raise an
     /// <c>EmailDeliveryFailed</c> alert. Until W3-07 it was a branch inside
     /// <see cref="ReleaseExpiredLeasesAsync"/> that returned nothing but a count, so a customer whose
-    /// final attempt was lost to a restart was never told about and nobody was told either.
+    /// final attempt was lost to a restart was never contacted, and no Super Admin was told either.
     /// </para>
     /// <para>
     /// It runs <b>before</b> <see cref="ReleaseExpiredLeasesAsync"/> in a sweep, which is what stops an
