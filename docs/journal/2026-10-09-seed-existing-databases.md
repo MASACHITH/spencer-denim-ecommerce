@@ -201,7 +201,83 @@ existing tests.
 
 ---
 
-## 5. Owed, or worth a line in somebody else's issue
+## 5. The tests, and the mutation that killed each one
+
+Every new test was proven able to fail. The mutations were applied one at a time, with a build and a run
+each, and reverted (`git checkout -- src tests`; never `git stash`, the stack is shared).
+
+| Test | Mutation that killed it |
+|---|---|
+| `Baseline_plus_increments_reproduces_the_shipped_definition` (Store Manager) | `Customers.Edit` removed from version 2's increment while `DefaultRoleDefinitions` keeps it |
+| …(Order Staff) | the baseline's `Order Staff` key renamed to `Order Staffs` |
+| …(Content Editor) | `Content.Delete` removed from the Content Editor increment |
+| `Current_is_the_highest_declared_increment_version` | `Current` raised to 3 with no version-3 increment |
+| `Every_increment_is_above_the_baseline_version` | an increment declared at version 1 |
+| `No_increment_repeats_a_baseline_permission` | `Content.Edit` added to version 2's increment |
+| `Every_permission_in_the_history_is_grantable_to_a_role` | `Settings.Security` added to an increment |
+| `Every_named_role_is_a_default_role` | the baseline's `Order Staff` key renamed |
+| `Since_returns_the_increments_above_the_recorded_version_and_no_others` | `>` changed to `>=` |
+| `Version_two_grants_the_three_permissions_issue_122_names` | `Customers.Edit` removed from the increment |
+| `The_parse_of_doc_08_section_3_8_finds_the_keys_it_is_supposed_to` | the parser made to return an empty list |
+| `Every_specified_key_is_either_seeded_or_recorded_as_deferred` | `Store.Name` misspelt in `DeferredSettingKeys` |
+| `No_key_is_both_seeded_and_recorded_as_deferred` | `Contact.Phone` added to `DeferredSettingKeys` |
+| `Nothing_seeded_or_deferred_is_absent_from_doc_08` | `Store.Nickname` added to `DeferredSettingKeys` |
+| `Every_deferral_carries_a_reason_and_appears_once` | `Email.Smtp.Host` listed twice; separately, a reason shortened to "Not built yet." |
+| `Every_deferred_key_with_a_code_fallback_falls_back_to_the_documented_default` | `CatalogOptions.NewArrivalDays` changed from 30 to 31 |
+| `A_seeded_value_exists_only_where_doc_08_states_the_default` | `Bank.BankName` given `SeedValue: "Some Bank PLC"` |
+| `The_seed_version_marker_is_not_a_catalogue_key` | `Seed.Version` added to `SettingCatalog` |
+| `A_permission_added_after_seeding_reaches_a_role_that_already_exists` | `Since(recorded)` made to yield nothing |
+| `A_permission_the_client_removed_is_not_put_back` | the grant loop made to apply the role's whole shipped definition instead of the increment's additions |
+| `The_step_reports_what_it_will_not_grant_by_name` | the drift scan made to report nothing |
+| `Running_the_step_again_grants_nothing_and_leaves_one_row_per_permission` | `Since(recorded)` made to yield nothing |
+| `A_newer_marker_is_left_alone_and_an_unreadable_one_re_offers_every_increment` | the `recorded > Current` guard removed; separately, an unreadable marker treated as `Current`; separately, the per-row idempotence guard removed |
+| `Three_hosts_starting_at_once_grant_each_permission_exactly_once` | `Since(recorded)` made to yield nothing |
+| `A_fresh_deployment_seeds_every_catalogue_key_and_no_deferred_key` | `SettingsSeeder` made to skip the first catalogue key |
+| `Only_the_keys_whose_default_a_document_states_are_seeded_with_a_value` | `SettingsSeeder` made to write `SeedValue ?? "TBC"` |
+
+### Two of them could not fail when first written, and the mutations are why that is known
+
+1. **`A_permission_the_client_removed_is_not_put_back`.** It removed a baseline permission with the marker
+   already at the current version, so `Since()` returned nothing and the grant loop never ran. The
+   mutation that replaced `increment.AddedPermissions` with the role's whole shipped definition — the
+   tempting wrong fix, the one N13 forbids — **passed it unchanged**. It now also winds the marker back, so
+   the step is granting on that very role in that very pass and still has to leave the removed permission
+   alone.
+2. **`Only_the_keys_whose_default_a_document_states_are_seeded_with_a_value`.** Its expected set was
+   computed from `SettingDefinition.SeedValue`, so giving `Bank.BankName` a plausible bank name mutated
+   both sides of the comparison and the test **passed**. It is the right check for the *seeder* and cannot
+   be the check for the *catalogue*; the catalogue half is now a unit test whose permitted values come
+   from doc 08 §3.8's own cells.
+
+### One existing test caught a regression this branch caused
+
+`FreshDeploymentTests.The_seed_lock_is_released_before_the_demo_catalogue_is_written` watched for
+`Settings.Count() == SettingCatalog.All.Count` as "the reference phase has finished". The new step runs
+after the settings seeder and commits the `Seed.Version` row, so that equality now holds only for the
+microseconds between two saves and the 100 ms poll never saw it. It failed with "the demo catalogue never
+took long enough to observe", which is precisely what that message is for. The marker is now the
+`Seed.Version` row itself — whatever the phase writes last, which is what the test always meant.
+
+### Numbers
+
+| Suite | Before | After |
+|---|---|---|
+| Unit (xUnit) | 1,980 | **1,998** (18 new) |
+| Integration (xUnit, real SQL Server) | 1,357 | **1,365** (8 new) |
+| Vitest | 24 files / 1,417 / 495 | unchanged — no frontend file is in this branch's diff |
+| Playwright | 974 | unchanged |
+
+Both backend figures were measured, not taken from the brief: the first whole-assembly integration run
+reported 1,365 total, and 1,365 − 8 = 1,357 matches what main was said to have. Likewise 1,998 − 18 =
+1,980. `dotnet ef migrations has-pending-model-changes` answers "No changes have been made to the model
+since the last migration" after a rebuild.
+
+Test databases: every one this branch created is a `SpencerDenim_Deploy_<guid>` made and dropped by
+`FreshDeployment`, plus the fixture's own `SpencerDenim_Test_<guid>`. Nothing else was touched —
+`SpencerDenim_Dev`, the `SpencerDenim_W113_*` set, `SpencerDenim_W103_Tester` and the other
+`SpencerDenim_Test_*` databases were left alone.
+
+## 6. Owed, or worth a line in somebody else's issue
 
 1. **`Social.YouTubeUrl`** needs a glyph in `@spencer-denim/shared`'s `IconName` and then a catalogue
    row. Small, frontend, out of #113's scope.
