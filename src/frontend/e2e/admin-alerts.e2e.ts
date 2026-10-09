@@ -90,7 +90,7 @@ test.describe('the banner is in the shell (ADM-04 does not exist yet)', () => {
    * would not catch it, because nested heading order is a best-practice rule and the gate is set at
    * serious and critical. Measured over the DOM order of every heading, not over what is visible.
    */
-  for (const path of ['/orders', '/settings', '/audit-log']) {
+  for (const path of ['/', '/orders', '/orders/bank-transfers', '/orders/couriers', '/catalog', '/products', '/products/new', '/settings', '/content/pages', '/content/pages/new', '/enquiries', '/audit-log', '/security', '/users', '/users/new', '/roles']) {
     test(`${path} still says what the page is before anything else`, async ({ page }) => {
       await openWithAlerts(page, 'many', path);
 
