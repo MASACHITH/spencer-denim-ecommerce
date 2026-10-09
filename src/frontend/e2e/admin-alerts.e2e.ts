@@ -81,6 +81,33 @@ test.describe('the banner is in the shell (ADM-04 does not exist yet)', () => {
     });
   }
 
+  /**
+   * **The banner does not put a heading in front of the page's `<h1>`.**
+   *
+   * `accessibility.e2e.ts`' own rule, from #76 and #20's SH11: the first heading in the DOM order of the
+   * document says what the page is. The banner renders above `<main>`, so an `<h2>` in it would be
+   * precisely that defect — department headings and a "Menu" before the page said what it was — and axe
+   * would not catch it, because nested heading order is a best-practice rule and the gate is set at
+   * serious and critical. Measured over the DOM order of every heading, not over what is visible.
+   */
+  for (const path of ['/orders', '/settings', '/audit-log']) {
+    test(`${path} still says what the page is before anything else`, async ({ page }) => {
+      await openWithAlerts(page, 'many', path);
+
+      await expect(page.locator('[data-testid="alert-banner"]')).toBeVisible();
+      await expect(page.getByRole('heading', { level: 1 })).toBeAttached();
+
+      const headings = await page.evaluate(() =>
+        [...document.querySelectorAll('h1, h2, h3, h4, h5, h6')].map(
+          (element) => `${element.tagName} ${(element.textContent ?? '').trim().slice(0, 40)}`,
+        ),
+      );
+
+      expect(headings.length, 'the page has no headings at all').toBeGreaterThan(0);
+      expect(headings[0], `headings were ${JSON.stringify(headings)}`).toMatch(/^H1 /);
+    });
+  }
+
   test('shows nothing at all when there are no alerts', async ({ page }) => {
     await openWithAlerts(page, 'none');
 

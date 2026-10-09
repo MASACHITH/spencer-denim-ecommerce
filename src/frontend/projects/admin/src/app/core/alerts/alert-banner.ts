@@ -57,6 +57,14 @@ interface Cleared {
  *    the owner; the branch is not named here because I have not checked which one it was.)
  * 4. **An identical announcement re-fires.** `role="status"` announces a *change*, so acknowledging two
  *    alerts in a row would be read out once; the second gets a trailing space (ADM-22).
+ * 5. **The banner's title is not a heading.** It is a `<p>` that names the landmark through
+ *    `aria-labelledby`, because this component renders *above* every admin page's `<h1>` — and an `<h2>`
+ *    there would be the defect #76 and #20's SH11 were: a screen reader met the mega menu's headings
+ *    "before the page said what it was", and "axe reports nothing, because nested heading order is a
+ *    best-practice rule rather than a WCAG failure, which is exactly why it survived"
+ *    (`accessibility.e2e.ts`). Nothing is lost: a `region` with an accessible name is how a
+ *    screen-reader user finds a banner, and that file's own rule — the first heading in the DOM is the
+ *    `h1` — stays true on every admin screen. `admin-alerts.e2e.ts` asserts it on three of them.
  *
  * **It is silent about itself.** No alerts, no permission, no API — all three render nothing. A banner that
  * said "could not load alerts" on every admin screen for a user who is not allowed any would be a
@@ -72,10 +80,11 @@ interface Cleared {
     <p class="sr-only" role="status" data-testid="alert-announcement">{{ announcement() }}</p>
 
     @if (alerts().length > 0) {
+      <!-- A landmark with a name, and deliberately **not** a heading: see rule 5 above. -->
       <section class="alerts" aria-labelledby="alerts-heading" data-testid="alert-banner">
-        <h2 class="alerts__heading" id="alerts-heading">
+        <p class="alerts__heading" id="alerts-heading">
           {{ heading() }}
-        </h2>
+        </p>
 
         <p class="alerts__hint">
           Acknowledging an alert records that you have seen it. It does not fix the problem and does not
