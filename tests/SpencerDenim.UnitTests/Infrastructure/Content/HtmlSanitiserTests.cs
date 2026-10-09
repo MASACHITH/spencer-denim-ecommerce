@@ -19,6 +19,7 @@ namespace SpencerDenim.UnitTests.Infrastructure.Content;
 /// as coverage.
 /// </para>
 /// </summary>
+[Collection(typeof(MeasuresDurations))]
 public sealed class HtmlSanitiserTests
 {
     private readonly HtmlSanitiser _sanitiser = new();
@@ -590,10 +591,23 @@ public sealed class HtmlSanitiserTests
     /// pinned a false positive against every real page that pastes unclosed paragraphs.
     /// </para>
     /// <para>
-    /// The cost still matters here, because "flat" has to mean cheap. It used to be asserted as
-    /// <c>clock.Elapsed &lt; 5s</c>, and <b>this is the assertion #134 was filed about</b>: it began
-    /// failing the backend job consistently at 6.7 s and 5.5 s on a GitHub hosted runner against 1–2 s
-    /// here, on branches touching no sanitiser file.
+    /// The cost still matters here. It used to be asserted as <c>clock.Elapsed &lt; 5s</c>, and
+    /// <b>this is the assertion #134 was filed about</b>: it began failing the backend job consistently
+    /// at 6.7 s and 5.5 s on a GitHub hosted runner against 1–2 s here, on branches touching no
+    /// sanitiser file.
+    /// </para>
+    /// <para>
+    /// <b>What is asserted below is the shape of that cost and not its size, and the difference is a
+    /// real hole — the tester measured it rather than arguing about it.</b> An earlier draft of this
+    /// docblock said the cost mattered "because flat has to mean cheap". A ratio cannot say cheap. With
+    /// the accept path made twenty times slower at every size — 1,390 ms then 4,799 ms per call against
+    /// the 75 ms and 236 ms it really costs — the assertion below reads <b>3.45x</b> and passes, while
+    /// the 5 s clock it replaces would have failed on the first call. So the clock is not strictly
+    /// weaker than what replaced it, as #134 claimed when it proposed this: the two instruments catch
+    /// different regressions, and a constant-factor slowdown is now caught by nothing here. That is
+    /// deliberate, because an absolute budget on this payload is what #134 is about, and
+    /// <see cref="HtmlSanitiser"/>'s own cost is tracked on #135 instead — but it is a gap and not a
+    /// clean win, and it should not be rediscovered by someone reading a confident comment.
     /// </para>
     /// <para>
     /// <b>The old text said these forty thousand siblings are "linear work". They are not — I measured
@@ -613,8 +627,10 @@ public sealed class HtmlSanitiserTests
     /// That cost is in the <i>accept</i> path — parse, clean and serialise a wide flat tree — not in
     /// the pre-scan. It is not the same shape as the residual <see cref="HtmlSanitiser"/> already records
     /// — that one is a deep tree, this one is a wide flat one — but it is the same category of thing,
-    /// an accept-path parse costing seconds at the cap, which the owner has already weighed and accepted (8.8 seconds at the 400 KB cap, W2-11 journal, "Three residuals").
-    /// <b>Nothing here is a fix for it</b>; it is noted on #134 rather than quietly absorbed.
+    /// an accept-path parse costing seconds at the cap. The owner's acceptance on record covers that
+    /// one and not this one (8.8 seconds at the 400 KB cap, W2-11 journal, "Three residuals"), so this
+    /// is a comparison and not an inherited sign-off. <b>Nothing here is a fix for it</b>; it is noted
+    /// on #134 and filed as #135 rather than quietly absorbed.
     /// </para>
     /// <para>
     /// <b>So this asserts the shape rather than the seconds, at a bound the measurement supports:</b>
@@ -626,11 +642,36 @@ public sealed class HtmlSanitiserTests
     /// can fail rather than a round number.
     /// </para>
     /// <para>
+    /// <b>"Cubic or worse" is the claim, and at cubic it is only just true.</b> The tester made this
+    /// call path super-quadratic for real — an injected term growing as the cube, nothing else changed —
+    /// and this assertion went red at <b>6.59x</b> against the bound of 6.00x (274 ms then 1,809 ms).
+    /// So the assertion is wired to the sanitiser and not only to the helper, which is the thing worth
+    /// knowing; but the margin against a genuinely cubic regression is <b>1.10x</b>, not the 2x that
+    /// comparing 8 with 6 suggests, because the flat per-call cost deflates the reading here the same
+    /// way it deflates the quadratic one. Quartic is caught comfortably. Cubic is caught on a quiet
+    /// machine and should not be relied on to be caught on a loaded one.
+    /// </para>
+    /// <para>
     /// <b>Measured</b> at exactly this setting, Release, five readings each: idle <b>3.04–3.13x</b>, and
     /// with all eight cores saturated by spin loops <b>3.15–3.35x</b>. Saturation roughly doubled the
     /// absolute times and moved the ratio by a tenth, which is the whole claim being made for a ratio
-    /// over a clock. The margin at the worst reading is <b>1.8x</b>. Ten consecutive runs of the whole
-    /// unit suite under that saturation were green.
+    /// over a clock. Ten consecutive runs of the whole unit suite under that saturation were green.
+    /// </para>
+    /// <para>
+    /// <b>Eight saturated cores is not the machine this issue is about, and the tester measured the one
+    /// that is.</b> The backend job runs on <c>ubuntu-latest</c>, which is <b>two</b> vCPUs, and it runs
+    /// the unit and integration suites in one job. Pinned to two cores — closer to the runner in the
+    /// shape that matters — and at loads from idle up to a seventeen-fold slowdown, this assertion read
+    /// <b>2.60–3.74x</b> over ten full-suite runs, against the 3.35x worst reading taken here on eight
+    /// idle cores. It stayed green every one of them, so the margin is <b>1.6x</b> rather than 1.8x.
+    /// <b>And the ratio did hold the machine out</b>, which is the claim worth checking rather than
+    /// assuming: across those runs the 10,000 side's own cost moved from 74 ms to 240 ms, a 3.2-fold
+    /// change in how fast the machine was, and the multiple stayed inside 2.60–3.74.
+    /// </para>
+    /// <para>
+    /// What did not stay green at the worst of those loads was <c>TimingShapeTests</c>' own quadratic
+    /// canary, which is a fault in the measurement rather than in this bound and is recorded on
+    /// <see cref="SpencerDenim.UnitTests.Support.TimingShape"/>.
     /// </para>
     /// <para>
     /// <b>The bound is 6 and not larger, deliberately.</b> It sits between the quadratic this path
