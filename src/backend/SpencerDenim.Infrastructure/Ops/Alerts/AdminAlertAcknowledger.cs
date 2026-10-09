@@ -102,7 +102,7 @@ internal sealed class AdminAlertAcknowledger(
 
         // **There is deliberately no "is it already acknowledged?" branch here.** The read above is for
         // the two things only a read can answer — does the alert exist, and is its type one this caller
-        // may see (R10) — and the <c>UPDATE</c> below decides whether it is still open, because that is
+        // may see (R10) — and the `UPDATE` below decides whether it is still open, because that is
         // the only place the answer cannot go stale between being read and being acted on (doc 08 §5.2).
         //
         // **A short-circuit here was in the first version and a mutation proved it hid the clause that
