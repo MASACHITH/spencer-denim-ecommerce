@@ -17,13 +17,38 @@ namespace SpencerDenim.UnitTests.Support;
 /// the guard discriminates needs a known-quadratic workload, not a deliberately broken sanitiser.
 /// </para>
 /// <para>
-/// <b>Measured</b> on the developer machine, Release, seven samples each, four repeats of the whole
-/// set — these are readings I took, not estimates, and they agree with the exponents to about a
-/// percent, which is the evidence that the instrument works:
-/// <c>GrowingAs(1)</c> doubles at <b>2.00–2.04x</b> (theory 2), <c>GrowingAs(2)</c> at
-/// <b>3.78–4.01x</b> (theory 4) and <c>GrowingAs(4)</c> at <b>15.92–16.11x</b> (theory 16). The same
-/// shape against itself is <b>0.99–1.00x</b>, and linear against quadratic at <c>n</c> = 2,000 is
-/// <b>1,989–2,165x</b>.
+/// <b>Every assertion here is one-sided, and that was a correction rather than a choice.</b> Three of
+/// these cases first also pinned the measured multiple inside a narrow band —
+/// <c>Assert.InRange(multiple, 3.0, 5.0)</c> on the quadratic one. Running the suite under eight spin
+/// loops on eight cores read <b>2.88</b> and it went red, which is the #134 defect reproduced inside the
+/// fix for it: a two-sided bound on a timing measurement, tight enough that a busy machine trips it. The
+/// bands are gone. What is left is what each guard is for — it trips, or it does not. The exponents
+/// the instrument reads belong below as measurements, which is the right place for a number nobody
+/// should fail a build over.
+/// </para>
+/// <para>
+/// <b>Then the quadratic case went red again at 6.79x</b>, and that one was a real fault in
+/// <see cref="TimingShape"/> rather than in the assertion: a 25 ms sample floor is only a couple of
+/// scheduler quanta, and the two sides of a ratio were measured one after the other. Both are fixed
+/// there — a 50 ms floor and alternating samples — and the sizes here are chosen so that a single
+/// call is tens of milliseconds rather than two, which is the part that belonged in the test. Worth
+/// recording because it is the same mistake twice: a timing measurement that is too short to be stable
+/// is the thing that makes timing assertions look unreliable.
+/// </para>
+/// <para>
+/// <b>Measured</b> on the developer machine, Release, seven samples each, five repeats of the whole set
+/// — these are readings I took, not estimates, and they agree with the exponents to about a percent,
+/// which is the evidence that the instrument works. Idle, then with all eight cores saturated by spin
+/// loops:
+/// <list type="bullet">
+/// <item><description><c>GrowingAs(1)</c>, theory 2: <b>1.98–2.01x</b>, then <b>1.97–2.19x</b>.</description></item>
+/// <item><description><c>GrowingAs(2)</c>, theory 4: <b>3.99–4.04x</b>, then <b>3.99–4.10x</b>.</description></item>
+/// <item><description><c>GrowingAs(4)</c>, theory 16: <b>15.93–15.99x</b>, then <b>15.97–16.68x</b>.</description></item>
+/// <item><description>The same shape against itself: <b>1.00–1.01x</b>, then <b>1.00–1.08x</b>.</description></item>
+/// <item><description>Linear against quadratic at <c>n</c> = 2,000: <b>1,980–1,998x</b>, then <b>1,659–1,998x</b>.</description></item>
+/// </list>
+/// Saturation costs about a tenth on the worst of them, which is the whole claim being made for a ratio
+/// over a clock. None of them is asserted as a range all the same.
 /// </para>
 /// </summary>
 public sealed class TimingShapeTests
@@ -48,30 +73,26 @@ public sealed class TimingShapeTests
     [Fact]
     public void The_doubling_guard_does_not_trip_on_work_that_grows_linearly()
     {
-        var multiple = TimingShape.AssertDoublingWithin(
+        TimingShape.AssertDoublingWithin(
             DoublingBound,
             GrowingAs(1),
-            100_000,
+            50_000_000,
             "linear work must pass the bound, or the guard is strict rather than discriminating.");
-
-        Assert.InRange(multiple, 1.5, 3.0);
     }
 
     [Fact]
     public void The_doubling_guard_does_not_trip_on_work_that_grows_quadratically()
     {
-        // This is not slack: the sanitiser's accept path is itself quadratic, measured at 2.73-4.23x per
-        // doubling at the size that ships (#134, and the docblock on the sanitiser case carries the full
+        // This is not slack: the sanitiser's accept path is itself quadratic, measured at 3.04-3.35x per
+        // doubling at the size that ships (#134, and the docblock on the sanitiser case carries the
         // spread). A bound that refused quadratic work would be red on main, so the bound that ships has
         // to sit above it — and this case is the honest record of that, next to the one below, which
         // shows what the bound still catches.
-        var multiple = TimingShape.AssertDoublingWithin(
+        TimingShape.AssertDoublingWithin(
             DoublingBound,
             GrowingAs(2),
-            2_000,
+            6_000,
             "quadratic work is below this bound by design; see the case above it.");
-
-        Assert.InRange(multiple, 3.0, 5.0);
     }
 
     [Fact]
@@ -80,7 +101,7 @@ public sealed class TimingShapeTests
         var failure = Assert.ThrowsAny<XunitException>(() => TimingShape.AssertDoublingWithin(
             DoublingBound,
             GrowingAs(4),
-            60,
+            50,
             "this must trip."));
 
         Assert.Contains("multiplied the cost by", failure.Message, StringComparison.Ordinal);
@@ -89,13 +110,11 @@ public sealed class TimingShapeTests
     [Fact]
     public void The_ratio_guard_does_not_trip_on_two_workloads_of_the_same_shape()
     {
-        var ratio = TimingShape.AssertWithin(
+        TimingShape.AssertWithin(
             RatioBound,
             GrowingAs(2)(2_000),
             GrowingAs(2)(2_000),
             "the same work twice must come out as the same cost.");
-
-        Assert.InRange(ratio, 0.5, 2.0);
     }
 
     /// <summary>

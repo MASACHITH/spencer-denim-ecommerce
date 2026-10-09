@@ -626,16 +626,19 @@ public sealed class HtmlSanitiserTests
     /// can fail rather than a round number.
     /// </para>
     /// <para>
-    /// <b>Measured</b> at exactly this setting, Release: idle, six readings, <b>3.13–3.60x</b>; with all
-    /// eight cores saturated by spin loops, sixteen readings, <b>2.73–4.23x</b> (fifteen of them at or
-    /// below 3.88x). Saturation roughly doubled the absolute times and moved the ratio by a tenth, which
-    /// is the whole claim being made for a ratio over a clock. <b>So the real margin is 1.4x at the worst
-    /// reading taken, and that is thin — say so rather than discover it in CI.</b> Two things keep it
-    /// honest instead of raising the number: the bound sits between the quadratic this path measures (4)
-    /// and the cubic it must still refuse (8), so there is nowhere looser to go that still discriminates;
-    /// and that flat per-call cost deflates a 10,000-to-20,000 reading most of all, so a faster parser
-    /// would push these readings up toward 4 rather than down. <b>If this ever does go red, the fix is
-    /// the quadratic accept path, not a bigger bound</b> — raising it is what #134 is a complaint about.
+    /// <b>Measured</b> at exactly this setting, Release, five readings each: idle <b>3.04–3.13x</b>, and
+    /// with all eight cores saturated by spin loops <b>3.15–3.35x</b>. Saturation roughly doubled the
+    /// absolute times and moved the ratio by a tenth, which is the whole claim being made for a ratio
+    /// over a clock. The margin at the worst reading is <b>1.8x</b>. Ten consecutive runs of the whole
+    /// unit suite under that saturation were green.
+    /// </para>
+    /// <para>
+    /// <b>The bound is 6 and not larger, deliberately.</b> It sits between the quadratic this path
+    /// measures (4) and the cubic it must still refuse (8), so there is nowhere looser to go that still
+    /// discriminates. The flat per-call cost also deflates a 10,000-to-20,000 reading most of all, so a
+    /// faster parser would push these readings up toward 4 rather than down, and the margin is 1.8x
+    /// rather than comfortable. <b>If this ever does go red, the fix is the quadratic accept path, not a
+    /// bigger bound</b> — raising the number is what #134 is a complaint about.
     /// </para>
     /// </summary>
     [Fact]
