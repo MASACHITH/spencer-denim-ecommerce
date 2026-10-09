@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using SpencerDenim.Infrastructure.Identity.Seeding;
 using SpencerDenim.Infrastructure.Media;
 
 namespace SpencerDenim.Infrastructure.Persistence.Seeding;
@@ -34,6 +35,7 @@ public sealed partial class CatalogSeedRunner(
     SalesReferenceDataSeeder salesReferenceData,
     HomeContentSeeder homeContent,
     SettingsSeeder settings,
+    DefaultRoleSeedUpgrader defaultRolePermissions,
     DemoCatalogueSeeder demoCatalogue,
     DemoMediaPlaceholderGenerator demoMedia,
     ILogger<CatalogSeedRunner> logger)
@@ -99,6 +101,20 @@ public sealed partial class CatalogSeedRunner(
         // anything above — but keeping the one order makes the log line's counts read in a fixed order.
         var settingsCounts = await settings.SeedAsync(cancellationToken);
         counts.Settings = settingsCounts.Inserted;
+
+        // Doc 08 §9's versioned seeder step for default-role permissions (issue #122, N13). **After the
+        // settings seeder, and that order is load-bearing rather than cosmetic:** the step records its
+        // progress in the `Seed.Version` settings row, so `ops.Settings` has to be reachable before it
+        // runs. It is part of this phase because §9 puts "default roles and their RoleClaims" in the same
+        // idempotent step as the rest of the reference data, and because this phase already owns the
+        // applock, the contention retry and the readiness signal a deploy-time write needs.
+        //
+        // On a fresh database the roles do not exist yet — this hosted service is registered before
+        // `AddAdminIdentity()` — so it grants nothing and `AdminSeedHostedService` then creates each role
+        // from the whole current definition. See `DefaultRoleSeedUpgrader` for why every interleaving of
+        // the two is safe.
+        var rolePermissions = await defaultRolePermissions.RunAsync(cancellationToken);
+        counts.DefaultRolePermissions = rolePermissions.Granted.Count;
 
         return counts;
     }

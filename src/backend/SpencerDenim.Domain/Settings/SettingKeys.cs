@@ -249,6 +249,31 @@ public static class SettingKeys
         public const string Instructions = "Bank.Instructions";
     }
 
+    /// <summary>
+    /// Group <c>Seed</c>: the seeder's own bookkeeping, and <b>not a group any screen shows</b>.
+    /// <para>
+    /// <b>Deliberately absent from <see cref="SettingCatalog"/>, which is what keeps it off the settings
+    /// screen.</b> Every read model and every write handler starts from the catalogue — <c>SettingsStore</c>
+    /// only ever queries <c>WHERE Key IN (@catalogue keys)</c> — so a row whose key is not in the catalogue
+    /// is invisible to the admin API and unwritable through it. <c>SettingsSeeder</c> leaves such rows
+    /// alone rather than deleting them, which is the behaviour this key needs. A unit test asserts it is
+    /// not in the catalogue, because putting it there would offer an operator a box in which to break the
+    /// upgrade step.
+    /// </para>
+    /// </summary>
+    public static class Seed
+    {
+        public const string Group = "Seed";
+
+        /// <summary>
+        /// Doc 08 §9's <c>Seed.Version</c>: the highest <see cref="Identity.DefaultRoleSeedVersions"/>
+        /// version whose permission increments have been offered to the default roles in this database
+        /// (issue #122). An <see cref="SettingValueType.Int"/> row, written by the seeder and read by
+        /// nothing else.
+        /// </summary>
+        public const string Version = "Seed.Version";
+    }
+
     /// <summary><c>ops.Settings.Key</c> is <c>varchar(100)</c>.</summary>
     public const int KeyMaxLength = 100;
 
