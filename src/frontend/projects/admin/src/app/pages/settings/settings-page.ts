@@ -12,6 +12,7 @@ import { BRAND } from '@spencer-denim/shared';
 
 import { CatalogFailure, toCatalogFailure } from '../../core/catalog/admin-catalog-api';
 import { AdminSettingsApi } from '../../core/settings/admin-settings-api';
+import { PayHerePanel } from './payhere-panel';
 import {
   AdminLogo,
   AdminSettings,
@@ -53,7 +54,7 @@ const LOGO_ACCEPT = 'image/png,image/jpeg,image/webp';
  */
 @Component({
   selector: 'sda-settings-page',
-  imports: [FormsModule],
+  imports: [FormsModule, PayHerePanel],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <section class="settings">
@@ -370,6 +371,12 @@ const LOGO_ACCEPT = 'image/png,image/jpeg,image/webp';
           </section>
         }
 
+        @if (payHereGroup(); as payHere) {
+          <!-- PayHere's merchant account (doc 11 P8b). Its own component: it owns its form, its save and its
+               messages, and tells this page when it has saved so the page can re-read. -->
+          <sda-payhere-panel [group]="payHere" (saved)="onPayHereSaved()" />
+        }
+
         @if (canEditInvoice()) {
           <section class="adm-panel" aria-labelledby="invoice-title">
             <h2 class="adm-panel__title" id="invoice-title">Invoice and fulfilment</h2>
@@ -441,7 +448,7 @@ const LOGO_ACCEPT = 'image/png,image/jpeg,image/webp';
           </section>
         }
 
-        @if (!canEditStore() && !canEditContact() && !canEditBank() && !canEditInvoice()) {
+        @if (!canEditStore() && !canEditContact() && !canEditBank() && !canEditInvoice() && !payHereGroup()) {
           <p class="adm-state" data-testid="nothing-to-edit">
             There are no settings you can change here.
           </p>
@@ -777,6 +784,14 @@ export class SettingsPage {
    */
   protected readonly canEditInvoice = computed(() => this.hasGroup(SETTING_GROUPS.orders));
 
+  /**
+   * The `Payments.PayHere` group, when the server sent it - which it does only to a `Settings.Payments`
+   * holder. Handed to the PayHere panel as it is; the panel owns everything about it.
+   */
+  protected readonly payHereGroup = computed(
+    () => this.loaded()?.groups.find((group) => group.groupKey === SETTING_GROUPS.payHere) ?? null,
+  );
+
   constructor() {
     this.load();
   }
@@ -944,6 +959,11 @@ export class SettingsPage {
       next: () => this.afterWrite('Contact and social settings saved.'),
       error: (error: unknown) => this.afterFailure(error),
     });
+  }
+
+  /** The PayHere panel saved: re-read, so it is handed the group's new row version. */
+  protected onPayHereSaved(): void {
+    this.refresh();
   }
 
   protected saveBankDetails(): void {

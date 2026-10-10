@@ -146,6 +146,41 @@ export interface InvoiceAndFulfilmentValues {
   readonly autoDeliverAfterDays?: string | null;
 }
 
+/**
+ * The PayHere panel's values (doc 11 P8b, `Settings.Payments`). Unlike the other groups every field is
+ * required: the whole group arrives together or not at all, so there is no absent-versus-null to preserve
+ * - the group's absence hides the panel entirely.
+ *
+ * **`merchantSecret` is write-only.** The server never returns it, so the box starts empty and a value is
+ * sent only when the admin has typed one; a blank keeps the one that is saved.
+ */
+export interface PayHereValues {
+  /** `sandbox` or `live`. */
+  readonly mode: string;
+  readonly merchantId: string;
+  readonly merchantSecret: string;
+  /** Whole days as digits, 1-14. */
+  readonly pendingMaxDays: string;
+  /** Whole minutes as digits, 15-1440. */
+  readonly expiryMinutes: string;
+}
+
+/**
+ * `GET /api/admin/settings/payhere/status`: whether checkout would offer PayHere right now, what is
+ * missing, and the address to register in the PayHere merchant portal. A copy of
+ * `PayHereStatusDto`; never carries the secret.
+ */
+export interface PayHereStatus {
+  /** The notify URL to register with PayHere, or null when the server has no public address configured. */
+  readonly notifyUrl: string | null;
+  /** The switch on the payment provider row. There is no screen for it yet. */
+  readonly providerEnabled: boolean;
+  readonly offeredAtCheckout: boolean;
+  readonly mode: string | null;
+  /** What is missing, in plain sentences. */
+  readonly problems: readonly string[];
+}
+
 /** The settings keys this screen edits, so the template and the mapping cannot disagree about a name. */
 export const SETTING_KEYS = {
   logoAssetId: 'Store.LogoAssetId',
@@ -168,6 +203,11 @@ export const SETTING_KEYS = {
   brNumber: 'Store.BRNumber',
   vatNumber: 'Store.VatNumber',
   autoDeliverAfterDays: 'Orders.AutoDeliverAfterDays',
+  payHereMode: 'Payments.PayHere.Mode',
+  payHereMerchantId: 'Payments.PayHere.MerchantId',
+  payHereMerchantSecret: 'Payments.PayHere.MerchantSecret',
+  payHerePendingMaxDays: 'Payments.PayHere.PendingMaxDays',
+  payHereExpiryMinutes: 'Payments.PayHere.ExpiryMinutes',
 } as const;
 
 /** Doc 08 §3.8's group names. */
@@ -176,6 +216,9 @@ export const SETTING_GROUPS = {
   contact: 'Contact',
   social: 'Social',
   bank: 'Bank',
+
+  /** PayHere's merchant account (doc 11 P8b). Its own save unit, guarded by `Settings.Payments`. */
+  payHere: 'Payments.PayHere',
 
   /**
    * ADM-09's own group. It shares a **save unit** with `Store` (`SettingCatalog.SaveUnits`), so the token

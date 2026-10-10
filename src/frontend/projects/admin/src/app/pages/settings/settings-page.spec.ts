@@ -940,6 +940,121 @@ describe('SettingsPage (ADM-22)', () => {
     });
   });
 
+
+  // ---- PayHere (doc 11 P8b) --------------------------------------------------------------------
+
+  /** The ordinary payload plus the `Payments.PayHere` group, which only a `Settings.Payments` holder gets. */
+  function payloadWithPayHere(): AdminSettings {
+    const base = payload();
+    const item = (key: string, value: string | null, type: 'String' | 'Int' | 'Secret' = 'String') => ({
+      key,
+      valueType: type,
+      value,
+      isSecret: type === 'Secret',
+      hasValue: type === 'Secret' ? true : value !== null,
+      requiredPermission: 'Settings.Payments',
+      description: null,
+      updatedAtUtc: null,
+    });
+
+    return {
+      ...base,
+      groups: [
+        ...base.groups,
+        {
+          groupKey: 'Payments.PayHere',
+          rowVersion: 'payhere-rv-1',
+          settings: [
+            item(SETTING_KEYS.payHereMode, 'sandbox'),
+            item(SETTING_KEYS.payHereMerchantId, '1211149'),
+            item(SETTING_KEYS.payHereMerchantSecret, null, 'Secret'),
+            item(SETTING_KEYS.payHerePendingMaxDays, '5', 'Int'),
+            item(SETTING_KEYS.payHereExpiryMinutes, '60', 'Int'),
+          ],
+        },
+      ],
+    };
+  }
+
+  const payHereStatus = {
+    notifyUrl: 'https://shop.example.test/api/payments/payhere/notify',
+    providerEnabled: false,
+    offeredAtCheckout: false,
+    mode: 'sandbox',
+    problems: [],
+  };
+
+  it('draws the PayHere panel only when the server sent the PayHere group', async () => {
+    await open(payloadWithPayHere());
+
+    controller.expectOne(AdminSettingsApi.payHereStatusUrl).flush(payHereStatus);
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    expect(element.querySelector('[data-testid="payhere-panel"]')).not.toBeNull();
+    expect(element.querySelector('[data-testid="field-payhere-merchantSecret"]')).not.toBeNull();
+    expect(element.querySelector('[data-testid="nothing-to-edit"]')).toBeNull();
+  });
+
+  it('draws no PayHere panel, and asks for no PayHere status, when the group is absent', async () => {
+    await open();
+
+    controller.expectNone(AdminSettingsApi.payHereStatusUrl);
+
+    expect(element.querySelector('[data-testid="payhere-panel"]')).toBeNull();
+  });
+
+  it('re-reads the settings after the PayHere panel saves, so the panel gets the new row version', async () => {
+    await open(payloadWithPayHere());
+
+    controller.expectOne(AdminSettingsApi.payHereStatusUrl).flush(payHereStatus);
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    (element.querySelector('[data-testid="save-payhere"]') as HTMLButtonElement).click();
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    controller.expectOne(AdminAuthApiUrl).flush({ token: 'xsrf-token' });
+
+    const write = controller.expectOne(AdminSettingsApi.payHereUrl);
+
+    expect((write.request.body as Record<string, unknown>)['rowVersion']).toBe('payhere-rv-1');
+    expect(Object.keys(write.request.body as object)).not.toContain('merchantSecret');
+
+    write.flush(null, { status: 204, statusText: 'No Content' });
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    // The page re-reads, and the panel re-reads its status.
+    controller.expectOne(AdminSettingsApi.settingsUrl).flush({
+      ...payloadWithPayHere(),
+      groups: payloadWithPayHere().groups.map((group) =>
+        group.groupKey === 'Payments.PayHere' ? { ...group, rowVersion: 'payhere-rv-2' } : group,
+      ),
+    });
+    controller.expectOne(AdminSettingsApi.payHereStatusUrl).flush(payHereStatus);
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    // A second save carries the new token: this is the 409-on-every-save defect ADM-22 once shipped.
+    (element.querySelector('[data-testid="save-payhere"]') as HTMLButtonElement).click();
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    controller.expectOne(AdminAuthApiUrl).flush({ token: 'xsrf-token' });
+
+    const second = controller.expectOne(AdminSettingsApi.payHereUrl);
+
+    expect((second.request.body as Record<string, unknown>)['rowVersion']).toBe('payhere-rv-2');
+
+    second.flush(null, { status: 204, statusText: 'No Content' });
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    controller.expectOne(AdminSettingsApi.settingsUrl).flush(payloadWithPayHere());
+    controller.expectOne(AdminSettingsApi.payHereStatusUrl).flush(payHereStatus);
+  });
 });
 
 /**

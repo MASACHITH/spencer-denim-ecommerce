@@ -8,6 +8,8 @@ import {
   BankDetailValues,
   InvoiceAndFulfilmentValues,
   ContactAndSocialValues,
+  PayHereStatus,
+  PayHereValues,
   UploadedMediaAsset,
 } from './admin-settings.model';
 
@@ -24,6 +26,8 @@ export class AdminSettingsApi {
   static readonly contactSocialUrl = '/api/admin/settings/contact-social';
   static readonly bankUrl = '/api/admin/settings/bank';
   static readonly invoiceAndFulfilmentUrl = '/api/admin/settings/invoice-and-fulfilment';
+  static readonly payHereUrl = '/api/admin/settings/payhere';
+  static readonly payHereStatusUrl = '/api/admin/settings/payhere/status';
   static readonly imagesUrl = '/api/admin/media/images';
 
   private readonly http = inject(HttpClient);
@@ -95,6 +99,29 @@ export class AdminSettingsApi {
     rowVersion: string,
   ): Observable<void> {
     return this.put(AdminSettingsApi.invoiceAndFulfilmentUrl, { ...values, rowVersion });
+  }
+
+  /**
+   * The PayHere merchant account, mode and windows (doc 11 P8b; `Settings.Payments`).
+   *
+   * **The secret is sent only when one was typed.** The server never returns it, so the box starts empty,
+   * and a body that carried an empty `merchantSecret` would at best be ignored. Leaving the key out says
+   * "keep the saved one" in the plainest way the protocol has.
+   */
+  updatePayHere(values: PayHereValues, rowVersion: string): Observable<void> {
+    const { merchantSecret, ...rest } = values;
+    const secret = merchantSecret.trim();
+
+    return this.put(AdminSettingsApi.payHereUrl, {
+      ...rest,
+      ...(secret.length > 0 ? { merchantSecret: secret } : {}),
+      rowVersion,
+    });
+  }
+
+  /** Whether checkout offers PayHere, what is missing, and the address to register with PayHere. */
+  payHereStatus(): Observable<PayHereStatus> {
+    return this.http.get<PayHereStatus>(AdminSettingsApi.payHereStatusUrl);
   }
 
   private put(url: string, body: unknown): Observable<void> {
