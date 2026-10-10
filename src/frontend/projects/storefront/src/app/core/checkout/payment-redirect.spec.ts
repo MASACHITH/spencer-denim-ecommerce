@@ -93,6 +93,41 @@ describe('paymentRedirect', () => {
     ).toBeNull();
   });
 
+  // A provider that is holding a payment says so in words and offers nothing to press.
+  it('is a notice when there is no redirect, nothing a bank transfer has, and a note', () => {
+    expect(
+      paymentRedirect(instructions({ notes: 'Your payment is pending. Please do not pay again.' })),
+    ).toEqual({
+      amountLkr: 9_184,
+      kind: 'notice',
+      notice: 'Your payment is pending. Please do not pay again.',
+    });
+  });
+
+  it.each([
+    ['a blank note', { notes: '   ' }],
+    ['no note', { notes: null }],
+    ['a reference', { notes: 'Pending.', reference: 'SD-2026-000123' }],
+    [
+      'bank fields',
+      { notes: 'Pending.', fields: [{ label: 'Bank', value: 'Example Bank PLC', copyable: false }] },
+    ],
+    ['a proof upload', { notes: 'Pending.', acceptsProof: true }],
+  ] satisfies [string, Partial<OrderPaymentInstructionsDto>][])(
+    'is not a notice with %s',
+    (_name, overrides) => {
+      expect(paymentRedirect(instructions(overrides))).toBeNull();
+    },
+  );
+
+  it('prefers a redirect to a note when both are sent', () => {
+    expect(
+      paymentRedirect(
+        instructions({ notes: 'Pending.', redirectUrl: 'https://pay.example.test/checkout' }),
+      ),
+    ).toEqual({ amountLkr: 9_184, kind: 'link', href: 'https://pay.example.test/checkout' });
+  });
+
   it('describes a form, with its fields in order', () => {
     const result = paymentRedirect(
       instructions({

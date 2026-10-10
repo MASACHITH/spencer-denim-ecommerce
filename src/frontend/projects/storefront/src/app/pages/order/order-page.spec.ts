@@ -130,7 +130,7 @@ describe('OrderPage (CHK-04)', () => {
     await fixture.whenStable();
   }
 
-  function create(): void {
+  function create(query: Record<string, string> = {}): void {
     response = {};
     TestBed.resetTestingModule();
     TestBed.configureTestingModule({
@@ -145,7 +145,11 @@ describe('OrderPage (CHK-04)', () => {
           provide: ActivatedRoute,
           useValue: {
             params: of({ token: TOKEN }),
-            snapshot: { params: { token: TOKEN }, paramMap: convertToParamMap({ token: TOKEN }) },
+            snapshot: {
+              params: { token: TOKEN },
+              paramMap: convertToParamMap({ token: TOKEN }),
+              queryParamMap: convertToParamMap(query),
+            },
           },
         },
       ],
@@ -163,8 +167,11 @@ describe('OrderPage (CHK-04)', () => {
     );
   }
 
-  async function open(payload: OrderConfirmationDto): Promise<void> {
-    create();
+  async function open(
+    payload: OrderConfirmationDto,
+    query: Record<string, string> = {},
+  ): Promise<void> {
+    create(query);
     await settle();
     orderRequest().flush(payload);
     await settle();
@@ -1428,5 +1435,203 @@ describe('OrderPage (CHK-04)', () => {
 
     expect(text()).toContain('Awaiting payment. We hold your items until 7 October 2026 at 10.00 am.');
     expect(text()).not.toMatch(/transfer|bank statement|account number|slip/i);
+  });
+
+  // ---------------------------------------------------------------------------------------------------
+  // The way back from paying online (doc 11 P8b step 3).
+  //
+  // The provider sends the shopper back to /order/{token}?payment=return (or =cancelled). The marker is
+  // display only: the page asks the server again and shows whatever the server says. Nothing below names a
+  // gateway.
+  // ---------------------------------------------------------------------------------------------------
+
+  const POLL_MS = 4_000;
+  const POLL_MAX = 20;
+
+  function onlineOrder(overrides: Partial<OrderConfirmationDto> = {}): OrderConfirmationDto {
+    return order({
+      paymentMethodCode: 'OnlineProvider',
+      paymentMethodName: 'Pay online',
+      payment: onlineInstructions({ redirectForm: redirectForm() }),
+      ...overrides,
+    });
+  }
+
+  function pendingOrder(): OrderConfirmationDto {
+    return onlineOrder({
+      payment: onlineInstructions({
+        notes: 'Your payment is pending. We will update this order as soon as it is confirmed.',
+      }),
+    });
+  }
+
+  function paidOrder(): OrderConfirmationDto {
+    return onlineOrder({
+      status: 'Paid',
+      statusLabel: 'Paid',
+      payment: null,
+      proof: null,
+      canCancel: false,
+    });
+  }
+
+  /** Lets the timer fire and the page's request go out, then settles the view. */
+  async function tick(): Promise<void> {
+    vi.advanceTimersByTime(POLL_MS);
+    await settle();
+  }
+
+  afterEach(() => vi.useRealTimers());
+
+  it('says it is checking, and draws no way to pay again, when the shopper comes back from paying', async () => {
+    await open(onlineOrder(), { payment: 'return' });
+
+    const checking = element.querySelector('[data-testid="payment-checking"]');
+
+    expect(checking?.textContent).toContain('Checking your payment');
+    expect(checking?.textContent).toContain('please do not pay again');
+    expect(element.querySelector('[data-testid="pay-panel"]')).toBeNull();
+    expect(element.querySelector('[data-testid="pay-now"]')).toBeNull();
+    expect(element.querySelector('form')).toBeNull();
+  });
+
+  it('asks the server again after a few seconds and shows the order as paid when it is', async () => {
+    vi.useFakeTimers();
+    await open(onlineOrder(), { payment: 'return' });
+
+    expect(element.querySelector('[data-testid="payment-checking"]')).not.toBeNull();
+
+    await tick();
+    orderRequest().flush(onlineOrder());
+    await settle();
+
+    // Still waiting: still checking, and still no button.
+    expect(element.querySelector('[data-testid="payment-checking"]')).not.toBeNull();
+
+    await tick();
+    orderRequest().flush(paidOrder());
+    await settle();
+
+    expect(element.querySelector('[data-testid="payment-checking"]')).toBeNull();
+    expect(element.querySelector('[data-testid="pay-panel"]')).toBeNull();
+    expect(text()).toContain('Paid.');
+    expect(element.querySelector('[data-testid="order-paid-lead"]')?.textContent).toContain(
+      'received your payment',
+    );
+    expect(element.querySelector('[data-testid="pay-announcement"]')?.textContent).toContain(
+      'Your payment has been received',
+    );
+
+    // And it has stopped asking.
+    vi.advanceTimersByTime(POLL_MS * 3);
+    http.expectNone(`${CheckoutApi.orderUrl}/${TOKEN}`);
+  });
+
+  it('stops asking after a minute and a half and says what to do, without inviting a second payment', async () => {
+    vi.useFakeTimers();
+    await open(onlineOrder(), { payment: 'return' });
+
+    for (let ask = 0; ask < POLL_MAX; ask++) {
+      await tick();
+      orderRequest().flush(onlineOrder());
+      await settle();
+    }
+
+    // It has given up: no more requests, no longer "checking", and the words tell the shopper what to do.
+    vi.advanceTimersByTime(POLL_MS * 5);
+    http.expectNone(`${CheckoutApi.orderUrl}/${TOKEN}`);
+
+    expect(element.querySelector('[data-testid="payment-checking"]')).toBeNull();
+
+    const unconfirmed = element.querySelector('[data-testid="payment-unconfirmed"]');
+
+    expect(unconfirmed?.textContent).toContain('not had confirmation');
+    expect(unconfirmed?.textContent).toContain('do not pay again');
+  });
+
+  it('carries on asking after a request fails', async () => {
+    vi.useFakeTimers();
+    await open(onlineOrder(), { payment: 'return' });
+
+    await tick();
+    orderRequest().flush({ title: 'Server error' }, { status: 500, statusText: 'Server Error' });
+    await settle();
+
+    expect(element.querySelector('[data-testid="payment-checking"]')).not.toBeNull();
+    expect(element.querySelector('[role="alert"]')).toBeNull();
+
+    await tick();
+    orderRequest().flush(paidOrder());
+    await settle();
+
+    expect(text()).toContain('Paid.');
+  });
+
+  it('shows the pending notice, not a button, while the provider holds the payment', async () => {
+    await open(pendingOrder());
+
+    const panel = payPanel();
+
+    expect(panel.querySelector('[data-testid="pay-notice"]')?.textContent).toContain(
+      'Your payment is pending',
+    );
+    expect(panel.querySelector('[data-testid="pay-due"]')?.textContent).toContain('7 October 2026');
+    expect(panel.querySelector('form')).toBeNull();
+    expect(panel.querySelector('a')).toBeNull();
+    expect(panel.querySelector('[data-testid="pay-now"]')).toBeNull();
+
+    // And none of the bank parts.
+    for (const id of BANK_ONLY_TEST_IDS) {
+      expect(panel.querySelector(`[data-testid="${id}"]`), id).toBeNull();
+    }
+
+    expect(text()).not.toMatch(/transfer|bank statement|account number|slip/i);
+  });
+
+  it('puts the pending notice and the checking state together without a button for a shopper who just returned', async () => {
+    await open(pendingOrder(), { payment: 'return' });
+
+    expect(element.querySelector('[data-testid="payment-checking"]')).not.toBeNull();
+    expect(element.querySelector('[data-testid="pay-now"]')).toBeNull();
+  });
+
+  it('welcomes a shopper back from cancelling and keeps the way to try again', async () => {
+    await open(onlineOrder(), { payment: 'cancelled' });
+
+    expect(element.querySelector('[data-testid="payment-cancelled"]')?.textContent).toContain(
+      'You left the payment page before paying',
+    );
+    expect(element.querySelector('[data-testid="payment-checking"]')).toBeNull();
+    expect(element.querySelector('[data-testid="pay-now"]')).not.toBeNull();
+  });
+
+  it('never polls without the return marker', async () => {
+    vi.useFakeTimers();
+    await open(onlineOrder());
+
+    vi.advanceTimersByTime(POLL_MS * 3);
+    http.expectNone(`${CheckoutApi.orderUrl}/${TOKEN}`);
+
+    expect(element.querySelector('[data-testid="payment-checking"]')).toBeNull();
+    expect(element.querySelector('[data-testid="pay-now"]')).not.toBeNull();
+  });
+
+  it('ignores the markers for a bank transfer, whose page is unchanged', async () => {
+    vi.useFakeTimers();
+    await open(order(), { payment: 'return' });
+
+    vi.advanceTimersByTime(POLL_MS * 3);
+    http.expectNone(`${CheckoutApi.orderUrl}/${TOKEN}`);
+
+    expect(element.querySelector('[data-testid="payment-checking"]')).toBeNull();
+    expect(element.querySelector('[data-testid="payment-cancelled"]')).toBeNull();
+    expect(payPanel().querySelector('#pay-title')?.textContent?.trim()).toBe('How to pay');
+  });
+
+  it('does not say a paid order is waiting for payment', async () => {
+    await open(paidOrder());
+
+    expect(text()).not.toContain('waiting for payment');
+    expect(element.querySelector('[data-testid="order-paid-lead"]')).not.toBeNull();
   });
 });

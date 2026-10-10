@@ -21,6 +21,12 @@ export type PaymentRedirect = { readonly amountLkr: number } & (
   | { readonly kind: 'link'; readonly href: string }
   /** The server asked for a redirect that this page will not perform. Says so, and offers nothing to click. */
   | { readonly kind: 'unavailable' }
+  /**
+   * The provider has something to say and nothing for the shopper to press - a payment it is still holding.
+   * The words are the server's, rendered as text; there is deliberately no control, so a shopper is not
+   * invited to pay twice.
+   */
+  | { readonly kind: 'notice'; readonly notice: string }
 );
 
 /** The only hosts that may be reached over plain `http:`, so a local build can talk to a local stub. */
@@ -87,6 +93,8 @@ export function safeRedirectUrl(raw: string | null | undefined): string | null {
  * - `redirectForm` wins over `redirectUrl` when both are set. When the form is set but unusable (an unsafe
  *   action, or a method other than POST) the link is **not** used instead: a GET to the bare address would
  *   open the provider's page without the fields it needs, which is worse than saying it is unavailable.
+ * - No redirect at all, but a note and nothing a bank transfer has (no reference, no fields, no proof
+ *   upload), is a `notice`: the provider telling the shopper where their payment stands.
  * - A redirect that is asked for and refused becomes `unavailable` — **unless the payload also carries real
  *   bank content** (`acceptsProof` or bank fields), in which case the bank rendering is still true and is
  *   used. Showing "transfer to the account below" with nothing below it, for a provider that has no bank
@@ -107,12 +115,25 @@ export function paymentRedirect(how: OrderPaymentInstructionsDto): PaymentRedire
   const url = typeof how.redirectUrl === 'string' ? how.redirectUrl.trim() : '';
 
   if (url.length === 0) {
-    return null;
+    return noticeOnly(how);
   }
 
   const href = safeRedirectUrl(url);
 
   return href === null ? refused(how) : { amountLkr, kind: 'link', href };
+}
+
+/**
+ * Instructions with no redirect, no reference, no fields and no proof upload, but a note: an online
+ * provider telling the shopper where their payment stands. A bank transfer always has fields (or is null),
+ * so it can never match, and this is how the page shows "your payment is pending" without knowing whose it is.
+ */
+function noticeOnly(how: OrderPaymentInstructionsDto): PaymentRedirect | null {
+  const notice = typeof how.notes === 'string' ? how.notes.trim() : '';
+
+  return !how.acceptsProof && how.reference === null && how.fields.length === 0 && notice.length > 0
+    ? { amountLkr: how.amountLkr, kind: 'notice', notice }
+    : null;
 }
 
 function refused(how: OrderPaymentInstructionsDto): PaymentRedirect | null {

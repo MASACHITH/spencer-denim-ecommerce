@@ -14,6 +14,7 @@ import { HttpErrorResponse } from '@angular/common/http';
 import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
 import { Meta, Title } from '@angular/platform-browser';
 import { ActivatedRoute, RouterLink } from '@angular/router';
+import { EMPTY, catchError, switchMap, take, takeWhile, timer } from 'rxjs';
 import { BRAND, brandPageTitle } from '@spencer-denim/shared';
 
 import { formatLkr } from '../../core/catalog/money';
@@ -33,6 +34,23 @@ const HANDOVER_KEY = 'order';
 
 /** A token that names no order gets a real 404, the same as a mistyped product slug. */
 const NOT_FOUND_STATUS = 404;
+
+/**
+ * The `payment` query parameter an online provider's return and cancel addresses carry
+ * (`/order/{token}?payment=return`). **Display only, and never proof of anything**: the page changes its
+ * words because of it and nothing else, and the order's real state is whatever the server says when asked.
+ * Provider-neutral - the server builds these addresses and this page does not know whose they are.
+ */
+const RETURN_MARKER = 'return';
+const CANCELLED_MARKER = 'cancelled';
+
+/**
+ * How often, and how many times, the page asks again after a shopper comes back from paying online.
+ * Twenty asks, four seconds apart, is about a minute and a half: long enough for a provider's notification
+ * to arrive in the ordinary case, short enough that a page left open does not poll for ever.
+ */
+const PAYMENT_POLL_MS = 4_000;
+const PAYMENT_POLL_MAX = 20;
 
 /**
  * The largest slip this page will send.
@@ -121,10 +139,17 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
             <strong class="order__number-value" data-order-number>{{ placed.orderNumber }}</strong>
           </p>
 
-          <p class="order__muted">
-            We have your order and it is waiting for payment. Keep this page's address: it is the link to
-            your order.
-          </p>
+          @if (placed.status === 'Paid') {
+            <p class="order__muted" data-testid="order-paid-lead">
+              We have received your payment and are getting your order ready. Keep this page's address: it
+              is the link to your order.
+            </p>
+          } @else {
+            <p class="order__muted">
+              We have your order and it is waiting for payment. Keep this page's address: it is the link
+              to your order.
+            </p>
+          }
         </header>
 
         <div class="order__layout">
@@ -292,7 +317,35 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
              works before hydration and without script. The proof comment further down explains why a
              form with no action is dangerous before hydration; this one always has an absolute https
              action that was checked before it was rendered, so a pre-hydration press goes where it should. -->
-        @if (payRedirect(); as go) {
+        @if (paymentUnconfirmed()) {
+          <!-- The shopper came back from paying, and the page has asked for about a minute and a half
+               without an answer. Said plainly, and without telling them to pay again: the money may well be
+               on its way, and a second payment is the one thing this page must not invite. -->
+          <p class="order__error pay__lead" role="status" data-testid="payment-unconfirmed">
+            We have not had confirmation of your payment yet. If you have paid, please wait a few minutes
+            and reload this page - do not pay again. If this page has not changed within the hour, get in
+            touch with your order number.
+          </p>
+        }
+
+        @if (paymentCancelled()) {
+          <p class="order__muted pay__lead" data-testid="payment-cancelled">
+            You left the payment page before paying. You can try again below until
+            <strong>{{ dueAt(placed) }}</strong>.
+          </p>
+        }
+
+        @if (checkingPayment()) {
+          <!-- A real state, not a spinner: the shopper has just paid and the provider's confirmation has
+               not arrived. The pay panel is not drawn meanwhile, so there is no button to press twice. -->
+          <section class="order__panel pay" aria-labelledby="checking-title" data-testid="payment-checking">
+            <h2 class="order__panel-title" id="checking-title">Checking your payment…</h2>
+            <p class="pay__lead">
+              We are waiting for confirmation of your payment. This usually takes a few seconds, and this
+              page updates by itself. You do not need to do anything - please do not pay again.
+            </p>
+          </section>
+        } @else if (payRedirect(); as go) {
           <section class="order__panel pay" aria-labelledby="pay-title" data-testid="pay-panel">
             <h2 class="order__panel-title" id="pay-title">Pay online</h2>
 
@@ -303,6 +356,13 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
                 The payment page for this order is not available right now. Reload this page in a moment to
                 try again. We hold your items until
                 <strong data-testid="pay-due">{{ dueAt(placed) }}</strong>.
+              </p>
+            } @else if (go.kind === 'notice') {
+              <!-- The provider has something to say and nothing for the shopper to press: a payment it is
+                   still holding. The words are the server's, rendered as text. -->
+              <p class="pay__lead" data-testid="pay-notice">{{ go.notice }}</p>
+              <p class="pay__lead">
+                We hold your items until <strong data-testid="pay-due">{{ dueAt(placed) }}</strong>.
               </p>
             } @else {
               <p class="pay__lead">
@@ -956,6 +1016,16 @@ export class OrderPage {
    */
   private readonly response = inject(RESPONSE_INIT, { optional: true });
 
+  /**
+   * Why the shopper is here, when an online provider sent them back: `return` after paying, `cancelled`
+   * after leaving the payment page. Read once from the address the page was opened with. **Words only** -
+   * see {@link RETURN_MARKER}.
+   */
+  private readonly paymentMarker = this.route.snapshot.queryParamMap.get('payment');
+
+  /** Set once the page has asked as many times as it is going to and the payment is still not confirmed. */
+  private readonly confirmationGaveUp = signal(false);
+
   private readonly writing = signal(false);
   private readonly payProblem = signal<string | null>(null);
   private readonly said = signal('');
@@ -995,6 +1065,12 @@ export class OrderPage {
     }
 
     this.read();
+
+    // Only in a browser (afterNextRender never runs on the server), and only when the shopper has just come
+    // back from paying: nothing else on this page polls.
+    if (this.paymentMarker === RETURN_MARKER) {
+      afterNextRender(() => this.pollForConfirmation(), { injector: this.injector });
+    }
   }
 
   protected readonly order = this.current.asReadonly();
@@ -1041,6 +1117,50 @@ export class OrderPage {
   protected awaitingPayment(order: OrderConfirmationDto): boolean {
     return order.status === 'PendingPayment';
   }
+
+  /**
+   * Whether an online payment is open on this order: waiting for money, with instructions that are not a
+   * bank transfer's (a bank transfer takes a slip; an online payment confirms itself).
+   */
+  private hasOnlinePaymentOpen(order: OrderConfirmationDto): boolean {
+    return this.awaitingPayment(order) && order.payment !== null && !order.payment.acceptsProof;
+  }
+
+  /**
+   * "Checking your payment…": the shopper has come back from paying online and the provider's confirmation
+   * has not arrived yet. Cleared by the order moving on, or by the page giving up asking.
+   */
+  protected readonly checkingPayment = computed(() => {
+    const placed = this.current();
+
+    return (
+      this.paymentMarker === RETURN_MARKER &&
+      placed !== null &&
+      this.hasOnlinePaymentOpen(placed) &&
+      !this.confirmationGaveUp()
+    );
+  });
+
+  /** The page asked for a minute and a half and the payment is still unconfirmed. */
+  protected readonly paymentUnconfirmed = computed(() => {
+    const placed = this.current();
+
+    return (
+      this.paymentMarker === RETURN_MARKER &&
+      placed !== null &&
+      this.hasOnlinePaymentOpen(placed) &&
+      this.confirmationGaveUp()
+    );
+  });
+
+  /** The shopper left the payment page without paying. */
+  protected readonly paymentCancelled = computed(() => {
+    const placed = this.current();
+
+    return (
+      this.paymentMarker === CANCELLED_MARKER && placed !== null && this.hasOnlinePaymentOpen(placed)
+    );
+  });
 
   /**
    * How to hand the shopper over to an online provider's own page, or null for a bank transfer.
@@ -1397,6 +1517,38 @@ export class OrderPage {
 
   protected retry(): void {
     this.read();
+  }
+
+  /**
+   * Asks the server again, quietly, until the order moves on or the page has asked enough times.
+   *
+   * **The server is the only judge.** This never decides the payment succeeded; it re-reads the order and
+   * shows whatever state the server reports, which is Paid only once the provider's own notification has
+   * been verified and applied. It does not touch the loading flag, so the page does not flash "Loading".
+   * A failed ask is skipped and the next one tries again; running out of asks is not an error either - it
+   * is the `paymentUnconfirmed` state, with words that tell the shopper what to do.
+   */
+  private pollForConfirmation(): void {
+    timer(PAYMENT_POLL_MS, PAYMENT_POLL_MS)
+      .pipe(
+        take(PAYMENT_POLL_MAX),
+        takeWhile(() => this.checkingPayment()),
+        switchMap(() => this.api.order(this.token()).pipe(catchError(() => EMPTY))),
+        takeUntilDestroyed(this.destroyRef),
+      )
+      .subscribe({
+        next: (fresh) => {
+          const wasPaid = this.current()?.status === 'Paid';
+
+          this.current.set(fresh);
+          this.handover.give(HANDOVER_KEY, fresh);
+
+          if (!wasPaid && fresh.status === 'Paid') {
+            this.announce('Your payment has been received. Thank you.');
+          }
+        },
+        complete: () => this.confirmationGaveUp.set(true),
+      });
   }
 
   /**
