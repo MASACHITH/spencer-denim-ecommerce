@@ -1,6 +1,7 @@
 using System.Net;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using SpencerDenim.Application.Sales.Checkout.Contracts;
 using SpencerDenim.Application.Sales.Payments;
 using SpencerDenim.Application.Sales.Payments.Abstractions;
 using SpencerDenim.Application.Sales.Payments.PayPal;
@@ -55,7 +56,7 @@ public sealed class PayPalWebhookTests(SqlServerDatabaseFixture sqlServer) : Pay
         var seriesBefore = await InvoiceSeriesNextValueAsync();
 
         using var response = await PostWebhookAsync(
-            Completed(order, paypalOrderId, "WH-FORGED-1", "CAP-FORGED-1"),
+            Completed(order, paypalOrderId, "WH-FORGED-1", Cap("CAP-FORGED-1")),
             signature: "forged");
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
@@ -76,7 +77,7 @@ public sealed class PayPalWebhookTests(SqlServerDatabaseFixture sqlServer) : Pay
     public async Task A_forged_request_cannot_use_up_an_event_id_the_genuine_one_then_needs()
     {
         var (order, paypalOrderId) = await StartedAsync();
-        var body = Completed(order, paypalOrderId, "WH-SAME-ID", "CAP-REAL-1");
+        var body = Completed(order, paypalOrderId, "WH-SAME-ID", Cap("CAP-REAL-1"));
 
         using (var forged = await PostWebhookAsync(body, signature: "forged"))
         {
@@ -99,7 +100,7 @@ public sealed class PayPalWebhookTests(SqlServerDatabaseFixture sqlServer) : Pay
     {
         var (order, paypalOrderId) = await StartedAsync();
         var events = await EventCountAsync();
-        var body = Completed(order, paypalOrderId, "WH-RETRY-1", "CAP-RETRY-1");
+        var body = Completed(order, paypalOrderId, "WH-RETRY-1", Cap("CAP-RETRY-1"));
 
         PayPal.VerificationFails = true;
 
@@ -154,7 +155,7 @@ public sealed class PayPalWebhookTests(SqlServerDatabaseFixture sqlServer) : Pay
         });
 
         using var response = await PostWebhookAsync(
-            Completed(order, paypalOrderId, "WH-BARE-1", "CAP-BARE-1"),
+            Completed(order, paypalOrderId, "WH-BARE-1", Cap("CAP-BARE-1")),
             client: bare);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -167,7 +168,7 @@ public sealed class PayPalWebhookTests(SqlServerDatabaseFixture sqlServer) : Pay
     {
         var (order, paypalOrderId) = await StartedAsync(quantity: 2);
         var before = await StockAsync(order.VariantId);
-        var body = Completed(order, paypalOrderId, "WH-OK-1", "CAP-OK-1");
+        var body = Completed(order, paypalOrderId, "WH-OK-1", Cap("CAP-OK-1"));
 
         using var response = await PostWebhookAsync(body);
 
@@ -182,7 +183,7 @@ public sealed class PayPalWebhookTests(SqlServerDatabaseFixture sqlServer) : Pay
         var payment = await PaymentAsync(order.PaymentId);
         Assert.Equal(PaymentStatus.Succeeded, payment.Status);
         Assert.True(payment.IsOrderSettlement);
-        Assert.Equal("CAP-OK-1", payment.ProviderTransactionId);
+        Assert.Equal(Cap("CAP-OK-1"), payment.ProviderTransactionId);
 
         var stored = Assert.Single(await EventsOfAsync(order.PaymentId), e => e.ProviderEventId == "WH-OK-1");
         Assert.Equal(PaymentEventSource.VerifiedWebhook, stored.EventSource);
@@ -191,7 +192,7 @@ public sealed class PayPalWebhookTests(SqlServerDatabaseFixture sqlServer) : Pay
         Assert.Equal(PaymentEventProcessingStatus.Processed, stored.ProcessingStatus);
         Assert.Equal(order.OrderId, stored.OrderId);
         Assert.Null(stored.NextAttemptAtUtc);
-        Assert.Contains("CAP-OK-1", stored.PayloadJson, StringComparison.Ordinal);
+        Assert.Contains(Cap("CAP-OK-1"), stored.PayloadJson, StringComparison.Ordinal);
 
         // The verification was asked of PayPal with the body exactly as it arrived.
         Assert.Equal(body, PayPal.Verifications.Single().Body);
@@ -203,7 +204,7 @@ public sealed class PayPalWebhookTests(SqlServerDatabaseFixture sqlServer) : Pay
     {
         var (order, paypalOrderId) = await StartedAsync();
         var seriesBefore = await InvoiceSeriesNextValueAsync();
-        var body = Completed(order, paypalOrderId, "WH-REPLAY-1", "CAP-REPLAY-1");
+        var body = Completed(order, paypalOrderId, "WH-REPLAY-1", Cap("CAP-REPLAY-1"));
 
         for (var delivery = 0; delivery < 3; delivery++)
         {
@@ -224,7 +225,7 @@ public sealed class PayPalWebhookTests(SqlServerDatabaseFixture sqlServer) : Pay
     {
         var (order, paypalOrderId) = await StartedAsync(quantity: 2);
         var before = await StockAsync(order.VariantId);
-        var body = Completed(order, paypalOrderId, "WH-RACE-1", "CAP-RACE-1");
+        var body = Completed(order, paypalOrderId, "WH-RACE-1", Cap("CAP-RACE-1"));
 
         var responses = await Task.WhenAll(
             Enumerable.Range(0, 6).Select(_ => Task.Run(() => PostWebhookAsync(body), Token)));
@@ -248,12 +249,12 @@ public sealed class PayPalWebhookTests(SqlServerDatabaseFixture sqlServer) : Pay
     {
         var (order, paypalOrderId) = await StartedAsync();
 
-        using (var first = await PostWebhookAsync(Completed(order, paypalOrderId, "WH-DUP-A", "CAP-DUP")))
+        using (var first = await PostWebhookAsync(Completed(order, paypalOrderId, "WH-DUP-A", Cap("CAP-DUP"))))
         {
             Assert.Equal(HttpStatusCode.OK, first.StatusCode);
         }
 
-        using (var second = await PostWebhookAsync(Completed(order, paypalOrderId, "WH-DUP-B", "CAP-DUP")))
+        using (var second = await PostWebhookAsync(Completed(order, paypalOrderId, "WH-DUP-B", Cap("CAP-DUP"))))
         {
             Assert.Equal(HttpStatusCode.OK, second.StatusCode);
         }
@@ -272,12 +273,12 @@ public sealed class PayPalWebhookTests(SqlServerDatabaseFixture sqlServer) : Pay
     {
         var (order, paypalOrderId) = await StartedAsync();
 
-        using (var completed = await PostWebhookAsync(Completed(order, paypalOrderId, "WH-C-1", "CAP-1")))
+        using (var completed = await PostWebhookAsync(Completed(order, paypalOrderId, "WH-C-1", Cap("CAP-1"))))
         {
             Assert.Equal(HttpStatusCode.OK, completed.StatusCode);
         }
 
-        using (var denied = await PostWebhookAsync(Event("PAYMENT.CAPTURE.DENIED", order, paypalOrderId, "WH-D-1", "CAP-1")))
+        using (var denied = await PostWebhookAsync(Event("PAYMENT.CAPTURE.DENIED", order, paypalOrderId, "WH-D-1", Cap("CAP-1"))))
         {
             Assert.Equal(HttpStatusCode.OK, denied.StatusCode);
         }
@@ -297,13 +298,13 @@ public sealed class PayPalWebhookTests(SqlServerDatabaseFixture sqlServer) : Pay
     {
         var (order, paypalOrderId) = await StartedAsync();
 
-        using (await PostWebhookAsync(Completed(order, paypalOrderId, "WH-C-2", "CAP-2")))
+        using (await PostWebhookAsync(Completed(order, paypalOrderId, "WH-C-2", Cap("CAP-2"))))
         {
         }
 
         var due = (await OrderRowAsync(order.OrderId)).PaymentDueAtUtc;
 
-        using (var pending = await PostWebhookAsync(Event("PAYMENT.CAPTURE.PENDING", order, paypalOrderId, "WH-P-2", "CAP-2")))
+        using (var pending = await PostWebhookAsync(Event("PAYMENT.CAPTURE.PENDING", order, paypalOrderId, "WH-P-2", Cap("CAP-2"))))
         {
             Assert.Equal(HttpStatusCode.OK, pending.StatusCode);
         }
@@ -318,13 +319,13 @@ public sealed class PayPalWebhookTests(SqlServerDatabaseFixture sqlServer) : Pay
     {
         var (order, paypalOrderId) = await StartedAsync();
 
-        using (await PostWebhookAsync(Event("PAYMENT.CAPTURE.DENIED", order, paypalOrderId, "WH-D-3", "CAP-3")))
+        using (await PostWebhookAsync(Event("PAYMENT.CAPTURE.DENIED", order, paypalOrderId, "WH-D-3", Cap("CAP-3"))))
         {
         }
 
         Assert.Equal(PaymentStatus.Failed, (await PaymentAsync(order.PaymentId)).Status);
 
-        using (var pending = await PostWebhookAsync(Event("PAYMENT.CAPTURE.PENDING", order, paypalOrderId, "WH-P-3", "CAP-3")))
+        using (var pending = await PostWebhookAsync(Event("PAYMENT.CAPTURE.PENDING", order, paypalOrderId, "WH-P-3", Cap("CAP-3"))))
         {
             Assert.Equal(HttpStatusCode.OK, pending.StatusCode);
         }
@@ -348,7 +349,7 @@ public sealed class PayPalWebhookTests(SqlServerDatabaseFixture sqlServer) : Pay
 
         PayPal.DuringCapture = async (_, _, _) =>
         {
-            using var webhook = await PostWebhookAsync(Completed(order, paypalOrderId, "WH-EARLY-1", "CAP-EARLY-1"));
+            using var webhook = await PostWebhookAsync(Completed(order, paypalOrderId, "WH-EARLY-1", Cap("CAP-EARLY-1")));
             Assert.Equal(HttpStatusCode.OK, webhook.StatusCode);
         };
 
@@ -359,7 +360,7 @@ public sealed class PayPalWebhookTests(SqlServerDatabaseFixture sqlServer) : Pay
 
         var payment = await PaymentAsync(order.PaymentId);
         Assert.Equal(PaymentStatus.Succeeded, payment.Status);
-        Assert.Equal("CAP-EARLY-1", payment.ProviderTransactionId);
+        Assert.Equal(Cap("CAP-EARLY-1"), payment.ProviderTransactionId);
 
         Assert.Equal(before.OnHand - 2, (await StockAsync(order.VariantId)).OnHand);
         Assert.Equal((seriesBefore ?? 1) + 1, await InvoiceSeriesNextValueAsync());
@@ -386,7 +387,7 @@ public sealed class PayPalWebhookTests(SqlServerDatabaseFixture sqlServer) : Pay
 
         Assert.Equal(PaymentStatus.Failed, (await PaymentAsync(order.PaymentId)).Status);
 
-        using var late = await PostWebhookAsync(Completed(order, paypalOrderId, "WH-LATE-F", "CAP-LATE-F"));
+        using var late = await PostWebhookAsync(Completed(order, paypalOrderId, "WH-LATE-F", Cap("CAP-LATE-F")));
 
         Assert.Equal(HttpStatusCode.OK, late.StatusCode);
 
@@ -421,7 +422,7 @@ public sealed class PayPalWebhookTests(SqlServerDatabaseFixture sqlServer) : Pay
         Assert.NotEqual(firstPayPalOrderId, secondPayPalOrderId);
         Assert.Equal(2, (await PaymentsOfAsync(order.OrderId)).Count);
 
-        using var late = await PostWebhookAsync(Completed(order, firstPayPalOrderId, "WH-LATE-C", "CAP-LATE-C"));
+        using var late = await PostWebhookAsync(Completed(order, firstPayPalOrderId, "WH-LATE-C", Cap("CAP-LATE-C")));
 
         Assert.Equal(HttpStatusCode.OK, late.StatusCode);
 
@@ -445,14 +446,14 @@ public sealed class PayPalWebhookTests(SqlServerDatabaseFixture sqlServer) : Pay
 
         try
         {
-            using var response = await PostWebhookAsync(Completed(order, paypalOrderId, "WH-EXP-1", "CAP-EXP-1"));
+            using var response = await PostWebhookAsync(Completed(order, paypalOrderId, "WH-EXP-1", Cap("CAP-EXP-1")));
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
             var payment = await PaymentAsync(order.PaymentId);
             Assert.Equal(PaymentStatus.CapturedRequiresRefund, payment.Status);
             Assert.False(payment.IsOrderSettlement);
-            Assert.Equal("CAP-EXP-1", payment.ProviderTransactionId);
+            Assert.Equal(Cap("CAP-EXP-1"), payment.ProviderTransactionId);
 
             var row = await OrderRowAsync(order.OrderId);
             Assert.Equal(OrderStatus.Expired, row.Status);
@@ -468,7 +469,7 @@ public sealed class PayPalWebhookTests(SqlServerDatabaseFixture sqlServer) : Pay
                 Assert.Single(await EventsOfAsync(order.PaymentId), e => e.ProviderEventId == "WH-EXP-1").ProcessingStatus);
 
             // And a replay raises no second banner.
-            using (await PostWebhookAsync(Completed(order, paypalOrderId, "WH-EXP-1", "CAP-EXP-1")))
+            using (await PostWebhookAsync(Completed(order, paypalOrderId, "WH-EXP-1", Cap("CAP-EXP-1"))))
             {
             }
 
@@ -486,7 +487,7 @@ public sealed class PayPalWebhookTests(SqlServerDatabaseFixture sqlServer) : Pay
     {
         var (order, paypalOrderId) = await StartedAsync();
 
-        using (var paid = await PostWebhookAsync(Completed(order, paypalOrderId, "WH-FIRST", "CAP-FIRST")))
+        using (var paid = await PostWebhookAsync(Completed(order, paypalOrderId, "WH-FIRST", Cap("CAP-FIRST"))))
         {
             Assert.Equal(HttpStatusCode.OK, paid.StatusCode);
         }
@@ -499,7 +500,7 @@ public sealed class PayPalWebhookTests(SqlServerDatabaseFixture sqlServer) : Pay
             using var response = await PostWebhookAsync(CaptureEvent(
                 "PAYMENT.CAPTURE.COMPLETED",
                 "WH-SECOND",
-                "CAP-SECOND",
+                Cap("CAP-SECOND"),
                 "FAKE-SECOND-TAB",
                 secondPaymentId,
                 SecondTabUsd));
@@ -534,7 +535,7 @@ public sealed class PayPalWebhookTests(SqlServerDatabaseFixture sqlServer) : Pay
         try
         {
             using var response = await PostWebhookAsync(
-                Completed(order, paypalOrderId, "WH-AMT-1", "CAP-AMT-1", amount: order.UsdAmount - 1m));
+                Completed(order, paypalOrderId, "WH-AMT-1", Cap("CAP-AMT-1"), amount: order.UsdAmount - 1m));
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
@@ -549,6 +550,173 @@ public sealed class PayPalWebhookTests(SqlServerDatabaseFixture sqlServer) : Pay
         }
     }
 
+    // ------------------------------------------------------------------------------ what the customer is told
+
+    /// <summary>
+    /// The three ways a verified success lands without settling the order must each leave the customer's order
+    /// page saying "we received your payment" - read from the database, so it is there on any later visit.
+    /// Nothing about the money (provider, amount, ids) travels with it, and no way to pay is offered beside it.
+    /// </summary>
+    private static void AssertReceivedAndNothingElse(OrderConfirmationDto page, string json, PayPalOrder order, string captureId)
+    {
+        Assert.Equal(OrderPaymentNotices.Received, page.PaymentNotice);
+        Assert.Null(page.Payment);
+        Assert.Null(page.Proof);
+
+        // The order link is the whole credential: nothing of the payment itself may ride along with the notice.
+        Assert.DoesNotContain(PayPalUsdAmount.Format(order.UsdAmount), json, StringComparison.Ordinal);
+        Assert.DoesNotContain(captureId, json, StringComparison.Ordinal);
+        Assert.DoesNotContain("FAKE-", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("USD", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("providerCode", json, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task A_success_for_an_expired_order_is_shown_to_the_customer_on_every_later_visit()
+    {
+        var (order, paypalOrderId) = await StartedAsync();
+
+        // Before anything lands: no notice, and the way to pay is there.
+        var before = await ReadOrderPageAsync(order);
+        Assert.Null(before.PaymentNotice);
+        Assert.NotNull(before.Payment);
+
+        Assert.True(await ExpireAtAsync(order.OrderId, Clock.Now.AddHours(2)));
+
+        try
+        {
+            // Expired first, and the payment is read as the page's own bank-less "closed" order: no notice yet.
+            var expired = await ReadOrderPageAsync(order);
+            Assert.Equal("Expired", expired.Status);
+            Assert.Null(expired.PaymentNotice);
+
+            // The notification lands while no browser is open.
+            using (var response = await PostWebhookAsync(Completed(order, paypalOrderId, "WH-NOTICE-EXP", Cap("CAP-NOTICE-EXP"))))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            }
+
+            var (page, json) = await ReadOrderPageWithJsonAsync(order);
+
+            Assert.Equal("Expired", page.Status);
+            AssertReceivedAndNothingElse(page, json, order, Cap("CAP-NOTICE-EXP"));
+            Assert.False(page.CanCancel);
+
+            // And it is still there on the next visit, and after a replay of the same notification.
+            using (await PostWebhookAsync(Completed(order, paypalOrderId, "WH-NOTICE-EXP", Cap("CAP-NOTICE-EXP"))))
+            {
+            }
+
+            Assert.Equal(OrderPaymentNotices.Received, (await ReadOrderPageAsync(order)).PaymentNotice);
+        }
+        finally
+        {
+            await DeleteAlertsAsync(order.PublicId);
+        }
+    }
+
+    [Fact]
+    public async Task A_success_for_the_wrong_amount_leaves_the_order_waiting_but_stops_inviting_a_payment()
+    {
+        var (order, paypalOrderId) = await StartedAsync();
+
+        try
+        {
+            using (var response = await PostWebhookAsync(
+                Completed(order, paypalOrderId, "WH-NOTICE-AMT", Cap("CAP-NOTICE-AMT"), amount: order.UsdAmount - 1m)))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            }
+
+            var (page, json) = await ReadOrderPageWithJsonAsync(order);
+
+            // Still PendingPayment, as doc 11 P8 step 6 says - and yet no bank details, no Pay now, no
+            // "we are still confirming the payment details": the page says the money arrived.
+            Assert.Equal("PendingPayment", page.Status);
+            AssertReceivedAndNothingElse(page, json, order, Cap("CAP-NOTICE-AMT"));
+
+            // The start endpoint refuses to open a second attempt beside it, whatever the page does.
+            var attemptsBefore = (await PaymentsOfAsync(order.OrderId)).Count;
+            var createdBefore = PayPal.Creates.Count;
+
+            using (var start = await GetAsync(StartPath(order.PublicId)))
+            {
+                Assert.Equal(PayPalPageHints.Received, HintOf(start));
+            }
+
+            Assert.Equal(attemptsBefore, (await PaymentsOfAsync(order.OrderId)).Count);
+            Assert.Equal(createdBefore, PayPal.Creates.Count);
+
+            // Nor does coming back through the return path invite one.
+            using (var returned = await GetAsync(ReturnPath(order.PublicId)))
+            {
+                Assert.NotEqual(PayPalPageHints.Paid, HintOf(returned));
+            }
+
+            Assert.Equal(attemptsBefore, (await PaymentsOfAsync(order.OrderId)).Count);
+        }
+        finally
+        {
+            await DeleteAlertsAsync(order.PublicId);
+        }
+    }
+
+    [Fact]
+    public async Task A_second_payment_for_an_order_that_is_already_paid_is_shown_on_its_order_page()
+    {
+        var (order, paypalOrderId) = await StartedAsync();
+
+        using (var paid = await PostWebhookAsync(Completed(order, paypalOrderId, "WH-NOTICE-FIRST", Cap("CAP-NOTICE-FIRST"))))
+        {
+            Assert.Equal(HttpStatusCode.OK, paid.StatusCode);
+        }
+
+        var paidPage = await ReadOrderPageAsync(order);
+        Assert.Equal("Paid", paidPage.Status);
+        Assert.Null(paidPage.PaymentNotice);
+
+        var secondPaymentId = await InsertPayPalPaymentAsync(order.OrderId, "FAKE-NOTICE-SECOND", PaymentStatus.Capturing);
+
+        try
+        {
+            using (var response = await PostWebhookAsync(CaptureEvent(
+                "PAYMENT.CAPTURE.COMPLETED",
+                "WH-NOTICE-SECOND",
+                Cap("CAP-NOTICE-SECOND"),
+                "FAKE-NOTICE-SECOND",
+                secondPaymentId,
+                SecondTabUsd)))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            }
+
+            var (page, json) = await ReadOrderPageWithJsonAsync(order);
+
+            Assert.Equal("Paid", page.Status);
+            Assert.Equal(OrderPaymentNotices.Received, page.PaymentNotice);
+            Assert.Null(page.Payment);
+            Assert.DoesNotContain(Cap("CAP-NOTICE-SECOND"), json, StringComparison.Ordinal);
+            Assert.DoesNotContain("FAKE-", json, StringComparison.Ordinal);
+        }
+        finally
+        {
+            await DeleteAlertsAsync(order.PublicId);
+        }
+    }
+
+    [Theory]
+    [InlineData(PaymentStatus.Failed)]
+    [InlineData(PaymentStatus.Cancelled)]
+    [InlineData(PaymentStatus.Expired)]
+    public async Task A_payment_that_took_no_money_adds_no_notice(PaymentStatus status)
+    {
+        var (order, _) = await StartedAsync();
+
+        await SetPaymentStatusAsync(order.PaymentId, status);
+
+        Assert.Null((await ReadOrderPageAsync(order)).PaymentNotice);
+    }
+
     // ------------------------------------------------------------------------------ recorded, not applied
 
     [Theory]
@@ -560,14 +728,14 @@ public sealed class PayPalWebhookTests(SqlServerDatabaseFixture sqlServer) : Pay
 
         // Ids carry the event type: the database is shared by both cases of this theory, and a repeated event
         // id is (correctly) a duplicate.
-        using (await PostWebhookAsync(Completed(order, paypalOrderId, "WH-BEFORE-" + eventType, "CAP-R-" + eventType)))
+        using (await PostWebhookAsync(Completed(order, paypalOrderId, "WH-BEFORE-" + eventType, Cap("CAP-R-" + eventType))))
         {
         }
 
         var payment = await PaymentAsync(order.PaymentId);
         var row = await OrderRowAsync(order.OrderId);
 
-        using var response = await PostWebhookAsync(Event(eventType, order, paypalOrderId, "WH-REFUND-" + eventType, "CAP-R-" + eventType));
+        using var response = await PostWebhookAsync(Event(eventType, order, paypalOrderId, "WH-REFUND-" + eventType, Cap("CAP-R-" + eventType)));
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
@@ -591,7 +759,7 @@ public sealed class PayPalWebhookTests(SqlServerDatabaseFixture sqlServer) : Pay
         var (order, paypalOrderId) = await StartedAsync();
         var events = await EventCountAsync();
 
-        using var response = await PostWebhookAsync(Event(eventType, order, paypalOrderId, "WH-OTHER-" + eventType, "CAP-X"));
+        using var response = await PostWebhookAsync(Event(eventType, order, paypalOrderId, "WH-OTHER-" + eventType, Cap("CAP-X")));
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(events + 1, await EventCountAsync());
@@ -613,7 +781,7 @@ public sealed class PayPalWebhookTests(SqlServerDatabaseFixture sqlServer) : Pay
         using (var response = await PostWebhookAsync(CaptureEvent(
             "PAYMENT.CAPTURE.COMPLETED",
             "WH-NOMATCH-1",
-            "CAP-NOMATCH-1",
+            Cap("CAP-NOMATCH-1"),
             LatePayPalOrder,
             paymentId: 99_999_999,
             order.UsdAmount)))
@@ -652,7 +820,7 @@ public sealed class PayPalWebhookTests(SqlServerDatabaseFixture sqlServer) : Pay
 
         // Exactly what the endpoint does, up to the moment the process died.
         var receipt = await RecordWebhookAsync(
-            Completed(order, paypalOrderId, "WH-DIED-1", "CAP-DIED-1"),
+            Completed(order, paypalOrderId, "WH-DIED-1", Cap("CAP-DIED-1")),
             "WH-DIED-1",
             received: Clock.Now);
 
@@ -679,7 +847,7 @@ public sealed class PayPalWebhookTests(SqlServerDatabaseFixture sqlServer) : Pay
         using (await PostWebhookAsync(CaptureEvent(
             "PAYMENT.CAPTURE.COMPLETED",
             "WH-NEVER-1",
-            "CAP-NEVER-1",
+            Cap("CAP-NEVER-1"),
             "FAKE-NEVER-EXISTS",
             paymentId: 99_999_998,
             order.UsdAmount)))
@@ -729,7 +897,7 @@ public sealed class PayPalWebhookTests(SqlServerDatabaseFixture sqlServer) : Pay
         foreach (var (order, paypalOrderId) in orders)
         {
             await RecordWebhookAsync(
-                Completed(order, paypalOrderId, "WH-OVERLAP-" + order.PaymentId, "CAP-OVERLAP-" + order.PaymentId),
+                Completed(order, paypalOrderId, "WH-OVERLAP-" + order.PaymentId, Cap("CAP-OVERLAP-" + order.PaymentId)),
                 "WH-OVERLAP-" + order.PaymentId,
                 received: Clock.Now);
         }

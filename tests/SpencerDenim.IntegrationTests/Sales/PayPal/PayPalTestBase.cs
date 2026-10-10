@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using System.Text;
+using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -10,6 +11,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using SpencerDenim.Application.Abstractions.Time;
+using SpencerDenim.Application.Sales.Checkout.Contracts;
 using SpencerDenim.Application.Sales.Payments.Abstractions;
 using SpencerDenim.Application.Sales.Payments.PayPal;
 using SpencerDenim.Application.Settings.Abstractions;
@@ -288,6 +290,24 @@ public abstract class PayPalTestBase(SqlServerDatabaseFixture sqlServer) : BankT
     protected async Task<HttpResponseMessage> GetAsync(string path, HttpClient? client = null) =>
         await (client ?? NewPayPalClient()).GetAsync(new Uri(path, UriKind.Relative), Token);
 
+    /// <summary>The order page's payload for an order, as the shopper's own browser would get it.</summary>
+    protected async Task<OrderConfirmationDto> ReadOrderPageAsync(PayPalOrder order) =>
+        (await ReadOrderPageWithJsonAsync(order)).Page;
+
+    /// <summary>The same, with the raw JSON as well, for a test that must prove what is *not* in it.</summary>
+    protected async Task<(OrderConfirmationDto Page, string Json)> ReadOrderPageWithJsonAsync(PayPalOrder order)
+    {
+        using var response = await GetAsync($"/api/orders/{order.PublicId:D}");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var json = await response.Content.ReadAsStringAsync(Token);
+        var page = JsonSerializer.Deserialize<OrderConfirmationDto>(json, CheckoutApiClient.JsonOptions);
+        Assert.NotNull(page);
+
+        return (page, json);
+    }
+
     /// <summary>The <c>pay</c> hint on the order-page redirect, or null when the response is not one.</summary>
     protected static string? HintOf(HttpResponseMessage response)
     {
@@ -345,6 +365,21 @@ public abstract class PayPalTestBase(SqlServerDatabaseFixture sqlServer) : BankT
 
         return await (client ?? NewPayPalClient()).SendAsync(request, Token);
     }
+
+    private static readonly string RunTag = Guid.NewGuid().ToString("N")[..8].ToUpperInvariant();
+
+    /// <summary>
+    /// A capture id that is unique to this test run.
+    /// <para>
+    /// <b>Why a literal such as <c>"CAP-DUP"</c> is not enough.</b> The whole test run shares one database,
+    /// and a webhook finds its payment by the capture id <i>first</i>. The settlement store's own tests keep a
+    /// PayPal payment with <c>CAP-DUP</c> on it, so this class's webhook for <c>CAP-DUP</c> was matched to that
+    /// other order's payment instead of its own, and "the same capture under a new event id" failed with no
+    /// event on the payment under test - but only when both classes ran in one pass. Tagging every literal
+    /// keeps a test of ours from ever being matched to a row that belongs to somebody else's.
+    /// </para>
+    /// </summary>
+    protected static string Cap(string id) => $"{id}-{RunTag}";
 
     /// <summary>A PAYMENT.CAPTURE.* notification body, shaped as PayPal sends one.</summary>
     protected static string CaptureEvent(
@@ -491,6 +526,18 @@ public abstract class PayPalTestBase(SqlServerDatabaseFixture sqlServer) : BankT
                     .SetProperty(row => row.ProcessingStatus, PaymentEventProcessingStatus.Ignored)
                     .SetProperty(row => row.NextAttemptAtUtc, (DateTime?)null),
                 CancellationToken.None);
+    }
+
+    /// <summary>Puts a payment into a status directly - an arrangement, asserted by its caller.</summary>
+    protected async Task SetPaymentStatusAsync(int paymentId, PaymentStatus status)
+    {
+        using var scope = CreateScope();
+
+        var moved = await scope.ServiceProvider.GetRequiredService<AppDbContext>().Payments
+            .Where(payment => payment.Id == paymentId)
+            .ExecuteUpdateAsync(payment => payment.SetProperty(row => row.Status, status), Token);
+
+        Assert.Equal(1, moved);
     }
 
     /// <summary>Changes the order's payment due time directly - an arrangement, asserted by its caller.</summary>

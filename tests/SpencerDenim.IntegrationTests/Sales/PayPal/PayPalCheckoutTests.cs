@@ -192,18 +192,6 @@ public sealed class PayPalCheckoutTests(SqlServerDatabaseFixture sqlServer) : Pa
 
     // ---------------------------------------------------------------- what the order page says
 
-    private async Task<OrderConfirmationDto> ReadOrderPageAsync(PayPalOrder order)
-    {
-        using var response = await GetAsync($"/api/orders/{order.PublicId:D}");
-
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-
-        var dto = await response.Content.ReadFromJsonAsync<OrderConfirmationDto>(CheckoutApiClient.JsonOptions, Token);
-        Assert.NotNull(dto);
-
-        return dto;
-    }
-
     [Fact]
     public async Task The_order_page_shows_the_dollar_amount_before_the_redirect_and_a_link_to_the_start_endpoint()
     {
@@ -240,14 +228,18 @@ public sealed class PayPalCheckoutTests(SqlServerDatabaseFixture sqlServer) : Pa
 
         // Capturing: no redirect, "being processed".
         await SetPaymentStatusAsync(order.PaymentId, PaymentStatus.Capturing);
-        var processing = (await ReadOrderPageAsync(order)).Payment!;
+        var processingPage = await ReadOrderPageAsync(order);
+        var processing = processingPage.Payment!;
+        Assert.Null(processingPage.PaymentNotice);
         Assert.Null(processing.RedirectUrl);
         Assert.False(processing.AcceptsProof);
         Assert.Contains("being processed", processing.Notes, StringComparison.Ordinal);
 
         // Pending: no redirect, "pending with PayPal", and the date the hold runs out.
         await SetPaymentStatusAsync(order.PaymentId, PaymentStatus.Pending);
-        var pending = (await ReadOrderPageAsync(order)).Payment!;
+        var pendingPage = await ReadOrderPageAsync(order);
+        var pending = pendingPage.Payment!;
+        Assert.Null(pendingPage.PaymentNotice);
         Assert.Null(pending.RedirectUrl);
         Assert.Contains("pending with PayPal", pending.Notes, StringComparison.Ordinal);
 
@@ -271,10 +263,13 @@ public sealed class PayPalCheckoutTests(SqlServerDatabaseFixture sqlServer) : Pa
                 && field.Value == "USD " + PayPalUsdAmount.Format(PayPalUsdAmount.Compute(row.GrandTotal, 320m, 3m)));
 
         // CapturedRequiresRefund: "we received your payment, our team will contact you", and no second Pay now.
+        // This is the provider-neutral PaymentNotice now (the order page reads it from the payment's status),
+        // and the page carries no payment instructions at all - nothing to press, nothing to quote.
         await SetPaymentStatusAsync(order.PaymentId, PaymentStatus.CapturedRequiresRefund);
-        var exception = (await ReadOrderPageAsync(order)).Payment!;
-        Assert.Null(exception.RedirectUrl);
-        Assert.Contains("received your payment", exception.Notes, StringComparison.Ordinal);
+        var exception = await ReadOrderPageAsync(order);
+        Assert.Equal(OrderPaymentNotices.Received, exception.PaymentNotice);
+        Assert.Null(exception.Payment);
+        Assert.Null(exception.Proof);
     }
 
     /// <summary>
@@ -313,16 +308,5 @@ public sealed class PayPalCheckoutTests(SqlServerDatabaseFixture sqlServer) : Pa
 
         Assert.Equal(nameof(OrderStatus.Paid), page.Status);
         Assert.Null(page.Payment);
-    }
-
-    private async Task SetPaymentStatusAsync(int paymentId, PaymentStatus status)
-    {
-        using var scope = CreateScope();
-
-        var moved = await scope.ServiceProvider.GetRequiredService<AppDbContext>().Payments
-            .Where(payment => payment.Id == paymentId)
-            .ExecuteUpdateAsync(payment => payment.SetProperty(row => row.Status, status), Token);
-
-        Assert.Equal(1, moved);
     }
 }

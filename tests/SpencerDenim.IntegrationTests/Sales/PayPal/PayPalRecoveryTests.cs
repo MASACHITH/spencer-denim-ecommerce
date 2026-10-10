@@ -350,7 +350,7 @@ public sealed class PayPalRecoveryTests(SqlServerDatabaseFixture sqlServer) : Pa
             using var webhook = await PostWebhookAsync(CaptureEvent(
                 "PAYMENT.CAPTURE.COMPLETED",
                 "WH-R1-1",
-                "CAP-R1-1",
+                Cap("CAP-R1-1"),
                 paypalOrderId,
                 order.PaymentId,
                 order.UsdAmount));
@@ -389,7 +389,7 @@ public sealed class PayPalRecoveryTests(SqlServerDatabaseFixture sqlServer) : Pa
             using var webhook = await PostWebhookAsync(CaptureEvent(
                 "PAYMENT.CAPTURE.COMPLETED",
                 "WH-R1-2",
-                "CAP-R1-2",
+                Cap("CAP-R1-2"),
                 paypalOrderId,
                 order.PaymentId,
                 order.UsdAmount));

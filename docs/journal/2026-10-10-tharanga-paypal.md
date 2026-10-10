@@ -102,6 +102,46 @@ endpoint, and shows a fixed sentence for the `?pay=` hint (picked from a whiteli
 ever displayed, and no hint ever says "paid"). After a `processing` return it re-reads the order every 5 s,
 12 times at most, in the browser only.
 
+### Money that landed but could not settle the order (shared, provider-neutral)
+
+Added after the PayHere tester's finding, and it is **not PayPal's**: any provider's payment that ends in
+`CapturedRequiresRefund` (status 7) is covered, because it reads the payment's status and nothing else.
+Doc 11 P8 step 6 / P8b step 4: "We received your payment, our team will contact you". Before this the page said
+the order had expired (or "we are still confirming the payment details... nothing to transfer yet" for an amount
+mismatch) with no word about the money, and the `?pay=received` hint only covered the browser-return path, not a
+notification that landed while the browser was closed.
+
+- **DTO**: `OrderConfirmationDto.PaymentNotice` (`string?`, last positional parameter, default `null`), with the
+  value constants in `OrderPaymentNotices` (`Received = "received"`), both in
+  `Application/Sales/Checkout/Contracts/OrderConfirmationDto.cs`. TS: `OrderConfirmationDto.paymentNotice?: string | null`
+  in `core/checkout/checkout.model.ts`.
+- **Derived from the database on every read**, in `CheckoutReader.FindOrderWhereAsync` (one extra `EXISTS` in the
+  existing projection, no extra round trip): any payment of the order with status 7. So a reload, a later visit and a
+  webhook that arrived with the browser closed all show it, and it disappears when staff refund the payment (the
+  status leaves 7).
+- **Carries nothing else**: no provider, amount, payment id or capture id. The order link is the credential, and
+  the integration tests assert the raw JSON contains none of those.
+- **No way to pay beside it**: `GetOrderQueryHandler` returns the order as read, without asking a provider, when
+  the notice is set, so `Payment` and `Proof` are null (no bank account, no Pay now). The page also refuses to draw
+  a redirect panel if instructions ever arrive with a notice, and the "Payment" line stops saying "Awaiting
+  payment". PayPal's start endpoint refuses a new attempt while a payment is in status 7
+  (`PayPalBlock.CapturedAwaitingStaff`, decided inside the attempt's own transaction after the order row is held),
+  redirecting with `?pay=received`; `PayPalOrderView.HasUnsettledCapture` is the read-side copy.
+- **Wording** (`core/checkout/payment-notice.ts`, a whitelist; an unknown code shows nothing): an order that is
+  waiting, expired or cancelled reads "We received your payment, our team will contact you. You do not need to pay
+  again."; an order that is already paid (a duplicate capture) reads "We received a second payment for this order.
+  Our team will contact you about it, and you do not need to pay again." The `?pay=received` hint is suppressed when
+  the order carries the notice, so the page does not say it twice.
+- **Pending and declined copy** was already derived from the database (the provider's `Describe` reads the open or
+  latest payment), not from `?pay=`; only status 7 had no database-derived message. Unchanged.
+- **Not changed, deliberately**: `CanCancel` (the Cancel panel still shows for an order that is still
+  `PendingPayment` with a status-7 payment). Cancelling is harmless there (staff refund a payment on a cancelled
+  order, doc 11 P8 step 11) and hiding it would have meant a second copy of the cancel predicate in the read model
+  that the cancellation store does not share.
+- Bank-transfer orders and orders with no payment in status 7 are byte-for-byte what they were
+  (`GetOrderQueryHandlerTests`, the order-page spec "keeps the bank rendering exactly as it was", and the existing
+  `CheckoutEndpointTests`).
+
 ## How to test against the real PayPal sandbox (once credentials exist)
 
 You need a PayPal developer account (developer.paypal.com), which the client will provide, and an HTTPS public
@@ -222,6 +262,20 @@ registered; do it once, with a small real purchase, after the client signs off.
 `Application/DependencyInjection.cs` (one handler), `CheckoutReader.cs` (registry filter),
 `IPaymentProvider.cs` (default member), `PaymentProviderContractTests.cs` (stub), the settings catalogue tests,
 and on the storefront `order-page.ts` and `payment-redirect.ts` (notice kind, fields and notes, hint banner).
+
+## Test hygiene found on the way: shared database, fixed capture ids
+
+The whole integration run shares one database (a fresh one per run, shared by every class), and a webhook finds its
+payment by the **capture id first**. The settlement store's tests (`OrderSettlementStoreTests`) leave a PayPal
+payment with `ProviderTransactionId = "CAP-DUP"` behind, and `PayPalWebhookTests` used the same literal, so when
+both classes ran in one pass the webhook was matched to that other order's payment and
+"The_same_capture_under_a_new_event_id_is_a_duplicate_and_is_ignored" found no event on the payment under test
+("Sequence contains no matching element"). Reproduced by running `OrderSettlementStoreTests` with that one test.
+It was a test-data collision, **not** an incompatibility with the groundwork fixes and not load. Fix: every
+literal capture id in the PayPal tests now goes through `Cap("...")` in `PayPalTestBase`, which appends a per-run
+tag, so none of them can equal a row another class left behind. (The ids the fake gateway makes were already
+unique per instance.) Worth knowing for PayHere: any test that posts a fixed provider transaction id into the
+shared database can be matched by an earlier class's leftovers.
 
 ## Tests
 
