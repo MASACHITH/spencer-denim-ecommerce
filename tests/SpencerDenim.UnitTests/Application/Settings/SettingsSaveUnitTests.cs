@@ -48,6 +48,7 @@ public sealed class SettingsSaveUnitTests
                 new[] { SettingKeys.Store.Group, SettingKeys.Orders.Group },
                 new[] { SettingKeys.Contact.Group, SettingKeys.Social.Group },
                 new[] { SettingKeys.Bank.Group },
+                new[] { SettingKeys.PayPal.Group },
             ],
             SettingCatalog.SaveUnits);
     }
@@ -122,6 +123,10 @@ public sealed class SettingsSaveUnitTests
             SettingKeys.Store.BRNumber,
             SettingKeys.Store.VatNumber,
             SettingKeys.Orders.AutoDeliverAfterDays,
+
+            // W4-01: PayPal's payment window is doc 08's Orders.PayPalExpiryMinutes, so it rides in this unit
+            // (and with Settings.Edit, the permission this unit shares) rather than in PayPal's own.
+            SettingKeys.PayPal.ExpiryMinutes,
         ];
 
         // Both group names answer with the same set, as with Contact and Social below: the screen may have
@@ -174,8 +179,8 @@ public sealed class SettingsSaveUnitTests
             SettingCatalog.KeysInSaveUnitFor(SettingKeys.Bank.Group));
 
         // `Bank` used to be the undeclared example and now has a unit of its own; `Store` was the
-        // fall-through example and W3-04 paired it with `Orders`. An unbuilt group takes their place
-        // (doc 08 §3.8's `Payments.PayPal`, which W4-01 adds).
-        Assert.Empty(SettingCatalog.KeysInSaveUnitFor("Payments.PayPal"));
+        // fall-through example and W3-04 paired it with `Orders`; `Payments.PayPal` was the next and W4-01
+        // built it. An unbuilt group takes their place (doc 08 §3.8's `Email.Smtp`).
+        Assert.Empty(SettingCatalog.KeysInSaveUnitFor("Email.Smtp"));
     }
 }

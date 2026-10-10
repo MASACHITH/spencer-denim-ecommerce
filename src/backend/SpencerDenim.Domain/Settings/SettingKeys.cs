@@ -6,8 +6,8 @@ namespace SpencerDenim.Domain.Settings;
 /// <para>
 /// <b>What is deliberately absent, and why that is not an oversight.</b> Doc 08 lists sixteen groups.
 /// <c>Bank.*</c> is now here (W3-03, PAY-01): it is the one group doc 11 P7's preconditions make a
-/// prerequisite of taking money at all. <c>Payments.PayPal.*</c> still waits for W4-01 — its keys are
-/// credentials and an FX rate with no provider to use them; <c>Email.Smtp.*</c>, <c>Security.*</c> and
+/// prerequisite of taking money at all. <c>Payments.PayPal.*</c> is here since W4-01 (see
+/// <c>SettingKeys.PayPal</c>); <c>Email.Smtp.*</c>, <c>Security.*</c> and
 /// <c>Privacy.RetainInvoiceBillTo</c> need
 /// <c>Settings.Security</c>, the sensitive-change alert and <c>ops.AdminAlerts</c>, none of which exists;
 /// <c>Delivery</c>, the couriers and the delivery methods need <c>sales.DeliveryMethods</c> and friends,
@@ -34,7 +34,7 @@ namespace SpencerDenim.Domain.Settings;
 /// is a row the client fills in — and it stays unset, and prints as nothing, until they do.
 /// </para>
 /// </summary>
-public static class SettingKeys
+public static partial class SettingKeys
 {
     /// <summary>Group <c>Store</c> (doc 08 §3.8): the shop's own identity as a shopper sees it (GLB-02).</summary>
     public static class Store

@@ -57,7 +57,7 @@ namespace SpencerDenim.Api.Endpoints.Admin;
 /// exist yet; see <c>SettingKeys</c>. They arrive as rows and as routes beside these, not as a redesign.
 /// </para>
 /// </summary>
-internal static class AdminSettingsEndpoints
+internal static partial class AdminSettingsEndpoints
 {
     public static IEndpointRouteBuilder MapAdminSettingsEndpoints(this IEndpointRouteBuilder endpoints)
     {
