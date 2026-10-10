@@ -1,6 +1,8 @@
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using SpencerDenim.IntegrationTests.Infrastructure;
@@ -103,10 +105,23 @@ public sealed class DataProtectionKeyRingTests : IDisposable
         Assert.Contains("DataProtection__CertificatePath", Flatten(exception), StringComparison.Ordinal);
     }
 
-    private static ApiFactory CreateFactory(Dictionary<string, string?> configuration, string environment = "Testing") =>
-        new(ApiFactory.UnreachableConnectionString, environment, additionalConfiguration: configuration);
+    /// <summary>
+    /// The key ring settings go in through <c>UseSetting</c>, not <c>additionalConfiguration</c>: the API reads
+    /// them while it registers its services, which is when a deployment's environment variables are already
+    /// there but before <see cref="ApiFactory"/>'s <c>ConfigureAppConfiguration</c> sources are applied. A host
+    /// setting is applied as early as the environment variables it stands in for.
+    /// </summary>
+    private static WebApplicationFactory<Program> CreateFactory(
+        Dictionary<string, string?> configuration, string environment = "Testing") =>
+        new ApiFactory(ApiFactory.UnreachableConnectionString, environment).WithWebHostBuilder(builder =>
+        {
+            foreach (var (key, value) in configuration)
+            {
+                builder.UseSetting(key, value);
+            }
+        });
 
-    private static IDataProtector Protector(ApiFactory factory) =>
+    private static IDataProtector Protector(WebApplicationFactory<Program> factory) =>
         factory.Services.GetRequiredService<IDataProtectionProvider>().CreateProtector(Purpose);
 
     private static void WriteSelfSignedCertificate(string path, string password)

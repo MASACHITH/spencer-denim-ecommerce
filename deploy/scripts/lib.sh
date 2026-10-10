@@ -80,18 +80,29 @@ check_env_file() {
     problems=1
   fi
 
+  # Compose strips a carriage return and cuts an unquoted value at " #", while these scripts read the raw line,
+  # so a CRLF file or a password containing " #" provisions one password in SQL Server and hands the API another.
+  if grep -q "$(printf '\r')" "$file"; then
+    warn "$file has Windows (CRLF) line endings; convert it with: sed -i 's/\r$//' $file"
+    problems=1
+  fi
+  if grep -E '^[A-Za-z_][A-Za-z0-9_]*=' "$file" | grep -q ' #'; then
+    warn "$file has a value containing ' #'; compose treats the rest of that line as a comment"
+    problems=1
+  fi
+
   if [ "$kind" = app ]; then
     local key cs pw
     for key in SD_APP_DB_CONNECTION SD_MIGRATOR_DB_CONNECTION SD_PUBLIC_HOSTS SD_PUBLIC_ORIGIN; do
       [ -n "$(env_value "$file" "$key")" ] || { warn "$file: $key is empty"; problems=1; }
     done
-    # The storefront ignores a value with a path, a query or a trailing slash and falls back to production's
-    # domain (#86), so refuse it here instead of publishing the wrong addresses.
-    case "$(env_value "$file" SD_PUBLIC_ORIGIN)" in
-      ''|https://*/*|http://*/*) warn "$file: SD_PUBLIC_ORIGIN must be scheme and host only, e.g. https://colombowardrobecompany.com"; problems=1 ;;
-      https://*|http://*) ;;
-      *) warn "$file: SD_PUBLIC_ORIGIN must start with https://"; problems=1 ;;
-    esac
+    # The storefront ignores a value with a path, query, fragment, credentials or no host, and falls back to
+    # production's domain (#86), so anything but scheme://host[:port] is refused here instead of being published.
+    if ! printf '%s' "$(env_value "$file" SD_PUBLIC_ORIGIN)" \
+        | grep -Eq '^https?://[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]{1,5})?$'; then
+      warn "$file: SD_PUBLIC_ORIGIN must be scheme and host only (http:// or https://, optional :port), e.g. https://colombowardrobecompany.com"
+      problems=1
+    fi
     for key in SD_APP_DB_CONNECTION SD_MIGRATOR_DB_CONNECTION; do
       cs="$(env_value "$file" "$key")"
       pw="$(conn_part "$cs" 'Password')"

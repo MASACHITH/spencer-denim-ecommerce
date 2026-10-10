@@ -11,8 +11,9 @@ namespace SpencerDenim.Api.Http;
 ///   <item><c>ForwardedHeaders__KnownProxies</c>: comma-separated single addresses.</item>
 /// </list>
 /// <para>
-/// In the Docker deployment (W0-15, docs/15) this is the web gateway's own compose network, which has a
-/// fixed subnet and holds only the gateway and the API. Nothing else can reach the API on it.
+/// In the Docker deployment (W0-15, docs/15) this is <c>KnownProxies</c> = the web gateway container's fixed
+/// address on the <c>edge</c> network. The storefront shares that network, so a single address is trusted rather
+/// than the subnet.
 /// </para>
 /// <para>
 /// When neither is set, the API trusts nobody's <c>X-Forwarded-For</c> at all and accepts

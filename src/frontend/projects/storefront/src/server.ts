@@ -51,6 +51,33 @@ app.use((req, res, next) => {
   res.redirect(redirectStatusFor(req.method), canonical);
 });
 
+/**
+ * **Forwarded headers nobody vouches for are dropped before anything renders** (W0-15).
+ *
+ * Angular's engine renders on the server only if every `X-Forwarded-*` header it receives is one it
+ * was told to trust (`NG_TRUST_PROXY_HEADERS`); a single other one — `X-Forwarded-Server`,
+ * `X-Forwarded-Ssl`, or a name a visitor simply made up — makes it serve the empty client-side shell,
+ * with no content for a crawler and no `og:` tags. The gateway drops the common ones, but a list of
+ * names can never be complete, so the rule lives here: anything under `x-forwarded-` that is not on the
+ * trusted list is removed. The trusted ones are the gateway's own, overwritten on every request.
+ */
+const trustedForwardedHeaders = new Set(
+  (process.env['NG_TRUST_PROXY_HEADERS'] ?? '')
+    .split(',')
+    .map((name) => name.trim().toLowerCase())
+    .filter((name) => name.length > 0),
+);
+
+app.use((req, _res, next) => {
+  for (const name of Object.keys(req.headers)) {
+    if (name.startsWith('x-forwarded-') && !trustedForwardedHeaders.has(name)) {
+      delete req.headers[name];
+    }
+  }
+
+  next();
+});
+
 /** Liveness probe for process managers and the reverse proxy. Does not render Angular. */
 app.get('/healthz', (_req, res) => {
   res.setHeader('Cache-Control', 'no-store');

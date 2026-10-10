@@ -18,7 +18,13 @@ tag="${2:-}"
 if [ -z "$tag" ]; then
   [ -f "$history" ] || die "no deploy history at $history; name the tag to roll back to"
   current="$(tail -n 1 "$history" | awk '{print $3}')"
-  tag="$(awk -v cur="$current" '$3 != cur {t=$3} END {print t}' "$history")"
+  # The history read as a stack: a deploy pushes its tag, a rollback to T pops back down to T. The release below
+  # the top is the one to return to, so rolling back twice goes back twice rather than forward again to the
+  # release that was rolled back from.
+  tag="$(awk '
+    $5 == "rollback" { while (n > 0 && s[n] != $3) n--; if (n == 0) s[++n] = $3; next }
+    { if (n == 0 || s[n] != $3) s[++n] = $3 }
+    END { if (n >= 2) print s[n-1] }' "$history")"
   [ -n "$tag" ] || die "no earlier release than $current in $history"
   log "Current release is $current; rolling back to $tag"
 fi
@@ -27,4 +33,4 @@ case "$tag" in *[!A-Za-z0-9_.-]*) die "invalid tag '$tag'" ;; esac
 release_dir="$app/compose/releases/$tag"
 [ -d "$release_dir" ] || die "no compose files for $tag in $release_dir"
 
-SD_RELEASE_COMPOSE_DIR="$release_dir" "$(dirname "$(readlink -f "$0")")/deploy.sh" "$env" "$tag" --skip-backup
+SD_DEPLOY_KIND=rollback SD_RELEASE_COMPOSE_DIR="$release_dir" "$(dirname "$(readlink -f "$0")")/deploy.sh" "$env" "$tag" --skip-backup

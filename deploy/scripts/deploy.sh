@@ -68,15 +68,24 @@ code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/api/catal
 [ "$code" = 200 ] || die "GET /api/catalog/departments answered $code, expected 200"
 
 # The home page must be server-rendered, not Angular's empty client-side fallback (docs/15 §3 step 5).
-curl -s "http://127.0.0.1:$port/" | grep -q 'ng-server-context="ssr"' \
-  || die "GET / returned the client-side shell, not a server-rendered page (see docs/15 §3, NG_TRUST_PROXY_HEADERS)"
+# Each response is read into a variable before it is searched: piping curl into "grep -q" under pipefail fails
+# whenever grep stops reading before curl has finished writing (curl exits 23), about one deploy in ten.
+home="$(curl -s "http://127.0.0.1:$port/" || true)"
+case "$home" in
+  *'ng-server-context="ssr"'*) ;;
+  *) die "GET / returned the client-side shell, not a server-rendered page (see docs/15 §3, NG_TRUST_PROXY_HEADERS)" ;;
+esac
 
 # #86: robots.txt must advertise this environment's own sitemap, never production's on staging.
 origin="$(env_value "$app/config/app.env" SD_PUBLIC_ORIGIN)"
-sitemap_line="$(curl -s "http://127.0.0.1:$port/robots.txt" | tr -d '\r' | sed -n 's/^Sitemap: //p')"
+robots="$(curl -s "http://127.0.0.1:$port/robots.txt" || true)"
+sitemap_line="$(printf '%s\n' "$robots" | tr -d '\r' | sed -n 's/^Sitemap: //p')"
 [ "$sitemap_line" = "$origin/sitemap.xml" ] \
   || die "robots.txt names '$sitemap_line' as the sitemap, expected '$origin/sitemap.xml' (check SD_PUBLIC_ORIGIN)"
 
-printf '%s %s %s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$env" "$tag" "${SUDO_USER:-$(id -un)}" >> "$app/data/deploy-history.log"
+# Fifth field: "rollback" when rollback.sh asked for this deploy, so the next rollback can tell a release that
+# was rolled back from (never returned to by default) from an ordinary earlier one.
+printf '%s %s %s %s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$env" "$tag" "${SUDO_USER:-$(id -un)}" \
+  "${SD_DEPLOY_KIND:-deploy}" >> "$app/data/deploy-history.log"
 app_compose "$env" "$compose_dir" ps
 log "$env is running $tag."

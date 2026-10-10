@@ -139,7 +139,10 @@ public sealed class ForwardedHeadersTests
     {
         await using var factory = CreateFactory(new() { [key] = value });
 
-        var exception = await Assert.ThrowsAnyAsync<Exception>(() => ProbeAsync(factory, Gateway, Visitor, "https"));
+        // Building the host is what fails, so ask for exactly that. Going through a request instead let a
+        // background service that touched the already-disposed provider during the failed start win the race
+        // and surface an ObjectDisposedException in place of the validation error.
+        var exception = Assert.ThrowsAny<Exception>(() => factory.Services);
 
         Assert.Contains(key, Flatten(exception), StringComparison.Ordinal);
     }

@@ -111,7 +111,7 @@ public sealed class NewsletterSignupThrottleTests
 
         var warning = Assert.Single(logger.Warnings);
         Assert.Contains("forwarded headers", warning, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("ForwardedHeaders__KnownNetworks", warning, StringComparison.Ordinal);
+        Assert.Contains("ForwardedHeaders__KnownProxies", warning, StringComparison.Ordinal);
     }
 
     [Theory]

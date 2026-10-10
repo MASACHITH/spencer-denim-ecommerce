@@ -29,7 +29,7 @@ Internet ──► host nginx (80/443, certbot; already serves other sites on th
 | Image | Built from | Base (pinned) | Runs as | Healthcheck |
 |---|---|---|---|---|
 | `spencer-denim/api` | `deploy/docker/backend.Dockerfile` target `api` | `dotnet/aspnet:10.0.12-alpine3.24` + ICU | `app` (1654) | `GET /health` (image); compose uses `/health/ready` |
-| `spencer-denim/migrator` | same, target `migrator` | `dotnet/runtime-deps:10.0.12-alpine3.24` (self-contained bundle) | `app` (1654) | one-shot, exit code |
+| `spencer-denim/migrator` | same, target `migrator` | `dotnet/aspnet:10.0.12-alpine3.24` + ICU (framework-dependent bundle, shares the API's layers) | `app` (1654) | one-shot, exit code |
 | `spencer-denim/storefront` | `deploy/docker/frontend.Dockerfile` target `storefront` | `node:24.21.0-alpine3.24` | `node` (1000) | `GET /healthz` |
 | `spencer-denim/web` | same, target `web` | `nginxinc/nginx-unprivileged:1.30.5-alpine3.24` | `nginx` (101) | `GET /gateway-health` |
 | SQL Server | `deploy/database/compose.yml` | `mssql/server:2025-CU9-ubuntu-24.04` | `mssql` (10001) | `sqlcmd SELECT 1` |

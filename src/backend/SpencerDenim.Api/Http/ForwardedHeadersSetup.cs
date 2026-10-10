@@ -16,7 +16,8 @@ namespace SpencerDenim.Api.Http;
 /// <para>
 /// <b>Who is trusted</b> comes from configuration (<see cref="TrustedProxySettings"/>):
 /// <c>ForwardedHeaders__KnownNetworks</c> / <c>ForwardedHeaders__KnownProxies</c>. The compose files set
-/// <c>KnownNetworks</c> to the gateway's network, a fixed subnet that only the gateway and the API are attached to.
+/// <c>KnownProxies</c> to the gateway container's fixed address on the <c>edge</c> network. The storefront is on that
+/// network too, so it is the single address that is trusted, not the network.
 /// </para>
 /// <para>
 /// <b>Unconfigured is the safe state W1-01 round 3 left:</b> <c>X-Forwarded-For</c> is not processed at all, so a

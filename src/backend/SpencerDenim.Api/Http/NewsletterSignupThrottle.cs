@@ -10,7 +10,7 @@ namespace SpencerDenim.Api.Http;
 ///
 /// <para>
 /// <b>The partition is the visitor's own address</b> once the deployment is configured: the web
-/// gateway's network is trusted for <c>X-Forwarded-For</c> (<c>ForwardedHeaders__KnownNetworks</c>,
+/// gateway's address is trusted for <c>X-Forwarded-For</c> (<c>ForwardedHeaders__KnownProxies</c>,
 /// W0-15, docs/15), so <c>RemoteIpAddress</c> is the client the host's nginx saw, not the gateway.
 /// The ceiling is therefore sized for one address, not for the whole site.
 /// </para>
@@ -75,7 +75,7 @@ internal sealed partial class NewsletterSignupThrottle : INewsletterSignupThrott
 
         WarnIfTheAddressIsNotAVisitor(partition);
 
-        using var lease = _limiter.AttemptAcquire(partition);
+        using var lease = _limiter.AttemptAcquire(ClientAddressPartition.For(partition)!);
         return lease.IsAcquired;
     }
 
@@ -88,7 +88,7 @@ internal sealed partial class NewsletterSignupThrottle : INewsletterSignupThrott
     /// A loopback or private address here means the caller arrived through something else — a
     /// reverse proxy, a container network — whose forwarded headers the API is not trusting. On a
     /// developer's machine that is expected and harmless. In a deployment it means
-    /// <c>ForwardedHeaders__KnownNetworks</c> is unset or does not match the gateway's network, so
+    /// <c>ForwardedHeaders__KnownProxies</c> is unset or does not match the gateway's address, so
     /// every visitor is sharing one bucket, and this says so out loud rather than leaving it to be
     /// noticed when a genuine signup is refused.
     /// </para>
@@ -163,8 +163,8 @@ internal sealed partial class NewsletterSignupThrottle : INewsletterSignupThrott
         Message = "Newsletter signups are arriving from {Address}, which is not a visitor's own address. " +
             "Every caller arriving this way shares one rate-limit partition of {PermitLimit} signups per " +
             "{WindowMinutes} minutes. This is expected on a developer machine. In a deployment it means the " +
-            "reverse proxy's forwarded headers are not trusted: ForwardedHeaders__KnownNetworks is unset or does " +
-            "not match the web gateway's network (docs/15-deployment-runbook.md), and genuine signups will be refused.")]
+            "reverse proxy's forwarded headers are not trusted: ForwardedHeaders__KnownProxies is unset or does " +
+            "not match the web gateway's address (docs/15-deployment-runbook.md), and genuine signups will be refused.")]
     private static partial void LogSharedPartition(
         ILogger logger,
         string address,

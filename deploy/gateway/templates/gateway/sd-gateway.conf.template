@@ -40,6 +40,10 @@ server {
 
     # Redirects stay relative, so they never leak this container's port (8080) to the browser.
     absolute_redirect off;
+    # Small by default. Request bodies are buffered under /tmp, a RAM-backed tmpfs counted against this
+    # container's memory limit, so a 60 MB ceiling on every route let three anonymous POSTs OOM-kill the gateway
+    # (W0-15 tester). Only the two upload routes below take more, and they stream to the API instead of being
+    # buffered here.
     client_max_body_size ${SD_MAX_BODY_SIZE};
 
     set $sd_api        http://${SD_API_UPSTREAM};
@@ -71,6 +75,21 @@ server {
 
     # --- API --------------------------------------------------------------------------------------------------
     location /api/ {
+        proxy_pass $sd_api;
+    }
+
+    # Uploads. proxy_request_buffering off streams the body to the API as it arrives (the API spools it to disk
+    # itself, Media__UploadSpoolPath), so nothing large ever sits in this container's memory. The ceilings are the
+    # API's own limits plus multipart overhead: MediaLimits.MaxVideoBytes (50 MB, staff only) and
+    # MaxPrivateBytes (5 MB, a customer's bank slip). The API still enforces the exact limit and the file type.
+    location ^~ /api/admin/media/ {
+        client_max_body_size ${SD_MAX_UPLOAD_SIZE};
+        proxy_request_buffering off;
+        proxy_pass $sd_api;
+    }
+    location ~ ^/api/orders/[0-9A-Fa-f-]+/payment-slip$ {
+        client_max_body_size 6m;
+        proxy_request_buffering off;
         proxy_pass $sd_api;
     }
     location = /api {
