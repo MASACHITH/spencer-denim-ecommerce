@@ -239,5 +239,17 @@ internal static class SalesReferenceData
             IsEnabled: false,
             DisplayOrder: 2,
             "Pay by card or PayPal balance."),
+        new(
+            PaymentProviderCodes.PayHere,
+            "PayHere (card, mobile wallet, internet banking)",
+
+            // A change request outside the signed scope (doc 11 §7 G-43, issue #141): it ships disabled and
+            // stays so until the owner has confirmed it with the client, the client's merchant account
+            // exists and a Super Admin has filled in Settings.Payments.PayHere.*. Checkout also hides it
+            // while the merchant ID or secret is missing, so a row switched on early still cannot take an
+            // order nobody can pay for.
+            IsEnabled: false,
+            DisplayOrder: 3,
+            "Pay in Sri Lankan rupees by card, mobile wallet or internet banking."),
     ];
 }

@@ -249,6 +249,87 @@ public static class SettingKeys
         public const string Instructions = "Bank.Instructions";
     }
 
+    /// <summary>
+    /// Group <c>Payments.PayHere</c> (doc 11 P8b, issue #141): the merchant account the PayHere gateway
+    /// charges to, and the two windows its orders wait for money. <c>Settings.Payments</c> on every key,
+    /// like <see cref="Bank"/>, and read <b>at the moment they are used</b> from this table so that
+    /// switching sandbox to live, or rotating the secret, needs no rebuild and no environment variable.
+    /// <para>
+    /// <b>Five keys, and the payment window is named <c>Payments.PayHere.ExpiryMinutes</c> where doc 11 §1.6
+    /// first wrote <c>Orders.PayHereExpiryMinutes</c>.</b> Doc 08 files <c>PayPalExpiryMinutes</c> under the
+    /// <c>Orders</c> group because the shop's own staff tune it; for PayHere the window belongs on the form
+    /// that holds the merchant account, which only <c>Settings.Payments</c> can change, and this catalogue
+    /// has two rules a <c>Payments.PayHere</c> key under an <c>Orders.</c> name would break: a key begins
+    /// with its group (which is how DB2's permission is read off a prefix), and no save unit spans two
+    /// permissions (the <c>Orders</c> group shares one with the invoice and fulfilment form).
+    /// </para>
+    /// <para>
+    /// <b>The merchant ID and secret are seeded null</b> — they are the client's, and nothing is invented —
+    /// so a fresh deployment cannot take a PayHere payment even if somebody switches the provider row on.
+    /// <c>Mode</c> defaults to <c>sandbox</c>: moving to live money is a deliberate act.
+    /// </para>
+    /// </summary>
+    public static class PayHere
+    {
+        public const string Group = "Payments.PayHere";
+
+        /// <summary><c>sandbox</c> or <c>live</c>. Decides which PayHere host the checkout form posts to.</summary>
+        public const string Mode = "Payments.PayHere.Mode";
+
+        /// <summary>The value of <see cref="Mode"/> for PayHere's test environment. The seeded default.</summary>
+        public const string ModeSandbox = "sandbox";
+
+        /// <summary>The value of <see cref="Mode"/> for real money.</summary>
+        public const string ModeLive = "live";
+
+        /// <summary>
+        /// The merchant ID PayHere gave the shop. Not a secret — it is in every checkout form the browser
+        /// posts — and a notification naming any other merchant is refused.
+        /// </summary>
+        public const string MerchantId = "Payments.PayHere.MerchantId";
+
+        /// <summary>
+        /// The merchant secret: <see cref="SettingValueType.Secret"/>, Data Protection ciphertext.
+        /// Write-only — it is never returned by any endpoint, and a blank on a save keeps the stored value.
+        /// The checkout hash and the notification signature are both keyed by <c>MD5(secret)</c>, so
+        /// whoever reads it can forge a payment.
+        /// </summary>
+        public const string MerchantSecret = "Payments.PayHere.MerchantSecret";
+
+        /// <summary>
+        /// How many days after placement a payment PayHere reports as <i>pending</i> may hold the order's
+        /// stock (doc 11 P8b step 4). Seeded <b>5</b>, the figure P8b states.
+        /// </summary>
+        public const string PendingMaxDays = "Payments.PayHere.PendingMaxDays";
+
+        /// <summary>Seeded default for <see cref="PendingMaxDays"/>.</summary>
+        public const int PendingMaxDaysDefault = 5;
+
+        /// <summary>One day: shorter than that is not a pending hold.</summary>
+        public const int PendingMaxDaysMin = 1;
+
+        /// <summary>Two weeks. Beyond that the figure is a typo, and the stock is not the shop's to sit on.</summary>
+        public const int PendingMaxDaysMax = 14;
+
+        /// <summary>
+        /// How many minutes a PayHere order waits for the customer to pay before the expiry job releases
+        /// its stock (doc 11 P8b). Seeded <b>60</b>, PayPal's window.
+        /// </summary>
+        public const string ExpiryMinutes = "Payments.PayHere.ExpiryMinutes";
+
+        /// <summary>Seeded default for <see cref="ExpiryMinutes"/>.</summary>
+        public const int ExpiryMinutesDefault = 60;
+
+        /// <summary>
+        /// Fifteen minutes. A card or wallet payment with a one-time password can take several, and an
+        /// order that expires while the customer is at PayHere's page becomes a payment exception.
+        /// </summary>
+        public const int ExpiryMinutesMin = 15;
+
+        /// <summary>One day.</summary>
+        public const int ExpiryMinutesMax = 1_440;
+    }
+
     /// <summary><c>ops.Settings.Key</c> is <c>varchar(100)</c>.</summary>
     public const int KeyMaxLength = 100;
 

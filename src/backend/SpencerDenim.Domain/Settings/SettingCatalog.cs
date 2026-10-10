@@ -274,6 +274,62 @@ public static class SettingCatalog
             + "collected has not been delivered. Between 1 and 90 days.",
             SeedValue: SettingKeys.Orders.AutoDeliverAfterDaysDefault.ToString(
                 System.Globalization.CultureInfo.InvariantCulture)),
+
+        // Group Payments.PayHere (doc 11 P8b, issue #141). Settings.Payments on every row, like Bank. The
+        // merchant ID and secret hold information only the client has and are seeded null; Mode,
+        // PendingMaxDays and ExpiryMinutes are figures P8b states, so they take the second kind of seed
+        // value this catalogue allows ("a value this project's own documents state"). ExpiryMinutes is
+        // named for its group, not "Orders.PayHereExpiryMinutes" - see SettingKeys.PayHere.
+        new(
+            SettingKeys.PayHere.Mode,
+            SettingKeys.PayHere.Group,
+            SettingValueType.String,
+            Permissions.Settings.Payments,
+            "PayHere mode",
+            "sandbox sends customers to PayHere's test page, where no real money moves; live takes real "
+            + "payments. The merchant ID and secret differ between the two, so change all three together. "
+            + "Type sandbox or live.",
+            SeedValue: SettingKeys.PayHere.ModeSandbox),
+
+        new(
+            SettingKeys.PayHere.MerchantId,
+            SettingKeys.PayHere.Group,
+            SettingValueType.String,
+            Permissions.Settings.Payments,
+            "PayHere merchant ID",
+            "The merchant ID shown in the PayHere merchant portal. Customers cannot pay by PayHere until "
+            + "this and the merchant secret are filled in."),
+
+        new(
+            SettingKeys.PayHere.MerchantSecret,
+            SettingKeys.PayHere.Group,
+            SettingValueType.Secret,
+            Permissions.Settings.Payments,
+            "PayHere merchant secret",
+            "The merchant secret for the domain you registered in the PayHere portal. It is stored "
+            + "encrypted and is never shown again; leave this box empty to keep the one that is saved."),
+
+        new(
+            SettingKeys.PayHere.PendingMaxDays,
+            SettingKeys.PayHere.Group,
+            SettingValueType.Int,
+            Permissions.Settings.Payments,
+            "PayHere pending hold (days)",
+            "How long an order's items are held while PayHere reports a payment as pending, counted from "
+            + "when the order was placed. Between 1 and 14 days.",
+            SeedValue: SettingKeys.PayHere.PendingMaxDaysDefault.ToString(
+                System.Globalization.CultureInfo.InvariantCulture)),
+
+        new(
+            SettingKeys.PayHere.ExpiryMinutes,
+            SettingKeys.PayHere.Group,
+            SettingValueType.Int,
+            Permissions.Settings.Payments,
+            "PayHere payment window (minutes)",
+            "How long an order waits for the customer to pay at PayHere before the items are released. "
+            + "Between 15 and 1440 minutes.",
+            SeedValue: SettingKeys.PayHere.ExpiryMinutesDefault.ToString(
+                System.Globalization.CultureInfo.InvariantCulture)),
     ];
 
     /// <summary>
@@ -331,6 +387,10 @@ public static class SettingCatalog
         // they are guarded by a different permission from every other group — a save unit that spanned both
         // would hand a Settings.Edit holder a token covering rows they may not write.
         [SettingKeys.Bank.Group],
+
+        // PayHere on its own, for the same reason (issue #141): its own form, its own permission, and a
+        // secret that this form writes and no other.
+        [SettingKeys.PayHere.Group],
     ];
 
     /// <summary>

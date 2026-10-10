@@ -78,7 +78,6 @@ Super Admin can edit these roles or create custom ones. Permissions are `Module 
 |---|---|---|
 | `Orders.BankTransferExpiryHours` | 48 | P7 |
 | `Orders.PayPalExpiryMinutes` | 60 | P8 |
-| `Orders.PayHereExpiryMinutes` | 60 | P8b |
 | `Orders.AutoDeliverAfterDays` | 7 | P9, P12 |
 | `Inventory.DefaultLowStockThreshold` | 5 | P2 |
 | `Catalog.NewArrivalDays` / `BestSellerTopN` | 30 / 10 | P1, P4 |
@@ -86,7 +85,7 @@ Super Admin can edit these roles or create custom ones. Permissions are `Module 
 | `Delivery.DefaultZone` | 3 IslandWide | P5, P6 |
 | `Payments.PayPal.FxBufferPercent` / `RateMaxAgeDays` | 3.00 / 7 | P8 |
 | `Payments.PayPal.CaptureLockHours` / `CaptureRecoveryMaxHours` / `PendingCaptureMaxDays` | 3 / 24 / 5 | P8 |
-| `Payments.PayHere.Mode` / `PendingMaxDays` | sandbox / 5 | P8b |
+| `Payments.PayHere.Mode` / `PendingMaxDays` / `ExpiryMinutes` | sandbox / 5 / 60 | P8b |
 | `Security.StaffLockoutMaxFailures` / `StaffLockoutMinutes` | 5 / 15 | P14 |
 | `Security.CustomerLockoutMaxFailures` / `CustomerLockoutMinutes` | 10 / 15 | P11 |
 | `Privacy.RetainInvoiceBillTo` | true | P17 |

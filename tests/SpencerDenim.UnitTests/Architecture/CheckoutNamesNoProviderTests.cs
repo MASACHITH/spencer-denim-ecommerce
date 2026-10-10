@@ -30,6 +30,7 @@ public sealed class CheckoutNamesNoProviderTests
     [
         PaymentProviderCodes.BankTransfer,
         PaymentProviderCodes.PayPal,
+        PaymentProviderCodes.PayHere,
     ];
 
     /// <summary>

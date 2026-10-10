@@ -68,15 +68,24 @@ public sealed class SettingCatalogTests
     }
 
     /// <summary>
-    /// Nothing this build seeds is a secret. Said as a test rather than left implicit, because the
-    /// <see cref="SettingValueType.Secret"/> machinery is built and unused — so the day the first one is
-    /// added, this test goes red and whoever adds it has to confirm the protector, the audit redaction and
-    /// the read models are all in place rather than discovering them later.
+    /// Exactly one key this build seeds is a secret: PayHere's merchant secret (issue #141). Said as a test
+    /// rather than left implicit, because the <see cref="SettingValueType.Secret"/> machinery was built
+    /// before it had anything to protect precisely so that the first secret would arrive with the protector,
+    /// the audit redaction and the read models already in place — and this test is where the next one has to
+    /// be added deliberately.
     /// </summary>
     [Fact]
-    public void No_key_this_build_seeds_is_a_secret()
+    public void The_only_secret_this_build_seeds_is_the_PayHere_merchant_secret()
     {
-        Assert.DoesNotContain(SettingCatalog.All, definition => definition.IsSecret);
+        Assert.Equal(
+            [SettingKeys.PayHere.MerchantSecret],
+            SettingCatalog.All.Where(definition => definition.IsSecret).Select(definition => definition.Key));
+
+        // And it is guarded by the payments permission, never the ordinary settings one: whoever can read or
+        // replace it can forge a PayHere payment.
+        Assert.Equal(
+            Permissions.Settings.Payments,
+            SettingCatalog.Find(SettingKeys.PayHere.MerchantSecret)!.RequiredPermission);
     }
 
     /// <summary>
@@ -171,6 +180,11 @@ public sealed class SettingCatalogTests
             SettingKeys.Store.BRNumber,
             SettingKeys.Store.VatNumber,
             SettingKeys.Orders.AutoDeliverAfterDays,
+            SettingKeys.PayHere.Mode,
+            SettingKeys.PayHere.MerchantId,
+            SettingKeys.PayHere.MerchantSecret,
+            SettingKeys.PayHere.PendingMaxDays,
+            SettingKeys.PayHere.ExpiryMinutes,
         ];
 
         Assert.Equal(expected.Order(StringComparer.Ordinal), SettingCatalog.All.Select(d => d.Key).Order(StringComparer.Ordinal));
@@ -334,7 +348,7 @@ public sealed class SettingCatalogTests
     {
         // `Store` appears once although W3-04 added four more keys to it further down the list: Groups is
         // distinct, and that is what the "once each" in the name is about.
-        Assert.Equal(["Store", "Contact", "Social", "Bank", "Orders"], SettingCatalog.Groups);
+        Assert.Equal(["Store", "Contact", "Social", "Bank", "Orders", "Payments.PayHere"], SettingCatalog.Groups);
     }
 
     [Fact]

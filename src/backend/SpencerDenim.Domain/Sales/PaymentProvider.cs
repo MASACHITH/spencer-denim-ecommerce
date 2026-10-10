@@ -67,6 +67,12 @@ public static class PaymentProviderCodes
     /// <summary>PayPal, built last behind <c>IPaymentProvider</c>.</summary>
     public const string PayPal = "PayPal";
 
+    /// <summary>
+    /// PayHere, a Sri Lankan card, wallet and internet-banking gateway that charges in LKR (doc 11 P8b,
+    /// issue #141). A change request outside the signed scope (doc 11 §7 G-43): the row ships disabled.
+    /// </summary>
+    public const string PayHere = "PayHere";
+
     /// <summary>Doc 08 §3.5's maximum length for the code column, shared by every FK that copies it.</summary>
     public const int MaxCodeLength = 30;
 }
