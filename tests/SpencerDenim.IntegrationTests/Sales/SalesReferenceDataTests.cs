@@ -216,15 +216,23 @@ public sealed class SalesReferenceDataTests(SqlServerDatabaseFixture sqlServer)
             rates);
     }
 
-    /// <summary>Doc 08 §9: BankTransfer enabled, PayPal disabled until its credentials and FX rate exist.</summary>
+    /// <summary>
+    /// Doc 08 §9: BankTransfer enabled, PayPal disabled until its credentials and FX rate exist - and PayHere,
+    /// a change request outside the signed scope (doc 11 G-43), disabled until the owner confirms it.
+    /// </summary>
     [Fact]
-    public async Task The_two_payment_providers_are_seeded_with_PayPal_disabled()
+    public async Task The_payment_providers_are_seeded_with_every_gateway_disabled()
     {
         SqlServer.SkipIfUnavailable();
 
-        var seededCodes = new[] { PaymentProviderCodes.BankTransfer, PaymentProviderCodes.PayPal };
+        var seededCodes = new[]
+        {
+            PaymentProviderCodes.BankTransfer,
+            PaymentProviderCodes.PayPal,
+            PaymentProviderCodes.PayHere,
+        };
 
-        // The two §9 names, not the whole table: `SalesSchemaTestBase` inserts an enabled provider of its
+        // The §9 names, not the whole table: `SalesSchemaTestBase` inserts an enabled provider of its
         // own, and reading every row would be reading which suites had run first.
         var providers = await DbContext.PaymentProviders
             .AsNoTracking()
@@ -233,7 +241,7 @@ public sealed class SalesReferenceDataTests(SqlServerDatabaseFixture sqlServer)
             .Select(provider => $"{provider.Code}|{provider.IsEnabled}|{provider.DisplayOrder}")
             .ToListAsync(Token);
 
-        Assert.Equal(["BankTransfer|True|1", "PayPal|False|2"], providers);
+        Assert.Equal(["BankTransfer|True|1", "PayPal|False|2", "PayHere|False|3"], providers);
     }
 
     /// <summary>
@@ -246,7 +254,12 @@ public sealed class SalesReferenceDataTests(SqlServerDatabaseFixture sqlServer)
     {
         SqlServer.SkipIfUnavailable();
 
-        var seededCodes = new[] { PaymentProviderCodes.BankTransfer, PaymentProviderCodes.PayPal };
+        var seededCodes = new[]
+        {
+            PaymentProviderCodes.BankTransfer,
+            PaymentProviderCodes.PayPal,
+            PaymentProviderCodes.PayHere,
+        };
 
         var descriptions = await DbContext.PaymentProviders
             .AsNoTracking()

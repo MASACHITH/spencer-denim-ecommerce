@@ -241,7 +241,7 @@ internal static class SalesReferenceData
             "Pay by card or PayPal balance."),
         new(
             PaymentProviderCodes.PayHere,
-            "PayHere (card, mobile wallet, internet banking)",
+            "PayHere (card, eZ Cash, internet banking)",
 
             // A change request outside the signed scope (doc 11 §7 G-43, issue #141): it ships disabled and
             // stays so until the owner has confirmed it with the client, the client's merchant account
