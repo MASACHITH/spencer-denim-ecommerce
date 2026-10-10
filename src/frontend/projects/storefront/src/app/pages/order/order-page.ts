@@ -24,6 +24,13 @@ import {
   OrderPaymentProofDto,
   formatColomboDateTime,
 } from '../../core/checkout/checkout.model';
+import {
+  PAY_HINT_PARAMETER,
+  PAY_POLL_INTERVAL_MS,
+  PAY_POLL_MAX_ATTEMPTS,
+  payHintIsProcessing,
+  payHintMessage,
+} from '../../core/checkout/payment-hint';
 import { paymentRedirect } from '../../core/checkout/payment-redirect';
 import { RobotsMeta } from '../../core/platform/robots-meta';
 import { ServerHandover } from '../../core/platform/server-handover';
@@ -280,6 +287,12 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
           data-testid="pay-announcement"
         >{{ announcement() }}</p>
 
+        <!-- Why the shopper is here, when the payment page sent them back with a reason (see
+             payment-hint.ts). A fixed sentence picked by a whitelist, never the address's own text. -->
+        @if (hintMessage(placed); as said) {
+          <p class="pay__hint" role="status" data-testid="pay-hint">{{ said }}</p>
+        }
+
         <!-- **An online provider's panel comes first, and the bank panel below is the else branch, so the
              bank rendering is untouched when there is no redirect.** payRedirect() is null unless the
              server sent a redirect this page is willing to follow (see payment-redirect.ts); then the
@@ -305,11 +318,35 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
                 <strong data-testid="pay-due">{{ dueAt(placed) }}</strong>.
               </p>
             } @else {
-              <p class="pay__lead">
-                You will be taken to our secure payment page to pay
-                <strong data-testid="pay-amount">{{ money(go.amountLkr) }}</strong>. Your order is held
-                until <strong data-testid="pay-due">{{ dueAt(placed) }}</strong>.
-              </p>
+              @if (go.kind !== 'notice') {
+                <p class="pay__lead">
+                  You will be taken to our secure payment page to pay
+                  <strong data-testid="pay-amount">{{ money(go.amountLkr) }}</strong>. Your order is held
+                  until <strong data-testid="pay-due">{{ dueAt(placed) }}</strong>.
+                </p>
+              }
+
+              <!-- What the provider has to say before (or instead of) the button: the amount it will
+                   actually charge and how it was worked out, or where the payment stands. Both arrive as
+                   text from the server and are interpolated as text - the same rule as the bank notes. -->
+              @if (placed.payment; as how) {
+                @if (how.fields.length > 0) {
+                  <dl class="pay__details" data-testid="pay-redirect-fields">
+                    @for (field of how.fields; track field.label) {
+                      <div class="pay__detail">
+                        <dt>{{ field.label }}</dt>
+                        <dd>
+                          <span class="pay__value" [attr.data-testid]="fieldTestId(field)">{{ field.value }}</span>
+                        </dd>
+                      </div>
+                    }
+                  </dl>
+                }
+
+                @if (how.notes) {
+                  <p class="pay__notes" data-testid="pay-redirect-notes">{{ how.notes }}</p>
+                }
+              }
 
               @if (go.kind === 'form') {
                 <!-- pay__actions is a flex row that wraps, so the button never forces the page wider at
@@ -327,7 +364,7 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
                   }
                   <button class="btn btn--primary" type="submit" data-testid="pay-now">Pay now</button>
                 </form>
-              } @else {
+              } @else if (go.kind === 'link') {
                 <div class="pay__actions">
                   <a
                     class="btn btn--primary"
@@ -728,6 +765,14 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
       min-width: var(--tap);
     }
     /* The shop's own note, with its line breaks kept. It arrives as text and is interpolated as text. */
+    /* The reason the payment page sent the shopper back, above the panel it is about. */
+    .pay__hint {
+      max-width: 60ch;
+      margin: 0 0 var(--space-2);
+      padding: var(--space-1-5);
+      border: 1px solid var(--color-border);
+      background-color: var(--color-surface);
+    }
     .pay__notes {
       max-width: 60ch;
       white-space: pre-line;
@@ -969,6 +1014,17 @@ export class OrderPage {
   private readonly document = inject(DOCUMENT);
   private readonly injector = inject(Injector);
 
+  /**
+   * The `pay` hint the payment page's return left on the address, read once. Read from the route's snapshot
+   * (optional chaining, because a test double may have no query map): a client-side navigation to another
+   * order builds a new page, and the hint is a one-shot explanation, not state to keep in step.
+   */
+  private readonly hint: string | null =
+    this.route.snapshot.queryParamMap?.get(PAY_HINT_PARAMETER) ?? null;
+
+  private pollTimer: ReturnType<typeof setTimeout> | null = null;
+  private pollAttempts = 0;
+
   constructor() {
     inject(Title).setTitle(brandPageTitle('Your order'));
     inject(Meta).updateTag({
@@ -995,12 +1051,48 @@ export class OrderPage {
     }
 
     this.read();
+
+    // A return that said "being processed" is waiting for PayPal's answer to reach the shop. Ask again every
+    // few seconds - in the browser only - until the order stops waiting or a minute has gone by, so the
+    // shopper sees "paid" without reloading (doc 08 section 4.2 step 1: "the page polls order status").
+    afterNextRender(() => this.pollWhileProcessing());
+    this.destroyRef.onDestroy(() => {
+      if (this.pollTimer !== null) {
+        clearTimeout(this.pollTimer);
+      }
+    });
   }
 
   protected readonly order = this.current.asReadonly();
   protected readonly isLoading = this.loading.asReadonly();
   protected readonly error = this.failure.asReadonly();
   protected readonly notFound = computed(() => this.missing() && this.current() === null);
+
+  /** The sentence the return hint selects, or null. See `payHintMessage` for why it is never the hint itself. */
+  protected hintMessage(order: OrderConfirmationDto): string | null {
+    return payHintMessage(this.hint, order.status);
+  }
+
+  private pollWhileProcessing(): void {
+    if (!payHintIsProcessing(this.hint)) {
+      return;
+    }
+
+    this.pollTimer = setTimeout(() => {
+      this.pollTimer = null;
+
+      // Only while there is still something to wait for: an order that has moved on needs no more asking,
+      // and one that has not loaded yet is simply asked about again.
+      const status = this.current()?.status;
+
+      if ((status !== undefined && status !== 'PendingPayment') || this.pollAttempts >= PAY_POLL_MAX_ATTEMPTS) {
+        return;
+      }
+
+      this.pollAttempts++;
+      this.read(() => this.pollWhileProcessing());
+    }, PAY_POLL_INTERVAL_MS);
+  }
 
   /** What the media endpoint takes for a slip. Checked on the server by file signature, not by name. */
   protected readonly slipAccept = 'image/jpeg,image/png,image/webp,application/pdf';

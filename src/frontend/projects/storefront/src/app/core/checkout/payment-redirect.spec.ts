@@ -137,6 +137,31 @@ describe('paymentRedirect', () => {
     expect(paymentRedirect(instructions({ redirectUrl: '   ' }))).toBeNull();
   });
 
+  it('is a notice for an online provider that sends no redirect but has something to say', () => {
+    // A payment that is pending, or being processed: nothing to click, and the bank rendering would say
+    // "transfer to the account below" about a provider that has no account.
+    expect(
+      paymentRedirect(instructions({ notes: 'Your payment is being processed.' })),
+    ).toEqual({ amountLkr: 9_184, kind: 'notice' });
+
+    expect(
+      paymentRedirect(
+        instructions({ fields: [{ label: 'Amount', value: 'USD 53.55', copyable: false }] }),
+      ),
+    ).toEqual({ amountLkr: 9_184, kind: 'notice' });
+  });
+
+  it('is not a notice when the notes are blank, or when the provider takes a slip', () => {
+    expect(paymentRedirect(instructions({ notes: '   ' }))).toBeNull();
+    expect(paymentRedirect(instructions({ notes: 'Pay soon.', acceptsProof: true }))).toBeNull();
+  });
+
+  it('is a notice only when there is no redirect: a redirect that is refused is still unavailable', () => {
+    expect(
+      paymentRedirect(instructions({ notes: 'Pay now.', redirectUrl: 'javascript:alert(1)' })),
+    ).toEqual({ amountLkr: 9_184, kind: 'unavailable' });
+  });
+
   it('is null for a bank transfer, whatever else is in the payload', () => {
     expect(
       paymentRedirect(

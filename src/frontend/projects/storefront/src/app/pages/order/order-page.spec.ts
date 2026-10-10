@@ -130,7 +130,7 @@ describe('OrderPage (CHK-04)', () => {
     await fixture.whenStable();
   }
 
-  function create(): void {
+  function create(query: Record<string, string> = {}): void {
     response = {};
     TestBed.resetTestingModule();
     TestBed.configureTestingModule({
@@ -145,7 +145,11 @@ describe('OrderPage (CHK-04)', () => {
           provide: ActivatedRoute,
           useValue: {
             params: of({ token: TOKEN }),
-            snapshot: { params: { token: TOKEN }, paramMap: convertToParamMap({ token: TOKEN }) },
+            snapshot: {
+              params: { token: TOKEN },
+              paramMap: convertToParamMap({ token: TOKEN }),
+              queryParamMap: convertToParamMap(query),
+            },
           },
         },
       ],
@@ -163,8 +167,8 @@ describe('OrderPage (CHK-04)', () => {
     );
   }
 
-  async function open(payload: OrderConfirmationDto): Promise<void> {
-    create();
+  async function open(payload: OrderConfirmationDto, query: Record<string, string> = {}): Promise<void> {
+    create(query);
     await settle();
     orderRequest().flush(payload);
     await settle();
@@ -1231,6 +1235,173 @@ describe('OrderPage (CHK-04)', () => {
     expect(panel.querySelector('form')?.getAttribute('action')).toBe(REDIRECT_ACTION);
     expect(panel.querySelector('a')).toBeNull();
     expect(panel.querySelectorAll('button')).toHaveLength(1);
+  });
+
+  // ---- what an online provider says beside (or instead of) its button -----------------------------
+
+  it('prints the provider\'s fields and notes beside the Pay now button, as text', async () => {
+    await open(
+      order({
+        payment: onlineInstructions({
+          redirectUrl: 'https://pay.example.test/hosted?session=abc',
+          fields: [{ label: 'Amount charged', value: 'USD 53.55', copyable: false }],
+          notes: 'The total is converted to dollars.\nNothing is charged until you approve it.',
+        }),
+      }),
+    );
+
+    const panel = payPanel();
+
+    expect(panel.querySelector('[data-testid="pay-redirect-fields"]')?.textContent).toContain('Amount charged');
+    expect(panel.querySelector('[data-testid="pay-amount-charged"]')?.textContent).toContain('USD 53.55');
+    expect(panel.querySelector('[data-testid="pay-redirect-notes"]')?.textContent).toContain('Nothing is charged');
+    expect(panel.querySelector('[data-testid="pay-now"]')).not.toBeNull();
+
+    // No copy buttons: those belong to the bank's details.
+    expect(panel.querySelector('button.pay__copy')).toBeNull();
+  });
+
+  it('renders the provider\'s notes as text and never as markup', async () => {
+    await open(
+      order({
+        payment: onlineInstructions({
+          redirectUrl: 'https://pay.example.test/hosted',
+          notes: '<img src=x onerror=alert(1)> <b>bold</b>',
+        }),
+      }),
+    );
+
+    const notes = payPanel().querySelector('[data-testid="pay-redirect-notes"]')!;
+
+    expect(notes.querySelector('img')).toBeNull();
+    expect(notes.querySelector('b')).toBeNull();
+    expect(notes.textContent).toContain('<img src=x onerror=alert(1)>');
+  });
+
+  it('draws a notice with no button when the provider has only something to say', async () => {
+    await open(
+      order({
+        payment: onlineInstructions({
+          notes: 'Your payment is being processed. Please wait a moment and reload this page.',
+        }),
+      }),
+    );
+
+    const panel = payPanel();
+
+    expect(panel.querySelector('[data-testid="pay-redirect-notes"]')?.textContent).toContain('being processed');
+
+    // Nothing to press, no "you will be taken to" promise, and none of the bank-only parts.
+    expect(panel.querySelector('[data-testid="pay-now"]')).toBeNull();
+    expect(panel.querySelector('form')).toBeNull();
+    expect(panel.querySelector('.pay__lead')).toBeNull();
+    expect(panel.querySelector('[data-testid="pay-redirect-unavailable"]')).toBeNull();
+    expectNoBankParts();
+  });
+
+  it('draws a notice for a payment pending with the provider, and still offers the cancel panel', async () => {
+    await open(
+      order({
+        payment: onlineInstructions({ notes: 'Your payment is pending. We hold your items until Friday.' }),
+      }),
+    );
+
+    expect(payPanel().textContent).toContain('pending');
+    expect(element.querySelector('[data-testid="cancel-panel"]')).not.toBeNull();
+  });
+
+  // ---- why the shopper is back: the hint on the address (payment-hint.ts) --------------------------------
+
+  it('says why, once, when the payment page sent the shopper back', async () => {
+    await open(order({ payment: onlineInstructions({ redirectUrl: 'https://pay.example.test/h' }) }), {
+      pay: 'notapproved',
+    });
+
+    const hint = element.querySelector('[data-testid="pay-hint"]')!;
+
+    expect(hint.textContent).toContain('nothing was charged');
+    expect(hint.getAttribute('role')).toBe('status');
+  });
+
+  it('tells a shopper whose payment could not be matched that the team will contact them', async () => {
+    await open(order({ status: 'Expired', statusLabel: 'Expired', payment: null, canCancel: false }), {
+      pay: 'received',
+    });
+
+    expect(element.querySelector('[data-testid="pay-hint"]')?.textContent).toContain(
+      'Our team will contact you',
+    );
+  });
+
+  it('shows no hint without one, with an unknown one, or on a paid order', async () => {
+    await open(order());
+    expect(element.querySelector('[data-testid="pay-hint"]')).toBeNull();
+
+    await open(order(), { pay: '<script>alert(1)</script>' });
+    expect(element.querySelector('[data-testid="pay-hint"]')).toBeNull();
+    expect(element.querySelector('script')).toBeNull();
+
+    await open(order({ status: 'Paid', statusLabel: 'Paid', payment: null, canCancel: false }), {
+      pay: 'closed',
+    });
+    expect(element.querySelector('[data-testid="pay-hint"]')).toBeNull();
+  });
+
+  describe('after a "being processed" return', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    const processing = () =>
+      order({ payment: onlineInstructions({ notes: 'Your payment is being processed.' }) });
+
+    it('asks for the order again every few seconds until it is paid', async () => {
+      await open(processing(), { pay: 'processing' });
+
+      // Nothing yet: the first look is a few seconds after the page.
+      http.expectNone((request) => request.url === `${CheckoutApi.orderUrl}/${TOKEN}`);
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      orderRequest().flush(processing());
+      await settle();
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      orderRequest().flush(order({ status: 'Paid', statusLabel: 'Paid', payment: null, canCancel: false }));
+      await settle();
+
+      expect(text()).toContain('Paid.');
+
+      // And it has stopped: the order no longer waits for anything.
+      await vi.advanceTimersByTimeAsync(60_000);
+      http.expectNone((request) => request.url === `${CheckoutApi.orderUrl}/${TOKEN}`);
+    });
+
+    it('gives up after a minute rather than asking for ever', async () => {
+      await open(processing(), { pay: 'processing' });
+
+      for (let attempt = 0; attempt < 12; attempt++) {
+        await vi.advanceTimersByTimeAsync(5_000);
+        orderRequest().flush(processing());
+        await settle();
+      }
+
+      await vi.advanceTimersByTimeAsync(60_000);
+      http.expectNone((request) => request.url === `${CheckoutApi.orderUrl}/${TOKEN}`);
+    });
+
+    it('does not poll for any other hint, or none', async () => {
+      await open(processing(), { pay: 'pending' });
+      await vi.advanceTimersByTimeAsync(30_000);
+      http.expectNone((request) => request.url === `${CheckoutApi.orderUrl}/${TOKEN}`);
+
+      await open(processing());
+      await vi.advanceTimersByTimeAsync(30_000);
+      http.expectNone((request) => request.url === `${CheckoutApi.orderUrl}/${TOKEN}`);
+    });
   });
 
   it('keeps the live region and the cancel panel beside a redirect panel', async () => {
