@@ -275,6 +275,11 @@ public static class DependencyInjection
         services.AddScoped<IOrderExpiryStore, OrderExpiryStore>();
         services.AddScoped<IBankTransferProofStore, BankTransferProofStore>();
 
+        // The Paid effects of doc 08 §4.1, written once and called by the bank review above (W4-01
+        // groundwork). A concrete class and not a port: it must run inside its caller's transaction, and
+        // a port would invite a transaction of its own.
+        services.AddScoped<OrderSettlementEffects>();
+
         // The admin orders screen (W3-04, ADM-09, doc 11 P9): the list and the detail, the four fulfilment
         // transitions, the couriers the client fills in, and the two settings groups an invoice and the
         // auto-deliver job read.
