@@ -130,19 +130,15 @@ internal sealed class OrderCancellationStore(
         // *clears* the lock and extends `PaymentDueAtUtc` instead, so a PayPal PENDING order has no lock
         // for the claim to refuse.
         //
-        // **It is a read-then-check and the claim is not**, which is the one place this file departs from
-        // §5.2's rule, so it is said rather than left to be found. A PayPal payment appearing between this
-        // read and the claim would not be refused. That cannot happen in this build — nothing creates
-        // one — and the fix when W4-01 does is to add the clause to the claim as a `NOT EXISTS` over
-        // `ProviderCode = 'PayPal' AND Status = 1`, plus a branch in `DiagnoseAsync` so the refusal still
-        // names the right cause. Doing that now would be three places for a state nothing can produce.
-        if (snapshot.HasPayPalPendingPayment)
+        // **The rule covers every gateway that confirms its own payments, not PayPal alone** (PayHere's
+        // pending status, doc 11 P8b step 6, is treated exactly like P8 step 9's), and it is now in the claim
+        // below as well as here. This read-then-check was this file's one departure from §5.2 while nothing
+        // could create such a payment; PayHere can, so a pending notice landing between this read and the
+        // claim would have been cancelled over. The check here still earns its place: it names the cause
+        // without taking the claim, and `DiagnoseAsync` names it again for the racing case.
+        if (snapshot.PendingGatewayProvider is not null)
         {
-            return Refused(
-                CancelOrderRefusalCodes.PayPalPending,
-                "A PayPal payment on this order is still being confirmed, so it cannot be cancelled here. "
-                + "Please get in touch and we will sort it out.",
-                snapshot);
+            return GatewayPendingRefusal(snapshot);
         }
 
         // Doc 11 P10 step 2 in full, and doc 08 §4.1's `PendingPayment → Cancelled` row: PendingPayment,
@@ -162,6 +158,12 @@ internal sealed class OrderCancellationStore(
         // itself. They both stay because doc 08 §4.1's table names both, and because the day a path
         // writes one without the other is exactly the day the surviving guard is the one that matters.
         // What is *not* claimed is that a test would catch their removal one at a time.
+        //
+        // The last `NOT EXISTS` is the gateway-pending rule (see above). **`Status = 1` is a literal, the
+        // number of PaymentStatus.Pending**, for the reason the settlement clause's `IsOrderSettlement = 1`
+        // is: a literal implies UX_Payments_OneOpen's filter ([Status] IN (0, 1)), so the probe is a seek on
+        // this order's key, where a parameter would be a scan that locks other orders' payment rows - and
+        // this statement runs while holding the order's X lock, which is the position a scan deadlocks from.
         //
         // The settlement guard is doc 11 P10 step 2's and doc 08 §4.1's own ("no settlement payment"),
         // and **no path in this build can reach the state it guards** — which is said plainly rather than
@@ -194,7 +196,13 @@ internal sealed class OrderCancellationStore(
                      SELECT 1
                        FROM sales.Payments AS settlement
                       WHERE settlement.OrderId = {snapshot.OrderId}
-                        AND settlement.IsOrderSettlement = 1);
+                        AND settlement.IsOrderSettlement = 1)
+               AND NOT EXISTS (
+                     SELECT 1
+                       FROM sales.Payments AS gateway
+                      WHERE gateway.OrderId = {snapshot.OrderId}
+                        AND gateway.Status = 1
+                        AND gateway.ProviderCode <> {PaymentProviderCodes.BankTransfer});
             """,
             cancellationToken);
 
@@ -386,6 +394,13 @@ internal sealed class OrderCancellationStore(
                 snapshot);
         }
 
+        // A gateway payment went Pending between the pre-check and the claim: the claim refused, and this is
+        // the sentence that says why.
+        if (snapshot.Status == OrderStatus.PendingPayment && snapshot.PendingGatewayProvider is not null)
+        {
+            return GatewayPendingRefusal(snapshot);
+        }
+
         var label = OrderStatusLabels.For(snapshot.Status, snapshot.IsPickup);
 
         // Phrased from where the order is, not from where we wanted it — and for the closed statuses it
@@ -419,6 +434,24 @@ internal sealed class OrderCancellationStore(
             label);
     }
 
+    /// <summary>
+    /// The refusal for an order holding a Pending payment of a gateway. PayPal keeps its own code and its own
+    /// words; every other gateway gets the neutral code and the neutral words, so a new gateway needs nothing
+    /// here.
+    /// </summary>
+    private static CancelOrderOutcome.Refused GatewayPendingRefusal(OrderSnapshot snapshot) =>
+        string.Equals(snapshot.PendingGatewayProvider, PaymentProviderCodes.PayPal, StringComparison.OrdinalIgnoreCase)
+            ? Refused(
+                CancelOrderRefusalCodes.PayPalPending,
+                "A PayPal payment on this order is still being confirmed, so it cannot be cancelled here. "
+                + "Please get in touch and we will sort it out.",
+                snapshot)
+            : Refused(
+                CancelOrderRefusalCodes.GatewayPaymentPending,
+                "An online payment on this order is still being confirmed, so it cannot be cancelled here. "
+                + "Please wait for it to be confirmed, or get in touch and we will sort it out.",
+                snapshot);
+
     private static CancelOrderOutcome.Refused Refused(string code, string message, OrderSnapshot snapshot) =>
         new(code, message, snapshot.Status, OrderStatusLabels.For(snapshot.Status, snapshot.IsPickup));
 
@@ -439,9 +472,15 @@ internal sealed class OrderCancellationStore(
                 order.Delivery.DeliveryMethodCode == DeliveryMethod.PickupCode,
                 order.CaptureLockedUntilUtc,
                 order.Payments.Any(payment => payment.IsOrderSettlement),
-                order.Payments.Any(payment =>
-                    payment.ProviderCode == PaymentProviderCodes.PayPal
-                    && payment.Status == PaymentStatus.Pending),
+
+                // The provider of a gateway payment (anything but a bank transfer) that is Pending, or null.
+                // A bank transfer is Pending for the whole life of an unpaid order and must never block.
+                order.Payments
+                    .Where(payment =>
+                        payment.ProviderCode != PaymentProviderCodes.BankTransfer
+                        && payment.Status == PaymentStatus.Pending)
+                    .Select(payment => payment.ProviderCode)
+                    .FirstOrDefault(),
 
                 // For the email only (W3-06). Three more columns on a projection that already reads this
                 // row, rather than a second query inside the transaction.
@@ -473,7 +512,7 @@ internal sealed class OrderCancellationStore(
         bool IsPickup,
         DateTime? CaptureLockedUntilUtc,
         bool HasSettlementPayment,
-        bool HasPayPalPendingPayment,
+        string? PendingGatewayProvider,
         string Email,
         string FirstName,
         string? LastName);

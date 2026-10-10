@@ -59,6 +59,7 @@ public sealed class AdminOrderWorkflowRulesTests
             CancelOrderRefusalCodes.WrongStatus,
             CancelOrderRefusalCodes.CaptureInProgress,
             CancelOrderRefusalCodes.PayPalPending,
+            CancelOrderRefusalCodes.GatewayPaymentPending,
             CancelOrderRefusalCodes.PaymentSettling,
         ];
 

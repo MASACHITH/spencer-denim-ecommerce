@@ -657,7 +657,7 @@ internal sealed class AdminOrderReader(AppDbContext dbContext, IClock clock) : I
             && (order.CaptureLockedUntilUtc is null || order.CaptureLockedUntilUtc < clock.UtcNow.UtcDateTime)
             && !payments.Any(payment => payment.IsOrderSettlement)
             && !payments.Any(payment =>
-                payment.ProviderCode == PaymentProviderCodes.PayPal
+                payment.ProviderCode != PaymentProviderCodes.BankTransfer
                 && payment.Status == nameof(PaymentStatus.Pending));
 
         return new AdminOrderActionsDto(

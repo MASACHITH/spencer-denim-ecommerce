@@ -414,7 +414,7 @@ internal sealed class CheckoutReader(
                 order.CaptureLockedUntilUtc,
                 order.Payments.Any(payment => payment.IsOrderSettlement),
                 order.Payments.Any(payment =>
-                    payment.ProviderCode == PaymentProviderCodes.PayPal
+                    payment.ProviderCode != PaymentProviderCodes.BankTransfer
                     && payment.Status == PaymentStatus.Pending)))
             .FirstOrDefaultAsync(cancellationToken);
 
@@ -429,8 +429,8 @@ internal sealed class CheckoutReader(
     /// <remarks>
     /// <b>The same four conditions as <c>OrderCancellationStore</c>'s claim, in the same order</b>:
     /// <c>PendingPayment</c>, stock <c>Reserved</c>, no active capture lock, no settling payment — plus
-    /// doc 08 §4.1 R1's PayPal <c>PENDING</c> rule, which hands that decision to <c>Orders.Approve</c>
-    /// alone and so is never the customer's.
+    /// doc 08 §4.1 R1's gateway-pending rule (PayPal's <c>PENDING</c>, PayHere's pending status), which
+    /// hands that decision to <c>Orders.Approve</c> alone and so is never the customer's.
     /// <para>
     /// <b>It is a read model and the claim is the boundary.</b> Two copies of a predicate is the shape this
     /// project warns about, and the mitigation is the one #126 prescribes rather than a shared expression:
@@ -444,7 +444,7 @@ internal sealed class CheckoutReader(
         && row.StockState == OrderStockState.Reserved
         && (row.CaptureLockedUntilUtc is null || row.CaptureLockedUntilUtc < nowUtc)
         && !row.HasSettlementPayment
-        && !row.HasPayPalPendingPayment;
+        && !row.HasGatewayPendingPayment;
 
     private static OrderConfirmationDto ToConfirmation(
         OrderRow row,
@@ -667,7 +667,7 @@ internal sealed class CheckoutReader(
         OrderStockState StockState,
         DateTime? CaptureLockedUntilUtc,
         bool HasSettlementPayment,
-        bool HasPayPalPendingPayment);
+        bool HasGatewayPendingPayment);
 
     private sealed record OrderLineRow(
         short LineNumber,

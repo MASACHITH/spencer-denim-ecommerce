@@ -174,6 +174,20 @@ public static class CancelOrderRefusalCodes
     public const string PayPalPending = "paypal_pending";
 
     /// <summary>
+    /// The same rule for any other gateway that confirms its own payments (PayHere's pending status is the
+    /// first): a payment of a provider that is <b>not</b> a bank transfer is <c>Pending</c>, so the money may
+    /// be on its way and the decision is not the customer's or an <c>Orders.Edit</c> holder's. Doc 11 P8b
+    /// step 6 gives a Pending PayHere payment P8 step 9's treatment.
+    /// <para>
+    /// <b>A bank transfer's Pending is the ordinary state of an unpaid order and never blocks a cancel</b> -
+    /// flow A exists to cancel exactly that - which is why the rule is "a gateway payment" and not "any
+    /// Pending payment". <see cref="PayPalPending"/> keeps its own string so nothing that matches on it
+    /// changes; this one is for everybody else.
+    /// </para>
+    /// </summary>
+    public const string GatewayPaymentPending = "gateway_payment_pending";
+
+    /// <summary>
     /// A payment on this order is already the one that settles it, so the money is in and cancel does not
     /// apply (doc 11 P10 step 2's "no settling payment").
     /// </summary>
