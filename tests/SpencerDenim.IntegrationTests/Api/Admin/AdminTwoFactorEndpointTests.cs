@@ -426,6 +426,65 @@ public sealed class AdminTwoFactorEndpointTests(SqlServerDatabaseFixture sqlServ
         Assert.Equal((HttpStatusCode)423, passwordStep.StatusCode);
     }
 
+    /// <summary>
+    /// Issue #46 for the second step: wrong codes sent all at once used to get 8–17 checks per lockout window instead
+    /// of five, for the same lost-update reason as parallel wrong passwords. Exactly four are now answered as wrong
+    /// codes and audited as <c>InvalidCode</c>, one locks, and the rest are refused (locked, or the pending sign-in
+    /// the lockout ended) without counting.
+    /// </summary>
+    [Fact]
+    public async Task Parallel_wrong_codes_cannot_outrun_the_lockout()
+    {
+        const int parallelAttempts = 30;
+        const int maxFailedAttempts = 5; // AdminSecurityOptions.LockoutMaxFailedAttempts default.
+        await using var host = await StartAsync();
+        var email = UniqueEmail("parallel-code-lockout");
+        var userId = await CreateStaffUserAsync(host, email);
+        var key = await EnrolThroughApiAsync(host, email);
+
+        using var client = await PendingSignInAsync(host, email);
+
+        // One antiforgery pair for every request: parallel token requests would each replace the cookie the others'
+        // header tokens belong to.
+        var token = await GetAntiforgeryTokenAsync(client);
+        var wrongCode = TotpTestCodes.Wrong(key);
+        var replies = await Task.WhenAll(Enumerable.Range(0, parallelAttempts).Select(async _ =>
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, LoginTwoFactorUrl)
+            {
+                Content = JsonContent.Create(new { code = wrongCode, isRecoveryCode = false }),
+            };
+            request.Headers.Add("X-XSRF-TOKEN", token);
+            using var response = await client.SendAsync(request, Ct);
+            var body = await response.Content.ReadAsStringAsync(Ct);
+            return (response.StatusCode, Error: ErrorCodeOf(body));
+        }));
+
+        Assert.All(replies, reply => Assert.True(
+            reply.StatusCode is HttpStatusCode.Unauthorized or (HttpStatusCode)423,
+            $"Every parallel attempt is refused or locked out, never anything else; got {reply.StatusCode} {reply.Error}."));
+        Assert.Equal(maxFailedAttempts - 1, replies.Count(r => r.Error == "invalid_two_factor_code"));
+        Assert.Contains(replies, r => r.StatusCode == (HttpStatusCode)423);
+
+        await using (var scope = host.Services.CreateAsyncScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var codeFailures = await dbContext.AuditLogs.AsNoTracking()
+                .Where(a => a.UserEmail == email && a.Action == "TwoFactorFailed")
+                .Select(a => a.AfterJson)
+                .ToListAsync(Ct);
+            Assert.Equal(maxFailedAttempts - 1, codeFailures.Count(json => json != null && json.Contains("\"InvalidCode\"", StringComparison.Ordinal)));
+            Assert.Equal(1, await dbContext.AuditLogs.CountAsync(a => a.UserEmail == email && a.Action == "Lockout", Ct));
+        }
+
+        var user = await FindUserAsync(host, userId);
+        Assert.True(user.LockoutEnd > DateTimeOffset.UtcNow);
+
+        using var anonymous = CreateClient(host);
+        using var passwordStep = await PostJsonAsync(anonymous, LoginUrl, new { email, password = Password });
+        Assert.Equal((HttpStatusCode)423, passwordStep.StatusCode);
+    }
+
     [Fact]
     public async Task A_right_code_resets_the_failure_count()
     {
@@ -787,6 +846,18 @@ public sealed class AdminTwoFactorEndpointTests(SqlServerDatabaseFixture sqlServ
         using var response = await client.GetAsync(new Uri(url, UriKind.Relative), Ct);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         return await ReadJsonAsync(response);
+    }
+
+    /// <summary>The machine-readable <c>error</c> of a reply, or the raw body when it has none (a 500, say), for assertion messages.</summary>
+    private static string? ErrorCodeOf(string body)
+    {
+        if (!body.StartsWith('{'))
+        {
+            return body;
+        }
+
+        using var document = JsonDocument.Parse(body);
+        return document.RootElement.TryGetProperty("error", out var code) ? code.GetString() : body;
     }
 
     private static async Task<JsonElement> ReadJsonAsync(HttpResponseMessage response) =>

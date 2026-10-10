@@ -1,24 +1,28 @@
 using System.Globalization;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using SpencerDenim.Application.Admin.Authentication;
 using SpencerDenim.Domain.Identity;
+using SpencerDenim.Infrastructure.Persistence;
 using SpencerDenim.Infrastructure.Persistence.Configurations.Identity;
 
 namespace SpencerDenim.Infrastructure.Identity;
 
 /// <summary>
 /// Checks staff credentials (doc 08 §3.1 DB10 scoping rules) and, for an account with 2FA on, the second-step code
-/// (W1-10). Uses <see cref="SignInManager{TUser}"/> purely to validate the password and manage Identity's lockout
-/// bookkeeping (doc 08 §3.1 N14, time-boxed), and <see cref="UserManager{TUser}"/>'s own 2FA methods for the code —
-/// it never signs a cookie in; that is the Api endpoint's job (see <see cref="IAdminAuthenticator"/>).
+/// (W1-10). The password goes through <see cref="StaffAccountLockout"/> (Identity's <see cref="SignInManager{TUser}"/>
+/// validates it; the time-boxed lockout of doc 08 §3.1 N14 is counted atomically, issue #46), and the code through
+/// <see cref="UserManager{TUser}"/>'s own 2FA methods, its failures counted by the same lockout — it never signs a
+/// cookie in; that is the Api endpoint's job (see <see cref="IAdminAuthenticator"/>).
 /// </summary>
 public sealed class AdminAuthenticator(
     UserManager<AppUser> userManager,
-    SignInManager<AppUser> signInManager,
     RoleManager<AppRole> roleManager,
     IPasswordHasher<AppUser> passwordHasher,
-    IOptions<AdminSecurityOptions> securityOptions) : IAdminAuthenticator
+    IOptions<AdminSecurityOptions> securityOptions,
+    StaffAccountLockout lockout,
+    AppDbContext dbContext) : IAdminAuthenticator
 {
     // Doc 08 §3.1 DB10: "the response never reveals which" — an unknown email, a customer match, or an
     // inactive account must cost the same as a genuine wrong-password attempt against a real, active staff
@@ -54,14 +58,15 @@ public sealed class AdminAuthenticator(
             return AdminAuthenticationOutcome.InvalidCredentials(user.Id, user.Email);
         }
 
-        var wasAlreadyLockedOut = await userManager.IsLockedOutAsync(user);
+        // Issue #46: SignInManager still checks the password and resets the counter on success, but a failure is
+        // counted by one atomic UPDATE that locks at the threshold configured on IdentityOptions.Lockout (bound from
+        // AdminSecurityOptions) and refuses an account already locked, so parallel wrong passwords cannot overwrite
+        // each other's count; and a right password is accepted only if no racing failure locked the account while
+        // it was being verified. Which attempt tripped the lock comes from that statement, not from comparing with
+        // the lockout state loaded above, which every request of a parallel burst sees as "not locked".
+        var check = await lockout.CheckPasswordAsync(user, password);
 
-        // lockoutOnFailure: true — SignInManager increments AccessFailedCount and sets LockoutEnd once the
-        // threshold configured on IdentityOptions.Lockout (bound from AdminSecurityOptions) is reached, and
-        // resets the counter on success. This is the one call site that owns all of that bookkeeping.
-        var checkResult = await signInManager.CheckPasswordSignInAsync(user, password, lockoutOnFailure: true);
-
-        if (checkResult.Succeeded)
+        if (check.Status == StaffSecretCheckStatus.Succeeded)
         {
             var securityStamp = await userManager.GetSecurityStampAsync(user);
 
@@ -77,10 +82,9 @@ public sealed class AdminAuthenticator(
             return await SucceedAsync(user, securityStamp);
         }
 
-        if (checkResult.IsLockedOut)
+        if (check is { Status: StaffSecretCheckStatus.LockedOut, LockoutEnd: { } lockoutEnd })
         {
-            var lockoutEnd = user.LockoutEnd ?? DateTimeOffset.UtcNow;
-            return AdminAuthenticationOutcome.LockedOut(user.Id, user.Email ?? email, lockoutEnd, wasNewlyLockedOut: !wasAlreadyLockedOut);
+            return AdminAuthenticationOutcome.LockedOut(user.Id, user.Email ?? email, lockoutEnd, check.WasNewlyLockedOut);
         }
 
         return AdminAuthenticationOutcome.InvalidCredentials(user.Id, user.Email);
@@ -132,16 +136,28 @@ public sealed class AdminAuthenticator(
 
         if (!await IsCodeValidAsync(user, code, isRecoveryCode))
         {
-            // Wrong codes count towards the same time-boxed lockout as wrong passwords (doc 08 §3.1 N14).
-            await userManager.AccessFailedAsync(user);
-            if (await userManager.IsLockedOutAsync(user))
+            // Wrong codes count towards the same time-boxed lockout as wrong passwords (doc 08 §3.1 N14), through the
+            // same atomic statement (issue #46): parallel wrong codes used to get 8–17 checks per window, not 5. A
+            // code that raced a lockout another request set is answered as locked, and only the code that tripped
+            // the lock is reported as newly locking it.
+            var failure = await lockout.RecordFailedAttemptAsync(user);
+            if (failure is { Status: StaffSecretCheckStatus.LockedOut, LockoutEnd: { } lockoutEnd })
             {
                 await ClosePendingSignInAsync(user);
                 return AdminAuthenticationOutcome.LockedOut(
-                    user.Id, user.Email ?? string.Empty, user.LockoutEnd ?? DateTimeOffset.UtcNow, wasNewlyLockedOut: true, isRecoveryCode);
+                    user.Id, user.Email ?? string.Empty, lockoutEnd, failure.WasNewlyLockedOut, isRecoveryCode);
             }
 
             return AdminAuthenticationOutcome.InvalidTwoFactorCode(user.Id, user.Email, isRecoveryCode);
+        }
+
+        // A right code is accepted only if the account is still unlocked now it has been verified: the check above
+        // read the user as loaded, and parallel wrong codes may have locked it since (see StaffAccountLockout).
+        if (await lockout.FindActiveLockoutAsync(user) is { } racedLockoutEnd)
+        {
+            await ClosePendingSignInAsync(user);
+            return AdminAuthenticationOutcome.LockedOut(
+                user.Id, user.Email ?? string.Empty, racedLockoutEnd, wasNewlyLockedOut: false, isRecoveryCode);
         }
 
         await ClosePendingSignInAsync(user);
@@ -184,15 +200,38 @@ public sealed class AdminAuthenticator(
         return PendingSignInIds.HashesMatch(parts[0], id);
     }
 
-    private async Task ClosePendingSignInAsync(AppUser user) =>
-        EnsureSucceeded(await userManager.RemoveAuthenticationTokenAsync(user, AdminTokenNames.LoginProvider, AdminTokenNames.PendingTwoFactorSignIn));
+    /// <summary>
+    /// Ends the pending sign-in, idempotently. Identity's <c>RemoveAuthenticationTokenAsync</c> is not: when two
+    /// requests end the same pending sign-in at once (parallel wrong codes racing the lockout, issue #46), the second
+    /// one's <c>DELETE</c> finds no row, which EF reports as a concurrency failure, and the deleted entry left in the
+    /// change tracker then fails the audit write that shares this <see cref="DbContext"/>. A set-based delete is done
+    /// whether or not another request got there first; the tracked copy of the row, if any, is let go so nothing later
+    /// in the request tries to save it.
+    /// </summary>
+    private async Task ClosePendingSignInAsync(AppUser user)
+    {
+        await dbContext.Set<IdentityUserToken<int>>()
+            .Where(t => t.UserId == user.Id
+                && t.LoginProvider == AdminTokenNames.LoginProvider
+                && t.Name == AdminTokenNames.PendingTwoFactorSignIn)
+            .ExecuteDeleteAsync();
+
+        foreach (var tracked in dbContext.ChangeTracker.Entries<IdentityUserToken<int>>()
+            .Where(e => e.Entity.UserId == user.Id
+                && e.Entity.LoginProvider == AdminTokenNames.LoginProvider
+                && e.Entity.Name == AdminTokenNames.PendingTwoFactorSignIn)
+            .ToList())
+        {
+            tracked.State = EntityState.Detached;
+        }
+    }
 
     private static void EnsureSucceeded(IdentityResult result)
     {
         if (!result.Succeeded)
         {
             throw new InvalidOperationException(
-                $"Could not update the pending sign-in: {string.Join("; ", result.Errors.Select(e => e.Description))}");
+                $"Could not open the pending sign-in: {string.Join("; ", result.Errors.Select(e => e.Description))}");
         }
     }
 

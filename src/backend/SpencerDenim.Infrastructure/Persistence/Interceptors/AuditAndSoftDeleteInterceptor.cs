@@ -42,8 +42,10 @@ public sealed class AuditAndSoftDeleteInterceptor(IClock clock, IHttpContextAcce
     /// authenticated principal, rather than requiring every command handler to set <see cref="CurrentUserId"/>
     /// by hand and risk forgetting it. <see cref="CurrentUserId"/> still wins when a caller (a seeder, a test)
     /// sets it explicitly, since there is no HTTP request for this to read in that case anyway.
+    /// Internal rather than private for <c>StaffAccountLockout</c> (issue #46), whose atomic counter <c>UPDATE</c>
+    /// never passes through the change tracker and stamps the same <c>UpdatedByUserId</c> by calling this.
     /// </summary>
-    private int? ResolveCurrentUserId()
+    internal int? ResolveCurrentUserId()
     {
         if (CurrentUserId is { } explicitUserId)
         {
