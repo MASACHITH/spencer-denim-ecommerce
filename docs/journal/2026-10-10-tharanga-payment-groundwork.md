@@ -303,3 +303,20 @@ was **not** run (the box is shared and loaded).
 
 One defect the new tests found in the new tests, not in the product: the theory over wrong amounts reused one
 provider transaction id, and `UX_Payments_Provider_Txn` refused the second row — the index doing its job.
+
+### Verification after the tester's first round
+
+- `dotnet build SpencerDenim.sln`: 0 warnings, 0 errors. `git diff --check origin/main..HEAD`: clean.
+- Unit, the whole project: **2,125 passed**, 0 failed (new this round: `PaymentEventPayloadTests` now 89,
+  `PaymentRedirectFormTests` 38, `PaymentExceptionAlertTests` 14).
+- Integration, `FullyQualifiedName~Sales` plus `AdminAlertsBehaviourTests`, `OrderEmailTransactionTests` and
+  `AdminBankTransferEndpointTests`: **616 passed**, 0 failed, 29 m 50 s. New: `OrderSettlementRobustnessTests`
+  37, `PaymentEventStoreTests` 33 (was 19). The run ended with an xUnit "Test Assembly Cleanup Failure": the
+  fixture's `ALTER DATABASE … SINGLE_USER` succeeded and the `DROP` after it did not, leaving this run's database
+  single-user on the test container (I dropped it by hand). None of the shorter runs, including every run of the
+  new classes, did this; I could not tell whether a background job in a test host re-took the single-user slot
+  or whether it is the 30-minute run on a loaded box, and I have not chased it.
+- Mutation check: with the index hint removed and the predicate defeated, the two deadlock tests fail (11 and 20
+  deadlock victims, a `TimeoutException`, a call that ran out of retries) and pass with the fix.
+- Storefront (Node 24): `payment-redirect.spec.ts` + `order-page.spec.ts` 132 passed (was 100); `ng lint storefront`
+  clean.
