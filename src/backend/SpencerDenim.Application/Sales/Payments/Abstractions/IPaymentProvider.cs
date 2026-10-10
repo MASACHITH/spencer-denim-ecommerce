@@ -82,6 +82,21 @@ public interface IPaymentProvider
     string Code { get; }
 
     /// <summary>
+    /// Whether this provider can take an order <b>right now</b>, on top of the shop having switched its
+    /// <c>sales.PaymentProviders</c> row on. Checkout lists a provider only when both are true, and refuses
+    /// an order placed with one that answers <see langword="false"/> — so a gateway whose merchant account
+    /// is not filled in yet, or whose public address is not configured, is hidden from shoppers instead of
+    /// taking orders nobody can pay for.
+    /// <para>
+    /// <b>True by default</b> (a default interface member), so a provider with nothing to configure — the
+    /// bank transfer, which has its own "details not set" state on the order page — is unchanged. A provider
+    /// that needs settings overrides it. It must be cheap and must not throw: it is asked on every view of
+    /// the checkout page.
+    /// </para>
+    /// </summary>
+    ValueTask<bool> IsAvailableAsync(CancellationToken cancellationToken) => ValueTask.FromResult(true);
+
+    /// <summary>
     /// The payment row a newly placed order starts with, and the deadline to put on the order.
     /// <para>
     /// Asynchronous because a provider may have to read its own settings — PayPal needs an exchange rate

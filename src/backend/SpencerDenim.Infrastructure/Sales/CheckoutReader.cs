@@ -6,6 +6,7 @@ using SpencerDenim.Application.Sales.Cart.Contracts;
 using SpencerDenim.Application.Sales.Checkout.Abstractions;
 using SpencerDenim.Application.Sales.Checkout.Contracts;
 using SpencerDenim.Application.Sales.Orders.Contracts;
+using SpencerDenim.Application.Sales.Payments.Abstractions;
 using SpencerDenim.Domain.Catalog;
 using SpencerDenim.Domain.Media;
 using SpencerDenim.Domain.Reference;
@@ -37,7 +38,8 @@ namespace SpencerDenim.Infrastructure.Sales;
 internal sealed class CheckoutReader(
     AppDbContext dbContext,
     IOptions<CatalogOptions> options,
-    IClock clock) : ICheckoutReader
+    IClock clock,
+    IPaymentProviderRegistry paymentProviders) : ICheckoutReader
 {
     private readonly CatalogOptions _options = options.Value;
 
@@ -173,9 +175,21 @@ internal sealed class CheckoutReader(
         return row is null ? null : ToPickupLocation(row.location, row.district);
     }
 
+    /// <summary>
+    /// The payment methods a shopper may choose: the rows the shop has switched on, <b>and</b> whose provider
+    /// says it can take an order right now (<see cref="IPaymentProvider.IsAvailableAsync"/>).
+    /// </summary>
+    /// <remarks>
+    /// <b>One filter for both questions checkout asks.</b> The checkout page lists these and the placement
+    /// handler refuses a code that is not among them, so a provider that is switched on but not ready — a
+    /// gateway whose merchant account has not been filled in — is hidden and also cannot be chosen by a
+    /// request that names it. A code with no implementation in this build is left in the list on purpose:
+    /// the placement handler has its own, differently-worded refusal for that case.
+    /// </remarks>
     public async Task<IReadOnlyList<CheckoutPaymentMethod>> EnabledPaymentMethodsAsync(
-        CancellationToken cancellationToken) =>
-        await dbContext.PaymentProviders
+        CancellationToken cancellationToken)
+    {
+        var enabled = await dbContext.PaymentProviders
             .AsNoTracking()
             .Where(provider => provider.IsEnabled)
             .OrderBy(provider => provider.DisplayOrder)
@@ -185,6 +199,22 @@ internal sealed class CheckoutReader(
                 provider.DisplayName,
                 provider.CheckoutDescription))
             .ToListAsync(cancellationToken);
+
+        var offered = new List<CheckoutPaymentMethod>(enabled.Count);
+
+        foreach (var method in enabled)
+        {
+            if (paymentProviders.Find(method.Code) is { } provider
+                && !await provider.IsAvailableAsync(cancellationToken))
+            {
+                continue;
+            }
+
+            offered.Add(method);
+        }
+
+        return offered;
+    }
 
     public async Task<IReadOnlyList<CheckoutCartLine>> ReadCartAsync(
         int cartId,
