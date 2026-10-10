@@ -1347,6 +1347,179 @@ describe('OrderPage (CHK-04)', () => {
     expect(element.querySelector('[data-testid="pay-hint"]')).toBeNull();
   });
 
+  // ---- money that arrived and could not settle the order (doc 11 P8 step 6, P8b step 4) ---------------------
+
+  describe('a payment that arrived and could not settle the order', () => {
+    const noticePanel = () => element.querySelector<HTMLElement>('[data-testid="pay-notice"]');
+
+    /** Nothing that could take, or ask for, a second payment. */
+    function expectNoWayToPay(): void {
+      expect(element.querySelector('[data-testid="pay-panel"]')).toBeNull();
+      expect(element.querySelector('[data-testid="pay-now"]')).toBeNull();
+      expect(element.querySelector('[data-testid="pay-pending-details"]')).toBeNull();
+      expect(element.querySelector('[data-testid="reference-input"]')).toBeNull();
+      expect(element.querySelector('[data-testid="slip-input"]')).toBeNull();
+      expect(element.querySelector('form')).toBeNull();
+      expect(text()).not.toContain('Pay now');
+      expect(text()).not.toContain('Transfer Rs.');
+    }
+
+    it('says the team will be in touch on an order that expired first, with no ?pay= on the address', async () => {
+      await open(
+        order({
+          status: 'Expired',
+          statusLabel: 'Expired',
+          payment: null,
+          canCancel: false,
+          paymentNotice: 'received',
+        }),
+      );
+
+      expect(noticePanel()?.querySelector('[data-testid="pay-notice-text"]')?.textContent?.trim()).toBe(
+        'We received your payment, our team will contact you. You do not need to pay again.',
+      );
+      expect(noticePanel()?.querySelector('#pay-notice-title')?.textContent?.trim()).toBe('Your payment');
+      expectNoWayToPay();
+    });
+
+    it('says it on a cancelled order too', async () => {
+      await open(
+        order({
+          status: 'Cancelled',
+          statusLabel: 'Cancelled',
+          payment: null,
+          canCancel: false,
+          paymentNotice: 'received',
+        }),
+      );
+
+      expect(noticePanel()?.textContent).toContain('We received your payment, our team will contact you');
+      expectNoWayToPay();
+    });
+
+    it('replaces "still confirming the details" on an order that is still waiting (an amount that differed)', async () => {
+      await open(order({ payment: null, paymentNotice: 'received' }));
+
+      expect(noticePanel()?.textContent).toContain('We received your payment, our team will contact you');
+      expect(text()).not.toContain('We are still confirming the payment details');
+      expect(text()).not.toContain('nothing to transfer');
+
+      // And the "Payment" line no longer invites a payment either.
+      expect(text()).not.toContain('Awaiting payment.');
+      expect(text()).toContain('We have received a payment for this order. Our team will contact you.');
+      expectNoWayToPay();
+    });
+
+    it('never shows a Pay now button or the bank details, even if instructions arrive beside the notice', async () => {
+      await open(
+        order({
+          payment: onlineInstructions({ redirectUrl: 'https://pay.example.test/h' }),
+          paymentNotice: 'received',
+        }),
+      );
+
+      expect(noticePanel()).not.toBeNull();
+      expectNoWayToPay();
+      expect(element.querySelector('a[href^="https://pay.example.test"]')).toBeNull();
+
+      await open(order({ payment: bankInstructions(), paymentNotice: 'received' }));
+
+      expect(noticePanel()).not.toBeNull();
+      expectNoWayToPay();
+      expect(text()).not.toContain('8001234567890');
+    });
+
+    it('says a second payment arrived when the order is already paid', async () => {
+      await open(
+        order({
+          status: 'Paid',
+          statusLabel: 'Paid',
+          payment: null,
+          canCancel: false,
+          paymentNotice: 'received',
+        }),
+      );
+
+      const said = noticePanel()?.textContent ?? '';
+
+      expect(said).toContain('We received a second payment for this order');
+      expect(said).not.toContain('We received your payment, our team');
+      expect(text()).toContain('Paid.');
+    });
+
+    it('shows it once when the shopper also came back with ?pay=received', async () => {
+      await open(
+        order({
+          status: 'Expired',
+          statusLabel: 'Expired',
+          payment: null,
+          canCancel: false,
+          paymentNotice: 'received',
+        }),
+        { pay: 'received' },
+      );
+
+      expect(noticePanel()).not.toBeNull();
+      expect(element.querySelector('[data-testid="pay-hint"]')).toBeNull();
+      expect(text().match(/our team will contact you/gi)).toHaveLength(1);
+    });
+
+    it('still explains other hints beside it', async () => {
+      await open(
+        order({
+          status: 'Expired',
+          statusLabel: 'Expired',
+          payment: null,
+          canCancel: false,
+          paymentNotice: 'received',
+        }),
+        { pay: 'closed' },
+      );
+
+      expect(noticePanel()).not.toBeNull();
+      expect(element.querySelector('[data-testid="pay-hint"]')?.textContent).toBe(
+        'This order can no longer be paid.',
+      );
+    });
+
+    it('shows nothing for a code it does not know, and leaves the bank panel as it was', async () => {
+      await open(order({ paymentNotice: 'something-newer' }));
+
+      expect(noticePanel()).toBeNull();
+      expect(payPanel().querySelector('#pay-title')?.textContent?.trim()).toBe('How to pay');
+      expect(payPanel().querySelector('[data-testid="reference-input"]')).not.toBeNull();
+    });
+
+    it('leaves the bank page and a provider-less order exactly as they were without a notice', async () => {
+      await open(order({ paymentNotice: null }));
+
+      expect(noticePanel()).toBeNull();
+      expect(payPanel().querySelector('#pay-title')?.textContent?.trim()).toBe('How to pay');
+      expect(text()).toContain('Awaiting payment.');
+
+      await open(order({ payment: null }));
+
+      expect(noticePanel()).toBeNull();
+      expect(element.querySelector('[data-testid="pay-pending-details"]')).not.toBeNull();
+    });
+
+    it('prints the notice as text, never the code or any markup', async () => {
+      await open(
+        order({
+          status: 'Expired',
+          statusLabel: 'Expired',
+          payment: null,
+          canCancel: false,
+          paymentNotice: 'received',
+        }),
+      );
+
+      expect(noticePanel()?.innerHTML).not.toContain('<script');
+      expect(noticePanel()?.textContent).not.toContain('received"');
+      expect(noticePanel()?.querySelectorAll('a, button, input, form')).toHaveLength(0);
+    });
+  });
+
   describe('after a "being processed" return', () => {
     beforeEach(() => {
       vi.useFakeTimers();

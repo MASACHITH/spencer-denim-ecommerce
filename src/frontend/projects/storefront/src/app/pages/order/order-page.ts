@@ -31,6 +31,7 @@ import {
   payHintIsProcessing,
   payHintMessage,
 } from '../../core/checkout/payment-hint';
+import { paymentNoticeMessage } from '../../core/checkout/payment-notice';
 import { paymentRedirect } from '../../core/checkout/payment-redirect';
 import { RobotsMeta } from '../../core/platform/robots-meta';
 import { ServerHandover } from '../../core/platform/server-handover';
@@ -305,7 +306,18 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
              works before hydration and without script. The proof comment further down explains why a
              form with no action is dangerous before hydration; this one always has an absolute https
              action that was checked before it was rendered, so a pre-hydration press goes where it should. -->
-        @if (payRedirect(); as go) {
+        @if (paymentNotice(placed); as notice) {
+          <!-- **Money has already arrived for this order and could not settle it** (doc 11 P8 step 6): the
+               order expired or was cancelled first, was paid already, or the amount differed. Read from the
+               order's payments on every visit, so it is here after a reload, tomorrow, and when a provider's
+               notification landed while the browser was closed - not only on the return that said so.
+               It replaces every way to pay below: the server sends no instructions for this order, and this
+               branch is first in the chain so that a bank panel or a Pay now button cannot appear beside it. -->
+          <section class="order__panel pay" aria-labelledby="pay-notice-title" data-testid="pay-notice">
+            <h2 class="order__panel-title" id="pay-notice-title">Your payment</h2>
+            <p class="pay__lead" data-testid="pay-notice-text">{{ notice }}</p>
+          </section>
+        } @else if (payRedirect(); as go) {
           <section class="order__panel pay" aria-labelledby="pay-title" data-testid="pay-panel">
             <h2 class="order__panel-title" id="pay-title">Pay online</h2>
 
@@ -1060,9 +1072,23 @@ export class OrderPage {
   protected readonly error = this.failure.asReadonly();
   protected readonly notFound = computed(() => this.missing() && this.current() === null);
 
-  /** The sentence the return hint selects, or null. See `payHintMessage` for why it is never the hint itself. */
+  /**
+   * The sentence the return hint selects, or null. See `payHintMessage` for why it is never the hint itself.
+   *
+   * The "received" hint is left out when the order itself carries the notice: the notice says the same thing
+   * from the database, and two paragraphs saying one thing read as two events.
+   */
   protected hintMessage(order: OrderConfirmationDto): string | null {
+    if (this.hint === 'received' && paymentNoticeMessage(order.paymentNotice, order.status) !== null) {
+      return null;
+    }
+
     return payHintMessage(this.hint, order.status);
+  }
+
+  /** The sentence for money that arrived and could not settle the order, or null. See `paymentNoticeMessage`. */
+  protected paymentNotice(order: OrderConfirmationDto): string | null {
+    return paymentNoticeMessage(order.paymentNotice, order.status);
   }
 
   private pollWhileProcessing(): void {
@@ -1077,7 +1103,11 @@ export class OrderPage {
       // and one that has not loaded yet is simply asked about again.
       const status = this.current()?.status;
 
-      if ((status !== undefined && status !== 'PendingPayment') || this.pollAttempts >= PAY_POLL_MAX_ATTEMPTS) {
+      if (
+        (status !== undefined && status !== 'PendingPayment')
+        || this.current()?.paymentNotice
+        || this.pollAttempts >= PAY_POLL_MAX_ATTEMPTS
+      ) {
         return;
       }
 
@@ -1138,7 +1168,7 @@ export class OrderPage {
   protected readonly payRedirect = computed(() => {
     const placed = this.current();
 
-    return placed !== null && this.awaitingPayment(placed) && placed.payment !== null
+    return placed !== null && this.awaitingPayment(placed) && !placed.paymentNotice && placed.payment !== null
       ? paymentRedirect(placed.payment)
       : null;
   });
@@ -1157,6 +1187,12 @@ export class OrderPage {
       return order.status === 'Paid'
         ? 'Paid. Thank you — we are getting your order ready.'
         : `This order is ${order.statusLabel.toLowerCase()}.`;
+    }
+
+    // A payment has arrived and could not settle the order: "awaiting payment" would send the shopper to pay
+    // again, which is the one thing they must not do.
+    if (paymentNoticeMessage(order.paymentNotice, order.status) !== null) {
+      return 'We have received a payment for this order. Our team will contact you.';
     }
 
     return `Awaiting payment. We hold your items until ${this.dueAt(order)}.`;
