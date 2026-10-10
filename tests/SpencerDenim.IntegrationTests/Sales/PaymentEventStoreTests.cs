@@ -116,6 +116,27 @@ public sealed class PaymentEventStoreTests(SqlServerDatabaseFixture sqlServer) :
         Assert.Equal(1, await CountAsync(key));
     }
 
+    /// <summary>
+    /// The guarded insert holds a key-range lock for its statement (<c>UPDLOCK, HOLDLOCK</c>), which is what
+    /// serialises two deliveries of one key. This is the other half of that claim: deliveries of
+    /// <i>different</i> keys that land in the same range queue behind one another and finish — none is
+    /// killed as a deadlock victim. (The count is this host's own commands; the server's counter is shared
+    /// with other runs.)
+    /// </summary>
+    [Fact]
+    public async Task Parallel_deliveries_of_different_events_all_store_and_none_deadlocks()
+    {
+        var records = Enumerable.Range(0, 24).Select(_ => Record(NewKey())).ToList();
+
+        CommandCounter.Reset();
+
+        var receipts = await Task.WhenAll(records.Select(record => Task.Run(() => RecordAsync(record), Token)));
+
+        Assert.All(receipts, receipt => Assert.True(receipt.IsNew));
+        Assert.Equal(records.Count, receipts.Select(receipt => receipt.EventId).Distinct().Count());
+        Assert.Equal(0, CommandCounter.DeadlockCount);
+    }
+
     [Fact]
     public async Task Different_keys_are_different_events()
     {
@@ -196,6 +217,85 @@ public sealed class PaymentEventStoreTests(SqlServerDatabaseFixture sqlServer) :
 
         await Assert.ThrowsAsync<ArgumentException>(
             () => RecordAsync(Record(NewKey()) with { Source = (PaymentEventSource)9 }));
+    }
+
+    /// <summary>
+    /// <b>The key goes into a <c>varchar</c> column as <c>nvarchar</c> text, so a character outside the code
+    /// page used to become <c>?</c> on the way in.</b> A Sinhala key recorded twice then threw a unique
+    /// violation (the "already there?" check compared the unfolded text, found nothing, and the insert
+    /// collided with its own earlier self), and two different Cyrillic keys collided with each other. Real
+    /// gateway ids are ASCII, so the store refuses the rest with a message - before anything is stored, and
+    /// as an <see cref="ArgumentException"/>, never as a <c>SqlException</c> 2627.
+    /// </summary>
+    [Theory]
+    [InlineData("PayPal:WH-\u0DC3\u0DD2\u0D82\u0DC4\u0DBD")]
+    [InlineData("PayPal:\u0434\u0430\u043D\u043D\u044B\u0435")]
+    [InlineData("PayPal:\u0438\u0434-\u0434\u0440\u0443\u0433\u043E\u0439")]
+    [InlineData("PayPal:caf\u00E9")]
+    [InlineData("PayPal:WH-1 ")]
+    [InlineData("PayPal: WH-1")]
+    [InlineData("PayPal:WH 1")]
+    [InlineData("PayPal:WH-1\t")]
+    [InlineData("PayPal:WH-1\u0007")]
+    [InlineData("PayPal:WH-1\u00A0")]
+    public async Task A_key_the_column_cannot_hold_exactly_is_refused_with_a_message_not_a_unique_violation(string key)
+    {
+        // Twice, because the original defect was in the second call.
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            var thrown = await Assert.ThrowsAsync<ArgumentException>(() => RecordAsync(Record(key)));
+
+            Assert.Contains("printable ASCII", thrown.Message, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public async Task Two_different_non_ASCII_keys_cannot_collide_because_neither_is_stored()
+    {
+        var one = "PayPal:\u0434\u0430\u043D\u043D\u044B\u0435";
+        var two = "PayPal:\u0438\u0434\u0443\u0442\u0441\u0442\u0440";
+
+        await Assert.ThrowsAsync<ArgumentException>(() => RecordAsync(Record(one)));
+        await Assert.ThrowsAsync<ArgumentException>(() => RecordAsync(Record(two)));
+
+        // Folded to '?', both would have been "PayPal:?????" - one event standing for two.
+        Assert.Equal(0, await CountFoldedAsync());
+    }
+
+    [Fact]
+    public async Task The_other_text_columns_that_are_varchar_are_held_to_the_same_rule()
+    {
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => RecordAsync(Record(NewKey()) with { EventType = "PAYMENT.\u0434.COMPLETED" }));
+
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => RecordAsync(Record(NewKey()) with { ProviderEventId = "WH-\u0DC3" }));
+
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => RecordAsync(Record(NewKey()) with { ProviderCode = "PayPa\u0142" }));
+
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => RecordAsync(Record(NewKey()) with { EventType = "PAYMENT CAPTURE" }));
+    }
+
+    /// <summary>
+    /// The collation is case-insensitive, so keys that differ only by case are one event to the index. They
+    /// are reported as a redelivery - not thrown as a violation - because the "already there?" check uses
+    /// the same comparison.
+    /// </summary>
+    [Fact]
+    public async Task Keys_that_differ_only_by_case_are_one_event_as_the_collation_says()
+    {
+        var key = NewKey();
+        var upper = key.ToUpperInvariant();
+        _keys.Add(upper);
+
+        var first = await RecordAsync(Record(key));
+        var second = await RecordAsync(Record(upper));
+
+        Assert.True(first.IsNew);
+        Assert.False(second.IsNew);
+        Assert.Equal(first.EventId, second.EventId);
     }
 
     [Fact]
@@ -399,6 +499,16 @@ public sealed class PaymentEventStoreTests(SqlServerDatabaseFixture sqlServer) :
         return await scope.ServiceProvider.GetRequiredService<AppDbContext>().PaymentEvents
             .AsNoTracking()
             .SingleAsync(row => row.Id == eventId, Token);
+    }
+
+    /// <summary>How many events have a key made of folded characters: what a non-ASCII key would have become.</summary>
+    private async Task<int> CountFoldedAsync()
+    {
+        using var scope = CreateScope();
+
+        return await scope.ServiceProvider.GetRequiredService<AppDbContext>().PaymentEvents
+            .AsNoTracking()
+            .CountAsync(row => row.IdempotencyKey.StartsWith("PayPal:?"), Token);
     }
 
     private async Task<int> CountAsync(string key)

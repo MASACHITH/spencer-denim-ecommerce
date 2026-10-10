@@ -111,9 +111,8 @@ public sealed class PaymentEventPayloadTests
             PaymentEventPayload.RedactedValue,
             root.GetProperty("resource").GetProperty("items")[0].GetProperty("Authorization").GetString());
 
-        // "token" alone is not a credential: redacting every identifier that contains it would make the
-        // log useless for the dispute it exists for.
-        Assert.Equal("reference-not-a-credential", root.GetProperty("payment_token").GetString());
+        // "token" is redacted whole (see SecretFragments): the log is safe first.
+        Assert.Equal(PaymentEventPayload.RedactedValue, root.GetProperty("payment_token").GetString());
     }
 
     [Theory]
@@ -127,6 +126,22 @@ public sealed class PaymentEventPayloadTests
     [InlineData("apiKey")]
     [InlineData("private-key")]
     [InlineData("cvv")]
+    [InlineData("token")]
+    [InlineData("payment_token")]
+    [InlineData("X-Auth-Token")]
+    [InlineData("id_token")]
+    [InlineData("credential")]
+    [InlineData("credentials")]
+    [InlineData("user.credentials")]
+    [InlineData("pwd")]
+    [InlineData("Pwd")]
+    [InlineData("passphrase")]
+    [InlineData("pass_phrase")]
+    [InlineData("auth")]
+    [InlineData("Authorization")]
+    [InlineData("proxy-authorization")]
+    [InlineData("AUTH")]
+    [InlineData("auth_key")]
     public void Every_spelling_of_a_credential_name_is_recognised(string propertyName)
     {
         var payload = $"{{\"{propertyName}\":\"do-not-store\",\"keep\":\"yes\"}}";
@@ -136,6 +151,84 @@ public sealed class PaymentEventPayloadTests
         Assert.True(prepared.Redacted);
         Assert.DoesNotContain("do-not-store", prepared.Json, StringComparison.Ordinal);
         Assert.Contains("\"keep\":\"yes\"", prepared.Json, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// <b>What the rule must leave alone is as much its contract as what it takes.</b> These are the fields a
+    /// payment dispute reads — PayPal's capture webhook and PayHere's notification, plus the ones that merely
+    /// share a stem with a credential word (<c>authorization_id</c> is not an authorization header,
+    /// <c>author</c> is not <c>auth</c>). A signature (<c>md5sig</c>) is not redacted by the store: the provider
+    /// decides, and the recommendation is to drop it once verified.
+    /// </summary>
+    [Theory]
+    [InlineData("payment_id")]
+    [InlineData("order_id")]
+    [InlineData("merchant_id")]
+    [InlineData("payer_id")]
+    [InlineData("id")]
+    [InlineData("event_type")]
+    [InlineData("status_code")]
+    [InlineData("status_message")]
+    [InlineData("payhere_amount")]
+    [InlineData("payhere_currency")]
+    [InlineData("captured_amount")]
+    [InlineData("custom_id")]
+    [InlineData("invoice_id")]
+    [InlineData("authorization_id")]
+    [InlineData("authorizations")]
+    [InlineData("authorised_amount")]
+    [InlineData("author")]
+    [InlineData("card_holder_name")]
+    [InlineData("card_no")]
+    [InlineData("method")]
+    [InlineData("md5sig")]
+    [InlineData("amount")]
+    [InlineData("currency_code")]
+    [InlineData("related_ids")]
+    public void A_field_a_payment_dispute_reads_is_never_redacted(string propertyName)
+    {
+        Assert.False(PaymentEventPayload.LooksSecret(propertyName), propertyName);
+
+        var payload = $"{{\"{propertyName}\":\"kept\"}}";
+        var prepared = PaymentEventPayload.Prepare(payload);
+
+        Assert.False(prepared.Redacted);
+        Assert.Equal(payload, prepared.Json);
+    }
+
+    [Fact]
+    public void A_realistic_PayPal_capture_and_a_realistic_PayHere_notification_come_through_untouched()
+    {
+        const string payPal = """
+            {
+              "id": "WH-2WR32451HC0233532-67976317FL4543714",
+              "event_type": "PAYMENT.CAPTURE.COMPLETED",
+              "resource": {
+                "id": "3C679366HH908993F",
+                "status": "COMPLETED",
+                "amount": { "currency_code": "USD", "value": "31.25" },
+                "custom_id": "4711",
+                "invoice_id": "CW-2026-000123",
+                "supplementary_data": { "related_ids": { "order_id": "5O190127TN364715T", "authorization_id": "0AF1" } },
+                "links": [ { "href": "https://api.example.test/v2/payments/captures/3C679366HH908993F", "rel": "self" } ]
+              }
+            }
+            """;
+
+        const string payHere = """
+            {
+              "merchant_id": "121XXXX", "order_id": "CW-2026-000123-4711", "payment_id": "320032400018",
+              "captured_amount": "9375.00", "payhere_amount": "9375.00", "payhere_currency": "LKR",
+              "status_code": "2", "md5sig": "ABCDEF0123456789", "custom_1": "", "custom_2": "",
+              "method": "VISA", "status_message": "Successfully received payment",
+              "card_holder_name": "N Perera", "card_no": "************1234", "card_expiry": "0527"
+            }
+            """;
+
+        Assert.False(PaymentEventPayload.Prepare(payPal).Redacted);
+        Assert.Equal(payPal, PaymentEventPayload.Prepare(payPal).Json);
+        Assert.False(PaymentEventPayload.Prepare(payHere).Redacted);
+        Assert.Equal(payHere, PaymentEventPayload.Prepare(payHere).Json);
     }
 
     [Fact]
@@ -182,6 +275,39 @@ public sealed class PaymentEventPayloadTests
         // a duplicate.
         Assert.Throws<ArgumentException>(
             () => PaymentEventKey.ForEvent("PayPal", new string('a', PaymentEventKey.MaxLength)));
+    }
+
+    [Theory]
+    [InlineData("PayPal", "WH-\u0DC3\u0DD2\u0D82\u0DC4\u0DBD")]
+    [InlineData("PayPal", "\u0434\u0430\u043D\u043D\u044B\u0435")]
+    [InlineData("PayPal", "caf\u00E9")]
+    [InlineData("PayPal", "WH 1")]
+    [InlineData("PayPal", "WH-1\u0007")]
+    [InlineData("P\u0430yPal", "WH-1")] // Cyrillic a
+    public void A_key_the_varchar_column_would_fold_is_refused(string provider, string eventId)
+    {
+        // Folded to '?', two different ids become one and the unique index reports a violation instead of
+        // a redelivery. See PaymentEventKey.IsStorable.
+        Assert.Throws<ArgumentException>(() => PaymentEventKey.ForEvent(provider, eventId));
+        Assert.Throws<ArgumentException>(() => PaymentEventKey.ForResource(provider, "PAYMENT.NOTIFY", eventId));
+    }
+
+    [Theory]
+    [InlineData("PayPal:WH-1AB", true)]
+    [InlineData("a", true)]
+    [InlineData("~!@#$%^&*()_+-=[]{};:,./<>?|`", true)]
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    [InlineData(" ", false)]
+    [InlineData("a b", false)]
+    [InlineData("a\tb", false)]
+    [InlineData("a\u007Fb", false)]
+    [InlineData("a\u0080b", false)]
+    [InlineData("\u00E9", false)]
+    [InlineData("\u0434", false)]
+    public void Only_printable_ASCII_with_no_space_is_storable_as_a_key(string? value, bool expected)
+    {
+        Assert.Equal(expected, PaymentEventKey.IsStorable(value));
     }
 
     [Theory]

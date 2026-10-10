@@ -21,14 +21,22 @@ namespace SpencerDenim.Application.Sales.Payments;
 /// constraint number.
 /// </description></item>
 /// <item><description>
-/// <b>Secrets are overwritten, not stored.</b> Any property whose name says it is a secret, a password, a
-/// token or a credential has its value replaced with <see cref="RedactedValue"/>, at any depth. No
+/// <b>Secrets are overwritten, not stored.</b> Any property whose name says it is a secret, a password
+/// (or passphrase), a token, a credential or an API key — or is an authorization header — has its value
+/// replaced with <see cref="RedactedValue"/>, at any depth; the rule is <see cref="LooksSecret"/>. No
 /// provider event is expected to contain one — they are notifications <i>about</i> a payment — so this
 /// should never change anything; it is the net under the rule "never store secrets" for the day a
 /// payload does, through a provider's bug or a caller that passed a request body where it meant a
 /// response. When nothing matches the text is stored <b>verbatim</b>, byte for byte, because the entity's
 /// contract is the provider's own payload and a re-serialised copy would differ in whitespace and number
 /// formatting from what a dispute needs.
+/// <para>
+/// <b>A signature is not a secret and is not redacted here</b> (PayHere's <c>md5sig</c>, PayPal's transmission
+/// signature header): the provider code has verified it before it calls the store, and this class cannot
+/// know a provider's field names. Whether to keep it is the provider's decision, and the recommendation is
+/// to drop it before recording — a hash derived from the merchant secret is of no use once the event is
+/// accepted, and leaves nothing to brute-force from a leaked table.
+/// </para>
 /// </description></item>
 /// <item><description>
 /// <b>It is capped at <see cref="MaxLength"/> characters.</b> A real PayPal or PayHere event is a few
@@ -55,13 +63,16 @@ public static class PaymentEventPayload
     private const int MaxDepth = 32;
 
     /// <summary>
-    /// Fragments of a property name (lower-case, with <c>_</c> and <c>-</c> removed) that mark its value as
-    /// not to be stored. Fragments rather than exact names, because providers spell the same thing
-    /// <c>client_secret</c>, <c>clientSecret</c> and <c>merchant-secret</c>.
+    /// Fragments of a property name, once normalised (lower-case, with <c>_</c>, <c>-</c>, <c>.</c> and
+    /// spaces removed), that mark its value as not to be stored. Fragments, because providers spell the
+    /// same thing <c>client_secret</c>, <c>clientSecret</c>, <c>merchant-secret</c> and <c>X-Auth-Token</c>.
     /// <para>
-    /// <b>"token" alone is not on the list</b>: it would eat harmless identifiers (a payment token that is
-    /// a reference, not a credential), and redacting one makes the log less useful for the dispute it
-    /// exists for. The credential forms are named.
+    /// <b>"token" is on the list, whole</b>: any name containing it is redacted, so <c>access_token</c>,
+    /// <c>id_token</c>, <c>X-Auth-Token</c> and a vault's <c>payment_token</c> all go. That is a choice
+    /// for the log being safe over the log being complete — an earlier version of this list named the
+    /// credential forms only, left <c>payment_token</c> readable for the sake of disputes, and so did not do
+    /// what this class's own remarks said. Neither PayPal's payment webhooks nor PayHere's notification
+    /// carries a field with "token" in its name, so nothing a payment dispute needs is lost.
     /// </para>
     /// </summary>
     private static readonly string[] SecretFragments =
@@ -69,17 +80,33 @@ public static class PaymentEventPayload
         "secret",
         "password",
         "passwd",
-        "authorization",
+        "pwd",
+        "passphrase",
+        "token",
+        "credential",
         "apikey",
-        "accesstoken",
-        "refreshtoken",
-        "idtoken",
+        "authkey",
         "privatekey",
         "bearer",
         "cvv",
         "cvc",
         "securitycode",
     ];
+
+    /// <summary>
+    /// Names (normalised) that are redacted only when they are exactly this, because as fragments they would
+    /// take legitimate fields with them: PayPal's capture carries <c>authorization_id</c> in
+    /// <c>supplementary_data.related_ids</c> and an order's <c>payments.authorizations</c> is an array of
+    /// authorisation records, none of which is a credential. A bare <c>authorization</c> or <c>auth</c>
+    /// property is an HTTP header or a credential pair, and is.
+    /// </summary>
+    private static readonly HashSet<string> SecretNames = new(StringComparer.Ordinal)
+    {
+        "auth",
+        "authorization",
+        "proxyauthorization",
+        "authheader",
+    };
 
     /// <summary>
     /// Validates <paramref name="payloadJson"/>, redacts anything secret-named and applies the cap.
@@ -172,14 +199,30 @@ public static class PaymentEventPayload
         return changed;
     }
 
-    private static bool LooksSecret(string propertyName)
+    /// <summary>
+    /// Whether a property of this name must not have its value stored: its normalised name contains one of
+    /// <see cref="SecretFragments"/>, or is one of <see cref="SecretNames"/> exactly.
+    /// </summary>
+    /// <remarks>
+    /// Public so the rule is testable as a rule, name by name, not only through a payload. **What it must
+    /// leave alone** is as much the contract as what it takes: <c>payment_id</c>, <c>order_id</c>,
+    /// <c>merchant_id</c>, <c>payer_id</c>, <c>status_code</c>, <c>authorization_id</c>,
+    /// <c>captured_amount</c>, <c>card_holder_name</c> and a signature such as <c>md5sig</c> are the fields a
+    /// payment dispute reads, and none contains a fragment above.
+    /// </remarks>
+    public static bool LooksSecret(string propertyName)
     {
+        ArgumentNullException.ThrowIfNull(propertyName);
+
         var normalised = propertyName
             .Replace("_", string.Empty, StringComparison.Ordinal)
             .Replace("-", string.Empty, StringComparison.Ordinal)
+            .Replace(".", string.Empty, StringComparison.Ordinal)
+            .Replace(" ", string.Empty, StringComparison.Ordinal)
             .ToLowerInvariant();
 
-        return SecretFragments.Any(fragment => normalised.Contains(fragment, StringComparison.Ordinal));
+        return SecretNames.Contains(normalised)
+            || SecretFragments.Any(fragment => normalised.Contains(fragment, StringComparison.Ordinal));
     }
 }
 
@@ -198,6 +241,39 @@ public static class PaymentEventKey
 {
     /// <summary><c>varchar(160)</c>, doc 08 §3.5 — longer than the parts it is built from, on purpose.</summary>
     public const int MaxLength = 160;
+
+    /// <summary>
+    /// Whether <paramref name="value"/> is non-empty printable ASCII with no space — the only text that
+    /// survives a trip into a <c>varchar</c> column unchanged.
+    /// </summary>
+    /// <remarks>
+    /// <b>This is a correctness rule, not a style one.</b> Every text column of <c>sales.PaymentEvents</c>
+    /// that carries a key (<c>ProviderCode</c>, <c>EventType</c>, <c>ProviderEventId</c>,
+    /// <c>IdempotencyKey</c>) is <c>varchar</c>, but a parameter arrives as <c>nvarchar</c>, so a character
+    /// outside the code page is folded to <c>?</c> on the way in. The unique index on the key then sees two
+    /// different keys as one (two Cyrillic ids both become <c>????</c>), and the "is it there already?" check —
+    /// which compares the <i>unfolded</i> text — says no, so the insert fails with a unique violation instead
+    /// of answering "redelivery". A space is excluded too: SQL Server ignores trailing spaces when comparing,
+    /// so <c>"A "</c> and <c>"A"</c> are the same key to the index and different to the caller. Real gateways'
+    /// event and payment ids are ASCII tokens, so rejecting the rest costs nothing real.
+    /// </remarks>
+    public static bool IsStorable(string? value)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return false;
+        }
+
+        foreach (var c in value)
+        {
+            if (c is < '!' or > '~')
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
 
     /// <summary><c>{Provider}:{EventId}</c>, for a provider that gives every event an id.</summary>
     public static string ForEvent(string providerCode, string eventId) =>
@@ -218,6 +294,13 @@ public static class PaymentEventKey
         }
 
         var key = string.Join(':', parts.Select(part => part.Trim()));
+
+        if (!IsStorable(key))
+        {
+            throw new ArgumentException(
+                "A payment event idempotency key must be printable ASCII with no spaces: the column is "
+                + "varchar, and text outside it is folded to '?', which makes different keys collide.");
+        }
 
         return key.Length <= MaxLength
             ? key

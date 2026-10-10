@@ -43,15 +43,13 @@ internal sealed class PaymentEventStore(AppDbContext dbContext) : IPaymentEventS
     {
         ArgumentNullException.ThrowIfNull(record);
 
-        RequireFits(record.ProviderCode, PaymentProviderCodes.MaxCodeLength, nameof(record.ProviderCode));
-        RequireFits(record.EventType, EventTypeMaxLength, nameof(record.EventType));
-        RequireFits(record.IdempotencyKey, PaymentEventKey.MaxLength, nameof(record.IdempotencyKey));
+        RequireKeyText(record.ProviderCode, PaymentProviderCodes.MaxCodeLength, nameof(record.ProviderCode));
+        RequireKeyText(record.EventType, EventTypeMaxLength, nameof(record.EventType));
+        RequireKeyText(record.IdempotencyKey, PaymentEventKey.MaxLength, nameof(record.IdempotencyKey));
 
-        if (record.ProviderEventId is { Length: > ProviderEventIdMaxLength })
+        if (record.ProviderEventId is not null)
         {
-            throw new ArgumentException(
-                $"ProviderEventId is at most {ProviderEventIdMaxLength} characters.",
-                nameof(record));
+            RequireKeyText(record.ProviderEventId, ProviderEventIdMaxLength, nameof(record.ProviderEventId));
         }
 
         if (!Enum.IsDefined(record.Source))
@@ -73,13 +71,14 @@ internal sealed class PaymentEventStore(AppDbContext dbContext) : IPaymentEventS
             INSERT INTO sales.PaymentEvents
                 (ProviderCode, EventSource, ProviderEventId, EventType, IdempotencyKey, PaymentId, OrderId,
                  PayloadJson, ProcessingStatus, AttemptCount, NextAttemptAtUtc, ReceivedAtUtc)
-            SELECT {record.ProviderCode}, {(byte)record.Source}, {record.ProviderEventId}, {record.EventType},
-                   {record.IdempotencyKey}, {record.PaymentId}, {record.OrderId},
+            SELECT CONVERT(varchar(30), {record.ProviderCode}), {(byte)record.Source},
+                   CONVERT(varchar(100), {record.ProviderEventId}), CONVERT(varchar(100), {record.EventType}),
+                   CONVERT(varchar(160), {record.IdempotencyKey}), {record.PaymentId}, {record.OrderId},
                    {payload.Json}, {(byte)PaymentEventProcessingStatus.Received}, 0,
                    {firstRetryAt}, {record.ReceivedAtUtc}
              WHERE NOT EXISTS (
                      SELECT 1 FROM sales.PaymentEvents WITH (UPDLOCK, HOLDLOCK)
-                      WHERE IdempotencyKey = {record.IdempotencyKey});
+                      WHERE IdempotencyKey = CONVERT(varchar(160), {record.IdempotencyKey}));
             """,
             cancellationToken);
 
@@ -185,13 +184,26 @@ internal sealed class PaymentEventStore(AppDbContext dbContext) : IPaymentEventS
         return moved == 1;
     }
 
-    private static void RequireFits(string value, int maxLength, string name)
+    /// <summary>
+    /// A key-like text: non-empty, at most <paramref name="maxLength"/> characters, printable ASCII with no
+    /// space. <see cref="PaymentEventKey.IsStorable"/> says why the last two matter — the column is
+    /// <c>varchar</c>, and a character outside it is folded to <c>?</c> and makes different keys collide.
+    /// </summary>
+    private static void RequireKeyText(string value, int maxLength, string name)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(value, name);
 
         if (value.Length > maxLength)
         {
             throw new ArgumentException($"{name} is at most {maxLength} characters.", name);
+        }
+
+        if (!PaymentEventKey.IsStorable(value))
+        {
+            throw new ArgumentException(
+                $"{name} must be printable ASCII with no spaces: the column is varchar, and any other "
+                + "character is folded to '?', which makes different keys collide.",
+                name);
         }
     }
 
