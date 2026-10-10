@@ -280,6 +280,11 @@ public static class DependencyInjection
         // a port would invite a transaction of its own.
         services.AddScoped<OrderSettlementEffects>();
 
+        // IOrderSettlementStore: "this payment is complete" -> pay the order, or put the money on record
+        // as a payment exception (doc 08 §4.2 step 3). The provider-facing transaction around the same
+        // effects.
+        services.AddScoped<IOrderSettlementStore, OrderSettlementStore>();
+
         // The admin orders screen (W3-04, ADM-09, doc 11 P9): the list and the detail, the four fulfilment
         // transitions, the couriers the client fills in, and the two settings groups an invoice and the
         // auto-deliver job read.
