@@ -41,10 +41,9 @@ row, other payments, stock rows by `VariantId`, number series):
    the bank Approve uses, pinned to the payment's provider. 0 rows or a payment update that then affects 0
    rows roll back to the savepoint only and go to the exception path.
 4. Paid effects (shared with the bank flow, see below): stock, gapless invoice number, history row with source
-   `PaymentProvider` (no user), `PaymentConfirmed` email in the same transaction. A payment that can have
-   another attempt open beside it — a late success on a Failed / Cancelled / Expired payment, or a Capturing one
-   whose customer retried — closes it (Appendix B1). The ordinary success on an Initiated payment asks the
-   database nothing (see the deadlock finding below).
+   `PaymentProvider` (no user), `PaymentConfirmed` email in the same transaction. Any other open
+   attempt is closed (Appendix B1) — on every settlement, unconditionally, by a statement hinted to
+   `IX_Payments_OrderId` (see the deadlock finding and the second round below).
 5. **Exception path**: payment → `CapturedRequiresRefund`, `IsOrderSettlement = 0`, provider transaction id
    kept, `ops.AdminAlerts` `PaymentException` (Warning, related entity = the order's `PublicId`, details =
    ids and amounts only) in the same transaction. **Once per payment**, by construction: the `UPDATE` only
@@ -59,12 +58,15 @@ tester round below); a caller's code that is not ordinally equal to the row's an
 
 **What the provider sends has to fit its columns, and an anomaly never loses the payment.**
 `ProviderTransactionId` is `varchar(100)` in a unique index with the provider code, so it must be printable ASCII
-and at most 100 characters; `PayerReference` is `nvarchar(100)`. An id that is not usable is **dropped, not
-repaired** (a truncated id can collide, a folded one already does): on the exception path the payment is
-recorded without it and `FailureMessage` quotes the start of it; on a payable order the payment is kept as an
-exception with reason `provider_data_invalid` rather than settled with a falsified reference or refused. Column
-widths are constants on `Payment` now (`ProviderTransactionIdMaxLength` etc.), used by the EF configuration too
-(same values, no migration).
+and at most 100 characters; `PayerReference` is `nvarchar(100)`, informational and unindexed. A transaction id
+that is not usable is **dropped, not repaired** (a truncated id can collide, a folded one already does): on the
+exception path the payment is recorded without it and `FailureMessage` quotes the start of it; on an order that
+was **otherwise payable** (checked after the order claim, rolled back to the `BeforeSettle` savepoint) the
+payment is kept as an exception with reason `provider_data_invalid`, whose message and alert say to verify it
+with the provider and refund it or record the reference by hand — not to accept it. An order that is already
+paid, expired or cancelled is reported as that, whatever the id looked like. **A payer reference that is too
+long never blocks anything**: it is cut and the payment settles. Column widths are constants on `Payment` now
+(`ProviderTransactionIdMaxLength` etc.), used by the EF configuration too (same values, no migration).
 
 Not in the port, on purpose: pending / failed / cancelled notifications (they only change a payment's status
 and are each provider's rule), cutting back or extending `PaymentDueAtUtc` (R2 / N16), the capture claim, and
@@ -107,9 +109,12 @@ PaymentEventKey.ForEvent(provider, eventId) / .ForResource(provider, type, resou
     an order's `authorizations` array, neither of which is a credential. Nothing PayPal's payment webhooks or
     PayHere's notification carries is redacted (`payment_id`, `order_id`, `merchant_id`, `payer_id`,
     `status_code`, `captured_amount`, `card_no`… are pinned in a test, as well as one realistic payload of each).
-  - **`token` is redacted whole.** An earlier version named only `access_token` and friends and left
-    `payment_token` readable "for disputes", which did not do what its own remarks said; the log being safe
-    wins, and neither provider's payment events have a field with "token" in its name.
+  - **`token` is redacted whole** — except the words that merely contain it (`tokenization`, `tokenized`). An
+    earlier version named only `access_token` and friends and left `payment_token` readable "for disputes",
+    which did not do what its own remarks said; the log being safe wins, and neither provider's payment events
+    have a field with "token" in its name. **`cvv` / `cvc` (and `cvv2`, `cvc2`) are redacted when the name ends
+    with one** (`cvv`, `card_cvv`) and not when it starts with one: `processor_response.cvv_code` and
+    `cvc_check` are result letters a dispute reads, not the digits on the back of a card.
   - **A signature (`md5sig`) is not redacted by the store.** The provider verifies it before recording, and the
     store cannot know a provider's field names. The recommendation to the PayHere task is to drop it before
     `RecordAsync`: a hash derived from the merchant secret is of no use once the event is accepted, and leaves
@@ -235,11 +240,9 @@ No regression in the extraction (564 integration tests passed). What it found, a
    three retries). The execution strategy retries a victim silently, so my own tests never saw it: they asserted
    results, and the result was right. **Fixed both ways:** the statement runs only when the payment's status
    before settling is outside `UX_Payments_OneOpen`'s filter — `Capturing`, `Failed`, `Cancelled`, `Expired`
-   (`OrderSettlementEffects.CanHaveOtherOpenAttempt`) — and it carries `WITH (INDEX(IX_Payments_OrderId))`.
-   *I included `Capturing`, which the brief did not list:* `PaymentConfiguration` describes capture claimed, lock
-   lapsed, customer retries, original capture completes — a newer Initiated row beside a Capturing one — and
-   that is the normal PayPal path, so the hint (not the predicate) is what makes it safe. The other new
-   statements were checked for the same shape: every other one is a primary-key seek (`Id = @id`), a seek on
+   (a gate that the second round removed) — and it carries `WITH (INDEX(IX_Payments_OrderId))`.
+   *(Superseded: the status gate was itself wrong — see the second round below. The hint alone is what removes
+   the deadlock, and the statement now runs unconditionally.)* The other new statements were checked for the same shape: every other one is a primary-key seek (`Id = @id`), a seek on
    `UX_PaymentEvents_IdempotencyKey`, or the existing claim whose `NOT EXISTS` seeks `UX_Payments_OneSettlement`
    on a literal; none ranges over rows it does not own.
    - Tests: `Settling_twelve_orders_in_parallel_never_deadlocks` (Initiated / Capturing / Failed) asserts all
@@ -268,6 +271,44 @@ No regression in the extraction (564 integration tests passed). What it found, a
    fails if an entry is missing from the TS spec.
 6. **The redaction list did not match its own doc** — see "Payload rules" above. Whitespace at the end of this
    file is fixed (`git diff --check` is clean).
+
+## The tester's second round (HEAD 12cbe67): two narrow findings and one cosmetic, all fixed
+
+1. **The status gate lost a race (my regression).** `CanHaveOtherOpenAttempt(payment.Status)` used the status read
+   at the top of `SettleInTransactionAsync`, before the order claim and with no lock. A retry flow locks the order
+   first: payment A read as Initiated, the settlement blocked on the order row, the other transaction cancelled A
+   and opened a newer attempt B and committed, and the settlement paid A and left B Initiated — against doc 08
+   Appendix B1. **A read taken before the lock is not a fact about the state the lock protects.** The tester showed
+   with raw SQL that the `INDEX(IX_Payments_OrderId)` hint alone removes the deadlock (0 of 40 with it, 40 of 40
+   without), so the gate is gone — `CanHaveOtherOpenAttempt`, its call site and its test are deleted — and
+   `CloseOtherOpenAttemptsAsync` runs on every settlement. New test
+   `An_attempt_opened_while_the_settlement_waited_for_the_order_is_closed_with_it` makes the race happen with a
+   second connection (order locked, settlement observed blocked through `sys.dm_exec_requests`, then A cancelled,
+   B inserted, commit) and asserts A `Succeeded` and B `Cancelled`; it fails with the gate put back (B stays
+   Initiated). The deadlock tests stay, and now cover the close statement in all three opening statuses.
+2. **The dropped-id rule over-reached.**
+   - A too-long **payer reference** no longer takes the `provider_data_invalid` path: it is informational and
+     unindexed, so it is cut to 100 characters and the payment settles. (The exception path still cuts it and
+     says so in the failure message.)
+   - The **transaction id** check now happens **after the order claim**, with a rollback to the `BeforeSettle`
+     savepoint, so an already-paid or expired order reports `order_already_paid` / `order_expired`. The reason
+     `provider_data_invalid` is for a payable order only, and its wording no longer leaves room to "accept": the
+     payment's `FailureMessage` says "Verify the payment with the provider, then refund it or record the reference
+     by hand", and the alert title ends "Check it with the provider, then refund it or record the reference by
+     hand." No other reason carries a remedy. I did **not** add a `FailureCode` for it (so a later "accept an
+     exception payment" use case would not refuse it on code alone) — that is a decision for that use case, and
+     the wording is the only guard today.
+   - Tests for each combination: payable + long txn id (four spellings, claim undone, order still payable),
+     payable + long payer reference (settles, cut), already-paid + long txn id, expired + long txn id.
+3. **Redaction no longer eats result flags** (`processor_response.cvv_code`, `cvc_check`, `tokenization`); real
+   secrets (`cvv`, `card_cvv`, `cvc2`, `tokenization_token`) are still redacted. See "Payload rules" above.
+   The two URL-parity gaps the tester noted (`https:evil.example` and `https:\\evil.example\x`, accepted by the
+   WHATWG parser and refused by .NET) are left as they are — the backend is the stricter there — and are recorded
+   in a comment above the shared list on both sides.
+
+The test-fixture cleanup failure (a `SendEmails` sweep re-taking the single-user slot at assembly cleanup) is
+not touched here and is being filed separately; the "Test Assembly Cleanup Failure" note in the verification
+block above is that.
 
 ## Frontend (written by a sub-agent, reviewed here)
 
@@ -320,3 +361,13 @@ provider transaction id, and `UX_Payments_Provider_Txn` refused the second row �
   deadlock victims, a `TimeoutException`, a call that ran out of retries) and pass with the fix.
 - Storefront (Node 24): `payment-redirect.spec.ts` + `order-page.spec.ts` 132 passed (was 100); `ng lint storefront`
   clean.
+
+### Verification after the tester's second round
+
+- `dotnet build SpencerDenim.sln`: 0 warnings, 0 errors. `git diff --check origin/main..HEAD`: clean.
+- Unit, the whole project: **2,137 passed**, 0 failed.
+- Integration — `OrderSettlementRobustnessTests`, `OrderSettlementStoreTests`, `PaymentEventStoreTests`,
+  `BankTransferReviewTests`, `OrderExpiryTests`, `OrderPagePaymentAttemptTests`: **124 passed**, 0 failed.
+- Mutation check: with the close statement gated on the pre-lock status again, the new race test fails
+  (`Expected: Cancelled, Actual: Initiated`).
+- Storefront: `payment-redirect.spec.ts` 73 passed; `ng lint storefront` clean (a comment changed there).
