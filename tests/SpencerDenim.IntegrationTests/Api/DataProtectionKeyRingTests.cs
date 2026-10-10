@@ -53,7 +53,8 @@ public sealed class DataProtectionKeyRingTests : IDisposable
     [Fact]
     public async Task Production_refuses_to_start_without_a_persisted_key_ring()
     {
-        await using var factory = CreateFactory(new(), environment: "Production");
+        // ApiFactory gives every host a key ring directory by default; this test is about its absence.
+        await using var factory = CreateFactory(new() { ["DataProtection:KeysPath"] = string.Empty }, environment: "Production");
 
         var exception = Assert.ThrowsAny<Exception>(() => factory.Services);
 
