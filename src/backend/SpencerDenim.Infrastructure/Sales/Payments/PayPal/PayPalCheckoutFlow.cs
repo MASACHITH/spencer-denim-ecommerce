@@ -45,6 +45,13 @@ internal sealed partial class PayPalCheckoutFlow(
             return new PayPalStartResult.Back(PayPalPageHints.Closed);
         }
 
+        // Money has already arrived for this order and could not settle it: staff will be in touch, and a
+        // second payment is not invited beside it. (Re-decided inside the attempt's own transaction.)
+        if (order.HasUnsettledCapture)
+        {
+            return new PayPalStartResult.Back(PayPalPageHints.Received);
+        }
+
         var configured = await settings.ReadAsync(cancellationToken);
         var now = clock.UtcNow.UtcDateTime;
 
@@ -71,6 +78,7 @@ internal sealed partial class PayPalCheckoutFlow(
                 {
                     PayPalBlock.BeingProcessed => PayPalPageHints.Processing,
                     PayPalBlock.PendingWithPayPal => PayPalPageHints.Pending,
+                    PayPalBlock.CapturedAwaitingStaff => PayPalPageHints.Received,
                     _ => PayPalPageHints.Closed,
                 });
 

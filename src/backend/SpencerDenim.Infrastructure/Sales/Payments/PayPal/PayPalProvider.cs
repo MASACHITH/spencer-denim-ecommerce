@@ -125,6 +125,10 @@ internal sealed partial class PayPalProvider(
 
         // No open payment. Say what happened to the last one, and offer a fresh attempt while the order can
         // still be paid.
+        //
+        // The order page no longer reaches this for a payment in this status: GetOrderQueryHandler sees the
+        // provider-neutral PaymentNotice and does not ask a provider at all. It stays so that the provider is
+        // correct on its own - another caller of DescribeAsync must never be told to offer a second payment.
         if (order.Latest?.Status == PaymentStatus.CapturedRequiresRefund)
         {
             return Notice(

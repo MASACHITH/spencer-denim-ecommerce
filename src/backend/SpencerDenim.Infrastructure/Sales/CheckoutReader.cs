@@ -422,7 +422,12 @@ internal sealed class CheckoutReader(
                 order.Payments.Any(payment => payment.IsOrderSettlement),
                 order.Payments.Any(payment =>
                     payment.ProviderCode == PaymentProviderCodes.PayPal
-                    && payment.Status == PaymentStatus.Pending)))
+                    && payment.Status == PaymentStatus.Pending),
+
+                // Money that arrived and could not settle the order, from any provider: the notice below.
+                // Read from the payment *status*, which is the one provider-neutral fact (doc 08 §4.2 step 4),
+                // so a provider added later is covered without this reader hearing its name.
+                order.Payments.Any(payment => payment.Status == PaymentStatus.CapturedRequiresRefund)))
             .FirstOrDefaultAsync(cancellationToken);
 
         return row is null
@@ -531,7 +536,11 @@ internal sealed class CheckoutReader(
             // Named arguments from here on, because the three that follow are optional and only the last
             // is being set. Positional would mean restating a default — and `IsDuplicateSubmission` is a
             // fact about a *submission*, which a read of an order by its token can never be.
-            CanCancel: CanCancel(row, nowUtc));
+            CanCancel: CanCancel(row, nowUtc),
+
+            // Doc 11 P8 step 6: "We received your payment, our team will contact you". A code and nothing
+            // else - no provider, no amount, no payment id - because the order link is the whole credential.
+            PaymentNotice: row.HasUnsettledPayment ? OrderPaymentNotices.Received : null);
 
     /// <summary>
     /// Builds a <see cref="CheckoutPickupLocation"/> from a location and the district it is in (R7).
@@ -674,7 +683,8 @@ internal sealed class CheckoutReader(
         OrderStockState StockState,
         DateTime? CaptureLockedUntilUtc,
         bool HasSettlementPayment,
-        bool HasPayPalPendingPayment);
+        bool HasPayPalPendingPayment,
+        bool HasUnsettledPayment);
 
     private sealed record OrderLineRow(
         short LineNumber,

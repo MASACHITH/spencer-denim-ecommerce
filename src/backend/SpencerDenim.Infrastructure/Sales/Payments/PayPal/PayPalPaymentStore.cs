@@ -485,7 +485,8 @@ internal sealed class PayPalPaymentStore(AppDbContext dbContext, IAdminAlertWrit
             payments.FirstOrDefault(payment => payment.Status is PaymentStatus.Initiated
                 or PaymentStatus.Pending
                 or PaymentStatus.Capturing),
-            payments.FirstOrDefault());
+            payments.FirstOrDefault(),
+            payments.Any(payment => payment.Status == PaymentStatus.CapturedRequiresRefund));
     }
 
     private async Task<OpenAttemptResult> OpenAttemptInTransactionAsync(
@@ -512,6 +513,18 @@ internal sealed class PayPalPaymentStore(AppDbContext dbContext, IAdminAlertWrit
         if (locked != 1)
         {
             return new OpenAttemptResult.Blocked(await DiagnoseAsync(orderId, nowUtc, cancellationToken));
+        }
+
+        // Money that arrived and could not settle this order is with staff. Checked after the order row is held,
+        // so a settlement that is routing a payment to that state (which takes the same row first) has either
+        // finished, and is seen here, or has not begun and cannot slip a new attempt in beside it.
+        if (await dbContext.Payments.AnyAsync(
+                payment => payment.OrderId == orderId
+                    && payment.ProviderCode == PayPal
+                    && payment.Status == PaymentStatus.CapturedRequiresRefund,
+                cancellationToken))
+        {
+            return new OpenAttemptResult.Blocked(PayPalBlock.CapturedAwaitingStaff);
         }
 
         var open = await dbContext.Payments

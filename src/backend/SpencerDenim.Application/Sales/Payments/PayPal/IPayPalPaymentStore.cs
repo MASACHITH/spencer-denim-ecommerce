@@ -181,6 +181,10 @@ public interface IPayPalPaymentStore
 /// <param name="PaymentProviderCode">The provider the customer chose.</param>
 /// <param name="Open">The newest PayPal payment still Initiated, Pending or Capturing, or null.</param>
 /// <param name="Latest">The newest PayPal payment of any status, or null when the order has none.</param>
+/// <param name="HasUnsettledCapture">
+/// Whether any PayPal payment of the order is <c>CapturedRequiresRefund</c>: money that arrived and could not
+/// settle the order, which staff have to deal with. While it is true no new attempt is opened.
+/// </param>
 public sealed record PayPalOrderView(
     int OrderId,
     Guid PublicId,
@@ -192,7 +196,8 @@ public sealed record PayPalOrderView(
     decimal GrandTotal,
     string PaymentProviderCode,
     PayPalPaymentView? Open,
-    PayPalPaymentView? Latest);
+    PayPalPaymentView? Latest,
+    bool HasUnsettledCapture = false);
 
 /// <summary>One PayPal payment row, as far as describing it needs.</summary>
 public sealed record PayPalPaymentView(
@@ -248,6 +253,13 @@ public enum PayPalBlock
     /// deadline. "This order can no longer be paid."
     /// </summary>
     NotPayable = 2,
+
+    /// <summary>
+    /// A payment of this order has been captured and could not settle it (<c>CapturedRequiresRefund</c>:
+    /// the amount differed, or the order closed first). Staff are dealing with that money, so a new attempt
+    /// is not opened beside it: "We received your payment, our team will contact you" (doc 11 P8 step 6).
+    /// </summary>
+    CapturedAwaitingStaff = 3,
 }
 
 /// <summary>The answer to <see cref="IPayPalPaymentStore.OpenAttemptAsync"/>.</summary>
