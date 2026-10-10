@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Logging;
+using SpencerDenim.Application.Abstractions.Time;
 using SpencerDenim.Application.Ops.Email;
 using SpencerDenim.Application.Sales.Payments.Abstractions;
 using SpencerDenim.Application.Sales.Payments.Contracts;
@@ -33,18 +35,40 @@ namespace SpencerDenim.Infrastructure.Sales.Payments.PayHere;
 /// so a customer is not invited to pay twice.
 /// </para>
 /// </summary>
-internal sealed class PayHereProvider(
+internal sealed partial class PayHereProvider(
     IPayHereSettingsReader settings,
     IPayHerePaymentStore payments,
-    EmailOptions emailOptions) : IPaymentProvider
+    EmailOptions emailOptions,
+    PayHereWarningThrottle throttle,
+    IClock clock,
+    ILogger<PayHereProvider> logger) : IPaymentProvider
 {
     public string Code => PaymentProviderCodes.PayHere;
 
+    /// <summary>
+    /// Whether checkout may offer PayHere: the mode, the merchant ID and the secret are set and the shop's
+    /// public address is usable. <b>Fails closed and says why.</b> This is only ever asked for a provider row
+    /// the shop has switched <i>on</i>, so a "no" here means an administrator expects PayHere to work and it
+    /// does not - which is exactly when a log line is owed. It carries the problems and never a value (the
+    /// sentences name what is missing, not what is configured), and is throttled because the question is
+    /// asked on every view of the checkout page.
+    /// </summary>
     public async ValueTask<bool> IsAvailableAsync(CancellationToken cancellationToken)
     {
         var current = await settings.ReadAsync(cancellationToken);
+        var problems = PayHereReadiness.Problems(current, emailOptions.StorefrontBaseUrl);
 
-        return PayHereReadiness.Problems(current, emailOptions.StorefrontBaseUrl).Count == 0;
+        if (problems.Count == 0)
+        {
+            return true;
+        }
+
+        if (throttle.ShouldWarn(clock.UtcNow))
+        {
+            LogUnavailable(logger, string.Join(' ', problems));
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -138,6 +162,14 @@ internal sealed class PayHereProvider(
             _ => null,
         };
     }
+
+    [LoggerMessage(
+        EventId = 3520,
+        Level = LogLevel.Warning,
+        Message = "PayHere is switched on but customers cannot choose it, so it is hidden at checkout: "
+            + "{Problems} Fix Settings.Payments.PayHere in the admin panel or the server's "
+            + "Email__StorefrontBaseUrl. This is logged at most every 30 minutes.")]
+    private static partial void LogUnavailable(ILogger logger, string problems);
 
     /// <summary>
     /// What the page says while PayHere reports the payment as pending. Plain text, no markup. It names the

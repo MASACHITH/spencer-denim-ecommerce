@@ -241,6 +241,31 @@ public sealed class PayHereCheckoutFormTests
     }
 
     [Fact]
+    public void A_live_form_is_not_built_for_a_plain_http_address_and_a_sandbox_one_is()
+    {
+        Assert.Throws<InvalidOperationException>(() => PayHereCheckoutForm.Build(
+            PayHereSample.Settings(mode: "live"),
+            Context(),
+            "http://shop.example.test"));
+
+        var form = PayHereCheckoutForm.Build(
+            PayHereSample.Settings(mode: "sandbox"),
+            Context(),
+            "http://shop.example.test");
+
+        Assert.StartsWith("http://shop.example.test/order/", Fields(form)["return_url"], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_form_is_not_built_for_an_origin_with_a_query_string()
+    {
+        Assert.Throws<InvalidOperationException>(() => PayHereCheckoutForm.Build(
+            PayHereSample.Settings(),
+            Context(),
+            "https://shop.example.test?x=1"));
+    }
+
+    [Fact]
     public void The_text_the_form_is_clipped_with_never_splits_a_character()
     {
         // 49 letters then an emoji (a surrogate pair): clipping at 50 would leave half of it.

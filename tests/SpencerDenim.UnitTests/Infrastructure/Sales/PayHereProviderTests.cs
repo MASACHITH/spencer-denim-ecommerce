@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using SpencerDenim.Application.Ops.Email;
 using SpencerDenim.Application.Sales.Payments.Contracts;
 using SpencerDenim.Application.Sales.Payments.PayHere;
@@ -35,11 +36,16 @@ public sealed class PayHereProviderTests
     private static PayHereProvider Provider(
         PayHereSettings? settings = null,
         PayHereCheckoutContext? context = null,
-        string? origin = Origin) =>
+        string? origin = Origin,
+        ListLogger? logger = null,
+        PayHereWarningThrottle? throttle = null) =>
         new(
             new FakePayHereSettings(settings ?? PayHereSample.Settings()),
             new FakePayHerePayments { Context = context },
-            new EmailOptions { StorefrontBaseUrl = origin });
+            new EmailOptions { StorefrontBaseUrl = origin },
+            throttle ?? new PayHereWarningThrottle(),
+            new PayHereTestClock(PayHereSample.Now),
+            logger ?? new ListLogger());
 
     private static PaymentInstructionsRequest Request(int? paymentId = PayHereSample.PaymentId) =>
         new(
@@ -81,6 +87,74 @@ public sealed class PayHereProviderTests
     public async Task Without_a_public_origin_it_is_not_available(string? origin)
     {
         Assert.False(await Provider(origin: origin).IsAvailableAsync(Token));
+    }
+
+    // ---- the public address ------------------------------------------------------------------------
+
+    [Theory]
+    [InlineData("https://shop.example.test?x=1")]
+    [InlineData("https://shop.example.test/?x=1")]
+    [InlineData("https://shop.example.test#frag")]
+    [InlineData("https://shop.example.test/shop")]
+    [InlineData("https://user:pw@shop.example.test")]
+    public async Task A_public_address_that_is_not_just_scheme_and_host_makes_it_unavailable(string origin)
+    {
+        var logger = new ListLogger();
+        var provider = Provider(origin: origin, logger: logger);
+
+        Assert.False(await provider.IsAvailableAsync(Token));
+
+        // And it says so: this question is only asked of a row the shop has switched on.
+        var line = Assert.Single(logger.Lines);
+
+        Assert.Equal(LogLevel.Warning, line.Level);
+        Assert.Contains("Email__StorefrontBaseUrl", line.Message, StringComparison.Ordinal);
+        Assert.Contains("hidden at checkout", line.Message, StringComparison.Ordinal);
+
+        // What is configured is never printed - the sentences name the fault, not the value.
+        Assert.DoesNotContain(origin, line.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(PayHereSample.Secret, line.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Plain_http_is_unavailable_in_live_mode_and_fine_in_sandbox()
+    {
+        Assert.False(await Provider(PayHereSample.Settings(mode: "live"), origin: "http://shop.example.test")
+            .IsAvailableAsync(Token));
+
+        Assert.True(await Provider(PayHereSample.Settings(mode: "sandbox"), origin: "http://shop.example.test")
+            .IsAvailableAsync(Token));
+    }
+
+    [Fact]
+    public async Task A_loopback_address_is_fine_over_http_even_in_live_mode()
+    {
+        Assert.True(await Provider(PayHereSample.Settings(mode: "live"), origin: "http://localhost:4200")
+            .IsAvailableAsync(Token));
+    }
+
+    [Fact]
+    public async Task The_warning_is_written_once_per_window_however_often_checkout_asks()
+    {
+        var logger = new ListLogger();
+        var throttle = new PayHereWarningThrottle();
+        var provider = Provider(PayHereSample.Settings(secret: null), logger: logger, throttle: throttle);
+
+        for (var view = 0; view < 25; view++)
+        {
+            Assert.False(await provider.IsAvailableAsync(Token));
+        }
+
+        Assert.Single(logger.Lines);
+    }
+
+    [Fact]
+    public async Task A_provider_that_can_take_orders_writes_nothing()
+    {
+        var logger = new ListLogger();
+
+        Assert.True(await Provider(logger: logger).IsAvailableAsync(Token));
+        Assert.Empty(logger.Lines);
     }
 
     // ---- the payment row ---------------------------------------------------------------------------
@@ -210,5 +284,24 @@ public sealed class PayHereProviderTests
     public async Task Without_a_public_origin_it_describes_nothing()
     {
         Assert.Null(await Provider(context: Context(), origin: null).DescribeAsync(Request(), Token));
+    }
+
+    /// <summary>A logger that keeps what it was given, so a test can read the line and its level.</summary>
+    internal sealed class ListLogger : ILogger<PayHereProvider>
+    {
+        public List<(LogLevel Level, string Message)> Lines { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter) =>
+            Lines.Add((logLevel, formatter(state, exception)));
     }
 }

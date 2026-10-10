@@ -35,11 +35,15 @@ public static class PayHereReadiness
             problems.Add("The merchant secret is not set.");
         }
 
-        if (PayHereRoutes.Origin(publicOrigin) is null)
+        if (PayHereRoutes.Origin(publicOrigin, settings.AllowsPlainHttpOrigin) is null)
         {
             problems.Add(
-                "The shop's public web address is not configured on the server (Email__StorefrontBaseUrl), "
-                + "so PayHere cannot be given a return address or a notify address.");
+                string.IsNullOrWhiteSpace(publicOrigin)
+                    ? "The shop's public web address is not configured on the server (Email__StorefrontBaseUrl), "
+                      + "so PayHere cannot be given a return address or a notify address."
+                    : "The shop's public web address on the server (Email__StorefrontBaseUrl) is not usable: it "
+                      + "must be just scheme://host[:port] - no path, query or credentials - and https unless "
+                      + "the mode is sandbox.");
         }
 
         return problems;
@@ -93,7 +97,7 @@ public sealed class GetPayHereStatusQueryHandler(
         var problems = PayHereReadiness.Problems(current, origin);
 
         return new PayHereStatusDto(
-            PayHereRoutes.NotifyUrl(origin),
+            PayHereRoutes.NotifyUrl(origin, current.AllowsPlainHttpOrigin),
             enabled,
             enabled && problems.Count == 0,
             current.Mode,

@@ -113,6 +113,96 @@ public sealed class PayHereReadinessTests
         Assert.Null(PayHereRoutes.OrderPageUrl(origin, PayHereSample.OrderPublicId, PayHereRoutes.ReturnMarker));
     }
 
+    // ---- the origin is scheme://host[:port] and nothing else ---------------------------------------
+
+    [Theory]
+    [InlineData("https://shop.example.test?x=1")]
+    [InlineData("https://shop.example.test/?x=1")]
+    [InlineData("https://shop.example.test#frag")]
+    [InlineData("https://shop.example.test/#")]
+    [InlineData("https://shop.example.test/shop")]
+    [InlineData("https://shop.example.test/shop/")]
+    [InlineData("https://user@shop.example.test")]
+    [InlineData("https://user:pass@shop.example.test")]
+    [InlineData("https://shop.example.test\\evil.example")]
+    [InlineData("https://shop .example.test")]
+    [InlineData("https://shop.exam\nple.test")]
+    [InlineData("https://shop.example.test\t:8443")]
+    [InlineData("https://")]
+    [InlineData("//shop.example.test")]
+    [InlineData("ftp://shop.example.test")]
+    [InlineData("javascript:alert(1)")]
+    public void An_origin_with_a_path_query_fragment_or_credentials_is_refused_not_repaired(string origin)
+    {
+        Assert.Null(PayHereRoutes.Origin(origin, allowPlainHttp: true));
+        Assert.Null(PayHereRoutes.NotifyUrl(origin, allowPlainHttp: true));
+        Assert.Null(PayHereRoutes.OrderPageUrl(origin, PayHereSample.OrderPublicId, PayHereRoutes.ReturnMarker, true));
+    }
+
+    [Theory]
+    [InlineData("https://shop.example.test", "https://shop.example.test")]
+    [InlineData("https://shop.example.test/", "https://shop.example.test")]
+    [InlineData("  HTTPS://Shop.Example.Test/  ", "https://shop.example.test")]
+    // A .env file commonly leaves a newline at the end of a value.
+    [InlineData("https://shop.example.test\r\n", "https://shop.example.test")]
+    [InlineData("https://shop.example.test:8443", "https://shop.example.test:8443")]
+    [InlineData("https://shop.example.test:443", "https://shop.example.test")]
+    public void A_clean_https_origin_is_normalised(string origin, string expected)
+    {
+        Assert.Equal(expected, PayHereRoutes.Origin(origin));
+    }
+
+    [Fact]
+    public void The_query_string_case_that_used_to_build_a_broken_address_now_builds_none()
+    {
+        // Before: "https://shop.example?x=1" + "/order/..." = "https://shop.example?x=1/order/...".
+        Assert.Null(PayHereRoutes.OrderPageUrl(
+            "https://shop.example.test?x=1",
+            PayHereSample.OrderPublicId,
+            PayHereRoutes.ReturnMarker));
+    }
+
+    [Theory]
+    [InlineData("http://shop.example.test", false, null)]
+    [InlineData("http://shop.example.test", true, "http://shop.example.test")]
+    [InlineData("http://localhost:4200", false, "http://localhost:4200")]
+    [InlineData("http://127.0.0.1:5000", false, "http://127.0.0.1:5000")]
+    [InlineData("http://[::1]:5000", false, "http://[::1]:5000")]
+    [InlineData("https://shop.example.test", false, "https://shop.example.test")]
+    public void Plain_http_needs_sandbox_mode_or_a_loopback_host(string origin, bool allowPlainHttp, string? expected)
+    {
+        Assert.Equal(expected, PayHereRoutes.Origin(origin, allowPlainHttp));
+    }
+
+    [Fact]
+    public void Readiness_follows_the_mode_for_plain_http_and_names_the_fault()
+    {
+        Assert.Single(PayHereReadiness.Problems(PayHereSample.Settings(mode: "live"), "http://shop.example.test"));
+        Assert.Empty(PayHereReadiness.Problems(PayHereSample.Settings(mode: "sandbox"), "http://shop.example.test"));
+        Assert.Empty(PayHereReadiness.Problems(PayHereSample.Settings(mode: "live"), "https://shop.example.test"));
+
+        var problem = Assert.Single(PayHereReadiness.Problems(PayHereSample.Settings(), "https://shop.example.test?x=1"));
+
+        // "Not configured" would be wrong for a value that is configured and unusable.
+        Assert.Contains("not usable", problem, StringComparison.Ordinal);
+        Assert.Contains("scheme://host", problem, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task The_status_reports_no_notify_address_for_an_unusable_origin()
+    {
+        var handler = new GetPayHereStatusQueryHandler(
+            new FakePayHereSettings(PayHereSample.Settings()),
+            new FixedSwitch(true),
+            new EmailOptions { StorefrontBaseUrl = "https://shop.example.test/path" });
+
+        var status = await handler.HandleAsync(new GetPayHereStatusQuery(), TestContext.Current.CancellationToken);
+
+        Assert.Null(status.NotifyUrl);
+        Assert.False(status.OfferedAtCheckout);
+        Assert.Contains("not usable", Assert.Single(status.Problems), StringComparison.Ordinal);
+    }
+
     [Fact]
     public void The_return_and_cancel_addresses_carry_a_marker_and_nothing_else()
     {

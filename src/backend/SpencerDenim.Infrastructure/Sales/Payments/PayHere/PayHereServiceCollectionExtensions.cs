@@ -19,6 +19,9 @@ public static class PayHereServiceCollectionExtensions
         services.AddScoped<IPayHereSettingsReader, PayHereSettingsReader>();
         services.AddScoped<IPayHereProviderSwitch, PayHereProviderSwitch>();
         services.AddScoped<IPayHerePaymentStore, PayHerePaymentStore>();
+
+        // Singleton, because the throttle is per process: the provider is per request.
+        services.AddSingleton<PayHereWarningThrottle>();
         services.AddScoped<IPayHereEventRetryStore, PayHereEventRetryStore>();
 
         // PayHere is told 200 as soon as a verified notification is stored, so the sweep is what finishes

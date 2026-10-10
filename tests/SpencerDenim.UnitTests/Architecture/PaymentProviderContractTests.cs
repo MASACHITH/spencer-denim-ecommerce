@@ -11,6 +11,7 @@ using SpencerDenim.Application.Sales.Payments.PayHere;
 using SpencerDenim.Domain.Sales;
 using SpencerDenim.Infrastructure.Persistence.Seeding;
 using SpencerDenim.Infrastructure.Sales.Payments;
+using SpencerDenim.Infrastructure.Sales.Payments.PayHere;
 
 namespace SpencerDenim.UnitTests.Architecture;
 
@@ -553,6 +554,11 @@ public sealed class PaymentProviderContractTests
         if (type == typeof(IPayHerePaymentStore))
         {
             return new OnePayHereOrder();
+        }
+
+        if (type == typeof(PayHereWarningThrottle))
+        {
+            return new PayHereWarningThrottle();
         }
 
         if (type == typeof(EmailOptions))

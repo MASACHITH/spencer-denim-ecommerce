@@ -42,6 +42,12 @@ public sealed record PayHereSettings(
         && !string.IsNullOrWhiteSpace(MerchantId)
         && !string.IsNullOrEmpty(MerchantSecret);
 
+    /// <summary>
+    /// Whether the shop's public address may be plain <c>http</c>: only in sandbox mode, where no real payment
+    /// is taken (a loopback host is always allowed - see <see cref="PayHereRoutes.Origin"/>).
+    /// </summary>
+    public bool AllowsPlainHttpOrigin => Mode == SettingKeys.PayHere.ModeSandbox;
+
     /// <summary>The address the checkout form posts to for <see cref="Mode"/>, or <see langword="null"/> for no valid mode.</summary>
     public string? CheckoutUrl => Mode switch
     {

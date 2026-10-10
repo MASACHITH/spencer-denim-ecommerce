@@ -20,26 +20,46 @@ public static class PayHereRoutes
     public const string CancelMarker = "cancelled";
 
     /// <summary>
-    /// <c>https://shop.example/api/payments/payhere/notify</c>, or <see langword="null"/> when no public
-    /// origin is configured — in which case PayHere cannot be given an address it could call.
+    /// <c>https://shop.example/api/payments/payhere/notify</c>, or <see langword="null"/> when no valid public
+    /// origin is configured - in which case PayHere cannot be given an address it could call.
     /// </summary>
-    public static string? NotifyUrl(string? publicOrigin) =>
-        Origin(publicOrigin) is { } origin ? origin + NotifyPath : null;
+    public static string? NotifyUrl(string? publicOrigin, bool allowPlainHttp = false) =>
+        Origin(publicOrigin, allowPlainHttp) is { } origin ? origin + NotifyPath : null;
 
     /// <summary>
     /// The storefront's order page for an order, with a marker that says why the customer is there. Display
     /// only: <b>the marker is never proof of anything</b>, and the page changes nothing because of it except
     /// the words it shows (doc 11 P8b step 3).
     /// </summary>
-    public static string? OrderPageUrl(string? publicOrigin, Guid orderPublicId, string marker) =>
-        Origin(publicOrigin) is { } origin
+    public static string? OrderPageUrl(
+        string? publicOrigin,
+        Guid orderPublicId,
+        string marker,
+        bool allowPlainHttp = false) =>
+        Origin(publicOrigin, allowPlainHttp) is { } origin
             ? string.Create(
                 CultureInfo.InvariantCulture,
                 $"{origin}/order/{orderPublicId:D}?payment={marker}")
             : null;
 
-    /// <summary>The origin without a trailing slash, or null when it is not an absolute http(s) address.</summary>
-    public static string? Origin(string? publicOrigin)
+    /// <summary>
+    /// The storefront's origin as <c>scheme://host[:port]</c>, or <see langword="null"/> when what was
+    /// configured is not exactly that.
+    /// <para>
+    /// <b>Strict, because three addresses are built by appending to it.</b> A value with a query or a
+    /// fragment (<c>https://shop.example?x=1</c>) would produce <c>https://shop.example?x=1/order/...</c>; one
+    /// with a path would put the notify route under it; one with credentials would send PayHere a link that
+    /// reads as one host and goes to another. Each is refused rather than repaired, because a repaired value
+    /// is a guess about what the administrator meant - and every refusal makes PayHere unavailable
+    /// (<see cref="PayHereReadiness"/>), which is the safe failure.
+    /// </para>
+    /// <para>
+    /// <b><c>http</c> only where it cannot reach a customer's money</b>: in sandbox mode, where no real
+    /// payment is taken, or for a loopback host, which is a developer's machine. A live shop on plain http
+    /// would hand PayHere a return address that a network attacker can rewrite.
+    /// </para>
+    /// </summary>
+    public static string? Origin(string? publicOrigin, bool allowPlainHttp = false)
     {
         if (string.IsNullOrWhiteSpace(publicOrigin))
         {
@@ -48,11 +68,27 @@ public static class PayHereRoutes
 
         var trimmed = publicOrigin.Trim().TrimEnd('/');
 
-        return Uri.TryCreate(trimmed, UriKind.Absolute, out var uri)
-            && (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp)
-            && string.IsNullOrEmpty(uri.UserInfo)
-            ? trimmed
-            : null;
+        // Checked on the text, before parsing: Uri.TryCreate is forgiving about a lone '?' or '#', a
+        // backslash and embedded whitespace, and none of them belongs in an origin.
+        if (trimmed.Length == 0 || trimmed.Any(character => character is '?' or '#' or '\\' || char.IsWhiteSpace(character) || char.IsControl(character)))
+        {
+            return null;
+        }
+
+        if (!Uri.TryCreate(trimmed, UriKind.Absolute, out var uri)
+            || !string.IsNullOrEmpty(uri.UserInfo)
+            || !string.IsNullOrEmpty(uri.Query)
+            || !string.IsNullOrEmpty(uri.Fragment)
+            || uri.AbsolutePath != "/"
+            || string.IsNullOrEmpty(uri.Host))
+        {
+            return null;
+        }
+
+        var secure = uri.Scheme == Uri.UriSchemeHttps;
+        var plain = uri.Scheme == Uri.UriSchemeHttp && (allowPlainHttp || uri.IsLoopback);
+
+        return secure || plain ? uri.GetLeftPart(UriPartial.Authority) : null;
     }
 }
 
@@ -124,15 +160,16 @@ public static class PayHereCheckoutForm
             throw new InvalidOperationException("PayHere is not configured: it needs a mode, a merchant ID and a secret.");
         }
 
-        var returnUrl = PayHereRoutes.OrderPageUrl(publicOrigin, context.OrderPublicId, PayHereRoutes.ReturnMarker);
-        var cancelUrl = PayHereRoutes.OrderPageUrl(publicOrigin, context.OrderPublicId, PayHereRoutes.CancelMarker);
-        var notifyUrl = PayHereRoutes.NotifyUrl(publicOrigin);
+        var plain = settings.AllowsPlainHttpOrigin;
+        var returnUrl = PayHereRoutes.OrderPageUrl(publicOrigin, context.OrderPublicId, PayHereRoutes.ReturnMarker, plain);
+        var cancelUrl = PayHereRoutes.OrderPageUrl(publicOrigin, context.OrderPublicId, PayHereRoutes.CancelMarker, plain);
+        var notifyUrl = PayHereRoutes.NotifyUrl(publicOrigin, plain);
 
         if (returnUrl is null || cancelUrl is null || notifyUrl is null)
         {
             throw new InvalidOperationException(
-                "PayHere needs the storefront's public address (Email:StorefrontBaseUrl) to give it a "
-                + "return, cancel and notify address.");
+                "PayHere needs the storefront's public address (Email:StorefrontBaseUrl, as scheme://host[:port] "
+                + "and https unless the mode is sandbox) to give it a return, cancel and notify address.");
         }
 
         var merchantId = settings.MerchantId!.Trim();
