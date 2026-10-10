@@ -324,6 +324,95 @@ public sealed class AdminTwoFactorEndpointTests(SqlServerDatabaseFixture sqlServ
         Assert.Equal(HttpStatusCode.OK, nextStep.StatusCode);
     }
 
+    /// <summary>
+    /// #48, end to end: the sequential test above, fired all at once. Twenty second steps carry the same pending
+    /// cookie and the same valid code and are released together; exactly one opens a session, and every other one
+    /// is refused as an ordinary wrong or spent code (or, once the winner has closed the pending sign-in, as an
+    /// expired one) — a 401, never a 500.
+    /// <para>
+    /// <b>This is the contract end to end, not the reproducer.</b> Each second step makes several round trips
+    /// (the user, the pending sign-in, the stamp, the lockout) before it reaches the code, so how many of the
+    /// twenty arrive at the watermark together depends on the machine — on a loaded test server this passed
+    /// against the unfixed provider too. The race itself is reproduced, and its fix proved, directly against
+    /// the provider by <see cref="SpencerDenim.IntegrationTests.Identity.AuthenticatorCodeRaceTests"/>, which
+    /// the unfixed provider fails every time. What this test adds is that the whole sign-in, pending cookie
+    /// and all, keeps "one code, one session" and answers every loser with a 401 rather than a 500.
+    /// </para>
+    /// <para>
+    /// The lockout threshold is raised for this host so nineteen refusals do not lock the account part way
+    /// through. A lockout closes the pending sign-in from a losing request while the winner may be closing it
+    /// too, and whether that is safe under concurrency is #46's question (the failed-attempt counter race), not
+    /// this one. The lockout's own behaviour is covered by the sequential tests further down.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task Concurrent_second_steps_with_one_code_open_exactly_one_session()
+    {
+        const int requests = 20;
+        await using var host = await StartAsync(new Dictionary<string, string?>
+        {
+            ["AdminSecurity:LockoutMaxFailedAttempts"] = "1000",
+        });
+        var email = UniqueEmail("code-race");
+        await CreateStaffUserAsync(host, email);
+        var key = await EnrolThroughApiAsync(host, email);
+
+        using var raw = CreateClient(host, handleCookies: false);
+        using var login = await PostJsonAsync(raw, LoginUrl, new { email, password = Password });
+        Assert.True((await ReadJsonAsync(login)).GetProperty("twoFactorRequired").GetBoolean());
+        var pendingCookie = CookiePair(login, "sd_admin_2fa");
+
+        using var tokenResponse = await raw.GetAsync(new Uri(AntiforgeryUrl, UriKind.Relative), Ct);
+        var antiforgeryToken = (await ReadJsonAsync(tokenResponse)).GetProperty("token").GetString()!;
+        var antiforgeryCookie = CookiePair(tokenResponse, "sd_admin_xsrf");
+
+        // Enrolment used the current step; this is the next one, captured once and sent on every request.
+        var code = TotpTestCodes.Next(key, 1);
+        var sends = Enumerable.Range(0, requests).Select(_ =>
+        {
+            var request = new HttpRequestMessage(HttpMethod.Post, LoginTwoFactorUrl)
+            {
+                Content = JsonContent.Create(new { code, isRecoveryCode = false }),
+            };
+            request.Headers.Add("X-XSRF-TOKEN", antiforgeryToken);
+            request.Headers.Add("Cookie", $"{antiforgeryCookie}; {pendingCookie}");
+            return request;
+        }).ToList();
+
+        var responses = await Task.WhenAll(sends.Select(request => raw.SendAsync(request, Ct)));
+        try
+        {
+            var statuses = responses.Select(r => (int)r.StatusCode).OrderBy(s => s).ToList();
+            Assert.True(
+                responses.Count(r => r.StatusCode == HttpStatusCode.OK) == 1,
+                $"Expected exactly one 200; got [{string.Join(", ", statuses)}].");
+            Assert.Single(responses, r => CookiePairOrNull(r, "sd_admin_auth") is not null);
+
+            foreach (var refused in responses.Where(r => r.StatusCode != HttpStatusCode.OK))
+            {
+                Assert.True(
+                    refused.StatusCode == HttpStatusCode.Unauthorized,
+                    $"Expected every other request to be a 401; got [{string.Join(", ", statuses)}].");
+                var error = (await ReadJsonAsync(refused)).GetProperty("error").GetString();
+                Assert.True(
+                    error is "invalid_two_factor_code" or "two_factor_session_expired",
+                    $"Unexpected refusal '{error}'.");
+            }
+        }
+        finally
+        {
+            foreach (var response in responses)
+            {
+                response.Dispose();
+            }
+
+            foreach (var request in sends)
+            {
+                request.Dispose();
+            }
+        }
+    }
+
     [Fact]
     public async Task The_second_step_without_a_pending_sign_in_is_refused()
     {
@@ -678,13 +767,13 @@ public sealed class AdminTwoFactorEndpointTests(SqlServerDatabaseFixture sqlServ
 
     private static string UniqueEmail(string label) => $"{label}-{Guid.NewGuid():N}@example.com";
 
-    private async Task<WebApplicationFactory<Program>> StartAsync()
+    private async Task<WebApplicationFactory<Program>> StartAsync(IReadOnlyDictionary<string, string?>? configuration = null)
     {
         sqlServer.SkipIfUnavailable();
         await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, Ct);
 
         // The probe host is derived from (and owned by) this factory: disposing it disposes both.
-        var factory = new ApiFactory(sqlServer.ConnectionString);
+        var factory = new ApiFactory(sqlServer.ConnectionString, additionalConfiguration: configuration);
         return factory.WithWebHostBuilder(builder =>
             builder.ConfigureTestServices(services => services.AddTransient<IStartupFilter, ProbeEndpointsStartupFilter>()));
     }
