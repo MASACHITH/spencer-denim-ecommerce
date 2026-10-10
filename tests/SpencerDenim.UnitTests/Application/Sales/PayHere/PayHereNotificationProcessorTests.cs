@@ -132,6 +132,27 @@ public sealed class PayHereNotificationProcessorTests
         Assert.Equal("Processed", Assert.Single(arranged.Events.Marks).Outcome);
     }
 
+    /// <summary>
+    /// The first success was parked as an exception (the order had expired); a second, different PayHere
+    /// payment arrives for the same attempt. The order was not paid, so the banner must not say it was.
+    /// </summary>
+    [Fact]
+    public async Task A_second_charge_on_a_payment_parked_as_an_exception_does_not_claim_the_order_was_paid()
+    {
+        var arranged = new Arrangement();
+        arranged.Payments.Payment = PayHereSample.Payment(
+            PaymentStatus.CapturedRequiresRefund, OrderStatus.Expired, "999000111");
+        arranged.Settlements.Result = new PaymentSettlementResult.AlreadyHandled(PaymentStatus.CapturedRequiresRefund);
+
+        await arranged.ProcessAsync(PayHereSample.Notification());
+
+        var alert = Assert.Single(arranged.Alerts.Raised);
+
+        using var details = JsonDocument.Parse(alert.DetailsJson!);
+        Assert.Equal("order_not_payable", details.RootElement.GetProperty("reason").GetString());
+        Assert.DoesNotContain("already paid", alert.Title, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task A_notification_for_a_payment_the_store_does_not_know_is_unmatched()
     {

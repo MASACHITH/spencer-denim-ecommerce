@@ -116,6 +116,14 @@ the secret). Each save writes one audit row per changed key (the secret as `[sec
    `0000000000`, address `Not provided`, city `N/A` (a pickup order sends the store as the address and the
    district as the city). Each value is clipped (50/50/100/20/50).
 10. Seeded display name is the one proposed in #141 ("PayHere (card, eZ Cash, internet banking)").
+11. **The deadline is the expiry job's, not the claim's.** `SettleAsync`'s claim has no `PaymentDueAtUtc`
+    predicate (groundwork behaviour, shared with the bank flow), so a success notified after the due time but
+    before the next 5-minute expiry sweep still pays the order — its stock is still reserved, so paying it is
+    better than a refund. A success after the sweep has run becomes `CapturedRequiresRefund` as P8b says.
+12. **Refusals carry the host's generic status-code document** (`UseStatusCodePages`), not an empty body; it
+    names nothing of the request. 200 is empty. The integration test pins "nothing of the request in the body".
+13. **A second charge on a payment already parked as an exception** raises `order_not_payable`, not
+    `order_already_paid`: the order was not paid, and the banner must not send staff looking for a payment.
 
 ## Not done / open
 
@@ -167,6 +175,43 @@ the secret). Each save writes one audit row per changed key (the secret as `[sec
 9. **Going live.** New merchant ID and secret for the live domain, mode `live`, save; the next order's form
    posts to `www.payhere.lk`. No restart, no rebuild.
 
+## Expectations of the groundwork fix that is being rebased under this branch
+
+Written against the coordinator's note (2026-10-10): idempotency keys are printable ASCII (the key is
+`PayHere:{payment_id}:{status_code}` and both parts are shape-checked to ASCII before anything is stored, so no
+posted text can make one that is not; pinned by `The_idempotency_key_is_printable_ascii…` and
+`A_payment_id_written_in_non_ascii_digits_is_refused…`); the form action is `https://sandbox.payhere.lk/...` or
+`https://www.payhere.lk/...`, public host names (so the stricter `IsSafeAbsoluteUrl` accepts it); the provider
+code passed to `SettleAsync`/`RouteToExceptionAsync` is `PayHere` and matches the payment row; `ProviderTransactionId`
+and `ProviderReference` are at most 64 characters (column 100) and `FailureMessage` is clipped to 500. The late
+success on a Failed/Cancelled payment still closes the replacement attempt (it runs for exactly those statuses).
+**Re-run `PayHere*` after the rebase**; nothing here depends on the parts that change.
+
 ## Verification
 
-(See the end of this file — filled in after the runs.)
+All against the throwaway SQL Server container (127.0.0.1:38998), VSTest filters, no network.
+
+- `dotnet build SpencerDenim.sln`: 0 warnings, 0 errors (warnings are errors). CA5351 is suppressed in exactly one
+  place (`PayHereHash.Md5Upper`), with the reason.
+- **Unit: the whole project, 2,357 passed, 0 failed** (2,041 before this task on the groundwork). The PayHere
+  subset (`FullyQualifiedName~PayHere`) is 311, in: `PayHereHashTests` (known-answer vectors computed with an
+  independent MD5), `PayHereOrderReferenceTests`, `PayHereNotificationTests` (shape, allow-list, no card data),
+  `PayHereCheckoutFormTests` (field order, values, fallbacks, hash), `PayHereReadinessTests` (config gating, status),
+  `PayHereNotifyCommandHandlerTests` (verification order, nothing stored on refusal, replay),
+  `PayHereNotificationProcessorTests` (each status, second charge, retry ladder),
+  `UpdatePayHereSettingsCommandHandlerTests` (write-only secret, audit redaction, banner, permission, conflict),
+  `PayHereProviderTests`; plus the PAY-03 contract tests now run the provider (`PaymentProviderContractTests`).
+- **Integration: `FullyQualifiedName~PayHere`, 71 passed, 0 failed** — `PayHereNotifyTests` (the attack suite),
+  `PayHereCheckoutTests` (+ `PayHereWithoutPublicAddressTests`), `PayHereSettingsEndpointTests`. A wider run over
+  the PayHere classes and every suite this task touched or builds on (`SalesReferenceDataTests`,
+  `CheckoutEndpointTests`, `CheckoutPlacementStoreTests`, `AdminSettings*`, `SettingsSchemaAndSeedTests`,
+  `FreshDeploymentTests`, `AdminBankTransferEndpointTests`, `OrderPagePaymentAttemptTests`,
+  `OrderSettlementStoreTests`, `PaymentEventStoreTests`, `BankTransferReviewTests`, `OrderExpiryTests`,
+  `AdminAlert*`): **382 passed, 0 failed**. The whole integration suite was not run.
+  One failure on the way: a test expected an empty body on a 400; the host answers a generic status-code document
+  (nothing of the request in it). Assertion and wording corrected.
+- **Frontend (Node 24)**: storefront `order-page.spec.ts` + `payment-redirect.spec.ts` 117 passed (the order page
+  went from 59 to 69 cases, payment-redirect from 41 to 48); admin `settings/*.spec.ts` 58 passed (new
+  `payhere-panel.spec.ts` 17, 3 added to `settings-page.spec.ts`). `ng lint admin`, `ng lint storefront` clean;
+  production `ng build storefront` and `ng build admin` clean, no budget warning. The whole frontend suites were
+  not run.

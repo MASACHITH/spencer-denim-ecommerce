@@ -15,7 +15,8 @@ namespace SpencerDenim.Api.Endpoints.Sales;
 /// <see cref="PayHereRoutes.NotifyPath"/>; the reverse proxy already sends <c>/api</c> here.
 /// </para>
 /// <para>
-/// <b>The answers are bare status codes, and that is deliberate.</b> 200 means "stored; stop calling" — it is
+/// <b>The answers are bare status codes, and that is deliberate.</b> The body is empty for 200 and is the
+/// host's generic status-code document (no detail, nothing from the request) for the refusals. 200 means "stored; stop calling" — it is
 /// sent for a first delivery, a duplicate and a notification that names no payment of ours, so PayHere is
 /// never told which. 400 means "not a valid notification" — malformed, wrong merchant, or a signature that
 /// does not verify — with no reason in the body for a forger to learn from. 503 means "PayHere is not
@@ -66,7 +67,8 @@ internal static partial class PayHereEndpoints
                 + "md5sig. The signature and the merchant ID are verified first, in constant time, and "
                 + "nothing is stored for a request that fails either: 400. A verified notification is "
                 + "stored once per PayHere payment ID and status code and then applied: 200, also for a "
-                + "redelivery. 503 when PayHere is not configured. The body of every answer is empty.")
+                + "redelivery. 503 when PayHere is not configured. A refusal carries no reason and nothing "
+                + "from the request.")
             .DisableAntiforgery()
             .Produces(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status400BadRequest)

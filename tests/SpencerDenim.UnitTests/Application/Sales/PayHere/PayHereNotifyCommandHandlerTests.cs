@@ -68,6 +68,38 @@ public sealed class PayHereNotifyCommandHandlerTests
         Assert.Equal(1L, mark.EventId);
     }
 
+    /// <summary>
+    /// The event store takes printable ASCII keys only. The key is built from two fields that are shape-checked
+    /// to ASCII before anything is stored, so no posted text - however it is spelt - can make one that is not.
+    /// </summary>
+    [Theory]
+    [InlineData("2")]
+    [InlineData("-3")]
+    [InlineData("0")]
+    public async Task The_idempotency_key_is_printable_ascii_and_within_its_column(string status)
+    {
+        var arranged = new Arrangement();
+
+        await arranged.SendAsync(PayHereSample.Form(status: status));
+
+        var key = Assert.Single(arranged.Events.Recorded).IdempotencyKey;
+
+        Assert.All(key, character => Assert.InRange(character, ' ', '~'));
+        Assert.True(key.Length <= SpencerDenim.Application.Sales.Payments.PaymentEventKey.MaxLength);
+        Assert.Equal($"PayHere:{PayHereSample.PayHerePaymentId}:{status}", key);
+    }
+
+    [Fact]
+    public async Task A_payment_id_written_in_non_ascii_digits_is_refused_before_it_can_become_a_key()
+    {
+        var arranged = new Arrangement();
+
+        var result = await arranged.SendAsync(PayHereSample.Form(paymentId: "٣٢٠٠"));
+
+        Assert.IsType<PayHereNotifyResult.Malformed>(result);
+        AssertNothingHappened(arranged);
+    }
+
     [Fact]
     public async Task The_payload_that_is_stored_has_no_signature_and_no_card_data()
     {

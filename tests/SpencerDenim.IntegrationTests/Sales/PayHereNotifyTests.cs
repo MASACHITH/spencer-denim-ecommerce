@@ -134,7 +134,14 @@ public sealed class PayHereNotifyTests(SqlServerDatabaseFixture sqlServer) : Pay
             NotifyForm(placed.OrderReference, placed.GrandTotal, signature: new string('A', 32)));
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-        Assert.Equal(string.Empty, await response.Content.ReadAsStringAsync(Token));
+
+        // The host's generic 400 document (UseStatusCodePages) and nothing of the request: not the order, the
+        // amount, the signature or a reason a forger could learn from.
+        var body = await response.Content.ReadAsStringAsync(Token);
+        Assert.DoesNotContain(placed.OrderNumber, body, StringComparison.Ordinal);
+        Assert.DoesNotContain(MerchantId, body, StringComparison.Ordinal);
+        Assert.DoesNotContain("signature", body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("md5", body, StringComparison.OrdinalIgnoreCase);
 
         Assert.Equal(events, await PayHereEventCountAsync());
         await AssertStillUnpaidAsync(placed);
@@ -492,6 +499,43 @@ public sealed class PayHereNotifyTests(SqlServerDatabaseFixture sqlServer) : Pay
             var alert = Assert.Single(await AlertsAsync(placed.PublicId));
             Assert.Equal(AdminAlertSeverity.Warning, alert.Severity);
             Assert.DoesNotContain(secondId, alert.DetailsJson!, StringComparison.Ordinal);
+        }
+        finally
+        {
+            await DeleteAlertsAsync(placed.PublicId);
+        }
+    }
+
+    [Fact]
+    public async Task A_second_charge_on_a_payment_parked_as_an_exception_does_not_claim_the_order_was_paid()
+    {
+        await ConfigurePayHereAsync();
+        var placed = await PlacePayHereOrderAsync();
+
+        Assert.True(await ExpireAsync(placed.OrderId, DateTime.UtcNow.AddHours(3)));
+
+        try
+        {
+            using (var late = await PostNotifyAsync(NotifyForm(placed.OrderReference, placed.GrandTotal)))
+            {
+                Assert.Equal(HttpStatusCode.OK, late.StatusCode);
+            }
+
+            using (var again = await PostNotifyAsync(NotifyForm(placed.OrderReference, placed.GrandTotal)))
+            {
+                Assert.Equal(HttpStatusCode.OK, again.StatusCode);
+            }
+
+            // One banner for the late payment, one for the second charge - and the second does not say the
+            // order was paid, because it was not.
+            var alerts = await AlertsAsync(placed.PublicId);
+
+            Assert.Equal(2, alerts.Count);
+            Assert.Contains("order_expired", alerts[0].DetailsJson, StringComparison.Ordinal);
+            Assert.Contains("order_not_payable", alerts[1].DetailsJson, StringComparison.Ordinal);
+            Assert.DoesNotContain("already paid", alerts[1].Title, StringComparison.Ordinal);
+
+            Assert.Equal(OrderStatus.Expired, (await ReadOrderAsync(placed.PublicId)).Status);
         }
         finally
         {

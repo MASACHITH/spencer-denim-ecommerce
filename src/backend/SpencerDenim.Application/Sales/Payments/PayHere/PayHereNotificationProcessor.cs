@@ -264,8 +264,9 @@ public sealed class PayHereNotificationProcessor(
                     PayHereOutcomeKind.Applied,
                     $"The money was put on record as a payment exception ({routed.Reason}).");
 
-            case PaymentSettlementResult.AlreadyHandled:
-                return await ApplyDuplicateSuccessAsync(notification, payment, amount, now, cancellationToken);
+            case PaymentSettlementResult.AlreadyHandled handled:
+                return await ApplyDuplicateSuccessAsync(
+                    notification, payment, handled.PaymentStatus, amount, now, cancellationToken);
 
             default:
                 return new PayHereProcessingOutcome(
@@ -286,6 +287,7 @@ public sealed class PayHereNotificationProcessor(
     private async Task<PayHereProcessingOutcome> ApplyDuplicateSuccessAsync(
         PayHereNotification notification,
         PayHerePayment payment,
+        PaymentStatus settledStatus,
         decimal? amount,
         DateTime now,
         CancellationToken cancellationToken)
@@ -308,7 +310,14 @@ public sealed class PayHereNotificationProcessor(
                     PaymentProviderCodes.PayHere,
                     payment.OrderPublicId,
                     payment.OrderNumber,
-                    PaymentExceptionReasons.OrderAlreadyPaid,
+
+                    // "The order was already paid" is true when the payment that was handled is the settling
+                    // one (or has been refunded since). When it was parked as an exception instead, the order
+                    // was *not* paid, and saying so on a banner would send a person looking for a payment
+                    // that does not exist.
+                    settledStatus is PaymentStatus.CapturedRequiresRefund
+                        ? PaymentExceptionReasons.OrderNotPayable
+                        : PaymentExceptionReasons.OrderAlreadyPaid,
                     payment.Amount,
                     PayHereHash.Currency,
                     amount,
