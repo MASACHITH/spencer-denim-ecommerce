@@ -100,6 +100,44 @@ public sealed class KestrelApiHost : IAsyncDisposable
         return new KestrelApiHost(app, new Uri(address));
     }
 
+    /// <summary>
+    /// Starts a real Kestrel serving PayHere's notify endpoint, with <paramref name="handler"/> standing in for
+    /// the verification and the database.
+    /// <para>
+    /// For the one question a <c>TestServer</c> cannot answer about it: <b>is the request-body ceiling the
+    /// endpoint sets enforced by the transport?</b> The in-memory server has no body limit at all, so a test
+    /// of the 16 KB cap against it would pass whatever the endpoint did. The handler is a stub for the reason
+    /// the wishlist's is: a transport test must be able to fail on the transport and on nothing else.
+    /// </para>
+    /// </summary>
+    public static async Task<KestrelApiHost> StartPayHereNotifyAsync(
+        Application.Abstractions.Messaging.ICommandHandler<
+            Application.Sales.Payments.PayHere.PayHereNotifyCommand,
+            Application.Sales.Payments.PayHere.PayHereNotifyResult> handler)
+    {
+        ArgumentNullException.ThrowIfNull(handler);
+
+        var builder = WebApplication.CreateSlimBuilder();
+
+        builder.Logging.ClearProviders();
+        builder.WebHost.UseUrls("http://127.0.0.1:0");
+        builder.Services.AddSingleton(handler);
+
+        var app = builder.Build();
+        app.MapPayHereEndpoints();
+
+        await app.StartAsync();
+
+        var addresses = app.Services.GetRequiredService<IServer>().Features
+            .Get<IServerAddressesFeature>()
+            ?? throw new InvalidOperationException("Kestrel reported no addresses, so there is nothing to talk to.");
+
+        var address = addresses.Addresses.FirstOrDefault()
+            ?? throw new InvalidOperationException("Kestrel bound no address.");
+
+        return new KestrelApiHost(app, new Uri(address));
+    }
+
     /// <summary>A client addressing the real listener. Nothing is intercepted and nothing is in memory.</summary>
     public HttpClient CreateClient() => new() { BaseAddress = BaseAddress };
 
