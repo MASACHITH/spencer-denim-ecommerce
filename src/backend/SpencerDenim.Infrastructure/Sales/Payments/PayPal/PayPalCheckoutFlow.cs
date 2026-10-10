@@ -178,6 +178,15 @@ internal sealed partial class PayPalCheckoutFlow(
             case { Status: PaymentStatus.Initiated } open:
             {
                 var outcome = await processor.CaptureAsync(order, open, cancellationToken);
+
+                if (outcome == PayPalCaptureOutcome.NotPayable)
+                {
+                    // The claim was refused because the order changed between our read and the claim - most
+                    // often another return got there first and paid it. Say what the order is *now*, not
+                    // "can no longer be paid" to somebody whose order has just been paid.
+                    return new PayPalReturnResult(await HintNowAsync(orderPublicId, cancellationToken));
+                }
+
                 return new PayPalReturnResult(Hint(outcome));
             }
 
@@ -189,6 +198,19 @@ internal sealed partial class PayPalCheckoutFlow(
         }
 
         return new PayPalReturnResult(HintWithoutOpenPayment(order));
+    }
+
+    /// <summary>The sentence for the order as it stands now, read afresh.</summary>
+    private async Task<string> HintNowAsync(Guid orderPublicId, CancellationToken cancellationToken)
+    {
+        var now = await payments.FindOrderAsync(orderPublicId, cancellationToken);
+
+        return now?.Open?.Status switch
+        {
+            PaymentStatus.Capturing => PayPalPageHints.Processing,
+            PaymentStatus.Pending => PayPalPageHints.Pending,
+            _ => now is null ? PayPalPageHints.Closed : HintWithoutOpenPayment(now),
+        };
     }
 
     public async Task<PayPalReturnResult> CancelAsync(Guid orderPublicId, CancellationToken cancellationToken)
@@ -248,6 +270,10 @@ internal sealed partial class PayPalCheckoutFlow(
 
         return order.Latest?.Status switch
         {
+            // The order and its payments are two reads, so a payment can have settled between them: the order
+            // still says PendingPayment and its newest payment says Succeeded. A settled payment is a paid order.
+            PaymentStatus.Succeeded or PaymentStatus.PartiallyRefunded or PaymentStatus.Refunded =>
+                PayPalPageHints.Paid,
             PaymentStatus.CapturedRequiresRefund => PayPalPageHints.Received,
             PaymentStatus.Failed when order.Status == OrderStatus.PendingPayment => PayPalPageHints.Declined,
             PaymentStatus.Cancelled when order.Status == OrderStatus.PendingPayment => PayPalPageHints.Cancelled,

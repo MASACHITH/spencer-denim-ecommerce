@@ -73,8 +73,9 @@ internal sealed partial class PayPalCaptureProcessor(
 
         if (payment.ProviderReference is not { } paypalOrderId)
         {
-            // Nothing to capture: the buyer cannot have approved an order that was never created.
-            return PayPalCaptureOutcome.NotPayable;
+            // Nothing to capture: no PayPal order was ever created, so the buyer cannot have approved one.
+            // Said as it is - they came back without approving - and not as "can no longer be paid".
+            return PayPalCaptureOutcome.NotApproved;
         }
 
         var configured = await settings.ReadAsync(cancellationToken);

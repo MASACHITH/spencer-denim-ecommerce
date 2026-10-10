@@ -188,6 +188,17 @@ internal sealed partial class PayPalWebhookProcessor(
         // will be told.
         if (status is PayPalCaptureStatus.Refunded or PayPalCaptureStatus.PartiallyRefunded or PayPalCaptureStatus.Reversed)
         {
+            // Linked to its payment when that can be told, so the log reads by payment for reconciliation -
+            // but never a reason to fail: an event that names nothing we know is still recorded.
+            if (await payments.FindPaymentForEventAsync(
+                    webhookEvent.ResourceId,
+                    webhookEvent.RelatedOrderId,
+                    PayPalRequestIds.PaymentIdFromCustomId(webhookEvent.CustomId),
+                    cancellationToken) is { } known)
+            {
+                await events.LinkAsync(eventId, known.PaymentId, known.OrderId, cancellationToken);
+            }
+
             LogRefundOrReversal(logger, webhookEvent.EventType, eventId);
             return PaymentEventOutcome.Ignored;
         }
@@ -239,14 +250,15 @@ internal sealed partial class PayPalWebhookProcessor(
     {
         try
         {
-            if (!string.IsNullOrWhiteSpace(webhookEvent.EventId))
-            {
-                return PaymentEventKey.ForEvent(PaymentProviderCodes.PayPal, webhookEvent.EventId);
-            }
+            var key = !string.IsNullOrWhiteSpace(webhookEvent.EventId)
+                ? PaymentEventKey.ForEvent(PaymentProviderCodes.PayPal, webhookEvent.EventId)
+                : string.IsNullOrWhiteSpace(webhookEvent.ResourceId)
+                    ? null
+                    : PaymentEventKey.ForResource(PaymentProviderCodes.PayPal, webhookEvent.EventType, webhookEvent.ResourceId);
 
-            return string.IsNullOrWhiteSpace(webhookEvent.ResourceId)
-                ? null
-                : PaymentEventKey.ForResource(PaymentProviderCodes.PayPal, webhookEvent.EventType, webhookEvent.ResourceId);
+            // PayPal's ids are plain ASCII. Anything else in a "verified" body is not an id we can key on, and
+            // is refused here rather than left to fail inside the event store.
+            return key is not null && key.All(character => character is >= '!' and <= '~') ? key : null;
         }
         catch (ArgumentException)
         {

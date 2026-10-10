@@ -43,6 +43,7 @@ public sealed record PayPalRecoveryReport(
 internal sealed partial class PayPalCaptureRecovery(
     IPayPalPaymentStore payments,
     PayPalCaptureProcessor processor,
+    IPayPalSettingsReader settings,
     IClock clock,
     ILogger<PayPalCaptureRecovery> logger)
 {
@@ -61,6 +62,10 @@ internal sealed partial class PayPalCaptureRecovery(
             BatchSize,
             cancellationToken);
 
+        var recoveryHours = stuck.Count == 0
+            ? 0
+            : (await settings.ReadAsync(cancellationToken)).CaptureRecoveryMaxHours;
+
         int notDue = 0, applied = 0, failed = 0, released = 0, unreachable = 0, gaveUp = 0, errors = 0;
 
         foreach (var payment in stuck)
@@ -71,7 +76,11 @@ internal sealed partial class PayPalCaptureRecovery(
             // the time the payment is actually looked at.
             var current = clock.UtcNow.UtcDateTime;
 
-            if (!PayPalRecoverySchedule.IsDue(payment.CaptureStartedAtUtc, payment.LastAttemptAtUtc, current))
+            // **A payment past its recovery window is always due**, whatever the backoff says: the ladder is
+            // there to space the asking, and a window that has closed is a reason to ask one last time and then
+            // fail the payment - not to wait up to an hour more for the next rung.
+            if (!PayPalRecoverySchedule.IsDue(payment.CaptureStartedAtUtc, payment.LastAttemptAtUtc, current)
+                && !PayPalRecoverySchedule.WindowHasClosed(payment.CaptureStartedAtUtc, current, recoveryHours))
             {
                 notDue++;
                 continue;
