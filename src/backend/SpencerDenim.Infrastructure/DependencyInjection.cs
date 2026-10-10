@@ -37,6 +37,7 @@ using SpencerDenim.Infrastructure.Persistence.Seeding;
 using SpencerDenim.Infrastructure.Sales;
 using SpencerDenim.Infrastructure.Sales.Orders;
 using SpencerDenim.Infrastructure.Sales.Payments;
+using SpencerDenim.Infrastructure.Sales.Payments.PayPal;
 using SpencerDenim.Infrastructure.Settings;
 using SpencerDenim.Infrastructure.Time;
 using SpencerDenim.Application.Ops.Alerts.Abstractions;
@@ -255,6 +256,13 @@ public static class DependencyInjection
         // by code. PayPalProvider (W4-01) is one more AddScoped line on this list and nothing else.
         services.AddScoped<IPaymentProvider, BankTransferProvider>();
         services.AddScoped<IPaymentProviderRegistry, PaymentProviderRegistry>();
+
+        // PayPal (W4-01, PAY-02): the provider is this one line; the rest of what it needs (the gateway, the
+        // capture lifecycle, the webhook, the two jobs) is registered by AddPayPalPayments. The line stays
+        // here, written out, because PaymentProviderContractTests reads this file to prove every provider
+        // class is on the list.
+        services.AddScoped<IPaymentProvider, PayPalProvider>();
+        services.AddPayPalPayments();
 
         // Singleton, because "once" means once for the process: the provider itself is per request, and a
         // warning that fires per request is noise rather than a signal (see BankDetailsWarningOnce).

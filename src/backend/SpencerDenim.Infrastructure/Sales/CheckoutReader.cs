@@ -6,6 +6,7 @@ using SpencerDenim.Application.Sales.Cart.Contracts;
 using SpencerDenim.Application.Sales.Checkout.Abstractions;
 using SpencerDenim.Application.Sales.Checkout.Contracts;
 using SpencerDenim.Application.Sales.Orders.Contracts;
+using SpencerDenim.Application.Sales.Payments.Abstractions;
 using SpencerDenim.Domain.Catalog;
 using SpencerDenim.Domain.Media;
 using SpencerDenim.Domain.Reference;
@@ -37,7 +38,8 @@ namespace SpencerDenim.Infrastructure.Sales;
 internal sealed class CheckoutReader(
     AppDbContext dbContext,
     IOptions<CatalogOptions> options,
-    IClock clock) : ICheckoutReader
+    IClock clock,
+    IPaymentProviderRegistry paymentProviders) : ICheckoutReader
 {
     private readonly CatalogOptions _options = options.Value;
 
@@ -173,9 +175,28 @@ internal sealed class CheckoutReader(
         return row is null ? null : ToPickupLocation(row.location, row.district);
     }
 
+    /// <summary>
+    /// The payment methods a shopper may choose: the providers the shop has switched on
+    /// (<c>sales.PaymentProviders.IsEnabled</c>) <b>that can take a payment right now</b>.
+    /// </summary>
+    /// <remarks>
+    /// <b>Two questions, asked of two different owners (W4-01).</b> Whether a provider is <i>enabled</i> is
+    /// the shop's decision and lives in the table. Whether it is <i>available</i> is the provider's own fact —
+    /// PayPal needs credentials and an exchange rate updated within its age limit (doc 11 P8: "PayPal is hidden
+    /// at checkout when its rate is older than 7 days") — and is asked through
+    /// <see cref="IPaymentProvider.IsAvailableAsync"/>, which answers true for a provider with no such
+    /// conditions. This reader names no provider; it only declines to list one that says it cannot work.
+    /// <para>
+    /// A provider that is enabled but has <b>no code in this build</b> is still listed, as it always was, so
+    /// that <c>PlaceOrderCommandHandler</c>'s own refusal ("cannot be used yet") is the one a shopper reads.
+    /// Because the placement handler resolves the shopper's choice from this same list, a method that is
+    /// hidden here is also refused there.
+    /// </para>
+    /// </remarks>
     public async Task<IReadOnlyList<CheckoutPaymentMethod>> EnabledPaymentMethodsAsync(
-        CancellationToken cancellationToken) =>
-        await dbContext.PaymentProviders
+        CancellationToken cancellationToken)
+    {
+        var enabled = await dbContext.PaymentProviders
             .AsNoTracking()
             .Where(provider => provider.IsEnabled)
             .OrderBy(provider => provider.DisplayOrder)
@@ -185,6 +206,22 @@ internal sealed class CheckoutReader(
                 provider.DisplayName,
                 provider.CheckoutDescription))
             .ToListAsync(cancellationToken);
+
+        var offered = new List<CheckoutPaymentMethod>(enabled.Count);
+
+        foreach (var method in enabled)
+        {
+            if (paymentProviders.Find(method.Code) is { } provider
+                && !await provider.IsAvailableAsync(cancellationToken))
+            {
+                continue;
+            }
+
+            offered.Add(method);
+        }
+
+        return offered;
+    }
 
     public async Task<IReadOnlyList<CheckoutCartLine>> ReadCartAsync(
         int cartId,
