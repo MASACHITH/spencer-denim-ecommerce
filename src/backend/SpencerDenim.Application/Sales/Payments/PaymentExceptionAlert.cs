@@ -60,6 +60,9 @@ public static class PaymentExceptionAlert
     /// <summary>Doc 11 §4.3: <c>PaymentException</c> is a Warning.</summary>
     public const AdminAlertSeverity Severity = AdminAlertSeverity.Warning;
 
+    /// <summary>The longest currency text the details carry; an ISO 4217 code is three letters.</summary>
+    public const int ConfirmedCurrencyMaxLength = 8;
+
     /// <summary>Builds the row. <paramref name="nowUtc"/> is passed in so the caller's clock is the only clock.</summary>
     public static AdminAlert For(PaymentExceptionFacts facts, DateTime nowUtc)
     {
@@ -97,6 +100,7 @@ public static class PaymentExceptionAlert
             PaymentExceptionReasons.OrderCancelled => "the order had been cancelled",
             PaymentExceptionReasons.OrderAlreadyPaid => "the order was already paid",
             PaymentExceptionReasons.AmountMismatch => "the amount or currency did not match",
+            PaymentExceptionReasons.ProviderDataInvalid => "the provider's reference could not be stored",
             _ => "the order could not take payment",
         };
 
@@ -125,7 +129,11 @@ public static class PaymentExceptionAlert
 
             if (facts.ConfirmedCurrency is { Length: > 0 } currency)
             {
-                writer.WriteString("confirmedCurrency", currency);
+                // Clipped: an ISO code is three letters, and what a provider sends in its place is not
+                // something to copy into a table every Super Admin's banner reads.
+                writer.WriteString(
+                    "confirmedCurrency",
+                    currency.Length <= ConfirmedCurrencyMaxLength ? currency : currency[..ConfirmedCurrencyMaxLength]);
             }
 
             writer.WriteEndObject();

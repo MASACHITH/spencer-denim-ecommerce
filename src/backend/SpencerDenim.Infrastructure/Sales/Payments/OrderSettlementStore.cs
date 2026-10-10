@@ -64,12 +64,11 @@ internal sealed class OrderSettlementStore(
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(settlement);
-        RequireGatewayProvider(settlement.ProviderCode);
         ArgumentException.ThrowIfNullOrWhiteSpace(settlement.ConfirmedCurrency);
 
-        // Trimmed once, here: the column compares equal case-insensitively but not across leading space,
-        // and a notification handler that passes " PayPal" should not be told the payment does not exist.
-        var trimmed = settlement with { ProviderCode = settlement.ProviderCode.Trim() };
+        // Trimmed once, here: a notification handler that passes " PayPal" should not be told the payment
+        // does not exist. Nothing else about the spelling is forgiven; see ResolvePaymentAsync.
+        var trimmed = settlement with { ProviderCode = RequireGatewayProvider(settlement.ProviderCode) };
 
         return await SettlementTransaction.RunAsync(
             dbContext,
@@ -83,7 +82,6 @@ internal sealed class OrderSettlementStore(
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(routing);
-        RequireGatewayProvider(routing.ProviderCode);
 
         if (!PaymentExceptionReasons.All.Contains(routing.Reason))
         {
@@ -92,7 +90,7 @@ internal sealed class OrderSettlementStore(
                 nameof(routing));
         }
 
-        var trimmed = routing with { ProviderCode = routing.ProviderCode.Trim() };
+        var trimmed = routing with { ProviderCode = RequireGatewayProvider(routing.ProviderCode) };
 
         return await SettlementTransaction.RunAsync(
             dbContext,
@@ -102,22 +100,92 @@ internal sealed class OrderSettlementStore(
     }
 
     /// <summary>
-    /// A bank transfer is confirmed by a person, not by a notification: the approver, the audit row and the
-    /// <c>Orders.Approve</c> permission all belong to <see cref="BankTransferReviewStore"/>. Reaching this
-    /// store with that provider's code is a programming error in a caller, so it is refused loudly rather
-    /// than answered — an answer of "settled" would be a bank order paid with nobody's say-so.
+    /// The caller's provider code, trimmed — refused if it is the bank transfer's. The first of two guards;
+    /// <see cref="ResolvePaymentAsync"/> is the one that cannot be spelled around.
     /// </summary>
-    private static void RequireGatewayProvider(string providerCode)
+    private static string RequireGatewayProvider(string providerCode)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(providerCode);
 
-        if (string.Equals(providerCode.Trim(), PaymentProviderCodes.BankTransfer, StringComparison.OrdinalIgnoreCase))
+        var trimmed = providerCode.Trim();
+
+        if (IsBankTransfer(trimmed))
         {
-            throw new ArgumentException(
-                "A bank transfer is settled by staff through IBankTransferReviewStore, never by a "
-                + "provider's notification.",
-                nameof(providerCode));
+            throw BankTransferIsNotSettledHere(nameof(providerCode));
         }
+
+        return trimmed;
+    }
+
+    private static bool IsBankTransfer(string providerCode) =>
+        string.Equals(providerCode.Trim(), PaymentProviderCodes.BankTransfer, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// A bank transfer is confirmed by a person, not by a notification: the approver, the audit row and the
+    /// <c>Orders.Approve</c> permission all belong to <see cref="BankTransferReviewStore"/>. Reaching this
+    /// store for one is a programming error in a caller, so it is refused loudly rather than answered — an
+    /// answer of "settled" would be a bank order paid with nobody's say-so.
+    /// </summary>
+    private static ArgumentException BankTransferIsNotSettledHere(string parameterName) =>
+        new(
+            "A bank transfer is settled by staff through IBankTransferReviewStore, never by a "
+            + "provider's notification.",
+            parameterName);
+
+    /// <summary>
+    /// The payment, decided on **the stored row's provider code** and not on how the caller spelled it.
+    /// </summary>
+    /// <remarks>
+    /// <b>The first version looked the payment up with <c>ProviderCode = @code</c> and so let the database
+    /// compare the caller's text.</b> The column is <c>varchar</c> in a <c>Latin1_General_100_CI_AS_SC</c>
+    /// database — case-insensitive and <i>width</i>-insensitive — so a full-width "ＢａｎｋＴｒａｎｓｆｅｒ"
+    /// found the bank payment, passed a guard that compared the same text in C# and found it different, and
+    /// paid a bank order with no approver. Reading the row by its id and deciding in C# on what is
+    /// <i>stored</i> closes that for any spelling the collation might ever fold:
+    /// <list type="number">
+    /// <item><description>
+    /// A row whose code is the bank transfer's is refused with an <see cref="ArgumentException"/>,
+    /// whatever the caller said — the same refusal as passing the bank code itself.
+    /// </description></item>
+    /// <item><description>
+    /// Otherwise the caller's code must equal the row's <b>ordinally</b>. Anything else — another provider,
+    /// a different case, a look-alike — answers <see langword="null"/> (not found), the same as a payment
+    /// that does not exist, so the call cannot be used to ask which payments exist.
+    /// </description></item>
+    /// </list>
+    /// Every later statement uses the row's own code, so what is written is what is stored, never the
+    /// caller's spelling.
+    /// </remarks>
+    private async Task<PaymentRow?> ResolvePaymentAsync(
+        int paymentId,
+        string callerProviderCode,
+        CancellationToken cancellationToken)
+    {
+        var row = await dbContext.Payments
+            .AsNoTracking()
+            .Where(payment => payment.Id == paymentId)
+            .Select(payment => new PaymentRow(
+                payment.Id,
+                payment.OrderId,
+                payment.ProviderCode,
+                payment.Status,
+                payment.Amount,
+                payment.Currency,
+                payment.ProviderAmount,
+                payment.ProviderCurrency))
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (row is null)
+        {
+            return null;
+        }
+
+        if (IsBankTransfer(row.ProviderCode))
+        {
+            throw BankTransferIsNotSettledHere(nameof(callerProviderCode));
+        }
+
+        return string.Equals(row.ProviderCode, callerProviderCode, StringComparison.Ordinal) ? row : null;
     }
 
     /// <summary>Kept: the order was paid, or the money was put on record. Everything else changed nothing.</summary>
@@ -128,7 +196,7 @@ internal sealed class OrderSettlementStore(
         PaymentSettlement settlement,
         CancellationToken cancellationToken)
     {
-        var payment = await ReadPaymentAsync(settlement.PaymentId, settlement.ProviderCode, cancellationToken);
+        var payment = await ResolvePaymentAsync(settlement.PaymentId, settlement.ProviderCode, cancellationToken);
 
         if (payment is null)
         {
@@ -169,6 +237,27 @@ internal sealed class OrderSettlementStore(
                 cancellationToken);
         }
 
+        // What the provider sent has to fit the columns it will be written to. A payable order paid with an
+        // id that does not is **kept as an exception, not refused and not truncated into a settling payment**:
+        // the money has arrived, so it must be on record, and a transaction id that was cut or folded would
+        // sit in a unique index as a falsified reference on the row that settles the order.
+        var transactionId = CleanTransactionId(settlement.ProviderTransactionId);
+        var payerReference = CleanPayerReference(settlement.PayerReference);
+
+        if (transactionId.Unusable || payerReference.Unusable)
+        {
+            return await RecordExceptionAsync(
+                payment,
+                order,
+                PaymentExceptionReasons.ProviderDataInvalid,
+                settlement.ConfirmedAmount,
+                settlement.ConfirmedCurrency,
+                settlement.ProviderTransactionId,
+                settlement.PayerReference,
+                settlement.NowUtc,
+                cancellationToken);
+        }
+
         var transaction = dbContext.Database.CurrentTransaction
             ?? throw new InvalidOperationException("SettleAsync must run inside its transaction.");
 
@@ -198,7 +287,12 @@ internal sealed class OrderSettlementStore(
                 cancellationToken);
         }
 
-        var settled = await SettlePaymentAsync(payment, settlement, cancellationToken);
+        var settled = await SettlePaymentAsync(
+            payment,
+            settlement.NowUtc,
+            transactionId.Value,
+            payerReference.Value,
+            cancellationToken);
 
         if (settled != 1)
         {
@@ -219,12 +313,19 @@ internal sealed class OrderSettlementStore(
                 cancellationToken);
         }
 
-        // Doc 08 Appendix B1 — only ever closes something after a late success on an older attempt.
-        await effects.CloseOtherOpenAttemptsAsync(
-            payment.OrderId,
-            payment.Id,
-            settlement.NowUtc,
-            cancellationToken);
+        // Doc 08 Appendix B1 — closes something only after a late success on an older attempt, or a
+        // capture that completes after the customer retried. A payment that is itself the one open attempt
+        // (Initiated, Pending) has nothing beside it, so the ordinary success asks the database nothing: see
+        // CanHaveOtherOpenAttempt, and CloseOtherOpenAttemptsAsync for why this must not run needlessly
+        // while this transaction holds a row lock.
+        if (OrderSettlementEffects.CanHaveOtherOpenAttempt(payment.Status))
+        {
+            await effects.CloseOtherOpenAttemptsAsync(
+                payment.OrderId,
+                payment.Id,
+                settlement.NowUtc,
+                cancellationToken);
+        }
 
         // Stock first, then the number series — the order every Paid path uses; see
         // BankTransferReviewStore.ApproveAsync for the deadlock this ordering exists to prevent.
@@ -260,7 +361,7 @@ internal sealed class OrderSettlementStore(
         PaymentExceptionRouting routing,
         CancellationToken cancellationToken)
     {
-        var payment = await ReadPaymentAsync(routing.PaymentId, routing.ProviderCode, cancellationToken);
+        var payment = await ResolvePaymentAsync(routing.PaymentId, routing.ProviderCode, cancellationToken);
 
         if (payment is null)
         {
@@ -316,19 +417,21 @@ internal sealed class OrderSettlementStore(
     /// </remarks>
     private async Task<int> SettlePaymentAsync(
         PaymentRow payment,
-        PaymentSettlement settlement,
+        DateTime nowUtc,
+        string? transactionId,
+        string? payerReference,
         CancellationToken cancellationToken) =>
         await dbContext.Database.ExecuteSqlInterpolatedAsync(
             $"""
             UPDATE sales.Payments
                SET Status = {(byte)PaymentStatus.Succeeded},
                    IsOrderSettlement = 1,
-                   ProviderTransactionId = COALESCE({settlement.ProviderTransactionId}, ProviderTransactionId),
-                   PayerReference = COALESCE({settlement.PayerReference}, PayerReference),
+                   ProviderTransactionId = COALESCE({transactionId}, ProviderTransactionId),
+                   PayerReference = COALESCE({payerReference}, PayerReference),
                    FailureCode = NULL,
                    FailureMessage = NULL,
-                   CompletedAtUtc = {settlement.NowUtc},
-                   UpdatedAtUtc = {settlement.NowUtc}
+                   CompletedAtUtc = {nowUtc},
+                   UpdatedAtUtc = {nowUtc}
              WHERE Id = {payment.Id}
                AND OrderId = {payment.OrderId}
                AND ProviderCode = {payment.ProviderCode}
@@ -390,16 +493,23 @@ internal sealed class OrderSettlementStore(
                 cancellationToken);
         }
 
+        // **A provider anomaly must never prevent the exception being recorded.** Whatever the provider
+        // sent is made to fit the columns here — cut, or dropped with a note — instead of thrown on, because
+        // a long id would otherwise turn "money held for refund" into "String or binary data would be
+        // truncated" and the payment would be recorded nowhere.
+        var cleanTransactionId = CleanTransactionId(providerTransactionId);
+        var cleanPayerReference = CleanPayerReference(payerReference);
+
         var failureCode = isMismatch ? PaymentFailureCodes.AmountMismatch : null;
-        var failureMessage = Describe(reason);
+        var failureMessage = FailureMessage(reason, cleanTransactionId, cleanPayerReference);
 
         var routed = await dbContext.Database.ExecuteSqlInterpolatedAsync(
             $"""
             UPDATE sales.Payments
                SET Status = {(byte)PaymentStatus.CapturedRequiresRefund},
                    IsOrderSettlement = 0,
-                   ProviderTransactionId = COALESCE({providerTransactionId}, ProviderTransactionId),
-                   PayerReference = COALESCE({payerReference}, PayerReference),
+                   ProviderTransactionId = COALESCE({cleanTransactionId.Value}, ProviderTransactionId),
+                   PayerReference = COALESCE({cleanPayerReference.Value}, PayerReference),
                    FailureCode = {failureCode},
                    FailureMessage = {failureMessage},
                    CompletedAtUtc = {nowUtc},
@@ -482,30 +592,6 @@ internal sealed class OrderSettlementStore(
             payment.ProviderCurrency ?? payment.Currency,
             StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>
-    /// The payment, if it is this provider's. A payment of another provider answers the same as one that
-    /// does not exist, so the call cannot be used to ask which payments exist.
-    /// </summary>
-    private async Task<PaymentRow?> ReadPaymentAsync(
-        int paymentId,
-        string providerCode,
-        CancellationToken cancellationToken) =>
-        await dbContext.Payments
-            .AsNoTracking()
-            .Where(payment =>
-                payment.Id == paymentId
-                && payment.ProviderCode == providerCode)
-            .Select(payment => new PaymentRow(
-                payment.Id,
-                payment.OrderId,
-                payment.ProviderCode,
-                payment.Status,
-                payment.Amount,
-                payment.Currency,
-                payment.ProviderAmount,
-                payment.ProviderCurrency))
-            .FirstOrDefaultAsync(cancellationToken);
-
     private async Task<OrderSnapshot?> ReadOrderAsync(int orderId, CancellationToken cancellationToken) =>
         await dbContext.Orders
             .AsNoTracking()
@@ -522,8 +608,91 @@ internal sealed class OrderSettlementStore(
             PaymentExceptionReasons.OrderAlreadyPaid => "Payment received for an order that was already paid.",
             PaymentExceptionReasons.AmountMismatch =>
                 "The amount or currency received did not match what was requested.",
+            PaymentExceptionReasons.ProviderDataInvalid =>
+                "Payment received, but the provider's references could not be stored as given, so it was not applied.",
             _ => "Payment received for an order that could not take payment.",
         };
+
+    /// <summary>
+    /// The reason, plus a note for each reference that was not stored as given — what staff need to find the
+    /// money at the provider when the row cannot carry the id.
+    /// </summary>
+    private static string FailureMessage(string reason, CleanedText transactionId, CleanedText payerReference)
+    {
+        var message = Describe(reason);
+
+        if (transactionId.Unusable)
+        {
+            message += " The provider's transaction id could not be stored as given; it begins: "
+                + Excerpt(transactionId.Original) + ".";
+        }
+
+        if (payerReference.Unusable)
+        {
+            message += " The payer reference was longer than " + Payment.PayerReferenceMaxLength
+                .ToString(System.Globalization.CultureInfo.InvariantCulture) + " characters and was cut.";
+        }
+
+        return message.Length <= Payment.FailureMessageMaxLength
+            ? message
+            : message[..Payment.FailureMessageMaxLength];
+    }
+
+    /// <summary>
+    /// <c>Payments.ProviderTransactionId</c> as it can be stored: <c>varchar(100)</c> and part of a unique
+    /// index, so it must be short and printable ASCII — which every real gateway's id is. Anything else is
+    /// <b>dropped, not repaired</b>: a truncated id could collide with another payment's, and a folded one
+    /// (non-ASCII text becomes <c>?</c> in a <c>varchar</c>) already does.
+    /// </summary>
+    private static CleanedText CleanTransactionId(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return new CleanedText(null, Unusable: false, Original: null);
+        }
+
+        var text = raw.Trim();
+
+        return text.Length <= Payment.ProviderTransactionIdMaxLength && text.All(IsPrintableAscii)
+            ? new CleanedText(text, Unusable: false, text)
+            : new CleanedText(null, Unusable: true, raw);
+    }
+
+    /// <summary>
+    /// <c>Payments.PayerReference</c> as it can be stored: <c>nvarchar(100)</c>, so any text, cut to length.
+    /// <c>Unusable</c> says it was cut; the settlement path treats that as a provider anomaly and the
+    /// exception path just stores the cut value.
+    /// </summary>
+    private static CleanedText CleanPayerReference(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return new CleanedText(null, Unusable: false, Original: null);
+        }
+
+        var text = raw.Trim();
+
+        return text.Length <= Payment.PayerReferenceMaxLength
+            ? new CleanedText(text, Unusable: false, text)
+            : new CleanedText(text[..Payment.PayerReferenceMaxLength], Unusable: true, raw);
+    }
+
+    private static bool IsPrintableAscii(char c) => c is >= '!' and <= '~';
+
+    /// <summary>The start of an unusable id, safe to print: at most 60 characters, anything else shown as <c>?</c>.</summary>
+    private static string Excerpt(string? raw)
+    {
+        var text = (raw ?? string.Empty).Trim();
+        var head = text.Length <= 60 ? text : text[..60];
+
+        return new string(head.Select(c => IsPrintableAscii(c) ? c : '?').ToArray());
+    }
+
+    /// <summary>A provider-sent reference after it has been made to fit its column.</summary>
+    /// <param name="Value">What to store, or null for nothing.</param>
+    /// <param name="Unusable">True when what was sent could not be stored as given.</param>
+    /// <param name="Original">What was sent, for the note staff read.</param>
+    private readonly record struct CleanedText(string? Value, bool Unusable, string? Original);
 
     /// <summary>The caller's note, or the default, clipped to the history column.</summary>
     private static string Clip(string? note, string fallback)

@@ -209,6 +209,15 @@ public static class PaymentExceptionReasons
     /// </summary>
     public const string AmountMismatch = "amount_mismatch";
 
+    /// <summary>
+    /// The provider's transaction id or payer reference cannot be stored as given — longer than its column,
+    /// or (for the transaction id) not printable ASCII, which a <c>varchar</c> column in a unique index
+    /// would fold into a collision. <b>The money has arrived and is kept as an exception rather than
+    /// refused</b>: a provider anomaly must never be a reason for a payment to go unrecorded. The unusable
+    /// id is not stored; the payment's <c>FailureMessage</c> says so and quotes the start of it.
+    /// </summary>
+    public const string ProviderDataInvalid = "provider_data_invalid";
+
     /// <summary>Every reason, for validation.</summary>
     public static IReadOnlyList<string> All { get; } =
     [
@@ -217,6 +226,7 @@ public static class PaymentExceptionReasons
         OrderAlreadyPaid,
         OrderNotPayable,
         AmountMismatch,
+        ProviderDataInvalid,
     ];
 }
 

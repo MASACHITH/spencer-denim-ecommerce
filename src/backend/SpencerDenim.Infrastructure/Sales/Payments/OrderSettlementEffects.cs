@@ -363,20 +363,52 @@ internal sealed class OrderSettlementEffects(
             wasLatePayment));
 
     /// <summary>
-    /// Doc 08 Appendix B1: when a payment pays the order, any <b>other</b> attempt still open
-    /// (Initiated or Pending) is closed in the same transaction — <c>Cancelled</c>, the status doc 08 §4.3
-    /// gives an abandoned attempt.
+    /// Whether a payment that is about to settle, read at this <paramref name="statusBeforeSettling"/>, can
+    /// have another attempt still open beside it — which is the only case
+    /// <see cref="CloseOtherOpenAttemptsAsync"/> has anything to do.
     /// </summary>
     /// <remarks>
-    /// <b>Only reachable from a late success on an older attempt</b> (Failed or Cancelled to Succeeded,
-    /// R1), where a newer open attempt can exist beside the one that has just been paid; a bank approval
-    /// settles the one open row (<c>UX_Payments_OneOpen</c> allows only one) and has nothing to close.
+    /// <c>UX_Payments_OneOpen</c> allows at most one Initiated-or-Pending row per order, so a payment that is
+    /// itself Initiated or Pending is the open attempt and nothing else is. Every other status the settlement
+    /// accepts is <i>outside</i> that index, and a second attempt can be open beside it:
+    /// <c>Failed</c> / <c>Cancelled</c> / <c>Expired</c> (doc 08 Appendix B1: a late success on an older
+    /// attempt, after the customer opened a newer one) and <c>Capturing</c> (which the index leaves out
+    /// on purpose — capture claimed, lock lapsed, customer retries, then the original capture completes;
+    /// <c>PaymentConfiguration</c> describes the sequence). The ordinary success on an Initiated payment
+    /// asks the database nothing.
+    /// </remarks>
+    public static bool CanHaveOtherOpenAttempt(PaymentStatus statusBeforeSettling) =>
+        statusBeforeSettling is PaymentStatus.Capturing
+            or PaymentStatus.Failed
+            or PaymentStatus.Cancelled
+            or PaymentStatus.Expired;
+
+    /// <summary>
+    /// Doc 08 Appendix B1: when a payment pays the order, any <b>other</b> attempt still open
+    /// (Initiated or Pending) is closed in the same transaction — <c>Cancelled</c>, the status doc 08 §4.3
+    /// gives an abandoned attempt. Call it only when <see cref="CanHaveOtherOpenAttempt"/> says there can be
+    /// one.
+    /// </summary>
+    /// <remarks>
     /// "Newer" in the note and "other" here are the same set: an open attempt older than the paying one
     /// cannot exist, because the paying one would have been blocked from opening beside it.
     /// <para>
     /// Statuses 0 and 1 only — <c>Capturing</c> (2) is deliberately left alone. A capture in flight is
     /// money the shop does not yet know about, and cancelling its row would hide it; it resolves through
     /// its own apply, and becomes an exception payment when it finds the order paid.
+    /// </para>
+    /// <para>
+    /// <b>The index hint is not tuning, it is what makes this statement safe to run while this transaction
+    /// holds a row lock — a deadlock the tester measured.</b> This transaction has already updated its own
+    /// payment row, so it holds an exclusive lock on it. Without the hint the optimiser, on a small table,
+    /// answers <c>OrderId = @o AND Id &lt;&gt; @p</c> with a range seek on the clustered key
+    /// (<c>Id &lt; @p OR Id &gt; @p</c>) — in effect a scan of <c>sales.Payments</c> — and two settlements of
+    /// <i>different</i> orders each scan into the row the other has locked. Measured: two transactions that
+    /// each update their own payment and then run this statement deadlocked 40 times in 40 without the
+    /// hint and 0 in 40 with it; twelve settlements in parallel produced 16 to 31 deadlocks per run and one
+    /// call that ran out of its three retries. <c>IX_Payments_OrderId</c> confines the statement to the rows
+    /// of its own order, whose lock order the order claim already serialises. (Doc 08 §1.6 DB7 is why the
+    /// index exists: its filtered siblings are not matched by <c>OrderId = @o</c> alone.)
     /// </para>
     /// </remarks>
     public async Task<int> CloseOtherOpenAttemptsAsync(
@@ -386,13 +418,14 @@ internal sealed class OrderSettlementEffects(
         CancellationToken cancellationToken) =>
         await dbContext.Database.ExecuteSqlInterpolatedAsync(
             $"""
-            UPDATE sales.Payments
+            UPDATE p
                SET Status = {(byte)PaymentStatus.Cancelled},
                    CompletedAtUtc = {nowUtc},
                    UpdatedAtUtc = {nowUtc}
-             WHERE OrderId = {orderId}
-               AND Id <> {exceptPaymentId}
-               AND Status IN ({(byte)PaymentStatus.Initiated}, {(byte)PaymentStatus.Pending});
+              FROM sales.Payments AS p WITH (INDEX(IX_Payments_OrderId))
+             WHERE p.OrderId = {orderId}
+               AND p.Id <> {exceptPaymentId}
+               AND p.Status IN ({(byte)PaymentStatus.Initiated}, {(byte)PaymentStatus.Pending});
             """,
             cancellationToken);
 

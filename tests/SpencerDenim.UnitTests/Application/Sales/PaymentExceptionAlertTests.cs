@@ -65,6 +65,7 @@ public sealed class PaymentExceptionAlertTests
     [InlineData(PaymentExceptionReasons.OrderAlreadyPaid, "the order was already paid")]
     [InlineData(PaymentExceptionReasons.AmountMismatch, "the amount or currency did not match")]
     [InlineData(PaymentExceptionReasons.OrderNotPayable, "the order could not take payment")]
+    [InlineData(PaymentExceptionReasons.ProviderDataInvalid, "the provider's reference could not be stored")]
     public void Every_reason_has_its_own_wording(string reason, string expected)
     {
         var alert = PaymentExceptionAlert.For(Facts(reason), Now);
@@ -127,6 +128,20 @@ public sealed class PaymentExceptionAlertTests
                 "confirmedCurrency",
             ],
             document.RootElement.EnumerateObject().Select(property => property.Name).ToArray());
+    }
+
+    [Fact]
+    public void A_currency_that_is_not_a_currency_code_is_clipped_in_the_details()
+    {
+        // What a provider sends in place of "USD" is not something to copy into a table every Super Admin's
+        // banner reads.
+        var alert = PaymentExceptionAlert.For(Facts(confirmedCurrency: new string('C', 500)), Now);
+
+        using var document = JsonDocument.Parse(alert.DetailsJson!);
+
+        Assert.Equal(
+            new string('C', PaymentExceptionAlert.ConfirmedCurrencyMaxLength),
+            document.RootElement.GetProperty("confirmedCurrency").GetString());
     }
 
     [Fact]
