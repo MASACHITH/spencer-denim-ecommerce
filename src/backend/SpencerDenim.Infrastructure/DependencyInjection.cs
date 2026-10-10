@@ -285,6 +285,9 @@ public static class DependencyInjection
         // effects.
         services.AddScoped<IOrderSettlementStore, OrderSettlementStore>();
 
+        // IPaymentEventStore: the provider event log, once per idempotency key (doc 08 DB13).
+        services.AddScoped<IPaymentEventStore, PaymentEventStore>();
+
         // The admin orders screen (W3-04, ADM-09, doc 11 P9): the list and the detail, the four fulfilment
         // transitions, the couriers the client fills in, and the two settings groups an invoice and the
         // auto-deliver job read.
