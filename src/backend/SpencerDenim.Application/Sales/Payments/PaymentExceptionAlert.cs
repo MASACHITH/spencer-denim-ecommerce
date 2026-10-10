@@ -81,12 +81,15 @@ public static class PaymentExceptionAlert
         };
     }
 
-    /// <summary>One sentence of facts, clipped to the column. The remedy is the screen's to say.</summary>
+    /// <summary>
+    /// One sentence of facts, clipped to the column. The remedy is the screen's to say - except for the one
+    /// reason whose remedy is not the obvious one (see <see cref="Remedy"/>).
+    /// </summary>
     private static string Title(PaymentExceptionFacts facts)
     {
         var title = string.Create(
             CultureInfo.InvariantCulture,
-            $"Payment received but not applied to order {facts.OrderNumber}: {Describe(facts.Reason)} (payment {facts.PaymentId})");
+            $"Payment received but not applied to order {facts.OrderNumber}: {Describe(facts.Reason)} (payment {facts.PaymentId}){Remedy(facts.Reason)}");
 
         return title.Length <= AdminAlert.TitleMaxLength
             ? title
@@ -103,6 +106,17 @@ public static class PaymentExceptionAlert
             PaymentExceptionReasons.ProviderDataInvalid => "the provider's reference could not be stored",
             _ => "the order could not take payment",
         };
+
+    /// <summary>
+    /// What to do, for the one reason where the answer is not the usual one. A payment whose reference could
+    /// not be stored is **not** one to accept as it stands - the row would carry no way to find the money at
+    /// the provider - so the alert says to check it there first. The other reasons say nothing of the kind:
+    /// what to do about those is the screen's to say (see <see cref="Title"/>).
+    /// </summary>
+    private static string Remedy(string reason) =>
+        reason == PaymentExceptionReasons.ProviderDataInvalid
+            ? ". Check it with the provider, then refund it or record the reference by hand."
+            : string.Empty;
 
     /// <summary>Fixed key order, so a test can assert the whole document.</summary>
     private static string Details(PaymentExceptionFacts facts)

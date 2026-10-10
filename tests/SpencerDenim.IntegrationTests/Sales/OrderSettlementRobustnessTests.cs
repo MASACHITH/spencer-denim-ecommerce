@@ -91,8 +91,8 @@ public sealed class OrderSettlementRobustnessTests(SqlServerDatabaseFixture sqlS
     /// </summary>
     /// <remarks>
     /// An exclusive lock on order B's payment row is held in an open transaction on a second connection, then
-    /// order A is settled. A's payment starts <c>Capturing</c> or <c>Failed</c> so that the close-other-attempts
-    /// statement runs; with it unhinted it blocks here, with <c>IX_Payments_OrderId</c> it never looks at B.
+    /// order A is settled. The close-other-attempts statement runs on every settlement, whatever status A's
+    /// payment starts in; unhinted it blocks here, with <c>IX_Payments_OrderId</c> it never looks at B.
     /// </remarks>
     [Theory]
     [InlineData(PaymentStatus.Initiated)]
@@ -164,24 +164,99 @@ public sealed class OrderSettlementRobustnessTests(SqlServerDatabaseFixture sqlS
         Assert.Equal(PaymentStatus.Cancelled, row.Payments.Single(candidate => candidate.Id == newer).Status);
     }
 
-    [Theory]
-    [InlineData(PaymentStatus.Initiated, false)]
-    [InlineData(PaymentStatus.Pending, false)]
-    [InlineData(PaymentStatus.Capturing, true)]
-    [InlineData(PaymentStatus.Failed, true)]
-    [InlineData(PaymentStatus.Cancelled, true)]
-    [InlineData(PaymentStatus.Expired, true)]
-    [InlineData(PaymentStatus.Succeeded, false)]
-    [InlineData(PaymentStatus.CapturedRequiresRefund, false)]
-    public void Only_a_payment_outside_the_one_open_index_can_have_another_attempt_beside_it(
-        PaymentStatus status,
-        bool expected)
+    /// <summary>
+    /// <b>The race the status gate lost, made to happen.</b> The settlement reads payment A as Initiated, then
+    /// blocks on the order row, which a retry flow (it locks the order first) is holding. That flow cancels A,
+    /// opens a newer attempt B and commits. The settlement then pays A — and B, opened after its first read,
+    /// must be closed in the same Paid transaction (doc 08 Appendix B1), which is only so if the close
+    /// statement does not trust what the settlement read before it had the lock.
+    /// </summary>
+    [Fact]
+    public async Task An_attempt_opened_while_the_settlement_waited_for_the_order_is_closed_with_it()
     {
-        // UX_Payments_OneOpen allows one Initiated-or-Pending row per order, so a payment that is one of
-        // those is the open attempt. The settled statuses never reach the question.
-        Assert.Equal(
-            expected,
-            SpencerDenim.Infrastructure.Sales.Payments.OrderSettlementEffects.CanHaveOtherOpenAttempt(status));
+        var arranged = await PlaceProviderOrderAsync();
+
+        await using var holder = new SqlConnection(SqlServer.ConnectionString);
+        await holder.OpenAsync(Token);
+
+        await using var transaction = (SqlTransaction)await holder.BeginTransactionAsync(Token);
+
+        int holderSpid;
+        Task<PaymentSettlementResult> settling;
+
+        try
+        {
+            // The retry flow's first move: lock the order row.
+            await using (var lockOrder = holder.CreateCommand())
+            {
+                lockOrder.Transaction = transaction;
+                lockOrder.CommandText = "UPDATE sales.Orders SET UpdatedAtUtc = SYSUTCDATETIME() WHERE Id = @id;";
+                lockOrder.Parameters.AddWithValue("@id", arranged.OrderId);
+
+                // The arrangement, asserted: the lock is held on exactly the row meant.
+                Assert.Equal(1, await lockOrder.ExecuteNonQueryAsync(Token));
+            }
+
+            await using (var spid = holder.CreateCommand())
+            {
+                spid.Transaction = transaction;
+                spid.CommandText = "SELECT @@SPID;";
+                holderSpid = Convert.ToInt32(await spid.ExecuteScalarAsync(Token), CultureInfo.InvariantCulture);
+            }
+
+            settling = Task.Run(() => SettleAsync(arranged), Token);
+
+            // It has read the payment (Initiated) and is now waiting on the order row.
+            await WaitUntilBlockedByAsync(holderSpid);
+
+            // The retry: cancel the abandoned attempt, open a newer one, commit.
+            await using (var retry = holder.CreateCommand())
+            {
+                retry.Transaction = transaction;
+                retry.CommandText =
+                    """
+                    UPDATE sales.Payments SET Status = @cancelled WHERE Id = @id;
+                    INSERT INTO sales.Payments (OrderId, ProviderCode, Status, Amount, ProviderReference)
+                         SELECT OrderId, ProviderCode, @initiated, Amount, @reference
+                           FROM sales.Payments WHERE Id = @id;
+                    """;
+                retry.Parameters.AddWithValue("@cancelled", (byte)PaymentStatus.Cancelled);
+                retry.Parameters.AddWithValue("@initiated", (byte)PaymentStatus.Initiated);
+                retry.Parameters.AddWithValue("@id", arranged.PaymentId);
+                retry.Parameters.AddWithValue("@reference", SalesRowWriter.Unique("PP-RETRY-"));
+
+                await retry.ExecuteNonQueryAsync(Token);
+            }
+
+            await transaction.CommitAsync(Token);
+        }
+        finally
+        {
+            // A transaction left open would hold the order for the rest of the run.
+            if (transaction.Connection is not null)
+            {
+                await transaction.RollbackAsync(CancellationToken.None);
+            }
+        }
+
+        var result = await settling.WaitAsync(TimeSpan.FromSeconds(60), Token);
+
+        Assert.IsType<PaymentSettlementResult.Settled>(result);
+
+        var row = await ReadOrderAsync(arranged.PublicId);
+        Assert.Equal(OrderStatus.Paid, row.Status);
+        Assert.Equal(2, row.Payments.Count);
+
+        // A, read as Initiated and cancelled behind its back, is the one that settled (R1: a late success on
+        // a Cancelled payment is not a duplicate)...
+        var paid = row.Payments.Single(candidate => candidate.Id == arranged.PaymentId);
+        Assert.Equal(PaymentStatus.Succeeded, paid.Status);
+        Assert.True(paid.IsOrderSettlement);
+
+        // ...and B, which did not exist when it was read, is closed in the same transaction.
+        var newer = row.Payments.Single(candidate => candidate.Id != arranged.PaymentId);
+        Assert.Equal(PaymentStatus.Cancelled, newer.Status);
+        Assert.False(newer.IsOrderSettlement);
     }
 
     // ---------------------------------------------------------------------------------------------------
@@ -339,8 +414,9 @@ public sealed class OrderSettlementRobustnessTests(SqlServerDatabaseFixture sqlS
     }
 
     /// <summary>
-    /// A payable order paid with an unusable id is not refused and not quietly settled with a falsified
-    /// reference: the money is on record as an exception, with a reason that says why.
+    /// A <b>payable</b> order paid with a transaction id that cannot be stored is not refused and not quietly
+    /// settled with a falsified reference: the money is on record as an exception, with a reason that says
+    /// why — and with the claim on the order undone, so the order is exactly as payable as it was.
     /// </summary>
     [Theory]
     [InlineData("ascii-too-long")]
@@ -370,24 +446,34 @@ public sealed class OrderSettlementRobustnessTests(SqlServerDatabaseFixture sqlS
 
             var row = await ReadOrderAsync(arranged.PublicId);
 
-            // The order is exactly as it was: payable, reserved, no invoice, no deduction.
+            // The order is exactly as it was: payable, reserved, no invoice, no deduction — the claim made
+            // before the id was looked at went back to the savepoint.
             Assert.Equal(OrderStatus.PendingPayment, row.Status);
             Assert.Equal(OrderStockState.Reserved, row.StockState);
+            Assert.Null(row.PaidAtUtc);
             Assert.Null(row.InvoiceNumber);
             Assert.Equal(stockBefore, await StockAsync(arranged.VariantId));
             Assert.Equal(seriesBefore, await InvoiceSeriesNextValueAsync());
+            Assert.DoesNotContain(row.StatusHistory, entry => entry.ToStatus == OrderStatus.Paid);
 
             var payment = Assert.Single(row.Payments);
             Assert.Equal(PaymentStatus.CapturedRequiresRefund, payment.Status);
             Assert.False(payment.IsOrderSettlement);
             Assert.Null(payment.ProviderTransactionId);
-
-            // Not AMOUNT_MISMATCH: staff may accept this one once they have looked.
             Assert.Null(payment.FailureCode);
+
+            // What staff are told: check it with the provider, then refund it or record the reference by
+            // hand. Not "accept" - the row would carry no way to find the money at the provider.
             Assert.Contains("could not be stored", payment.FailureMessage!, StringComparison.Ordinal);
+            Assert.Contains("Verify the payment with the provider", payment.FailureMessage, StringComparison.Ordinal);
+            Assert.Contains("refund it or record the reference by hand", payment.FailureMessage, StringComparison.Ordinal);
+            Assert.DoesNotContain("accept", payment.FailureMessage, StringComparison.OrdinalIgnoreCase);
 
             var alert = Assert.Single(await AlertsAsync(arranged.PublicId));
             Assert.Contains("\"reason\":\"provider_data_invalid\"", alert.DetailsJson, StringComparison.Ordinal);
+            Assert.Contains("Check it with the provider", alert.Title, StringComparison.Ordinal);
+            Assert.Contains("refund it or record the reference by hand", alert.Title, StringComparison.Ordinal);
+            Assert.DoesNotContain("accept", alert.Title, StringComparison.OrdinalIgnoreCase);
         }
         finally
         {
@@ -395,8 +481,13 @@ public sealed class OrderSettlementRobustnessTests(SqlServerDatabaseFixture sqlS
         }
     }
 
+    /// <summary>
+    /// <b>An unusable id must not hide the more useful fact.</b> The order is looked at first: an order that has
+    /// expired is reported as expired, and one that is already paid as already paid, with the id dropped from
+    /// the row and a note saying so — "provider data invalid" is only for an order that could have been paid.
+    /// </summary>
     [Fact]
-    public async Task An_unusable_id_on_an_order_that_has_expired_is_still_recorded()
+    public async Task An_unusable_id_on_an_order_that_has_expired_is_reported_as_expired()
     {
         var arranged = await PlaceProviderOrderAsync();
         Assert.True(await ExpireAsync(arranged.OrderId));
@@ -405,12 +496,51 @@ public sealed class OrderSettlementRobustnessTests(SqlServerDatabaseFixture sqlS
         {
             var result = await SettleAsync(arranged, transactionId: LongId);
 
-            // Recorded, whichever reason wins; what matters is that the anomaly did not stop it.
-            Assert.IsType<PaymentSettlementResult.CapturedRequiresRefund>(result);
-            Assert.Equal(
-                PaymentStatus.CapturedRequiresRefund,
-                Assert.Single((await ReadOrderAsync(arranged.PublicId)).Payments).Status);
-            Assert.Single(await AlertsAsync(arranged.PublicId));
+            var routed = Assert.IsType<PaymentSettlementResult.CapturedRequiresRefund>(result);
+            Assert.Equal(PaymentExceptionReasons.OrderExpired, routed.Reason);
+
+            var payment = Assert.Single((await ReadOrderAsync(arranged.PublicId)).Payments);
+            Assert.Equal(PaymentStatus.CapturedRequiresRefund, payment.Status);
+            Assert.Null(payment.ProviderTransactionId);
+            Assert.Contains("expired", payment.FailureMessage!, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("could not be stored as given", payment.FailureMessage, StringComparison.Ordinal);
+
+            var alert = Assert.Single(await AlertsAsync(arranged.PublicId));
+            Assert.Contains("\"reason\":\"order_expired\"", alert.DetailsJson, StringComparison.Ordinal);
+        }
+        finally
+        {
+            await DeleteAlertsAsync(arranged.PublicId);
+        }
+    }
+
+    [Fact]
+    public async Task An_unusable_id_on_an_order_that_is_already_paid_is_reported_as_already_paid()
+    {
+        var arranged = await PlaceProviderOrderAsync();
+        Assert.IsType<PaymentSettlementResult.Settled>(await SettleAsync(arranged));
+
+        var extra = await InsertPaymentAsync(arranged.OrderId, PaymentStatus.Initiated);
+        var orderBefore = await ReadOrderAsync(arranged.PublicId);
+
+        try
+        {
+            var result = await SettleAsync(arranged, paymentId: extra, transactionId: LongId);
+
+            var routed = Assert.IsType<PaymentSettlementResult.CapturedRequiresRefund>(result);
+            Assert.Equal(PaymentExceptionReasons.OrderAlreadyPaid, routed.Reason);
+
+            var row = await ReadOrderAsync(arranged.PublicId);
+            Assert.Equal(OrderStatus.Paid, row.Status);
+            Assert.Equal(orderBefore.InvoiceNumber, row.InvoiceNumber);
+
+            var duplicate = row.Payments.Single(candidate => candidate.Id == extra);
+            Assert.Equal(PaymentStatus.CapturedRequiresRefund, duplicate.Status);
+            Assert.Null(duplicate.ProviderTransactionId);
+            Assert.Contains("already paid", duplicate.FailureMessage!, StringComparison.OrdinalIgnoreCase);
+
+            var alert = Assert.Single(await AlertsAsync(arranged.PublicId));
+            Assert.Contains("\"reason\":\"order_already_paid\"", alert.DetailsJson, StringComparison.Ordinal);
         }
         finally
         {
@@ -429,13 +559,37 @@ public sealed class OrderSettlementRobustnessTests(SqlServerDatabaseFixture sqlS
         Assert.Equal(exact, Assert.Single((await ReadOrderAsync(arranged.PublicId)).Payments).ProviderTransactionId);
     }
 
+    /// <summary>
+    /// The payer reference is informational and unindexed: too long, it is **cut and the payment settles**.
+    /// It never holds a payable order's money out.
+    /// </summary>
     [Fact]
-    public async Task A_payer_reference_too_long_is_cut_on_the_exception_path_and_makes_a_settlement_an_exception()
+    public async Task A_payer_reference_too_long_is_cut_and_the_payment_settles_normally()
     {
+        var arranged = await PlaceProviderOrderAsync();
         var tooLong = new string('P', Payment.PayerReferenceMaxLength + 25);
 
-        // On a mismatch the payment is an exception whatever the payer reference was, and it is stored cut.
+        Assert.IsType<PaymentSettlementResult.Settled>(await SettleAsync(arranged, payer: tooLong));
+
+        var row = await ReadOrderAsync(arranged.PublicId);
+        Assert.Equal(OrderStatus.Paid, row.Status);
+
+        var payment = Assert.Single(row.Payments);
+        Assert.Equal(PaymentStatus.Succeeded, payment.Status);
+        Assert.True(payment.IsOrderSettlement);
+        Assert.Equal(new string('P', Payment.PayerReferenceMaxLength), payment.PayerReference);
+        Assert.Empty(await AlertsAsync(arranged.PublicId));
+    }
+
+    /// <summary>
+    /// On the exception path the payer reference is cut too, with a note: on a mismatch the payment is an
+    /// exception whatever the payer reference was, and it must still be recorded.
+    /// </summary>
+    [Fact]
+    public async Task A_payer_reference_too_long_is_cut_on_the_exception_path_too()
+    {
         var mismatched = await PlaceProviderOrderAsync();
+        var tooLong = new string('P', Payment.PayerReferenceMaxLength + 25);
 
         try
         {
@@ -448,16 +602,6 @@ public sealed class OrderSettlementRobustnessTests(SqlServerDatabaseFixture sqlS
             var payment = Assert.Single((await ReadOrderAsync(mismatched.PublicId)).Payments);
             Assert.Equal(Payment.PayerReferenceMaxLength, payment.PayerReference!.Length);
             Assert.Contains("was cut", payment.FailureMessage!, StringComparison.Ordinal);
-
-            // On a payable order a cut payer reference is a provider anomaly, kept as an exception.
-            var payable = await PlaceProviderOrderAsync();
-            var second = await SettleAsync(payable, payer: tooLong);
-
-            Assert.Equal(
-                PaymentExceptionReasons.ProviderDataInvalid,
-                Assert.IsType<PaymentSettlementResult.CapturedRequiresRefund>(second).Reason);
-
-            await DeleteAlertsAsync(payable.PublicId);
         }
         finally
         {

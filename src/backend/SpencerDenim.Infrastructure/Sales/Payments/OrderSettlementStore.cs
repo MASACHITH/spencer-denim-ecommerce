@@ -237,26 +237,13 @@ internal sealed class OrderSettlementStore(
                 cancellationToken);
         }
 
-        // What the provider sent has to fit the columns it will be written to. A payable order paid with an
-        // id that does not is **kept as an exception, not refused and not truncated into a settling payment**:
-        // the money has arrived, so it must be on record, and a transaction id that was cut or folded would
-        // sit in a unique index as a falsified reference on the row that settles the order.
+        // What the provider sent has to fit the columns it will be written to, and the two columns are not
+        // alike. **The transaction id is indexed and unique** (it is how the money is found again), so one
+        // that cannot be stored as given is not stored at all — see below. **The payer reference is
+        // informational and unindexed**, so one that is too long is simply cut and the payment settles: a
+        // provider's chatty payer field is not a reason to hold a payable order's money out.
         var transactionId = CleanTransactionId(settlement.ProviderTransactionId);
         var payerReference = CleanPayerReference(settlement.PayerReference);
-
-        if (transactionId.Unusable || payerReference.Unusable)
-        {
-            return await RecordExceptionAsync(
-                payment,
-                order,
-                PaymentExceptionReasons.ProviderDataInvalid,
-                settlement.ConfirmedAmount,
-                settlement.ConfirmedCurrency,
-                settlement.ProviderTransactionId,
-                settlement.PayerReference,
-                settlement.NowUtc,
-                cancellationToken);
-        }
 
         var transaction = dbContext.Database.CurrentTransaction
             ?? throw new InvalidOperationException("SettleAsync must run inside its transaction.");
@@ -279,6 +266,32 @@ internal sealed class OrderSettlementStore(
                 payment,
                 order,
                 await DiagnoseAsync(payment, cancellationToken),
+                settlement.ConfirmedAmount,
+                settlement.ConfirmedCurrency,
+                settlement.ProviderTransactionId,
+                settlement.PayerReference,
+                settlement.NowUtc,
+                cancellationToken);
+        }
+
+        // **Only now, with the order claimed, is it known whether the order could take this money — so only
+        // now does an unusable transaction id matter.** Checked before the claim, an already-paid, expired or
+        // cancelled order would have been reported as "provider data invalid" when what staff need to read is
+        // order_already_paid / order_expired. Those orders never get here: their claim failed above, and the
+        // exception they were recorded with already dropped the id and said so.
+        //
+        // A payable order paid with an id that cannot be stored is **kept as an exception, not refused and
+        // not settled with a cut or folded id**: the money has arrived, so it must be on record, and an id
+        // that was truncated or folded would sit in a unique index as a falsified reference on the row that
+        // settles the order. The savepoint undoes the claim just made, so the order stays payable.
+        if (transactionId.Unusable)
+        {
+            await transaction.RollbackToSavepointAsync(SavepointName, cancellationToken);
+
+            return await RecordExceptionAsync(
+                payment,
+                order,
+                PaymentExceptionReasons.ProviderDataInvalid,
                 settlement.ConfirmedAmount,
                 settlement.ConfirmedCurrency,
                 settlement.ProviderTransactionId,
@@ -313,19 +326,15 @@ internal sealed class OrderSettlementStore(
                 cancellationToken);
         }
 
-        // Doc 08 Appendix B1 — closes something only after a late success on an older attempt, or a
-        // capture that completes after the customer retried. A payment that is itself the one open attempt
-        // (Initiated, Pending) has nothing beside it, so the ordinary success asks the database nothing: see
-        // CanHaveOtherOpenAttempt, and CloseOtherOpenAttemptsAsync for why this must not run needlessly
-        // while this transaction holds a row lock.
-        if (OrderSettlementEffects.CanHaveOtherOpenAttempt(payment.Status))
-        {
-            await effects.CloseOtherOpenAttemptsAsync(
-                payment.OrderId,
-                payment.Id,
-                settlement.NowUtc,
-                cancellationToken);
-        }
+        // Doc 08 Appendix B1: any other open attempt is closed in this Paid transaction. Always run, never
+        // gated on the status read at the top: that read took no lock, and a retry that locked the order
+        // first can have cancelled this payment and opened a newer one since. The index hint inside is what
+        // makes it safe to run while this transaction holds its payment row — see the method.
+        await effects.CloseOtherOpenAttemptsAsync(
+            payment.OrderId,
+            payment.Id,
+            settlement.NowUtc,
+            cancellationToken);
 
         // Stock first, then the number series — the order every Paid path uses; see
         // BankTransferReviewStore.ApproveAsync for the deadlock this ordering exists to prevent.
@@ -609,7 +618,8 @@ internal sealed class OrderSettlementStore(
             PaymentExceptionReasons.AmountMismatch =>
                 "The amount or currency received did not match what was requested.",
             PaymentExceptionReasons.ProviderDataInvalid =>
-                "Payment received, but the provider's references could not be stored as given, so it was not applied.",
+                "Payment received but not applied: the provider's transaction id could not be stored. Verify the "
+                + "payment with the provider, then refund it or record the reference by hand.",
             _ => "Payment received for an order that could not take payment.",
         };
 
@@ -660,8 +670,9 @@ internal sealed class OrderSettlementStore(
 
     /// <summary>
     /// <c>Payments.PayerReference</c> as it can be stored: <c>nvarchar(100)</c>, so any text, cut to length.
-    /// <c>Unusable</c> says it was cut; the settlement path treats that as a provider anomaly and the
-    /// exception path just stores the cut value.
+    /// <c>Unusable</c> says it was cut. It is informational and unindexed, so **a cut payer reference never
+    /// holds a settlement back**: the settlement stores the cut value, and the exception path stores it too and
+    /// says in the failure message that it was cut.
     /// </summary>
     private static CleanedText CleanPayerReference(string? raw)
     {

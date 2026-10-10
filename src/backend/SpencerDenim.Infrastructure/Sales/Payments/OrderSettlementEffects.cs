@@ -363,35 +363,23 @@ internal sealed class OrderSettlementEffects(
             wasLatePayment));
 
     /// <summary>
-    /// Whether a payment that is about to settle, read at this <paramref name="statusBeforeSettling"/>, can
-    /// have another attempt still open beside it — which is the only case
-    /// <see cref="CloseOtherOpenAttemptsAsync"/> has anything to do.
-    /// </summary>
-    /// <remarks>
-    /// <c>UX_Payments_OneOpen</c> allows at most one Initiated-or-Pending row per order, so a payment that is
-    /// itself Initiated or Pending is the open attempt and nothing else is. Every other status the settlement
-    /// accepts is <i>outside</i> that index, and a second attempt can be open beside it:
-    /// <c>Failed</c> / <c>Cancelled</c> / <c>Expired</c> (doc 08 Appendix B1: a late success on an older
-    /// attempt, after the customer opened a newer one) and <c>Capturing</c> (which the index leaves out
-    /// on purpose — capture claimed, lock lapsed, customer retries, then the original capture completes;
-    /// <c>PaymentConfiguration</c> describes the sequence). The ordinary success on an Initiated payment
-    /// asks the database nothing.
-    /// </remarks>
-    public static bool CanHaveOtherOpenAttempt(PaymentStatus statusBeforeSettling) =>
-        statusBeforeSettling is PaymentStatus.Capturing
-            or PaymentStatus.Failed
-            or PaymentStatus.Cancelled
-            or PaymentStatus.Expired;
-
-    /// <summary>
     /// Doc 08 Appendix B1: when a payment pays the order, any <b>other</b> attempt still open
     /// (Initiated or Pending) is closed in the same transaction — <c>Cancelled</c>, the status doc 08 §4.3
-    /// gives an abandoned attempt. Call it only when <see cref="CanHaveOtherOpenAttempt"/> says there can be
-    /// one.
+    /// gives an abandoned attempt. **Run on every settlement, unconditionally.**
     /// </summary>
     /// <remarks>
     /// "Newer" in the note and "other" here are the same set: an open attempt older than the paying one
     /// cannot exist, because the paying one would have been blocked from opening beside it.
+    /// <para>
+    /// <b>It is not gated on the paying payment's status, and the first fix gated it.</b> That version skipped
+    /// the statement for a payment read as Initiated or Pending (<c>UX_Payments_OneOpen</c> allows only one open
+    /// row, so such a payment has nothing beside it) — but the status was read <i>before</i> the order claim,
+    /// with no lock, and a retry flow locks the order first. Measured by the tester: payment A read as
+    /// Initiated, the settlement blocked on the order row, the other transaction cancelled A and opened a newer
+    /// attempt B and committed, and the settlement then paid A and left B Initiated. A read taken before the
+    /// lock is not a fact about the state the lock protects; the hint below is what makes the statement cheap
+    /// and safe, so it simply runs.
+    /// </para>
     /// <para>
     /// Statuses 0 and 1 only — <c>Capturing</c> (2) is deliberately left alone. A capture in flight is
     /// money the shop does not yet know about, and cancelling its row would hide it; it resolves through

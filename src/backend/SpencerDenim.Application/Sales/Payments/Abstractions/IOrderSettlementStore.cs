@@ -210,11 +210,20 @@ public static class PaymentExceptionReasons
     public const string AmountMismatch = "amount_mismatch";
 
     /// <summary>
-    /// The provider's transaction id or payer reference cannot be stored as given — longer than its column,
-    /// or (for the transaction id) not printable ASCII, which a <c>varchar</c> column in a unique index
-    /// would fold into a collision. <b>The money has arrived and is kept as an exception rather than
-    /// refused</b>: a provider anomaly must never be a reason for a payment to go unrecorded. The unusable
-    /// id is not stored; the payment's <c>FailureMessage</c> says so and quotes the start of it.
+    /// The provider's transaction id cannot be stored as given — longer than its column, or not printable
+    /// ASCII, which a <c>varchar</c> column in a unique index would fold into a collision — <b>on an order
+    /// that was otherwise payable</b>. The money has arrived and is kept as an exception rather than
+    /// refused: a provider anomaly must never be a reason for a payment to go unrecorded. The unusable id is
+    /// not stored; the payment's <c>FailureMessage</c> says so, quotes the start of it, and tells staff to
+    /// verify the payment with the provider and refund it or record the reference by hand — it is not a
+    /// payment to accept as it stands.
+    /// <para>
+    /// **Only a payable order gets this reason.** An order that was already paid, expired or cancelled is
+    /// reported as that (<see cref="OrderAlreadyPaid"/>, <see cref="OrderExpired"/>, …), because that is the
+    /// fact staff need first; the id is dropped from the row with the same note. And **only the transaction id
+    /// can cause it**: the payer reference is informational and unindexed, so a too-long one is cut and the
+    /// payment settles.
+    /// </para>
     /// </summary>
     public const string ProviderDataInvalid = "provider_data_invalid";
 
