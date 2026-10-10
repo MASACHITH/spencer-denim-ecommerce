@@ -13,9 +13,11 @@ namespace SpencerDenim.Api.Http;
 /// <c>UseExceptionHandler</c> turned the throw into a <b>500</b>; outside Development the same request
 /// short-circuited to a <b>bodyless 400</b>. So the status depended on the environment, and neither said what
 /// was wrong. <see cref="AddApiBadRequestHandling"/> makes the framework throw everywhere and this handler
-/// answers the throw, so every endpoint that binds a body behaves the same and the same way as
-/// <see cref="AdminWriteRequest.ReadJsonAsync{TBody}"/>: a 400 (or the exception's own 4xx, e.g. 413) with a
-/// machine-readable <c>code</c>.
+/// answers the throw, so every endpoint that binds a body behaves the same: a 400 (or the exception's own 4xx)
+/// problem document with a machine-readable <c>code</c>. It is the same <i>shape</i> as the one
+/// <see cref="AdminWriteRequest.ReadJsonAsync{TBody}"/> gives the endpoints that read their own body, but not the
+/// same codes: here a body that cannot be bound at all is <c>bad_request</c> where that helper says
+/// <c>empty_body</c>, because the exception does not say whether the body was empty or a JSON <c>null</c>.
 /// </para>
 /// <para>
 /// No stack trace, no exception type, no framework wording: the detail is fixed text plus, for bad JSON, the JSON
@@ -67,6 +69,7 @@ internal sealed class BadRequestExceptionHandler(IProblemDetailsService problemD
 
         // No registered writer accepts the caller's Accept header (text/html, application/xml): answer with the
         // problem document anyway rather than a bodyless 400 and an "unhandled exception" error in the log.
+        problem.Extensions["traceId"] = httpContext.TraceIdentifier;
         await httpContext.Response.WriteAsJsonAsync(
             problem, options: null, contentType: "application/problem+json", cancellationToken);
 
