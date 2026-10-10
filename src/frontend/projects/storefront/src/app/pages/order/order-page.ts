@@ -1127,10 +1127,11 @@ export class OrderPage {
   }
 
   /**
-   * "Checking your payment…": the shopper has come back from paying online and the provider's confirmation
-   * has not arrived yet. Cleared by the order moving on, or by the page giving up asking.
+   * Whether the page is still waiting to hear that an online payment was confirmed: the shopper came back
+   * from paying, the order is still open, and the page has not yet asked as many times as it will. **This is
+   * what keeps the polling going; it says nothing about what is on screen** - see {@link checkingPayment}.
    */
-  protected readonly checkingPayment = computed(() => {
+  private readonly awaitingConfirmation = computed(() => {
     const placed = this.current();
 
     return (
@@ -1141,7 +1142,26 @@ export class OrderPage {
     );
   });
 
-  /** The page asked for a minute and a half and the payment is still unconfirmed. */
+  /**
+   * Whether the server has already said where the payment stands, in words ("your payment is pending")
+   * rather than with a form. **A state the server has named always wins over the page's own guess.**
+   */
+  private readonly serverHasNamedTheState = computed(() => this.payRedirect()?.kind === 'notice');
+
+  /**
+   * "Checking your payment…": the shopper has come back from paying online and nothing yet says what became
+   * of it. Not drawn once the server has named the state - the first version drew it above a pending notice
+   * for up to eighty seconds, hiding the one fact the shopper most wanted - and cleared by the order moving
+   * on, or by the page giving up asking.
+   */
+  protected readonly checkingPayment = computed(
+    () => this.awaitingConfirmation() && !this.serverHasNamedTheState(),
+  );
+
+  /**
+   * The page asked for a minute and a half and the payment is still unconfirmed. Not drawn when the server
+   * has named the state: "we have not had confirmation" above "your payment is pending" contradicts it.
+   */
   protected readonly paymentUnconfirmed = computed(() => {
     const placed = this.current();
 
@@ -1149,7 +1169,8 @@ export class OrderPage {
       this.paymentMarker === RETURN_MARKER &&
       placed !== null &&
       this.hasOnlinePaymentOpen(placed) &&
-      this.confirmationGaveUp()
+      this.confirmationGaveUp() &&
+      !this.serverHasNamedTheState()
     );
   });
 
@@ -1526,13 +1547,15 @@ export class OrderPage {
    * shows whatever state the server reports, which is Paid only once the provider's own notification has
    * been verified and applied. It does not touch the loading flag, so the page does not flash "Loading".
    * A failed ask is skipped and the next one tries again; running out of asks is not an error either - it
-   * is the `paymentUnconfirmed` state, with words that tell the shopper what to do.
+   * is the `paymentUnconfirmed` state, with words that tell the shopper what to do. **It keeps asking while the
+   * server shows a pending notice too**: a pending payment is exactly the one that turns into a paid order a
+   * moment later.
    */
   private pollForConfirmation(): void {
     timer(PAYMENT_POLL_MS, PAYMENT_POLL_MS)
       .pipe(
         take(PAYMENT_POLL_MAX),
-        takeWhile(() => this.checkingPayment()),
+        takeWhile(() => this.awaitingConfirmation()),
         switchMap(() => this.api.order(this.token()).pipe(catchError(() => EMPTY))),
         takeUntilDestroyed(this.destroyRef),
       )

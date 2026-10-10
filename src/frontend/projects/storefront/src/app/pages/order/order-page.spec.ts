@@ -1588,11 +1588,78 @@ describe('OrderPage (CHK-04)', () => {
     expect(text()).not.toMatch(/transfer|bank statement|account number|slip/i);
   });
 
-  it('puts the pending notice and the checking state together without a button for a shopper who just returned', async () => {
+  /**
+   * The server has already said where the payment stands, so the page's own "checking" must not stand in
+   * front of it: a shopper who has paid and reads "your payment is pending with ..." is better informed than
+   * one reading a spinner's words for the next eighty seconds.
+   */
+  it('shows the pending notice, not "checking", to a shopper who just returned', async () => {
     await open(pendingOrder(), { payment: 'return' });
 
-    expect(element.querySelector('[data-testid="payment-checking"]')).not.toBeNull();
+    expect(element.querySelector('[data-testid="payment-checking"]')).toBeNull();
+    expect(element.querySelector('[data-testid="pay-notice"]')?.textContent).toContain(
+      'Your payment is pending',
+    );
     expect(element.querySelector('[data-testid="pay-now"]')).toBeNull();
+    expect(element.querySelector('form')).toBeNull();
+  });
+
+  it('keeps asking while the pending notice is on screen, and shows the paid order the moment it is', async () => {
+    vi.useFakeTimers();
+    await open(pendingOrder(), { payment: 'return' });
+
+    await tick();
+    orderRequest().flush(pendingOrder());
+    await settle();
+
+    // Still pending: the notice, still no "checking", still no button.
+    expect(element.querySelector('[data-testid="pay-notice"]')).not.toBeNull();
+    expect(element.querySelector('[data-testid="payment-checking"]')).toBeNull();
+
+    await tick();
+    orderRequest().flush(paidOrder());
+    await settle();
+
+    expect(element.querySelector('[data-testid="pay-notice"]')).toBeNull();
+    expect(text()).toContain('Paid.');
+    expect(element.querySelector('[data-testid="pay-announcement"]')?.textContent).toContain(
+      'Your payment has been received',
+    );
+  });
+
+  it('never puts "we have not had confirmation" above a pending notice when it gives up', async () => {
+    vi.useFakeTimers();
+    await open(pendingOrder(), { payment: 'return' });
+
+    for (let ask = 0; ask < POLL_MAX; ask++) {
+      await tick();
+      orderRequest().flush(pendingOrder());
+      await settle();
+    }
+
+    vi.advanceTimersByTime(POLL_MS * 5);
+    http.expectNone(`${CheckoutApi.orderUrl}/${TOKEN}`);
+
+    // The page has stopped asking, and what it shows is still what the server said.
+    expect(element.querySelector('[data-testid="payment-unconfirmed"]')).toBeNull();
+    expect(element.querySelector('[data-testid="payment-checking"]')).toBeNull();
+    expect(element.querySelector('[data-testid="pay-notice"]')?.textContent).toContain(
+      'Your payment is pending',
+    );
+  });
+
+  it('goes from checking to the pending notice when the server first names the state', async () => {
+    vi.useFakeTimers();
+    await open(onlineOrder(), { payment: 'return' });
+
+    expect(element.querySelector('[data-testid="payment-checking"]')).not.toBeNull();
+
+    await tick();
+    orderRequest().flush(pendingOrder());
+    await settle();
+
+    expect(element.querySelector('[data-testid="payment-checking"]')).toBeNull();
+    expect(element.querySelector('[data-testid="pay-notice"]')).not.toBeNull();
   });
 
   it('welcomes a shopper back from cancelling and keeps the way to try again', async () => {
