@@ -93,6 +93,7 @@ spencer-denim-ecommerce/
 
 ### 3c. Payments
 - `IPaymentProvider` implementations: `BankTransferProvider` (week 3) and `PayPalProvider` (week 4, built last). A future gateway (TBD) is a new class + settings, and checkout code does not change.
+- **PayHere** (`PayHereProvider`, issue #141, doc 11 P8b) is being built alongside PayPal as the first such gateway: a server-built checkout form signed with the merchant secret, and a server-to-server notify verified by `md5sig` before anything is stored. It charges in **LKR**, so none of PayPal's conversion applies. *Change request: not yet in doc 02; ships disabled until the owner confirms it with the client (doc 11 §7 G-43).*
 - Provider credentials are stored encrypted in Settings (ASP.NET Data Protection), editable only with the `Settings.Payments` permission.
 - **PayPal cannot charge in LKR** (not a supported currency). Charge USD at an admin-set rate plus a buffer (default 3%), show the USD amount before redirect, and refund the captured USD amount. *Pending client confirmation.*
 - A capture first claims the order (only if still PendingPayment). Late or duplicate captures go to a `CapturedRequiresRefund` status with an alert. Webhook signatures are verified before the event is stored.

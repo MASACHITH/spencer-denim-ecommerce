@@ -78,6 +78,7 @@ Super Admin can edit these roles or create custom ones. Permissions are `Module 
 |---|---|---|
 | `Orders.BankTransferExpiryHours` | 48 | P7 |
 | `Orders.PayPalExpiryMinutes` | 60 | P8 |
+| `Orders.PayHereExpiryMinutes` | 60 | P8b |
 | `Orders.AutoDeliverAfterDays` | 7 | P9, P12 |
 | `Inventory.DefaultLowStockThreshold` | 5 | P2 |
 | `Catalog.NewArrivalDays` / `BestSellerTopN` | 30 / 10 | P1, P4 |
@@ -85,6 +86,7 @@ Super Admin can edit these roles or create custom ones. Permissions are `Module 
 | `Delivery.DefaultZone` | 3 IslandWide | P5, P6 |
 | `Payments.PayPal.FxBufferPercent` / `RateMaxAgeDays` | 3.00 / 7 | P8 |
 | `Payments.PayPal.CaptureLockHours` / `CaptureRecoveryMaxHours` / `PendingCaptureMaxDays` | 3 / 24 / 5 | P8 |
+| `Payments.PayHere.Mode` / `PendingMaxDays` | sandbox / 5 | P8b |
 | `Security.StaffLockoutMaxFailures` / `StaffLockoutMinutes` | 5 / 15 | P14 |
 | `Security.CustomerLockoutMaxFailures` / `CustomerLockoutMinutes` | 10 / 15 | P11 |
 | `Privacy.RetainInvoiceBillTo` | true | P17 |
@@ -110,6 +112,7 @@ flowchart LR
   subgraph Pay["Payment"]
     P7["P7 Bank transfer"]
     P8["P8 PayPal"]
+    P8b["P8b PayHere"]
   end
   subgraph After["After payment"]
     P9["P9 Fulfilment"]
@@ -130,10 +133,13 @@ flowchart LR
   P5 --> P6
   P6 -->|"bank transfer"| P7
   P6 -->|"PayPal"| P8
+  P6 -->|"PayHere"| P8b
   P7 -->|"approved: Paid"| P9
   P8 -->|"captured: Paid"| P9
+  P8b -->|"notified: Paid"| P9
   P7 -->|"not paid in 48 h"| P10
   P8 -->|"not paid / exception"| P10
+  P8b -->|"not paid / exception"| P10
   P9 -->|"Delivered"| P12
   P9 -->|"refund"| P10
   P2 -.->|"stock checks"| P5
@@ -1012,6 +1018,57 @@ sequenceDiagram
 - *Differs:* **currency.** WooCommerce does not require the store currency to be one PayPal supports — the extension runs either way. The real constraint is PayPal itself: it **cannot settle in LKR**. So we **convert to USD at an admin rate plus a buffer** and show that amount before redirect (D1), rather than leaving the customer to discover a currency conversion at PayPal. **Delayed payments:** Woo moves an order to **On hold** when the payment mechanism defers settlement — an authorize-only (not capture) setting, an eCheck, or a currency mismatch needing conversion — not as a blanket rule for every PayPal order. We keep the order **PendingPayment** with stock held up to 5 days instead (D13), so one status means "money not confirmed" whatever the reason. We add an explicit **claim and lock**, a **recovery job** for stuck captures, and an exception status (*CapturedRequiresRefund*) with staff alerts for late, duplicate or mismatched captures, so no payment can silently settle an expired order.
 
 **Feature IDs.** PAY-02, PAY-03, ADM-09, ADM-22, ADM-04, CHK-04, ACC-03.
+
+---
+
+### P8b Payment by PayHere
+
+> **Scope status: change request, not yet in doc 02.** Added on Tharanga's instruction (2026-10-10, issue #141). Doc 02 lists Bank Transfer and PayPal as the only payment methods and puts a second gateway in future work, so the project owner must confirm the scope change with the client and amend doc 02 and doc 08 (§7 G-43). Until then this section describes the build, not a signed commitment.
+
+**Goal.** Take local card, mobile-wallet and internet-banking payments through PayHere (Sri Lanka), **in LKR**, confirmed only by PayHere's server-to-server notification, without charging twice, losing a payment or selling released stock.
+
+**Trigger.** Order placed with **PayHere** (P6), or a customer retries payment on a PendingPayment PayHere order.
+
+**Actors.** Customer. PayHere. System (API, notify handler, `RetryPaymentEvents`, expiry job). Staff (`Orders.Approve`, `Orders.Refund`) for exceptions.
+
+**Preconditions**
+- PayHere provider enabled by a Super Admin, with a **merchant ID**, **merchant secret** (encrypted in Settings, `Settings.Payments`) and **mode** (sandbox or live).
+- The shop's domain approved for that merchant in the PayHere portal (PayHere refuses checkout from an unapproved domain), and the notify address reachable from the internet over HTTPS — PayHere never calls `localhost` or a private address.
+- Order PendingPayment with a PayHere payment *Initiated*.
+
+**Currency.** PayHere settles in **LKR**, so there is no conversion: the amount charged is the order's grand total, and `ProviderCurrency`/`ExchangeRate`/`FxBufferPercent` stay empty on the payment. This is the main practical difference from P8.
+
+**Main flow**
+1. **[System]** After the order is committed (P6), builds the PayHere checkout form on the server: merchant ID, the PayHere `order_id` (the order number and the payment ID, e.g. `SD-000123-4567`, so a notification names the exact attempt and that binding is covered by the signature), the amount formatted to two decimals, `LKR`, the customer's name, email, phone and address from the order, the return, cancel and notify addresses, and the **checkout hash** — `UPPER(MD5(merchant_id + order_id + amount + currency + UPPER(MD5(merchant_secret))))`. The merchant secret never leaves the server. The browser posts the form to PayHere (`sandbox.payhere.lk` or `www.payhere.lk` by mode).
+2. **[Customer]** Pays at PayHere by card, mobile wallet or internet banking.
+3. **[Customer]** Returns to the store (return or cancel address). The return is **never treated as proof of payment** (`PaymentEvents.EventSource = 3`); the order page shows "Checking your payment…" and polls the order status.
+4. **[PayHere → System] Notify.** PayHere posts the result to the notify address. The system **verifies `md5sig` first** — `UPPER(MD5(merchant_id + order_id + payhere_amount + payhere_currency + status_code + UPPER(MD5(merchant_secret))))` — compared in constant time, with the merchant ID checked against the configured one. A notification that fails verification is **not stored**: HTTP 400, logged without the payload. A verified one is stored once per (PayHere payment ID, status code) in `PaymentEvents` (duplicates return 200 and are ignored), then applied:
+
+   | PayHere `status_code` | What happens | Customer sees |
+   |---|---|---|
+   | **2 success**, amount and currency match, order still payable | Order **Paid** (stock deducted, invoice number, paid time); payment *Succeeded* and settling; PayHere `payment_id` stored as the provider reference; **Payment confirmed** email | Order success page, "Payment received" |
+   | **2 success**, order no longer payable (expired, cancelled, already paid) | Payment *CapturedRequiresRefund*; **Payment exception** alert and email to staff; order unchanged | "We received your payment, our team will contact you" |
+   | **2 success**, amount or currency **mismatch** | As above with reason `AMOUNT_MISMATCH`; this payment can only be refunded | As above |
+   | **0 pending** | Payment *Pending*; **hold extended** to placed time + `PendingMaxDays` (5); stock stays reserved | "Your payment is pending with PayHere" |
+   | **−1 cancelled** / **−2 failed** | Payment *Failed* (`CANCELLED` / `FAILED`, with PayHere's status message); if it had been *Pending*, the hold is **cut back** to now + 60 min | "Payment not completed, try again" (retry allowed until due) |
+   | **−3 charged back** | Recorded; **Payment exception** alert (`CHARGEBACK`); order status unchanged — staff decide | — |
+
+   A success after a *Failed* or *Cancelled* status on the same payment is **not a duplicate** and is applied (same rule as P8 / 08 §4.2 R1). A success on a payment that is already *Succeeded* is a duplicate and is ignored.
+5. **[System] Retries.** A verified notification whose processing failed (database unavailable) is retried by `RetryPaymentEvents`; PayHere is answered 200 once the event is stored, so it does not need to resend.
+6. **[Customer] Retry.** While the order is PendingPayment, the customer can pay again from the order link: the abandoned *Initiated* payment is cancelled and a new one created with a new `order_id` suffix — never more than one open payment (`UX_Payments_OneOpen`). A *Pending* PayHere payment blocks retry exactly as in P8 step 9.
+7. **[System] Expiry.** When the due time passes (60 min, or the extended pending hold) the order expires (P10). A success notified afterwards becomes an exception (step 4), never a silent settlement.
+8. **[Staff] Resolve an exception** — as P8 step 11. **Refunds are manual in v1** (owner decision 2026-10-08): made in the PayHere merchant portal and recorded in the order's internal note.
+
+**Not built in v1 (deliberately).** No capture step or capture lock — PayHere settles on its own page, so there is nothing to claim before capturing. No recovery job: PayHere's status-lookup API needs a separate OAuth "business app" credential; if the client supplies one, a recovery job polling for missed notifications is a small addition. Until then a missing notification surfaces as an expired order that the customer reports, and staff check the PayHere portal and use **Accept** (P8 step 11).
+
+**Exceptions and edge cases**
+- Customer closes the browser at PayHere after paying → the notify still arrives server-to-server and the order is paid; the customer gets the **Payment confirmed** email.
+- Notify forged or tampered (amount changed, another order's ID) → `md5sig` fails, nothing stored, 400.
+- Notify replayed → the stored-once key ignores it, 200.
+- Customer pays after the 60-minute due time → the order has expired; the notification becomes a payment exception for staff.
+- Domain not approved in the PayHere portal, or the wrong mode for the credentials → PayHere refuses the checkout; a Super Admin fixes the settings or disables PayHere; bank transfer remains.
+
+**Feature IDs.** PAY-03 (and a PAY-0x to be assigned by the owner in doc 02), ADM-09, ADM-22, CHK-04, ACC-03.
 
 ---
 
@@ -2023,6 +2080,7 @@ Decision owner: **Client** = needs client decision · **Architect** = needs arch
 | G-40 | Duplicate bank transfer on a paid order | A customer who transfers twice, or transfers again after approval, leaves money with no home: the order is Paid, and the only refund path for a Paid order is the settlement refund, which drags the order to Refunded (08 §4.1, §4.3). G-13 covers Expired and Cancelled orders only | v1 returns the duplicate outside the system and records both bank references in the internal note. A system path needs either a second bank payment row that can be refunded on its own, or a Paid-order refund that leaves the order status alone | Architect | P7, P10 |
 | G-41 | Rate limit on the guest order link | The order link carries `Orders.PublicId` and never expires; doc 08 rate-limits slip uploads (5 per hour per order and per IP) but says nothing about opening the order page | Apply the same limit to order-link views and name it in doc 08 | Build + Architect | P11 |
 | G-42 | Outbox screen and retry action | `ops.EmailOutbox` is a table with no screen: doc 02's admin sidebar (§G) has no outbox entry, the fixed dashboard widgets (ADM-04–ADM-08) have no failed-email count, and doc 08 names no permission for retrying a message | v1 works from the `EmailDeliveryFailed` alert. Two actions this document relies on are undefined and need naming: a per-order **Resend email** action with its permission (used by §4, §6.1 step 6 and §6.6), and — if wanted — a list of dead messages with a retry button plus a dashboard count, which would need a sidebar entry, a permission and a small scope increase. Account emails (no order) have no resend route either way: the customer requests a fresh link | Architect + Client | P7–P11, P14 |
+| G-43 | PayHere as a third payment method | Doc 02 names Bank Transfer and PayPal as the **only** payment methods and lists a second gateway as future work; PayHere was added to the build on Tharanga's instruction on 2026-10-10 (issue #141, P8b). PayHere settles in LKR, so it avoids P8's USD conversion, but needs the client's own merchant account, merchant ID and secret, and the shop domain approved in the PayHere portal | Build it behind `IPaymentProvider` and test on the PayHere sandbox; ship it **disabled** until the owner confirms the change with the client and amends doc 02 (a PAY feature ID) and doc 08 (provider row, `Payments.PayHere.*` settings, notify handling — proposed wording in #141) | Client + Architect | P6, P8b |
 
 ## 8. Traceability table
 
