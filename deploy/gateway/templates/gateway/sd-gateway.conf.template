@@ -2,7 +2,7 @@
 #
 #   /api/...        -> API (.NET)             /health -> API liveness       /health/ready -> not exposed
 #   /admin/...      -> admin static build (baked into this image)
-#   /media/...      -> public media volume (read-only)
+#   /media/public/  -> API (uploaded media)  /media/* else -> storefront (its own webfonts)
 #   everything else -> storefront SSR (Node)
 #
 # Rendered at start-up by the image entrypoint; only SD_* variables are substituted, nginx's own $variables are
@@ -107,16 +107,35 @@ server {
         try_files $uri =404;
     }
 
-    # --- Public media (Catalog__MediaBaseUrl=/media). Private uploads (bank slips) are never mounted here. -----
-    location /media/ {
-        root /srv;
-        add_header X-Content-Type-Options nosniff always;
-        add_header Cache-Control "public, max-age=2592000" always;
-        try_files $uri =404;
+    # --- Uploaded media (Catalog__MediaBaseUrl=/media) --------------------------------------------------------
+    # The API serves these (MediaFileEndpoints), not a volume here: "404 for anything not Ready" and "a deleted
+    # file stops being served" are questions for the database. It sets the year-long immutable Cache-Control,
+    # the strong ETag and byte ranges itself, so nothing is added here.
+    #
+    # Only /media/public/ — /media is a shared namespace (docs/03 §4): the storefront build emits its own
+    # webfonts under /media/inter-*.woff2, and those fall through to the storefront below. public/ is the only
+    # prefix the API will serve and nothing the build emits starts with it.
+    location ^~ /media/public/ {
+        proxy_pass $sd_api;
     }
 
     # --- Everything else: the storefront, server-rendered ------------------------------------------------------
+    #
+    # Angular's SSR engine renders only when every X-Forwarded-* header it receives is one it was told to trust
+    # (NG_TRUST_PROXY_HEADERS in compose.yml: host and proto, both overwritten above). Any other one makes it
+    # fall back to the empty client-side shell — no content for crawlers, no og: tags. So the storefront gets
+    # neither the visitor's address (it has no use for it) nor any X-Forwarded-* header a visitor sent that
+    # this gateway does not overwrite. An empty value makes nginx drop the header. A location that sets any
+    # proxy_set_header inherits none from the server block, so the ones it keeps are repeated here.
     location / {
+        proxy_set_header Connection         "";
+        proxy_set_header Host               $host;
+        proxy_set_header X-Forwarded-Proto  $sd_forwarded_proto;
+        proxy_set_header X-Forwarded-Host   $host;
+        proxy_set_header X-Forwarded-For    "";
+        proxy_set_header X-Real-IP          "";
+        proxy_set_header X-Forwarded-Port   "";
+        proxy_set_header X-Forwarded-Prefix "";
         proxy_pass $sd_storefront;
     }
 }

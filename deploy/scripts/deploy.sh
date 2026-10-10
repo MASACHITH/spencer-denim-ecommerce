@@ -35,8 +35,9 @@ docker network inspect "sd-$env-db" >/dev/null 2>&1 \
   || die "network sd-$env-db does not exist: start the database first ($app/scripts/db-up.sh $env)"
 
 # Directories the containers write to must exist with the right owner, or Docker creates them as root.
-install -d -m 755 "$app/data/media-public"
-install -d -m 700 -o "$SD_API_UID" -g "$SD_API_UID" "$app/data/dataprotection-keys"
+install -d -m 700 -o "$SD_API_UID" -g "$SD_API_UID" \
+  "$app/data/dataprotection-keys" "$app/data/media-private" "$app/data/upload-spool"
+install -d -m 755 -o "$SD_API_UID" -g "$SD_API_UID" "$app/data/media-public"
 
 if [ "$env" = production ] && [ "$skip_backup" -eq 0 ]; then
   "$(dirname "$(readlink -f "$0")")/backup-db.sh" "$env" "pre-deploy-$tag"
@@ -65,6 +66,16 @@ for path in /gateway-health /health /admin/ /; do
 done
 code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/api/catalog/departments" || true)"
 [ "$code" = 200 ] || die "GET /api/catalog/departments answered $code, expected 200"
+
+# The home page must be server-rendered, not Angular's empty client-side fallback (docs/15 §3 step 5).
+curl -s "http://127.0.0.1:$port/" | grep -q 'ng-server-context="ssr"' \
+  || die "GET / returned the client-side shell, not a server-rendered page (see docs/15 §3, NG_TRUST_PROXY_HEADERS)"
+
+# #86: robots.txt must advertise this environment's own sitemap, never production's on staging.
+origin="$(env_value "$app/config/app.env" SD_PUBLIC_ORIGIN)"
+sitemap_line="$(curl -s "http://127.0.0.1:$port/robots.txt" | tr -d '\r' | sed -n 's/^Sitemap: //p')"
+[ "$sitemap_line" = "$origin/sitemap.xml" ] \
+  || die "robots.txt names '$sitemap_line' as the sitemap, expected '$origin/sitemap.xml' (check SD_PUBLIC_ORIGIN)"
 
 printf '%s %s %s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$env" "$tag" "${SUDO_USER:-$(id -un)}" >> "$app/data/deploy-history.log"
 app_compose "$env" "$compose_dir" ps

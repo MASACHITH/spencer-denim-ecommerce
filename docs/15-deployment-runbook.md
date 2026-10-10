@@ -16,8 +16,8 @@ Internet ──► host nginx (80/443, certbot; already serves other sites on th
    │ web (nginx gateway, fixed IP on "edge")                                                               │
    │   /api/*  /health ──► api (.NET 10)  ──┐                                                              │
    │   /admin/*       ──► admin static files (baked into the web image)                                     │
-   │   /media/*       ──► data/media-public (read-only)                                                     │
-   │   everything else ──► storefront (Angular SSR) ──► api (server-side calls, http://api:8080)            │
+   │   /media/public/* ──► api (serves data/media-public only for assets that are Ready)                    │
+   │   everything else ──► storefront (Angular SSR, incl. its own /media webfonts) ──► api (http://api:8080) │
    │ migrator (one-shot EF Core bundle, runs before the API starts)                                        │
    └────────────────────────────────────────┼──────────────────────────────────────────────────────────────┘
                                             │ network sd-<env>-db (internal: no route to the internet)
@@ -48,9 +48,12 @@ Follows the server's existing convention:
 ├── compose/            compose.yml + compose.<env>.yml (copied by install.sh)
 │   └── releases/<tag>/ the compose files each deployed release used (rollback uses these)
 ├── config/app.env      secrets for the stack (root, 600) — template deploy/app/.env.example
-├── data/
-│   ├── dataprotection-keys/   ASP.NET Data Protection key ring (owner 1654) — admin sign-ins survive restarts
-│   ├── media-public/          served at /media (uploads pipeline W1-04 writes here later)
+├── data/                      all written by the API only (owner 1654)
+│   ├── dataprotection-keys/   ASP.NET Data Protection key ring (#96) — admin sign-ins and encrypted settings
+│   │                          survive restarts. Back it up with the database: without it they are unreadable
+│   ├── media-public/          uploads (W1-04); the API serves them at /media/public/…
+│   ├── media-private/         bank-transfer slips; never served by the gateway, only through the admin API
+│   ├── upload-spool/          a video is written here while it streams in (keeps it out of the RAM tmpfs)
 │   └── deploy-history.log     one line per deploy: time, env, tag, user
 └── scripts/            deploy/scripts/*.sh (copied by install.sh)
 
@@ -101,6 +104,14 @@ the first install, check on the server that neither the ports nor the subnets ar
    per 10 minutes** (was 600 while every visitor shared the proxy's address). If it logs warning 1101
    ("signups are arriving from … not a visitor's own address"), step 2 or 3 is misconfigured.
 
+5. The **storefront** gets only `X-Forwarded-Host` and `X-Forwarded-Proto` (both overwritten by the gateway) and
+   trusts exactly those (`NG_TRUST_PROXY_HEADERS`). Angular's SSR engine falls back to the **empty client-side
+   shell** — no content for crawlers, no `og:` tags — whenever it receives any `X-Forwarded-*` header it was not
+   told to trust, so the gateway's `location /` drops `X-Forwarded-For`, `X-Real-IP`, `X-Forwarded-Port` and
+   `X-Forwarded-Prefix`. If the storefront logs *"Received "x-…" header but "trustProxyHeaders" was not set up
+   to allow it"*, that list and the gateway have drifted apart. Quick check: `curl -s https://<host>/ | grep -c
+   'ng-server-context="ssr"'` must print 1.
+
 Never set `ASPNETCORE_FORWARDEDHEADERS_ENABLED`: that framework switch trusts every peer.
 
 ## 4. Configuration
@@ -113,6 +124,8 @@ quoted values, `$` (compose would interpolate it), the same login for API and mi
 | File | Variable | Meaning |
 |---|---|---|
 | `config/app.env` | `SD_PUBLIC_HOSTS` | Public host name(s), comma-separated; the SSR engine renders only for these (`NG_ALLOWED_HOSTS`) |
+| | `SD_PUBLIC_ORIGIN` | `https://<host>`, scheme and host only. robots.txt, sitemap.xml, og:url (#86) and every link in an order email. Never derived from the request |
+| | `SD_SMTP_HOST/PORT/USERNAME/PASSWORD/FROM_ADDRESS/FROM_NAME` | Optional until the client's SMTP account exists; unset, emails queue unsent and the admin banner says so |
 | | `SD_APP_DB_CONNECTION` | API login `sd_<env>_app` (read/write). `Server=sqlserver,1433;…;TrustServerCertificate=True` |
 | | `SD_MIGRATOR_DB_CONNECTION` | Migrator login `sd_<env>_migrator` (db_owner). The API never sees it |
 | | `SD_DB_COMPATIBILITY_LEVEL` | `170` (SQL Server 2025) |
@@ -122,6 +135,13 @@ quoted values, `$` (compose would interpolate it), the same login for API and mi
 | | `SD_MSSQL_SA_PASSWORD` | sa: healthcheck and provisioning only |
 | | `SD_MSSQL_PID` | `Express` |
 | | `SD_MSSQL_MEMORY_LIMIT_MB` / `SD_MSSQL_CONTAINER_MEMORY` | `2048`/`2560m` production, `1024`/`1536m` staging |
+
+Set by `compose.yml` itself, not the env file: `DataProtection__KeysPath`, `Media__PublicRoot`,
+`Media__PrivateRoot` and `Media__UploadSpoolPath` (the four `data/` directories above). **Production refuses to
+start without `DataProtection__KeysPath`**: a key ring inside the container would sign every admin out on every
+restart and make encrypted settings unreadable (#96). To encrypt the key ring at rest (doc 03 §4), add
+`DataProtection__CertificatePath` (a `.pfx` mounted read-only) and `DataProtection__CertificatePassword`; keep a
+copy of the certificate and its password off the server, because without them a restored key ring is useless.
 
 Everything else the API reads (README "Other settings") can be added to the `api` service's `environment:` in
 `compose.<env>.yml`. Database names: `SpencerDenim` (production), `SpencerDenim_Staging` (staging).
@@ -252,12 +272,15 @@ SD_LOCAL_EDGE_PREFIX=10.251.97
 SD_IMAGE_REPOSITORY=sdw015
 SD_IMAGE_TAG=dev
 SD_PUBLIC_HOSTS=shop.w015.test
+SD_PUBLIC_ORIGIN=http://shop.w015.test:38997
 SD_APP_DB_CONNECTION=Server=sqlserver,1433;Database=SpencerDenim_W015;User Id=sd_w015_app;Password=<pw>;Encrypt=True;TrustServerCertificate=True
 SD_MIGRATOR_DB_CONNECTION=Server=sqlserver,1433;Database=SpencerDenim_W015;User Id=sd_w015_migrator;Password=<pw>;Encrypt=True;TrustServerCertificate=True
 EOF
 
 cd deploy/app
-docker compose -f ../database/compose.yml --env-file /path/outside/repo/w015.env up -d --wait
+# compose.local.yml: on Docker Desktop for Windows SQL Server cannot keep its files on a bind mount of a Windows
+# folder ("[AppLoader] Failed to load LSA"), so the local override uses named volumes.
+docker compose -f ../database/compose.yml -f ../database/compose.local.yml --env-file /path/outside/repo/w015.env up -d --wait
 # create the database and logins: see db-provision.sh (it expects the server layout, so on a laptop pipe
 # tools/db/provision-database.sql and deploy/database/sql/logins.sql to sqlcmd with :setvar lines yourself)
 docker compose -f compose.yml -f compose.local.yml --env-file /path/outside/repo/w015.env build
@@ -265,8 +288,11 @@ docker compose -f compose.yml -f compose.local.yml --env-file /path/outside/repo
 curl -s http://127.0.0.1:38997/api/catalog/products?pageSize=2
 # tear down ONLY your own projects:
 docker compose -f compose.yml -f compose.local.yml --env-file /path/outside/repo/w015.env down
-docker compose -f ../database/compose.yml --env-file /path/outside/repo/w015.env down
+docker compose -f ../database/compose.yml -f ../database/compose.local.yml --env-file /path/outside/repo/w015.env down
 ```
+
+In Git Bash, set `MSYS_NO_PATHCONV=1` before any `docker exec … /opt/mssql-tools18/bin/sqlcmd`, or the path is
+rewritten to a Windows one and the exec fails.
 
 ## 10. Decisions for the owner to confirm
 
@@ -279,4 +305,4 @@ docker compose -f ../database/compose.yml --env-file /path/outside/repo/w015.env
 | 5 | Newsletter limit **20 per address per 10 minutes** | Sri Lankan mobile carriers use carrier-grade NAT; 10 could refuse a real campaign | 10 (TASKS row's suggestion) |
 | 6 | Migrator credentials (db_owner) are in `config/app.env` | The one-shot migrator needs them at every deploy | Doc 03 §3a wants break-glass CLI credentials entered interactively; that is a different tool (not built yet) |
 | 7 | Doc 08 §10.4's `DENY UPDATE ON identity.Roles(GrantsAllPermissions)` is **not** applied yet | `RoleManager.UpdateAsync` writes every column, so the DENY would break role editing in production only | Apply it with the Users & Roles work (W1-09) plus a test that runs as the app login |
-| 8 | The Data Protection key ring is a file volume (`data/dataprotection-keys`), unencrypted at rest | Keeps admin sign-ins across restarts today | Doc 08 §3.8's certificate-protected key ring in the database, with the Settings work |
+| 8 | The Data Protection key ring is a file volume (`data/dataprotection-keys`, #96), with the application name pinned. Encryption at rest with a certificate is **supported but optional** (`DataProtection__CertificatePath`) | A single API container needs no shared store; the volume keeps admin sign-ins and encrypted settings across restarts and deploys. The folder is readable only by root and the API | Doc 08 DB30's `ops.DataProtectionKeys` table — needed only with more than one API replica. **Owner: decide whether to issue the certificate before the first secret (PayPal, SMTP) is saved** |

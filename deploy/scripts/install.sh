@@ -20,9 +20,12 @@ app="$(app_root "$env")"
 db="$(db_root "$env")"
 
 log "Installing $env from $repo"
-install -d -m 755 "$app" "$app/compose" "$app/scripts" "$app/data" "$app/data/media-public"
+install -d -m 755 "$app" "$app/compose" "$app/scripts" "$app/data"
 install -d -m 700 "$app/config"
-install -d -m 700 -o "$SD_API_UID" -g "$SD_API_UID" "$app/data/dataprotection-keys"
+# Written by the API (uid 1654) only: the key ring, the uploads and the upload spool.
+install -d -m 700 -o "$SD_API_UID" -g "$SD_API_UID" \
+  "$app/data/dataprotection-keys" "$app/data/media-private" "$app/data/upload-spool"
+install -d -m 755 -o "$SD_API_UID" -g "$SD_API_UID" "$app/data/media-public"
 
 install -d -m 755 "$db" "$db/compose" "$db/scripts"
 install -d -m 700 "$db/config"

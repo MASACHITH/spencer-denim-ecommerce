@@ -81,9 +81,11 @@ WORKDIR /app
 FROM runtime AS api
 ENV ASPNETCORE_HTTP_PORTS=8080
 COPY --from=build --chown=root:root /out/api/ ./
-# The Data Protection key ring (admin auth cookie, antiforgery) lives here; the compose file mounts a volume on
-# it so a restart does not sign every admin out. See docs/15 §2.
-RUN mkdir -p /home/app/.aspnet/DataProtection-Keys && chown -R app:app /home/app/.aspnet
+# Mount points for the volumes the compose file attaches (docs/15 §2): the Data Protection key ring (#96), the
+# public and private uploads and the upload spool (W1-04). Owned by app so a fresh named volume inherits it.
+RUN mkdir -p /var/lib/spencer-denim/dataprotection-keys /var/lib/spencer-denim/media-public \
+             /var/lib/spencer-denim/media-private /var/lib/spencer-denim/upload-spool \
+ && chown -R app:app /var/lib/spencer-denim
 USER app
 EXPOSE 8080
 HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=5 \

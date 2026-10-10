@@ -56,7 +56,7 @@ RUN rm -f /etc/nginx/conf.d/default.conf
 COPY deploy/gateway/nginx.conf /etc/nginx/nginx.conf
 COPY deploy/gateway/templates/ /etc/nginx/templates/
 COPY --from=build /src/frontend/dist/admin/browser/ /usr/share/nginx/admin/
-RUN mkdir -p /srv/media && chown -R root:root /usr/share/nginx/admin /etc/nginx/templates
+RUN chown -R root:root /usr/share/nginx/admin /etc/nginx/templates
 USER 101
 # Rendered by the image's own entrypoint (20-envsubst-on-templates.sh) into /tmp/gateway/*.conf.
 ENV NGINX_ENVSUBST_OUTPUT_DIR=/tmp \

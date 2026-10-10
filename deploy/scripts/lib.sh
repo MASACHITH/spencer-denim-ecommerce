@@ -67,9 +67,10 @@ check_env_file() {
     warn "$file is mode $mode; it holds secrets and should be 600 (chmod 600 $file)"
   fi
 
-  if grep -q 'CHANGE_ME' "$file"; then
+  # Values only: the templates' own comments mention CHANGE_ME, and a filled-in file keeps those comments.
+  if grep -E '^[A-Za-z_][A-Za-z0-9_]*=' "$file" | grep -q 'CHANGE_ME'; then
     warn "$file still contains CHANGE_ME placeholders:"
-    grep -n 'CHANGE_ME' "$file" | sed 's/=.*/=…/' >&2
+    grep -nE '^[A-Za-z_][A-Za-z0-9_]*=.*CHANGE_ME' "$file" | sed 's/=.*/=…/' >&2
     problems=1
   fi
 
@@ -81,9 +82,16 @@ check_env_file() {
 
   if [ "$kind" = app ]; then
     local key cs pw
-    for key in SD_APP_DB_CONNECTION SD_MIGRATOR_DB_CONNECTION SD_PUBLIC_HOSTS; do
+    for key in SD_APP_DB_CONNECTION SD_MIGRATOR_DB_CONNECTION SD_PUBLIC_HOSTS SD_PUBLIC_ORIGIN; do
       [ -n "$(env_value "$file" "$key")" ] || { warn "$file: $key is empty"; problems=1; }
     done
+    # The storefront ignores a value with a path, a query or a trailing slash and falls back to production's
+    # domain (#86), so refuse it here instead of publishing the wrong addresses.
+    case "$(env_value "$file" SD_PUBLIC_ORIGIN)" in
+      ''|https://*/*|http://*/*) warn "$file: SD_PUBLIC_ORIGIN must be scheme and host only, e.g. https://colombowardrobecompany.com"; problems=1 ;;
+      https://*|http://*) ;;
+      *) warn "$file: SD_PUBLIC_ORIGIN must start with https://"; problems=1 ;;
+    esac
     for key in SD_APP_DB_CONNECTION SD_MIGRATOR_DB_CONNECTION; do
       cs="$(env_value "$file" "$key")"
       pw="$(conn_part "$cs" 'Password')"

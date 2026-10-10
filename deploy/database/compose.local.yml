@@ -1,0 +1,17 @@
+# Spencer Denim SQL Server: developer-machine override (W0-15, docs/15 §9). Never used on a server.
+#
+#   docker compose -f compose.yml -f compose.local.yml --env-file <file> up -d --wait
+#
+# On Docker Desktop for Windows, SQL Server cannot keep its files on a bind mount of a Windows folder: it stops at
+# start-up with "[AppLoader] Failed to load LSA: 0xc0070102". Named volumes live inside Docker's own Linux
+# filesystem, so it starts normally. The server (Linux, ext4) keeps the bind mounts in compose.yml, where the
+# files have to be visible to the backup and restore steps in docs/15 §7.
+services:
+  sqlserver:
+    volumes: !override
+      - data:/var/opt/mssql
+      - backups:/var/opt/mssql/backup
+
+volumes:
+  data:
+  backups:
