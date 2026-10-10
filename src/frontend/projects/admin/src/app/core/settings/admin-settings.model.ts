@@ -146,6 +146,40 @@ export interface InvoiceAndFulfilmentValues {
   readonly autoDeliverAfterDays?: string | null;
 }
 
+/**
+ * PayPal's credentials, exchange rate and timings (PAY-02, doc 08 §3.8 `Payments.PayPal`).
+ *
+ * **Optional for the same reason {@link BankDetailValues}' fields are, and with one difference.** These keys
+ * need `Settings.Payments`, so a screen whose caller cannot read them never receives them, and a field the
+ * object omits is one the API leaves alone. `expiryMinutes` is doc 08's `Orders.PayPalExpiryMinutes`, which is
+ * `Settings.Edit`: a caller with `Settings.Payments` alone does not receive it, so it is absent here and the
+ * box is not drawn.
+ *
+ * **The client secret is not a field of this form.** It is write-only: the server never returns it, so there
+ * is nothing to load into a box, and the screen holds whatever the admin types in a separate signal and sends
+ * it only when it is not blank. A blank box means "keep what is saved", not "clear it".
+ *
+ * Every value is text, as the API reads it: numbers are typed digits, and the server validates and
+ * normalises (`3` becomes `3.00`).
+ */
+export interface PayPalValues {
+  /** `sandbox` or `live`. */
+  readonly mode?: string | null;
+  readonly clientId?: string | null;
+  readonly webhookId?: string | null;
+
+  /** Rupees per US dollar. Changing it stamps the rate's age on the server. */
+  readonly lkrPerUsd?: string | null;
+  readonly fxBufferPercent?: string | null;
+  readonly rateMaxAgeDays?: string | null;
+  readonly captureLockHours?: string | null;
+  readonly captureRecoveryMaxHours?: string | null;
+  readonly pendingCaptureMaxDays?: string | null;
+
+  /** Doc 08's `Orders.PayPalExpiryMinutes` — `Settings.Edit`, so often absent. */
+  readonly expiryMinutes?: string | null;
+}
+
 /** The settings keys this screen edits, so the template and the mapping cannot disagree about a name. */
 export const SETTING_KEYS = {
   logoAssetId: 'Store.LogoAssetId',
@@ -168,6 +202,18 @@ export const SETTING_KEYS = {
   brNumber: 'Store.BRNumber',
   vatNumber: 'Store.VatNumber',
   autoDeliverAfterDays: 'Orders.AutoDeliverAfterDays',
+  payPalMode: 'Payments.PayPal.Mode',
+  payPalClientId: 'Payments.PayPal.ClientId',
+  payPalClientSecret: 'Payments.PayPal.ClientSecret',
+  payPalWebhookId: 'Payments.PayPal.WebhookId',
+  payPalLkrPerUsd: 'Payments.PayPal.LkrPerUsd',
+  payPalFxBufferPercent: 'Payments.PayPal.FxBufferPercent',
+  payPalRateMaxAgeDays: 'Payments.PayPal.RateMaxAgeDays',
+  payPalRateUpdatedAtUtc: 'Payments.PayPal.RateUpdatedAtUtc',
+  payPalCaptureLockHours: 'Payments.PayPal.CaptureLockHours',
+  payPalCaptureRecoveryMaxHours: 'Payments.PayPal.CaptureRecoveryMaxHours',
+  payPalPendingCaptureMaxDays: 'Payments.PayPal.PendingCaptureMaxDays',
+  payPalExpiryMinutes: 'Orders.PayPalExpiryMinutes',
 } as const;
 
 /** Doc 08 §3.8's group names. */
@@ -184,4 +230,7 @@ export const SETTING_GROUPS = {
    * tokens for one unit is the mismatch that made every valid ADM-22 save a 409.
    */
   orders: 'Orders',
+
+  /** PayPal's own panel and save unit; `Settings.Payments`, so a Store Manager never receives it. */
+  payPal: 'Payments.PayPal',
 } as const;
