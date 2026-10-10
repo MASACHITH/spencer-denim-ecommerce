@@ -53,8 +53,9 @@ server {
     access_log /var/log/nginx/spencer-denim-production.access.log;
     error_log  /var/log/nginx/spencer-denim-production.error.log warn;
 
-    # Product videos are up to 50 MB (doc 03 §3b); the gateway allows 60m too.
-    client_max_body_size 60m;
+    # A product video is up to 50 MB and is uploaded with its poster (up to 15 MB) in one request: 66 MiB at most
+    # (MediaOptions). The gateway allows 67m on the media upload route and 2m everywhere else.
+    client_max_body_size 67m;
 
     location / {
         proxy_pass http://spencer_denim_production;

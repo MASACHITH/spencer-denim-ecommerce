@@ -216,6 +216,11 @@ sudo /opt/apps/<env>/spencer-denim-app/scripts/rollback.sh <env>          # the 
 sudo /opt/apps/<env>/spencer-denim-app/scripts/rollback.sh <env> <tag>    # a specific earlier release
 ```
 
+`rollback.sh` with no tag walks back through `data/deploy-history.log` like a stack: a rollback to B pops everything
+above B, so running it again goes to the release before B rather than forward again. It answers "no earlier release"
+when there is nothing below the current one — including after a rollback to the oldest release, or after an
+explicit rollback to a tag older than the start of the history. Name the tag in those cases.
+
 Rollback redeploys the earlier images with **their own** compose files (`compose/releases/<tag>/`). It does **not**
 roll the database back: migrations are expand-then-contract (doc 08 §10.4), so the previous release runs on the
 newer schema, and its older migrator finds nothing to apply. If a migration itself must be undone, restore the

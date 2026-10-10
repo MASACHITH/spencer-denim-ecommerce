@@ -80,7 +80,8 @@ server {
 
     # Uploads. proxy_request_buffering off streams the body to the API as it arrives (the API spools it to disk
     # itself, Media__UploadSpoolPath), so nothing large ever sits in this container's memory. The ceilings are the
-    # API's own limits plus multipart overhead: MediaLimits.MaxVideoBytes (50 MB, staff only) and
+    # API's own limits plus multipart overhead: a video (MediaLimits.MaxVideoBytes, 50 MB) and its poster
+    # (MediaOptions.MaxImageBytes, 15 MB) travel in one request, staff only, 66 MiB at most; and
     # MaxPrivateBytes (5 MB, a customer's bank slip). The API still enforces the exact limit and the file type.
     location ^~ /api/admin/media/ {
         client_max_body_size ${SD_MAX_UPLOAD_SIZE};
