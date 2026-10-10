@@ -130,6 +130,32 @@ public sealed class PaymentExceptionAlertTests
             document.RootElement.EnumerateObject().Select(property => property.Name).ToArray());
     }
 
+    /// <summary>
+    /// A payment whose reference could not be stored is not one to accept as it stands - the row would carry
+    /// no way to find the money at the provider - so the alert says to check it there first. The other
+    /// reasons carry no remedy: what to do about those is the screen's to say.
+    /// </summary>
+    [Fact]
+    public void Only_the_provider_data_reason_carries_a_remedy_and_it_is_not_to_accept()
+    {
+        var alert = PaymentExceptionAlert.For(Facts(PaymentExceptionReasons.ProviderDataInvalid), Now);
+
+        Assert.Equal(
+            "Payment received but not applied to order CW-2026-000123: the provider's reference could not be stored "
+            + "(payment 481). Check it with the provider, then refund it or record the reference by hand.",
+            alert.Title);
+        Assert.DoesNotContain("accept", alert.Title, StringComparison.OrdinalIgnoreCase);
+        Assert.True(alert.Title.Length <= AdminAlert.TitleMaxLength);
+
+        foreach (var reason in PaymentExceptionReasons.All.Where(r => r != PaymentExceptionReasons.ProviderDataInvalid))
+        {
+            Assert.DoesNotContain(
+                "Check it with the provider",
+                PaymentExceptionAlert.For(Facts(reason), Now).Title,
+                StringComparison.Ordinal);
+        }
+    }
+
     [Fact]
     public void A_currency_that_is_not_a_currency_code_is_clipped_in_the_details()
     {

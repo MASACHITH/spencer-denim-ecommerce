@@ -30,6 +30,10 @@ function form(overrides: { method?: string; action?: string } = {}): OrderPaymen
 // tests/SpencerDenim.UnitTests/Application/Sales/PaymentRedirectFormTests.cs (`SafeUrls`, `UnsafeUrls`), which
 // runs them through `PaymentRedirectForm.IsSafeAbsoluteUrl`; a test there fails if an entry is missing here.
 // The two are one rule written in two languages, and a rule written twice drifts. Change both together.
+// Two addresses are on neither list because the parsers disagree and a shared list needs one answer:
+// `https:evil.example` and `https:\\evil.example\x` (no slashes, or backslashes) are accepted by this
+// browser-side WHATWG parser and refused by .NET's Uri. The backend is the stricter there, which is the safe
+// direction; do not "fix" it by loosening the backend.
 const SHARED_SAFE_URLS: readonly string[] = [
   'https://pay.example.test/checkout',
   'https://pay.example.test/checkout?session=abc&x=1',

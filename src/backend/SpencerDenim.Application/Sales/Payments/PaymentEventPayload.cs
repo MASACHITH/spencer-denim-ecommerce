@@ -73,6 +73,8 @@ public static class PaymentEventPayload
     /// credential forms only, left <c>payment_token</c> readable for the sake of disputes, and so did not do
     /// what this class's own remarks said. Neither PayPal's payment webhooks nor PayHere's notification
     /// carries a field with "token" in its name, so nothing a payment dispute needs is lost.
+    /// <b>"Tokenization" is not "token"</b> (see <see cref="TokenizationWords"/>): it names a feature or a
+    /// result, not a credential.
     /// </para>
     /// </summary>
     private static readonly string[] SecretFragments =
@@ -88,10 +90,22 @@ public static class PaymentEventPayload
         "authkey",
         "privatekey",
         "bearer",
-        "cvv",
-        "cvc",
         "securitycode",
     ];
+
+    /// <summary>
+    /// Words that contain "token" without being one, removed from a name before it is tested for "token":
+    /// <c>tokenization</c>, <c>tokenized</c>, <c>tokenize</c>. A property of that name is a flag or a result.
+    /// </summary>
+    private static readonly string[] TokenizationWords = ["tokenization", "tokenised", "tokenized", "tokenize"];
+
+    /// <summary>
+    /// Card verification values, redacted when the name <b>ends</b> with one — <c>cvv</c>, <c>card_cvv</c>,
+    /// <c>cvc2</c> — and not when it merely starts with one. PayPal's card response carries
+    /// <c>processor_response.cvv_code</c> and Stripe-style payloads <c>cvc_check</c>: a result letter ("M",
+    /// "pass"), not the three digits on the back of a card, and a dispute reads it.
+    /// </summary>
+    private static readonly string[] SecretSuffixes = ["cvv", "cvc", "cvv2", "cvc2"];
 
     /// <summary>
     /// Names (normalised) that are redacted only when they are exactly this, because as fragments they would
@@ -200,8 +214,24 @@ public static class PaymentEventPayload
     }
 
     /// <summary>
+    /// Whether a name still contains "token" once the words that merely contain it are taken out.
+    /// </summary>
+    private static bool ContainsRealToken(string normalised)
+    {
+        var stripped = normalised;
+
+        foreach (var word in TokenizationWords)
+        {
+            stripped = stripped.Replace(word, string.Empty, StringComparison.Ordinal);
+        }
+
+        return stripped.Contains("token", StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// Whether a property of this name must not have its value stored: its normalised name contains one of
-    /// <see cref="SecretFragments"/>, or is one of <see cref="SecretNames"/> exactly.
+    /// <see cref="SecretFragments"/> (but "tokenization" is not "token"), ends with one of
+    /// <see cref="SecretSuffixes"/>, or is one of <see cref="SecretNames"/> exactly.
     /// </summary>
     /// <remarks>
     /// Public so the rule is testable as a rule, name by name, not only through a payload. **What it must
@@ -222,7 +252,11 @@ public static class PaymentEventPayload
             .ToLowerInvariant();
 
         return SecretNames.Contains(normalised)
-            || SecretFragments.Any(fragment => normalised.Contains(fragment, StringComparison.Ordinal));
+            || SecretFragments.Any(fragment =>
+                fragment == "token"
+                    ? ContainsRealToken(normalised)
+                    : normalised.Contains(fragment, StringComparison.Ordinal))
+            || SecretSuffixes.Any(suffix => normalised.EndsWith(suffix, StringComparison.Ordinal));
     }
 }
 

@@ -35,6 +35,13 @@ public sealed class PaymentRedirectFormTests
     /// they matched. These two lists are copied verbatim into
     /// <c>src/frontend/projects/storefront/src/app/core/checkout/payment-redirect.spec.ts</c> (search for
     /// "SHARED URL LIST"); a test below fails if an entry here is missing there. Change a list in both places.
+    /// <para>
+    /// <b>Two addresses are deliberately not on either list</b>, because the two parsers disagree about them and
+    /// a shared list needs one answer: <c>https:evil.example</c> and <c>https:\\evil.example\x</c> (no slashes,
+    /// or backslashes) are accepted by the browser's WHATWG parser the storefront uses and refused by
+    /// <see cref="Uri"/>. The backend is the stricter of the two there, which is the safe direction; do not
+    /// "fix" it by loosening this side.
+    /// </para>
     /// </summary>
     public static readonly string[] SafeUrls =
     [

@@ -142,6 +142,11 @@ public sealed class PaymentEventPayloadTests
     [InlineData("proxy-authorization")]
     [InlineData("AUTH")]
     [InlineData("auth_key")]
+    [InlineData("card_cvv")]
+    [InlineData("CVC")]
+    [InlineData("cvv2")]
+    [InlineData("card.cvc2")]
+    [InlineData("tokenization_token")]
     public void Every_spelling_of_a_credential_name_is_recognised(string propertyName)
     {
         var payload = $"{{\"{propertyName}\":\"do-not-store\",\"keep\":\"yes\"}}";
@@ -185,6 +190,11 @@ public sealed class PaymentEventPayloadTests
     [InlineData("amount")]
     [InlineData("currency_code")]
     [InlineData("related_ids")]
+    [InlineData("cvv_code")]
+    [InlineData("cvc_check")]
+    [InlineData("tokenization")]
+    [InlineData("tokenized")]
+    [InlineData("card_cvv_result")]
     public void A_field_a_payment_dispute_reads_is_never_redacted(string propertyName)
     {
         Assert.False(PaymentEventPayload.LooksSecret(propertyName), propertyName);
@@ -194,6 +204,36 @@ public sealed class PaymentEventPayloadTests
 
         Assert.False(prepared.Redacted);
         Assert.Equal(payload, prepared.Json);
+    }
+
+    /// <summary>
+    /// The flags and result letters of a card response are not secrets: <c>cvv_code</c> is "M" for a match,
+    /// <c>cvc_check</c> is "pass". The three digits on the back of a card (<c>cvv</c>) still are.
+    /// </summary>
+    [Fact]
+    public void A_cards_verification_results_are_kept_and_its_verification_value_is_not()
+    {
+        const string payload = """
+            {
+              "processor_response": { "avs_code": "A", "cvv_code": "M", "response_code": "0000" },
+              "checks": { "cvc_check": "pass", "tokenization": "applied" },
+              "card": { "cvv": "123", "last_digits": "1234" }
+            }
+            """;
+
+        var prepared = PaymentEventPayload.Prepare(payload);
+
+        Assert.True(prepared.Redacted);
+
+        using var document = JsonDocument.Parse(prepared.Json);
+        var root = document.RootElement;
+
+        Assert.Equal("M", root.GetProperty("processor_response").GetProperty("cvv_code").GetString());
+        Assert.Equal("pass", root.GetProperty("checks").GetProperty("cvc_check").GetString());
+        Assert.Equal("applied", root.GetProperty("checks").GetProperty("tokenization").GetString());
+        Assert.Equal("1234", root.GetProperty("card").GetProperty("last_digits").GetString());
+        Assert.Equal(PaymentEventPayload.RedactedValue, root.GetProperty("card").GetProperty("cvv").GetString());
+        Assert.DoesNotContain("\"123\"", prepared.Json, StringComparison.Ordinal);
     }
 
     [Fact]
