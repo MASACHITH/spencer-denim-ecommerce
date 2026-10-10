@@ -384,6 +384,12 @@ function orderDetail(state, order) {
         providerAmount: null,
         providerCurrency: null,
         payerReference: 'CBC-778812',
+
+        // The provider's own ids, which a bank transfer does not have (the real payload always carries the
+        // keys, and a stub that dropped them could not fail the day the screen stops reading them).
+        providerReference: null,
+        providerTransactionId: null,
+        providerOrderId: null,
         slipPublicId: '66666666-6666-4666-8666-666666666666',
         slipContentType: 'image/jpeg',
         slipFileName: 'slip.jpg',

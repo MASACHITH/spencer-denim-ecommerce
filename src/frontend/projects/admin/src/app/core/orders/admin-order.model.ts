@@ -219,6 +219,25 @@ export interface AdminOrderPayment {
   readonly approvalNote: string | null;
   readonly createdAtUtc: string;
   readonly completedAtUtc: string | null;
+
+  /**
+   * The provider's own id for the attempt, as last recorded - a PayPal order id, a PayHere `payment_id` - or
+   * null (a bank transfer, or an attempt the provider has not reported on).
+   *
+   * **The next two fields and this are what staff search the provider's own portal for to make a refund by
+   * hand**, which is how every refund is made in v1. Neutral: the screen labels them as the provider's and
+   * names no gateway.
+   */
+  readonly providerReference: string | null;
+
+  /** The provider's id for the money - the payment that settled, or was kept as an exception - or null. */
+  readonly providerTransactionId: string | null;
+
+  /**
+   * The order id the provider was given for this attempt, when it is derived rather than stored (PayHere's
+   * `{order number}-{payment id}`), or null.
+   */
+  readonly providerOrderId: string | null;
 }
 
 /** One refund recorded against the order. */

@@ -34,6 +34,11 @@ function payment(overrides: Partial<AdminOrderPayment> = {}): AdminOrderPayment 
     approvalNote: 'Credit on the statement at 14:02.',
     createdAtUtc: '2026-10-05T04:31:00Z',
     completedAtUtc: '2026-10-05T09:00:00Z',
+
+    // A bank transfer has none of the provider's ids, and the screen shows none.
+    providerReference: null,
+    providerTransactionId: null,
+    providerOrderId: null,
     ...overrides,
   };
 }
@@ -869,6 +874,79 @@ describe('OrderDetailPage (ADM-09)', () => {
     // The LKR amount is still there beside it: both are facts about the same payment and a staff member
     // reconciling a statement needs the rupee figure as well.
     expect(payments).toContain('Rs. 15,596.60');
+  });
+
+  /**
+   * Staff refund by hand, in the provider's own portal (v1), and they find the payment there by these ids.
+   * Neutral labels, and each id only when it exists: a bank transfer has none and shows none.
+   */
+  it('shows the ids staff search the provider’s portal for, only when there are any', async () => {
+    await open(detail());
+
+    const bank = element.querySelector('[data-testid="order-payments"]')?.textContent ?? '';
+
+    expect(bank).not.toContain('Order ID sent to the provider');
+    expect(bank).not.toContain("Provider's payment ID");
+    expect(bank).not.toContain("Provider's reference");
+
+    await open(
+      detail({
+        payments: [
+          payment({
+            providerCode: 'OnlineProvider',
+            payerReference: null,
+            slipPublicId: null,
+            slipContentType: null,
+            slipFileName: null,
+            providerOrderId: 'SD-2026-000123-4567',
+            providerTransactionId: '320032123456',
+            providerReference: '320032123456',
+          }),
+        ],
+      }),
+    );
+
+    const created = '2026-10-05T04:31:00Z';
+    const shown = element.querySelector('[data-testid="order-payments"]')?.textContent ?? '';
+
+    expect(element.querySelector(`[data-testid="provider-order-id-${created}"]`)?.textContent?.trim()).toBe(
+      'SD-2026-000123-4567',
+    );
+    expect(element.querySelector(`[data-testid="provider-payment-id-${created}"]`)?.textContent?.trim()).toBe(
+      '320032123456',
+    );
+
+    // The same id twice is shown once: a "reference" that repeats the payment id is noise.
+    expect(element.querySelector(`[data-testid="provider-reference-${created}"]`)).toBeNull();
+
+    // Labelled as the provider's, naming no gateway.
+    expect(shown).toContain('Order ID sent to the provider');
+    expect(shown).toContain("Provider's payment ID");
+    expect(shown).not.toMatch(/PayHere|PayPal/);
+  });
+
+  it('shows the provider’s reference when it differs from the payment that settled', async () => {
+    await open(
+      detail({
+        payments: [
+          payment({
+            providerCode: 'OnlineProvider',
+            status: 'Failed',
+            isOrderSettlement: false,
+            providerReference: 'REF-1',
+            providerTransactionId: null,
+            providerOrderId: 'SD-2026-000123-4567',
+          }),
+        ],
+      }),
+    );
+
+    const created = '2026-10-05T04:31:00Z';
+
+    expect(element.querySelector(`[data-testid="provider-reference-${created}"]`)?.textContent?.trim()).toBe(
+      'REF-1',
+    );
+    expect(element.querySelector(`[data-testid="provider-payment-id-${created}"]`)).toBeNull();
   });
 
   it('shows what a refund actually sent back when the provider sent it', async () => {

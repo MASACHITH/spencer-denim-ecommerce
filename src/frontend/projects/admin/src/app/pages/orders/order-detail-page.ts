@@ -580,6 +580,27 @@ import { CatalogFailure, toCatalogFailure } from '../../core/catalog/admin-catal
                   <dt>Their reference</dt>
                   <dd>{{ payment.payerReference }}</dd>
                 }
+                @if (payment.providerOrderId) {
+                  <!-- What staff need to find the payment in the provider's own portal when they refund by
+                       hand (refunds are manual in v1). Labelled as the provider's and naming no gateway;
+                       user-select: all so one click takes the whole id. -->
+                  <dt>Order ID sent to the provider</dt>
+                  <dd class="order-id" [attr.data-testid]="'provider-order-id-' + payment.createdAtUtc">
+                    {{ payment.providerOrderId }}
+                  </dd>
+                }
+                @if (payment.providerTransactionId) {
+                  <dt>Provider's payment ID</dt>
+                  <dd class="order-id" [attr.data-testid]="'provider-payment-id-' + payment.createdAtUtc">
+                    {{ payment.providerTransactionId }}
+                  </dd>
+                }
+                @if (payment.providerReference && payment.providerReference !== payment.providerTransactionId) {
+                  <dt>Provider's reference</dt>
+                  <dd class="order-id" [attr.data-testid]="'provider-reference-' + payment.createdAtUtc">
+                    {{ payment.providerReference }}
+                  </dd>
+                }
                 @if (payment.slipPublicId) {
                   <dt>Slip</dt>
                   <dd>
@@ -718,6 +739,10 @@ import { CatalogFailure, toCatalogFailure } from '../../core/catalog/admin-catal
       /* A long SKU, email address or tracking number must not widen the panel; at 320 px that is the
          difference between a readable screen and one that scrolls sideways. */
       overflow-wrap: anywhere;
+    }
+    /* One click takes the whole id: staff paste it into the provider's own portal to refund by hand. */
+    .order-id {
+      user-select: all;
     }
     .order-lines,
     .order-history,

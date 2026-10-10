@@ -254,6 +254,22 @@ public sealed record AdminOrderLineDto(
 /// <param name="ApprovalNote">Their reason, which is what staff read back if the customer asks.</param>
 /// <param name="CreatedAtUtc">When the attempt was opened.</param>
 /// <param name="CompletedAtUtc">When it reached a terminal state.</param>
+/// <param name="ProviderReference">
+/// The provider's own id for the attempt, as last recorded (<c>Payments.ProviderReference</c>): a PayPal order
+/// id, a PayHere <c>payment_id</c>. <see langword="null"/> for a bank transfer and for an attempt the provider
+/// has not reported on yet.
+/// </param>
+/// <param name="ProviderTransactionId">
+/// The provider's id for the <b>money</b> (<c>Payments.ProviderTransactionId</c>): the PayPal capture id, the
+/// PayHere <c>payment_id</c> that settled or was kept as an exception. <b>With the next field, this is what a
+/// member of staff searches for in the provider's portal</b> to make a refund by hand, which is how every
+/// refund is made in v1.
+/// </param>
+/// <param name="ProviderOrderId">
+/// The order id the provider was given for this attempt, <b>when it is derived and not stored</b> -
+/// PayHere's <c>{OrderNumber}-{PaymentId}</c> - or <see langword="null"/>. See <c>ProviderOrderIds</c>. Neutral:
+/// the screen shows whichever of the three exist, labelled, and names no gateway.
+/// </param>
 public sealed record AdminOrderPaymentDto(
     string ProviderCode,
     string Status,
@@ -272,7 +288,10 @@ public sealed record AdminOrderPaymentDto(
     DateTime? ApprovedAtUtc,
     string? ApprovalNote,
     DateTime CreatedAtUtc,
-    DateTime? CompletedAtUtc);
+    DateTime? CompletedAtUtc,
+    string? ProviderReference = null,
+    string? ProviderTransactionId = null,
+    string? ProviderOrderId = null);
 
 /// <summary>One refund recorded against the order (doc 08 §3.5).</summary>
 /// <param name="Amount">LKR that went back.</param>

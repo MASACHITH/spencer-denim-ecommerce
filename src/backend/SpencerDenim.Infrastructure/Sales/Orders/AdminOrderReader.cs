@@ -3,6 +3,7 @@ using SpencerDenim.Application.Abstractions.Time;
 using SpencerDenim.Application.Sales.Orders;
 using SpencerDenim.Application.Sales.Orders.Abstractions;
 using SpencerDenim.Application.Sales.Orders.Contracts;
+using SpencerDenim.Application.Sales.Payments;
 using SpencerDenim.Domain.Media;
 using SpencerDenim.Domain.Sales;
 using SpencerDenim.Infrastructure.Persistence;
@@ -414,48 +415,69 @@ internal sealed class AdminOrderReader(AppDbContext dbContext, IClock clock) : I
     /// </remarks>
     private async Task<IReadOnlyList<AdminOrderPaymentDto>> ReadPaymentsAsync(
         int orderId,
-        CancellationToken cancellationToken) =>
-        await dbContext.Payments
+        CancellationToken cancellationToken)
+    {
+        // The id and the order number ride beside each DTO because the provider's order id is derived from
+        // them (see ProviderOrderIds) and cannot be computed inside the query.
+        var rows = await dbContext.Payments
             .AsNoTracking()
             .Where(payment => payment.OrderId == orderId)
             .OrderByDescending(payment => payment.Id)
-            .Select(payment => new AdminOrderPaymentDto(
-                payment.ProviderCode,
-                payment.Status.ToString(),
-                payment.IsOrderSettlement,
-                payment.Amount,
-                payment.Currency,
+            .Select(payment => new
+            {
+                payment.Id,
+                payment.Order!.OrderNumber,
+                Dto = new AdminOrderPaymentDto(
+                    payment.ProviderCode,
+                    payment.Status.ToString(),
+                    payment.IsOrderSettlement,
+                    payment.Amount,
+                    payment.Currency,
 
-                // The foreign figure, which is the one that is allowed to differ from LKR (doc 08 §3.5).
-                // Null for every payment this build can create; the screen renders it only when set.
-                payment.ProviderAmount,
-                payment.ProviderCurrency,
-                payment.PayerReference,
-                payment.ProofAsset != null && !payment.ProofAsset.IsDeleted
-                    && payment.ProofAsset.Status == MediaAssetStatus.Ready
-                    ? payment.ProofAsset.PublicId
-                    : null,
-                payment.ProofAsset != null && !payment.ProofAsset.IsDeleted
-                    ? payment.ProofAsset.ContentType
-                    : null,
-                payment.ProofAsset != null && !payment.ProofAsset.IsDeleted
-                    ? payment.ProofAsset.OriginalFileName
-                    : null,
-                payment.FailureCode,
-                payment.FailureMessage,
+                    // The foreign figure, which is the one that is allowed to differ from LKR (doc 08 §3.5).
+                    // Null for every payment this build can create; the screen renders it only when set.
+                    payment.ProviderAmount,
+                    payment.ProviderCurrency,
+                    payment.PayerReference,
+                    payment.ProofAsset != null && !payment.ProofAsset.IsDeleted
+                        && payment.ProofAsset.Status == MediaAssetStatus.Ready
+                        ? payment.ProofAsset.PublicId
+                        : null,
+                    payment.ProofAsset != null && !payment.ProofAsset.IsDeleted
+                        ? payment.ProofAsset.ContentType
+                        : null,
+                    payment.ProofAsset != null && !payment.ProofAsset.IsDeleted
+                        ? payment.ProofAsset.OriginalFileName
+                        : null,
+                    payment.FailureCode,
+                    payment.FailureMessage,
 
-                // The approver's address, from identity.Users. A left join rather than a required one
-                // because doc 08 §1.5 gives these user columns no FK — users are anonymised, never
-                // hard-deleted — so the row may name an id whose user row has since been overwritten.
-                dbContext.Users
-                    .Where(user => user.Id == payment.ApprovedByUserId)
-                    .Select(user => user.Email)
-                    .FirstOrDefault(),
-                payment.ApprovedAtUtc,
-                payment.ApprovalNote,
-                payment.CreatedAtUtc,
-                payment.CompletedAtUtc))
+                    // The approver's address, from identity.Users. A left join rather than a required one
+                    // because doc 08 §1.5 gives these user columns no FK — users are anonymised, never
+                    // hard-deleted — so the row may name an id whose user row has since been overwritten.
+                    dbContext.Users
+                        .Where(user => user.Id == payment.ApprovedByUserId)
+                        .Select(user => user.Email)
+                        .FirstOrDefault(),
+                    payment.ApprovedAtUtc,
+                    payment.ApprovalNote,
+                    payment.CreatedAtUtc,
+                    payment.CompletedAtUtc,
+
+                    // What staff search the provider's portal for (a refund is made there, by hand, in v1).
+                    payment.ProviderReference,
+                    payment.ProviderTransactionId,
+                    null),
+            })
             .ToListAsync(cancellationToken);
+
+        return rows
+            .Select(row => row.Dto with
+            {
+                ProviderOrderId = ProviderOrderIds.For(row.Dto.ProviderCode, row.OrderNumber, row.Id),
+            })
+            .ToList();
+    }
 
     private async Task<IReadOnlyList<AdminOrderRefundDto>> ReadRefundsAsync(
         int orderId,
