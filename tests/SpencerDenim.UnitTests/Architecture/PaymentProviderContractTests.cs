@@ -293,7 +293,8 @@ public sealed class PaymentProviderContractTests
 
         if (instructions.RedirectUrl is not null)
         {
-            // The order page renders only an absolute https address (http for localhost) as a link.
+            // The order page follows only what PaymentRedirectForm.IsSafeAbsoluteUrl accepts - the
+            // storefront's own rule, run on one shared list by both suites (PaymentRedirectFormTests).
             Assert.True(
                 PaymentRedirectForm.IsSafeAbsoluteUrl(instructions.RedirectUrl),
                 $"{providerCode} returned a redirect URL the order page would not follow.");

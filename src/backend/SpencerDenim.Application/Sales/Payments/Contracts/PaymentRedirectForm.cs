@@ -31,8 +31,7 @@ public sealed record PaymentRedirectForm(
     /// Builds a <c>POST</c> form, refusing an address the order page would not render.
     /// </summary>
     /// <exception cref="ArgumentException">
-    /// The action is not an absolute <c>https</c> URL (a plain <c>http</c> one is allowed only for a
-    /// loopback host, so a developer's machine works), or a field has no name.
+    /// The action is not an address <see cref="IsSafeAbsoluteUrl"/> accepts, or a field has no name.
     /// </exception>
     public static PaymentRedirectForm Post(string action, IEnumerable<PaymentRedirectFormField> fields)
     {
@@ -41,7 +40,8 @@ public sealed record PaymentRedirectForm(
         if (!IsSafeAbsoluteUrl(action))
         {
             throw new ArgumentException(
-                "A redirect form must post to an absolute https URL (http is allowed for localhost only).",
+                "A redirect form must post to an absolute https URL with no user name or password "
+                + "(plain http is allowed for localhost and 127.0.0.1 only).",
                 nameof(action));
         }
 
@@ -52,24 +52,51 @@ public sealed record PaymentRedirectForm(
             throw new ArgumentException("Every redirect form field needs a name.", nameof(fields));
         }
 
-        return new PaymentRedirectForm(PostMethod, action, list);
+        return new PaymentRedirectForm(PostMethod, action.Trim(), list);
     }
 
     /// <summary>
-    /// Whether <paramref name="url"/> is a destination the order page will send a customer to: absolute,
-    /// <c>https</c>, or <c>http</c> on a loopback host. The storefront applies the same rule, so a provider
-    /// that breaks it finds out in a unit test and not on a customer's screen.
+    /// Whether <paramref name="url"/> is a destination the order page will send a customer to. **This is the
+    /// storefront's rule (<c>safeRedirectUrl</c> in <c>payment-redirect.ts</c>), written a second time in the
+    /// other language, and it must stay at least as strict:**
+    /// <list type="bullet">
+    /// <item><description>absolute, after trimming surrounding whitespace;</description></item>
+    /// <item><description>
+    /// <b>no user name or password</b> — <c>https://trusted.example@evil.example/</c> reads as one host and
+    /// goes to another;
+    /// </description></item>
+    /// <item><description><c>https</c>, any host; or</description></item>
+    /// <item><description>
+    /// <c>http</c> only when the host is exactly <c>localhost</c> or <c>127.0.0.1</c>. Not "any loopback":
+    /// <see cref="Uri.IsLoopback"/> is also true for <c>127.0.0.2</c> and <c>[::1]</c>, which the storefront
+    /// refuses.
+    /// </description></item>
+    /// </list>
+    /// <para>
+    /// The two sides are kept in step by one list of safe and unsafe addresses that both test suites run
+    /// (<c>PaymentRedirectFormTests</c> and <c>payment-redirect.spec.ts</c>, each naming the other), and a
+    /// test that fails if an entry is missing from either.
+    /// </para>
     /// </summary>
     public static bool IsSafeAbsoluteUrl(string? url)
     {
         if (string.IsNullOrWhiteSpace(url)
-            || !Uri.TryCreate(url, UriKind.Absolute, out var uri))
+            || !Uri.TryCreate(url.Trim(), UriKind.Absolute, out var uri)
+            || uri.UserInfo.Length > 0)
         {
             return false;
         }
 
-        return uri.Scheme == Uri.UriSchemeHttps
-            || (uri.Scheme == Uri.UriSchemeHttp && uri.IsLoopback);
+        if (uri.Scheme == Uri.UriSchemeHttps)
+        {
+            return true;
+        }
+
+        // Host is lower-case for a DNS name, and keeps its brackets for an IPv6 literal, so "[::1]" is
+        // never equal to either of the two names below.
+        return uri.Scheme == Uri.UriSchemeHttp
+            && (string.Equals(uri.Host, "localhost", StringComparison.Ordinal)
+                || string.Equals(uri.Host, "127.0.0.1", StringComparison.Ordinal));
     }
 }
 

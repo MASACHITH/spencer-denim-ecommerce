@@ -26,6 +26,58 @@ function form(overrides: { method?: string; action?: string } = {}): OrderPaymen
   } as OrderPaymentRedirectFormDto;
 }
 
+// SHARED URL LIST - the same two lists, verbatim, are in the backend's
+// tests/SpencerDenim.UnitTests/Application/Sales/PaymentRedirectFormTests.cs (`SafeUrls`, `UnsafeUrls`), which
+// runs them through `PaymentRedirectForm.IsSafeAbsoluteUrl`; a test there fails if an entry is missing here.
+// The two are one rule written in two languages, and a rule written twice drifts. Change both together.
+const SHARED_SAFE_URLS: readonly string[] = [
+  'https://pay.example.test/checkout',
+  'https://pay.example.test/checkout?session=abc&x=1',
+  '  https://pay.example.test/checkout  ',
+  'HTTPS://PAY.EXAMPLE.TEST/checkout',
+  'https://pay.example.test:8443/checkout',
+  'https://203.0.113.7/pay',
+  'http://localhost:5100/hosted',
+  'http://LOCALHOST:5100/hosted',
+  'http://127.0.0.1:5100/hosted',
+];
+
+const SHARED_UNSAFE_URLS: readonly string[] = [
+  '',
+  '   ',
+  'not a url',
+  'https:',
+  'javascript:alert(1)',
+  'JaVaScRiPt:alert(1)',
+  'data:text/html,<script>alert(1)</script>',
+  'vbscript:msgbox(1)',
+  'file:///etc/passwd',
+  'ftp://pay.example.test/checkout',
+  '/pay/checkout',
+  'pay/checkout',
+  '//pay.example.test/checkout',
+  'http://pay.example.test/checkout',
+  'http://localhost.evil.example/hosted',
+  'http://127.0.0.1.evil.example/hosted',
+  'http://127.0.0.2/hosted',
+  'http://[::1]/hosted',
+  'http://[::1]:5100/hosted',
+  'https://trusted.example@evil.example/pay',
+  'https://good.example@evil.example/',
+  'https://user:secret@pay.example.test/pay',
+  'http://localhost@evil.example/hosted',
+];
+
+describe('safeRedirectUrl (the lists shared with the backend)', () => {
+  it.each(SHARED_SAFE_URLS)('allows %j', (raw) => {
+    expect(safeRedirectUrl(raw)).not.toBeNull();
+  });
+
+  it.each(SHARED_UNSAFE_URLS)('refuses %j', (raw) => {
+    expect(safeRedirectUrl(raw)).toBeNull();
+  });
+});
+
 describe('safeRedirectUrl', () => {
   it.each([
     ['https://pay.example.test/checkout', 'https://pay.example.test/checkout'],
