@@ -4,8 +4,10 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
 using SpencerDenim.Application.Abstractions.Time;
+using SpencerDenim.Application.Ops.Email;
 using SpencerDenim.Application.Sales.Payments.Abstractions;
 using SpencerDenim.Application.Sales.Payments.Contracts;
+using SpencerDenim.Application.Sales.Payments.PayHere;
 using SpencerDenim.Domain.Sales;
 using SpencerDenim.Infrastructure.Persistence.Seeding;
 using SpencerDenim.Infrastructure.Sales.Payments;
@@ -110,6 +112,24 @@ public sealed class PaymentProviderContractTests
 
         Assert.Equal(hasConversion, initiation.ProviderAmount is not null);
         Assert.Equal(hasConversion, initiation.ExchangeRate is not null);
+    }
+
+    /// <summary>
+    /// Whether a provider can take an order right now is asked on every view of the checkout page, so asking
+    /// must be safe — and a provider that says yes must then be able to open a payment, which
+    /// <see cref="A_provider_opens_a_payment_the_database_will_accept"/> proves against the same stubs.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ProviderTypeNames))]
+    public async Task A_provider_says_whether_it_is_available_without_throwing(string typeName)
+    {
+        var provider = Build(typeName);
+
+        var available = await provider.IsAvailableAsync(TestContext.Current.CancellationToken);
+
+        // The stubs describe a provider that has everything it needs, so every provider here is available:
+        // an unconfigured one is covered by its own suite.
+        Assert.True(available, $"{provider.Code} says it is unavailable when everything it needs is present.");
     }
 
     [Theory]
@@ -520,6 +540,26 @@ public sealed class PaymentProviderContractTests
             return new FixedClock(new DateTimeOffset(2026, 10, 6, 9, 0, 0, TimeSpan.Zero));
         }
 
+        // PayHere (issue #141). **Configured, with an order to describe**, unlike the bank stub that has
+        // nothing: the contract has to be proved against the answer a redirecting provider gives when it
+        // can answer, which is a signed form, and the consistency rules below hold that form to the same
+        // standard as any other redirect. A provider that is not configured answers null and is covered by
+        // PayHereProviderTests.
+        if (type == typeof(IPayHereSettingsReader))
+        {
+            return new ConfiguredPayHere();
+        }
+
+        if (type == typeof(IPayHerePaymentStore))
+        {
+            return new OnePayHereOrder();
+        }
+
+        if (type == typeof(EmailOptions))
+        {
+            return new EmailOptions { StorefrontBaseUrl = "https://shop.example.test" };
+        }
+
         throw new NotSupportedException(
             $"A payment provider now depends on {type.Name}, which this contract test has no stub for. "
             + "Add one: the contract has to be provable without a database.");
@@ -533,6 +573,49 @@ public sealed class PaymentProviderContractTests
     {
         public Task<BankTransferDetails?> ReadAsync(CancellationToken cancellationToken) =>
             Task.FromResult<BankTransferDetails?>(null);
+    }
+
+    /// <summary>A PayHere account that is set up, in sandbox.</summary>
+    private sealed class ConfiguredPayHere : IPayHereSettingsReader
+    {
+        public Task<PayHereSettings> ReadAsync(CancellationToken cancellationToken) =>
+            Task.FromResult(new PayHereSettings("sandbox", "1210000", "test-secret-not-a-real-one", 5, 60));
+    }
+
+    /// <summary>One PayHere order whose payment is Initiated, whatever id is asked for.</summary>
+    private sealed class OnePayHereOrder : IPayHerePaymentStore
+    {
+        public Task<PayHerePayment?> FindAsync(string orderNumber, int paymentId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("A provider's contract questions must not look up a notification's payment.");
+
+        public Task<PayHereCheckoutContext?> FindCheckoutContextAsync(int paymentId, CancellationToken cancellationToken) =>
+            Task.FromResult<PayHereCheckoutContext?>(new PayHereCheckoutContext(
+                paymentId,
+                PaymentStatus.Initiated,
+                "SD-2026-000123",
+                Guid.Parse("11111111-2222-3333-4444-555555555555"),
+                9_184m,
+                "Test",
+                "Buyer",
+                "buyer@example.test",
+                "0771234567",
+                "1 Example Road",
+                "Colombo"));
+
+        public Task RecordReferenceAsync(int paymentId, string payHerePaymentId, DateTime nowUtc, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<PayHereTransition> MarkPendingAsync(
+            int paymentId,
+            int orderId,
+            string payHerePaymentId,
+            int pendingMaxDays,
+            DateTime nowUtc,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<PayHereFailureResult> MarkFailedAsync(PayHereFailure failure, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 
     /// <summary>An order with no live payment attempt - the state at placement, and after a rejection.</summary>

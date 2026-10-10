@@ -26,6 +26,13 @@ namespace SpencerDenim.IntegrationTests.Sales;
 /// </summary>
 public abstract class CartTestBase(SqlServerDatabaseFixture sqlServer) : IAsyncDisposable
 {
+    /// <summary>
+    /// Extra configuration for the host this suite starts, or <see langword="null"/> for none. A suite whose
+    /// subject needs a configured key (PayHere needs the shop's public address) overrides it; every other
+    /// suite is unchanged.
+    /// </summary>
+    protected virtual IReadOnlyDictionary<string, string?>? AdditionalHostConfiguration => null;
+
     /// <summary>What the API is addressed as. See the type remarks: the scheme is load-bearing.</summary>
     protected static readonly Uri BaseAddress = new("https://localhost");
 
@@ -51,7 +58,7 @@ public abstract class CartTestBase(SqlServerDatabaseFixture sqlServer) : IAsyncD
     {
         SqlServer.SkipIfUnavailable();
 
-        _factory ??= new ApiFactory(SqlServer.ConnectionString, commandInterceptor: CommandCounter);
+        _factory ??= new ApiFactory(SqlServer.ConnectionString, additionalConfiguration: AdditionalHostConfiguration, commandInterceptor: CommandCounter);
         var client = _factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             BaseAddress = BaseAddress,
@@ -71,7 +78,7 @@ public abstract class CartTestBase(SqlServerDatabaseFixture sqlServer) : IAsyncD
     {
         SqlServer.SkipIfUnavailable();
 
-        _factory ??= new ApiFactory(SqlServer.ConnectionString, commandInterceptor: CommandCounter);
+        _factory ??= new ApiFactory(SqlServer.ConnectionString, additionalConfiguration: AdditionalHostConfiguration, commandInterceptor: CommandCounter);
         var client = _factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             BaseAddress = BaseAddress,
@@ -113,7 +120,7 @@ public abstract class CartTestBase(SqlServerDatabaseFixture sqlServer) : IAsyncD
         get
         {
             SqlServer.SkipIfUnavailable();
-            return _factory ??= new ApiFactory(SqlServer.ConnectionString, commandInterceptor: CommandCounter);
+            return _factory ??= new ApiFactory(SqlServer.ConnectionString, additionalConfiguration: AdditionalHostConfiguration, commandInterceptor: CommandCounter);
         }
     }
 
@@ -126,7 +133,7 @@ public abstract class CartTestBase(SqlServerDatabaseFixture sqlServer) : IAsyncD
     protected IServiceScope CreateApplicationScope()
     {
         SqlServer.SkipIfUnavailable();
-        _factory ??= new ApiFactory(SqlServer.ConnectionString, commandInterceptor: CommandCounter);
+        _factory ??= new ApiFactory(SqlServer.ConnectionString, additionalConfiguration: AdditionalHostConfiguration, commandInterceptor: CommandCounter);
         return _factory.Services.CreateScope();
     }
 

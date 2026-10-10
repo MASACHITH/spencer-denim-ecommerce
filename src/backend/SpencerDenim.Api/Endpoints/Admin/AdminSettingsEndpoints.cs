@@ -357,7 +357,7 @@ internal static class AdminSettingsEndpoints
     /// The one mapping from a use case's answer to HTTP, shared by both write routes so a third cannot
     /// invent a different status for the same situation.
     /// </summary>
-    private static IResult ToHttp(SettingsWriteResult result) => result switch
+    internal static IResult ToHttp(SettingsWriteResult result) => result switch
     {
         SettingsWriteResult.Succeeded => TypedResults.NoContent(),
 
@@ -398,7 +398,7 @@ internal static class AdminSettingsEndpoints
     };
 
     /// <summary>One RFC 9457 response carrying every rejected field, keyed by its name in the request body.</summary>
-    private static ValidationProblem ValidationProblem(IReadOnlyList<ValidationError> errors) =>
+    internal static ValidationProblem ValidationProblem(IReadOnlyList<ValidationError> errors) =>
         TypedResults.ValidationProblem(
             errors
                 .GroupBy(error => error.Field, StringComparer.Ordinal)
@@ -449,7 +449,7 @@ internal static class AdminSettingsEndpoints
     /// something a person can fix).
     /// </para>
     /// </summary>
-    private static ValidationProblem? ReadString(
+    internal static ValidationProblem? ReadString(
         JsonObject body,
         string field,
         out string? value,

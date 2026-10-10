@@ -98,12 +98,14 @@ app.MapContentEndpoints();
 app.MapSiteSettingsEndpoints();
 app.MapAdminSettingsEndpoints();
 app.MapAdminBankTransferEndpoints();
+app.MapAdminPayHereSettingsEndpoints();
 app.MapAdminOrderEndpoints();
 app.MapPaymentSlipEndpoints();
 app.MapAdminContentEndpoints();
 app.MapCartEndpoints();
 app.MapWishlistEndpoints();
 app.MapCheckoutEndpoints();
+app.MapPayHereEndpoints();
 app.MapAdminMediaEndpoints();
 app.MapMediaFileEndpoints();
 

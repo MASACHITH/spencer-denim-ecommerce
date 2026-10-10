@@ -37,6 +37,7 @@ using SpencerDenim.Infrastructure.Persistence.Seeding;
 using SpencerDenim.Infrastructure.Sales;
 using SpencerDenim.Infrastructure.Sales.Orders;
 using SpencerDenim.Infrastructure.Sales.Payments;
+using SpencerDenim.Infrastructure.Sales.Payments.PayHere;
 using SpencerDenim.Infrastructure.Settings;
 using SpencerDenim.Infrastructure.Time;
 using SpencerDenim.Application.Ops.Alerts.Abstractions;
@@ -254,7 +255,11 @@ public static class DependencyInjection
         // registry is built from whatever IPaymentProvider implementations are here, and checkout asks it
         // by code. PayPalProvider (W4-01) is one more AddScoped line on this list and nothing else.
         services.AddScoped<IPaymentProvider, BankTransferProvider>();
+        services.AddScoped<IPaymentProvider, PayHereProvider>();
         services.AddScoped<IPaymentProviderRegistry, PaymentProviderRegistry>();
+
+        // PayHere's settings reader, stores and notification retry (doc 11 P8b, issue #141).
+        services.AddPayHereSupport();
 
         // Singleton, because "once" means once for the process: the provider itself is per request, and a
         // warning that fires per request is noise rather than a signal (see BankDetailsWarningOnce).

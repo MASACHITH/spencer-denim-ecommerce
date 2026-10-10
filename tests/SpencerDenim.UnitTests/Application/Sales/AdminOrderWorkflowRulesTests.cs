@@ -228,7 +228,20 @@ public sealed class AdminOrderWorkflowRulesTests
             .Select(definition => definition.Key)
             .ToList();
 
-        Assert.Equal([SettingKeys.Orders.AutoDeliverAfterDays], seeded);
+        // The auto-deliver window, and PayHere's mode, pending hold and payment window: each a figure doc 11
+        // states (7 days; sandbox, 5 days and 60 minutes, P8b). PayHere's merchant ID and secret are the
+        // client's and are seeded with nothing.
+        Assert.Equal(
+            [
+                SettingKeys.Orders.AutoDeliverAfterDays,
+                SettingKeys.PayHere.Mode,
+                SettingKeys.PayHere.PendingMaxDays,
+                SettingKeys.PayHere.ExpiryMinutes,
+            ],
+            seeded);
+
+        Assert.Null(SettingCatalog.Find(SettingKeys.PayHere.MerchantId)!.SeedValue);
+        Assert.Null(SettingCatalog.Find(SettingKeys.PayHere.MerchantSecret)!.SeedValue);
 
         foreach (var key in new[]
         {
