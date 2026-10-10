@@ -90,6 +90,91 @@ public sealed class MalformedRequestBodyTests
         Assert.DoesNotContain("SpencerDenim.", raw, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// What issue #47 is really about (owner's diagnosis, 2026-10-02): a <b>well-formed</b> object with a property
+    /// omitted. <c>System.Text.Json</c> ignores nullable annotations, so the omitted property bound null and a
+    /// <c>ThrowIfNull</c> inside the authenticator answered 500. Every shape that leaves the email or the password
+    /// out must be a 400 that names the field, in every environment, and never reach the authenticator.
+    /// </summary>
+    [Theory]
+    [InlineData("Testing", "{}", "email,password")]
+    [InlineData("Development", "{}", "email,password")]
+    [InlineData("Production", "{}", "email,password")]
+    [InlineData("Production", "{\"email\":\"a@b.c\"}", "password")]
+    [InlineData("Production", "{\"password\":\"x\"}", "email")]
+    [InlineData("Production", "{\"email\":null,\"password\":null}", "email,password")]
+    [InlineData("Development", "{\"email\":\"a@b.c\"}", "password")]
+    [InlineData("Development", "{\"password\":\"x\"}", "email")]
+    public async Task A_sign_in_with_a_field_left_out_is_a_400_naming_the_field(
+        string environment, string payload, string expectedFields)
+    {
+        await using var factory = new ApiFactory(ApiFactory.UnreachableConnectionString, environment);
+        using var client = factory.CreateClient();
+
+        var (status, body) = await PostRawAsync(client, "/api/admin/auth/login", payload);
+
+        Assert.Equal(HttpStatusCode.BadRequest, status);
+        Assert.Equal("missing_field", body.GetProperty("code").GetString());
+        var errors = body.GetProperty("errors");
+        foreach (var field in expectedFields.Split(','))
+        {
+            Assert.True(errors.TryGetProperty(field, out _), $"expected an error for '{field}'");
+        }
+
+        Assert.Equal(expectedFields.Split(',').Length, errors.EnumerateObject().Count());
+    }
+
+    /// <summary>
+    /// The detail is fixed wording plus the JSON path the reader stopped at. The framework's and
+    /// <c>System.Text.Json</c>'s own messages name internal CLR types, which tells a stranger how the server is built.
+    /// </summary>
+    [Theory]
+    [InlineData("/api/admin/auth/login", "[]")]
+    [InlineData("/api/admin/auth/login", "\"x\"")]
+    [InlineData("/api/admin/auth/login", "{\"email\":5}")]
+    [InlineData("/api/cart/items", "{\"variantId\":\"abc\"}")]
+    [InlineData("/api/content/newsletter", "")]
+    [InlineData("/api/content/newsletter", "null")]
+    public async Task The_detail_names_no_internal_type_or_framework_wording(string route, string payload)
+    {
+        await using var factory = new ApiFactory(ApiFactory.UnreachableConnectionString, "Production");
+        using var client = factory.CreateClient();
+
+        var (status, body) = await PostRawAsync(client, route, payload);
+
+        Assert.Equal(HttpStatusCode.BadRequest, status);
+        var text = body.ToString();
+        Assert.DoesNotContain("SpencerDenim.", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("System.", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("Implicit body", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("Did you mean", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("converted to", text, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Real browsers send <c>Accept: */*</c>, but a probe or a proxy may not. With no problem writer matching the
+    /// header the answer used to be a bodyless 400 and an error-level "unhandled exception" log line.
+    /// </summary>
+    [Theory]
+    [InlineData("text/html")]
+    [InlineData("application/xml")]
+    public async Task A_caller_who_does_not_accept_json_still_gets_the_problem_document(string accept)
+    {
+        await using var factory = new ApiFactory(ApiFactory.UnreachableConnectionString, "Production");
+        using var client = factory.CreateClient();
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/cart/items")
+        {
+            Content = new StringContent("{bad", Encoding.UTF8, "application/json"),
+        };
+        request.Headers.TryAddWithoutValidation("Accept", accept);
+
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        var raw = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains("malformed_json", raw, StringComparison.Ordinal);
+    }
+
     private static async Task<(HttpStatusCode Status, JsonElement Body)> PostRawAsync(
         HttpClient client, string route, string payload)
     {

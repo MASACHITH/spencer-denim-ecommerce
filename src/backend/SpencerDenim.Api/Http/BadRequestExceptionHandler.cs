@@ -18,8 +18,8 @@ namespace SpencerDenim.Api.Http;
 /// machine-readable <c>code</c>.
 /// </para>
 /// <para>
-/// No stack trace, no exception type: the detail is the JSON reader's message (it names the JSON path and
-/// position, nothing the caller did not send) or the framework's own bad-request text.
+/// No stack trace, no exception type, no framework wording: the detail is fixed text plus, for bad JSON, the JSON
+/// path the reader stopped at.
 /// </para>
 /// </summary>
 internal sealed class BadRequestExceptionHandler(IProblemDetailsService problemDetails) : IExceptionHandler
@@ -39,20 +39,38 @@ internal sealed class BadRequestExceptionHandler(IProblemDetailsService problemD
         {
             Status = badRequest.StatusCode,
             Title = json is null ? "Bad request" : "Malformed JSON",
+
+            // Fixed wording, never the exception's own message: the framework's text and System.Text.Json's name
+            // internal CLR types ("could not be converted to SpencerDenim.Api.Endpoints.Admin.AdminLoginRequest",
+            // "Implicit body inferred for parameter ... Did you mean to use a Service instead?"), which tells a
+            // stranger how the server is built. The JSON path is the part that helps the caller, and it is
+            // something they sent.
             Detail = json is null
-                ? badRequest.Message
-                : $"The request body is not valid JSON for this endpoint: {json.Message}",
+                ? "The request could not be read. Check the body and the parameters."
+                : json.Path is { Length: > 0 } path
+                    ? $"The request body is not valid JSON for this endpoint (at {path})."
+                    : "The request body is not valid JSON for this endpoint.",
         };
         problem.Extensions["code"] = json is null ? "bad_request" : "malformed_json";
 
         httpContext.Response.StatusCode = badRequest.StatusCode;
 
-        return await problemDetails.TryWriteAsync(new ProblemDetailsContext
+        if (await problemDetails.TryWriteAsync(new ProblemDetailsContext
         {
             HttpContext = httpContext,
             ProblemDetails = problem,
             Exception = exception,
-        });
+        }))
+        {
+            return true;
+        }
+
+        // No registered writer accepts the caller's Accept header (text/html, application/xml): answer with the
+        // problem document anyway rather than a bodyless 400 and an "unhandled exception" error in the log.
+        await httpContext.Response.WriteAsJsonAsync(
+            problem, options: null, contentType: "application/problem+json", cancellationToken);
+
+        return true;
     }
 
     private static JsonException? FindJsonException(Exception exception)
