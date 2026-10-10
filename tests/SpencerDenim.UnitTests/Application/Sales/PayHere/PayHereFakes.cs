@@ -184,7 +184,12 @@ internal sealed class FakePayHerePayments : IPayHerePaymentStore
         return Task.FromResult(Context);
     }
 
-    public Task RecordReferenceAsync(int paymentId, string payHerePaymentId, DateTime nowUtc, CancellationToken cancellationToken)
+    public Task RecordReferenceAsync(
+        int paymentId,
+        int orderId,
+        string payHerePaymentId,
+        DateTime nowUtc,
+        CancellationToken cancellationToken)
     {
         Calls.Add("RecordReference");
         LastReference = payHerePaymentId;

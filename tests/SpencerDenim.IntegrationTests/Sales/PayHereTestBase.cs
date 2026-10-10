@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using SpencerDenim.Application.Sales.Checkout.Contracts;
 using SpencerDenim.Application.Sales.Payments.PayHere;
@@ -50,6 +51,25 @@ public abstract class PayHereTestBase(SqlServerDatabaseFixture sqlServer) : Bank
     ];
 
     private bool _touchedPayHere;
+
+    /// <summary>
+    /// Every command this host ran that SQL Server killed as a deadlock victim. EF retries those silently, so
+    /// without a recorder a deadlock is invisible: the request succeeds and only the latency suffers.
+    /// </summary>
+    protected DeadlockVictimRecorder DeadlockVictims { get; } = new();
+
+    /// <summary>
+    /// Every command the host started, in order. For tests that assert on the shape of a code path (lock
+    /// order) and so run one request at a time.
+    /// </summary>
+    protected SqlStatementLog Statements { get; } = new();
+
+    protected override Action<IServiceCollection>? ConfigureHostServices =>
+        services =>
+        {
+            services.AddSingleton<IInterceptor>(DeadlockVictims);
+            services.AddSingleton<IInterceptor>(Statements);
+        };
 
     /// <summary>
     /// The shop's public address as the server is configured with it, or <see langword="null"/> for a host
@@ -269,6 +289,45 @@ public abstract class PayHereTestBase(SqlServerDatabaseFixture sqlServer) : Bank
 
     protected HttpClient NewNotifyClient() =>
         Factory.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = BaseAddress, HandleCookies = false });
+
+    // ---- finishing what a first delivery left ------------------------------------------------------
+
+    /// <summary>
+    /// Runs the retry sweep until nothing PayHere is left Received or Failed with a retry time, bringing each
+    /// event's retry time forward first - the system's own recovery, run without waiting minutes for its
+    /// ladder. Returns how many events the sweep took in all.
+    /// </summary>
+    protected async Task<int> DrainRetrySweepAsync()
+    {
+        var taken = 0;
+
+        for (var pass = 0; pass < 12; pass++)
+        {
+            using (var scope = CreateScope())
+            {
+                await scope.ServiceProvider.GetRequiredService<AppDbContext>().PaymentEvents
+                    .Where(candidate => candidate.ProviderCode == PaymentProviderCodes.PayHere
+                        && (candidate.ProcessingStatus == PaymentEventProcessingStatus.Received
+                            || candidate.ProcessingStatus == PaymentEventProcessingStatus.Failed)
+                        && candidate.NextAttemptAtUtc != null)
+                    .ExecuteUpdateAsync(
+                        candidate => candidate.SetProperty(row => row.NextAttemptAtUtc, DateTime.UtcNow.AddMinutes(-1)),
+                        Token);
+            }
+
+            using var sweepScope = CreateApplicationScope();
+            var result = await sweepScope.ServiceProvider.GetRequiredService<PayHereRetrySweep>().RunAsync(Token);
+
+            taken += result.Claimed;
+
+            if (result.Found == 0)
+            {
+                break;
+            }
+        }
+
+        return taken;
+    }
 
     // ---- reading what happened ---------------------------------------------------------------------
 

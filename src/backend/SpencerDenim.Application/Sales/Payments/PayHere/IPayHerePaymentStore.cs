@@ -39,10 +39,12 @@ public interface IPayHerePaymentStore
 
     /// <summary>
     /// Writes PayHere's own id for the payment into <c>Payments.ProviderReference</c>, so a refund made in the
-    /// PayHere portal can be matched to its payment. Idempotent; never changes a status.
+    /// PayHere portal can be matched to its payment. Idempotent; never changes a status. Takes the order's
+    /// lock first, like every method here, which is why it is given the order.
     /// </summary>
     Task RecordReferenceAsync(
         int paymentId,
+        int orderId,
         string payHerePaymentId,
         DateTime nowUtc,
         CancellationToken cancellationToken);

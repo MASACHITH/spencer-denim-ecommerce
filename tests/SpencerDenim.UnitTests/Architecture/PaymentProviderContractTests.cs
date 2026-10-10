@@ -602,7 +602,12 @@ public sealed class PaymentProviderContractTests
                 "1 Example Road",
                 "Colombo"));
 
-        public Task RecordReferenceAsync(int paymentId, string payHerePaymentId, DateTime nowUtc, CancellationToken cancellationToken) =>
+        public Task RecordReferenceAsync(
+            int paymentId,
+            int orderId,
+            string payHerePaymentId,
+            DateTime nowUtc,
+            CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public Task<PayHereTransition> MarkPendingAsync(

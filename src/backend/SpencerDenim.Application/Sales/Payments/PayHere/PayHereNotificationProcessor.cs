@@ -220,7 +220,8 @@ public sealed class PayHereNotificationProcessor(
         // PayHere's own id for the payment, written before the settlement so a refund made in the PayHere
         // portal can be found from our side whatever the settlement decides. Only on a payment that has not
         // settled: a second charge must not overwrite the first one's id.
-        await payments.RecordReferenceAsync(payment.PaymentId, notification.PaymentId, now, cancellationToken);
+        await payments.RecordReferenceAsync(
+            payment.PaymentId, payment.OrderId, notification.PaymentId, now, cancellationToken);
 
         var amount = notification.AmountValue;
 
