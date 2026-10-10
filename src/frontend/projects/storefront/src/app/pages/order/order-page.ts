@@ -290,7 +290,7 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
         <!-- Why the shopper is here, when the payment page sent them back with a reason (see
              payment-hint.ts). A fixed sentence picked by a whitelist, never the address's own text. -->
         @if (hintMessage(placed); as said) {
-          <p class="pay__hint" role="status" data-testid="pay-hint">{{ said }}</p>
+          <p class="order__panel" role="status" data-testid="pay-hint">{{ said }}</p>
         }
 
         <!-- **An online provider's panel comes first, and the bank panel below is the else branch, so the
@@ -765,14 +765,6 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
       min-width: var(--tap);
     }
     /* The shop's own note, with its line breaks kept. It arrives as text and is interpolated as text. */
-    /* The reason the payment page sent the shopper back, above the panel it is about. */
-    .pay__hint {
-      max-width: 60ch;
-      margin: 0 0 var(--space-2);
-      padding: var(--space-1-5);
-      border: 1px solid var(--color-border);
-      background-color: var(--color-surface);
-    }
     .pay__notes {
       max-width: 60ch;
       white-space: pre-line;
