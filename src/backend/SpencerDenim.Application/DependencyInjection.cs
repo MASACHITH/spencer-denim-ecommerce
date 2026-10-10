@@ -34,6 +34,7 @@ using SpencerDenim.Application.Sales.Orders.Customer;
 using SpencerDenim.Application.Sales.Payments.Admin;
 using SpencerDenim.Application.Sales.Payments.Contracts;
 using SpencerDenim.Application.Sales.Payments.Customer;
+using SpencerDenim.Application.Sales.Payments.PayHere;
 using SpencerDenim.Application.Sales.Wishlist;
 using SpencerDenim.Application.Sales.Wishlist.Contracts;
 using SpencerDenim.Application.Sales.Checkout;
@@ -360,6 +361,9 @@ public static class DependencyInjection
         services.AddScoped<
             ICommandHandler<UpdateInvoiceAndFulfilmentSettingsCommand, SettingsWriteResult>,
             UpdateInvoiceAndFulfilmentSettingsCommandHandler>();
+
+        // PayHere (doc 11 P8b, issue #141): the notify handler, its settings screen and its readiness.
+        services.AddPayHereUseCases();
 
         // Settings (ADM-22 + W3-03): the bank details a customer transfers to, under Settings.Payments.
         services.AddScoped<
