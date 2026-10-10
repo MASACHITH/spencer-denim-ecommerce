@@ -258,6 +258,50 @@ public sealed class AdminAuthEndpointTests(SqlServerDatabaseFixture sqlServer)
     }
 
     /// <summary>
+    /// Issue #46 follow-up (tester D2): an account with <c>LockoutEnabled = 0</c> is never locked and never counted,
+    /// as in Identity. The atomic statement must not lock it (and report a <c>Lockout</c>) on the fifth failure just
+    /// because it counts there.
+    /// </summary>
+    [Fact]
+    public async Task An_account_with_lockout_switched_off_is_never_locked_by_wrong_passwords()
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, TestContext.Current.CancellationToken);
+
+        var email = UniqueEmail("no-lockout");
+        const string password = "Correct-Password-1!";
+        await using var factory = new ApiFactory(sqlServer.ConnectionString);
+        var userId = await CreateStaffUserAsync(factory, email, password, isActive: true);
+        using var client = CreateClient(factory);
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            await dbContext.Users.Where(u => u.Id == userId)
+                .ExecuteUpdateAsync(set => set.SetProperty(u => u.LockoutEnabled, false), TestContext.Current.CancellationToken);
+        }
+
+        for (var attempt = 0; attempt < 7; attempt++)
+        {
+            using var failed = await client.PostAsJsonAsync(LoginUrl, new { email, password = "wrong" }, TestContext.Current.CancellationToken);
+            Assert.Equal(HttpStatusCode.Unauthorized, failed.StatusCode);
+        }
+
+        var user = await FindUserAsync(factory, userId);
+        Assert.Null(user.LockoutEnd);
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            Assert.Equal(0, await dbContext.AuditLogs.CountAsync(a => a.UserEmail == email && a.Action == "Lockout", TestContext.Current.CancellationToken));
+            Assert.Equal(7, await dbContext.AuditLogs.CountAsync(a => a.UserEmail == email && a.Action == "LoginFailed", TestContext.Current.CancellationToken));
+        }
+
+        using var succeeded = await client.PostAsJsonAsync(LoginUrl, new { email, password }, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, succeeded.StatusCode);
+    }
+
+    /// <summary>
     /// Issue #46 guard for the sequential caller: with the lockout columns kept out of stale saves, Identity's own
     /// counter reset on a right password (a deliberate change, saved through the same store) must still land.
     /// </summary>
@@ -291,7 +335,7 @@ public sealed class AdminAuthEndpointTests(SqlServerDatabaseFixture sqlServer)
     }
 
     /// <summary>
-    /// Regression test for the defect in issue #16:before this fix, <c>IsActive</c> was only checked at login and
+    /// Regression test for the defect in issue #16: before this fix, <c>IsActive</c> was only checked at login and
     /// on <c>/whoami</c>, so a deactivated staff account's cookie kept authenticating every other endpoint for the
     /// rest of its 60-minute sliding lifetime. <c>AdminSecurity:SecurityStampValidationIntervalSeconds</c> is
     /// shrunk to 1 second here so the test proves the real revalidation path without waiting out a real minute.

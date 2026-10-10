@@ -485,6 +485,125 @@ public sealed class AdminTwoFactorEndpointTests(SqlServerDatabaseFixture sqlServ
         Assert.Equal((HttpStatusCode)423, passwordStep.StatusCode);
     }
 
+    /// <summary>
+    /// Issue #46 follow-up (tester D1): the pending sign-in is a claim. A recovery code is redeemed by a read-modify-write
+    /// save, so twelve requests carrying the same code all pass the code check; only the one whose <c>DELETE</c> of
+    /// the pending sign-in removes the row may open a session. The rest are told the sign-in is already over (a
+    /// 401, never a 200 and never a 500), and exactly one auth cookie and one recovery-code <c>Login</c> audit row result.
+    /// </summary>
+    [Fact]
+    public async Task Parallel_second_steps_with_the_same_recovery_code_open_exactly_one_session()
+    {
+        var tokenWriteDelay = new TokenWriteDelayInterceptor(TimeSpan.FromMilliseconds(750));
+        await using var host = await StartAsync(NoLockoutDuringTheRace, tokenWriteDelay);
+        var email = UniqueEmail("parallel-recovery");
+        await CreateStaffUserAsync(host, email);
+        var (_, recoveryCodes) = await EnrolThroughApiWithCodesAsync(host, email);
+
+        var replies = await ParallelSecondStepsAsync(host, tokenWriteDelay, email, recoveryCodes[0], isRecoveryCode: true, count: 12);
+
+        AssertNoServerErrors(replies);
+        Assert.True(replies.Count(r => r.StatusCode == HttpStatusCode.OK) == 1, $"Exactly one request completes the sign-in. {Describe(replies)}");
+        Assert.True(replies.Count(r => r.HasSessionCookie) == 1, $"Exactly one auth cookie is issued. {Describe(replies)}");
+        Assert.All(replies.Where(r => r.StatusCode != HttpStatusCode.OK), r => Assert.Equal(HttpStatusCode.Unauthorized, r.StatusCode));
+
+        await using var scope = host.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        // The enrolment sign-in wrote its own Login row (2FA was still off); the race wrote exactly one more.
+        var recoveryLogins = await dbContext.AuditLogs.AsNoTracking()
+            .Where(a => a.UserEmail == email && a.Action == "Login" && a.AfterJson != null && a.AfterJson.Contains("RecoveryCode"))
+            .CountAsync(Ct);
+        Assert.Equal(1, recoveryLogins);
+        Assert.Equal(1, await dbContext.AuditLogs.CountAsync(a => a.UserEmail == email && a.Action == "RecoveryCodeUsed", Ct));
+    }
+
+    /// <summary>
+    /// The same claim for an authenticator code: whatever the code check lets through (the replay protection of the
+    /// TOTP provider is a separate fix; the delayed token writes make every request pass it here), at most one of
+    /// the twelve opens a session.
+    /// </summary>
+    [Fact]
+    public async Task Parallel_second_steps_with_the_same_authenticator_code_open_at_most_one_session()
+    {
+        var tokenWriteDelay = new TokenWriteDelayInterceptor(TimeSpan.FromMilliseconds(750));
+        await using var host = await StartAsync(NoLockoutDuringTheRace, tokenWriteDelay);
+        var email = UniqueEmail("parallel-totp");
+        await CreateStaffUserAsync(host, email);
+        var key = await EnrolThroughApiAsync(host, email);
+
+        var replies = await ParallelSecondStepsAsync(host, tokenWriteDelay, email, TotpTestCodes.Next(key), isRecoveryCode: false, count: 12);
+
+        AssertNoServerErrors(replies);
+        Assert.True(replies.Count(r => r.StatusCode == HttpStatusCode.OK) <= 1, $"More than one request completed the same pending sign-in. {Describe(replies)}");
+        Assert.True(replies.Count(r => r.HasSessionCookie) <= 1, $"More than one auth cookie was issued for the same pending sign-in. {Describe(replies)}");
+        Assert.All(replies.Where(r => r.StatusCode != HttpStatusCode.OK), r => Assert.Equal(HttpStatusCode.Unauthorized, r.StatusCode));
+    }
+
+    /// <summary>
+    /// The lockout threshold is raised for the same-code races above. Twelve requests with one code is the point of
+    /// those tests, but the ones that read the code after the winner redeemed it count as wrong codes, and at the
+    /// default five the account can lock before the winner's own check, which would make "exactly one session"
+    /// depend on timing. The lockout itself is covered by the parallel wrong-code test, at the default.
+    /// </summary>
+    private static readonly Dictionary<string, string?> NoLockoutDuringTheRace = new()
+    {
+        ["AdminSecurity:LockoutMaxFailedAttempts"] = "100",
+    };
+
+    private readonly record struct SecondStepReply(HttpStatusCode StatusCode, bool HasSessionCookie, string? Error);
+
+    /// <summary>
+    /// Passes the password step once with a cookie-less client, then sends <paramref name="count"/> second steps
+    /// with that one pending cookie and one antiforgery pair, all released together. Each one's record of the code
+    /// as used is delayed by <paramref name="tokenWriteDelay"/> (switched on after the password step), so none of
+    /// them can see that another has used the code: the worst case, on every run.
+    /// </summary>
+    private static async Task<SecondStepReply[]> ParallelSecondStepsAsync(
+        WebApplicationFactory<Program> host, TokenWriteDelayInterceptor tokenWriteDelay, string email, string code, bool isRecoveryCode, int count)
+    {
+        using var client = CreateClient(host, handleCookies: false);
+        using var login = await PostJsonAsync(client, LoginUrl, new { email, password = Password });
+        Assert.True((await ReadJsonAsync(login)).GetProperty("twoFactorRequired").GetBoolean());
+        var pendingCookie = CookiePair(login, "sd_admin_2fa");
+
+        using var tokenResponse = await client.GetAsync(new Uri(AntiforgeryUrl, UriKind.Relative), Ct);
+        var token = (await ReadJsonAsync(tokenResponse)).GetProperty("token").GetString()!;
+        var antiforgeryCookie = CookiePair(tokenResponse, "sd_admin_xsrf");
+
+        // From here every record of a used code is held back, so all the requests below pass the code check first.
+        tokenWriteDelay.Enabled = true;
+
+        var gate = new TaskCompletionSource();
+        var sends = Enumerable.Range(0, count).Select(async _ =>
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, LoginTwoFactorUrl)
+            {
+                Content = JsonContent.Create(new { code, isRecoveryCode }),
+            };
+            request.Headers.Add("X-XSRF-TOKEN", token);
+            request.Headers.Add("Cookie", $"{antiforgeryCookie}; {pendingCookie}");
+
+            await gate.Task;
+            using var response = await client.SendAsync(request, Ct);
+            return new SecondStepReply(
+                response.StatusCode,
+                CookiePairOrNull(response, "sd_admin_auth") is not null,
+                ErrorCodeOf(await response.Content.ReadAsStringAsync(Ct)));
+        }).ToArray();
+
+        gate.SetResult();
+        return await Task.WhenAll(sends);
+    }
+
+    private static string Describe(IEnumerable<SecondStepReply> replies) =>
+        "Replies: " + string.Join(", ", replies.Select(r => $"{(int)r.StatusCode}/{r.Error}{(r.HasSessionCookie ? "/cookie" : string.Empty)}"));
+
+    private static void AssertNoServerErrors(IEnumerable<SecondStepReply> replies) =>
+        Assert.All(replies, r => Assert.True(
+            (int)r.StatusCode < 500,
+            $"A parallel second step must be answered, not crash: {r.StatusCode} {r.Error}"));
+
     [Fact]
     public async Task A_right_code_resets_the_failure_count()
     {
@@ -737,13 +856,15 @@ public sealed class AdminTwoFactorEndpointTests(SqlServerDatabaseFixture sqlServ
 
     private static string UniqueEmail(string label) => $"{label}-{Guid.NewGuid():N}@example.com";
 
-    private async Task<WebApplicationFactory<Program>> StartAsync()
+    private async Task<WebApplicationFactory<Program>> StartAsync(
+        IReadOnlyDictionary<string, string?>? configuration = null,
+        TokenWriteDelayInterceptor? tokenWriteDelay = null)
     {
         sqlServer.SkipIfUnavailable();
         await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, Ct);
 
         // The probe host is derived from (and owned by) this factory: disposing it disposes both.
-        var factory = new ApiFactory(sqlServer.ConnectionString);
+        var factory = new ApiFactory(sqlServer.ConnectionString, additionalConfiguration: configuration, commandInterceptor: tokenWriteDelay);
         return factory.WithWebHostBuilder(builder =>
             builder.ConfigureTestServices(services => services.AddTransient<IStartupFilter, ProbeEndpointsStartupFilter>()));
     }

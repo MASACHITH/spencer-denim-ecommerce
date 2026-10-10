@@ -80,7 +80,8 @@ public sealed class StaffAccountLockout(
     /// <summary>
     /// Counts one wrong password or code, atomically. Locks the account when this failure reaches
     /// <see cref="LockoutOptions.MaxFailedAccessAttempts"/> (and, like Identity, resets the counter for the next
-    /// window); an account that is already locked is answered as locked and not counted.
+    /// window); an account that is already locked is answered as locked and not counted, and one that has lockout
+    /// switched off (<c>LockoutEnabled = 0</c>) is neither counted nor ever locked.
     /// </summary>
     public async Task<StaffSecretCheck> RecordFailedAttemptAsync(AppUser user)
     {
@@ -108,8 +109,10 @@ public sealed class StaffAccountLockout(
 
             // [identity] is bracketed because IDENTITY is a reserved word in T-SQL. Right-hand sides of SET all read
             // the row as it was before this UPDATE, so both CASEs test the same pre-increment count. Identity treats
-            // LockoutEnd >= now as locked, hence "< @now" for unlocked. When the row is not updated (already locked),
-            // the second statement reports the lockout that stopped it.
+            // LockoutEnd >= now as locked, hence "< @now" for unlocked. An account with LockoutEnabled = 0 is never
+            // locked and never counted, as in Identity (IsLockedOutAsync is false for it whatever LockoutEnd holds),
+            // so the UPDATE leaves it alone. When the row is not updated (already locked, or not lockable), the second
+            // statement reports the lockout that stopped it, if any.
             command.CommandText =
                 """
                 UPDATE [identity].[Users]
@@ -122,7 +125,8 @@ public sealed class StaffAccountLockout(
                        CAST(CASE WHEN deleted.AccessFailedCount + 1 >= @maxFailedAttempts THEN 1 ELSE 0 END AS bit),
                        CAST(0 AS bit)
                  WHERE Id = @userId
-                   AND (LockoutEnabled = 0 OR LockoutEnd IS NULL OR LockoutEnd < @now);
+                   AND LockoutEnabled = 1
+                   AND (LockoutEnd IS NULL OR LockoutEnd < @now);
 
                 IF @@ROWCOUNT = 0
                     SELECT AccessFailedCount,

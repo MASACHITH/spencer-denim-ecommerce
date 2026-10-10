@@ -160,7 +160,17 @@ public sealed class AdminAuthenticator(
                 user.Id, user.Email ?? string.Empty, racedLockoutEnd, wasNewlyLockedOut: false, isRecoveryCode);
         }
 
-        await ClosePendingSignInAsync(user);
+        // The claim. The code check above is no gate on its own: a recovery code is redeemed and an authenticator step
+        // recorded by read-modify-write saves, so any number of parallel requests with the same code all pass it.
+        // Deleting the pending sign-in is what lets exactly one of them through: the DELETE affects one row for the
+        // request that gets there first and none for the rest, which are answered as a sign-in that is already over
+        // (the same reply a stale cookie gets), with no session. On main this was Identity's own remove, which fails
+        // for the second deleter; the idempotent close below must not be used here, or all of them sign in.
+        if (!await TryClaimPendingSignInAsync(user, pendingSignInId))
+        {
+            return AdminAuthenticationOutcome.TwoFactorSessionExpired(user.Id, user.Email);
+        }
+
         await userManager.ResetAccessFailedCountAsync(user);
         var recoveryCodesLeft = await userManager.CountRecoveryCodesAsync(user);
         return await SucceedAsync(user, currentStamp, twoFactorEnabled: true, isRecoveryCode, recoveryCodesLeft);
@@ -201,6 +211,32 @@ public sealed class AdminAuthenticator(
     }
 
     /// <summary>
+    /// Completes the pending sign-in <paramref name="pendingSignInId"/> names, for exactly one caller: true for the
+    /// request whose set-based <c>DELETE</c> removed the row, false for every other request racing it, and for one
+    /// whose pending sign-in was replaced by a newer password step in the meantime (the row then holds a different
+    /// hash and nothing matches). Only the success path may use this; every path that merely ends a pending
+    /// sign-in (wrong code, lockout, stale stamp) uses <see cref="ClosePendingSignInAsync"/>, which is happy to
+    /// find nothing left to delete.
+    /// </summary>
+    private async Task<bool> TryClaimPendingSignInAsync(AppUser user, string pendingSignInId)
+    {
+        // The stored value is "{hash of the id}|{expiry}" (see OpenPendingSignInAsync); the hash is hex, so the
+        // prefix match has no LIKE wildcards in it.
+        var valuePrefix = PendingSignInIds.Hash(pendingSignInId) + "|";
+
+        var claimed = await dbContext.Set<IdentityUserToken<int>>()
+            .Where(t => t.UserId == user.Id
+                && t.LoginProvider == AdminTokenNames.LoginProvider
+                && t.Name == AdminTokenNames.PendingTwoFactorSignIn
+                && t.Value != null
+                && t.Value.StartsWith(valuePrefix))
+            .ExecuteDeleteAsync();
+
+        ForgetTrackedPendingSignIn(user);
+        return claimed == 1;
+    }
+
+    /// <summary>
     /// Ends the pending sign-in, idempotently. Identity's <c>RemoveAuthenticationTokenAsync</c> is not: when two
     /// requests end the same pending sign-in at once (parallel wrong codes racing the lockout, issue #46), the second
     /// one's <c>DELETE</c> finds no row, which EF reports as a concurrency failure, and the deleted entry left in the
@@ -216,6 +252,11 @@ public sealed class AdminAuthenticator(
                 && t.Name == AdminTokenNames.PendingTwoFactorSignIn)
             .ExecuteDeleteAsync();
 
+        ForgetTrackedPendingSignIn(user);
+    }
+
+    private void ForgetTrackedPendingSignIn(AppUser user)
+    {
         foreach (var tracked in dbContext.ChangeTracker.Entries<IdentityUserToken<int>>()
             .Where(e => e.Entity.UserId == user.Id
                 && e.Entity.LoginProvider == AdminTokenNames.LoginProvider
