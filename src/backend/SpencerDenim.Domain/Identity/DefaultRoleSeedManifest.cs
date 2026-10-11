@@ -6,7 +6,7 @@ namespace SpencerDenim.Domain.Identity;
 /// <param name="Version">The default-role seed version that introduced it. Always above the baseline.</param>
 /// <param name="RoleName">The default role's name, as in <see cref="DefaultRoleDefinitions"/>.</param>
 /// <param name="Permission">A <see cref="Permissions"/> value.</param>
-/// <param name="Origin">The task that added it, so the log and the journal can name where it came from.</param>
+/// <param name="Origin">The task that added it, so a reader of the manifest can see where each entry came from.</param>
 public sealed record DefaultRolePermissionIntroduction(int Version, string RoleName, string Permission, string Origin);
 
 /// <summary>
