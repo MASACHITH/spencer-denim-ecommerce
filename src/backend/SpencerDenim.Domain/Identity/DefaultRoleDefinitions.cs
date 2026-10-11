@@ -21,6 +21,11 @@ public static class DefaultRoleDefinitions
     // computed by exclusion on purpose (a new permission must be granted deliberately, never by default), which is
     // exactly why Categories.Create/Delete and Media.Create/Edit, added by the catalogue admin work (W1-12, W1-04),
     // had to be added here by hand. The unit test for Store Manager walks the whole catalogue and fails on a miss.
+    //
+    // **And adding one here is only half the change.** These lists are what a FRESH database is seeded with; a
+    // database that already exists keeps the roles it has (N13), so the same permission must also be given a
+    // version in DefaultRoleSeedManifest.Introductions (the next one), or the client's staff will not get it
+    // (issue #122). DefaultRoleSeedManifestTests fails if this is forgotten.
 
     /// <summary>
     /// Doc 08 §9: "Every Module.Action except Users.*, Settings.Payments and Settings.Security (the last
