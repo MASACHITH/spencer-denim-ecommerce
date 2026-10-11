@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using SpencerDenim.Infrastructure.Identity.Seeding;
 using SpencerDenim.Infrastructure.Media;
 
 namespace SpencerDenim.Infrastructure.Persistence.Seeding;
@@ -34,6 +35,7 @@ public sealed partial class CatalogSeedRunner(
     SalesReferenceDataSeeder salesReferenceData,
     HomeContentSeeder homeContent,
     SettingsSeeder settings,
+    DefaultRolePermissionSync defaultRoles,
     DemoCatalogueSeeder demoCatalogue,
     DemoMediaPlaceholderGenerator demoMedia,
     ILogger<CatalogSeedRunner> logger)
@@ -99,6 +101,14 @@ public sealed partial class CatalogSeedRunner(
         // anything above — but keeping the one order makes the log line's counts read in a fixed order.
         var settingsCounts = await settings.SeedAsync(cancellationToken);
         counts.Settings = settingsCounts.Inserted;
+
+        // The default roles' permissions (issue #122, doc 08 §9 N13). Last, after the settings rows, because it
+        // records its version as one of them. It is here and not behind Seed:Admin:Enabled because that flag is
+        // turned off once the real Super Admins exist, and the database this exists for is the one that has
+        // been live for months. A role is only ever added to, never created, and a failure is logged and not
+        // thrown: a permissions reconciliation that cannot finish must not make a shop that works report
+        // itself unable to take an order.
+        await defaultRoles.TryRunAsync(cancellationToken);
 
         return counts;
     }

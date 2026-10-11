@@ -206,6 +206,10 @@ public static class IdentityRegistration
 
         services.AddHostedService<AdminSeedHostedService>();
 
+        // The versioned grant of a new permission to the default roles that already exist (issue #122). Run by
+        // the reference-data seed rather than hosted here, so it is not behind Seed:Admin:Enabled.
+        services.AddSingleton<DefaultRolePermissionSync>();
+
         return services;
     }
 

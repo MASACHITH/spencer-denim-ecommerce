@@ -123,12 +123,16 @@ public sealed class AdminSeedHostedService(
     /// <summary>
     /// Doc 08 §9: "The seeder creates default roles and their claims only when the role doesn't exist. A later
     /// permission reaches default roles only through an explicit, idempotent, versioned seeder step (recorded
-    /// in the setting Seed.Version), never by overwriting admin edits." <c>ops.Settings</c> (where Seed.Version
-    /// would live) does not exist in this codebase yet (ADM-22, W3-07 — see <c>CatalogOptions</c>'s remarks), so
-    /// there is nothing to version against yet: this only ever creates a role that is missing by name, exactly
-    /// like <see cref="EnsureSuperAdminRoleAsync"/> above, and never touches one that already exists — so it can
-    /// never overwrite an admin's own edits to that role's claims. Adding the versioned upgrade path is a
-    /// follow-up once a default role's permission list needs to change after its first seed.
+    /// in the setting Seed.Version), never by overwriting admin edits." This is the first half of that sentence:
+    /// it only ever creates a role that is missing by name, exactly like <see cref="EnsureSuperAdminRoleAsync"/>
+    /// above, and never touches one that already exists — so it can never overwrite an admin's own edits to that
+    /// role's claims.
+    /// <para>
+    /// <b>The second half is <see cref="DefaultRolePermissionSync"/> (issue #122)</b>, which is not here because
+    /// this service does nothing at all unless <c>Seed:Admin:Enabled</c> is on, and that flag is turned off once
+    /// the real Super Admins exist. A permission added to <see cref="DefaultRoleDefinitions"/> after a database
+    /// was created reaches that database's roles through the sync, on every start, whatever this flag says.
+    /// </para>
     /// </summary>
     private static async Task EnsureDefaultRolesAsync(RoleManager<AppRole> roleManager)
     {

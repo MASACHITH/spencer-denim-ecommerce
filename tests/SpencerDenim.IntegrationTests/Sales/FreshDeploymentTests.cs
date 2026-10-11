@@ -511,15 +511,20 @@ public sealed class FreshDeploymentTests(SqlServerDatabaseFixture sqlServer)
                 // still held for steps 3 and 4 — the first version of this watched for districts and
                 // reported a held lock that was being held exactly as intended. The settings keys are the
                 // last thing the reference phase writes, so they are the marker for "that phase is done".
+                //
+                // **That is now every catalogue key plus the `Seed.Version` row (#122).** The default roles'
+                // version is recorded by the last step of the phase, after the settings seeder, and it is a
+                // row outside `SettingCatalog` on purpose. A count of `SettingCatalog.All.Count` alone stops
+                // matching the moment that row exists, and the window is never seen.
                 settings = await db.Settings.CountAsync(cancellationToken);
                 products = await db.Products.CountAsync(cancellationToken);
             }
 
             // The window: reference data complete, demo catalogue not finished.
-            if (settings == SettingCatalog.All.Count && products < DemoProducts && !starting.IsCompleted)
+            if (settings == SettingCatalog.All.Count + 1 && products < DemoProducts && !starting.IsCompleted)
             {
                 // Given a couple of seconds, because the release is the statement after the one that
-                // committed the settings: a sub-millisecond gap, against a demo phase of about eleven
+                // recorded the version: a sub-millisecond gap, against a demo phase of about eleven
                 // seconds. If it is still held after this, it is held for the demo.
                 Assert.True(
                     await Eventually(() => LockIsFreeAsync(probeConnectionString, cancellationToken)),
