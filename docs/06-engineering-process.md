@@ -83,6 +83,32 @@ verified free: [14](14-multi-session-coordination.md) "Scratch scripts and ports
 - Configuration via environment variables only (Azure-ready).
 - Small commits referencing task IDs (e.g. `ADM-08: approve bank transfer`). Branch per task, merge to `main` after tests pass.
 
+### 5a. Adding a permission (issue #122, doc 08 §9 N13)
+
+A new permission value reaches the default roles (Store Manager, Order Staff, Content Editor) on a **fresh database only**: the seeder never touches a role that already exists, so that a Super Admin's own edits are not overwritten on every deploy. On any database that already exists, including the client's live one, their staff silently lack it: the screen is there and the button refuses. Super Admin is unaffected, because it is evaluated rather than enumerated.
+
+If a default role should hold the new permission:
+1. Add it to that role in `DefaultRoleDefinitions` (what a fresh database is seeded with).
+2. Add a `DefaultRolePermissionIntroduction` to `DefaultRoleSeedManifest.Introductions` at **`CurrentVersion + 1`** (what existing databases are brought up to). Never at a version that has shipped, and never by editing an entry that has. `DefaultRoleSeedManifestTests` fails if step 1 is done without step 2.
+3. Say in the PR which roles gained it, and which did not and why.
+
+On every start the reference-data phase runs `DefaultRolePermissionSync` (so it is **not** behind `Seed:Admin:Enabled`, which is switched off after go-live). It reads the version this database has been brought up to (`ops.Settings` key `Seed.Version`; absent means the baseline, version 1) and, in one transaction behind an application lock, adds to each default role that exists only the permissions introduced after it, then records the current version. It never removes a permission, never creates a role, never touches Super Admin or a custom role, and never re-adds what a Super Admin removed after the version that granted it. Each role that gains a permission gets a `PermissionChange` audit row (no acting user), and its holders' `SecurityStamp` is regenerated so the permission cache sees the change on the next request.
+
+**What to look for in the log** (category `DefaultRolePermissionSync`, once per start, never per request):
+
+| Line | Level | Meaning |
+|---|---|---|
+| `Default roles are in step with the shipped definitions: 3 of 3 default role(s) checked at default-role seed version N` | Information | Nothing differs. The normal line. |
+| `Default role '…' was granted K permission(s) added after default-role seed version A (now at B): …` | Information | Expected once, on the first start after a release that bumped the version. |
+| `Default role '…' does not hold K permission(s) its shipped definition includes: …` | Warning | The version that introduced them was already applied, so they were **not** granted again: they were removed after the fact. Grant them by hand if that was not intended. |
+| `Default role '…' holds K permission(s) its shipped definition does not include …` | Information | A Super Admin added them. Left alone. |
+| `Default role '…' does not exist …` / `A role named '…' exists but is not a seeded system role …` | Information / Warning | Not created / not touched. |
+| `Could not reconcile the default roles' permissions with this build.` | Error | Nothing was changed. Retried on the next start; the shop is unaffected. |
+
+**Launch-day check** (and after every release that bumped the version): after the first start on the live database, (1) `SELECT [Value] FROM ops.Settings WHERE [Key] = N'Seed.Version'` equals `DefaultRoleSeedManifest.CurrentVersion`; (2) the log has the first or second line above for the default roles, and no Error line; (3) sign in as a Store Manager and a Content Editor and open one screen guarded by the newest permission. If the step failed, the safety net is to insert the missing `identity.RoleClaims` rows (`ClaimType = 'perm'`) by hand from the release's manifest entries. The deployment runbook's launch-day list should carry these three checks.
+
+A default role that is itself new is created only by the admin seed (`Seed:Admin:Enabled`), never by this step.
+
 ## 6. Lessons learned (apply to every future task)
 
 | # | Lesson | Rule |
@@ -93,6 +119,7 @@ verified free: [14](14-multi-session-coordination.md) "Scratch scripts and ports
 | L4 | A pseudo-element with `inset:0` painted over an inset focus outline (style tile QA r1) | Check the focus ring at every breakpoint. Avoid inset outlines on elements that have overlay pseudo-elements. |
 | L5 | A large design document was produced in one agent response, hit the output limit and was lost (DB design, 2026-09-15) | Write long documents to disk section by section, never in a single response. |
 | L6 | An architecture test that only inspected emitted assembly references missed an unused-but-declared dependency; the project-file check caught it (W0-09 QA) | Keep both checks: project references **and** assembly references. Prove a rule fails by deliberately breaking it in a scratch copy. |
+| L7 | A permission added to a default role reached a fresh database only, so on every existing database the staff in that role silently lacked it (W2-11 added three; issue #122) | A permission added to a default role gets a seed version in `DefaultRoleSeedManifest` in the same change (§5a). The unit test that walks the definitions fails otherwise. |
 
 ## 7. Session discipline
 
