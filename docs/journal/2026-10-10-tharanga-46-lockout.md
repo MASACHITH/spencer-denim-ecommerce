@@ -33,3 +33,26 @@ still correct and the user retries. Filed as an issue.
 Also: a request that loses the claim has already spent its recovery code / TOTP step (as on main); #48's provider fix (PR #142) closes the TOTP
 replay at the provider level independently.
 Per-account / per-IP rate limiting on the login endpoints (the issue's "fix idea") is not included.
+
+## Owner review, 2026-10-12 — what was changed in response
+The owner verified this branch with no CI (Actions is down account-wide) and returned one Major, a test fix and three Minors.
+- **Major — the two post-verification lockout re-checks had no test** (`StaffAccountLockout.CheckPasswordAsync`,
+  `AdminAuthenticator.CompleteTwoFactorSignInAsync`; deleting either left every test green). A fresh right-password request is stopped by
+  Identity's own lock check before the second look matters, so the only shape that exercises it is a right secret *in flight* while a burst
+  locks the account. `LockoutRecheckGateInterceptor` holds that one read (matched by its three-column projection without `PasswordHash`);
+  `A_right_password_that_a_burst_of_wrong_ones_outruns_is_refused_as_locked` and
+  `A_right_code_that_a_burst_of_wrong_passwords_outruns_is_refused_as_locked` lock the account with five wrong passwords while it waits and
+  require a 423 with no session. **Proven by mutation, both ways:** keeping the query but making it never refuse gives `Got 200` with a full
+  session body on both tests; deleting the second look entirely fails both on the gate's timeout, whose message names the removal as the
+  first cause so it cannot be mistaken for a stale matcher.
+- **Test that could not fail** (`Parallel_second_steps_with_the_same_authenticator_code_…`, `<= 1` → `== 1`): the owner's `776427f`,
+  cherry-picked unchanged.
+- **Minor 1:** the parallel gate's `TaskCompletionSource` now uses `RunContinuationsAsynchronously`.
+- **Minor 3:** the claim comment in `AdminAuthenticator` names only the recovery code, and does *not* describe #142's compare-and-swap,
+  because that is not on this branch yet.
+- **Minor 2 — not done, deliberately:** the lockout counter runs as a raw `DbCommand`, outside `EnableRetryOnFailure`. Wrapping it in
+  `CreateExecutionStrategy().ExecuteAsync` changes how the statement behaves inside a caller's transaction (an execution strategy refuses a
+  user-initiated transaction that it does not own). Nothing opens one on a sign-in path today, but that is a behaviour change on the
+  sign-in path three days before launch, so it is left for the owner's call.
+- **Merge order is #144 → #146 → #142.** The #142 × #146 conflict is tests-only (`AdminTwoFactorEndpointTests.StartAsync`); keep this
+  branch's signature — it is now `StartAsync(configuration, DbCommandInterceptor? commandInterceptor)`, a superset of #142's.
