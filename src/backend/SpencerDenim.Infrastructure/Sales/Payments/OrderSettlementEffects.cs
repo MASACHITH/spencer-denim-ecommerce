@@ -39,9 +39,11 @@ namespace SpencerDenim.Infrastructure.Sales.Payments;
 /// so the fact is reconstructible for an order — it is the <i>variant's</i> timeline that has the hole.
 /// </description></item>
 /// <item><description>
-/// <b>No promo use restored on a late acceptance.</b> Doc 08 §4.1 restores <c>UsageCount + 1</c> ignoring
-/// the limits. <c>marketing.PromoCodes</c> does not exist (ADM-13 / W3-05) and <c>Orders.PromoCodeId</c> is
-/// therefore null on every order ever placed, so there is nothing to restore and no branch that could run.
+/// <b>Promo use is not retaken here.</b> Doc 08 §3.6's fourth usage event, "Expired → Paid: +1
+/// unconditionally", is written by <c>BankTransferReviewStore.AcceptLateAsync</c> (<c>OrderPromoUse.RetakeAsync</c>,
+/// after the stock rows and before the invoice), because a late acceptance is the one route from Expired or
+/// Cancelled to Paid. A provider payment for a payable order needs none — the order still holds the use
+/// checkout took — and one for a closed order is recorded as an exception for staff rather than paid.
 /// </description></item>
 /// <item><description>
 /// <b>No <c>InvoiceSellerSnapshotJson</c>.</b> Doc 08 §4.1 wants the store's legal name, address and

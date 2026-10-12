@@ -2,6 +2,7 @@ using SpencerDenim.Application.Catalog.Contracts;
 using SpencerDenim.Application.Sales.Cart.Contracts;
 using SpencerDenim.Application.Sales.Checkout.Abstractions;
 using SpencerDenim.Application.Sales.Checkout.Contracts;
+using SpencerDenim.Domain.Marketing;
 using SpencerDenim.Domain.Sales;
 
 namespace SpencerDenim.Application.Sales.Checkout;
@@ -41,6 +42,33 @@ internal static class CheckoutQuote
     public static bool IsPlaceable(CheckoutCartLine line) => line.Status is CartLineStatus.Buyable;
 
     /// <summary>
+    /// Doc 08 §6 steps 7 and 8 over the lines that are being priced (ADM-13).
+    /// </summary>
+    /// <remarks>
+    /// <b>The lines it evaluates are the lines that will be priced, and that is not a detail.</b>
+    /// <see cref="PromoEvaluator"/>'s eligible base and <c>OrderPricing</c>'s step 9 allocation must agree
+    /// or step 9 throws "a promo discount was given with no eligible line to allocate it to" — so both
+    /// read the same <see cref="IsPriced"/> set, mapped by the same <see cref="ToPricingLines"/>.
+    /// </remarks>
+    /// <param name="pricedLines">The <see cref="IsPriced"/> lines.</param>
+    /// <param name="terms">
+    /// The row the reader found, or <see langword="null"/> when the shopper typed a code that matches no
+    /// undeleted row — which is <see cref="PromoRefusal.NotRecognised"/> and not "no code".
+    /// </param>
+    /// <param name="utcNow">The instant the window is judged against.</param>
+    public static PromoEvaluation EvaluatePromo(
+        IReadOnlyList<CheckoutCartLine> pricedLines,
+        PromoCodeTerms? terms,
+        DateTime utcNow)
+    {
+        ArgumentNullException.ThrowIfNull(pricedLines);
+
+        return terms is { } found
+            ? PromoEvaluator.Evaluate(found, ToPricingLines(pricedLines), utcNow)
+            : PromoEvaluation.Refused(PromoRefusal.NotRecognised);
+    }
+
+    /// <summary>
     /// Prices the bag, or returns <see langword="null"/> when there is nothing to price — an empty bag, or
     /// one whose every line has gone.
     /// </summary>
@@ -49,9 +77,15 @@ internal static class CheckoutQuote
     /// chosen yet. Null gives a <b>partial</b> quote: item figures only, with no fee and no grand total,
     /// because doc 08 §6 step 10 has no fee to give without a rate and a zero would read as free delivery.
     /// </param>
+    /// <param name="promo">
+    /// The outcome of <see cref="EvaluatePromo"/> when it applied, or <see langword="null"/> for no code.
+    /// A <i>refused</i> code is null here: the refusal is a sentence on the page, never a row in the
+    /// ladder.
+    /// </param>
     public static CheckoutTotalsDto? Totals(
         IReadOnlyList<CheckoutCartLine> lines,
-        CheckoutZoneRate? rate)
+        CheckoutZoneRate? rate,
+        PromoCharge? promo = null)
     {
         ArgumentNullException.ThrowIfNull(lines);
 
@@ -91,6 +125,14 @@ internal static class CheckoutQuote
             var original = priced.Sum(line => line.UnitOriginalPrice * line.Quantity);
             var subtotal = priced.Sum(line => line.UnitPrice * line.Quantity);
 
+            // **The Discount row is shown before a delivery option is chosen, and the figure is honest
+            // rather than final.** A shopper who has just applied a code is owed the news that it worked;
+            // what the row cannot yet say is whether step 11's Rs. 1.00 clamp will reduce it, because that
+            // needs a delivery fee. The `Min` mirrors OrderPricing's own first clamp, so the partial
+            // ladder can never show a discount larger than the items — and the moment a method is chosen,
+            // the figure below is recomputed by the one function that applies every step.
+            var partialPromo = Math.Min(Math.Max(promo?.Amount ?? 0m, 0m), subtotal);
+
             return new CheckoutTotalsDto(
                 itemCount,
                 buyableItemCount,
@@ -98,7 +140,7 @@ internal static class CheckoutQuote
                 original,
                 subtotal,
                 original - subtotal,
-                0m,
+                partialPromo,
                 null,
                 0m,
                 null,
@@ -106,7 +148,7 @@ internal static class CheckoutQuote
                 PriceDto.Lkr);
         }
 
-        var pricing = Price(priced, available);
+        var pricing = Price(priced, available, promo);
 
         return new CheckoutTotalsDto(
             itemCount,
@@ -132,18 +174,60 @@ internal static class CheckoutQuote
     /// quote and the stored order cannot diverge.
     /// </summary>
     /// <remarks>
-    /// <b>No promo code is passed, and that is a gap rather than a decision.</b> Doc 08 §6 steps 7 and 8
-    /// read <c>marketing.PromoCodes</c>, which no migration has created (ADM-13, W3-05). The calculator
-    /// takes a promo outcome and applies steps 9 and 11 — the allocation and the Rs. 1.00 clamp — so W3-05
-    /// changes this one argument and nothing else about the totals.
+    /// <b>The promo is now a real argument, which is what this method's own note asked for.</b> It used to
+    /// pass <c>promo: null</c> and say that doing so was "a gap rather than a decision", because doc 08 §6
+    /// steps 7 and 8 read <c>marketing.PromoCodes</c> and no migration had created it. W3-05 created the
+    /// table and <see cref="PromoEvaluator"/> is steps 7 and 8; steps 9, 10 and 11 — the allocation, the
+    /// delivery discount and the Rs. 1.00 clamp — were already here and are unchanged.
     /// </remarks>
     public static OrderPricingResult Price(
         IReadOnlyList<CheckoutCartLine> pricedLines,
-        CheckoutZoneRate rate)
+        CheckoutZoneRate rate,
+        PromoCharge? promo = null)
     {
         ArgumentNullException.ThrowIfNull(pricedLines);
 
-        var lines = pricedLines
+        return OrderPricing.Price(
+            ToPricingLines(pricedLines),
+            new DeliveryCharge(rate.Fee, rate.FreeAboveAmount),
+            promo);
+    }
+
+    /// <summary>
+    /// The fee this option would add to the bag as it stands, for the option list: zero when a
+    /// free-delivery code pays for it or when the rate's own threshold is met, and the fee otherwise.
+    /// <para>
+    /// It mirrors doc 08 §6 step 10 rather than reimplementing it — the comparison is the same one, over
+    /// the same post-promo subtotal — so the fee printed against an option a shopper has <i>not</i> chosen
+    /// is the fee they would be charged if they did.
+    /// </para>
+    /// </summary>
+    /// <param name="rate">The option's zone rate.</param>
+    /// <param name="itemsSubtotalAfterPromo">
+    /// The items subtotal <b>less the promo discount</b>, which is what step 10 compares with
+    /// <c>FreeAboveAmount</c>. Passing the gross subtotal would overstate it and could promise free
+    /// delivery that the order then charges for.
+    /// </param>
+    /// <param name="freeDeliveryPromo">True when the applied code is a free-delivery one.</param>
+    public static decimal FeeAfterDiscount(
+        CheckoutZoneRate rate,
+        decimal itemsSubtotalAfterPromo,
+        bool freeDeliveryPromo = false)
+    {
+        if (freeDeliveryPromo)
+        {
+            return 0m;
+        }
+
+        return rate.FreeAboveAmount is { } threshold && itemsSubtotalAfterPromo >= threshold ? 0m : rate.Fee;
+    }
+
+    /// <summary>
+    /// The one mapping from a checkout line to the calculator's line, so the evaluator's eligible base and
+    /// step 9's allocation are computed over the same values.
+    /// </summary>
+    private static List<OrderPricingLine> ToPricingLines(IReadOnlyList<CheckoutCartLine> pricedLines) =>
+        pricedLines
             .Select(line => new OrderPricingLine(
                 line.VariantId,
                 line.Quantity,
@@ -151,21 +235,4 @@ internal static class CheckoutQuote
                 line.UnitListPrice,
                 line.UnitPrice))
             .ToList();
-
-        return OrderPricing.Price(
-            lines,
-            new DeliveryCharge(rate.Fee, rate.FreeAboveAmount),
-            promo: null);
-    }
-
-    /// <summary>
-    /// The fee this option would add to the bag as it stands, for the option list: the rate's fee, or zero
-    /// once its free-delivery threshold is met by the items subtotal.
-    /// <para>
-    /// It mirrors doc 08 §6 step 10 rather than reimplementing it: with no promo code in the picture the
-    /// post-promo subtotal is the subtotal, so the comparison is the same one.
-    /// </para>
-    /// </summary>
-    public static decimal FeeAfterDiscount(CheckoutZoneRate rate, decimal itemsSubtotal) =>
-        rate.FreeAboveAmount is { } threshold && itemsSubtotal >= threshold ? 0m : rate.Fee;
 }

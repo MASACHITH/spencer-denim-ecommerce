@@ -1,5 +1,6 @@
 using SpencerDenim.Application.Sales.Cart.Contracts;
 using SpencerDenim.Application.Sales.Checkout.Contracts;
+using SpencerDenim.Domain.Marketing;
 using SpencerDenim.Domain.Sales;
 
 namespace SpencerDenim.Application.Sales.Checkout.Abstractions;
@@ -155,6 +156,31 @@ public interface ICheckoutReader
 
     /// <summary>The enabled payment providers, in <c>DisplayOrder</c>.</summary>
     Task<IReadOnlyList<CheckoutPaymentMethod>> EnabledPaymentMethodsAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// One <c>marketing.PromoCodes</c> row by code (ADM-13, doc 08 §6 step 7), or <see langword="null"/>
+    /// when no undeleted row holds it.
+    /// <para>
+    /// <b>Soft-deleted rows never reach the evaluator</b>, so a removed code is "not recognised" rather
+    /// than found-and-refused and <see cref="PromoCodeTerms"/> does not carry a flag the evaluator would
+    /// have to remember to read. Two things exclude them: the model's global soft-delete filter
+    /// (<c>ApplySoftDelete</c>, doc 08 §1.5) and the implementation's own predicate, which is what would
+    /// survive an <c>IgnoreQueryFilters()</c>.
+    /// </para>
+    /// <para>
+    /// <b>Inactive and out-of-window rows <i>are</i> returned</b>, unlike every other lookup on this
+    /// interface. The reason is the opposite of the district one: a shopper has typed a string and is
+    /// owed an answer about <i>it</i>, and <see cref="PromoEvaluator"/> is the single place that decides
+    /// which of the five unusable states collapse into one sentence. A reader that filtered on
+    /// <c>IsActive</c> would make that decision twice, in two languages.
+    /// </para>
+    /// </summary>
+    /// <param name="normalisedCode">
+    /// The code already trimmed and upper-cased by <c>PromoCodeText.Normalise</c>. The match is still
+    /// case-insensitive in SQL — the collation is <c>Latin1_General_100_CI_AS_SC</c> (doc 08 §1.1) — so
+    /// normalising is about what gets <i>stored</i> on the order, not about finding the row.
+    /// </param>
+    Task<PromoCodeTerms?> FindPromoCodeAsync(string normalisedCode, CancellationToken cancellationToken);
 
     /// <summary>
     /// The bag, repriced from today's catalogue, with the snapshot columns an order line needs. This is the

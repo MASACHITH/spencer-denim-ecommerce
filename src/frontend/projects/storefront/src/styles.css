@@ -369,3 +369,37 @@
 .home-section__link:hover {
   text-decoration-thickness: 2px;
 }
+
+/* The checkout promo-code row (ADM-13, W3-05).
+
+   **Here rather than in `checkout-page.ts`'s own `styles` because that component is at its 4 kB
+   `anyComponentStyle` budget.** Measured: with these four rules in the component the build warns at
+   4.33 kB, and with them removed it does not warn at all — so the page has no room, and a warning the
+   next task inherits is worse than a rule in the one stylesheet this project already uses for
+   cross-cutting control styling (see the `.btn[aria-disabled]` note at the top of this file). It is
+   layout for one panel and nothing a theme would want to change; if the page is ever split, these move
+   with it. */
+.checkout__promo {
+  display: grid;
+  gap: var(--space-0-5);
+  padding-block: var(--space-1-5);
+  border-block-start: 1px solid var(--color-border);
+}
+.checkout__promo-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+/* Grows to fill the row and shrinks below its content, so there is no horizontal scroll at 320 px. */
+.checkout__promo-row > input {
+  flex: 1 1 8rem;
+  min-width: 0;
+  /* The shop's codes are stored upper-case (doc 08 §3.6), so the box shows what will be stored. Display
+     only: the server upper-cases the value, and a client that did so too would be a second place for
+     one rule to live. */
+  text-transform: uppercase;
+}
+.checkout__promo-said {
+  margin: 0;
+  min-height: 1.25rem;
+}

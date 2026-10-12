@@ -25,6 +25,29 @@ public sealed class AuditLogEndpointTests(SqlServerDatabaseFixture sqlServer)
     private const string AuditLogsUrl = "/api/admin/audit-logs";
     private const string LoginUrl = "/api/admin/auth/login";
 
+    /// <summary>
+    /// The acting user id the paging test attributes its seeded rows to: an id **no Identity user can have**
+    /// in a test database, so the row set the test counts cannot be changed by anything another test does.
+    ///
+    /// <para>
+    /// It was <c>30</c>, which is an id a staff account created by an earlier test reaches easily, and that
+    /// made <see cref="Paging_returns_the_requested_page_and_an_accurate_total_count"/> fail in a full-suite
+    /// run while passing on its own (measured: 1 failure in 1373, <c>totalCount</c> 0 instead of 5; the test
+    /// alone, three times, 1/1). The old comment saw half of it — a real user 30 writing real rows would
+    /// inflate the count, which the date window already bounded — but not the half that actually bit:
+    /// <c>AuditLogReader.ExcludeGrantsAllHoldersAsync</c> <b>hides</b> every row whose <c>UserId</c> is a
+    /// current GrantsAll (Super Admin) holder from a viewer who is not one (tester round 3, Major 2). So as
+    /// soon as user 30 in the shared database happened to be a Super Admin, all five seeded rows became
+    /// invisible and the count went to zero rather than up.
+    /// </para>
+    /// <para>
+    /// The endpoint accepts <c>userId</c> up to <c>int.MaxValue</c> inclusive
+    /// (<c>GetAuditLogsQuery.ParseWholeNumber(…, 1, int.MaxValue, …)</c>), and nothing assigns that id, so
+    /// it can never be a GrantsAll holder and can never collide with a seeded or test-created account.
+    /// </para>
+    /// </summary>
+    private const int PagerUserId = int.MaxValue;
+
     [Fact]
     public async Task Unauthenticated_requests_are_rejected()
     {
@@ -232,7 +255,7 @@ public sealed class AuditLogEndpointTests(SqlServerDatabaseFixture sqlServer)
                 "Product",
                 i.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 "Update",
-                (int?)30,
+                (int?)PagerUserId,
                 (string?)"pager@example.com"))
             .ToList();
         await SeedAuditLogsAsync(factory, marker, entries);
@@ -243,9 +266,9 @@ public sealed class AuditLogEndpointTests(SqlServerDatabaseFixture sqlServer)
 
         using var response = await client.GetAsync(
             new Uri(
-                // Bounded to the window this test seeded: user ids are assigned by Identity, so a staff
-                // account created by another test can legitimately be user 30 and write real audit rows.
-                $"{AuditLogsUrl}?userId=30&fromUtc=2026-09-01T00:00:00Z&toUtc=2026-09-02T00:00:00Z&page=2&pageSize=2",
+                // Bounded to the window this test seeded, and attributed to an id no Identity user can have
+                // (see PagerUserId).
+                $"{AuditLogsUrl}?userId={PagerUserId}&fromUtc=2026-09-01T00:00:00Z&toUtc=2026-09-02T00:00:00Z&page=2&pageSize=2",
                 UriKind.Relative),
             TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);

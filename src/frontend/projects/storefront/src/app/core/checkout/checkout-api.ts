@@ -9,7 +9,9 @@ import {
   OrderConfirmationDto,
   OrderPaymentProofDto,
   PlaceOrderRequest,
+  PromoRefusal,
   SlipUploadedDto,
+  promoRefusalMessage,
 } from './checkout.model';
 import { ValidationProblemDetails } from '../catalog/catalog.model';
 
@@ -29,12 +31,21 @@ export class CheckoutApi {
   private readonly http = inject(HttpClient);
 
   /**
-   * The checkout page for this visitor.
+   * The visitor's checkout for this district, method and promo code.
    *
-   * Both ids are optional, and omitting them is not the same as sending zero: with no district there is
-   * no zone, so there is no delivery fee and no grand total. The server declines to invent one.
+   * Every argument is optional, and omitting one is not the same as sending an empty value: with no
+   * district there is no zone, so there is no delivery fee and no grand total, and the server declines to
+   * invent one. A blank `promoCode` is the same as none.
+   *
+   * **The code travels on every read** rather than living on the server, which is what makes doc 11 P3
+   * step 12's "re-validated on every bag read" true by construction: a code that stops qualifying comes
+   * back refused on the next quote rather than lingering in a total.
    */
-  get(districtId: number | null, deliveryMethodId: number | null): Observable<CheckoutSessionDto> {
+  get(
+    districtId: number | null,
+    deliveryMethodId: number | null,
+    promoCode: string | null = null,
+  ): Observable<CheckoutSessionDto> {
     let params = new HttpParams();
 
     if (districtId !== null) {
@@ -43,6 +54,10 @@ export class CheckoutApi {
 
     if (deliveryMethodId !== null) {
       params = params.set('deliveryMethodId', deliveryMethodId);
+    }
+
+    if (promoCode !== null && promoCode.trim() !== '') {
+      params = params.set('promoCode', promoCode.trim());
     }
 
     return this.http.get<CheckoutSessionDto>(CheckoutApi.url, { params });
@@ -128,6 +143,8 @@ export class CheckoutApi {
  * - `invalid` — **400**. The API names the fields it refused and those messages are safe to show.
  * - `soldOut` — **409** with `shortLines`. Items sold out mid-checkout; nothing was placed.
  * - `totalChanged` — **409** with `totals`. G-10: the price moved, nothing was placed, show the new one.
+ * - `promoRejected` — **409** with `promoRefusal`. The code stopped qualifying, or somebody took its
+ *   last use; nothing was placed and the order has to be re-quoted and placed again.
  * - `blocked` — **409** with `blockers`. The bag or the shop's state refuses checkout.
  * - `notFound` — **404**, for an order link that names no order.
  * - `offline` — status 0: the browser never reached the shop.
@@ -137,6 +154,7 @@ export type CheckoutFailure =
   | 'invalid'
   | 'soldOut'
   | 'totalChanged'
+  | 'promoRejected'
   | 'blocked'
   | 'notFound'
   | 'offline'
@@ -149,6 +167,10 @@ interface CheckoutProblem {
   readonly shortLines?: Readonly<Record<string, number>>;
   readonly totals?: CheckoutTotalsDto;
   readonly blockers?: readonly string[];
+  /** ADM-13. The `PromoRefusal` member name, which `promoRefusalMessage` turns into a sentence. */
+  readonly promoRefusal?: string;
+  /** The threshold, sent only with `MinimumSpend`. */
+  readonly promoMinimumSpend?: number | null;
 }
 
 /** Classifies a failed checkout request. */
@@ -177,6 +199,10 @@ export function checkoutFailure(error: unknown): CheckoutFailure {
 
     if (body?.totals) {
       return 'totalChanged';
+    }
+
+    if (body?.promoRefusal) {
+      return 'promoRejected';
     }
 
     return 'blocked';
@@ -263,6 +289,17 @@ export function checkoutErrorMessage(error: unknown): string {
         'The total has changed since this page was loaded. Check the new total below and place your ' +
         'order again. Nothing has been placed.'
       );
+    case 'promoRejected': {
+      // ADM-13. The sentence comes from `promoRefusalMessage`, the same function the quote's refusal
+      // goes through, so a code that is fully used reads identically whether the shopper learns it on a
+      // re-quote or on a refused Place order. The second sentence is this path's own: the quote's
+      // refusal happens before anything is placed and does not need to say so.
+      const refusal = promoRejectionOf(error);
+
+      return refusal === null
+        ? 'That promo code could not be used. Nothing has been placed.'
+        : `${promoRefusalMessage(refusal.refusal, refusal.minimumSpend)} Nothing has been placed.`;
+    }
     case 'blocked':
       return problemBody(error)?.detail ?? 'Checkout is not available at the moment.';
     case 'notFound':
@@ -273,6 +310,38 @@ export function checkoutErrorMessage(error: unknown): string {
       return 'We could not place your order just now. Please try again in a moment.';
   }
 }
+
+/**
+ * The refusal reason and threshold from a promo-rejected 409, or null (ADM-13).
+ *
+ * The reason is validated against the union rather than cast, because it arrives from the network: an
+ * unknown name answers null and the caller falls back to a sentence that is true of every refusal, which
+ * is better than printing a server enum member at a shopper.
+ */
+export function promoRejectionOf(
+  error: unknown,
+): { readonly refusal: PromoRefusal; readonly minimumSpend: number | null } | null {
+  const body = problemBody(error);
+  const refusal = body?.promoRefusal;
+
+  if (refusal === undefined || !PROMO_REFUSALS.includes(refusal as PromoRefusal)) {
+    return null;
+  }
+
+  return {
+    refusal: refusal as PromoRefusal,
+    minimumSpend: typeof body?.promoMinimumSpend === 'number' ? body.promoMinimumSpend : null,
+  };
+}
+
+/** The `PromoRefusal` names this client recognises. Anything else is treated as unknown. */
+const PROMO_REFUSALS: readonly PromoRefusal[] = [
+  'NotRecognised',
+  'FullyUsed',
+  'MinimumSpend',
+  'NoEligibleItems',
+  'AlreadyUsedByCustomer',
+];
 
 function problemBody(error: unknown): CheckoutProblem | null {
   if (!(error instanceof HttpErrorResponse)) {

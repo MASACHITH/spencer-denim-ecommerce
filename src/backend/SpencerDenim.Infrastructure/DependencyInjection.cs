@@ -13,6 +13,7 @@ using SpencerDenim.Application.Catalog.Admin.Products.Abstractions;
 using SpencerDenim.Application.Content.Abstractions;
 using SpencerDenim.Application.Content.Admin.Abstractions;
 using SpencerDenim.Application.Marketing.Newsletter;
+using SpencerDenim.Application.Marketing.Promotions.Abstractions;
 using SpencerDenim.Application.Ops.Email;
 using SpencerDenim.Application.Ops.Email.Abstractions;
 using SpencerDenim.Application.Sales.Cart.Abstractions;
@@ -221,6 +222,12 @@ public static class DependencyInjection
         services.AddScoped<IAdminContentReader, AdminContentReader>();
         services.AddScoped<IContentPageStore, ContentPageStore>();
         services.AddScoped<IContactEnquiryStore, ContactEnquiryStore>();
+
+        // The admin promo-code screen (ADM-13, W3-05). The reader converts the two UTC columns to Colombo
+        // wall-clock at this edge; the store keeps one unit of work so a change and its audit row commit
+        // together.
+        services.AddScoped<IPromoCodeAdminReader, PromoCodeAdminReader>();
+        services.AddScoped<IPromoCodeAdminStore, PromoCodeAdminStore>();
         services.AddScoped<INewsletterSubscriptions, NewsletterSubscriptions>();
 
         // Doc 08 §3.7's homepage cache. A singleton, because a cache scoped to one request caches
@@ -315,6 +322,12 @@ public static class DependencyInjection
         services.AddScoped<SalesReferenceDataSeeder>();
         services.AddScoped<HomeContentSeeder>();
         services.AddScoped<SettingsSeeder>();
+
+        // Doc 08 §9's versioned default-role permission step (issue #122). A step of the reference-data
+        // phase rather than a hosted service of its own, so it runs under that phase's applock and retry
+        // rather than growing a second copy of them — and so it is not behind `Seed:Admin:Enabled`, which
+        // is turned off after go-live.
+        services.AddScoped<Identity.Seeding.DefaultRoleSeedUpgrader>();
         services.AddScoped<DemoCatalogueSeeder>();
         services.AddScoped<CatalogSeedRunner>();
         services.AddHostedService<CatalogSeedHostedService>();
