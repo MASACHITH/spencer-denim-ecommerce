@@ -59,21 +59,47 @@ if ! app_compose "$env" "$compose_dir" up -d --wait --wait-timeout 300 --remove-
 fi
 
 port="$(http_port "$env")"
-log "Smoke test through 127.0.0.1:$port ..."
+
+# Every smoke request carries the PUBLIC host name, because 127.0.0.1 is the one host that proves nothing.
+#
+# The gateway sends the storefront "Host: $host" and "X-Forwarded-Host: $host", and Angular's SSR engine
+# validates both against its allowed-host set. That set is NG_ALLOWED_HOSTS (= SD_PUBLIC_HOSTS) **unioned with
+# the build manifest's own ["localhost", "127.0.0.1"]** (AngularAppEngine.getAllowedHosts), so loopback is
+# always allowed however SD_PUBLIC_HOSTS is set, while any other unlisted host is answered 400 Bad Request.
+#
+# Measured on the built storefront with NG_ALLOWED_HOSTS=shop.example.test:
+#     Host: shop.example.test        -> 200 server-rendered
+#     Host: 127.0.0.1:<port>         -> 200 server-rendered   <- what this smoke test used to assert
+#     Host: localhost:<port>         -> 200 server-rendered
+#     Host: evil.example.com         -> 400 Bad Request
+#     Host: staging.shop.example.test-> 400 Bad Request
+#
+# So addressing the loopback port told us only that loopback works. A wrong SD_PUBLIC_HOSTS — a typo, or a
+# staging value left in a production file — answers **400 to every real visitor** while this smoke test still
+# passed and deploy.sh still printed "<env> is running <tag>". Asking for the public host is what makes the
+# check cover the path visitors actually take. check-env.sh now also refuses the mismatch up front.
+#
+# The first of SD_PUBLIC_HOSTS is used, so this stays correct when more than one host is served.
+public_host="$(env_value "$app/config/app.env" SD_PUBLIC_HOSTS | cut -d, -f1 | tr -d '[:space:]')"
+[ -n "$public_host" ] || die "SD_PUBLIC_HOSTS is empty in $app/config/app.env"
+
+log "Smoke test through 127.0.0.1:$port as $public_host ..."
 for path in /gateway-health /health /admin/ /; do
-  code="$(curl -s -o /dev/null -w '%{http_code}' -H "X-Forwarded-Proto: https" "http://127.0.0.1:$port$path" || true)"
+  code="$(curl -s -o /dev/null -w '%{http_code}' \
+    -H "Host: $public_host" -H "X-Forwarded-Proto: https" "http://127.0.0.1:$port$path" || true)"
   [ "$code" = 200 ] || die "GET $path answered $code, expected 200"
 done
-code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/api/catalog/departments" || true)"
+code="$(curl -s -o /dev/null -w '%{http_code}' -H "Host: $public_host" \
+  "http://127.0.0.1:$port/api/catalog/departments" || true)"
 [ "$code" = 200 ] || die "GET /api/catalog/departments answered $code, expected 200"
 
 # The home page must be server-rendered, not Angular's empty client-side fallback (docs/15 §3 step 5).
 # Each response is read into a variable before it is searched: piping curl into "grep -q" under pipefail fails
 # whenever grep stops reading before curl has finished writing (curl exits 23), about one deploy in ten.
-home="$(curl -s "http://127.0.0.1:$port/" || true)"
+home="$(curl -s -H "Host: $public_host" -H "X-Forwarded-Proto: https" "http://127.0.0.1:$port/" || true)"
 case "$home" in
   *'ng-server-context="ssr"'*) ;;
-  *) die "GET / returned the client-side shell, not a server-rendered page (see docs/15 §3, NG_TRUST_PROXY_HEADERS)" ;;
+  *) die "GET / was not server-rendered. Check NG_TRUST_PROXY_HEADERS against the gateway's 'location /' block, and SD_PUBLIC_HOSTS against the Host above (docs/15 §3 step 5)" ;;
 esac
 
 # #86: robots.txt must advertise this environment's own sitemap, never production's on staging.

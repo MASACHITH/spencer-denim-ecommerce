@@ -22,7 +22,13 @@ public sealed class ForwardedHeadersTests
 {
     private const string ProbePath = "/__test/forwarded-headers-probe";
 
-    /// <summary>The production compose file's gateway network, for readability. Any private /28 would do.</summary>
+    /// <summary>
+    /// A private /28 inside production's <c>edge</c> subnet (10.251.0.0/24), to exercise the
+    /// <c>KnownNetworks</c> branch. It is <b>not</b> what any compose file sets: the deployment configures
+    /// <c>ForwardedHeaders__KnownProxies</c> with the gateway's single fixed address
+    /// (10.251.0.10 production, 10.251.1.10 staging), which
+    /// <see cref="Configured_a_single_known_proxy_is_trusted_and_its_neighbours_are_not"/> covers.
+    /// </summary>
     private const string GatewayNetwork = "10.251.0.16/28";
 
     private static readonly IPAddress Gateway = IPAddress.Parse("10.251.0.18");

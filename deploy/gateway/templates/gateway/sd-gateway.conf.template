@@ -46,6 +46,20 @@ server {
     # buffered here.
     client_max_body_size ${SD_MAX_BODY_SIZE};
 
+    # The same problem on the way back out, which the request-body fix above does not cover.
+    #
+    # nginx buffers a proxied RESPONSE too, and spills whatever does not fit in proxy_buffers into
+    # proxy_temp_path — which nginx.conf puts under /tmp, the RAM-backed tmpfs, because the root filesystem is
+    # read-only. The default proxy_max_temp_file_size is 1024m against a container limited to 128m
+    # (96m on staging), and a product video served through /media/public/ is up to 50 MB: one visitor on a slow
+    # mobile connection makes nginx read ahead from the API faster than it can write to them, and the surplus
+    # lands in RAM. A few of those at once OOM-kill the gateway exactly as three anonymous POSTs did.
+    #
+    # 0 disables the temp file entirely: nginx streams within proxy_buffers and lets the slow client apply
+    # backpressure to the API instead. The cost is that a slow reader holds its upstream connection open for
+    # the whole transfer, which is the right trade for a 128 MB container serving 50 MB files.
+    proxy_max_temp_file_size 0;
+
     set $sd_api        http://${SD_API_UPSTREAM};
     set $sd_storefront http://${SD_STOREFRONT_UPSTREAM};
 

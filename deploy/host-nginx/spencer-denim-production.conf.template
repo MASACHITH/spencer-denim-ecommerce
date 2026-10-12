@@ -53,21 +53,47 @@ server {
     access_log /var/log/nginx/spencer-denim-production.access.log;
     error_log  /var/log/nginx/spencer-denim-production.error.log warn;
 
-    # A product video is up to 50 MB and is uploaded with its poster (up to 15 MB) in one request: 66 MiB at most
-    # (MediaOptions). The gateway allows 67m on the media upload route and 2m everywhere else.
-    client_max_body_size 67m;
+    # 2 MB by default, matching the gateway; only the two upload routes below take more.
+    #
+    # This hop, not the gateway, is the one facing the internet, so it is the one that has to say no. A flat
+    # 67m here meant an anonymous POST of 67 MB to any path at all was read to completion and spooled into
+    # /var/lib/nginx/body before the gateway answered 413 on Content-Length — so the round-1 tester's finding
+    # ("three anonymous POSTs could OOM-kill the gateway") was only half fixed: the gateway stopped buffering
+    # them in its RAM tmpfs, and this hop went on buffering them on the host's disk, which the client's other
+    # sites share. The ceilings mirror deploy/gateway/templates/gateway/sd-gateway.conf.template: change both.
+    client_max_body_size 2m;
+
+    # Set on the server, so every location below inherits them. nginx inherits proxy_set_header only into a
+    # location that sets none of its own, which is why none of the three do.
+    proxy_http_version 1.1;
+    proxy_set_header Connection        "";
+    proxy_set_header Host              $host;
+    proxy_set_header X-Forwarded-For   $remote_addr;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Host  $host;
+    proxy_set_header X-Real-IP         $remote_addr;
+    proxy_connect_timeout 5s;
+    proxy_read_timeout    60s;
+    proxy_send_timeout    60s;
+
+    # A product video (MediaLimits.MaxVideoBytes, 50 MB) travels with its poster (MaxImageBytes, 15 MB) in one
+    # request: 66 MiB plus multipart overhead, staff only. proxy_request_buffering off streams it through
+    # rather than landing it on this host's disk first, which is what makes "streamed, not buffered" true end
+    # to end rather than only on the gateway-to-API hop.
+    location ^~ /api/admin/media/ {
+        client_max_body_size 67m;
+        proxy_request_buffering off;
+        proxy_pass http://spencer_denim_production;
+    }
+
+    # A customer's bank slip (MaxPrivateBytes, 5 MB) plus multipart overhead.
+    location ~ ^/api/orders/[0-9A-Fa-f-]+/payment-slip$ {
+        client_max_body_size 6m;
+        proxy_request_buffering off;
+        proxy_pass http://spencer_denim_production;
+    }
 
     location / {
         proxy_pass http://spencer_denim_production;
-        proxy_http_version 1.1;
-        proxy_set_header Connection        "";
-        proxy_set_header Host              $host;
-        proxy_set_header X-Forwarded-For   $remote_addr;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header X-Forwarded-Host  $host;
-        proxy_set_header X-Real-IP         $remote_addr;
-        proxy_connect_timeout 5s;
-        proxy_read_timeout    60s;
-        proxy_send_timeout    60s;
     }
 }

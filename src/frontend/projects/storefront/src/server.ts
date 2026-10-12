@@ -61,8 +61,23 @@ app.use((req, res, next) => {
  * names can never be complete, so the rule lives here: anything under `x-forwarded-` that is not on the
  * trusted list is removed. The trusted ones are the gateway's own, overwritten on every request.
  */
+/**
+ * Unset must mean **what the engine's own default means**, not "trust nothing".
+ *
+ * `normalizeTrustProxyHeaders` in `@angular/ssr` maps an absent `trustProxyHeaders` to
+ * `{x-forwarded-host, x-forwarded-proto}`, so falling back to `''` here made this list and the engine's
+ * disagree in exactly the case nobody configures: every `x-forwarded-*` header was stripped, including the
+ * two the engine would have honoured. The page still server-renders — so nothing fails — but the engine then
+ * reconstructs the request URL from the internal `Host` and `http`, which is the silent half of the bug this
+ * middleware exists to prevent. Compose always sets the variable; a `docker run` or an edited compose file
+ * would not. Reading the same variable with the same default is what keeps the two in step.
+ */
+const configuredForwardedHeaders = process.env['NG_TRUST_PROXY_HEADERS'];
 const trustedForwardedHeaders = new Set(
-  (process.env['NG_TRUST_PROXY_HEADERS'] ?? '')
+  (configuredForwardedHeaders === undefined || configuredForwardedHeaders.trim() === ''
+    ? 'x-forwarded-host,x-forwarded-proto'
+    : configuredForwardedHeaders
+  )
     .split(',')
     .map((name) => name.trim().toLowerCase())
     .filter((name) => name.length > 0),
