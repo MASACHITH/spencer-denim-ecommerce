@@ -60,14 +60,24 @@ fi
 
 port="$(http_port "$env")"
 
-# Every smoke request must carry the PUBLIC host name, not 127.0.0.1.
+# Every smoke request carries the PUBLIC host name, because 127.0.0.1 is the one host that proves nothing.
 #
 # The gateway sends the storefront "Host: $host" and "X-Forwarded-Host: $host", and Angular's SSR engine
-# validates BOTH against NG_ALLOWED_HOSTS (= SD_PUBLIC_HOSTS). A host it does not allow is not a deopt to the
-# client shell: with allowedHosts configured it is an outright 400 Bad Request
-# (@angular/ssr AngularAppEngine.handleValidationError). Addressing the loopback port without this header
-# therefore made "GET /" answer 400 on every correctly-configured deployment, so deploy.sh could never finish
-# — and the SSR assertion below then blamed NG_TRUST_PROXY_HEADERS for it.
+# validates both against its allowed-host set. That set is NG_ALLOWED_HOSTS (= SD_PUBLIC_HOSTS) **unioned with
+# the build manifest's own ["localhost", "127.0.0.1"]** (AngularAppEngine.getAllowedHosts), so loopback is
+# always allowed however SD_PUBLIC_HOSTS is set, while any other unlisted host is answered 400 Bad Request.
+#
+# Measured on the built storefront with NG_ALLOWED_HOSTS=shop.example.test:
+#     Host: shop.example.test        -> 200 server-rendered
+#     Host: 127.0.0.1:<port>         -> 200 server-rendered   <- what this smoke test used to assert
+#     Host: localhost:<port>         -> 200 server-rendered
+#     Host: evil.example.com         -> 400 Bad Request
+#     Host: staging.shop.example.test-> 400 Bad Request
+#
+# So addressing the loopback port told us only that loopback works. A wrong SD_PUBLIC_HOSTS — a typo, or a
+# staging value left in a production file — answers **400 to every real visitor** while this smoke test still
+# passed and deploy.sh still printed "<env> is running <tag>". Asking for the public host is what makes the
+# check cover the path visitors actually take. check-env.sh now also refuses the mismatch up front.
 #
 # The first of SD_PUBLIC_HOSTS is used, so this stays correct when more than one host is served.
 public_host="$(env_value "$app/config/app.env" SD_PUBLIC_HOSTS | cut -d, -f1 | tr -d '[:space:]')"
