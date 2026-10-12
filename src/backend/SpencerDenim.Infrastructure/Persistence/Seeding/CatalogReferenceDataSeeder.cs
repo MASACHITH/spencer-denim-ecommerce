@@ -339,6 +339,13 @@ public sealed class SeedCounts
     public int Settings { get; set; }
 
     /// <summary>
+    /// <c>identity.RoleClaims</c> rows granted to an <b>existing</b> default role by doc 08 §9's versioned
+    /// seeder step (issue #122). Zero on a fresh database, where the roles are created complete, and zero
+    /// on every run after the first that applies a new increment.
+    /// </summary>
+    public int DefaultRolePermissions { get; set; }
+
+    /// <summary>
     /// What <see cref="SalesReferenceDataSeeder"/> inserted (doc 08 §9): provinces, districts, delivery
     /// methods, zone rates and payment providers. Separate from the catalogue counts above because a
     /// different seeder writes them, and reported so that a deployment can see whether checkout's
@@ -353,6 +360,7 @@ public sealed class SeedCounts
         $"media placeholders {MediaPlaceholders}, " +
         $"home sections {HomeSections}, home section items {HomeSectionItems}, " +
         $"announcements {AnnouncementMessages}, content pages {ContentPages}, settings {Settings}, " +
+        $"default role permissions {DefaultRolePermissions}, " +
         $"provinces {Sales.Provinces}, districts {Sales.Districts}, " +
         $"delivery methods {Sales.DeliveryMethods}, zone rates {Sales.DeliveryMethodZoneRates}, " +
         $"payment providers {Sales.PaymentProviders}";
