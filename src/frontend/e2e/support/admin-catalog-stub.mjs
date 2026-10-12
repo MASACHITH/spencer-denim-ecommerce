@@ -454,6 +454,171 @@ function orderDetail(state, order) {
  * it rather than a null. A stub that filled in the gaps would let the screen regress to a partial PUT
  * with every browser test still passing.
  */
+/**
+ * The promo-code validator (ADM-13), refusing what `PromoCodeWriteHandlers` refuses.
+ *
+ * **A missing key is a field error, not a default.** "A field this body does not carry is left as it is"
+ * and "a field it carries as null is cleared" are different instructions, and the real endpoint refuses
+ * the ambiguity rather than resolving it — here the figure that would be dropped is a usage limit, which
+ * is money.
+ */
+function promoCodeErrors(state, body, exceptId) {
+  const errors = {};
+
+  for (const field of [
+    'code',
+    'description',
+    'discountType',
+    'discountValue',
+    'maxDiscountAmount',
+    'minSpendAmount',
+    'startsAt',
+    'endsAt',
+    'totalUsageLimit',
+    'perCustomerLimit',
+    'isActive',
+  ]) {
+    if (!Object.hasOwn(body, field)) {
+      errors[field] = [`Send ${field}.`];
+    }
+  }
+
+  if (Object.keys(errors).length > 0) {
+    return errors;
+  }
+
+  const code = typeof body.code === 'string' ? body.code.trim().toUpperCase() : '';
+
+  if (code === '') {
+    errors.code = ['Enter the code shoppers will type.'];
+  } else if (!/^[A-Z0-9_-]{1,40}$/.test(code)) {
+    errors.code = [
+      'A code may be up to 40 letters, numbers, hyphens or underscores, with no spaces.',
+    ];
+  } else if (
+    state.promoCodes.some((candidate) => candidate.code === code && candidate.id !== exceptId)
+  ) {
+    errors.code = ['A promo code with that code already exists.'];
+  }
+
+  if (!['Percent', 'FixedAmount', 'FreeDelivery'].includes(body.discountType)) {
+    errors.discountType = ['Choose a percentage, a fixed amount off, or free delivery.'];
+  }
+
+  if (body.discountType === 'Percent') {
+    if (typeof body.discountValue !== 'number' || body.discountValue <= 0 || body.discountValue > 100) {
+      errors.discountValue = ['Enter a percentage above 0 and up to 100.'];
+    }
+  } else if (body.discountType === 'FixedAmount') {
+    if (typeof body.discountValue !== 'number' || body.discountValue <= 0) {
+      errors.discountValue = ['Enter an amount above zero.'];
+    }
+  } else if (body.discountValue !== null) {
+    errors.discountValue = [
+      'A free-delivery code has no amount. Clear the value or choose another type.',
+    ];
+  }
+
+  if (body.discountType !== 'Percent' && body.maxDiscountAmount !== null) {
+    errors.maxDiscountAmount = ['A maximum discount only applies to a percentage code.'];
+  }
+
+  if (typeof body.startsAt !== 'string' || body.startsAt.trim() === '') {
+    errors.startsAt = ['Choose when the code starts working.'];
+  } else if (/[Zz]/.test(body.startsAt) || /T.*[+-]/.test(body.startsAt)) {
+    // The Colombo contract: the shop's own time, with no offset. The real endpoint refuses an offset
+    // rather than guessing, because guessing wrong moves a code's window by five and a half hours.
+    errors.startsAt = [
+      "Send startsAt as a date and time in the shop's own time with no offset, like 2026-10-12T23:59.",
+    ];
+  } else if (typeof body.endsAt === 'string' && body.endsAt <= body.startsAt) {
+    errors.endsAt = ['The end must be after the start.'];
+  }
+
+  if (
+    typeof body.perCustomerLimit === 'number' &&
+    typeof body.totalUsageLimit === 'number' &&
+    body.perCustomerLimit > body.totalUsageLimit
+  ) {
+    errors.perCustomerLimit = ['A customer cannot be allowed more uses than the code has in total.'];
+  }
+
+  return Object.keys(errors).length > 0 ? errors : null;
+}
+
+/** One row, in the shape `AdminPromoCodeDto` has — field for field (#126). */
+function buildPromoCode(state, body, id, usageCount) {
+  const startsAt = withSeconds(body.startsAt);
+  const endsAt = body.endsAt === null ? null : withSeconds(body.endsAt);
+
+  return {
+    id,
+    code: String(body.code).trim().toUpperCase(),
+    description: body.description === null ? null : String(body.description).trim(),
+    discountType: body.discountType,
+    discountValue: body.discountValue,
+    maxDiscountAmount: body.maxDiscountAmount,
+    minSpendAmount: body.minSpendAmount,
+    startsAt,
+    endsAt,
+    totalUsageLimit: body.totalUsageLimit,
+    perCustomerLimit: body.perCustomerLimit,
+    usageCount,
+    isActive: body.isActive === true,
+    status: promoStatus(body, startsAt, endsAt),
+    rowVersion: nextRowVersion(),
+  };
+}
+
+/**
+ * Doc 11 P3's derived status, against the stub's own clock in the shop's time.
+ *
+ * Inactive wins over the dates, which is the rule `PromoCodeSchedule.StatusOf` applies — a staff member
+ * asking why their code is not working is owed "we have turned this off" before "the dates".
+ */
+function promoStatus(body, startsAt, endsAt) {
+  if (body.isActive !== true) {
+    return 'Inactive';
+  }
+
+  // The shop is UTC+05:30 and has no daylight saving (doc 08 §1.1's collation note aside, this is
+  // `ColomboTime.Offset`), so "now" in the shop's time is now plus five and a half hours.
+  const nowLocal = new Date(Date.now() + 330 * 60 * 1000).toISOString().slice(0, 19);
+
+  if (startsAt > nowLocal) {
+    return 'Scheduled';
+  }
+
+  return endsAt !== null && endsAt <= nowLocal ? 'Ended' : 'Live';
+}
+
+/** Doc 08 §3.6 DB19's warning, and the one for a window that is already over. */
+function promoWarnings(body, promoCode) {
+  const warnings = [];
+
+  if (typeof body.totalUsageLimit === 'number' && promoCode.usageCount > body.totalUsageLimit) {
+    warnings.push(
+      `This code has already been used ${promoCode.usageCount} times, which is above the new total ` +
+        `limit of ${body.totalUsageLimit}. No new customer can use it; orders already placed keep ` +
+        'their use.',
+    );
+  }
+
+  if (promoCode.status === 'Ended') {
+    warnings.push("This code's end date has already passed, so no shopper can use it.");
+  }
+
+  return warnings;
+}
+
+/** `yyyy-MM-ddTHH:mm` from the form becomes `yyyy-MM-ddTHH:mm:ss`, which is what the API answers with. */
+function withSeconds(value) {
+  const text = String(value).trim();
+
+  return text.length === 16 ? `${text}:00` : text;
+}
+
+
 function courierErrors(state, body, selfId) {
   const errors = {};
 
@@ -742,6 +907,11 @@ function freshState() {
     // their information. A stub that invented one would make every "you cannot ship yet" assertion
     // unreachable, which is the one state a new installation is actually in.
     couriers: [],
+
+    // ADM-13 (W3-05). Empty for the same reason: doc 02 line 167 replaces the demo's hard-coded codes
+    // with admin-managed ones and the shop seeds none, so a stub code would make the "nothing a shopper
+    // types will work" state unreachable — which is the state a new installation is in.
+    promoCodes: [],
 
     // What the next transition answers. `wrong-status` makes the 409 the real API answers when somebody
     // else moved the order first, which is how the screen's refusal branch is reachable at all.
@@ -1568,6 +1738,86 @@ const server = createServer(async (request, response) => {
     }
 
     return json(response, 200, orderDetail(state, order));
+  }
+
+  // ADM-13 (W3-05). The promo codes.
+  //
+  // **It refuses what the real API refuses, field for field**, which is the rule the whole of this stub
+  // is written to (#126): every key must be *present*, a free-delivery code may carry no amount, the end
+  // must be after the start, a per-customer limit may not exceed the total, and a date must arrive as the
+  // shop's own wall-clock time with no offset. A stub that accepted a body the API refuses would make
+  // every refusal path on the screen unreachable in a browser.
+  if (path === '/api/admin/marketing/promo-codes' && request.method === 'GET') {
+    return json(response, 200, state.promoCodes);
+  }
+
+  if (path === '/api/admin/marketing/promo-codes' && request.method === 'POST') {
+    const body = await readBody(request);
+
+    if (body === undefined || body === null) {
+      return problem(response, 400, 'Malformed JSON', 'The request body is not valid JSON.', 'malformed_json');
+    }
+
+    const invalid = promoCodeErrors(state, body, null);
+    if (invalid) {
+      return json(response, 400, { title: 'One or more fields need correcting.', status: 400, errors: invalid });
+    }
+
+    const promoCode = buildPromoCode(state, body, state.promoCodes.length + 1, 0);
+
+    state.promoCodes.unshift(promoCode);
+
+    return json(response, 201, { promoCode, warnings: promoWarnings(body, promoCode) });
+  }
+
+  const promoRoute = /^\/api\/admin\/marketing\/promo-codes\/(\d+)$/.exec(path);
+
+  if (promoRoute && request.method === 'PUT') {
+    const body = await readBody(request);
+
+    if (body === undefined || body === null) {
+      return problem(response, 400, 'Malformed JSON', 'The request body is not valid JSON.', 'malformed_json');
+    }
+
+    const index = state.promoCodes.findIndex((candidate) => candidate.id === Number(promoRoute[1]));
+    if (index < 0) {
+      return json(response, 404, { title: 'Not found', status: 404 });
+    }
+
+    const existing = state.promoCodes[index];
+
+    // `rowVersionOk` writes the 409 itself, so the refusal reads identically to every other stale-edit
+    // refusal this stub answers — one problem shape for one condition.
+    if (!rowVersionOk(response, request, body, existing)) {
+      return undefined;
+    }
+
+    const invalid = promoCodeErrors(state, body, existing.id);
+    if (invalid) {
+      return json(response, 400, { title: 'One or more fields need correcting.', status: 400, errors: invalid });
+    }
+
+    const promoCode = buildPromoCode(state, body, existing.id, existing.usageCount);
+
+    state.promoCodes[index] = promoCode;
+
+    return json(response, 200, { promoCode, warnings: promoWarnings(body, promoCode) });
+  }
+
+  if (promoRoute && request.method === 'DELETE') {
+    const index = state.promoCodes.findIndex((candidate) => candidate.id === Number(promoRoute[1]));
+    if (index < 0) {
+      return json(response, 404, { title: 'Not found', status: 404 });
+    }
+
+    if (!rowVersionOk(response, request, null, state.promoCodes[index])) {
+      return undefined;
+    }
+
+    // A soft delete on the server; from the screen's side the row is gone and its code is free again.
+    state.promoCodes.splice(index, 1);
+
+    return noContent(response);
   }
 
   if (path === '/api/admin/couriers' && request.method === 'GET') {
