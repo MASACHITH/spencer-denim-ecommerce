@@ -19,7 +19,7 @@ namespace SpencerDenim.IntegrationTests.Identity;
 /// each role from the whole current definition, and invisible on the shared fixture's database, because
 /// the fixture seeded it with the current build. So each test creates the deployment doc 08 §10 describes,
 /// starts the API once to get a correctly seeded database, then puts that database back into the state an
-/// older build left it in — the version-2 claims deleted and <c>Seed.Version</c> wound back — and starts
+/// older build left it in — every increment's claims deleted and <c>Seed.Version</c> wound back — and starts
 /// the API again. Without the ageing step none of these tests could fail, which is the shape this project
 /// has shipped eleven times.
 /// </para>
@@ -27,13 +27,29 @@ namespace SpencerDenim.IntegrationTests.Identity;
 public sealed class DefaultRoleSeedUpgradeTests(SqlServerDatabaseFixture sqlServer)
 {
     /// <summary>
-    /// The role-and-permission pairs version 2 adds, which is what an existing database is missing. Taken
-    /// from <see cref="DefaultRoleSeedVersions"/> rather than retyped, so the assertions follow the
-    /// declaration; <c>DefaultRoleSeedVersionsTests</c> is what pins the declaration to issue #122's list.
+    /// Every role-and-permission pair <b>every</b> increment above the baseline adds, which is what a
+    /// database created at the baseline is missing. Taken from <see cref="DefaultRoleSeedVersions"/>
+    /// rather than retyped, so the assertions follow the declaration;
+    /// <c>DefaultRoleSeedVersionsTests</c> is what pins the declaration to issue #122's list.
     /// </summary>
-    private static List<(string RoleName, string Permission)> VersionTwoPairs =>
+    /// <remarks>
+    /// <b>It used to select version 2 alone, and that made this whole suite go quiet the moment a second
+    /// increment was declared.</b> W3-05's version 3 adds <c>Promotions.Create</c> and
+    /// <c>Promotions.Delete</c> to Store Manager, and with a version-2-only list none of it was asserted:
+    /// the ageing step did not remove those two claims, so the database it produced was not the state any
+    /// build ever left (a version-1 marker over version-3 claims), the step had nothing to grant for them,
+    /// and <see cref="Running_the_step_again_grants_nothing_and_leaves_one_row_per_permission"/>'s count
+    /// matched because the pairs it did not know about were already there. The mechanism merged in #152
+    /// and its first real use would have shipped unverified.
+    /// <para>
+    /// Over every increment, the next one is covered by arriving — which is the property this suite is
+    /// for. <see cref="DefaultRoleSeedVersionsTests"/> pins the baseline so a permission smuggled in
+    /// there instead still goes red.
+    /// </para>
+    /// </remarks>
+    private static List<(string RoleName, string Permission)> IncrementPairs =>
         DefaultRoleSeedVersions.All
-            .Where(increment => increment.Version == 2)
+            .Where(increment => increment.Version > DefaultRoleSeedVersions.Baseline)
             .SelectMany(increment => increment.AddedPermissions
                 .Select(permission => (increment.RoleName, permission)))
             .ToList();
@@ -47,9 +63,10 @@ public sealed class DefaultRoleSeedUpgradeTests(SqlServerDatabaseFixture sqlServ
         };
 
     /// <summary>
-    /// <b>The defect, and the fix.</b> A database seeded by the build before W2-11 has none of version 2's
-    /// three permission values on its default roles; starting this build's API grants them, and leaves the
-    /// marker at the current version.
+    /// <b>The defect, and the fix.</b> A database seeded at the baseline has none of the permission values
+    /// any later increment adds on its default roles; starting this build's API grants every one of them,
+    /// and leaves the marker at the current version. It covers version 2 and version 3 today, and the
+    /// next increment by arriving.
     /// </summary>
     [Fact]
     public async Task A_permission_added_after_seeding_reaches_a_role_that_already_exists()
@@ -64,11 +81,11 @@ public sealed class DefaultRoleSeedUpgradeTests(SqlServerDatabaseFixture sqlServ
         await StartHostAsync(deployment, cancellationToken);
 
         // The database is now correct for this build. Wind it back to what the previous build left.
-        await AgeToVersionOneAsync(deployment, cancellationToken);
+        await AgeToTheBaselineAsync(deployment, cancellationToken);
 
         // **The premise, asserted.** Without this the test would pass against a step that does nothing,
         // because the host above already granted everything.
-        foreach (var (roleName, permission) in VersionTwoPairs)
+        foreach (var (roleName, permission) in IncrementPairs)
         {
             Assert.False(
                 await HoldsAsync(deployment, roleName, permission, cancellationToken),
@@ -78,7 +95,7 @@ public sealed class DefaultRoleSeedUpgradeTests(SqlServerDatabaseFixture sqlServ
         // Step 3 of the deployment, again: start the API. No flag, no script, no manual grant.
         await StartHostAsync(deployment, cancellationToken);
 
-        foreach (var (roleName, permission) in VersionTwoPairs)
+        foreach (var (roleName, permission) in IncrementPairs)
         {
             Assert.True(
                 await HoldsAsync(deployment, roleName, permission, cancellationToken),
@@ -158,11 +175,11 @@ public sealed class DefaultRoleSeedUpgradeTests(SqlServerDatabaseFixture sqlServ
 
         // **Now with an increment pending**, so the step is doing work on this very role in this very
         // pass, and still must not touch anything but the additions.
-        await AgeToVersionOneAsync(deployment, cancellationToken);
+        await AgeToTheBaselineAsync(deployment, cancellationToken);
 
         await StartHostAsync(deployment, cancellationToken);
 
-        foreach (var (roleName, permission) in VersionTwoPairs)
+        foreach (var (roleName, permission) in IncrementPairs)
         {
             Assert.True(
                 await HoldsAsync(deployment, roleName, permission, cancellationToken),
@@ -176,7 +193,8 @@ public sealed class DefaultRoleSeedUpgradeTests(SqlServerDatabaseFixture sqlServ
                 DefaultRoleDefinitions.StoreManagerName,
                 Permissions.Orders.Refund,
                 cancellationToken),
-            "Orders.Refund came back on the startup that granted version 2's permissions. The step must "
+            "Orders.Refund came back on the startup that granted the pending increments' permissions. The step "
+            + "must "
             + "apply the increment's additions and nothing else — not the role's whole shipped "
             + "definition, which would undo every edit the client has made (doc 08 N13).");
     }
@@ -246,7 +264,7 @@ public sealed class DefaultRoleSeedUpgradeTests(SqlServerDatabaseFixture sqlServ
             additionalConfiguration: SeedConfiguration());
         _ = factory.Services;
 
-        await AgeToVersionOneAsync(deployment, cancellationToken);
+        await AgeToTheBaselineAsync(deployment, cancellationToken);
 
         await using (var first = factory.Services.CreateAsyncScope())
         {
@@ -254,7 +272,7 @@ public sealed class DefaultRoleSeedUpgradeTests(SqlServerDatabaseFixture sqlServ
                 .GetRequiredService<DefaultRoleSeedUpgrader>()
                 .RunAsync(cancellationToken);
 
-            Assert.Equal(VersionTwoPairs.Count, granted.Granted.Count);
+            Assert.Equal(IncrementPairs.Count, granted.Granted.Count);
         }
 
         await using (var second = factory.Services.CreateAsyncScope())
@@ -268,7 +286,7 @@ public sealed class DefaultRoleSeedUpgradeTests(SqlServerDatabaseFixture sqlServ
             Assert.Equal(DefaultRoleSeedVersions.Current, again.RecordedVersion);
         }
 
-        foreach (var (roleName, permission) in VersionTwoPairs)
+        foreach (var (roleName, permission) in IncrementPairs)
         {
             Assert.Equal(1, await ClaimRowCountAsync(deployment, roleName, permission, cancellationToken));
         }
@@ -294,7 +312,7 @@ public sealed class DefaultRoleSeedUpgradeTests(SqlServerDatabaseFixture sqlServ
             additionalConfiguration: SeedConfiguration());
         _ = factory.Services;
 
-        var (roleName, permission) = VersionTwoPairs[0];
+        var (roleName, permission) = IncrementPairs[0];
 
         // A newer build's marker, with one of this build's increments missing from the role.
         await RemoveAsync(deployment, roleName, permission, cancellationToken);
@@ -358,7 +376,7 @@ public sealed class DefaultRoleSeedUpgradeTests(SqlServerDatabaseFixture sqlServ
             cancellationToken);
 
         await StartHostAsync(deployment, cancellationToken);
-        await AgeToVersionOneAsync(deployment, cancellationToken);
+        await AgeToTheBaselineAsync(deployment, cancellationToken);
 
         var factories = Enumerable.Range(0, instances)
             .Select(_ => new ApiFactory(
@@ -402,7 +420,7 @@ public sealed class DefaultRoleSeedUpgradeTests(SqlServerDatabaseFixture sqlServ
                 }
             }
 
-            foreach (var (roleName, permission) in VersionTwoPairs)
+            foreach (var (roleName, permission) in IncrementPairs)
             {
                 Assert.Equal(
                     1,
@@ -440,14 +458,14 @@ public sealed class DefaultRoleSeedUpgradeTests(SqlServerDatabaseFixture sqlServ
     }
 
     /// <summary>
-    /// Puts the database back into the state the build before W2-11 left: version 2's claims deleted and
+    /// Puts the database back into the state a baseline build left: every increment's claims deleted and
     /// <c>Seed.Version</c> wound back to the baseline.
     /// </summary>
-    private static async Task AgeToVersionOneAsync(
+    private static async Task AgeToTheBaselineAsync(
         FreshDeployment deployment,
         CancellationToken cancellationToken)
     {
-        foreach (var (roleName, permission) in VersionTwoPairs)
+        foreach (var (roleName, permission) in IncrementPairs)
         {
             await RemoveAsync(deployment, roleName, permission, cancellationToken);
         }

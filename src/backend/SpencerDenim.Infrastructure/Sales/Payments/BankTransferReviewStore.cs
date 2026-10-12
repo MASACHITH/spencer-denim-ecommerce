@@ -57,10 +57,6 @@ namespace SpencerDenim.Infrastructure.Sales.Payments;
 /// so the fact is reconstructible for an order — it is the <i>variant's</i> timeline that has the hole.
 /// </description></item>
 /// <item><description>
-/// <b>No promo use restored on a late acceptance.</b> Doc 08 §4.1 restores <c>UsageCount + 1</c> ignoring
-/// the limits. <c>marketing.PromoCodes</c> does not exist (ADM-13 / W3-05) and <c>Orders.PromoCodeId</c> is
-/// therefore null on every order ever placed, so there is nothing to restore and no branch that could run.
-/// </description></item>
 /// <item><description>
 /// <b>No email on a rejection, and that is doc 11's instruction rather than an omission.</b> P7's
 /// notification list says "No email on rejection" and §7 G-14 leaves the question with the client. So
@@ -396,6 +392,13 @@ internal sealed class BankTransferReviewStore(
                 {
                     return shortLines;
                 }
+
+                // Doc 08 §3.6's fourth usage event: "Expired → Paid: +1 unconditionally (limit ignored:
+                // the customer already paid)". The expiry or the cancel gave this order's use back, and
+                // the order holds one again now that it is Paid — so without this the cache sits below
+                // the number of orders holding a use and the total limit lets the next shopper have one
+                // the code does not have. After the stock rows, which is doc 08 §5.3's lock order.
+                await OrderPromoUse.RetakeAsync(dbContext, decision.OrderId, cancellationToken);
 
                 var invoiceNumber = await IssueInvoiceAsync(decision, cancellationToken);
 

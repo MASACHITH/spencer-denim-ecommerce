@@ -105,6 +105,7 @@ app.MapAdminBankTransferEndpoints();
 app.MapAdminOrderEndpoints();
 app.MapPaymentSlipEndpoints();
 app.MapAdminContentEndpoints();
+app.MapAdminPromotionEndpoints();
 app.MapCartEndpoints();
 app.MapWishlistEndpoints();
 app.MapCheckoutEndpoints();

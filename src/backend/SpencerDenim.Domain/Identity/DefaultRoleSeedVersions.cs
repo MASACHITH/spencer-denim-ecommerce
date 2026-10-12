@@ -62,7 +62,7 @@ public static class DefaultRoleSeedVersions
     /// The version this build ships. Recorded in <c>ops.Settings</c> under <c>Seed.Version</c> once every
     /// increment up to it has been offered to the default roles that exist.
     /// </summary>
-    public const int Current = 2;
+    public const int Current = 3;
 
     /// <summary>
     /// Every increment, in version order.
@@ -96,6 +96,20 @@ public static class DefaultRoleSeedVersions
             {
                 Permissions.Content.Create,
                 Permissions.Content.Delete,
+            }),
+
+        // Version 3 — W3-05 / ADM-13, the promo-code screen. `Promotions.Create` and `Promotions.Delete`
+        // did not exist until this task: doc 11 P3's permission table names them for the promo-code and
+        // sale-campaign screens, and doc 08 §9 grants Store Manager every Module.Action bar `Users.*`,
+        // `Settings.Payments` and `Settings.Security`. Content Editor gets neither, because §9 grants that
+        // role `Products.*`, `Categories.*`, `Content.*`, `Media.*` and four `Reviews.*` and no promotions.
+        new(
+            Version: 3,
+            RoleName: DefaultRoleDefinitions.StoreManagerName,
+            AddedPermissions: new HashSet<string>(StringComparer.Ordinal)
+            {
+                Permissions.Promotions.Create,
+                Permissions.Promotions.Delete,
             }),
     ];
 

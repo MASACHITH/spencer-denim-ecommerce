@@ -140,10 +140,12 @@ internal sealed class OrderExpiryStore(AppDbContext dbContext, IOrderEmailOutbox
                     "expiry",
                     cancellationToken);
 
-                // Doc 08 §5.6 step 4's promo decrement, a no-op while marketing.PromoCodes does not
-                // exist. Called rather than commented out, so the statement lands in one place for both
-                // this job and cancel the day W3-05 creates the table.
-                await OrderStockRelease.ReturnPromoUseAsync(dbContext, orderId, cancellationToken);
+                // Doc 08 §5.6 step 4's promo decrement, and doc 11 line 500: "Our use counting explicitly
+                // gives a use back when an unpaid order expires or is cancelled." In this transaction, so
+                // an expiry that released the stock can never forget the use — there would be nothing to
+                // reconcile the figure against afterwards. A no-op for the orders with no code, which is
+                // most of them.
+                await OrderPromoUse.ReturnAsync(dbContext, orderId, cancellationToken);
 
                 // Doc 08 §4.1: "open payments (0/1) -> Expired". Plural and set-based: UX_Payments_OneOpen
                 // allows at most one today, but the statement is written for the rule rather than for the

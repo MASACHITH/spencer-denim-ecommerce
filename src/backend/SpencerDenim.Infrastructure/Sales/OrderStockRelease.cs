@@ -41,12 +41,15 @@ namespace SpencerDenim.Infrastructure.Sales;
 /// </para>
 /// <para>
 /// <b>What it does not do.</b> Doc 08 §5.6 step 4 also writes <c>Release</c> movements and returns the
-/// promo use. <c>inventory.InventoryMovements</c> does not exist (#108, W1-05) and
-/// <c>marketing.PromoCodes</c> does not exist (ADM-13 / W3-05) — checked in this branch against
-/// <c>Migrations/</c>: the only table in the <c>marketing</c> schema any migration creates is
-/// <c>NewsletterSubscribers</c>, and <c>OrderConfiguration</c> says in as many words that
-/// <c>Orders.PromoCodeId</c> is a column with no foreign key for that reason. So the stock figures are
-/// exact and the per-movement trail and the promo decrement are both no-ops with nothing to write to.
+/// promo use. <c>inventory.InventoryMovements</c> still does not exist (#108, W1-05), so the stock
+/// figures are exact and the per-movement trail is a no-op with nothing to write to.
+/// <para>
+/// <b>The promo decrement is no longer one of them.</b> It was a documented no-op in this file while
+/// <c>marketing.PromoCodes</c> did not exist; W3-05 created the table and moved the statement to
+/// <see cref="OrderPromoUse.ReturnAsync"/>, beside the <c>TakeAsync</c> it has to agree with about what
+/// doc 08 §3.6 calls a held use. Both callers of this release call that too, in the same transaction and
+/// after the stock rows — doc 08 §5.3's lock order.
+/// </para>
 /// </para>
 /// </remarks>
 internal static class OrderStockRelease
@@ -103,41 +106,5 @@ internal static class OrderStockRelease
                     + "the order lines have drifted (doc 08 §5.6, §5.9).");
             }
         }
-    }
-
-    /// <summary>
-    /// Doc 08 §5.6 step 4's <c>UsageCount − 1</c>, which has nothing to decrement in this build.
-    /// </summary>
-    /// <remarks>
-    /// <b>A method rather than a comment, so the shape is right the day W3-05 adds the table.</b> Doc 11
-    /// P10 step 3 returns the promo use when an unpaid order closes, and doc 08 §5.6 step 4 gives the
-    /// statement. Written against <paramref name="orderId"/> rather than a promo id, it is one statement
-    /// and no extra read:
-    /// <code>
-    /// UPDATE marketing.PromoCodes SET UsageCount = UsageCount - 1
-    ///  WHERE Id = (SELECT PromoCodeId FROM sales.Orders WHERE Id = @o) AND UsageCount &gt; 0;
-    /// </code>
-    /// <b>It is a no-op today because there is no table.</b> Checked in this branch rather than taken from
-    /// the brief: <c>git grep</c> over <c>Migrations/</c> finds exactly one table in the <c>marketing</c>
-    /// schema, <c>NewsletterSubscribers</c> (<c>20260924095858_HomeContentAndNewsletter</c>), and
-    /// <c>OrderConfiguration</c>'s own remarks say <c>Orders.PromoCodeId</c> is a column with no foreign
-    /// key because <c>marketing.PromoCodes</c> (ADM-13) has not been created by any migration. So
-    /// <c>PromoCodeId</c> is null on every order ever placed and returning a use that was never taken is
-    /// nothing to do — not a failure, and not worth a log line.
-    /// <para>
-    /// Both the expiry job and cancel call it, in the position doc 08 §5.3's lock order puts it: after the
-    /// stock rows, last. When the table arrives the statement goes here once and both paths get it.
-    /// </para>
-    /// </remarks>
-    public static Task ReturnPromoUseAsync(
-        AppDbContext dbContext,
-        int orderId,
-        CancellationToken cancellationToken)
-    {
-        _ = dbContext;
-        _ = orderId;
-        _ = cancellationToken;
-
-        return Task.CompletedTask;
     }
 }

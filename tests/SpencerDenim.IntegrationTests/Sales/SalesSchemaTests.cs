@@ -326,6 +326,12 @@ public sealed class SalesSchemaTests(SqlServerDatabaseFixture sqlServer) : Sales
                 + "W2-09's. The filter is what makes 'one cart per customer' expressible at all, since a "
                 + "plain unique index would allow exactly one guest cart in the whole table; and a cart is "
                 + "looked up either by token or by a known user id, which implies the filter.",
+            ["Orders.PromoCodeId"] =
+                "IX_Orders_Promo_Email (PromoCodeId, EmailNormalized) INCLUDE (Status, PaidAtUtc) WHERE "
+                + "PromoCodeId IS NOT NULL, doc 08 §3.5 and §3.6. W3-05 made the column a real foreign key "
+                + "and deliberately added no plain index: the composite already leads on it, most orders "
+                + "keep a NULL, and the one lookup that exists — the per-customer limit's count — passes a "
+                + "real promo id, which implies the filter. PromoCodePlanTests measures the seek.",
         };
 
     /// <summary>
@@ -445,18 +451,22 @@ public sealed class SalesSchemaTests(SqlServerDatabaseFixture sqlServer) : Sales
 
     /// <summary>
     /// The doc 08 foreign keys that are still columns without constraints, because the table they would
-    /// point at does not exist yet. Named in a test so that creating <c>marketing.PromoCodes</c> or
-    /// <c>marketing.SaleCampaigns</c> and forgetting the constraint is a failure rather than a silence.
+    /// point at does not exist yet. Named in a test so that creating <c>marketing.SaleCampaigns</c> and
+    /// forgetting the constraint is a failure rather than a silence.
     /// </summary>
     /// <remarks>
-    /// <b><c>Orders.DeliveryDistrictId</c> and <c>PickupLocations.DistrictId</c> have been taken out of
-    /// this list by W3-02, and this test is why they were in it.</b> W3-03 built them as bare columns
-    /// because <c>ref.Districts</c> did not exist, and listed them here so that whichever task created
-    /// that table would be forced to notice. W3-02 created it (doc 08 §3.1 heads it "GLB-06, CHK-01"),
-    /// and this test failed — which is the guard working, not a regression. Both now have real
-    /// constraints, asserted positively in
-    /// <see cref="The_district_foreign_keys_W3_03_deferred_now_exist"/>; leaving them here would have
-    /// meant asserting the absence of a constraint this branch deliberately added.
+    /// <b>Three columns have been taken out of this list, and this test is why they were in it.</b>
+    /// <c>Orders.PromoCodeId</c> went when W3-05 created <c>marketing.PromoCodes</c>
+    /// (<see cref="The_promo_code_foreign_key_W3_03_deferred_now_exists"/>), and before that
+    /// <c>Orders.DeliveryDistrictId</c> and <c>PickupLocations.DistrictId</c> went when W3-02 created
+    /// <c>ref.Districts</c> (<see cref="The_district_foreign_keys_W3_03_deferred_now_exist"/>).
+    /// <para>
+    /// In each case an earlier task built a bare column because the table it pointed at did not exist and
+    /// listed it here, so that whichever task created that table would be forced to notice — and in each
+    /// case this theory failed when it did, which is the guard working rather than a regression. Leaving
+    /// an entry here afterwards would mean asserting the absence of a constraint that branch deliberately
+    /// added.
+    /// </para>
     /// <para>
     /// <c>identity.Users.DefaultDistrictId</c> is doc 08 §3.1's third FK to <c>ref.Districts</c> and is
     /// deliberately still unconstrained — it has no index, no reader (there is no customer sign-in,
@@ -465,7 +475,6 @@ public sealed class SalesSchemaTests(SqlServerDatabaseFixture sqlServer) : Sales
     /// </para>
     /// </remarks>
     [Theory]
-    [InlineData("Orders", "PromoCodeId")]
     [InlineData("OrderLines", "SaleCampaignId")]
     public async Task The_deferred_foreign_keys_are_indexed_columns_with_no_constraint(string table, string column)
     {
@@ -514,6 +523,57 @@ public sealed class SalesSchemaTests(SqlServerDatabaseFixture sqlServer) : Sales
     /// still satisfy "a constraint exists on this column".
     /// </para>
     /// </remarks>
+    /// <summary>
+    /// <c>sales.Orders.PromoCodeId</c>, which W3-05 turned from a bare column into a real constraint, now
+    /// points at <c>marketing.PromoCodes.Id</c> with <c>NO ACTION</c> both ways.
+    /// </summary>
+    /// <remarks>
+    /// <b>It was in <see cref="The_deferred_foreign_keys_are_indexed_columns_with_no_constraint"/> and is
+    /// not any more, and this test is why it was there.</b> The orders migration built it as a bare column
+    /// because <c>marketing.PromoCodes</c> did not exist, and listed it there so that whichever task
+    /// created that table would be forced to notice. W3-05 created it (doc 08 §3.6 heads it "ADM-13,
+    /// CART-01") and that theory failed — which is the guard working, not a regression. The same thing
+    /// happened to the two district keys when W3-02 created <c>ref.Districts</c>; see
+    /// <see cref="The_district_foreign_keys_W3_03_deferred_now_exist"/>.
+    /// <para>
+    /// <b>The delete rule is the half worth asserting.</b> A cascade here would mean removing one promo
+    /// code deleted <b>orders</b>, and doc 08 §1.6 lists Orders among the rows that are never deleted at
+    /// all. It cannot happen in practice — a promo code is soft-deleted through <c>SoftDelete()</c> and
+    /// <c>Remove()</c> on it throws (DB5) — but "it cannot happen in practice" is exactly the reasoning
+    /// that leaves a wrong delete rule in a schema for a year.
+    /// </para>
+    /// <para>
+    /// <c>OrderLines.SaleCampaignId</c> is still deferred and still has no constraint:
+    /// <c>marketing.SaleCampaigns</c> is ADM-14 and W3-05 deliberately did not create it.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task The_promo_code_foreign_key_W3_03_deferred_now_exists()
+    {
+        SqlServer.SkipIfUnavailable();
+
+        var shape = await DbContext.Database
+            .SqlQuery<string>($"""
+                SELECT CONCAT(
+                           SCHEMA_NAME(rt.schema_id) COLLATE DATABASE_DEFAULT, '.',
+                           rt.name COLLATE DATABASE_DEFAULT, '.',
+                           rc.name COLLATE DATABASE_DEFAULT,
+                           '|', fk.delete_referential_action_desc COLLATE DATABASE_DEFAULT,
+                           '|', fk.update_referential_action_desc COLLATE DATABASE_DEFAULT) AS [Value]
+                FROM sys.foreign_keys fk
+                JOIN sys.foreign_key_columns fc ON fc.constraint_object_id = fk.object_id
+                JOIN sys.columns pc
+                  ON pc.object_id = fc.parent_object_id AND pc.column_id = fc.parent_column_id
+                JOIN sys.tables rt ON rt.object_id = fc.referenced_object_id
+                JOIN sys.columns rc
+                  ON rc.object_id = fc.referenced_object_id AND rc.column_id = fc.referenced_column_id
+                WHERE fc.parent_object_id = OBJECT_ID('sales.Orders') AND pc.name = 'PromoCodeId'
+                """)
+            .ToListAsync(Token);
+
+        Assert.Equal(["marketing.PromoCodes.Id|NO_ACTION|NO_ACTION"], shape);
+    }
+
     [Theory]
     [InlineData("Orders", "DeliveryDistrictId")]
     [InlineData("PickupLocations", "DistrictId")]

@@ -218,6 +218,17 @@ public sealed class AdminAlertsBehaviourTests(SqlServerDatabaseFixture sqlServer
     /// worse than no banner: they would telephone a customer who is about to get the email anyway. The
     /// raiser reads the status back rather than trusting its caller, which is what makes the port
     /// impossible to misuse.
+    /// <para>
+    /// <b>The row is planted a year in the future, and that is a fix rather than a detail.</b> Measured
+    /// on 2026-10-12: with it due now, two of these five cases failed on each of two full-assembly runs
+    /// -- a different two each time ((Failed, Sending), then (Pending, Sent)) -- while the class passed
+    /// 29/29 in isolation in one second and 44/44 beside the promo suites in twelve. The actor is the
+    /// live <c>SendEmailsService</c> in an API host another suite started against this same shared
+    /// database: it claims a due <c>Pending</c> or <c>Failed</c> row, finds its attempts exhausted,
+    /// marks it <c>Dead</c> and raises <c>EmailDeliveryFailed</c> for that id -- the alert this test
+    /// asserts is absent. It needs enough wall-clock for a sweep to tick inside the window, which is why
+    /// <c>origin/main</c> passes 1,381/1,381 and a longer suite does not: a latent defect, not a new one.
+    /// </para>
     /// </remarks>
     [Theory]
     [InlineData(EmailOutboxStatus.Pending)]
@@ -230,7 +241,14 @@ public sealed class AdminAlertsBehaviourTests(SqlServerDatabaseFixture sqlServer
         var messageId = await InsertDeadMessageAsync(
             EmailTemplateCodes.OrderPlaced,
             orderPublicId: null,
-            status: status);
+            status: status,
+
+            // **Not due, so the live sweep cannot claim it.** This assertion is about the raiser
+            // refusing a status, and a due date is no part of it -- but a `Pending` or `Failed` row that
+            // is due now, with its attempts exhausted, is exactly what `ClaimAsync` takes and
+            // `SendOneAsync` then kills, raising the alert this test says is absent. A host started by
+            // another suite is still sweeping this shared database. See the parameter's own remarks.
+            nextAttemptAtUtc: Now.AddYears(1));
 
         Assert.False(await RaiseAsync(messageId));
 
@@ -913,12 +931,28 @@ public sealed class AdminAlertsBehaviourTests(SqlServerDatabaseFixture sqlServer
     /// its sixth attempt is a state no application path can write in one step, and going through the
     /// entity would mean this fixture could only produce states the code under test already produces.
     /// </remarks>
+    /// <param name="nextAttemptAtUtc">
+    /// When the row becomes due. Defaults to now, which is what the <c>Dead</c> cases want — a
+    /// <c>Dead</c> row is not claimable whatever its due time.
+    /// <para>
+    /// <b>A row that is <i>not</i> Dead and is due now is a row the live sweep will take.</b>
+    /// <c>SendEmailsService</c> is registered unconditionally
+    /// (<c>Infrastructure/DependencyInjection.cs</c>: <c>AddHostedService&lt;SendEmailsService&gt;</c>),
+    /// so an API host started by any other suite keeps sweeping this shared database while this class
+    /// runs; <c>EmailOutboxStore.ClaimAsync</c> takes <c>Status IN (Pending, Failed)</c> with
+    /// <c>NextAttemptAtUtc &lt;= now</c>, and a claimed row whose <c>AttemptCount >= MaxAttempts</c> --
+    /// which is how this helper plants them -- goes <c>Dead</c> and raises the very
+    /// <c>EmailDeliveryFailed</c> alert <see cref="A_message_that_is_not_dead_raises_nothing"/> asserts
+    /// is absent. See that test's remarks for the measurements.
+    /// </para>
+    /// </param>
     private async Task<long> InsertDeadMessageAsync(
         string templateCode,
         Guid? orderPublicId,
         EmailOutboxStatus status = EmailOutboxStatus.Dead,
         string toEmail = "queue-probe@example.invalid",
-        string toName = "Queue Probe")
+        string toName = "Queue Probe",
+        DateTime? nextAttemptAtUtc = null)
     {
         SqlServer.SkipIfUnavailable();
 
@@ -935,7 +969,7 @@ public sealed class AdminAlertsBehaviourTests(SqlServerDatabaseFixture sqlServer
                 VALUES
                     ({templateCode}, {toEmail}, {toName}, 'A queue probe', '<p>probe</p>', 'probe',
                      {relatedType}, {relatedId}, {(byte)status}, {EmailBackoff.MaxAttempts},
-                     {EmailBackoff.MaxAttempts}, {Now}, '550 refused', {Now});
+                     {EmailBackoff.MaxAttempts}, {nextAttemptAtUtc ?? Now}, '550 refused', {Now});
                 """)
             .ToListAsync(Token);
 
