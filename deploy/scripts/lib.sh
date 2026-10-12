@@ -103,6 +103,36 @@ check_env_file() {
       warn "$file: SD_PUBLIC_ORIGIN must be scheme and host only (http:// or https://, optional :port), e.g. https://colombowardrobecompany.com"
       problems=1
     fi
+    # SD_PUBLIC_ORIGIN's host must be one the SSR engine will render for.
+    #
+    # NG_ALLOWED_HOSTS comes from SD_PUBLIC_HOSTS, and @angular/ssr validates the request's Host and
+    # X-Forwarded-Host against it; a host it does not allow is answered 400 Bad Request, not degraded. If the
+    # two disagree, every page on the site answers 400 while robots.txt and sitemap.xml — which take their
+    # origin from PUBLIC_SITE_ORIGIN and never touch the engine — keep answering correctly. Two variables
+    # that must agree, a total outage when they do not, and a check that passed either way.
+    #
+    # Compared without the port: the engine strips it before deciding (origins.ts allowedHost, and
+    # Angular's own isHostAllowed compares URL.hostname).
+    # Compared in the shell rather than with grep: "grep -F -i" dies with SIGABRT on GNU grep 3.0 as shipped
+    # in Git for Windows, which is where these scripts get read and tried out even though they only ever run
+    # on the server.
+    local origin_host listed_host public_origin_matched=0
+    origin_host="$(env_value "$file" SD_PUBLIC_ORIGIN | sed -e 's#^https\?://##' -e 's#:[0-9]*$##')"
+    origin_host="$(printf '%s' "$origin_host" | tr '[:upper:]' '[:lower:]')"
+    if [ -n "$origin_host" ]; then
+      while IFS= read -r listed_host; do
+        listed_host="$(printf '%s' "$listed_host" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
+        listed_host="${listed_host%%:*}"
+        [ "$listed_host" = "$origin_host" ] && public_origin_matched=1
+      done <<EOF_HOSTS
+$(env_value "$file" SD_PUBLIC_HOSTS | tr ',' '\n')
+EOF_HOSTS
+      if [ "$public_origin_matched" -eq 0 ]; then
+        warn "$file: SD_PUBLIC_ORIGIN names host '$origin_host', which is not listed in SD_PUBLIC_HOSTS. The SSR engine renders only for SD_PUBLIC_HOSTS and answers 400 for any other host, so every page would fail while robots.txt and sitemap.xml kept working"
+        problems=1
+      fi
+    fi
+
     for key in SD_APP_DB_CONNECTION SD_MIGRATOR_DB_CONNECTION; do
       cs="$(env_value "$file" "$key")"
       pw="$(conn_part "$cs" 'Password')"
