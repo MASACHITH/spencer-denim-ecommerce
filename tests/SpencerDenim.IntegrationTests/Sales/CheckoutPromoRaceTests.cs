@@ -69,6 +69,13 @@ public sealed class CheckoutPromoRaceTests(SqlServerDatabaseFixture sqlServer)
     private const int Rounds = 6;
 
     /// <summary>
+    /// How many submissions of one checkout key the double-submit test sends. Eight rather than
+    /// <c>CheckoutConcurrencyTests</c>' twenty-four: that test is hunting an interleaving, and this one
+    /// reproduces a refusal the app lock makes deterministic.
+    /// </summary>
+    private const int DoubleSubmissions = 8;
+
+    /// <summary>
     /// <b>The per-customer limit, which is the one place this feature leaks money.</b> Four shoppers, one
     /// email, a code that allows one use each, and four <i>different</i> variants so that nothing but the
     /// app lock can serialise them. Exactly one order exists afterwards, and <c>UsageCount</c> is 1.
@@ -333,6 +340,82 @@ public sealed class CheckoutPromoRaceTests(SqlServerDatabaseFixture sqlServer)
 
         Assert.Equal(HttpStatusCode.Conflict, second.StatusCode);
         Assert.Equal(nameof(PromoRefusal.AlreadyUsedByCustomer), await PromoRefusalOfAsync(second));
+        Assert.Equal(1, await UsageCountAsync(code.Id));
+    }
+
+    /// <summary>
+    /// Doc 11 P6's double-submit rule — "with the same checkout key returns the same order, never a
+    /// second one" — <b>when the order carries a per-customer-limited code</b>.
+    /// </summary>
+    /// <remarks>
+    /// <b>This is the one case where the per-customer guard and the idempotency guarantee point in
+    /// opposite directions, and it is not the stock race in another costume.</b> The two submissions carry
+    /// one checkout key, so <c>PlaceOrderCommandHandler</c>'s step-1 pre-check cannot see the winner (it
+    /// has not committed yet) and the loser goes on into the transaction. There it reaches
+    /// <see cref="OrderPromoUse.TakeAsync"/>, waits on the winner's <c>sp_getapplock</c>, and then counts
+    /// the winner's own order as a held use for its own email — so a per-customer limit of one refuses
+    /// the loser <b>deterministically</b>, before <c>UX_Orders_CheckoutIdempotencyKey</c> is ever
+    /// consulted.
+    /// <para>
+    /// That is the exact shape <c>RefuseUnlessAlreadyPlacedAsync</c> exists for, and its own remarks name
+    /// it: "a reserving UPDATE that matches no row … a correct description of the database and the wrong
+    /// answer to the question asked, which was 'place my order'." The promo refusal was the one refusal
+    /// not routed through it, on the argument that the transaction rolled back so "there is nothing to
+    /// replay" — which is true of <i>this</i> request and says nothing about the key.
+    /// </para>
+    /// <para>
+    /// <b>Eight submissions and no rounds, because the refusal is not a race to lose.</b> The app lock
+    /// guarantees the losers are serialised behind the winner and therefore guarantees every one of them
+    /// sees its order, so one attempt reproduces it every time.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task A_double_submission_with_a_per_customer_code_is_replayed_the_order_it_placed()
+    {
+        var variantIds = await CheckoutVariantIdsAsync(1);
+        var colombo = await DistrictIdAsync("Colombo");
+        var standard = await DeliveryMethodIdAsync(DeliveryMethod.StandardCode);
+
+        var code = await NewPromoCodeAsync(
+            discountType: PromoDiscountType.FixedAmount,
+            discountValue: 100m,
+            perCustomerLimit: 1,
+            totalUsageLimit: null);
+
+        await SetStockAsync(variantIds[0], 10);
+
+        var (token, _, api) = await NewBagAsync(variantIds[0]);
+        var (_, session) = await api.GetAsync(colombo, standard, Token, code.Code);
+        var body = PromoBody(session, standard, colombo, UniqueEmail("doublesubmit"), code.Code);
+
+        // A client each, so the submissions are genuinely simultaneous — a double-clicked button on a
+        // flaky connection, which is what doc 11 P6's rule is written about.
+        var clients = Enumerable.Range(0, DoubleSubmissions)
+            .Select(_ => NewCheckoutVisitorWithoutCookieJar())
+            .ToList();
+
+        var results = await Task.WhenAll(
+            clients.Select(client => client.PlaceWithCookieAsync(token.ToString("D"), body, Token)));
+
+        // **Asserted first and by name, because the count cannot say what went wrong.** A submission
+        // refused for a code its own key already spent is the defect.
+        foreach (var refused in results.Where(result => !result.Response.IsSuccessStatusCode))
+        {
+            using var problem = await CheckoutApiClient.ProblemAsync(refused.Response, Token);
+
+            Assert.Fail(
+                $"One of {DoubleSubmissions} submissions of a single checkout key was refused with "
+                + $"{(int)refused.Response.StatusCode} instead of being replayed the order its own key "
+                + $"placed. Body: {problem.RootElement.GetRawText()}");
+        }
+
+        Assert.Equal(1, results.Count(result => result.Response.StatusCode == HttpStatusCode.Created));
+        Assert.Equal(
+            DoubleSubmissions - 1,
+            results.Count(result => result.Response.StatusCode == HttpStatusCode.OK));
+
+        // One order, and one use of the code — the replays must not take a second one.
+        Assert.Single(results.Select(result => result.Order!.OrderNumber).Distinct(StringComparer.Ordinal));
         Assert.Equal(1, await UsageCountAsync(code.Id));
     }
 

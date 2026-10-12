@@ -290,9 +290,20 @@ public sealed class PlaceOrderCommandHandler(
 
             case OrderPlacementStatus.PromoRejected:
                 // The conditional UPDATE matched no row, or the per-customer count reached the limit
-                // under the app lock. Nothing was written — the transaction rolled back and took the stock
-                // reservation with it — so there is nothing to replay and no order to return.
-                return PlaceOrderResult.PromoRejected(result.PromoRefusal!.Value);
+                // under the app lock. Nothing was written by *this* request — the transaction rolled back
+                // and took the stock reservation with it — but that says nothing about the key.
+                //
+                // **Re-checked for the same reason as OutOfStock above, and this one is not a race to
+                // lose.** Two submissions of one checkout key pass the step-1 pre-check truthfully, both
+                // reach `OrderPromoUse.TakeAsync`, and the loser waits on the winner's `sp_getapplock`
+                // and then counts the winner's own order as a held use for its own email. So a
+                // per-customer limit of one refuses a double-click *deterministically*, before
+                // `UX_Orders_CheckoutIdempotencyKey` is ever consulted — and the refusal says "nothing
+                // has been charged" about an order that exists. `CheckoutPromoRaceTests` measures it.
+                return await RefuseUnlessAlreadyPlacedAsync(
+                    command,
+                    PlaceOrderResult.PromoRejected(result.PromoRefusal!.Value),
+                    cancellationToken);
 
             case OrderPlacementStatus.DuplicateSubmission:
                 // Two submissions genuinely in flight at once: the unique index on
