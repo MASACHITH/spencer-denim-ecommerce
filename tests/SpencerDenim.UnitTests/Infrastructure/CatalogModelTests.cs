@@ -239,7 +239,7 @@ public sealed class CatalogModelTests
         });
     }
 
-    /// <summary>Doc 08 §1.5: the four [SD] tables carry the soft-delete filter, and nothing else does.</summary>
+    /// <summary>Doc 08 §1.5: the [SD] tables carry the soft-delete filter, and nothing else does.</summary>
     [Fact]
     public void Only_the_soft_deletable_entities_have_the_soft_delete_filter()
     {
@@ -248,7 +248,7 @@ public sealed class CatalogModelTests
             .Select(entity => entity.ClrType)
             .ToList();
 
-        Assert.Equal(5, filtered.Count);
+        Assert.Equal(6, filtered.Count);
         Assert.All(filtered, type => Assert.True(typeof(ISoftDeletable).IsAssignableFrom(type)));
         Assert.Contains(typeof(Product), filtered);
         Assert.Contains(typeof(Category), filtered);
@@ -259,7 +259,14 @@ public sealed class CatalogModelTests
         // removed custom page gone rather than hidden — the storefront reader never mentions IsDeleted,
         // so the filter is the only thing keeping a deleted page off the shop.
         Assert.Contains(typeof(SpencerDenim.Domain.Content.ContentPage), filtered);
+
+        // ADM-13 (W3-05): doc 08 §3.6 marks marketing.PromoCodes [SD], and `ApplySoftDelete` gives it the
+        // filter like every other such table. It is load-bearing in the same way: a removed code has to be
+        // "not recognised" rather than found-and-refused, or the box a shopper types into would tell them
+        // which strings the shop has ever issued.
+        Assert.Contains(typeof(SpencerDenim.Domain.Marketing.PromoCode), filtered);
     }
+
 
     /// <summary>Doc 08 §3.4: Available is a persisted computed column so it can be indexed.</summary>
     [Fact]

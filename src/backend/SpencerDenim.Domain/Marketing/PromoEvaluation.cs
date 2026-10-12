@@ -63,9 +63,10 @@ public enum PromoRefusal : byte
 /// move only through <see cref="PromoCode.SoftDelete"/> — so a unit test could not construct a deleted
 /// entity to check that the evaluator refused it. There is nothing to check: <b><c>IsDeleted</c> is
 /// deliberately not on this type</b>, because a soft-deleted code must never reach the evaluator at all.
-/// The reader's <c>WHERE IsDeleted = 0</c> is the one place that is decided, which is where
-/// <c>UX_PromoCodes_Code</c>'s own filter puts it, and an integration test asserts a removed code is not
-/// found rather than found-and-refused.
+/// Two things keep it away — the model's global soft-delete filter (<c>ApplySoftDelete</c>, doc 08 §1.5)
+/// and the reader's own predicate — and <c>UX_PromoCodes_Code</c> is filtered the same way, which is why
+/// "the row for this code" is only well defined among undeleted rows. An integration test asserts that a
+/// removed code is <i>not found</i> rather than found-and-refused.
 /// </remarks>
 public readonly record struct PromoCodeTerms(
     int Id,

@@ -161,10 +161,11 @@ public interface ICheckoutReader
     /// One <c>marketing.PromoCodes</c> row by code (ADM-13, doc 08 §6 step 7), or <see langword="null"/>
     /// when no undeleted row holds it.
     /// <para>
-    /// <b>Soft-deleted rows are filtered out here and nowhere else</b>, which is where
-    /// <c>UX_PromoCodes_Code</c>'s own filter puts the decision — so a removed code is "not recognised"
-    /// rather than found-and-refused, and <see cref="PromoCodeTerms"/> does not have to carry a flag the
-    /// evaluator would have to remember to read.
+    /// <b>Soft-deleted rows never reach the evaluator</b>, so a removed code is "not recognised" rather
+    /// than found-and-refused and <see cref="PromoCodeTerms"/> does not carry a flag the evaluator would
+    /// have to remember to read. Two things exclude them: the model's global soft-delete filter
+    /// (<c>ApplySoftDelete</c>, doc 08 §1.5) and the implementation's own predicate, which is what would
+    /// survive an <c>IgnoreQueryFilters()</c>.
     /// </para>
     /// <para>
     /// <b>Inactive and out-of-window rows <i>are</i> returned</b>, unlike every other lookup on this

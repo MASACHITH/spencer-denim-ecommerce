@@ -48,10 +48,11 @@ internal sealed class PromoCodeAdminReader(AppDbContext dbContext, IClock clock)
     /// Every undeleted row, projected to the columns the screen uses.
     /// </summary>
     /// <remarks>
-    /// <c>IsDeleted</c> is filtered here and not by a global query filter, because <c>PromoCode</c> has
-    /// none — <c>UX_PromoCodes_Code</c> is itself filtered, so "undeleted" is the only scope in which a
-    /// code is a unique key, and making it explicit at each use site is what the rest of this codebase
-    /// does for the soft-deleted catalogue types.
+    /// <c>IsDeleted</c> is excluded both ways: <c>PromoCode</c> carries the global soft-delete filter
+    /// (<c>ApplySoftDelete</c>, doc 08 §1.5), and the predicate is also written out here. That is not
+    /// belt-and-braces for its own sake — it is what survives an <c>IgnoreQueryFilters()</c>, which
+    /// <c>CheckoutReader.ReadCartAsync</c> uses two methods away for a documented reason, so the next
+    /// person to need one on this query does not silently start matching removed codes.
     /// </remarks>
     private IQueryable<PromoCodeRow> Projection() =>
         dbContext.PromoCodes

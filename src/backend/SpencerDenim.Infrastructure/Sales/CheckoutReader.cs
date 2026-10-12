@@ -189,24 +189,27 @@ internal sealed class CheckoutReader(
 
     /// <inheritdoc />
     /// <remarks>
-    /// <b>The only filter is <c>IsDeleted = 0</c>, which is deliberate and is the opposite of the district
-    /// and pickup-location lookups above.</b> Those collapse "no such row" and "deactivated" so a caller
-    /// cannot map the shop's reference data by probing ids. A promo code is not reference data a caller
-    /// could enumerate — it is a string the shopper was given — and the five unusable states have to be
-    /// told apart *somewhere* so that "that code is fully used" and "spend Rs. 5,000 to use that code" can
-    /// be said at all. <c>PromoEvaluator</c> is that somewhere, and it collapses them back down to one
-    /// sentence for the four that a shopper cannot act on. A reader that filtered on <c>IsActive</c> or on
-    /// the window would make that decision twice, in two languages, and the second copy would drift.
+    /// <c>IsDeleted</c> is excluded twice over: <c>PromoCode</c> carries the global soft-delete filter
+    /// (<c>ApplySoftDelete</c>, doc 08 §1.5), and the predicate is written out here as well. The second is
+    /// what would survive an <c>IgnoreQueryFilters()</c> — which this very file uses in
+    /// <c>ReadCartAsync</c> for a documented reason, so the next person to need one here does not
+    /// silently start matching removed codes.
     /// <para>
-    /// A soft-deleted row is the one exception, and it is here rather than in the evaluator because
-    /// <c>UX_PromoCodes_Code</c> is itself filtered on <c>IsDeleted = 0</c>: two deleted rows may hold the
-    /// same code, so "the row for this code" is only a well-defined question among undeleted ones.
+    /// <b>Inactive and out-of-window rows <i>are</i> returned</b>, unlike the district and pickup-location
+    /// lookups above. Those collapse "no such row" and "deactivated" so a caller cannot map the shop's
+    /// reference data by probing ids. A promo code is not reference data a caller could enumerate — it is
+    /// a string the shopper was given — and the five unusable states have to be told apart
+    /// <i>somewhere</i> so that "that code is fully used" and "spend Rs. 5,000 to use that code" can be
+    /// said at all. <c>PromoEvaluator</c> is that somewhere, and it collapses four of them back into one
+    /// sentence. A reader that filtered on <c>IsActive</c> would make that decision twice, in two
+    /// languages, and the second copy would drift.
     /// </para>
     /// <para>
-    /// <b>No <c>IgnoreQueryFilters</c> and no explicit <c>ToUpper</c>.</b> The match is case-insensitive
-    /// because the database collation is <c>Latin1_General_100_CI_AS_SC</c> (doc 08 §1.1) — asserted by an
-    /// integration test rather than trusted — so <c>UX_PromoCodes_Code</c> is used as an index seek and a
-    /// <c>ToUpper</c> in the predicate would have made it a scan.
+    /// <b>No explicit <c>ToUpper</c>.</b> The match is case-insensitive because the database collation is
+    /// <c>Latin1_General_100_CI_AS_SC</c> (doc 08 §1.1) — asserted by an integration test that applies a
+    /// lower-cased code and reads the stored upper-case one back, rather than trusted — so
+    /// <c>UX_PromoCodes_Code</c> is used as an index seek and a <c>ToUpper</c> in the predicate would have
+    /// made it a scan.
     /// </para>
     /// </remarks>
     public async Task<PromoCodeTerms?> FindPromoCodeAsync(
