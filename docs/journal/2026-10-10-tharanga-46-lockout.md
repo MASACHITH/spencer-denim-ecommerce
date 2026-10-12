@@ -56,3 +56,18 @@ The owner verified this branch with no CI (Actions is down account-wide) and ret
   sign-in path three days before launch, so it is left for the owner's call.
 - **Merge order is #144 → #146 → #142.** The #142 × #146 conflict is tests-only (`AdminTwoFactorEndpointTests.StartAsync`); keep this
   branch's signature — it is now `StartAsync(configuration, DbCommandInterceptor? commandInterceptor)`, a superset of #142's.
+
+### Verification of the above (2026-10-12, no CI — all local, LocalDB per doc 06)
+- **Unit, whole project: 1,980 / 1,980.**
+- **Integration, whole assembly, run alone and built fresh: 1,365 / 1,366** (47 min). The one failure is
+  `AdminAlertsBehaviourTests.A_dead_message_with_no_order_still_raises_an_alert` (`RaiseAsync` returned false). That test is
+  nothing to do with sign-in or lockout, and **it passes alone on this same build (the class: 29 / 29)**. It also passed in both
+  of #144's concurrent full runs (1,386 / 1,386 each), which contain the same test. It fits the family in #114 / #148 (live
+  test hosts' background email jobs working the shared database), **but I have not proven which host raised the alert first, and
+  I cannot rule out that the two hosts the new gate tests hold open for a few seconds each make it a little likelier.** Treat it
+  as a known flake that I did not cause rather than as shown to be one.
+- **Both new guards proven by mutation:** keeping the re-check query but making it never refuse → both tests fail with
+  `Got 200` and a full session body; deleting the second look entirely → both fail on the gate timeout, whose message names the
+  removal as the first cause.
+- The binaries were rebuilt after each mutation was reverted before the full run (a stale mutated build would have been run
+  otherwise — `dotnet test --no-build` after an edit runs the previous binary).
