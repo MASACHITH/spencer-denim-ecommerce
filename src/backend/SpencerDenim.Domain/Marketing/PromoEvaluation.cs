@@ -15,11 +15,11 @@ public enum PromoRefusal : byte
     /// <summary>
     /// No such code, or it is inactive, soft-deleted, not started yet or over.
     /// <para>
-    /// <b>One reason for five states, deliberately.</b> Telling a shopper "that code has expired" when
+    /// <b>One reason for five states, deliberately.</b> Telling a shopper "that code has expired" where
     /// "we do not recognise that code" would otherwise have been the answer turns the box into an oracle
-    /// for which strings are codes the shop has ever issued. The four causes are all answered by the same
-    /// action — check the code, or ask for a current one — so nothing actionable is withheld. The reasons
-    /// below are each distinguished because each one tells the shopper something they can act on.
+    /// for which strings are codes the shop has ever issued. All five are answered by the same action —
+    /// check the code, or ask for a current one — so nothing actionable is withheld. The reasons below are
+    /// each distinguished because each one tells the shopper something they can act on.
     /// </para>
     /// </summary>
     NotRecognised = 1,
@@ -27,13 +27,13 @@ public enum PromoRefusal : byte
     /// <summary>
     /// Every use is taken (doc 08 §3.6's total limit). Doc 11 P3's own exception list asks for this
     /// sentence in particular: "the other is told the code is fully used and can place the order without
-    /// it", and a shopper who is not told would simply retype it.
+    /// it", and a shopper who was not told would simply retype it.
     /// </summary>
     FullyUsed = 2,
 
     /// <summary>
     /// The items subtotal is under <c>MinSpendAmount</c>. Actionable — the shopper can add more — so the
-    /// threshold itself is carried on <see cref="PromoEvaluation.MinimumSpend"/> and printed.
+    /// threshold itself travels on <see cref="PromoEvaluation.MinimumSpend"/> and is printed.
     /// </summary>
     MinimumSpend = 3,
 
@@ -45,13 +45,42 @@ public enum PromoRefusal : byte
 
     /// <summary>
     /// This email has already used the code as many times as <c>PerCustomerLimit</c> allows (doc 11
-    /// line 468). <b>Decided at placement only</b>, never on a quote: the limit counts orders by
-    /// normalised email, and answering it on a GET whose email is a free-text box would let anyone test
-    /// whether a given address had used a given code. Doc 11 P3 step 10 puts it at placement for the
-    /// plainer reason that that is when the email is known.
+    /// line 468). <b>Decided at placement only</b> and never by <see cref="PromoEvaluator"/>: the limit
+    /// counts orders by normalised email under an app lock, which is I/O, and doc 11 P3 step 10 puts it at
+    /// placement because that is when the email is known. Answering it on a quote whose email is a
+    /// free-text box would also let anyone test whether a given address had used a given code.
     /// </summary>
     AlreadyUsedByCustomer = 5,
 }
+
+/// <summary>
+/// Everything about one <c>marketing.PromoCodes</c> row that doc 08 §6 steps 7 and 8 read.
+/// </summary>
+/// <remarks>
+/// <b>A snapshot and not the entity, for two reasons.</b> The reader projects straight to this, so a
+/// lookup selects thirteen columns rather than the row plus its audit, soft-delete and rowversion
+/// columns. And <see cref="PromoCode.IsDeleted"/> has a private setter — doc 08 §10.2 DB5 allows it to
+/// move only through <see cref="PromoCode.SoftDelete"/> — so a unit test could not construct a deleted
+/// entity to check that the evaluator refused it. There is nothing to check: <b><c>IsDeleted</c> is
+/// deliberately not on this type</b>, because a soft-deleted code must never reach the evaluator at all.
+/// The reader's <c>WHERE IsDeleted = 0</c> is the one place that is decided, which is where
+/// <c>UX_PromoCodes_Code</c>'s own filter puts it, and an integration test asserts a removed code is not
+/// found rather than found-and-refused.
+/// </remarks>
+public readonly record struct PromoCodeTerms(
+    int Id,
+    string Code,
+    PromoDiscountType DiscountType,
+    decimal? DiscountValue,
+    decimal? MaxDiscountAmount,
+    decimal? MinSpendAmount,
+    bool ExcludeSaleItems,
+    DateTime StartsAtUtc,
+    DateTime? EndsAtUtc,
+    int? TotalUsageLimit,
+    int? PerCustomerLimit,
+    int UsageCount,
+    bool IsActive);
 
 /// <summary>
 /// The answer to doc 08 §6 steps 7 and 8: either a <see cref="PromoCharge"/> the calculator can take, or
@@ -91,10 +120,11 @@ public sealed record PromoEvaluation(
 /// <para>
 /// <b>Pure, and in the Domain, for the same reason <see cref="OrderPricing"/> is.</b> Validity is a
 /// comparison against a clock, the eligible base is a sum over lines, and the percentage is a rounding
-/// rule — none of it needs a database, and all of it has to give the same answer on the bag page, on the
-/// checkout quote and inside the placement transaction. The <i>per-customer</i> limit is the one check
-/// that is not here, because it counts rows in <c>sales.Orders</c> under a lock; see
-/// <see cref="PromoRefusal.AlreadyUsedByCustomer"/>.
+/// rule — none of it needs a database, and all of it has to give the same answer on the checkout quote and
+/// inside the placement transaction. The two checks that are <i>not</i> here are the ones that cannot be:
+/// the per-customer limit counts rows in <c>sales.Orders</c> under an app lock, and the total limit is
+/// re-applied by a conditional UPDATE at placement because the count this type reads can be stale by the
+/// time the order is written.
 /// </para>
 /// </summary>
 public static class PromoEvaluator
@@ -103,37 +133,38 @@ public static class PromoEvaluator
     private const int MoneyDecimals = 2;
 
     /// <summary>
-    /// Evaluates <paramref name="code"/> against the lines that are being priced.
+    /// Evaluates <paramref name="terms"/> against the lines that are being priced.
     /// </summary>
-    /// <param name="code">The row as it stands. A soft-deleted row is refused here as well as filtered
-    /// out by the reader, so a caller that forgets the filter cannot discount anything.</param>
+    /// <param name="terms">
+    /// The row as it stands, already filtered to a row that is not soft-deleted — see
+    /// <see cref="PromoCodeTerms"/>.
+    /// </param>
     /// <param name="lines">
     /// Exactly the lines <see cref="OrderPricing.Price"/> is about to be given. Passing a different set
     /// would make the eligible base and the allocation disagree, which is the one way step 9 can throw.
     /// </param>
     /// <param name="utcNow">
-    /// The instant to judge the window against. <b>UTC, and that is not a timezone bug:</b> the stored
+    /// The instant to judge the window against. <b>UTC, and that is not the Colombo defect:</b> the stored
     /// bounds are UTC too (<c>StartsAtUtc</c>, <c>EndsAtUtc</c>), so the comparison is offset-free. What
     /// has to know about Asia/Colombo is the admin screen that turns "valid until 12 October, 23:59" into
-    /// an instant — see <c>PromoCodeSchedule</c>.
+    /// an instant — see <see cref="PromoCodeSchedule"/>.
     /// </param>
     public static PromoEvaluation Evaluate(
-        PromoCode code,
+        PromoCodeTerms terms,
         IReadOnlyList<OrderPricingLine> lines,
         DateTime utcNow)
     {
-        ArgumentNullException.ThrowIfNull(code);
         ArgumentNullException.ThrowIfNull(lines);
 
-        // Step 7, in doc 11 P3 step 10's order: exists and is active, then the window, then the total
-        // limit, then the minimum spend, then at least one eligible line. The order is what decides which
-        // sentence a shopper sees when two things are wrong at once.
-        if (code.IsDeleted || !code.IsActive || !IsWithinWindow(code, utcNow))
+        // Step 7, in doc 11 P3 step 10's order: active, then the window, then the total limit, then the
+        // minimum spend, then at least one eligible line. The order is what decides which sentence a
+        // shopper sees when two things are wrong at once.
+        if (!terms.IsActive || !IsWithinWindow(terms, utcNow))
         {
             return PromoEvaluation.Refused(PromoRefusal.NotRecognised);
         }
 
-        if (code.TotalUsageLimit is { } totalLimit && code.UsageCount >= totalLimit)
+        if (terms.TotalUsageLimit is { } totalLimit && terms.UsageCount >= totalLimit)
         {
             return PromoEvaluation.Refused(PromoRefusal.FullyUsed);
         }
@@ -148,7 +179,7 @@ public static class PromoEvaluator
             var lineSubtotal = line.UnitPrice * line.Quantity;
             itemsSubtotal += lineSubtotal;
 
-            if (IsEligible(code, line))
+            if (IsEligible(terms, line))
             {
                 eligibleBase += lineSubtotal;
                 eligibleVariantIds.Add(line.VariantId);
@@ -160,9 +191,9 @@ public static class PromoEvaluator
         }
 
         // Doc 08 §6 step 7 and doc 11 P3's rules list: the minimum spend is compared with the **items
-        // subtotal after sale prices**, not with the eligible base and not with the grand total. So a
-        // bag that clears the threshold only because of its excluded lines still clears it.
-        if (code.MinSpendAmount is { } minimumSpend && itemsSubtotal < minimumSpend)
+        // subtotal after sale prices**, not with the eligible base and not with the grand total. So a bag
+        // that clears the threshold only because of its excluded lines still clears it.
+        if (terms.MinSpendAmount is { } minimumSpend && itemsSubtotal < minimumSpend)
         {
             return PromoEvaluation.NeedsMinimumSpend(minimumSpend);
         }
@@ -176,28 +207,28 @@ public static class PromoEvaluator
 
         // Null rather than the set when nothing is excluded: `PromoCharge.EligibleVariantIds` documents
         // null as "all of them", and handing step 9 a set it does not need would make a line's eligibility
-        // depend on a HashSet lookup instead of on nothing at all.
+        // depend on a hash lookup instead of on nothing at all.
         var eligible = everyLineEligible ? null : eligibleVariantIds;
 
         // Step 8.
-        return code.DiscountType switch
+        return terms.DiscountType switch
         {
             PromoDiscountType.FreeDelivery =>
                 // "FreeDelivery → 0 here": the whole effect is step 10's, and the eligible set still
-                // travels so that a later code type cannot inherit a silent "all lines".
+                // travels so that no later code type inherits a silent "all lines".
                 PromoEvaluation.Applies(new PromoCharge(0m, FreeDelivery: true, eligible)),
 
             PromoDiscountType.Percent =>
                 PromoEvaluation.Applies(new PromoCharge(
-                    PercentDiscount(code, eligibleBase),
+                    PercentDiscount(terms, eligibleBase),
                     FreeDelivery: false,
                     eligible)),
 
             PromoDiscountType.FixedAmount =>
                 // "Fixed → min(v, base)". The cap is what makes a Rs. 1,000 code on Rs. 800 of eligible
-                // items worth Rs. 800.00 (doc 11 P3's own worked edge case) rather than a negative line.
+                // items worth Rs. 800.00 — doc 11 P3's own worked edge case — rather than a negative line.
                 PromoEvaluation.Applies(new PromoCharge(
-                    Math.Min(code.DiscountValue ?? 0m, eligibleBase),
+                    Math.Min(terms.DiscountValue ?? 0m, eligibleBase),
                     FreeDelivery: false,
                     eligible)),
 
@@ -205,7 +236,7 @@ public static class PromoEvaluator
             // rather than silently worth nothing: a code that discounts nothing while the screen says it
             // applied is the defect, not the exception.
             _ => throw new InvalidOperationException(
-                $"Promo code {code.Id} has discount type {(byte)code.DiscountType}, which "
+                $"Promo code {terms.Id} has discount type {(byte)terms.DiscountType}, which "
                 + "CK_PromoCodes_DiscountType does not allow."),
         };
     }
@@ -215,14 +246,14 @@ public static class PromoEvaluator
     /// </summary>
     /// <remarks>
     /// The cap is applied <b>after</b> the rounding, so a cap of Rs. 2,000.00 is exactly Rs. 2,000.00 and
-    /// not Rs. 2,000.004 rounded to it. It is also clamped to the eligible base, which
-    /// <c>CK_PromoCodes_DiscountValue</c> allows a percentage of 100 to reach exactly.
+    /// not Rs. 2,000.004 rounded to it. It is also clamped to the eligible base, which a percentage of
+    /// 100 — the most <c>CK_PromoCodes_DiscountValue</c> allows — can reach exactly.
     /// </remarks>
-    private static decimal PercentDiscount(PromoCode code, decimal eligibleBase)
+    private static decimal PercentDiscount(PromoCodeTerms terms, decimal eligibleBase)
     {
-        var discount = Round(eligibleBase * (code.DiscountValue ?? 0m) / 100m);
+        var discount = Round(eligibleBase * (terms.DiscountValue ?? 0m) / 100m);
 
-        if (code.MaxDiscountAmount is { } cap)
+        if (terms.MaxDiscountAmount is { } cap)
         {
             discount = Math.Min(discount, cap);
         }
@@ -232,11 +263,11 @@ public static class PromoEvaluator
 
     /// <summary>
     /// Doc 08 §3.6's window: the start is inclusive, the end exclusive — the same rule
-    /// <c>ContentSchedule.IsLive</c> applies to every other scheduled row in this schema, so "ends at
+    /// <c>ContentSchedule.IsLive</c> applies to every other scheduled row in this database, so "ends at
     /// 23:59" means the same thing on an announcement and on a promo code.
     /// </summary>
-    private static bool IsWithinWindow(PromoCode code, DateTime utcNow) =>
-        code.StartsAtUtc <= utcNow && (code.EndsAtUtc is null || code.EndsAtUtc.Value > utcNow);
+    private static bool IsWithinWindow(PromoCodeTerms terms, DateTime utcNow) =>
+        terms.StartsAtUtc <= utcNow && (terms.EndsAtUtc is null || terms.EndsAtUtc.Value > utcNow);
 
     /// <summary>
     /// Doc 08 §6 step 7's <c>ExcludeSaleItems</c>: a line <b>a campaign priced</b> is out of the eligible
@@ -249,18 +280,18 @@ public static class PromoEvaluator
     /// no campaign id and no join.
     /// <para>
     /// <b>It therefore excludes nothing in this build, and that is a fact about the repository rather than
-    /// a claim about the rule.</b> Checked rather than assumed: <c>CheckoutReader</c>'s projection sets
-    /// <c>UnitPrice</c> from the same <c>PriceOverride ?? BasePrice</c> expression as
-    /// <c>UnitListPrice</c> — grep <c>UnitListPrice</c> in
-    /// <c>src/backend/SpencerDenim.Infrastructure/Sales/CheckoutReader.cs</c> — because
-    /// <c>marketing.SaleCampaigns</c> does not exist (ADM-14, and deliberately not in W3-05's scope). No
-    /// line can satisfy <c>UnitPrice &lt; UnitListPrice</c> until it does, so the flag is carried, honoured
-    /// and unit-tested here against a synthesised campaign-priced line, and left off the admin form, where
-    /// a checkbox that could not do anything would be a promise.
+    /// a claim about the rule.</b> Checked rather than assumed: <c>CheckoutReader.ToLine</c> computes the
+    /// sale price as <c>CatalogPricing.SalePrice(list, campaignPrice: null)</c>, and that function returns
+    /// <c>listPrice</c> unchanged for a null campaign price — so <c>UnitPrice == UnitListPrice</c> on every
+    /// checkout line, and the comment there says why (<c>marketing.SaleCampaigns</c> does not exist;
+    /// ADM-14, deliberately not in W3-05's scope). No line can satisfy <c>UnitPrice &lt; UnitListPrice</c>
+    /// until it does, so the flag is carried, honoured and unit-tested here against a synthesised
+    /// campaign-priced line, and left off the admin form, where a checkbox that could not do anything
+    /// would be a promise.
     /// </para>
     /// </remarks>
-    private static bool IsEligible(PromoCode code, OrderPricingLine line) =>
-        !code.ExcludeSaleItems || line.UnitPrice >= line.UnitListPrice;
+    private static bool IsEligible(PromoCodeTerms terms, OrderPricingLine line) =>
+        !terms.ExcludeSaleItems || line.UnitPrice >= line.UnitListPrice;
 
     private static decimal Round(decimal value) =>
         Math.Round(value, MoneyDecimals, MidpointRounding.AwayFromZero);

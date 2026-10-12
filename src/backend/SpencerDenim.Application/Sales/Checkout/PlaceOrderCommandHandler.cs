@@ -176,12 +176,32 @@ public sealed class PlaceOrderCommandHandler(
                 cancellationToken);
         }
 
-        var pricing = CheckoutQuote.Price(lines, zoneRate);
+        // 4a. ADM-13, doc 11 P3 step 12: "re-validates the code on every bag read **and again at
+        // placement**". The same resolver the GET uses, so the two cannot reach different verdicts — if
+        // they could, the G-10 check below would refuse the order and nothing on screen would say why.
+        //
+        // A code that has stopped qualifying since the quote is refused here rather than dropped: the
+        // shopper agreed to a total that included it, and placing the order without it would charge more
+        // than they agreed. The per-customer limit is *not* decided here — it is counted inside the
+        // transaction under an app lock, where the race lives.
+        var promo = await PromoResolver.ResolveAsync(
+            command.PromoCode,
+            lines,
+            reader,
+            clock.UtcNow.UtcDateTime,
+            cancellationToken);
+
+        if (promo.Refusal is { } promoRefusal)
+        {
+            return PlaceOrderResult.PromoRejected(promoRefusal, promo.MinimumSpend);
+        }
+
+        var pricing = CheckoutQuote.Price(lines, zoneRate, promo.Charge);
 
         // 5. G-10. The figure the shopper was looking at, or nothing is placed.
         if (pricing.GrandTotal != command.ExpectedGrandTotal)
         {
-            return PlaceOrderResult.TotalChanged(CheckoutQuote.Totals(lines, zoneRate)!);
+            return PlaceOrderResult.TotalChanged(CheckoutQuote.Totals(lines, zoneRate, promo.Charge)!);
         }
 
         var placedAt = clock.UtcNow;
@@ -238,7 +258,8 @@ public sealed class PlaceOrderCommandHandler(
             placedAt,
             initiation,
             choice.DisplayName!,
-            instructions);
+            instructions,
+            promo);
 
         // 7. One transaction: reserve, insert, empty the bag.
         var result = await placements.PlaceAsync(placement, cancellationToken);
@@ -266,6 +287,12 @@ public sealed class PlaceOrderCommandHandler(
                     command,
                     PlaceOrderResult.OutOfStock(result.ShortLines),
                     cancellationToken);
+
+            case OrderPlacementStatus.PromoRejected:
+                // The conditional UPDATE matched no row, or the per-customer count reached the limit
+                // under the app lock. Nothing was written — the transaction rolled back and took the stock
+                // reservation with it — so there is nothing to replay and no order to return.
+                return PlaceOrderResult.PromoRejected(result.PromoRefusal!.Value);
 
             case OrderPlacementStatus.DuplicateSubmission:
                 // Two submissions genuinely in flight at once: the unique index on
@@ -440,7 +467,8 @@ public sealed class PlaceOrderCommandHandler(
         DateTimeOffset placedAt,
         PaymentInitiation payment,
         string paymentMethodName,
-        PaymentInstructions? instructions)
+        PaymentInstructions? instructions,
+        ResolvedPromo promo)
     {
         var district = destination.District!.Value;
         var isPickup = !method.RequiresAddress;
@@ -544,7 +572,11 @@ public sealed class PlaceOrderCommandHandler(
             // provider had to say about paying. Checkout does not read either one; the placement
             // transaction puts them into the emails it queues (doc 11 P6 step 9).
             paymentMethodName,
-            instructions);
+            instructions,
+
+            // ADM-13. Only the id and the stored code: the two limits are applied inside the transaction
+            // against the row as it is then, not against the snapshot this resolution read (doc 08 §3.6).
+            promo.Terms is { } terms ? new PromoTake(terms.Id, terms.Code) : null);
     }
 
     /// <summary>Where the order is going, or why it cannot be worked out.</summary>

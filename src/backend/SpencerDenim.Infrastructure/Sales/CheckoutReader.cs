@@ -9,6 +9,7 @@ using SpencerDenim.Application.Sales.Orders.Contracts;
 using SpencerDenim.Domain.Catalog;
 using SpencerDenim.Domain.Media;
 using SpencerDenim.Domain.Reference;
+using SpencerDenim.Domain.Marketing;
 using SpencerDenim.Domain.Sales;
 using SpencerDenim.Infrastructure.Catalog;
 using SpencerDenim.Infrastructure.Persistence;
@@ -185,6 +186,57 @@ internal sealed class CheckoutReader(
                 provider.DisplayName,
                 provider.CheckoutDescription))
             .ToListAsync(cancellationToken);
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// <b>The only filter is <c>IsDeleted = 0</c>, which is deliberate and is the opposite of the district
+    /// and pickup-location lookups above.</b> Those collapse "no such row" and "deactivated" so a caller
+    /// cannot map the shop's reference data by probing ids. A promo code is not reference data a caller
+    /// could enumerate — it is a string the shopper was given — and the five unusable states have to be
+    /// told apart *somewhere* so that "that code is fully used" and "spend Rs. 5,000 to use that code" can
+    /// be said at all. <c>PromoEvaluator</c> is that somewhere, and it collapses them back down to one
+    /// sentence for the four that a shopper cannot act on. A reader that filtered on <c>IsActive</c> or on
+    /// the window would make that decision twice, in two languages, and the second copy would drift.
+    /// <para>
+    /// A soft-deleted row is the one exception, and it is here rather than in the evaluator because
+    /// <c>UX_PromoCodes_Code</c> is itself filtered on <c>IsDeleted = 0</c>: two deleted rows may hold the
+    /// same code, so "the row for this code" is only a well-defined question among undeleted ones.
+    /// </para>
+    /// <para>
+    /// <b>No <c>IgnoreQueryFilters</c> and no explicit <c>ToUpper</c>.</b> The match is case-insensitive
+    /// because the database collation is <c>Latin1_General_100_CI_AS_SC</c> (doc 08 §1.1) — asserted by an
+    /// integration test rather than trusted — so <c>UX_PromoCodes_Code</c> is used as an index seek and a
+    /// <c>ToUpper</c> in the predicate would have made it a scan.
+    /// </para>
+    /// </remarks>
+    public async Task<PromoCodeTerms?> FindPromoCodeAsync(
+        string normalisedCode,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(normalisedCode);
+
+        var rows = await dbContext.PromoCodes
+            .AsNoTracking()
+            .Where(code => !code.IsDeleted && code.Code == normalisedCode)
+            .Select(code => new PromoCodeTerms(
+                code.Id,
+                code.Code,
+                code.DiscountType,
+                code.DiscountValue,
+                code.MaxDiscountAmount,
+                code.MinSpendAmount,
+                code.ExcludeSaleItems,
+                code.StartsAtUtc,
+                code.EndsAtUtc,
+                code.TotalUsageLimit,
+                code.PerCustomerLimit,
+                code.UsageCount,
+                code.IsActive))
+            .Take(1)
+            .ToListAsync(cancellationToken);
+
+        return rows.Count == 1 ? rows[0] : null;
+    }
 
     public async Task<IReadOnlyList<CheckoutCartLine>> ReadCartAsync(
         int cartId,
