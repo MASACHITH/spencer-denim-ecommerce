@@ -1,3 +1,4 @@
+import AxeBuilder from '@axe-core/playwright';
 import { Browser, Page, expect, test } from '@playwright/test';
 
 import { apiURL } from '../playwright.config';
@@ -838,7 +839,13 @@ test.describe('checkout (CHK-01..04)', () => {
       await chooseMethod(page, STANDARD);
       await fillDetails(page);
 
-      for (const selector of ['#co-firstName', '#co-email', '#co-district', '#co-line1']) {
+      for (const selector of [
+        '#co-firstName',
+        '#co-email',
+        '#co-district',
+        '#co-line1',
+        '#co-promo',
+      ]) {
         const control = page.locator(selector);
         await control.focus();
         expect(
@@ -850,8 +857,15 @@ test.describe('checkout (CHK-01..04)', () => {
       // **The button has to be reached with Tab, not with `focus()`.** Chrome grants `:focus-visible` on
       // a programmatic focus to controls that take typed input and *not* to a button, so `.focus()` left
       // the Place order button focused with no ring and the test reported a missing ring that a keyboard
-      // user would never meet. Tabbing from the last field is how a shopper gets there anyway.
-      await page.locator('#co-note').focus();
+      // user would never meet. Tabbing is how a shopper gets there anyway.
+      //
+      // **Tabbed from the promo panel's last control and not from the note, because W3-05 put the promo
+      // box between them.** The panel is in the summary, which follows the form in the DOM, so the order
+      // is: the note, the promo box, Apply, Remove, Place order. That is doc 11 P6's own step order —
+      // step 5 applies a code, step 7 places the order — and it is the visual order too, so the tab
+      // order matches what a sighted shopper reads. Neither Apply nor Remove is ever `disabled`, which is
+      // what keeps them in the tab order at all (#109).
+      await page.locator('[data-testid="promo-remove"]').focus();
       await page.keyboard.press('Tab');
 
       const place = page.locator('.checkout__place');
@@ -1051,6 +1065,219 @@ test.describe('checkout (CHK-01..04)', () => {
       expect(checkout.headers()['vary']).toBe('Cookie');
 
       await context.close();
+    });
+  });
+
+  /**
+   * The promo-code box (ADM-13, CART-01, doc 11 P6 step 5).
+   *
+   * **What a browser can prove here and jsdom cannot**: that applying a code does not break the ladder's
+   * arithmetic on screen, that the Free delivery row appears for a free-delivery code, and that the box
+   * and its live region are still the same DOM nodes after the re-quote that fills them. The codes come
+   * from `catalog-api-stub.mjs` — Playwright never starts the .NET API (#126), so the *rules* are proved
+   * in `CheckoutPromoBehaviourTests` and what is proved here is the screen.
+   */
+  test.describe('the promo code (ADM-13)', () => {
+    /** Applies a code and waits for the re-quote it triggers. */
+    async function applyPromo(page: Page, code: string): Promise<void> {
+      const read = page.waitForResponse(
+        (response) =>
+          new URL(response.url()).pathname === '/api/checkout'
+          && new URL(response.url()).searchParams.get('promoCode') === code,
+      );
+
+      await page.locator('#co-promo').fill(code);
+      await page.locator('[data-testid="promo-apply"]').click();
+      await read;
+    }
+
+    test('applies a percentage code and the ladder still adds up', async ({ page }) => {
+      await addToBag(page, 20);
+      await openCheckout(page, { lines: 1 });
+      await chooseDistrict(page, COLOMBO);
+      await chooseMethod(page, STANDARD);
+
+      const before = await sums(page);
+
+      await applyPromo(page, 'E2EPERCENT');
+
+      await expect(page.locator('[data-testid="promo-said"]')).toContainText('E2EPERCENT applied');
+
+      const after = await sums(page);
+
+      expect(after.promo).toBeGreaterThan(0);
+      expect(after.total).toBeLessThan(before.total);
+
+      // The identity the bag and checkout both print, with the Discount row in it.
+      expect(
+        after.subtotal - after.savings - after.promo + after.delivery - after.deliveryDiscount,
+      ).toBe(after.total);
+    });
+
+    /**
+     * **Free delivery is a discount on a different line.** The Discount row stays away and the Free
+     * delivery row appears — which is the whole of doc 08 §6 steps 8 and 10 as a shopper sees it.
+     */
+    test('a free-delivery code discounts the fee and not the items', async ({ page }) => {
+      await addToBag(page, 12);
+      await openCheckout(page, { lines: 1 });
+      await chooseDistrict(page, COLOMBO);
+      await chooseMethod(page, EXPRESS);
+
+      const before = await sums(page);
+      expect(before.delivery).toBeGreaterThan(0);
+
+      await applyPromo(page, 'E2EFREESHIP');
+
+      const after = await sums(page);
+
+      // No items discount at all, so the Discount row is not even rendered.
+      await expect(page.locator('[data-sum="promo"]')).toHaveCount(0);
+
+      // The fee still shows what the courier costs; the Free delivery row says who paid for it.
+      expect(after.delivery).toBe(before.delivery);
+      expect(after.deliveryDiscount).toBe(before.delivery);
+      expect(after.total).toBe(before.total - before.delivery);
+
+      expect(
+        after.subtotal - after.savings - after.promo + after.delivery - after.deliveryDiscount,
+      ).toBe(after.total);
+    });
+
+    test('says we do not recognise a code the shop has not issued', async ({ page }) => {
+      await addToBag(page, 13);
+      await openCheckout(page, { lines: 1 });
+      await chooseDistrict(page, COLOMBO);
+      await chooseMethod(page, STANDARD);
+
+      await applyPromo(page, 'E2ENOSUCHCODE');
+
+      await expect(page.locator('[data-testid="promo-said"]')).toContainText('do not recognise');
+
+      // Nothing came off, and the box keeps the code so one character can be corrected.
+      await expect(page.locator('[data-sum="promo"]')).toHaveCount(0);
+      await expect(page.locator('#co-promo')).toHaveValue('E2ENOSUCHCODE');
+    });
+
+    test('prints the threshold when a code needs a bigger order', async ({ page }) => {
+      await addToBag(page, 14);
+      await openCheckout(page, { lines: 1 });
+      await chooseDistrict(page, COLOMBO);
+      await chooseMethod(page, STANDARD);
+
+      await applyPromo(page, 'E2EBIGSPEND');
+
+      await expect(page.locator('[data-testid="promo-said"]')).toContainText('at least Rs.');
+    });
+
+    /**
+     * **The box and its live region are the same nodes before and after the re-quote.**
+     *
+     * This is the defect this project has shipped twice — a refusal written into the panel its own
+     * refusal destroyed, and a live region inside a block that success removed, which meant a blind
+     * customer pressed a button and heard nothing. Measured in a real browser on node identity, because
+     * that is the only form of the assertion that cannot be satisfied by a node that was replaced with an
+     * identical one.
+     */
+    test('keeps the same box and live region across the re-quote', async ({ page }) => {
+      await addToBag(page, 15);
+      await openCheckout(page, { lines: 1 });
+      await chooseDistrict(page, COLOMBO);
+      await chooseMethod(page, STANDARD);
+
+      await page.evaluate(() => {
+        (document.querySelector('#co-promo') as HTMLElement).dataset['e2eMark'] = 'input';
+        (document.querySelector('[data-testid="promo-said"]') as HTMLElement).dataset['e2eMark'] =
+          'said';
+      });
+
+      await applyPromo(page, 'E2EPERCENT');
+
+      // A re-rendered node would not carry the attribute this test put on the original.
+      await expect(page.locator('#co-promo')).toHaveAttribute('data-e2e-mark', 'input');
+      await expect(page.locator('[data-testid="promo-said"]')).toHaveAttribute(
+        'data-e2e-mark',
+        'said',
+      );
+    });
+
+    /** #109: `aria-disabled` and a refusal in the handler, never the `disabled` attribute. */
+    test('never gives the promo buttons the disabled attribute', async ({ page }) => {
+      await addToBag(page, 16);
+      await openCheckout(page, { lines: 1 });
+
+      for (const testId of ['promo-apply', 'promo-remove']) {
+        const button = page.locator(`[data-testid="${testId}"]`);
+
+        await expect(button).not.toHaveAttribute('disabled', '');
+        await expect(button).toHaveAttribute('aria-disabled', 'true');
+      }
+    });
+
+    test('removes an applied code and the discount goes with it', async ({ page }) => {
+      await addToBag(page, 17);
+      await openCheckout(page, { lines: 1 });
+      await chooseDistrict(page, COLOMBO);
+      await chooseMethod(page, STANDARD);
+
+      const before = await sums(page);
+
+      await applyPromo(page, 'E2EFIXED');
+      await expect(page.locator('[data-sum="promo"]')).toBeVisible();
+
+      const removed = page.waitForResponse(
+        (response) =>
+          new URL(response.url()).pathname === '/api/checkout'
+          && !new URL(response.url()).searchParams.has('promoCode'),
+      );
+
+      await page.locator('[data-testid="promo-remove"]').click();
+      await removed;
+
+      await expect(page.locator('[data-sum="promo"]')).toHaveCount(0);
+      expect((await sums(page)).total).toBe(before.total);
+    });
+
+    test('has no axe violations with a code applied', async ({ page }) => {
+      await addToBag(page, 18);
+      await openCheckout(page, { lines: 1 });
+      await chooseDistrict(page, COLOMBO);
+      await chooseMethod(page, STANDARD);
+      await applyPromo(page, 'E2EPERCENT');
+
+      const results = await new AxeBuilder({ page }).analyze();
+
+      expect(results.violations).toEqual([]);
+    });
+
+    test('fits at every width with the promo controls reachable', async ({ page }) => {
+      await addToBag(page, 19);
+      await openCheckout(page, { lines: 1 });
+      await chooseDistrict(page, COLOMBO);
+      await chooseMethod(page, STANDARD);
+      await applyPromo(page, 'E2EPERCENT');
+
+      const controls = [
+        '#co-promo',
+        '[data-testid="promo-apply"]',
+        '[data-testid="promo-remove"]',
+      ] as const;
+
+      for (const width of BREAKPOINTS) {
+        await page.setViewportSize({ width, height: 900 });
+
+        expect(await horizontalOverflow(page), `horizontal overflow at ${width}px`).toBe(0);
+
+        for (const control of controls) {
+          await expect(page.locator(control), `${control} at ${width}px`).toHaveCount(1);
+
+          expect(await undersized(page, control), `tap target ${control} at ${width}px`).toEqual([]);
+          expect(
+            await unreachable(page, control),
+            `reachability of ${control} at ${width}px`,
+          ).toEqual([]);
+        }
+      }
     });
   });
 });
