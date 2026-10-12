@@ -1,0 +1,32 @@
+# Fallback build-context filter for any Dockerfile without its own <Dockerfile>.dockerignore (the images in
+# deploy/docker/ each have one, as allow-lists). Keeps secrets and bulky, irrelevant trees out of any context.
+.git
+.github
+.vs
+.vscode
+.idea
+**/.env
+**/.env.*
+!**/.env.example
+**/*.pfx
+**/*.pem
+**/*.key
+**/secrets.json
+**/appsettings.*.local.json
+reference
+client-progress
+worktrees
+design
+docs
+data
+backups
+uploads
+logs
+**/node_modules
+**/dist
+**/.angular
+**/bin
+**/obj
+**/TestResults
+**/test-results
+**/playwright-report

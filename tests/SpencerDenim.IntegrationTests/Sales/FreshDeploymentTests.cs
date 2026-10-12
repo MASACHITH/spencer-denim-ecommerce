@@ -499,24 +499,33 @@ public sealed class FreshDeploymentTests(SqlServerDatabaseFixture sqlServer)
 
         while (DateTime.UtcNow < deadline)
         {
-            int settings;
+            bool referenceDataComplete;
             int products;
 
             using (var scope = deployment.Services.CreateScope())
             {
                 var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-                // **`ops.Settings`, not `ref.Districts`, and the difference is the whole test.** The
-                // districts are committed by step 2 of `RunReferenceDataAsync` and the lock is correctly
-                // still held for steps 3 and 4 — the first version of this watched for districts and
-                // reported a held lock that was being held exactly as intended. The settings keys are the
-                // last thing the reference phase writes, so they are the marker for "that phase is done".
-                settings = await db.Settings.CountAsync(cancellationToken);
+                // **A row of `ops.Settings`, not `ref.Districts`, and the difference is the whole test.**
+                // The districts are committed early in `RunReferenceDataAsync` and the lock is correctly
+                // still held for the steps after them — the first version of this watched for districts
+                // and reported a held lock that was being held exactly as intended. So the marker has to
+                // be whatever that phase writes *last*.
+                //
+                // **It used to be the settings count and that stopped being true.** The versioned
+                // default-role permission step (#122) now runs after the settings seeder and commits the
+                // `Seed.Version` row, so `Settings.Count() == SettingCatalog.All.Count` is true only for
+                // the microseconds between the two saves and a 100 ms poll never sees it — this test
+                // failed with "the demo catalogue never took long enough to observe", and that is what it
+                // was telling us. The marker is now that last row itself, which is both later and exact.
+                referenceDataComplete = await db.Settings
+                    .AnyAsync(setting => setting.Key == SettingKeys.Seed.Version, cancellationToken);
+
                 products = await db.Products.CountAsync(cancellationToken);
             }
 
             // The window: reference data complete, demo catalogue not finished.
-            if (settings == SettingCatalog.All.Count && products < DemoProducts && !starting.IsCompleted)
+            if (referenceDataComplete && products < DemoProducts && !starting.IsCompleted)
             {
                 // Given a couple of seconds, because the release is the statement after the one that
                 // committed the settings: a sub-millisecond gap, against a demo phase of about eleven
@@ -634,115 +643,5 @@ public sealed class FreshDeploymentTests(SqlServerDatabaseFixture sqlServer)
         }
 
         return null;
-    }
-
-    /// <summary>
-    /// A throwaway database created exactly as doc 08 §10.1 says to create a real one, migrated and
-    /// nothing else, with a service provider over it and a drop at the end.
-    /// </summary>
-    private sealed class FreshDeployment : IAsyncDisposable
-    {
-        private readonly string _serverConnectionString;
-        private readonly string _databaseName;
-        private ServiceProvider? _services;
-
-        private FreshDeployment(
-            string serverConnectionString,
-            string databaseName,
-            string connectionString,
-            ServiceProvider services)
-        {
-            _serverConnectionString = serverConnectionString;
-            _databaseName = databaseName;
-            ConnectionString = connectionString;
-            _services = services;
-        }
-
-        public string ConnectionString { get; }
-
-        public IServiceProvider Services =>
-            _services ?? throw new ObjectDisposedException(nameof(FreshDeployment));
-
-        /// <param name="migrate">
-        /// False to leave the database empty of tables, which is the "connectable but no migrations
-        /// applied" state that `CanConnectAsync()` cannot see.
-        /// </param>
-        public static async Task<FreshDeployment> CreateAsync(
-            string fixtureConnectionString,
-            CancellationToken cancellationToken,
-            bool migrate = true)
-        {
-            var server = new SqlConnectionStringBuilder(fixtureConnectionString) { InitialCatalog = "master" }
-                .ConnectionString;
-
-            var databaseName = "SpencerDenim_Deploy_" + Guid.NewGuid().ToString("N");
-            var connectionString = new SqlConnectionStringBuilder(fixtureConnectionString)
-            {
-                InitialCatalog = databaseName,
-            }.ConnectionString;
-
-            // Doc 08 §1.1: the collation is fixed at CREATE DATABASE and the migrations cannot set it.
-            await ExecuteAsync(
-                server,
-                string.Create(
-                    CultureInfo.InvariantCulture,
-                    $"CREATE DATABASE [{databaseName}] COLLATE {SqlServerDatabaseFixture.Collation};"),
-                cancellationToken);
-
-            if (migrate)
-            {
-                await TestDatabaseMigrator.MigrateAsync(connectionString, cancellationToken);
-            }
-
-            var options = new DbContextOptionsBuilder<AppDbContext>()
-                .UseSqlServer(
-                    connectionString,
-                    sql => sql.MigrationsHistoryTable(
-                        AppDbContext.MigrationsHistoryTable,
-                        AppDbContext.MigrationsHistorySchema))
-                .Options;
-
-            var services = new ServiceCollection();
-            services.AddSingleton(options);
-            services.AddScoped<AppDbContext>();
-
-            return new FreshDeployment(server, databaseName, connectionString, services.BuildServiceProvider());
-        }
-
-        public async ValueTask DisposeAsync()
-        {
-            if (_services is not null)
-            {
-                await _services.DisposeAsync();
-                _services = null;
-            }
-
-            // The API under test pooled connections to this database; they would keep it in use.
-            SqlConnection.ClearAllPools();
-
-            await ExecuteAsync(
-                _serverConnectionString,
-                $"""
-                IF DB_ID(N'{_databaseName}') IS NOT NULL
-                BEGIN
-                    ALTER DATABASE [{_databaseName}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
-                    DROP DATABASE [{_databaseName}];
-                END
-                """,
-                CancellationToken.None);
-        }
-
-        private static async Task ExecuteAsync(
-            string connectionString,
-            string sql,
-            CancellationToken cancellationToken)
-        {
-            await using var connection = new SqlConnection(connectionString);
-            await connection.OpenAsync(cancellationToken);
-
-            await using var command = connection.CreateCommand();
-            command.CommandText = sql;
-            await command.ExecuteNonQueryAsync(cancellationToken);
-        }
     }
 }

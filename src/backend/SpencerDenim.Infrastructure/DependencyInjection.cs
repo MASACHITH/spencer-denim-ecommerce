@@ -300,6 +300,12 @@ public static class DependencyInjection
         services.AddScoped<SalesReferenceDataSeeder>();
         services.AddScoped<HomeContentSeeder>();
         services.AddScoped<SettingsSeeder>();
+
+        // Doc 08 §9's versioned default-role permission step (issue #122). A step of the reference-data
+        // phase rather than a hosted service of its own, so it runs under that phase's applock and retry
+        // rather than growing a second copy of them — and so it is not behind `Seed:Admin:Enabled`, which
+        // is turned off after go-live.
+        services.AddScoped<Identity.Seeding.DefaultRoleSeedUpgrader>();
         services.AddScoped<DemoCatalogueSeeder>();
         services.AddScoped<CatalogSeedRunner>();
         services.AddHostedService<CatalogSeedHostedService>();
