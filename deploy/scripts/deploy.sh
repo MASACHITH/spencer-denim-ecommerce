@@ -59,21 +59,37 @@ if ! app_compose "$env" "$compose_dir" up -d --wait --wait-timeout 300 --remove-
 fi
 
 port="$(http_port "$env")"
-log "Smoke test through 127.0.0.1:$port ..."
+
+# Every smoke request must carry the PUBLIC host name, not 127.0.0.1.
+#
+# The gateway sends the storefront "Host: $host" and "X-Forwarded-Host: $host", and Angular's SSR engine
+# validates BOTH against NG_ALLOWED_HOSTS (= SD_PUBLIC_HOSTS). A host it does not allow is not a deopt to the
+# client shell: with allowedHosts configured it is an outright 400 Bad Request
+# (@angular/ssr AngularAppEngine.handleValidationError). Addressing the loopback port without this header
+# therefore made "GET /" answer 400 on every correctly-configured deployment, so deploy.sh could never finish
+# — and the SSR assertion below then blamed NG_TRUST_PROXY_HEADERS for it.
+#
+# The first of SD_PUBLIC_HOSTS is used, so this stays correct when more than one host is served.
+public_host="$(env_value "$app/config/app.env" SD_PUBLIC_HOSTS | cut -d, -f1 | tr -d '[:space:]')"
+[ -n "$public_host" ] || die "SD_PUBLIC_HOSTS is empty in $app/config/app.env"
+
+log "Smoke test through 127.0.0.1:$port as $public_host ..."
 for path in /gateway-health /health /admin/ /; do
-  code="$(curl -s -o /dev/null -w '%{http_code}' -H "X-Forwarded-Proto: https" "http://127.0.0.1:$port$path" || true)"
+  code="$(curl -s -o /dev/null -w '%{http_code}' \
+    -H "Host: $public_host" -H "X-Forwarded-Proto: https" "http://127.0.0.1:$port$path" || true)"
   [ "$code" = 200 ] || die "GET $path answered $code, expected 200"
 done
-code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/api/catalog/departments" || true)"
+code="$(curl -s -o /dev/null -w '%{http_code}' -H "Host: $public_host" \
+  "http://127.0.0.1:$port/api/catalog/departments" || true)"
 [ "$code" = 200 ] || die "GET /api/catalog/departments answered $code, expected 200"
 
 # The home page must be server-rendered, not Angular's empty client-side fallback (docs/15 §3 step 5).
 # Each response is read into a variable before it is searched: piping curl into "grep -q" under pipefail fails
 # whenever grep stops reading before curl has finished writing (curl exits 23), about one deploy in ten.
-home="$(curl -s "http://127.0.0.1:$port/" || true)"
+home="$(curl -s -H "Host: $public_host" -H "X-Forwarded-Proto: https" "http://127.0.0.1:$port/" || true)"
 case "$home" in
   *'ng-server-context="ssr"'*) ;;
-  *) die "GET / returned the client-side shell, not a server-rendered page (see docs/15 §3, NG_TRUST_PROXY_HEADERS)" ;;
+  *) die "GET / was not server-rendered. Check NG_TRUST_PROXY_HEADERS against the gateway's 'location /' block, and SD_PUBLIC_HOSTS against the Host above (docs/15 §3 step 5)" ;;
 esac
 
 # #86: robots.txt must advertise this environment's own sitemap, never production's on staging.
