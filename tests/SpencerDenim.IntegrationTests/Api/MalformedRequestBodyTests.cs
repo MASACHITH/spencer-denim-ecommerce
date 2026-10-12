@@ -1,7 +1,14 @@
+using System.Collections.Concurrent;
+using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using Microsoft.AspNetCore.Diagnostics;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
+using Serilog.Core;
+using Serilog.Events;
 using SpencerDenim.IntegrationTests.Infrastructure;
 
 namespace SpencerDenim.IntegrationTests.Api;
@@ -16,6 +23,13 @@ namespace SpencerDenim.IntegrationTests.Api;
 /// routes are a mix of the ones the issue names and public ones that bind a body the same way, so the fix is
 /// shown to be the pipeline's rather than one endpoint's. Binding fails before any handler runs, so no SQL
 /// Server is needed.
+/// </para>
+/// <para>
+/// <b>A request that is not a 400 explains itself.</b> The eight missing-field cases once answered 500 in a
+/// full-assembly run beside a second suite, then passed 174 times in a row, and the only thing the failure said
+/// was <c>Expected 400, Actual 500</c>. So every assertion here goes through <see cref="Probe"/>, which keeps
+/// what the host threw and everything it logged at Error and puts both, with the response body, in the failure
+/// message. The next intermittent failure names its own cause.
 /// </para>
 /// </summary>
 public sealed class MalformedRequestBodyTests
@@ -37,14 +51,12 @@ public sealed class MalformedRequestBodyTests
     [MemberData(nameof(Routes))]
     public async Task Broken_json_is_a_400_problem_not_a_500(string environment, string route)
     {
-        await using var factory = new ApiFactory(ApiFactory.UnreachableConnectionString, environment);
-        using var client = factory.CreateClient();
+        await using var probe = new Probe(environment);
 
         foreach (var payload in new[] { "{bad", "{\"email\":", "\"just a string\"" })
         {
-            var (status, body) = await PostRawAsync(client, route, payload);
+            var body = await probe.PostExpectingBadRequestAsync(route, payload);
 
-            Assert.Equal(HttpStatusCode.BadRequest, status);
             Assert.Equal("malformed_json", body.GetProperty("code").GetString());
             Assert.Equal(400, body.GetProperty("status").GetInt32());
         }
@@ -55,12 +67,11 @@ public sealed class MalformedRequestBodyTests
     [InlineData("Production")]
     public async Task A_field_of_the_wrong_json_type_is_a_400_problem_naming_the_field(string environment)
     {
-        await using var factory = new ApiFactory(ApiFactory.UnreachableConnectionString, environment);
-        using var client = factory.CreateClient();
+        await using var probe = new Probe(environment);
 
-        var (status, body) = await PostRawAsync(client, "/api/admin/auth/login", "{\"email\":123,\"password\":\"x\"}");
+        var body = await probe.PostExpectingBadRequestAsync(
+            "/api/admin/auth/login", "{\"email\":123,\"password\":\"x\"}");
 
-        Assert.Equal(HttpStatusCode.BadRequest, status);
         Assert.Equal("malformed_json", body.GetProperty("code").GetString());
         Assert.Contains("$.email", body.GetProperty("detail").GetString(), StringComparison.Ordinal);
     }
@@ -74,16 +85,15 @@ public sealed class MalformedRequestBodyTests
     [InlineData("Production")]
     public async Task The_problem_carries_no_stack_trace_or_exception_detail(string environment)
     {
-        await using var factory = new ApiFactory(ApiFactory.UnreachableConnectionString, environment);
-        using var client = factory.CreateClient();
+        await using var probe = new Probe(environment);
 
         using var content = new StringContent("{bad", Encoding.UTF8);
         content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
-        using var response = await client.PostAsync(
+        using var response = await probe.Client.PostAsync(
             "/api/admin/auth/login", content, TestContext.Current.CancellationToken);
         var raw = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
 
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        probe.ExpectBadRequest(response.StatusCode, raw);
         Assert.StartsWith("application/problem+json", response.Content.Headers.ContentType?.ToString(), StringComparison.Ordinal);
         Assert.DoesNotContain("   at ", raw, StringComparison.Ordinal);
         Assert.DoesNotContain("BadHttpRequestException", raw, StringComparison.Ordinal);
@@ -108,12 +118,10 @@ public sealed class MalformedRequestBodyTests
     public async Task A_sign_in_with_a_field_left_out_is_a_400_naming_the_field(
         string environment, string payload, string expectedFields)
     {
-        await using var factory = new ApiFactory(ApiFactory.UnreachableConnectionString, environment);
-        using var client = factory.CreateClient();
+        await using var probe = new Probe(environment);
 
-        var (status, body) = await PostRawAsync(client, "/api/admin/auth/login", payload);
+        var body = await probe.PostExpectingBadRequestAsync("/api/admin/auth/login", payload);
 
-        Assert.Equal(HttpStatusCode.BadRequest, status);
         Assert.Equal("missing_field", body.GetProperty("code").GetString());
         var errors = body.GetProperty("errors");
         foreach (var field in expectedFields.Split(','))
@@ -137,12 +145,10 @@ public sealed class MalformedRequestBodyTests
     [InlineData("/api/content/newsletter", "null")]
     public async Task The_detail_names_no_internal_type_or_framework_wording(string route, string payload)
     {
-        await using var factory = new ApiFactory(ApiFactory.UnreachableConnectionString, "Production");
-        using var client = factory.CreateClient();
+        await using var probe = new Probe("Production");
 
-        var (status, body) = await PostRawAsync(client, route, payload);
+        var body = await probe.PostExpectingBadRequestAsync(route, payload);
 
-        Assert.Equal(HttpStatusCode.BadRequest, status);
         var text = body.ToString();
         Assert.DoesNotContain("SpencerDenim.", text, StringComparison.Ordinal);
         Assert.DoesNotContain("System.", text, StringComparison.Ordinal);
@@ -160,30 +166,112 @@ public sealed class MalformedRequestBodyTests
     [InlineData("application/xml")]
     public async Task A_caller_who_does_not_accept_json_still_gets_the_problem_document(string accept)
     {
-        await using var factory = new ApiFactory(ApiFactory.UnreachableConnectionString, "Production");
-        using var client = factory.CreateClient();
+        await using var probe = new Probe("Production");
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/cart/items")
         {
             Content = new StringContent("{bad", Encoding.UTF8, "application/json"),
         };
         request.Headers.TryAddWithoutValidation("Accept", accept);
 
-        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        using var response = await probe.Client.SendAsync(request, TestContext.Current.CancellationToken);
         var raw = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
 
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        probe.ExpectBadRequest(response.StatusCode, raw);
         Assert.Contains("malformed_json", raw, StringComparison.Ordinal);
     }
 
-    private static async Task<(HttpStatusCode Status, JsonElement Body)> PostRawAsync(
-        HttpClient client, string route, string payload)
+    /// <summary>
+    /// The API in memory against a database that refuses connections, plus the two things a failing request leaves
+    /// behind: what the pipeline threw and what the host logged at Error.
+    /// </summary>
+    private sealed class Probe : IAsyncDisposable
     {
-        using var content = new StringContent(payload, Encoding.UTF8);
-        content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+        private readonly ApiFactory _factory;
 
-        using var response = await client.PostAsync(route, content, TestContext.Current.CancellationToken);
-        var json = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        public Probe(string environment)
+        {
+            Evidence = new Evidence();
+            _factory = new ApiFactory(
+                ApiFactory.UnreachableConnectionString,
+                environment,
+                configureServices: services =>
+                {
+                    // Added after the application's own registrations, so this handler runs after the
+                    // bad-request handler and sees only what that one declined: the exceptions that become a 500.
+                    // It always returns false, so it changes nothing about the answer.
+                    services.AddSingleton<IExceptionHandler>(Evidence);
 
-        return (response.StatusCode, JsonDocument.Parse(json).RootElement.Clone());
+                    // Serilog replaces the logging providers (`AddSerilog` without `writeToProviders`) and reads
+                    // its sinks from the container, so a sink is the only way to see the host's own log lines.
+                    // An `ILoggerProvider` here would be accepted, never called, and look like a quiet host.
+                    services.AddSingleton<ILogEventSink>(Evidence);
+                });
+            Client = _factory.CreateClient();
+        }
+
+        public HttpClient Client { get; }
+
+        private Evidence Evidence { get; }
+
+        public async Task<JsonElement> PostExpectingBadRequestAsync(string route, string payload)
+        {
+            using var content = new StringContent(payload, Encoding.UTF8);
+            content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+
+            using var response = await Client.PostAsync(route, content, TestContext.Current.CancellationToken);
+            var raw = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+
+            ExpectBadRequest(response.StatusCode, raw);
+
+            return JsonDocument.Parse(raw).RootElement.Clone();
+        }
+
+        public void ExpectBadRequest(HttpStatusCode status, string responseBody) =>
+            Assert.True(
+                status == HttpStatusCode.BadRequest,
+                $"Expected 400 but the API answered {(int)status} {status}.{Environment.NewLine}"
+                + $"Response body: {responseBody}{Environment.NewLine}"
+                + $"What the host saw: {Evidence.Describe()}");
+
+        public async ValueTask DisposeAsync()
+        {
+            Client.Dispose();
+            await _factory.DisposeAsync();
+        }
+    }
+
+    /// <summary>Everything a request threw and everything the host logged at Error, in order.</summary>
+    private sealed class Evidence : IExceptionHandler, ILogEventSink
+    {
+        private readonly ConcurrentQueue<string> _seen = new();
+
+        public ValueTask<bool> TryHandleAsync(
+            HttpContext httpContext, Exception exception, CancellationToken cancellationToken)
+        {
+            _seen.Enqueue($"thrown in the request: {exception}");
+
+            return ValueTask.FromResult(false);
+        }
+
+        public void Emit(LogEvent logEvent)
+        {
+            if (logEvent.Level < LogEventLevel.Error)
+            {
+                return;
+            }
+
+            var source = logEvent.Properties.TryGetValue("SourceContext", out var context)
+                ? context.ToString().Trim('"')
+                : "unknown source";
+            var exception = logEvent.Exception is null ? string.Empty : Environment.NewLine + logEvent.Exception;
+
+            _seen.Enqueue(
+                $"logged at {logEvent.Level} by {source}: {logEvent.RenderMessage(CultureInfo.InvariantCulture)}{exception}");
+        }
+
+        public string Describe() =>
+            _seen.IsEmpty
+                ? "nothing was thrown in the request and nothing was logged at Error"
+                : Environment.NewLine + string.Join(Environment.NewLine + "---" + Environment.NewLine, _seen);
     }
 }
