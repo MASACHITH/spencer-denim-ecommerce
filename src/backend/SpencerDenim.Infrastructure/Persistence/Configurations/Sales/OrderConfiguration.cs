@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using SpencerDenim.Domain.Marketing;
 using SpencerDenim.Domain.Reference;
 using SpencerDenim.Domain.Sales;
 using SpencerDenim.Infrastructure.Identity;
@@ -15,10 +16,11 @@ namespace SpencerDenim.Infrastructure.Persistence.Configurations.Sales;
 /// make a cascade by convention because the line's <c>OrderId</c> is required.
 /// </para>
 /// <para>
-/// <b>Two of doc 08's foreign keys are still columns only:</b> <c>PromoCodeId</c> here and
-/// <c>SaleCampaignId</c> on the line, because <c>marketing.PromoCodes</c> (ADM-13) and
-/// <c>marketing.SaleCampaigns</c> (ADM-14) have not been created by any migration. Each is indexed as if
-/// the constraint existed, so adding it later is one <c>ALTER TABLE</c>.
+/// <b>One of doc 08's foreign keys is still a column only:</b> <c>SaleCampaignId</c> on the line,
+/// because <c>marketing.SaleCampaigns</c> (ADM-14) has not been created by any migration. It is indexed
+/// as if the constraint existed, so adding it later is one <c>ALTER TABLE</c> — which is exactly what
+/// W3-05 did for <c>PromoCodeId</c>, the other of the pair, when ADM-13 created
+/// <c>marketing.PromoCodes</c> (see <see cref="ConfigureRelationships"/>).
 /// </para>
 /// <para>
 /// <b><c>DeliveryDistrictId</c> was the third, and W3-02 has made it a real constraint.</b> W3-03 built
@@ -363,6 +365,23 @@ internal sealed class OrderConfiguration : IEntityTypeConfiguration<Order>
             .HasOne<District>()
             .WithMany()
             .HasForeignKey(order => order.DeliveryDistrictId)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        // **W3-05 makes `PromoCodeId` a real constraint**, which the class remarks above had been waiting
+        // for since W3-03: the column has existed and been null on every order ever placed, and ADM-13
+        // creates the table it points at in the same change, so it owes the constraint in the same change.
+        // NO ACTION, like every other relationship here — a promo code is soft-deleted and never removed,
+        // so the rule can never block an admin, and `PromoCodeText` is the snapshot an order reads from.
+        //
+        // No navigation property, and no index declared here: `IX_Orders_Promo_Email` already leads on
+        // `PromoCodeId` (its own comment says it exists "ahead of the foreign key marketing.PromoCodes
+        // will carry"), so EF's FK-index convention adds nothing and a second single-column index would
+        // be writes paid for nothing. Verified against the generated migration rather than assumed: the
+        // snapshot diff for this change adds `FK_Orders_PromoCodes_PromoCodeId` and no index at all.
+        builder
+            .HasOne<PromoCode>()
+            .WithMany()
+            .HasForeignKey(order => order.PromoCodeId)
             .OnDelete(DeleteBehavior.NoAction);
     }
 }

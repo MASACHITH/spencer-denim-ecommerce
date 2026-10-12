@@ -150,6 +150,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
 
     public DbSet<NewsletterSubscriber> NewsletterSubscribers => Set<NewsletterSubscriber>();
 
+    /// <summary><c>marketing.PromoCodes</c> (doc 08 §3.6, ADM-13). Created by W3-05's migration.</summary>
+    public DbSet<PromoCode> PromoCodes => Set<PromoCode>();
+
     public DbSet<Province> Provinces => Set<Province>();
 
     public DbSet<District> Districts => Set<District>();

@@ -1711,6 +1711,122 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("SpencerDenim.Domain.Marketing.PromoCode", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasColumnType("varchar(40)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2(3)")
+                        .HasDefaultValueSql("sysutcdatetime()");
+
+                    b.Property<int?>("CreatedByUserId")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("DeletedAtUtc")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<int?>("DeletedByUserId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(250)
+                        .HasColumnType("nvarchar(250)");
+
+                    b.Property<byte>("DiscountType")
+                        .HasColumnType("tinyint");
+
+                    b.Property<decimal?>("DiscountValue")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<DateTime?>("EndsAtUtc")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<bool>("ExcludeSaleItems")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false);
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("IsDeleted")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false);
+
+                    b.Property<decimal?>("MaxDiscountAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<decimal?>("MinSpendAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<int?>("PerCustomerLimit")
+                        .HasColumnType("int");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.Property<DateTime>("StartsAtUtc")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<int?>("TotalUsageLimit")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<int?>("UpdatedByUserId")
+                        .HasColumnType("int");
+
+                    b.Property<int>("UsageCount")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(0);
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Code")
+                        .IsUnique()
+                        .HasDatabaseName("UX_PromoCodes_Code")
+                        .HasFilter("[IsDeleted] = 0");
+
+                    b.HasIndex("IsActive", "StartsAtUtc", "EndsAtUtc")
+                        .HasDatabaseName("IX_PromoCodes_Active");
+
+                    b.ToTable("PromoCodes", "marketing", t =>
+                        {
+                            t.HasCheckConstraint("CK_PromoCodes_DiscountType", "[DiscountType] IN (1, 2, 3)");
+
+                            t.HasCheckConstraint("CK_PromoCodes_DiscountValue", "([DiscountType] = 1 AND [DiscountValue] > 0 AND [DiscountValue] <= 100) OR ([DiscountType] = 2 AND [DiscountValue] > 0) OR ([DiscountType] = 3 AND [DiscountValue] IS NULL)");
+
+                            t.HasCheckConstraint("CK_PromoCodes_MaxDiscountAmount", "[MaxDiscountAmount] IS NULL OR [MaxDiscountAmount] > 0");
+
+                            t.HasCheckConstraint("CK_PromoCodes_MinSpendAmount", "[MinSpendAmount] IS NULL OR [MinSpendAmount] > 0");
+
+                            t.HasCheckConstraint("CK_PromoCodes_PerCustomerLimit", "[PerCustomerLimit] IS NULL OR [PerCustomerLimit] >= 1");
+
+                            t.HasCheckConstraint("CK_PromoCodes_TotalUsageLimit", "[TotalUsageLimit] IS NULL OR [TotalUsageLimit] >= 1");
+
+                            t.HasCheckConstraint("CK_PromoCodes_UsageCount", "[UsageCount] >= 0");
+
+                            t.HasCheckConstraint("CK_PromoCodes_Window", "[EndsAtUtc] IS NULL OR [EndsAtUtc] > [StartsAtUtc]");
+                        });
+                });
+
             modelBuilder.Entity("SpencerDenim.Domain.Media.MediaAsset", b =>
                 {
                     b.Property<int>("Id")
@@ -4191,6 +4307,11 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                     b.HasOne("SpencerDenim.Domain.Sales.PickupLocation", "PickupLocation")
                         .WithMany()
                         .HasForeignKey("PickupLocationId")
+                        .OnDelete(DeleteBehavior.NoAction);
+
+                    b.HasOne("SpencerDenim.Domain.Marketing.PromoCode", null)
+                        .WithMany()
+                        .HasForeignKey("PromoCodeId")
                         .OnDelete(DeleteBehavior.NoAction);
 
                     b.Navigation("Courier");
