@@ -192,6 +192,47 @@ internal static class OrderPromoUse
     }
 
     /// <summary>
+    /// Doc 08 §3.6's fourth usage event and doc 08 §4.1's <c>Expired / Cancelled → Paid</c>:
+    /// <c>UsageCount + 1</c> <b>unconditionally</b>, because the customer has already paid.
+    /// </summary>
+    /// <remarks>
+    /// <b>It is not <see cref="TakeAsync"/> and must not be.</b> Doc 08 §3.6's table is explicit — "+1
+    /// unconditionally (limit ignored: the customer already paid)" — so neither the total limit nor the
+    /// per-customer limit applies: refusing here would mean refusing money that has arrived, and the only
+    /// alternative would be to pay it back for a reason the shop invented.
+    /// <para>
+    /// <b>Why there is a statement here at all.</b> <c>UsageCount</c> is a cache of the uses doc 08 §3.6
+    /// calls <i>held</i>, and a <c>Paid</c> order holds one. The expiry or the cancel gave this order's
+    /// use back, so without this the cache sits one <i>below</i> the number of orders holding a use — and
+    /// the total limit is enforced from the cache alone, by <see cref="TakeAsync"/>'s conditional UPDATE.
+    /// The next shopper would be sold a use the code does not have, once per late acceptance, with
+    /// nothing to reconcile it against.
+    /// </para>
+    /// <para>
+    /// <b>No <c>UsageCount &gt; 0</c> twin and no idempotency predicate</b>, unlike
+    /// <see cref="ReturnAsync"/>: the caller claims the order row with a conditional <c>UPDATE</c> on
+    /// <c>Status IN (Cancelled, Expired)</c> and has already moved it to <c>Paid</c> by the time this
+    /// runs, so a second acceptance of the same order matches no row and never gets here. The claim is
+    /// the guard, which is the same argument the release path makes.
+    /// </para>
+    /// </remarks>
+    public static Task<int> RetakeAsync(
+        AppDbContext dbContext,
+        int orderId,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(dbContext);
+
+        return dbContext.Database.ExecuteSqlInterpolatedAsync(
+            $"""
+            UPDATE marketing.PromoCodes
+               SET UsageCount = UsageCount + 1
+             WHERE Id = (SELECT PromoCodeId FROM sales.Orders WHERE Id = {orderId});
+            """,
+            cancellationToken);
+    }
+
+    /// <summary>
     /// Doc 08 §3.6 (DB18): <c>'promo:' + {Id} + ':' + {hex SHA-256 of EmailNormalized}</c> — a fixed
     /// length, and no personal data in the lock DMVs.
     /// </summary>

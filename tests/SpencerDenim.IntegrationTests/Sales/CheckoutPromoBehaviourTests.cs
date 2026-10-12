@@ -115,6 +115,68 @@ public sealed class CheckoutPromoBehaviourTests(SqlServerDatabaseFixture sqlServ
     }
 
     /// <summary>
+    /// Doc 08 §3.6's fourth usage event, and doc 11 P3 section D's fourth row: <b>"Expired → Paid:
+    /// <c>+1</c> unconditionally (limit ignored: the customer already paid)"</b>. The expiry gave the use
+    /// back; accepting the transfer that arrived afterwards takes it again.
+    /// </summary>
+    /// <remarks>
+    /// <b>The limit is deliberately already full when the late payment is accepted</b>, which is the
+    /// whole of the word "unconditionally". A shopper's transfer arrives on day three, somebody else has
+    /// taken the code's last use in the meantime, and the shop has the money — so the order is paid and
+    /// <c>UsageCount</c> goes to two against a limit of one. Doc 08 §3.6's own note gives the reason: the
+    /// conditional UPDATE's limit is for <i>new</i> uses, and this order is not a new use but the return
+    /// of one.
+    /// <para>
+    /// <b>Why <c>UsageCount</c> and not just the order's status is the assertion.</b> It is a cache of
+    /// held uses, and a <c>Paid</c> order holds one by §3.6's own definition — so a count that stayed at
+    /// one while two orders held a use would be a cache that had drifted below the truth, and the total
+    /// limit is enforced from the cache alone. The next shopper would get a use the code does not have.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task An_expired_order_paid_late_takes_its_use_again_whatever_the_limit()
+    {
+        var variantIds = await CheckoutVariantIdsAsync(2);
+        var colombo = await DistrictIdAsync("Colombo");
+        var standard = await DeliveryMethodIdAsync(DeliveryMethod.StandardCode);
+        var email = UniqueEmail("paidlate");
+
+        var code = await NewPromoCodeAsync(
+            discountType: PromoDiscountType.FixedAmount,
+            discountValue: 100m,
+            perCustomerLimit: null,
+            totalUsageLimit: 1);
+
+        foreach (var variantId in variantIds)
+        {
+            await SetStockAsync(variantId, 10);
+        }
+
+        var placed = await PlaceWithPromoAsync(variantIds[0], colombo, standard, email, code.Code);
+        Assert.Equal(HttpStatusCode.Created, placed.StatusCode);
+
+        var orderId = await OrderIdOfAsync(code.Id, email);
+
+        // The 48 hours pass: the use goes back and the code's one use is available again.
+        Assert.True(await ExpireAsync(orderId));
+        Assert.Equal(0, await UsageCountAsync(code.Id));
+
+        // Somebody else takes it, so the limit is full when the late transfer lands.
+        var other = await PlaceWithPromoAsync(
+            variantIds[1], colombo, standard, UniqueEmail("tookthelast"), code.Code);
+
+        Assert.Equal(HttpStatusCode.Created, other.StatusCode);
+        Assert.Equal(1, await UsageCountAsync(code.Id));
+
+        // The transfer arrives on day three and staff honour it (doc 08 §4.1 "Expired → Paid").
+        Assert.IsType<SpencerDenim.Application.Sales.Payments.Abstractions.BankTransferDecisionResult.Applied>(
+            await AcceptLateAsync(orderId, "Credit landed on day 3."));
+
+        // Two orders now hold a use, so the cache says two — above the limit, which is the point.
+        Assert.Equal(2, await UsageCountAsync(code.Id));
+    }
+
+    /// <summary>
     /// A <b>paid</b> order keeps its use when it is refunded — doc 08 §3.6's usage table, "Refund: no
     /// change" — and that is the row of the table the <c>UsageCount &gt; 0</c> guard alone would not keep.
     /// </summary>
