@@ -1202,6 +1202,76 @@ test.describe('checkout (CHK-01..04)', () => {
     });
 
     /** #109: `aria-disabled` and a refusal in the handler, never the `disabled` attribute. */
+    /**
+     * **A second Apply on a code that is still refused says it again, measured in a browser.**
+     *
+     * `role="status"` announces a *change*, so writing the same sentence back is silence — ADM-22's
+     * defect, and the reason `sayPromo` blanks the node and rewrites it after the next render.
+     *
+     * **This test exists because the Vitest one cannot fail for the right reason.** Measured: replacing
+     * `afterNextRender` with `queueMicrotask` in `sayPromo` left all 1,428 storefront Vitest tests green
+     * and all 9 of this block green, because `settle()` calls `detectChanges()` synchronously between
+     * the two writes and so renders the blank that a browser never would. In a browser a signal write
+     * schedules change detection as a *task*, so a microtask callback runs first and the two writes
+     * collapse into no change at all. A real `MutationObserver` in a real browser is the only place that
+     * distinction shows up.
+     *
+     * `oldValue` and not `textContent`: the callback runs as a microtask, by which time the node already
+     * holds the final value, so reading the target would record the sentence twice and never the blank
+     * between them.
+     */
+    test('says a repeated refusal again rather than falling silent', async ({ page }) => {
+      await addToBag(page, 13);
+      await openCheckout(page, { lines: 1 });
+      await chooseDistrict(page, COLOMBO);
+      await chooseMethod(page, STANDARD);
+
+      await applyPromo(page, 'E2ENOSUCHCODE');
+      await expect(page.locator('[data-testid="promo-said"]')).toContainText('do not recognise');
+
+      await page.evaluate(() => {
+        const said = document.querySelector('[data-testid="promo-said"]')!;
+        const seen: string[] = [];
+
+        (window as unknown as { __promoSaidOldValues: string[] }).__promoSaidOldValues = seen;
+
+        new MutationObserver((records) => {
+          for (const record of records) {
+            seen.push((record.oldValue ?? '').trim());
+          }
+        }).observe(said, {
+          childList: true,
+          characterData: true,
+          characterDataOldValue: true,
+          subtree: true,
+        });
+      });
+
+      // The same code again, so the sentence it produces is the one already on screen.
+      const read = page.waitForResponse(
+        (response) =>
+          new URL(response.url()).pathname === '/api/checkout'
+          && new URL(response.url()).searchParams.get('promoCode') === 'E2ENOSUCHCODE',
+      );
+
+      await page.locator('[data-testid="promo-apply"]').click();
+      await read;
+
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () =>
+              (window as unknown as { __promoSaidOldValues: string[] }).__promoSaidOldValues.includes(
+                '',
+              ),
+          ),
+        )
+        .toBe(true);
+
+      // And it ends on the sentence rather than on the blank it passed through.
+      await expect(page.locator('[data-testid="promo-said"]')).toContainText('do not recognise');
+    });
+
     test('never gives the promo buttons the disabled attribute', async ({ page }) => {
       await addToBag(page, 16);
       await openCheckout(page, { lines: 1 });
