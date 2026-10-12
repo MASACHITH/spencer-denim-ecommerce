@@ -115,6 +115,8 @@ const progressData = {
     },
     {
       name: "Launch",
+      // Not development: excluded from the headline figure (see app.js).
+      countsTowardOverall: false,
       features: [
         { name: "Preview website for your review", status: "planned", progress: 0 },
         { name: "Mobile, tablet & desktop testing", status: "planned", progress: 0 },

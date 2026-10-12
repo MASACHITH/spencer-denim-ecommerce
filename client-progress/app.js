@@ -155,7 +155,16 @@
         warn('skipped ' + where + ' (no valid features).', raw);
         return;
       }
-      groups.push({ name: raw.name.trim(), features: features });
+      groups.push({
+        name: raw.name.trim(),
+        features: features,
+        // A group opts out of the headline figure with `countsTowardOverall: false`.
+        // Launch activities (client preview, device testing, go-live, training) are real
+        // work, but they are not development: averaging four 0% items into the headline
+        // understates how much of the build is finished. Such a group keeps its own block
+        // and its own count, and is labelled as not counted. Default is to count.
+        countsTowardOverall: raw.countsTowardOverall !== false
+      });
     });
     return groups;
   }
@@ -366,9 +375,11 @@
       const wrapper = el('div', 'group');
       const head = el('div', 'group__head');
       const heading = el('div', 'group__heading');
+      const metaText = stats.percent + '% complete · ' + stats.done + ' of ' + stats.total + ' done'
+        + (group.countsTowardOverall ? '' : ' · not counted in the overall figure');
       heading.append(
         el('h3', 'group__title', group.name),
-        el('p', 'group__meta', stats.percent + '% complete · ' + stats.done + ' of ' + stats.total + ' done')
+        el('p', 'group__meta', metaText)
       );
 
       // Show/hide button, visible on small screens only (hidden by CSS from 768px).
@@ -425,7 +436,10 @@
 
     try {
       const groups = cleanGroups(data.groups);
-      const allFeatures = groups.flatMap((group) => group.features);
+      const counted = groups.filter((group) => group.countsTowardOverall);
+      // If every group opted out, a 0% headline would be a lie rather than a simplification,
+      // so fall back to counting everything.
+      const allFeatures = (counted.length > 0 ? counted : groups).flatMap((group) => group.features);
 
       renderHeader(isObject(data.project) ? data.project : {}, data.lastUpdated);
       renderOverall(document.getElementById('overall'), computeProgress(allFeatures));
