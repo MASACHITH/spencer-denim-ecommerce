@@ -1,0 +1,21 @@
+# Build context for backend.Dockerfile (BuildKit reads <Dockerfile>.dockerignore next to the Dockerfile).
+# An allow-list: everything is excluded, then only what the backend build needs is let back in. So secrets,
+# .env files, reference/, client-progress/, worktrees/, docs, the frontend and every bin/obj stay out.
+*
+!global.json
+!Directory.Build.props
+!Directory.Packages.props
+!.editorconfig
+!src/backend/**
+
+# Re-exclude build output and local-only files inside the allowed tree.
+**/bin
+**/obj
+**/*.user
+**/appsettings.*.local.json
+**/secrets.json
+**/.env
+**/.env.*
+**/*.pfx
+**/*.pem
+**/*.key

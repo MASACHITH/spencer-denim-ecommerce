@@ -11,8 +11,8 @@ namespace SpencerDenim.Application.Marketing.Newsletter;
 /// <param name="Source">Where the form was (<see cref="NewsletterSource"/>).</param>
 /// <param name="IpAddress">
 /// The caller's address, recorded as proof of consent (doc 08 §3.6 <c>ConsentIpAddress</c>) and
-/// used as the rate-limit partition. It is the real socket peer: <c>X-Forwarded-For</c> processing
-/// is deliberately off (W1-01 round 3).
+/// used as the rate-limit partition. It is the socket peer, corrected from <c>X-Forwarded-For</c> only
+/// when that peer is the trusted web gateway (W0-15); a header sent by anyone else is ignored.
 /// </param>
 public sealed record SubscribeToNewsletterCommand(string? Email, string Source, string? IpAddress);
 

@@ -1,0 +1,21 @@
+# Build context for frontend.Dockerfile (BuildKit reads <Dockerfile>.dockerignore next to the Dockerfile).
+# An allow-list: only the Angular workspace sources and the gateway config are let in.
+*
+!src/frontend/package.json
+!src/frontend/package-lock.json
+!src/frontend/angular.json
+!src/frontend/tsconfig.json
+!src/frontend/projects/**
+!deploy/gateway/**
+
+# Re-exclude generated and local-only files inside the allowed tree.
+**/node_modules
+**/dist
+**/.angular
+**/coverage
+**/test-results
+**/playwright-report
+**/.env
+**/.env.*
+**/*.pem
+**/*.key
