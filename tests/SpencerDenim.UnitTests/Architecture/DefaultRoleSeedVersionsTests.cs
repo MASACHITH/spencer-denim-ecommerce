@@ -67,6 +67,53 @@ public sealed class DefaultRoleSeedVersionsTests
     }
 
     /// <summary>
+    /// <b>The baseline is frozen, and nothing but this asserted it.</b>
+    /// <para>
+    /// Every other test here compares the history with
+    /// <see cref="DefaultRoleDefinitions"/>, so the two agree whether a new permission is declared as an
+    /// increment or written straight into <see cref="DefaultRoleSeedVersions.BaselinePermissions"/>. The
+    /// second is the tempting wrong fix — it makes the red build green with one line and no version bump
+    /// — and its consequence is exactly issue #122 again: the baseline is a record of what databases
+    /// <i>already hold</i>, so a permission added there is never offered to any existing database, and
+    /// the only trace is the drift Warning on the client's deploy log. Measured: a permission added to a
+    /// role's definition, its exact-set test and the baseline left all 2,027 unit tests and all 8 of this
+    /// branch's integration tests green.
+    /// </para>
+    /// <para>
+    /// The counts are the version-1 sets of commit <c>4a32705</c> (W1-08), verified against that commit's
+    /// own file. They change only if someone edits a frozen set, which is the thing to catch.
+    /// </para>
+    /// </summary>
+    [Theory]
+    [InlineData(DefaultRoleDefinitions.StoreManagerName, 37)]
+    [InlineData(DefaultRoleDefinitions.OrderStaffName, 6)]
+    [InlineData(DefaultRoleDefinitions.ContentEditorName, 18)]
+    public void The_baseline_is_frozen_at_what_version_one_shipped(string roleName, int expectedCount)
+    {
+        var baseline = DefaultRoleSeedVersions.BaselinePermissions[roleName];
+
+        Assert.Equal(expectedCount, baseline.Count);
+    }
+
+    /// <summary>
+    /// And the whole baseline, so a permission moved from one role's frozen set to another's is caught
+    /// too.
+    /// </summary>
+    [Fact]
+    public void The_baseline_holds_the_sixty_one_role_permission_pairs_version_one_shipped()
+    {
+        var pairs = DefaultRoleSeedVersions.BaselinePermissions.Sum(entry => entry.Value.Count);
+
+        Assert.True(
+            pairs == 61,
+            $"The frozen version-1 baseline now has {pairs} role-permission pairs rather than 61. It is a "
+            + "record of what databases created by commit 4a32705 already hold, not a statement about "
+            + "what a role should hold today — DefaultRoleDefinitions is that. A permission added here "
+            + "reaches a fresh database and no existing one, which is issue #122 exactly. Declare it as a "
+            + "new DefaultRoleSeedIncrement and raise DefaultRoleSeedVersions.Current instead.");
+    }
+
+    /// <summary>
     /// <see cref="DefaultRoleSeedVersions.Current"/> is the highest version any increment names, so a new
     /// increment cannot be declared and then never applied.
     /// </summary>
