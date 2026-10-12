@@ -13,6 +13,7 @@ using SpencerDenim.Application.Catalog.Admin.Products.Abstractions;
 using SpencerDenim.Application.Content.Abstractions;
 using SpencerDenim.Application.Content.Admin.Abstractions;
 using SpencerDenim.Application.Marketing.Newsletter;
+using SpencerDenim.Application.Marketing.Promotions.Abstractions;
 using SpencerDenim.Application.Ops.Email;
 using SpencerDenim.Application.Ops.Email.Abstractions;
 using SpencerDenim.Application.Sales.Cart.Abstractions;
@@ -221,6 +222,12 @@ public static class DependencyInjection
         services.AddScoped<IAdminContentReader, AdminContentReader>();
         services.AddScoped<IContentPageStore, ContentPageStore>();
         services.AddScoped<IContactEnquiryStore, ContactEnquiryStore>();
+
+        // The admin promo-code screen (ADM-13, W3-05). The reader converts the two UTC columns to Colombo
+        // wall-clock at this edge; the store keeps one unit of work so a change and its audit row commit
+        // together.
+        services.AddScoped<IPromoCodeAdminReader, PromoCodeAdminReader>();
+        services.AddScoped<IPromoCodeAdminStore, PromoCodeAdminStore>();
         services.AddScoped<INewsletterSubscriptions, NewsletterSubscriptions>();
 
         // Doc 08 §3.7's homepage cache. A singleton, because a cache scoped to one request caches
