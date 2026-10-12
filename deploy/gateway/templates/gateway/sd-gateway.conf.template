@@ -1,0 +1,161 @@
+# Spencer Denim web gateway: routing (W0-15, docs/15-deployment-runbook.md §4).
+#
+#   /api/...        -> API (.NET)             /health -> API liveness       /health/ready -> not exposed
+#   /admin/...      -> admin static build (baked into this image)
+#   /media/public/  -> API (uploaded media)  /media/* else -> storefront (its own webfonts)
+#   everything else -> storefront SSR (Node)
+#
+# Rendered at start-up by the image entrypoint; only SD_* variables are substituted, nginx's own $variables are
+# left alone. Defaults are set in the Dockerfile and overridden per environment in the compose files.
+
+# Docker's embedded DNS, re-resolved every 10 s, so an API or storefront container that restarts with a new
+# address is found again without reloading the gateway.
+resolver 127.0.0.11 valid=10s ipv6=off;
+resolver_timeout 5s;
+
+# --- Who the visitor is --------------------------------------------------------------------------------------
+# The host's nginx overwrites X-Forwarded-For with the address it saw ($remote_addr) and reaches this container
+# through the 127.0.0.1-bound published port, which Docker delivers from the network's gateway address. Only that
+# peer (SD_REAL_IP_FROM) is believed; the right-most X-Forwarded-For entry becomes $remote_addr. A header from any
+# other peer is ignored and $remote_addr stays the socket peer.
+set_real_ip_from ${SD_REAL_IP_FROM};
+real_ip_header   X-Forwarded-For;
+real_ip_recursive off;
+
+# The scheme the visitor used. TLS ends at the host's nginx, so from the trusted peer X-Forwarded-Proto is
+# believed (http/https only); from anyone else it is this hop's own scheme (http).
+geo $realip_remote_addr $sd_from_trusted_proxy {
+    default            0;
+    ${SD_REAL_IP_FROM} 1;
+}
+map "$sd_from_trusted_proxy:$http_x_forwarded_proto" $sd_forwarded_proto {
+    default   $scheme;
+    "1:https" https;
+    "1:http"  http;
+}
+
+server {
+    listen 8080 default_server;
+    server_name _;
+
+    # Redirects stay relative, so they never leak this container's port (8080) to the browser.
+    absolute_redirect off;
+    # Small by default. Request bodies are buffered under /tmp, a RAM-backed tmpfs counted against this
+    # container's memory limit, so a 60 MB ceiling on every route let three anonymous POSTs OOM-kill the gateway
+    # (W0-15 tester). Only the two upload routes below take more, and they stream to the API instead of being
+    # buffered here.
+    client_max_body_size ${SD_MAX_BODY_SIZE};
+
+    set $sd_api        http://${SD_API_UPSTREAM};
+    set $sd_storefront http://${SD_STOREFRONT_UPSTREAM};
+
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+
+    # Every proxied request: the visitor's address overwrites (never appends to) X-Forwarded-For, so the API,
+    # which trusts only this gateway's network, sees exactly one value and it is the one written here.
+    proxy_http_version 1.1;
+    proxy_set_header Connection        "";
+    proxy_set_header Host              $host;
+    proxy_set_header X-Forwarded-For   $remote_addr;
+    proxy_set_header X-Forwarded-Proto $sd_forwarded_proto;
+    proxy_set_header X-Forwarded-Host  $host;
+    proxy_set_header X-Real-IP         $remote_addr;
+    proxy_connect_timeout 5s;
+    proxy_read_timeout    60s;
+    proxy_send_timeout    60s;
+
+    # The gateway's own liveness, for its container healthcheck. Touches no upstream.
+    location = /gateway-health {
+        access_log off;
+        default_type application/json;
+        add_header Cache-Control "no-store" always;
+        return 200 '{"status":"ok"}';
+    }
+
+    # --- API --------------------------------------------------------------------------------------------------
+    location /api/ {
+        proxy_pass $sd_api;
+    }
+
+    # Uploads. proxy_request_buffering off streams the body to the API as it arrives (the API spools it to disk
+    # itself, Media__UploadSpoolPath), so nothing large ever sits in this container's memory. The ceilings are the
+    # API's own limits plus multipart overhead: a video (MediaLimits.MaxVideoBytes, 50 MB) and its poster
+    # (MediaOptions.MaxImageBytes, 15 MB) travel in one request, staff only, 66 MiB at most; and
+    # MaxPrivateBytes (5 MB, a customer's bank slip). The API still enforces the exact limit and the file type.
+    location ^~ /api/admin/media/ {
+        client_max_body_size ${SD_MAX_UPLOAD_SIZE};
+        proxy_request_buffering off;
+        proxy_pass $sd_api;
+    }
+    location ~ ^/api/orders/[0-9A-Fa-f-]+/payment-slip$ {
+        client_max_body_size 6m;
+        proxy_request_buffering off;
+        proxy_pass $sd_api;
+    }
+    location = /api {
+        return 404;
+    }
+
+    # Liveness is public (uptime monitors). Readiness names the dependencies and their timings, so it is only
+    # checked from inside the stack (docker compose ps / the container healthcheck), never through here.
+    location = /health {
+        access_log off;
+        proxy_pass $sd_api;
+    }
+    location ^~ /health/ {
+        return 404;
+    }
+
+    # --- Admin (static, client-side routed) --------------------------------------------------------------------
+    location = /admin {
+        return 301 /admin/;
+    }
+    location /admin/ {
+        root /usr/share/nginx;
+        add_header X-Frame-Options DENY always;
+        add_header X-Content-Type-Options nosniff always;
+        add_header Referrer-Policy same-origin always;
+        add_header Cache-Control "no-cache" always;
+        try_files $uri $uri/ /admin/index.html;
+    }
+    # Content-hashed bundles (outputHashing: all) never change under the same name.
+    location ~* ^/admin/.+\.(?:js|css|woff2?)$ {
+        root /usr/share/nginx;
+        add_header X-Content-Type-Options nosniff always;
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+        try_files $uri =404;
+    }
+
+    # --- Uploaded media (Catalog__MediaBaseUrl=/media) --------------------------------------------------------
+    # The API serves these (MediaFileEndpoints), not a volume here: "404 for anything not Ready" and "a deleted
+    # file stops being served" are questions for the database. It sets the year-long immutable Cache-Control,
+    # the strong ETag and byte ranges itself, so nothing is added here.
+    #
+    # Only /media/public/ — /media is a shared namespace (docs/03 §4): the storefront build emits its own
+    # webfonts under /media/inter-*.woff2, and those fall through to the storefront below. public/ is the only
+    # prefix the API will serve and nothing the build emits starts with it.
+    location ^~ /media/public/ {
+        proxy_pass $sd_api;
+    }
+
+    # --- Everything else: the storefront, server-rendered ------------------------------------------------------
+    #
+    # Angular's SSR engine renders only when every X-Forwarded-* header it receives is one it was told to trust
+    # (NG_TRUST_PROXY_HEADERS in compose.yml: host and proto, both overwritten above). Any other one makes it
+    # fall back to the empty client-side shell — no content for crawlers, no og: tags. So the storefront gets
+    # neither the visitor's address (it has no use for it) nor any X-Forwarded-* header a visitor sent that
+    # this gateway does not overwrite. An empty value makes nginx drop the header. A location that sets any
+    # proxy_set_header inherits none from the server block, so the ones it keeps are repeated here.
+    location / {
+        proxy_set_header Connection         "";
+        proxy_set_header Host               $host;
+        proxy_set_header X-Forwarded-Proto  $sd_forwarded_proto;
+        proxy_set_header X-Forwarded-Host   $host;
+        proxy_set_header X-Forwarded-For    "";
+        proxy_set_header X-Real-IP          "";
+        proxy_set_header X-Forwarded-Port   "";
+        proxy_set_header X-Forwarded-Prefix "";
+        proxy_pass $sd_storefront;
+    }
+}

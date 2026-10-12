@@ -72,7 +72,7 @@ internal sealed partial class ContactEnquiryThrottle : IContactEnquiryThrottle, 
 
         WarnIfTheAddressIsNotAVisitor(partition);
 
-        using var lease = _limiter.AttemptAcquire(partition);
+        using var lease = _limiter.AttemptAcquire(ClientAddressPartition.For(partition)!);
         return lease.IsAcquired;
     }
 
