@@ -371,3 +371,24 @@ provider transaction id, and `UX_Payments_Provider_Txn` refused the second row �
 - Mutation check: with the close statement gated on the pre-lock status again, the new race test fails
   (`Expected: Cancelled, Actual: Initiated`).
 - Storefront: `payment-redirect.spec.ts` 73 passed; `ng lint storefront` clean (a comment changed there).
+
+### 2026-10-12 — merging `main` (promo codes, #153) into this branch
+
+`main` moved five commits while this PR waited, and one of them (W3-05, promo codes) changed
+`BankTransferReviewStore`, the file this branch had just emptied of its Paid effects. Three files conflicted;
+none was a pick-a-side conflict.
+- **The late acceptance now retakes its promo use.** Main added `OrderPromoUse.RetakeAsync` to
+  `AcceptLateAsync` (doc 08 §3.6, "Expired → Paid: +1 unconditionally"). It is re-applied after the stock rows and
+  before `effects.IssueInvoiceAsync`, which is where main had it relative to the same two calls. It is **not** in
+  `OrderSettlementEffects`, deliberately: `AcceptLateAsync` is the only route from Expired/Cancelled to Paid on
+  this branch — `OrderSettlementStore` records an exception for a closed order instead of paying it, and a
+  payable order still holds the use checkout took. **A future provider flow that pays a closed order must call
+  `RetakeAsync` too**; the effects class's remarks now say so where the "no promo restore" bullet used to be.
+- **Proven by mutation, not by the suite being green:** with the call deleted,
+  `An_expired_order_paid_late_takes_its_use_again_whatever_the_limit` fails (`Expected: 2, Actual: 1`).
+- `CommandCountingInterceptor` kept both sides' members (deadlock count; `Watch`/`CountOf`) with one `Reset()`.
+- Merged tree: solution 0 warnings; unit **2,234/2,234**; the integration classes both sides touch
+  (`BankTransferReviewTests`, `AdminBankTransferEndpointTests`, `OrderSettlement*`, `PaymentEventStoreTests`,
+  `CheckoutPromo*`, `CheckoutPlacementStoreTests`, `OrderExpiryTests`, `PromoCodePlanTests`) **164/164**.
+  The whole integration assembly was **not** re-run on the merged tree.
+- No CI exists (Actions has been down since 9 Oct, billing). Everything above is local.
