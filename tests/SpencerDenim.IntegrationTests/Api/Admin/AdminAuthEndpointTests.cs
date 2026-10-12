@@ -201,6 +201,64 @@ public sealed class AdminAuthEndpointTests(SqlServerDatabaseFixture sqlServer)
     }
 
     /// <summary>
+    /// Issue #46, the guard the test above cannot reach: <c>StaffAccountLockout</c>'s "a right secret racing a lockout is
+    /// refused too". The lock check Identity makes before a password check reads the user as loaded at the start of the
+    /// request, and the hash takes long enough for a burst of wrong passwords to lock the account meanwhile. So a
+    /// <b>right</b> password whose hash was verified against an unlocked account must still be refused if the account is
+    /// locked by the time it is accepted.
+    /// <para>
+    /// The right password is stopped at that second look (<see cref="LockoutRecheckGateInterceptor"/>), the account is
+    /// locked with five wrong passwords while it waits, and it is let go. A final right password sent as a fresh request
+    /// would be stopped by Identity's own check and prove nothing; this is the only shape in which the second look is
+    /// the thing that refuses. With the second look deleted the right password comes back 200 with a session.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task A_right_password_that_a_burst_of_wrong_ones_outruns_is_refused_as_locked()
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, TestContext.Current.CancellationToken);
+
+        const int maxFailedAttempts = 5; // AdminSecurityOptions.LockoutMaxFailedAttempts default.
+        var email = UniqueEmail("right-after-burst");
+        const string password = "Correct-Password-1!";
+        var gate = new LockoutRecheckGateInterceptor();
+        await using var factory = new ApiFactory(sqlServer.ConnectionString, commandInterceptor: gate);
+        await CreateStaffUserAsync(factory, email, password, isActive: true);
+        using var client = CreateClient(factory);
+
+        gate.Arm();
+        var rightPassword = client.PostAsJsonAsync(LoginUrl, new { email, password }, TestContext.Current.CancellationToken);
+        try
+        {
+            // From here the right password has been verified against an account that was unlocked.
+            await gate.WaitUntilHeldAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+
+            for (var attempt = 1; attempt <= maxFailedAttempts; attempt++)
+            {
+                using var wrong = await client.PostAsJsonAsync(LoginUrl, new { email, password = "wrong" }, TestContext.Current.CancellationToken);
+                Assert.Equal(attempt < maxFailedAttempts ? HttpStatusCode.Unauthorized : (HttpStatusCode)423, wrong.StatusCode);
+            }
+        }
+        finally
+        {
+            gate.Release();
+        }
+
+        using var response = await rightPassword;
+        var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+
+        Assert.True(
+            response.StatusCode == (HttpStatusCode)423,
+            $"A right password the burst outran must be refused as locked, not accepted. Got {(int)response.StatusCode}: {body}");
+        Assert.Contains("locked_out", body, StringComparison.Ordinal);
+
+        // Refused means no session: the same client, which keeps its cookies, is still anonymous.
+        using var whoAmI = await client.GetAsync(new Uri(WhoAmIUrl, UriKind.Relative), TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.Unauthorized, whoAmI.StatusCode);
+    }
+
+    /// <summary>
     /// Issue #46, the other half of the race: Identity's <c>UserStore.UpdateAsync</c> marks every column of the user
     /// modified, so any save of a copy of the user loaded before a lockout — the 2FA password step storing its
     /// pending sign-in, a successful sign-in stamping <c>LastLoginAtUtc</c> — wrote the old

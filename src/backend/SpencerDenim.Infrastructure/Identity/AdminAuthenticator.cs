@@ -160,8 +160,9 @@ public sealed class AdminAuthenticator(
                 user.Id, user.Email ?? string.Empty, racedLockoutEnd, wasNewlyLockedOut: false, isRecoveryCode);
         }
 
-        // The claim. The code check above is no gate on its own: a recovery code is redeemed and an authenticator step
-        // recorded by read-modify-write saves, so any number of parallel requests with the same code all pass it.
+        // The claim. The code check above is no gate on its own: a recovery code is redeemed by a read-modify-write
+        // save, so any number of parallel requests with the same recovery code all pass it. Whether a replayed
+        // authenticator code is refused earlier is the TOTP provider's business; this claim does not rely on it.
         // Deleting the pending sign-in is what lets exactly one of them through: the DELETE affects one row for the
         // request that gets there first and none for the rest, which are answered as a sign-in that is already over
         // (the same reply a stale cookie gets), with no session. On main this was Identity's own remove, which fails

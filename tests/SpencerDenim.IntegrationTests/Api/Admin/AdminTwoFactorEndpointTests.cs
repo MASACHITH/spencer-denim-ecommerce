@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using SpencerDenim.Api.Authorization;
 using SpencerDenim.Domain.Identity;
@@ -541,6 +542,62 @@ public sealed class AdminTwoFactorEndpointTests(SqlServerDatabaseFixture sqlServ
     }
 
     /// <summary>
+    /// Issue #46, the second step's twin of <c>A_right_password_that_a_burst_of_wrong_ones_outruns_is_refused_as_locked</c>:
+    /// <c>AdminAuthenticator</c> accepts a right code only if the account is still unlocked <i>after</i> the code was
+    /// verified, because the lock check before it read the user as loaded and a burst of wrong passwords may have locked
+    /// the account since. The right code is stopped at that second look (<see cref="LockoutRecheckGateInterceptor"/>), the
+    /// account is locked with five wrong passwords while it waits, and it is let go: it must be refused as locked, with
+    /// no session. With the second look deleted the same request comes back 200 with an auth cookie.
+    /// </summary>
+    [Fact]
+    public async Task A_right_code_that_a_burst_of_wrong_passwords_outruns_is_refused_as_locked()
+    {
+        const int maxFailedAttempts = 5; // AdminSecurityOptions.LockoutMaxFailedAttempts default.
+        var gate = new LockoutRecheckGateInterceptor();
+        await using var host = await StartAsync(commandInterceptor: gate);
+        var email = UniqueEmail("right-code-after-burst");
+        await CreateStaffUserAsync(host, email);
+        var key = await EnrolThroughApiAsync(host, email);
+
+        using var client = await PendingSignInAsync(host, email);
+        var token = await GetAntiforgeryTokenAsync(client);
+        using var request = new HttpRequestMessage(HttpMethod.Post, LoginTwoFactorUrl)
+        {
+            Content = JsonContent.Create(new { code = TotpTestCodes.Next(key), isRecoveryCode = false }),
+        };
+        request.Headers.Add("X-XSRF-TOKEN", token);
+
+        gate.Arm();
+        var rightCode = client.SendAsync(request, Ct);
+        try
+        {
+            // From here the right code has been verified against an account that was unlocked.
+            await gate.WaitUntilHeldAsync(TimeSpan.FromSeconds(30), Ct);
+
+            // Wrong passwords, from another client: a wrong password opens no pending sign-in, so this cannot replace
+            // the one the held request is completing.
+            using var anonymous = CreateClient(host);
+            for (var attempt = 1; attempt <= maxFailedAttempts; attempt++)
+            {
+                using var wrong = await PostJsonAsync(anonymous, LoginUrl, new { email, password = "wrong" });
+                Assert.Equal(attempt < maxFailedAttempts ? HttpStatusCode.Unauthorized : (HttpStatusCode)423, wrong.StatusCode);
+            }
+        }
+        finally
+        {
+            gate.Release();
+        }
+
+        using var response = await rightCode;
+        var body = await response.Content.ReadAsStringAsync(Ct);
+
+        Assert.True(
+            response.StatusCode == (HttpStatusCode)423,
+            $"A right code the burst outran must be refused as locked, not accepted. Got {(int)response.StatusCode}: {body}");
+        Assert.Null(CookiePairOrNull(response, "sd_admin_auth"));
+    }
+
+    /// <summary>
     /// The lockout threshold is raised for the same-code races above. Twelve requests with one code is the point of
     /// those tests, but the ones that read the code after the winner redeemed it count as wrong codes, and at the
     /// default five the account can lock before the winner's own check, which would make "exactly one session"
@@ -574,7 +631,9 @@ public sealed class AdminTwoFactorEndpointTests(SqlServerDatabaseFixture sqlServ
         // From here every record of a used code is held back, so all the requests below pass the code check first.
         tokenWriteDelay.Enabled = true;
 
-        var gate = new TaskCompletionSource();
+        // RunContinuationsAsynchronously: without it SetResult() below runs all the continuations inline on this
+        // thread, one after another, so the requests are dispatched in turn rather than together.
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var sends = Enumerable.Range(0, count).Select(async _ =>
         {
             using var request = new HttpRequestMessage(HttpMethod.Post, LoginTwoFactorUrl)
@@ -858,13 +917,13 @@ public sealed class AdminTwoFactorEndpointTests(SqlServerDatabaseFixture sqlServ
 
     private async Task<WebApplicationFactory<Program>> StartAsync(
         IReadOnlyDictionary<string, string?>? configuration = null,
-        TokenWriteDelayInterceptor? tokenWriteDelay = null)
+        DbCommandInterceptor? commandInterceptor = null)
     {
         sqlServer.SkipIfUnavailable();
         await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, Ct);
 
         // The probe host is derived from (and owned by) this factory: disposing it disposes both.
-        var factory = new ApiFactory(sqlServer.ConnectionString, additionalConfiguration: configuration, commandInterceptor: tokenWriteDelay);
+        var factory = new ApiFactory(sqlServer.ConnectionString, additionalConfiguration: configuration, commandInterceptor: commandInterceptor);
         return factory.WithWebHostBuilder(builder =>
             builder.ConfigureTestServices(services => services.AddTransient<IStartupFilter, ProbeEndpointsStartupFilter>()));
     }
