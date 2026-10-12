@@ -30,7 +30,7 @@ public sealed record DeferredSettingKey(string Key, SettingKeyDeferralKind Kind,
 /// (issue #113).
 /// <para>
 /// <b>This list exists so that "which of §9's keys are missing" has an answer in source rather than in a
-/// task report.</b> <c>SettingCatalogSpecificationTests</c> parses doc 08 §3.8's "Groups" table and asserts
+/// task report.</b> <c>SettingKeySpecificationTests</c> parses doc 08 §3.8's "Groups" table and asserts
 /// that every key it finds is either in <see cref="SettingCatalog"/> or here, that nothing is in both, and
 /// that nothing here is absent from the document. So a key added to doc 08 fails the build until somebody
 /// decides about it, and a key left here after its feature ships fails the build too.
@@ -50,7 +50,8 @@ public sealed record DeferredSettingKey(string Key, SettingKeyDeferralKind Kind,
 /// <c>Orders.BankTransferExpiryHours</c>; <c>AdminSecurityOptions</c> ships 5 and 15 for
 /// <c>Security.StaffLockoutMaxFailures</c> and <c>StaffLockoutMinutes</c>. So no key below is silently
 /// running on a number that differs from the document, which is the half of #113 that would have been a
-/// defect rather than an omission. <c>DeferredSettingKeysTests</c> pins those five.
+/// defect rather than an omission. <c>SettingKeySpecificationTests</c> pins all six, against the
+/// document's own cells rather than against a second copy of the number.
 /// </para>
 /// </summary>
 public static class DeferredSettingKeys

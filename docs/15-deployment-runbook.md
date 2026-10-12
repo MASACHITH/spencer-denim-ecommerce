@@ -205,6 +205,33 @@ then the **gateway**. It then smoke-tests `/gateway-health`, `/health`, `/admin/
 It never runs `down` and never removes volumes, data or backups. Deploy staging first; production only after the
 same tag has been checked on staging.
 
+**After every deploy, read one line out of the API log** (issue #122, doc 08 §9 / N13):
+
+```bash
+$C logs --tail 500 api | grep "is missing"      # $C from section 8
+```
+
+The reference-data phase applies the permissions added to a default role since this database's recorded
+`Seed.Version`, and **reports by name, at `Warning`, anything a default role still lacks against the shipped
+defaults** — it never grants those, because "the client removed it" and "it never arrived" are the same absent
+row and only one of them is a defect. Nothing to read is the normal case.
+
+- **On the first deploy of a new database** that line should not appear at all: the client has had no chance to
+  remove anything, so a Warning there means the seeding is wrong. Grant what it names, per role:
+  ```sql
+  INSERT INTO identity.RoleClaims (RoleId, ClaimType, ClaimValue)
+  SELECT r.Id, 'perm', N'<Permission>' FROM identity.Roles r
+  WHERE r.Name = N'<Role>' AND NOT EXISTS (
+      SELECT 1 FROM identity.RoleClaims c
+      WHERE c.RoleId = r.Id AND c.ClaimType = 'perm' AND c.ClaimValue = N'<Permission>');
+  ```
+  `Settings.Security` is never insertable (`CK_RoleClaims_NoSecurity`); only a GrantsAll role reaches it.
+- **On a later deploy** it is most likely the client's own edit, which doc 08 N13 says to keep. Ask before
+  granting anything back. Staff need no sign-out: effective permissions are cached for five minutes and a deploy
+  restarts the process anyway.
+- **Never edit the `Seed.Version` row** in `ops.Settings`. Lowering it re-offers permissions the client may have
+  removed on purpose; raising it suppresses ones that have not been applied. No screen exposes it.
+
 Building on the VPS takes a few minutes and some memory next to the running stack. The alternative is to build
 elsewhere and copy: `docker save spencer-denim/{api,migrator,storefront,web}:<tag> | ssh srv1983022 docker load`
 (then run `install.sh` from a checkout of the same commit and `deploy.sh`).
