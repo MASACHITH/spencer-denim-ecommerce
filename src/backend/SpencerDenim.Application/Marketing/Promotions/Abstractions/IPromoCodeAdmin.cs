@@ -10,7 +10,7 @@ public interface IPromoCodeAdminReader
     /// Every code that has not been removed, newest first.
     /// <para>
     /// <b>Inactive and ended codes are included</b>, unlike the storefront's lookup: the list is where a
-    /// staff member ends an expired code or turns one back on (doc 11 §P-daily step 17, "check upcoming
+    /// staff member ends an expired code or turns one back on (doc 11 §6.4 item 17, weekly: "check upcoming
     /// campaign dates and code limits; end expired codes"), and a list that hid them could not.
     /// Soft-deleted rows are not, because removing one is how a staff member says it is finished with.
     /// </para>

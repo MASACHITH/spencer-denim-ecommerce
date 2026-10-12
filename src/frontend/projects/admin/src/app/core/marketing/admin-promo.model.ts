@@ -93,7 +93,7 @@ export function promoDiscountLabel(promoCode: AdminPromoCode): string {
   }
 }
 
-/** What the list says about the limits, which is the thing a staff member checks daily (doc 11 §P17). */
+/** What the list says about the limits — doc 11 §6.4 item 17's weekly "check … code limits". */
 export function promoLimitLabel(promoCode: AdminPromoCode): string {
   const total =
     promoCode.totalUsageLimit === null

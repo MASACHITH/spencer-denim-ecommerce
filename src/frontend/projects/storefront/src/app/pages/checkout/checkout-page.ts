@@ -759,7 +759,7 @@ const SUMMARY_FIELDS: readonly { readonly field: string; readonly elementId: str
                     the panel its own refusal destroys is invisible, and a live region inside a block that
                     success removes announces nothing — both of those shipped, and the second meant a
                     blind customer pressed Cancel and heard silence. Nothing here sits behind a conditional block.
-                 2. "aria-disabled", never "disabled" (#109, seven instances): disabling the control that
+                 2. "aria-disabled", never "disabled" (#109): disabling the control that
                     has focus throws focus to BODY. The handlers refuse the press instead.
                  3. Applying goes through the server, so the Discount row, the Delivery row and the Total
                     below all come out of one calculation (doc 08 §6). Nothing is worked out here. -->
@@ -1644,7 +1644,9 @@ export class CheckoutPage {
    * Applies the code in the box (ADM-13, doc 11 P6 step 5).
    *
    * **The guard is here rather than on the button's `disabled` attribute** (#109): disabling the control
-   * that has focus moves focus to `<body>`, which is a recorded defect in this project seven times over.
+   * that has focus moves focus to `<body>`, which is issue #109 and is recorded against several screens
+   * in this project. The count is deliberately not repeated here: the comments that quote one disagree
+   * with each other, and the issue is the thing to read.
    * The button carries `aria-disabled` so assistive technology and Playwright both see the state, and
    * this refuses the activation.
    *

@@ -59,10 +59,21 @@ public sealed record AdminPromoCodeDto(
 /// What a save answers: the row, plus anything the staff member has to be told although it worked.
 /// </summary>
 /// <param name="Warnings">
-/// Sentences about a save that <b>succeeded</b> — today exactly one, doc 08 §3.6 DB19's "lowering
-/// <c>TotalUsageLimit</c> below <c>UsageCount</c> is allowed with a warning". It is carried on the success
-/// path on purpose: the save worked, and the staff member still has to know that the figure they typed is
-/// below the uses already held, so the code is now blocked for new customers while the pending orders
-/// keep theirs. A silent save there would be the shape of defect this project has shipped three times.
+/// Sentences about a save that <b>succeeded</b> — today two of them, from
+/// <c>PromoCodeWriteHandlers.Warnings</c>:
+/// <list type="bullet">
+/// <item><description>
+/// Doc 08 §3.6 DB19's "lowering <c>TotalUsageLimit</c> below <c>UsageCount</c> is allowed with a
+/// warning": the save worked, and the staff member still has to know the figure they typed is below the
+/// uses already held, so the code is now blocked for new customers while the pending orders keep theirs.
+/// </description></item>
+/// <item><description>
+/// A code whose end date has already passed, which doc 08 does not ask for — it is here because saving a
+/// code nobody can use is the one mistake this form makes silently, and the derived status on the row is
+/// easy to miss.
+/// </description></item>
+/// </list>
+/// They are on the success path on purpose. A silent save that did something other than what the staff
+/// member expected is the shape of defect this project has shipped three times.
 /// </param>
 public sealed record AdminPromoCodeSavedDto(AdminPromoCodeDto PromoCode, IReadOnlyList<string> Warnings);

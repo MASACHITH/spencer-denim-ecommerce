@@ -103,8 +103,8 @@ describe('PromoCodesPage (ADM-13)', () => {
     expect(text).toContain('T4FIXTURE');
     expect(text).toContain('10% off, up to Rs. 2,000');
 
-    // The figure a staff member checks daily (doc 11 §P17: "check upcoming campaign dates and code
-    // limits"), and the per-customer limit beside it.
+    // The figure doc 11 §6.4 item 17 asks a staff member to check weekly ("check upcoming campaign
+    // dates and code limits"), and the per-customer limit beside it.
     expect(text).toContain('3 of 50 used');
     expect(text).toContain('1 per customer');
   });

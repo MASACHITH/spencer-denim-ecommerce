@@ -33,7 +33,7 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
     /// <para>
     /// <b>The two limits are not check constraints, and doc 08 §3.6 (DB8) is explicit about why.</b>
     /// <c>UsageCount</c> carries <c>&gt;= 0</c> only: the total limit lives in the conditional UPDATE at
-    /// placement, and a constraint of <c>UsageCount &lt;= TotalUsageLimit</c> would make §4.2's
+    /// placement, and a constraint of <c>UsageCount &lt;= TotalUsageLimit</c> would make §4.1's
     /// "Expired → Paid: +1 unconditionally, limit ignored" unwritable. The per-customer limit is counted
     /// from <c>sales.Orders</c> under an app lock and has no column here at all.
     /// </para>
