@@ -174,6 +174,15 @@ public sealed class CheckoutPromoBehaviourTests(SqlServerDatabaseFixture sqlServ
 
         // Two orders now hold a use, so the cache says two — above the limit, which is the point.
         Assert.Equal(2, await UsageCountAsync(code.Id));
+
+        // **And exactly once.** `RetakeAsync` carries no idempotency predicate of its own, on the
+        // argument that the caller's conditional claim on `Status IN (Cancelled, Expired)` has already
+        // moved the order to `Paid` — so a second acceptance matches no row and never reaches it. That is
+        // the same shape `ReturnAsync` relies on, and it is asserted rather than argued.
+        Assert.IsNotType<SpencerDenim.Application.Sales.Payments.Abstractions.BankTransferDecisionResult.Applied>(
+            await AcceptLateAsync(orderId, "The same credit, twice."));
+
+        Assert.Equal(2, await UsageCountAsync(code.Id));
     }
 
     /// <summary>
