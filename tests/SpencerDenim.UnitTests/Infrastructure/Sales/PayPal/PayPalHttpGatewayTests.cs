@@ -1,9 +1,11 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging;
 using SpencerDenim.Application.Abstractions.Time;
 using SpencerDenim.Application.Sales.Payments.PayPal;
+using SpencerDenim.Domain.Branding;
 using SpencerDenim.Infrastructure.Sales.Payments.PayPal;
 
 namespace SpencerDenim.UnitTests.Infrastructure.Sales.PayPal;
@@ -11,8 +13,10 @@ namespace SpencerDenim.UnitTests.Infrastructure.Sales.PayPal;
 /// <summary>
 /// <c>PayPalHttpGateway</c> against a hand-written <see cref="HttpMessageHandler"/>: the exact requests it
 /// sends and how it reads what comes back. <b>Nothing here touches a network</b> - the handler is the only
-/// "PayPal" there is, and no PayPal sandbox credentials exist for this project. What these tests cannot say is
-/// whether PayPal still speaks the dialect this class assumes; the journal lists the sandbox steps that do.
+/// "PayPal" there is. Most of the answers it gives are written from PayPal's documentation, so they cannot say
+/// whether PayPal still speaks the dialect this class assumes. <b>The section "recorded from the real sandbox"
+/// can:</b> its answers are PayPal's own, captured from the sandbox on 2026-10-12, and its request test pins the
+/// body PayPal accepted that day. A change that breaks either is a change to something proven, not guessed.
 /// </summary>
 public sealed class PayPalHttpGatewayTests
 {
@@ -801,6 +805,227 @@ public sealed class PayPalHttpGatewayTests
         Assert.DoesNotContain("client-id-123", everything, StringComparison.Ordinal);
         Assert.DoesNotContain("Basic ", everything, StringComparison.Ordinal);
         Assert.DoesNotContain("Bearer ", everything, StringComparison.Ordinal);
+    }
+
+    // ---------------------------------------------------------------- recorded from the real sandbox
+
+    // Recorded from api-m.sandbox.paypal.com on 2026-10-12 by creating a USD 10.00 order with the request below,
+    // approving it as a sandbox buyer in a browser, and capturing it. Only the buyer's name and email are masked;
+    // every id, status, amount and link is as PayPal sent it. Two facts the hand-written answers above get wrong:
+    // PayPal answers order creation with 200, not 201, and a repeated capture under the same PayPal-Request-Id
+    // answers 200 with the capture it already made, not 201.
+    private const string RecordedCreateAnswer = """
+        {
+          "id": "4GW21777298832935",
+          "status": "PAYER_ACTION_REQUIRED",
+          "payment_source": { "paypal": {} },
+          "links": [
+            { "href": "https://api.sandbox.paypal.com/v2/checkout/orders/4GW21777298832935", "rel": "self", "method": "GET" },
+            { "href": "https://www.sandbox.paypal.com/checkoutnow?token=4GW21777298832935", "rel": "payer-action", "method": "GET" }
+          ]
+        }
+        """;
+
+    // The answer to the capture. The order read back afterwards (GET) agrees with it on every field the gateway reads.
+    private const string RecordedCapturedOrder = """
+        {
+          "id": "4GW21777298832935",
+          "status": "COMPLETED",
+          "payment_source": {
+            "paypal": {
+              "email_address": "REDACTED",
+              "account_id": "HCYAB57PXSKYU",
+              "account_status": "VERIFIED",
+              "name": { "given_name": "REDACTED", "surname": "REDACTED" },
+              "address": { "country_code": "US" }
+            }
+          },
+          "purchase_units": [
+            {
+              "reference_id": "default",
+              "shipping": {},
+              "payments": {
+                "captures": [
+                  {
+                    "id": "7MK72654UA6613524",
+                    "status": "COMPLETED",
+                    "amount": { "currency_code": "USD", "value": "10.00" },
+                    "final_capture": true,
+                    "disbursement_mode": "INSTANT",
+                    "seller_protection": {
+                      "status": "ELIGIBLE",
+                      "dispute_categories": [ "ITEM_NOT_RECEIVED", "UNAUTHORIZED_TRANSACTION" ]
+                    },
+                    "seller_receivable_breakdown": {
+                      "gross_amount": { "currency_code": "USD", "value": "10.00" },
+                      "paypal_fee": { "currency_code": "USD", "value": "0.84" },
+                      "net_amount": { "currency_code": "USD", "value": "9.16" }
+                    },
+                    "custom_id": "SD-TEST-ORDER-1",
+                    "links": [
+                      { "href": "https://api.sandbox.paypal.com/v2/payments/captures/7MK72654UA6613524", "rel": "self", "method": "GET" },
+                      { "href": "https://api.sandbox.paypal.com/v2/payments/captures/7MK72654UA6613524/refund", "rel": "refund", "method": "POST" },
+                      { "href": "https://api.sandbox.paypal.com/v2/checkout/orders/4GW21777298832935", "rel": "up", "method": "GET" }
+                    ],
+                    "create_time": "2026-10-12T17:38:53Z",
+                    "update_time": "2026-10-12T17:38:53Z"
+                  }
+                ]
+              }
+            }
+          ],
+          "payer": {
+            "name": { "given_name": "REDACTED", "surname": "REDACTED" },
+            "email_address": "REDACTED",
+            "payer_id": "HCYAB57PXSKYU",
+            "address": { "country_code": "US" }
+          },
+          "links": [
+            { "href": "https://api.sandbox.paypal.com/v2/checkout/orders/4GW21777298832935", "rel": "self", "method": "GET" }
+          ]
+        }
+        """;
+
+    /// <summary>
+    /// The create-order body PayPal's sandbox <b>accepted</b> (200, <c>PAYER_ACTION_REQUIRED</c>, a
+    /// <c>payer-action</c> link) on 2026-10-12. Pinned whole, so a change to any field - the experience context, the
+    /// amount format, the custom id - fails here and must be re-proven against the sandbox rather than assumed.
+    /// The brand is the shop's one constant, not a copy of it, and PayPal showed it on its own login page.
+    /// </summary>
+    [Fact]
+    public async Task The_create_order_body_is_the_one_PayPals_sandbox_accepted()
+    {
+        var h = new Harness();
+        h.Handler.Enqueue(HttpStatusCode.OK, TokenJson());
+        h.Handler.Enqueue(HttpStatusCode.OK, RecordedCreateAnswer);
+
+        await h.Gateway.CreateOrderAsync(
+            new PayPalCreateOrderRequest(
+                "sdtest-create-1",
+                10m,
+                "USD",
+                "SD-TEST-ORDER-1",
+                "Sandbox verification order",
+                "https://example.com/paypal-return",
+                "https://example.com/paypal-cancel"),
+            TestContext.Current.CancellationToken);
+
+        var accepted = JsonNode.Parse($$"""
+            {
+              "intent": "CAPTURE",
+              "purchase_units": [
+                {
+                  "custom_id": "SD-TEST-ORDER-1",
+                  "description": "Sandbox verification order",
+                  "amount": { "currency_code": "USD", "value": "10.00" }
+                }
+              ],
+              "payment_source": {
+                "paypal": {
+                  "experience_context": {
+                    "brand_name": "{{StoreBrand.Name}}",
+                    "landing_page": "NO_PREFERENCE",
+                    "shipping_preference": "NO_SHIPPING",
+                    "user_action": "PAY_NOW",
+                    "return_url": "https://example.com/paypal-return",
+                    "cancel_url": "https://example.com/paypal-cancel"
+                  }
+                }
+              }
+            }
+            """);
+
+        var sent = JsonNode.Parse(h.Handler.Requests[^1].Body!);
+
+        Assert.True(
+            JsonNode.DeepEquals(accepted, sent),
+            "The create-order body is no longer the one PayPal's sandbox accepted on 2026-10-12.\n"
+            + "Expected: " + accepted!.ToJsonString() + "\nSent:     " + sent!.ToJsonString());
+    }
+
+    [Fact]
+    public async Task PayPals_real_create_answer_is_read_as_an_order_id_and_the_approval_link()
+    {
+        var h = new Harness();
+        h.Handler.Enqueue(HttpStatusCode.OK, TokenJson());
+        h.Handler.Enqueue(HttpStatusCode.OK, RecordedCreateAnswer);
+
+        var created = Assert.IsType<PayPalCreateOrderResult.Created>(await h.Gateway.CreateOrderAsync(
+            new PayPalCreateOrderRequest("create-1", 10m, "USD", "SD-TEST-ORDER-1", "d", "https://x.test/r", "https://x.test/c"),
+            TestContext.Current.CancellationToken));
+
+        Assert.Equal("4GW21777298832935", created.OrderId);
+        Assert.Equal("https://www.sandbox.paypal.com/checkoutnow?token=4GW21777298832935", created.ApprovalUrl);
+    }
+
+    /// <summary>
+    /// The real capture answer is 201 the first time and 200 for a repeat under the same request id. Both are
+    /// "the capture happened" and both must read as the same completed capture of the amount asked for - a
+    /// gateway that only accepted 201 would have treated the retry that follows a timeout as a failure.
+    /// </summary>
+    [Theory]
+    [InlineData(HttpStatusCode.Created)]
+    [InlineData(HttpStatusCode.OK)]
+    public async Task PayPals_real_capture_answer_is_read_as_a_completed_capture_of_the_amount_asked_for(HttpStatusCode status)
+    {
+        var h = new Harness();
+        h.Handler.Enqueue(HttpStatusCode.OK, TokenJson());
+        h.Handler.Enqueue(status, RecordedCapturedOrder);
+
+        var captured = Assert.IsType<PayPalCaptureCallResult.Captured>(await h.Gateway.CaptureOrderAsync(
+            "4GW21777298832935",
+            "capture-sdtest",
+            TestContext.Current.CancellationToken));
+
+        Assert.Equal("4GW21777298832935", captured.Order.OrderId);
+        Assert.Equal(PayPalOrderStatus.Completed, captured.Order.Status);
+        Assert.Equal("HCYAB57PXSKYU", captured.Order.PayerId);
+
+        var capture = Assert.Single(captured.Order.Captures);
+        Assert.Equal("7MK72654UA6613524", capture.CaptureId);
+        Assert.Equal(PayPalCaptureStatus.Completed, capture.Status);
+        Assert.Equal(10.00m, capture.Amount);
+        Assert.Equal("USD", capture.Currency);
+
+        // It was one call: the answer carried the capture, so nothing needed reading back.
+        Assert.Equal(2, h.Handler.Requests.Count);
+        Assert.Equal("{}", h.Handler.Requests[^1].Body);
+        Assert.Equal("capture-sdtest", h.Handler.Requests[^1].RequestId);
+    }
+
+    [Fact]
+    public async Task PayPals_real_read_of_a_captured_order_gives_the_same_capture()
+    {
+        var h = new Harness();
+        h.Handler.Enqueue(HttpStatusCode.OK, TokenJson());
+        h.Handler.Enqueue(HttpStatusCode.OK, RecordedCapturedOrder);
+
+        var found = Assert.IsType<PayPalGetOrderResult.Found>(await h.Gateway.GetOrderAsync(
+            "4GW21777298832935",
+            TestContext.Current.CancellationToken));
+
+        var capture = Assert.Single(found.Order.Captures);
+        Assert.Equal("7MK72654UA6613524", capture.CaptureId);
+        Assert.Equal(PayPalCaptureStatus.Completed, capture.Status);
+        Assert.Equal(10.00m, capture.Amount);
+    }
+
+    /// <summary>
+    /// The buyer's name and email are in PayPal's real answer and are not in anything the gateway keeps or logs.
+    /// </summary>
+    [Fact]
+    public async Task The_real_answers_personal_fields_reach_neither_the_result_nor_a_log()
+    {
+        var h = new Harness();
+        h.Handler.Enqueue(HttpStatusCode.OK, TokenJson());
+        h.Handler.Enqueue(HttpStatusCode.OK, RecordedCapturedOrder.Replace("REDACTED", "Nimal.Perera@buyer.example", StringComparison.Ordinal));
+
+        var found = Assert.IsType<PayPalGetOrderResult.Found>(await h.Gateway.GetOrderAsync(
+            "4GW21777298832935",
+            TestContext.Current.CancellationToken));
+
+        Assert.DoesNotContain("Nimal.Perera@buyer.example", found.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("Nimal.Perera@buyer.example", string.Join('\n', h.Logs.Messages), StringComparison.Ordinal);
     }
 
     // ---------------------------------------------------------------- doubles

@@ -285,3 +285,40 @@ See the commit messages and the lead's report for the counts and the last run. U
 `PayPalCheckoutTests`, `PayPalCaptureFlowTests`, `PayPalWebhookTests`, `PayPalRecoveryTests`,
 `PayPalSettingsEndpointTests`. Frontend: `settings-page.spec.ts` (22 new), `payment-redirect.spec.ts`,
 `payment-hint.spec.ts`, `order-page.spec.ts` (10 new).
+
+## Verified against the real PayPal sandbox — 2026-10-12
+
+A sandbox REST app and a sandbox buyer exist now (credentials were supplied in chat and are **not** in the repository, a
+commit or a log; the secret should be regenerated now that it has been in a conversation). What was run, in order, all
+against `api-m.sandbox.paypal.com`, with the request body `PayPalHttpGateway.CreateOrderBody` writes:
+
+| Step | Result |
+|---|---|
+| `POST /v1/oauth2/token` (client credentials) | 200, a 9 h bearer token |
+| `POST /v2/checkout/orders`, USD 10.00, `PayPal-Request-Id` set | **200** (not 201), `PAYER_ACTION_REQUIRED`, links `self` and `payer-action` = `https://www.sandbox.paypal.com/checkoutnow?token=…` |
+| Buyer opens that link, signs in, **Complete Purchase** | PayPal shows the shop name (`brand_name`) and USD 10.00; redirects to our `return_url` with `?token=…&PayerID=…` |
+| `POST …/capture`, body `{}`, `PayPal-Request-Id: capture-…` | **201**, order `COMPLETED`, capture `COMPLETED`, USD 10.00, **`custom_id` echoed on the capture**, `final_capture: true` |
+| The same capture again, same request id | **200** with the identical capture — no second charge |
+| `GET …/orders/{id}` | 200, `COMPLETED`, agrees with the capture answer on every field the gateway reads |
+
+**Open items 8 and 9 are closed.** The `payment_source.paypal.experience_context` shape is accepted as written; PayPal
+returns `payer-action`, on `www.sandbox.paypal.com`, which passes the gateway's "https on `*.paypal.com`" check. Two
+corrections to what the hand-written tests assumed: creation answers **200**, and a repeated capture answers **200** — both
+are 2xx and the gateway reads any 2xx as success, so no code changed, but a gateway that had insisted on 201 would have
+failed on the very first real call.
+
+**What is now pinned.** `PayPalHttpGatewayTests`, section "recorded from the real sandbox": the create-order body PayPal
+accepted, compared whole; PayPal's real create, capture (as 201 and as the repeat's 200) and read-back answers (only the
+buyer's name and email masked) read as the right ids, statuses, amount and currency; and the buyer's personal fields
+reaching neither the result nor a log. **Proven by mutation:** changing `landing_page` fails the pinned-body test;
+adding 1 to the parsed amount fails both real-capture tests with `Expected 10.00, Actual 11.00`.
+
+**Not verified, and not claimed:**
+- **Webhooks** (steps 3, 7, 8 above): they need a public HTTPS address PayPal can reach, and no tunnel was available. The
+  signature verification call, the `verify-webhook-signature` request body and the event shapes are still written from
+  documentation.
+- **The application end to end.** A sandbox payment was driven through the gateway's own request and PayPal's own pages,
+  not through checkout, the order page and the admin panel — on `localhost` the order page shows no Pay link by design
+  (the groundwork's `IsSafeAbsoluteUrl` refuses loopback and non-https).
+- **PENDING, DENIED and declined captures** — only the happy path was run.
+- **The sandbox buyer's currency conversion** — the buyer paid from a USD balance; nothing was learned about LKR.
