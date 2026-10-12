@@ -535,8 +535,8 @@ public sealed class AdminTwoFactorEndpointTests(SqlServerDatabaseFixture sqlServ
         var replies = await ParallelSecondStepsAsync(host, tokenWriteDelay, email, TotpTestCodes.Next(key), isRecoveryCode: false, count: 12);
 
         AssertNoServerErrors(replies);
-        Assert.True(replies.Count(r => r.StatusCode == HttpStatusCode.OK) <= 1, $"More than one request completed the same pending sign-in. {Describe(replies)}");
-        Assert.True(replies.Count(r => r.HasSessionCookie) <= 1, $"More than one auth cookie was issued for the same pending sign-in. {Describe(replies)}");
+        Assert.True(replies.Count(r => r.StatusCode == HttpStatusCode.OK) == 1, $"Exactly one request completes the same pending sign-in. {Describe(replies)}");
+        Assert.True(replies.Count(r => r.HasSessionCookie) == 1, $"Exactly one auth cookie is issued for the same pending sign-in. {Describe(replies)}");
         Assert.All(replies.Where(r => r.StatusCode != HttpStatusCode.OK), r => Assert.Equal(HttpStatusCode.Unauthorized, r.StatusCode));
     }
 
