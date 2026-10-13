@@ -24,6 +24,7 @@ import {
   OrderPaymentProofDto,
   formatColomboDateTime,
 } from '../../core/checkout/checkout.model';
+import { paymentRedirect } from '../../core/checkout/payment-redirect';
 import { RobotsMeta } from '../../core/platform/robots-meta';
 import { ServerHandover } from '../../core/platform/server-handover';
 
@@ -74,6 +75,13 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
  * deadline all come from the payload — the shop's details are read live, which is correct for a shopper
  * who has not paid yet. If the shop has not filled its bank details in, the panel says the details are
  * being confirmed rather than printing an empty account number somebody might transfer money to.
+ *
+ * **The same panel hands over to an online provider when the server says so, and knows nothing about
+ * which.** If the instructions carry a `redirectForm` (a POST) or a `redirectUrl` (a GET) whose address is
+ * an absolute `https:` one, the panel is "Pay online" with a single "Pay now" control — a real form or a
+ * real link, in the same tab — and none of the bank-only parts: no reference to quote, no copy buttons, no
+ * proof or slip upload. An address the page will not follow gets no control at all (see
+ * `payment-redirect.ts`). With neither field set the bank panel renders exactly as it always did.
  *
  * **It still does not claim an email has been sent**, because nothing sends one: `ops.EmailOutbox` and
  * ACC-03's templates are W3-06. The order's own link is what a shopper is told to keep, and the panel
@@ -272,7 +280,66 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
           data-testid="pay-announcement"
         >{{ announcement() }}</p>
 
-        @if (awaitingPayment(placed)) {
+        <!-- **An online provider's panel comes first, and the bank panel below is the else branch, so the
+             bank rendering is untouched when there is no redirect.** payRedirect() is null unless the
+             server sent a redirect this page is willing to follow (see payment-redirect.ts); then the
+             shopper is handed over with a real form or a real link, and none of the bank-only parts below
+             - the reference to quote, the copy buttons, the proof and slip upload - belong here. Nothing in
+             this block names a provider: the server says how to get there, the page does it.
+
+             A form rather than a link when the server sends one, because a provider that cannot be reached
+             by GET needs the fields POSTed. It is a native submission with no handler of ours on it, so it
+             works before hydration and without script. The proof comment further down explains why a
+             form with no action is dangerous before hydration; this one always has an absolute https
+             action that was checked before it was rendered, so a pre-hydration press goes where it should. -->
+        @if (payRedirect(); as go) {
+          <section class="order__panel pay" aria-labelledby="pay-title" data-testid="pay-panel">
+            <h2 class="order__panel-title" id="pay-title">Pay online</h2>
+
+            @if (go.kind === 'unavailable') {
+              <!-- Asked for a redirect and refused it, with no bank details to fall back on. Saying so beats
+                   a button that goes nowhere or a "transfer to the account below" with no account. -->
+              <p class="pay__lead" data-testid="pay-redirect-unavailable">
+                The payment page for this order is not available right now. Reload this page in a moment to
+                try again. We hold your items until
+                <strong data-testid="pay-due">{{ dueAt(placed) }}</strong>.
+              </p>
+            } @else {
+              <p class="pay__lead">
+                You will be taken to our secure payment page to pay
+                <strong data-testid="pay-amount">{{ money(go.amountLkr) }}</strong>. Your order is held
+                until <strong data-testid="pay-due">{{ dueAt(placed) }}</strong>.
+              </p>
+
+              @if (go.kind === 'form') {
+                <!-- pay__actions is a flex row that wraps, so the button never forces the page wider at
+                     320 px; the hidden fields are display: none and take no part in it. attr.name and
+                     attr.value rather than the properties, so the fields are in the markup the server
+                     renders and not only in the DOM the browser builds after hydration. -->
+                <form
+                  class="pay__actions"
+                  method="post"
+                  [attr.action]="go.action"
+                  data-testid="pay-redirect-form"
+                >
+                  @for (field of go.fields; track $index) {
+                    <input type="hidden" [attr.name]="field.name" [attr.value]="field.value" />
+                  }
+                  <button class="btn btn--primary" type="submit" data-testid="pay-now">Pay now</button>
+                </form>
+              } @else {
+                <div class="pay__actions">
+                  <a
+                    class="btn btn--primary"
+                    [href]="go.href"
+                    rel="noopener"
+                    data-testid="pay-now"
+                  >Pay now</a>
+                </div>
+              }
+            }
+          </section>
+        } @else if (awaitingPayment(placed)) {
           <section class="order__panel pay" aria-labelledby="pay-title" data-testid="pay-panel">
             <h2 class="order__panel-title" id="pay-title">How to pay</h2>
 
@@ -974,6 +1041,23 @@ export class OrderPage {
   protected awaitingPayment(order: OrderConfirmationDto): boolean {
     return order.status === 'PendingPayment';
   }
+
+  /**
+   * How to hand the shopper over to an online provider's own page, or null for a bank transfer.
+   *
+   * **Provider-neutral.** The payload says how to get there — a form to POST, or a link — and this page
+   * does it without knowing whose page it is. Null for anything that is not waiting for money, for an order
+   * with no instructions yet, and for instructions that carry no redirect, which is every bank transfer:
+   * the pay panel below it is then exactly what it was. A redirect is followed only when
+   * `paymentRedirect` says its address is safe to send a browser to; see `payment-redirect.ts`.
+   */
+  protected readonly payRedirect = computed(() => {
+    const placed = this.current();
+
+    return placed !== null && this.awaitingPayment(placed) && placed.payment !== null
+      ? paymentRedirect(placed.payment)
+      : null;
+  });
 
   /**
    * The sentence beside "Payment" in the details list.

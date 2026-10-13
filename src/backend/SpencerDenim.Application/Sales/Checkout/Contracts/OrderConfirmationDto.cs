@@ -187,6 +187,11 @@ public sealed record CancelOrderDto(string OrderNumber);
 /// </param>
 /// <param name="RedirectUrl">Where to go to pay, for a provider that redirects. Always null for a bank transfer.</param>
 /// <param name="AcceptsProof">Whether this provider takes a customer-entered reference and a slip.</param>
+/// <param name="RedirectForm">
+/// A form the page must submit (<c>POST</c>) to reach a provider's hosted page, for one that cannot be
+/// reached by a link. Null for a bank transfer and for a plain redirect; when both this and
+/// <paramref name="RedirectUrl"/> are set the page uses the form.
+/// </param>
 public sealed record OrderPaymentInstructionsDto(
     string ProviderCode,
     string? Reference,
@@ -195,7 +200,25 @@ public sealed record OrderPaymentInstructionsDto(
     IReadOnlyList<OrderPaymentFieldDto> Fields,
     string? Notes,
     string? RedirectUrl,
-    bool AcceptsProof);
+    bool AcceptsProof,
+    OrderPaymentRedirectFormDto? RedirectForm = null);
+
+/// <summary>
+/// The form the order page submits to a provider's hosted payment page (see
+/// <c>PaymentRedirectForm</c>, which this mirrors).
+/// </summary>
+/// <param name="Method">Always <c>POST</c>.</param>
+/// <param name="Action">The absolute address to post to.</param>
+/// <param name="Fields">The hidden fields, in the order to send them.</param>
+public sealed record OrderPaymentRedirectFormDto(
+    string Method,
+    string Action,
+    IReadOnlyList<OrderPaymentRedirectFieldDto> Fields);
+
+/// <summary>One hidden field of an <see cref="OrderPaymentRedirectFormDto"/>.</summary>
+/// <param name="Name">The field name.</param>
+/// <param name="Value">The value to send.</param>
+public sealed record OrderPaymentRedirectFieldDto(string Name, string Value);
 
 /// <summary>One labelled payment detail, e.g. "Account number" / "8001234567890".</summary>
 /// <param name="Label">What to print beside the value. Written by the provider, never by a client.</param>

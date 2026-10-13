@@ -282,6 +282,21 @@ public static class DependencyInjection
         services.AddScoped<IOrderExpiryStore, OrderExpiryStore>();
         services.AddScoped<IBankTransferProofStore, BankTransferProofStore>();
 
+        // The groundwork a provider that is confirmed by the provider itself (PayPal, W4-01; a second
+        // gateway, W4-01b) is built on, so that adding one stays "a class and a registration line" with no
+        // change to checkout (PAY-03):
+        //  - OrderSettlementEffects: the Paid effects, written once, called by the bank review above and by
+        //    the settlement below. A concrete class and not a port: it must run inside its caller's
+        //    transaction, and a port would invite a transaction of its own.
+        //  - IOrderSettlementStore: "this payment is complete" -> pay the order, or put the money on record
+        //    as a payment exception (doc 08 §4.2 step 3).
+        //  - IPaymentEventStore: the provider event log, once per idempotency key (doc 08 DB13).
+        //  - IPaymentAttemptReader: which payment the order page is describing (PaymentInstructionsRequest).
+        services.AddScoped<OrderSettlementEffects>();
+        services.AddScoped<IOrderSettlementStore, OrderSettlementStore>();
+        services.AddScoped<IPaymentEventStore, PaymentEventStore>();
+        services.AddScoped<IPaymentAttemptReader, PaymentAttemptReader>();
+
         // The admin orders screen (W3-04, ADM-09, doc 11 P9): the list and the detail, the four fulfilment
         // transitions, the couriers the client fills in, and the two settings groups an invoice and the
         // auto-deliver job read.

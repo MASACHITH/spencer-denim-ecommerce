@@ -46,16 +46,24 @@ public sealed record GetOrderQuery(Guid PublicId);
 /// process rule covers the gap: the previous account stays able to receive funds for 48 hours after a
 /// change.
 /// <para>
-/// <b>Three reads and not one, and only for an unpaid order.</b> A <c>Paid</c>, <c>Expired</c> or
-/// <c>Cancelled</c> order has nothing for the customer to do, so neither the provider nor the proof is
-/// asked for and the payload is exactly what it was before this task. That keeps the order page's cost
-/// unchanged for every order except the ones that are waiting for money.
+/// <b>Four reads and not one, and only for an unpaid order.</b> A <c>Paid</c>, <c>Expired</c> or
+/// <c>Cancelled</c> order has nothing for the customer to do, so neither the provider, the payment attempt
+/// nor the proof is asked for and the payload is exactly what it was before this task. That keeps the order
+/// page's cost unchanged for every order except the ones that are waiting for money.
+/// </para>
+/// <para>
+/// <b>The provider is told which payment it is describing.</b> The live attempt is read first
+/// (<see cref="IPaymentAttemptReader"/>) and its id and the provider's own reference travel in the
+/// request, so a provider that redirects can find the page for the attempt that already exists instead of
+/// starting another one on every view. Checkout cannot do the same at placement — the row does not exist
+/// yet — and passes neither.
 /// </para>
 /// </remarks>
 public sealed class GetOrderQueryHandler(
     ICheckoutReader reader,
     IOrderPaymentProofReader proofs,
-    IPaymentProviderRegistry providers)
+    IPaymentProviderRegistry providers,
+    IPaymentAttemptReader attempts)
     : IQueryHandler<GetOrderQuery, OrderConfirmationDto?>
 {
     public async Task<OrderConfirmationDto?> HandleAsync(
@@ -89,6 +97,8 @@ public sealed class GetOrderQueryHandler(
             return order;
         }
 
+        var attempt = await attempts.FindInFlightAsync(query.PublicId, cancellationToken);
+
         var instructions = await provider.DescribeAsync(
             new PaymentInstructionsRequest(
                 order.OrderNumber,
@@ -99,7 +109,13 @@ public sealed class GetOrderQueryHandler(
                 // *email*; on this page the link is the page, and the API has no configured storefront
                 // origin to build one from. Inventing one from the request's own Host header would put a
                 // forgeable value into a payload, which is the hole W1-01 round 3 closed for IP addresses.
-                OrderUrl: null),
+                OrderUrl: null,
+
+                // The attempt the customer would pay against, when there is one. Both are null for an
+                // order with no live attempt (a bank transfer that was rejected and not resubmitted, say),
+                // which every provider must be able to answer.
+                PaymentId: attempt?.PaymentId,
+                ProviderReference: attempt?.ProviderReference),
             cancellationToken);
 
         var proof = await proofs.FindAsync(query.PublicId, cancellationToken);
@@ -118,7 +134,15 @@ public sealed class GetOrderQueryHandler(
                         .ToList(),
                     instructions.Notes,
                     instructions.RedirectUrl,
-                    instructions.AcceptsProof),
+                    instructions.AcceptsProof,
+                    instructions.RedirectForm is { } form
+                        ? new OrderPaymentRedirectFormDto(
+                            form.Method,
+                            form.Action,
+                            form.Fields
+                                .Select(field => new OrderPaymentRedirectFieldDto(field.Name, field.Value))
+                                .ToList())
+                        : null),
 
             Proof = proof is null
                 ? null

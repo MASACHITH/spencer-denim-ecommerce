@@ -261,6 +261,14 @@ internal sealed class OrderPlacementStore(
     /// null-or-not is a faithful reading of P6 step 10, and the day a second provider returns non-null
     /// instructions it will need a rule about which of them are worth emailing.
     /// </para>
+    /// <para>
+    /// <b>The rule, written (W4-01 groundwork):</b> instructions that send the customer elsewhere — a
+    /// <c>RedirectUrl</c> or a <c>RedirectForm</c> — are not worth emailing as bank-transfer instructions.
+    /// The only template there is says "Here is everything you need to pay … by bank or online transfer",
+    /// and a redirecting provider's page, not an email, is where the customer pays. It names no gateway: it
+    /// reads the shape of the answer. (A provider that cannot build its redirect until the payment row
+    /// exists answers <see langword="null"/> at placement and is covered by the first condition.)
+    /// </para>
     /// </remarks>
     private void QueueEmails(OrderPlacement placement, Order order)
     {
@@ -299,7 +307,7 @@ internal sealed class OrderPlacementStore(
             placement.PaymentMethodName,
             placement.Payment.PaymentDueAtUtc));
 
-        if (placement.Instructions is { } instructions)
+        if (placement.Instructions is { RedirectUrl: null, RedirectForm: null } instructions)
         {
             emails.EnlistPaymentInstructions(header, instructions);
         }

@@ -286,8 +286,34 @@ export interface OrderPaymentInstructionsDto {
   /** Where to go to pay, for a provider that redirects. Always null for a bank transfer. */
   readonly redirectUrl: string | null;
 
+  /**
+   * A POST form the browser must submit to reach the provider's hosted page, for a provider that cannot be
+   * reached by a plain link. Null or absent for a bank transfer and for a GET redirect.
+   *
+   * **Optional on purpose**, so an older payload and every existing fixture still type-check. When both
+   * this and `redirectUrl` are set, this one wins: it is the more specific instruction.
+   */
+  readonly redirectForm?: OrderPaymentRedirectFormDto | null;
+
   /** Whether this provider takes a customer-entered reference and a slip. */
   readonly acceptsProof: boolean;
+}
+
+/** A form to POST to a provider's hosted page. */
+export interface OrderPaymentRedirectFormDto {
+  readonly method: 'POST';
+
+  /** Absolute URL. The storefront renders it only when it is `https:` (see `paymentRedirect`). */
+  readonly action: string;
+
+  /** In the order to print them. */
+  readonly fields: readonly OrderPaymentRedirectFieldDto[];
+}
+
+/** One hidden field of a redirect form. */
+export interface OrderPaymentRedirectFieldDto {
+  readonly name: string;
+  readonly value: string;
 }
 
 /** One labelled payment detail. */

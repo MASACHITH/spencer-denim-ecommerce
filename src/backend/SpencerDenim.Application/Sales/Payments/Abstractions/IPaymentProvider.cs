@@ -33,7 +33,36 @@ namespace SpencerDenim.Application.Sales.Payments.Abstractions;
 /// would force <c>PayPalProvider</c> to implement two methods that can only throw (the Liskov point doc 03
 /// makes about this port). They live in their own use cases, and the part they share with a PayPal capture
 /// — order <c>PendingPayment → Paid</c>, stock reserved → sold, a gapless invoice number — is
-/// <c>IOrderSettlementStore</c>, which is a transaction and not a provider.
+/// <see cref="IOrderSettlementStore"/>, which is a transaction and not a provider.
+/// </para>
+/// <para>
+/// <b>What a provider that is confirmed by the provider itself builds on</b> (PayPal, W4-01; a second
+/// gateway, W4-01b) — all of it ports, none of it checkout's:
+/// </para>
+/// <list type="bullet">
+/// <item><description>
+/// <see cref="IOrderSettlementStore"/> — "this payment is complete": pay the order, or put the money on
+/// record as a payment exception when the order can no longer take it.
+/// </description></item>
+/// <item><description>
+/// <see cref="IPaymentEventStore"/> — the provider event log: verify the signature, record the event once
+/// per idempotency key, apply it, say what became of it.
+/// </description></item>
+/// <item><description>
+/// <see cref="IPaymentAttemptReader"/> and the <see cref="PaymentInstructionsRequest"/> it feeds — which
+/// payment the order page is describing, so <see cref="DescribeAsync"/> can find the provider's own page
+/// for an attempt that exists.
+/// </description></item>
+/// </list>
+/// <para>
+/// <b>A provider the customer pays on its own page answers <see cref="DescribeAsync"/> in two stages.</b>
+/// At placement the payment row does not exist (checkout asks before the transaction that inserts it), so
+/// <see cref="PaymentInstructionsRequest.PaymentId"/> is null and the provider answers
+/// <see langword="null"/> — which also means no bank-transfer instructions email is queued. On the order
+/// page the attempt exists and is named, and the provider answers with
+/// <see cref="PaymentInstructions.RedirectForm"/> (a form the browser must POST) or
+/// <see cref="PaymentInstructions.RedirectUrl"/> (a link), with <see cref="PaymentInstructions.AcceptsProof"/>
+/// false. The order page renders either without knowing which provider it is.
 /// </para>
 /// <para>
 /// <b>Liskov, concretely (doc 03 §3c).</b> Every implementation must satisfy
@@ -72,6 +101,10 @@ public interface IPaymentProvider
     /// a Super Admin" a precondition of the process, and the shop can be deployed before the client sends
     /// them. The order page then says the details are being confirmed and gives the shopper the order link
     /// to come back to, rather than printing an empty account number somebody might transfer money to.
+    /// </para>
+    /// <para>
+    /// <b>It is also the right answer at placement for a provider that needs the payment row</b> — see the
+    /// type remarks and <see cref="PaymentInstructionsRequest.PaymentId"/>.
     /// </para>
     /// </summary>
     Task<PaymentInstructions?> DescribeAsync(
