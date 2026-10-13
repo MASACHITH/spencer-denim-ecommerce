@@ -27,6 +27,14 @@ namespace SpencerDenim.Application.Marketing.Promotions;
 /// Colombo wall-clock, as the form's <c>datetime-local</c> input produces it. Converted by
 /// <see cref="PromoCodeSchedule.ToUtc"/>, which is where Asia/Colombo lives and nowhere else.
 /// </param>
+/// <param name="ExcludeSaleItems">
+/// Doc 11 P3 step 7's "exclude sale items". <b>No rule validates it, and that is a finding rather than
+/// an omission.</b> It is meaningful under all three discount types — including <c>FreeDelivery</c>,
+/// where it cannot change the delivery discount but can still empty the eligible base and so refuse the
+/// code with <c>PromoRefusal.NoEligibleItems</c> (<see cref="PromoEvaluator"/>'s
+/// <c>eligibleBase &lt;= 0m</c> check) — so there is no type it has to be refused for, and no range to
+/// bound. Null is read as off, the same reading <see cref="IsActive"/> gets and for the same reason.
+/// </param>
 public sealed record PromoCodeInput(
     string? Code,
     string? Description,
@@ -36,6 +44,7 @@ public sealed record PromoCodeInput(
     decimal? MinSpendAmount,
     DateTime? StartsAt,
     DateTime? EndsAt,
+    bool? ExcludeSaleItems,
     int? TotalUsageLimit,
     int? PerCustomerLimit,
     bool? IsActive);
@@ -467,6 +476,10 @@ public sealed class PromoCodeWriteHandlers(
             input.MinSpendAmount,
             PromoCodeSchedule.ToUtc(input.StartsAt ?? default),
             input.EndsAt is { } end ? PromoCodeSchedule.ToUtc(end) : null,
+
+            // Null is "off", as `IsActive` below. A half-filled request that did not say to narrow the
+            // eligible base has not asked for the narrower reading of the code.
+            input.ExcludeSaleItems ?? false,
             input.TotalUsageLimit,
             input.PerCustomerLimit,
 
@@ -528,6 +541,7 @@ public sealed class PromoCodeWriteHandlers(
         promoCode.MinSpendAmount = fields.MinSpendAmount;
         promoCode.StartsAtUtc = fields.StartsAtUtc;
         promoCode.EndsAtUtc = fields.EndsAtUtc;
+        promoCode.ExcludeSaleItems = fields.ExcludeSaleItems;
         promoCode.TotalUsageLimit = fields.TotalUsageLimit;
         promoCode.PerCustomerLimit = fields.PerCustomerLimit;
         promoCode.IsActive = fields.IsActive;
@@ -557,6 +571,7 @@ public sealed class PromoCodeWriteHandlers(
             // stays at the screen's edge. A trail with two timezones in it is a trail nobody can order.
             ["startsAtUtc"] = promoCode.StartsAtUtc,
             ["endsAtUtc"] = promoCode.EndsAtUtc,
+            ["excludeSaleItems"] = promoCode.ExcludeSaleItems,
             ["totalUsageLimit"] = promoCode.TotalUsageLimit,
             ["perCustomerLimit"] = promoCode.PerCustomerLimit,
             ["isActive"] = promoCode.IsActive,
@@ -577,6 +592,7 @@ public sealed class PromoCodeWriteHandlers(
             promoCode.MinSpendAmount,
             PromoCodeSchedule.ToColombo(promoCode.StartsAtUtc),
             promoCode.EndsAtUtc is { } endsAt ? PromoCodeSchedule.ToColombo(endsAt) : null,
+            promoCode.ExcludeSaleItems,
             promoCode.TotalUsageLimit,
             promoCode.PerCustomerLimit,
             promoCode.UsageCount,
@@ -598,6 +614,7 @@ public sealed class PromoCodeWriteHandlers(
         decimal? MinSpendAmount,
         DateTime StartsAtUtc,
         DateTime? EndsAtUtc,
+        bool ExcludeSaleItems,
         int? TotalUsageLimit,
         int? PerCustomerLimit,
         bool IsActive);

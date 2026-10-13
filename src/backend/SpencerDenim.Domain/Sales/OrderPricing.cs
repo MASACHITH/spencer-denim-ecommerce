@@ -40,10 +40,10 @@ public readonly record struct DeliveryCharge(decimal Fee, decimal? FreeAboveAmou
 /// <remarks>
 /// <b>Steps 7 and 8 of doc 08 §6 are deliberately not in this file.</b> Eligibility (active, in date,
 /// under both usage limits, minimum spend, <c>ExcludeSaleItems</c>) and the percent/fixed/cap arithmetic
-/// all read columns of <c>marketing.PromoCodes</c>, which no migration has created (ADM-13, W3-05). What
-/// this type carries is the *outcome* of those steps, so that steps 9, 10 and 11 — allocation, delivery
-/// and the minimum-total clamp — can be built, tested and relied on now, and W3-05 plugs into them
-/// without reopening the totals.
+/// all read columns of <c>marketing.PromoCodes</c>, and they live in <c>PromoEvaluator</c> (ADM-13,
+/// W3-05 — the table was created by <c>20261012084301_MarketingPromoCodes</c>). What this type carries
+/// is the *outcome* of those steps, so steps 9, 10 and 11 — allocation, delivery and the minimum-total
+/// clamp — decide a total without reopening eligibility.
 /// </remarks>
 /// <param name="Amount">The discount in LKR, before the step 11 clamp. Never negative.</param>
 /// <param name="FreeDelivery">
@@ -51,7 +51,8 @@ public readonly record struct DeliveryCharge(decimal Fee, decimal? FreeAboveAmou
 /// </param>
 /// <param name="EligibleVariantIds">
 /// The lines the discount may be spread over, or <see langword="null"/> for all of them. This is where
-/// <c>ExcludeSaleItems</c> lands once it exists.
+/// <c>ExcludeSaleItems</c> lands: <c>PromoEvaluator</c> fills it with the lines no campaign priced when
+/// the flag is on, and leaves it null when every line is eligible.
 /// </param>
 public sealed record PromoCharge(
     decimal Amount,

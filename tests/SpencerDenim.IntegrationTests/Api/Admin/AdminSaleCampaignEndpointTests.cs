@@ -395,6 +395,89 @@ public sealed class AdminSaleCampaignEndpointTests(SqlServerDatabaseFixture sqlS
     }
 
     /// <summary>
+    /// <b>The body the sale-campaign screen really sends, keyed and typed exactly as it builds it, against
+    /// the real API — the one join #126 leaves open, closed for the create.</b>
+    /// </summary>
+    /// <remarks>
+    /// Every other test in this file sends <see cref="Body"/>, which the suite wrote; the screen's Vitest
+    /// (<c>sale-campaigns-page.spec.ts</c>, "creates doc 11 line 450 Linen Week") asserts the screen's
+    /// body with <c>toEqual</c>, which is exact. So one side is pinned to the screen and the other to the
+    /// API, and <b>nothing joined the two spellings</b> — a renamed or dropped key would pass both.
+    /// That is precisely how the promo-code 500 survived: the screen was proved against a Node stub and
+    /// the store was never proved at all.
+    /// <para>
+    /// The literal below is therefore a copy of that Vitest's expected body and must stay one — nine keys,
+    /// in the screen's names and types, with <b>no <c>rowVersion</c></b> (the screen sends it in
+    /// <c>If-Match</c> and omits it from the body, which <c>AdminJsonBody.RowVersionIn</c> tolerates and
+    /// no test had shown), <c>bannerAssetId</c> null because the screen does not choose one, and
+    /// <c>description</c> null because the optional note was left blank.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task The_screens_own_body_creates_a_campaign()
+    {
+        sqlServer.SkipIfUnavailable();
+
+        await using var host = MediaTestHost.Create(sqlServer.ConnectionString);
+        using var client = await host.SignInAsync(
+            Permissions.Promotions.Create,
+            Permissions.Promotions.Delete);
+
+        var categoryId = await CategoryIdAsync(host, "women", "shirts-blouses");
+
+        var screenBody = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["name"] = "Linen Week",
+            ["description"] = null,
+            ["discountType"] = "Percent",
+            ["discountValue"] = 20m,
+            ["startsAt"] = "2026-10-19T00:00",
+            ["endsAt"] = "2026-10-26T00:00",
+            ["isActive"] = true,
+            ["bannerAssetId"] = null,
+            ["targets"] = new[]
+            {
+                new Dictionary<string, object?>(StringComparer.Ordinal)
+                {
+                    ["targetType"] = "Category",
+                    ["departmentId"] = null,
+                    ["categoryId"] = categoryId,
+                    ["productId"] = null,
+                    ["includeSubcategories"] = true,
+                },
+            },
+        };
+
+        var created = await PostAsync(client, screenBody);
+
+        try
+        {
+            Assert.Equal(HttpStatusCode.Created, created.Status);
+
+            var campaign = created.Body.GetProperty("campaign");
+
+            Assert.Equal("Linen Week", campaign.GetProperty("name").GetString());
+            Assert.Null(campaign.GetProperty("description").GetString());
+            Assert.Equal(20m, campaign.GetProperty("discountValue").GetDecimal());
+
+            // The window is in the future, so this one is Scheduled rather than Live — which is also the
+            // status the screen's own Playwright test reads back as "Starts later".
+            Assert.Equal("Scheduled", campaign.GetProperty("status").GetString());
+            Assert.Equal("2026-10-19T00:00:00", campaign.GetProperty("startsAt").GetString());
+            Assert.Equal("2026-10-26T00:00:00", campaign.GetProperty("endsAt").GetString());
+
+            var target = campaign.GetProperty("targets").EnumerateArray().Single();
+
+            Assert.Equal(categoryId, target.GetProperty("categoryId").GetInt32());
+            Assert.Equal("Women › Shirts & Blouses", target.GetProperty("name").GetString());
+        }
+        finally
+        {
+            await DeleteAsync(client, created);
+        }
+    }
+
+    /// <summary>
     /// A campaign with no target is refused: doc 02 line 119's "discount on categories/products" has to
     /// apply to something, and a campaign that applies to nothing is a sale that never happens.
     /// </summary>

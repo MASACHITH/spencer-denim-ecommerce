@@ -203,6 +203,60 @@ public sealed class PromoEvaluatorTests
     }
 
     /// <summary>
+    /// <b>The same under <c>FreeDelivery</c>, which is the claim W3-05c's "no validation rule is needed"
+    /// decision rests on.</b>
+    /// </summary>
+    /// <remarks>
+    /// W3-05c put "exclude sale items" on the promo-code form and deliberately added no rule refusing it
+    /// for a discount type, on the grounds that it is meaningful under <i>all three</i> — including
+    /// <c>FreeDelivery</c>, where it cannot change the delivery discount but can still empty the eligible
+    /// base and refuse the code outright. That is true because <see cref="PromoEvaluator"/> tests
+    /// <c>eligibleBase &lt;= 0m</c> <b>before</b> it switches on the discount type, and <b>nothing pinned
+    /// it</b>: the only <c>NoEligibleItems</c> test used <c>Percent</c>. A refactor that moved the check
+    /// inside the percent and fixed arms would make a free-delivery code with the box ticked apply
+    /// through a site-wide sale — the opposite of what the staff member asked for — and every test would
+    /// still pass.
+    /// <para>
+    /// Added in the W3-05c tester pass, because the flag only became settable in W3-05c and this edge is
+    /// therefore reachable in the shop for the first time.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void A_free_delivery_code_that_excludes_sale_items_is_refused_when_every_line_is_on_campaign()
+    {
+        var evaluation = PromoEvaluator.Evaluate(
+            Terms(PromoDiscountType.FreeDelivery, discountValue: null, excludeSaleItems: true),
+            [LinenShirt],
+            Now);
+
+        Assert.Equal(PromoRefusal.NoEligibleItems, evaluation.Refusal);
+        Assert.Null(evaluation.Charge);
+        Assert.False(evaluation.IsUsable);
+    }
+
+    /// <summary>
+    /// And it still gives free delivery when a line survives the exclusion, so the test above is a
+    /// refusal and not the flag quietly disabling the type.
+    /// </summary>
+    /// <remarks>
+    /// The jeans are at list price with no campaign on them, so <c>IsEligible</c>'s
+    /// <c>UnitPrice &gt;= UnitListPrice</c> keeps them in. The pair is the point: the flag refuses a bag
+    /// it has emptied and changes nothing about a bag it has not.
+    /// </remarks>
+    [Fact]
+    public void A_free_delivery_code_that_excludes_sale_items_still_applies_when_a_line_survives()
+    {
+        var evaluation = PromoEvaluator.Evaluate(
+            Terms(PromoDiscountType.FreeDelivery, discountValue: null, excludeSaleItems: true),
+            [Jeans],
+            Now);
+
+        Assert.True(evaluation.IsUsable);
+        Assert.True(evaluation.Charge!.FreeDelivery);
+        Assert.Equal(0m, evaluation.Charge.Amount);
+    }
+
+    /// <summary>
     /// The minimum spend refusal carries the threshold, because it is the one refusal a shopper can act
     /// on.
     /// </summary>

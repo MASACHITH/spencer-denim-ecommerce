@@ -35,6 +35,13 @@ export interface AdminPromoCode {
   readonly startsAt: string;
   /** The same, or null for no end. */
   readonly endsAt: string | null;
+  /**
+   * Doc 08 §6 step 7 and doc 11 §7 G-07. True takes the lines a **sale campaign** priced out of the
+   * eligible base, and **keeps** the lines that only carry a markdown. The distinction is the whole of
+   * the field: `PromoEvaluator.IsEligible` tests `UnitPrice >= UnitListPrice`, and only a campaign moves
+   * a unit price below its list price.
+   */
+  readonly excludeSaleItems: boolean;
   readonly totalUsageLimit: number | null;
   readonly perCustomerLimit: number | null;
   /** Held uses (doc 08 §3.6). Not editable: only a placement and the return of a use move it. */
@@ -67,6 +74,7 @@ export interface AdminPromoCodeRequest {
   readonly minSpendAmount: number | null;
   readonly startsAt: string;
   readonly endsAt: string | null;
+  readonly excludeSaleItems: boolean;
   readonly totalUsageLimit: number | null;
   readonly perCustomerLimit: number | null;
   readonly isActive: boolean;
@@ -111,8 +119,12 @@ export function promoLimitLabel(promoCode: AdminPromoCode): string {
  * Hand-rolled rather than `Intl.NumberFormat` for the reason the storefront's `formatLkr` gives: this app
  * is not server-rendered, but two formatters in one repository that disagree by a separator is a figure
  * that reads differently on two screens showing the same row.
+ *
+ * **Exported for the sale-campaign screen (ADM-14), not copied there**, which is the same argument one
+ * step further: the promo-code list and the campaign list sit under one menu and a staff member reads
+ * them in the same sitting.
  */
-function formatAmount(amount: number): string {
+export function formatAmount(amount: number): string {
   const whole = Math.trunc(Math.abs(amount));
   const cents = Math.round((Math.abs(amount) - whole) * 100);
   const grouped = whole.toLocaleString('en-US');

@@ -76,7 +76,9 @@ internal static class AdminPromotionEndpoints
                 + "`FreeDelivery` — sending one with a free-delivery code is refused rather than ignored, "
                 + "so nobody believes they have made a 20%-off-and-free-delivery code. `endsAt` must be "
                 + "after `startsAt`, and `perCustomerLimit` may not exceed `totalUsageLimit` when both "
-                + "are set. **Send every field**, including the empty ones.")
+                + "are set. `excludeSaleItems` takes the lines a **sale campaign** priced out of the "
+                + "eligible base and keeps the lines that only carry a markdown (doc 08 §6 step 7, doc "
+                + "11 §7 G-07). **Send every field**, including the empty ones.")
             .Accepts<AdminPromoCodeRequest>("application/json")
             .Produces<AdminPromoCodeSavedDto>(StatusCodes.Status201Created)
             .ProducesValidationProblem()
@@ -269,6 +271,11 @@ internal static class AdminPromotionEndpoints
             return badEnd;
         }
 
+        if (AdminJsonBody.ReadBool(body, "excludeSaleItems", out var excludeSaleItems) is { } badExclude)
+        {
+            return badExclude;
+        }
+
         if (AdminJsonBody.ReadInt(body, "totalUsageLimit", out var totalLimit) is { } badTotal)
         {
             return badTotal;
@@ -293,6 +300,7 @@ internal static class AdminPromotionEndpoints
             minSpend,
             startsAt,
             endsAt,
+            excludeSaleItems,
             totalLimit,
             perCustomerLimit,
             isActive);
@@ -350,6 +358,11 @@ internal static class AdminPromotionEndpoints
 /// Colombo and guessing wrong moves a code's window by five and a half hours.
 /// </param>
 /// <param name="EndsAt">The same, or null for no end.</param>
+/// <param name="ExcludeSaleItems">
+/// Doc 11 P3 step 7's "exclude sale items". True takes the lines a <b>sale campaign</b> priced out of
+/// the eligible base; a line that only carries a markdown (an original price above its list price) stays
+/// in (doc 08 §6 step 7, doc 11 §7 G-07).
+/// </param>
 /// <param name="RowVersion">
 /// On an edit: the row version from the list, unless it is sent in <c>If-Match</c>. Ignored on a create.
 /// </param>
@@ -362,6 +375,7 @@ public sealed record AdminPromoCodeRequest(
     decimal? MinSpendAmount,
     string? StartsAt,
     string? EndsAt,
+    bool? ExcludeSaleItems,
     int? TotalUsageLimit,
     int? PerCustomerLimit,
     bool? IsActive,
