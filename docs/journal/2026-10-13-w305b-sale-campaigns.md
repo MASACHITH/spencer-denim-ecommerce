@@ -265,6 +265,39 @@ to exactly the seeded figure.
 filtered run — or one lucky full run — would have let this through to a tester as "flaky". It is not
 flaky; it is deterministic given the class order.
 
+## The teardown, and the mistake that cost four classes
+
+Worth reading before anything else in this file, because it is the biggest thing this task got wrong.
+
+The campaign suites place orders on the **linen shirt** and the **jeans**, because doc 08 §6's worked
+example is about those two products. They are `SD-W-0001` and `SD-W-0009`, at the **low** end of the
+catalogue — which is where `CartStaleItemTests` takes its variants from, and that class sets `OnHand` to 0
+or 1. A placed order holds its reservation for ever, so `Reserved` stayed above zero and
+`CK_StockLevels_ReservedLeOnHand` refused its `UPDATE`. The promo suites never hit this because
+`CheckoutVariantIdsAsync` hands out the *highest* ids for exactly this reason; a campaign suite cannot use
+it, because it needs named products.
+
+**The first fix made it much worse.** It released the stock by cancelling the orders through the real
+`IOrderCancellationStore` — which looked more honest, a release with its status change and history row.
+But the query could not tell this test's orders from any other order holding the same variant, so a test
+that placed nothing at all tried to cancel an order a previous test had placed and whose stock the base
+had already rebalanced. `OrderStockRelease` refused it, **correctly**, and the exception came out of
+`DisposeAsync` *before the campaigns were removed*. A Rs. 99,000-off campaign then stayed live for the
+rest of the assembly: fifteen failures across four classes, several of them reading Rs. 1.00 where a real
+price was expected.
+
+Two lessons, and the second is the one that generalises:
+
+1. The stock goes back with one statement per variant — `OnHand = OnHand − Reserved, Reserved = 0`, which
+   yields exactly the seeded pair and **cannot throw**. The orders keep a reservation the stock row no
+   longer reflects; in a throwaway test database, for orders this suite placed itself, that is the right
+   trade.
+2. **A teardown must be ordered by danger, and every step must be in its own `try`/`finally`.** A
+   campaign left live reprices the catalogue for every class that follows, so it is removed first and
+   nothing that can throw is allowed before it. The first version had the fragile step first, and that
+   single ordering mistake turned one broken teardown into fifteen red tests with no visible connection
+   to campaigns.
+
 ## The one failure I could not reproduce, stated as measured
 
 The third whole-assembly run failed **one** test:
