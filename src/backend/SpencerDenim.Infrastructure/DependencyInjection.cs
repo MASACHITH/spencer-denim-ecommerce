@@ -230,6 +230,12 @@ public static class DependencyInjection
         services.AddScoped<IPromoCodeAdminStore, PromoCodeAdminStore>();
         services.AddScoped<INewsletterSubscriptions, NewsletterSubscriptions>();
 
+        // Sale campaigns (ADM-14, W3-05b). `ICampaignOfferReader` is the **live** side of doc 08 §6
+        // step 3, which the bag, the checkout quote and the placement all read — doc 08 §7.4's "checkout
+        // always prices live", as against the stored summary on ProductStats that listings read and that
+        // may lag five minutes at a boundary.
+        services.AddScoped<ICampaignOfferReader, CampaignOfferReader>();
+
         // Doc 08 §3.7's homepage cache. A singleton, because a cache scoped to one request caches
         // nothing at all.
         services.AddSingleton<IHomePageCache, HomePageCache>();
