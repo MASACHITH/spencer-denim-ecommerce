@@ -797,6 +797,12 @@ export class SaleCampaignsPage {
     this.editingId.set(campaign.id);
     this.rowVersion = campaign.rowVersion;
     this.removingId.set(null);
+
+    // **The last save's warnings go, and that matters more here than it looks.** They are kept after a
+    // save on purpose — they are the only thing that says a campaign reaches no product — but every one
+    // of them is written as "this campaign's…", so leaving them above a form that is now editing a
+    // *different* campaign attaches the most important sentence on this screen to the wrong row.
+    this.warnings.set([]);
     this.name.set(campaign.name);
     this.description.set(campaign.description ?? '');
     this.discountType.set(campaign.discountType);

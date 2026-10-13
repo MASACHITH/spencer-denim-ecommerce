@@ -856,6 +856,46 @@ describe('SaleCampaignsPage (ADM-14)', () => {
     expect(element.querySelector('[data-testid="remove-cancel-4"]')).toBeNull();
   });
 
+  /**
+   * **A save's warnings do not follow the staff member on to a different campaign.**
+   *
+   * They survive the save deliberately — they are the only thing that says a campaign reaches no product
+   * — but each is phrased "this campaign's…", so one left above a form now editing another campaign
+   * attaches that sentence to the wrong row. Found in the W3-05c tester pass.
+   */
+  it('clears the last save warnings when another campaign is opened for editing', async () => {
+    await open([]);
+
+    type('campaign-name', 'T4WARN');
+    type('campaign-value', '20');
+    type('campaign-starts', '2026-10-19T00:00');
+    type('campaign-ends', '2026-10-26T00:00');
+    choose('target-category', '31');
+    click('add-target');
+    await settle();
+
+    click('campaign-save');
+    answerAntiforgery();
+    await settle();
+
+    http
+      .expectOne(
+        (candidate) => candidate.url === AdminCampaignApi.campaignsUrl && candidate.method === 'POST',
+      )
+      .flush(saved({ warnings: ["This campaign's targets do not reach any product."] }));
+    http.expectOne(AdminCampaignApi.campaignsUrl).flush([campaign()]);
+    await settle();
+
+    expect(element.querySelector('[data-testid="campaign-warnings"]')?.textContent).toContain(
+      'do not reach any product',
+    );
+
+    click('edit-4');
+    await settle();
+
+    expect(element.querySelector('[data-testid="campaign-warnings"]')).toBeNull();
+  });
+
   /** `aria-disabled`, never `disabled` — a control that changes under the user throws focus to body. */
   it('never gives a button the disabled attribute', async () => {
     await open();
