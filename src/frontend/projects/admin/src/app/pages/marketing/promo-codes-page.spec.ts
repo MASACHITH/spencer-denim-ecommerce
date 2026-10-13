@@ -17,6 +17,7 @@ function promoCode(overrides: Partial<AdminPromoCode> = {}): AdminPromoCode {
     minSpendAmount: 5000,
     startsAt: '2026-10-01T00:00:00',
     endsAt: '2026-10-31T23:59:00',
+    excludeSaleItems: false,
     totalUsageLimit: 50,
     perCustomerLimit: 1,
     usageCount: 3,
@@ -185,6 +186,7 @@ describe('PromoCodesPage (ADM-13)', () => {
     type('promo-total-limit', '50');
     type('promo-per-customer', '2');
     type('promo-description', 'Spring mailshot.');
+    click('promo-exclude-sale');
     click('promo-active');
     click('promo-save');
 
@@ -204,6 +206,11 @@ describe('PromoCodesPage (ADM-13)', () => {
       minSpendAmount: 4000,
       startsAt: '2026-10-13T00:00',
       endsAt: '2026-10-20T12:30',
+
+      // Ticked, because the checkbox starts unticked and was clicked once — doc 11 P3 step 7's "exclude
+      // sale items", which `PromoEvaluator.IsEligible` honours and which no staff member could set
+      // before W3-05c.
+      excludeSaleItems: true,
       totalUsageLimit: 50,
       perCustomerLimit: 2,
 
@@ -242,6 +249,10 @@ describe('PromoCodesPage (ADM-13)', () => {
       minSpendAmount: null,
       startsAt: '2026-10-13T00:00',
       endsAt: null,
+
+      // False, not null and not absent: the column is a `bit NOT NULL` and the endpoint refuses a body
+      // that leaves the key out. "Nothing is excluded" is a value, not a silence.
+      excludeSaleItems: false,
       totalUsageLimit: null,
       perCustomerLimit: null,
       isActive: true,
@@ -250,6 +261,76 @@ describe('PromoCodesPage (ADM-13)', () => {
     request.flush(saved());
     http.expectOne(AdminPromoApi.promoCodesUrl).flush([promoCode()]);
     await settle();
+  });
+
+  /**
+   * **The label says which items, and that is the whole test.**
+   *
+   * Doc 11 §7 G-07 and doc 11 line 464 separate two things a shopper would both call "on sale": a line a
+   * sale campaign is pricing, which this flag removes, and a line that only carries a markdown, which it
+   * keeps. A checkbox reading "Exclude sale items" would be read as covering both, and a staff member who
+   * ticked it believing it skipped marked-down stock would have set a rule they did not mean.
+   */
+  it('says which items the exclusion skips, and which it does not', async () => {
+    await open([]);
+
+    const label = element.querySelector<HTMLElement>('[data-testid="promo-exclude-sale-field"]');
+    const hint = element.querySelector<HTMLElement>('#promo-exclude-sale-hint');
+
+    expect(label?.textContent).toContain('sale campaign');
+    expect(hint?.textContent).toContain('marked down');
+    expect(hint?.textContent).toContain('still counts');
+
+    // The hint is attached to the control, not merely near it.
+    expect(
+      element
+        .querySelector<HTMLInputElement>('[data-testid="promo-exclude-sale"]')
+        ?.getAttribute('aria-describedby'),
+    ).toBe('promo-exclude-sale-hint');
+  });
+
+  /**
+   * Editing a code loads the flag from the row.
+   *
+   * Without this, a staff member editing a code that excludes campaign-priced lines would save it back
+   * with the exclusion dropped — the form posts every field, so the box's state *is* the saved value.
+   */
+  it('loads the exclusion from the row being edited and sends it back unchanged', async () => {
+    await open([promoCode({ excludeSaleItems: true })]);
+
+    click('edit-7');
+    await settle();
+
+    expect(
+      element.querySelector<HTMLInputElement>('[data-testid="promo-exclude-sale"]')?.checked,
+    ).toBe(true);
+
+    click('promo-save');
+    answerAntiforgery();
+    await settle();
+
+    const request = http.expectOne(
+      (candidate) => candidate.url.endsWith('/7') && candidate.method === 'PUT',
+    );
+
+    expect((request.request.body as { excludeSaleItems: boolean }).excludeSaleItems).toBe(true);
+
+    request.flush(saved());
+    http.expectOne(AdminPromoApi.promoCodesUrl).flush([promoCode()]);
+    await settle();
+  });
+
+  /** The list says so, in the same words as the form, and only when it is on. */
+  it('says on the row when a code skips campaign-priced lines', async () => {
+    await open([promoCode({ excludeSaleItems: true })]);
+
+    expect(element.querySelector('[data-testid="excludes-sale-7"]')?.textContent).toContain(
+      'sale campaign',
+    );
+
+    await open([promoCode({ excludeSaleItems: false })]);
+
+    expect(element.querySelector('[data-testid="excludes-sale-7"]')).toBeNull();
   });
 
   /**

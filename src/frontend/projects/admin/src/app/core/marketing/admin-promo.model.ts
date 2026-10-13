@@ -35,6 +35,13 @@ export interface AdminPromoCode {
   readonly startsAt: string;
   /** The same, or null for no end. */
   readonly endsAt: string | null;
+  /**
+   * Doc 08 §6 step 7 and doc 11 §7 G-07. True takes the lines a **sale campaign** priced out of the
+   * eligible base, and **keeps** the lines that only carry a markdown. The distinction is the whole of
+   * the field: `PromoEvaluator.IsEligible` tests `UnitPrice >= UnitListPrice`, and only a campaign moves
+   * a unit price below its list price.
+   */
+  readonly excludeSaleItems: boolean;
   readonly totalUsageLimit: number | null;
   readonly perCustomerLimit: number | null;
   /** Held uses (doc 08 §3.6). Not editable: only a placement and the return of a use move it. */
@@ -67,6 +74,7 @@ export interface AdminPromoCodeRequest {
   readonly minSpendAmount: number | null;
   readonly startsAt: string;
   readonly endsAt: string | null;
+  readonly excludeSaleItems: boolean;
   readonly totalUsageLimit: number | null;
   readonly perCustomerLimit: number | null;
   readonly isActive: boolean;

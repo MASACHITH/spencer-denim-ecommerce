@@ -30,10 +30,13 @@ import { CatalogFailure, toCatalogFailure } from '../../core/catalog/admin-catal
  * the API's contract is Colombo wall-clock for exactly that reason: a staff member who types 23:59 means
  * 23:59 in the shop. The server converts; nothing here does arithmetic on a date.
  *
- * **"Exclude sale items" is deliberately not on this form.** Doc 08 §3.6 gives the column and the
- * evaluator honours it, but it can only exclude a line a sale campaign priced and `marketing.SaleCampaigns`
- * does not exist (ADM-14). A checkbox that could not change any total is a promise this shop would not
- * keep, so the column defaults to off and the control arrives with the feature that gives it meaning.
+ * **"Exclude sale items" is on this form as of W3-05c.** W3-05 left it off because it could only exclude
+ * a line a sale campaign priced and `marketing.SaleCampaigns` did not exist (ADM-14) — a checkbox that
+ * could not change any total is a promise this shop would not keep. ADM-14 merged, so the flag changes a
+ * real total and the shop was applying a rule no staff member could set. **The label has to say which
+ * items**: doc 11 §7 G-07 and doc 11 line 464 are explicit that it removes lines a *campaign* priced and
+ * keeps lines that only carry a markdown, and that distinction is the whole point of the field — a
+ * checkbox reading only "exclude sale items" would be read as covering both.
  *
  * **There is a remove, and it is a soft delete.** Doc 11 P3's permission table has `Promotions.Delete` for
  * "remove campaign or code". It releases the code string for reuse and leaves every placed order alone,
@@ -279,6 +282,28 @@ import { CatalogFailure, toCatalogFailure } from '../../core/catalog/admin-catal
             }
           </label>
 
+          <!-- Doc 11 P3 step 7's "exclude sale items", with the distinction doc 11 §7 G-07 draws spelled
+               out underneath rather than left to the two words. The two readings it separates — a
+               campaign price and a markdown — are both "on sale" in a shopper's words, and only one of
+               them is excluded. -->
+          <span class="promo-check promo-check--wide">
+            <input
+              type="checkbox"
+              id="promo-exclude-sale"
+              aria-describedby="promo-exclude-sale-hint"
+              [checked]="excludeSaleItems()"
+              data-testid="promo-exclude-sale"
+              (change)="toggleExcludeSaleItems($event)"
+            />
+            <label for="promo-exclude-sale" data-testid="promo-exclude-sale-field">
+              Skip items a sale campaign has discounted
+            </label>
+          </span>
+          <p class="adm-panel__hint promo-check__hint" id="promo-exclude-sale-hint">
+            Lines a sale campaign is pricing are left out of what this code takes off. A product whose
+            own price has simply been marked down still counts.
+          </p>
+
           <!-- A 44 px row around a 24 px box, and the label is part of the control, which is the shape
                CouriersPage settled on: the shared 20 px checkbox fails GLB-09's floor and a 44 px native
                one renders as an outsized glyph. -->
@@ -348,6 +373,14 @@ import { CatalogFailure, toCatalogFailure } from '../../core/catalog/admin-catal
               @if (promoCode.minSpendAmount !== null) {
                 <dt>Smallest order</dt>
                 <dd>{{ promoCode.minSpendAmount }}</dd>
+              }
+              <!-- Shown only when it is on. A row reading "Sale items: included" on every code would be
+                   noise on the common case, and the common case is the column's default. -->
+              @if (promoCode.excludeSaleItems) {
+                <dt>Sale items</dt>
+                <dd [attr.data-testid]="'excludes-sale-' + promoCode.id">
+                  Skipped when a sale campaign is pricing them
+                </dd>
               }
               @if (promoCode.description) {
                 <dt>Note</dt>
@@ -453,6 +486,16 @@ import { CatalogFailure, toCatalogFailure } from '../../core/catalog/admin-catal
       min-height: var(--tap);
       cursor: pointer;
     }
+    /* The two long labels get the whole row rather than a grid column, so neither wraps to one word per
+       line at 320 px. .adm-fields is the grid; this is the same escape .adm-field--wide takes. No
+       backticks in here: the styles block is a template literal. */
+    .promo-check--wide {
+      grid-column: 1 / -1;
+    }
+    .promo-check__hint {
+      grid-column: 1 / -1;
+      margin: 0;
+    }
   `,
 })
 export class PromoCodesPage {
@@ -479,6 +522,7 @@ export class PromoCodesPage {
   protected readonly minSpendAmount = signal('');
   protected readonly startsAt = signal('');
   protected readonly endsAt = signal('');
+  protected readonly excludeSaleItems = signal(false);
   protected readonly totalUsageLimit = signal('');
   protected readonly perCustomerLimit = signal('');
   protected readonly isActive = signal(true);
@@ -514,6 +558,10 @@ export class PromoCodesPage {
 
   protected toggleActive(event: Event): void {
     this.isActive.set((event.target as HTMLInputElement | null)?.checked ?? false);
+  }
+
+  protected toggleExcludeSaleItems(event: Event): void {
+    this.excludeSaleItems.set((event.target as HTMLInputElement | null)?.checked ?? false);
   }
 
   /**
@@ -559,6 +607,10 @@ export class PromoCodesPage {
     // member did not choose, and the server refuses a missing start with a message against the control.
     this.startsAt.set('');
     this.endsAt.set('');
+
+    // Off, which is the column's default and the reading doc 08 §6 step 7 is written in: a new code
+    // discounts every line until somebody says otherwise.
+    this.excludeSaleItems.set(false);
     this.totalUsageLimit.set('');
     this.perCustomerLimit.set('');
     this.isActive.set(true);
@@ -584,6 +636,7 @@ export class PromoCodesPage {
     // the only transformation is trimming the seconds the input does not show.
     this.startsAt.set(toLocalInput(promoCode.startsAt));
     this.endsAt.set(promoCode.endsAt === null ? '' : toLocalInput(promoCode.endsAt));
+    this.excludeSaleItems.set(promoCode.excludeSaleItems);
     this.totalUsageLimit.set(
       promoCode.totalUsageLimit === null ? '' : String(promoCode.totalUsageLimit),
     );
@@ -650,6 +703,7 @@ export class PromoCodesPage {
           minSpendAmount: toNumberOrNull(this.minSpendAmount()),
           startsAt: this.startsAt().trim(),
           endsAt: blankToNull(this.endsAt()),
+          excludeSaleItems: this.excludeSaleItems(),
           totalUsageLimit: toNumberOrNull(this.totalUsageLimit()),
           perCustomerLimit: toNumberOrNull(this.perCustomerLimit()),
           isActive: this.isActive(),

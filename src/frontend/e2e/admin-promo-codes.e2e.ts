@@ -145,6 +145,33 @@ test.describe('the promo-codes screen (ADM-13)', () => {
     await expect(page.locator('[data-testid="promo-said"]')).toContainText('can be used again');
   });
 
+  /**
+   * Doc 11 P3 step 7's "exclude sale items", in a browser.
+   *
+   * **The label is the assertion.** Doc 11 §7 G-07 separates a line a sale campaign is pricing, which
+   * this flag removes, from a line that only carries a markdown, which it keeps — and both are "on sale"
+   * in a shopper's words. A checkbox reading only "Exclude sale items" would be read as covering both.
+   * The round trip itself is proved against a real SQL Server in `AdminPromoCodeEndpointTests`; nothing
+   * here can observe the API (#126).
+   */
+  test('offers the sale-item exclusion, saying which items it skips', async ({ page }) => {
+    await open(page);
+
+    const label = page.locator('[data-testid="promo-exclude-sale-field"]');
+
+    await expect(label).toContainText('sale campaign');
+    await expect(page.locator('#promo-exclude-sale-hint')).toContainText('marked down');
+
+    await expect(page.locator('[data-testid="promo-exclude-sale"]')).not.toBeChecked();
+
+    await page.locator('[data-testid="promo-exclude-sale-field"]').click();
+    await expect(page.locator('[data-testid="promo-exclude-sale"]')).toBeChecked();
+
+    await addCode(page, 'E2EEXCL');
+
+    await expect(page.locator('[data-testid="excludes-sale-1"]')).toContainText('sale campaign');
+  });
+
   /** The save button carries `aria-disabled`, never `disabled` (#109). */
   test('never gives the save button the disabled attribute', async ({ page }) => {
     await open(page);
@@ -191,6 +218,7 @@ test.describe('the promo-codes screen (ADM-13)', () => {
       '[data-testid="promo-value"]',
       '[data-testid="promo-starts"]',
       '[data-testid="promo-save"]',
+      '[data-testid="promo-exclude-sale-field"]',
       '[data-testid="promo-active-field"]',
       '[data-testid="edit-1"]',
       '[data-testid="remove-1"]',
