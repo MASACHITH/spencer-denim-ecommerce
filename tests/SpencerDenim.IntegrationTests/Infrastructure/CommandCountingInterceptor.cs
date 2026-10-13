@@ -148,6 +148,38 @@ public sealed class CommandCountingInterceptor : DbCommandInterceptor
     }
 
     /// <summary>
+    /// The watches, for a command that returns no rows — <c>ExecuteSqlInterpolatedAsync</c> and every other
+    /// <c>INSERT</c>, <c>UPDATE</c> or <c>DELETE</c> EF sends.
+    /// </summary>
+    /// <remarks>
+    /// <b>Added by the W4-01 verification, and it deliberately does not touch <see cref="Count"/>.</b>
+    /// Without these two overrides <see cref="Watch"/> could only see reads, so "how many attempts reached
+    /// this statement" was unanswerable for exactly the statements where it matters — the guarded
+    /// <c>INSERT</c> in <c>PaymentEventStore</c>, the order claim, the stock deducts. <see cref="Count"/> is
+    /// left alone because several suites assert an exact number of commands against it
+    /// (<c>CartQueryPlanTests</c>, <c>CatalogQueryPlanTests</c>, <c>HomeEndpointTests</c>) and counting
+    /// non-queries as well would change every one of those numbers for no reason.
+    /// </remarks>
+    public override InterceptionResult<int> NonQueryExecuting(
+        DbCommand command,
+        CommandEventData eventData,
+        InterceptionResult<int> result)
+    {
+        ObserveWatched(command);
+        return base.NonQueryExecuting(command, eventData, result);
+    }
+
+    public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
+        DbCommand command,
+        CommandEventData eventData,
+        InterceptionResult<int> result,
+        CancellationToken cancellationToken = default)
+    {
+        ObserveWatched(command);
+        return base.NonQueryExecutingAsync(command, eventData, result, cancellationToken);
+    }
+
+    /// <summary>
     /// Counts one executed command: the total, and each watched substring it contains.
     /// </summary>
     /// <remarks>
@@ -157,7 +189,11 @@ public sealed class CommandCountingInterceptor : DbCommandInterceptor
     private void Observe(DbCommand command)
     {
         Interlocked.Increment(ref _count);
+        ObserveWatched(command);
+    }
 
+    private void ObserveWatched(DbCommand command)
+    {
         if (_watched.IsEmpty)
         {
             return;
