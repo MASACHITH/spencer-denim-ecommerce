@@ -281,6 +281,33 @@ public sealed class CampaignPricingTests
     }
 
     /// <summary>
+    /// A product priced <b>below</b> Rs. 1.00 is left alone entirely, rather than put <i>up</i> to the
+    /// floor.
+    /// </summary>
+    /// <remarks>
+    /// <b>This is a reachable state and the behaviour is load-bearing.</b>
+    /// <c>CK_Products_BasePrice</c> is <c>&gt; 0</c>, so Rs. 0.50 is a price the catalogue allows, and a
+    /// campaign over a whole department sweeps up whatever is in it. The floor would resolve such a line
+    /// to Rs. 1.00 — <i>above</i> its list price — and <c>OrderPricing.ValidateLines</c> requires
+    /// <c>UnitListPrice &gt;= UnitPrice</c>, so a winner here would throw inside the placement
+    /// transaction and the shopper would meet a failed checkout with no explanation. The strict
+    /// comparison in <see cref="CampaignPricing.Best"/> is what prevents it: Rs. 1.00 is not below
+    /// Rs. 0.50, so no campaign wins and the sale price stays the list price.
+    /// </remarks>
+    [Fact]
+    public void A_product_priced_under_a_rupee_is_not_put_up_to_the_floor()
+    {
+        CampaignOffer[] offers =
+        [
+            new(80, SaleDiscountType.Percent, 50m),
+            new(81, SaleDiscountType.FixedAmount, 0.10m),
+        ];
+
+        Assert.Null(CampaignPricing.Best(offers, listPrice: 0.50m));
+        Assert.Equal(0.50m, CatalogPricing.SalePrice(0.50m, CampaignPricing.Best(offers, 0.50m)?.Price));
+    }
+
+    /// <summary>
     /// A discount type outside <c>CK_SaleCampaigns_DiscountType</c> throws rather than quietly charging
     /// the list price.
     /// </summary>
