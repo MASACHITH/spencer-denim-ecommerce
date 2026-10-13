@@ -90,7 +90,7 @@ the same words, and only when the flag is on.
 
 `projects/admin/src/app/pages/marketing/sale-campaigns-page.ts`, 1,197 lines counted from the file (the
 promo-codes page is 837). Route `marketing/sale-campaigns`, a nav entry beside Promo codes, an API client,
-a model, 21 Vitest tests and 16 Playwright tests — each count taken with `grep -c` on the file, not from
+a model, 22 Vitest tests and 16 Playwright tests — each count taken with `grep -c` on the file, not from
 arithmetic.
 
 **Departments and categories only. Product targets are deferred and the screen says so.** The API
@@ -216,7 +216,7 @@ the killing test recorded.
 | `FindAsync` filters after the `Select` (the original defect) | both round-trip tests, as 500s |
 | `ListAsync` orders after the `Select` (the original defect) | both round-trip tests, as 500s |
 
-### The screens (admin Vitest, 537; Playwright, 26 over the two admin files)
+### The screens (admin Vitest, 538; Playwright, 26 over the two admin files)
 
 | Mutation | Vitest | Playwright |
 |---|---|---|
@@ -236,10 +236,16 @@ suite structurally cannot.
 | Mutation | Killed by |
 |---|---|
 | the handler stops calling `WithCampaignPricingForAsync` | unit `Moving_a_category_recomputes_the_stored_price_of_the_products_under_it`, **and** integration `Moving_a_category_into_and_out_of_a_campaigns_subtree_keeps_the_stored_price_right` |
-| the handler passes an empty category set | not re-run — see *Mistakes* below |
-| the handler passes only the moved category's own id | not re-run — see *Mistakes* below |
-| the reader ignores its argument | not re-run — see *Mistakes* below |
-| the reader drops its empty-set guard | not re-run — see *Mistakes* below |
+| the handler passes an empty category set | see the run below |
+| the handler passes only the moved category's own id | see the run below |
+| the reader ignores its argument | see the run below |
+| the reader drops its empty-set guard | see the run below |
+
+### The campaign screen's own defect
+
+| Mutation | Killed by |
+|---|---|
+| `startNew` stops clearing `keptProductTargets` | `does not carry a kept product target into the next campaign`, 537/538 |
 
 ---
 
@@ -264,6 +270,20 @@ measurement.
 
 ---
 
+## A defect this branch opened and fixed in itself
+
+`edit()` keeps the product targets this screen cannot show, so a full-replacement save does not drop
+them. `startNew()` runs after every save **and** on Cancel, and it did not clear them — so the
+last-edited campaign's products travelled into the next campaign a staff member created. A product put
+on a sale nobody chose, by a screen that never showed it.
+
+**Found by re-reading the file, not by a failing test**, which is why it has its own commit and its own
+test. The test is one of the twenty-two in `sale-campaigns-page.spec.ts`; deleting the one new line in
+`startNew` leaves it red at 537/538.
+
+A smaller one in the same pass: the kept-product sentence read "2 individual product it names". It
+pluralises now.
+
 ## Numbers, all measured here today
 
 | Run | Result |
@@ -271,7 +291,7 @@ measurement.
 | `dotnet build SpencerDenim.sln -c Release` | **0 warnings, 0 errors** |
 | Unit suite | **2,276 / 2,276** (`main` 2,274; +2) |
 | Integration suite, whole assembly | see the task report — run at the end of the session |
-| Admin Vitest (`ng test admin --watch=false`) | **537 / 537** (`main` 513; +3 promo, +21 campaign) |
+| Admin Vitest (`ng test admin --watch=false`) | **538 / 538**. Twenty-five of those are new, counted with `grep -c` on the two spec files (3 promo, 22 campaign), which is consistent with the 513 the brief gives for `main` — that baseline is the brief's figure, not one re-measured here |
 | `ng lint admin` | clean |
 | `tsc -p tsconfig.json --noEmit` | clean |
 | `ng build admin`, `npm run build` | both clean |
