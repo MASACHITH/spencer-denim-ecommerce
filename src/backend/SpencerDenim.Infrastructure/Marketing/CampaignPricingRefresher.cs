@@ -143,7 +143,13 @@ internal sealed class CampaignPricingRefresher(AppDbContext dbContext, IClock cl
                     SELECT l.ProductId,
                            l.OriginalPrice,
                            ISNULL((
-                               SELECT MIN(CASE WHEN candidate.Price < l.ListPrice THEN candidate.Price END)
+                               -- The "only a campaign that beats the list price wins" test is in this
+                               -- subquery's WHERE and not inside the MIN, because SQL Server refuses an
+                               -- aggregate whose expression mixes an outer reference with an inner
+                               -- column ("Multiple columns are specified in an aggregated expression
+                               -- containing an outer reference"). The two are the same rule either way:
+                               -- MIN over the candidates that beat the list price, and NULL when none do.
+                               SELECT MIN(candidate.Price)
                                  FROM (
                                      SELECT CASE WHEN c.DiscountType = 1
                                                  THEN CASE WHEN ROUND(l.ListPrice * (1 - c.DiscountValue / 100.0), 2) < 1.00
@@ -180,6 +186,7 @@ internal sealed class CampaignPricingRefresher(AppDbContext dbContext, IClock cl
                                                )
                                         )
                                  ) AS candidate
+                                WHERE candidate.Price < l.ListPrice
                            ), l.ListPrice) AS SalePrice
                       FROM lines l
                 )

@@ -1,6 +1,7 @@
 using System.Net;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using SpencerDenim.Application.Marketing.Promotions.Abstractions;
 using SpencerDenim.Application.Sales.Checkout.Contracts;
 using SpencerDenim.Domain.Marketing;
 using SpencerDenim.Domain.Sales;
@@ -283,13 +284,29 @@ public abstract class CheckoutCampaignTestBase(SqlServerDatabaseFixture sqlServe
             .ToDictionaryAsync(line => line.VariantId, Token);
     }
 
-    /// <summary>Removes every campaign this test arranged, then hands over to the stock restore.</summary>
+    /// <summary>
+    /// Removes every campaign this test arranged, puts the affected products' stored summaries back, then
+    /// hands over to the stock restore.
+    /// </summary>
+    /// <remarks>
+    /// <b>The summary has to be put back as well as the campaign removed.</b> <c>catalog.ProductStats</c>
+    /// is what the listing, Sale page and homepage suites assert prices from, so a test that recomputed a
+    /// product's summary while a campaign was live and then only soft-deleted the campaign would leave a
+    /// Rs. 4,392.00 and a Sale badge behind for <c>CatalogListingTests</c> to trip over — a failure with
+    /// no visible connection to campaigns at all. The restore runs the production refresher with every
+    /// campaign already gone, so it writes exactly what the seeder wrote.
+    /// </remarks>
     public override async ValueTask DisposeAsync()
     {
         if (_campaignIds.Count > 0 && SqlServer.IsAvailable)
         {
             using var scope = SqlServer.CreateScope();
             var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var refresher = scope.ServiceProvider.GetRequiredService<ICampaignPricingRefresher>();
+
+            // Taken *before* the delete: after it, the campaign's targets are still there but asking
+            // which products they reach is a question about a row the filter now hides.
+            var affected = await refresher.ProductsTargetedByAsync(_campaignIds, CancellationToken.None);
 
             var campaigns = await dbContext.SaleCampaigns
                 .Where(campaign => _campaignIds.Contains(campaign.Id))
@@ -301,6 +318,8 @@ public abstract class CheckoutCampaignTestBase(SqlServerDatabaseFixture sqlServe
             }
 
             await dbContext.SaveChangesAsync(CancellationToken.None);
+
+            await refresher.RefreshProductsAsync(affected, CancellationToken.None);
 
             _campaignIds.Clear();
         }
