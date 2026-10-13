@@ -2,6 +2,15 @@
 
 Branch `feature/W3-05b-sale-campaigns`, from `origin/main` at `62bd88e`. Not pushed, no PR.
 
+**`origin/main` has moved on while this branch was being built** — it is `03a4feb` now, two commits
+ahead of the base: `ddd199e` (W4-01 payment groundwork) and `03a4feb` (its review fix). No new migration
+came with them, so `20261013040644_MarketingSaleCampaigns` is still last and the snapshot diff below is
+measured against the base, `62bd88e`, not against today's `origin/main`. Four files are touched by both
+sides and will want a small merge: `Infrastructure/DependencyInjection.cs`,
+`Infrastructure/Sales/OrderPlacementStore.cs` (one line here — `SaleCampaignId = line.Priced.SaleCampaignId`),
+`IntegrationTests/Sales/SalesSchemaTests.cs` and `UnitTests/Application/Sales/PlaceOrderCommandHandlerTests.cs`
+(one `null` added to a line-builder helper). None of them is in the pricing logic.
+
 **There is no CI.** GitHub Actions has been dead since 9 Oct 09:21, so every figure below comes from a
 run on this machine, in this worktree. Where a figure is an estimate or an inference rather than a
 measurement, it says so.
@@ -165,7 +174,7 @@ W3-05 wrote four claims that ADM-14 has falsified. Each is corrected rather than
 | `dotnet build SpencerDenim.sln -c Release` | **0 warnings, 0 errors** |
 | Unit suite | **2,105 / 2,105** (main was 2,077; +28) |
 | `dotnet ef migrations has-pending-model-changes`, after a rebuild | "No changes have been made to the model" |
-| Snapshot diff vs `origin/main` | **+187 lines, 0 deletions** — purely additive |
+| Snapshot diff vs the branch base `62bd88e` | **+187 lines, 0 deletions** — purely additive |
 | `dotnet ef migrations remove` | never run; the one empty migration was removed with `rm` and regenerated |
 
 `TEST_SQL_CONNECTION` was set to `(localdb)\MSSQLLocalDB` for every integration run. The one empty
