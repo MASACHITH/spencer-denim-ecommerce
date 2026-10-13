@@ -62,6 +62,34 @@ public interface ICampaignPricingRefresher
         CancellationToken cancellationToken);
 
     /// <summary>
+    /// The products linked to any of these categories, so a caller can take the affected set before it
+    /// moves one.
+    /// </summary>
+    /// <remarks>
+    /// <b>This exists for the category move, which is the one catalogue write that changes what a
+    /// campaign reaches without touching the campaign or the product.</b>
+    /// <c>UpdateCategoryCommandHandler</c> reparents a category and rebases <c>Path</c> for the whole
+    /// subtree, and <c>Path</c> is exactly what the subtree predicate in
+    /// <see cref="ProductsTargetedByAsync"/> and in the T-SQL recompute match on. So moving a category
+    /// into or out of a targeted subtree changes the <i>live</i> price at once — the bag and checkout
+    /// read live — and leaves the stored summary stale until the campaign ends.
+    /// <c>RefreshCampaignPricing</c> does not fix it, because no boundary has moved.
+    /// <para>
+    /// Moving a category <b>out</b> is the worse direction: the card goes on advertising a discount the
+    /// bag refuses, which is the one disagreement that costs the shop a customer rather than money.
+    /// </para>
+    /// <para>
+    /// <b>Category ids and not a subtree path</b>, because the caller already holds the whole subtree it
+    /// is about to re-path and the set of products under it is the same before and after the move — only
+    /// the campaigns reaching them change. Taking ids avoids asking this method to resolve a path that is
+    /// mid-rewrite.
+    /// </para>
+    /// </remarks>
+    Task<IReadOnlyList<int>> ProductsLinkedToCategoriesAsync(
+        IReadOnlyCollection<int> categoryIds,
+        CancellationToken cancellationToken);
+
+    /// <summary>
     /// One <c>RefreshCampaignPricing</c> pass: recompute the products of every campaign whose start or
     /// end falls in <c>(sinceUtc, untilUtc]</c> (doc 08 §7.4: "for campaigns that started or ended since
     /// the last run").

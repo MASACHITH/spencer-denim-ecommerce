@@ -97,4 +97,39 @@ internal static class CatalogWriteSupport
 
         return result;
     }
+
+    /// <summary>
+    /// Re-applies doc 08 §6 step 3 to a set of products a save has just moved under or out of a campaign's
+    /// reach, once the save has committed.
+    /// </summary>
+    /// <remarks>
+    /// <b>The overload above is "this one product"; this is "these products, for a reason that is not
+    /// about any one of them".</b> A category move rewrites <c>Categories.Path</c> for a whole subtree,
+    /// and <c>Path</c> is what every campaign subtree predicate matches on — so the products under that
+    /// subtree change which campaigns reach them without themselves being touched. See
+    /// <see cref="ICampaignPricingRefresher.ProductsLinkedToCategoriesAsync"/> for why the job does not
+    /// correct it: no campaign boundary has moved.
+    /// <para>
+    /// After the commit and only on a save that wrote something, for the reasons the overload above
+    /// gives, and with the same idempotence behind it: the statement recomputes the whole answer from
+    /// committed rows, so a failure here leaves a stale listing and never a wrong one, and the money path
+    /// does not read these columns at all.
+    /// </para>
+    /// </remarks>
+    public static async Task<CatalogWriteResult> WithCampaignPricingForAsync(
+        CatalogWriteResult result,
+        ICampaignPricingRefresher campaigns,
+        IReadOnlyCollection<int> productIds,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(campaigns);
+        ArgumentNullException.ThrowIfNull(productIds);
+
+        if (result is CatalogWriteResult.Succeeded && productIds.Count > 0)
+        {
+            await campaigns.RefreshProductsAsync(productIds, cancellationToken);
+        }
+
+        return result;
+    }
 }

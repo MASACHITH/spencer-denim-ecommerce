@@ -975,6 +975,11 @@ public sealed class ProductWriteHandlerTests
             CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<int>>([]);
 
+        public Task<IReadOnlyList<int>> ProductsLinkedToCategoriesAsync(
+            IReadOnlyCollection<int> categoryIds,
+            CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<int>>([]);
+
         public Task<CampaignPricingRefreshPass> RefreshBoundariesAsync(
             DateTime sinceUtc,
             DateTime untilUtc,

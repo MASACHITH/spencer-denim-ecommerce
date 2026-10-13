@@ -256,6 +256,33 @@ internal sealed class CampaignPricingRefresher(AppDbContext dbContext, IClock cl
             .ToListAsync(cancellationToken);
     }
 
+    /// <inheritdoc />
+    /// <remarks>
+    /// <b>No <c>IgnoreQueryFilters</c>, and that is measured rather than assumed.</b>
+    /// <c>ProductCategory</c> carries no soft-delete filter of its own — <c>ProductCategoryConfiguration</c>
+    /// does not call <c>ApplySoftDelete</c> — and this query reads only <c>CategoryId</c> and
+    /// <c>ProductId</c>, so it touches no filtered navigation. A soft-deleted product's link is therefore
+    /// included, which is what is wanted: recomputing its summary is correct and costs one row.
+    /// </remarks>
+    public async Task<IReadOnlyList<int>> ProductsLinkedToCategoriesAsync(
+        IReadOnlyCollection<int> categoryIds,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(categoryIds);
+
+        if (categoryIds.Count == 0)
+        {
+            return [];
+        }
+
+        return await dbContext.ProductCategories
+            .AsNoTracking()
+            .Where(link => categoryIds.Contains(link.CategoryId))
+            .Select(link => link.ProductId)
+            .Distinct()
+            .ToListAsync(cancellationToken);
+    }
+
     public async Task<CampaignPricingRefreshPass> RefreshBoundariesAsync(
         DateTime sinceUtc,
         DateTime untilUtc,
