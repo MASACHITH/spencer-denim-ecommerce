@@ -114,12 +114,16 @@ internal sealed class PaymentConfiguration : IEntityTypeConfiguration<Payment>
         // Doc 08 §1.4: a percent is decimal(5,2).
         builder.Property(payment => payment.FxBufferPercent).HasPrecision(5, 2);
 
-        builder.Property(payment => payment.ProviderReference).HasColumnType("varchar(100)");
-        builder.Property(payment => payment.ProviderTransactionId).HasColumnType("varchar(100)");
-        builder.Property(payment => payment.PayerReference).HasMaxLength(100);
+        builder
+            .Property(payment => payment.ProviderReference)
+            .HasColumnType($"varchar({Payment.ProviderReferenceMaxLength})");
+        builder
+            .Property(payment => payment.ProviderTransactionId)
+            .HasColumnType($"varchar({Payment.ProviderTransactionIdMaxLength})");
+        builder.Property(payment => payment.PayerReference).HasMaxLength(Payment.PayerReferenceMaxLength);
         builder.Property(payment => payment.CaptureStartedAtUtc);
-        builder.Property(payment => payment.FailureCode).HasColumnType("varchar(50)");
-        builder.Property(payment => payment.FailureMessage).HasMaxLength(500);
+        builder.Property(payment => payment.FailureCode).HasColumnType($"varchar({Payment.FailureCodeMaxLength})");
+        builder.Property(payment => payment.FailureMessage).HasMaxLength(Payment.FailureMessageMaxLength);
 
         // No FK on ApprovedByUserId: doc 08 §1.5's convention for user columns.
         builder.Property(payment => payment.ApprovedByUserId);

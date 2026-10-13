@@ -16,6 +16,7 @@ import {
   OrderConfirmationDto,
   OrderLineDto,
   OrderPaymentInstructionsDto,
+  OrderPaymentRedirectFormDto,
 } from '../../core/checkout/checkout.model';
 
 const TOKEN = '22222222-2222-4222-8222-222222222222';
@@ -995,5 +996,437 @@ describe('OrderPage (CHK-04)', () => {
     expect(element.querySelector('[data-order-number]')?.textContent?.trim()).toBe(
       'SD-2026-000123',
     );
+  });
+
+  // ---------------------------------------------------------------------------------------------------
+  // W4-01: the pay panel is provider-neutral.
+  //
+  // The server says how to reach an online provider's own page - a form to POST, or a link - and the page
+  // does it without knowing whose page it is. Nothing below names a gateway, and nothing in the page
+  // should: a provider added later must need no change here.
+  // ---------------------------------------------------------------------------------------------------
+
+  const REDIRECT_ACTION = 'https://pay.example.test/checkout';
+
+  /** What an online provider sends: no bank content at all, and a way to reach its page. */
+  function onlineInstructions(
+    overrides: Partial<OrderPaymentInstructionsDto> = {},
+  ): OrderPaymentInstructionsDto {
+    return bankInstructions({
+      providerCode: 'OnlineProvider',
+      reference: null,
+      fields: [],
+      notes: null,
+      acceptsProof: false,
+      redirectUrl: null,
+      redirectForm: null,
+      ...overrides,
+    });
+  }
+
+  /**
+   * A redirect form. `method` is a plain string here so a test can send the one thing the contract says
+   * never arrives, and see the page refuse it.
+   */
+  function redirectForm(
+    overrides: { method?: string; action?: string; fields?: OrderPaymentRedirectFormDto['fields'] } = {},
+  ): OrderPaymentRedirectFormDto {
+    return {
+      method: 'POST',
+      action: REDIRECT_ACTION,
+      fields: [
+        { name: 'order_ref', value: 'SD-2026-000123' },
+        { name: 'amount', value: '9184.00' },
+        // Markup characters, to show a value is carried as a value and never read as HTML.
+        { name: 'signature', value: 'a"b&c<d>e' },
+        // The same name twice: a provider may legitimately repeat one, and both must survive in order.
+        { name: 'item', value: 'first' },
+        { name: 'item', value: 'second' },
+      ],
+      ...overrides,
+    } as OrderPaymentRedirectFormDto;
+  }
+
+  function payPanel(): HTMLElement {
+    return element.querySelector<HTMLElement>('[data-testid="pay-panel"]')!;
+  }
+
+  /** Every part of the panel that only makes sense for a bank transfer. */
+  const BANK_ONLY_TEST_IDS = [
+    'pay-reference',
+    'copy-reference',
+    'pay-bank',
+    'pay-account-number',
+    'copy-pay-account-number',
+    'pay-notes',
+    'reference-input',
+    'save-reference',
+    'slip-input',
+  ];
+
+  function expectNoBankParts(): void {
+    const panel = payPanel();
+
+    for (const id of BANK_ONLY_TEST_IDS) {
+      expect(panel.querySelector(`[data-testid="${id}"]`), id).toBeNull();
+    }
+
+    expect(panel.querySelector('dl')).toBeNull();
+    expect(panel.querySelector('.pay__proof')).toBeNull();
+    expect(panel.querySelector('input[type="text"], input[type="file"]')).toBeNull();
+    expect(panel.textContent ?? '').not.toMatch(/transfer|account|bank|reference|slip|receipt/i);
+  }
+
+  /** Nothing a shopper could press, follow or submit - the point of refusing an address. */
+  function expectNothingToFollow(): void {
+    const panel = payPanel();
+
+    expect(panel.querySelector('form')).toBeNull();
+    expect(panel.querySelector('a')).toBeNull();
+    expect(panel.querySelector('button')).toBeNull();
+    expect(panel.querySelector('input')).toBeNull();
+    expect(panel.textContent).not.toContain('Pay now');
+  }
+
+  it('renders a real POST form for a redirect form, with the fields in order', async () => {
+    await open(order({ payment: onlineInstructions({ redirectForm: redirectForm() }) }));
+
+    const panel = payPanel();
+
+    expect(panel.querySelector('#pay-title')?.textContent?.trim()).toBe('Pay online');
+
+    const form = panel.querySelector<HTMLFormElement>('form[data-testid="pay-redirect-form"]')!;
+
+    expect(form).not.toBeNull();
+    expect(form.getAttribute('method')).toBe('post');
+    expect(form.getAttribute('action')).toBe(REDIRECT_ACTION);
+
+    // Same tab: a payment is a hand-over, not a second window to lose behind the first.
+    expect(form.hasAttribute('target')).toBe(false);
+
+    const inputs = Array.from(form.querySelectorAll<HTMLInputElement>('input'));
+
+    expect(inputs.map((input) => input.getAttribute('type'))).toEqual([
+      'hidden',
+      'hidden',
+      'hidden',
+      'hidden',
+      'hidden',
+    ]);
+    expect(inputs.map((input) => [input.getAttribute('name'), input.getAttribute('value')])).toEqual([
+      ['order_ref', 'SD-2026-000123'],
+      ['amount', '9184.00'],
+      ['signature', 'a"b&c<d>e'],
+      ['item', 'first'],
+      ['item', 'second'],
+    ]);
+
+    // What the browser will actually send, which is not the same thing as what the attributes say.
+    expect(new FormData(form).getAll('signature')).toEqual(['a"b&c<d>e']);
+    expect(new FormData(form).getAll('item')).toEqual(['first', 'second']);
+  });
+
+  it('gives the redirect form a visible, keyboard-reachable Pay now that submits natively', async () => {
+    await open(order({ payment: onlineInstructions({ redirectForm: redirectForm() }) }));
+
+    const form = payPanel().querySelector<HTMLFormElement>('form')!;
+    const buttons = form.querySelectorAll('button');
+
+    expect(buttons).toHaveLength(1);
+
+    const button = buttons[0];
+
+    expect(button.textContent?.trim()).toBe('Pay now');
+    expect(button.type).toBe('submit');
+    expect(button.form).toBe(form);
+    expect(button.classList.contains('btn--primary')).toBe(true);
+
+    // A native button: focusable, activated by Enter and Space, with nothing to switch it off or take it
+    // out of the tab order.
+    expect(button.hasAttribute('disabled')).toBe(false);
+    expect(button.getAttribute('aria-disabled')).toBeNull();
+    expect(button.tabIndex).toBe(0);
+
+    // And nothing of ours stands between the press and the browser: a submit that a handler cancelled
+    // would be a fetch in disguise, and the provider's page would never open.
+    const submit = new Event('submit', { bubbles: true, cancelable: true });
+
+    form.dispatchEvent(submit);
+
+    expect(submit.defaultPrevented).toBe(false);
+    http.expectNone(() => true);
+  });
+
+  it('shows the amount and the due time, in Colombo time, beside a redirect form', async () => {
+    await open(order({ payment: onlineInstructions({ redirectForm: redirectForm() }) }));
+
+    const panel = payPanel();
+
+    expect(panel.querySelector('[data-testid="pay-amount"]')?.textContent).toContain('9,184');
+    expect(panel.querySelector('[data-testid="pay-due"]')?.textContent).toContain(
+      '7 October 2026 at 10.00 am',
+    );
+
+    const copy = panel.querySelector('.pay__lead')?.textContent?.replace(/\s+/g, ' ') ?? '';
+
+    expect(copy).toContain('You will be taken to our secure payment page');
+    expect(copy).toContain('Your order is held until 7 October 2026 at 10.00 am');
+  });
+
+  it('shows none of the bank-only parts for a redirect form', async () => {
+    await open(order({ payment: onlineInstructions({ redirectForm: redirectForm() }) }));
+
+    expectNoBankParts();
+  });
+
+  it('renders a real Pay now link for a redirect url, in the same tab', async () => {
+    await open(
+      order({ payment: onlineInstructions({ redirectUrl: 'https://pay.example.test/hosted?session=abc' }) }),
+    );
+
+    const panel = payPanel();
+
+    expect(panel.querySelector('#pay-title')?.textContent?.trim()).toBe('Pay online');
+
+    const links = panel.querySelectorAll<HTMLAnchorElement>('a');
+
+    expect(links).toHaveLength(1);
+
+    const link = links[0];
+
+    expect(link.getAttribute('href')).toBe('https://pay.example.test/hosted?session=abc');
+    expect(link.textContent?.trim()).toBe('Pay now');
+    expect(link.getAttribute('rel')).toBe('noopener');
+    expect(link.hasAttribute('target')).toBe(false);
+    expect(link.classList.contains('btn')).toBe(true);
+    expect(link.classList.contains('btn--primary')).toBe(true);
+
+    expect(panel.querySelector('form')).toBeNull();
+    expect(panel.querySelector('[data-testid="pay-due"]')?.textContent).toContain(
+      '7 October 2026 at 10.00 am',
+    );
+    expectNoBankParts();
+  });
+
+  it('lets a local build reach a local provider stub over plain http, and nothing else', async () => {
+    for (const url of ['http://localhost:5100/hosted', 'http://127.0.0.1:5100/hosted']) {
+      await open(order({ payment: onlineInstructions({ redirectUrl: url }) }));
+
+      expect(payPanel().querySelector('a')?.getAttribute('href'), url).toBe(url);
+    }
+  });
+
+  it('prefers the form when the server sends both a form and a url', async () => {
+    await open(
+      order({
+        payment: onlineInstructions({
+          redirectUrl: 'https://pay.example.test/hosted',
+          redirectForm: redirectForm(),
+        }),
+      }),
+    );
+
+    const panel = payPanel();
+
+    expect(panel.querySelector('form')?.getAttribute('action')).toBe(REDIRECT_ACTION);
+    expect(panel.querySelector('a')).toBeNull();
+    expect(panel.querySelectorAll('button')).toHaveLength(1);
+  });
+
+  it('keeps the live region and the cancel panel beside a redirect panel', async () => {
+    await open(order({ payment: onlineInstructions({ redirectForm: redirectForm() }) }));
+
+    expect(element.querySelector('[data-testid="pay-announcement"]')).not.toBeNull();
+    expect(element.querySelector('[data-testid="cancel-panel"]')).not.toBeNull();
+  });
+
+  it('draws no redirect panel once the order is no longer waiting for payment', async () => {
+    await open(
+      order({
+        status: 'Paid',
+        statusLabel: 'Paid',
+        payment: onlineInstructions({ redirectForm: redirectForm() }),
+        canCancel: false,
+      }),
+    );
+
+    expect(element.querySelector('[data-testid="pay-panel"]')).toBeNull();
+    expect(element.querySelector('form')).toBeNull();
+  });
+
+  /**
+   * **Addresses the page will not follow.** Angular's sanitiser already rewrites a `javascript:` action
+   * into `unsafe:...`, but it still renders the control - a payment button that goes nowhere. The page
+   * refuses first, so the shopper is told the page is unavailable instead, and there is nothing to press.
+   */
+  const REFUSED: readonly (readonly [string, OrderPaymentInstructionsDto])[] = [
+    [
+      'a javascript: form action',
+      onlineInstructions({ redirectForm: redirectForm({ action: 'javascript:alert(1)' }) }),
+    ],
+    [
+      'a data: form action',
+      onlineInstructions({
+        redirectForm: redirectForm({ action: 'data:text/html,<script>alert(1)</script>' }),
+      }),
+    ],
+    [
+      'a relative form action',
+      onlineInstructions({ redirectForm: redirectForm({ action: '/pay/checkout' }) }),
+    ],
+    [
+      'a protocol-relative form action',
+      onlineInstructions({ redirectForm: redirectForm({ action: '//evil.example/pay' }) }),
+    ],
+    [
+      'a plain-http form action on a public host',
+      onlineInstructions({ redirectForm: redirectForm({ action: 'http://evil.example/pay' }) }),
+    ],
+    [
+      'a form action carrying credentials',
+      onlineInstructions({
+        redirectForm: redirectForm({ action: 'https://pay.example.test@evil.example/pay' }),
+      }),
+    ],
+    [
+      'a form action that is not a url',
+      onlineInstructions({ redirectForm: redirectForm({ action: 'not a url' }) }),
+    ],
+    [
+      'a form that is not a POST',
+      onlineInstructions({ redirectForm: redirectForm({ method: 'GET' }) }),
+    ],
+    [
+      'a javascript: redirect url',
+      onlineInstructions({ redirectUrl: 'javascript:alert(document.cookie)' }),
+    ],
+    ['a relative redirect url', onlineInstructions({ redirectUrl: '/pay/checkout' })],
+    [
+      'a protocol-relative redirect url',
+      onlineInstructions({ redirectUrl: '//evil.example/pay' }),
+    ],
+    [
+      'a plain-http redirect url on a public host',
+      onlineInstructions({ redirectUrl: 'http://evil.example/pay' }),
+    ],
+    [
+      'a plain-http redirect url on a look-alike of localhost',
+      onlineInstructions({ redirectUrl: 'http://localhost.evil.example/pay' }),
+    ],
+    ['a redirect url that is not a url', onlineInstructions({ redirectUrl: 'pay me' })],
+    [
+      'a bad form action even though a good redirect url came with it',
+      // The form wins, and a GET to the bare address would open the provider without its fields.
+      onlineInstructions({
+        redirectUrl: 'https://pay.example.test/hosted',
+        redirectForm: redirectForm({ action: 'javascript:alert(1)' }),
+      }),
+    ],
+  ];
+
+  for (const [label, payment] of REFUSED) {
+    it(`renders nothing to follow, and says so, for ${label}`, async () => {
+      await open(order({ payment }));
+
+      const panel = payPanel();
+
+      expect(panel.querySelector('[data-testid="pay-redirect-unavailable"]')).not.toBeNull();
+      expect(panel.querySelector('#pay-title')?.textContent?.trim()).toBe('Pay online');
+      expect(panel.querySelector('[data-testid="pay-due"]')?.textContent).toContain(
+        '7 October 2026 at 10.00 am',
+      );
+
+      expectNothingToFollow();
+      expectNoBankParts();
+
+      // Not in the markup in any form - including the `unsafe:` prefix Angular's sanitiser would add.
+      const markup = element.innerHTML;
+
+      expect(markup).not.toContain('javascript:');
+      expect(markup).not.toContain('unsafe:');
+      expect(markup).not.toContain('evil.example');
+    });
+  }
+
+  /**
+   * A refused address does not take real bank details away. Instructions that carry bank content are still
+   * telling the truth about it, so the bank panel is drawn - with nothing to follow.
+   */
+  it('falls back to the bank panel when a refused address comes with real bank details', async () => {
+    await open(order({ payment: bankInstructions({ redirectUrl: 'javascript:alert(1)' }) }));
+
+    const panel = payPanel();
+
+    expect(panel.querySelector('#pay-title')?.textContent?.trim()).toBe('How to pay');
+    expect(panel.querySelector('[data-testid="pay-account-number"]')).not.toBeNull();
+    expect(panel.querySelector('form')).toBeNull();
+    expect(panel.querySelector('a')).toBeNull();
+    expect(element.innerHTML).not.toContain('unsafe:');
+  });
+
+  /**
+   * **The bank rendering is unchanged when neither redirect field is set.** Absent, null, empty and
+   * blank all mean "no redirect", and all four must produce the same panel, byte for byte.
+   */
+  it('keeps the bank rendering exactly as it was when no redirect is sent', async () => {
+    await open(order());
+
+    const panel = payPanel();
+    const baseline = panel.innerHTML;
+
+    expect(panel.querySelector('#pay-title')?.textContent?.trim()).toBe('How to pay');
+    expect(panel.querySelector('.pay__lead')?.textContent?.replace(/\s+/g, ' ').trim()).toBe(
+      'Transfer Rs. 9,184 to the account below by 7 October 2026 at 10.00 am, quoting your order '
+        + 'number as the reference. We hold your items until then.',
+    );
+    expect(panel.querySelectorAll('dl.pay__details > .pay__detail')).toHaveLength(5);
+    expect(panel.querySelector('[data-testid="copy-reference"]')).not.toBeNull();
+    expect(panel.querySelector('[data-testid="copy-pay-account-number"]')).not.toBeNull();
+    expect(panel.querySelector('.pay__sub')?.textContent).toContain('Tell us about your transfer');
+    expect(panel.querySelector('[data-testid="reference-input"]')).not.toBeNull();
+    expect(panel.querySelector('[data-testid="save-reference"]')).not.toBeNull();
+    expect(panel.querySelector('[data-testid="slip-input"]')).not.toBeNull();
+    expect(panel.querySelector('form')).toBeNull();
+    expect(panel.querySelector('a')).toBeNull();
+    expect(panel.textContent).not.toContain('Pay now');
+    expect(panel.textContent).not.toContain('Pay online');
+
+    for (const none of [
+      { redirectForm: null },
+      { redirectUrl: '' },
+      { redirectUrl: '   ' },
+      { redirectForm: undefined },
+    ] satisfies Partial<OrderPaymentInstructionsDto>[]) {
+      await open(order({ payment: bankInstructions(none) }));
+
+      expect(payPanel().innerHTML, JSON.stringify(none)).toBe(baseline);
+    }
+  });
+
+  it('never calls a bank transfer an online payment', async () => {
+    await open(order());
+
+    expect(text()).not.toContain('secure payment page');
+    expect(text()).not.toContain('Pay online');
+  });
+
+  /**
+   * Everything on the page outside the pay panel is already neutral - "Awaiting payment", "your order is
+   * held" - so a redirect provider needs no wording change there, and none was made. This pins it: the
+   * only words that name a bank transfer are inside the bank panel.
+   */
+  it('has no bank-transfer wording anywhere on the page for a redirect provider', async () => {
+    // The method's own name comes from the server (`PaymentMethods.Name`), so the fixture gives it the name
+    // an online provider would have rather than the bank method's.
+    await open(
+      order({
+        paymentMethodCode: 'OnlineProvider',
+        paymentMethodName: 'Pay online',
+        payment: onlineInstructions({ redirectForm: redirectForm() }),
+      }),
+    );
+
+    expect(text()).toContain('Awaiting payment. We hold your items until 7 October 2026 at 10.00 am.');
+    expect(text()).not.toMatch(/transfer|bank statement|account number|slip/i);
   });
 });

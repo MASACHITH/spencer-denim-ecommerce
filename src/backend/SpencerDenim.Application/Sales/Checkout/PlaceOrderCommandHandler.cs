@@ -238,12 +238,21 @@ public sealed class PlaceOrderCommandHandler(
         //
         // `OrderUrl: null` here, as on the order page: the link in the email is built inside the store,
         // which is where the order's PublicId is generated, and `PaymentInstructions` carries no URL.
+        //
+        // `PaymentId` and `ProviderReference` are null **because there is no payment row yet**, not because
+        // nobody filled them in: this call precedes the placement transaction that inserts it, and the
+        // order page (GetOrderQueryHandler) is where a row exists to read. A provider whose instructions
+        // need the attempt answers null here and describes itself there; null also means no payment
+        // instructions email is queued, which is right for a provider the customer pays on the provider's
+        // own page.
         var instructions = await paymentProvider.DescribeAsync(
             new PaymentInstructionsRequest(
                 orderNumber,
                 pricing.GrandTotal,
                 initiation.PaymentDueAtUtc,
-                OrderUrl: null),
+                OrderUrl: null,
+                PaymentId: null,
+                ProviderReference: null),
             cancellationToken);
 
         var placement = BuildPlacement(

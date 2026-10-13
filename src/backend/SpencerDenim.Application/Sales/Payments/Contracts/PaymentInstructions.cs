@@ -14,11 +14,34 @@ namespace SpencerDenim.Application.Sales.Payments.Contracts;
 /// The absolute order link, built from the order's <c>PublicId</c>. P7 step 1 lists it beside the bank
 /// details because it is a guest's only route back to the order, and the shop sends no email yet (W3-06).
 /// </param>
+/// <param name="PaymentId">
+/// <c>sales.Payments.Id</c> of the order's payment attempt that is still in flight (Initiated, Pending or
+/// Capturing), or <see langword="null"/> when there is none.
+/// <para>
+/// <b>Null at placement, always, and that is not a shortcoming but an ordering fact.</b> Checkout asks
+/// <c>DescribeAsync</c> <i>before</i> the placement transaction (doc 08 §5.4 keeps every read out of the
+/// transaction that holds the stock locks), so the payment row does not exist yet and has no id. The order
+/// page asks later, after the row exists, and fills this in. A provider that has to name the exact attempt
+/// to the customer — a hosted checkout whose reference carries the payment id, so that the notification
+/// that comes back can be tied to this attempt and not merely to this order — therefore answers
+/// <see langword="null"/> (nothing to say yet) when this is null, and describes itself on the order page.
+/// A bank transfer ignores it.
+/// </para>
+/// </param>
+/// <param name="ProviderReference">
+/// The provider's own identifier for that attempt (<c>sales.Payments.ProviderReference</c> — the PayPal
+/// order id, for instance), or <see langword="null"/> when the provider has not created one yet or has no
+/// such thing. Together with <paramref name="PaymentId"/> it is what lets <c>DescribeAsync</c> find the
+/// provider's own approval page for an <b>existing</b> payment instead of creating a second one on every
+/// page view.
+/// </param>
 public sealed record PaymentInstructionsRequest(
     string OrderNumber,
     decimal AmountLkr,
     DateTime PaymentDueAtUtc,
-    string? OrderUrl);
+    string? OrderUrl,
+    int? PaymentId = null,
+    string? ProviderReference = null);
 
 /// <summary>
 /// The customer-facing "what to do next" for one payment provider, in a shape both v1 providers fit
@@ -38,11 +61,18 @@ public sealed record PaymentInstructionsRequest(
 /// </param>
 /// <param name="Notes">Free text under the fields (<c>Bank.Instructions</c>), plain text, never markup.</param>
 /// <param name="RedirectUrl">
-/// Where to send the customer to pay, for a provider that redirects. Always null for a bank transfer.
+/// Where to send the customer to pay, for a provider whose hosted page is reached by a plain link (a GET
+/// redirect). Always null for a bank transfer. An absolute <c>https</c> URL; the order page refuses to
+/// render anything else as a link.
 /// </param>
 /// <param name="AcceptsProof">
 /// Whether this provider takes a customer-uploaded reference and payment slip (doc 11 P7 step 3). True for
 /// bank transfer, false for a gateway that confirms itself.
+/// </param>
+/// <param name="RedirectForm">
+/// For a provider whose hosted page can only be reached by <b>posting</b> a form to it — the browser has to
+/// submit fields the server computed and signed, so they cannot be a link. Null for a bank transfer and for
+/// a GET redirect. If both this and <paramref name="RedirectUrl"/> are set, the form wins.
 /// </param>
 public sealed record PaymentInstructions(
     string ProviderCode,
@@ -52,7 +82,8 @@ public sealed record PaymentInstructions(
     IReadOnlyList<PaymentInstructionField> Fields,
     string? Notes,
     string? RedirectUrl,
-    bool AcceptsProof);
+    bool AcceptsProof,
+    PaymentRedirectForm? RedirectForm = null);
 
 /// <summary>One labelled detail of <see cref="PaymentInstructions"/>, e.g. "Account number" / "1234567890".</summary>
 /// <param name="Label">What to print beside the value. Set by the provider, never by a caller.</param>

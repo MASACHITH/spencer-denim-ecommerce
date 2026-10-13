@@ -54,8 +54,17 @@ internal sealed class StubPaymentProvider(
         return ValueTask.FromResult(new PaymentInitiation(status, request.PlacedAtUtc + _window));
     }
 
+    /// <summary>Every request checkout or the order page made, in order, so a test can assert what was asked.</summary>
+    public List<PaymentInstructionsRequest> DescribeRequests { get; } = [];
+
     public Task<PaymentInstructions?> DescribeAsync(
         PaymentInstructionsRequest request,
-        CancellationToken cancellationToken) =>
-        Task.FromResult(instructions);
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        DescribeRequests.Add(request);
+
+        return Task.FromResult(instructions);
+    }
 }

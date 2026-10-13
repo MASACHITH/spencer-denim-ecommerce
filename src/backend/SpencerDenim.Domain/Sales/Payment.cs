@@ -24,6 +24,27 @@ namespace SpencerDenim.Domain.Sales;
 /// </summary>
 public sealed class Payment
 {
+    /// <summary><c>varchar(100)</c>: the provider's own id for the attempt (<see cref="ProviderReference"/>).</summary>
+    public const int ProviderReferenceMaxLength = 100;
+
+    /// <summary>
+    /// <c>varchar(100)</c>: the provider's id for the money (<see cref="ProviderTransactionId"/>).
+    /// <b><c>varchar</c>, not <c>nvarchar</c></b>, and it sits in a unique index with the provider code, so
+    /// text outside the code page is not stored as given but folded to <c>?</c> — two different ids can then
+    /// collide. Anything that writes it must therefore hold it to printable ASCII, which every real
+    /// gateway's ids are.
+    /// </summary>
+    public const int ProviderTransactionIdMaxLength = 100;
+
+    /// <summary><c>nvarchar(100)</c>: <see cref="PayerReference"/>.</summary>
+    public const int PayerReferenceMaxLength = 100;
+
+    /// <summary><c>varchar(50)</c>: <see cref="FailureCode"/>.</summary>
+    public const int FailureCodeMaxLength = 50;
+
+    /// <summary><c>nvarchar(500)</c>: <see cref="FailureMessage"/>.</summary>
+    public const int FailureMessageMaxLength = 500;
+
     public int Id { get; set; }
 
     public int OrderId { get; set; }

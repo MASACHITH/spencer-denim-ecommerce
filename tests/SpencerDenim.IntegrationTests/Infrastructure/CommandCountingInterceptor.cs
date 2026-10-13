@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Data.Common;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 
 namespace SpencerDenim.IntegrationTests.Infrastructure;
@@ -10,7 +11,11 @@ namespace SpencerDenim.IntegrationTests.Infrastructure;
 /// </summary>
 public sealed class CommandCountingInterceptor : DbCommandInterceptor
 {
+    /// <summary>SQL Server error 1205: this session was chosen as the deadlock victim.</summary>
+    private const int DeadlockVictimError = 1205;
+
     private int _count;
+    private int _deadlocks;
 
     /// <summary>
     /// How many executed commands contained each watched substring, by substring.
@@ -32,6 +37,51 @@ public sealed class CommandCountingInterceptor : DbCommandInterceptor
     private readonly ConcurrentDictionary<string, int> _watched = new(StringComparer.Ordinal);
 
     public int Count => Volatile.Read(ref _count);
+
+    /// <summary>
+    /// How many commands this host ran that SQL Server killed as a deadlock victim (error 1205).
+    /// </summary>
+    /// <remarks>
+    /// <b>Counted here, on the host's own commands, rather than read from
+    /// <c>sys.dm_os_performance_counters</c>.</b> That counter is the whole server's, and the test server is
+    /// shared: another run's deliberate contention would make a test about <i>this</i> code's locking fail.
+    /// The execution strategy retries a victim silently (<c>EnableRetryOnFailure</c>), so without this a
+    /// deadlock shows up only as slowness — or, past the retry limit, as an exception.
+    /// </remarks>
+    public int DeadlockCount => Volatile.Read(ref _deadlocks);
+
+    public void Reset()
+    {
+        Volatile.Write(ref _count, 0);
+        Volatile.Write(ref _deadlocks, 0);
+    }
+
+    public override void CommandFailed(DbCommand command, CommandErrorEventData eventData)
+    {
+        CountDeadlock(eventData.Exception);
+        base.CommandFailed(command, eventData);
+    }
+
+    public override Task CommandFailedAsync(
+        DbCommand command,
+        CommandErrorEventData eventData,
+        CancellationToken cancellationToken = default)
+    {
+        CountDeadlock(eventData.Exception);
+        return base.CommandFailedAsync(command, eventData, cancellationToken);
+    }
+
+    private void CountDeadlock(Exception? exception)
+    {
+        for (var current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is SqlException sql && sql.Errors.Cast<SqlError>().Any(error => error.Number == DeadlockVictimError))
+            {
+                Interlocked.Increment(ref _deadlocks);
+                return;
+            }
+        }
+    }
 
     /// <summary>
     /// Starts counting commands whose text contains <paramref name="substring"/>, from zero. Calling it
@@ -58,8 +108,6 @@ public sealed class CommandCountingInterceptor : DbCommandInterceptor
             : throw new InvalidOperationException(
                 $"Nothing is watching commands containing '{substring}'. Call Watch first.");
     }
-
-    public void Reset() => Volatile.Write(ref _count, 0);
 
     public override InterceptionResult<DbDataReader> ReaderExecuting(
         DbCommand command,
@@ -100,6 +148,38 @@ public sealed class CommandCountingInterceptor : DbCommandInterceptor
     }
 
     /// <summary>
+    /// The watches, for a command that returns no rows — <c>ExecuteSqlInterpolatedAsync</c> and every other
+    /// <c>INSERT</c>, <c>UPDATE</c> or <c>DELETE</c> EF sends.
+    /// </summary>
+    /// <remarks>
+    /// <b>Added by the W4-01 verification, and it deliberately does not touch <see cref="Count"/>.</b>
+    /// Without these two overrides <see cref="Watch"/> could only see reads, so "how many attempts reached
+    /// this statement" was unanswerable for exactly the statements where it matters — the guarded
+    /// <c>INSERT</c> in <c>PaymentEventStore</c>, the order claim, the stock deducts. <see cref="Count"/> is
+    /// left alone because several suites assert an exact number of commands against it
+    /// (<c>CartQueryPlanTests</c>, <c>CatalogQueryPlanTests</c>, <c>HomeEndpointTests</c>) and counting
+    /// non-queries as well would change every one of those numbers for no reason.
+    /// </remarks>
+    public override InterceptionResult<int> NonQueryExecuting(
+        DbCommand command,
+        CommandEventData eventData,
+        InterceptionResult<int> result)
+    {
+        ObserveWatched(command);
+        return base.NonQueryExecuting(command, eventData, result);
+    }
+
+    public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
+        DbCommand command,
+        CommandEventData eventData,
+        InterceptionResult<int> result,
+        CancellationToken cancellationToken = default)
+    {
+        ObserveWatched(command);
+        return base.NonQueryExecutingAsync(command, eventData, result, cancellationToken);
+    }
+
+    /// <summary>
     /// Counts one executed command: the total, and each watched substring it contains.
     /// </summary>
     /// <remarks>
@@ -109,7 +189,11 @@ public sealed class CommandCountingInterceptor : DbCommandInterceptor
     private void Observe(DbCommand command)
     {
         Interlocked.Increment(ref _count);
+        ObserveWatched(command);
+    }
 
+    private void ObserveWatched(DbCommand command)
+    {
         if (_watched.IsEmpty)
         {
             return;
