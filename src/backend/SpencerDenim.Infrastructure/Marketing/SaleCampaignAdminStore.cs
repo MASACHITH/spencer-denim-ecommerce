@@ -29,39 +29,51 @@ internal sealed class SaleCampaignAdminReader(AppDbContext dbContext, IClock clo
 {
     public async Task<IReadOnlyList<AdminSaleCampaignDto>> ListAsync(CancellationToken cancellationToken)
     {
-        var rows = await Projection()
+        var rows = await Project(
+                Undeleted()
 
-            // Newest first: a staff member who has just created a campaign expects to see it, and the
-            // list is short enough that no paging is warranted (doc 02 line 119 scopes ADM-14 to one
-            // screen).
-            .OrderByDescending(row => row.Id)
+                    // Newest first: a staff member who has just created a campaign expects to see it, and
+                    // the list is short enough that no paging is warranted (doc 02 line 119 scopes ADM-14
+                    // to one screen).
+                    .OrderByDescending(campaign => campaign.Id))
             .ToListAsync(cancellationToken);
 
-        var now = clock.UtcNow.UtcDateTime;
-
-        return rows.Select(row => ToDto(row, now)).ToList().AsReadOnly();
+        return await ToDtosAsync(rows, cancellationToken);
     }
 
     public async Task<AdminSaleCampaignDto?> FindAsync(int campaignId, CancellationToken cancellationToken)
     {
-        var row = await Projection()
-            .FirstOrDefaultAsync(candidate => candidate.Id == campaignId, cancellationToken);
+        var rows = await Project(Undeleted().Where(campaign => campaign.Id == campaignId))
+            .ToListAsync(cancellationToken);
 
-        return row is null ? null : ToDto(row, clock.UtcNow.UtcDateTime);
+        var dtos = await ToDtosAsync(rows, cancellationToken);
+
+        return dtos.Count == 0 ? null : dtos[0];
     }
 
     /// <summary>
-    /// Every undeleted campaign with its targets, projected to the columns the screen uses.
+    /// Every campaign a staff member may see.
     /// </summary>
     /// <remarks>
     /// <c>IsDeleted</c> is excluded both ways — the global soft-delete filter and the predicate written
     /// out here — for the reason <see cref="PromoCodeAdminReader"/> gives: the predicate is what survives
     /// an <c>IgnoreQueryFilters()</c> that somebody adds later for an unrelated reason.
     /// </remarks>
-    private IQueryable<CampaignRow> Projection() =>
-        dbContext.SaleCampaigns
-            .AsNoTracking()
-            .Where(campaign => !campaign.IsDeleted)
+    private IQueryable<SaleCampaign> Undeleted() =>
+        dbContext.SaleCampaigns.AsNoTracking().Where(campaign => !campaign.IsDeleted);
+
+    /// <summary>
+    /// The columns the screen uses, <b>without the targets</b>.
+    /// </summary>
+    /// <remarks>
+    /// <b>Every filter and the ordering go in before this, on the entity, and that is not style.</b> The
+    /// first version of this reader projected first and then wrote <c>.Where(row =&gt; row.Id == id)</c>
+    /// over the projected record; EF Core could not translate it — "The LINQ expression
+    /// 'DbSet&lt;SaleCampaign&gt;() … ).Id == @campaignId)' could not be translated" — and it arrived as
+    /// a 500 from the create endpoint, because the create re-reads the row it has just written.
+    /// </remarks>
+    private static IQueryable<CampaignRow> Project(IQueryable<SaleCampaign> campaigns) =>
+        campaigns
             .Select(campaign => new CampaignRow(
                 campaign.Id,
                 campaign.Name,
@@ -72,23 +84,69 @@ internal sealed class SaleCampaignAdminReader(AppDbContext dbContext, IClock clo
                 campaign.EndsAtUtc,
                 campaign.IsActive,
                 campaign.BannerAssetId,
-                campaign.RowVersion,
-                campaign.Targets
-                    .Select(target => new TargetRow(
-                        target.TargetType,
-                        target.DepartmentId,
-                        target.CategoryId,
-                        target.ProductId,
-                        target.IncludeSubcategories,
-                        target.Department == null ? null : target.Department.Name,
-                        target.Category == null ? null : target.Category.Name,
-                        target.Category == null || target.Category.Department == null
-                            ? null
-                            : target.Category.Department.Name,
-                        target.Product == null ? null : target.Product.Name))
-                    .ToList()));
+                campaign.RowVersion));
 
-    private static AdminSaleCampaignDto ToDto(CampaignRow row, DateTime utcNow) =>
+    /// <summary>
+    /// The targets of these campaigns, with the name of whatever each one points at, in one query.
+    /// </summary>
+    /// <remarks>
+    /// <b>A second query rather than a nested collection in the projection above, and that is not a
+    /// preference.</b> The first version of this reader projected the targets inline, with each one's
+    /// department, category and product names reached through navigations, and EF Core could not
+    /// translate it: "The LINQ expression 'DbSet&lt;SaleCampaign&gt;()' … could not be translated",
+    /// which arrived as a 500 from the create endpoint and nothing else. Two queries also keep the
+    /// shape honest — a campaign list of ten rows is two round-trips whatever the targets do, instead of
+    /// one query whose cost depends on how many products somebody listed.
+    /// </remarks>
+    private async Task<IReadOnlyList<AdminSaleCampaignDto>> ToDtosAsync(
+        List<CampaignRow> campaigns,
+        CancellationToken cancellationToken)
+    {
+        if (campaigns.Count == 0)
+        {
+            return [];
+        }
+
+        var ids = campaigns.Select(campaign => campaign.Id).ToList();
+
+        var targets = await dbContext.SaleCampaignTargets
+            .AsNoTracking()
+            .Where(target => ids.Contains(target.SaleCampaignId))
+            .OrderBy(target => target.Id)
+            .Select(target => new TargetRow(
+                target.SaleCampaignId,
+                target.TargetType,
+                target.DepartmentId,
+                target.CategoryId,
+                target.ProductId,
+                target.IncludeSubcategories,
+                target.Department == null ? null : target.Department.Name,
+                target.Category == null ? null : target.Category.Name,
+                target.Category == null || target.Category.Department == null
+                    ? null
+                    : target.Category.Department.Name,
+                target.Product == null ? null : target.Product.Name))
+            .ToListAsync(cancellationToken);
+
+        var byCampaign = targets
+            .GroupBy(target => target.SaleCampaignId)
+            .ToDictionary(group => group.Key, group => group.ToList());
+
+        var now = clock.UtcNow.UtcDateTime;
+
+        return campaigns
+            .Select(campaign => ToDto(
+                campaign,
+                byCampaign.TryGetValue(campaign.Id, out var own) ? own : [],
+                now))
+            .ToList()
+            .AsReadOnly();
+    }
+
+    private static AdminSaleCampaignDto ToDto(
+        CampaignRow row,
+        List<TargetRow> targets,
+        DateTime utcNow) =>
         new(
             row.Id,
             row.Name,
@@ -99,7 +157,7 @@ internal sealed class SaleCampaignAdminReader(AppDbContext dbContext, IClock clo
             CampaignWindow.ToColombo(row.EndsAtUtc),
             row.IsActive,
             row.BannerAssetId,
-            row.Targets.Select(ToTargetDto).ToList().AsReadOnly(),
+            targets.Select(ToTargetDto).ToList().AsReadOnly(),
             CampaignWindow.StatusOf(row.IsActive, row.StartsAtUtc, row.EndsAtUtc, utcNow),
             row.RowVersion is { } bytes ? Convert.ToBase64String(bytes) : string.Empty);
 
@@ -146,10 +204,10 @@ internal sealed class SaleCampaignAdminReader(AppDbContext dbContext, IClock clo
         DateTime EndsAtUtc,
         bool IsActive,
         int? BannerAssetId,
-        byte[]? RowVersion,
-        List<TargetRow> Targets);
+        byte[]? RowVersion);
 
     private sealed record TargetRow(
+        int SaleCampaignId,
         SaleCampaignTargetType TargetType,
         int? DepartmentId,
         int? CategoryId,
