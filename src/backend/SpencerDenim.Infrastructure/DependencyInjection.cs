@@ -240,6 +240,12 @@ public static class DependencyInjection
         // summary, which the admin save path and the RefreshCampaignPricing job both drive.
         services.AddScoped<ICampaignPricingRefresher, CampaignPricingRefresher>();
 
+        // The admin screen (ADM-14). The reader converts the two UTC columns to Colombo wall-clock at
+        // this edge and resolves each target to the name the list prints; the store keeps one unit of
+        // work so a change and its audit row commit together.
+        services.AddScoped<ISaleCampaignAdminReader, SaleCampaignAdminReader>();
+        services.AddScoped<ISaleCampaignAdminStore, SaleCampaignAdminStore>();
+
         // Doc 08 §3.7's homepage cache. A singleton, because a cache scoped to one request caches
         // nothing at all.
         services.AddSingleton<IHomePageCache, HomePageCache>();

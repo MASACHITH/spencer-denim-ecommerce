@@ -27,4 +27,38 @@ public static class CampaignWindow
     /// </summary>
     public static bool IsLive(bool isActive, DateTime startsAtUtc, DateTime endsAtUtc, DateTime utcNow) =>
         ContentSchedule.IsLive(isActive, startsAtUtc, endsAtUtc, utcNow);
+
+    /// <summary>
+    /// Doc 11 P3's derived status, which the document gives to a campaign and a promo code in one
+    /// sentence: "Scheduled (start in future) → Live → Ended (by date) / Inactive (by staff) / Deleted
+    /// (soft). These are derived from dates and flags, not stored statuses."
+    /// </summary>
+    /// <remarks>
+    /// <b>It delegates to <see cref="PromoCodeSchedule.StatusOf"/> rather than restating the four
+    /// branches</b>, and the shared <see cref="PromoCodeStatus"/> is the document's own shared concept
+    /// rather than a type borrowed by accident. The name reads oddly on a campaign and the alternative —
+    /// a second copy, or renaming the promo-code type and every test that mentions it two days before the
+    /// deadline — is worse: a status a staff member reads has to mean the same thing on both screens, and
+    /// the only way to guarantee that is for it to be the same function.
+    /// </remarks>
+    public static PromoCodeStatus StatusOf(
+        bool isActive,
+        DateTime startsAtUtc,
+        DateTime endsAtUtc,
+        DateTime utcNow) =>
+        PromoCodeSchedule.StatusOf(isActive, startsAtUtc, endsAtUtc, utcNow);
+
+    /// <summary>
+    /// The instant a staff member meant by a wall-clock date and time in the shop, for a campaign's
+    /// window.
+    /// </summary>
+    /// <remarks>
+    /// Delegates to <see cref="PromoCodeSchedule.ToUtc"/> so that Asia/Colombo appears in exactly one
+    /// place in this codebase, which is the whole point of that type existing. "Ends at 23:59" has to mean
+    /// the same thing on a campaign as on a code.
+    /// </remarks>
+    public static DateTime ToUtc(DateTime colomboLocal) => PromoCodeSchedule.ToUtc(colomboLocal);
+
+    /// <summary>The wall-clock date and time in the shop for a stored instant, for the form to show back.</summary>
+    public static DateTime ToColombo(DateTime utc) => PromoCodeSchedule.ToColombo(utc);
 }

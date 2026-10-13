@@ -260,6 +260,17 @@ public static class DependencyInjection
         services.AddScoped<ICommandHandler<DeletePromoCodeCommand, PromoWriteResult>>(
             provider => provider.GetRequiredService<PromoCodeWriteHandlers>());
 
+        // ADM-14 (W3-05b). One class per interface, so each endpoint asks for the one command it sends;
+        // the three writes share every rule, including doc 11 P3 step 3's recompute of the affected
+        // products' stored price summary.
+        services.AddScoped<SaleCampaignWriteHandlers>();
+        services.AddScoped<ICommandHandler<CreateSaleCampaignCommand, SaleCampaignWriteResult>>(
+            provider => provider.GetRequiredService<SaleCampaignWriteHandlers>());
+        services.AddScoped<ICommandHandler<UpdateSaleCampaignCommand, SaleCampaignWriteResult>>(
+            provider => provider.GetRequiredService<SaleCampaignWriteHandlers>());
+        services.AddScoped<ICommandHandler<DeleteSaleCampaignCommand, SaleCampaignWriteResult>>(
+            provider => provider.GetRequiredService<SaleCampaignWriteHandlers>());
+
         services.AddScoped<ContactEnquiryWriteHandlers>();
         services.AddScoped<ICommandHandler<OpenContactSubmissionCommand, ContactSubmissionWriteOutcome>>(
             provider => provider.GetRequiredService<ContactEnquiryWriteHandlers>());
