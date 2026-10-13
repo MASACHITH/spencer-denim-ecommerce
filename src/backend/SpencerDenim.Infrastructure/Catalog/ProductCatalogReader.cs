@@ -821,9 +821,35 @@ internal sealed class ProductCatalogReader(
             StockAvailability.ResolveThreshold(variant.LowStockThreshold, defaultThreshold));
         var stockStatus = StockAvailability.Evaluate(totalAvailable, totalThreshold);
 
+        // **The product-level price block is aggregated from the variants just priced, not read from
+        // `ProductStats` — and that is a fix rather than a tidy-up.** W3-05b made the variants above
+        // price live from campaigns and left this block, the badge and the min/max range reading the
+        // stored summary, which doc 08 §7.4 lets lag five minutes at a campaign boundary. The result was
+        // one page contradicting itself: the header said Rs. 5,490.00 with no Sale badge while the
+        // variant under it, and the Add to bag it feeds, said Rs. 4,392.00. Doc 08 §7.5 puts the PDP
+        // with checkout and the cart — "Checkout, cart, and PDP price and stock are never served from
+        // this cache" — so the whole page has to come from the live read, not half of it.
+        //
+        // The aggregate is the same one `ProductDerivedData.RefreshStats` computes: the detail query
+        // projects only active variants (see the `Where(variant => variant.IsActive)` above), so this is
+        // that function's arithmetic over that function's rows, with step 3 applied. A product with no
+        // active variant keeps the stored figures, which is the only case the aggregate has no rows for
+        // and is a product G-01 will not let anybody publish.
+        var hasVariants = variants.Count > 0;
+
+        var minSalePrice = hasVariants ? variants.Min(variant => variant.Price.Current) : row.MinSalePrice;
+        var maxSalePrice = hasVariants ? variants.Max(variant => variant.Price.Current) : row.MaxSalePrice;
+        var maxOriginalPrice = hasVariants
+            ? variants.Max(variant => variant.Price.Original)
+            : row.MaxOriginalPrice;
+        var maxDiscountPercent = hasVariants
+            ? variants.Max(variant => variant.Price.DiscountPercent)
+            : row.MaxDiscountPercent;
+        var hasDiscount = hasVariants ? maxDiscountPercent > 0m : row.HasDiscount;
+
         var badge = ProductBadgeResolver.Resolve(
             row.BadgeOverride,
-            row.HasDiscount,
+            hasDiscount,
             stockStatus,
             isBestSeller: false,
             row.NewUntilUtc,
@@ -889,13 +915,13 @@ internal sealed class ProductCatalogReader(
                 row.AgeGroupName,
                 row.AgeGroupSlug),
             new PriceDto(
-                row.MinSalePrice,
-                row.MaxOriginalPrice,
-                row.MaxDiscountPercent,
-                row.HasDiscount,
+                minSalePrice,
+                maxOriginalPrice,
+                maxDiscountPercent,
+                hasDiscount,
                 PriceDto.Lkr),
-            row.MinSalePrice,
-            row.MaxSalePrice,
+            minSalePrice,
+            maxSalePrice,
             new RatingDto(row.RatingAverage, row.RatingCount),
             badge,
             stockStatus,
