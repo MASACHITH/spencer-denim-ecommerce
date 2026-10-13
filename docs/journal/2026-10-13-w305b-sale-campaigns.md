@@ -173,7 +173,8 @@ W3-05 wrote four claims that ADM-14 has falsified. Each is corrected rather than
 |---|---|
 | `dotnet build SpencerDenim.sln -c Release` | **0 warnings, 0 errors** |
 | Unit suite | **2,106 / 2,106** (main was 2,077; +29) |
-| Integration suite | **1,446 tests**; whole-assembly runs of 1,444 (two cross-suite assertions, fixed), 1,442 (four `CartStaleItemTests`, a real fixture collision, fixed) and 1,445 (one `CheckoutPromoRaceTests`, see below). 21 m 2 s / 19 m 19 s / 21 m 5 s. Main was 1,401; +45 |
+| Integration suite | **1,446 / 1,446 in 20 m 9 s** on the fifth whole-assembly run (main was 1,401; +45) |
+| Integration suite, the four runs before it | 1,444 (two cross-suite assertions — fixed), 1,442 (four `CartStaleItemTests`, a real fixture collision — fixed), 1,445 (one `CheckoutPromoRaceTests`, see below), 1,431 (fifteen, my own broken teardown — fixed). 21 m 2 s / 19 m 19 s / 21 m 5 s / 21 m |
 | `dotnet ef migrations has-pending-model-changes`, after a rebuild | "No changes have been made to the model" |
 | Snapshot diff vs the branch base `62bd88e` | **+187 lines, 0 deletions** — purely additive |
 | `dotnet ef migrations remove` | never run; the one empty migration was removed with `rm` and regenerated |
@@ -316,7 +317,8 @@ Everything measured about it:
 
 Seven of eight observations pass, and **the failure message was not captured** — the run's output was
 piped through a filter that dropped it, which is a mistake in how the run was invoked rather than a fact
-about the test. The fourth run was therefore invoked unfiltered.
+about the test. Later runs were invoked unfiltered, and **it has not recurred since**: the fifth
+whole-assembly run is 1,446 / 1,446.
 
 **What is honestly known about the cause: not enough.** Two things are worth the next person's attention
 rather than a conclusion:
