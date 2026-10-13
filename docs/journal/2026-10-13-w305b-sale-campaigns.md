@@ -172,10 +172,12 @@ W3-05 wrote four claims that ADM-14 has falsified. Each is corrected rather than
 | Run | Result |
 |---|---|
 | `dotnet build SpencerDenim.sln -c Release` | **0 warnings, 0 errors** |
-| Unit suite | **2,105 / 2,105** (main was 2,077; +28) |
+| Unit suite | **2,106 / 2,106** (main was 2,077; +29) |
+| Integration suite | first whole-assembly run: **1,444 / 1,446** in 21 m 2 s (main was 1,401; +45) — the two failures were the cross-suite assertions below, fixed, re-run pending at the time of writing |
 | `dotnet ef migrations has-pending-model-changes`, after a rebuild | "No changes have been made to the model" |
 | Snapshot diff vs the branch base `62bd88e` | **+187 lines, 0 deletions** — purely additive |
 | `dotnet ef migrations remove` | never run; the one empty migration was removed with `rm` and regenerated |
+| Size, counted from `git diff --stat` against the base | production 3,581 added / 296 changed over 37 files; tests 3,097 added over 13 files; the migration and its designer and snapshot 5,103 added over 3 |
 
 `TEST_SQL_CONNECTION` was set to `(localdb)\MSSQLLocalDB` for every integration run. The one empty
 migration was the `--no-build` stale-binary trap the W1-03 journal records: it generated an empty `Up()`
