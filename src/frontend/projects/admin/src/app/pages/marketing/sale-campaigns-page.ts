@@ -824,11 +824,14 @@ export class SaleCampaignsPage {
 
     this.fieldErrors.set({});
 
+    const kept = this.keptProductTargets.length;
+
     this.announce(
-      this.keptProductTargets.length === 0
+      kept === 0
         ? `Editing ${campaign.name}.`
-        : `Editing ${campaign.name}. It also applies to ${this.keptProductTargets.length} individual `
-          + 'product it names, which this screen cannot change and will keep as they are.',
+        : `Editing ${campaign.name}. It also applies to ${kept} individual `
+          + `${kept === 1 ? 'product it names' : 'products it names'}, which this screen cannot change `
+          + 'and will keep as they are.',
     );
   }
 
