@@ -612,6 +612,67 @@ describe('SaleCampaignsPage (ADM-14)', () => {
     await settle();
   });
 
+  /**
+   * **A product target kept for an edit must not leak into the next campaign.**
+   *
+   * `edit` holds the product targets this screen cannot show, and the form posts every field — so a
+   * `startNew` that did not clear them would put the last-edited campaign's products on the next campaign
+   * a staff member created. That is a product on a sale nobody chose, by a screen that never showed it.
+   * This was a real defect in this file, found by re-reading it rather than by a failing test.
+   */
+  it('does not carry a kept product target into the next campaign', async () => {
+    await open([
+      campaign({
+        targets: [
+          target(),
+          target({
+            targetType: 'Product',
+            categoryId: null,
+            productId: 88,
+            name: 'Relaxed Linen Blend Shirt',
+          }),
+        ],
+      }),
+    ]);
+
+    click('edit-4');
+    await settle();
+
+    // Cancel, which is `startNew`, and then build a fresh campaign.
+    click('campaign-cancel');
+    await settle();
+
+    type('campaign-name', 'T4FRESH');
+    type('campaign-value', '20');
+    type('campaign-starts', '2026-10-19T00:00');
+    type('campaign-ends', '2026-10-26T00:00');
+    choose('target-category', '31');
+    click('add-target');
+    await settle();
+
+    click('campaign-save');
+    answerAntiforgery();
+    await settle();
+
+    const request = http.expectOne(
+      (candidate) => candidate.url === AdminCampaignApi.campaignsUrl && candidate.method === 'POST',
+    );
+
+    expect((request.request.body as { targets: unknown[] }).targets).toEqual([
+      {
+        targetType: 'Category',
+        departmentId: null,
+        categoryId: 31,
+        productId: null,
+        includeSubcategories: true,
+      },
+    ]);
+
+    request.flush(saved());
+    http.expectOne(AdminCampaignApi.campaignsUrl).flush([campaign()]);
+    await settle();
+  });
+
   /** The server's field message lands against its own control, which is the only thing saying where. */
   it('shows the server message against the field it named', async () => {
     await open([]);

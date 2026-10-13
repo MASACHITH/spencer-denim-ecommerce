@@ -763,6 +763,13 @@ export class SaleCampaignsPage {
     this.endsAt.set('');
     this.isActive.set(true);
     this.targets.set([]);
+
+    // **Cleared here, and leaving it out was a real defect in this file.** `edit` fills it with the
+    // product targets this screen cannot show, and `startNew` runs after every save and on Cancel — so a
+    // form that did not clear it would carry the last-edited campaign's products into the next campaign
+    // a staff member created. That is a product put on a sale nobody chose, by a screen that never showed
+    // it.
+    this.keptProductTargets = [];
     this.targetType.set('Category');
     this.targetDepartmentId.set('');
     this.targetCategoryId.set('');
