@@ -173,7 +173,7 @@ W3-05 wrote four claims that ADM-14 has falsified. Each is corrected rather than
 |---|---|
 | `dotnet build SpencerDenim.sln -c Release` | **0 warnings, 0 errors** |
 | Unit suite | **2,106 / 2,106** (main was 2,077; +29) |
-| Integration suite | **1,446 tests**; three whole-assembly runs — 1,444 (two cross-suite assertions, fixed), 1,442 (four `CartStaleItemTests`, a real fixture collision, fixed), then the confirming run. Main was 1,401; +45 |
+| Integration suite | **1,446 tests**; whole-assembly runs of 1,444 (two cross-suite assertions, fixed), 1,442 (four `CartStaleItemTests`, a real fixture collision, fixed) and 1,445 (one `CheckoutPromoRaceTests`, see below). 21 m 2 s / 19 m 19 s / 21 m 5 s. Main was 1,401; +45 |
 | `dotnet ef migrations has-pending-model-changes`, after a rebuild | "No changes have been made to the model" |
 | Snapshot diff vs the branch base `62bd88e` | **+187 lines, 0 deletions** — purely additive |
 | `dotnet ef migrations remove` | never run; the one empty migration was removed with `rm` and regenerated |
@@ -264,6 +264,40 @@ to exactly the seeded figure.
 **Why it matters beyond this branch:** the first whole-assembly run passed `CartStaleItemTests`, so a
 filtered run — or one lucky full run — would have let this through to a tester as "flaky". It is not
 flaky; it is deterministic given the class order.
+
+## The one failure I could not reproduce, stated as measured
+
+The third whole-assembly run failed **one** test:
+`CheckoutPromoRaceTests.Four_simultaneous_checkouts_take_only_the_last_use_a_code_has`. It is a promo-code
+test from W3-05, not a campaign test.
+
+Everything measured about it:
+
+| Observation | Result |
+|---|---|
+| Whole-assembly run 1 | pass |
+| Whole-assembly run 2 | pass |
+| Whole-assembly run 3 | **fail** |
+| That class alone, three times | pass, pass, pass (5/5 each) |
+| That class together with all three campaign suites, twice | pass, pass (23/23 each) |
+
+Seven of eight observations pass, and **the failure message was not captured** — the run's output was
+piped through a filter that dropped it, which is a mistake in how the run was invoked rather than a fact
+about the test. The fourth run was therefore invoked unfiltered.
+
+**What is honestly known about the cause: not enough.** Two things are worth the next person's attention
+rather than a conclusion:
+
+- The test's own remarks say the number of contenders that reach the contended statement is "an assertion
+  about scheduling", and it settles for `>= 2` of 4 for exactly that reason. Its guard is a measurement of
+  the scheduler, so it is sensitive to machine load, and a 21-minute whole-assembly run is the loudest
+  load this suite ever sees.
+- W3-05b **does** add one query to the checkout read on the placement path (the live campaign read),
+  before the promo section. That is a plausible contributor to the timing and it is unproven: the same
+  code passed the test in two full runs and in five targeted ones.
+
+It is **not** called flaky here. It is one failure in eight observations that I could not reproduce in
+five attempts, on a test whose own assertion is about scheduling, and that is all the evidence there is.
 
 ## What is not done
 
