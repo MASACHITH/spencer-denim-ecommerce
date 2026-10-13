@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using SpencerDenim.Application.Marketing.Promotions.Abstractions;
 using SpencerDenim.Application.Sales.Checkout.Contracts;
+using SpencerDenim.Application.Sales.Orders.Abstractions;
 using SpencerDenim.Domain.Marketing;
 using SpencerDenim.Domain.Sales;
 using SpencerDenim.Infrastructure.Persistence;
@@ -44,6 +45,37 @@ public abstract class CheckoutCampaignTestBase(SqlServerDatabaseFixture sqlServe
     /// </para>
     /// </remarks>
     private readonly List<int> _campaignIds = [];
+
+    /// <summary>
+    /// Every variant whose stock this test arranged, so <see cref="DisposeAsync"/> can give back the
+    /// reservations its orders are holding.
+    /// </summary>
+    /// <remarks>
+    /// <b>This exists because the first version of this suite reddened four of
+    /// <c>CartStaleItemTests</c>' twelve tests in a whole-assembly run, and the mechanism is the one
+    /// <c>CheckoutTestBase</c>'s own remarks describe.</b> Those tests set <c>OnHand</c> to 0 or 1 on
+    /// variants taken from the <i>low</i> end of the catalogue, and this suite has to use the <i>linen
+    /// shirt</i> and the <i>jeans</i> — doc 08 §6's worked example is about those two products
+    /// specifically — which are <c>SD-W-0001</c> and <c>SD-W-0009</c>, at the low end. A placed order
+    /// holds its reservation for ever, so <c>Reserved</c> stayed above zero and
+    /// <c>CK_StockLevels_ReservedLeOnHand</c> refused their <c>UPDATE</c>: "The UPDATE statement
+    /// conflicted with the CHECK constraint". Twelve of twelve on its own, four red together, reproduced
+    /// with the two classes alone in sixteen seconds.
+    /// <para>
+    /// <b>The fix is to give the stock back, not to restore a number.</b> <c>CheckoutTestBase</c>'s
+    /// restore deliberately puts <c>OnHand</c> back as <c>original + held</c> so that <c>Available</c> is
+    /// right, which is correct for a suite whose orders stand — but it leaves <c>Reserved</c> above zero,
+    /// and that is what the other suite trips on. Cancelling each order releases the reservation through
+    /// the real <c>IOrderCancellationStore</c>, so <c>Reserved</c> returns to what it was and the base's
+    /// restore then puts <c>OnHand</c> back to exactly the seeded figure.
+    /// </para>
+    /// <para>
+    /// The promo suites do not need this because <c>CheckoutVariantIdsAsync</c> hands out the
+    /// <i>highest</i> ids for exactly this reason. A campaign suite cannot use it: it needs named
+    /// products.
+    /// </para>
+    /// </remarks>
+    private readonly HashSet<int> _arrangedVariantIds = [];
 
     /// <summary>
     /// A new <c>marketing.SaleCampaigns</c> row with its targets, live by default.
@@ -220,6 +252,73 @@ public abstract class CheckoutCampaignTestBase(SqlServerDatabaseFixture sqlServe
         return (cartId, new CheckoutApiClient(cart.Http));
     }
 
+    /// <summary>
+    /// Sets a variant's stock <b>and remembers it</b>, so the reservations this test's orders take are
+    /// released again in <see cref="DisposeAsync"/>. Use this rather than
+    /// <see cref="CheckoutTestBase.SetStockAsync"/> anywhere in a campaign suite — see
+    /// <see cref="_arrangedVariantIds"/> for what goes wrong otherwise.
+    /// </summary>
+    protected async Task ArrangeStockAsync(int variantId, int onHand)
+    {
+        _arrangedVariantIds.Add(variantId);
+
+        await SetStockAsync(variantId, onHand);
+    }
+
+    /// <summary>
+    /// Cancels every order still holding a reservation on a variant this test arranged, through the real
+    /// cancellation store, so <c>inventory.StockLevels.Reserved</c> goes back to what it was.
+    /// </summary>
+    /// <remarks>
+    /// Through <c>IOrderCancellationStore</c> rather than by writing the stock row: the release is a
+    /// transaction with a status change and a history row in it (doc 08 §5.6), and a test that moved the
+    /// number by hand would leave an order claiming a reservation it no longer has — which is the state
+    /// <c>ReconcileStock</c> exists to alert on.
+    /// </remarks>
+    private async Task ReleaseArrangedStockAsync()
+    {
+        List<int> orderIds;
+
+        using (var scope = SqlServer.CreateScope())
+        {
+            orderIds = await scope.ServiceProvider.GetRequiredService<AppDbContext>().OrderLines
+                .AsNoTracking()
+                .Where(line =>
+                    _arrangedVariantIds.Contains(line.VariantId)
+                    && line.Order!.StockState == OrderStockState.Reserved)
+                .Select(line => line.OrderId)
+                .Distinct()
+                .ToListAsync(CancellationToken.None);
+        }
+
+        foreach (var orderId in orderIds)
+        {
+            Guid publicId;
+
+            using (var scope = SqlServer.CreateScope())
+            {
+                publicId = await scope.ServiceProvider.GetRequiredService<AppDbContext>().Orders
+                    .AsNoTracking()
+                    .Where(order => order.Id == orderId)
+                    .Select(order => order.PublicId)
+                    .SingleAsync(CancellationToken.None);
+            }
+
+            using var cancelScope = SqlServer.CreateScope();
+
+            await cancelScope.ServiceProvider
+                .GetRequiredService<IOrderCancellationStore>()
+                .CancelAsync(
+                    new OrderCancellation(
+                        publicId,
+                        OrderCancelledBy.Staff,
+                        Fulfiller(),
+                        "Released by the sale-campaign integration suite.",
+                        DateTime.UtcNow),
+                    CancellationToken.None);
+        }
+    }
+
     /// <summary>Soft-deletes a campaign through the domain method, as doc 08 §10.2 DB5 requires.</summary>
     protected async Task RemoveCampaignAsync(int campaignId)
     {
@@ -298,6 +397,15 @@ public abstract class CheckoutCampaignTestBase(SqlServerDatabaseFixture sqlServe
     /// </remarks>
     public override async ValueTask DisposeAsync()
     {
+        // **Before the base's stock restore, and that order matters.** The base puts `OnHand` back as
+        // `original + held`; releasing first makes `held` zero, so it puts back exactly the seeded
+        // figure and leaves `Reserved` at zero — which is the state every other suite expects to find.
+        if (_arrangedVariantIds.Count > 0 && SqlServer.IsAvailable)
+        {
+            await ReleaseArrangedStockAsync();
+            _arrangedVariantIds.Clear();
+        }
+
         if (_campaignIds.Count > 0 && SqlServer.IsAvailable)
         {
             using var scope = SqlServer.CreateScope();

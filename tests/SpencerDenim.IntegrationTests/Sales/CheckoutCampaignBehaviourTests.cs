@@ -57,8 +57,8 @@ public sealed class CheckoutCampaignBehaviourTests(SqlServerDatabaseFixture sqlS
         var colombo = await DistrictIdAsync("Colombo");
         var express = await DeliveryMethodIdAsync(DeliveryMethod.ExpressCode);
 
-        await SetStockAsync(shirt, 20);
-        await SetStockAsync(jeans, 20);
+        await ArrangeStockAsync(shirt, 20);
+        await ArrangeStockAsync(jeans, 20);
 
         var campaign = await NewCampaignAsync(
             SaleDiscountType.Percent,
@@ -128,8 +128,8 @@ public sealed class CheckoutCampaignBehaviourTests(SqlServerDatabaseFixture sqlS
         var colombo = await DistrictIdAsync("Colombo");
         var express = await DeliveryMethodIdAsync(DeliveryMethod.ExpressCode);
 
-        await SetStockAsync(shirt, 20);
-        await SetStockAsync(jeans, 20);
+        await ArrangeStockAsync(shirt, 20);
+        await ArrangeStockAsync(jeans, 20);
 
         var percent = await NewCampaignAsync(
             SaleDiscountType.Percent,
@@ -181,7 +181,7 @@ public sealed class CheckoutCampaignBehaviourTests(SqlServerDatabaseFixture sqlS
         var colombo = await DistrictIdAsync("Colombo");
         var express = await DeliveryMethodIdAsync(DeliveryMethod.ExpressCode);
 
-        await SetStockAsync(shirt, 20);
+        await ArrangeStockAsync(shirt, 20);
 
         var departmentWide = await NewCampaignAsync(
             SaleDiscountType.Percent,
@@ -226,7 +226,7 @@ public sealed class CheckoutCampaignBehaviourTests(SqlServerDatabaseFixture sqlS
         var colombo = await DistrictIdAsync("Colombo");
         var express = await DeliveryMethodIdAsync(DeliveryMethod.ExpressCode);
 
-        await SetStockAsync(shirt, 20);
+        await ArrangeStockAsync(shirt, 20);
 
         await NewCampaignAsync(
             SaleDiscountType.FixedAmount,
@@ -278,8 +278,8 @@ public sealed class CheckoutCampaignBehaviourTests(SqlServerDatabaseFixture sqlS
         var colombo = await DistrictIdAsync("Colombo");
         var express = await DeliveryMethodIdAsync(DeliveryMethod.ExpressCode);
 
-        await SetStockAsync(shirt, 20);
-        await SetStockAsync(jeans, 20);
+        await ArrangeStockAsync(shirt, 20);
+        await ArrangeStockAsync(jeans, 20);
 
         // Only the jeans. The shirt's markdown is the seeded compare-at price, which is not a campaign.
         var campaign = await NewCampaignAsync(
@@ -342,7 +342,7 @@ public sealed class CheckoutCampaignBehaviourTests(SqlServerDatabaseFixture sqlS
         var shirt = await BaseVariantIdAsync(ShirtSlug);
         var productId = await ProductIdAsync(ShirtSlug);
 
-        await SetStockAsync(shirt, 20);
+        await ArrangeStockAsync(shirt, 20);
 
         var before = await StoredSummaryAsync(productId);
         Assert.Equal(5_490m, before.MinSalePrice);
@@ -380,7 +380,7 @@ public sealed class CheckoutCampaignBehaviourTests(SqlServerDatabaseFixture sqlS
     public async Task A_campaign_that_is_over_deactivated_or_removed_prices_nothing(string how)
     {
         var shirt = await BaseVariantIdAsync(ShirtSlug);
-        await SetStockAsync(shirt, 20);
+        await ArrangeStockAsync(shirt, 20);
 
         var now = DateTime.UtcNow;
 
@@ -412,7 +412,7 @@ public sealed class CheckoutCampaignBehaviourTests(SqlServerDatabaseFixture sqlS
     public async Task Moving_a_campaign_s_end_into_the_past_ends_it_on_the_next_bag_read()
     {
         var shirt = await BaseVariantIdAsync(ShirtSlug);
-        await SetStockAsync(shirt, 20);
+        await ArrangeStockAsync(shirt, 20);
 
         var campaign = await NewCampaignAsync(
             SaleDiscountType.Percent,
@@ -446,8 +446,8 @@ public sealed class CheckoutCampaignBehaviourTests(SqlServerDatabaseFixture sqlS
         var shirt = await BaseVariantIdAsync(ShirtSlug);
         var jeans = await BaseVariantIdAsync(JeansSlug);
 
-        await SetStockAsync(shirt, 20);
-        await SetStockAsync(jeans, 20);
+        await ArrangeStockAsync(shirt, 20);
+        await ArrangeStockAsync(jeans, 20);
 
         await NewCampaignAsync(
             SaleDiscountType.Percent,
