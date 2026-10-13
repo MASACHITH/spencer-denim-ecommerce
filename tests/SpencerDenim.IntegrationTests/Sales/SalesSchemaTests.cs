@@ -450,60 +450,79 @@ public sealed class SalesSchemaTests(SqlServerDatabaseFixture sqlServer) : Sales
             .ToListAsync(Token);
 
     /// <summary>
-    /// The doc 08 foreign keys that are still columns without constraints, because the table they would
-    /// point at does not exist yet. Named in a test so that creating <c>marketing.SaleCampaigns</c> and
-    /// forgetting the constraint is a failure rather than a silence.
+    /// <c>sales.OrderLines.SaleCampaignId</c>, which W3-05b turned from a bare column into a real
+    /// constraint, now points at <c>marketing.SaleCampaigns.Id</c> with <c>NO ACTION</c> both ways — and
+    /// still leads an index.
     /// </summary>
     /// <remarks>
-    /// <b>Three columns have been taken out of this list, and this test is why they were in it.</b>
-    /// <c>Orders.PromoCodeId</c> went when W3-05 created <c>marketing.PromoCodes</c>
-    /// (<see cref="The_promo_code_foreign_key_W3_03_deferred_now_exists"/>), and before that
-    /// <c>Orders.DeliveryDistrictId</c> and <c>PickupLocations.DistrictId</c> went when W3-02 created
-    /// <c>ref.Districts</c> (<see cref="The_district_foreign_keys_W3_03_deferred_now_exist"/>).
+    /// <b>This method replaces a theory, and the theory is why the constraint got added.</b> Until this
+    /// branch, <c>The_deferred_foreign_keys_are_indexed_columns_with_no_constraint</c> asserted that this
+    /// column had <i>no</i> constraint, because <c>marketing.SaleCampaigns</c> (ADM-14) did not exist and
+    /// W2-09's orders migration had built the column bare. It was the last row of that theory; W3-05b
+    /// created the table, the theory failed — the guard working, not a regression — and with its last row
+    /// gone the theory itself has gone, since an xUnit <c>[Theory]</c> with no data is an error rather
+    /// than a pass. The same thing happened to <c>Orders.PromoCodeId</c> in W3-05 and to the two district
+    /// keys in W3-02, and each left a positive test like this one behind.
     /// <para>
-    /// In each case an earlier task built a bare column because the table it pointed at did not exist and
-    /// listed it here, so that whichever task created that table would be forced to notice — and in each
-    /// case this theory failed when it did, which is the guard working rather than a regression. Leaving
-    /// an entry here afterwards would mean asserting the absence of a constraint that branch deliberately
-    /// added.
+    /// <b>Every foreign key doc 08 §3.5 names is therefore now real.</b> There is nothing left to defer in
+    /// this schema. <c>identity.Users.DefaultDistrictId</c> is doc 08 §3.1's third reference to
+    /// <c>ref.Districts</c> and is still unconstrained, on a table outside the <c>sales</c> schema this
+    /// file looks at; see <c>AppUser.DefaultDistrictId</c>.
     /// </para>
     /// <para>
-    /// <c>identity.Users.DefaultDistrictId</c> is doc 08 §3.1's third FK to <c>ref.Districts</c> and is
-    /// deliberately still unconstrained — it has no index, no reader (there is no customer sign-in,
-    /// ACC-01) and lives on a table this branch does not own. It is not in either list because this
-    /// theory only looks at the <c>sales</c> schema; see <c>AppUser.DefaultDistrictId</c>.
+    /// <b>The delete rule is the half worth asserting.</b> A cascade here would mean that purging one
+    /// campaign deleted <b>order lines</b>, and doc 08 §1.6 lists Orders among the rows that are never
+    /// deleted at all. It cannot happen through the application — a campaign is soft-deleted and
+    /// <c>Remove()</c> on it throws (DB5) — but "it cannot happen in practice" is exactly the reasoning
+    /// that leaves a wrong delete rule in a schema for a year. The referenced table and column are
+    /// checked too, because a key pointing at the wrong column would still satisfy "a constraint exists".
+    /// </para>
+    /// <para>
+    /// The index assertion is kept from the theory it replaces: doc 08 §1.6 (DB7) wants every FK column
+    /// leading at least one index, and W3-05b deliberately declared <b>no</b> new index because
+    /// <c>IX_OrderLines_SaleCampaignId</c> was already there. If EF's FK-index convention ever decided to
+    /// add a second one, the index-inventory test below would say so; this says the first one is still
+    /// there.
     /// </para>
     /// </remarks>
-    [Theory]
-    [InlineData("OrderLines", "SaleCampaignId")]
-    public async Task The_deferred_foreign_keys_are_indexed_columns_with_no_constraint(string table, string column)
+    [Fact]
+    public async Task The_sale_campaign_foreign_key_W3_03_deferred_now_exists()
     {
         SqlServer.SkipIfUnavailable();
 
-        var constraints = await DbContext.Database
-            .SqlQuery<int>($"""
-                SELECT COUNT(*) AS [Value]
-                FROM sys.foreign_key_columns fc
-                JOIN sys.columns c
-                  ON c.object_id = fc.parent_object_id AND c.column_id = fc.parent_column_id
-                WHERE fc.parent_object_id = OBJECT_ID('sales.' + {table}) AND c.name = {column}
+        var shape = await DbContext.Database
+            .SqlQuery<string>($"""
+                SELECT CONCAT(
+                           SCHEMA_NAME(rt.schema_id) COLLATE DATABASE_DEFAULT, '.',
+                           rt.name COLLATE DATABASE_DEFAULT, '.',
+                           rc.name COLLATE DATABASE_DEFAULT,
+                           '|', fk.delete_referential_action_desc COLLATE DATABASE_DEFAULT,
+                           '|', fk.update_referential_action_desc COLLATE DATABASE_DEFAULT) AS [Value]
+                FROM sys.foreign_keys fk
+                JOIN sys.foreign_key_columns fc ON fc.constraint_object_id = fk.object_id
+                JOIN sys.columns pc
+                  ON pc.object_id = fc.parent_object_id AND pc.column_id = fc.parent_column_id
+                JOIN sys.tables rt ON rt.object_id = fc.referenced_object_id
+                JOIN sys.columns rc
+                  ON rc.object_id = fc.referenced_object_id AND rc.column_id = fc.referenced_column_id
+                WHERE fc.parent_object_id = OBJECT_ID('sales.OrderLines') AND pc.name = 'SaleCampaignId'
                 """)
-            .SingleAsync(Token);
+            .ToListAsync(Token);
 
-        Assert.Equal(0, constraints);
+        Assert.Equal(["marketing.SaleCampaigns.Id|NO_ACTION|NO_ACTION"], shape);
 
         var leadsAnIndex = await DbContext.Database
             .SqlQuery<int>($"""
                 SELECT COUNT(*) AS [Value]
                 FROM sys.index_columns ic
                 JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
-                WHERE ic.object_id = OBJECT_ID('sales.' + {table})
+                WHERE ic.object_id = OBJECT_ID('sales.OrderLines')
                   AND ic.key_ordinal = 1
-                  AND c.name = {column}
+                  AND c.name = 'SaleCampaignId'
                 """)
             .SingleAsync(Token);
 
-        Assert.True(leadsAnIndex >= 1, $"sales.{table}.{column} leads no index.");
+        Assert.Equal(1, leadsAnIndex);
     }
 
     /// <summary>
@@ -528,7 +547,8 @@ public sealed class SalesSchemaTests(SqlServerDatabaseFixture sqlServer) : Sales
     /// points at <c>marketing.PromoCodes.Id</c> with <c>NO ACTION</c> both ways.
     /// </summary>
     /// <remarks>
-    /// <b>It was in <see cref="The_deferred_foreign_keys_are_indexed_columns_with_no_constraint"/> and is
+    /// <b>It was in <c>The_deferred_foreign_keys_are_indexed_columns_with_no_constraint</c> — a theory
+    /// W3-05b has since removed, its last row having been <c>OrderLines.SaleCampaignId</c> — and is
     /// not any more, and this test is why it was there.</b> The orders migration built it as a bare column
     /// because <c>marketing.PromoCodes</c> did not exist, and listed it there so that whichever task
     /// created that table would be forced to notice. W3-05 created it (doc 08 §3.6 heads it "ADM-13,
@@ -543,8 +563,9 @@ public sealed class SalesSchemaTests(SqlServerDatabaseFixture sqlServer) : Sales
     /// that leaves a wrong delete rule in a schema for a year.
     /// </para>
     /// <para>
-    /// <c>OrderLines.SaleCampaignId</c> is still deferred and still has no constraint:
-    /// <c>marketing.SaleCampaigns</c> is ADM-14 and W3-05 deliberately did not create it.
+    /// <c>OrderLines.SaleCampaignId</c> was still deferred when this test was written and is not any
+    /// more: W3-05b created <c>marketing.SaleCampaigns</c> (ADM-14) and added the constraint, which
+    /// <see cref="The_sale_campaign_foreign_key_W3_03_deferred_now_exists"/> asserts the same way.
     /// </para>
     /// </remarks>
     [Fact]
