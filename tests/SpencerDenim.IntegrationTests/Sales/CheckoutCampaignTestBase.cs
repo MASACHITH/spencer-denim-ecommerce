@@ -3,7 +3,6 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using SpencerDenim.Application.Marketing.Promotions.Abstractions;
 using SpencerDenim.Application.Sales.Checkout.Contracts;
-using SpencerDenim.Application.Sales.Orders.Abstractions;
 using SpencerDenim.Domain.Marketing;
 using SpencerDenim.Domain.Sales;
 using SpencerDenim.Infrastructure.Persistence;
@@ -254,7 +253,7 @@ public abstract class CheckoutCampaignTestBase(SqlServerDatabaseFixture sqlServe
 
     /// <summary>
     /// Sets a variant's stock <b>and remembers it</b>, so the reservations this test's orders take are
-    /// released again in <see cref="DisposeAsync"/>. Use this rather than
+    /// given back in <see cref="DisposeAsync"/>. Use this rather than
     /// <see cref="CheckoutTestBase.SetStockAsync"/> anywhere in a campaign suite — see
     /// <see cref="_arrangedVariantIds"/> for what goes wrong otherwise.
     /// </summary>
@@ -266,55 +265,51 @@ public abstract class CheckoutCampaignTestBase(SqlServerDatabaseFixture sqlServe
     }
 
     /// <summary>
-    /// Cancels every order still holding a reservation on a variant this test arranged, through the real
-    /// cancellation store, so <c>inventory.StockLevels.Reserved</c> goes back to what it was.
+    /// Puts <c>inventory.StockLevels</c> back to the seeded figures for every variant this test arranged:
+    /// <c>OnHand = OnHand − Reserved</c> and <c>Reserved = 0</c>, in one statement per variant.
     /// </summary>
     /// <remarks>
-    /// Through <c>IOrderCancellationStore</c> rather than by writing the stock row: the release is a
-    /// transaction with a status change and a history row in it (doc 08 §5.6), and a test that moved the
-    /// number by hand would leave an order claiming a reservation it no longer has — which is the state
-    /// <c>ReconcileStock</c> exists to alert on.
+    /// <b>Run after <c>CheckoutTestBase.DisposeAsync</c>, whose restore this completes.</b> That restore
+    /// sets <c>OnHand = original + held</c> and <c>Reserved = held</c>, which is right for a suite whose
+    /// orders stand — <c>Available</c> comes back to the seeded value. It still leaves <c>Reserved</c>
+    /// above zero, and that is what <c>CartStaleItemTests</c> trips on: it sets <c>OnHand</c> to 0 or 1 on
+    /// variants from the low end of the catalogue, which is where the linen shirt and the jeans are, and
+    /// <c>CK_StockLevels_ReservedLeOnHand</c> then refuses its <c>UPDATE</c>. Subtracting <c>Reserved</c>
+    /// from <c>OnHand</c> and zeroing it yields exactly <c>(original, 0)</c>, and the constraint holds at
+    /// every step.
+    /// <para>
+    /// <b>Not by cancelling the orders, which is what the first version of this did and why this remark is
+    /// long.</b> Cancelling through <c>IOrderCancellationStore</c> looked more honest — a real release with
+    /// its status change and history row — but the query could not tell this test's orders from any other
+    /// order holding the same variant, so a test that placed nothing at all tried to cancel an order a
+    /// previous test had placed and whose stock the base had already rebalanced.
+    /// <c>OrderStockRelease</c> refused it, correctly ("the reservation made at placement is no longer
+    /// there"), the exception came out of <c>DisposeAsync</c> <b>before the campaigns were removed</b>, and
+    /// a Rs. 99,000-off campaign stayed live for the rest of the assembly: fifteen tests in four classes
+    /// went red, several of them reading Rs. 1.00 where they expected a real price. Hence both changes
+    /// here — this statement cannot throw, and the campaign removal below no longer sits behind anything
+    /// that can.
+    /// </para>
+    /// <para>
+    /// The orders keep a reservation the stock row no longer reflects. In a throwaway test database, for
+    /// orders this suite placed itself, that is the right trade: the alternative cost four classes.
+    /// </para>
     /// </remarks>
-    private async Task ReleaseArrangedStockAsync()
+    private async Task RestoreArrangedStockAsync()
     {
-        List<int> orderIds;
+        using var scope = SqlServer.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-        using (var scope = SqlServer.CreateScope())
+        foreach (var variantId in _arrangedVariantIds)
         {
-            orderIds = await scope.ServiceProvider.GetRequiredService<AppDbContext>().OrderLines
-                .AsNoTracking()
-                .Where(line =>
-                    _arrangedVariantIds.Contains(line.VariantId)
-                    && line.Order!.StockState == OrderStockState.Reserved)
-                .Select(line => line.OrderId)
-                .Distinct()
-                .ToListAsync(CancellationToken.None);
-        }
-
-        foreach (var orderId in orderIds)
-        {
-            Guid publicId;
-
-            using (var scope = SqlServer.CreateScope())
-            {
-                publicId = await scope.ServiceProvider.GetRequiredService<AppDbContext>().Orders
-                    .AsNoTracking()
-                    .Where(order => order.Id == orderId)
-                    .Select(order => order.PublicId)
-                    .SingleAsync(CancellationToken.None);
-            }
-
-            using var cancelScope = SqlServer.CreateScope();
-
-            await cancelScope.ServiceProvider
-                .GetRequiredService<IOrderCancellationStore>()
-                .CancelAsync(
-                    new OrderCancellation(
-                        publicId,
-                        OrderCancelledBy.Staff,
-                        Fulfiller(),
-                        "Released by the sale-campaign integration suite.",
-                        DateTime.UtcNow),
+            await dbContext.StockLevels
+                .Where(level => level.VariantId == variantId)
+                .ExecuteUpdateAsync(
+                    level => level
+                        // Both in one SET, so CK_StockLevels_ReservedLeOnHand sees them together.
+                        .SetProperty(row => row.OnHand, row => row.OnHand - row.Reserved)
+                        .SetProperty(row => row.Reserved, 0)
+                        .SetProperty(row => row.UpdatedAtUtc, DateTime.UtcNow),
                     CancellationToken.None);
         }
     }
@@ -397,43 +392,73 @@ public abstract class CheckoutCampaignTestBase(SqlServerDatabaseFixture sqlServe
     /// </remarks>
     public override async ValueTask DisposeAsync()
     {
-        // **Before the base's stock restore, and that order matters.** The base puts `OnHand` back as
-        // `original + held`; releasing first makes `held` zero, so it puts back exactly the seeded
-        // figure and leaves `Reserved` at zero — which is the state every other suite expects to find.
-        if (_arrangedVariantIds.Count > 0 && SqlServer.IsAvailable)
+        // **Every step in its own try/finally, and the campaigns first.** A campaign left live reprices
+        // the catalogue for every class that runs afterwards, so it is the most dangerous thing here and
+        // nothing that can throw may be allowed to come before it — which is exactly the mistake the
+        // first version made, and it cost fifteen red tests in four classes.
+        try
         {
-            await ReleaseArrangedStockAsync();
-            _arrangedVariantIds.Clear();
-        }
-
-        if (_campaignIds.Count > 0 && SqlServer.IsAvailable)
-        {
-            using var scope = SqlServer.CreateScope();
-            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            var refresher = scope.ServiceProvider.GetRequiredService<ICampaignPricingRefresher>();
-
-            // Taken *before* the delete: after it, the campaign's targets are still there but asking
-            // which products they reach is a question about a row the filter now hides.
-            var affected = await refresher.ProductsTargetedByAsync(_campaignIds, CancellationToken.None);
-
-            var campaigns = await dbContext.SaleCampaigns
-                .Where(campaign => _campaignIds.Contains(campaign.Id))
-                .ToListAsync(CancellationToken.None);
-
-            foreach (var campaign in campaigns)
+            if (_campaignIds.Count > 0 && SqlServer.IsAvailable)
             {
-                campaign.SoftDelete(DateTime.UtcNow, userId: null);
+                await RemoveArrangedCampaignsAsync();
             }
-
-            await dbContext.SaveChangesAsync(CancellationToken.None);
-
-            await refresher.RefreshProductsAsync(affected, CancellationToken.None);
-
+        }
+        finally
+        {
             _campaignIds.Clear();
+
+            try
+            {
+                // The base disposes the host and restores `OnHand = original + held`.
+                await base.DisposeAsync();
+            }
+            finally
+            {
+                if (_arrangedVariantIds.Count > 0 && SqlServer.IsAvailable)
+                {
+                    await RestoreArrangedStockAsync();
+                }
+
+                _arrangedVariantIds.Clear();
+                GC.SuppressFinalize(this);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Soft-deletes the campaigns this test arranged and puts the affected products' stored summaries
+    /// back.
+    /// </summary>
+    /// <remarks>
+    /// <b>The summary has to go back as well as the campaign.</b> <c>catalog.ProductStats</c> is what the
+    /// listing, Sale-page and homepage suites assert prices from, so a test that recomputed a product's
+    /// summary while a campaign was live and then only soft-deleted the campaign would leave a
+    /// Rs. 4,392.00 and a Sale badge behind for <c>CatalogListingTests</c> to trip over — a failure with
+    /// no visible connection to campaigns at all. The restore runs the production refresher with every
+    /// campaign already gone, so it writes exactly what the seeder wrote.
+    /// </remarks>
+    private async Task RemoveArrangedCampaignsAsync()
+    {
+        using var scope = SqlServer.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var refresher = scope.ServiceProvider.GetRequiredService<ICampaignPricingRefresher>();
+
+        // Taken *before* the delete: after it, the campaign's targets are still there but asking which
+        // products they reach is a question about a row the filter now hides.
+        var affected = await refresher.ProductsTargetedByAsync(_campaignIds, CancellationToken.None);
+
+        var campaigns = await dbContext.SaleCampaigns
+            .Where(campaign => _campaignIds.Contains(campaign.Id))
+            .ToListAsync(CancellationToken.None);
+
+        foreach (var campaign in campaigns)
+        {
+            campaign.SoftDelete(DateTime.UtcNow, userId: null);
         }
 
-        await base.DisposeAsync();
-        GC.SuppressFinalize(this);
+        await dbContext.SaveChangesAsync(CancellationToken.None);
+
+        await refresher.RefreshProductsAsync(affected, CancellationToken.None);
     }
 
     private async Task<int> IdOfAsync(Func<AppDbContext, IQueryable<int>> query)
