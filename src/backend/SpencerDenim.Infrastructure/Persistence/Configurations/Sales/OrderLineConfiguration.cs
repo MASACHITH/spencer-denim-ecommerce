@@ -100,8 +100,9 @@ internal sealed class OrderLineConfiguration : IEntityTypeConfiguration<OrderLin
             .IncludeProperties(line => new { line.OrderId, line.Quantity, line.LineTotal })
             .HasDatabaseName("IX_OrderLines_Product");
 
-        // Doc 08 §1.6 (DB7): the remaining FK columns, plus SaleCampaignId whose constraint is deferred
-        // until marketing.SaleCampaigns exists (ADM-14).
+        // Doc 08 §1.6 (DB7): the remaining FK columns. `IX_OrderLines_SaleCampaignId` was built by the
+        // orders migration ahead of the constraint and now leads the real foreign key W3-05b added, so
+        // EF's FK-index convention adds nothing on top of it.
         builder.HasIndex(line => line.DepartmentId).HasDatabaseName("IX_OrderLines_DepartmentId");
         builder.HasIndex(line => line.CategoryId).HasDatabaseName("IX_OrderLines_CategoryId");
         builder.HasIndex(line => line.SaleCampaignId).HasDatabaseName("IX_OrderLines_SaleCampaignId");
@@ -139,6 +140,25 @@ internal sealed class OrderLineConfiguration : IEntityTypeConfiguration<OrderLin
             .HasOne(line => line.Category)
             .WithMany()
             .HasForeignKey(line => line.CategoryId)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        // **W3-05b makes `SaleCampaignId` a real constraint**, the last of the four columns the orders
+        // migration deferred. The column has existed and been null on every order ever placed, and ADM-14
+        // creates the table it points at in the same change, so it owes the constraint in the same change
+        // — exactly what W3-05 did for `Orders.PromoCodeId` and W3-02 for the two district keys.
+        //
+        // NO ACTION, like every other relationship on this table. A campaign is soft-deleted through
+        // `SoftDelete()` and `Remove()` on it throws (DB5), so the rule can never block staff ending a
+        // sale; and an order line keeps its own `UnitPrice`, so the id is a record of *which* campaign
+        // priced it rather than something the line is read through.
+        //
+        // No navigation property — `OrderLine` has none for the campaign, and adding one would invite a
+        // read path through an order into live marketing data — and no index declared here, because
+        // `IX_OrderLines_SaleCampaignId` above already leads on the column.
+        builder
+            .HasOne<SpencerDenim.Domain.Marketing.SaleCampaign>()
+            .WithMany()
+            .HasForeignKey(line => line.SaleCampaignId)
             .OnDelete(DeleteBehavior.NoAction);
     }
 }

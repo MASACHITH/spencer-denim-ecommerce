@@ -1827,6 +1827,141 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("SpencerDenim.Domain.Marketing.SaleCampaign", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<int?>("BannerAssetId")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2(3)")
+                        .HasDefaultValueSql("sysutcdatetime()");
+
+                    b.Property<int?>("CreatedByUserId")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("DeletedAtUtc")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<int?>("DeletedByUserId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<byte>("DiscountType")
+                        .HasColumnType("tinyint");
+
+                    b.Property<decimal>("DiscountValue")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<DateTime>("EndsAtUtc")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("IsDeleted")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false);
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.Property<DateTime>("StartsAtUtc")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<int?>("UpdatedByUserId")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BannerAssetId")
+                        .HasDatabaseName("IX_SaleCampaigns_BannerAssetId");
+
+                    b.HasIndex("StartsAtUtc", "EndsAtUtc")
+                        .HasDatabaseName("IX_SaleCampaigns_Window")
+                        .HasFilter("[IsActive] = 1 AND [IsDeleted] = 0");
+
+                    b.ToTable("SaleCampaigns", "marketing", t =>
+                        {
+                            t.HasCheckConstraint("CK_SaleCampaigns_DiscountType", "[DiscountType] IN (1, 2)");
+
+                            t.HasCheckConstraint("CK_SaleCampaigns_DiscountValue", "([DiscountType] = 1 AND [DiscountValue] > 0 AND [DiscountValue] <= 90) OR ([DiscountType] = 2 AND [DiscountValue] > 0)");
+
+                            t.HasCheckConstraint("CK_SaleCampaigns_Window", "[EndsAtUtc] > [StartsAtUtc]");
+                        });
+                });
+
+            modelBuilder.Entity("SpencerDenim.Domain.Marketing.SaleCampaignTarget", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<int?>("CategoryId")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("DepartmentId")
+                        .HasColumnType("int");
+
+                    b.Property<bool>("IncludeSubcategories")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(true);
+
+                    b.Property<int?>("ProductId")
+                        .HasColumnType("int");
+
+                    b.Property<int>("SaleCampaignId")
+                        .HasColumnType("int");
+
+                    b.Property<byte>("TargetType")
+                        .HasColumnType("tinyint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CategoryId")
+                        .HasDatabaseName("IX_SaleCampaignTargets_CategoryId");
+
+                    b.HasIndex("DepartmentId")
+                        .HasDatabaseName("IX_SaleCampaignTargets_DepartmentId");
+
+                    b.HasIndex("ProductId")
+                        .HasDatabaseName("IX_SaleCampaignTargets_ProductId");
+
+                    b.HasIndex("SaleCampaignId")
+                        .HasDatabaseName("IX_SaleCampaignTargets_SaleCampaignId");
+
+                    b.ToTable("SaleCampaignTargets", "marketing", t =>
+                        {
+                            t.HasCheckConstraint("CK_SaleCampaignTargets_Target", "([TargetType] = 1 AND [DepartmentId] IS NOT NULL AND [CategoryId] IS NULL AND [ProductId] IS NULL) OR ([TargetType] = 2 AND [CategoryId] IS NOT NULL AND [DepartmentId] IS NULL AND [ProductId] IS NULL) OR ([TargetType] = 3 AND [ProductId] IS NOT NULL AND [DepartmentId] IS NULL AND [CategoryId] IS NULL)");
+
+                            t.HasCheckConstraint("CK_SaleCampaignTargets_TargetType", "[TargetType] IN (1, 2, 3)");
+                        });
+                });
+
             modelBuilder.Entity("SpencerDenim.Domain.Media.MediaAsset", b =>
                 {
                     b.Property<int>("Id")
@@ -4188,6 +4323,48 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.NoAction);
                 });
 
+            modelBuilder.Entity("SpencerDenim.Domain.Marketing.SaleCampaign", b =>
+                {
+                    b.HasOne("SpencerDenim.Domain.Media.MediaAsset", "BannerAsset")
+                        .WithMany()
+                        .HasForeignKey("BannerAssetId")
+                        .OnDelete(DeleteBehavior.NoAction);
+
+                    b.Navigation("BannerAsset");
+                });
+
+            modelBuilder.Entity("SpencerDenim.Domain.Marketing.SaleCampaignTarget", b =>
+                {
+                    b.HasOne("SpencerDenim.Domain.Catalog.Category", "Category")
+                        .WithMany()
+                        .HasForeignKey("CategoryId")
+                        .OnDelete(DeleteBehavior.NoAction);
+
+                    b.HasOne("SpencerDenim.Domain.Catalog.Department", "Department")
+                        .WithMany()
+                        .HasForeignKey("DepartmentId")
+                        .OnDelete(DeleteBehavior.NoAction);
+
+                    b.HasOne("SpencerDenim.Domain.Catalog.Product", "Product")
+                        .WithMany()
+                        .HasForeignKey("ProductId")
+                        .OnDelete(DeleteBehavior.NoAction);
+
+                    b.HasOne("SpencerDenim.Domain.Marketing.SaleCampaign", "SaleCampaign")
+                        .WithMany("Targets")
+                        .HasForeignKey("SaleCampaignId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Category");
+
+                    b.Navigation("Department");
+
+                    b.Navigation("Product");
+
+                    b.Navigation("SaleCampaign");
+                });
+
             modelBuilder.Entity("SpencerDenim.Domain.Media.MediaAsset", b =>
                 {
                     b.HasOne("SpencerDenim.Domain.Media.MediaAsset", "PosterAsset")
@@ -4348,6 +4525,11 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                         .HasForeignKey("ProductId")
                         .OnDelete(DeleteBehavior.NoAction)
                         .IsRequired();
+
+                    b.HasOne("SpencerDenim.Domain.Marketing.SaleCampaign", null)
+                        .WithMany()
+                        .HasForeignKey("SaleCampaignId")
+                        .OnDelete(DeleteBehavior.NoAction);
 
                     b.HasOne("SpencerDenim.Domain.Catalog.ProductVariant", "Variant")
                         .WithMany()
@@ -4526,6 +4708,11 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("SpencerDenim.Domain.Content.HomeSection", b =>
                 {
                     b.Navigation("Items");
+                });
+
+            modelBuilder.Entity("SpencerDenim.Domain.Marketing.SaleCampaign", b =>
+                {
+                    b.Navigation("Targets");
                 });
 
             modelBuilder.Entity("SpencerDenim.Domain.Reference.Province", b =>

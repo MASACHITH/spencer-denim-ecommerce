@@ -16,11 +16,11 @@ namespace SpencerDenim.Infrastructure.Persistence.Configurations.Sales;
 /// make a cascade by convention because the line's <c>OrderId</c> is required.
 /// </para>
 /// <para>
-/// <b>One of doc 08's foreign keys is still a column only:</b> <c>SaleCampaignId</c> on the line,
-/// because <c>marketing.SaleCampaigns</c> (ADM-14) has not been created by any migration. It is indexed
-/// as if the constraint existed, so adding it later is one <c>ALTER TABLE</c> — which is exactly what
-/// W3-05 did for <c>PromoCodeId</c>, the other of the pair, when ADM-13 created
-/// <c>marketing.PromoCodes</c> (see <see cref="ConfigureRelationships"/>).
+/// <b>The last of doc 08's deferred foreign keys has gone.</b> <c>SaleCampaignId</c> on the line was a
+/// column without a constraint because <c>marketing.SaleCampaigns</c> (ADM-14) did not exist; W3-05b
+/// created that table and added the constraint in the same change, as W3-05 did for <c>PromoCodeId</c>
+/// here (see <see cref="ConfigureRelationships"/>). Both were indexed as if the constraint existed, so
+/// each addition was one <c>ALTER TABLE</c> and no new index.
 /// </para>
 /// <para>
 /// <b><c>DeliveryDistrictId</c> was the third, and W3-02 has made it a real constraint.</b> W3-03 built
