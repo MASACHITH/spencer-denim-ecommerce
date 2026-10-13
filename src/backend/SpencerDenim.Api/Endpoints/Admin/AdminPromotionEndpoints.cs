@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Http.HttpResults;
@@ -24,9 +23,11 @@ namespace SpencerDenim.Api.Endpoints.Admin;
 /// step, so they reach a database whose Store Manager role already exists (issue #122, doc 08 §9 N13).
 /// </para>
 /// <para>
-/// <b>Sale campaigns (ADM-14) are deliberately not here.</b> Doc 02 line 119 is a separate feature with
-/// its own tables and its own <c>RefreshCampaignPricing</c> job; nothing in this file touches campaign
-/// pricing, and the route group is named for the promo codes it serves rather than for the module.
+/// <b>Sale campaigns (ADM-14) are not here; they are in <see cref="AdminSaleCampaignEndpoints"/>.</b> Doc
+/// 02 line 119 is a separate feature with its own tables and its own <c>RefreshCampaignPricing</c> job,
+/// and nothing in this file touches campaign pricing — which is why the route group is named for the
+/// promo codes it serves rather than for the module. The two screens share the four
+/// <c>Promotions.*</c> permissions and, since W3-05b, the body readers in <see cref="AdminJsonBody"/>.
 /// </para>
 /// <para>
 /// <b>Every mutating route requires every field to be present in the body</b>, and that is not pedantry.
@@ -182,16 +183,11 @@ internal static class AdminPromotionEndpoints
             return badField;
         }
 
-        var bodyRowVersion = body!["rowVersion"] is JsonValue value
-            && value.TryGetValue<string>(out var text)
-            ? text
-            : null;
-
         var result = await handler.HandleAsync(
             new UpdatePromoCodeCommand(
                 promoCodeId,
                 fields,
-                AdminWriteRequest.RowVersion(httpContext.Request, bodyRowVersion),
+                AdminWriteRequest.RowVersion(httpContext.Request, AdminJsonBody.RowVersionIn(body!)),
                 AdminWriteRequest.Actor(httpContext)),
             cancellationToken);
 
@@ -232,57 +228,58 @@ internal static class AdminPromotionEndpoints
     {
         fields = default!;
 
-        if (ReadRequiredString(body, "code", out var code) is { } badCode)
+        if (AdminJsonBody.ReadString(body, "code", out var code) is { } badCode)
         {
             return badCode;
         }
 
-        if (ReadRequiredString(body, "description", out var description) is { } badDescription)
+        if (AdminJsonBody.ReadString(body, "description", out var description) is { } badDescription)
         {
             return badDescription;
         }
 
-        if (ReadDiscountType(body, out var discountType) is { } badType)
+        if (AdminJsonBody.ReadEnum<PromoDiscountType>(
+                body, "discountType", "one of Percent, FixedAmount or FreeDelivery", out var discountType) is { } badType)
         {
             return badType;
         }
 
-        if (ReadDecimal(body, "discountValue", out var discountValue) is { } badValue)
+        if (AdminJsonBody.ReadDecimal(body, "discountValue", out var discountValue) is { } badValue)
         {
             return badValue;
         }
 
-        if (ReadDecimal(body, "maxDiscountAmount", out var maxDiscount) is { } badCap)
+        if (AdminJsonBody.ReadDecimal(body, "maxDiscountAmount", out var maxDiscount) is { } badCap)
         {
             return badCap;
         }
 
-        if (ReadDecimal(body, "minSpendAmount", out var minSpend) is { } badMinimum)
+        if (AdminJsonBody.ReadDecimal(body, "minSpendAmount", out var minSpend) is { } badMinimum)
         {
             return badMinimum;
         }
 
-        if (ReadLocalDateTime(body, "startsAt", out var startsAt) is { } badStart)
+        if (AdminJsonBody.ReadLocalDateTime(body, "startsAt", out var startsAt) is { } badStart)
         {
             return badStart;
         }
 
-        if (ReadLocalDateTime(body, "endsAt", out var endsAt) is { } badEnd)
+        if (AdminJsonBody.ReadLocalDateTime(body, "endsAt", out var endsAt) is { } badEnd)
         {
             return badEnd;
         }
 
-        if (ReadInt(body, "totalUsageLimit", out var totalLimit) is { } badTotal)
+        if (AdminJsonBody.ReadInt(body, "totalUsageLimit", out var totalLimit) is { } badTotal)
         {
             return badTotal;
         }
 
-        if (ReadInt(body, "perCustomerLimit", out var perCustomerLimit) is { } badPerCustomer)
+        if (AdminJsonBody.ReadInt(body, "perCustomerLimit", out var perCustomerLimit) is { } badPerCustomer)
         {
             return badPerCustomer;
         }
 
-        if (ReadBool(body, "isActive", out var isActive) is { } badActive)
+        if (AdminJsonBody.ReadBool(body, "isActive", out var isActive) is { } badActive)
         {
             return badActive;
         }
@@ -303,209 +300,6 @@ internal static class AdminPromotionEndpoints
         return null;
     }
 
-    private static ValidationProblem? ReadRequiredString(JsonObject body, string field, out string? value)
-    {
-        value = null;
-
-        if (!body.TryGetPropertyValue(field, out var node))
-        {
-            return Missing(field);
-        }
-
-        if (node is null)
-        {
-            return null;
-        }
-
-        if (node is not JsonValue json || !json.TryGetValue<string>(out var text))
-        {
-            return WrongType(field, "text");
-        }
-
-        value = text;
-        return null;
-    }
-
-    private static ValidationProblem? ReadDiscountType(JsonObject body, out PromoDiscountType? value)
-    {
-        value = null;
-
-        if (!body.TryGetPropertyValue("discountType", out var node))
-        {
-            return Missing("discountType");
-        }
-
-        if (node is null)
-        {
-            // Left to the validator, which answers "Choose a percentage, a fixed amount off, or free
-            // delivery" against the control — a better sentence than a type complaint.
-            return null;
-        }
-
-        if (node is not JsonValue json || !json.TryGetValue<string>(out var text))
-        {
-            return WrongType("discountType", "one of Percent, FixedAmount or FreeDelivery");
-        }
-
-        // The API serialises enums as names (Program.cs registers a global JsonStringEnumConverter), so a
-        // name is what comes back out and a name is what goes in. Case-insensitive, because the storefront
-        // and the admin app both camel-case their own payloads and the difference is not meaningful here.
-        if (!Enum.TryParse(text, ignoreCase: true, out PromoDiscountType parsed))
-        {
-            return WrongType("discountType", "one of Percent, FixedAmount or FreeDelivery");
-        }
-
-        value = parsed;
-        return null;
-    }
-
-    private static ValidationProblem? ReadDecimal(JsonObject body, string field, out decimal? value)
-    {
-        value = null;
-
-        if (!body.TryGetPropertyValue(field, out var node))
-        {
-            return Missing(field);
-        }
-
-        if (node is null)
-        {
-            return null;
-        }
-
-        if (node is not JsonValue json || !json.TryGetValue<decimal>(out var number))
-        {
-            return WrongType(field, "a number");
-        }
-
-        value = number;
-        return null;
-    }
-
-    private static ValidationProblem? ReadInt(JsonObject body, string field, out int? value)
-    {
-        value = null;
-
-        if (!body.TryGetPropertyValue(field, out var node))
-        {
-            return Missing(field);
-        }
-
-        if (node is null)
-        {
-            return null;
-        }
-
-        if (node is not JsonValue json || !json.TryGetValue<int>(out var number))
-        {
-            return WrongType(field, "a whole number");
-        }
-
-        value = number;
-        return null;
-    }
-
-    private static ValidationProblem? ReadBool(JsonObject body, string field, out bool? value)
-    {
-        value = null;
-
-        if (!body.TryGetPropertyValue(field, out var node))
-        {
-            return Missing(field);
-        }
-
-        if (node is null)
-        {
-            return null;
-        }
-
-        if (node is not JsonValue json || !json.TryGetValue<bool>(out var flag))
-        {
-            return WrongType(field, "true or false");
-        }
-
-        value = flag;
-        return null;
-    }
-
-    /// <summary>
-    /// A date and time with <b>no offset</b>, which is what the form's <c>datetime-local</c> input
-    /// produces and what this API means by a promo-code window.
-    /// </summary>
-    /// <remarks>
-    /// <b>An offset or a trailing <c>Z</c> is refused rather than honoured, and that is the Colombo
-    /// defect being closed rather than rediscovered.</b> <c>PromoCodeSchedule.ToUtc</c> defines its input
-    /// to be Colombo wall-clock; if this accepted <c>2026-10-12T23:59:00Z</c> and passed the same
-    /// <see cref="DateTime"/> through, the code would silently end five and a half hours early. Refusing
-    /// makes the contract visible to whoever sends the wrong thing instead of making it a wrong figure in
-    /// the database.
-    /// </remarks>
-    private static ValidationProblem? ReadLocalDateTime(JsonObject body, string field, out DateTime? value)
-    {
-        value = null;
-
-        if (!body.TryGetPropertyValue(field, out var node))
-        {
-            return Missing(field);
-        }
-
-        if (node is null)
-        {
-            return null;
-        }
-
-        if (node is not JsonValue json || !json.TryGetValue<string>(out var text)
-            || string.IsNullOrWhiteSpace(text))
-        {
-            return WrongType(field, "a date and time like 2026-10-12T23:59");
-        }
-
-        var trimmed = text.Trim();
-
-        if (trimmed.EndsWith('Z') || trimmed.EndsWith('z')
-            || HasOffset(trimmed)
-            || !DateTime.TryParse(
-                trimmed,
-                CultureInfo.InvariantCulture,
-                DateTimeStyles.None,
-                out var parsed))
-        {
-            return WrongType(
-                field,
-                "a date and time in the shop's own time with no offset, like 2026-10-12T23:59");
-        }
-
-        value = parsed;
-        return null;
-    }
-
-    /// <summary>
-    /// Whether an ISO-8601 date-time carries a <c>+hh:mm</c> or <c>-hh:mm</c> offset.
-    /// </summary>
-    /// <remarks>
-    /// Looked for after the <c>T</c> only, because the date half of every such string contains hyphens.
-    /// A value with no <c>T</c> cannot carry an offset in the first place.
-    /// </remarks>
-    private static bool HasOffset(string text)
-    {
-        var timeStart = text.IndexOf('T', StringComparison.Ordinal);
-
-        if (timeStart < 0)
-        {
-            return false;
-        }
-
-        var time = text.AsSpan(timeStart);
-
-        return time.Contains('+') || time.Contains('-');
-    }
-
-    private static ValidationProblem Missing(string field) =>
-        ValidationProblem([new ValidationError(field, $"Send {field}.")]);
-
-    private static ValidationProblem WrongType(string field, string expected) =>
-        ValidationProblem([new ValidationError(field, $"Send {field} as {expected}.")]);
-
     /// <summary>The one mapping from an ADM-13 write's answer to HTTP.</summary>
     private static IResult ToHttp(PromoWriteResult result, Func<AdminPromoCodeSavedDto, IResult> onSuccess)
     {
@@ -515,7 +309,7 @@ internal static class AdminPromotionEndpoints
         {
             PromoWriteResult.Succeeded success => onSuccess(success.Saved),
 
-            PromoWriteResult.Invalid invalid => ValidationProblem(invalid.Errors),
+            PromoWriteResult.Invalid invalid => AdminJsonBody.Problem(invalid.Errors),
 
             PromoWriteResult.NotFound missing => AdminWriteRequest.Problem(
                 StatusCodes.Status404NotFound,
@@ -533,15 +327,6 @@ internal static class AdminPromotionEndpoints
         };
     }
 
-    private static ValidationProblem ValidationProblem(IReadOnlyList<ValidationError> errors) =>
-        TypedResults.ValidationProblem(
-            errors
-                .GroupBy(error => error.Field, StringComparer.Ordinal)
-                .ToDictionary(
-                    group => group.Key,
-                    group => group.Select(error => error.Message).ToArray(),
-                    StringComparer.Ordinal),
-            title: "One or more fields need correcting.");
 }
 
 /// <summary>

@@ -47,9 +47,10 @@ public sealed class CartQueryPlanTests(SqlServerDatabaseFixture sqlServer) : Car
             $"A bag of {cart.Lines.Count} lines was read with {commands} SQL commands " +
             "(the cart lookup, the lines projection, and the activity touch).");
 
-        // Three: find the cart, project every line in one query, move the activity clock. A per-line
-        // query would make this grow with `lines`, which is the only thing this test is really about —
-        // so the bound is deliberately well clear of three and still far below 1-per-line at twelve.
+        // Four: find the cart, project every line in one query, read the live campaigns for their
+        // products in one more (W3-05b, doc 08 §6 step 3), move the activity clock. A per-line query
+        // would make this grow with `lines`, which is the only thing this test is really about — so the
+        // bound is deliberately well clear of four and still far below 1-per-line at twelve.
         Assert.True(
             commands <= 5,
             $"A bag of {cart.Lines.Count} lines issued {commands} SQL commands; a per-line query is the "
@@ -57,11 +58,23 @@ public sealed class CartQueryPlanTests(SqlServerDatabaseFixture sqlServer) : Car
     }
 
     /// <summary>
-    /// And the projection really is one query over the lines, not a join fan-out that EF then splits.
-    /// Read through the reader directly, so the cart lookup and the touch are not in the count.
+    /// And the projection really is one query over the lines, not a join fan-out that EF then splits —
+    /// plus exactly one more for the live campaign read, whatever the number of lines.
     /// </summary>
+    /// <remarks>
+    /// <b>It was one query until W3-05b and is two now, and the second one is the point.</b> Doc 08 §6
+    /// step 3 has to be answered live for the bag (doc 08 §7.4: "checkout always prices live"), so
+    /// <c>CartReader</c> asks <c>ICampaignOfferReader</c> which campaigns reach the products it has just
+    /// projected. <b>One extra query for the whole bag, not one per line</b>, which is the property this
+    /// test exists to hold: a bag of eight lines costs two commands and so would a bag of eighty. The
+    /// assertion is an exact 2 rather than a bound, because the bound is what let the per-line regression
+    /// in last time and the number here is small enough to name.
+    /// <para>
+    /// Read through the reader directly, so the cart lookup and the activity touch are not in the count.
+    /// </para>
+    /// </remarks>
     [Fact]
-    public async Task Projecting_the_lines_is_one_query()
+    public async Task Projecting_the_lines_is_one_query_plus_one_for_campaigns()
     {
         var api = NewVisitor();
         var variantIds = await InStockVariantIdsAsync(8);
@@ -90,9 +103,10 @@ public sealed class CartQueryPlanTests(SqlServerDatabaseFixture sqlServer) : Car
         var commands = CommandCounter.Count;
 
         TestContext.Current.TestOutputHelper!.WriteLine(
-            $"{cart.Lines.Count} lines projected with {commands} SQL command(s).");
+            $"{cart.Lines.Count} lines projected with {commands} SQL command(s) "
+            + "(the lines projection, and the live campaign read).");
 
         Assert.Equal(8, cart.Lines.Count);
-        Assert.Equal(1, commands);
+        Assert.Equal(2, commands);
     }
 }

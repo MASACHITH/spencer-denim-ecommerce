@@ -3,6 +3,7 @@ using Microsoft.Extensions.Options;
 using SpencerDenim.Application.Abstractions.Time;
 using SpencerDenim.Application.Catalog;
 using SpencerDenim.Application.Sales.Cart.Contracts;
+using SpencerDenim.Application.Marketing.Promotions.Abstractions;
 using SpencerDenim.Application.Sales.Checkout.Abstractions;
 using SpencerDenim.Application.Sales.Checkout.Contracts;
 using SpencerDenim.Application.Sales.Orders.Contracts;
@@ -38,7 +39,8 @@ namespace SpencerDenim.Infrastructure.Sales;
 internal sealed class CheckoutReader(
     AppDbContext dbContext,
     IOptions<CatalogOptions> options,
-    IClock clock) : ICheckoutReader
+    IClock clock,
+    ICampaignOfferReader campaigns) : ICheckoutReader
 {
     private readonly CatalogOptions _options = options.Value;
 
@@ -322,7 +324,14 @@ internal sealed class CheckoutReader(
                             : null)))
             .ToListAsync(cancellationToken);
 
-        return rows.Select(row => ToLine(row, _options.MediaBaseUrl)).ToList();
+        // Doc 08 §6 step 3, live — doc 08 §7.4's "checkout always prices live" in as many words. This is
+        // the read whose figures become the order's stored totals, so it must never see the five-minute
+        // stored summary: a campaign that ended four minutes ago would otherwise be charged.
+        var offers = await campaigns.ReadAsync(
+            rows.Select(row => row.ProductId).Distinct().ToList(),
+            cancellationToken);
+
+        return rows.Select(row => ToLine(row, offers, _options.MediaBaseUrl)).ToList();
     }
 
     public async Task<IReadOnlyDictionary<int, int>> AvailableStockAsync(
@@ -598,7 +607,10 @@ internal sealed class CheckoutReader(
                 row.EstimatedDaysMin,
                 row.EstimatedDaysMax);
 
-    private static CheckoutCartLine ToLine(CheckoutLineRow row, string? mediaBaseUrl)
+    private static CheckoutCartLine ToLine(
+        CheckoutLineRow row,
+        CampaignOfferSet offers,
+        string? mediaBaseUrl)
     {
         // The same five conditions CartReader applies, and they are the storefront's definition of "a
         // shopper may reach this": published, not deleted, active variant, active department, active and
@@ -611,10 +623,10 @@ internal sealed class CheckoutReader(
         var list = CatalogPricing.ListPrice(row.BasePrice, row.PriceOverride);
         var original = CatalogPricing.OriginalPrice(list, row.CompareAtPrice, row.CompareAtPriceOverride);
 
-        // Step 3 with no campaign is the list price. Sale campaigns are ADM-14 (W3-05) and no table
-        // exists, so passing null keeps the one place that knows the rule in the loop rather than
-        // open-coding "sale = list" here and having to find it again later.
-        var sale = CatalogPricing.SalePrice(list, campaignPrice: null);
+        // Step 3: the lowest resulting price among the campaigns that reach this product, resolved
+        // against *this variant's* list price (doc 08 §6 step 1), and null when none of them beats it.
+        var campaign = offers.Best(row.ProductId, list);
+        var sale = CatalogPricing.SalePrice(list, campaign?.Price);
 
         var available = Math.Max(row.Available, 0);
 
@@ -649,6 +661,11 @@ internal sealed class CheckoutReader(
             original,
             list,
             sale,
+
+            // Which campaign priced the line, for `sales.OrderLines.SaleCampaignId`. Null when no
+            // campaign won, which is also the case when one targeted the product but could not beat its
+            // list price — a line that was not discounted must not record a campaign.
+            campaign?.CampaignId,
             status);
     }
 

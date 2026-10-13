@@ -89,6 +89,7 @@ public sealed record CheckoutCartLine(
     decimal UnitOriginalPrice,
     decimal UnitListPrice,
     decimal UnitPrice,
+    int? SaleCampaignId,
     CartLineStatus Status);
 
 /// <summary>

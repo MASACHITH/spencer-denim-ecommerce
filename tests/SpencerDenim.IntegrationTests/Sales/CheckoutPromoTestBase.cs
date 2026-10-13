@@ -53,6 +53,12 @@ public abstract class CheckoutPromoTestBase(SqlServerDatabaseFixture sqlServer)
     /// <param name="startsAtUtc">Defaults to an hour ago, so the code is live.</param>
     /// <param name="endsAtUtc">Defaults to no end.</param>
     /// <param name="isActive">False to arrange a code staff have switched off.</param>
+    /// <param name="excludeSaleItems">
+    /// Doc 08 §6 step 7: leave the lines a sale campaign priced out of the eligible base. Added by
+    /// W3-05b, because until <c>marketing.SaleCampaigns</c> existed (ADM-14) no real line could satisfy
+    /// the condition and arranging the flag would have tested nothing — <c>PromoEvaluator</c>'s own
+    /// remarks say so.
+    /// </param>
     protected async Task<PromoCode> NewPromoCodeAsync(
         PromoDiscountType discountType,
         decimal? discountValue,
@@ -62,7 +68,8 @@ public abstract class CheckoutPromoTestBase(SqlServerDatabaseFixture sqlServer)
         decimal? maxDiscountAmount = null,
         DateTime? startsAtUtc = null,
         DateTime? endsAtUtc = null,
-        bool isActive = true)
+        bool isActive = true,
+        bool excludeSaleItems = false)
     {
         SqlServer.SkipIfUnavailable();
 
@@ -78,6 +85,7 @@ public abstract class CheckoutPromoTestBase(SqlServerDatabaseFixture sqlServer)
             DiscountValue = discountValue,
             MaxDiscountAmount = maxDiscountAmount,
             MinSpendAmount = minSpendAmount,
+            ExcludeSaleItems = excludeSaleItems,
             StartsAtUtc = startsAtUtc ?? now.AddHours(-1),
             EndsAtUtc = endsAtUtc,
             TotalUsageLimit = totalUsageLimit,

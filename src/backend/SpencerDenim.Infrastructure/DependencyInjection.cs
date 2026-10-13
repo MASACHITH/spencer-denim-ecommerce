@@ -230,6 +230,22 @@ public static class DependencyInjection
         services.AddScoped<IPromoCodeAdminStore, PromoCodeAdminStore>();
         services.AddScoped<INewsletterSubscriptions, NewsletterSubscriptions>();
 
+        // Sale campaigns (ADM-14, W3-05b). `ICampaignOfferReader` is the **live** side of doc 08 §6
+        // step 3, which the bag, the checkout quote and the placement all read — doc 08 §7.4's "checkout
+        // always prices live", as against the stored summary on ProductStats that listings read and that
+        // may lag five minutes at a boundary.
+        services.AddScoped<ICampaignOfferReader, CampaignOfferReader>();
+
+        // The lagging side of the same decision: doc 08 §7.4's batched recompute of the stored price
+        // summary, which the admin save path and the RefreshCampaignPricing job both drive.
+        services.AddScoped<ICampaignPricingRefresher, CampaignPricingRefresher>();
+
+        // The admin screen (ADM-14). The reader converts the two UTC columns to Colombo wall-clock at
+        // this edge and resolves each target to the name the list prints; the store keeps one unit of
+        // work so a change and its audit row commit together.
+        services.AddScoped<ISaleCampaignAdminReader, SaleCampaignAdminReader>();
+        services.AddScoped<ISaleCampaignAdminStore, SaleCampaignAdminStore>();
+
         // Doc 08 §3.7's homepage cache. A singleton, because a cache scoped to one request caches
         // nothing at all.
         services.AddSingleton<IHomePageCache, HomePageCache>();
@@ -339,6 +355,11 @@ public static class DependencyInjection
         // Doc 11 P9 step 8 and doc 08 §4.1 D4: once a day, close orders that shipped more than
         // Orders.AutoDeliverAfterDays ago. **Never a store pickup order** (G-18).
         services.AddHostedService<AutoDeliverShippedService>();
+
+        // Doc 08 §7.4 and doc 11 P3 step 3 (ADM-14): every five minutes, bring the stored sale price of
+        // the products of campaigns that have just started or ended up to date, so listings and the Sale
+        // page catch up with a boundary. Never on the money path — the bag and checkout price live.
+        services.AddHostedService<RefreshCampaignPricingService>();
 
         // Doc 11 §1.4's `SendEmails` and doc 08 §3.8: hand the queued messages to the mail server with
         // the 1/5/15/60/240-minute ladder. With no SMTP configured it claims nothing and says so with a

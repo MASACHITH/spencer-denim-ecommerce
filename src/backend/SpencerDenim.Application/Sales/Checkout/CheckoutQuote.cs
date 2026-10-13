@@ -233,6 +233,7 @@ internal static class CheckoutQuote
                 line.Quantity,
                 line.UnitOriginalPrice,
                 line.UnitListPrice,
-                line.UnitPrice))
+                line.UnitPrice,
+                line.SaleCampaignId))
             .ToList();
 }

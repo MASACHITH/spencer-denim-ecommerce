@@ -233,6 +233,9 @@ public sealed class PlaceOrderCommandHandlerTests
             1000m,
             1000m,
             1000m,
+
+            // No campaign priced this line: original, list and sale are all Rs. 1,000.00 (ADM-14).
+            null,
             status);
 
     private sealed class FixedClock(DateTimeOffset now) : IClock

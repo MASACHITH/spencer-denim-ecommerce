@@ -38,8 +38,10 @@ public enum PromoRefusal : byte
     MinimumSpend = 3,
 
     /// <summary>
-    /// Nothing in the bag the code may discount. Reachable only through <c>ExcludeSaleItems</c>, so it
-    /// cannot happen until sale campaigns exist (ADM-14) — see <see cref="PromoEvaluator"/>.
+    /// Nothing in the bag the code may discount. Reachable only through <c>ExcludeSaleItems</c>, which
+    /// needed sale campaigns to exist — <b>and since W3-05b (ADM-14) they do</b>, so this is a reason a
+    /// shopper can now actually be given: every line in the bag is campaign-priced and the code excludes
+    /// sale items. See <see cref="PromoEvaluator"/>.
     /// </summary>
     NoEligibleItems = 4,
 
@@ -280,15 +282,20 @@ public static class PromoEvaluator
     /// <c>UnitListPrice</c>, and only step 3's campaign moves <c>UnitPrice</c> below it. So the test needs
     /// no campaign id and no join.
     /// <para>
-    /// <b>It therefore excludes nothing in this build, and that is a fact about the repository rather than
-    /// a claim about the rule.</b> Checked rather than assumed: <c>CheckoutReader.ToLine</c> computes the
-    /// sale price as <c>CatalogPricing.SalePrice(list, campaignPrice: null)</c>, and that function returns
-    /// <c>listPrice</c> unchanged for a null campaign price — so <c>UnitPrice == UnitListPrice</c> on every
-    /// checkout line, and the comment there says why (<c>marketing.SaleCampaigns</c> does not exist;
-    /// ADM-14, deliberately not in W3-05's scope). No line can satisfy <c>UnitPrice &lt; UnitListPrice</c>
-    /// until it does, so the flag is carried, honoured and unit-tested here against a synthesised
-    /// campaign-priced line, and left off the admin form, where a checkbox that could not do anything
-    /// would be a promise.
+    /// <b>W3-05b has made this reachable, and the paragraph that used to stand here is now wrong.</b> It
+    /// said the flag excluded nothing in this build, because <c>CheckoutReader</c> computed every sale
+    /// price as <c>CatalogPricing.SalePrice(list, campaignPrice: null)</c> and no line could satisfy
+    /// <c>UnitPrice &lt; UnitListPrice</c>. ADM-14 exists now: <c>CheckoutReader</c> resolves a live
+    /// campaign per line, so a campaign-priced line really does arrive here and really is excluded.
+    /// <c>CheckoutCampaignBehaviourTests.Exclude_sale_items_drops_the_campaign_line_and_keeps_the_</c>
+    /// <c>markdown_line</c> is the first test in the repository that could exercise it: the jeans are
+    /// campaign-priced and dropped from the eligible base, the shirt carries only a markdown and stays in.
+    /// </para>
+    /// <para>
+    /// <b>The checkbox is still off the admin promo-code form, and that is now a gap rather than a
+    /// decision.</b> It was left off because it could not change any total; it can now, so a staff member
+    /// cannot set a rule the evaluator honours. It is in W3-05b's task report, and the control is one
+    /// field plus one validator line.
     /// </para>
     /// </remarks>
     private static bool IsEligible(PromoCodeTerms terms, OrderPricingLine line) =>

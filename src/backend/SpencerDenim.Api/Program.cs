@@ -106,6 +106,7 @@ app.MapAdminOrderEndpoints();
 app.MapPaymentSlipEndpoints();
 app.MapAdminContentEndpoints();
 app.MapAdminPromotionEndpoints();
+app.MapAdminSaleCampaignEndpoints();
 app.MapCartEndpoints();
 app.MapWishlistEndpoints();
 app.MapCheckoutEndpoints();

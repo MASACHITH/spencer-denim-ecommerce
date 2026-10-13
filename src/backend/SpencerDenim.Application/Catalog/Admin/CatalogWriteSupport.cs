@@ -1,4 +1,5 @@
 using SpencerDenim.Application.Catalog.Admin.Abstractions;
+using SpencerDenim.Application.Marketing.Promotions.Abstractions;
 
 namespace SpencerDenim.Application.Catalog.Admin;
 
@@ -59,4 +60,41 @@ internal static class CatalogWriteSupport
 
         _ => throw new InvalidOperationException($"Unhandled save outcome '{outcome}'."),
     };
+
+    /// <summary>
+    /// Re-applies doc 08 §6 step 3 to the product a save has just written, once the save has committed.
+    /// </summary>
+    /// <remarks>
+    /// <b>This closes a hole W3-05b opened and would otherwise have shipped.</b>
+    /// <c>ProductDerivedData.RefreshStats</c> computes <c>ProductStats</c>' pricing columns from the
+    /// product and its variants alone — it has no campaign and cannot have one, being a pure function
+    /// over the aggregate — so a product edited <i>during</i> a live campaign had its stored sale price
+    /// written back up to its list price. The money path was never affected (the bag and checkout price
+    /// live, doc 08 §7.4), but the card, the listing and the Sale page would have shown the undiscounted
+    /// price, and <c>RefreshCampaignPricing</c> would not have fixed it: that job only looks at campaigns
+    /// whose <i>boundary</i> has just passed, and a product save moves no boundary. The wrong price would
+    /// have stood until the campaign ended.
+    /// <para>
+    /// <b>After the commit, and only on a save that wrote something.</b> The refresher is a set-based
+    /// <c>UPDATE</c> that computes from committed rows, so it cannot run inside the unit of work it is
+    /// correcting; and running it on a <c>Conflict</c> or an <c>Unchanged</c> would be work for nothing.
+    /// It is idempotent, so the sequence "save writes the campaign-free summary, refresh writes the
+    /// campaign-aware one" converges — the window between them is one statement wide and no price a
+    /// shopper is charged reads either column.
+    /// </para>
+    /// </remarks>
+    public static async Task<CatalogWriteResult> WithCampaignPricingAsync(
+        CatalogWriteResult result,
+        ICampaignPricingRefresher campaigns,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(campaigns);
+
+        if (result is CatalogWriteResult.Succeeded succeeded)
+        {
+            await campaigns.RefreshProductsAsync([succeeded.EntityId], cancellationToken);
+        }
+
+        return result;
+    }
 }

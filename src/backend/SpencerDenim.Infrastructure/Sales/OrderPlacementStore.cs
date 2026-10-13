@@ -426,9 +426,12 @@ internal sealed class OrderPlacementStore(
                 UnitListPrice = line.Priced.UnitListPrice,
                 UnitPrice = line.Priced.UnitPrice,
 
-                // Sale campaigns are ADM-14 (W3-05); with no campaign table nothing moved the price, so
-                // there is no campaign to attribute the line to.
-                SaleCampaignId = null,
+                // Which campaign priced the line (ADM-14), resolved live by `CheckoutReader` in the
+                // repricing read this placement is built from — not re-resolved here, because doc 08 §6
+                // says the order's prices are "copied into the order at placement and never recomputed",
+                // and a second resolution could pick a different campaign if a boundary fell between the
+                // two reads. Null when no campaign won.
+                SaleCampaignId = line.Priced.SaleCampaignId,
                 LineSubtotal = line.Priced.LineSubtotal,
                 PromoDiscountAllocated = line.Priced.PromoDiscountAllocated,
                 LineTotal = line.Priced.LineTotal,

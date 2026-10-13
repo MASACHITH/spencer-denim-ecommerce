@@ -8,12 +8,20 @@ namespace SpencerDenim.Domain.Sales;
 /// <param name="UnitOriginalPrice">Step 2's "was" price. Never below <paramref name="UnitListPrice"/>.</param>
 /// <param name="UnitListPrice">Step 1's list price.</param>
 /// <param name="UnitPrice">Step 3's sale price — what one unit is actually charged at.</param>
+/// <param name="SaleCampaignId">
+/// Which campaign produced <paramref name="UnitPrice"/>, for <c>sales.OrderLines.SaleCampaignId</c>, or
+/// <see langword="null"/> when no campaign did (ADM-14). <b>It takes no part in the arithmetic</b> — the
+/// totals are computed from the three prices and nothing else — and is carried here so that the one
+/// mapping from a checkout line to a priced line does not have to be done twice. Optional, so the
+/// hundreds of existing positional constructions in tests of steps 5 to 12 still read as they did.
+/// </param>
 public readonly record struct OrderPricingLine(
     int VariantId,
     short Quantity,
     decimal UnitOriginalPrice,
     decimal UnitListPrice,
-    decimal UnitPrice);
+    decimal UnitPrice,
+    int? SaleCampaignId = null);
 
 /// <summary>
 /// The delivery rate that applies, as doc 08 §6 step 10 reads it off one
@@ -59,7 +67,8 @@ public sealed record PricedOrderLine(
     decimal UnitPrice,
     decimal LineSubtotal,
     decimal PromoDiscountAllocated,
-    decimal LineTotal);
+    decimal LineTotal,
+    int? SaleCampaignId = null);
 
 /// <summary>
 /// Every money column of <c>sales.Orders</c>, computed once. The names are the column names on purpose:
@@ -350,7 +359,12 @@ public static class OrderPricing
                 line.UnitPrice,
                 lineSubtotals[index],
                 shares[index],
-                lineSubtotals[index] - shares[index]));
+                lineSubtotals[index] - shares[index],
+
+                // Carried through untouched. The campaign id is a record of which campaign set
+                // `UnitPrice`, not an input to any total, and the placement writes it to
+                // `sales.OrderLines.SaleCampaignId` (ADM-14).
+                line.SaleCampaignId));
         }
 
         return priced;
