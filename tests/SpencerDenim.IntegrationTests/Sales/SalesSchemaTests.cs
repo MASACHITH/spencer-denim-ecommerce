@@ -993,6 +993,11 @@ public sealed class SalesSchemaTests(SqlServerDatabaseFixture sqlServer) : Sales
         "identity.UserRoles -> Roles",
         "identity.UserRoles -> Users",
         "identity.UserTokens -> Users",
+
+        // W3-05b (ADM-14): doc 08 §1.6 names SaleCampaignTargets in the permitted list. It only ever
+        // runs on a purge — a campaign is removed through SoftDelete() and Remove() on it throws (DB5) —
+        // and the target's three catalogue references are NO ACTION, which is why only this one appears.
+        "marketing.SaleCampaignTargets -> SaleCampaigns",
         "sales.CartItems -> Carts",
         "sales.DeliveryMethodZoneRates -> DeliveryMethods",
     ];

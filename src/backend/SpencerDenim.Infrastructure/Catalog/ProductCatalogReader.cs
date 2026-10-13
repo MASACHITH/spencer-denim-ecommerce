@@ -8,8 +8,10 @@ using SpencerDenim.Application.Catalog.Contracts;
 using SpencerDenim.Application.Catalog.Products;
 using SpencerDenim.Application.Catalog.Search;
 using SpencerDenim.Application.Sales.Wishlist.Abstractions;
+using SpencerDenim.Application.Marketing.Promotions.Abstractions;
 using SpencerDenim.Domain.Catalog;
 using SpencerDenim.Domain.Inventory;
+using SpencerDenim.Domain.Marketing;
 using SpencerDenim.Domain.Media;
 using SpencerDenim.Infrastructure.Persistence;
 
@@ -25,7 +27,8 @@ namespace SpencerDenim.Infrastructure.Catalog;
 internal sealed class ProductCatalogReader(
     AppDbContext dbContext,
     IOptions<CatalogOptions> options,
-    IClock clock)
+    IClock clock,
+    ICampaignOfferReader campaigns)
     : IProductCatalogReader, IWishlistCatalogReader
 {
     private readonly CatalogOptions _options = options.Value;
@@ -347,7 +350,14 @@ internal sealed class ProductCatalogReader(
         var breadcrumb = await LoadBreadcrumbAsync(row.CategoryPath, cancellationToken);
         var related = await LoadRelatedAsync(row, cancellationToken);
 
-        return MapDetail(row, breadcrumb, related, defaultThreshold);
+        // Doc 08 §6 step 3, **live**. The product page is not a listing: doc 08 §7.5 puts it with
+        // checkout and the cart — "Checkout, cart, and PDP price and stock are never served from this
+        // cache" — and it is the page a shopper reads the price off before pressing Add to bag. A card in
+        // a listing may lag five minutes at a campaign boundary (§7.4); a product page that disagreed
+        // with the bag it feeds would be a different thing entirely.
+        var offers = await campaigns.ReadAsync([row.Id], cancellationToken);
+
+        return MapDetail(row, breadcrumb, related, defaultThreshold, offers);
     }
 
     // ---------------------------------------------------------------- query building
@@ -769,7 +779,8 @@ internal sealed class ProductCatalogReader(
         ProductDetailRow row,
         IReadOnlyList<CategoryRefDto> breadcrumb,
         IReadOnlyList<ProductCardDto> related,
-        int defaultThreshold)
+        int defaultThreshold,
+        CampaignOfferSet offers)
     {
         var utcNow = clock.UtcNow.UtcDateTime;
 
@@ -778,8 +789,10 @@ internal sealed class ProductCatalogReader(
             var listPrice = CatalogPricing.ListPrice(row.BasePrice, variant.PriceOverride);
             var originalPrice = CatalogPricing.OriginalPrice(listPrice, row.CompareAtPrice, variant.CompareAtPriceOverride);
 
-            // Campaigns (doc 08 §6 step 3) arrive with marketing in week 3, so today sale == list.
-            var salePrice = CatalogPricing.SalePrice(listPrice, campaignPrice: null);
+            // Per variant, against this variant's own list price: a size with a price override can be
+            // won by a different campaign from its siblings, which is why `Best` takes a price and not a
+            // product (see CampaignPricingTests).
+            var salePrice = CatalogPricing.SalePrice(listPrice, offers.Best(row.Id, listPrice)?.Price);
             var threshold = StockAvailability.ResolveThreshold(variant.LowStockThreshold, defaultThreshold);
             var status = StockAvailability.Evaluate(variant.Available, threshold);
 

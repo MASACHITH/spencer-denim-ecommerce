@@ -1,0 +1,270 @@
+# 2026-10-13 — W3-05b, sale campaigns (ADM-14)
+
+Branch `feature/W3-05b-sale-campaigns`, from `origin/main` at `62bd88e`. Not pushed, no PR.
+
+**There is no CI.** GitHub Actions has been dead since 9 Oct 09:21, so every figure below comes from a
+run on this machine, in this worktree. Where a figure is an estimate or an inference rather than a
+measurement, it says so.
+
+---
+
+## What this task was
+
+Doc 02 line 119, **ADM-14**: "Sale campaigns: discount on categories/products for a date range."
+Specified in full already — doc 08 §3.6 (`marketing.SaleCampaigns`, `marketing.SaleCampaignTargets`),
+doc 08 §6 step 3 (the pricing rule), doc 08 §7.4 (the stored summary and its five-minute staleness),
+doc 11 P3 section A (the staff flow) and doc 11 line 450 (the worked example).
+
+The job was to follow it, not to design it.
+
+## Order of work
+
+Built in the order that leaves the most working if it stops early, which it did not:
+
+1. the pricing rule as a pure function, with its unit tests;
+2. the two tables, the foreign key the orders migration deferred, and the schema and model guards;
+3. the **live** read, wired into the bag, the checkout quote and the placement — the money path;
+4. the integration tests, including doc 11 line 450 placed as a real order;
+5. the plan test for the filtered index;
+6. the batched recompute of the stored summary and the five-minute job;
+7. the admin API;
+8. a defect found on the way: a product saved during a live campaign.
+
+The admin **screen** (Angular) is not built. See *What is not done*.
+
+---
+
+## The pricing rule
+
+`CampaignPricing.Best(offers, listPrice)` is the whole of doc 08 §6 step 3: "Percent →
+`round(list × (1 − v/100))`; Fixed → `list − v`. Lowest wins, floor at Rs. 1.00, no stacking."
+
+Three things about it were worth being careful with.
+
+**"Lowest wins" is about the result, not the discount.** A 30%-off campaign and a Rs. 500-off campaign
+change places at a list price of Rs. 1,666.67, so one pair of campaigns is won by different campaigns on
+two products — and on two variants of one product, because a variant may carry a `PriceOverride`. That is
+why `Best` takes a list price and not a product, and why nothing caches a winner per product.
+
+**Specificity does not win.** Nothing in doc 08 §3.6, doc 08 §6 or doc 11 P3 ranks a product target above
+a department target. `CampaignOffer` therefore does not carry what targeted it: the resolver cannot
+prefer a target type because it is never told one. Tested in both directions, on real rows.
+
+**Ties are broken by the lower id.** Two campaigns can resolve to the same price; which one wins is
+arbitrary, but it has to be the *same* arbitrary one on the bag, on the quote and at placement, because
+`sales.OrderLines.SaleCampaignId` is stored.
+
+## The live path and the lagging path
+
+Doc 08 §7.4 gives `ProductStats`' pricing columns a staleness of "≤ 5 min at campaign boundaries" and
+says in the same row that "checkout always prices live". Both halves are built, and a test pins them
+against each other:
+
+- **Live** (`ICampaignOfferReader`): the bag, the checkout quote, the placement, and — added for the
+  reason doc 08 §7.5 gives — the product detail page.
+- **Lagging** (`ICampaignPricingRefresher`): listings, the Sale page (DEPT-03) and the Sale homepage
+  block (HOME-07), all of which read `ProductStats.HasDiscount` and `MinSalePrice`.
+
+`CheckoutCampaignBehaviourTests.The_bag_prices_live_while_the_stored_summary_still_lags` asserts the
+*disagreement*: the bag charges Rs. 4,392.00 while `MinSalePrice` still says Rs. 5,490.00. Asserting only
+the bag would go on passing if somebody later pointed checkout at the summary, which is the change this
+pins against.
+
+## The recompute: failure, overlap, and racing an edit
+
+Doc 08 §7.4 requires each batch to be **one `UPDATE … FROM`** of ≤ 1,000 products computing straight from
+the source tables with `WITH (READCOMMITTEDLOCK)` on them. The lock hint is the part that is easy to drop
+and hard to notice: without it, a database with `READ_COMMITTED_SNAPSHOT ON` would let the statement price
+from a snapshot taken before a product save that commits during it, and then write that over the save.
+
+- **Fails halfway** — one `UPDATE` is atomic, so the batches that ran are correct and the rest are stale.
+  Nothing needs repairing: every statement recomputes the whole answer, so the next pass or the next save
+  converges. The job does not advance its cursor on a failure, so the window widens rather than skipping.
+- **Two instances overlap** — both compute from the same source rows and write the same values. No lease,
+  and `ops.JobLeases` still does not exist (the same argument `ExpireUnpaidOrdersService` and
+  `AutoDeliverShippedService` make for themselves).
+- **Racing an edit** — the statement reads the campaign rows inside itself, so it sees the campaign before
+  or after the edit, never halfway; and the edit's own save path recomputes the same products. Neither is
+  an increment, so the order does not matter. The worst outcome is one interval of lag on a listing.
+
+All three are tested as properties rather than as timing.
+
+**It is a second implementation of `CampaignPricing`, in T-SQL.** That cannot be avoided — §7.4 requires
+the arithmetic inside one statement — so it is managed instead:
+`CampaignPricingRefreshTests.The_stored_summary_agrees_with_the_live_price_for_every_product` drives a
+matrix through both paths and compares all four stored columns. The expectation is computed from the live
+reader, never typed.
+
+## Two things the equivalence test did not catch until they were measured
+
+Both are now in the arrangement rather than in a comment.
+
+1. **Comparing only the targeted products made an over-wide T-SQL rule invisible.** An `UPDATE` writes
+   only the ids it is given, and the ids came from the C# targeting — so the compared set was exactly the
+   set both rules agree about. Widening the T-SQL's subtree test to "same department" was **green**. The
+   test now refreshes and compares the whole catalogue, and that mutation fails.
+2. **With no inactive or out-of-window campaign in the matrix, deleting `c.IsActive = 1` from the
+   statement was green.** The matrix now carries three campaigns that must price nothing — inactive, not
+   started, already ended — so each of the statement's three exclusions is covered.
+
+## The filtered index, and a correction
+
+`IX_SaleCampaigns_Window` is filtered `WHERE IsActive = 1 AND IsDeleted = 0`, so it needed a plan test
+that observes the real query. `CampaignOfferReader.Query` is a separate method for exactly that: the test
+takes `ToQueryString()` of the production query rather than rebuilding it, which is the trap this
+repository has already fallen into (a plan test that stayed green with its index dropped, 20,101 logical
+reads against 18).
+
+**The correction: the live campaign read measurably does not seek that index, and should not.** It asks
+"which of these products does a live campaign target", so the selective side is `SaleCampaignTargets`; the
+plan drives from `PK_SaleCampaignTargets` and `IX_ProductCategories_ProductId` and reaches each candidate
+campaign by `PK_SaleCampaigns`. Measured with 3,000 ended campaigns in the table and statistics updated:
+the plan is unchanged, so it is the join order and not the row count.
+
+The index is justified by the other query shape — "which campaigns are live now", which is
+`RefreshCampaignPricing`'s (doc 08 §7.4) — and that test seeks it. Two further measurements behind it:
+
+- with the instant as a `DECLARE`d variable, the estimated plan **scans** even on 3,000 rows: an estimated
+  plan cannot sniff a local variable, so an inequality is costed at a ~30% guess and the key lookups lose.
+  A real parameterised statement is sniffed on first compile, so this is an artefact of reading an
+  estimated plan rather than a prediction about the job.
+- the plan names the index under `<UnmatchedIndexes>` **as well as** in the seek, because the lookup back
+  to the clustered index for `DiscountType` and `DiscountValue` is a part the filtered index cannot serve.
+  So only the positive half is asserted, with the reason written down.
+
+## A defect this branch opened and fixed
+
+`ProductDerivedData.RefreshStats` computes `ProductStats`' pricing columns from the product and its
+variants alone — it is a pure function over the aggregate and cannot see a campaign — so a product edited
+**during** a live campaign had its stored sale price written back up to its list price. And
+`RefreshCampaignPricing` would not have corrected it: that job looks only at campaigns whose *boundary*
+has just passed, and a product save moves no boundary. The undiscounted figure would have stood on every
+card, listing and Sale page until the campaign ended.
+
+The money path was never affected, which is what would have made it hard to spot: the card and the bag
+would have disagreed, in the shopper's favour.
+
+Fixed by `CatalogWriteSupport.WithCampaignPricingAsync`, which runs the refresher for that one product
+after the save commits and only on a save that wrote something.
+
+## Comments this branch made false, and corrected
+
+W3-05 wrote four claims that ADM-14 has falsified. Each is corrected rather than left:
+
+| Where | Said | Now |
+|---|---|---|
+| `PromoEvaluator.IsEligible` | `ExcludeSaleItems` "excludes nothing in this build" | it excludes a real line, with the test that proves it |
+| `PromoRefusal.NoEligibleItems` | "cannot happen until sale campaigns exist" | a reason a shopper can now be given |
+| `AdminPromoCodeDto` | the checkbox is "deliberately absent" | a **gap**, not a decision — see below |
+| `OrderLine.SaleCampaignId` | "no migration has created it" | a real constraint |
+
+## Numbers, all measured here today
+
+| Run | Result |
+|---|---|
+| `dotnet build SpencerDenim.sln -c Release` | **0 warnings, 0 errors** |
+| Unit suite | **2,105 / 2,105** (main was 2,077; +28) |
+| `dotnet ef migrations has-pending-model-changes`, after a rebuild | "No changes have been made to the model" |
+| Snapshot diff vs `origin/main` | **+187 lines, 0 deletions** — purely additive |
+| `dotnet ef migrations remove` | never run; the one empty migration was removed with `rm` and regenerated |
+
+`TEST_SQL_CONNECTION` was set to `(localdb)\MSSQLLocalDB` for every integration run. The one empty
+migration was the `--no-build` stale-binary trap the W1-03 journal records: it generated an empty `Up()`
+because `SpencerDenim.Api`'s copy of the Infrastructure assembly was stale.
+
+## Mutations
+
+Nothing below is a claim that a test "would" fail. Each mutation was applied, the suite run, and the
+killing test recorded.
+
+**The pricing rule** (`CampaignPricingTests`, 27 tests):
+
+| Mutation | Killed by |
+|---|---|
+| floor removed | `A_fixed_amount_never_prices_below_one_rupee`, `The_floor_bites_only_below_one_rupee`, `A_campaign_that_cannot_beat_the_list_price_does_not_win` |
+| banker's rounding instead of away-from-zero | `A_half_rupee_cent_rounds_away_from_zero` |
+| tie-break `<` → `<=` | `A_tie_is_broken_by_the_lower_id_whatever_the_order` |
+| tie-break by higher id | the same |
+| first offer always wins | the two crossover tests, the specificity test, the tie test |
+| `>= listPrice` → `> listPrice` | `A_campaign_that_cannot_beat_the_list_price_does_not_win` |
+| percentage inverted (`v/100`) | 14 of 27 |
+| window end made inclusive | `A_campaign_is_live_from_its_start_until_its_end` |
+| window start made exclusive | the same |
+
+**The live path** (`CheckoutCampaignBehaviourTests`, 11 tests):
+
+| Mutation | Killed |
+|---|---|
+| campaign end bound dropped | 2 |
+| `IsActive` dropped | 1 |
+| soft-delete filter bypassed (`IgnoreQueryFilters`) | 8 |
+| category target widened to the department | 2, incl. the worked example |
+| placement stops recording the campaign id | 4 |
+| checkout ignores campaigns | 8 |
+| `ExcludeSaleItems` compares the markdown instead of the campaign | 1 — the new G-07 test, and only it |
+
+**The T-SQL recompute** (`CampaignPricingRefreshTests`, 7 tests): the fixed-amount floor removed, the
+percent value rounded to 0 dp, the percentage inverted, `MIN` → `MAX`, `FLOOR` → `ROUND` on the discount
+percent, the subtree flag ignored, and each of `IsActive` / the start bound / the end bound deleted in
+turn — nine mutations, all killed. Two of them only after the arrangement was widened; see above.
+
+**The plan test**: dropping `IX_SaleCampaigns_Window` and re-running turns the plan to `PK_SaleCampaigns`
+and fails the seek assertion.
+
+**The product-save fix**: removing the `WithCampaignPricingAsync` call leaves
+`A_saved_product_has_its_campaign_pricing_recomputed` red.
+
+## Decisions this task made that no document states
+
+Listed so a reviewer can disagree with them.
+
+- **`CK_SaleCampaigns_DiscountValue` has a lower bound of 0** for a percent campaign. Doc 08 §3.6 gives
+  only the 90 ceiling. A campaign of 0% is a sale the shop advertises that discounts nothing.
+- **At most 200 targets per campaign.** Neither document bounds the collection. What the bound stops is a
+  mistyped request making the validator do hundreds of thousands of existence checks.
+- **A duplicate target is refused, not de-duplicated.** It changes no price, but a staff member who added
+  Women twice has made a mistake, and tidying it silently would also tidy the case where they meant two
+  different categories.
+- **A tie between two campaigns is broken by the lower id**, not by "ends soonest" — which would change
+  the recorded winner as a clock moved.
+- **`WhichTargetsExistAsync` does not filter departments by `IsActive`.** A campaign may legitimately be
+  set up for a department the client has temporarily switched off.
+
+## What is not done
+
+Stated plainly, because two days before the deadline this matters more than the rest of this file.
+
+1. **There is no admin screen.** The API is complete and tested (list, create, edit, remove, with
+   targets, validation, permissions, concurrency and the recompute), but no Angular page calls it. A staff
+   member cannot create a campaign from the admin app today; the feature is reachable only by an
+   authenticated HTTP client. This is the largest remaining piece of ADM-14 and it is a front-end task:
+   a page in `projects/admin/src/app/pages/marketing/` beside `promo-codes-page.ts`, an API client, a
+   route, and its Vitest and e2e suites. `promo-codes-page.ts` is 837 lines, so take that as the scale.
+2. **`ExcludeSaleItems` is still off the promo-code form.** W3-05 left the checkbox off because the flag
+   could not change any total; it can now, and the evaluator honours it, so a staff member cannot set a
+   rule the shop applies. One field, one reader in the endpoint, one validator line — plus the Angular
+   control.
+3. **No storefront UI work.** Listings, the Sale page (`onSaleOnly`) and the homepage Sale block already
+   read `ProductStats.HasDiscount` and `MinSalePrice`, so they pick campaigns up through the refresher
+   with no change — that is inference from reading `ProductCatalogReader`, **not** something a browser
+   test confirmed. No campaign banner is shown anywhere: doc 11 P3 step 1 makes the banner optional and
+   `BannerAssetId` is stored and returned by the API, but nothing renders it.
+4. **Nothing is seeded.** No demo campaign, which is the client's decision.
+5. **No browser test.** #126: Playwright never starts the .NET API, so a screen test cannot observe any
+   of this.
+
+## Notes for whoever picks this up
+
+- `CampaignWindow` delegates its window, its status and its Colombo conversions to `ContentSchedule` and
+  `PromoCodeSchedule` rather than restating them. `PromoCodeStatus` on a campaign reads oddly and is
+  deliberate: doc 11 P3 gives both features one derived status, and the only way to guarantee the two
+  screens agree is for it to be the same function.
+- The category subtree predicate goes through `dbContext.ProductCategories` rather than the
+  `CategoryLinks` navigation. Translation is identical; the navigation's `Any` is a delegate lambda nested
+  in an expression tree, and CA1310 fires on the `StartsWith` that every other subtree predicate uses.
+- `AdminJsonBody` is the admin body readers, extracted from `AdminPromotionEndpoints` so both forms use
+  one copy. `AdminSaleCampaignEndpointTests` is the first backend test to exercise them — the promo-code
+  endpoints had no backend test at all.
+- The campaign integration suites remove their campaigns **and** put the affected products' stored
+  summaries back. A campaign is global state in a way a promo code is not: the first run of the behaviour
+  suite left one Rs. 99,000-off campaign live and seven of eleven tests asserted Rs. 1.00.
