@@ -88,7 +88,7 @@ the same words, and only when the flag is on.
 
 ## 2. The sale-campaign screen
 
-`projects/admin/src/app/pages/marketing/sale-campaigns-page.ts`, 1,197 lines counted from the file (the
+`projects/admin/src/app/pages/marketing/sale-campaigns-page.ts`, 1,207 lines counted from the file (the
 promo-codes page is 837). Route `marketing/sale-campaigns`, a nav entry beside Promo codes, an API client,
 a model, 22 Vitest tests and 16 Playwright tests — each count taken with `grep -c` on the file, not from
 arithmetic.
@@ -233,13 +233,33 @@ suite structurally cannot.
 
 ### The category move
 
-| Mutation | Killed by |
-|---|---|
-| the handler stops calling `WithCampaignPricingForAsync` | unit `Moving_a_category_recomputes_the_stored_price_of_the_products_under_it`, **and** integration `Moving_a_category_into_and_out_of_a_campaigns_subtree_keeps_the_stored_price_right` |
-| the handler passes an empty category set | see the run below |
-| the handler passes only the moved category's own id | see the run below |
-| the reader ignores its argument | see the run below |
-| the reader drops its empty-set guard | see the run below |
+Run on a clean tree after the change was committed. `U` is
+`CategoryWriteHandlerTests` (33 tests), `I` is `CampaignCategoryMoveTests` (2).
+
+| Mutation | U | I |
+|---|---|---|
+| the handler stops calling `WithCampaignPricingForAsync` | **killed** | **killed** |
+| the handler passes an empty category set | **killed** | **killed** |
+| the handler passes only the moved category's own id | **killed** | survives |
+| the reader ignores its argument (`Where` deleted) | survives | **killed** |
+| the reader drops its empty-set guard | survives | **survives** |
+
+**Two of those need saying rather than hiding.**
+
+*"Only the moved category's own id" survives the integration test* because the seeded
+`shirts-blouses` has **no children**, so "the whole subtree" and "the category alone" are the same set
+in that catalogue. The unit test tells them apart — it asserts `[11, 12]` on a fixture that has a child —
+and that is the only thing protecting the shape of the affected set. Adding a seeded child category to
+make the integration test discriminate would mean moving a two-level subtree of the real catalogue and
+restoring both rows, and two days out that is a worse trade than writing this paragraph.
+
+*"The reader drops its empty-set guard" is killed by nothing, and the guard is not a correctness guard.*
+`categoryIds.Contains(link.CategoryId)` over an empty list already translates to a predicate that matches
+no row, so removing the early return changes one round trip and no answer.
+`Assert.Empty(await ProductsLinkedToCategoriesAsync([], Token))` therefore pins the **contract** —
+empty in, empty out — and not the guard. It would still catch a rewrite that made an empty argument mean
+"all categories", which is the mistake worth catching; it does not catch the guard going missing, and
+saying it did would be the kind of claim this project has shipped seventeen of.
 
 ### The campaign screen's own defect
 
@@ -261,12 +281,11 @@ Both are the same lesson and it is the one the brief already gave: **commit befo
 loop that reverts with `git checkout` cannot tell a mutation from uncommitted work, and a contaminated
 mutation table is worse than no mutation table — it reads as evidence.
 
-The four unrerun mutations above are left stated as unrerun rather than quietly dropped. The one that was
-run on a clean tree kills the behaviour in both suites, so the wiring is covered; what is **not**
-separately proved by mutation is the exact *shape* of the affected set (the whole subtree rather than the
-moved category alone). `Moving_a_category_recomputes_the_stored_price_of_the_products_under_it` asserts
-`[11, 12]` explicitly, so a change to that shape would fail it — but that is reading the test, not a
-measurement.
+**All four were re-run afterwards on a clean tree**, and their results are in the table above — including
+the two that survive, which is the part this mistake nearly cost. A third attempt in between failed for a
+different reason worth recording: `dotnet build -o /dev/null` on Windows makes the output directory
+a UNC-looking path under the null device, and every project fails to copy into it. That reads as four
+"build error" lines rather than as a typo in the loop. `/dev/null` is not a sink for an MSBuild `-o`.
 
 ---
 
@@ -279,7 +298,7 @@ on a sale nobody chose, by a screen that never showed it.
 
 **Found by re-reading the file, not by a failing test**, which is why it has its own commit and its own
 test. The test is one of the twenty-two in `sale-campaigns-page.spec.ts`; deleting the one new line in
-`startNew` leaves it red at 537/538.
+`startNew` leaves it red, 537 of 538.
 
 A smaller one in the same pass: the kept-product sentence read "2 individual product it names". It
 pluralises now.
@@ -289,13 +308,16 @@ pluralises now.
 | Run | Result |
 |---|---|
 | `dotnet build SpencerDenim.sln -c Release` | **0 warnings, 0 errors** |
-| Unit suite | **2,276 / 2,276** (`main` 2,274; +2) |
-| Integration suite, whole assembly | see the task report — run at the end of the session |
+| Unit suite | **2,276 / 2,276** (`main` 2,274 measured here first; +2) |
+| Integration suite, whole assembly | **1,557 / 1,557 in 23 m 30 s** (`main` 1,552; +5) — one run, unfiltered, exit code 0 |
 | Admin Vitest (`ng test admin --watch=false`) | **538 / 538**. Twenty-five of those are new, counted with `grep -c` on the two spec files (3 promo, 22 campaign), which is consistent with the 513 the brief gives for `main` — that baseline is the brief's figure, not one re-measured here |
 | `ng lint admin` | clean |
 | `tsc -p tsconfig.json --noEmit` | clean |
+| Storefront Vitest | **1,529 / 1,529** — unchanged, and exactly the brief's figure |
+| Shared Vitest | **24 / 24** |
 | `ng build admin`, `npm run build` | both clean |
 | Playwright, `admin-sale-campaigns` + `admin-promo-codes` | **26 / 26** in 31.2 s, on ports 5400–5416 |
+| Playwright, **whole suite** | **1,011 / 1,011 in 7.8 min**, exit code 0. Run because this branch changes `admin-catalog-stub.mjs`, which every admin suite shares — a stub change is not a local change |
 | Size, counted from `git diff --numstat` against `origin/main` | **4,057 added / 41 deleted** over 26 files |
 | Migrations | **none added.** No schema change: `ExcludeSaleItems` was created by `20261012084301_MarketingPromoCodes` |
 
@@ -345,3 +367,8 @@ tester had found it wrong in two places; the version on `9576d66` states the rig
    what the real validator refuses, and the endpoints are proved separately against SQL Server — but no
    single run has exercised the page and the API together. That is the largest remaining risk in this
    branch and it is the same one every admin screen in this project carries.
+7. **The empty-set guard on the new reader is not covered by a test** — see the mutation table. It is a
+   round trip, not an answer, and nothing measured here would notice it going missing.
+8. **The integration test cannot tell the whole subtree from the moved category alone**, because the
+   seeded `shirts-blouses` has no children. Only the unit test's `[11, 12]` assertion protects that
+   shape.
