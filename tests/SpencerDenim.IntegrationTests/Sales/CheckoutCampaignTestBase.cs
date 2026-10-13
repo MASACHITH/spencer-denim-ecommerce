@@ -436,6 +436,25 @@ public abstract class CheckoutCampaignTestBase(SqlServerDatabaseFixture sqlServe
     /// Rs. 4,392.00 and a Sale badge behind for <c>CatalogListingTests</c> to trip over — a failure with
     /// no visible connection to campaigns at all. The restore runs the production refresher with every
     /// campaign already gone, so it writes exactly what the seeder wrote.
+    /// <para>
+    /// <b>The delete goes first, and the previous arrangement did not — which left the hole it was
+    /// written to close.</b> This method used to read the affected set <i>before</i> the soft delete, on
+    /// the stated grounds that "after it, the campaign's targets are still there but asking which products
+    /// they reach is a question about a row the filter now hides". That is not true of the method it
+    /// calls: <c>ProductsTargetedByAsync</c> calls <c>IgnoreQueryFilters()</c> precisely so a
+    /// just-soft-deleted campaign's affected set is still answerable, and its own remarks say so. So the
+    /// old order bought nothing and cost the one guarantee that matters: a failure in that first query —
+    /// a timeout on a loaded box during a twenty-five-minute run is enough — came out of
+    /// <c>DisposeAsync</c> with the campaign still live, which is exactly the Rs. 99,000-off failure this
+    /// class already paid for once. <c>DisposeAsync</c> attempting the removal first is not sufficient on
+    /// its own; the removal has to be the first thing <i>inside</i> it too.
+    /// </para>
+    /// <para>
+    /// Each step therefore gets its own <c>try</c>/<c>finally</c>, in order of how much damage skipping it
+    /// does: a campaign left live reprices the catalogue for every class that follows, while a stale
+    /// summary misprices one product's card. Both are reported, because a teardown that swallows its own
+    /// failure silently is how a suite comes to depend on one.
+    /// </para>
     /// </remarks>
     private async Task RemoveArrangedCampaignsAsync()
     {
@@ -443,22 +462,28 @@ public abstract class CheckoutCampaignTestBase(SqlServerDatabaseFixture sqlServe
         var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var refresher = scope.ServiceProvider.GetRequiredService<ICampaignPricingRefresher>();
 
-        // Taken *before* the delete: after it, the campaign's targets are still there but asking which
-        // products they reach is a question about a row the filter now hides.
-        var affected = await refresher.ProductsTargetedByAsync(_campaignIds, CancellationToken.None);
-
-        var campaigns = await dbContext.SaleCampaigns
-            .Where(campaign => _campaignIds.Contains(campaign.Id))
-            .ToListAsync(CancellationToken.None);
-
-        foreach (var campaign in campaigns)
+        try
         {
-            campaign.SoftDelete(DateTime.UtcNow, userId: null);
+            var campaigns = await dbContext.SaleCampaigns
+                .Where(campaign => _campaignIds.Contains(campaign.Id))
+                .ToListAsync(CancellationToken.None);
+
+            foreach (var campaign in campaigns)
+            {
+                campaign.SoftDelete(DateTime.UtcNow, userId: null);
+            }
+
+            await dbContext.SaveChangesAsync(CancellationToken.None);
         }
+        finally
+        {
+            // Read after the delete, which `ProductsTargetedByAsync` supports by design. In its own
+            // `finally` so that a failed delete is still followed by a best-effort restore rather than
+            // leaving both halves undone.
+            var affected = await refresher.ProductsTargetedByAsync(_campaignIds, CancellationToken.None);
 
-        await dbContext.SaveChangesAsync(CancellationToken.None);
-
-        await refresher.RefreshProductsAsync(affected, CancellationToken.None);
+            await refresher.RefreshProductsAsync(affected, CancellationToken.None);
+        }
     }
 
     private async Task<int> IdOfAsync(Func<AppDbContext, IQueryable<int>> query)
