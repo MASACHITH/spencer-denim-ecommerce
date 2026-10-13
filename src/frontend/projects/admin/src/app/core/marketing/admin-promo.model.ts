@@ -119,8 +119,12 @@ export function promoLimitLabel(promoCode: AdminPromoCode): string {
  * Hand-rolled rather than `Intl.NumberFormat` for the reason the storefront's `formatLkr` gives: this app
  * is not server-rendered, but two formatters in one repository that disagree by a separator is a figure
  * that reads differently on two screens showing the same row.
+ *
+ * **Exported for the sale-campaign screen (ADM-14), not copied there**, which is the same argument one
+ * step further: the promo-code list and the campaign list sit under one menu and a staff member reads
+ * them in the same sitting.
  */
-function formatAmount(amount: number): string {
+export function formatAmount(amount: number): string {
   const whole = Math.trunc(Math.abs(amount));
   const cents = Math.round((Math.abs(amount) - whole) * 100);
   const grouped = whole.toLocaleString('en-US');
