@@ -9,35 +9,37 @@ namespace SpencerDenim.Api.Http;
 /// The newsletter signup's rate limit (HOME-10, GLB-07), partitioned by the caller's address.
 ///
 /// <para>
-/// <b>The partition is the real socket peer, and behind Caddy that is Caddy.</b> Doc 03 §4 puts a
-/// reverse proxy in front of the API, and <c>X-Forwarded-For</c> processing is deliberately off
-/// (W1-01 round 3: it let anyone forge the address written into <c>ops.AuditLogs</c>, and there is
-/// still no known proxy address to pin <c>KnownIPNetworks</c> to). So until W0-15 builds the real
-/// Docker/Caddy networking, every visitor may land in one bucket, and the ceiling has to be one
-/// that a whole launch day of genuine signups cannot reach. It is deliberately loose for that
-/// reason and tightens the day the forwarded-headers work lands — which is on W0-15 as a launch
-/// blocker, not as a comment.
+/// <b>The partition is the visitor's own address</b> once the deployment is configured: the web
+/// gateway's address is trusted for <c>X-Forwarded-For</c> (<c>ForwardedHeaders__KnownProxies</c>,
+/// W0-15, docs/15), so <c>RemoteIpAddress</c> is the client the host's nginx saw, not the gateway.
+/// The ceiling is therefore sized for one address, not for the whole site.
 /// </para>
 /// <para>
-/// What still holds in that shared-bucket state: a script cannot write millions of rows, and a
-/// mistyped address costs nothing at all, because the use case only asks for a permit once it has
-/// an address it is about to store.
+/// If that setting is missing or does not match the gateway's subnet, every visitor lands in the
+/// gateway's bucket and this ceiling becomes the whole site's budget. That is a misconfiguration,
+/// not a supported mode, and the warning below says so in the log the first time it happens.
+/// </para>
+/// <para>
+/// What holds either way: a script cannot write millions of rows, and a mistyped address costs
+/// nothing at all, because the use case only asks for a permit once it has an address it is about
+/// to store.
 /// </para>
 /// </summary>
 internal sealed partial class NewsletterSignupThrottle : INewsletterSignupThrottle, IDisposable
 {
     /// <summary>
-    /// Signups one partition may make per window.
+    /// Signups one address may make per window.
     ///
     /// <para>
-    /// Sized for the bad case, not the good one: if every visitor shares Caddy's address, this is
-    /// the whole site's budget. 600 per ten minutes is one a second sustained — far above any
-    /// plausible day for a new Sri Lankan clothing store, and far below what makes filling the
-    /// table worth a script's time. Once the deployment can see real client addresses this is far
-    /// too loose for one person and should come down to something like ten.
+    /// Twenty per ten minutes. A person signs up once; a family or an office sharing one connection
+    /// signs up a handful of times. The margin above that is for carrier-grade NAT: Sri Lankan mobile
+    /// networks put many subscribers behind one public address, and a campaign link shared on social
+    /// media can bring several of them to the form within minutes. Twenty caps one address at under
+    /// three thousand rows a day, where 600 allowed eighty-six thousand. (It was 600 while every visitor
+    /// shared the reverse proxy's address; W0-15 fixed that.)
     /// </para>
     /// </summary>
-    private const int PermitLimit = 600;
+    private const int PermitLimit = 20;
 
     /// <summary>What a caller with no address at all shares. They are all one bucket.</summary>
     private const string UnknownPartition = "unknown";
@@ -73,7 +75,7 @@ internal sealed partial class NewsletterSignupThrottle : INewsletterSignupThrott
 
         WarnIfTheAddressIsNotAVisitor(partition);
 
-        using var lease = _limiter.AttemptAcquire(partition);
+        using var lease = _limiter.AttemptAcquire(ClientAddressPartition.For(partition)!);
         return lease.IsAcquired;
     }
 
@@ -83,18 +85,18 @@ internal sealed partial class NewsletterSignupThrottle : INewsletterSignupThrott
     /// The signal that the deployment cannot see its visitors.
     ///
     /// <para>
-    /// A loopback or private address here means every caller is arriving through something else —
-    /// a reverse proxy, a container network — and the whole site is sharing one bucket. On a
-    /// developer's machine that is expected and harmless; in production it is the thing W0-15 has
-    /// to fix, and this is what says so out loud rather than leaving it to be noticed when a
-    /// launch-day signup is refused.
+    /// A loopback or private address here means the caller arrived through something else — a
+    /// reverse proxy, a container network — whose forwarded headers the API is not trusting. On a
+    /// developer's machine that is expected and harmless. In a deployment it means
+    /// <c>ForwardedHeaders__KnownProxies</c> is unset or does not match the gateway's address, so
+    /// every visitor is sharing one bucket, and this says so out loud rather than leaving it to be
+    /// noticed when a genuine signup is refused.
     /// </para>
     /// <para>
     /// <b>The address is tested before the flag is spent</b>, and the order is the whole point. The
     /// other way round, the first call burned the once-only flag whatever address it came from — so
-    /// a single signup from a real visitor, a monitor or a probe, arriving in any window before
-    /// Caddy fronts the API, silenced this warning for the life of the process. The flag exists to
-    /// stop the warning repeating, not to stop it happening.
+    /// a single signup from a real visitor, a monitor or a probe silenced this warning for the life
+    /// of the process. The flag exists to stop the warning repeating, not to stop it happening.
     /// </para>
     /// </summary>
     private void WarnIfTheAddressIsNotAVisitor(string partition)
@@ -159,10 +161,10 @@ internal sealed partial class NewsletterSignupThrottle : INewsletterSignupThrott
         EventId = 1101,
         Level = LogLevel.Warning,
         Message = "Newsletter signups are arriving from {Address}, which is not a visitor's own address. " +
-            "Every caller is therefore sharing one rate-limit partition of {PermitLimit} signups per " +
-            "{WindowMinutes} minutes. This is expected on a developer machine. In production it means the " +
-            "reverse proxy's forwarded headers are not configured (W0-15), and one busy period could refuse " +
-            "signups for everyone.")]
+            "Every caller arriving this way shares one rate-limit partition of {PermitLimit} signups per " +
+            "{WindowMinutes} minutes. This is expected on a developer machine. In a deployment it means the " +
+            "reverse proxy's forwarded headers are not trusted: ForwardedHeaders__KnownProxies is unset or does " +
+            "not match the web gateway's address (docs/15-deployment-runbook.md), and genuine signups will be refused.")]
     private static partial void LogSharedPartition(
         ILogger logger,
         string address,

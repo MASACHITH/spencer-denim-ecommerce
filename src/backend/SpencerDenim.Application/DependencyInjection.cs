@@ -21,6 +21,7 @@ using SpencerDenim.Application.Content.Abstractions;
 using SpencerDenim.Application.Content.Announcements;
 using SpencerDenim.Application.Content.Contracts;
 using SpencerDenim.Application.Content.Admin;
+using SpencerDenim.Application.Marketing.Promotions;
 using SpencerDenim.Application.Content.Admin.Contracts;
 using SpencerDenim.Application.Content.Contact;
 using SpencerDenim.Application.Content.Home;
@@ -249,6 +250,27 @@ public static class DependencyInjection
             provider => provider.GetRequiredService<ContentPageWriteHandlers>());
         services.AddScoped<ICommandHandler<DeleteContentPageCommand, ContentWriteResult>>(
             provider => provider.GetRequiredService<ContentPageWriteHandlers>());
+
+        // The admin promo-code screen (ADM-13, W3-05). Three writes in one class because they share every
+        // rule; registered once per interface so each endpoint asks for the one command it sends.
+        services.AddScoped<PromoCodeWriteHandlers>();
+        services.AddScoped<ICommandHandler<CreatePromoCodeCommand, PromoWriteResult>>(
+            provider => provider.GetRequiredService<PromoCodeWriteHandlers>());
+        services.AddScoped<ICommandHandler<UpdatePromoCodeCommand, PromoWriteResult>>(
+            provider => provider.GetRequiredService<PromoCodeWriteHandlers>());
+        services.AddScoped<ICommandHandler<DeletePromoCodeCommand, PromoWriteResult>>(
+            provider => provider.GetRequiredService<PromoCodeWriteHandlers>());
+
+        // ADM-14 (W3-05b). One class per interface, so each endpoint asks for the one command it sends;
+        // the three writes share every rule, including doc 11 P3 step 3's recompute of the affected
+        // products' stored price summary.
+        services.AddScoped<SaleCampaignWriteHandlers>();
+        services.AddScoped<ICommandHandler<CreateSaleCampaignCommand, SaleCampaignWriteResult>>(
+            provider => provider.GetRequiredService<SaleCampaignWriteHandlers>());
+        services.AddScoped<ICommandHandler<UpdateSaleCampaignCommand, SaleCampaignWriteResult>>(
+            provider => provider.GetRequiredService<SaleCampaignWriteHandlers>());
+        services.AddScoped<ICommandHandler<DeleteSaleCampaignCommand, SaleCampaignWriteResult>>(
+            provider => provider.GetRequiredService<SaleCampaignWriteHandlers>());
 
         services.AddScoped<ContactEnquiryWriteHandlers>();
         services.AddScoped<ICommandHandler<OpenContactSubmissionCommand, ContactSubmissionWriteOutcome>>(

@@ -18,6 +18,10 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.AddSerilogLogging();
 
+// The key ring behind the admin cookie, antiforgery tokens and encrypted settings: persisted to a volume,
+// so a container restart signs nobody out (#96, docs/15 §4).
+builder.AddApiDataProtection();
+
 builder.Services.AddProblemDetails();
 
 // Enums travel as their names ("Sale", "LowStock", "OutOfStock"), so a client never has to keep a
@@ -103,6 +107,8 @@ app.MapAdminBankTransferEndpoints();
 app.MapAdminOrderEndpoints();
 app.MapPaymentSlipEndpoints();
 app.MapAdminContentEndpoints();
+app.MapAdminPromotionEndpoints();
+app.MapAdminSaleCampaignEndpoints();
 app.MapCartEndpoints();
 app.MapWishlistEndpoints();
 app.MapCheckoutEndpoints();

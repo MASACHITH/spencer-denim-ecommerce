@@ -2,9 +2,11 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using SpencerDenim.Application.Catalog;
 using SpencerDenim.Application.Catalog.Contracts;
+using SpencerDenim.Application.Marketing.Promotions.Abstractions;
 using SpencerDenim.Application.Sales.Cart.Abstractions;
 using SpencerDenim.Application.Sales.Cart.Contracts;
 using SpencerDenim.Domain.Catalog;
+using SpencerDenim.Domain.Marketing;
 using SpencerDenim.Domain.Media;
 using SpencerDenim.Domain.Sales;
 using SpencerDenim.Infrastructure.Catalog;
@@ -32,7 +34,10 @@ namespace SpencerDenim.Infrastructure.Sales;
 /// <see cref="CartLineStatus.Unavailable"/>.
 /// </para>
 /// </summary>
-internal sealed class CartReader(AppDbContext dbContext, IOptions<CatalogOptions> options) : ICartReader
+internal sealed class CartReader(
+    AppDbContext dbContext,
+    IOptions<CatalogOptions> options,
+    ICampaignOfferReader campaigns) : ICartReader
 {
     private readonly CatalogOptions _options = options.Value;
 
@@ -118,7 +123,14 @@ internal sealed class CartReader(AppDbContext dbContext, IOptions<CatalogOptions
                             : null)))
             .ToListAsync(cancellationToken);
 
-        var lines = rows.Select(row => ToLine(row, _options.MediaBaseUrl)).ToList();
+        // Doc 08 §6 step 3, live. One extra round-trip for the whole bag, and only when it has a line:
+        // doc 08 §7.4's stored price summary is for listings and may lag five minutes at a campaign
+        // boundary, so the bag — whose figures a shopper is about to be charged — reads campaigns itself.
+        var offers = await campaigns.ReadAsync(
+            rows.Select(row => row.ProductId).Distinct().ToList(),
+            cancellationToken);
+
+        var lines = rows.Select(row => ToLine(row, offers, _options.MediaBaseUrl)).ToList();
         return new CartDto(lines.AsReadOnly(), Totals(lines));
     }
 
@@ -148,6 +160,7 @@ internal sealed class CartReader(AppDbContext dbContext, IOptions<CatalogOptions
             .Select(variant => new
             {
                 variant.Id,
+                variant.ProductId,
                 variant.PriceOverride,
                 BasePrice = variant.Product!.BasePrice,
                 Available = variant.StockLevel == null ? 0 : variant.StockLevel.Available,
@@ -161,15 +174,19 @@ internal sealed class CartReader(AppDbContext dbContext, IOptions<CatalogOptions
 
         var list = CatalogPricing.ListPrice(row.BasePrice, row.PriceOverride);
 
+        // Doc 08 §6 step 3 for the one variant being added. `UnitPriceAtAdd` is a snapshot the bag only
+        // ever uses to say "the price has changed" (doc 08 §3.5), never to total anything — but it is the
+        // figure the shopper saw on the product page, so it has to be the campaign price rather than the
+        // list price, or every add during a sale would immediately announce its own price as changed.
+        var offers = await campaigns.ReadAsync([row.ProductId], cancellationToken);
+
         return new CartVariantSnapshot(
             row.Id,
-            // Step 3 with no campaign is the list price. Campaigns (ADM-14) are week 3; passing null
-            // rather than skipping the call keeps the one place that knows the rule in the loop.
-            CatalogPricing.SalePrice(list, campaignPrice: null),
+            CatalogPricing.SalePrice(list, offers.Best(row.ProductId, list)?.Price),
             Math.Max(row.Available, 0));
     }
 
-    private static CartLineDto ToLine(CartLineRow row, string? mediaBaseUrl)
+    private static CartLineDto ToLine(CartLineRow row, CampaignOfferSet offers, string? mediaBaseUrl)
     {
         var sellable = row is { IsPublished: true, IsProductDeleted: false, IsVariantActive: true }
             && row.IsDepartmentActive
@@ -178,7 +195,7 @@ internal sealed class CartReader(AppDbContext dbContext, IOptions<CatalogOptions
 
         var list = CatalogPricing.ListPrice(row.BasePrice, row.PriceOverride);
         var original = CatalogPricing.OriginalPrice(list, row.CompareAtPrice, row.CompareAtPriceOverride);
-        var sale = CatalogPricing.SalePrice(list, campaignPrice: null);
+        var sale = CatalogPricing.SalePrice(list, offers.Best(row.ProductId, list)?.Price);
         var available = Math.Max(row.Available, 0);
 
         var status = !sellable

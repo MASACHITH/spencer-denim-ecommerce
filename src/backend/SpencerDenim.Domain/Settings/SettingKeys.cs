@@ -4,7 +4,11 @@ namespace SpencerDenim.Domain.Settings;
 /// The <c>ops.Settings</c> keys this milestone populates (ADM-22, GLB-02). Doc 08 §3.8's "Groups" table
 /// is the authority for the names; these are the subset with a screen behind them.
 /// <para>
-/// <b>What is deliberately absent, and why that is not an oversight.</b> Doc 08 lists sixteen groups.
+/// <b>What is deliberately absent, and why that is not an oversight.</b> Doc 08 §3.8's "Groups" table
+/// has fifteen rows — counted from the table; "sixteen" is §3.1's module list, which is a different
+/// thing — and names 59 keys, of which this build seeds 20. <see cref="DeferredSettingKeys"/> is the
+/// per-key record of the other 39 and is machine-checked against the document
+/// (<c>SettingKeySpecificationTests</c>); the paragraphs below are the summary.
 /// <c>Bank.*</c> is now here (W3-03, PAY-01): it is the one group doc 11 P7's preconditions make a
 /// prerequisite of taking money at all. <c>Payments.PayPal.*</c> is here since W4-01 (see
 /// <c>SettingKeys.PayPal</c>); <c>Email.Smtp.*</c>, <c>Security.*</c> and
@@ -247,6 +251,31 @@ public static partial class SettingKeys
         /// </para>
         /// </summary>
         public const string Instructions = "Bank.Instructions";
+    }
+
+    /// <summary>
+    /// Group <c>Seed</c>: the seeder's own bookkeeping, and <b>not a group any screen shows</b>.
+    /// <para>
+    /// <b>Deliberately absent from <see cref="SettingCatalog"/>, which is what keeps it off the settings
+    /// screen.</b> Every read model and every write handler starts from the catalogue — <c>SettingsStore</c>
+    /// only ever queries <c>WHERE Key IN (@catalogue keys)</c> — so a row whose key is not in the catalogue
+    /// is invisible to the admin API and unwritable through it. <c>SettingsSeeder</c> leaves such rows
+    /// alone rather than deleting them, which is the behaviour this key needs. A unit test asserts it is
+    /// not in the catalogue, because putting it there would offer an operator a box in which to break the
+    /// upgrade step.
+    /// </para>
+    /// </summary>
+    public static class Seed
+    {
+        public const string Group = "Seed";
+
+        /// <summary>
+        /// Doc 08 §9's <c>Seed.Version</c>: the highest <see cref="Identity.DefaultRoleSeedVersions"/>
+        /// version whose permission increments have been offered to the default roles in this database
+        /// (issue #122). An <see cref="SettingValueType.Int"/> row, written by the seeder and read by
+        /// nothing else.
+        /// </summary>
+        public const string Version = "Seed.Version";
     }
 
     /// <summary><c>ops.Settings.Key</c> is <c>varchar(100)</c>.</summary>

@@ -3,6 +3,7 @@ using Microsoft.Extensions.Options;
 using SpencerDenim.Application.Abstractions.Time;
 using SpencerDenim.Application.Catalog;
 using SpencerDenim.Application.Sales.Cart.Contracts;
+using SpencerDenim.Application.Marketing.Promotions.Abstractions;
 using SpencerDenim.Application.Sales.Checkout.Abstractions;
 using SpencerDenim.Application.Sales.Checkout.Contracts;
 using SpencerDenim.Application.Sales.Orders.Contracts;
@@ -10,6 +11,7 @@ using SpencerDenim.Application.Sales.Payments.Abstractions;
 using SpencerDenim.Domain.Catalog;
 using SpencerDenim.Domain.Media;
 using SpencerDenim.Domain.Reference;
+using SpencerDenim.Domain.Marketing;
 using SpencerDenim.Domain.Sales;
 using SpencerDenim.Infrastructure.Catalog;
 using SpencerDenim.Infrastructure.Persistence;
@@ -39,7 +41,8 @@ internal sealed class CheckoutReader(
     AppDbContext dbContext,
     IOptions<CatalogOptions> options,
     IClock clock,
-    IPaymentProviderRegistry paymentProviders) : ICheckoutReader
+    IPaymentProviderRegistry paymentProviders,
+    ICampaignOfferReader campaigns) : ICheckoutReader
 {
     private readonly CatalogOptions _options = options.Value;
 
@@ -223,6 +226,60 @@ internal sealed class CheckoutReader(
         return offered;
     }
 
+    /// <inheritdoc />
+    /// <remarks>
+    /// <c>IsDeleted</c> is excluded twice over: <c>PromoCode</c> carries the global soft-delete filter
+    /// (<c>ApplySoftDelete</c>, doc 08 §1.5), and the predicate is written out here as well. The second is
+    /// what would survive an <c>IgnoreQueryFilters()</c> — which this very file uses in
+    /// <c>ReadCartAsync</c> for a documented reason, so the next person to need one here does not
+    /// silently start matching removed codes.
+    /// <para>
+    /// <b>Inactive and out-of-window rows <i>are</i> returned</b>, unlike the district and pickup-location
+    /// lookups above. Those collapse "no such row" and "deactivated" so a caller cannot map the shop's
+    /// reference data by probing ids. A promo code is not reference data a caller could enumerate — it is
+    /// a string the shopper was given — and the five unusable states have to be told apart
+    /// <i>somewhere</i> so that "that code is fully used" and "spend Rs. 5,000 to use that code" can be
+    /// said at all. <c>PromoEvaluator</c> is that somewhere, and it collapses four of them back into one
+    /// sentence. A reader that filtered on <c>IsActive</c> would make that decision twice, in two
+    /// languages, and the second copy would drift.
+    /// </para>
+    /// <para>
+    /// <b>No explicit <c>ToUpper</c>.</b> The match is case-insensitive because the database collation is
+    /// <c>Latin1_General_100_CI_AS_SC</c> (doc 08 §1.1) — asserted by an integration test that applies a
+    /// lower-cased code and reads the stored upper-case one back, rather than trusted — so
+    /// <c>UX_PromoCodes_Code</c> is used as an index seek and a <c>ToUpper</c> in the predicate would have
+    /// made it a scan.
+    /// </para>
+    /// </remarks>
+    public async Task<PromoCodeTerms?> FindPromoCodeAsync(
+        string normalisedCode,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(normalisedCode);
+
+        var rows = await dbContext.PromoCodes
+            .AsNoTracking()
+            .Where(code => !code.IsDeleted && code.Code == normalisedCode)
+            .Select(code => new PromoCodeTerms(
+                code.Id,
+                code.Code,
+                code.DiscountType,
+                code.DiscountValue,
+                code.MaxDiscountAmount,
+                code.MinSpendAmount,
+                code.ExcludeSaleItems,
+                code.StartsAtUtc,
+                code.EndsAtUtc,
+                code.TotalUsageLimit,
+                code.PerCustomerLimit,
+                code.UsageCount,
+                code.IsActive))
+            .Take(1)
+            .ToListAsync(cancellationToken);
+
+        return rows.Count == 1 ? rows[0] : null;
+    }
+
     public async Task<IReadOnlyList<CheckoutCartLine>> ReadCartAsync(
         int cartId,
         CancellationToken cancellationToken)
@@ -304,7 +361,14 @@ internal sealed class CheckoutReader(
                             : null)))
             .ToListAsync(cancellationToken);
 
-        return rows.Select(row => ToLine(row, _options.MediaBaseUrl)).ToList();
+        // Doc 08 §6 step 3, live — doc 08 §7.4's "checkout always prices live" in as many words. This is
+        // the read whose figures become the order's stored totals, so it must never see the five-minute
+        // stored summary: a campaign that ended four minutes ago would otherwise be charged.
+        var offers = await campaigns.ReadAsync(
+            rows.Select(row => row.ProductId).Distinct().ToList(),
+            cancellationToken);
+
+        return rows.Select(row => ToLine(row, offers, _options.MediaBaseUrl)).ToList();
     }
 
     public async Task<IReadOnlyDictionary<int, int>> AvailableStockAsync(
@@ -589,7 +653,10 @@ internal sealed class CheckoutReader(
                 row.EstimatedDaysMin,
                 row.EstimatedDaysMax);
 
-    private static CheckoutCartLine ToLine(CheckoutLineRow row, string? mediaBaseUrl)
+    private static CheckoutCartLine ToLine(
+        CheckoutLineRow row,
+        CampaignOfferSet offers,
+        string? mediaBaseUrl)
     {
         // The same five conditions CartReader applies, and they are the storefront's definition of "a
         // shopper may reach this": published, not deleted, active variant, active department, active and
@@ -602,10 +669,10 @@ internal sealed class CheckoutReader(
         var list = CatalogPricing.ListPrice(row.BasePrice, row.PriceOverride);
         var original = CatalogPricing.OriginalPrice(list, row.CompareAtPrice, row.CompareAtPriceOverride);
 
-        // Step 3 with no campaign is the list price. Sale campaigns are ADM-14 (W3-05) and no table
-        // exists, so passing null keeps the one place that knows the rule in the loop rather than
-        // open-coding "sale = list" here and having to find it again later.
-        var sale = CatalogPricing.SalePrice(list, campaignPrice: null);
+        // Step 3: the lowest resulting price among the campaigns that reach this product, resolved
+        // against *this variant's* list price (doc 08 §6 step 1), and null when none of them beats it.
+        var campaign = offers.Best(row.ProductId, list);
+        var sale = CatalogPricing.SalePrice(list, campaign?.Price);
 
         var available = Math.Max(row.Available, 0);
 
@@ -640,6 +707,11 @@ internal sealed class CheckoutReader(
             original,
             list,
             sale,
+
+            // Which campaign priced the line, for `sales.OrderLines.SaleCampaignId`. Null when no
+            // campaign won, which is also the case when one targeted the product but could not beat its
+            // list price — a line that was not discounted must not record a campaign.
+            campaign?.CampaignId,
             status);
     }
 

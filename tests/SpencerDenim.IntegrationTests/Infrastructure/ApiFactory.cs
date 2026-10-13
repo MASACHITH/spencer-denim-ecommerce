@@ -45,9 +45,40 @@ public sealed class ApiFactory(
                 + "address: drive IEmailOutboxStore directly with a fake transport instead.");
     }
 
+    /// <summary>
+    /// This host's own Data Protection key ring. Production refuses to start without one (issue #96), and the API
+    /// reads that setting while it registers its services, which is before the in-memory configuration below
+    /// is applied, so it has to be a host setting. A directory per host keeps hosts from sharing a key ring.
+    /// Created lazily by Data Protection, only if something is protected; removed with the host.
+    /// </summary>
+    private readonly string _dataProtectionKeys = Path.Combine(Path.GetTempPath(), "sd-it-dp-" + Guid.NewGuid().ToString("N"));
+
+    protected override void Dispose(bool disposing)
+    {
+        base.Dispose(disposing);
+
+        if (disposing)
+        {
+            try
+            {
+                Directory.Delete(_dataProtectionKeys, recursive: true);
+            }
+            catch (IOException)
+            {
+                // Best effort: a temp directory that is still locked or was never created is not a test result.
+            }
+            catch (UnauthorizedAccessException)
+            {
+            }
+        }
+    }
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment(environment);
+
+        // A default, not a rule: a test that is about the key ring sets its own (or blanks it) afterwards.
+        builder.UseSetting("DataProtection:KeysPath", _dataProtectionKeys);
 
         // Added last, so it wins over appsettings.Development.json, user-secrets and developer environment variables.
         builder.ConfigureAppConfiguration((_, configuration) =>

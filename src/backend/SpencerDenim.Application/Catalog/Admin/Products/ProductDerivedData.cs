@@ -86,8 +86,15 @@ public static class ProductDerivedData
         stats.MinListPrice = listPrices.Min();
         stats.MaxListPrice = listPrices.Max();
 
-        // Campaigns are doc 08 §6 step 3 and belong to ADM-14; with none the sale price is the list price.
-        // The campaign refresh, when it is built, rewrites these two and MaxDiscountPercent and nothing else.
+        // **The sale price here is the list price, and a campaign is not considered — because a pure
+        // function over this aggregate cannot see one.** Doc 08 §6 step 3's campaigns live in
+        // `marketing.SaleCampaigns` (ADM-14), and a product save that is running during a live campaign
+        // therefore writes these three columns back up to the undiscounted figures. That is corrected
+        // immediately after the save commits: `CatalogWriteSupport.WithCampaignPricingAsync` runs
+        // `ICampaignPricingRefresher` for this one product, which recomputes the same three columns with
+        // the campaigns applied. Do not "fix" this by passing a campaign price in — doc 08 §7.4 requires
+        // the campaign recompute to be one set-based statement reading committed rows, which is the one
+        // thing a function inside the unit of work cannot be.
         stats.MinSalePrice = listPrices.Min();
         stats.MaxSalePrice = listPrices.Max();
         stats.MaxOriginalPrice = originalPrices.Max();

@@ -41,8 +41,8 @@ namespace SpencerDenim.Infrastructure.Sales.Payments;
 /// <b>The Paid effects are not in this file.</b> Stock reserved to sold, the gapless invoice number, the
 /// history row and the <c>PaymentConfirmed</c> email are <see cref="OrderSettlementEffects"/>, which this
 /// store and <c>OrderSettlementStore</c> (the provider-facing settlement) both call; its remarks
-/// carry what is deliberately not written there (no <c>InventoryMovements</c> row, no promo restore, no
-/// seller snapshot). What stays here is the bank flow's own: the staff actor, the review of a
+/// carry what is deliberately not written there (no <c>InventoryMovements</c> row, no seller snapshot; the
+/// promo use a late acceptance takes back is retaken in <see cref="AcceptLateAsync"/> itself). What stays here is the bank flow's own: the staff actor, the review of a
 /// <i>transfer</i>, the refusals worded for an approver, and the audit row.
 /// </para>
 /// <para>
@@ -353,6 +353,17 @@ internal sealed class BankTransferReviewStore(
                     // without it the screen cannot know the order is closed. See ShortStock's own remarks.
                     return new BankTransferDecisionResult.ShortStock(shortLines, snapshot.Status);
                 }
+
+                // Doc 08 §3.6's fourth usage event: "Expired → Paid: +1 unconditionally (limit ignored:
+                // the customer already paid)". The expiry or the cancel gave this order's use back, and
+                // the order holds one again now that it is Paid — so without this the cache sits below
+                // the number of orders holding a use and the total limit lets the next shopper have one
+                // the code does not have. After the stock rows, which is doc 08 §5.3's lock order.
+                //
+                // Only this path needs it: the provider-facing settlement never pays an expired or
+                // cancelled order (it records an exception for staff instead), so the one route from
+                // Expired/Cancelled to Paid is this late acceptance.
+                await OrderPromoUse.RetakeAsync(dbContext, decision.OrderId, cancellationToken);
 
                 var invoiceNumber = await effects.IssueInvoiceAsync(
                     decision.OrderId,

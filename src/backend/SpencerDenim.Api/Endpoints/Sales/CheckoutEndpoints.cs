@@ -40,7 +40,10 @@ internal static class CheckoutEndpoints
                 "CHK-01..03. Every line is repriced from the catalogue on each read (doc 08 §6). "
                 + "Pass districtId and deliveryMethodId to be quoted a delivery fee: without a district "
                 + "there is no zone, and doc 08 §6 step 10 has no fee to give — so none is shown rather "
-                + "than one being invented.")
+                + "than one being invented. Pass promoCode to be quoted with a promo code applied "
+                + "(ADM-13): it is revalidated on every read, and a code that does not qualify comes back "
+                + "as `promoRefusal` with `appliedPromoCode` null, so the box clears rather than leaving a "
+                + "discount on screen that is not in the total.")
             .Produces<CheckoutSessionDto>();
 
         checkout.MapPost("/orders", PlaceOrderAsync)
@@ -50,7 +53,8 @@ internal static class CheckoutEndpoints
                 "CHK-01..04, doc 11 P6. Reserves stock for every line in one transaction and writes the "
                 + "order as PendingPayment. Re-sending the same checkoutKey returns the first order and "
                 + "creates nothing (doc 08 §5.4). 409 when a line has sold out or the total has changed "
-                + "since it was displayed; nothing is written in either case.")
+                + "since it was displayed, or the promo code could not take a use (`promoRefusal`); nothing "
+                + "is written in any of the three cases.")
             .Produces<OrderConfirmationDto>(StatusCodes.Status201Created)
             .ProducesValidationProblem()
             .ProducesProblem(StatusCodes.Status409Conflict);
@@ -118,10 +122,11 @@ internal static class CheckoutEndpoints
         TimeProvider clock,
         CancellationToken cancellationToken,
         [FromQuery] int? districtId = null,
-        [FromQuery] int? deliveryMethodId = null)
+        [FromQuery] int? deliveryMethodId = null,
+        [FromQuery] string? promoCode = null)
     {
         var view = await handler.HandleAsync(
-            new GetCheckoutQuery(ReadLookup(httpContext), districtId, deliveryMethodId),
+            new GetCheckoutQuery(ReadLookup(httpContext), districtId, deliveryMethodId, promoCode),
             cancellationToken);
 
         CartCookie.Apply(httpContext.Response, view.Cookie, view.GuestToken, clock);
@@ -161,7 +166,12 @@ internal static class CheckoutEndpoints
             // days" (doc 08 §8.4 owns the purge, which is not built — see the task report). Read from the
             // connection rather than from a header the client controls; the forwarded-headers middleware
             // is what makes this the real address behind Caddy.
-            httpContext.Connection.RemoteIpAddress?.ToString());
+            httpContext.Connection.RemoteIpAddress?.ToString(),
+
+            // ADM-13. Sent on every submit, not held on the server: the code travels on the quote request
+            // too, so it is revalidated on both (doc 11 P3 step 12). A body that omits it is an order
+            // placed without a code, which is what a shopper who cleared the box asked for.
+            request?.PromoCode);
 
         var result = await handler.HandleAsync(command, cancellationToken);
 
@@ -224,6 +234,29 @@ internal static class CheckoutEndpoints
                     extensions: new Dictionary<string, object?>(StringComparer.Ordinal)
                     {
                         ["totals"] = result.Totals,
+                    });
+
+            case PlaceOrderStatus.PromoRejected:
+                // 409 and not a 400 field error, although a withdrawn *delivery option* is reported as a
+                // 400 on `deliveryMethodId` a few lines up. The difference is what the shopper has to do
+                // next: a withdrawn delivery option leaves them on a form with one control to change,
+                // while a refused code changes the total they were about to agree to, so the page has to
+                // re-quote and ask again — the same shape as `TotalChanged`, which is also a 409.
+                //
+                // The reason travels as a name and the storefront writes the sentence, exactly as
+                // `blockers` does, so the wording of "that code is fully used" lives in one file and not
+                // two. `promoMinimumSpend` is sent only with `MinimumSpend`, because that is the one
+                // refusal with a figure in it.
+                return TypedResults.Problem(
+                    title: "Promo code not applied",
+                    detail:
+                        "That promo code could not be used for this order. Your order has not been placed "
+                        + "and nothing has been charged.",
+                    statusCode: StatusCodes.Status409Conflict,
+                    extensions: new Dictionary<string, object?>(StringComparer.Ordinal)
+                    {
+                        ["promoRefusal"] = result.PromoRefusal!.Value.ToString(),
+                        ["promoMinimumSpend"] = result.PromoMinimumSpend,
                     });
 
             default:
@@ -421,6 +454,12 @@ internal static class CheckoutEndpoints
 /// The total shown on the page. The order is refused if the freshly priced total differs (G-10), so an
 /// order is never placed at a figure the customer has not seen.
 /// </param>
+/// <param name="PromoCode">
+/// The promo code the shopper applied, or <see langword="null"/> for none (ADM-13). Case does not matter.
+/// It is revalidated at placement, so a code that has since expired, filled up or stopped meeting its
+/// minimum spend refuses the order with 409 <c>promoRefusal</c> rather than being quietly dropped — the
+/// total the shopper agreed to included it.
+/// </param>
 public sealed record PlaceOrderRequest(
     Guid CheckoutKey,
     string? FirstName,
@@ -433,7 +472,8 @@ public sealed record PlaceOrderRequest(
     CheckoutAddressInput? Address,
     string? PaymentMethodCode,
     decimal? ExpectedGrandTotal,
-    string? CustomerNote);
+    string? CustomerNote,
+    string? PromoCode);
 
 /// <summary>
 /// The bank reference a customer quotes for their transfer (PAY-01, doc 11 P7 step 3).

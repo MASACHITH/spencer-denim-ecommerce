@@ -102,6 +102,9 @@ function session(overrides: Partial<CheckoutSessionDto> = {}): CheckoutSessionDt
     paymentMethods: [BANK],
     selectedDistrictId: COLOMBO.id,
     selectedDeliveryMethodId: 1,
+    appliedPromoCode: null,
+    promoRefusal: null,
+    promoMinimumSpend: null,
     blockers: [],
     ...overrides,
   };
@@ -1359,6 +1362,277 @@ describe('CheckoutPage (CHK-01..03)', () => {
       expect(placeButton().getAttribute('form')).toBe('checkout-form');
       expect(element.querySelector('form')?.id).toBe('checkout-form');
       expect(placeButton().type).toBe('submit');
+    });
+  });
+
+  /**
+   * The promo-code box (ADM-13, CART-01, doc 11 P6 step 5).
+   *
+   * **Nothing here computes a discount.** Applying a code is a re-quote, and every figure comes back from
+   * the server — so these tests assert the request that goes out, the sentence that comes back, and that
+   * neither the box nor its live region can be destroyed by the update that fills them.
+   */
+  describe('the promo code (ADM-13)', () => {
+    function promoSaid(): string {
+      return element.querySelector('[data-testid="promo-said"]')?.textContent?.trim() ?? '';
+    }
+
+    function promoButton(testId: string): HTMLButtonElement {
+      const node = element.querySelector<HTMLButtonElement>(`[data-testid="${testId}"]`);
+      if (!node) {
+        throw new Error(`No button [data-testid="${testId}"] is rendered.`);
+      }
+      return node;
+    }
+
+    async function apply(code: string): Promise<void> {
+      await type('co-promo', code);
+      promoButton('promo-apply').click();
+      await settle();
+    }
+
+    it('sends the code as a query parameter and shows the discount the server priced', async () => {
+      await openWith(session());
+
+      await apply('welcome10');
+
+      const request = checkoutRequest();
+      expect(request.request.params.get('promoCode')).toBe('welcome10');
+
+      request.flush(
+        session({
+          appliedPromoCode: 'WELCOME10',
+          totals: totals({ promoDiscountAmount: 878.4, grandTotal: 8_305.6 }),
+        }),
+      );
+      await settle();
+
+      expect(sums().promo).toBe(878.4);
+      expect(promoSaid()).toContain('WELCOME10 applied');
+
+      // The box shows the shop's spelling, not the shopper's: that is the code the order will record.
+      expect(field('co-promo').value).toBe('WELCOME10');
+
+      // And the ladder still adds up with the Discount row in it, which is the identity the bag prints.
+      const { subtotal, savings, promo, delivery, deliveryDiscount, total } = sums();
+      expect(subtotal - savings - promo + delivery - deliveryDiscount).toBe(total);
+    });
+
+    it('sends no promoCode parameter when the box is empty', async () => {
+      await openWith(session());
+
+      const select = element.querySelector<HTMLSelectElement>('#co-district')!;
+      select.value = String(JAFFNA.id);
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      await settle();
+
+      expect(checkoutRequest().request.params.has('promoCode')).toBe(false);
+    });
+
+    /**
+     * The refusal has to be visible, and the refused code has to stay in the box so one mistyped
+     * character can be fixed rather than the whole thing retyped.
+     */
+    it('shows the refusal and keeps the typed code in the box', async () => {
+      await openWith(session());
+
+      await apply('NOPE');
+
+      checkoutRequest().flush(session({ appliedPromoCode: null, promoRefusal: 'NotRecognised' }));
+      await settle();
+
+      expect(promoSaid()).toContain('do not recognise');
+      expect(field('co-promo').value).toBe('NOPE');
+      expect(sums().promo).toBe(0);
+    });
+
+    it('prints the threshold when a code needs a bigger order', async () => {
+      await openWith(session());
+
+      await apply('BIGSPEND');
+
+      checkoutRequest().flush(
+        session({ appliedPromoCode: null, promoRefusal: 'MinimumSpend', promoMinimumSpend: 5_000 }),
+      );
+      await settle();
+
+      // The figure, not "you have not spent enough": it is the one refusal a shopper can act on.
+      expect(promoSaid()).toContain('Rs. 5,000');
+    });
+
+    /**
+     * **The sentence and the box survive the update that produces them.**
+     *
+     * This is the defect this project has shipped twice — a refusal written into the panel its own
+     * refusal destroyed, and a live region inside a block that success removed, which meant a blind
+     * customer pressed a button and heard nothing. The assertion is on node identity: the same DOM node
+     * that existed before the re-quote is the one carrying the sentence afterwards, so there was no
+     * moment at which a screen reader had nothing to watch.
+     */
+    it('keeps the same live-region node across the re-quote that fills it', async () => {
+      await openWith(session());
+
+      const before = element.querySelector('[data-testid="promo-said"]');
+      const inputBefore = field('co-promo');
+
+      await apply('welcome10');
+      checkoutRequest().flush(session({ appliedPromoCode: 'WELCOME10' }));
+      await settle();
+
+      expect(element.querySelector('[data-testid="promo-said"]')).toBe(before);
+      expect(field('co-promo')).toBe(inputBefore);
+      expect(before?.isConnected).toBe(true);
+    });
+
+    /**
+     * `role="status"` announces a *change*, so the second press of Apply on a code that is still refused
+     * must write the text again rather than leave it (ADM-22's defect).
+     *
+     * Asserted with a real `MutationObserver` on the text node, because a before/after read of
+     * `textContent` would be identical either way — a test that could not fail.
+     */
+    it('re-announces the same refusal, so a second press is not met with silence', async () => {
+      await openWith(session());
+
+      const said = element.querySelector('[data-testid="promo-said"]')!;
+
+      await apply('NOPE');
+      checkoutRequest().flush(session({ appliedPromoCode: null, promoRefusal: 'NotRecognised' }));
+      await settle();
+
+      const observed: (string | null)[] = [];
+      const observer = new MutationObserver((records) => {
+        for (const record of records) {
+          // **`oldValue`, not `target.textContent`.** The callback runs as a microtask, by which time the
+          // text node already holds the *final* value — so reading the target would record the sentence
+          // twice and never the blank between them, which is a test that cannot fail. The admin
+          // couriers page's own re-announce test makes the same point.
+          observed.push(record.oldValue);
+        }
+      });
+
+      observer.observe(said, {
+        childList: true,
+        characterData: true,
+        characterDataOldValue: true,
+        subtree: true,
+      });
+
+      promoButton('promo-apply').click();
+      await settle();
+      checkoutRequest().flush(session({ appliedPromoCode: null, promoRefusal: 'NotRecognised' }));
+      await settle();
+
+      // `afterNextRender` runs after the view has caught up, so the blanking is a real render.
+      await settle();
+
+      observer.disconnect();
+
+      expect(observed.some((value) => (value ?? '').trim() === '')).toBe(true);
+      expect(promoSaid()).toContain('do not recognise');
+    });
+
+    /**
+     * #109: the buttons carry `aria-disabled` and refuse the press in the handler, because disabling the
+     * control that has focus throws focus to `<body>`.
+     */
+    it('refuses Apply in the handler rather than disabling the button', async () => {
+      await openWith(session());
+
+      const button = promoButton('promo-apply');
+
+      expect(button.hasAttribute('disabled')).toBe(false);
+      expect(button.getAttribute('aria-disabled')).toBe('true');
+
+      button.click();
+      await settle();
+
+      // Nothing went out: an empty box is nothing to apply.
+      http.expectNone((request) => request.url === CheckoutApi.url);
+    });
+
+    it('refuses Remove in the handler when there is nothing applied', async () => {
+      await openWith(session());
+
+      const button = promoButton('promo-remove');
+
+      expect(button.hasAttribute('disabled')).toBe(false);
+      expect(button.getAttribute('aria-disabled')).toBe('true');
+
+      button.click();
+      await settle();
+
+      http.expectNone((request) => request.url === CheckoutApi.url);
+    });
+
+    it('removes an applied code and re-quotes without it', async () => {
+      await openWith(session({ appliedPromoCode: 'WELCOME10' }));
+
+      const button = promoButton('promo-remove');
+      expect(button.getAttribute('aria-disabled')).toBeNull();
+
+      button.click();
+      await settle();
+
+      expect(checkoutRequest().request.params.has('promoCode')).toBe(false);
+    });
+
+    /**
+     * Doc 08 §6 step 11 asks for "discount limited to the order total" to be shown, and
+     * `promoDiscountClamped` reached no screen at all before this.
+     */
+    it('says when the discount was limited to the order total', async () => {
+      await openWith(session());
+
+      await apply('BIGFIXED');
+
+      checkoutRequest().flush(
+        session({
+          appliedPromoCode: 'BIGFIXED',
+          totals: totals({ promoDiscountAmount: 9_183, grandTotal: 1, promoDiscountClamped: true }),
+        }),
+      );
+      await settle();
+
+      expect(promoSaid()).toContain('limited to the order total');
+    });
+
+    /**
+     * Doc 11 P3's exception, through the real 409: "the other is told the code is fully used and can
+     * place the order without it". The order is not retried without the code — the shopper presses the
+     * button again, having seen the new total.
+     */
+    it('refuses the order when the code stopped qualifying, and re-quotes without it', async () => {
+      await openWith(session({ appliedPromoCode: 'WELCOME10' }));
+      await fillValidForm();
+
+      placeButton().click();
+      await settle();
+
+      const place = http.expectOne(
+        (request) => request.url === `${CheckoutApi.url}/orders` && request.method === 'POST',
+      );
+
+      expect((place.request.body as { promoCode: string | null }).promoCode).toBe('WELCOME10');
+
+      place.flush(
+        {
+          title: 'Promo code not applied',
+          detail: 'That promo code could not be used for this order.',
+          promoRefusal: 'FullyUsed',
+          promoMinimumSpend: null,
+        },
+        { status: 409, statusText: 'Conflict' },
+      );
+      await settle();
+
+      // The sentence is in the page-level alert, which sits above every block the re-quote rebuilds.
+      expect(text()).toContain('fully used');
+      expect(text()).toContain('Nothing has been placed');
+      expect(navigated.length).toBe(0);
+
+      // And the re-quote asks for no code, so the total on screen becomes the one the shop would charge.
+      expect(checkoutRequest().request.params.has('promoCode')).toBe(false);
     });
   });
 });

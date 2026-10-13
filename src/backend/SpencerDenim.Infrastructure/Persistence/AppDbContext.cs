@@ -150,6 +150,23 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
 
     public DbSet<NewsletterSubscriber> NewsletterSubscribers => Set<NewsletterSubscriber>();
 
+    /// <summary><c>marketing.PromoCodes</c> (doc 08 §3.6, ADM-13). Created by W3-05's migration.</summary>
+    public DbSet<PromoCode> PromoCodes => Set<PromoCode>();
+
+    /// <summary>
+    /// <c>marketing.SaleCampaigns</c> (doc 08 §3.6, ADM-14). Created by W3-05b's migration, which is also
+    /// what turned <c>sales.OrderLines.SaleCampaignId</c> into a real foreign key.
+    /// </summary>
+    public DbSet<SaleCampaign> SaleCampaigns => Set<SaleCampaign>();
+
+    /// <summary>
+    /// <c>marketing.SaleCampaignTargets</c> (doc 08 §3.6, ADM-14). A set of its own, and not reached only
+    /// through <see cref="SaleCampaign.Targets"/>, because the pricing reader joins targets to products
+    /// without loading campaigns and the admin screen replaces a campaign's targets with a set-based
+    /// delete rather than a tracked one.
+    /// </summary>
+    public DbSet<SaleCampaignTarget> SaleCampaignTargets => Set<SaleCampaignTarget>();
+
     public DbSet<Province> Provinces => Set<Province>();
 
     public DbSet<District> Districts => Set<District>();

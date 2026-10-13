@@ -93,6 +93,18 @@ public sealed class CatalogVisibilityConventionTests
             + "entry is keyed on the file, so it would excuse the filtering half too — The_readers_"
             + "compose_it lists CartReader.cs for exactly that reason. Do not remove one without the "
             + "other.**",
+        ["src/backend/SpencerDenim.Infrastructure/Marketing/CampaignOfferReader.cs"] =
+            "sale campaigns (ADM-14, W3-05b). It is not asked whether an address is reachable; it is "
+            + "handed the product ids its caller is already pricing and asked which live campaigns reach "
+            + "them, so its only predicate on Products is `productIds.Contains(id)`. What this rule trips "
+            + "on is the **campaign's** own IsActive, which is doc 08 §3.6's column and half of "
+            + "IX_SaleCampaigns_Window's filter — nothing to do with the catalogue's switches. Composing "
+            + "VisibleProduct here would be wrong twice over: the bag deliberately carries withdrawn "
+            + "lines (see CartReader above) and would lose their offers, and the extra joins would be "
+            + "paid for on every checkout read for a line that is never priced into a total anyway. The "
+            + "one filter it does depend on is the campaign's soft-delete query filter, which is why "
+            + "there is no IgnoreQueryFilters in that file and CatalogModelTests asserts the filter "
+            + "exists. Nothing here can put a URL in the sitemap.",
     };
 
     /// <summary>

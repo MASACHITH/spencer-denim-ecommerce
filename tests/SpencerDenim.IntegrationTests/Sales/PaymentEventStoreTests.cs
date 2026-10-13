@@ -1,3 +1,5 @@
+using System.Globalization;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using SpencerDenim.Application.Sales.Payments;
@@ -99,21 +101,194 @@ public sealed class PaymentEventStoreTests(SqlServerDatabaseFixture sqlServer) :
     }
 
     /// <summary>
-    /// Two redeliveries arriving on two threads: exactly one is told it is new. The unique index is a
-    /// backstop here, not the mechanism — if the lock hint on the guarded insert were ever lost, this is
-    /// the test that would see a unique-violation surface instead of a clean answer.
+    /// Eight redeliveries arriving at the guarded insert together: exactly one is told it is new. The unique
+    /// index is a backstop here, not the mechanism — if the <c>UPDLOCK, HOLDLOCK</c> on the guarded insert
+    /// were ever lost, this is the test that sees a unique violation surface instead of a clean answer.
     /// </summary>
+    /// <remarks>
+    /// <b>Rewritten by the W4-01 verification, because the first version could not fail.</b> It fired eight
+    /// <c>Task.Run</c>s and asserted the end state only. Measured with <c>UPDLOCK, HOLDLOCK</c> deleted from
+    /// <c>PaymentEventStore</c>: the test went red 7 times in 8 when run <i>alone</i> (a cold connection
+    /// pool staggers the eight tasks so they finish opening together and then collide) and <b>0 times in 4
+    /// when the class ran as a class</b> — a warm pool hands the connections out in sequence, the first
+    /// insert commits before the eighth task is scheduled, and nothing contends. A full run is always the
+    /// second case, so the hint that is the whole mechanism was guarded by nothing.
+    /// <para>
+    /// Two changes fix that. Each delivery <b>opens and warms its own scope first</b> and then waits on a
+    /// barrier, so the eight reach the statement together whatever the pool is doing; and the arrivals at
+    /// the contended statement are <b>counted</b> (<c>CommandCountingInterceptor.Watch</c>, which needed a
+    /// <c>NonQueryExecuting</c> override to see an <c>INSERT</c> at all) and asserted to be eight. An end
+    /// state that is right because nothing raced is the failure mode this project has hit repeatedly; the
+    /// count is what tells the two apart.
+    /// </para>
+    /// </remarks>
     [Fact]
     public async Task Parallel_deliveries_of_one_event_store_it_exactly_once()
     {
+        const int deliveries = 8;
+        const string GuardedInsertFragment = "INSERT INTO sales.PaymentEvents";
+
         var key = NewKey();
 
-        var receipts = await Task.WhenAll(
-            Enumerable.Range(0, 8).Select(_ => Task.Run(() => RecordAsync(Record(key)), Token)));
+        CommandCounter.Watch(GuardedInsertFragment);
+
+        using var gate = new Barrier(deliveries);
+
+        var receipts = await Task.WhenAll(Enumerable.Range(0, deliveries).Select(_ => Task.Run(
+            async () =>
+            {
+                using var scope = CreateApplicationScope();
+                var store = scope.ServiceProvider.GetRequiredService<IPaymentEventStore>();
+
+                // Warm this scope's connection before the gate, so what the barrier releases is eight
+                // calls about to run the statement and not eight calls about to open a connection.
+                await scope.ServiceProvider.GetRequiredService<AppDbContext>().Database
+                    .ExecuteSqlRawAsync("SELECT 1;", Token);
+
+                // Bounded, so one delivery that fails before the gate ends the test instead of hanging the
+                // other seven on a barrier nobody will ever complete.
+                Assert.True(
+                    gate.SignalAndWait(TimeSpan.FromSeconds(30), Token),
+                    "The eight deliveries did not all reach the barrier.");
+
+                return await store.RecordAsync(Record(key), Token);
+            },
+            Token)));
+
+        // The arrangement, asserted: all eight really reached the guarded insert. A fragment that stops
+        // matching counts zero and this fails loudly, which is the right failure — the test would then be
+        // measuring nothing and says so.
+        Assert.Equal(deliveries, CommandCounter.CountOf(GuardedInsertFragment));
 
         Assert.Single(receipts, receipt => receipt.IsNew);
         Assert.Single(receipts.Select(receipt => receipt.EventId).Distinct());
         Assert.Equal(1, await CountAsync(key));
+    }
+
+    /// <summary>
+    /// <b>The race the lock hints exist for, made to happen — the deterministic half.</b> Another session
+    /// holds the key range of <c>UX_PaymentEvents_IdempotencyKey</c> for a key that does not exist yet, so a
+    /// delivery of that key must <i>wait</i>; the holder then inserts the row and commits, and the waiting
+    /// delivery must come back "this is a redelivery" rather than fail.
+    /// </summary>
+    /// <remarks>
+    /// <b>This is the test the W4-01 verification added, because neither the parallel test above nor anything
+    /// else guarded the hints.</b> Measured with <c>UPDLOCK, HOLDLOCK</c> deleted from
+    /// <c>PaymentEventStore</c>'s guarded insert: the parallel test reds 7 times in 8 run alone, 0 times in 4
+    /// when its class runs as a class, and 1 time in 4 even with the barrier — the first writer's insert
+    /// finishes in well under a millisecond, so eight threads arriving "together" still mostly arrive after
+    /// it. Scheduling cannot be asserted on. This test does not try:
+    /// <list type="bullet">
+    /// <item><description>
+    /// <b>With the hints</b> the guard's own <c>SELECT … WITH (UPDLOCK, HOLDLOCK)</c> blocks on the holder's
+    /// range lock, so the delivery waits, sees the committed row and answers <c>IsNew: false</c>.
+    /// </description></item>
+    /// <item><description>
+    /// <b>Without them</b> the guard reads no lock and no row, falls through to the <c>INSERT</c>, blocks
+    /// there on the same range lock instead, and fails with 2627 when the holder commits — which is exactly
+    /// the "unique violation as control flow" that doc 08 §4.2 says this path must never rely on.
+    /// </description></item>
+    /// </list>
+    /// Either way the delivery is observed blocked through <c>sys.dm_exec_requests</c> before the holder
+    /// commits, so the window is held open by a lock and not by a sleep.
+    /// </remarks>
+    [Fact]
+    public async Task A_delivery_waits_for_a_key_another_session_is_holding_and_is_told_it_is_a_redelivery()
+    {
+        var key = NewKey();
+
+        await using var holder = new SqlConnection(SqlServer.ConnectionString);
+        await holder.OpenAsync(Token);
+
+        await using var transaction = (SqlTransaction)await holder.BeginTransactionAsync(Token);
+
+        try
+        {
+            int holderSpid;
+
+            await using (var spid = holder.CreateCommand())
+            {
+                spid.Transaction = transaction;
+                spid.CommandText = "SELECT @@SPID;";
+                holderSpid = Convert.ToInt32(await spid.ExecuteScalarAsync(Token), CultureInfo.InvariantCulture);
+            }
+
+            // The same range lock the store's own guard takes, on a key that has no row yet.
+            await using (var hold = holder.CreateCommand())
+            {
+                hold.Transaction = transaction;
+                hold.CommandText = """
+                    SELECT 1 FROM sales.PaymentEvents WITH (UPDLOCK, HOLDLOCK)
+                     WHERE IdempotencyKey = CONVERT(varchar(160), @key);
+                    """;
+                hold.Parameters.AddWithValue("@key", key);
+                await hold.ExecuteNonQueryAsync(Token);
+            }
+
+            var delivering = Task.Run(() => RecordAsync(Record(key)), Token);
+
+            // The arrangement, asserted: the delivery really is waiting on this session.
+            await WaitUntilBlockedByAsync(holderSpid);
+
+            await using (var insert = holder.CreateCommand())
+            {
+                insert.Transaction = transaction;
+                insert.CommandText = """
+                    INSERT INTO sales.PaymentEvents
+                        (ProviderCode, EventSource, EventType, IdempotencyKey, PayloadJson,
+                         ProcessingStatus, AttemptCount, ReceivedAtUtc)
+                    VALUES ('PayPal', 1, 'holder.test', CONVERT(varchar(160), @key), '{"held":true}',
+                            0, 0, SYSUTCDATETIME());
+                    """;
+                insert.Parameters.AddWithValue("@key", key);
+                Assert.Equal(1, await insert.ExecuteNonQueryAsync(Token));
+            }
+
+            await transaction.CommitAsync(Token);
+
+            var receipt = await delivering.WaitAsync(TimeSpan.FromSeconds(30), Token);
+
+            // It waited, found the holder's row, and said so. Without the hints the insert below the guard
+            // would have been reached and the holder's row would have made it throw 2627 instead.
+            Assert.False(receipt.IsNew);
+            Assert.Equal(1, await CountAsync(key));
+        }
+        catch
+        {
+            if (holder.State == System.Data.ConnectionState.Open)
+            {
+                await transaction.RollbackAsync(CancellationToken.None);
+            }
+
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Polls <c>sys.dm_exec_requests</c> until some session is blocked by <paramref name="blockerSpid"/>, so
+    /// the test proceeds on a fact rather than on a sleep.
+    /// </summary>
+    private async Task WaitUntilBlockedByAsync(int blockerSpid)
+    {
+        await using var monitor = new SqlConnection(SqlServer.ConnectionString);
+        await monitor.OpenAsync(Token);
+
+        for (var attempt = 0; attempt < 150; attempt++)
+        {
+            await using var command = monitor.CreateCommand();
+            command.CommandText =
+                "SELECT COUNT(*) FROM sys.dm_exec_requests WHERE blocking_session_id = @spid;";
+            command.Parameters.AddWithValue("@spid", blockerSpid);
+
+            if (Convert.ToInt32(await command.ExecuteScalarAsync(Token), CultureInfo.InvariantCulture) > 0)
+            {
+                return;
+            }
+
+            await Task.Delay(100, Token);
+        }
+
+        Assert.Fail($"No session became blocked by SPID {blockerSpid}: the race was not set up.");
     }
 
     /// <summary>

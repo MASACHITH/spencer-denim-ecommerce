@@ -113,7 +113,7 @@ internal sealed partial class PaymentSlipUploadThrottle : IPaymentSlipUploadThro
 
         WarnIfTheAddressIsNotAVisitor(partition);
 
-        using var addressLease = _addresses.AttemptAcquire(partition);
+        using var addressLease = _addresses.AttemptAcquire(ClientAddressPartition.For(partition)!);
 
         return addressLease.IsAcquired ? SlipUploadPermit.Granted : SlipUploadPermit.AddressLimitReached;
     }

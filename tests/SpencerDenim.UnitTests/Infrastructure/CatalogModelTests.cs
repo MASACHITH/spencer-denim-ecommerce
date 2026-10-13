@@ -239,7 +239,7 @@ public sealed class CatalogModelTests
         });
     }
 
-    /// <summary>Doc 08 §1.5: the four [SD] tables carry the soft-delete filter, and nothing else does.</summary>
+    /// <summary>Doc 08 §1.5: the [SD] tables carry the soft-delete filter, and nothing else does.</summary>
     [Fact]
     public void Only_the_soft_deletable_entities_have_the_soft_delete_filter()
     {
@@ -248,7 +248,7 @@ public sealed class CatalogModelTests
             .Select(entity => entity.ClrType)
             .ToList();
 
-        Assert.Equal(5, filtered.Count);
+        Assert.Equal(7, filtered.Count);
         Assert.All(filtered, type => Assert.True(typeof(ISoftDeletable).IsAssignableFrom(type)));
         Assert.Contains(typeof(Product), filtered);
         Assert.Contains(typeof(Category), filtered);
@@ -259,7 +259,26 @@ public sealed class CatalogModelTests
         // removed custom page gone rather than hidden — the storefront reader never mentions IsDeleted,
         // so the filter is the only thing keeping a deleted page off the shop.
         Assert.Contains(typeof(SpencerDenim.Domain.Content.ContentPage), filtered);
+
+        // ADM-13 (W3-05): doc 08 §3.6 marks marketing.PromoCodes [SD], and `ApplySoftDelete` gives it the
+        // filter like every other such table. It is load-bearing in the same way: a removed code has to be
+        // "not recognised" rather than found-and-refused, or the box a shopper types into would tell them
+        // which strings the shop has ever issued.
+        Assert.Contains(typeof(SpencerDenim.Domain.Marketing.PromoCode), filtered);
+
+        // ADM-14 (W3-05b): doc 08 §3.6 marks marketing.SaleCampaigns [SD], and `ApplySoftDelete` gives
+        // it the filter — which is a thing that extension *does*, whatever a comment elsewhere in this
+        // repository may once have claimed. It is load-bearing here in the most direct way in the
+        // feature: a removed campaign must stop pricing the catalogue, and the pricing reader's own
+        // predicate never mentions IsDeleted, so this filter is the only thing that ends the sale.
+        Assert.Contains(typeof(SpencerDenim.Domain.Marketing.SaleCampaign), filtered);
+
+        // And SaleCampaignTargets does **not** carry one, deliberately: it is a child row, doc 08 §1.5
+        // does not mark it [SD], and the pricing reader only reaches a target through a campaign that
+        // the filter above has already vouched for.
+        Assert.DoesNotContain(typeof(SpencerDenim.Domain.Marketing.SaleCampaignTarget), filtered);
     }
+
 
     /// <summary>Doc 08 §3.4: Available is a persisted computed column so it can be indexed.</summary>
     [Fact]
@@ -359,10 +378,17 @@ public sealed class CatalogModelTests
             // meaning apart from its cart.
             "CartItem -> Cart",
 
-            // W3-03, the last entry on doc 08 §1.6's list: a zone rate has no meaning apart from its
-            // delivery method. Nothing else in the twelve tables W3-03 added cascades — Orders and
-            // OrderLines are on §1.6's "never deleted" list instead.
+            // W3-03: a zone rate has no meaning apart from its delivery method. Nothing else in the
+            // twelve tables W3-03 added cascades — Orders and OrderLines are on §1.6's "never deleted"
+            // list instead.
             "DeliveryMethodZoneRate -> DeliveryMethod",
+
+            // W3-05b (ADM-14): doc 08 §1.6 names SaleCampaignTargets in the permitted list. A target has
+            // no meaning apart from its campaign, and the cascade only ever runs on a purge, because a
+            // campaign is removed through SoftDelete() and Remove() on it throws (DB5). The target's
+            // three catalogue references are NO ACTION, which is the half worth having asserted: a
+            // cascade from Products would mean purging one product deleted a whole campaign's targeting.
+            "SaleCampaignTarget -> SaleCampaign",
 
             // W1-01's Identity model, the same doc 08 §1.6 list.
             "IdentityUserRole -> AppUser",

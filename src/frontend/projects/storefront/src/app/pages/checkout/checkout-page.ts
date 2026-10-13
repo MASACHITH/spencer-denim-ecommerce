@@ -4,6 +4,8 @@ import {
   Component,
   DestroyRef,
   RESPONSE_INIT,
+  Injector,
+  afterNextRender,
   computed,
   inject,
   signal,
@@ -33,6 +35,7 @@ import {
   isPricedLine,
   looksLikeEmail,
   looksLikePhone,
+  promoRefusalMessage,
 } from '../../core/checkout/checkout.model';
 import { DeliveryDistrictService } from '../../core/delivery/delivery-district.service';
 import { RobotsMeta } from '../../core/platform/robots-meta';
@@ -108,6 +111,10 @@ const SUMMARY_FIELDS: readonly { readonly field: string; readonly elementId: str
   { field: 'address.landmark', elementId: 'co-landmark' },
   { field: 'paymentMethodCode', elementId: 'co-payment' },
   { field: 'customerNote', elementId: 'co-note' },
+
+  // ADM-13. Last, because the box is in the summary rather than in the form, which is where a shopper
+  // reading the summary top to bottom meets it.
+  { field: 'promoCode', elementId: 'co-promo' },
 ];
 
 /**
@@ -744,6 +751,66 @@ const SUMMARY_FIELDS: readonly { readonly field: string; readonly elementId: str
               }
             </ul>
 
+            <!-- **The promo code (CART-01, ADM-13, doc 11 P6 step 5).**
+
+                 Three deliberate choices, each one a defect this project has already shipped:
+
+                 1. The box, both buttons and the sentence are **always mounted**. A refusal written into
+                    the panel its own refusal destroys is invisible, and a live region inside a block that
+                    success removes announces nothing — both of those shipped, and the second meant a
+                    blind customer pressed Cancel and heard silence. Nothing here sits behind a conditional block.
+                 2. "aria-disabled", never "disabled" (#109): disabling the control that
+                    has focus throws focus to BODY. The handlers refuse the press instead.
+                 3. Applying goes through the server, so the Discount row, the Delivery row and the Total
+                    below all come out of one calculation (doc 08 §6). Nothing is worked out here. -->
+            <div class="checkout__promo">
+              <label class="checkout__label" for="co-promo">Promo code</label>
+              <div class="checkout__promo-row">
+                <input
+                  class="checkout__input"
+                  id="co-promo"
+                  name="promoCode"
+                  type="text"
+                  autocomplete="off"
+                  spellcheck="false"
+                  maxlength="40"
+                  [value]="promoDraft()"
+                  (input)="typePromo($event)"
+                  (keydown.enter)="applyPromo()"
+                  [attr.aria-describedby]="promoSaid() ? 'co-promo-said' : null"
+                />
+                <button
+                  class="btn btn--ghost checkout__promo-apply"
+                  type="button"
+                  data-testid="promo-apply"
+                  [attr.aria-disabled]="canApplyPromo() ? null : 'true'"
+                  (click)="applyPromo()"
+                >
+                  Apply
+                </button>
+                <button
+                  class="btn btn--link checkout__promo-remove"
+                  type="button"
+                  data-testid="promo-remove"
+                  [attr.aria-disabled]="appliedPromoCode() === null ? 'true' : null"
+                  (click)="removePromo()"
+                >
+                  Remove
+                </button>
+              </div>
+              <!-- tabindex="-1" so focus can land here if a re-quote ever removes what had it. The
+                   sentence is written by "sayPromo", which re-announces a repeated one. -->
+              <p
+                class="checkout__promo-said checkout__muted"
+                id="co-promo-said"
+                role="status"
+                tabindex="-1"
+                data-testid="promo-said"
+              >
+                {{ promoSaid() }}
+              </p>
+            </div>
+
             <!-- **The ladder has to add up, and this is the arithmetic:**
                  Subtotal − Savings − Discount + Delivery − Free delivery = Total.
                  Subtotal is the original ("was") total and Total is the net figure, which is the labelling
@@ -1122,6 +1189,9 @@ export class CheckoutPage {
   private readonly destroyRef = inject(DestroyRef);
   private readonly document = inject(DOCUMENT);
 
+  // Needed because `afterNextRender` is called from an HTTP callback, which is not an injection context.
+  private readonly injector = inject(Injector);
+
   /**
    * GLB-06's header selector, which is the shopper's own stated district (CHK-01).
    *
@@ -1171,6 +1241,41 @@ export class CheckoutPage {
   private readonly chosenDeliveryMethodId = signal<number | null>(null);
   private readonly chosenPickupLocationId = signal<number | null>(null);
   private readonly chosenPaymentMethodCode = signal<string | null>(null);
+
+  /**
+   * The code the quote is being asked for, or null for none (ADM-13).
+   *
+   * Separate from {@link promoDraft}, which is what is in the box: a shopper typing a second code has not
+   * replaced the first one until they press Apply, and a re-quote triggered by changing the district must
+   * keep asking for the code that is actually applied rather than for a half-typed one.
+   */
+  private readonly chosenPromoCode = signal<string | null>(null);
+
+  /** What is in the promo box. */
+  protected readonly promoDraft = signal('');
+
+  /**
+   * The sentence beside the promo box.
+   *
+   * **It is written into an always-mounted node and is never cleared by a re-quote**, which is this
+   * project's shipped defect twice over: a refusal inside the panel its own refusal destroyed, and a live
+   * region inside a block that success removed, so a blind customer pressed a button and heard nothing.
+   * The node is a sibling of the ladder rather than a child of any conditional, and {@link apply}
+   * recomputes this from the server's echo on every read — so it cannot disagree with the totals beside
+   * it, and it cannot vanish when they change.
+   */
+  protected readonly promoSaid = signal('');
+
+  /**
+   * Set when the shopper pressed Apply or Remove, so the next {@link apply} re-announces even if the
+   * sentence has not changed.
+   *
+   * `role="status"` announces a *change*; setting it to the text it already holds is silence, and the
+   * second press of Apply on a code that is still refused is exactly when a shopper needs to hear
+   * something (ADM-22's defect, and the reason `announce` does its two-step).
+   */
+  private promoPressed = false;
+
   private readonly values = signal<CheckoutForm>({ ...EMPTY_FORM });
 
   /**
@@ -1517,6 +1622,66 @@ export class CheckoutPage {
     this.read();
   }
 
+  /** The code the server priced this quote with, or null (ADM-13). */
+  protected readonly appliedPromoCode = computed(() => this.current().appliedPromoCode);
+
+  /** Whether the promo box holds something that could be applied. */
+  protected readonly canApplyPromo = computed(
+    () => this.promoDraft().trim() !== '' && !this.loading() && !this.placing(),
+  );
+
+  /**
+   * Keeps what is typed in the promo box, without re-quoting.
+   *
+   * Nothing is sent until Apply: a GET per keystroke would be a request per keystroke, and a code is
+   * only ever wrong until it is finished.
+   */
+  protected typePromo(event: Event): void {
+    this.promoDraft.set((event.target as HTMLInputElement | null)?.value ?? '');
+  }
+
+  /**
+   * Applies the code in the box (ADM-13, doc 11 P6 step 5).
+   *
+   * **The guard is here rather than on the button's `disabled` attribute** (#109): disabling the control
+   * that has focus moves focus to `<body>`, which is issue #109 and is recorded against several screens
+   * in this project. The count is deliberately not repeated here: the comments that quote one disagree
+   * with each other, and the issue is the thing to read.
+   * The button carries `aria-disabled` so assistive technology and Playwright both see the state, and
+   * this refuses the activation.
+   *
+   * It goes through {@link read}, so the discount, the delivery fee and the total all come from the one
+   * server-side calculation rather than from arithmetic done here — and `expectedGrandTotal` on the next
+   * Place order is therefore the figure the server will price (G-10).
+   */
+  protected applyPromo(): void {
+    if (!this.canApplyPromo()) {
+      return;
+    }
+
+    this.promoPressed = true;
+    this.chosenPromoCode.set(this.promoDraft().trim());
+    this.read();
+  }
+
+  /**
+   * Takes the code off, and re-quotes without it.
+   *
+   * Always mounted and `aria-disabled` when there is nothing to remove, rather than hidden: a button
+   * that disappears when it is pressed takes the focus with it, which is #109 arriving by removal
+   * instead of by `[disabled]`.
+   */
+  protected removePromo(): void {
+    if (this.appliedPromoCode() === null && this.chosenPromoCode() === null) {
+      return;
+    }
+
+    this.promoPressed = true;
+    this.chosenPromoCode.set(null);
+    this.promoDraft.set('');
+    this.read();
+  }
+
   protected chooseDeliveryMethod(option: DeliveryOptionDto): void {
     if (!option.isAvailable) {
       return;
@@ -1601,6 +1766,10 @@ export class CheckoutPage {
         paymentMethodCode: this.chosenPaymentMethodCode(),
         expectedGrandTotal: this.totals().grandTotal,
         customerNote: trimmed(form.customerNote),
+
+        // ADM-13. The code the *server* said it priced with, not the box: a half-typed code the shopper
+        // never applied must not reach a placement, and the applied one is upper-cased by the shop.
+        promoCode: this.chosenPromoCode(),
       })
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
@@ -1645,6 +1814,22 @@ export class CheckoutPage {
               if (totals) {
                 this.current.update((session) => ({ ...session, totals }));
               }
+              this.read();
+              break;
+            }
+
+            case 'promoRejected': {
+              // ADM-13. The code stopped qualifying, or somebody took its last use, between the quote
+              // and the press. Nothing was placed and nothing was reserved.
+              //
+              // **The code is dropped and the bag re-quoted, rather than the order being retried
+              // without it.** Doc 11 P3's own exception says the loser of a last-use race "can place
+              // the order without it" — can, by pressing the button again, having seen the new total.
+              // Placing it here at a total the shopper has not seen is G-10 with extra steps.
+              //
+              // The sentence is already in `failure`, which is rendered in the page-level `role="alert"`
+              // above every block a re-quote rebuilds, so the re-read below cannot take it away.
+              this.chosenPromoCode.set(null);
               this.read();
               break;
             }
@@ -1817,7 +2002,7 @@ export class CheckoutPage {
     this.loading.set(true);
 
     this.api
-      .get(this.chosenDistrictId(), this.chosenDeliveryMethodId())
+      .get(this.chosenDistrictId(), this.chosenDeliveryMethodId(), this.chosenPromoCode())
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
         next: (session) => {
@@ -1852,6 +2037,67 @@ export class CheckoutPage {
    * either a name matches, in which case the quote is re-read for the real id, or the form asks. It runs
    * at most once per page, because a second attempt could only repeat the first.
    */
+  /**
+   * Makes the promo box and its sentence follow the quote (ADM-13).
+   *
+   * **The server's echo drives the controls, not the other way round**, which is the same rule the
+   * district and delivery radios follow: a code that stopped qualifying between two reads clears the box
+   * instead of leaving a discount on screen that is not in the total (doc 11 P3 step 12).
+   *
+   * A *refused* code is left in the box deliberately, so a shopper who mistyped one character can fix
+   * that character rather than retype the whole thing.
+   */
+  private applyPromoEcho(session: CheckoutSessionDto): void {
+    if (session.appliedPromoCode !== null) {
+      // The shop's spelling, upper-cased, which is what the order will record.
+      this.chosenPromoCode.set(session.appliedPromoCode);
+      this.promoDraft.set(session.appliedPromoCode);
+    } else if (session.promoRefusal !== null) {
+      // Refused: stop asking for it on the next read, but leave it in the box to be corrected.
+      this.chosenPromoCode.set(null);
+    }
+
+    const said =
+      session.appliedPromoCode !== null
+        ? session.totals.promoDiscountClamped
+          ? // Doc 08 §6 step 11: "The customer sees 'discount limited to the order total'." Without this
+            // the clamp reached no screen at all, so a shopper would see a discount smaller than the
+            // code promises and nothing saying why.
+            `${session.appliedPromoCode} applied — discount limited to the order total.`
+          : `${session.appliedPromoCode} applied.`
+        : session.promoRefusal !== null
+          ? promoRefusalMessage(session.promoRefusal, session.promoMinimumSpend)
+          : '';
+
+    this.sayPromo(said);
+  }
+
+  /**
+   * Writes the promo sentence, forcing a re-announcement when the shopper has just pressed a button.
+   *
+   * `role="status"` announces a *change*, so setting it to the text it already holds is silence — and a
+   * second press of Apply on a code that is still refused is exactly when a shopper needs to hear
+   * something (ADM-22). A read the shopper did not ask for, such as changing the district, writes the
+   * same text and so says nothing, which is right: nothing about the code changed.
+   *
+   * `afterNextRender` and not `queueMicrotask`: a signal write schedules change detection as a *task*,
+   * so a microtask would run before the empty string had been rendered and the two writes would collapse
+   * into no change at all. The injector is passed because this runs from an HTTP callback, which is not
+   * an injection context.
+   */
+  private sayPromo(said: string): void {
+    const pressed = this.promoPressed;
+    this.promoPressed = false;
+
+    if (!pressed || this.promoSaid() !== said) {
+      this.promoSaid.set(said);
+      return;
+    }
+
+    this.promoSaid.set('');
+    afterNextRender(() => this.promoSaid.set(said), { injector: this.injector });
+  }
+
   private recoverDistrictByName(session: CheckoutSessionDto): void {
     this.districtRecovered = true;
     this.chosenDistrictId.set(null);
@@ -1890,6 +2136,8 @@ export class CheckoutPage {
     }
 
     this.chosenDeliveryMethodId.set(session.selectedDeliveryMethodId);
+
+    this.applyPromoEcho(session);
 
     // One enabled provider is the ordinary case today (bank transfer; doc 08 §9 seeds PayPal disabled),
     // and making the shopper press a radio with one option is a step for nothing.

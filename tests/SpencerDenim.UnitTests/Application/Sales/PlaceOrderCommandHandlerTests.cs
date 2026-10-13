@@ -6,6 +6,7 @@ using SpencerDenim.Application.Sales.Checkout;
 using SpencerDenim.Application.Sales.Checkout.Abstractions;
 using SpencerDenim.Application.Sales.Checkout.Contracts;
 using SpencerDenim.Application.Sales.Payments.Abstractions;
+using SpencerDenim.Domain.Marketing;
 using SpencerDenim.Domain.Sales;
 using SpencerDenim.UnitTests.Support;
 
@@ -232,6 +233,9 @@ public sealed class PlaceOrderCommandHandlerTests
             1000m,
             1000m,
             1000m,
+
+            // No campaign priced this line: original, list and sale are all Rs. 1,000.00 (ADM-14).
+            null,
             status);
 
     private sealed class FixedClock(DateTimeOffset now) : IClock
@@ -301,6 +305,16 @@ public sealed class PlaceOrderCommandHandlerTests
             CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<CheckoutPaymentMethod>>(
                 [new CheckoutPaymentMethod(PaymentProviderCodes.BankTransfer, "Bank transfer", null)]);
+
+        /// <summary>
+        /// No code matches. These tests are about the idempotency race and none of them sends a promo
+        /// code, so the resolver short-circuits on a null code and never reaches this — answering "no
+        /// such row" rather than throwing keeps that true if one of them ever does.
+        /// </summary>
+        public Task<PromoCodeTerms?> FindPromoCodeAsync(
+            string normalisedCode,
+            CancellationToken cancellationToken) =>
+            Task.FromResult<PromoCodeTerms?>(null);
 
         public Task<CheckoutDistrict?> FindActiveDistrictAsync(
             int districtId,
