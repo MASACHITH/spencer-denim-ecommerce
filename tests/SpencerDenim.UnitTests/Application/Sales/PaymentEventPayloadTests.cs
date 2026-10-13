@@ -116,6 +116,15 @@ public sealed class PaymentEventPayloadTests
     }
 
     [Theory]
+    // A PAN in the spellings a card response can carry it. The project chose an allow-list for the far
+    // less sensitive redirect-URL problem because a block-list "is always one scheme short"; the same
+    // argument applies with more force to a card number stored verbatim for dispute reading.
+    [InlineData("card_number")]
+    [InlineData("cardNumber")]
+    [InlineData("CARD-NUMBER")]
+    [InlineData("funding_card_number")]
+    [InlineData("pan")]
+    [InlineData("PAN")]
     [InlineData("client_secret")]
     [InlineData("clientSecret")]
     [InlineData("merchant-secret")]
@@ -195,6 +204,14 @@ public sealed class PaymentEventPayloadTests
     [InlineData("tokenization")]
     [InlineData("tokenized")]
     [InlineData("card_cvv_result")]
+    // Every one of these contains "pan" once normalised, which is why "pan" is an exact name and not a
+    // fragment. PayPal sends company_name on a business account and an address line can say Japan, so a
+    // fragment rule here would redact the payer's own identity out of a dispute record.
+    [InlineData("company_name")]
+    [InlineData("company_id")]
+    [InlineData("expand")]
+    [InlineData("panel")]
+    [InlineData("japan")]
     public void A_field_a_payment_dispute_reads_is_never_redacted(string propertyName)
     {
         Assert.False(PaymentEventPayload.LooksSecret(propertyName), propertyName);

@@ -641,6 +641,14 @@ public sealed class SalesSchemaTests(SqlServerDatabaseFixture sqlServer) : Sales
     [InlineData("Payments", "UX_Payments_Provider_Txn", "1|ProviderCode,ProviderTransactionId||([ProviderTransactionId] IS NOT NULL)")]
     [InlineData("Payments", "IX_Payments_Exceptions", "0|CreatedAtUtc||([Status]=(7))")]
     [InlineData("Payments", "IX_Payments_BankQueue", "0|CreatedAtUtc||([ProviderCode]='BankTransfer' AND [Status]=(1))")]
+
+    // Added by the W4-01 verification. This index was not in the list, and W4-01 is what made its *name*
+    // load-bearing: OrderSettlementEffects.CloseOtherOpenAttemptsAsync carries
+    // WITH (INDEX(IX_Payments_OrderId)), so renaming or dropping it is not a slow query, it is Msg 308
+    // ("the index does not exist or does not have the required property") thrown inside the settlement
+    // transaction, after the order has already been claimed Paid. Doc 08 §1.6 DB7 is why it exists; this
+    // row is why a migration cannot take it away quietly.
+    [InlineData("Payments", "IX_Payments_OrderId", "0|OrderId||")]
     [InlineData("PaymentEvents", "UX_PaymentEvents_IdempotencyKey", "1|IdempotencyKey||")]
     [InlineData("PaymentEvents", "IX_PaymentEvents_Retry", "0|NextAttemptAtUtc||([ProcessingStatus] IN ((0), (3)))")]
     [InlineData("Refunds", "IX_Refunds_Completed", "0|CompletedAtUtc||([Status]=(1))")]

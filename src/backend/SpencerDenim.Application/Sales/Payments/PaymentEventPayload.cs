@@ -90,6 +90,12 @@ public static class PaymentEventPayload
         "authkey",
         "privatekey",
         "bearer",
+        // A PAN. Safe as a fragment: no legitimate payment field contains "cardnumber", while the
+        // masked forms a provider really sends are spelled differently (PayHere's "card_no", PayPal's
+        // "last_digits"), and those stay readable because a dispute is argued from them. "pan" itself
+        // is NOT a fragment - see SecretNames - because it is a substring of "company_name",
+        // "company_id", "expand", "panel" and "japan", all of which PayPal sends.
+        "cardnumber",
         "securitycode",
     ];
 
@@ -116,6 +122,9 @@ public static class PaymentEventPayload
     /// </summary>
     private static readonly HashSet<string> SecretNames = new(StringComparer.Ordinal)
     {
+        // The industry's own word for a card number, and the one spelling that cannot be a fragment:
+        // "pan" is inside "company_name", "company_id", "expand", "panel" and "japan". Exact only.
+        "pan",
         "auth",
         "authorization",
         "proxyauthorization",
