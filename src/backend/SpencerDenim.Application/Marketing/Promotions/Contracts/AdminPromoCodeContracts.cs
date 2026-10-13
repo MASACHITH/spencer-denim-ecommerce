@@ -1,4 +1,4 @@
-using SpencerDenim.Domain.Marketing;
+﻿using SpencerDenim.Domain.Marketing;
 
 namespace SpencerDenim.Application.Marketing.Promotions.Contracts;
 
@@ -12,13 +12,12 @@ namespace SpencerDenim.Application.Marketing.Promotions.Contracts;
 /// derived <see cref="Status"/> and the cached <see cref="UsageCount"/> come with it so the list can be
 /// read without a second request.
 /// <para>
-/// <b><c>ExcludeSaleItems</c> is absent, and since W3-05b that is a gap rather than a decision.</b> It
-/// was left off because the flag could only exclude a line a sale campaign priced and
-/// <c>marketing.SaleCampaigns</c> did not exist (ADM-14) — a checkbox that cannot change any total is a
-/// promise the shop would not keep. ADM-14 now exists and the flag really does exclude a line
-/// (<c>CheckoutCampaignBehaviourTests</c> proves it), so the column still defaults to 0 and a staff
-/// member has no way to turn it on. It is in W3-05b's task report; the control is one field here, one
-/// reader in the endpoint and one line in the validator.
+/// <b><c>ExcludeSaleItems</c> is here as of W3-05c, and was a gap before it.</b> W3-05 left it off
+/// because the flag could only exclude a line a sale campaign priced and <c>marketing.SaleCampaigns</c>
+/// did not exist (ADM-14) — a checkbox that cannot change any total is a promise the shop would not keep.
+/// ADM-14 merged, the flag really does exclude a line
+/// (<c>CheckoutCampaignBehaviourTests.Exclude_sale_items_drops_the_campaign_line_and_keeps_the_markdown_line</c>
+/// proves it), and the shop was applying a rule no staff member could set. It is now settable.
 /// </para>
 /// </remarks>
 /// <param name="StartsAt">
@@ -28,6 +27,12 @@ namespace SpencerDenim.Application.Marketing.Promotions.Contracts;
 /// the order emails already say so to customers.
 /// </param>
 /// <param name="EndsAt">Also Colombo wall-clock. Null is "no end".</param>
+/// <param name="ExcludeSaleItems">
+/// Doc 08 §6 step 7 and doc 11 §7 G-07: <b>lines a sale campaign priced are out of the eligible base,
+/// and lines that only carry a markdown stay in</b>. The distinction is the whole of the field — see
+/// <see cref="PromoEvaluator"/>'s <c>IsEligible</c>, which tests <c>UnitPrice &gt;= UnitListPrice</c>
+/// because only doc 08 §6 step 3's campaign moves a unit price below its list price.
+/// </param>
 /// <param name="UsageCount">
 /// Held uses (doc 08 §3.6), which is what the total limit is measured against. It is not editable: the
 /// two statements in <c>OrderPromoUse</c> are the only things that move it.
@@ -50,6 +55,7 @@ public sealed record AdminPromoCodeDto(
     decimal? MinSpendAmount,
     DateTime StartsAt,
     DateTime? EndsAt,
+    bool ExcludeSaleItems,
     int? TotalUsageLimit,
     int? PerCustomerLimit,
     int UsageCount,

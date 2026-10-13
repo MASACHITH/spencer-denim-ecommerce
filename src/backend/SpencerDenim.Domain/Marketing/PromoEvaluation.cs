@@ -292,10 +292,8 @@ public static class PromoEvaluator
     /// campaign-priced and dropped from the eligible base, the shirt carries only a markdown and stays in.
     /// </para>
     /// <para>
-    /// <b>The checkbox is still off the admin promo-code form, and that is now a gap rather than a
-    /// decision.</b> It was left off because it could not change any total; it can now, so a staff member
-    /// cannot set a rule the evaluator honours. It is in W3-05b's task report, and the control is one
-    /// field plus one validator line.
+    /// <b>W3-05c put the checkbox on the admin promo-code form</b>, so the rule this method applies is
+    /// one a staff member can set. Until then the shop honoured a flag nobody could turn on.
     /// </para>
     /// </remarks>
     private static bool IsEligible(PromoCodeTerms terms, OrderPricingLine line) =>
