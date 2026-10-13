@@ -173,7 +173,7 @@ W3-05 wrote four claims that ADM-14 has falsified. Each is corrected rather than
 |---|---|
 | `dotnet build SpencerDenim.sln -c Release` | **0 warnings, 0 errors** |
 | Unit suite | **2,106 / 2,106** (main was 2,077; +29) |
-| Integration suite | first whole-assembly run: **1,444 / 1,446** in 21 m 2 s (main was 1,401; +45) — the two failures were the cross-suite assertions below, fixed, re-run pending at the time of writing |
+| Integration suite | **1,446 tests**; three whole-assembly runs — 1,444 (two cross-suite assertions, fixed), 1,442 (four `CartStaleItemTests`, a real fixture collision, fixed), then the confirming run. Main was 1,401; +45 |
 | `dotnet ef migrations has-pending-model-changes`, after a rebuild | "No changes have been made to the model" |
 | Snapshot diff vs the branch base `62bd88e` | **+187 lines, 0 deletions** — purely additive |
 | `dotnet ef migrations remove` | never run; the one empty migration was removed with `rm` and regenerated |
@@ -240,6 +240,30 @@ Listed so a reviewer can disagree with them.
   the recorded winner as a clock moved.
 - **`WhichTargetsExistAsync` does not filter departments by `IsActive`.** A campaign may legitimately be
   set up for a department the client has temporarily switched off.
+
+## The fixture collision, which only a whole-assembly run showed
+
+The second whole-assembly run reddened **four of `CartStaleItemTests`' twelve tests**, and that class
+passes 12/12 on its own. Reproduced with the two classes alone in sixteen seconds, and the error names
+itself: *"The UPDATE statement conflicted with the CHECK constraint CK_StockLevels_ReservedLeOnHand"*.
+
+`CheckoutTestBase`'s own remarks describe the mechanism. Those tests set `OnHand` to 0 or 1 on variants
+from the **low** end of the catalogue; this suite has to use the linen shirt and the jeans, because doc 08
+§6's worked example is about those two products, and they are `SD-W-0001` and `SD-W-0009` — also at the
+low end. A placed order holds its reservation for ever, so `Reserved` stayed above zero and their `UPDATE`
+was refused. The promo suites never hit it because `CheckoutVariantIdsAsync` hands out the *highest* ids
+for precisely this reason; a campaign suite cannot use it, because it needs named products.
+
+**The fix gives the stock back rather than restoring a number.** `ArrangeStockAsync` records every variant
+the suite touches, and the teardown cancels each order still holding one through the real
+`IOrderCancellationStore` — a transaction with its status change and history row, not a hand-written stock
+update, which would leave an order claiming a reservation it no longer has (the state `ReconcileStock`
+exists to alert on). It runs *before* the base's restore, so `held` is zero by then and `OnHand` goes back
+to exactly the seeded figure.
+
+**Why it matters beyond this branch:** the first whole-assembly run passed `CartStaleItemTests`, so a
+filtered run — or one lucky full run — would have let this through to a tester as "flaky". It is not
+flaky; it is deterministic given the class order.
 
 ## What is not done
 
