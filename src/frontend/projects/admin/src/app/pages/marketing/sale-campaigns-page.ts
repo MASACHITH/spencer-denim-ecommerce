@@ -131,7 +131,7 @@ interface DraftTarget {
               class="adm-input"
               type="text"
               name="name"
-              maxlength="120"
+              maxlength="100"
               autocomplete="off"
               [value]="name()"
               [attr.aria-describedby]="'campaign-name-hint'"

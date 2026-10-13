@@ -648,8 +648,13 @@ function saleCampaignErrors(state, body) {
 
   if (name === '') {
     errors.name = ['Give the campaign a name.'];
-  } else if (name.length > 120) {
-    errors.name = ['Keep the name to 120 characters or fewer.'];
+  } else if (name.length > 100) {
+    // 100, which is `SaleCampaign.MaxNameLength` and doc 08 section 3.6's `nvarchar(100)`. It read 120
+    // until W3-05c's tester pass, and the form's own `maxlength` read 120 with it — so a 110-character
+    // name was accepted by the screen and by this stub and refused only by the real API, which is the
+    // #126 shape in miniature: a stub that is more permissive than the validator hides a screen defect
+    // instead of catching it.
+    errors.name = ['Keep the name to 100 characters or fewer.'];
   }
 
   if (!['Percent', 'FixedAmount'].includes(body.discountType)) {
