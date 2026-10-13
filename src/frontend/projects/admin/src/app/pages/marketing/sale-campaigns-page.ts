@@ -751,6 +751,13 @@ export class SaleCampaignsPage {
   protected startNew(): void {
     this.editingId.set(null);
     this.rowVersion = null;
+
+    // **Disarmed here too, and leaving it out was the second half of the `startNew` defect above.**
+    // `remove` arms a row on its first press and `startNew` runs after every save and on Cancel — so a
+    // row armed and then left while the form was saved stayed armed through the reload, with its button
+    // still reading "Yes, remove it". The next single press would then delete a campaign the staff
+    // member had moved on from. `edit` already clears it; this is the other way out of the form.
+    this.removingId.set(null);
     this.name.set('');
     this.description.set('');
     this.discountType.set('Percent');

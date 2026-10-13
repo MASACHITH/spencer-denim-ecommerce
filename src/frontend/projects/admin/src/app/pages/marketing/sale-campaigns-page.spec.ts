@@ -826,6 +826,36 @@ describe('SaleCampaignsPage (ADM-14)', () => {
     expect(said()).toContain('put back');
   });
 
+  /**
+   * **An armed Remove is disarmed by leaving the form, not carried through a reload.**
+   *
+   * `remove` arms a row on its first press. `startNew` runs on Cancel and after every save, and a build
+   * that did not clear `removingId` there left the row's button reading "Yes, remove it" across an
+   * unrelated save — so the next single press deleted a campaign the staff member had moved on from,
+   * with no second confirmation. Found in the W3-05c tester pass.
+   */
+  it('disarms an armed Remove when the form is left', async () => {
+    await open();
+
+    const remove = element.querySelector<HTMLElement>('[data-testid="remove-4"]')!;
+
+    click('edit-4');
+    await settle();
+
+    remove.click();
+    await settle();
+
+    expect(remove.textContent).toContain('Yes, remove it');
+
+    click('campaign-cancel');
+    await settle();
+
+    expect(
+      element.querySelector('[data-testid="remove-4"]')?.textContent?.trim(),
+    ).toBe('Remove');
+    expect(element.querySelector('[data-testid="remove-cancel-4"]')).toBeNull();
+  });
+
   /** `aria-disabled`, never `disabled` — a control that changes under the user throws focus to body. */
   it('never gives a button the disabled attribute', async () => {
     await open();
