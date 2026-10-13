@@ -110,6 +110,80 @@ public sealed class AdminPromoCodeEndpointTests(SqlServerDatabaseFixture sqlServ
     }
 
     /// <summary>
+    /// <b>The edit path, which answered 500 on <c>main</c> for the same reason the list did and which
+    /// nothing exercised.</b> The flag is turned off on an existing code and read back.
+    /// </summary>
+    /// <remarks>
+    /// Added in the W3-05c tester pass. The three tests this class shipped with all POST, and
+    /// <c>PromoCodeWriteHandlers.CommitAsync</c> re-reads through <c>PromoCodeAdminReader.FindAsync</c> on
+    /// a <b>PUT</b> as well — so the create proves the shared reader and nothing proved the route. Doc 11
+    /// P3 step 7 puts "exclude sale items" on an edit as much as on a create, and an edit that answered
+    /// 500 after writing the row is the worse of the two: the change lands and the screen says it failed,
+    /// so a staff member tries again.
+    /// <para>
+    /// The row version travels in <c>If-Match</c>, which is where the screen sends it. The reload asserts
+    /// the <b>stored</b> row rather than only the PUT's own answer, because both halves of the save come
+    /// back through the same reader and only a fresh request shows the row survived it.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task Editing_a_code_can_turn_the_exclusion_off_again()
+    {
+        sqlServer.SkipIfUnavailable();
+
+        await using var host = MediaTestHost.Create(sqlServer.ConnectionString);
+        using var client = await host.SignInAsync(
+            Permissions.Promotions.View,
+            Permissions.Promotions.Create,
+            Permissions.Promotions.Edit,
+            Permissions.Promotions.Delete);
+
+        var code = UniqueCode();
+        var created = await PostAsync(client, Body(code, excludeSaleItems: true));
+
+        try
+        {
+            Assert.Equal(HttpStatusCode.Created, created.Status);
+
+            var id = created.Body.GetProperty("promoCode").GetProperty("id").GetInt32();
+            var rowVersion = created.Body.GetProperty("promoCode").GetProperty("rowVersion").GetString();
+
+            using var request = new HttpRequestMessage(
+                HttpMethod.Put,
+                new Uri(string.Create(CultureInfo.InvariantCulture, $"{Url}/{id}"), UriKind.Relative))
+            {
+                Content = JsonContent.Create(Body(code, excludeSaleItems: false)),
+            };
+
+            request.Headers.TryAddWithoutValidation("If-Match", rowVersion);
+
+            using var response = await client.SendAsync(request, Token);
+
+            var text = await response.Content.ReadAsStringAsync(Token);
+            TestContext.Current.TestOutputHelper?.WriteLine(
+                string.Create(CultureInfo.InvariantCulture, $"PUT -> {(int)response.StatusCode}: {text}"));
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+            using var document = JsonDocument.Parse(text);
+
+            Assert.False(
+                document.RootElement
+                    .GetProperty("promoCode")
+                    .GetProperty("excludeSaleItems")
+                    .GetBoolean());
+
+            var listed = await ListAsync(client, code);
+
+            Assert.False(listed.GetProperty("excludeSaleItems").GetBoolean());
+        }
+        finally
+        {
+            await DeleteAsync(client, created, reread: true);
+        }
+    }
+
+    /// <summary>
     /// A body that leaves <c>excludeSaleItems</c> out is refused, naming the field.
     /// </summary>
     /// <remarks>
@@ -200,9 +274,17 @@ public sealed class AdminPromoCodeEndpointTests(SqlServerDatabaseFixture sqlServ
                 StringComparison.Ordinal));
     }
 
+    /// <param name="reread">
+    /// True when the test has edited the code since it was created, so the row version in the create's
+    /// response is stale and the current one has to be read from the list first — the same parameter
+    /// <c>AdminSaleCampaignEndpointTests.DeleteAsync</c> takes, for the same reason. A teardown that is
+    /// refused with a 412 is not a teardown: the code would stay behind and <c>UX_PromoCodes_Code</c>
+    /// would refuse the next run of this test by its own name.
+    /// </param>
     private static async Task DeleteAsync(
         HttpClient client,
-        (HttpStatusCode Status, JsonElement Body) created)
+        (HttpStatusCode Status, JsonElement Body) created,
+        bool reread = false)
     {
         if (created.Status != HttpStatusCode.Created)
         {
@@ -211,13 +293,20 @@ public sealed class AdminPromoCodeEndpointTests(SqlServerDatabaseFixture sqlServ
 
         var promoCode = created.Body.GetProperty("promoCode");
         var id = promoCode.GetProperty("id").GetInt32();
+        var rowVersion = promoCode.GetProperty("rowVersion").GetString();
+
+        if (reread)
+        {
+            rowVersion = (await ListAsync(client, promoCode.GetProperty("code").GetString()!))
+                .GetProperty("rowVersion")
+                .GetString();
+        }
 
         using var request = new HttpRequestMessage(
             HttpMethod.Delete,
             new Uri(string.Create(CultureInfo.InvariantCulture, $"{Url}/{id}"), UriKind.Relative));
 
-        request.Headers.TryAddWithoutValidation(
-            "If-Match", promoCode.GetProperty("rowVersion").GetString());
+        request.Headers.TryAddWithoutValidation("If-Match", rowVersion);
 
         using var response = await client.SendAsync(request, Token);
 
