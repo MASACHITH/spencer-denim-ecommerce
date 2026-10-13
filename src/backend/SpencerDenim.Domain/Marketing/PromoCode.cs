@@ -28,9 +28,9 @@ public enum PromoDiscountType : byte
 /// </para>
 /// <para>
 /// <b>What is deliberately not here: sale campaigns (ADM-14).</b> Doc 02 line 119 is a separate feature
-/// with its own tables and its own <c>RefreshCampaignPricing</c> job. <see cref="ExcludeSaleItems"/> is
-/// the one place the two meet, and it is a column this code reads rather than a campaign this code
-/// creates.
+/// with its own tables (<see cref="SaleCampaign"/>, built by W3-05b) and its own
+/// <c>RefreshCampaignPricing</c> job. <see cref="ExcludeSaleItems"/> is the one place the two meet, and
+/// it is a column this code reads rather than a campaign this code creates.
 /// </para>
 /// </summary>
 public sealed class PromoCode : IAuditable, ISoftDeletable

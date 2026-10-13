@@ -12,11 +12,13 @@ namespace SpencerDenim.Application.Marketing.Promotions.Contracts;
 /// derived <see cref="Status"/> and the cached <see cref="UsageCount"/> come with it so the list can be
 /// read without a second request.
 /// <para>
-/// <b><c>ExcludeSaleItems</c> is deliberately absent.</b> Doc 08 §3.6 gives the column and
-/// <c>PromoEvaluator</c> honours it, but it can only ever exclude a line a sale campaign priced, and
-/// <c>marketing.SaleCampaigns</c> does not exist (ADM-14). A checkbox that cannot change any total is a
-/// promise to a staff member that the shop would not keep, so the column defaults to 0 and the form does
-/// not offer it. It is in the task report, and the day ADM-14 ships, the control is one field.
+/// <b><c>ExcludeSaleItems</c> is absent, and since W3-05b that is a gap rather than a decision.</b> It
+/// was left off because the flag could only exclude a line a sale campaign priced and
+/// <c>marketing.SaleCampaigns</c> did not exist (ADM-14) — a checkbox that cannot change any total is a
+/// promise the shop would not keep. ADM-14 now exists and the flag really does exclude a line
+/// (<c>CheckoutCampaignBehaviourTests</c> proves it), so the column still defaults to 0 and a staff
+/// member has no way to turn it on. It is in W3-05b's task report; the control is one field here, one
+/// reader in the endpoint and one line in the validator.
 /// </para>
 /// </remarks>
 /// <param name="StartsAt">
