@@ -159,6 +159,27 @@ test.describe('newsletter subscribers', () => {
     expect(await page.evaluate(() => document.activeElement?.getAttribute('data-testid'))).toBe('newsletter-export');
   });
 
+  /**
+   * **A role with Newsletter.View and not Newsletter.Export is offered no button the server will refuse**
+   * (W3-07 tester). The stub's session grants everything, so this test narrows the whoami answer itself.
+   */
+  test('offers no export button to a role that can only view subscribers', async ({ page }) => {
+    await page.route('**/api/admin/auth/whoami', async (route) => {
+      const response = await route.fetch();
+      const session = await response.json();
+      await route.fulfill({
+        response,
+        json: { ...session, grantsAllPermissions: false, permissions: ['Newsletter.View'] },
+      });
+    });
+
+    await open(page, '/marketing/newsletter');
+    await expect(page.locator('[data-testid="subscriber-1"]')).toBeVisible();
+
+    await expect(page.locator('[data-testid="newsletter-export-unavailable"]')).toBeVisible();
+    await expect(page.locator('[data-testid="newsletter-export"]')).toHaveCount(0);
+  });
+
   test('refuses a to-date before the from-date and keeps the list', async ({ page }) => {
     await open(page, '/marketing/newsletter');
     await expect(page.locator('[data-testid="subscriber-1"]')).toBeVisible();
