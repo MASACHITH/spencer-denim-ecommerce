@@ -142,6 +142,9 @@ public static class DependencyInjection
         // Pure and stateless over the bound options, so one instance for the process.
         services.AddSingleton<OrderEmailComposer>();
 
+        // The four account emails of doc 11 P11 (W3-01, ACC-01). Pure over the same bound options.
+        services.AddSingleton<AccountEmailComposer>();
+
         // The SMTP boundary. A singleton over the options; it builds a fresh SmtpClient per message,
         // because SmtpClient is not thread-safe (see SmtpEmailTransport).
         services.AddSingleton<IEmailTransport, SmtpEmailTransport>();
@@ -150,6 +153,7 @@ public static class DependencyInjection
         // outbox row commit in the same transaction as the order it is about (doc 08 §3.8).
         services.AddScoped<IEmailOutboxWriter, EmailOutboxWriter>();
         services.AddScoped<IOrderEmailOutbox, OrderEmailOutbox>();
+        services.AddScoped<IAccountEmailOutbox, AccountEmailOutbox>();
         services.AddScoped<IEmailOutboxStore, EmailOutboxStore>();
 
         // ops.AdminAlerts (doc 08 §3.8 N2, W4-02a). Scoped for the same reason: the acknowledgement writes
