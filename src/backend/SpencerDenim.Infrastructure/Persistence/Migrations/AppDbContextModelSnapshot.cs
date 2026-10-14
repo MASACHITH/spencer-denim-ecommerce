@@ -1597,6 +1597,89 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("SpencerDenim.Domain.Identity.CustomerAddress", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("City")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("nvarchar(80)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2(3)")
+                        .HasDefaultValueSql("sysutcdatetime()");
+
+                    b.Property<int?>("CreatedByUserId")
+                        .HasColumnType("int");
+
+                    b.Property<int>("DistrictId")
+                        .HasColumnType("int");
+
+                    b.Property<bool>("IsDefault")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false);
+
+                    b.Property<string>("Label")
+                        .HasMaxLength(40)
+                        .HasColumnType("nvarchar(40)");
+
+                    b.Property<string>("Landmark")
+                        .HasMaxLength(150)
+                        .HasColumnType("nvarchar(150)");
+
+                    b.Property<string>("Line1")
+                        .IsRequired()
+                        .HasMaxLength(150)
+                        .HasColumnType("nvarchar(150)");
+
+                    b.Property<string>("Line2")
+                        .HasMaxLength(150)
+                        .HasColumnType("nvarchar(150)");
+
+                    b.Property<string>("Phone")
+                        .IsRequired()
+                        .HasColumnType("varchar(20)");
+
+                    b.Property<string>("PostalCode")
+                        .HasColumnType("varchar(10)");
+
+                    b.Property<string>("RecipientName")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("nvarchar(120)");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<int?>("UpdatedByUserId")
+                        .HasColumnType("int");
+
+                    b.Property<int>("UserId")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DistrictId")
+                        .HasDatabaseName("IX_CustomerAddresses_District");
+
+                    b.HasIndex("UserId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_CustomerAddresses_UserId_Default")
+                        .HasFilter("[IsDefault] = 1");
+
+                    b.HasIndex("UserId", "Id")
+                        .HasDatabaseName("IX_CustomerAddresses_User");
+
+                    b.ToTable("CustomerAddresses", "identity");
+                });
+
             modelBuilder.Entity("SpencerDenim.Domain.Inventory.StockLevel", b =>
                 {
                     b.Property<int>("VariantId")
@@ -3914,6 +3997,9 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("DefaultDistrictId")
+                        .HasDatabaseName("IX_Users_DefaultDistrictId");
+
                     b.HasIndex("NormalizedEmail")
                         .IsUnique()
                         .HasDatabaseName("UX_Users_NormalizedEmail")
@@ -4304,6 +4390,23 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                     b.Navigation("VideoAsset");
                 });
 
+            modelBuilder.Entity("SpencerDenim.Domain.Identity.CustomerAddress", b =>
+                {
+                    b.HasOne("SpencerDenim.Domain.Reference.District", "District")
+                        .WithMany()
+                        .HasForeignKey("DistrictId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
+                    b.HasOne("SpencerDenim.Infrastructure.Identity.AppUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
+                    b.Navigation("District");
+                });
+
             modelBuilder.Entity("SpencerDenim.Domain.Inventory.StockLevel", b =>
                 {
                     b.HasOne("SpencerDenim.Domain.Catalog.ProductVariant", "Variant")
@@ -4660,6 +4763,14 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                     b.Navigation("Product");
 
                     b.Navigation("ProductColour");
+                });
+
+            modelBuilder.Entity("SpencerDenim.Infrastructure.Identity.AppUser", b =>
+                {
+                    b.HasOne("SpencerDenim.Domain.Reference.District", null)
+                        .WithMany()
+                        .HasForeignKey("DefaultDistrictId")
+                        .OnDelete(DeleteBehavior.NoAction);
                 });
 
             modelBuilder.Entity("SpencerDenim.Domain.Catalog.Category", b =>
