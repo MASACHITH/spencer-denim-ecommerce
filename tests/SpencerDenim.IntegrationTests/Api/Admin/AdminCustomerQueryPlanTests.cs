@@ -62,6 +62,45 @@ public sealed class AdminCustomerQueryPlanTests(SqlServerDatabaseFixture sqlServ
     }
 
     /// <summary>
+    /// <b>Every one of the three aggregates can use the filtered index</b> — not merely one of them. The test
+    /// above asserts the index appears <i>somewhere</i> in the plan, so a regression in a single aggregate
+    /// (its predicate no longer implying <c>CustomerUserId IS NOT NULL</c>) still passed (W3-07 tester,
+    /// mutation m12c). This one forces the index on every <c>sales.Orders</c> reference in the reader's own
+    /// SQL: SQL Server refuses to compile a hint on a filtered index the predicate cannot match (error 8622),
+    /// so the answer depends on the query's shape and not on the optimiser's costing of test-sized tables —
+    /// which is what made the removed <c>PK_Orders</c> assertion flaky.
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("nimali")]
+    [InlineData("NIMALI@")]
+    [InlineData("0771234567")]
+    public async Task Each_aggregate_can_be_answered_from_the_filtered_index(string? search)
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, Token);
+
+        using var scope = sqlServer.CreateScope();
+        var reader = (AdminCustomerReader)scope.ServiceProvider.GetRequiredService<IAdminCustomerReader>();
+
+        var sql = reader.PageQuery(AdminCustomerSearch.Classify(search), null, 1, 25).ToQueryString();
+
+        var references = OrdersReference.Count(sql);
+        Assert.Equal(3, references);
+
+        var hinted = OrdersReference.Replace(sql, "$1 WITH (INDEX([" + StatisticsIndex + "]))");
+
+        // Throws SqlException 8622 if any one aggregate cannot be matched to the filtered index.
+        var plan = await PlanForAsync(hinted);
+        Assert.Contains(StatisticsIndex, plan.UsedIndexes);
+    }
+
+    private static readonly Regex OrdersReference = new(
+        @"(FROM \[sales\]\.\[Orders\] AS \[[^\]]+\])",
+        RegexOptions.None,
+        TimeSpan.FromSeconds(5));
+
+    /// <summary>
     /// The indexes one statement's estimated plan <b>reads</b>, and the filtered indexes it names as
     /// considered and unusable — <c>BankQueuePlanTests</c>' helper, whose remarks explain why the
     /// <c>&lt;UnmatchedIndexes&gt;</c> block has to be separated out before reading the operators.
