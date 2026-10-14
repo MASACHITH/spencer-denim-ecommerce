@@ -118,3 +118,17 @@ default, which is a normal navigation or scroll. None is lossy or leaks anything
 - After this merges, the comment in `order-page.ts` ("It is W3-02's and filed as issue #123 — not fixed
   here") is out of date; the W3-03 branch owns that file, so it is left for them.
 - Open question for the owner: the hydration-overwrites-typed-text finding above, as its own issue?
+
+## 2026-10-14 — rebased, opened as PR #165, and what almost went wrong checking it
+
+Rebased onto `main` (`ea4156a`, five commits, no conflicts), pushed with `--force-with-lease`, PR #165.
+
+**The Playwright suite does not test your source, it tests whatever `dist/` was last built.** The
+`webServer` command is `npm run serve:ssr:storefront`, which serves the prebuilt bundle. The bundle in this
+worktree dated from 11 Oct, three days before the rebase, so the first 40 passing tests said nothing about
+the rebased tree. The first mutation check (remove `method="dialog"`, run the checkout test) passed for the
+same reason, and a second one passed because a `sed` matched the word in a comment instead of the
+attribute. Valid result only after `npm run build:storefront` each time: fresh build 40 / 40; attribute
+removed and rebuilt, the checkout test fails with `/checkout?firstName=Nimali&lastName=Perera&email=...`;
+restored and rebuilt. Rebuild before every Playwright run, and check the mutation's `git diff` shows the
+line you meant.
