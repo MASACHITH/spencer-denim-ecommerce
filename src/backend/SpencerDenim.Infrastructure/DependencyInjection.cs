@@ -32,6 +32,7 @@ using SpencerDenim.Infrastructure.Media;
 using SpencerDenim.Infrastructure.Ops.Email;
 using SpencerDenim.Infrastructure.Health;
 using SpencerDenim.Infrastructure.Identity;
+using SpencerDenim.Infrastructure.Identity.Customers;
 using SpencerDenim.Infrastructure.Persistence;
 using SpencerDenim.Infrastructure.Persistence.Interceptors;
 using SpencerDenim.Infrastructure.Persistence.Seeding;
@@ -143,6 +144,9 @@ public static class DependencyInjection
         // Pure and stateless over the bound options, so one instance for the process.
         services.AddSingleton<OrderEmailComposer>();
 
+        // The four account emails of doc 11 P11 (W3-01, ACC-01). Pure over the same bound options.
+        services.AddSingleton<AccountEmailComposer>();
+
         // The SMTP boundary. A singleton over the options; it builds a fresh SmtpClient per message,
         // because SmtpClient is not thread-safe (see SmtpEmailTransport).
         services.AddSingleton<IEmailTransport, SmtpEmailTransport>();
@@ -151,6 +155,7 @@ public static class DependencyInjection
         // outbox row commit in the same transaction as the order it is about (doc 08 §3.8).
         services.AddScoped<IEmailOutboxWriter, EmailOutboxWriter>();
         services.AddScoped<IOrderEmailOutbox, OrderEmailOutbox>();
+        services.AddScoped<IAccountEmailOutbox, AccountEmailOutbox>();
         services.AddScoped<IEmailOutboxStore, EmailOutboxStore>();
 
         // ops.AdminAlerts (doc 08 §3.8 N2, W4-02a). Scoped for the same reason: the acknowledgement writes
@@ -393,6 +398,11 @@ public static class DependencyInjection
                 tags: [HealthCheckTags.Ready]);
 
         services.AddAdminIdentity();
+
+        // ACC-01 / ACC-02 (W3-01): the second cookie scheme doc 08 §3.1 DB10 asks for, and the customer
+        // account use cases behind it. **After** AddAdminIdentity, because that call establishes the
+        // Identity core services both share (one store, doc 08 D7) and names the default scheme.
+        services.AddCustomerIdentity();
 
         return services;
     }

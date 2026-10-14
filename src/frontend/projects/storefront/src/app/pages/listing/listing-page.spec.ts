@@ -10,6 +10,7 @@ import {
   primeContentPages,
   primeFailedContentPages,
 } from '../../core/content/content-pages.testing';
+import { AccountStore } from '../../core/account/account.store';
 import { NavigationService } from '../../core/navigation/navigation.service';
 import { PagedResult, ProductCardDto } from '../../core/catalog/catalog.model';
 import { MAX_LOADED_PAGES, MAX_PAGE_SIZE, PAGE_SIZE } from '../../core/catalog/listing-state';
@@ -727,18 +728,30 @@ describe('ListingPage', () => {
     // has published nothing they are addresses the shop genuinely does not have — so the honest answer
     // is the catch-all's real 404, not the home page at HTTP 200, which is #28's own defect. The three
     // cases that replace this loop are below.
-    for (const path of ['/account']) {
-      it(`${path} goes back to the home page, not to the listing`, async () => {
-        await goTo(path);
+    //
+    // **W3-01 took the last one, `/account`.** It used to redirect home because the page did not exist;
+    // it is eight real pages now, so the redirect is gone and the test that asserted it would be
+    // asserting the old behaviour. What has to stay true is the thing this whole describe block exists
+    // for: `/:department` matches any single segment, so `/account` must not render this listing's
+    // "No products found" and tell a shopper a *department* is missing when they clicked "Account".
+    it('/account is the account area now, not a listing for a department that does not exist', async () => {
+      // **The session is settled before navigating, and that is not a shortcut.** The signed-in guard
+      // reads it through `AccountStore`, which is single-flight: telling the store there is no session
+      // means the guard answers from the memo and the navigation needs no HTTP call — so this test
+      // cannot race a request it would have to flush *during* an awaited navigation, which is a
+      // deadlock. `account.store.spec.ts` and `signed-in.guard.spec.ts` cover the request itself.
+      TestBed.inject(AccountStore).accept(null);
 
-        // Reaching the home page is the point of the test, and the home page fetches its content.
-        flushHomeContent();
+      await goTo('/account');
 
-        expect(TestBed.inject(Router).url).toBe('/');
-        expect(text()).not.toContain('No products found');
-        expect(text()).not.toContain('could not find that page');
-      });
-    }
+      // `/account` redirects to `/account/orders`, the guard refuses it, and the sign-in form is what a
+      // signed-out visitor gets — with the address they were going to in `returnTo`, so signing in
+      // takes them there.
+      expect(TestBed.inject(Router).url).toBe('/account/sign-in?returnTo=%2Faccount%2Forders');
+      expect(text()).toContain('Sign in');
+      expect(text()).not.toContain('No products found');
+      expect(text()).not.toContain('could not find that page');
+    });
 
     /**
      * The three content-page addresses this listing used to swallow (GLB-10, W2-11).

@@ -165,19 +165,18 @@ test.describe('addresses that are not a department', () => {
    * used to render the listing's not-found state at HTTP 200 — the copy told a shopper that a
    * *department* no longer existed when they had clicked "Bag".
    */
-  // `/account` is the last entry in `UNBUILT_PATHS` (W3-01's), so it still redirects home.
+  // `/account` left `UNBUILT_PATHS` when W3-01 built the account pages. It used to redirect home; it
+  // now opens the order history, which sends a visitor who is not signed in to sign in. The property
+  // this block is about is unchanged: it is not the listing's "department not found".
   for (const path of ['/account']) {
-    test(`${path} goes to the home page`, async ({ page }) => {
+    test(`${path} opens the account area, not a listing`, async ({ page }) => {
       const response = await page.goto(path);
 
       expect(response?.status()).toBe(200);
-      await expect(page).toHaveURL('/');
+      await expect(page).toHaveURL(/\/account\/sign-in\?returnTo=%2Faccount%2Forders$/);
 
-      // The home page, not the listing. `.product-grid` is a design-system class the homepage's
-      // own product rows use as well (HOME-03, HOME-07), so the question has to be asked about
-      // the listing component rather than about a shared stylesheet hook.
       await expect(page.locator('sd-listing-page')).toHaveCount(0);
-      await expect(page.locator('sd-home-page')).toHaveCount(1);
+      await expect(page.locator('sd-sign-in-page')).toHaveCount(1);
       await expect(page.getByText('could not find that page')).toHaveCount(0);
     });
   }

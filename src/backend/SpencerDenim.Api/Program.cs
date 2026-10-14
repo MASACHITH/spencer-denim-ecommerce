@@ -2,6 +2,7 @@ using System.Text.Json.Serialization;
 using SpencerDenim.Api.Authorization;
 using SpencerDenim.Api.Cli;
 using SpencerDenim.Api.Endpoints;
+using SpencerDenim.Api.Endpoints.Accounts;
 using SpencerDenim.Api.Endpoints.Admin;
 using SpencerDenim.Api.Endpoints.Catalog;
 using SpencerDenim.Api.Endpoints.Content;
@@ -34,6 +35,7 @@ builder.Services.AddApiForwardedHeaders();
 builder.Services.AddNewsletterSignupThrottle();
 builder.Services.AddPaymentSlipUploadThrottle();
 builder.Services.AddPayPalEndpointThrottle();
+builder.Services.AddAccountRequestThrottle();
 builder.Services.AddContactEnquiryThrottle();
 // Output caching, with no base policy: only the sitemap feed opts in (see SitemapOutputCache for the
 // window and why it is a minute rather than matching the storefront's fifteen).
@@ -113,6 +115,10 @@ app.MapCartEndpoints();
 app.MapWishlistEndpoints();
 app.MapCheckoutEndpoints();
 app.MapPayPalEndpoints();
+
+// Customer accounts (W3-01, ACC-01/02; doc 11 P11).
+app.MapCustomerAuthEndpoints();
+app.MapCustomerAccountEndpoints();
 app.MapAdminMediaEndpoints();
 app.MapMediaFileEndpoints();
 

@@ -25,6 +25,7 @@ namespace SpencerDenim.IntegrationTests.Ops;
 /// build has no composer for — and an insert is the only way to reach them.
 /// </para>
 /// </summary>
+[Collection(nameof(OutboxWipingTests))]
 public sealed class EmailOutboxSendingTests(SqlServerDatabaseFixture sqlServer)
     : SalesSchemaTestBase(sqlServer)
 {
@@ -229,6 +230,67 @@ public sealed class EmailOutboxSendingTests(SqlServerDatabaseFixture sqlServer)
         Assert.Null(stored.BodyHtml);
         Assert.Null(stored.BodyText);
         Assert.NotNull(stored.Subject);
+    }
+
+    /// <summary>
+    /// G-03 on <c>Dead</c> too: a token-bearing message whose last attempt fails loses its body, and an
+    /// ordinary one keeps it (independent tester, W3-01).
+    /// </summary>
+    /// <remarks>
+    /// The link in a reset or confirmation body still works whether or not the message was delivered, and
+    /// a dead message is never sent, so its body has no use left — only a risk. Before the fix only
+    /// <c>Sent</c> cleared it, so every undeliverable reset link sat in the table for thirty days.
+    /// </remarks>
+    [Theory]
+    [InlineData(EmailTemplateCodes.PasswordReset, true)]
+    [InlineData(EmailTemplateCodes.EmailConfirmation, true)]
+    [InlineData(EmailTemplateCodes.Welcome, false)]
+    public async Task A_message_that_dies_on_its_last_failure_loses_its_body_only_if_it_carries_a_token(
+        string template,
+        bool cleared)
+    {
+        await ResetAsync();
+
+        var id = await InsertAsync(
+            template: template,
+            status: EmailOutboxStatus.Failed,
+            attemptCount: (short)(EmailBackoff.MaxAttempts - 1),
+            nextAttemptAtUtc: Now.AddMinutes(-1));
+
+        var claim = Assert.Single(await ClaimAsync(), row => row.Id == id);
+        Assert.Equal(EmailFailureOutcome.Dead, await MarkFailedAsync(claim, "550 refused, finally"));
+
+        var stored = await RowAsync(id);
+        Assert.Equal(EmailOutboxStatus.Dead, stored.Status);
+        Assert.Equal(cleared, stored.BodyHtml is null);
+        Assert.Equal(cleared, stored.BodyText is null);
+    }
+
+    /// <summary>
+    /// And on the other path to <c>Dead</c>: a sender that died holding the message's last attempt.
+    /// </summary>
+    [Theory]
+    [InlineData(EmailTemplateCodes.PasswordReset, true)]
+    [InlineData(EmailTemplateCodes.EmailConfirmation, true)]
+    [InlineData(EmailTemplateCodes.OrderPlaced, false)]
+    public async Task A_stranded_message_killed_on_its_last_attempt_loses_its_body_only_if_it_carries_a_token(
+        string template,
+        bool cleared)
+    {
+        await ResetAsync();
+
+        var id = await InsertAsync(
+            template: template,
+            status: EmailOutboxStatus.Sending,
+            attemptCount: EmailBackoff.MaxAttempts,
+            lockedUntilUtc: Now.AddMinutes(-1));
+
+        Assert.Equal([id], await KillStrandedAsync());
+
+        var stored = await RowAsync(id);
+        Assert.Equal(EmailOutboxStatus.Dead, stored.Status);
+        Assert.Equal(cleared, stored.BodyHtml is null);
+        Assert.Equal(cleared, stored.BodyText is null);
     }
 
     /// <summary>
@@ -846,3 +908,20 @@ public sealed class EmailOutboxSendingTests(SqlServerDatabaseFixture sqlServer)
             .SingleAsync(message => message.Id == id, Token);
     }
 }
+
+/// <summary>
+/// The test classes that empty <c>ops.EmailOutbox</c>, run on their own rather than beside everything else.
+/// </summary>
+/// <remarks>
+/// <b>Added by the W3-01 round-2 independent tester, from a full-assembly failure.</b> The suite shares one
+/// database (<c>AssemblyFixture</c>) and xUnit runs test classes in parallel, so
+/// <see cref="EmailOutboxSendingTests"/>' <c>DELETE FROM ops.EmailOutbox</c> removed rows that other classes
+/// were in the middle of using: <c>AdminAlertsBehaviourTests.Two_dead_messages_for_one_order_raise_two_alerts</c>
+/// inserted a Dead message, the delete removed it, and <c>RaiseAsync</c> answered false — 1684 / 1685 in a
+/// full run, 29 / 29 three times alone. The account tests read their confirmation and reset links out of the
+/// same table and are exposed the same way, and W3-01 added six more calls to the delete. A collection with
+/// parallelisation disabled runs after the parallel ones, alone, so the delete can no longer land in the
+/// middle of another class's test.
+/// </remarks>
+[CollectionDefinition(nameof(OutboxWipingTests), DisableParallelization = true)]
+public sealed class OutboxWipingTests;
