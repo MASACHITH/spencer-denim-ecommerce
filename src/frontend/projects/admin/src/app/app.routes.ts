@@ -5,6 +5,7 @@ import { BRAND } from '@spencer-denim/shared';
 
 export const routes: Routes = [
   {
+    // ADM-04, ADM-05, ADM-07, ADM-08 (W4-02): the dashboard.
     path: '',
     title: BRAND.adminName,
     canActivate: [adminSessionGuard],
@@ -120,6 +121,15 @@ export const routes: Routes = [
     canActivate: [adminSessionGuard],
     loadComponent: () =>
       import('./pages/newsletter/newsletter-subscribers-page').then((m) => m.NewsletterSubscribersPage),
+  },
+  {
+    // ADM-19 (W4-02): the Sales, Inventory and Customers reports and their audited exports. The guard asks
+    // only for a session, as every other admin route does: the API is the security boundary (doc 03 §3a),
+    // and the page itself says so to a role without Reports.View rather than bouncing it.
+    path: 'reports',
+    title: `Reports — ${BRAND.adminName}`,
+    canActivate: [adminSessionGuard],
+    loadComponent: () => import('./pages/reports/reports-page').then((m) => m.ReportsPage),
   },
   {
     // ADM-11 (W1-12). Like every other admin route the guard only asks for a session: the API is the
