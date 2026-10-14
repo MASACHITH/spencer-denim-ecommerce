@@ -502,9 +502,18 @@ export class SiteHeader {
     afterNextRender(() => this.account.load().subscribe());
 
     // Navigating away always leaves the shell tidy, whichever link was used.
+    //
+    // **Not on the first navigation, which is not "navigating away".** On a server-rendered load the
+    // initial navigation ends only once the requests in flight at start-up have answered, which is after
+    // hydration: the header is already live, and a shopper can have opened the search panel, the menu
+    // or the bag by then. Closing them on that NavigationEnd shut a panel the shopper had just opened.
+    // W3-01 made the window wider and constant — the header's `GET /api/account/session` is the last
+    // start-up request to answer — and `search.e2e.ts` "one Escape" went from 1 in 10 failing on the base
+    // commit to 10 in 10 (round-2 independent tester, measured: the initial `replaceState` landed
+    // 1–100 ms after the hydrated click on every run of the branch, and 46–322 ms before it on base).
     this.router.events
       .pipe(
-        filter((event) => event instanceof NavigationEnd),
+        filter((event) => event instanceof NavigationEnd && event.id > 1),
         takeUntilDestroyed(),
       )
       .subscribe(() => {

@@ -261,6 +261,28 @@ describe('SiteHeader shell (GLB-04, GLB-05)', () => {
     expect(logo!.hasAttribute('height')).toBe(false);
   });
 
+  // W3-01 round 2, independent tester. On a server-rendered load the first navigation ends after
+  // hydration, once the start-up requests have answered, and the header's `GET /api/account/session` is
+  // the last of them; closing every panel on that NavigationEnd shut a search panel the shopper had just
+  // opened (`search.e2e.ts` "one Escape", 10 of 10 on the branch). Only a navigation *away* tidies up.
+  it('leaves an open panel alone on the first navigation and closes it on the next', async () => {
+    const router = TestBed.inject(Router);
+    const header = fixture.componentInstance;
+
+    header.toggleSearch();
+    await settle();
+    expect(header.searchOpen()).toBe(true);
+
+    // The test bed has not navigated yet, so this is the application's initial navigation (id 1).
+    await router.navigateByUrl('/');
+    await settle();
+    expect(header.searchOpen()).toBe(true);
+
+    await router.navigateByUrl('/wishlist');
+    await settle();
+    expect(header.searchOpen()).toBe(false);
+  });
+
   it('shows the five main navigation entries', () => {
     const labels = Array.from(
       element.querySelectorAll<HTMLAnchorElement>('sd-main-nav .site-nav__link'),
