@@ -63,8 +63,9 @@ public sealed record SettingDefinition(
 /// <b>This is the allow-list, in both directions.</b> The seeder creates exactly these rows, and a key
 /// that is not here has no row — so a write path cannot reach one, a read model cannot project one, and
 /// the question "which permission guards this key" always has an answer that came from source rather
-/// than from a caller. <see cref="SettingKeys"/> explains which of doc 08 §3.8's sixteen groups are
-/// missing and what each is waiting for.
+/// than from a caller. <see cref="DeferredSettingKeys"/> records every key of doc 08 §3.8's fifteen
+/// groups that this build does not seed, and why, and a test diffs both lists against the document
+/// itself.
 /// </para>
 /// </summary>
 public static class SettingCatalog
@@ -274,6 +275,10 @@ public static class SettingCatalog
             + "collected has not been delivered. Between 1 and 90 days.",
             SeedValue: SettingKeys.Orders.AutoDeliverAfterDaysDefault.ToString(
                 System.Globalization.CultureInfo.InvariantCulture)),
+
+        // Group Payments.PayPal (doc 08 §3.8, W4-01), and Orders.PayPalExpiryMinutes. Their own file, so the
+        // payment providers that follow add theirs beside these.
+        .. PayPalSettingDefinitions.All,
     ];
 
     /// <summary>
@@ -331,6 +336,12 @@ public static class SettingCatalog
         // they are guarded by a different permission from every other group — a save unit that spanned both
         // would hand a Settings.Edit holder a token covering rows they may not write.
         [SettingKeys.Bank.Group],
+
+        // PayPal's credentials, rate and timings: one form, one permission (Settings.Payments).
+        // Orders.PayPalExpiryMinutes is written by this form too but lives in the Orders group (doc 08 §3.8's
+        // name and permission for it, Settings.Edit), so it is covered by the Store-and-Orders token above
+        // and not by this one - a unit may not span two permissions.
+        [SettingKeys.PayPal.Group],
     ];
 
     /// <summary>

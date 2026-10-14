@@ -21,6 +21,20 @@ public static class DefaultRoleDefinitions
     // computed by exclusion on purpose (a new permission must be granted deliberately, never by default), which is
     // exactly why Categories.Create/Delete and Media.Create/Edit, added by the catalogue admin work (W1-12, W1-04),
     // had to be added here by hand. The unit test for Store Manager walks the whole catalogue and fails on a miss.
+    //
+    // **And a permission added here reaches a database that already exists only through
+    // `DefaultRoleSeedVersions`** (issue #122, doc 08 §9 / N13): the seeder creates a role only when the role is
+    // absent, so adding a permission below and nothing else leaves every existing database without it. Declare it
+    // as a new increment there. `DefaultRoleSeedVersionsTests` fails the build if you do not.
+
+    /// <summary>Doc 08 §9's "Store Manager". The role name is the seeder's only key, so it is a constant.</summary>
+    public const string StoreManagerName = "Store Manager";
+
+    /// <summary>Doc 08 §9's "Order Staff".</summary>
+    public const string OrderStaffName = "Order Staff";
+
+    /// <summary>Doc 08 §9's "Content Editor".</summary>
+    public const string ContentEditorName = "Content Editor";
 
     /// <summary>
     /// Doc 08 §9: "Every Module.Action except Users.*, Settings.Payments and Settings.Security (the last
@@ -28,7 +42,7 @@ public static class DefaultRoleDefinitions
     /// Customers.Delete."
     /// </summary>
     public static readonly RoleDefinition StoreManager = new(
-        Name: "Store Manager",
+        Name: StoreManagerName,
         Description: "Every module except Users management and payment/security settings (doc 08 §9).",
         Permissions: new HashSet<string>
         {
@@ -55,7 +69,9 @@ public static class DefaultRoleDefinitions
             Identity.Permissions.Reviews.Approve,
             Identity.Permissions.Reviews.Delete,
             Identity.Permissions.Promotions.View,
+            Identity.Permissions.Promotions.Create,
             Identity.Permissions.Promotions.Edit,
+            Identity.Permissions.Promotions.Delete,
             Identity.Permissions.Content.View,
             Identity.Permissions.Content.Create,
             Identity.Permissions.Content.Edit,
@@ -76,7 +92,7 @@ public static class DefaultRoleDefinitions
 
     /// <summary>Doc 08 §9: "Dashboard.View, Orders.View/Edit/Approve, Customers.View, Inventory.View. No Orders.Refund".</summary>
     public static readonly RoleDefinition OrderStaff = new(
-        Name: "Order Staff",
+        Name: OrderStaffName,
         Description: "Order processing without refunds (doc 08 §9).",
         Permissions: new HashSet<string>
         {
@@ -90,7 +106,7 @@ public static class DefaultRoleDefinitions
 
     /// <summary>Doc 08 §9: "Products.*, Categories.*, Content.*, Media.*, Reviews.View/Edit/Approve/Delete".</summary>
     public static readonly RoleDefinition ContentEditor = new(
-        Name: "Content Editor",
+        Name: ContentEditorName,
         Description: "Catalogue content, media and reviews (doc 08 §9).",
         Permissions: new HashSet<string>
         {

@@ -5,6 +5,8 @@ using SpencerDenim.Application.Sales.Cart.Contracts;
 using SpencerDenim.Application.Sales.Checkout;
 using SpencerDenim.Application.Sales.Checkout.Abstractions;
 using SpencerDenim.Application.Sales.Checkout.Contracts;
+using SpencerDenim.Application.Sales.Payments.Abstractions;
+using SpencerDenim.Domain.Marketing;
 using SpencerDenim.Domain.Sales;
 using SpencerDenim.UnitTests.Support;
 
@@ -140,9 +142,36 @@ public sealed class PlaceOrderCommandHandlerTests
         Assert.Equal(0, reader.CartReads);
     }
 
+    /// <summary>
+    /// <b>Checkout describes the payment before there is a payment row, and says so.</b> The provider is
+    /// asked for its instructions ahead of the placement transaction (doc 08 §5.4 keeps reads out of it), so
+    /// the request cannot name an attempt: <c>PaymentId</c> and <c>ProviderReference</c> are null. A provider
+    /// that needs them answers null here and describes itself on the order page, where
+    /// <c>GetOrderQueryHandler</c> fills them in. Pinned because the day somebody "helpfully" invents an id
+    /// here, a provider would build a hosted-checkout reference around a payment that does not exist.
+    /// </summary>
+    [Fact]
+    public async Task Checkout_asks_the_provider_to_describe_the_payment_before_any_payment_row_exists()
+    {
+        var provider = new StubPaymentProvider();
+        var reader = new RacingCheckoutReader { Lines = [Line(CartLineStatus.Buyable)], WinnerExists = false };
+        var placements = new StubPlacementStore(OrderPlacementResult.Placed(Guid.NewGuid()));
+
+        var result = await HandleAsync(reader, placements, provider);
+
+        Assert.Equal(PlaceOrderStatus.Placed, result.Status);
+
+        var request = Assert.Single(provider.DescribeRequests);
+        Assert.Equal("CW-2026-000999", request.OrderNumber);
+        Assert.Equal(1350m, request.AmountLkr);
+        Assert.Null(request.PaymentId);
+        Assert.Null(request.ProviderReference);
+    }
+
     private static Task<PlaceOrderResult> HandleAsync(
         RacingCheckoutReader reader,
-        IOrderPlacementStore? placements = null)
+        IOrderPlacementStore? placements = null,
+        IPaymentProvider? provider = null)
     {
         var handler = new PlaceOrderCommandHandler(
             new StubCartStore(),
@@ -151,10 +180,10 @@ public sealed class PlaceOrderCommandHandlerTests
             placements ?? new StubPlacementStore(OrderPlacementResult.DuplicateSubmission),
             new FixedClock(new DateTimeOffset(2026, 10, 6, 9, 0, 0, TimeSpan.Zero)),
 
-            // PAY-03: the handler takes a registry, not a bank-transfer setting. These race tests never
+            // PAY-03: the handler takes a registry, not a bank-transfer setting. The race tests never
             // reach the provider — they all refuse before the initiation call — but the registry has to be
             // real enough to resolve the provider code the command carries.
-            new StubPaymentProviderRegistry());
+            new StubPaymentProviderRegistry(provider));
 
         return handler.HandleAsync(
             new PlaceOrderCommand(
@@ -204,6 +233,9 @@ public sealed class PlaceOrderCommandHandlerTests
             1000m,
             1000m,
             1000m,
+
+            // No campaign priced this line: original, list and sale are all Rs. 1,000.00 (ADM-14).
+            null,
             status);
 
     private sealed class FixedClock(DateTimeOffset now) : IClock
@@ -273,6 +305,16 @@ public sealed class PlaceOrderCommandHandlerTests
             CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<CheckoutPaymentMethod>>(
                 [new CheckoutPaymentMethod(PaymentProviderCodes.BankTransfer, "Bank transfer", null)]);
+
+        /// <summary>
+        /// No code matches. These tests are about the idempotency race and none of them sends a promo
+        /// code, so the resolver short-circuits on a null code and never reaches this — answering "no
+        /// such row" rather than throwing keeps that true if one of them ever does.
+        /// </summary>
+        public Task<PromoCodeTerms?> FindPromoCodeAsync(
+            string normalisedCode,
+            CancellationToken cancellationToken) =>
+            Task.FromResult<PromoCodeTerms?>(null);
 
         public Task<CheckoutDistrict?> FindActiveDistrictAsync(
             int districtId,

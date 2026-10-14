@@ -326,6 +326,12 @@ public sealed class SalesSchemaTests(SqlServerDatabaseFixture sqlServer) : Sales
                 + "W2-09's. The filter is what makes 'one cart per customer' expressible at all, since a "
                 + "plain unique index would allow exactly one guest cart in the whole table; and a cart is "
                 + "looked up either by token or by a known user id, which implies the filter.",
+            ["Orders.PromoCodeId"] =
+                "IX_Orders_Promo_Email (PromoCodeId, EmailNormalized) INCLUDE (Status, PaidAtUtc) WHERE "
+                + "PromoCodeId IS NOT NULL, doc 08 §3.5 and §3.6. W3-05 made the column a real foreign key "
+                + "and deliberately added no plain index: the composite already leads on it, most orders "
+                + "keep a NULL, and the one lookup that exists — the per-customer limit's count — passes a "
+                + "real promo id, which implies the filter. PromoCodePlanTests measures the seek.",
         };
 
     /// <summary>
@@ -444,57 +450,79 @@ public sealed class SalesSchemaTests(SqlServerDatabaseFixture sqlServer) : Sales
             .ToListAsync(Token);
 
     /// <summary>
-    /// The doc 08 foreign keys that are still columns without constraints, because the table they would
-    /// point at does not exist yet. Named in a test so that creating <c>marketing.PromoCodes</c> or
-    /// <c>marketing.SaleCampaigns</c> and forgetting the constraint is a failure rather than a silence.
+    /// <c>sales.OrderLines.SaleCampaignId</c>, which W3-05b turned from a bare column into a real
+    /// constraint, now points at <c>marketing.SaleCampaigns.Id</c> with <c>NO ACTION</c> both ways — and
+    /// still leads an index.
     /// </summary>
     /// <remarks>
-    /// <b><c>Orders.DeliveryDistrictId</c> and <c>PickupLocations.DistrictId</c> have been taken out of
-    /// this list by W3-02, and this test is why they were in it.</b> W3-03 built them as bare columns
-    /// because <c>ref.Districts</c> did not exist, and listed them here so that whichever task created
-    /// that table would be forced to notice. W3-02 created it (doc 08 §3.1 heads it "GLB-06, CHK-01"),
-    /// and this test failed — which is the guard working, not a regression. Both now have real
-    /// constraints, asserted positively in
-    /// <see cref="The_district_foreign_keys_W3_03_deferred_now_exist"/>; leaving them here would have
-    /// meant asserting the absence of a constraint this branch deliberately added.
+    /// <b>This method replaces a theory, and the theory is why the constraint got added.</b> Until this
+    /// branch, <c>The_deferred_foreign_keys_are_indexed_columns_with_no_constraint</c> asserted that this
+    /// column had <i>no</i> constraint, because <c>marketing.SaleCampaigns</c> (ADM-14) did not exist and
+    /// W2-09's orders migration had built the column bare. It was the last row of that theory; W3-05b
+    /// created the table, the theory failed — the guard working, not a regression — and with its last row
+    /// gone the theory itself has gone, since an xUnit <c>[Theory]</c> with no data is an error rather
+    /// than a pass. The same thing happened to <c>Orders.PromoCodeId</c> in W3-05 and to the two district
+    /// keys in W3-02, and each left a positive test like this one behind.
     /// <para>
-    /// <c>identity.Users.DefaultDistrictId</c> is doc 08 §3.1's third FK to <c>ref.Districts</c> and is
-    /// deliberately still unconstrained — it has no index, no reader (there is no customer sign-in,
-    /// ACC-01) and lives on a table this branch does not own. It is not in either list because this
-    /// theory only looks at the <c>sales</c> schema; see <c>AppUser.DefaultDistrictId</c>.
+    /// <b>Every foreign key doc 08 §3.5 names is therefore now real.</b> There is nothing left to defer in
+    /// this schema. <c>identity.Users.DefaultDistrictId</c> is doc 08 §3.1's third reference to
+    /// <c>ref.Districts</c> and is still unconstrained, on a table outside the <c>sales</c> schema this
+    /// file looks at; see <c>AppUser.DefaultDistrictId</c>.
+    /// </para>
+    /// <para>
+    /// <b>The delete rule is the half worth asserting.</b> A cascade here would mean that purging one
+    /// campaign deleted <b>order lines</b>, and doc 08 §1.6 lists Orders among the rows that are never
+    /// deleted at all. It cannot happen through the application — a campaign is soft-deleted and
+    /// <c>Remove()</c> on it throws (DB5) — but "it cannot happen in practice" is exactly the reasoning
+    /// that leaves a wrong delete rule in a schema for a year. The referenced table and column are
+    /// checked too, because a key pointing at the wrong column would still satisfy "a constraint exists".
+    /// </para>
+    /// <para>
+    /// The index assertion is kept from the theory it replaces: doc 08 §1.6 (DB7) wants every FK column
+    /// leading at least one index, and W3-05b deliberately declared <b>no</b> new index because
+    /// <c>IX_OrderLines_SaleCampaignId</c> was already there. If EF's FK-index convention ever decided to
+    /// add a second one, the index-inventory test below would say so; this says the first one is still
+    /// there.
     /// </para>
     /// </remarks>
-    [Theory]
-    [InlineData("Orders", "PromoCodeId")]
-    [InlineData("OrderLines", "SaleCampaignId")]
-    public async Task The_deferred_foreign_keys_are_indexed_columns_with_no_constraint(string table, string column)
+    [Fact]
+    public async Task The_sale_campaign_foreign_key_W3_03_deferred_now_exists()
     {
         SqlServer.SkipIfUnavailable();
 
-        var constraints = await DbContext.Database
-            .SqlQuery<int>($"""
-                SELECT COUNT(*) AS [Value]
-                FROM sys.foreign_key_columns fc
-                JOIN sys.columns c
-                  ON c.object_id = fc.parent_object_id AND c.column_id = fc.parent_column_id
-                WHERE fc.parent_object_id = OBJECT_ID('sales.' + {table}) AND c.name = {column}
+        var shape = await DbContext.Database
+            .SqlQuery<string>($"""
+                SELECT CONCAT(
+                           SCHEMA_NAME(rt.schema_id) COLLATE DATABASE_DEFAULT, '.',
+                           rt.name COLLATE DATABASE_DEFAULT, '.',
+                           rc.name COLLATE DATABASE_DEFAULT,
+                           '|', fk.delete_referential_action_desc COLLATE DATABASE_DEFAULT,
+                           '|', fk.update_referential_action_desc COLLATE DATABASE_DEFAULT) AS [Value]
+                FROM sys.foreign_keys fk
+                JOIN sys.foreign_key_columns fc ON fc.constraint_object_id = fk.object_id
+                JOIN sys.columns pc
+                  ON pc.object_id = fc.parent_object_id AND pc.column_id = fc.parent_column_id
+                JOIN sys.tables rt ON rt.object_id = fc.referenced_object_id
+                JOIN sys.columns rc
+                  ON rc.object_id = fc.referenced_object_id AND rc.column_id = fc.referenced_column_id
+                WHERE fc.parent_object_id = OBJECT_ID('sales.OrderLines') AND pc.name = 'SaleCampaignId'
                 """)
-            .SingleAsync(Token);
+            .ToListAsync(Token);
 
-        Assert.Equal(0, constraints);
+        Assert.Equal(["marketing.SaleCampaigns.Id|NO_ACTION|NO_ACTION"], shape);
 
         var leadsAnIndex = await DbContext.Database
             .SqlQuery<int>($"""
                 SELECT COUNT(*) AS [Value]
                 FROM sys.index_columns ic
                 JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
-                WHERE ic.object_id = OBJECT_ID('sales.' + {table})
+                WHERE ic.object_id = OBJECT_ID('sales.OrderLines')
                   AND ic.key_ordinal = 1
-                  AND c.name = {column}
+                  AND c.name = 'SaleCampaignId'
                 """)
             .SingleAsync(Token);
 
-        Assert.True(leadsAnIndex >= 1, $"sales.{table}.{column} leads no index.");
+        Assert.Equal(1, leadsAnIndex);
     }
 
     /// <summary>
@@ -514,6 +542,59 @@ public sealed class SalesSchemaTests(SqlServerDatabaseFixture sqlServer) : Sales
     /// still satisfy "a constraint exists on this column".
     /// </para>
     /// </remarks>
+    /// <summary>
+    /// <c>sales.Orders.PromoCodeId</c>, which W3-05 turned from a bare column into a real constraint, now
+    /// points at <c>marketing.PromoCodes.Id</c> with <c>NO ACTION</c> both ways.
+    /// </summary>
+    /// <remarks>
+    /// <b>It was in <c>The_deferred_foreign_keys_are_indexed_columns_with_no_constraint</c> — a theory
+    /// W3-05b has since removed, its last row having been <c>OrderLines.SaleCampaignId</c> — and is
+    /// not any more, and this test is why it was there.</b> The orders migration built it as a bare column
+    /// because <c>marketing.PromoCodes</c> did not exist, and listed it there so that whichever task
+    /// created that table would be forced to notice. W3-05 created it (doc 08 §3.6 heads it "ADM-13,
+    /// CART-01") and that theory failed — which is the guard working, not a regression. The same thing
+    /// happened to the two district keys when W3-02 created <c>ref.Districts</c>; see
+    /// <see cref="The_district_foreign_keys_W3_03_deferred_now_exist"/>.
+    /// <para>
+    /// <b>The delete rule is the half worth asserting.</b> A cascade here would mean removing one promo
+    /// code deleted <b>orders</b>, and doc 08 §1.6 lists Orders among the rows that are never deleted at
+    /// all. It cannot happen in practice — a promo code is soft-deleted through <c>SoftDelete()</c> and
+    /// <c>Remove()</c> on it throws (DB5) — but "it cannot happen in practice" is exactly the reasoning
+    /// that leaves a wrong delete rule in a schema for a year.
+    /// </para>
+    /// <para>
+    /// <c>OrderLines.SaleCampaignId</c> was still deferred when this test was written and is not any
+    /// more: W3-05b created <c>marketing.SaleCampaigns</c> (ADM-14) and added the constraint, which
+    /// <see cref="The_sale_campaign_foreign_key_W3_03_deferred_now_exists"/> asserts the same way.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task The_promo_code_foreign_key_W3_03_deferred_now_exists()
+    {
+        SqlServer.SkipIfUnavailable();
+
+        var shape = await DbContext.Database
+            .SqlQuery<string>($"""
+                SELECT CONCAT(
+                           SCHEMA_NAME(rt.schema_id) COLLATE DATABASE_DEFAULT, '.',
+                           rt.name COLLATE DATABASE_DEFAULT, '.',
+                           rc.name COLLATE DATABASE_DEFAULT,
+                           '|', fk.delete_referential_action_desc COLLATE DATABASE_DEFAULT,
+                           '|', fk.update_referential_action_desc COLLATE DATABASE_DEFAULT) AS [Value]
+                FROM sys.foreign_keys fk
+                JOIN sys.foreign_key_columns fc ON fc.constraint_object_id = fk.object_id
+                JOIN sys.columns pc
+                  ON pc.object_id = fc.parent_object_id AND pc.column_id = fc.parent_column_id
+                JOIN sys.tables rt ON rt.object_id = fc.referenced_object_id
+                JOIN sys.columns rc
+                  ON rc.object_id = fc.referenced_object_id AND rc.column_id = fc.referenced_column_id
+                WHERE fc.parent_object_id = OBJECT_ID('sales.Orders') AND pc.name = 'PromoCodeId'
+                """)
+            .ToListAsync(Token);
+
+        Assert.Equal(["marketing.PromoCodes.Id|NO_ACTION|NO_ACTION"], shape);
+    }
+
     [Theory]
     [InlineData("Orders", "DeliveryDistrictId")]
     [InlineData("PickupLocations", "DistrictId")]
@@ -581,6 +662,14 @@ public sealed class SalesSchemaTests(SqlServerDatabaseFixture sqlServer) : Sales
     [InlineData("Payments", "UX_Payments_Provider_Txn", "1|ProviderCode,ProviderTransactionId||([ProviderTransactionId] IS NOT NULL)")]
     [InlineData("Payments", "IX_Payments_Exceptions", "0|CreatedAtUtc||([Status]=(7))")]
     [InlineData("Payments", "IX_Payments_BankQueue", "0|CreatedAtUtc||([ProviderCode]='BankTransfer' AND [Status]=(1))")]
+
+    // Added by the W4-01 verification. This index was not in the list, and W4-01 is what made its *name*
+    // load-bearing: OrderSettlementEffects.CloseOtherOpenAttemptsAsync carries
+    // WITH (INDEX(IX_Payments_OrderId)), so renaming or dropping it is not a slow query, it is Msg 308
+    // ("the index does not exist or does not have the required property") thrown inside the settlement
+    // transaction, after the order has already been claimed Paid. Doc 08 §1.6 DB7 is why it exists; this
+    // row is why a migration cannot take it away quietly.
+    [InlineData("Payments", "IX_Payments_OrderId", "0|OrderId||")]
     [InlineData("PaymentEvents", "UX_PaymentEvents_IdempotencyKey", "1|IdempotencyKey||")]
     [InlineData("PaymentEvents", "IX_PaymentEvents_Retry", "0|NextAttemptAtUtc||([ProcessingStatus] IN ((0), (3)))")]
     [InlineData("Refunds", "IX_Refunds_Completed", "0|CompletedAtUtc||([Status]=(1))")]
@@ -912,6 +1001,11 @@ public sealed class SalesSchemaTests(SqlServerDatabaseFixture sqlServer) : Sales
         "identity.UserRoles -> Roles",
         "identity.UserRoles -> Users",
         "identity.UserTokens -> Users",
+
+        // W3-05b (ADM-14): doc 08 §1.6 names SaleCampaignTargets in the permitted list. It only ever
+        // runs on a purge — a campaign is removed through SoftDelete() and Remove() on it throws (DB5) —
+        // and the target's three catalogue references are NO ACTION, which is why only this one appears.
+        "marketing.SaleCampaignTargets -> SaleCampaigns",
         "sales.CartItems -> Carts",
         "sales.DeliveryMethodZoneRates -> DeliveryMethods",
     ];

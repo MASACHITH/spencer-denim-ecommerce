@@ -1,0 +1,99 @@
+# Spencer Denim: host nginx site, staging (W0-15, docs/15-deployment-runbook.md §3).
+#
+# Copy to /etc/nginx/sites-available/spencer-denim-staging.conf on srv1983022 and replace the two remaining
+# placeholders (`grep -n '__[A-Z_]*__' <file>` must then print nothing):
+#
+#   __SERVER_NAME__   public host name(s), space-separated. Must match SD_PUBLIC_HOSTS in config/app.env.
+#   __PRIMARY_HOST__  the first of them: the certificate's directory under /etc/letsencrypt/live/
+#
+# This environment's stack listens on 127.0.0.1:38081 (its only published port).
+#
+# TLS paths follow certbot's defaults; `certbot --nginx -d <host>` (or certonly --webroot) creates them. The
+# host's nginx already owns 80/443 for the other sites on this server; this file only adds a server block.
+#
+# X-Forwarded-For is OVERWRITTEN with the address nginx saw ($remote_addr), never appended to, so nothing a
+# visitor sends in that header survives. The gateway container trusts this hop only, and the API trusts only the
+# gateway (docs/15 §3).
+
+upstream spencer_denim_staging {
+    server 127.0.0.1:38081;
+    keepalive 16;
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name __SERVER_NAME__;
+
+    # certbot's HTTP-01 challenge, then everything else to HTTPS.
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+        default_type text/plain;
+    }
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    # "listen ... ssl http2" works on nginx 1.24 (Ubuntu 24.04). On nginx >= 1.25.1 it only warns; there, the
+    # newer form is "listen 443 ssl;" plus "http2 on;".
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name __SERVER_NAME__;
+
+    ssl_certificate     /etc/letsencrypt/live/__PRIMARY_HOST__/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/__PRIMARY_HOST__/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    # One year, this host only. Add includeSubDomains / preload only once every subdomain is HTTPS-only.
+    add_header Strict-Transport-Security "max-age=31536000" always;
+
+    access_log /var/log/nginx/spencer-denim-staging.access.log;
+    error_log  /var/log/nginx/spencer-denim-staging.error.log warn;
+
+    # 2 MB by default, matching the gateway; only the two upload routes below take more.
+    #
+    # This hop, not the gateway, is the one facing the internet, so it is the one that has to say no. A flat
+    # 67m here meant an anonymous POST of 67 MB to any path at all was read to completion and spooled into
+    # /var/lib/nginx/body before the gateway answered 413 on Content-Length — so the round-1 tester's finding
+    # ("three anonymous POSTs could OOM-kill the gateway") was only half fixed: the gateway stopped buffering
+    # them in its RAM tmpfs, and this hop went on buffering them on the host's disk, which the client's other
+    # sites share. The ceilings mirror deploy/gateway/templates/gateway/sd-gateway.conf.template: change both.
+    client_max_body_size 2m;
+
+    # Set on the server, so every location below inherits them. nginx inherits proxy_set_header only into a
+    # location that sets none of its own, which is why none of the three do.
+    proxy_http_version 1.1;
+    proxy_set_header Connection        "";
+    proxy_set_header Host              $host;
+    proxy_set_header X-Forwarded-For   $remote_addr;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Host  $host;
+    proxy_set_header X-Real-IP         $remote_addr;
+    proxy_connect_timeout 5s;
+    proxy_read_timeout    60s;
+    proxy_send_timeout    60s;
+
+    # A product video (MediaLimits.MaxVideoBytes, 50 MB) travels with its poster (MaxImageBytes, 15 MB) in one
+    # request: 66 MiB plus multipart overhead, staff only. proxy_request_buffering off streams it through
+    # rather than landing it on this host's disk first, which is what makes "streamed, not buffered" true end
+    # to end rather than only on the gateway-to-API hop.
+    location ^~ /api/admin/media/ {
+        client_max_body_size 67m;
+        proxy_request_buffering off;
+        proxy_pass http://spencer_denim_staging;
+    }
+
+    # A customer's bank slip (MaxPrivateBytes, 5 MB) plus multipart overhead.
+    location ~ ^/api/orders/[0-9A-Fa-f-]+/payment-slip$ {
+        client_max_body_size 6m;
+        proxy_request_buffering off;
+        proxy_pass http://spencer_denim_staging;
+    }
+
+    location / {
+        proxy_pass http://spencer_denim_staging;
+    }
+}

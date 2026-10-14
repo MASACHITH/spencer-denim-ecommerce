@@ -55,6 +55,11 @@ test.describe('reduced motion', () => {
       await page.setViewportSize(dialog.viewport);
       await page.goto('/');
 
+      // Hydrated before the press: a click on server-rendered markup has no handler yet and is lost,
+      // which made this test fail about one run in ten on main and more often once the header did a
+      // little more on start-up (W3-01). `ng-version` is the gate `home-page.e2e.ts` uses.
+      await page.waitForFunction(() => !!document.querySelector('sd-root')?.hasAttribute('ng-version'));
+
       const trigger = page.locator(dialog.trigger);
       await trigger.focus();
       await trigger.click();

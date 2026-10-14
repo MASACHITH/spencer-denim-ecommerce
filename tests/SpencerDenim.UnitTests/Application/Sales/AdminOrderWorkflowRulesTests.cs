@@ -228,7 +228,33 @@ public sealed class AdminOrderWorkflowRulesTests
             .Select(definition => definition.Key)
             .ToList();
 
-        Assert.Equal([SettingKeys.Orders.AutoDeliverAfterDays], seeded);
+        // The figures doc 08 §3.8 itself states - nothing a client knows. W4-01 added PayPal's defaults (the
+        // environment, the buffer, the rate's age limit, the lock, the recovery window, the pending hold and
+        // the payment window); its credentials, webhook id and exchange rate stay null.
+        Assert.Equal(
+            [
+                SettingKeys.Orders.AutoDeliverAfterDays,
+                SettingKeys.PayPal.Mode,
+                SettingKeys.PayPal.FxBufferPercent,
+                SettingKeys.PayPal.RateMaxAgeDays,
+                SettingKeys.PayPal.CaptureLockHours,
+                SettingKeys.PayPal.CaptureRecoveryMaxHours,
+                SettingKeys.PayPal.PendingCaptureMaxDays,
+                SettingKeys.PayPal.ExpiryMinutes,
+            ],
+            seeded);
+
+        foreach (var key in new[]
+        {
+            SettingKeys.PayPal.ClientId,
+            SettingKeys.PayPal.ClientSecret,
+            SettingKeys.PayPal.WebhookId,
+            SettingKeys.PayPal.LkrPerUsd,
+            SettingKeys.PayPal.RateUpdatedAtUtc,
+        })
+        {
+            Assert.Null(SettingCatalog.Find(key)!.SeedValue);
+        }
 
         foreach (var key in new[]
         {

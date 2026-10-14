@@ -1,9 +1,11 @@
 using System.Collections.ObjectModel;
 using SpencerDenim.Application.Abstractions.Messaging;
+using SpencerDenim.Application.Abstractions.Time;
 using SpencerDenim.Application.Sales.Cart;
 using SpencerDenim.Application.Sales.Cart.Abstractions;
 using SpencerDenim.Application.Sales.Checkout.Abstractions;
 using SpencerDenim.Application.Sales.Checkout.Contracts;
+using SpencerDenim.Domain.Marketing;
 using SpencerDenim.Domain.Sales;
 
 namespace SpencerDenim.Application.Sales.Checkout;
@@ -23,7 +25,24 @@ namespace SpencerDenim.Application.Sales.Checkout;
 /// read: the page comes back with it unselected, which is what doc 11 P6 asks for when an option is
 /// withdrawn after it was chosen ("this delivery option is no longer available, choose another").
 /// </param>
-public sealed record GetCheckoutQuery(CartLookup Lookup, int? DistrictId, int? DeliveryMethodId);
+/// <param name="PromoCode">
+/// The code the shopper has applied, as they typed it, or <see langword="null"/> for none (ADM-13).
+/// <para>
+/// <b>It travels on the request rather than living on the cart, and that is a decision.</b> Doc 08 §3.5
+/// gives <c>Carts.PromoCodeText</c> a column, which W2-09 left out of its migration because there was no
+/// table to revalidate against; what doc 11 P3 step 12 actually requires is that the code be
+/// "re-validated on every bag read and again at placement", and a code the client resends on every read
+/// is revalidated on every read by construction. Keeping it off the cart also keeps it out of the one
+/// row two tabs share, so a code applied in one tab cannot change the total in another while a shopper
+/// is looking at it. The cost is that the code does not survive closing the tab, which is in the task
+/// report.
+/// </para>
+/// </param>
+public sealed record GetCheckoutQuery(
+    CartLookup Lookup,
+    int? DistrictId,
+    int? DeliveryMethodId,
+    string? PromoCode = null);
 
 /// <summary>
 /// What the GET answered: the session, plus whatever the guest cookie must now say.
@@ -46,7 +65,7 @@ public sealed record CheckoutView(CheckoutSessionDto Session, CartCookieAction C
 /// speculatively: <see cref="CheckoutSessionDto.SelectedDistrictId"/> says what a signed-in shopper would
 /// get instead, and the placement command's <c>CustomerUserId</c> is the one field W3-01 fills in.
 /// </remarks>
-public sealed class GetCheckoutQueryHandler(ICartStore carts, ICheckoutReader reader)
+public sealed class GetCheckoutQueryHandler(ICartStore carts, ICheckoutReader reader, IClock clock)
     : IQueryHandler<GetCheckoutQuery, CheckoutView>
 {
     public async Task<CheckoutView> HandleAsync(GetCheckoutQuery query, CancellationToken cancellationToken)
@@ -78,7 +97,23 @@ public sealed class GetCheckoutQueryHandler(ICartStore carts, ICheckoutReader re
             : [];
 
         var selectedMethod = methods.FirstOrDefault(method => method.Id == query.DeliveryMethodId);
-        var totals = CheckoutQuote.Totals(lines, selectedMethod?.Rate);
+
+        // ADM-13, doc 08 §6 steps 7 and 8. The code is evaluated against the lines the quote prices, so
+        // the eligible base and step 9's allocation can never disagree.
+        //
+        // **Doc 11 P3 step 12: re-validated on every read.** A code the shopper applied an hour ago whose
+        // window has since closed, whose total limit has since filled, or whose minimum spend the bag no
+        // longer meets comes back refused with the reason — and `AppliedPromoCode` comes back null, which
+        // is what clears the box rather than leaving a discount on screen that is not in the total.
+        var promo = await ResolvePromoAsync(query.PromoCode, lines, cancellationToken);
+
+        var totals = CheckoutQuote.Totals(lines, selectedMethod?.Rate, promo.Charge);
+
+        // Step 10's comparison is against the items subtotal **less the promo**, so the fee printed beside
+        // an option the shopper has not chosen is the fee they would be charged if they did.
+        var subtotalAfterPromo = Math.Max(
+            (totals?.ItemsSubtotal ?? 0m) - (totals?.PromoDiscountAmount ?? 0m),
+            0m);
 
         var session = new CheckoutSessionDto(
             // A fresh token per page load. It is the shopper's protection against their own double click,
@@ -87,11 +122,14 @@ public sealed class GetCheckoutQueryHandler(ICartStore carts, ICheckoutReader re
             lines.Select(ToLine).ToList().AsReadOnly(),
             totals ?? EmptyTotals,
             districts.Select(ToDistrict).ToList().AsReadOnly(),
-            DeliveryOptions(methods, totals?.ItemsSubtotal ?? 0m),
+            DeliveryOptions(methods, subtotalAfterPromo, promo.Charge?.FreeDelivery ?? false),
             pickupLocations.Select(ToPickupLocation).ToList().AsReadOnly(),
             paymentMethods.Select(ToPaymentMethod).ToList().AsReadOnly(),
             district?.Id,
             selectedMethod is { IsAvailable: true } ? selectedMethod.Id : null,
+            promo.AppliedCode,
+            promo.Refusal,
+            promo.MinimumSpend,
             Blockers(lines, district, methods, paymentMethods));
 
         if (cart is not { } identity)
@@ -111,6 +149,16 @@ public sealed class GetCheckoutQueryHandler(ICartStore carts, ICheckoutReader re
                 null)
             : new CheckoutView(session, CartCookieAction.Issue, identity.Token);
     }
+
+    /// <summary>
+    /// Doc 08 §6 steps 7 and 8 for the page (ADM-13), through the one resolver the placement path also
+    /// uses.
+    /// </summary>
+    private Task<ResolvedPromo> ResolvePromoAsync(
+        string? promoCode,
+        IReadOnlyList<CheckoutCartLine> lines,
+        CancellationToken cancellationToken) =>
+        PromoResolver.ResolveAsync(promoCode, lines, reader, clock.UtcNow.UtcDateTime, cancellationToken);
 
     /// <summary>
     /// The reasons the Place order button cannot be pressed, in the order a shopper would meet them.
@@ -149,7 +197,8 @@ public sealed class GetCheckoutQueryHandler(ICartStore carts, ICheckoutReader re
 
     private static ReadOnlyCollection<DeliveryOptionDto> DeliveryOptions(
         IReadOnlyList<CheckoutDeliveryMethod> methods,
-        decimal itemsSubtotal) =>
+        decimal itemsSubtotalAfterPromo,
+        bool freeDeliveryPromo) =>
         methods
             .Select(method => new DeliveryOptionDto(
                 method.Id,
@@ -164,7 +213,10 @@ public sealed class GetCheckoutQueryHandler(ICartStore carts, ICheckoutReader re
                 method.IsAvailable ? method.Rate!.Value.Fee : null,
                 method.IsAvailable ? method.Rate!.Value.FreeAboveAmount : null,
                 method.IsAvailable
-                    ? CheckoutQuote.FeeAfterDiscount(method.Rate!.Value, itemsSubtotal)
+                    ? CheckoutQuote.FeeAfterDiscount(
+                        method.Rate!.Value,
+                        itemsSubtotalAfterPromo,
+                        freeDeliveryPromo)
                     : null,
                 method.IsAvailable ? method.Rate!.Value.EstimatedDaysMin : null,
                 method.IsAvailable ? method.Rate!.Value.EstimatedDaysMax : null))

@@ -68,15 +68,17 @@ public sealed class SettingCatalogTests
     }
 
     /// <summary>
-    /// Nothing this build seeds is a secret. Said as a test rather than left implicit, because the
-    /// <see cref="SettingValueType.Secret"/> machinery is built and unused — so the day the first one is
-    /// added, this test goes red and whoever adds it has to confirm the protector, the audit redaction and
-    /// the read models are all in place rather than discovering them later.
+    /// The one secret this build seeds is PayPal's client secret (W4-01). Said as a test rather than left
+    /// implicit, because the <see cref="SettingValueType.Secret"/> machinery has few users — so the day the
+    /// next one is added, this test goes red and whoever adds it has to confirm the protector, the audit
+    /// redaction and the read models are all in place rather than discovering them later.
     /// </summary>
     [Fact]
-    public void No_key_this_build_seeds_is_a_secret()
+    public void The_only_secret_this_build_seeds_is_PayPals_client_secret()
     {
-        Assert.DoesNotContain(SettingCatalog.All, definition => definition.IsSecret);
+        Assert.Equal(
+            [SettingKeys.PayPal.ClientSecret],
+            SettingCatalog.All.Where(definition => definition.IsSecret).Select(definition => definition.Key));
     }
 
     /// <summary>
@@ -171,6 +173,18 @@ public sealed class SettingCatalogTests
             SettingKeys.Store.BRNumber,
             SettingKeys.Store.VatNumber,
             SettingKeys.Orders.AutoDeliverAfterDays,
+            SettingKeys.PayPal.Mode,
+            SettingKeys.PayPal.ClientId,
+            SettingKeys.PayPal.ClientSecret,
+            SettingKeys.PayPal.WebhookId,
+            SettingKeys.PayPal.LkrPerUsd,
+            SettingKeys.PayPal.FxBufferPercent,
+            SettingKeys.PayPal.RateMaxAgeDays,
+            SettingKeys.PayPal.RateUpdatedAtUtc,
+            SettingKeys.PayPal.CaptureLockHours,
+            SettingKeys.PayPal.CaptureRecoveryMaxHours,
+            SettingKeys.PayPal.PendingCaptureMaxDays,
+            SettingKeys.PayPal.ExpiryMinutes,
         ];
 
         Assert.Equal(expected.Order(StringComparer.Ordinal), SettingCatalog.All.Select(d => d.Key).Order(StringComparer.Ordinal));
@@ -334,7 +348,7 @@ public sealed class SettingCatalogTests
     {
         // `Store` appears once although W3-04 added four more keys to it further down the list: Groups is
         // distinct, and that is what the "once each" in the name is about.
-        Assert.Equal(["Store", "Contact", "Social", "Bank", "Orders"], SettingCatalog.Groups);
+        Assert.Equal(["Store", "Contact", "Social", "Bank", "Orders", "Payments.PayPal"], SettingCatalog.Groups);
     }
 
     [Fact]
@@ -351,7 +365,7 @@ public sealed class SettingCatalogTests
             SettingCatalog.KeysIn(SettingKeys.Store.Group));
 
         Assert.Equal(
-            [SettingKeys.Orders.AutoDeliverAfterDays],
+            [SettingKeys.Orders.AutoDeliverAfterDays, SettingKeys.PayPal.ExpiryMinutes],
             SettingCatalog.KeysIn(SettingKeys.Orders.Group));
 
         Assert.Equal(
@@ -368,18 +382,35 @@ public sealed class SettingCatalogTests
             ],
             SettingCatalog.KeysIn(SettingKeys.Bank.Group));
 
+        Assert.Equal(
+            [
+                SettingKeys.PayPal.Mode,
+                SettingKeys.PayPal.ClientId,
+                SettingKeys.PayPal.ClientSecret,
+                SettingKeys.PayPal.WebhookId,
+                SettingKeys.PayPal.LkrPerUsd,
+                SettingKeys.PayPal.FxBufferPercent,
+                SettingKeys.PayPal.RateMaxAgeDays,
+                SettingKeys.PayPal.RateUpdatedAtUtc,
+                SettingKeys.PayPal.CaptureLockHours,
+                SettingKeys.PayPal.CaptureRecoveryMaxHours,
+                SettingKeys.PayPal.PendingCaptureMaxDays,
+            ],
+            SettingCatalog.KeysIn(SettingKeys.PayPal.Group));
+
         // A group nobody has defined is an empty list, not an exception: the read model iterates groups.
-        // `Bank` used to be this example and is now a real group, so the next unbuilt one takes its place
-        // (doc 08 §3.8's `Payments.PayPal`, which W4-01 adds).
-        Assert.Empty(SettingCatalog.KeysIn("Payments.PayPal"));
+        // `Bank`, then `Payments.PayPal`, used to be this example and are real groups now, so the next unbuilt
+        // one takes their place (doc 08 §3.8's `Email.Smtp`).
+        Assert.Empty(SettingCatalog.KeysIn("Email.Smtp"));
     }
 
     [Fact]
     public void Find_answers_null_for_a_key_this_build_does_not_know()
     {
-        // `Bank.AccountNumber` used to be the example of a key this build does not know. W3-03 added it,
-        // so an unbuilt group takes its place: doc 08 §3.8's `Payments.PayPal.ClientId`, which W4-01 adds.
-        Assert.Null(SettingCatalog.Find("Payments.PayPal.ClientId"));
+        // `Bank.AccountNumber`, then `Payments.PayPal.ClientId`, used to be the example of a key this build
+        // does not know. W3-03 and W4-01 added them, so an unbuilt group takes their place: doc 08 §3.8's
+        // `Email.Smtp.Host`.
+        Assert.Null(SettingCatalog.Find("Email.Smtp.Host"));
         Assert.Null(SettingCatalog.Find(null));
         Assert.Null(SettingCatalog.Find("Store.Logo"));
     }

@@ -1,7 +1,24 @@
 using SpencerDenim.Application.Sales.Payments.Contracts;
+using SpencerDenim.Domain.Marketing;
 using SpencerDenim.Domain.Sales;
 
 namespace SpencerDenim.Application.Sales.Checkout.Abstractions;
+
+/// <summary>
+/// The promo code one order is taking a use of (ADM-13, doc 11 P6 step 9 sub-step 2).
+/// </summary>
+/// <remarks>
+/// <b>Only the id and the code travel, deliberately.</b> The two limits are applied inside the
+/// transaction against the row <i>as it is then</i>, not against the snapshot the quote read: doc 08 §3.6
+/// puts the total limit in a conditional UPDATE for exactly that reason, and an admin who lowers a limit
+/// between a shopper's quote and their Place order must not be overruled by a figure read a minute ago.
+/// </remarks>
+/// <param name="PromoCodeId">The row. Becomes <c>sales.Orders.PromoCodeId</c>, now a real foreign key.</param>
+/// <param name="Code">
+/// The stored, upper-cased code. Becomes <c>sales.Orders.PromoCodeText</c>, which is the snapshot every
+/// order screen and the invoice read so that a later soft-delete still prints (doc 08 §3.6 DB19).
+/// </param>
+public sealed record PromoTake(int PromoCodeId, string Code);
 
 /// <summary>
 /// Everything the placement transaction writes for one order, worked out by the use case before the
@@ -57,7 +74,8 @@ public sealed record OrderPlacement(
     DateTime PlacedAtUtc,
     PaymentInitiation Payment,
     string PaymentMethodName,
-    PaymentInstructions? Instructions);
+    PaymentInstructions? Instructions,
+    PromoTake? Promo = null);
 
 /// <summary>
 /// The catalogue facts an order line keeps, paired with the priced figures. Split from
@@ -94,7 +112,20 @@ public enum OrderPlacementStatus : byte
     /// The caller returns the first order.
     /// </summary>
     DuplicateSubmission = 3,
+
+    /// <summary>
+    /// The promo code could not take a use (ADM-13). Nothing was written: the transaction rolled back, so
+    /// the stock reservation went with it and no order exists.
+    /// <para>
+    /// <b>Refused rather than placed without the discount.</b> The shopper agreed to a total that included
+    /// the code; placing the order at a higher one would be the G-10 defect with extra steps. Doc 11 P3's
+    /// own exception says the loser of a last-use race "is told the code is fully used <i>and can place
+    /// the order without it</i>" — can, by pressing the button again, having seen the new total.
+    /// </para>
+    /// </summary>
+    PromoRejected = 4,
 }
+
 
 /// <summary>
 /// The outcome of one placement transaction.
@@ -106,7 +137,8 @@ public enum OrderPlacementStatus : byte
 public sealed record OrderPlacementResult(
     OrderPlacementStatus Status,
     Guid? PublicId,
-    IReadOnlyDictionary<int, int> ShortLines)
+    IReadOnlyDictionary<int, int> ShortLines,
+    PromoRefusal? PromoRefusal = null)
 {
     // A static readonly field declared *before* the members that use it, not a property: static property
     // initialisers run in declaration order, so `DuplicateSubmission` initialised before `EmptyShortLines`
@@ -122,6 +154,16 @@ public sealed record OrderPlacementResult(
 
     public static OrderPlacementResult DuplicateSubmission { get; } =
         new(OrderPlacementStatus.DuplicateSubmission, null, EmptyShortLines);
+
+    /// <summary>
+    /// The code was refused inside the transaction, which rolled back. <paramref name="refusal"/> is
+    /// either <see cref="Domain.Marketing.PromoRefusal.FullyUsed"/> (the conditional UPDATE matched no
+    /// row) or <see cref="Domain.Marketing.PromoRefusal.AlreadyUsedByCustomer"/> (the per-customer count
+    /// reached the limit under the app lock). No other reason can arise here: everything else was decided
+    /// by <c>PromoEvaluator</c> before the transaction opened.
+    /// </summary>
+    public static OrderPlacementResult PromoRejected(PromoRefusal refusal) =>
+        new(OrderPlacementStatus.PromoRejected, null, EmptyShortLines, refusal);
 }
 
 /// <summary>

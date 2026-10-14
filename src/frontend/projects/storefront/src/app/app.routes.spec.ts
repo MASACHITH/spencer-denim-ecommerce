@@ -66,7 +66,14 @@ describe('the storefront route table (#28)', () => {
     // unconditionally linked from the shell — the footer draws a policy link only once the page is
     // published, which on a fresh shop is none of them. So there is nothing for this list to hold:
     // an address the shell does not link cannot be a broken link in the footer.
-    const linkedFromTheShell = ['account'];
+    //
+    // **`account` is no longer here either, and it was the last one (W3-01).** `/account` has a real
+    // route with eight pages under it, so the entry claiming the site has no such address is gone and
+    // this list is empty. The list is kept rather than deleted because it is the half of the invariant
+    // the route table cannot state — "every address the shell links and has not built is listed" — and
+    // the next task to link a page before building it needs it. `linkedFromTheShell.length === 0` is
+    // therefore the current state and not the permanent one.
+    const linkedFromTheShell: readonly string[] = [];
 
     for (const path of linkedFromTheShell) {
       expect(UNBUILT_PATHS).toContain(path);

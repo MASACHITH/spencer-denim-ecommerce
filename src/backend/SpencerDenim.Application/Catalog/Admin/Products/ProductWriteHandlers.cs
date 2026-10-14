@@ -4,6 +4,7 @@ using SpencerDenim.Application.Abstractions.Messaging;
 using SpencerDenim.Application.Abstractions.Results;
 using SpencerDenim.Application.Abstractions.Time;
 using SpencerDenim.Application.Catalog.Admin.Products.Abstractions;
+using SpencerDenim.Application.Marketing.Promotions.Abstractions;
 using SpencerDenim.Domain.Auditing;
 using SpencerDenim.Domain.Catalog;
 
@@ -91,7 +92,8 @@ internal static class ProductUniquenessRules
 public sealed class CreateProductCommandHandler(
     IProductWriteStore store,
     IAuditLogWriter auditLog,
-    IClock clock)
+    IClock clock,
+    ICampaignPricingRefresher campaigns)
     : ICommandHandler<CreateProductCommand, CatalogWriteResult>
 {
     public async Task<CatalogWriteResult> HandleAsync(
@@ -154,7 +156,10 @@ public sealed class CreateProductCommandHandler(
             command.Actor.UserId,
             cancellationToken);
 
-        return CatalogWriteSupport.ToResult(outcome, product.Id);
+        return await CatalogWriteSupport.WithCampaignPricingAsync(
+            CatalogWriteSupport.ToResult(outcome, product.Id),
+            campaigns,
+            cancellationToken);
     }
 }
 
@@ -162,7 +167,8 @@ public sealed class CreateProductCommandHandler(
 public sealed class UpdateProductCommandHandler(
     IProductWriteStore store,
     IAuditLogWriter auditLog,
-    IClock clock)
+    IClock clock,
+    ICampaignPricingRefresher campaigns)
     : ICommandHandler<UpdateProductCommand, CatalogWriteResult>
 {
     public async Task<CatalogWriteResult> HandleAsync(
@@ -300,9 +306,12 @@ public sealed class UpdateProductCommandHandler(
         await store.SyncProductMediaUsagesAsync(
             product.Id, ProductWriteRules.DesiredMediaUsages(product), cancellationToken);
 
-        return CatalogWriteSupport.ToResult(
-            await store.SaveAsync(command.Actor.UserId, cancellationToken),
-            product.Id);
+        return await CatalogWriteSupport.WithCampaignPricingAsync(
+            CatalogWriteSupport.ToResult(
+                await store.SaveAsync(command.Actor.UserId, cancellationToken),
+                product.Id),
+            campaigns,
+            cancellationToken);
     }
 }
 

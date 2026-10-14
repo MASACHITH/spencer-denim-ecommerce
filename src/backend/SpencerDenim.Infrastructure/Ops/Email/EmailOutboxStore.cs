@@ -56,6 +56,18 @@ internal sealed class EmailOutboxStore(AppDbContext dbContext) : IEmailOutboxSto
         + "connection. The attempt was counted and the message was put back in the queue.";
 
     /// <summary>
+    /// The G-03 template codes as a SQL list of literals, for <see cref="KillStrandedExhaustedSql"/>.
+    /// </summary>
+    /// <remarks>
+    /// <b>Literals and not parameters</b>, because they are constants of this program and not input, and
+    /// because that statement is tested by its text (see below), which a parameter list would make vary.
+    /// Declared above the statement because static field initialisers run in the order they are written.
+    /// </remarks>
+    private static readonly string CredentialTemplatesSql = string.Join(
+        ", ",
+        EmailOutboxMessage.TemplatesWithBodyClearedOnSend.Select(code => $"N'{code.Replace("'", "''", StringComparison.Ordinal)}'"));
+
+    /// <summary>
     /// The statement <see cref="KillStrandedExhaustedAsync"/> sends, verbatim.
     /// </summary>
     /// <remarks>
@@ -74,7 +86,9 @@ internal sealed class EmailOutboxStore(AppDbContext dbContext) : IEmailOutboxSto
            SET Status = {(byte)EmailOutboxStatus.Dead},
                LockedUntilUtc = NULL,
                LastError = @failure,
-               TransportOverrideProtected = NULL
+               TransportOverrideProtected = NULL,
+               BodyHtml = CASE WHEN TemplateCode IN ({CredentialTemplatesSql}) THEN NULL ELSE BodyHtml END,
+               BodyText = CASE WHEN TemplateCode IN ({CredentialTemplatesSql}) THEN NULL ELSE BodyText END
         OUTPUT inserted.Id
          WHERE Status = {(byte)EmailOutboxStatus.Sending}
            AND LockedUntilUtc IS NOT NULL
@@ -487,6 +501,29 @@ internal sealed class EmailOutboxStore(AppDbContext dbContext) : IEmailOutboxSto
         {
             // The ladder is exhausted. Terminal: no sweep claims a Dead row, because 4 is outside
             // IX_EmailOutbox_Due's filter, and v1 has no screen that could retry it (doc 11 §7 G-42).
+            //
+            // G-03 on Dead as well as on Sent (independent tester, W3-01): a reset or confirmation link
+            // that was never delivered is still a working link, and nobody will ever send this body now.
+            if (EmailOutboxMessage.BodyIsClearedOnSend(claim.TemplateCode))
+            {
+                var killedWithBody = await dbContext.Database.ExecuteSqlInterpolatedAsync(
+                    $"""
+                    UPDATE ops.EmailOutbox
+                       SET Status = {(byte)EmailOutboxStatus.Dead},
+                           LockedUntilUtc = NULL,
+                           LastError = {clipped},
+                           TransportOverrideProtected = NULL,
+                           BodyHtml = NULL,
+                           BodyText = NULL
+                     WHERE Id = {claim.Id}
+                       AND Status = {(byte)EmailOutboxStatus.Sending}
+                       AND AttemptCount = {claim.AttemptCount};
+                    """,
+                    cancellationToken);
+
+                return killedWithBody == 1 ? EmailFailureOutcome.Dead : EmailFailureOutcome.NotOurs;
+            }
+
             var killed = await dbContext.Database.ExecuteSqlInterpolatedAsync(
                 $"""
                 UPDATE ops.EmailOutbox

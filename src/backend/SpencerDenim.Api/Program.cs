@@ -2,6 +2,7 @@ using System.Text.Json.Serialization;
 using SpencerDenim.Api.Authorization;
 using SpencerDenim.Api.Cli;
 using SpencerDenim.Api.Endpoints;
+using SpencerDenim.Api.Endpoints.Accounts;
 using SpencerDenim.Api.Endpoints.Admin;
 using SpencerDenim.Api.Endpoints.Catalog;
 using SpencerDenim.Api.Endpoints.Content;
@@ -18,6 +19,10 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.AddSerilogLogging();
 
+// The key ring behind the admin cookie, antiforgery tokens and encrypted settings: persisted to a volume,
+// so a container restart signs nobody out (#96, docs/15 §4).
+builder.AddApiDataProtection();
+
 builder.Services.AddProblemDetails();
 // A body binding cannot read answers 400 with a problem document in every environment, not 500 (#47).
 builder.Services.AddApiBadRequestHandling();
@@ -31,6 +36,8 @@ builder.Services.AddApiHealthChecks();
 builder.Services.AddApiForwardedHeaders();
 builder.Services.AddNewsletterSignupThrottle();
 builder.Services.AddPaymentSlipUploadThrottle();
+builder.Services.AddPayPalEndpointThrottle();
+builder.Services.AddAccountRequestThrottle();
 builder.Services.AddContactEnquiryThrottle();
 // Output caching, with no base policy: only the sitemap feed opts in (see SitemapOutputCache for the
 // window and why it is a minute rather than matching the storefront's fifteen).
@@ -99,13 +106,21 @@ app.MapAdminProductEndpoints();
 app.MapContentEndpoints();
 app.MapSiteSettingsEndpoints();
 app.MapAdminSettingsEndpoints();
+app.MapAdminPayPalSettingsEndpoints();
 app.MapAdminBankTransferEndpoints();
 app.MapAdminOrderEndpoints();
 app.MapPaymentSlipEndpoints();
 app.MapAdminContentEndpoints();
+app.MapAdminPromotionEndpoints();
+app.MapAdminSaleCampaignEndpoints();
 app.MapCartEndpoints();
 app.MapWishlistEndpoints();
 app.MapCheckoutEndpoints();
+app.MapPayPalEndpoints();
+
+// Customer accounts (W3-01, ACC-01/02; doc 11 P11).
+app.MapCustomerAuthEndpoints();
+app.MapCustomerAccountEndpoints();
 app.MapAdminMediaEndpoints();
 app.MapMediaFileEndpoints();
 
