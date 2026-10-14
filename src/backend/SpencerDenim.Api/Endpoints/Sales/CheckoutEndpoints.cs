@@ -414,12 +414,6 @@ internal static class CheckoutEndpoints
             }));
 
     /// <summary>
-    /// Who is asking. Identical to the bag's, and for the identical reason: the only cookie
-    /// authentication scheme in this application is the admin one, and an admin principal is not a
-    /// customer, so <c>httpContext.User</c> is not read for a customer id that cannot exist.
-    /// </summary>
-
-    /// <summary>
     /// Nothing about a checkout may be stored by a shared cache: it holds a name, an address, a phone
     /// number and the idempotency token that places the order. <c>Vary: Cookie</c> as well as
     /// <c>no-store</c>, because the two say different things and a cache honouring only one of them has

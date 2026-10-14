@@ -1,9 +1,11 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using SpencerDenim.Domain.Sales;
+using SpencerDenim.Infrastructure.Identity;
 using SpencerDenim.Infrastructure.Persistence;
 using SpencerDenim.IntegrationTests.Infrastructure;
 using SpencerDenim.IntegrationTests.Sales;
@@ -196,6 +198,67 @@ public sealed class SignedInBagAndOrderTests(SqlServerDatabaseFixture sqlServer)
         var (_, signedOut) = await visitor.GetAsync(Token);
         Assert.NotNull(signedOut);
         Assert.Empty(signedOut.Lines);
+    }
+
+    /// <summary>
+    /// Checkout re-checks the session against the database on every request, so a session ended by a
+    /// password reset elsewhere stops seeing the account's bag at checkout at once — not up to five
+    /// minutes later, when the throttled revalidation would next run.
+    /// </summary>
+    /// <remarks>
+    /// <b>Added by the round-2 independent tester, because nothing could fail without it.</b> The
+    /// round-2 fix put <c>/api/checkout</c> beside <c>/api/account</c> in <c>AlwaysRevalidates</c>, and
+    /// removing that half survived every account and checkout test (225 passed). The stamp is rotated
+    /// directly, which is exactly what a reset does to the other browsers' sessions, and checkout is used
+    /// once beforehand so the throttle's last-validated time is fresh: without that, the first request
+    /// after the rotation would be due anyway and the test could not tell the two policies apart.
+    /// </remarks>
+    [Fact]
+    public async Task Checkout_stops_seeing_the_accounts_bag_the_moment_the_session_is_ended_elsewhere()
+    {
+        SqlServer.SkipIfUnavailable();
+
+        var variantId = await CheckoutVariantIdAsync();
+        var district = await DistrictIdAsync("Colombo");
+        var method = await DeliveryMethodIdAsync(DeliveryMethod.StandardCode);
+        var email = $"bag-stale-checkout-{Guid.NewGuid():N}@example.com";
+
+        var visitor = NewVisitor();
+
+        using (var register = await visitor.Http.PostAsJsonAsync(
+            "/api/account/register",
+            new { firstName = "Nimal", lastName = (string?)null, email, password = Password },
+            Token))
+        {
+            Assert.Equal(HttpStatusCode.Accepted, register.StatusCode);
+        }
+
+        using (var signIn = await visitor.Http.PostAsJsonAsync("/api/account/login", new { email, password = Password }, Token))
+        {
+            Assert.Equal(HttpStatusCode.OK, signIn.StatusCode);
+        }
+
+        var (added, _) = await visitor.AddAsync(variantId, 1, Token);
+        Assert.Equal(HttpStatusCode.OK, added.StatusCode);
+
+        var checkout = new CheckoutApiClient(visitor.Http);
+
+        var (_, before) = await checkout.GetAsync(district, method, Token);
+        Assert.NotNull(before);
+        Assert.Single(before.Lines);
+
+        // What a reset in another browser does to this one's session.
+        using (var scope = CreateScope())
+        {
+            var users = scope.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
+            var user = await users.FindByEmailAsync(email);
+            Assert.NotNull(user);
+            Assert.True((await users.UpdateSecurityStampAsync(user)).Succeeded);
+        }
+
+        var (_, after) = await checkout.GetAsync(district, method, Token);
+        Assert.NotNull(after);
+        Assert.Empty(after.Lines);
     }
 
     private async Task<int> UserIdAsync(string email)
