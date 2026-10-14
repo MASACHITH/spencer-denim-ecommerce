@@ -81,7 +81,7 @@ const REPORTS: readonly { readonly name: ReportName; readonly label: string; rea
     .rpt { display: grid; gap: var(--space-3); max-width: 1400px; margin-inline: auto; min-width: 0; }
     .rpt__title { font-size: var(--text-h2); }
     .rpt__tabs { display: flex; flex-wrap: wrap; gap: 0 var(--space-3); border-bottom: 1px solid var(--color-border); }
-    .rpt__tab { text-decoration: none; border-bottom: 2px solid transparent; }
+    .rpt__tab { justify-content: center; min-width: var(--tap); padding-inline: var(--space-1); text-decoration: none; border-bottom: 2px solid transparent; }
     .rpt__tab[aria-current='page'] { font-weight: var(--weight-semibold); border-bottom-color: var(--color-primary); }
   `,
 })

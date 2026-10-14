@@ -220,7 +220,7 @@ interface Access {
     .dash__period { grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr)); align-items: end; }
     .dash__wide { grid-column: 1 / -1; margin: 0; }
     .dash__grid { display: grid; gap: var(--space-3); grid-template-columns: minmax(0, 1fr); }
-    .dash__grid > * { min-width: 0; }
+    .dash__grid > * { min-width: 0; align-content: start; }
     .dash__links { display: flex; flex-wrap: wrap; gap: 0 var(--space-2); }
     @media (min-width: 1024px) {
       .dash__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
