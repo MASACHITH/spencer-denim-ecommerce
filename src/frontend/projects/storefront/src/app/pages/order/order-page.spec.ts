@@ -201,6 +201,153 @@ describe('OrderPage (CHK-04)', () => {
 
   afterEach(() => TestBed.inject(HttpTestingController).verify());
 
+  /**
+   * Doc 11 P11 step 14's tracking, on the link a guest actually holds (W3-01).
+   *
+   * **This page showed no tracking at all before W3-01**, and neither did the payload behind it, so the
+   * only place in the system that showed a tracking number was the admin panel. Step 14 says a guest
+   * following the secure link from their order emails sees "status, tracking", which made that a gap in
+   * a built feature rather than an unbuilt one.
+   */
+  describe('the courier tracking (doc 11 P11 step 14)', () => {
+    const shipped = {
+      status: 'Shipped',
+      statusLabel: 'Shipped',
+      payment: null,
+      canCancel: false,
+    } as const;
+
+    const tracking = {
+      courierName: 'Test Courier',
+      trackingNumber: 'CT-9981-AB',
+      trackingUrl: 'https://courier.test/track?id=CT-9981-AB',
+      shippedAtUtc: '2026-10-08T04:30:00Z',
+    };
+
+    it('shows the courier and the number as a link when the courier has online tracking', async () => {
+      await open(order({ ...shipped, tracking }));
+
+      const block = element.querySelector('[data-testid="order-page-tracking"]');
+      expect(block).not.toBeNull();
+      expect(block?.textContent).toContain('Test Courier');
+
+      const link = element.querySelector<HTMLAnchorElement>(
+        '[data-testid="order-page-tracking-link"]',
+      );
+
+      expect(link).not.toBeNull();
+      expect(link?.getAttribute('href')).toBe('https://courier.test/track?id=CT-9981-AB');
+      expect(link?.textContent).toContain('CT-9981-AB');
+    });
+
+    /**
+     * A new tab, and `noreferrer` as well as `noopener`.
+     *
+     * `noopener` is the usual one: the courier's page must not reach back through `window.opener`.
+     * `noreferrer` is the one that matters here specifically — without it the browser sends this page's
+     * address as the `Referer`, and this page's address **is** the order's unguessable token (doc 08
+     * §3.5). That would hand a third party a working credential for somebody's order.
+     */
+    it('opens the courier in a new tab without leaking the order token', async () => {
+      await open(order({ ...shipped, tracking }));
+
+      const link = element.querySelector<HTMLAnchorElement>(
+        '[data-testid="order-page-tracking-link"]',
+      );
+
+      expect(link?.getAttribute('target')).toBe('_blank');
+
+      const rel = link?.getAttribute('rel') ?? '';
+      expect(rel).toContain('noopener');
+      expect(rel).toContain('noreferrer');
+
+      // And a screen reader is told the tab will change, which a sighted shopper reads from the browser.
+      expect(link?.textContent).toContain('opens in a new tab');
+    });
+
+    /**
+     * A courier with no online tracking still shows the number, because that is what the shopper
+     * quotes on the telephone. Doc 08 §3.5 makes `TrackingUrlTemplate` nullable for exactly this.
+     */
+    it('prints the number as text when there is no link to give', async () => {
+      await open(order({ ...shipped, tracking: { ...tracking, trackingUrl: null } }));
+
+      expect(element.querySelector('[data-testid="order-page-tracking-link"]')).toBeNull();
+
+      const plain = element.querySelector('[data-testid="order-page-tracking-number"]');
+      expect(plain?.textContent).toContain('CT-9981-AB');
+    });
+
+    /**
+     * No block at all for an order with nothing to follow.
+     *
+     * The server sends the block only when all three parts of the dispatch snapshot are there, so an
+     * unshipped order and a pickup order both arrive without it. A page that rendered an empty
+     * "Tracking" row would be telling a shopper there is something to look at.
+     */
+    it('draws no tracking row for an order that has not shipped', async () => {
+      await open(order());
+
+      expect(element.querySelector('[data-testid="order-page-tracking"]')).toBeNull();
+      expect(text()).not.toContain('Tracking');
+    });
+  });
+
+  /**
+   * The heading follows the order's status (independent tester, W3-01). This page is the guest's
+   * permanent link, opened again days later, and it used to say "Your order is placed ... waiting for
+   * payment" for an order that had shipped, been cancelled or been refunded.
+   */
+  describe('the heading, as the order moves on', () => {
+    function headline(): string {
+      return element.querySelector('[data-testid="order-headline"]')?.textContent?.trim() ?? '';
+    }
+
+    function sentence(): string {
+      return element.querySelector('[data-testid="order-head-sentence"]')?.textContent?.trim() ?? '';
+    }
+
+    it('says placed and waiting for payment while it is', async () => {
+      await open(order());
+
+      expect(headline()).toBe('Your order is placed');
+      expect(sentence()).toContain('waiting for payment');
+      expect(text()).toContain('Thank you');
+    });
+
+    it('says the payment is in once the order is paid', async () => {
+      await open(order({ status: 'Paid', statusLabel: 'Paid', payment: null, canCancel: false }));
+
+      expect(headline()).toBe('Your order is placed');
+      expect(sentence()).toContain('We have your payment');
+      expect(sentence()).not.toContain('waiting for payment');
+    });
+
+    it('uses the server’s label once it has shipped, so a pickup order reads as ready to collect', async () => {
+      await open(
+        order({ status: 'Shipped', statusLabel: 'Ready for collection', payment: null, canCancel: false }),
+      );
+
+      expect(headline()).toBe('Your order');
+      expect(sentence()).toContain('This order is ready for collection.');
+      expect(sentence()).not.toContain('waiting for payment');
+    });
+
+    it('does not thank anyone for a cancelled order or call it placed', async () => {
+      await open(order({ status: 'Cancelled', statusLabel: 'Cancelled', payment: null, canCancel: false }));
+
+      expect(headline()).toBe('Your order');
+      expect(sentence()).toContain('This order is cancelled.');
+      expect(element.querySelector('.order__eyebrow')).toBeNull();
+    });
+
+    it('still tells every shopper to keep the address, which is their only way back', async () => {
+      await open(order({ status: 'Delivered', statusLabel: 'Delivered', payment: null, canCancel: false }));
+
+      expect(sentence()).toContain("Keep this page's address");
+    });
+  });
+
   /** Doc 11 P10 flow A: the shopper's own Cancel order, confirmed before it fires. */
   function cancelRequest(): TestRequest {
     return http.expectOne(

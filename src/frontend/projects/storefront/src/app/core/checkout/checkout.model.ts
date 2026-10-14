@@ -1,3 +1,5 @@
+import { CustomerOrderTrackingDto } from '../account/account.model';
+
 import { formatLkr } from '../catalog/money';
 import { CartLineStatus } from '../cart/cart.model';
 
@@ -260,6 +262,22 @@ export interface OrderConfirmationDto {
    * build has no refund path, so the page must not offer one.
    */
   readonly canCancel: boolean;
+
+  /**
+   * How to follow the parcel, or absent until it ships (W3-01; doc 11 P11 step 14's "view status,
+   * **tracking**").
+   *
+   * **This payload carried neither the courier nor the number before W3-01**, so the only place in the
+   * whole system that showed a tracking number was the admin panel — and doc 11 P11 step 14 is explicit
+   * that a guest following the secure link from their order emails sees it. The shape is the account
+   * order list's own {@link CustomerOrderTrackingDto} rather than a copy, so the signed-in and guest
+   * views of one order cannot disagree about where it is.
+   *
+   * **Absent, not null-filled, when there is nothing to track**: an order that has not shipped, or a
+   * store-pickup order, which has no courier at all. A block of nulls would make every consumer write
+   * the same three-way check.
+   */
+  readonly tracking?: CustomerOrderTrackingDto;
 }
 
 /** The customer-facing "how to pay" (doc 11 P7 step 1). */

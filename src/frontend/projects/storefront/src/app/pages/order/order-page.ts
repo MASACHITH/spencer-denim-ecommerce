@@ -111,8 +111,10 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
         </div>
       } @else if (order(); as placed) {
         <header class="order__head">
-          <p class="order__eyebrow">Thank you</p>
-          <h1 class="order__title" id="order-title">Your order is placed</h1>
+          @if (isUnderWay(placed)) {
+            <p class="order__eyebrow">Thank you</p>
+          }
+          <h1 class="order__title" id="order-title" data-testid="order-headline">{{ headline(placed) }}</h1>
 
           <!-- The order number is the one thing a shopper will be asked for on the phone, so it is the
                largest thing on the page and is selectable text rather than part of a sentence. -->
@@ -121,9 +123,8 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
             <strong class="order__number-value" data-order-number>{{ placed.orderNumber }}</strong>
           </p>
 
-          <p class="order__muted">
-            We have your order and it is waiting for payment. Keep this page's address: it is the link to
-            your order.
+          <p class="order__muted" data-testid="order-head-sentence">
+            {{ headSentence(placed) }} Keep this page's address: it is the link to your order.
           </p>
         </header>
 
@@ -243,6 +244,47 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
                   <span class="order__block order__muted">Estimated {{ estimate(placed) }}</span>
                 </dd>
               </div>
+              <!-- Doc 11 P11 step 14's tracking, on the guest's own link. Before W3-01 this payload
+                   carried neither the courier nor the number, so the only place in the system that
+                   showed a tracking number was the admin panel - and step 14 says a guest following
+                   the secure link from their order emails sees "status, tracking".
+
+                   The block is absent rather than full of nulls when there is nothing to follow: an
+                   order that has not shipped, or a pickup order, which has no courier. So this one
+                   condition is the whole three-way check rather than three in the body.
+
+                   The number is what the shopper quotes on the telephone, so when the courier has no
+                   online tracking - or has been deleted since, which doc 08 section 3.5 allows - it is
+                   printed as text rather than hidden. -->
+              @if (placed.tracking; as tracking) {
+                <div>
+                  <dt>Tracking</dt>
+                  <dd data-testid="order-page-tracking">
+                    <span class="order__block">{{ tracking.courierName }}</span>
+                    @if (tracking.trackingUrl; as url) {
+                      <!-- A new tab, because a shopper following a courier's site must not lose
+                           their order page - this address is a guest's only way back to it. The rel
+                           is noopener noreferrer: noopener so the courier's page cannot reach back
+                           through window.opener, and noreferrer so the order's own unguessable token
+                           is not sent to them as a Referer, which would hand a third party a working
+                           credential for somebody else's order. -->
+                      <a
+                        class="order__block order__track-link link"
+                        [href]="url"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        data-testid="order-page-tracking-link"
+                        >{{ tracking.trackingNumber
+                        }}<span class="sr-only"> (opens in a new tab)</span></a
+                      >
+                    } @else {
+                      <span class="order__block" data-testid="order-page-tracking-number">{{
+                        tracking.trackingNumber
+                      }}</span>
+                    }
+                  </dd>
+                </div>
+              }
               <div>
                 <dt>Payment</dt>
                 <dd>
@@ -656,7 +698,10 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
     .order__line-meta {
       color: var(--color-text-muted);
     }
-    .order__error {
+    /* One rule for both refusals; it was two identical ones, and the bytes paid for the 44 px tracking
+       link under this component's 4 kB style budget (W3-01). */
+    .order__error,
+    .pay__error {
       padding: var(--space-1-5);
       border: 1px solid var(--color-sale);
       color: var(--color-sale);
@@ -774,11 +819,6 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
     }
     .pay__sent {
       color: var(--color-text-muted);
-    }
-    .pay__error {
-      padding: var(--space-1-5);
-      border: 1px solid var(--color-sale);
-      color: var(--color-sale);
     }
     /* The write controls say aria-disabled rather than disabled, so a press does not throw the shopper's
        focus to the document body. That leaves the unavailable look to be drawn here. Opacity only: a
@@ -905,6 +945,16 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
     }
     .order__block {
       display: block;
+    }
+
+    /* WCAG 2.2 SC 2.5.8 asks for 24 px; this project's own rule (docs/04) is 44 px for every control a
+       thumb has to hit, and the link measured 26 px tall (independent tester, W3-01). The box grows; the
+       text stays where it was, aligned with the courier name above it. A long number still breaks
+       rather than widening the page, because the facts list's dd already sets overflow-wrap. */
+    .order__track-link {
+      display: flex;
+      align-items: center;
+      min-height: var(--tap);
     }
 
     @media (min-width: 64rem) {
@@ -1040,6 +1090,42 @@ export class OrderPage {
    */
   protected awaitingPayment(order: OrderConfirmationDto): boolean {
     return order.status === 'PendingPayment';
+  }
+
+  /**
+   * Whether the order is placed and on its way through the shop: waiting for money, paid, or being
+   * prepared. These are the states where "Thank you" and "Your order is placed" are true.
+   */
+  protected isUnderWay(order: OrderConfirmationDto): boolean {
+    return order.status === 'PendingPayment' || order.status === 'Paid' || order.status === 'Processing';
+  }
+
+  /**
+   * The page's heading, **following the order's status** (independent tester, W3-01).
+   *
+   * This page is the guest's permanent link to their order, not just the screen after checkout, so it is
+   * opened again days later — and it used to say "Your order is placed" for an order that had been
+   * delivered, cancelled or refunded. Past the point of being placed, the heading names the order and the
+   * sentence under it says where it is, in the server's own `statusLabel`.
+   */
+  protected headline(order: OrderConfirmationDto): string {
+    return this.isUnderWay(order) ? 'Your order is placed' : 'Your order';
+  }
+
+  /**
+   * The sentence under the heading. `statusLabel` rather than `status`, for the reason
+   * {@link paymentState} gives: a pickup order's `Shipped` reads "Ready for collection".
+   */
+  protected headSentence(order: OrderConfirmationDto): string {
+    switch (order.status) {
+      case 'PendingPayment':
+        return 'We have your order and it is waiting for payment.';
+      case 'Paid':
+      case 'Processing':
+        return 'We have your payment and are getting your order ready.';
+      default:
+        return `This order is ${order.statusLabel.toLowerCase()}.`;
+    }
   }
 
   /**

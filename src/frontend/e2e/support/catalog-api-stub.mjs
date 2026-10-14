@@ -3450,6 +3450,99 @@ function handleCheckout(request, response, url) {
     }
   }
 
+  // W3-01: the header asks who is signed in on every page view. The real API answers a visitor with no
+  // session 200 `{ customer: null }` (`GET /api/account/session`), and so does this stub — without it
+  // every page's first browser request was a 404, which the home page's "no console errors" test reads
+  // as a broken page. The stub has no accounts, so nobody is ever signed in here.
+  if (url.pathname === '/api/account/session') {
+    response.setHeader('Cache-Control', 'no-store');
+    response.end(JSON.stringify({ customer: null }));
+    return true;
+  }
+
+  // Test-only (W3-01): an order that has already shipped, with a courier tracking block, straight into the
+  // placed-orders map. **Why not the real checkout flow:** nothing in the storefront can move an order to
+  // Shipped — that is a staff action in the admin app — so a real placement could never reach the state
+  // `account.e2e.ts` measures, which is the tracking block on `/order/{token}` with a long number at 320 px.
+  // Keyed by the new order's own random publicId, so parallel tests cannot see each other's orders.
+  // `number` and `url` are the tracking number and link; `url=none` gives a courier with no online tracking.
+  if (url.pathname === '/__test__/shipped-order') {
+    const publicId = randomUUID();
+    const trackingNumber = url.searchParams.get('number') ?? 'CT-9981-AB';
+    const link = url.searchParams.get('url');
+    const placedAt = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+
+    placedOrders.set(publicId, {
+      orderNumber: `SD-2026-${String(placedOrders.size + 90000).padStart(5, '0')}`,
+      publicId,
+      status: 'Shipped',
+      statusLabel: 'Shipped',
+      email: 'tracking-probe@example.invalid',
+      firstName: 'Nimal',
+      lastName: 'Perera',
+      phone: '0771234567',
+      lines: [
+        {
+          lineNumber: 1,
+          productName: 'Test Product 3',
+          productCode: 'CW-3',
+          sku: 'SKU-3',
+          colourName: 'Indigo',
+          sizeLabel: '10',
+          imageUrl: null,
+          quantity: 1,
+          unitOriginalPrice: 4500,
+          unitPrice: 4500,
+          lineSubtotal: 4500,
+          promoDiscountAllocated: 0,
+          lineTotal: 4500,
+        },
+      ],
+      delivery: {
+        methodCode: 'STANDARD',
+        methodName: 'Standard delivery',
+        pickupLocationName: null,
+        recipientName: 'Nimal Perera',
+        phone: '0771234567',
+        line1: '12 Galle Road',
+        line2: null,
+        city: 'Colombo',
+        districtName: 'Colombo',
+        postalCode: '00300',
+        landmark: null,
+        estimatedDaysMin: 2,
+        estimatedDaysMax: 4,
+      },
+      itemsOriginalTotal: 4500,
+      itemsSubtotal: 4500,
+      savedTotal: 0,
+      promoDiscountAmount: 0,
+      deliveryFeeAmount: 350,
+      deliveryDiscountAmount: 0,
+      grandTotal: 4850,
+      currency: 'LKR',
+      paymentMethodCode: 'BankTransfer',
+      paymentMethodName: 'Bank or online transfer',
+      customerNote: null,
+      placedAtUtc: placedAt.toISOString(),
+      paymentDueAtUtc: new Date(placedAt.getTime() + 48 * 60 * 60 * 1000).toISOString(),
+      isDuplicateSubmission: false,
+      bankDetailsSet: true,
+      proof: emptyProof(),
+      canCancel: false,
+      tracking: {
+        courierName: 'Test Courier',
+        trackingNumber,
+        trackingUrl:
+          link === 'none' ? null : (link ?? `https://courier.test/track?id=${encodeURIComponent(trackingNumber)}`),
+        shippedAtUtc: new Date(placedAt.getTime() + 24 * 60 * 60 * 1000).toISOString(),
+      },
+    });
+
+    response.end(JSON.stringify({ publicId }));
+    return true;
+  }
+
   const order = /^\/api\/orders\/(.*)$/.exec(url.pathname);
   if (order) {
     cartNoStore(response);

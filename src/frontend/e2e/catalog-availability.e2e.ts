@@ -179,7 +179,9 @@ test.describe('addresses that are not listings are never a 503', () => {
     '/si/women',
     '/assets/x',
     '/static/x',
-    '/account/orders',
+    // An address under the account area that W3-01 did not build. `/account/orders` was this entry
+    // while the account pages were unbuilt; it is a real page now.
+    '/account/x',
     '/bag/checkout',
     '/wp-admin/setup-config.php',
   ]) {
@@ -213,13 +215,16 @@ test.describe('addresses that are not listings are never a 503', () => {
     expect(response.headers()['retry-after']).toBeUndefined();
   });
 
-  /** And the unbuilt pages the shell links to still go home, outage or not (#28). */
+  /**
+   * And the account area answers during an outage, because it does not depend on the catalogue (#28).
+   * It used to be an unbuilt address that went home; W3-01 built it, so it is the order history now.
+   */
   for (const path of ['/account']) {
-    test(`${path} still reaches the home page during an outage`, async ({ request }) => {
+    test(`${path} still reaches the account area during an outage`, async ({ request }) => {
       const response = await request.get(`${liveOnlyCatalogueURL}${path}`);
 
       expect(response.status()).toBe(200);
-      expect(new URL(response.url()).pathname).toBe('/');
+      expect(new URL(response.url()).pathname).toBe('/account/orders');
     });
   }
 

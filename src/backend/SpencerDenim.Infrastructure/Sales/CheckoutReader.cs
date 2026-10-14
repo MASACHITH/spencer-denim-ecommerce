@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using SpencerDenim.Application.Abstractions.Time;
+using SpencerDenim.Application.Accounts.Contracts;
 using SpencerDenim.Application.Catalog;
 using SpencerDenim.Application.Sales.Cart.Contracts;
 using SpencerDenim.Application.Marketing.Promotions.Abstractions;
@@ -449,7 +450,19 @@ internal sealed class CheckoutReader(
                 order.Payments.Any(payment => payment.IsOrderSettlement),
                 order.Payments.Any(payment =>
                     payment.ProviderCode == PaymentProviderCodes.PayPal
-                    && payment.Status == PaymentStatus.Pending)))
+                    && payment.Status == PaymentStatus.Pending),
+
+                // W3-01: doc 11 P11 step 14 says a guest following their emailed link sees "status,
+                // tracking", and this payload carried neither — the only place in the system that showed
+                // a tracking number was the admin panel. Joined by the id the order kept, so a courier
+                // that has since been deleted leaves the number as text the shopper can quote.
+                order.CourierName,
+                order.TrackingNumber,
+                order.ShippedAtUtc,
+                dbContext.Couriers
+                    .Where(courier => courier.Id == order.CourierId)
+                    .Select(courier => courier.TrackingUrlTemplate)
+                    .FirstOrDefault()))
             .FirstOrDefaultAsync(cancellationToken);
 
         return row is null
@@ -555,10 +568,23 @@ internal sealed class CheckoutReader(
             row.PlacedAtUtc,
             row.PaymentDueAtUtc,
 
-            // Named arguments from here on, because the three that follow are optional and only the last
-            // is being set. Positional would mean restating a default — and `IsDuplicateSubmission` is a
+            // Named arguments from here on, because the four that follow are optional and only two are
+            // being set. Positional would mean restating a default — and `IsDuplicateSubmission` is a
             // fact about a *submission*, which a read of an order by its token can never be.
-            CanCancel: CanCancel(row, nowUtc));
+            CanCancel: CanCancel(row, nowUtc),
+
+            // W3-01: present only when all three parts of the dispatch snapshot are. Doc 08 §3.5 makes
+            // them nullable and doc 11 P9's dispatch writes them together, but a null block and a block
+            // of nulls are different things to a client, and the second one makes every consumer write
+            // the same three-way check. A pickup order has no courier and gets no block, which is right:
+            // there is nothing to follow, and `StatusLabel` already reads "Ready for collection".
+            Tracking: row is { CourierName: { } courierName, TrackingNumber: { } trackingNumber, ShippedAtUtc: { } shippedAtUtc }
+                ? new CustomerOrderTrackingDto(
+                    courierName,
+                    trackingNumber,
+                    OrderTrackingLink.Build(row.TrackingUrlTemplate, trackingNumber),
+                    shippedAtUtc)
+                : null);
 
     /// <summary>
     /// Builds a <see cref="CheckoutPickupLocation"/> from a location and the district it is in (R7).
@@ -709,7 +735,15 @@ internal sealed class CheckoutReader(
         OrderStockState StockState,
         DateTime? CaptureLockedUntilUtc,
         bool HasSettlementPayment,
-        bool HasPayPalPendingPayment);
+        bool HasPayPalPendingPayment,
+
+        // W3-01 (ACC-02, doc 11 P11 steps 12 and 14): the dispatch snapshot and the courier's *current*
+        // template. Doc 08 §3.5 keeps the name and the number on the order and never a built URL, so
+        // editing a template changes the link on older orders too.
+        string? CourierName,
+        string? TrackingNumber,
+        DateTime? ShippedAtUtc,
+        string? TrackingUrlTemplate);
 
     private sealed record OrderLineRow(
         short LineNumber,
