@@ -49,6 +49,14 @@ public sealed class NewsletterExportCommandHandlerTests
         // The search text — here an address — is never written to the audit log, nor is any exported one.
         Assert.DoesNotContain("secret", row.AfterJson!, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("@", row.AfterJson!, StringComparison.Ordinal);
+
+        // Nor in any other column (W3-07 tester: the search text written into EntityId passed every test).
+        Assert.Null(row.EntityId);
+        Assert.Null(row.BeforeJson);
+        foreach (var column in typeof(AuditLog).GetProperties().Where(property => property.PropertyType == typeof(string)))
+        {
+            Assert.DoesNotContain("secret", (string?)column.GetValue(row) ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+        }
     }
 
     /// <summary>If the audit row cannot be written, no file is produced: an unaudited export never leaves.</summary>

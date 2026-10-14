@@ -364,6 +364,14 @@ public sealed class AdminNewsletterEndpointTests(SqlServerDatabaseFixture sqlSer
 
         Assert.DoesNotContain(Marker, row.AfterJson!, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("@", row.AfterJson!, StringComparison.Ordinal);
+
+        // Nor in any other column of the committed row (W3-07 tester: EntityId was unchecked).
+        Assert.Null(row.EntityId);
+        Assert.Null(row.BeforeJson);
+        foreach (var column in typeof(AuditLog).GetProperties().Where(property => property.PropertyType == typeof(string)))
+        {
+            Assert.DoesNotContain(Marker, (string?)column.GetValue(row) ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+        }
     }
 
     /// <summary>
