@@ -16,10 +16,10 @@ namespace SpencerDenim.Api.Endpoints.Sales;
 /// <summary>
 /// Checkout and the order it produces (CHK-01..04).
 /// <para>
-/// <b>No authentication, and every checkout here is a guest checkout (CHK-03).</b> There is no customer
-/// sign-in anywhere in this repository — ACC-01 is W3-01 — so the visitor is identified exactly as the bag
-/// identifies them: by the token in <c>sd_cart</c>. <see cref="ReadLookup"/> is the one line W3-01 changes,
-/// and <c>PlaceOrderCommand.CustomerUserId</c> is the one field it fills in.
+/// <b>No authentication is required, and a guest checkout is still a checkout (CHK-03).</b> The visitor is
+/// identified exactly as the bag identifies them: by the signed-in customer when there is one, otherwise
+/// by the token in <c>sd_cart</c> (<see cref="SignedInCustomer"/>), and <c>PlaceOrderCommand.CustomerUserId</c>
+/// is filled from the same session — which is what puts the order in My account (ACC-02).
 /// </para>
 /// <para>
 /// <b>Where this ends.</b> A placed order and its number. Nothing here touches money: PAY-01/PAY-03 — the
@@ -126,7 +126,7 @@ internal static class CheckoutEndpoints
         [FromQuery] string? promoCode = null)
     {
         var view = await handler.HandleAsync(
-            new GetCheckoutQuery(ReadLookup(httpContext), districtId, deliveryMethodId, promoCode),
+            new GetCheckoutQuery(await SignedInCustomer.ReadCartLookupAsync(httpContext), districtId, deliveryMethodId, promoCode),
             cancellationToken);
 
         CartCookie.Apply(httpContext.Response, view.Cookie, view.GuestToken, clock);
@@ -148,7 +148,7 @@ internal static class CheckoutEndpoints
         // validator turns them into one 400 naming every missing field. Nothing here dereferences before
         // that happens.
         var command = new PlaceOrderCommand(
-            ReadLookup(httpContext),
+            await SignedInCustomer.ReadCartLookupAsync(httpContext),
             request?.CheckoutKey ?? Guid.Empty,
             request?.FirstName,
             request?.LastName,
@@ -171,7 +171,14 @@ internal static class CheckoutEndpoints
             // ADM-13. Sent on every submit, not held on the server: the code travels on the quote request
             // too, so it is revalidated on both (doc 11 P3 step 12). A body that omits it is an order
             // placed without a code, which is what a shopper who cleared the box asked for.
-            request?.PromoCode);
+            request?.PromoCode)
+        {
+            // **The one field that decides whether this order is in My account** (ACC-02). It was
+            // never set before W3-01's tester pass, so every order placed while signed in was stored as
+            // a guest order and never appeared in the history. Read from the customer session cookie,
+            // never from the body.
+            CustomerUserId = await SignedInCustomer.ReadIdAsync(httpContext),
+        };
 
         var result = await handler.HandleAsync(command, cancellationToken);
 
@@ -411,8 +418,6 @@ internal static class CheckoutEndpoints
     /// authentication scheme in this application is the admin one, and an admin principal is not a
     /// customer, so <c>httpContext.User</c> is not read for a customer id that cannot exist.
     /// </summary>
-    private static CartLookup ReadLookup(HttpContext httpContext) =>
-        CartLookup.ForGuest(CartCookie.Read(httpContext.Request));
 
     /// <summary>
     /// Nothing about a checkout may be stored by a shared cache: it holds a name, an address, a phone
