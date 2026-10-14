@@ -25,6 +25,7 @@ namespace SpencerDenim.IntegrationTests.Ops;
 /// build has no composer for — and an insert is the only way to reach them.
 /// </para>
 /// </summary>
+[Collection(nameof(OutboxWipingTests))]
 public sealed class EmailOutboxSendingTests(SqlServerDatabaseFixture sqlServer)
     : SalesSchemaTestBase(sqlServer)
 {
@@ -907,3 +908,20 @@ public sealed class EmailOutboxSendingTests(SqlServerDatabaseFixture sqlServer)
             .SingleAsync(message => message.Id == id, Token);
     }
 }
+
+/// <summary>
+/// The test classes that empty <c>ops.EmailOutbox</c>, run on their own rather than beside everything else.
+/// </summary>
+/// <remarks>
+/// <b>Added by the W3-01 round-2 independent tester, from a full-assembly failure.</b> The suite shares one
+/// database (<c>AssemblyFixture</c>) and xUnit runs test classes in parallel, so
+/// <see cref="EmailOutboxSendingTests"/>' <c>DELETE FROM ops.EmailOutbox</c> removed rows that other classes
+/// were in the middle of using: <c>AdminAlertsBehaviourTests.Two_dead_messages_for_one_order_raise_two_alerts</c>
+/// inserted a Dead message, the delete removed it, and <c>RaiseAsync</c> answered false — 1684 / 1685 in a
+/// full run, 29 / 29 three times alone. The account tests read their confirmation and reset links out of the
+/// same table and are exposed the same way, and W3-01 added six more calls to the delete. A collection with
+/// parallelisation disabled runs after the parallel ones, alone, so the delete can no longer land in the
+/// middle of another class's test.
+/// </remarks>
+[CollectionDefinition(nameof(OutboxWipingTests), DisableParallelization = true)]
+public sealed class OutboxWipingTests;
