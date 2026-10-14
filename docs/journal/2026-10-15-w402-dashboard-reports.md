@@ -202,7 +202,7 @@ mutated run; the unmutated suite passed 624/624 before and after.
 |---|---|
 | `dotnet build SpencerDenim.sln -c Release --no-incremental` | 0 warnings, 0 errors |
 | Unit, whole assembly | **2,780 / 2,780** (main's 2,701 per the brief + this branch's 79) |
-| Integration, whole assembly, unfiltered, alone | INTEGRATION_RESULT |
+| Integration, whole assembly, unfiltered, alone | **1,933 / 1,933** in 33 min 57 s (main's 1,878 per the brief + this branch's 55); the #171 flake did not show |
 | My integration classes, filtered | 55 / 55 (23 dashboard, 21 reports, 4 inventory, 1 reconciliation, 6 plan); the m11 fix changed a test rather than adding one |
 | Vitest | shared 24, storefront 1,880, admin **624** — all pass |
 | Playwright, whole suite, retries 0, ports 5700–5716 | **1,052 / 1,052** in 8.0 min (this branch's file: 18) |
