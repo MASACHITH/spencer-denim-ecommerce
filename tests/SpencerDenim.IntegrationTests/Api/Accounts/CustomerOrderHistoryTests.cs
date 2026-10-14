@@ -324,6 +324,68 @@ public sealed class CustomerOrderHistoryTests(SqlServerDatabaseFixture sqlServer
         Assert.False(last.GetProperty("hasMore").GetBoolean());
     }
 
+    /// <summary>
+    /// Five orders placed at the <b>same instant</b> page without repeating or losing one.
+    /// </summary>
+    /// <remarks>
+    /// <b>This closes a hole the mutation run found.</b> Removing the key tie-break from
+    /// <c>CustomerOrderReader</c>'s ordering left <c>The_list_is_newest_first_and_pages_without_losing_a_row</c>
+    /// green, because that test seeds its orders a day apart and the tie-break never decides anything.
+    /// The property it guards only appears when two rows share a <c>PlacedAtUtc</c> — which a test does
+    /// trivially, and a real shop does under load.
+    /// <para>
+    /// <b>Why it matters rather than being tidy.</b> <c>OFFSET … FETCH</c> over a non-deterministic
+    /// order is free to return the rows in a different sequence for each page, so a row can appear on
+    /// page 1 and page 2 while another appears on neither. A customer would see one order twice and lose
+    /// another, which is exactly the complaint nobody can reproduce.
+    /// </para>
+    /// <para>
+    /// Asserted as a set across the pages, not as a sequence, because <i>which</i> order comes first
+    /// among equals is genuinely arbitrary — what must hold is that the paging is a partition.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task Orders_placed_at_the_same_instant_page_without_repeating_or_losing_one()
+    {
+        await ReadyAsync();
+
+        var reference = await ReferenceAsync();
+        var email = UniqueEmail("history-same-instant");
+
+        // One instant, to the millisecond the column stores (doc 08 §1.4: datetime2(3)).
+        var placed = new DateTime(2026, 10, 10, 9, 15, 30, 123, DateTimeKind.Utc);
+
+        for (var index = 0; index < 5; index++)
+        {
+            await InsertOrderAsync(reference, email, placedAtUtc: placed);
+        }
+
+        await using var factory = CreateHost();
+        using var client = CreateClient(factory);
+        await ConfirmedCustomerAsync(factory, client, email);
+
+        var seen = new List<string>();
+
+        for (var page = 1; page <= 3; page++)
+        {
+            using var response = await client.GetAsync(
+                new Uri($"{OrdersUrl}?page={page}&pageSize=2", UriKind.Relative),
+                Token);
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+            var body = await response.Content.ReadFromJsonAsync<JsonElement>(Token);
+
+            foreach (var order in body.GetProperty("orders").EnumerateArray())
+            {
+                seen.Add(order.GetProperty("orderNumber").GetString()!);
+            }
+        }
+
+        Assert.Equal(5, seen.Count);
+        Assert.Equal(5, seen.Distinct(StringComparer.Ordinal).Count());
+    }
+
     /// <summary>A page number or size that makes no sense is corrected, never a 500 and never a scan.</summary>
     [Theory]
     [InlineData("?page=0")]

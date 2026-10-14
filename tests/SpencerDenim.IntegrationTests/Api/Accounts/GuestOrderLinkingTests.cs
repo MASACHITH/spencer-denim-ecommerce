@@ -278,6 +278,76 @@ public sealed class GuestOrderLinkingTests(SqlServerDatabaseFixture sqlServer)
             await CountTokensAsync(factory, customer.Id, CustomerAccountTokens.EmailConfirmationName));
     }
 
+    /// <summary>
+    /// A confirmation link for an address the account no longer uses confirms nothing, and links nothing.
+    /// </summary>
+    /// <remarks>
+    /// <b>This closes a hole the mutation run found.</b> Disabling the stored-subject comparison in
+    /// <c>CustomerEmailConfirmationStore</c> left every other test in this file green, so nothing said
+    /// the guard worked.
+    /// <para>
+    /// <b>The branch is unreachable through the application today</b>, because doc 11 P11 step 10's email
+    /// change is not built and an account's address therefore never moves after a token is minted. It is
+    /// reachable from a test by rewriting the address directly, which is what this does — and it is worth
+    /// doing now rather than when that flow arrives: the guard is what stops a link emailed to one
+    /// address confirming a different one, and a guard nobody has seen work is a guard nobody has checked.
+    /// </para>
+    /// <para>
+    /// The spent link is asserted as well. The token is the account's own — the verifier matched — so
+    /// burning it is right: the address it was for is gone, and nothing it could confirm still exists.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task A_link_for_an_address_the_account_no_longer_uses_confirms_nothing()
+    {
+        await ReadyAsync();
+
+        var reference = await ReferenceAsync();
+        var original = UniqueEmail("d5-moved-from");
+        var moved = UniqueEmail("d5-moved-to");
+
+        var orderId = await InsertGuestOrderAsync(reference, original);
+
+        await using var factory = CreateHost();
+        using var client = CreateClient(factory);
+
+        await RegisterAsync(client, original);
+        var token = await ReadLinkTokenAsync(factory, Templates.Confirmation, original);
+        Assert.NotNull(token);
+
+        var customer = await ReadCustomerAsync(factory, original);
+        Assert.NotNull(customer);
+
+        // Stands in for doc 11 P11 step 10's email change, which is not built. Four columns, by key.
+        DbContext.ChangeTracker.Clear();
+
+        await DbContext.Database.ExecuteSqlAsync(
+            $"""
+            UPDATE [identity].[Users]
+            SET [Email] = {moved}, [NormalizedEmail] = {moved.ToUpperInvariant()},
+                [UserName] = {moved}, [NormalizedUserName] = {moved.ToUpperInvariant()}
+            WHERE [Id] = {customer.Id}
+            """,
+            Token);
+
+        using var response = await client.PostAsJsonAsync(ConfirmUrl, new { token }, Token);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>(Token);
+        Assert.Equal("invalid_link", body.GetProperty("code").GetString());
+
+        // Nothing was confirmed, and the order under the old address was not taken.
+        var after = await ReadCustomerAsync(factory, moved);
+        Assert.NotNull(after);
+        Assert.False(after.EmailConfirmed);
+        Assert.Null(await ReadOwnerAsync(orderId));
+
+        // The link is spent: it was this account's own token, and the address it named is gone.
+        Assert.Equal(
+            0,
+            await CountTokensAsync(factory, customer.Id, CustomerAccountTokens.EmailConfirmationName));
+    }
+
     /// <summary>A token that is not one of ours, and one that names a user who has no pending link.</summary>
     [Theory]
     [InlineData("")]

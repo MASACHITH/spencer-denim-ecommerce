@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Microsoft.EntityFrameworkCore;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -289,6 +290,72 @@ public sealed class CustomerAuthEndpointTests(SqlServerDatabaseFixture sqlServer
         Assert.Equal(HttpStatusCode.Unauthorized, me.StatusCode);
     }
 
+    /// <summary>
+    /// A deactivated customer cannot sign in, and the refusal is the same one everybody else gets.
+    /// </summary>
+    /// <remarks>
+    /// <b>This closes a hole the mutation run found.</b> <c>CustomerUserLookup</c> filters on
+    /// <c>IsActive</c>, and removing that filter left every test in this file green — so nothing said
+    /// that a deactivated account is refused. It matters because doc 08 §3.1's PDPA anonymisation sets
+    /// <c>IsActive = 0</c>, blanks the password hash and rewrites the address: an anonymised row must
+    /// not be a way back into the shop.
+    /// <para>
+    /// <b>And the live session ends too.</b> <c>IsActive</c> is re-read directly on each revalidation
+    /// rather than only through a security-stamp bump, so deactivation ends a session whether or not
+    /// whatever deactivated the account also remembered to rotate the stamp — <c>IdentityRegistration</c>
+    /// records that as a real defect on the admin scheme. The interval is configured down to one second
+    /// because the default is five minutes.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task A_deactivated_customer_cannot_sign_in_and_their_session_ends()
+    {
+        await ReadyAsync();
+
+        await using var factory = CreateHost(new Dictionary<string, string?>(StringComparer.Ordinal)
+        {
+            ["CustomerSecurity:SecurityStampValidationIntervalSeconds"] = "1",
+        });
+
+        using var client = CreateClient(factory);
+        var email = UniqueEmail("deactivated");
+
+        await RegisterAsync(client, email);
+        await SignInAsync(client, email);
+
+        using var signedIn = await client.GetAsync(new Uri(MeUrl, UriKind.Relative), Token);
+        Assert.Equal(HttpStatusCode.OK, signedIn.StatusCode);
+
+        var customer = await ReadCustomerAsync(factory, email);
+        Assert.NotNull(customer);
+
+        // Stands in for the staff "deactivate customer" action, which is ADM-15's and does not exist.
+        // One column, by key, exactly as that endpoint will write it.
+        await DeactivateAsync(customer.Id);
+
+        // The live session is gone within one revalidation interval.
+        await Task.Delay(TimeSpan.FromSeconds(1.5), Token);
+
+        using var afterDeactivation = await client.GetAsync(new Uri(MeUrl, UriKind.Relative), Token);
+        Assert.Equal(HttpStatusCode.Unauthorized, afterDeactivation.StatusCode);
+
+        // And the correct password is refused with the body an unknown address gets — a different reply
+        // here would say "this address exists but has been switched off".
+        using var fresh = CreateClient(factory);
+
+        using var refused = await fresh.PostAsJsonAsync(LoginUrl, new { email, password = GoodPassword }, Token);
+        Assert.Equal(HttpStatusCode.Unauthorized, refused.StatusCode);
+
+        using var unknown = await fresh.PostAsJsonAsync(
+            LoginUrl,
+            new { email = UniqueEmail("nobody-at-all"), password = GoodPassword },
+            Token);
+
+        Assert.Equal(
+            WithoutTraceId(await unknown.Content.ReadAsStringAsync(Token)),
+            WithoutTraceId(await refused.Content.ReadAsStringAsync(Token)));
+    }
+
     /// <summary>Doc 11 P11 step B.7: signing out removes the session.</summary>
     [Fact]
     public async Task Signing_out_ends_the_session()
@@ -506,6 +573,23 @@ public sealed class CustomerAuthEndpointTests(SqlServerDatabaseFixture sqlServer
             .ToDictionary(property => property.Name, property => property.Value.ToString(), StringComparer.Ordinal);
 
         return string.Join('|', kept.OrderBy(pair => pair.Key, StringComparer.Ordinal).Select(pair => $"{pair.Key}={pair.Value}"));
+    }
+
+    /// <summary>
+    /// Switches an account off, with the one column a future staff action will write.
+    /// </summary>
+    /// <remarks>
+    /// Written as a set-based statement rather than through <c>UserManager.UpdateAsync</c>, which would
+    /// write every column of a user instance — the trap #146's second finding is about, and the reason
+    /// every write in <c>CustomerAccountLockout</c> and <c>CustomerProfileStore</c> names its columns.
+    /// </remarks>
+    private async Task DeactivateAsync(int userId)
+    {
+        DbContext.ChangeTracker.Clear();
+
+        await DbContext.Database.ExecuteSqlAsync(
+            $"UPDATE [identity].[Users] SET [IsActive] = 0 WHERE [Id] = {userId}",
+            Token);
     }
 
     private static async Task<double> MeasureAsync(HttpClient client, string email, string password)

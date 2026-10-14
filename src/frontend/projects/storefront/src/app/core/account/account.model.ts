@@ -118,6 +118,33 @@ export interface CustomerAddressDto {
   readonly isDefault: boolean;
 }
 
+/**
+ * The password rule, shown **before** the shopper presses anything.
+ *
+ * ## Why a copy of a server constant lives here at all
+ *
+ * The server owns this rule — `CustomerPasswordPolicy.Requirement` — and that class's remark says the
+ * front end should read it rather than hold a second copy. There is no endpoint that serves it, and
+ * inventing one for a sentence would be a request on every page load for a string that changes once a
+ * year.
+ *
+ * So this is a copy, and the copy is **pinned**: `CustomerPasswordHintConventionTests` in the C# unit
+ * suite reads this file and fails the build if the string below is not byte-identical to the constant.
+ * That is the technique `BrandNameConventionTests` already uses across the three source trees for the
+ * shop's name, and it is the only cure for #126 that works — a form promising one rule while the server
+ * enforced another passed the form, the stub and sixteen browser tests.
+ *
+ * ## Why it is shown at all, rather than left to the 400
+ *
+ * WCAG 2.2 **3.3.2 Labels or Instructions**: where input is required, instructions are provided. A
+ * shopper who learns the rule only by being refused has been made to fail once to find out — and on a
+ * password field they cannot see what they typed, so the refusal is doubly opaque. It is wired to the
+ * input with `aria-describedby`, so a screen reader reads it as part of the field rather than as loose
+ * text after it.
+ */
+export const PASSWORD_RULE =
+  'Use at least 10 characters, including an upper-case letter, a lower-case letter, a number and a symbol.';
+
 /** What the address form sends (`CustomerAddressRequest`). */
 export interface CustomerAddressEdit {
   readonly label: string | null;

@@ -11,7 +11,11 @@ import { RouterLink } from '@angular/router';
 
 import { AccountNotice } from './account-notice';
 import { AccountApi, accountErrorMessage, fieldErrorsOf } from '../../core/account/account-api';
-import { ACCOUNT_FIELD_LENGTHS, blankToNull } from '../../core/account/account.model';
+import {
+  ACCOUNT_FIELD_LENGTHS,
+  PASSWORD_RULE,
+  blankToNull,
+} from '../../core/account/account.model';
 import { privatePage } from '../../core/platform/private-page';
 
 /**
@@ -160,13 +164,20 @@ import { privatePage } from '../../core/platform/private-page';
             [attr.maxlength]="LENGTHS.password"
             [value]="password()"
             [attr.aria-invalid]="messageFor('password') ? 'true' : null"
-            [attr.aria-describedby]="messageFor('password') ? 'rg-password-error' : null"
+            [attr.aria-describedby]="
+              messageFor('password')
+                ? 'rg-password-error rg-password-rule'
+                : 'rg-password-rule'
+            "
             data-testid="register-password"
             (input)="password.set(value($event))"
           />
           @if (messageFor('password'); as message) {
             <p class="acc-error" id="rg-password-error">{{ message }}</p>
           }
+          <p class="acc-hint" id="rg-password-rule" data-testid="register-password-rule">
+            {{ PASSWORD_RULE }}
+          </p>
         </div>
 
         <div class="acc-field">
@@ -216,6 +227,14 @@ import { privatePage } from '../../core/platform/private-page';
 })
 export class RegisterPage {
   protected readonly LENGTHS = ACCOUNT_FIELD_LENGTHS;
+
+  /**
+   * The one sentence the server's validator and this form both state.
+   *
+   * Pinned to `CustomerPasswordPolicy.Requirement` by a C# convention test; see
+   * {@link PASSWORD_RULE}.
+   */
+  protected readonly PASSWORD_RULE = PASSWORD_RULE;
 
   protected readonly firstName = signal('');
   protected readonly lastName = signal('');

@@ -14,7 +14,7 @@ import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 
 import { AccountNotice } from './account-notice';
 import { AccountApi, accountErrorMessage, fieldErrorsOf } from '../../core/account/account-api';
-import { ACCOUNT_FIELD_LENGTHS } from '../../core/account/account.model';
+import { ACCOUNT_FIELD_LENGTHS, PASSWORD_RULE } from '../../core/account/account.model';
 import { privatePage } from '../../core/platform/private-page';
 
 /**
@@ -97,16 +97,22 @@ import { privatePage } from '../../core/platform/private-page';
               [attr.maxlength]="LENGTHS.password"
               [value]="password()"
               [attr.aria-invalid]="messageFor('password') ? 'true' : null"
-              [attr.aria-describedby]="messageFor('password') ? 'rp-password-error' : null"
+              [attr.aria-describedby]="
+                messageFor('password')
+                  ? 'rp-password-error rp-password-rule'
+                  : 'rp-password-rule'
+              "
               data-testid="reset-password-password"
               (input)="password.set(value($event))"
             />
             @if (messageFor('password'); as message) {
-              <!-- The rule comes from the server, which is the thing that enforces it: see
-                   'CustomerPasswordPolicy', whose own remarks say the front end must not hold a second
-                   copy of the number. -->
+              <!-- The refusal is the server's own wording. The rule below it is a pinned copy of
+                   the server's constant - see PASSWORD_RULE - so the two cannot disagree. -->
               <p class="acc-error" id="rp-password-error">{{ message }}</p>
             }
+            <p class="acc-hint" id="rp-password-rule" data-testid="reset-password-rule">
+              {{ PASSWORD_RULE }}
+            </p>
           </div>
 
           <div class="acc-actions">
@@ -126,6 +132,14 @@ import { privatePage } from '../../core/platform/private-page';
 })
 export class ResetPasswordPage {
   protected readonly LENGTHS = ACCOUNT_FIELD_LENGTHS;
+
+  /**
+   * The one sentence the server's validator and this form both state.
+   *
+   * Pinned to `CustomerPasswordPolicy.Requirement` by a C# convention test; see
+   * {@link PASSWORD_RULE}.
+   */
+  protected readonly PASSWORD_RULE = PASSWORD_RULE;
 
   protected readonly password = signal('');
 

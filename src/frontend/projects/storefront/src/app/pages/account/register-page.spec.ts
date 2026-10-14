@@ -317,12 +317,68 @@ describe('RegisterPage (ACC-01)', () => {
       );
     });
 
-    it('states no password rule of its own before the server has refused one', async () => {
+    /**
+     * The rule is stated **before** the shopper presses anything, and it is the server's own sentence.
+     *
+     * ## This reverses an earlier decision in this file, and the reversal is the point
+     *
+     * The first version of this spec asserted the opposite — that the form states no rule of its own,
+     * because `CustomerPasswordPolicy`'s remarks say the front end should not hold a second copy of the
+     * number. That reading was right about the hazard (#126: a form promising one rule while the server
+     * enforces another passed the form, the stub and sixteen browser tests) and wrong about the cure.
+     * Leaving the rule out means a shopper learns it only by being refused — WCAG 2.2 **3.3.2 Labels or
+     * Instructions** — and on a password field they cannot see what they typed, so the refusal is doubly
+     * opaque.
+     *
+     * The cure is a copy that cannot drift: `PASSWORD_RULE` in `account.model.ts`, pinned to
+     * `CustomerPasswordPolicy.Requirement` by `CustomerPasswordHintConventionTests` in the C# unit
+     * suite, which fails the build if the two are not byte-identical. That is the technique
+     * `BrandNameConventionTests` already uses across the three source trees for the shop's name.
+     *
+     * ## What is asserted here, and what is asserted there
+     *
+     * This test owns the *markup*: the sentence is on the page, it is tied to the input with
+     * `aria-describedby` so a screen reader reads it as part of the field, and it is there before any
+     * refusal. Whether the sentence matches the server is the C# test's job — asserting it here as well
+     * would be a third copy of the words.
+     */
+    it('states the password rule up front, tied to the field', async () => {
       await settle();
 
-      // No number, and no sentence about characters: the rule has one home and it is on the server.
-      expect(text()).not.toMatch(/at least \d+ characters/i);
+      const hint = element.querySelector('[data-testid="register-password-rule"]');
+      expect(hint).not.toBeNull();
+      expect(hint?.textContent).toMatch(/at least \d+ characters/i);
+
+      // Tied to the input, not loose text after it.
+      const described = field('register-password').getAttribute('aria-describedby') ?? '';
+      expect(described.split(/\s+/)).toContain(hint?.id);
+
+      // Still no `minlength`: the browser's own bubble would state a rule in wording nobody here
+      // controls, and would refuse before the server's four character classes were ever checked.
       expect(field('register-password').getAttribute('minlength')).toBeNull();
+    });
+
+    /**
+     * And the refusal is read first, then the rule.
+     *
+     * `aria-describedby` is read in the order the ids appear, so a shopper who has just been refused
+     * hears what went wrong before hearing the rule again — which is the useful order, and the reverse
+     * of what putting the hint's id first would give.
+     */
+    it('reads the refusal before the rule once there is one', async () => {
+      await settle();
+
+      fillIn();
+      submit();
+      registerRequest().flush(
+        { errors: { password: ['Use at least 10 characters.'] } },
+        { status: 400, statusText: 'Bad Request' },
+      );
+      await settle();
+
+      const described = field('register-password').getAttribute('aria-describedby') ?? '';
+
+      expect(described.split(/\s+/)).toEqual(['rg-password-error', 'rg-password-rule']);
     });
 
     it('writes the refusal into the region that was already on the page', async () => {

@@ -276,10 +276,33 @@ describe('ResetPasswordPage (ACC-01)', () => {
       expect(before.textContent).toContain('Too short.');
     });
 
-    it('states no password rule of its own before the server refuses one', async () => {
+    /**
+     * The rule is stated up front, and it is the server's own sentence.
+     *
+     * **This reverses what this test used to assert**, and the reversal is recorded in the register
+     * page's own version at length: leaving the rule out means a shopper learns it only by being
+     * refused (WCAG 2.2 3.3.2), and the cure for #126's two-sources hazard is a copy that cannot drift
+     * rather than no copy. `PASSWORD_RULE` is pinned to `CustomerPasswordPolicy.Requirement` by
+     * `CustomerPasswordHintConventionTests` in the C# unit suite, which fails the build if the two
+     * differ by a character.
+     *
+     * It matters slightly more here than on registration. A shopper on this page is holding a
+     * single-use link; the server deliberately does **not** spend the token on a refused password for
+     * that reason, and stating the rule first means they are less likely to need that mercy.
+     */
+    it('states the password rule up front, tied to the field', async () => {
       await open('/account/reset-password?token=a-token');
 
-      expect(text()).not.toMatch(/at least \d+ characters/i);
+      const hint = element.querySelector('[data-testid="reset-password-rule"]');
+      expect(hint).not.toBeNull();
+      expect(hint?.textContent).toMatch(/at least \d+ characters/i);
+
+      // Tied to the input, not loose text after it.
+      const described = passwordBox().getAttribute('aria-describedby') ?? '';
+      expect(described.split(/\s+/)).toContain(hint?.id);
+
+      // Still no `minlength`: the browser's own bubble would state a rule in wording nobody here
+      // controls, and would refuse before the server's four character classes were ever checked.
       expect(passwordBox().getAttribute('minlength')).toBeNull();
     });
   });

@@ -31,8 +31,25 @@ public sealed class ContentPageSlugRulesTests
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     /// <summary>An entry in <c>UNBUILT_PATHS</c>, which claims an address the shell links and has no page.</summary>
+    /// <summary>
+    /// <c>UNBUILT_PATHS</c>'s declaration, with or without a type annotation.
+    /// </summary>
+    /// <remarks>
+    /// <b>The annotation is why this had to be widened.</b> W3-01 built <c>/account</c>, which was the
+    /// list's last entry, so the declaration became
+    /// <c>export const UNBUILT_PATHS: readonly string[] = []</c> — an empty array needs the annotation
+    /// or TypeScript infers <c>never[]</c>. The original pattern required <c>=</c> straight after the
+    /// name and therefore matched nothing, and this test failed with "could not find UNBUILT_PATHS"
+    /// rather than with anything about slugs.
+    /// <para>
+    /// <b>That failure was the test doing its job.</b> Its <c>Assert.True(body.Success, …)</c> exists so
+    /// that a parse which finds nothing is a red build rather than an <c>Assert.All</c> over an empty
+    /// list — this project's recurring cannot-fail shape. The front-end suite could not see it at all:
+    /// the rule spans two source trees and only this suite reads both.
+    /// </para>
+    /// </remarks>
     private static readonly Regex UnbuiltPaths = new(
-        @"export const UNBUILT_PATHS\s*=\s*\[(?<body>[^\]]*)\]",
+        @"export const UNBUILT_PATHS\s*(?::[^=]*)?=\s*\[(?<body>[^\]]*)\]",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.Singleline);
 
     /// <summary>

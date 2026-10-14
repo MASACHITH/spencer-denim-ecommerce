@@ -243,6 +243,47 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
                   <span class="order__block order__muted">Estimated {{ estimate(placed) }}</span>
                 </dd>
               </div>
+              <!-- Doc 11 P11 step 14's tracking, on the guest's own link. Before W3-01 this payload
+                   carried neither the courier nor the number, so the only place in the system that
+                   showed a tracking number was the admin panel - and step 14 says a guest following
+                   the secure link from their order emails sees "status, tracking".
+
+                   The block is absent rather than full of nulls when there is nothing to follow: an
+                   order that has not shipped, or a pickup order, which has no courier. So this one
+                   condition is the whole three-way check rather than three in the body.
+
+                   The number is what the shopper quotes on the telephone, so when the courier has no
+                   online tracking - or has been deleted since, which doc 08 section 3.5 allows - it is
+                   printed as text rather than hidden. -->
+              @if (placed.tracking; as tracking) {
+                <div>
+                  <dt>Tracking</dt>
+                  <dd data-testid="order-page-tracking">
+                    <span class="order__block">{{ tracking.courierName }}</span>
+                    @if (tracking.trackingUrl; as url) {
+                      <!-- A new tab, because a shopper following a courier's site must not lose
+                           their order page - this address is a guest's only way back to it. The rel
+                           is noopener noreferrer: noopener so the courier's page cannot reach back
+                           through window.opener, and noreferrer so the order's own unguessable token
+                           is not sent to them as a Referer, which would hand a third party a working
+                           credential for somebody else's order. -->
+                      <a
+                        class="order__block link"
+                        [href]="url"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        data-testid="order-page-tracking-link"
+                        >{{ tracking.trackingNumber
+                        }}<span class="sr-only"> (opens in a new tab)</span></a
+                      >
+                    } @else {
+                      <span class="order__block" data-testid="order-page-tracking-number">{{
+                        tracking.trackingNumber
+                      }}</span>
+                    }
+                  </dd>
+                </div>
+              }
               <div>
                 <dt>Payment</dt>
                 <dd>
