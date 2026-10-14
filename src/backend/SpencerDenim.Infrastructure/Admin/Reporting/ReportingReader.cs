@@ -71,10 +71,7 @@ internal sealed class ReportingReader(AppDbContext dbContext, IOptions<CatalogOp
             .Select(day => new { Day = day.Key, Items = day.Sum(line => line.LineTotal) })
             .ToListAsync(cancellationToken);
 
-        var refunds = await SettlementRefundsIn(range)
-            .GroupBy(refund => refund.CompletedAtUtc!.Value.AddMinutes(ColomboOffsetMinutes).Date)
-            .Select(day => new { Day = day.Key, Amount = day.Sum(refund => refund.Amount) })
-            .ToListAsync(cancellationToken);
+        var refunds = await RefundsDailyQuery(range).ToListAsync(cancellationToken);
 
         var days = paid.Select(row => row.Day)
             .Concat(placed.Select(row => row.Day))
@@ -532,6 +529,12 @@ internal sealed class ReportingReader(AppDbContext dbContext, IOptions<CatalogOp
                 && refund.CompletedAtUtc < range.ToUtcExclusive
                 && refund.Payment!.IsOrderSettlement);
 
+    /// <summary>Completed settlement refunds per Colombo day of completion.</summary>
+    internal IQueryable<RefundDay> RefundsDailyQuery(UtcRange range) =>
+        SettlementRefundsIn(range)
+            .GroupBy(refund => refund.CompletedAtUtc!.Value.AddMinutes(ColomboOffsetMinutes).Date)
+            .Select(day => new RefundDay(day.Key, day.Sum(refund => refund.Amount)));
+
     /// <summary>Gross revenue and paid orders over a range, as one grouped row (or none).</summary>
     internal IQueryable<PaidTotal> PaidTotalsQuery(UtcRange range) =>
         PaidIn(range)
@@ -614,6 +617,9 @@ internal sealed class ReportingReader(AppDbContext dbContext, IOptions<CatalogOp
 
     /// <summary>One Colombo day of paid orders.</summary>
     internal sealed record PaidDay(DateTime Day, decimal Gross, int PaidOrders, decimal Delivery);
+
+    /// <summary>One Colombo day of completed settlement refunds.</summary>
+    internal sealed record RefundDay(DateTime Day, decimal Amount);
 
     /// <summary>A range's gross revenue and paid orders.</summary>
     internal sealed record PaidTotal(decimal Gross, int PaidOrders);
