@@ -10,6 +10,8 @@ using SpencerDenim.Application.Admin.Auditing.Contracts;
 using SpencerDenim.Application.Admin.CurrentUser;
 using SpencerDenim.Application.Admin.Customers;
 using SpencerDenim.Application.Admin.Customers.Contracts;
+using SpencerDenim.Application.Admin.Reporting;
+using SpencerDenim.Application.Admin.Reporting.Contracts;
 using SpencerDenim.Application.Catalog.Admin;
 using SpencerDenim.Application.Catalog.Admin.Contracts;
 using SpencerDenim.Application.Catalog.Admin.Products;
@@ -447,6 +449,22 @@ public static class DependencyInjection
         services.AddScoped<
             ICommandHandler<ExportNewsletterSubscribersCommand, NewsletterExportFile>,
             ExportNewsletterSubscribersCommandHandler>();
+
+        // The dashboard and the reports (W4-02: ADM-04, ADM-05, ADM-07, ADM-08, ADM-19; doc 11 P16). Read only,
+        // bar the three exports, which write an Export audit row each.
+        services.AddScoped<IQueryHandler<GetAdminDashboardQuery, AdminDashboardDto>, GetAdminDashboardQueryHandler>();
+        services.AddScoped<IQueryHandler<GetSalesTrendQuery, SalesTrendDto>, GetSalesTrendQueryHandler>();
+        services.AddScoped<IQueryHandler<GetLowStockQuery, LowStockDto>, GetLowStockQueryHandler>();
+        services.AddScoped<IQueryHandler<GetSalesReportQuery, SalesReportDto>, GetSalesReportQueryHandler>();
+        services.AddScoped<IQueryHandler<GetInventoryReportQuery, InventoryReportPage>, GetInventoryReportQueryHandler>();
+        services.AddScoped<IQueryHandler<GetCustomerReportQuery, CustomerReportPage>, GetCustomerReportQueryHandler>();
+        services.AddScoped<ICommandHandler<ExportSalesReportCommand, ReportExportFile>, ExportSalesReportCommandHandler>();
+        services.AddScoped<
+            ICommandHandler<ExportInventoryReportCommand, ReportExportFile>,
+            ExportInventoryReportCommandHandler>();
+        services.AddScoped<
+            ICommandHandler<ExportCustomerReportCommand, ReportExportFile>,
+            ExportCustomerReportCommandHandler>();
 
         services.AddScoped<
             ICommandHandler<TransitionOrderCommand, TransitionOrderResult>,
