@@ -322,3 +322,34 @@ adding 1 to the parsed amount fails both real-capture tests with `Expected 10.00
   (the groundwork's `IsSafeAbsoluteUrl` refuses loopback and non-https).
 - **PENDING, DENIED and declined captures** — only the happy path was run.
 - **The sandbox buyer's currency conversion** — the buyer paid from a USD balance; nothing was learned about LKR.
+
+## 2026-10-14 — `main` merged in, branch retargeted to `main`
+
+PR #155 was stacked on `feature/W4-01-payment-groundwork`; #149 has since been squash-merged, so the PR now
+targets `main` and reports MERGEABLE. `main` was merged into this branch twice (13 Oct: promo codes and the
+groundwork; 14 Oct: customer accounts, #162). The branch was built on the pre-squash groundwork commits, so
+the merge was done against `83a7fad` (the last groundwork commit it contains) rather than git's own merge
+base, which would have reported 14 add/add conflicts. Every real conflict was additive and both sides were
+kept: `CheckoutReader`, `Program.cs`, `OrderConfirmationDto` (`PaymentNotice` then `Tracking`) and
+`checkout.model.ts`. No force push was needed.
+
+**Run after the merge:** Release build 0 warnings; unit 2646 / 2646; storefront lint clean; frontend unit
+storefront 1880, admin 562, shared 24, all passing; a targeted integration subset of 646 tests on LocalDB
+(PayPal, checkout, settlement, cancellation, fulfilment, payment events, bank transfer, accounts, settings)
+with one failure, below. **Not run:** the full integration assembly (about an hour), the production build,
+Playwright, and any UI check at 320 / 768 / 1280 px.
+
+**A test that counted its neighbour's rows.** `The_audit_trail_records_one_row_per_changed_key_and_never_a_secret`
+failed with `Assert.Single() ... 2 items` in the class run and in the wider run, and passed alone.
+"This test's audit rows" was `OccurredAtUtc >= construction time - 1 s`; audit rows cannot be deleted, so the
+previous test in the class, saving the same key inside that second, left a second row. The test now takes the
+newest audit id when it starts and counts only rows after it; the class passes 34 / 34. The relative
+assertions (`audits` before and after) were never affected.
+
+**If Playwright is run on this branch:** `npm run build:storefront` first. The e2e servers serve the
+prebuilt `dist/`, so a stale bundle passes or fails for reasons that have nothing to do with the source
+(see the #123 journal, same day).
+
+**Still true, and not changed by any of this:** webhooks, PENDING / DENIED / declined captures, LKR
+conversion and the end-to-end order through checkout are not verified against PayPal's sandbox; no tester
+pass; the PR stays a draft.
