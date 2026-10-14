@@ -497,3 +497,184 @@ Listed in the task report in full. The short version:
 6. **`resend-confirmation` and `logout` both require a session**, which the brief's endpoint summary did
    not say. Resend is therefore offered on the profile page to an unconfirmed customer, and nowhere a
    signed-out visitor can reach.
+
+---
+
+## Round 2: the independent tester's FAIL, and what changed
+
+The independent tester failed round 1 with two Blockers, two Majors and six Minors. All of them are fixed
+on this branch except where a line below says otherwise. The tester's commit `0173168` and
+`CustomerAccountTesterGapTests.cs` were kept; two edits were made to that file, both named below.
+
+### Blocker 1: signing in emptied the bag, and signed-in orders were guest orders
+
+`CartEndpoints` and `CheckoutEndpoints` read the customer with the **default** authentication scheme,
+which is the admin cookie, so a signed-in customer always looked like a guest: the bag after sign-in was
+the (now empty) guest bag, and `PlaceOrderCommand.CustomerUserId` was always null. `SignedInCustomer`
+(`SpencerDenim.Api/Http`) authenticates the customer scheme by name, once per request, and both endpoint
+groups use it. `SignedInBagAndOrderTests` walks the real round trip over HTTP: a guest bag, sign in,
+`/api/cart` and `/api/checkout` show the line, place the order, and it is in `GET /api/account/orders`;
+plus "a bag filled while signed in follows the customer to another browser" and "signing out leaves an
+empty guest bag". Mutations: guest-only lookup fails all three; owner not set fails the round trip.
+
+### Blocker 2: whoever registered your address first received your guest orders
+
+Option (a). Confirming now requires a session for the account the token names: a signed-out browser gets
+401 `sign_in_required` **before the token is examined** (so it is not spent), a token for a different
+signed-in account is refused without being spent, and confirming **issues no session**. The victim's
+route is Forgot password → reset (which kills the squatter's password and security stamp) → sign in →
+confirm. The account and checkout routes now revalidate the security stamp on every request, so the
+squatter's cookie dies at the reset rather than up to five minutes later; the cookie is re-issued only
+when the throttle was due or the confirmed claim changed.
+
+Why (a) and not (b): (a) costs a legitimate customer one sign-in they would make anyway, keeps one
+password flow, and never destroys the real owner's password; (b) would make every confirmation a
+password reset.
+
+`PreRegistrationTakeoverTests`: four tests, all four **failed on `fa51d87`** (the code before the fix) and
+pass after `c4ad7c7`. The recovery test only became able to fail once the attacker used their session
+before the reset — on the first draft the attacker's first request came after it, and the five-minute
+throttle was never exercised.
+
+The confirm page handles the 401: it shows the server's sentence, a Sign in link whose `returnTo` carries
+the token (rebuilt from the copy read at construction, since the address bar no longer has it) and a
+Forgot password link, and it no longer re-reads the bag.
+
+### Major 3: timing oracles on registration and forgot-password
+
+Two things, because one was not enough. The staff-address and taken-address registration branches now
+spend the dummy password hash. And sign-in, registration and forgot-password hold every answer except
+429 until `CustomerSecurity:AnonymousResponseFloorMilliseconds` (default **250 ms**) has passed since the
+rate limiter let the request through. The hash alone would have left forgot-password at 3.8x: that gap is
+the token insert and outbox row a customer match writes, which an unknown address cannot write, and
+equalising the *work* would mean database writes for addresses with no account. The floor costs only
+latency, and a timer costs no CPU. The integration suite runs with the floor at 0 (set in
+`CustomerAccountTestBase.CreateHost`); the timing tests set it explicitly.
+
+`AnonymousAccountTimingTests` replaces the round-1 10x sign-in test: eleven refusal paths over the three
+endpoints, nine interleaved rounds after a warm-up, medians, and **1.5x** allowed between the slowest and
+fastest path on one endpoint, so a 3x oracle fails. A second test turns the floor off and holds the hashed
+paths (sign-in, registration) to the same 1.5x, because otherwise removing the hash would pass silently
+under the floor.
+
+Medians, ms, this machine, LocalDB:
+
+| Endpoint | Path | Floor 250 | Floor off |
+|---|---|---:|---:|
+| sign-in | wrong password | 252.6 | 66.0 |
+| sign-in | unknown address | 252.7 | 64.5 |
+| sign-in | staff address | 254.6 | 68.1 |
+| sign-in | deactivated | 255.3 | 65.6 |
+| sign-in | locked (right password) | 256.5 | 64.7 |
+| register | free address | 253.1 | 69.8 |
+| register | customer address | 253.0 | 67.1 |
+| register | staff address | 258.3 | 65.3 |
+| forgot-password | customer address | 259.4 | — |
+| forgot-password | unknown address | 252.1 | — |
+| forgot-password | staff address | 261.2 | — |
+
+Round 1 for comparison (tester): registration 76.9 / 2.5 / 1.1, forgot-password 4.6 / 1.2 / 1.1.
+
+### Major 4: the lockout told a stranger which addresses had accounts
+
+A locked account now answers byte for byte what a wrong password answers: 401 `invalid_credentials`, one
+sentence ("That email address and password do not match an account. After several attempts, sign-in
+pauses for a few minutes; try again later or use Forgot password."), at the same floor. The lock still
+holds — the right password is refused until it clears — and is still audited server-side. Change-password
+keeps its 423: the caller is signed in and already owns the account. `A_locked_account_answers_exactly_
+what_an_address_with_no_account_answers` compares eleven attempts against a customer and against an
+unknown address, status and whole body less `traceId`, attempt by attempt, and checks the customer really
+is locked. The lockout tests now read the lock from the row instead of the reply. The sign-in page had no
+423-specific branch, so only its comment and one spec changed.
+
+### Minors
+
+| Finding | Fix |
+|---|---|
+| `/account/orders` scrolled 127/100/92 px at 320/375/390 with a 60-character number | `.acc-order__tracking > *` gets `min-width: 0` and `overflow-wrap: anywhere` (only `anywhere` lowers the min-content size flex layout reads) |
+| Tracking link on `/order/{token}` 26 px tall | `.order__track-link` is `display: flex; min-height: var(--tap)`. To stay inside the component's 4 kB style budget, two identical error rules were merged into one selector |
+| `/order/{token}` said "placed … waiting for payment" for every status | Heading and sentence follow `status`; past Processing they use the server's `statusLabel` ("Ready for collection" for pickup) and the "Thank you" eyebrow goes |
+| `account-contrast.spec` could not fail | Reads `projects/shared/src/styles/tokens.css` with `node:fs`, resolving `var()`; a spec checks the reader itself |
+| G-03 cleared bodies only on Sent | Also on both paths to Dead (`MarkFailedAsync`'s last failure, and `KillStrandedExhaustedSql`). **Cancelled has no writer in this build**, so there is nothing to change; whoever adds one must clear the body too, and `BodyIsClearedOnSend`'s remark says so |
+| `LinkGuestOrdersAsync` comment said `UserEmail` carries the email | Corrected: the row records no email at all |
+
+### Two edits to the tester's file
+
+1. `ConfirmAsync` takes the signed-in user id (Blocker 2), so the store-level race test passes the id the
+   token names.
+2. `A_reset_email_loses_its_body_when_sent_and_the_sent_link_still_works` swept three batches of twenty.
+   Tests run serially and share one outbox nobody else sweeps, so every earlier registration leaves two
+   Pending rows and the claim takes the oldest first: once the backlog passed sixty rows, this test's rows
+   were never claimed and it failed with "Expected Sent, Actual Pending" by run order (seen twice this
+   round). It now sweeps until its own rows leave the queue, bounded at 500 sweeps.
+
+### Browser tests
+
+`e2e/account.e2e.ts`, 11 tests, paired with the backend tests named in its header. The account API is
+answered in the browser by a deliberately small fake, since the stub has no account surface and the
+account pages read it only in the browser; catalogue, bag and orders go to the stub as elsewhere. The
+stub gains one switch, `/__test__/shipped-order`, keyed by a fresh publicId, because nothing on the
+storefront can move an order to Shipped.
+
+### Round 2 mutations: 13 run, 13 killed
+
+| Mutation | Killed by |
+|---|---|
+| response floor removed | `At_the_configured_floor_…` |
+| staff registration skips the dummy hash | `With_no_floor_the_password_hash_still_costs_…` |
+| locked account answers 423 again | 5 tests: the 11-attempt comparison, both lockout tests, both race tests |
+| `MarkFailedAsync`'s Dead keeps a credential body | 2 (PasswordReset, EmailConfirmation) |
+| `KillStrandedExhaustedSql` keeps a credential body | 2 (PasswordReset, EmailConfirmation) |
+| `--color-text-muted` lightened to #9b9b9b in tokens.css | 3 contrast specs (the hand copy could not see this) |
+| order heading always "placed" | 2 specs, 1 e2e |
+| order sentence always "waiting for payment" | 2 specs |
+| confirm page treats `sign_in_required` as a refused link | 3 specs, 2 e2e |
+| orders-page tracking may not shrink | 2 e2e (link and text) |
+| order-page tracking link back to 26 px | 1 e2e |
+
+Plus round 2's earlier mutations for the Blockers (guest-only cart lookup, owner not set, confirm without
+session, confirm by any signed-in account, throttled revalidation everywhere), each killed and recorded
+in the commits above.
+
+### What the full browser suite found that the account file alone did not
+
+Round 1 never ran the whole Playwright suite ("no shared stub was touched"). Round 2 touched the stub,
+so it ran, and it found three things:
+
+1. **A console error on every signed-out page view.** The header asked `GET /api/account/me`, which
+   answers a visitor with no session 401, and the browser logs that as a failed resource load. The home
+   page's "no console errors and no failed requests" test caught it (against the stub it was a 404; the
+   real API's 401 is the same entry). Fixed with `GET /api/account/session`: anonymous, always 200, the
+   customer or `null` (also `null` for a session whose account is no longer an active customer). The
+   store reads it; `/me` keeps its 401 for callers that want one. The stub answers `/session` as the API
+   does. Integration test `The_session_read_answers_200_whoever_asks_and_names_only_an_active_customer`;
+   mutation "read the session with the default (admin) scheme" kills it.
+2. **Six browser tests still asserted `/account` was unbuilt** (`catalog-availability` ×2,
+   `product-listing`, `search`, `seo` ×2): it went home, and `/account/orders` was a 404. Rewritten to
+   the built account area: a visitor is sent to sign in, `/account` is a 200 private page at
+   `/account/orders` with `noindex`, and `/account/x` is the unbuilt address that 404s.
+3. **The mobile drawer focus test pressed before hydration.** It failed 1 in 10 on the branch's base
+   commit (`8128597`, measured in a temporary worktree, since removed) and 3 in 10 here; with the
+   `ng-version` gate `home-page.e2e.ts` already uses it passed 20 of 20.
+
+Not fixed, and not W3-01's: **`search.e2e.ts` "one Escape closes the suggestions, a second closes the
+header panel"** failed 2 of 3 on the base commit and about 4 in 10 here, and a hydration gate does not
+cure it, so the cause is something else in SRCH-01. My edit to it was reverted. Also pre-existing:
+`npx eslint e2e` reports one error in `checkout.e2e.ts:546` (an empty arrow function), a file this
+branch does not touch.
+
+The full integration run before the session commit was 1683/1684; the one failure was
+`SaleCampaignPlanTests.The_window_shaped_read_seeks_the_window_index` (W3-05b), which passes alone (3/3).
+It is a plan-shape assertion that depends on what the shared database holds by that point in the run.
+
+### Final runs, on `f106f24` (plus the one-test fix below)
+
+| Suite | Result |
+|---|---|
+| Integration, whole assembly, unfiltered | **1684 / 1685** in 34 min. The one failure, `AuditLogEndpointTests.A_user_holding_AuditLog_View_can_list_entries_sorted_newest_first`, passes alone (8/8 in its class): it reads one page of 50 from a fixed 1–4 Sept 2026 window of the shared database, so rows other tests put in that window can push its three off the page. Not W3-01's (`66104da`). The previous full run's one failure was a different test (`SaleCampaignPlanTests`, above); neither touches accounts |
+| Unit | 2353 / 2353 |
+| Vitest | shared 24, storefront 1843, admin 540 — all pass |
+| Playwright, whole suite, retries 0 | 1019 passed, 3 failed: `search.e2e.ts` "one Escape" (pre-existing, above); `product-page.e2e.ts` "a refused add leaves focus on the button" (passes 8 of 8 alone); and `search.e2e.ts` "/account still goes to the home page", which was **my mistake** — reverting my edit to the Escape test reverted that file's `/account` fix too. Re-applied and passing |
+| `ng lint storefront`, `npx eslint` on every e2e file this branch changed | clean |
+| `ng build storefront`, `ng build admin` | clean, no budget warnings |
+
