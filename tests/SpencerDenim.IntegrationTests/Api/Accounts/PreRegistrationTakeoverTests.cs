@@ -117,6 +117,15 @@ public sealed class PreRegistrationTakeoverTests(SqlServerDatabaseFixture sqlSer
 
         var confirmToken = await ReadLinkTokenAsync(factory, Templates.Confirmation, victim);
 
+        // The attacker uses their session before the reset. **This line is what makes the test able to
+        // fail**: the first version left it out, so the attacker's first account request came after the
+        // reset, was the first revalidation of that cookie, and was refused for that reason alone — the
+        // five-minute window it exists to close never opened, and the test passed on the unfixed code.
+        using (var attackerBefore = await attacker.GetAsync(new Uri("/api/account/orders", UriKind.Relative), Token))
+        {
+            Assert.Equal(HttpStatusCode.OK, attackerBefore.StatusCode);
+        }
+
         // The victim cannot sign in — they never chose this password — so they reset it.
         using var victimBrowser = CreateClient(factory);
 
