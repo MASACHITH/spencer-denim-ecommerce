@@ -13,10 +13,10 @@ namespace SpencerDenim.IntegrationTests.Api.Admin;
 /// <summary>
 /// Low stock on the dashboard (ADM-08) and the inventory report (ADM-19), against SQL Server.
 /// <para>
-/// <b>Stock is live, so these tests cannot hide in a year of their own.</b> They set the stock of six
+/// <b>Stock is live, so these tests cannot hide in a year of their own.</b> They set the stock of seven
 /// variants they choose — the lowest ids, which the order suites (who take from the top of the id range)
 /// do not touch — and restore every value afterwards. Assertions about the whole shop are made as
-/// <b>differences</b>: what the count was with all six well stocked, and what it is after.
+/// <b>differences</b>: what the count was with all seven well stocked, and what it is after.
 /// </para>
 /// <para>
 /// <b>The threshold is the variant's own <c>LowStockThreshold</c>, or the shop default when it has none.</b>
@@ -45,7 +45,7 @@ public sealed class AdminInventoryReportTests(SqlServerDatabaseFixture sqlServer
         await using var host = await StartAsync();
         using var client = await host.SignInAsync(Permissions.Dashboard.View, Permissions.Reports.View);
 
-        var variants = await ChooseVariantsAsync(6);
+        var variants = await ChooseVariantsAsync(7);
         foreach (var variant in variants)
         {
             await SetStockAsync(variant, onHand: 500, threshold: null);
@@ -63,6 +63,7 @@ public sealed class AdminInventoryReportTests(SqlServerDatabaseFixture sqlServer
         var ownLower = variants[3];
         var ownHigher = variants[4];
         var inactive = variants[5];
+        var ownHigherToo = variants[6];
 
         await SetStockAsync(atDefault, onHand: threshold, threshold: null);            // low
         await SetStockAsync(aboveDefault, onHand: threshold + 1, threshold: null);     // in stock
@@ -71,12 +72,17 @@ public sealed class AdminInventoryReportTests(SqlServerDatabaseFixture sqlServer
         await SetStockAsync(ownHigher, onHand: threshold + 4, threshold: threshold + 4); // low: its own is higher
         await SetStockAsync(inactive, onHand: 1, threshold: null, active: false);      // not listed
 
+        // A second variant low only by its own threshold. Without it, a rule that ignored the variant's own
+        // threshold would count ownLower instead of ownHigher and the total would still come out right
+        // (mutation m11 survived exactly that way).
+        await SetStockAsync(ownHigherToo, onHand: threshold + 2, threshold: threshold + 2); // low: its own is higher
+
         var after = await GetJsonAsync(client, LowStockUrl);
-        Assert.Equal(lowBefore + 2, after.GetProperty("totalCount").GetInt32());
+        Assert.Equal(lowBefore + 3, after.GetProperty("totalCount").GetInt32());
 
         // Every row shown obeys the rule and they are lowest first.
         var rows = after.GetProperty("rows").EnumerateArray().ToList();
-        Assert.Equal(Math.Min(10, lowBefore + 2), rows.Count);
+        Assert.Equal(Math.Min(10, lowBefore + 3), rows.Count);
         Assert.All(rows, row =>
         {
             var available = row.GetProperty("available").GetInt32();
@@ -92,12 +98,13 @@ public sealed class AdminInventoryReportTests(SqlServerDatabaseFixture sqlServer
         Assert.Equal("OutOfStock", await StatusOfAsync(client, empty));
         Assert.Equal("InStock", await StatusOfAsync(client, ownLower));
         Assert.Equal("LowStock", await StatusOfAsync(client, ownHigher));
+        Assert.Equal("LowStock", await StatusOfAsync(client, ownHigherToo));
         Assert.Null(await StatusOfAsync(client, inactive));
 
         var reportAfter = (await GetJsonAsync(client, InventoryUrl)).GetProperty("counts");
-        Assert.Equal(reportBefore.GetProperty("lowStock").GetInt32() + 2, reportAfter.GetProperty("lowStock").GetInt32());
+        Assert.Equal(reportBefore.GetProperty("lowStock").GetInt32() + 3, reportAfter.GetProperty("lowStock").GetInt32());
         Assert.Equal(reportBefore.GetProperty("outOfStock").GetInt32() + 1, reportAfter.GetProperty("outOfStock").GetInt32());
-        Assert.Equal(reportBefore.GetProperty("inStock").GetInt32() - 4, reportAfter.GetProperty("inStock").GetInt32());
+        Assert.Equal(reportBefore.GetProperty("inStock").GetInt32() - 5, reportAfter.GetProperty("inStock").GetInt32());
 
         // The report's LowStock filter is the dashboard's rule: the same count.
         var lowFiltered = await GetJsonAsync(client, $"{InventoryUrl}?status=LowStock&pageSize=1");
