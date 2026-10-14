@@ -198,6 +198,29 @@ internal sealed class CustomerAccountLockout(
     /// PR needed a custom user store. This class never materialises a user, so there is nothing to write
     /// back.
     /// </remarks>
+    /// <summary>
+    /// <c>AccessFailedCount</c> as the database holds it.
+    /// </summary>
+    /// <remarks>
+    /// <b>Nothing in the production path calls this, and that is the point.</b> It exists so the
+    /// mutation run can turn <see cref="RecordFailureAsync"/>'s atomic increment into the
+    /// read-modify-write Identity does — which is the bug #146 measured as 60 parallel failures leaving a
+    /// count of 4 — and watch <c>Thirty_parallel_wrong_passwords_still_lock_the_account</c> go red. A
+    /// guard whose test has never been seen to fail is a guard nobody has checked.
+    /// </remarks>
+    internal async Task<int> ReadFailureCountAsync(int userId, CancellationToken cancellationToken)
+    {
+        var values = await dbContext.Database
+            .SqlQuery<int>($"""
+                SELECT [AccessFailedCount] AS [Value]
+                FROM [identity].[Users]
+                WHERE [Id] = {userId} AND [UserType] = {(byte)UserType.Customer}
+                """)
+            .ToListAsync(cancellationToken);
+
+        return values.Count == 1 ? values[0] : 0;
+    }
+
     private async Task<DateTime?> ReadLockoutEndAsync(int userId, CancellationToken cancellationToken)
     {
         var values = await dbContext.Database
