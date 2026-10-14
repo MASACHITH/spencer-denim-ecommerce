@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using SpencerDenim.Application.Abstractions.Time;
 using SpencerDenim.Application.Admin.Auditing;
+using SpencerDenim.Application.Admin.Customers;
 using SpencerDenim.Application.Admin.Users.Abstractions;
 using SpencerDenim.Application.Catalog;
 using SpencerDenim.Application.Catalog.Abstractions;
@@ -13,6 +14,7 @@ using SpencerDenim.Application.Catalog.Admin.Products.Abstractions;
 using SpencerDenim.Application.Content.Abstractions;
 using SpencerDenim.Application.Content.Admin.Abstractions;
 using SpencerDenim.Application.Marketing.Newsletter;
+using SpencerDenim.Application.Marketing.Newsletter.Admin;
 using SpencerDenim.Application.Marketing.Promotions.Abstractions;
 using SpencerDenim.Application.Ops.Email;
 using SpencerDenim.Application.Ops.Email.Abstractions;
@@ -24,6 +26,7 @@ using SpencerDenim.Application.Sales.Payments.Abstractions;
 using SpencerDenim.Application.Sales.Wishlist.Abstractions;
 using SpencerDenim.Application.Settings.Abstractions;
 using SpencerDenim.Infrastructure.Admin.Auditing;
+using SpencerDenim.Infrastructure.Admin.Customers;
 using SpencerDenim.Infrastructure.Admin.Users;
 using SpencerDenim.Infrastructure.Catalog;
 using SpencerDenim.Infrastructure.Content;
@@ -331,6 +334,11 @@ public static class DependencyInjection
         // auto-deliver job read.
         services.AddScoped<IAdminOrderReader, AdminOrderReader>();
         services.AddScoped<IOrderFulfilmentStore, OrderFulfilmentStore>();
+
+        // W3-07: the admin customers screen (ADM-15) and the newsletter subscriber list (ADM-21). Reads,
+        // plus the export's own audit row, which goes through IAuditLogWriter like every other.
+        services.AddScoped<IAdminCustomerReader, AdminCustomerReader>();
+        services.AddScoped<INewsletterSubscriberReader, NewsletterSubscriberReader>();
 
         // W3-04b / doc 11 P10 flow A: cancelling an unpaid order, for staff and for the shopper's own
         // order link. Its own store rather than a member of IOrderFulfilmentStore, which touches no stock.

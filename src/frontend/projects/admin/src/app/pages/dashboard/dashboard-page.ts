@@ -18,10 +18,12 @@ import { AdminAuthApi } from '../../core/auth/admin-auth-api';
         <a class="panel__link" routerLink="/orders">Orders</a>
         <a class="panel__link" routerLink="/orders/bank-transfers">Bank transfers</a>
         <a class="panel__link" routerLink="/orders/couriers">Couriers</a>
+        <a class="panel__link" routerLink="/customers">Customers</a>
         <a class="panel__link" routerLink="/products">Products</a>
         <a class="panel__link" routerLink="/catalog">Departments and categories</a>
         <a class="panel__link" routerLink="/marketing/promo-codes">Promo codes</a>
         <a class="panel__link" routerLink="/marketing/sale-campaigns">Sale campaigns</a>
+        <a class="panel__link" routerLink="/marketing/newsletter">Newsletter subscribers</a>
         <a class="panel__link" routerLink="/settings">Settings</a>
         <a class="panel__link" routerLink="/audit-log">Audit log</a>
         <a class="panel__link" routerLink="/users">Staff users</a>

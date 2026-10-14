@@ -8,6 +8,8 @@ using SpencerDenim.Application.Admin.Authentication;
 using SpencerDenim.Application.Admin.Auditing;
 using SpencerDenim.Application.Admin.Auditing.Contracts;
 using SpencerDenim.Application.Admin.CurrentUser;
+using SpencerDenim.Application.Admin.Customers;
+using SpencerDenim.Application.Admin.Customers.Contracts;
 using SpencerDenim.Application.Catalog.Admin;
 using SpencerDenim.Application.Catalog.Admin.Contracts;
 using SpencerDenim.Application.Catalog.Admin.Products;
@@ -30,6 +32,7 @@ using SpencerDenim.Application.Content.Home;
 using SpencerDenim.Application.Content.Pages;
 using SpencerDenim.Application.Diagnostics.Ping;
 using SpencerDenim.Application.Marketing.Newsletter;
+using SpencerDenim.Application.Marketing.Newsletter.Admin;
 using SpencerDenim.Application.Sales.Cart;
 using SpencerDenim.Application.Sales.Orders.Admin;
 using SpencerDenim.Application.Sales.Orders.Contracts;
@@ -422,6 +425,28 @@ public static class DependencyInjection
         services.AddScoped<
             IQueryHandler<ListCouriersQuery, IReadOnlyList<AdminCourierDto>>,
             ListCouriersQueryHandler>();
+
+        // The admin customers screen (W3-07, ADM-15, doc 11 P11 step 16): read only.
+        services.AddScoped<
+            IQueryHandler<GetAdminCustomersQuery, AdminCustomerListPage>,
+            GetAdminCustomersQueryHandler>();
+
+        services.AddScoped<
+            IQueryHandler<GetAdminCustomerQuery, AdminCustomerDetailDto?>,
+            GetAdminCustomerQueryHandler>();
+
+        services.AddScoped<
+            IQueryHandler<GetAdminCustomerOrdersQuery, AdminCustomerOrderPage?>,
+            GetAdminCustomerOrdersQueryHandler>();
+
+        // The newsletter subscriber list and its audited export (W3-07, ADM-21, doc 11 P15 step 4).
+        services.AddScoped<
+            IQueryHandler<GetNewsletterSubscribersQuery, NewsletterSubscriberPage>,
+            GetNewsletterSubscribersQueryHandler>();
+
+        services.AddScoped<
+            ICommandHandler<ExportNewsletterSubscribersCommand, NewsletterExportFile>,
+            ExportNewsletterSubscribersCommandHandler>();
 
         services.AddScoped<
             ICommandHandler<TransitionOrderCommand, TransitionOrderResult>,
