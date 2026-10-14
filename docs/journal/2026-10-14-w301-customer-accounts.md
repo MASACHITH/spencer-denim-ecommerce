@@ -230,38 +230,104 @@ a decision for the task that owns it. It is still open.
 
 ## Tests, and the mutations that killed them
 
-Every number below is from a run in this worktree.
+Every number below is from a run in this worktree, today.
+
+| Suite | Before | After | How the "before" was obtained |
+|---|---|---|---|
+| Release build warnings | 0 | **0** | measured here, on the base |
+| Unit | 2,278 | **2,353** | **the task brief's figure, not re-measured** |
+| Integration | 1,558 | see below | **the brief's figure, not re-measured** |
+| Storefront Vitest | 1,529 (55 files) | **1,830 (70 files)** | measured on the base before any front-end file changed |
+| Admin Vitest | 540 | 540, untouched | the brief's figure; the project was not touched |
+| Shared Vitest | — | 24, untouched | measured |
+| Playwright | 1,011 | **not run** | the brief's figure |
+
+**Two of those "before" numbers were not re-measured, and that is worth saying plainly** rather than
+presenting the lot as measurements: the unit and integration baselines are the brief's own figures. By the
+time it was worth checking them, the branch had already moved and the machine's disk had become the
+binding constraint (see below), so re-running `main`'s suites would have cost a working tree and a
+baseline nobody needed. The *after* figures are all from runs in this worktree.
+
+**Playwright was not run at all.** No shared stub was touched, so the brief's rule ("run the whole
+Playwright suite if you touch a shared stub") did not apply — said here rather than left to be assumed.
+
+### The full unfiltered integration run was not completed, and why
+
+**This is the one number this branch owes and does not have.** The brief asks for the integration
+assembly alone and unfiltered (~18–27 min). It was started and had to be abandoned: `C:` fell from
+227 MB free to **13 MB** while the run was seeding, and finishing it would have taken the machine to zero.
+The run was stopped and the one database it had created
+(`SpencerDenim_Test_94cdbcbc…`, created 12:17:47 and absent from the list recorded before this task began)
+was dropped, which is the only database this branch has dropped.
+
+**What was run instead, in slices, and what it showed.**
+
+| Slice | Result |
+|---|---|
+| `CheckoutEndpointTests`, `EmailOutboxSendingTests`, `AppUserAuditTests`, `CustomerAddressSchemaTests` | **55/55** |
+| `IntegrationTests.Identity`, `IntegrationTests.Ops`, `Api.Accounts`, `Api.Admin.AdminAuthEndpointTests` | 242/252, **all 10 failures disk-space exceptions** |
+
+The first slice is the regression surface: the four shared files, the `OrderConfirmationDto` change, the
+G-03 rule and the new migration against a real database. The second is everything near the shared
+boundary, including Tharanga's role seeding and the admin sign-in, so that "did W3-01 break the admin
+side" has an answer.
+
+**The ten failures are provably the disk and not the code**, which is worth quoting rather than asserting:
+
+```
+Could not allocate a new page for database 'SpencerDenim_Deploy_…' because of insufficient
+disk space in filegroup 'PRIMARY'.
+```
+```
+The transaction log for database 'SpencerDenim_Test_…' is full due to 'ACTIVE_TRANSACTION'.
+```
+
+They are `DefaultRoleSeedUpgradeTests` (6) and `AdminAlertsPlanTests` (4) — the two groups that create
+extra databases of their own (`FreshDeployment`) or hold long transactions, which is exactly what runs out
+of space first.
+
+**What the tester should therefore do first**: free space on `C:`, then run the assembly unfiltered. Until
+that run exists, **nobody has shown that the other 1,558 integration tests still pass on this branch** —
+only that the 55 nearest to it do, and that nothing in the 242 failed for a reason other than disk.
 
 ### Backend, by file
 
 | File | Tests |
 |---|---|
 | `Identity/CustomerAddressSchemaTests` | 6 |
-| `Api/Accounts/CustomerAuthEndpointTests` | 34 |
-| `Api/Accounts/GuestOrderLinkingTests` | 14 |
+| `Api/Accounts/CustomerAuthEndpointTests` | 35 (34 measured + the one added after) |
+| `Api/Accounts/GuestOrderLinkingTests` | 15 (14 measured + one) |
 | `Api/Accounts/CustomerPasswordEndpointTests` | 12 |
 | `Api/Accounts/CustomerAddressEndpointTests` | 10 |
-| `Api/Accounts/CustomerOrderHistoryTests` | 13 |
+| `Api/Accounts/CustomerOrderHistoryTests` | 14 (13 measured + one) |
 | `Api/Accounts/CustomerSignInRaceTests` | 5 |
 | `Api/Accounts/CustomerLockoutConcurrencyTests` | 3 |
 | `Api/Accounts/CustomerAddressConcurrencyTests` | 1 |
+| `UnitTests/.../CustomerAccountTokenTests` | 26 |
+| `UnitTests/.../AccountEmailComposerTests` | 15 |
+| `UnitTests/.../CustomerAccountValidatorTests` | 27 |
+| `UnitTests/Architecture/CustomerPasswordHintConventionTests` | 5 |
+
+The three files marked "+ one" were measured at the figure shown in brackets and then gained
+exactly one test each, which were run together and passed (3/3). **That is a measured base plus a
+measured addition, not a count from arithmetic** — the brief notes that a count from arithmetic has
+been wrong five times on this project, and the unit figures above were each obtained by running that
+one file and reading the number off.
 
 ### The HTTP race tests could not fail, and that is worth recording
 
 `CustomerSignInRaceTests` and `CustomerAddressEndpointTests` fire concurrent requests through
-`WebApplicationFactory` behind a `TaskCompletionSource` gate. Both **survived** the mutations they were
-written for:
+`WebApplicationFactory` behind a gate. Both **survived** the mutations they were written for: replacing
+`CustomerAccountLockout`'s atomic `SET [AccessFailedCount] = [AccessFailedCount] + 1` with a
+read-then-write — the exact bug #146 measured as 60 parallel failures leaving a count of 4 — and removing
+`sp_getapplock` from `CustomerAddressStore`.
 
-- replacing `CustomerAccountLockout`'s atomic `SET [AccessFailedCount] = [AccessFailedCount] + 1` with a
-  read-then-write — the exact bug #146 measured as 60 parallel failures leaving a count of 4;
-- removing `sp_getapplock` from `CustomerAddressStore`.
-
-Tried, in order, and each one still green: 8 racers instead of 4; `RunContinuationsAsynchronously` on the
-gate (a plain `TaskCompletionSource` runs its continuations synchronously on the thread that calls
-`SetResult`, so the tabs resume one after another); `Task.Run` per caller; and a 150 ms delay injected
-into the address `COUNT` through a `DbCommandInterceptor` — #146's own technique, "with delayed token
-writes to force the worst case". Diagnostic output from the address race under mutation:
-`statuses=[409,201,409,409,409,409,409,409]`. The requests in that harness do not overlap.
+Tried, in order, each still green: 8 racers instead of 4; `RunContinuationsAsynchronously` on the gate (a
+plain `TaskCompletionSource` runs its continuations *synchronously on the thread that calls `SetResult`*,
+so the tabs resume one after another); `Task.Run` per caller; and a 150 ms delay injected into the address
+`COUNT` through a `DbCommandInterceptor` — #146's own technique, "with delayed token writes to force the
+worst case". Diagnostic output from the address race under mutation:
+`statuses=[409,201,409,409,409,409,409,409]`. **The requests in that harness do not overlap.**
 
 So two tests drive the stores from parallel DI scopes, each with its own `AppDbContext` and connection:
 
@@ -270,7 +336,7 @@ So two tests drive the stores from parallel DI scopes, each with its own `AppDbC
   for.
 - **`CustomerAddressConcurrencyTests`** — eight concurrent callers cannot exceed the cap.
 
-### Mutation results
+### Mutations: 22 run, 16 killed, 6 survived
 
 Killed:
 
@@ -278,36 +344,90 @@ Killed:
 |---|---|
 | remove the post-verification lockout re-check | `A_correct_password_is_refused_if_the_account_locks_while_it_is_being_verified` |
 | atomic counter → read-then-write | `Parallel_failures_cannot_outrun_the_counter` |
-| report the lockout to every attempt | 3 tests, incl. `One_lockout_is_audited_once_however_many_attempts_raced` |
+| report the lockout to every attempt | 3, incl. `One_lockout_is_audited_once_however_many_attempts_raced` |
 | remove the dummy password hash | `An_unknown_address_costs_about_what_a_wrong_password_costs` |
-| address write ignores the owner | `One_customer_cannot_touch_anothers_address` |
-| drop the ten-address cap | 3 tests |
+| an address write ignores the owner | `One_customer_cannot_touch_anothers_address` |
+| drop the ten-address cap | 3, incl. `Eight_concurrent_callers_cannot_exceed_the_cap` |
 | D5 drops `CustomerUserId IS NULL` | `Confirming_links_the_guest_orders_under_that_address_and_nothing_else` |
-| a customer flow can see a staff row | `A_staff_members_own_password_does_not_sign_them_in_as_a_customer`, `Sign_in_refuses_four_different_situations_with_one_identical_reply` |
-| registration surfaces the taken case | `A_taken_customer_address_is_told_and_a_staff_address_is_not`, `Registration_answers_identically_for_a_free_a_taken_and_a_staff_address` |
+| D5 ignores the token's stored address | `A_link_for_an_address_the_account_no_longer_uses_confirms_nothing` |
+| a stale link spends the stored token | `Asking_for_a_new_link_invalidates_the_previous_one` |
+| a customer flow can see a staff row | 4, incl. `A_staff_password_cannot_be_reset_through_the_customer_endpoint` |
+| a customer flow can see a deactivated row | `A_deactivated_customer_cannot_sign_in_and_their_session_ends` |
 | a reset leaves the lockout | `A_reset_clears_a_lockout` |
+| a refused password spends the link | `A_refused_password_leaves_the_link_usable` |
+| registration surfaces the taken case | 2, incl. `Registration_answers_identically_for_a_free_a_taken_and_a_staff_address` |
+| the history ignores the owner | 3, incl. `A_customer_sees_only_their_own_orders` |
+| the tracking block is always built | `An_unshipped_order_has_no_tracking_block`, `A_pickup_order_reads_as_ready_for_collection_and_has_nothing_to_track` |
 
-Not killed, with the reason — these are the ones to read:
+Two more on the front end: untying the password hint from its field kills
+`states the password rule up front, tied to the field` and `reads the refusal before the rule once there
+is one`; changing the front-end copy of the rule from 10 to 8 kills
+`The_storefronts_password_hint_is_the_servers_own_sentence`.
+
+**Survived — these are the ones to read:**
 
 | Mutation | Why it survived |
 |---|---|
-| remove `sp_getapplock` from the address writes | **No test proves this lock is load-bearing.** The cap holds without it in every run. Measured: the store-level race takes **4 s** with the lock and **15–17 s** without, which is *consistent with* contention being resolved by blocking and retrying rather than by the lock. That is a hypothesis from a timing, not a verified mechanism. The lock stays: it is the deterministic mechanism, and being correct by deadlock-and-retry is a worse way to be correct. |
-| D5 matches `Email` instead of `EmailNormalized` | **Behaviourally equivalent in this database.** The collation is `Latin1_General_100_CI_AS_SC`, so `=` is case-insensitive and the two columns answer identically for any value differing only in case. The column choice is still right because it does not depend on a collation nobody will remember — that is an argument, not a test, and the test's docblock now says so instead of claiming coverage. |
-| D5 ignores the token's stored address | **The branch is unreachable in this build**, because doc 11 P11 step 10's email change is not built, so an account's address can never move after a token is minted. Defensive code for a flow that does not exist. |
+| remove `sp_getapplock` from the address writes | **No test proves this lock is load-bearing.** The cap holds without it in every run. Measured: the store-level race takes **4 s** with the lock and **15–17 s** without, which is *consistent with* contention being resolved by blocking and retrying rather than by the lock. That is a hypothesis from a timing, not a verified mechanism. The lock stays — being correct by deadlock-and-retry is a worse way to be correct. |
+| D5 matches `Email` instead of `EmailNormalized` | **Behaviourally equivalent in this database.** The collation is `Latin1_General_100_CI_AS_SC`, so `=` is case-insensitive and the two columns answer identically for any value differing only in case. The column choice is still right because it does not depend on a collation nobody will remember — an argument, not a test, and the test's docblock now says so instead of claiming coverage. |
+| the confirmation claim's row count is ignored | **The parallel half is not exercised.** Sequentially the behaviour is identical (the second redemption finds no row). `Twelve_parallel_redemptions_of_one_link_confirm_once` should catch it and does not, for the HTTP non-overlap reason above. The claim is the same pattern #146 proved on the staff side. |
 | the second lockout statement drops `LockoutEnabled = 1` | **Equivalent mutant.** The *first* statement still has the guard, so an exempt account's count never leaves 0 and `0 + 1 >= 5` is never true. |
 | the first lockout statement drops `LockoutEnd <= now` | **Equivalent under what is asserted.** It makes `AccessFailedCount` move on a locked account; `LockoutEnd` does not, and the end time is what the tests assert. The difference would be that after a lock expired the account would start closer to the next one — not a stated rule, so not asserted. |
+| the reset's explicit `UpdateSecurityStampAsync` | **Redundant, and the property is still covered.** `UserManager.AddPasswordAsync` rotates the stamp itself, so removing the explicit call changes nothing observable and `Resetting_a_password_replaces_it_and_ends_every_other_session` still passes. The explicit call is kept as a guard against a future change to that path. |
+| the history loses its key tie-break | **The engine happens to be stable here.** Even with five orders sharing a `PlacedAtUtc` to the millisecond, `OFFSET … FETCH` returns them in a consistent sequence on this table size and plan. The tie-break makes the order deterministic *by contract* rather than by the optimiser's choice, which is not something a behavioural test can show on this engine. |
+
+One mutation was replaced rather than counted: the first attempt at "a refused password spends the link"
+added the spend *before* the rollback, which undid it, so it was inert. The corrected version commits and
+kills the test.
 
 Two docblocks were rewritten rather than left overclaiming, which is the "seventeen wrong comments" rule
 applied to my own.
 
-### A test-setup trap worth recording
+### Two test-setup traps worth recording
 
-`UserManager.CreateAsync` **forces `LockoutEnabled = true`** on every new user, because
-`IdentityOptions.Lockout.AllowedForNewUsers` is true. Setting the property on the instance does nothing.
-`An_account_exempt_from_lockout_is_never_reported_as_locked` failed on its first run because the product
-was right and the test had been handed an account that was not exempt at all.
+1. **`UserManager.CreateAsync` forces `LockoutEnabled = true`** on every new user, because
+   `IdentityOptions.Lockout.AllowedForNewUsers` is true. Setting the property on the instance does
+   nothing. `An_account_exempt_from_lockout_is_never_reported_as_locked` failed on its first run because
+   the product was right and the test had been handed an account that was not exempt at all.
+2. **A `traceId` is on every RFC 9457 problem document**, so two refusals can only be compared with it
+   removed. The enumeration tests compare whole bodies on purpose — four 401s with four different
+   sentences would be the same leak in a uniform — and a named-field comparison would miss a field added
+   later.
 
----
+## The machine ran out of disk, and what that cost
+
+Part way through the mutation runs the integration suite began failing **every test in 119 ms** with
+
+```
+MODIFY FILE encountered operating system error 112 (There is not enough space on the disk)
+while attempting to expand the physical file 'C:\Users\sachithi\SpencerDenim_Test_<guid>.mdf'.
+CREATE DATABASE failed.
+```
+
+That is the fixture's `CREATE DATABASE` failing, not a test failing — worth recognising on sight, because
+a hundred red tests in a tenth of a second looks like a catastrophic regression and is nothing of the
+kind. `C:` was at **100%, 227 MB free of 318 GB**, measured with `Get-PSDrive`.
+
+**No database was dropped.** `sys.databases` holds exactly the twenty `SpencerDenim*` databases this
+branch started with — the ten `SpencerDenim_Test_*` (nine plus the orphan the brief names), the eight
+`SpencerDenim_W113_*`, `SpencerDenim_Dev` and `SpencerDenim_W103_Tester` — listed and recorded before any
+work began and checked again afterwards. The fixture cleans up after itself; the databases were never the
+problem.
+
+**What this task did contribute**, and could not clean up: `ApiFactory` creates a Data Protection
+key-ring directory per test host and `SqlServerDatabaseFixture` creates a media volume per run, both under
+the user's `Temp`. Across today's runs that left **991 `sd-it-dp-*` directories and a 122 MB
+`sd-media-tests`** — about 1.9 GB of `Temp` in all. Removing them was declined by the permission system as
+a sweep of a shared scratch area, and **that was not worked around**. It is a small share of 318 GB, but
+it is this task's share, and a future run will leave the same trail.
+
+**Worth fixing properly, by whoever owns the harness.** `ApiFactory` already deletes its key-ring
+directory on dispose and the fixture deletes its media root, so the 991 leftovers are from runs that were
+*killed* — which a mutation harness does often. A per-run parent directory, or a sweep of `sd-it-dp-*`
+older than a day at fixture start, would stop it accumulating.
+
+**The practical consequence for the tester:** one test database needs roughly 100 MB of headroom. If the
+suite fails instantly with error 112, free space before reading anything into the result.
 
 ## What is not built, and why
 
@@ -360,3 +480,17 @@ Listed in the task report in full. The short version:
    `SpencerDenim_Dev`, `SpencerDenim_W103_Tester`. Nothing was dropped.
 3. **"Run the whole Playwright suite if you touch a shared stub"** — no shared stub was touched, so it
    was not run. Said plainly rather than silently.
+4. **The brief's "two string literals with no producer" is right, and its instruction to read the guard
+   first was worth following.** `OrderEmailOutboxTests` asserted the declared code set was exactly the six
+   order codes *and* looped over every declared code asserting `BodyIsClearedOnSend` is **false** — so
+   declaring `PasswordReset` would have made that loop contradict the very assertion below it that says
+   the rule must cover it. The test had to be restructured, not merely extended, and its own remark
+   prescribes the restructuring.
+5. **`app.routes.ts`'s maintenance note is incomplete.** It tells the next person to delete their entry
+   from `UNBUILT_PATHS`. There are two other readers: `app.routes.spec.ts`'s `linkedFromTheShell`, and
+   **`ContentPageSlugRulesTests` in the C# unit suite**, which parses the array out of the TypeScript file
+   and whose regex did not allow the type annotation an empty array needs. A front-end-only run cannot see
+   the second one.
+6. **`resend-confirmation` and `logout` both require a session**, which the brief's endpoint summary did
+   not say. Resend is therefore offered on the profile page to an unconfirmed customer, and nowhere a
+   signed-out visitor can reach.
