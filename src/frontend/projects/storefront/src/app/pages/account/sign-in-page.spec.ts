@@ -209,7 +209,7 @@ describe('SignInPage (ACC-01)', () => {
 
       expect(TestBed.inject(AccountStore).customer()).toEqual(CUSTOMER);
       // And asks nothing more: the response was the session.
-      expect(http.match((request) => request.url === '/api/account/me')).toEqual([]);
+      expect(http.match((request) => request.url === '/api/account/session')).toEqual([]);
 
       http.match((request) => request.url === CartApi.url).forEach((request) => request.flush(null));
     });

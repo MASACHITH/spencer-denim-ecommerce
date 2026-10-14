@@ -53,6 +53,11 @@ export interface CustomerSessionDto {
  * the server says "queued" and never "sent". W3-02 removed "we will email your order number" from
  * checkout for the second reason and `checkout-page.spec.ts` pins its absence.
  */
+/** `GET /api/account/session`: always 200, `customer` null for a visitor who is not signed in. */
+export interface CustomerSessionStateDto {
+  readonly customer: CustomerSessionDto | null;
+}
+
 export interface AccountMessageDto {
   readonly message: string;
 }

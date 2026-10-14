@@ -130,7 +130,7 @@ describe('customerSignedIn (W3-01)', () => {
   it('reads the session through the store, so the guard and the header share one request', async () => {
     const pending = verdict('/account/profile');
 
-    http.expectOne('/api/account/me').flush(CUSTOMER);
+    http.expectOne('/api/account/session').flush({ customer: CUSTOMER });
 
     expect(await pending).toBe(true);
     expect(TestBed.inject(AccountStore).customer()).toEqual(CUSTOMER);
@@ -145,7 +145,7 @@ describe('customerSignedIn (W3-01)', () => {
   it('redirects rather than throwing when the session read fails', async () => {
     const pending = verdict('/account/orders');
 
-    http.expectOne('/api/account/me').flush(null, { status: 500, statusText: 'Server Error' });
+    http.expectOne('/api/account/session').flush(null, { status: 500, statusText: 'Server Error' });
 
     expect(await pending).toBeInstanceOf(UrlTree);
   });

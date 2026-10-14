@@ -40,7 +40,7 @@ import { AccountStore } from './account.store';
  *
  * On a cold load this guard runs during the first navigation, and the site header schedules its own read
  * from `afterNextRender`. `AccountStore.load()` is single-flight: whichever asks first makes the request
- * and the other gets the same observable, so there is one `GET /api/account/me` and no window in which
+ * and the other gets the same observable, so there is one `GET /api/account/session` and no window in which
  * the two disagree. Checked against `app.config.ts`: `provideRouter(routes, withComponentInputBinding())`
  * sets no `onSameUrlNavigation`, so the default `'ignore'` applies and re-navigating to the same URL does
  * not re-run this guard — and if it did, the store would answer it from the memo without a request.

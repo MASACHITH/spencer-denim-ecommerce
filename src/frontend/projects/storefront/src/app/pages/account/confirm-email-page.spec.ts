@@ -236,7 +236,7 @@ describe('ConfirmEmailPage (ACC-01)', () => {
       flushBag();
 
       expect(TestBed.inject(AccountStore).customer()).toEqual(CUSTOMER);
-      expect(http.match((candidate) => candidate.url === '/api/account/me')).toEqual([]);
+      expect(http.match((candidate) => candidate.url === '/api/account/session')).toEqual([]);
     });
 
     /**

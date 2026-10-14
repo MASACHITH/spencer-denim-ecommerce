@@ -82,7 +82,7 @@ import { privatePage } from '../../core/platform/private-page';
  *
  * Guest orders placed with the same address appear **only after the address is confirmed** (doc 08 §3.1
  * D5). That is specified behaviour and not a gap, so an unconfirmed customer is told it on this page —
- * {@link AccountNav} draws the note from `emailConfirmed` on `GET /api/account/me` — rather than left to
+ * {@link AccountNav} draws the note from `emailConfirmed` on `GET /api/account/session` — rather than left to
  * wonder why a list is short. Confirmation gates nothing else: doc 11 §7 G-24 lets them sign in, shop and
  * check out.
  */

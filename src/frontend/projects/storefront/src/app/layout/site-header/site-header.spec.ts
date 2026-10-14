@@ -150,12 +150,8 @@ describe('SiteHeader shell (GLB-04, GLB-05)', () => {
    */
   function flushSession(session: CustomerSessionDto | null): void {
     TestBed.inject(HttpTestingController)
-      .match((request) => request.url === `${AccountApi.url}/me`)
-      .forEach((request) =>
-        session === null
-          ? request.flush(null, { status: 401, statusText: 'Unauthorized' })
-          : request.flush(session),
-      );
+      .match((request) => request.url === `${AccountApi.url}/session`)
+      .forEach((request) => request.flush({ customer: session }));
   }
 
   /** Answers the bag read the header makes on its own behalf, if one is outstanding. */
@@ -472,7 +468,7 @@ describe('SiteHeader shell (GLB-04, GLB-05)', () => {
 
       expect(
         TestBed.inject(HttpTestingController).match(
-          (request) => request.url === `${AccountApi.url}/me`,
+          (request) => request.url === `${AccountApi.url}/session`,
         ),
       ).toEqual([]);
     });

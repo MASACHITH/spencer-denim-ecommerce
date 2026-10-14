@@ -3450,6 +3450,16 @@ function handleCheckout(request, response, url) {
     }
   }
 
+  // W3-01: the header asks who is signed in on every page view. The real API answers a visitor with no
+  // session 200 `{ customer: null }` (`GET /api/account/session`), and so does this stub — without it
+  // every page's first browser request was a 404, which the home page's "no console errors" test reads
+  // as a broken page. The stub has no accounts, so nobody is ever signed in here.
+  if (url.pathname === '/api/account/session') {
+    response.setHeader('Cache-Control', 'no-store');
+    response.end(JSON.stringify({ customer: null }));
+    return true;
+  }
+
   // Test-only (W3-01): an order that has already shipped, with a courier tracking block, straight into the
   // placed-orders map. **Why not the real checkout flow:** nothing in the storefront can move an order to
   // Shipped — that is a staff action in the admin app — so a real placement could never reach the state

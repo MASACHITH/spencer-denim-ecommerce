@@ -210,7 +210,7 @@ export class MobileNav {
   /**
    * The signed-in customer, or null (W3-01).
    *
-   * Null on the server for everyone and null until `GET /api/account/me` answers, which is why the
+   * Null on the server for everyone and null until `GET /api/account/session` answers, which is why the
    * `@else` branch in the template — "Sign in / Register" — is both the server's markup and the
    * signed-out state. `AccountStore` keeps "nobody has asked" and "signed out" apart, so this drawer
    * never greets somebody and then takes it back.

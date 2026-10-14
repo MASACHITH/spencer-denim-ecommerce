@@ -191,7 +191,7 @@ export class SignInPage {
    * "You are already signed in", or null.
    *
    * Only ever non-null once the server has answered, so it is null on the server for everyone and null
-   * in the browser until `GET /api/account/me` comes back. It is a `status` and not an `alert`: being
+   * in the browser until `GET /api/account/session` comes back. It is a `status` and not an `alert`: being
    * signed in is not a problem.
    */
   protected readonly signedInNote = computed(() => {

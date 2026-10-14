@@ -11,7 +11,7 @@ import { CustomerSessionDto } from './account.model';
  * - `unknown` — nobody has asked yet. **This is the state the server renders in, for everyone**, and it
  *   is not the same as `signedOut`: the difference is the whole of why the header does not draw a
  *   "Sign in" link on the server and then replace it with a name.
- * - `loading` — `GET /api/account/me` is in flight. Still not `signedOut`.
+ * - `loading` — `GET /api/account/session` is in flight. Still not `signedOut`.
  * - `signedIn` / `signedOut` — the answer came back.
  */
 export type AccountPhase = 'unknown' | 'loading' | 'signedIn' | 'signedOut';
@@ -52,7 +52,7 @@ export type AccountPhase = 'unknown' | 'loading' | 'signedIn' | 'signedOut';
  * same `Observable` through `shareReplay(1)`, and callers after it resolves get the cached answer with
  * no request at all. That is not a micro-optimisation — it is what stops the defect the brief names.
  * On a cold load the signed-in guard runs *during the first navigation* and the header's own read is
- * scheduled by `afterNextRender`, so without this there would be two `GET /api/account/me` calls racing
+ * scheduled by `afterNextRender`, so without this there would be two `GET /api/account/session` calls racing
  * each other, and the loser's answer would arrive after the winner's and overwrite it. With it there is
  * exactly one request however many callers there are, and `onSameUrlNavigation` is not involved: the
  * router's default is `'ignore'`, so re-navigating to the same URL does not re-run the guard, and the
@@ -130,8 +130,9 @@ export class AccountStore {
     // the order reversed the `tap` runs on the error branch's substituted `null` as well, so a 500 or an
     // offline browser went through `accept(null)` and became `signedOut` — the confident wrong answer
     // the `isSignedOut` docblock above is about, produced by the very code meant to avoid it.
-    this.inFlight = this.api.me().pipe(
-      tap((customer: CustomerSessionDto) => this.accept(customer)),
+    this.inFlight = this.api.session().pipe(
+      map((state) => state.customer),
+      tap((customer: CustomerSessionDto | null) => this.accept(customer)),
       catchError((error: unknown) => {
         // `signedOut` covers both "no cookie" and "the cookie names an account that is no longer an
         // active customer", which the server deliberately answers identically so the shell does not

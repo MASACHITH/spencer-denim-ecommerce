@@ -443,7 +443,7 @@ export class SiteHeader {
   /**
    * The signed-in customer, or null (W3-01, ACC-01).
    *
-   * Null on the server for everyone, and null in the browser until `GET /api/account/me` answers. It is
+   * Null on the server for everyone, and null in the browser until `GET /api/account/session` answers. It is
    * **not** read as "signed out": `AccountStore` keeps `unknown` and `signedOut` apart, so this header
    * never draws a greeting it has to take back, and never claims a shopper is signed out because the
    * read is still in flight.
@@ -495,7 +495,7 @@ export class SiteHeader {
   constructor() {
     // **The one read of who is signed in, and it happens after the first render.** `AccountStore.load`
     // is single-flight, so this and the signed-in route guard — which runs *during* the first navigation
-    // on a cold load — are one `GET /api/account/me` rather than two racing each other, whichever asks
+    // on a cold load — are one `GET /api/account/session` rather than two racing each other, whichever asks
     // first. `afterNextRender` so it does not compete with the catalogue calls the first paint needs,
     // and so it never runs during a server render: there is no cookie to read there, and a request made
     // then would answer 401 for every visitor.

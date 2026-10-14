@@ -115,3 +115,14 @@ internal sealed record CustomerSessionResponse(
 internal sealed record CustomerEmailConfirmedResponse(
     CustomerSessionResponse Customer,
     IReadOnlyList<string> LinkedOrderNumbers);
+
+/// <summary>
+/// <c>GET /api/account/session</c>: the signed-in customer, or <c>null</c> for a visitor who is not signed in.
+/// </summary>
+/// <remarks>
+/// <b>A 200 either way</b>, because the storefront header asks on every page view and being signed out
+/// is the ordinary state of most visitors, not an error. <c>/me</c>'s 401 for the same visitor is a
+/// failed resource load in the browser's console on every page — the home page's "no console errors"
+/// browser test caught it once the header started asking (W3-01 round 2).
+/// </remarks>
+internal sealed record CustomerSessionStateResponse(CustomerSessionResponse? Customer);

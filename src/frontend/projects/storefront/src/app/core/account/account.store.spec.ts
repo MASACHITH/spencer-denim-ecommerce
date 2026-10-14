@@ -84,14 +84,14 @@ describe('AccountStore (ACC-01)', () => {
       store.load().subscribe((customer) => answers.push(customer));
       store.load().subscribe((customer) => answers.push(customer));
 
-      http.expectOne('/api/account/me').flush(CUSTOMER);
+      http.expectOne('/api/account/session').flush({ customer: CUSTOMER });
 
       expect(answers).toEqual([CUSTOMER, CUSTOMER, CUSTOMER]);
     });
 
     it('answers a later caller from the read that already happened, with no request at all', () => {
       store.load().subscribe();
-      http.expectOne('/api/account/me').flush(CUSTOMER);
+      http.expectOne('/api/account/session').flush({ customer: CUSTOMER });
 
       let answered: CustomerSessionDto | null | undefined;
       store.load().subscribe((customer) => (answered = customer));
@@ -102,10 +102,10 @@ describe('AccountStore (ACC-01)', () => {
 
     it('asks again when told to, and only then', () => {
       store.load().subscribe();
-      http.expectOne('/api/account/me').flush(CUSTOMER);
+      http.expectOne('/api/account/session').flush({ customer: CUSTOMER });
 
       store.refresh().subscribe();
-      http.expectOne('/api/account/me').flush({ ...CUSTOMER, firstName: 'Nimali' });
+      http.expectOne('/api/account/session').flush({ customer: { ...CUSTOMER, firstName: 'Nimali' } });
 
       expect(store.customer()?.firstName).toBe('Nimali');
     });
@@ -114,7 +114,7 @@ describe('AccountStore (ACC-01)', () => {
   describe('what each answer means', () => {
     it('takes a 200 as the signed-in customer', () => {
       store.load().subscribe();
-      http.expectOne('/api/account/me').flush(CUSTOMER);
+      http.expectOne('/api/account/session').flush({ customer: CUSTOMER });
 
       expect(store.customer()).toEqual(CUSTOMER);
       expect(store.status()).toBe('signedIn');
@@ -123,9 +123,19 @@ describe('AccountStore (ACC-01)', () => {
     });
 
     /** The ordinary state of every visitor who is not signed in. An answer, not an error. */
-    it('takes a 401 as signed out', () => {
+    it('takes a null customer as signed out', () => {
       store.load().subscribe();
-      http.expectOne('/api/account/me').flush(null, { status: 401, statusText: 'Unauthorized' });
+      http.expectOne('/api/account/session').flush({ customer: null });
+
+      expect(store.customer()).toBeNull();
+      expect(store.status()).toBe('signedOut');
+      expect(store.isSignedOut()).toBe(true);
+    });
+
+    /** `/session` never answers 401 today, but one from a proxy still means "not signed in". */
+    it('still takes a 401 as signed out', () => {
+      store.load().subscribe();
+      http.expectOne('/api/account/session').flush(null, { status: 401, statusText: 'Unauthorized' });
 
       expect(store.customer()).toBeNull();
       expect(store.status()).toBe('signedOut');
@@ -140,21 +150,21 @@ describe('AccountStore (ACC-01)', () => {
      */
     it('leaves the session unknown when the shop could not answer, and lets the next caller try again', () => {
       store.load().subscribe();
-      http.expectOne('/api/account/me').flush(null, { status: 500, statusText: 'Server Error' });
+      http.expectOne('/api/account/session').flush(null, { status: 500, statusText: 'Server Error' });
 
       expect(store.status()).toBe('unknown');
       expect(store.isSignedOut()).toBe(false);
 
       // The memo was dropped, so this is a real second request rather than a replay of the failure.
       store.load().subscribe();
-      http.expectOne('/api/account/me').flush(CUSTOMER);
+      http.expectOne('/api/account/session').flush({ customer: CUSTOMER });
 
       expect(store.status()).toBe('signedIn');
     });
 
     it('treats an offline browser the same way as a server error', () => {
       store.load().subscribe();
-      http.expectOne('/api/account/me').error(new ProgressEvent('offline'), { status: 0 });
+      http.expectOne('/api/account/session').error(new ProgressEvent('offline'), { status: 0 });
 
       expect(store.status()).toBe('unknown');
       expect(store.isSignedOut()).toBe(false);

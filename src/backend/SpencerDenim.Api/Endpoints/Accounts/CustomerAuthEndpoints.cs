@@ -143,6 +143,18 @@ internal static class CustomerAuthEndpoints
             .Produces<CustomerSessionResponse>()
             .ProducesProblem(StatusCodes.Status401Unauthorized);
 
+        api.MapGet("/session", SessionAsync)
+            .AllowAnonymous()
+            .WithName("CustomerSession")
+            .WithSummary("Who is signed in, or nobody: always 200.")
+            .WithDescription(
+                "The storefront header's question on every page view. `{ customer: null }` when there is "
+                + "no customer session, or the session names an account that is no longer an active "
+                + "customer; otherwise the same body `/me` answers, read fresh from the database. A 200 "
+                + "either way, because a signed-out visitor is the ordinary case and a 401 on every page "
+                + "is a console error on every page. `/me` keeps its 401 for callers that need one.")
+            .Produces<CustomerSessionStateResponse>();
+
         api.MapPost("/confirm-email", ConfirmEmailAsync)
             .WithName("CustomerConfirmEmail")
             .WithSummary("Redeem a confirmation link (ACC-01, doc 11 P11 step A.4).")
@@ -398,6 +410,35 @@ internal static class CustomerAuthEndpoints
                 profile.FirstName,
                 profile.LastName,
                 profile.EmailConfirmed));
+    }
+
+    /// <summary>
+    /// The signed-in customer or null, always 200. The customer scheme is asked for by name, because an
+    /// anonymous endpoint authenticates with the default (admin) scheme — see <see cref="SignedInCustomer"/>.
+    /// </summary>
+    private static async Task<Ok<CustomerSessionStateResponse>> SessionAsync(
+        IQueryHandler<GetCustomerProfileQuery, CustomerProfile?> handler,
+        HttpContext httpContext,
+        CancellationToken cancellationToken)
+    {
+        CustomerSessionCookie.DoNotStore(httpContext.Response);
+
+        if (await SignedInCustomer.ReadIdAsync(httpContext) is not { } userId)
+        {
+            return TypedResults.Ok(new CustomerSessionStateResponse(null));
+        }
+
+        var profile = await handler.HandleAsync(new GetCustomerProfileQuery(userId), cancellationToken);
+
+        return TypedResults.Ok(new CustomerSessionStateResponse(
+            profile is null
+                ? null
+                : new CustomerSessionResponse(
+                    profile.UserId,
+                    profile.Email,
+                    profile.FirstName,
+                    profile.LastName,
+                    profile.EmailConfirmed)));
     }
 
     private static async Task<IResult> ConfirmEmailAsync(

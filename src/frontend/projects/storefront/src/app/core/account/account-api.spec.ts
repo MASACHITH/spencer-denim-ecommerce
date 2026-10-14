@@ -84,12 +84,12 @@ describe('AccountApi (ACC-01, ACC-02)', () => {
       request.flush(null, { status: 204, statusText: 'No Content' });
     });
 
-    it('reads the session with a GET on /me', () => {
-      api.me().subscribe();
+    it('reads the session with a GET on /session, which answers 200 signed in or not', () => {
+      api.session().subscribe();
 
-      const request = http.expectOne('/api/account/me');
+      const request = http.expectOne('/api/account/session');
       expect(request.request.method).toBe('GET');
-      request.flush({ userId: 1, email: 'x', firstName: 'N', lastName: null, emailConfirmed: true });
+      request.flush({ customer: null });
     });
 
     /**

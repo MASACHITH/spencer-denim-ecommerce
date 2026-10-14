@@ -443,6 +443,53 @@ public sealed class CustomerAuthEndpointTests(SqlServerDatabaseFixture sqlServer
     }
 
     /// <summary>
+    /// <c>GET /api/account/session</c>: 200 and <c>null</c> signed out, 200 and the customer signed in, and
+    /// <c>null</c> again once the account is switched off — never a 401.
+    /// </summary>
+    /// <remarks>
+    /// The header asks this on every page view, so a 401 for the ordinary signed-out visitor was a console
+    /// error on every page (the home page's browser test caught it). The deactivated case is the one that
+    /// matters for safety: a live cookie for a switched-off account must not be greeted by name.
+    /// </remarks>
+    [Fact]
+    public async Task The_session_read_answers_200_whoever_asks_and_names_only_an_active_customer()
+    {
+        await ReadyAsync();
+
+        await using var factory = CreateHost();
+        using var client = CreateClient(factory);
+
+        using (var anonymous = await client.GetAsync(new Uri("/api/account/session", UriKind.Relative), Token))
+        {
+            Assert.Equal(HttpStatusCode.OK, anonymous.StatusCode);
+            var body = await anonymous.Content.ReadFromJsonAsync<JsonElement>(Token);
+            Assert.Equal(JsonValueKind.Null, body.GetProperty("customer").ValueKind);
+        }
+
+        var email = UniqueEmail("session-read");
+        await RegisterAsync(client, email);
+        await SignInAsync(client, email);
+
+        using (var signedIn = await client.GetAsync(new Uri("/api/account/session", UriKind.Relative), Token))
+        {
+            Assert.Equal(HttpStatusCode.OK, signedIn.StatusCode);
+            var body = await signedIn.Content.ReadFromJsonAsync<JsonElement>(Token);
+            Assert.Equal(email, body.GetProperty("customer").GetProperty("email").GetString());
+        }
+
+        var row = await ReadCustomerAsync(factory, email);
+        Assert.NotNull(row);
+        await DeactivateAsync(row.Id);
+
+        using (var switchedOff = await client.GetAsync(new Uri("/api/account/session", UriKind.Relative), Token))
+        {
+            Assert.Equal(HttpStatusCode.OK, switchedOff.StatusCode);
+            var body = await switchedOff.Content.ReadFromJsonAsync<JsonElement>(Token);
+            Assert.Equal(JsonValueKind.Null, body.GetProperty("customer").ValueKind);
+        }
+    }
+
+    /// <summary>
     /// W3-01 Major 4: eleven wrong passwords against a real account and against an address with no
     /// account get the same eleven replies.
     /// </summary>

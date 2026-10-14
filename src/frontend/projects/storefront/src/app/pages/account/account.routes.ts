@@ -25,7 +25,7 @@ import { customerSignedIn } from '../../core/account/signed-in.guard';
  *
  * ## Which routes are guarded, and which deliberately are not
  *
- * Guarded: `orders`, `addresses`, `profile`. Each needs `GET /api/account/me` to have said yes, and a
+ * Guarded: `orders`, `addresses`, `profile`. Each needs `GET /api/account/session` to have said yes, and a
  * signed-out visitor is sent to the sign-in page with the whole address — query string included — in
  * `returnTo`.
  *

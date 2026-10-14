@@ -10,6 +10,7 @@ import {
   CustomerProfileDto,
   CustomerProfileEdit,
   CustomerSessionDto,
+  CustomerSessionStateDto,
   EmailConfirmedDto,
 } from './account.model';
 import { ValidationProblemDetails } from '../catalog/catalog.model';
@@ -74,11 +75,15 @@ export class AccountApi {
   }
 
   /**
-   * Who is signed in, read fresh from the database rather than from the cookie's claims — so a customer
-   * who has just confirmed in another tab is not told to confirm again. 401 when there is no session.
+   * Who is signed in, or `customer: null` — read fresh from the database rather than from the cookie's
+   * claims, so a customer who has just confirmed in another tab is not told to confirm again.
+   *
+   * **`/session` and not `/me`**, because the header asks on every page view: `/me` answers a signed-out
+   * visitor 401, which the browser logs as a failed resource load on every page (W3-01 round 2, caught by
+   * the home page's "no console errors" browser test). `/session` answers 200 either way.
    */
-  me(): Observable<CustomerSessionDto> {
-    return this.http.get<CustomerSessionDto>(`${AccountApi.url}/me`);
+  session(): Observable<CustomerSessionStateDto> {
+    return this.http.get<CustomerSessionStateDto>(`${AccountApi.url}/session`);
   }
 
   /**

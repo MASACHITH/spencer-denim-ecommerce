@@ -82,8 +82,8 @@ class AccountFake {
     const path = new URL(request.url()).pathname;
     const body = request.postDataJSON() as Record<string, string> | null;
 
-    if (path === '/api/account/me') {
-      return this.signedIn ? json(route, 200, CUSTOMER) : problem(route, 401, {});
+    if (path === '/api/account/session') {
+      return json(route, 200, { customer: this.signedIn ? CUSTOMER : null });
     }
 
     if (path === '/api/account/login' && request.method() === 'POST') {

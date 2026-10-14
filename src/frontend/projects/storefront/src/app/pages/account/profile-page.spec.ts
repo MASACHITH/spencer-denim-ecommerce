@@ -240,8 +240,8 @@ describe('ProfilePage (ACC-02)', () => {
 
       request.flush(profile({ firstName: 'Nimali', phone: null }));
       await settle();
-      http.match((candidate) => candidate.url === '/api/account/me').forEach((candidate) =>
-        candidate.flush(CUSTOMER),
+      http.match((candidate) => candidate.url === '/api/account/session').forEach((candidate) =>
+        candidate.flush({ customer: CUSTOMER }),
       );
     });
 
@@ -255,8 +255,8 @@ describe('ProfilePage (ACC-02)', () => {
 
       request.flush(profile({ defaultDistrictId: null, defaultDistrictName: null }));
       await settle();
-      http.match((candidate) => candidate.url === '/api/account/me').forEach((candidate) =>
-        candidate.flush(CUSTOMER),
+      http.match((candidate) => candidate.url === '/api/account/session').forEach((candidate) =>
+        candidate.flush({ customer: CUSTOMER }),
       );
     });
 
@@ -276,8 +276,8 @@ describe('ProfilePage (ACC-02)', () => {
         .expectOne((candidate) => candidate.method === 'PUT')
         .flush(profile({ defaultDistrictId: null, defaultDistrictName: null }));
       await settle();
-      http.match((candidate) => candidate.url === '/api/account/me').forEach((candidate) =>
-        candidate.flush(CUSTOMER),
+      http.match((candidate) => candidate.url === '/api/account/session').forEach((candidate) =>
+        candidate.flush({ customer: CUSTOMER }),
       );
 
       expect((field('profile-district') as HTMLSelectElement).value).toBe('');
@@ -296,8 +296,8 @@ describe('ProfilePage (ACC-02)', () => {
       await settle();
 
       http
-        .expectOne('/api/account/me')
-        .flush({ ...CUSTOMER, firstName: 'Nimali' });
+        .expectOne('/api/account/session')
+        .flush({ customer: { ...CUSTOMER, firstName: 'Nimali' } });
       await settle();
 
       expect(TestBed.inject(AccountStore).customer()?.firstName).toBe('Nimali');
@@ -368,8 +368,8 @@ describe('ProfilePage (ACC-02)', () => {
 
       request.flush(profile());
       await settle();
-      http.match((candidate) => candidate.url === '/api/account/me').forEach((candidate) =>
-        candidate.flush(CUSTOMER),
+      http.match((candidate) => candidate.url === '/api/account/session').forEach((candidate) =>
+        candidate.flush({ customer: CUSTOMER }),
       );
     });
   });
@@ -411,7 +411,7 @@ describe('ProfilePage (ACC-02)', () => {
 
       expect(one('profile-status')?.textContent).toContain('signed out');
       expect(TestBed.inject(AccountStore).customer()).toEqual(CUSTOMER);
-      expect(http.match((candidate) => candidate.url === '/api/account/me')).toEqual([]);
+      expect(http.match((candidate) => candidate.url === '/api/account/session')).toEqual([]);
     });
 
     it('shows the wrong-current-password refusal beside its own box', async () => {
