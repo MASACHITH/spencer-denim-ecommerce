@@ -46,10 +46,11 @@ internal sealed class ReportingReader(AppDbContext dbContext, IOptions<CatalogOp
 
     public async Task<SalesTotals> ReadTotalsAsync(UtcRange range, CancellationToken cancellationToken)
     {
-        var paid = PaidIn(range);
+        // One row, or none when nothing was paid (GROUP BY over no rows returns no group).
+        var paid = await PaidTotalsQuery(range).SingleOrDefaultAsync(cancellationToken);
 
-        var gross = await paid.SumAsync(order => order.GrandTotal, cancellationToken);
-        var paidOrders = await paid.CountAsync(cancellationToken);
+        var gross = paid?.Gross ?? 0m;
+        var paidOrders = paid?.PaidOrders ?? 0;
         var orders = await PlacedIn(range).CountAsync(cancellationToken);
         var refunds = await SettlementRefundsIn(range).SumAsync(refund => refund.Amount, cancellationToken);
 
@@ -103,15 +104,7 @@ internal sealed class ReportingReader(AppDbContext dbContext, IOptions<CatalogOp
         UtcRange range,
         CancellationToken cancellationToken)
     {
-        var sold = await LinesPaidIn(range)
-            .GroupBy(line => line.DepartmentId)
-            .Select(group => new
-            {
-                Id = group.Key,
-                Units = group.Sum(line => (int)line.Quantity),
-                Revenue = group.Sum(line => line.LineTotal),
-            })
-            .ToDictionaryAsync(row => row.Id, cancellationToken);
+        var sold = await DepartmentSalesQuery(range).ToDictionaryAsync(row => row.Id, cancellationToken);
 
         var departments = await dbContext.Departments
             .AsNoTracking()
@@ -261,16 +254,7 @@ internal sealed class ReportingReader(AppDbContext dbContext, IOptions<CatalogOp
     {
         var paid = PaidIn(range);
 
-        var byDistrict = await paid
-            .GroupBy(order => order.DeliveryDistrictId)
-            .Select(group => new
-            {
-                Id = group.Key,
-                Buyers = group.Select(order => order.EmailNormalized).Distinct().Count(),
-                Orders = group.Count(),
-                Revenue = group.Sum(order => order.GrandTotal),
-            })
-            .ToListAsync(cancellationToken);
+        var byDistrict = await BuyersByDistrictQuery(range).ToListAsync(cancellationToken);
 
         var distinct = await paid.Select(order => order.EmailNormalized).Distinct().CountAsync(cancellationToken);
 
@@ -548,6 +532,31 @@ internal sealed class ReportingReader(AppDbContext dbContext, IOptions<CatalogOp
                 && refund.CompletedAtUtc < range.ToUtcExclusive
                 && refund.Payment!.IsOrderSettlement);
 
+    /// <summary>Gross revenue and paid orders over a range, as one grouped row (or none).</summary>
+    internal IQueryable<PaidTotal> PaidTotalsQuery(UtcRange range) =>
+        PaidIn(range)
+            .GroupBy(order => 1)
+            .Select(all => new PaidTotal(all.Sum(order => order.GrandTotal), all.Count()));
+
+    /// <summary>Distinct buyers, paid orders and revenue per delivery district.</summary>
+    internal IQueryable<DistrictTotal> BuyersByDistrictQuery(UtcRange range) =>
+        PaidIn(range)
+            .GroupBy(order => order.DeliveryDistrictId)
+            .Select(group => new DistrictTotal(
+                group.Key,
+                group.Select(order => order.EmailNormalized).Distinct().Count(),
+                group.Count(),
+                group.Sum(order => order.GrandTotal)));
+
+    /// <summary>Line revenue per department at purchase, on orders paid in the range.</summary>
+    internal IQueryable<GroupSales> DepartmentSalesQuery(UtcRange range) =>
+        LinesPaidIn(range)
+            .GroupBy(line => line.DepartmentId)
+            .Select(group => new GroupSales(
+                group.Key,
+                group.Sum(line => (int)line.Quantity),
+                group.Sum(line => line.LineTotal)));
+
     /// <summary>The paid-date half of <see cref="ReadDailyAsync"/>, exposed for the plan test.</summary>
     internal IQueryable<PaidDay> PaidDailyQuery(UtcRange range) =>
         PaidIn(range)
@@ -605,4 +614,13 @@ internal sealed class ReportingReader(AppDbContext dbContext, IOptions<CatalogOp
 
     /// <summary>One Colombo day of paid orders.</summary>
     internal sealed record PaidDay(DateTime Day, decimal Gross, int PaidOrders, decimal Delivery);
+
+    /// <summary>A range's gross revenue and paid orders.</summary>
+    internal sealed record PaidTotal(decimal Gross, int PaidOrders);
+
+    /// <summary>One delivery district's buyers.</summary>
+    internal sealed record DistrictTotal(int Id, int Buyers, int Orders, decimal Revenue);
+
+    /// <summary>One department's line sales.</summary>
+    internal sealed record GroupSales(int Id, int Units, decimal Revenue);
 }
