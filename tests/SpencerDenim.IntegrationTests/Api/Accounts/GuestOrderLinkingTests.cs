@@ -68,6 +68,7 @@ public sealed class GuestOrderLinkingTests(SqlServerDatabaseFixture sqlServer)
         using var client = CreateClient(factory);
 
         await RegisterAsync(client, mine);
+        await SignInAsync(client, mine);
         var token = await ReadLinkTokenAsync(factory, Templates.Confirmation, mine);
         Assert.NotNull(token);
 
@@ -119,6 +120,7 @@ public sealed class GuestOrderLinkingTests(SqlServerDatabaseFixture sqlServer)
         using var client = CreateClient(factory);
 
         await RegisterAsync(client, email);
+        await SignInAsync(client, email);
         var token = await ReadLinkTokenAsync(factory, Templates.Confirmation, email);
 
         using var response = await client.PostAsJsonAsync(ConfirmUrl, new { token }, Token);
@@ -185,6 +187,7 @@ public sealed class GuestOrderLinkingTests(SqlServerDatabaseFixture sqlServer)
         using var client = CreateClient(factory);
 
         await RegisterAsync(client, lower);
+        await SignInAsync(client, lower);
         var token = await ReadLinkTokenAsync(factory, Templates.Confirmation, lower);
 
         using var response = await client.PostAsJsonAsync(ConfirmUrl, new { token }, Token);
@@ -218,6 +221,7 @@ public sealed class GuestOrderLinkingTests(SqlServerDatabaseFixture sqlServer)
 
         await RegisterAsync(client, email);
         await SignInAsync(client, email);
+        await SignInAsync(client, email);
 
         Assert.Null(await ReadOwnerAsync(orderId));
 
@@ -249,6 +253,7 @@ public sealed class GuestOrderLinkingTests(SqlServerDatabaseFixture sqlServer)
         using var client = CreateClient(factory);
 
         await RegisterAsync(client, email);
+        await SignInAsync(client, email);
         var token = await ReadLinkTokenAsync(factory, Templates.Confirmation, email);
 
         using var first = await client.PostAsJsonAsync(ConfirmUrl, new { token }, Token);
@@ -312,6 +317,7 @@ public sealed class GuestOrderLinkingTests(SqlServerDatabaseFixture sqlServer)
         using var client = CreateClient(factory);
 
         await RegisterAsync(client, original);
+        await SignInAsync(client, original);
         var token = await ReadLinkTokenAsync(factory, Templates.Confirmation, original);
         Assert.NotNull(token);
 
@@ -363,6 +369,12 @@ public sealed class GuestOrderLinkingTests(SqlServerDatabaseFixture sqlServer)
         await using var factory = CreateHost();
         using var client = CreateClient(factory);
 
+        // Signed in as a real customer, so what is refused is the token and not the missing session
+        // (confirming requires one — W3-01 Blocker 2).
+        var email = UniqueEmail("not-ours");
+        await RegisterAsync(client, email);
+        await SignInAsync(client, email);
+
         using var response = await client.PostAsJsonAsync(ConfirmUrl, new { token }, Token);
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
@@ -392,6 +404,7 @@ public sealed class GuestOrderLinkingTests(SqlServerDatabaseFixture sqlServer)
 
         using var client = CreateClient(factory);
         await RegisterAsync(client, email);
+        await SignInAsync(client, email);
 
         var token = await ReadLinkTokenAsync(factory, Templates.Confirmation, email);
         Assert.NotNull(token);
@@ -429,6 +442,7 @@ public sealed class GuestOrderLinkingTests(SqlServerDatabaseFixture sqlServer)
         using var client = CreateClient(factory);
 
         await RegisterAsync(client, email);
+        await SignInAsync(client, email);
         var first = await ReadLinkTokenAsync(factory, Templates.Confirmation, email);
 
         await SignInAsync(client, email);
@@ -474,11 +488,20 @@ public sealed class GuestOrderLinkingTests(SqlServerDatabaseFixture sqlServer)
         using var client = CreateClient(factory);
 
         await RegisterAsync(client, email);
+        await SignInAsync(client, email);
         var token = await ReadLinkTokenAsync(factory, Templates.Confirmation, email);
 
         // Separate clients, so twelve independent browsers rather than twelve requests sharing a cookie
         // jar — a shared jar would have the later ones carrying the session the first one established.
         var clients = Enumerable.Range(0, 12).Select(_ => CreateClient(factory)).ToList();
+
+        // Each browser is signed in as the owner: confirming requires the account's session as well as
+        // its link (W3-01 Blocker 2), and the race under test is between twelve redemptions that would
+        // each be allowed, not twelve that are refused at the door.
+        foreach (var browser in clients)
+        {
+            await SignInAsync(browser, email);
+        }
 
         try
         {

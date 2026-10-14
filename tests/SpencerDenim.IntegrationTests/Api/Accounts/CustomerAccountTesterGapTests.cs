@@ -15,6 +15,8 @@ using SpencerDenim.Infrastructure.Persistence;
 using SpencerDenim.IntegrationTests.Infrastructure;
 using SpencerDenim.IntegrationTests.Sales;
 
+using SpencerDenim.Infrastructure.Identity.Customers;
+
 namespace SpencerDenim.IntegrationTests.Api.Accounts;
 
 /// <summary>
@@ -141,7 +143,12 @@ public sealed class CustomerAccountTesterGapTests(SqlServerDatabaseFixture sqlSe
                 await using var scope = factory.Services.CreateAsyncScope();
                 var confirmation = scope.ServiceProvider.GetRequiredService<ICustomerEmailConfirmation>();
                 await gate.Task;
-                return await confirmation.ConfirmAsync(token!, Token);
+                // W3-01 Blocker 2: the store now takes the signed-in account, and the token must name
+                // it. The account the token names is the one confirming here.
+                return await confirmation.ConfirmAsync(
+                    token!,
+                    CustomerAccountTokens.ReadUserId(token)!.Value,
+                    Token);
             })).ToList();
 
             gate.SetResult();

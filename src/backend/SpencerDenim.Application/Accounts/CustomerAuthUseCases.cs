@@ -325,7 +325,11 @@ public sealed class ChangeCustomerPasswordCommandHandler(
 }
 
 /// <summary>Doc 11 P11 step A.4: redeeming a confirmation link (ACC-01).</summary>
-public sealed record ConfirmCustomerEmailCommand(string? Token);
+/// <param name="SignedInUserId">
+/// The customer the confirming browser is signed in as, from the session cookie, or null. Confirming
+/// requires one — see <see cref="CustomerEmailConfirmationResult.SignInRequired"/>.
+/// </param>
+public sealed record ConfirmCustomerEmailCommand(string? Token, int? SignedInUserId);
 
 /// <summary>Confirms an address and links the guest orders behind it (doc 08 §3.1 D5).</summary>
 public sealed class ConfirmCustomerEmailCommandHandler(ICustomerEmailConfirmation confirmation)
@@ -337,9 +341,16 @@ public sealed class ConfirmCustomerEmailCommandHandler(ICustomerEmailConfirmatio
     {
         ArgumentNullException.ThrowIfNull(command);
 
+        // The session first, before the token is looked at: a click from a signed-out browser reads,
+        // spends and links nothing, so the link survives for the account's real owner.
+        if (command.SignedInUserId is not { } signedInUserId)
+        {
+            return new CustomerEmailConfirmationResult.SignInRequired();
+        }
+
         return string.IsNullOrWhiteSpace(command.Token)
             ? new CustomerEmailConfirmationResult.InvalidToken()
-            : await confirmation.ConfirmAsync(command.Token, cancellationToken);
+            : await confirmation.ConfirmAsync(command.Token, signedInUserId, cancellationToken);
     }
 }
 

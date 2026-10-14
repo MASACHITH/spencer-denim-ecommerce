@@ -59,11 +59,16 @@ internal sealed class CustomerEmailConfirmationStore(
 
     public async Task<CustomerEmailConfirmationResult> ConfirmAsync(
         string token,
+        int signedInUserId,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(token);
 
-        if (CustomerAccountTokens.ReadUserId(token) is not { } userId)
+        // **The token must name the account that is signed in** (Blocker 2). Checked on the selector,
+        // before any row is read, so a token presented from somebody else's session is refused without
+        // being spent — a stranger cannot burn the owner's link — and so the mailbox proof and the
+        // credentials proof are always for the same account.
+        if (CustomerAccountTokens.ReadUserId(token) is not { } userId || userId != signedInUserId)
         {
             return new CustomerEmailConfirmationResult.InvalidToken();
         }

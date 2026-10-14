@@ -196,7 +196,9 @@ public static class CustomerIdentityRegistration
         var interval = TimeSpan.FromSeconds(security.SecurityStampValidationIntervalSeconds);
         var now = DateTimeOffset.UtcNow;
 
-        if (ReadLastValidated(context.Properties) is { } last && now - last < interval)
+        var due = ReadLastValidated(context.Properties) is not { } last || now - last >= interval;
+
+        if (!due && !AlwaysRevalidates(context.HttpContext.Request.Path))
         {
             return;
         }
@@ -220,10 +222,35 @@ public static class CustomerIdentityRegistration
             return;
         }
 
-        RefreshEmailConfirmedClaim(context, session.EmailConfirmed);
-        WriteLastValidated(context.Properties, now);
-        context.ShouldRenew = true;
+        var claimChanged = RefreshEmailConfirmedClaim(context, session.EmailConfirmed);
+
+        // Renew only when the throttle was due or what the cookie says has changed. An account route
+        // revalidates on every request (see AlwaysRevalidates), and renewing on every one of those would
+        // put a Set-Cookie on every account response for nothing: the check is the protection, the
+        // renewal only records when it last happened.
+        if (due || claimChanged)
+        {
+            WriteLastValidated(context.Properties, now);
+            context.ShouldRenew = true;
+        }
     }
+
+    /// <summary>
+    /// Whether a request must check the account against the database every time, rather than once per
+    /// <c>SecurityStampValidationIntervalSeconds</c>.
+    /// </summary>
+    /// <remarks>
+    /// <b>The account and checkout routes, because they read and write what the stamp protects</b> — the
+    /// order history with its tokens, the address book, the profile, and an order placed in the account's
+    /// name. Found through the independent tester's takeover: after a victim resets the password, the
+    /// attacker's cookie carries the old stamp, and with a five-minute throttle it would have kept reading
+    /// the victim's freshly linked orders for up to five minutes. One keyed read on <c>identity.Users</c>
+    /// per account request closes that. Browsing and the bag keep the throttle: they are the hot path and
+    /// expose nothing a stale session could misuse.
+    /// </remarks>
+    private static bool AlwaysRevalidates(PathString path) =>
+        path.StartsWithSegments("/api/account", StringComparison.OrdinalIgnoreCase)
+        || path.StartsWithSegments("/api/checkout", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Puts the current confirmed state on the principal, replacing a stale value.
@@ -234,11 +261,12 @@ public static class CustomerIdentityRegistration
     /// not a security control. It is done here rather than left to the next sign-in because a customer
     /// who has just confirmed and is still being told to confirm reads it as the link not having worked.
     /// </remarks>
-    private static void RefreshEmailConfirmedClaim(CookieValidatePrincipalContext context, bool emailConfirmed)
+    /// <returns>True when the claim changed, so the cookie has to be re-issued to carry it.</returns>
+    private static bool RefreshEmailConfirmedClaim(CookieValidatePrincipalContext context, bool emailConfirmed)
     {
         if (context.Principal?.Identity is not ClaimsIdentity identity)
         {
-            return;
+            return false;
         }
 
         var value = emailConfirmed ? "1" : "0";
@@ -248,13 +276,14 @@ public static class CustomerIdentityRegistration
         {
             if (string.Equals(existing.Value, value, StringComparison.Ordinal))
             {
-                return;
+                return false;
             }
 
             identity.RemoveClaim(existing);
         }
 
         identity.AddClaim(new Claim(CustomerAuthenticationDefaults.EmailConfirmedClaimType, value));
+        return true;
     }
 
     private static DateTimeOffset? ReadLastValidated(AuthenticationProperties properties) =>

@@ -220,30 +220,50 @@ public sealed class PreRegistrationTakeoverTests(SqlServerDatabaseFixture sqlSer
     }
 
     /// <summary>
-    /// Confirming issues no session: the caller is already signed in, and the cookie it holds is the one
-    /// it keeps.
+    /// Confirming never signs a browser in. A signed-out browser holding the owner's real link gets no
+    /// customer cookie at all, and a signed-in one stays signed in as the same customer.
     /// </summary>
+    /// <remarks>
+    /// <b>This is the half of the takeover that put the victim's browser inside the attacker's account.</b>
+    /// The first version of this test asserted "no <c>Set-Cookie</c> on a confirmation", which was the
+    /// wrong property: the account routes now revalidate the session on every request, and a revalidated
+    /// cookie is <i>renewed</i> — the caller's own session, re-sent with a fresh timestamp. What must never
+    /// happen is a browser that was signed in as nobody, or as somebody else, coming out of a confirmation
+    /// signed in as the account the token names.
+    /// </remarks>
     [Fact]
-    public async Task Confirming_issues_no_new_session_cookie()
+    public async Task Confirming_never_signs_a_browser_in()
     {
         await ReadyAsync();
 
         var email = UniqueEmail("takeover-no-session");
 
         await using var factory = CreateHost();
-        using var browser = CreateClient(factory);
-        await RegisterAsync(browser, email);
-        await SignInAsync(browser, email);
+        using var owner = CreateClient(factory);
+        await RegisterAsync(owner, email);
 
         var token = await ReadLinkTokenAsync(factory, Templates.Confirmation, email);
 
-        using var confirmed = await browser.PostAsJsonAsync("/api/account/confirm-email", new { token }, Token);
+        // A signed-out browser, holding a real, live link for a real account.
+        using var stranger = CreateClient(factory);
+        using var refused = await stranger.PostAsJsonAsync("/api/account/confirm-email", new { token }, Token);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, refused.StatusCode);
+        Assert.False(
+            refused.Headers.TryGetValues("Set-Cookie", out var cookies)
+            && cookies.Any(value => value.StartsWith(CustomerAuthenticationDefaults.CookieName + "=", StringComparison.Ordinal)),
+            "A signed-out browser was given a customer session by a confirmation link.");
+
+        // The owner, signed in, confirms and is still themselves afterwards.
+        await SignInAsync(owner, email);
+
+        using var confirmed = await owner.PostAsJsonAsync("/api/account/confirm-email", new { token }, Token);
         Assert.Equal(HttpStatusCode.OK, confirmed.StatusCode);
 
-        Assert.False(
-            confirmed.Headers.TryGetValues("Set-Cookie", out var cookies)
-            && cookies.Any(value => value.StartsWith(CustomerAuthenticationDefaults.CookieName + "=", StringComparison.Ordinal)),
-            "Confirming issued a customer session cookie.");
+        using var me = await owner.GetAsync(new Uri("/api/account/me", UriKind.Relative), Token);
+        var body = await me.Content.ReadFromJsonAsync<JsonElement>(Token);
+        Assert.Equal(email, body.GetProperty("email").GetString());
+        Assert.True(body.GetProperty("emailConfirmed").GetBoolean());
     }
 
     private async Task<int> InsertGuestOrderAsync(SalesReferenceData reference, string email)

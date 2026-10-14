@@ -146,14 +146,16 @@ internal static class CustomerAuthEndpoints
                 + "**that** address which have no account yet (doc 08 §3.1 D5), in one transaction, with "
                 + "the linked order ids written to `ops.AuditLogs` as `LinkGuestOrders`. The response "
                 + "names the orders, because \"all 3 appear in My account\" is the thing worth telling "
-                + "the customer. A link that is already used, expired, wrong, or for an address the "
-                + "account no longer uses all answer **400 with one opaque sentence** — saying \"expired\" "
-                + "rather than \"wrong\" would tell a holder it was once real. **A session is issued on "
-                + "success**, because the holder of a live confirmation link for an account is that "
-                + "account's owner, and asking them to sign in immediately afterwards is a step with no "
-                + "security value.")
+                + "the customer. **Requires a session for the account the token names**: a signed-out "
+                + "browser gets 401 `sign_in_required` before the token is examined, and a token for a "
+                + "different account is refused without being spent. The link proves the mailbox; the "
+                + "session proves the credentials; linking needs both, which is what stops an attacker "
+                + "who registered the victim's address first from receiving the victim's orders. A link "
+                + "that is already used, expired, wrong, or for an address the account no longer uses "
+                + "answers **400 with one opaque sentence**. **No session is issued.**")
             .Produces<CustomerEmailConfirmedResponse>()
             .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status429TooManyRequests);
 
         api.MapPost("/resend-confirmation", ResendConfirmationAsync)
@@ -367,16 +369,36 @@ internal static class CustomerAuthEndpoints
         }
 
         var result = await handler.HandleAsync(
-            new ConfirmCustomerEmailCommand(request?.Token),
+            new ConfirmCustomerEmailCommand(request?.Token, await SignedInCustomer.ReadIdAsync(httpContext)),
             cancellationToken);
+
+        if (result is CustomerEmailConfirmationResult.SignInRequired)
+        {
+            // Answered before the token is examined, so it says nothing about whether the link is real.
+            // The wording gives the one route that works for everybody, including a victim whose address
+            // somebody else registered: they never chose that password, so "sign in" alone would strand
+            // them, and "Forgot password" both proves the mailbox and kills the other person's password.
+            return TypedResults.Problem(
+                title: "Sign in to confirm your email address",
+                detail:
+                    "Sign in to your account, then open this link again. If you cannot sign in, use "
+                    + "Forgot password to set a password first.",
+                statusCode: StatusCodes.Status401Unauthorized,
+                extensions: new Dictionary<string, object?>(StringComparer.Ordinal)
+                {
+                    ["code"] = "sign_in_required",
+                });
+        }
 
         if (result is not CustomerEmailConfirmationResult.Confirmed confirmed)
         {
             return InvalidLink("We could not confirm your email address");
         }
 
-        await CustomerSessionCookie.SignInAsync(httpContext, confirmed.Session);
-
+        // **No session is issued.** The caller is already signed in — confirming required it — and
+        // issuing one here is what let the victim's browser be signed in to the attacker's account.
+        // The cookie's confirmed claim is refreshed on its next revalidation, which the account routes
+        // perform on every request.
         return TypedResults.Ok(new CustomerEmailConfirmedResponse(
             CustomerSessionResponse.From(confirmed.Session),
             confirmed.LinkedOrderNumbers));

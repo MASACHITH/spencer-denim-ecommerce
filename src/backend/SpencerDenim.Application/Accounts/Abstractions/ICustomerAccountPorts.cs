@@ -102,7 +102,15 @@ public interface ICustomerEmailConfirmation
     /// Confirms the address the token was minted for and runs doc 08 §3.1 D5's linking in the same
     /// transaction, so a confirmed address and its linked orders are true together or not at all.
     /// </summary>
-    Task<CustomerEmailConfirmationResult> ConfirmAsync(string token, CancellationToken cancellationToken);
+    /// <param name="signedInUserId">
+    /// The customer the confirming browser is signed in as. The token must name <b>this</b> account, or it
+    /// is refused without being spent — so a stranger cannot burn somebody else's link, and the account's
+    /// credentials as well as its mailbox are required before anything is linked.
+    /// </param>
+    Task<CustomerEmailConfirmationResult> ConfirmAsync(
+        string token,
+        int signedInUserId,
+        CancellationToken cancellationToken);
 }
 
 /// <summary>Doc 11 P11 step 10's profile half (ACC-02).</summary>

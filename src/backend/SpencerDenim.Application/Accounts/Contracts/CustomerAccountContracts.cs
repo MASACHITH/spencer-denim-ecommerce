@@ -111,7 +111,22 @@ public abstract record CustomerEmailConfirmationResult
         : CustomerEmailConfirmationResult;
 
     /// <summary>
-    /// The link was already used, has expired, names no pending confirmation, or does not verify.
+    /// The confirming browser is not signed in. Nothing was read, spent, confirmed or linked.
+    /// </summary>
+    /// <remarks>
+    /// <b>Why confirming needs a session at all</b> — the independent tester's Blocker 2. A confirmation
+    /// link proves the clicker controls the <i>mailbox</i>; it says nothing about who chose the account's
+    /// <i>password</i>. An attacker who registered the victim's address first owns the password, and before
+    /// this case existed the victim's click linked their guest orders to the attacker's account. Linking now
+    /// needs both proofs at once: the token (the mailbox) and a session for the account the token names
+    /// (the credentials). A victim gets the second by resetting the password through the same mailbox,
+    /// which kills the attacker's password and session.
+    /// </remarks>
+    public sealed record SignInRequired : CustomerEmailConfirmationResult;
+
+    /// <summary>
+    /// The link was already used, has expired, names no pending confirmation, does not verify, or names an
+    /// account other than the one signed in.
     /// </summary>
     /// <remarks>
     /// <b>One case for all four, deliberately.</b> Telling a holder that a token is "expired" rather than

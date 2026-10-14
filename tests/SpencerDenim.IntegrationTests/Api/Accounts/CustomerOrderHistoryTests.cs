@@ -70,6 +70,7 @@ public sealed class CustomerOrderHistoryTests(SqlServerDatabaseFixture sqlServer
         using var client = CreateClient(factory);
 
         await RegisterAsync(client, email);
+        await SignInAsync(client, email);
 
         var confirmToken = await ReadLinkTokenAsync(factory, Templates.Confirmation, email);
         using var confirmed = await client.PostAsJsonAsync("/api/account/confirm-email", new { token = confirmToken }, Token);
@@ -439,10 +440,13 @@ public sealed class CustomerOrderHistoryTests(SqlServerDatabaseFixture sqlServer
         Assert.False(body.GetProperty("hasMore").GetBoolean());
     }
 
-    /// <summary>Registers, confirms and signs in, which is the shopper's own route to their history.</summary>
+    /// <summary>Registers, signs in and confirms, which is the shopper's own route to their history.</summary>
     private static async Task ConfirmedCustomerAsync(ApiFactory factory, HttpClient client, string email)
     {
         await RegisterAsync(client, email);
+
+        // Confirming requires the account's own session as well as its link (W3-01 Blocker 2).
+        await SignInAsync(client, email);
 
         var token = await ReadLinkTokenAsync(factory, Templates.Confirmation, email);
 
