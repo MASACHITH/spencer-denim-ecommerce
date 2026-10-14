@@ -8,6 +8,12 @@ import { NewsletterApi, fileNameFrom } from '../../core/newsletter/newsletter-ap
 import { NewsletterSubscriberPage } from '../../core/newsletter/newsletter.model';
 
 const ANTIFORGERY = '/api/admin/auth/antiforgery-token';
+const WHOAMI = '/api/admin/auth/whoami';
+
+interface Session {
+  grantsAllPermissions: boolean;
+  permissions: string[];
+}
 
 function page(overrides: Partial<NewsletterSubscriberPage> = {}): NewsletterSubscriberPage {
   return {
@@ -48,13 +54,14 @@ describe('NewsletterSubscribersPage (ADM-21)', () => {
     await fixture.whenStable();
   }
 
-  async function open(payload = page()): Promise<void> {
+  async function open(payload = page(), permissions: Partial<Session> = {}): Promise<void> {
     fixture = TestBed.createComponent(NewsletterSubscribersPage);
     element = fixture.nativeElement as HTMLElement;
     document.body.appendChild(element);
 
     await settle();
     http.expectOne(`${NewsletterApi.url}?page=1&pageSize=25`).flush(payload);
+    http.expectOne(WHOAMI).flush({ grantsAllPermissions: true, permissions: [], ...permissions });
     await settle();
   }
 
@@ -207,6 +214,25 @@ describe('NewsletterSubscribersPage (ADM-21)', () => {
     expect(hint).toContain('subscribed');
     expect(hint).toContain('audit log');
     expect(byTestId('newsletter-export').getAttribute('aria-describedby')).toBe('newsletter-export-hint');
+  });
+
+  /**
+   * **View and Export are separate permissions, so the screen offers the button only to a role that holds
+   * Export.** A View-only role is told why there is no button rather than handed one that answers 403.
+   */
+  it('offers no export button to a role that can only view, and says why', async () => {
+    await open(page(), { grantsAllPermissions: false, permissions: ['Newsletter.View'] });
+
+    expect(byTestId('newsletter-export')).toBeNull();
+    expect(byTestId('newsletter-export-unavailable').textContent).toContain('not export');
+    expect(byTestId('subscriber-3')).not.toBeNull();
+  });
+
+  it('offers the export button to a role that holds Newsletter.Export without granting everything', async () => {
+    await open(page(), { grantsAllPermissions: false, permissions: ['Newsletter.View', 'Newsletter.Export'] });
+
+    expect(byTestId('newsletter-export')).not.toBeNull();
+    expect(byTestId('newsletter-export-unavailable')).toBeNull();
   });
 
   it('reads the file name from Content-Disposition, with a fallback', () => {

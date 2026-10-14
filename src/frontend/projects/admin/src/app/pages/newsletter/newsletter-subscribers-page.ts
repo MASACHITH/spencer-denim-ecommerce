@@ -9,6 +9,7 @@ import {
 } from '@angular/core';
 import { DOCUMENT } from '@angular/common';
 
+import { AdminAuthApi } from '../../core/auth/admin-auth-api';
 import { NewsletterApi } from '../../core/newsletter/newsletter-api';
 import {
   NEWSLETTER_STATUSES,
@@ -20,6 +21,9 @@ import { colomboDate } from '../../core/orders/order-formatting';
 import { CatalogFailure, toCatalogFailure } from '../../core/catalog/admin-catalog-api';
 
 const PAGE_SIZE = 25;
+
+/** The permission the export route requires (`Permissions.Newsletter.Export`). */
+const EXPORT_PERMISSION = 'Newsletter.Export';
 
 const NO_FILTER: NewsletterFilter = { search: '', status: null, from: '', to: '' };
 
@@ -117,18 +121,28 @@ const NO_FILTER: NewsletterFilter = { search: '', status: null, from: '', to: ''
         above — never an unsubscribed one, whatever the status filter shows. Every export is recorded in the
         audit log against your name.
       </p>
-      <div class="adm-actions">
-        <button
-          class="adm-btn--primary"
-          type="button"
-          data-testid="newsletter-export"
-          aria-describedby="newsletter-export-hint"
-          [attr.aria-disabled]="exporting() ? 'true' : null"
-          (click)="exportCsv()"
-        >
-          {{ exporting() ? 'Preparing the file…' : 'Export CSV' }}
-        </button>
-      </div>
+      <!-- Offered only to a role the server will let export: a button that always answers 403 is a
+           defect even though the server is right to refuse (W3-07 tester). Until the session is known
+           nothing is offered, so the button never appears and then vanishes. -->
+      @if (canExport() === true) {
+        <div class="adm-actions">
+          <button
+            class="adm-btn--primary"
+            type="button"
+            data-testid="newsletter-export"
+            aria-describedby="newsletter-export-hint"
+            [attr.aria-disabled]="exporting() ? 'true' : null"
+            (click)="exportCsv()"
+          >
+            {{ exporting() ? 'Preparing the file…' : 'Export CSV' }}
+          </button>
+        </div>
+      } @else if (canExport() === false) {
+        <p class="adm-muted" data-testid="newsletter-export-unavailable">
+          Your role can see subscribers but not export them. Ask an administrator for the newsletter
+          export permission if you need the file.
+        </p>
+      }
     </section>
 
     @if (problem(); as failure) {
@@ -258,6 +272,7 @@ const NO_FILTER: NewsletterFilter = { search: '', status: null, from: '', to: ''
 })
 export class NewsletterSubscribersPage {
   private readonly api = inject(NewsletterApi);
+  private readonly auth = inject(AdminAuthApi);
   private readonly document = inject(DOCUMENT);
   private readonly injector = inject(Injector);
 
@@ -274,6 +289,13 @@ export class NewsletterSubscribersPage {
   protected readonly problem = signal<CatalogFailure | null>(null);
   protected readonly dateError = signal<string | null>(null);
   protected readonly exporting = signal(false);
+
+  /**
+   * Whether this staff member holds `Newsletter.Export`: `null` until the session is read. Viewing and
+   * exporting are separate permissions (doc 11 P15), so a role can reach this screen and still be refused
+   * the file. If the session cannot be read the button is offered and the server decides, as before.
+   */
+  protected readonly canExport = signal<boolean | null>(null);
   protected readonly said = signal('');
 
   protected readonly subscribedCount = computed(() => this.page()?.subscribedCount ?? 0);
@@ -300,6 +322,12 @@ export class NewsletterSubscribersPage {
 
   constructor() {
     this.load(1);
+
+    this.auth.whoAmI().subscribe({
+      next: (session) =>
+        this.canExport.set(session.grantsAllPermissions || session.permissions.includes(EXPORT_PERMISSION)),
+      error: () => this.canExport.set(true),
+    });
   }
 
   protected day(utc: string): string {
