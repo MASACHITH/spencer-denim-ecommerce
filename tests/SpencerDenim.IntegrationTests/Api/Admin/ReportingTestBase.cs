@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using SpencerDenim.Domain.Auditing;
 using SpencerDenim.Domain.Common;
 using SpencerDenim.Domain.Sales;
 using SpencerDenim.Infrastructure.Persistence;
@@ -219,6 +220,27 @@ public abstract class ReportingTestBase(SqlServerDatabaseFixture sqlServer)
     }
 
     protected static decimal Money(JsonElement element) => element.GetDecimal();
+
+    protected async Task<long> LastAuditIdAsync()
+    {
+        using var scope = SqlServer.CreateScope();
+
+        return await scope.ServiceProvider.GetRequiredService<AppDbContext>().AuditLogs
+            .AsNoTracking()
+            .MaxAsync(row => (long?)row.Id, Token) ?? 0;
+    }
+
+    /// <summary>Every audit row written after <paramref name="id"/>, oldest first.</summary>
+    protected async Task<List<AuditLog>> AuditRowsAfterAsync(long id)
+    {
+        using var scope = SqlServer.CreateScope();
+
+        return await scope.ServiceProvider.GetRequiredService<AppDbContext>().AuditLogs
+            .AsNoTracking()
+            .Where(row => row.Id > id)
+            .OrderBy(row => row.Id)
+            .ToListAsync(Token);
+    }
 
     /// <summary>One catalogue row to sell.</summary>
     protected sealed record Pick(int ProductId, int VariantId, int DepartmentId, int CategoryId, string Department);
