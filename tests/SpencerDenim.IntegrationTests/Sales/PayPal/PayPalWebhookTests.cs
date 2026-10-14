@@ -161,6 +161,99 @@ public sealed class PayPalWebhookTests(SqlServerDatabaseFixture sqlServer) : Pay
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
+    // ------------------------------------------------------------------------------ the throttle (#166)
+
+    /// <summary>
+    /// #166. The endpoint-wide bucket is also what PayPal's real deliveries draw on, and a pending capture
+    /// settles only by webhook. A request that cannot be a PayPal notification used to take a permit before
+    /// anything cheap had looked at it, so about two a second emptied the bucket and the real delivery got a 429.
+    /// It must cost nothing now: not a permit, and not a call to PayPal.
+    /// </summary>
+    [Fact]
+    public async Task A_flood_of_requests_that_cannot_be_PayPal_does_not_cost_the_real_delivery_its_turn()
+    {
+        var (order, paypalOrderId) = await StartedAsync();
+        using var client = NewPayPalClient();
+
+        // Far more than the endpoint-wide bucket holds in its window, all from the one address the test host has.
+        for (var i = 0; i < 400; i++)
+        {
+            using var junk = await PostJunkAsync(client, i);
+
+            Assert.Equal(HttpStatusCode.BadRequest, junk.StatusCode);
+        }
+
+        Assert.Empty(PayPal.Verifications);
+
+        using var genuine = await PostWebhookAsync(Completed(order, paypalOrderId, "WH-AFTER-FLOOD", Cap("CAP-AFTER-FLOOD")));
+
+        Assert.Equal(HttpStatusCode.OK, genuine.StatusCode);
+        Assert.Equal(PaymentStatus.Succeeded, (await PaymentAsync(order.PaymentId)).Status);
+    }
+
+    /// <summary>
+    /// What a flood that <i>does</i> look like PayPal costs. It cannot be turned away for free, because only
+    /// asking PayPal can tell it from the real thing - so what is pinned is the bound: a fixed number of calls to
+    /// PayPal, then a 429 that says when to come back, and from that point no further call is made.
+    /// </summary>
+    [Fact]
+    public async Task A_flood_that_does_look_like_PayPal_costs_a_bounded_number_of_calls_and_then_a_429()
+    {
+        var (order, paypalOrderId) = await StartedAsync();
+        const int Flood = 400;
+        var reachedPayPal = 0;
+        var refused = 0;
+
+        for (var i = 0; i < Flood; i++)
+        {
+            using var response = await PostWebhookAsync(
+                Completed(order, paypalOrderId, $"WH-FLOOD-{i}", Cap($"CAP-FLOOD-{i}")),
+                signature: "forged");
+
+            if (response.StatusCode == HttpStatusCode.TooManyRequests)
+            {
+                refused++;
+                Assert.True(
+                    response.Headers.TryGetValues("Retry-After", out var retryAfter)
+                    && int.Parse(retryAfter.Single(), System.Globalization.CultureInfo.InvariantCulture) > 0,
+                    "a refusal must say when to come back");
+            }
+            else
+            {
+                Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+                reachedPayPal++;
+            }
+        }
+
+        Assert.InRange(reachedPayPal, 1, Flood - 1);
+        Assert.True(refused > 0, "the flood was never cut off");
+        Assert.Equal(reachedPayPal, PayPal.Verifications.Count);
+        Assert.Equal(Flood, reachedPayPal + refused);
+    }
+
+    /// <summary>
+    /// A POST that cannot be a PayPal notification: no PayPal headers at all, or all five with a certificate
+    /// address that is not on PayPal's host - the two ways the check refuses.
+    /// </summary>
+    private static async Task<HttpResponseMessage> PostJunkAsync(HttpClient client, int i)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(WebhookPath, UriKind.Relative))
+        {
+            Content = new StringContent($"{{\"junk\":{i}}}", System.Text.Encoding.UTF8, "application/json"),
+        };
+
+        if (i % 2 == 1)
+        {
+            request.Headers.Add("PAYPAL-AUTH-ALGO", "SHA256withRSA");
+            request.Headers.Add("PAYPAL-CERT-URL", "https://evil.example.com/v1/notifications/certs/CERT");
+            request.Headers.Add("PAYPAL-TRANSMISSION-ID", Guid.NewGuid().ToString("D"));
+            request.Headers.Add("PAYPAL-TRANSMISSION-SIG", "junk");
+            request.Headers.Add("PAYPAL-TRANSMISSION-TIME", "2026-10-10T09:08:45Z");
+        }
+
+        return await client.SendAsync(request, Token);
+    }
+
     // ------------------------------------------------------------------------------ verified: applied once
 
     [Fact]

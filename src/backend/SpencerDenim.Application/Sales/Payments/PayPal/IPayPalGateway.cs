@@ -243,7 +243,32 @@ public sealed record PayPalWebhookHeaders(
     string CertUrl,
     string TransmissionId,
     string TransmissionSig,
-    string TransmissionTime);
+    string TransmissionTime)
+{
+    /// <summary>
+    /// Whether the five headers are present and the certificate address is on PayPal's own domain over HTTPS.
+    /// <para>
+    /// <b>It lives on the headers, and is asked twice, because the cost of being wrong differs.</b> The webhook
+    /// endpoint asks it <i>before</i> it spends a throttle permit (#166): a request that cannot be a PayPal
+    /// notification is refused for nothing, so a flood of them cannot use up the budget PayPal's real deliveries
+    /// need. The gateway asks it again before it makes the call to PayPal to verify, which is what stops this
+    /// endpoint being a way to spend the shop's PayPal rate limit. Both must give the same answer, so there is
+    /// one definition.
+    /// </para>
+    /// <para>
+    /// It proves nothing about authenticity: anybody can send these headers. Verification with PayPal is what
+    /// does that. This only decides whether verifying is worth a call.
+    /// </para>
+    /// </summary>
+    public bool LooksLikePayPal() =>
+        !string.IsNullOrWhiteSpace(AuthAlgo)
+        && !string.IsNullOrWhiteSpace(TransmissionId)
+        && !string.IsNullOrWhiteSpace(TransmissionSig)
+        && !string.IsNullOrWhiteSpace(TransmissionTime)
+        && Uri.TryCreate(CertUrl, UriKind.Absolute, out var cert)
+        && cert.Scheme == Uri.UriSchemeHttps
+        && cert.Host.EndsWith(".paypal.com", StringComparison.OrdinalIgnoreCase);
+}
 
 /// <summary>What <see cref="IPayPalGateway.VerifyWebhookAsync"/> found.</summary>
 public enum PayPalWebhookVerification
