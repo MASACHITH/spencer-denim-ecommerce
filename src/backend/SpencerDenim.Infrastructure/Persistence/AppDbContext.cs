@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using SpencerDenim.Domain.Auditing;
 using SpencerDenim.Domain.Catalog;
 using SpencerDenim.Domain.Content;
+using SpencerDenim.Domain.Identity;
 using SpencerDenim.Domain.Inventory;
 using SpencerDenim.Domain.Marketing;
 using SpencerDenim.Domain.Media;
@@ -98,6 +99,17 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
 
     public DbSet<IdentityUserToken<int>> UserTokens => Set<IdentityUserToken<int>>();
 
+    /// <summary>
+    /// <c>identity.CustomerAddresses</c> (doc 08 §3.1, CHK-01 / ACC-02). Created by W3-01's migration.
+    /// <para>
+    /// A registered customer's address book, read and written by the customer's own account screens
+    /// (ACC-02) and picked from at checkout. It is <b>not</b> what an order ships to:
+    /// <c>sales.Orders.ShipAddress</c> is a snapshot with no FK to this table, so editing an entry here
+    /// never rewrites a past order.
+    /// </para>
+    /// </summary>
+    public DbSet<CustomerAddress> CustomerAddresses => Set<CustomerAddress>();
+
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
 
     public DbSet<Department> Departments => Set<Department>();
@@ -149,6 +161,23 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<ContactSubmission> ContactSubmissions => Set<ContactSubmission>();
 
     public DbSet<NewsletterSubscriber> NewsletterSubscribers => Set<NewsletterSubscriber>();
+
+    /// <summary><c>marketing.PromoCodes</c> (doc 08 §3.6, ADM-13). Created by W3-05's migration.</summary>
+    public DbSet<PromoCode> PromoCodes => Set<PromoCode>();
+
+    /// <summary>
+    /// <c>marketing.SaleCampaigns</c> (doc 08 §3.6, ADM-14). Created by W3-05b's migration, which is also
+    /// what turned <c>sales.OrderLines.SaleCampaignId</c> into a real foreign key.
+    /// </summary>
+    public DbSet<SaleCampaign> SaleCampaigns => Set<SaleCampaign>();
+
+    /// <summary>
+    /// <c>marketing.SaleCampaignTargets</c> (doc 08 §3.6, ADM-14). A set of its own, and not reached only
+    /// through <see cref="SaleCampaign.Targets"/>, because the pricing reader joins targets to products
+    /// without loading campaigns and the admin screen replaces a campaign's targets with a set-based
+    /// delete rather than a tracked one.
+    /// </summary>
+    public DbSet<SaleCampaignTarget> SaleCampaignTargets => Set<SaleCampaignTarget>();
 
     public DbSet<Province> Provinces => Set<Province>();
 

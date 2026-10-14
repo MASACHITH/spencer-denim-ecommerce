@@ -1,0 +1,191 @@
+# Spencer Denim application stack (W0-15, docs/15-deployment-runbook.md).
+#
+# Never used on its own: always together with exactly one environment file (compose.production.yml,
+# compose.staging.yml, or compose.local.yml on a developer machine), which fixes the published port, the edge
+# subnet and the gateway's address, the ASP.NET Core environment and the resource limits. Secrets and the image tag
+# come from the server's config/app.env (template: .env.example).
+#
+#   docker compose -p sd-production -f compose.yml -f compose.production.yml --env-file ../config/app.env up -d --wait
+#
+# (scripts/deploy.sh does exactly this.) Services:
+#
+#   web         nginx gateway, the ONLY published port (127.0.0.1:<port>, behind the host's nginx + certbot)
+#   storefront  Angular SSR server
+#   api         .NET API
+#   migrator    one-shot EF Core migrations bundle; the API starts only after it exits 0
+#
+# SQL Server is NOT in this stack. It runs as its own stack under /opt/server/database/<env>/ (deploy/database/),
+# so stopping, rebuilding or removing the application can never touch the database files. This stack joins that
+# stack's network (sd-<env>-db), which is internal: nothing on it can reach the internet, and SQL Server
+# publishes no port at all.
+#
+# Networks and trust (the W0-15 forwarded-headers launch blocker):
+#   edge  fixed subnet per environment. The gateway has a fixed address on it, and the API trusts X-Forwarded-For
+#         from that one address only (ForwardedHeaders__KnownProxies). The storefront is on edge too, so it can
+#         reach the API, but its address is not trusted.
+#   db    external, internal-only: api + migrator + SQL Server.
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+x-hardening: &hardening
+  restart: unless-stopped
+  read_only: true
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  logging: *default-logging
+
+services:
+  migrator:
+    image: ${SD_IMAGE_REPOSITORY:-spencer-denim}/migrator:${SD_IMAGE_TAG:?set SD_IMAGE_TAG}
+    build:
+      context: ../..
+      dockerfile: deploy/docker/backend.Dockerfile
+      target: migrator
+    restart: "no"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging: *default-logging
+    tmpfs:
+      - /tmp
+    environment:
+      # The migrator login (db_owner, doc 08 §10.4). The API never gets this one.
+      ConnectionStrings__Database: ${SD_MIGRATOR_DB_CONNECTION:?set SD_MIGRATOR_DB_CONNECTION}
+      Database__CompatibilityLevel: ${SD_DB_COMPATIBILITY_LEVEL:-170}
+      Logging__ConsoleFormat: json
+      # The bundle is a single self-contained file; it unpacks its native parts here.
+      DOTNET_BUNDLE_EXTRACT_BASE_DIR: /tmp
+      # The bundle builds the API's host to find the DbContext, and that host refuses to start in Production
+      # without a key ring path (#96). The migrator never protects anything, so a throwaway path on its tmpfs
+      # satisfies the check; it must NOT share the API's real key ring.
+      DataProtection__KeysPath: /tmp/dataprotection-keys
+    networks:
+      - db
+
+  api:
+    <<: *hardening
+    image: ${SD_IMAGE_REPOSITORY:-spencer-denim}/api:${SD_IMAGE_TAG:?set SD_IMAGE_TAG}
+    build:
+      context: ../..
+      dockerfile: deploy/docker/backend.Dockerfile
+      target: api
+    depends_on:
+      migrator:
+        condition: service_completed_successfully
+    tmpfs:
+      - /tmp
+    volumes:
+      # Data Protection key ring: admin sign-ins, antiforgery tokens and encrypted settings survive a restart
+      # (#96, docs/15 §4). DataProtection__KeysPath below points at it; Production refuses to start without it.
+      - ${SD_DATA_DIR:-../data}/dataprotection-keys:/var/lib/spencer-denim/dataprotection-keys
+      # Uploads (W1-04, doc 03 §4). The API serves /media itself, because "404 for anything not Ready" is a
+      # question for the database, so the gateway never mounts these. Private (bank slips) is a separate
+      # directory that is never served at all.
+      - ${SD_DATA_DIR:-../data}/media-public:/var/lib/spencer-denim/media-public
+      - ${SD_DATA_DIR:-../data}/media-private:/var/lib/spencer-denim/media-private
+      # A 50 MB video is spooled here while it streams in; /tmp is a RAM-backed tmpfs in this container.
+      - ${SD_DATA_DIR:-../data}/upload-spool:/var/lib/spencer-denim/upload-spool
+    environment:
+      ConnectionStrings__Database: ${SD_APP_DB_CONNECTION:?set SD_APP_DB_CONNECTION}
+      Database__CompatibilityLevel: ${SD_DB_COMPATIBILITY_LEVEL:-170}
+      Logging__ConsoleFormat: json
+      # ForwardedHeaders__KnownProxies (the gateway's fixed address) is set by the environment file. Never set
+      # ASPNETCORE_FORWARDEDHEADERS_ENABLED: that framework switch means "trust everybody".
+      AdminSecurity__RequireSecureCookies: "true"
+      # Reference data (departments, categories, sizes...) is seeded idempotently on every start. The demo
+      # catalogue is switched on by the staging/local environment files only.
+      Seed__RunOnStartup: "true"
+      Seed__IncludeDemoCatalogue: "false"
+      Seed__Admin__Enabled: ${SD_SEED_ADMIN_ENABLED:-false}
+      Seed__Admin__Email: ${SD_SEED_ADMIN_EMAIL:-}
+      Seed__Admin__Password: ${SD_SEED_ADMIN_PASSWORD:-}
+      Catalog__MediaBaseUrl: /media
+      DataProtection__KeysPath: /var/lib/spencer-denim/dataprotection-keys
+      Media__PublicRoot: /var/lib/spencer-denim/media-public
+      Media__PrivateRoot: /var/lib/spencer-denim/media-private
+      Media__UploadSpoolPath: /var/lib/spencer-denim/upload-spool
+      # Every link in an order email is built from this (W3-06); unset, the emails carry no links.
+      Email__StorefrontBaseUrl: ${SD_PUBLIC_ORIGIN:?set SD_PUBLIC_ORIGIN}
+      # SMTP: optional until the client's credentials arrive. Unset, emails queue and are not sent, and the
+      # admin banner says so (W4-02a).
+      Email__Smtp__Host: ${SD_SMTP_HOST:-}
+      Email__Smtp__Port: ${SD_SMTP_PORT:-587}
+      Email__Smtp__Username: ${SD_SMTP_USERNAME:-}
+      Email__Smtp__Password: ${SD_SMTP_PASSWORD:-}
+      Email__Smtp__FromAddress: ${SD_SMTP_FROM_ADDRESS:-}
+      Email__Smtp__FromName: ${SD_SMTP_FROM_NAME:-}
+    healthcheck:
+      # Readiness, not liveness: the gateway starts only once the API can reach SQL Server.
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/health/ready || exit 1"]
+      interval: 15s
+      timeout: 6s
+      start_period: 30s
+      retries: 5
+    networks:
+      edge: {}
+      db: {}
+
+  storefront:
+    <<: *hardening
+    image: ${SD_IMAGE_REPOSITORY:-spencer-denim}/storefront:${SD_IMAGE_TAG:?set SD_IMAGE_TAG}
+    build:
+      context: ../..
+      dockerfile: deploy/docker/frontend.Dockerfile
+      target: storefront
+    tmpfs:
+      - /tmp
+    environment:
+      PORT: "4000"
+      # Server-side rendering calls the API directly, not through the gateway.
+      API_INTERNAL_URL: http://api:8080
+      # The public host name(s) the SSR engine will render for (comma-separated). Anything else is refused.
+      NG_ALLOWED_HOSTS: ${SD_PUBLIC_HOSTS:?set SD_PUBLIC_HOSTS}
+      # The only X-Forwarded-* headers the gateway sends here, both overwritten by it. Angular falls back to the
+      # empty client-side shell on any forwarded header it does not trust, so this list and the gateway's
+      # "location /" block must agree (deploy/gateway).
+      NG_TRUST_PROXY_HEADERS: x-forwarded-host,x-forwarded-proto
+      # The absolute origin in robots.txt, sitemap.xml and og:url (#86). Never derived from the request: unset,
+      # staging would publish production's addresses.
+      PUBLIC_SITE_ORIGIN: ${SD_PUBLIC_ORIGIN:?set SD_PUBLIC_ORIGIN}
+    networks:
+      edge: {}
+
+  web:
+    <<: *hardening
+    image: ${SD_IMAGE_REPOSITORY:-spencer-denim}/web:${SD_IMAGE_TAG:?set SD_IMAGE_TAG}
+    build:
+      context: ../..
+      dockerfile: deploy/docker/frontend.Dockerfile
+      target: web
+    depends_on:
+      api:
+        condition: service_healthy
+      storefront:
+        condition: service_healthy
+    tmpfs:
+      - /tmp
+    environment:
+      SD_API_UPSTREAM: api:8080
+      SD_STOREFRONT_UPSTREAM: storefront:4000
+      # SD_REAL_IP_FROM (the only peer whose X-Forwarded-For the gateway believes) is set by the environment file.
+      SD_MAX_BODY_SIZE: 2m
+      SD_MAX_UPLOAD_SIZE: 67m
+    # The published port (127.0.0.1 only) and the fixed address are set by the environment file.
+    networks:
+      edge: {}
+
+networks:
+  edge:
+    driver: bridge
+    # Subnet, dynamic range and gateway address: set by the environment file.
+  db:
+    # Created by the database stack (deploy/database/compose.yml); its name is set by the environment file.
+    external: true

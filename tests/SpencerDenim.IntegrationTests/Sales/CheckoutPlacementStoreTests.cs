@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using SpencerDenim.Application.Sales.Checkout.Abstractions;
 using SpencerDenim.Application.Sales.Payments.Contracts;
+using SpencerDenim.Domain.Ops;
 using SpencerDenim.Domain.Sales;
 using SpencerDenim.Infrastructure.Persistence;
 using SpencerDenim.IntegrationTests.Infrastructure;
@@ -143,6 +144,99 @@ public sealed class CheckoutPlacementStoreTests(SqlServerDatabaseFixture sqlServ
                 .CountAsync(
                     order => order.CheckoutIdempotencyKey == placement.CheckoutIdempotencyKey,
                     Token));
+    }
+
+    /// <summary>
+    /// Doc 11 P6 step 10, per payment method, **without naming a gateway**: instructions that send the
+    /// customer elsewhere (a redirect link or a redirect form) are not emailed as bank-transfer
+    /// instructions. The only payment-instructions template there is says "pay by bank or online transfer",
+    /// and a redirecting provider's page, not an email, is where the customer pays.
+    /// </summary>
+    [Theory]
+    [InlineData("link")]
+    [InlineData("form")]
+    public async Task Instructions_that_send_the_customer_elsewhere_queue_no_bank_transfer_email(string kind)
+    {
+        SqlServer.SkipIfUnavailable();
+
+        var variantId = await CheckoutVariantIdAsync();
+        await SetStockAsync(variantId, 10);
+
+        var (_, cartId, _) = await NewBagAsync(variantId);
+        var placement = await BuildPlacementAsync(cartId, [(variantId, 1)]);
+
+        var redirecting = kind == "link"
+            ? Instructions(placement) with { RedirectUrl = "https://pay.example.test/checkout" }
+            : Instructions(placement) with
+            {
+                RedirectForm = PaymentRedirectForm.Post(
+                    "https://pay.example.test/checkout",
+                    [new PaymentRedirectFormField("order_id", placement.OrderNumber)]),
+            };
+
+        using var scope = CreateScope();
+        var result = await scope.ServiceProvider
+            .GetRequiredService<IOrderPlacementStore>()
+            .PlaceAsync(placement with { Instructions = redirecting }, Token);
+
+        Assert.Equal(OrderPlacementStatus.Placed, result.Status);
+
+        // The order-placed confirmation is queued for every order; the bank-transfer one is not.
+        Assert.Equal(
+            [EmailTemplateCodes.OrderPlaced],
+            (await OutboxTemplatesAsync(result.PublicId!.Value)).ToArray());
+    }
+
+    /// <summary>
+    /// The control for the test above: the same placement with ordinary bank instructions queues both
+    /// emails, so the redirect rule is proved to be the thing that removed the second.
+    /// </summary>
+    [Fact]
+    public async Task Instructions_with_bank_details_queue_the_order_confirmation_and_the_instructions()
+    {
+        SqlServer.SkipIfUnavailable();
+
+        var variantId = await CheckoutVariantIdAsync();
+        await SetStockAsync(variantId, 10);
+
+        var (_, cartId, _) = await NewBagAsync(variantId);
+        var placement = await BuildPlacementAsync(cartId, [(variantId, 1)]);
+
+        using var scope = CreateScope();
+        var result = await scope.ServiceProvider
+            .GetRequiredService<IOrderPlacementStore>()
+            .PlaceAsync(placement with { Instructions = Instructions(placement) }, Token);
+
+        Assert.Equal(OrderPlacementStatus.Placed, result.Status);
+
+        Assert.Equal(
+            [EmailTemplateCodes.OrderPlaced, EmailTemplateCodes.BankTransferInstructions],
+            (await OutboxTemplatesAsync(result.PublicId!.Value)).ToArray());
+    }
+
+    /// <summary>Bank-style instructions for a placement: a field to print and a slip to accept, no redirect.</summary>
+    private static PaymentInstructions Instructions(OrderPlacement placement) =>
+        new(
+            PaymentProviderCodes.BankTransfer,
+            placement.OrderNumber,
+            placement.Pricing.GrandTotal,
+            placement.Payment.PaymentDueAtUtc,
+            [new PaymentInstructionField("Account number", "0000 1111 2222", Copyable: true)],
+            null,
+            RedirectUrl: null,
+            AcceptsProof: true);
+
+    private async Task<List<string>> OutboxTemplatesAsync(Guid publicId)
+    {
+        using var scope = CreateScope();
+        var id = publicId.ToString("D");
+
+        return await scope.ServiceProvider.GetRequiredService<AppDbContext>().EmailOutbox
+            .AsNoTracking()
+            .Where(message => message.RelatedEntityId == id)
+            .OrderBy(message => message.Id)
+            .Select(message => message.TemplateCode)
+            .ToListAsync(Token);
     }
 
     /// <summary>

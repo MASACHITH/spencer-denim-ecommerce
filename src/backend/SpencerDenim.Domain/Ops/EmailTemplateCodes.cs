@@ -5,16 +5,19 @@ namespace SpencerDenim.Domain.Ops;
 /// constraint</b> — doc 08 lists the codes in the column's notes and pins nothing in the database, so a
 /// template added by a later task is a new constant here and not a migration.
 /// <para>
-/// <b>Only the six order emails are declared.</b> Doc 08 lists sixteen codes, five of which are declared
-/// here — <see cref="OrderCancelled"/> is the sixth and is <i>not</i> one of doc 08's — so the eleven
-/// below are the rest of doc 08's list (this said "the ten that are not here" and then named eleven: the
-/// arithmetic counted six declared codes against a list that holds five of them. W3-06's tester). They
-/// belong to tasks that are not built — <c>Welcome</c>, <c>EmailConfirmation</c>, <c>AccountExists</c>,
-/// <c>PasswordReset</c> and <c>StaffEmailChanged</c> are W3-01's and P14's,
-/// <c>SensitiveSettingsChanged</c> needs <c>ops.AdminAlerts</c> and the dual-send of doc 08 §3.8 N2,
-/// <c>StaffInvite</c> and <c>BreakGlassUsed</c> are P14's, and <c>PaymentException</c>,
+/// <b>Ten codes are declared: the six order emails and W3-01's four account emails.</b> Doc 08 lists
+/// sixteen, of which nine are declared here — <see cref="OrderCancelled"/> is the tenth and is <i>not</i>
+/// one of doc 08's — so the seven below are the rest of doc 08's list. They belong to tasks that are not
+/// built: <c>StaffEmailChanged</c> and <c>StaffInvite</c> and <c>BreakGlassUsed</c> are P14's,
+/// <c>SensitiveSettingsChanged</c> needs the dual-send of doc 08 §3.8 N2, and <c>PaymentException</c>,
 /// <c>CaptureRecoveryFailed</c> and <c>ReconciliationDrift</c> are PayPal's and the nightly jobs'. A
 /// constant with no composer and no caller would read as a template this build can send.
+/// </para>
+/// <para>
+/// <b>W3-01 declared the four account codes and <see cref="EmailOutboxMessage.BodyIsClearedOnSend"/> now
+/// reads two of them rather than its own literals</b>, which is the hand-off W3-06's tester wrote into
+/// <c>OrderEmailOutboxTests</c>: the G-03 privacy rule is keyed on the constants it is about, so renaming
+/// one cannot silently take the rule off the template it was written for.
 /// </para>
 /// </summary>
 public static class EmailTemplateCodes
@@ -51,6 +54,45 @@ public static class EmailTemplateCodes
     /// </para>
     /// </summary>
     public const string OrderCancelled = "OrderCancelled";
+
+    /// <summary>
+    /// Doc 11 P11 step A.3 / doc 08 §3.8: the link that confirms a new customer's address, and the link
+    /// sent to a <i>new</i> address when a customer changes their email.
+    /// <para>
+    /// <b>Its body is destroyed the moment it is sent</b> (G-03, <see cref="EmailOutboxMessage.BodyIsClearedOnSend"/>):
+    /// the link carries a single-use token, so it must not sit in the outbox table or in a backup.
+    /// </para>
+    /// </summary>
+    public const string EmailConfirmation = "EmailConfirmation";
+
+    /// <summary>
+    /// Doc 11 P11 step C.8 / doc 08 §3.8: the password-reset link. <b>Body destroyed on send</b> (G-03),
+    /// for the same reason as <see cref="EmailConfirmation"/>.
+    /// </summary>
+    public const string PasswordReset = "PasswordReset";
+
+    /// <summary>
+    /// Doc 11 P11 step A.3 / doc 08 §3.8: the "your account is ready" message a new customer gets beside
+    /// the confirmation link.
+    /// <para>
+    /// <b>It carries no token, so its body is kept for the ordinary thirty days.</b> That is the point of
+    /// splitting it from <see cref="EmailConfirmation"/> rather than sending one message: the record of
+    /// what the shop told a new customer survives, and the credential does not.
+    /// </para>
+    /// </summary>
+    public const string Welcome = "Welcome";
+
+    /// <summary>
+    /// Doc 11 P11 step A.2 / doc 08 §3.8: sent to an address that <b>already has a customer account</b>
+    /// when somebody tries to register with it again — "sign in or reset your password".
+    /// <para>
+    /// <b>This message is the whole of how registration stays non-enumerating.</b> The page says the same
+    /// sentence either way (doc 08 §3.1 DB10); the difference between a free address and a taken one is
+    /// visible only in the inbox of whoever owns the address, which is exactly who is entitled to know.
+    /// A staff match sends nothing at all.
+    /// </para>
+    /// </summary>
+    public const string AccountExists = "AccountExists";
 
     /// <summary><c>varchar(50)</c>, doc 08 §3.8.</summary>
     public const int MaxLength = 50;

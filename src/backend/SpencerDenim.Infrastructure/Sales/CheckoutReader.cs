@@ -1,14 +1,18 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using SpencerDenim.Application.Abstractions.Time;
+using SpencerDenim.Application.Accounts.Contracts;
 using SpencerDenim.Application.Catalog;
 using SpencerDenim.Application.Sales.Cart.Contracts;
+using SpencerDenim.Application.Marketing.Promotions.Abstractions;
 using SpencerDenim.Application.Sales.Checkout.Abstractions;
 using SpencerDenim.Application.Sales.Checkout.Contracts;
 using SpencerDenim.Application.Sales.Orders.Contracts;
+using SpencerDenim.Application.Sales.Payments.Abstractions;
 using SpencerDenim.Domain.Catalog;
 using SpencerDenim.Domain.Media;
 using SpencerDenim.Domain.Reference;
+using SpencerDenim.Domain.Marketing;
 using SpencerDenim.Domain.Sales;
 using SpencerDenim.Infrastructure.Catalog;
 using SpencerDenim.Infrastructure.Persistence;
@@ -37,7 +41,9 @@ namespace SpencerDenim.Infrastructure.Sales;
 internal sealed class CheckoutReader(
     AppDbContext dbContext,
     IOptions<CatalogOptions> options,
-    IClock clock) : ICheckoutReader
+    IClock clock,
+    IPaymentProviderRegistry paymentProviders,
+    ICampaignOfferReader campaigns) : ICheckoutReader
 {
     private readonly CatalogOptions _options = options.Value;
 
@@ -173,9 +179,28 @@ internal sealed class CheckoutReader(
         return row is null ? null : ToPickupLocation(row.location, row.district);
     }
 
+    /// <summary>
+    /// The payment methods a shopper may choose: the providers the shop has switched on
+    /// (<c>sales.PaymentProviders.IsEnabled</c>) <b>that can take a payment right now</b>.
+    /// </summary>
+    /// <remarks>
+    /// <b>Two questions, asked of two different owners (W4-01).</b> Whether a provider is <i>enabled</i> is
+    /// the shop's decision and lives in the table. Whether it is <i>available</i> is the provider's own fact —
+    /// PayPal needs credentials and an exchange rate updated within its age limit (doc 11 P8: "PayPal is hidden
+    /// at checkout when its rate is older than 7 days") — and is asked through
+    /// <see cref="IPaymentProvider.IsAvailableAsync"/>, which answers true for a provider with no such
+    /// conditions. This reader names no provider; it only declines to list one that says it cannot work.
+    /// <para>
+    /// A provider that is enabled but has <b>no code in this build</b> is still listed, as it always was, so
+    /// that <c>PlaceOrderCommandHandler</c>'s own refusal ("cannot be used yet") is the one a shopper reads.
+    /// Because the placement handler resolves the shopper's choice from this same list, a method that is
+    /// hidden here is also refused there.
+    /// </para>
+    /// </remarks>
     public async Task<IReadOnlyList<CheckoutPaymentMethod>> EnabledPaymentMethodsAsync(
-        CancellationToken cancellationToken) =>
-        await dbContext.PaymentProviders
+        CancellationToken cancellationToken)
+    {
+        var enabled = await dbContext.PaymentProviders
             .AsNoTracking()
             .Where(provider => provider.IsEnabled)
             .OrderBy(provider => provider.DisplayOrder)
@@ -185,6 +210,76 @@ internal sealed class CheckoutReader(
                 provider.DisplayName,
                 provider.CheckoutDescription))
             .ToListAsync(cancellationToken);
+
+        var offered = new List<CheckoutPaymentMethod>(enabled.Count);
+
+        foreach (var method in enabled)
+        {
+            if (paymentProviders.Find(method.Code) is { } provider
+                && !await provider.IsAvailableAsync(cancellationToken))
+            {
+                continue;
+            }
+
+            offered.Add(method);
+        }
+
+        return offered;
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// <c>IsDeleted</c> is excluded twice over: <c>PromoCode</c> carries the global soft-delete filter
+    /// (<c>ApplySoftDelete</c>, doc 08 §1.5), and the predicate is written out here as well. The second is
+    /// what would survive an <c>IgnoreQueryFilters()</c> — which this very file uses in
+    /// <c>ReadCartAsync</c> for a documented reason, so the next person to need one here does not
+    /// silently start matching removed codes.
+    /// <para>
+    /// <b>Inactive and out-of-window rows <i>are</i> returned</b>, unlike the district and pickup-location
+    /// lookups above. Those collapse "no such row" and "deactivated" so a caller cannot map the shop's
+    /// reference data by probing ids. A promo code is not reference data a caller could enumerate — it is
+    /// a string the shopper was given — and the five unusable states have to be told apart
+    /// <i>somewhere</i> so that "that code is fully used" and "spend Rs. 5,000 to use that code" can be
+    /// said at all. <c>PromoEvaluator</c> is that somewhere, and it collapses four of them back into one
+    /// sentence. A reader that filtered on <c>IsActive</c> would make that decision twice, in two
+    /// languages, and the second copy would drift.
+    /// </para>
+    /// <para>
+    /// <b>No explicit <c>ToUpper</c>.</b> The match is case-insensitive because the database collation is
+    /// <c>Latin1_General_100_CI_AS_SC</c> (doc 08 §1.1) — asserted by an integration test that applies a
+    /// lower-cased code and reads the stored upper-case one back, rather than trusted — so
+    /// <c>UX_PromoCodes_Code</c> is used as an index seek and a <c>ToUpper</c> in the predicate would have
+    /// made it a scan.
+    /// </para>
+    /// </remarks>
+    public async Task<PromoCodeTerms?> FindPromoCodeAsync(
+        string normalisedCode,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(normalisedCode);
+
+        var rows = await dbContext.PromoCodes
+            .AsNoTracking()
+            .Where(code => !code.IsDeleted && code.Code == normalisedCode)
+            .Select(code => new PromoCodeTerms(
+                code.Id,
+                code.Code,
+                code.DiscountType,
+                code.DiscountValue,
+                code.MaxDiscountAmount,
+                code.MinSpendAmount,
+                code.ExcludeSaleItems,
+                code.StartsAtUtc,
+                code.EndsAtUtc,
+                code.TotalUsageLimit,
+                code.PerCustomerLimit,
+                code.UsageCount,
+                code.IsActive))
+            .Take(1)
+            .ToListAsync(cancellationToken);
+
+        return rows.Count == 1 ? rows[0] : null;
+    }
 
     public async Task<IReadOnlyList<CheckoutCartLine>> ReadCartAsync(
         int cartId,
@@ -267,7 +362,14 @@ internal sealed class CheckoutReader(
                             : null)))
             .ToListAsync(cancellationToken);
 
-        return rows.Select(row => ToLine(row, _options.MediaBaseUrl)).ToList();
+        // Doc 08 §6 step 3, live — doc 08 §7.4's "checkout always prices live" in as many words. This is
+        // the read whose figures become the order's stored totals, so it must never see the five-minute
+        // stored summary: a campaign that ended four minutes ago would otherwise be charged.
+        var offers = await campaigns.ReadAsync(
+            rows.Select(row => row.ProductId).Distinct().ToList(),
+            cancellationToken);
+
+        return rows.Select(row => ToLine(row, offers, _options.MediaBaseUrl)).ToList();
     }
 
     public async Task<IReadOnlyDictionary<int, int>> AvailableStockAsync(
@@ -385,7 +487,24 @@ internal sealed class CheckoutReader(
                 order.Payments.Any(payment => payment.IsOrderSettlement),
                 order.Payments.Any(payment =>
                     payment.ProviderCode == PaymentProviderCodes.PayPal
-                    && payment.Status == PaymentStatus.Pending)))
+                    && payment.Status == PaymentStatus.Pending),
+
+                // Money that arrived and could not settle the order, from any provider: the notice below.
+                // Read from the payment *status*, which is the one provider-neutral fact (doc 08 §4.2 step 4),
+                // so a provider added later is covered without this reader hearing its name.
+                order.Payments.Any(payment => payment.Status == PaymentStatus.CapturedRequiresRefund),
+
+                // W3-01: doc 11 P11 step 14 says a guest following their emailed link sees "status,
+                // tracking", and this payload carried neither — the only place in the system that showed
+                // a tracking number was the admin panel. Joined by the id the order kept, so a courier
+                // that has since been deleted leaves the number as text the shopper can quote.
+                order.CourierName,
+                order.TrackingNumber,
+                order.ShippedAtUtc,
+                dbContext.Couriers
+                    .Where(courier => courier.Id == order.CourierId)
+                    .Select(courier => courier.TrackingUrlTemplate)
+                    .FirstOrDefault()))
             .FirstOrDefaultAsync(cancellationToken);
 
         return row is null
@@ -491,10 +610,27 @@ internal sealed class CheckoutReader(
             row.PlacedAtUtc,
             row.PaymentDueAtUtc,
 
-            // Named arguments from here on, because the three that follow are optional and only the last
-            // is being set. Positional would mean restating a default — and `IsDuplicateSubmission` is a
+            // Named arguments from here on, because the four that follow are optional and only two are
+            // being set. Positional would mean restating a default — and `IsDuplicateSubmission` is a
             // fact about a *submission*, which a read of an order by its token can never be.
-            CanCancel: CanCancel(row, nowUtc));
+            CanCancel: CanCancel(row, nowUtc),
+
+            // Doc 11 P8 step 6: "We received your payment, our team will contact you". A code and nothing
+            // else - no provider, no amount, no payment id - because the order link is the whole credential.
+            PaymentNotice: row.HasUnsettledPayment ? OrderPaymentNotices.Received : null,
+
+            // W3-01: present only when all three parts of the dispatch snapshot are. Doc 08 §3.5 makes
+            // them nullable and doc 11 P9's dispatch writes them together, but a null block and a block
+            // of nulls are different things to a client, and the second one makes every consumer write
+            // the same three-way check. A pickup order has no courier and gets no block, which is right:
+            // there is nothing to follow, and `StatusLabel` already reads "Ready for collection".
+            Tracking: row is { CourierName: { } courierName, TrackingNumber: { } trackingNumber, ShippedAtUtc: { } shippedAtUtc }
+                ? new CustomerOrderTrackingDto(
+                    courierName,
+                    trackingNumber,
+                    OrderTrackingLink.Build(row.TrackingUrlTemplate, trackingNumber),
+                    shippedAtUtc)
+                : null);
 
     /// <summary>
     /// Builds a <see cref="CheckoutPickupLocation"/> from a location and the district it is in (R7).
@@ -543,7 +679,10 @@ internal sealed class CheckoutReader(
                 row.EstimatedDaysMin,
                 row.EstimatedDaysMax);
 
-    private static CheckoutCartLine ToLine(CheckoutLineRow row, string? mediaBaseUrl)
+    private static CheckoutCartLine ToLine(
+        CheckoutLineRow row,
+        CampaignOfferSet offers,
+        string? mediaBaseUrl)
     {
         // The same five conditions CartReader applies, and they are the storefront's definition of "a
         // shopper may reach this": published, not deleted, active variant, active department, active and
@@ -556,10 +695,10 @@ internal sealed class CheckoutReader(
         var list = CatalogPricing.ListPrice(row.BasePrice, row.PriceOverride);
         var original = CatalogPricing.OriginalPrice(list, row.CompareAtPrice, row.CompareAtPriceOverride);
 
-        // Step 3 with no campaign is the list price. Sale campaigns are ADM-14 (W3-05) and no table
-        // exists, so passing null keeps the one place that knows the rule in the loop rather than
-        // open-coding "sale = list" here and having to find it again later.
-        var sale = CatalogPricing.SalePrice(list, campaignPrice: null);
+        // Step 3: the lowest resulting price among the campaigns that reach this product, resolved
+        // against *this variant's* list price (doc 08 §6 step 1), and null when none of them beats it.
+        var campaign = offers.Best(row.ProductId, list);
+        var sale = CatalogPricing.SalePrice(list, campaign?.Price);
 
         var available = Math.Max(row.Available, 0);
 
@@ -594,6 +733,11 @@ internal sealed class CheckoutReader(
             original,
             list,
             sale,
+
+            // Which campaign priced the line, for `sales.OrderLines.SaleCampaignId`. Null when no
+            // campaign won, which is also the case when one targeted the product but could not beat its
+            // list price — a line that was not discounted must not record a campaign.
+            campaign?.CampaignId,
             status);
     }
 
@@ -637,7 +781,16 @@ internal sealed class CheckoutReader(
         OrderStockState StockState,
         DateTime? CaptureLockedUntilUtc,
         bool HasSettlementPayment,
-        bool HasPayPalPendingPayment);
+        bool HasPayPalPendingPayment,
+        bool HasUnsettledPayment,
+
+        // W3-01 (ACC-02, doc 11 P11 steps 12 and 14): the dispatch snapshot and the courier's *current*
+        // template. Doc 08 §3.5 keeps the name and the number on the order and never a built URL, so
+        // editing a template changes the link on older orders too.
+        string? CourierName,
+        string? TrackingNumber,
+        DateTime? ShippedAtUtc,
+        string? TrackingUrlTemplate);
 
     private sealed record OrderLineRow(
         short LineNumber,

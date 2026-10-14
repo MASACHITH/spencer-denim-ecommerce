@@ -4,7 +4,7 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 
 import { AdminSettingsApi } from '../../core/settings/admin-settings-api';
 import { AdminSettings, SETTING_KEYS } from '../../core/settings/admin-settings.model';
-import { SettingsPage, toForm } from './settings-page';
+import { SettingsPage, formatStamp, toForm, toPayPalForm } from './settings-page';
 
 /**
  * ADM-22 and GLB-02: the settings screen.
@@ -98,6 +98,91 @@ describe('SettingsPage (ADM-22)', () => {
     };
   }
 
+
+  /**
+   * The ordinary payload plus the `Payments.PayPal` group, which needs `Settings.Payments`.
+   *
+   * **Every value is non-null and the secret has no value at all**, as the server sends it: `value` is always
+   * null for a secret and `hasValue` is the only thing it says. `expiryMinutes` is doc 08's
+   * `Orders.PayPalExpiryMinutes` (`Settings.Edit`), carried in the `Orders` group when asked for.
+   */
+  function payloadWithPayPal(
+    values: Partial<Record<string, string | null>> = {},
+    options: { secretSet?: boolean; withExpiry?: boolean } = {},
+  ): AdminSettings {
+    const { secretSet = true, withExpiry = true } = options;
+
+    const paypal = {
+      [SETTING_KEYS.payPalMode]: 'sandbox',
+      [SETTING_KEYS.payPalClientId]: 'client-id-123',
+      [SETTING_KEYS.payPalWebhookId]: 'WEBHOOK-ID-9',
+      [SETTING_KEYS.payPalLkrPerUsd]: '300.00',
+      [SETTING_KEYS.payPalFxBufferPercent]: '3.00',
+      [SETTING_KEYS.payPalRateMaxAgeDays]: '7',
+      [SETTING_KEYS.payPalRateUpdatedAtUtc]: new Date(Date.now() - 86_400_000).toISOString(),
+      [SETTING_KEYS.payPalCaptureLockHours]: '3',
+      [SETTING_KEYS.payPalCaptureRecoveryMaxHours]: '24',
+      [SETTING_KEYS.payPalPendingCaptureMaxDays]: '5',
+      ...values,
+    } as Record<string, string | null>;
+
+    const base = payload();
+
+    const row = (key: string, permission: string) => ({
+      key,
+      valueType: 'String' as const,
+      value: paypal[key] ?? null,
+      isSecret: false,
+      hasValue: Boolean(paypal[key]),
+      requiredPermission: permission,
+      description: `What ${key} is for.`,
+      updatedAtUtc: null,
+    });
+
+    const groups = [
+      ...base.groups,
+      {
+        groupKey: 'Payments.PayPal',
+        rowVersion: 'paypal-rv-1',
+        settings: [
+          ...Object.keys(paypal).map((key) => row(key, 'Settings.Payments')),
+
+          // The secret: never a value, whoever asks. `hasValue` is all the screen can learn.
+          {
+            key: SETTING_KEYS.payPalClientSecret,
+            valueType: 'Secret' as const,
+            value: null,
+            isSecret: true,
+            hasValue: secretSet,
+            requiredPermission: 'Settings.Payments',
+            description: 'The secret.',
+            updatedAtUtc: null,
+          },
+        ],
+      },
+    ];
+
+    if (withExpiry) {
+      groups.push({
+        groupKey: 'Orders',
+        rowVersion: 'store-rv-1',
+        settings: [
+          {
+            key: SETTING_KEYS.payPalExpiryMinutes,
+            valueType: 'Int' as never,
+            value: values[SETTING_KEYS.payPalExpiryMinutes] ?? '60',
+            isSecret: false,
+            hasValue: true,
+            requiredPermission: 'Settings.Edit',
+            description: 'How long to pay.',
+            updatedAtUtc: null,
+          },
+        ],
+      });
+    }
+
+    return { ...base, groups };
+  }
 
   /**
    * The ordinary payload plus the `Orders` group and the four `Store.*` legal keys, which is what ADM-09's
@@ -804,6 +889,365 @@ describe('SettingsPage (ADM-22)', () => {
    * screen at all** — not even read-only, because this screen renders named forms rather than a generic
    * key list. An invoice that cannot be completed short of SQL is not a deliverable.
    */
+  // ---- PayPal (PAY-02, doc 08 section 3.8) -------------------------------------------------------
+
+  describe('PayPal', () => {
+    async function clickSavePayPal(): Promise<void> {
+      element.querySelector<HTMLButtonElement>('[data-testid="save-paypal"]')!.click();
+      fixture.detectChanges();
+      await fixture.whenStable();
+    }
+
+    function flushAntiforgery(): void {
+      controller.expectOne((request) => request.url.includes('antiforgery')).flush({ token: 't' });
+      fixture.detectChanges();
+    }
+
+    function readiness(): HTMLElement {
+      return element.querySelector('[data-testid="paypal-readiness"]') as HTMLElement;
+    }
+
+    it('shows no PayPal panel when the server did not send the group', async () => {
+      await open(payload());
+
+      // Settings.Payments is held by no default role, so a Store Manager receives no PayPal group - and
+      // a box they could type into and never save would be worse than no box.
+      expect(element.querySelector('[data-testid="paypal-panel"]')).toBeNull();
+      expect(element.querySelector('[data-testid="field-clientId"]')).toBeNull();
+      expect(element.querySelector('[data-testid="save-paypal"]')).toBeNull();
+    });
+
+    it('fills the boxes from the payload', async () => {
+      await open(payloadWithPayPal());
+
+      expect(field('mode').value).toBe('sandbox');
+      expect(field('clientId').value).toBe('client-id-123');
+      expect(field('webhookId').value).toBe('WEBHOOK-ID-9');
+      expect(field('lkrPerUsd').value).toBe('300.00');
+      expect(field('fxBufferPercent').value).toBe('3.00');
+      expect(field('rateMaxAgeDays').value).toBe('7');
+      expect(field('expiryMinutes').value).toBe('60');
+      expect(field('captureLockHours').value).toBe('3');
+      expect(field('captureRecoveryMaxHours').value).toBe('24');
+      expect(field('pendingCaptureMaxDays').value).toBe('5');
+    });
+
+    /**
+     * **The secret is write-only.** The server returns no value for it, so there is nothing to show - and the
+     * box must say whether one is saved without ever holding it.
+     */
+    it('never puts a secret in the page: the box is empty and only says whether one is saved', async () => {
+      await open(payloadWithPayPal({}, { secretSet: true }));
+
+      const secret = field('clientSecret');
+      expect(secret.value).toBe('');
+      expect(secret.type).toBe('password');
+      expect(secret.getAttribute('autocomplete')).toBe('new-password');
+      expect(secret.placeholder).toContain('A secret is saved');
+      expect(element.querySelector('[data-testid="paypal-secret-state"]')?.textContent).toContain('A secret is saved.');
+
+      await open(payloadWithPayPal({}, { secretSet: false }));
+
+      expect(field('clientSecret').placeholder).toBe('Not set');
+      expect(element.querySelector('[data-testid="paypal-secret-state"]')?.textContent).toContain('No secret is saved yet.');
+    });
+
+    /**
+     * **The W1-12 test for this group.** The body is what matters: the API stores what it is handed, and the
+     * thing that was wrong in W1-12 was what the client sent. Every field the server sent goes back - and the
+     * secret does not, because the admin did not type one.
+     */
+    it('sends every field the server sent on every save, and no secret when none was typed', async () => {
+      const loaded = payloadWithPayPal();
+      await open(loaded);
+
+      await type('lkrPerUsd', '305.50');
+      await clickSavePayPal();
+      flushAntiforgery();
+
+      const saved = controller.expectOne(AdminSettingsApi.payPalUrl);
+      expect(saved.request.method).toBe('PUT');
+
+      const body = saved.request.body as Record<string, unknown>;
+
+      expect(body).toEqual({
+        mode: 'sandbox',
+        clientId: 'client-id-123',
+        webhookId: 'WEBHOOK-ID-9',
+        lkrPerUsd: '305.50',
+        fxBufferPercent: '3.00',
+        rateMaxAgeDays: '7',
+        captureLockHours: '3',
+        captureRecoveryMaxHours: '24',
+        pendingCaptureMaxDays: '5',
+        expiryMinutes: '60',
+        rowVersion: 'paypal-rv-1',
+      });
+
+      // Not even as an empty string: a missing field is "keep it", and so is a blank one, but the first
+      // is the one that cannot be misread.
+      expect('clientSecret' in body).toBe(false);
+      expect('rateUpdatedAtUtc' in body).toBe(false);
+      expect('confirmRate' in body).toBe(false);
+
+      saved.flush(null, { status: 204, statusText: 'No Content' });
+      fixture.detectChanges();
+
+      controller.expectOne(AdminSettingsApi.settingsUrl).flush(loaded);
+      fixture.detectChanges();
+    });
+
+    it('sends the secret that was typed, once, and then forgets it', async () => {
+      const loaded = payloadWithPayPal({}, { secretSet: false });
+      await open(loaded);
+
+      await type('clientSecret', '  EBWKjlELKMYqRNQ6sYvFo64FtaRLRR5BdHEESmha49TM ');
+      await clickSavePayPal();
+      flushAntiforgery();
+
+      const saved = controller.expectOne(AdminSettingsApi.payPalUrl);
+
+      expect((saved.request.body as Record<string, unknown>)['clientSecret']).toBe(
+        'EBWKjlELKMYqRNQ6sYvFo64FtaRLRR5BdHEESmha49TM',
+      );
+
+      saved.flush(null, { status: 204, statusText: 'No Content' });
+      fixture.detectChanges();
+
+      controller.expectOne(AdminSettingsApi.settingsUrl).flush(payloadWithPayPal({}, { secretSet: true }));
+      fixture.detectChanges();
+      await fixture.whenStable();
+      fixture.detectChanges();
+
+      // Gone from the box, and from the page altogether.
+      expect(field('clientSecret').value).toBe('');
+      expect(element.textContent).not.toContain('EBWKjlELKMYqRNQ6sYvFo64FtaRLRR5BdHEESmha49TM');
+      expect(element.querySelector('[data-testid="paypal-secret-state"]')?.textContent).toContain('A secret is saved.');
+    });
+
+    it('keeps what was typed in the secret box when the save is refused, so the admin can fix and retry', async () => {
+      await open(payloadWithPayPal({}, { secretSet: false }));
+
+      await type('clientSecret', 'abc 123');
+      await clickSavePayPal();
+      flushAntiforgery();
+
+      controller.expectOne(AdminSettingsApi.payPalUrl).flush(
+        { title: 'One or more fields are invalid.', errors: { clientSecret: ['That does not look like a PayPal secret.'] } },
+        { status: 400, statusText: 'Bad Request' },
+      );
+      fixture.detectChanges();
+
+      expect(element.querySelector('[data-testid="error-clientSecret"]')?.textContent).toContain('PayPal secret');
+      expect(field('clientSecret').value).toBe('abc 123');
+    });
+
+    /**
+     * A group the server did not send is a field the save does not mention - here the one key, doc 08's
+     * `Orders.PayPalExpiryMinutes`, that is `Settings.Edit` and so is absent for a caller with
+     * `Settings.Payments` alone.
+     */
+    it('draws no expiry box and sends no expiry when the server did not send that key', async () => {
+      const loaded = payloadWithPayPal({}, { withExpiry: false });
+      await open(loaded);
+
+      expect(element.querySelector('[data-testid="field-expiryMinutes"]')).toBeNull();
+
+      await clickSavePayPal();
+      flushAntiforgery();
+
+      const saved = controller.expectOne(AdminSettingsApi.payPalUrl);
+
+      expect('expiryMinutes' in (saved.request.body as Record<string, unknown>)).toBe(false);
+
+      saved.flush(null, { status: 204, statusText: 'No Content' });
+      fixture.detectChanges();
+
+      controller.expectOne(AdminSettingsApi.settingsUrl).flush(loaded);
+      fixture.detectChanges();
+    });
+
+    it('sends an emptied box as empty, because clearing one has to be sayable', async () => {
+      const loaded = payloadWithPayPal();
+      await open(loaded);
+
+      await type('webhookId', '');
+      await clickSavePayPal();
+      flushAntiforgery();
+
+      const saved = controller.expectOne(AdminSettingsApi.payPalUrl);
+
+      expect((saved.request.body as Record<string, unknown>)['webhookId']).toBe('');
+      expect((saved.request.body as Record<string, unknown>)['clientId']).toBe('client-id-123');
+
+      saved.flush(null, { status: 204, statusText: 'No Content' });
+      fixture.detectChanges();
+
+      controller.expectOne(AdminSettingsApi.settingsUrl).flush(loaded);
+      fixture.detectChanges();
+    });
+
+    it('can switch the environment', async () => {
+      const loaded = payloadWithPayPal();
+      await open(loaded);
+
+      const mode = element.querySelector<HTMLSelectElement>('[data-testid="field-mode"]')!;
+      mode.value = 'live';
+      mode.dispatchEvent(new Event('change'));
+      fixture.detectChanges();
+      await fixture.whenStable();
+
+      await clickSavePayPal();
+      flushAntiforgery();
+
+      const saved = controller.expectOne(AdminSettingsApi.payPalUrl);
+
+      expect((saved.request.body as Record<string, unknown>)['mode']).toBe('live');
+
+      saved.flush(null, { status: 204, statusText: 'No Content' });
+      fixture.detectChanges();
+
+      controller.expectOne(AdminSettingsApi.settingsUrl).flush(loaded);
+      fixture.detectChanges();
+    });
+
+    it('shows the server\'s message beside the box it is about', async () => {
+      await open(payloadWithPayPal());
+
+      await type('lkrPerUsd', 'three hundred');
+      await clickSavePayPal();
+      flushAntiforgery();
+
+      controller.expectOne(AdminSettingsApi.payPalUrl).flush(
+        { title: 'One or more fields are invalid.', errors: { lkrPerUsd: ['Enter how many rupees one US dollar costs.'] } },
+        { status: 400, statusText: 'Bad Request' },
+      );
+      fixture.detectChanges();
+
+      expect(element.querySelector('[data-testid="error-lkrPerUsd"]')?.textContent).toContain('rupees');
+      expect(field('lkrPerUsd').getAttribute('aria-invalid')).toBe('true');
+
+      await type('lkrPerUsd', '300');
+      expect(element.querySelector('[data-testid="error-lkrPerUsd"]')).toBeNull();
+    });
+
+    it('marks Save unavailable with aria-disabled rather than disabled', async () => {
+      await open(payloadWithPayPal());
+
+      const save = element.querySelector<HTMLButtonElement>('[data-testid="save-paypal"]')!;
+      save.click();
+      fixture.detectChanges();
+
+      // Issue #109: disabling the button under the admin's own finger throws their focus to body.
+      expect(save.getAttribute('aria-disabled')).toBe('true');
+      expect(save.hasAttribute('disabled')).toBe(false);
+
+      flushAntiforgery();
+      controller.expectOne(AdminSettingsApi.payPalUrl).flush(null, { status: 204, statusText: 'No Content' });
+      fixture.detectChanges();
+      controller.expectOne(AdminSettingsApi.settingsUrl).flush(payloadWithPayPal());
+      fixture.detectChanges();
+    });
+
+    // ---- the rate's age ----------------------------------------------------------------------------
+
+    it('confirms the rate with a body of nothing but the confirmation and the version', async () => {
+      const loaded = payloadWithPayPal();
+      await open(loaded);
+
+      element.querySelector<HTMLButtonElement>('[data-testid="confirm-paypal-rate"]')!.click();
+      fixture.detectChanges();
+      flushAntiforgery();
+
+      const saved = controller.expectOne(AdminSettingsApi.payPalUrl);
+
+      // Not the whole form: confirming the rate must not save anything else the admin half-typed.
+      expect(saved.request.body).toEqual({ confirmRate: true, rowVersion: 'paypal-rv-1' });
+
+      saved.flush(null, { status: 204, statusText: 'No Content' });
+      fixture.detectChanges();
+
+      controller.expectOne(AdminSettingsApi.settingsUrl).flush(loaded);
+      fixture.detectChanges();
+    });
+
+    it('offers no confirmation while there is no rate to confirm', async () => {
+      await open(payloadWithPayPal({ [SETTING_KEYS.payPalLkrPerUsd]: null }));
+
+      const confirm = element.querySelector<HTMLButtonElement>('[data-testid="confirm-paypal-rate"]')!;
+      expect(confirm.getAttribute('aria-disabled')).toBe('true');
+
+      confirm.click();
+      fixture.detectChanges();
+
+      // Nothing went out: no antiforgery fetch, no PUT.
+      controller.expectNone((request) => request.url.includes('antiforgery'));
+      controller.expectNone(AdminSettingsApi.payPalUrl);
+    });
+
+    it('says when the rate was last updated', async () => {
+      await open(payloadWithPayPal({ [SETTING_KEYS.payPalRateUpdatedAtUtc]: '2026-10-05T04:30:00.000Z' }));
+
+      // 04:30 UTC is 10:00 in Colombo.
+      expect(element.querySelector('[data-testid="paypal-rate-age"]')?.textContent).toContain('10:00');
+      expect(element.querySelector('[data-testid="paypal-rate-age"]')?.textContent).toContain('Sri Lanka time');
+
+      await open(payloadWithPayPal({ [SETTING_KEYS.payPalRateUpdatedAtUtc]: null }));
+
+      expect(element.querySelector('[data-testid="paypal-rate-age"]')?.textContent).toContain('never');
+    });
+
+    // ---- readiness ---------------------------------------------------------------------------------
+
+    it('says PayPal is ready when the credentials and a fresh rate are in place', async () => {
+      await open(payloadWithPayPal());
+
+      expect(readiness().dataset['state']).toBe('ready');
+      expect(readiness().textContent).toContain('Ready.');
+    });
+
+    it('names what is still missing, in the order a person would fill it in', async () => {
+      await open(
+        payloadWithPayPal(
+          {
+            [SETTING_KEYS.payPalClientId]: null,
+            [SETTING_KEYS.payPalWebhookId]: null,
+            [SETTING_KEYS.payPalLkrPerUsd]: null,
+          },
+          { secretSet: false },
+        ),
+      );
+
+      expect(readiness().dataset['state']).toBe('not-ready');
+      expect(readiness().textContent).toContain(
+        'the client ID, the client secret, the webhook ID, the exchange rate',
+      );
+    });
+
+    it('warns when the rate is older than its limit', async () => {
+      const old = new Date(Date.now() - 9 * 86_400_000).toISOString();
+      await open(payloadWithPayPal({ [SETTING_KEYS.payPalRateUpdatedAtUtc]: old }));
+
+      expect(readiness().dataset['state']).toBe('not-ready');
+      expect(readiness().textContent).toContain('more than 7 days ago');
+      expect(readiness().textContent).toContain('confirm it is still correct');
+    });
+
+    it('uses the limit the server holds, not a constant', async () => {
+      const threeDaysAgo = new Date(Date.now() - 3 * 86_400_000).toISOString();
+
+      await open(
+        payloadWithPayPal({
+          [SETTING_KEYS.payPalRateUpdatedAtUtc]: threeDaysAgo,
+          [SETTING_KEYS.payPalRateMaxAgeDays]: '2',
+        }),
+      );
+
+      expect(readiness().dataset['state']).toBe('not-ready');
+      expect(readiness().textContent).toContain('more than 2 days ago');
+    });
+  });
+
   describe('invoice and fulfilment (ADM-09)', () => {
     it('is absent for a caller who does not receive the Orders group', async () => {
       await open(payload());
@@ -1054,5 +1498,85 @@ describe('toForm (ADM-22)', () => {
 
   it('omits every key for a payload with no groups', async () => {
     expect(Object.keys(toForm({ groups: [], logo: null }))).toEqual([]);
+  });
+});
+
+describe('PayPal form mapping (PAY-02)', () => {
+  /** A payload holding PayPal's keys, as the server sends them: the secret has a flag and no value. */
+  function sample(withExpiry = true): AdminSettings {
+    const row = (key: string, value: string | null, isSecret = false) => ({
+      key,
+      valueType: (isSecret ? 'Secret' : 'String') as 'Secret' | 'String',
+      value,
+      isSecret,
+      hasValue: isSecret ? true : Boolean(value),
+      requiredPermission: 'Settings.Payments',
+      description: null,
+      updatedAtUtc: null,
+    });
+
+    return {
+      groups: [
+        {
+          groupKey: 'Payments.PayPal',
+          rowVersion: 'rv',
+          settings: [
+            row(SETTING_KEYS.payPalMode, 'sandbox'),
+            row(SETTING_KEYS.payPalClientId, 'client'),
+            row(SETTING_KEYS.payPalClientSecret, null, true),
+            row(SETTING_KEYS.payPalWebhookId, 'webhook'),
+            row(SETTING_KEYS.payPalLkrPerUsd, '300.00'),
+            row(SETTING_KEYS.payPalFxBufferPercent, '3.00'),
+            row(SETTING_KEYS.payPalRateMaxAgeDays, '7'),
+            row(SETTING_KEYS.payPalRateUpdatedAtUtc, '2026-10-05T04:30:00.000Z'),
+            row(SETTING_KEYS.payPalCaptureLockHours, '3'),
+            row(SETTING_KEYS.payPalCaptureRecoveryMaxHours, '24'),
+            row(SETTING_KEYS.payPalPendingCaptureMaxDays, '5'),
+          ],
+        },
+        ...(withExpiry
+          ? [{ groupKey: 'Orders', rowVersion: 'rv', settings: [row(SETTING_KEYS.payPalExpiryMinutes, '60')] }]
+          : []),
+      ],
+      logo: null,
+    };
+  }
+
+  describe('toPayPalForm', () => {
+    it('reads only the keys the payload contained, and never the secret', () => {
+      const form = toPayPalForm(sample());
+
+      expect(Object.keys(form).sort()).toEqual(
+        [
+          'mode',
+          'clientId',
+          'webhookId',
+          'lkrPerUsd',
+          'fxBufferPercent',
+          'rateMaxAgeDays',
+          'captureLockHours',
+          'captureRecoveryMaxHours',
+          'pendingCaptureMaxDays',
+          'expiryMinutes',
+        ].sort(),
+      );
+      expect('clientSecret' in form).toBe(false);
+    });
+
+    it('leaves out the keys an unreadable group would have carried, so a save cannot clear them', () => {
+      expect(Object.keys(toPayPalForm({ groups: [], logo: null }))).toEqual([]);
+      expect(Object.keys(toPayPalForm(sample(false))).includes('expiryMinutes')).toBe(false);
+    });
+  });
+
+  describe('formatStamp', () => {
+    it('writes a UTC instant as Colombo time with the offset named', () => {
+      expect(formatStamp('2026-10-05T04:30:00.000Z')).toContain('10:00');
+      expect(formatStamp('2026-10-05T04:30:00.000Z')).toContain('Sri Lanka time');
+    });
+
+    it('shows what it cannot read as it is, never as Invalid Date', () => {
+      expect(formatStamp('not a date')).toBe('not a date');
+    });
   });
 });

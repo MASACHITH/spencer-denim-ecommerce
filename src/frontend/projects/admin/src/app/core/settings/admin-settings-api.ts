@@ -8,6 +8,7 @@ import {
   BankDetailValues,
   InvoiceAndFulfilmentValues,
   ContactAndSocialValues,
+  PayPalValues,
   UploadedMediaAsset,
 } from './admin-settings.model';
 
@@ -24,6 +25,7 @@ export class AdminSettingsApi {
   static readonly contactSocialUrl = '/api/admin/settings/contact-social';
   static readonly bankUrl = '/api/admin/settings/bank';
   static readonly invoiceAndFulfilmentUrl = '/api/admin/settings/invoice-and-fulfilment';
+  static readonly payPalUrl = '/api/admin/settings/paypal';
   static readonly imagesUrl = '/api/admin/media/images';
 
   private readonly http = inject(HttpClient);
@@ -95,6 +97,28 @@ export class AdminSettingsApi {
     rowVersion: string,
   ): Observable<void> {
     return this.put(AdminSettingsApi.invoiceAndFulfilmentUrl, { ...values, rowVersion });
+  }
+
+  /**
+   * PayPal's credentials, exchange rate and timings (PAY-02, doc 08 §3.8).
+   *
+   * **Only the fields the screen was given**, the bank group's rule. Two things are particular to this one:
+   *
+   * - `clientSecret` is in `values` only when the admin typed one. The API never returns the secret, so the
+   *   form cannot hold it, and an absent or blank `clientSecret` keeps the stored value.
+   * - `confirmRate` re-stamps the rate's age without changing the rate ("today's rate is still this one").
+   *   Saving some other field never does, so a stale rate cannot be made to look fresh by accident.
+   */
+  updatePayPal(
+    values: PayPalValues & { readonly clientSecret?: string },
+    rowVersion: string,
+    confirmRate = false,
+  ): Observable<void> {
+    return this.put(AdminSettingsApi.payPalUrl, {
+      ...values,
+      ...(confirmRate ? { confirmRate: true } : {}),
+      rowVersion,
+    });
   }
 
   private put(url: string, body: unknown): Observable<void> {

@@ -1,0 +1,60 @@
+# Spencer Denim SQL Server, one stack per environment (W0-15, docs/15-deployment-runbook.md §2, §5).
+#
+# Lives on the server under /opt/server/database/<env>/ — deliberately NOT in the application stack, so that
+# deploying, rebuilding, rolling back or removing the application can never stop SQL Server or touch its files.
+#
+#   cd /opt/server/database/production/compose
+#   docker compose --env-file ../config/db.env up -d --wait
+#
+# SD_ENV (production | staging | local) names the project and the network the application stack joins.
+#
+# * No published port. SQL Server is reachable only on the sd-<env>-db network, which is internal (no route to
+#   the internet) and holds only this container, the API and the one-shot migrator. Administration is through
+#   `docker compose exec sqlserver /opt/mssql-tools18/bin/sqlcmd ...` (scripts/db-provision.sh, docs/15 §5).
+# * Data, logs and backups are bind mounts under /opt/server/database/<env>/ (owned by uid 10001, the image's
+#   mssql user). Nothing here ever runs `down -v`; bind mounts are not removed by it anyway.
+# * SQL Server 2025 Express (doc 03 §2): free for production, 1,410 MB buffer pool cap, 50 GB per database.
+
+name: sd-${SD_ENV:?set SD_ENV (production, staging or local)}-database
+
+services:
+  sqlserver:
+    # Pinned: "2025-latest" moves. Bump deliberately and read the CU notes first (docs/15 §8). SD_MSSQL_IMAGE is
+    # for developer machines only (e.g. reuse an already-pulled 2022 image); leave it unset on the server.
+    image: ${SD_MSSQL_IMAGE:-mcr.microsoft.com/mssql/server:2025-CU9-ubuntu-24.04}
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: ${SD_MSSQL_PID:-Express}
+      MSSQL_SA_PASSWORD: ${SD_MSSQL_SA_PASSWORD:?set SD_MSSQL_SA_PASSWORD}
+      # Doc 03 §4 RAM budget. Express caps the buffer pool at 1,410 MB whatever this says.
+      MSSQL_MEMORY_LIMIT_MB: ${SD_MSSQL_MEMORY_LIMIT_MB:-2048}
+      MSSQL_COLLATION: Latin1_General_100_CI_AS_SC
+      MSSQL_BACKUP_DIR: /var/opt/mssql/backup
+      TZ: UTC
+    volumes:
+      - ${SD_DB_ROOT:-..}/data:/var/opt/mssql
+      - ${SD_DB_ROOT:-..}/backups:/var/opt/mssql/backup
+    healthcheck:
+      # A login must succeed, not just an open port: the engine accepts TCP before recovery finishes.
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -C -b -Q 'SELECT 1' >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 10s
+      start_period: 60s
+      retries: 10
+    mem_limit: ${SD_MSSQL_CONTAINER_MEMORY:-2560m}
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    networks:
+      - db
+
+networks:
+  db:
+    name: sd-${SD_ENV}-db
+    driver: bridge
+    internal: true

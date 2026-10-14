@@ -2572,8 +2572,84 @@ function isPriced(line) {
   return line.status === 'Buyable' || line.status === 'NotEnoughStock';
 }
 
-/** Doc 08 section 6 steps 5, 6, 10 and 11, with no promo code (ADM-13 does not exist). */
-function checkoutTotals(lines, rate) {
+/**
+ * The promo codes this stub knows (ADM-13).
+ *
+ * **Nothing resembling a real code**: doc 02 line 167 replaces the demo's TUASL10 and FREESHIP with
+ * admin-managed codes and the shop seeds none, so a stub code that looked plausible would be the one a
+ * reader copied into a screenshot. These are obviously test fixtures and they cover the five refusals the
+ * screen has to be able to show.
+ */
+const CHECKOUT_PROMO_CODES = [
+  { code: 'E2EPERCENT', discountType: 'Percent', discountValue: 10, maxDiscountAmount: null, minSpendAmount: null },
+  { code: 'E2EFIXED', discountType: 'FixedAmount', discountValue: 500, maxDiscountAmount: null, minSpendAmount: null },
+  { code: 'E2EFREESHIP', discountType: 'FreeDelivery', discountValue: null, maxDiscountAmount: null, minSpendAmount: null },
+  { code: 'E2EBIGSPEND', discountType: 'Percent', discountValue: 10, maxDiscountAmount: null, minSpendAmount: 999999 },
+  { code: 'E2EUSEDUP', discountType: 'Percent', discountValue: 10, maxDiscountAmount: null, minSpendAmount: null, refusal: 'FullyUsed' },
+];
+
+/**
+ * Doc 08 section 6 steps 7 and 8 for the stub: the outcome of a promo code, or a refusal.
+ *
+ * **It refuses what the real API refuses, status and reason included**, which is the rule the whole
+ * checkout section of this file is written to (#126: a stub that answers 200 where the API answers 400
+ * makes a failure path unreachable in the browser, so the test "passes" while the screen it is testing
+ * can never be reached).
+ *
+ * The arithmetic is the same shape as "PromoEvaluator": a percentage is rounded to 2 dp and capped, a
+ * fixed amount never exceeds the subtotal, and free delivery contributes nothing here and everything to
+ * step 10.
+ */
+function checkoutPromo(code, subtotal) {
+  const normalised = (code ?? '').trim().toUpperCase();
+
+  if (normalised === '') {
+    return { applied: null, refusal: null, minimumSpend: null, amount: 0, freeDelivery: false };
+  }
+
+  const found = CHECKOUT_PROMO_CODES.find((candidate) => candidate.code === normalised);
+
+  if (!found) {
+    return { applied: null, refusal: 'NotRecognised', minimumSpend: null, amount: 0, freeDelivery: false };
+  }
+
+  if (found.refusal) {
+    return { applied: null, refusal: found.refusal, minimumSpend: null, amount: 0, freeDelivery: false };
+  }
+
+  if (found.minSpendAmount !== null && subtotal < found.minSpendAmount) {
+    return {
+      applied: null,
+      refusal: 'MinimumSpend',
+      minimumSpend: found.minSpendAmount,
+      amount: 0,
+      freeDelivery: false,
+    };
+  }
+
+  if (found.discountType === 'FreeDelivery') {
+    return { applied: found.code, refusal: null, minimumSpend: null, amount: 0, freeDelivery: true };
+  }
+
+  const raw =
+    found.discountType === 'Percent'
+      ? money((subtotal * found.discountValue) / 100)
+      : Math.min(found.discountValue, subtotal);
+
+  const capped = found.maxDiscountAmount === null ? raw : Math.min(raw, found.maxDiscountAmount);
+
+  return {
+    applied: found.code,
+    refusal: null,
+    minimumSpend: null,
+    amount: Math.min(capped, subtotal),
+    freeDelivery: false,
+  };
+}
+
+/** Doc 08 section 6 steps 5 to 11, with a promo code (ADM-13). */
+function checkoutTotals(lines, rate, promo) {
+  const applied = promo ?? { amount: 0, freeDelivery: false };
   const priced = lines.filter(isPriced);
   const itemCount = lines.reduce((total, line) => total + line.quantity, 0);
 
@@ -2582,11 +2658,17 @@ function checkoutTotals(lines, rate) {
 
   const base = {
     itemCount,
+
+    // **This was missing, and it is #126 in miniature.** `CheckoutTotalsDto` has required it since
+    // W3-02 — the bag's half of this stub builds it — so under the stub the checkout printed
+    // "Subtotal ( items)" and no browser test could see it. The field is mirrored here field for field
+    // because that is the only thing that makes a screen test about this payload mean anything.
+    buyableItemCount: priced.reduce((total, line) => total + line.quantity, 0),
     lineCount: lines.length,
     itemsOriginalTotal: priced.length === 0 ? 0 : original,
     itemsSubtotal: priced.length === 0 ? 0 : subtotal,
     savedTotal: priced.length === 0 ? 0 : money(original - subtotal),
-    promoDiscountAmount: 0,
+    promoDiscountAmount: priced.length === 0 ? 0 : applied.amount,
     deliveryFeeAmount: null,
     deliveryDiscountAmount: 0,
     grandTotal: null,
@@ -2598,14 +2680,69 @@ function checkoutTotals(lines, rate) {
     return base;
   }
 
-  const discount = rate.freeAboveAmount !== null && subtotal >= rate.freeAboveAmount ? rate.fee : 0;
+  // Step 10: the threshold is compared with the subtotal **after** the promo, and a free-delivery code
+  // discounts the whole fee. Both are the real step 10, not an approximation of it.
+  const afterPromo = money(subtotal - applied.amount);
+  const discount =
+    applied.freeDelivery || (rate.freeAboveAmount !== null && afterPromo >= rate.freeAboveAmount)
+      ? rate.fee
+      : 0;
+
+  // Step 11's clamp (G-11), so a fixed code larger than the bag cannot make the stub quote a total the
+  // real API would never quote.
+  const uncapped = money(afterPromo + rate.fee - discount);
+  const clamped = uncapped < 1;
+  const promoAmount = clamped ? Math.max(0, money(subtotal + rate.fee - discount - 1)) : applied.amount;
 
   return {
     ...base,
+    promoDiscountAmount: promoAmount,
     deliveryFeeAmount: rate.fee,
     deliveryDiscountAmount: discount,
-    grandTotal: money(subtotal + rate.fee - discount),
+    grandTotal: money(subtotal - promoAmount + rate.fee - discount),
+    promoDiscountClamped: clamped,
   };
+}
+
+/**
+ * Doc 08 section 6 step 9: spread a promo discount over the lines pro rata by subtotal.
+ *
+ * Each share is rounded to 2 dp and the remainder goes to the largest line, so the shares sum to
+ * "amount" exactly — which is what makes the success page's per-line figures add up to the order's
+ * discount. Capped at each line's own subtotal, so no lineTotal can be negative.
+ */
+function checkoutAllocate(lines, amount) {
+  if (amount <= 0 || lines.length === 0) {
+    return lines.map((line) => ({ ...line, promoDiscountAllocated: 0 }));
+  }
+
+  const base = lines.reduce((total, line) => total + line.lineSubtotal, 0);
+
+  if (base <= 0) {
+    return lines.map((line) => ({ ...line, promoDiscountAllocated: 0 }));
+  }
+
+  let allocated = 0;
+  let largest = 0;
+
+  const shares = lines.map((line, index) => {
+    const share = Math.min(money((amount * line.lineSubtotal) / base), line.lineSubtotal);
+    allocated = money(allocated + share);
+
+    if (line.lineSubtotal > lines[largest].lineSubtotal) {
+      largest = index;
+    }
+
+    return share;
+  });
+
+  const remainder = money(amount - allocated);
+
+  if (remainder !== 0) {
+    shares[largest] = Math.max(0, Math.min(money(shares[largest] + remainder), lines[largest].lineSubtotal));
+  }
+
+  return lines.map((line, index) => ({ ...line, promoDiscountAllocated: shares[index] }));
 }
 
 function checkoutBlockers(lines, districtId, options) {
@@ -2628,17 +2765,25 @@ function checkoutBlockers(lines, districtId, options) {
   return blockers;
 }
 
-function checkoutSession(token, districtId, deliveryMethodId) {
+function checkoutSession(token, districtId, deliveryMethodId, promoCode) {
   const lines = checkoutLines(token);
   const district = CHECKOUT_DISTRICTS.find((candidate) => candidate.id === districtId) ?? null;
+
+  // Steps 7 and 8 before the options, because step 10 compares the free-delivery threshold with the
+  // subtotal **after** the promo and a free-delivery code makes every option free. The real
+  // GetCheckoutQueryHandler does the same, and a stub that priced the options against the gross subtotal
+  // would show a fee the order would not charge.
+  const grossSubtotal = checkoutTotals(lines, null, null).itemsSubtotal;
+  const promo = checkoutPromo(promoCode, grossSubtotal);
+  const subtotalAfterPromo = Math.max(money(grossSubtotal - promo.amount), 0);
 
   const options = district
     ? CHECKOUT_METHODS.map((method) => {
         const rate = checkoutRateFor(method.id, district.deliveryZone);
         const available = rate !== null && rate.isAvailable;
-        const subtotal = checkoutTotals(lines, null).itemsSubtotal;
         const feeAfterDiscount = available
-          ? rate.freeAboveAmount !== null && subtotal >= rate.freeAboveAmount
+          ? promo.freeDelivery ||
+            (rate.freeAboveAmount !== null && subtotalAfterPromo >= rate.freeAboveAmount)
             ? 0
             : rate.fee
           : null;
@@ -2665,13 +2810,16 @@ function checkoutSession(token, districtId, deliveryMethodId) {
   return {
     checkoutKey: randomUUID(),
     lines,
-    totals: checkoutTotals(lines, rate),
+    totals: checkoutTotals(lines, rate, promo),
     districts: CHECKOUT_DISTRICTS,
     deliveryOptions: options,
     pickupLocations: [],
     paymentMethods: CHECKOUT_PAYMENT_METHODS,
     selectedDistrictId: district ? district.id : null,
     selectedDeliveryMethodId: selected ? selected.id : null,
+    appliedPromoCode: promo.applied,
+    promoRefusal: promo.refusal,
+    promoMinimumSpend: promo.minimumSpend,
     blockers: checkoutBlockers(lines, district ? district.id : null, options),
   };
 }
@@ -2722,6 +2870,7 @@ function handleCheckoutRead(request, response, url) {
   const rawDistrict = url.searchParams.get('districtId');
   const rawMethod = url.searchParams.get('deliveryMethodId');
 
+  const promoCode = url.searchParams.get('promoCode');
   const districtId = rawDistrict !== null && /^\d+$/.test(rawDistrict) ? Number(rawDistrict) : null;
   const methodId = rawMethod !== null && /^\d+$/.test(rawMethod) ? Number(rawMethod) : null;
 
@@ -2729,7 +2878,11 @@ function handleCheckoutRead(request, response, url) {
     issueCartCookie(response, token);
   }
 
-  response.end(JSON.stringify(checkoutSession(token && carts.has(token) ? token : null, districtId, methodId)));
+  response.end(
+    JSON.stringify(
+      checkoutSession(token && carts.has(token) ? token : null, districtId, methodId, promoCode),
+    ),
+  );
 }
 
 function handlePlaceOrder(request, response) {
@@ -2846,7 +2999,26 @@ function handlePlaceOrder(request, response) {
       return;
     }
 
-    const totals = checkoutTotals(lines, rate);
+    // ADM-13, doc 11 P3 step 12: the code is revalidated at placement, and one that has stopped
+    // qualifying refuses the order rather than being quietly dropped. The real API answers 409 with a
+    // `promoRefusal` extension and this answers the same, because a stub that accepted what the API
+    // refuses would make the screen's refusal path unreachable in the browser (#126).
+    const grossSubtotal = checkoutTotals(lines, null, null).itemsSubtotal;
+    const promo = checkoutPromo(body.promoCode, grossSubtotal);
+
+    if (promo.refusal !== null) {
+      checkoutProblem(response, 409, {
+        title: 'Promo code not applied',
+        detail:
+          'That promo code could not be used for this order. Your order has not been placed and nothing ' +
+          'has been charged.',
+        promoRefusal: promo.refusal,
+        promoMinimumSpend: promo.minimumSpend,
+      });
+      return;
+    }
+
+    const totals = checkoutTotals(lines, rate, promo);
 
     if (totals.grandTotal !== body.expectedGrandTotal) {
       checkoutProblem(response, 409, {
@@ -2911,7 +3083,15 @@ function handlePlaceOrder(request, response) {
       firstName: trimmed(body.firstName),
       lastName: trimmed(body.lastName),
       phone: trimmed(body.phone),
-      lines: lines.map((line, index) => ({
+      // Doc 08 section 6 step 9: the discount is spread pro rata by line subtotal, each share rounded to
+      // 2 dp, and the remainder goes to the largest eligible line — so the shares sum to the order's
+      // promoDiscountAmount exactly and every lineTotal is its subtotal less its own share.
+      //
+      // **It is here rather than a zero, and #129 is why.** A line's refundable amount is its lineTotal
+      // and never its lineSubtotal, because the difference is the customer's share of the promotion. A
+      // stub that left the per-line share at zero while the order carried a discount would make the
+      // success page add up wrongly in the browser and no test could see it.
+      lines: checkoutAllocate(lines, totals.promoDiscountAmount).map((line, index) => ({
         lineNumber: index + 1,
         productName: line.productName,
         productCode: `CW-${line.productId}`,
@@ -2923,8 +3103,8 @@ function handlePlaceOrder(request, response) {
         unitOriginalPrice: line.unitOriginalPrice,
         unitPrice: line.unitPrice,
         lineSubtotal: line.lineSubtotal,
-        promoDiscountAllocated: 0,
-        lineTotal: line.lineSubtotal,
+        promoDiscountAllocated: line.promoDiscountAllocated,
+        lineTotal: money(line.lineSubtotal - line.promoDiscountAllocated),
       })),
       delivery: {
         methodCode: method.code,
@@ -2944,7 +3124,7 @@ function handlePlaceOrder(request, response) {
       itemsOriginalTotal: totals.itemsOriginalTotal,
       itemsSubtotal: totals.itemsSubtotal,
       savedTotal: totals.savedTotal,
-      promoDiscountAmount: 0,
+      promoDiscountAmount: totals.promoDiscountAmount,
       deliveryFeeAmount: totals.deliveryFeeAmount,
       deliveryDiscountAmount: totals.deliveryDiscountAmount,
       grandTotal: totals.grandTotal,
@@ -3268,6 +3448,99 @@ function handleCheckout(request, response, url) {
       response.end('slip-bytes');
       return true;
     }
+  }
+
+  // W3-01: the header asks who is signed in on every page view. The real API answers a visitor with no
+  // session 200 `{ customer: null }` (`GET /api/account/session`), and so does this stub — without it
+  // every page's first browser request was a 404, which the home page's "no console errors" test reads
+  // as a broken page. The stub has no accounts, so nobody is ever signed in here.
+  if (url.pathname === '/api/account/session') {
+    response.setHeader('Cache-Control', 'no-store');
+    response.end(JSON.stringify({ customer: null }));
+    return true;
+  }
+
+  // Test-only (W3-01): an order that has already shipped, with a courier tracking block, straight into the
+  // placed-orders map. **Why not the real checkout flow:** nothing in the storefront can move an order to
+  // Shipped — that is a staff action in the admin app — so a real placement could never reach the state
+  // `account.e2e.ts` measures, which is the tracking block on `/order/{token}` with a long number at 320 px.
+  // Keyed by the new order's own random publicId, so parallel tests cannot see each other's orders.
+  // `number` and `url` are the tracking number and link; `url=none` gives a courier with no online tracking.
+  if (url.pathname === '/__test__/shipped-order') {
+    const publicId = randomUUID();
+    const trackingNumber = url.searchParams.get('number') ?? 'CT-9981-AB';
+    const link = url.searchParams.get('url');
+    const placedAt = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+
+    placedOrders.set(publicId, {
+      orderNumber: `SD-2026-${String(placedOrders.size + 90000).padStart(5, '0')}`,
+      publicId,
+      status: 'Shipped',
+      statusLabel: 'Shipped',
+      email: 'tracking-probe@example.invalid',
+      firstName: 'Nimal',
+      lastName: 'Perera',
+      phone: '0771234567',
+      lines: [
+        {
+          lineNumber: 1,
+          productName: 'Test Product 3',
+          productCode: 'CW-3',
+          sku: 'SKU-3',
+          colourName: 'Indigo',
+          sizeLabel: '10',
+          imageUrl: null,
+          quantity: 1,
+          unitOriginalPrice: 4500,
+          unitPrice: 4500,
+          lineSubtotal: 4500,
+          promoDiscountAllocated: 0,
+          lineTotal: 4500,
+        },
+      ],
+      delivery: {
+        methodCode: 'STANDARD',
+        methodName: 'Standard delivery',
+        pickupLocationName: null,
+        recipientName: 'Nimal Perera',
+        phone: '0771234567',
+        line1: '12 Galle Road',
+        line2: null,
+        city: 'Colombo',
+        districtName: 'Colombo',
+        postalCode: '00300',
+        landmark: null,
+        estimatedDaysMin: 2,
+        estimatedDaysMax: 4,
+      },
+      itemsOriginalTotal: 4500,
+      itemsSubtotal: 4500,
+      savedTotal: 0,
+      promoDiscountAmount: 0,
+      deliveryFeeAmount: 350,
+      deliveryDiscountAmount: 0,
+      grandTotal: 4850,
+      currency: 'LKR',
+      paymentMethodCode: 'BankTransfer',
+      paymentMethodName: 'Bank or online transfer',
+      customerNote: null,
+      placedAtUtc: placedAt.toISOString(),
+      paymentDueAtUtc: new Date(placedAt.getTime() + 48 * 60 * 60 * 1000).toISOString(),
+      isDuplicateSubmission: false,
+      bankDetailsSet: true,
+      proof: emptyProof(),
+      canCancel: false,
+      tracking: {
+        courierName: 'Test Courier',
+        trackingNumber,
+        trackingUrl:
+          link === 'none' ? null : (link ?? `https://courier.test/track?id=${encodeURIComponent(trackingNumber)}`),
+        shippedAtUtc: new Date(placedAt.getTime() + 24 * 60 * 60 * 1000).toISOString(),
+      },
+    });
+
+    response.end(JSON.stringify({ publicId }));
+    return true;
   }
 
   const order = /^\/api\/orders\/(.*)$/.exec(url.pathname);

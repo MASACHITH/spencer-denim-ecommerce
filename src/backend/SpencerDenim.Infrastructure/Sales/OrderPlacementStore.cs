@@ -130,6 +130,32 @@ internal sealed class OrderPlacementStore(
 
             var order = BuildOrder(placement);
 
+            // Doc 11 P6 step 9 sub-step 2, between the stock and the order: "takes a promo use (total
+            // limit, then per-customer limit for this email)". Doc 08 §5.3's lock order puts it here —
+            // after the stock rows, before anything else.
+            //
+            // **The refusal rolls the whole transaction back**, so the reservation above goes with it and
+            // no order exists. It is not placed at the undiscounted total: the shopper agreed to a figure
+            // that included the code, and charging more would be G-10 with extra steps. Doc 11 P3's own
+            // exception says the loser "can place the order without it" — by pressing the button again,
+            // having seen the new total.
+            if (placement.Promo is { } promo)
+            {
+                var refusal = await OrderPromoUse.TakeAsync(
+                    dbContext,
+                    promo,
+                    order.EmailNormalized,
+                    cancellationToken);
+
+                if (refusal is { } refused)
+                {
+                    await transaction.RollbackAsync(cancellationToken);
+                    DetachAll();
+
+                    return OrderPlacementResult.PromoRejected(refused);
+                }
+            }
+
             dbContext.Orders.Add(order);
 
             // Doc 11 P6 step 9: the transaction saves "the order, the order lines …, the payment record,
@@ -235,6 +261,14 @@ internal sealed class OrderPlacementStore(
     /// null-or-not is a faithful reading of P6 step 10, and the day a second provider returns non-null
     /// instructions it will need a rule about which of them are worth emailing.
     /// </para>
+    /// <para>
+    /// <b>The rule, written (W4-01 groundwork):</b> instructions that send the customer elsewhere — a
+    /// <c>RedirectUrl</c> or a <c>RedirectForm</c> — are not worth emailing as bank-transfer instructions.
+    /// The only template there is says "Here is everything you need to pay … by bank or online transfer",
+    /// and a redirecting provider's page, not an email, is where the customer pays. It names no gateway: it
+    /// reads the shape of the answer. (A provider that cannot build its redirect until the payment row
+    /// exists answers <see langword="null"/> at placement and is covered by the first condition.)
+    /// </para>
     /// </remarks>
     private void QueueEmails(OrderPlacement placement, Order order)
     {
@@ -273,7 +307,7 @@ internal sealed class OrderPlacementStore(
             placement.PaymentMethodName,
             placement.Payment.PaymentDueAtUtc));
 
-        if (placement.Instructions is { } instructions)
+        if (placement.Instructions is { RedirectUrl: null, RedirectForm: null } instructions)
         {
             emails.EnlistPaymentInstructions(header, instructions);
         }
@@ -354,10 +388,13 @@ internal sealed class OrderPlacementStore(
             MarkdownDiscountTotal = pricing.MarkdownDiscountTotal,
             CampaignDiscountTotal = pricing.CampaignDiscountTotal,
 
-            // No promo code: marketing.PromoCodes does not exist (ADM-13, W3-05). Zero is the right value
-            // here rather than a placeholder — nothing was discounted.
-            PromoCodeId = null,
-            PromoCodeText = null,
+            // ADM-13. Both null for an order placed without a code, which is most of them, and the
+            // `PromoDiscountAmount` below is then zero because `OrderPricing` was given no charge — not
+            // because anything here defaulted it. `PromoCodeText` is the stored, upper-cased code rather
+            // than what the shopper typed: it is the snapshot the invoice and every order screen read, and
+            // it has to be the code the shop issued (doc 08 §3.6 DB19).
+            PromoCodeId = placement.Promo?.PromoCodeId,
+            PromoCodeText = placement.Promo?.Code,
             PromoDiscountAmount = pricing.PromoDiscountAmount,
             DeliveryFeeAmount = pricing.DeliveryFeeAmount,
             DeliveryDiscountAmount = pricing.DeliveryDiscountAmount,
@@ -389,9 +426,12 @@ internal sealed class OrderPlacementStore(
                 UnitListPrice = line.Priced.UnitListPrice,
                 UnitPrice = line.Priced.UnitPrice,
 
-                // Sale campaigns are ADM-14 (W3-05); with no campaign table nothing moved the price, so
-                // there is no campaign to attribute the line to.
-                SaleCampaignId = null,
+                // Which campaign priced the line (ADM-14), resolved live by `CheckoutReader` in the
+                // repricing read this placement is built from — not re-resolved here, because doc 08 §6
+                // says the order's prices are "copied into the order at placement and never recomputed",
+                // and a second resolution could pick a different campaign if a boundary fell between the
+                // two reads. Null when no campaign won.
+                SaleCampaignId = line.Priced.SaleCampaignId,
                 LineSubtotal = line.Priced.LineSubtotal,
                 PromoDiscountAllocated = line.Priced.PromoDiscountAllocated,
                 LineTotal = line.Priced.LineTotal,

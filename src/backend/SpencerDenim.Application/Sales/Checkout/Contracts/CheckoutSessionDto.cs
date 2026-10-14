@@ -1,4 +1,5 @@
 using SpencerDenim.Application.Sales.Cart.Contracts;
+using SpencerDenim.Domain.Marketing;
 
 namespace SpencerDenim.Application.Sales.Checkout.Contracts;
 
@@ -188,6 +189,24 @@ public sealed record CheckoutTotalsDto(
 /// Empty when the order can be placed. Sent as a list rather than a boolean so the page can say which
 /// thing is wrong, and so a test can assert on the reason rather than on a disabled button.
 /// </param>
+/// <param name="AppliedPromoCode">
+/// The code the quote was priced with, upper-cased, or <see langword="null"/> when none was asked for or
+/// the one asked for was refused. Echoed for the same reason
+/// <see cref="CheckoutSessionDto.SelectedDistrictId"/> is: the page's controls follow the quote rather
+/// than the other way round, so a code that stops qualifying between two reads clears the box instead of
+/// leaving a shopper looking at a discount that is not in the total.
+/// </param>
+/// <param name="PromoRefusal">
+/// Why the code the shopper sent was not applied, or <see langword="null"/> when none was sent or it was.
+/// A reason and not a sentence — the wording is the storefront's, as with
+/// <see cref="CheckoutBlocker"/> — and the five unusable states are collapsed into
+/// <see cref="Domain.Marketing.PromoRefusal.NotRecognised"/> on purpose, so the box cannot be used to
+/// learn which strings are codes the shop has ever issued.
+/// </param>
+/// <param name="PromoMinimumSpend">
+/// The threshold, set only alongside <see cref="Domain.Marketing.PromoRefusal.MinimumSpend"/>, so the
+/// page can print the figure a shopper has to reach instead of "you have not spent enough".
+/// </param>
 public sealed record CheckoutSessionDto(
     Guid CheckoutKey,
     IReadOnlyList<CheckoutLineDto> Lines,
@@ -198,4 +217,7 @@ public sealed record CheckoutSessionDto(
     IReadOnlyList<PaymentMethodDto> PaymentMethods,
     int? SelectedDistrictId,
     int? SelectedDeliveryMethodId,
+    string? AppliedPromoCode,
+    PromoRefusal? PromoRefusal,
+    decimal? PromoMinimumSpend,
     IReadOnlyList<CheckoutBlocker> Blockers);

@@ -26,8 +26,9 @@ namespace SpencerDenim.Application.Sales.Payments.Abstractions;
 /// <b>Nothing here is on <c>IPaymentProvider</c>.</b> Approving a bank transfer is a staff decision about
 /// a bank statement; no gateway has an equivalent, and PayPal's settlement arrives from a verified
 /// webhook. What the two genuinely share is the <i>Paid effects</i> — stock reserved to sold, a gapless
-/// invoice number, <c>PaidAtUtc</c>, the settling-payment flag — and that is the sequence inside
-/// <see cref="ApproveAsync"/> that W4-01 should call rather than copy.
+/// invoice number, <c>PaidAtUtc</c>, the history row and the confirmation email — and those are written once,
+/// in the infrastructure's <c>OrderSettlementEffects</c>, which this store calls and which
+/// <see cref="IOrderSettlementStore"/> (the provider-facing transaction around them) calls too.
 /// </para>
 /// </summary>
 public interface IBankTransferReviewStore

@@ -17,7 +17,7 @@ const progressData = {
     endDate: "2026-10-15"
   },
 
-  lastUpdated: "2026-10-09",
+  lastUpdated: "2026-10-14",
 
   milestones: [
     { week: "Week 0", title: "Setup & design", start: "2026-09-15", end: "2026-09-18" },
@@ -79,7 +79,7 @@ const progressData = {
       features: [
         { name: "Wishlist", status: "done", progress: 100 },
         { name: "Shopping bag & mini bag", status: "done", progress: 100 },
-        { name: "Promo codes", status: "planned", progress: 0 },
+        { name: "Promo codes", status: "done", progress: 100 },
         { name: "Checkout & guest checkout", status: "done", progress: 100 },
         { name: "Delivery options", status: "done", progress: 100 },
         { name: "Bank transfer payment", status: "done", progress: 100 },
@@ -90,8 +90,8 @@ const progressData = {
     {
       name: "Customer Account",
       features: [
-        { name: "Register & login", status: "planned", progress: 0 },
-        { name: "Order history with tracking", status: "planned", progress: 0 },
+        { name: "Register & login", status: "done", progress: 100 },
+        { name: "Order history with tracking", status: "done", progress: 100 },
         { name: "Order & shipping emails", status: "done", progress: 100 }
       ]
     },
@@ -103,7 +103,7 @@ const progressData = {
         { name: "Category management", status: "done", progress: 100 },
         { name: "Inventory", status: "in-progress", progress: 25 },
         { name: "Order management & payment approval", status: "done", progress: 100 },
-        { name: "Promo codes & sale campaigns", status: "planned", progress: 0 },
+        { name: "Promo codes & sale campaigns", status: "in-progress", progress: 85 },
         { name: "Customers", status: "planned", progress: 0 },
         { name: "Review moderation", status: "planned", progress: 0 },
         { name: "Newsletter subscriber list", status: "planned", progress: 0 },
@@ -115,6 +115,8 @@ const progressData = {
     },
     {
       name: "Launch",
+      // Not development: excluded from the headline figure (see app.js).
+      countsTowardOverall: false,
       features: [
         { name: "Preview website for your review", status: "planned", progress: 0 },
         { name: "Mobile, tablet & desktop testing", status: "planned", progress: 0 },
@@ -126,6 +128,16 @@ const progressData = {
 
   // Newest first.
   updates: [
+    {
+      date: "2026-10-14",
+      title: "Customer accounts",
+      text: "Customers can now create an account, sign in, reset their password, save delivery addresses, and see their past orders with the courier and tracking link.",
+    },
+    {
+      date: "2026-10-13",
+      title: "Discount codes and seasonal sales are both in, and one is already fixed",
+      text: "Two things that work together. Discount codes: you create a code in the admin panel \u2014 a percentage off, a fixed amount off, or free delivery \u2014 with a minimum spend, the dates it is valid between, a total limit on how many times it can be used, and a limit per customer. A shopper types it in at checkout and sees what it took off. Separately, sale campaigns: you choose a discount and the dates, point it at a department or a category, and every product underneath goes on sale at once, on the shop pages and in the basket. If two campaigns could apply to the same product the shopper gets the cheaper price, never both discounts stacked. There is one deliberate gap: a campaign can target a whole department or category, but not a list of individual products you pick one by one. That one is a bigger job and we would rather ship the part your client actually asked for \u2014 \"20% off Women\u0027s shirts for a week\" \u2014 working properly than half of both. And one correction worth making plainly: when discount codes went in yesterday we reported them finished, and the admin screen for them was in fact broken \u2014 it could not list your codes at all, and saving one showed an error even though it had saved. We found it, fixed it, and added the first real test of those screens, which is why it will not happen again quietly.",
+    },
     {
       date: "2026-10-09",
       title: "If an email fails to reach a customer, you will be told",

@@ -34,6 +34,9 @@ const checkoutPage = () =>
 /** The order success page and a guest's order link (CHK-04). */
 const orderPage = () => import('./pages/order/order-page').then((m) => m.OrderPage);
 
+/** My account (W3-01, ACC-01, ACC-02). One lazy chunk; see `pages/account/account.routes.ts`. */
+const accountRoutes = () => import('./pages/account/account.routes').then((m) => m.accountRoutes);
+
 /** A published content page: About, Contact, Returns, Shipping, Privacy, Terms, or a custom one (GLB-10). */
 const contentPage = () => import('./pages/content-page/content-page').then((m) => m.ContentPage);
 
@@ -66,7 +69,16 @@ const catalogUnavailablePage = () =>
  * renames one. A single `:slug` route behind a guard over the published-page index serves all six and
  * any extra page the client creates — see the bottom of the route list.
  *
- * `account` is the only one left, and it is W3-01's.
+ * **The list is now empty, and `account` was the last entry (W3-01).** That is the rule above being
+ * followed to its end: `/account` and its eight pages are real, so the entry claiming the site has no
+ * such address is deleted in the same change. The constant stays, typed `readonly string[]` so an empty
+ * literal is still assignable, because the invariant it carries is the useful part and the next task that
+ * links the shell at a page it has not built yet needs somewhere to say so — the alternative is deleting
+ * the constant, the spec and the explanation, and rediscovering #28.
+ *
+ * `app.routes.spec.ts` has a matching change: its `linkedFromTheShell` list held `'account'` and now
+ * holds nothing, for the same reason, and the test that every entry here has no real route of its own is
+ * what would have caught a leftover.
  *
  * **`/wishlist` has been taken out by W2-08**, which is that rule being followed: the page is real, so
  * the entry claiming the site has no such address goes in the same change.
@@ -87,7 +99,7 @@ const catalogUnavailablePage = () =>
  * at — exactly how `/search` survived here through W2-07. The route wins at runtime, so every
  * behavioural test still passed; only the spec below could see it.
  */
-export const UNBUILT_PATHS = ['account'] as const;
+export const UNBUILT_PATHS: readonly string[] = [];
 
 export const routes: Routes = [
   {
@@ -129,6 +141,29 @@ export const routes: Routes = [
   // unlike `/bag` it renders **no list on the server at all**, because a guest's wishlist is in their own
   // browser (doc 08 §1.7) and the server has nothing to render it from. See the component.
   { path: 'wishlist', loadComponent: wishlistPage },
+
+  // My account (W3-01, ACC-01, ACC-02). Listed **ahead of `:department`**, which matches any single
+  // segment, and its `UNBUILT_PATHS` entry is removed in this change — the rule that list states for
+  // itself, and the one `/search` and `/bag` were each left behind by once.
+  //
+  // **`loadChildren` and no `pathMatch`**, so this claims `/account` and everything under it. The child
+  // table redirects `/account` itself to `/account/orders` and guards the three signed-in pages; see
+  // `pages/account/account.routes.ts` for why there is no hub page and which routes are deliberately
+  // unguarded. An address under `/account` that no child matches makes this route fail to match at all,
+  // and the router backtracks to the rest of the table and ends at `**` — a real 404, which is what
+  // `/account/bogus` should be.
+  //
+  // **The guard is `canActivate` and not `canMatch`**, which matters because of where this sits: a
+  // `canMatch` that answered no would let the router carry on to `:department/:category`, ask the
+  // catalogue about a department called "account", and land a signed-out shopper on the 404 page instead
+  // of the sign-in form. `signed-in.guard.ts` records that.
+  //
+  // Every page under it is personal, so each answers `no-store`, `private`, `Vary: Cookie` and `noindex`
+  // — the treatment `/bag` and `/checkout` get, for the same reason and more sharply. Unlike `/checkout`,
+  // **no account page renders its personal data on the server**: `sd_customer_auth` is not forwarded by
+  // `cartCookieInterceptor` (deliberately, see that file), so the server renders each page's shell and
+  // the browser reads the data. Each page's docblock says so.
+  { path: 'account', loadChildren: accountRoutes },
 
   // Checkout (W3-02, CHK-01..03). A single-segment route listed **ahead of `:department`**, which matches
   // any single segment, and its `UNBUILT_PATHS` entry is removed in this change.

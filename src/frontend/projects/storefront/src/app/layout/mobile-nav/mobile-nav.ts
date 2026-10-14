@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, inject, input, output, si
 import { RouterLink } from '@angular/router';
 import { Drawer, Icon } from '@spencer-denim/shared';
 
+import { AccountStore } from '../../core/account/account.store';
 import { NavigationService } from '../../core/navigation/navigation.service';
 import { NavItem, hasMenu } from '../../core/navigation/navigation.model';
 import { SITE_CONFIG, whatsAppUrl } from '../../core/config/site-config';
@@ -75,11 +76,37 @@ import { StorefrontCounts } from '../../core/storefront-counts.service';
       </nav>
 
       <ul class="m-nav m-nav--secondary">
+        <!-- W3-01. **The address is unchanged**: '/account' is a real route now, and its child table
+             sends a signed-in shopper to their orders and a signed-out one to the sign-in form with
+             'returnTo'. Only the words change, and only once the shop knows who is here — 'customer()'
+             is null on the server for every visitor, because 'AccountStore' does not ask during a render
+             ('sd_customer_auth' is not forwarded to the API), so this row reads "Sign in / Register" in
+             the server's markup and keeps reading it for everyone who is not signed in. -->
         <li>
           <a class="m-nav__link" routerLink="/account" (click)="closed.emit()">
-            <sd-icon name="user" size="sm" /> <span>Sign in / Register</span>
+            <sd-icon name="user" size="sm" />
+            @if (customer(); as me) {
+              <span data-testid="m-nav-account">Your account ({{ me.firstName }})</span>
+            } @else {
+              <span data-testid="m-nav-account">Sign in / Register</span>
+            }
           </a>
         </li>
+        @if (customer()) {
+          <!-- The drawer is the only place a phone can sign out: the header's own control is
+               'display: none' below 1024 px (see 'site-header.ts'). It is a row in this list rather than
+               a button beside the account row, so it is the same 56/44 px target as every other row and
+               cannot be mistaken for part of the link above it.
+
+               It asks the header rather than signing out itself. The header already owns the bag the
+               sign-out has to re-read and the focus that has to be re-homed, and two components calling
+               'AccountStore.signOut' would be two answers to what happens afterwards. -->
+          <li>
+            <button class="m-nav__link" type="button" data-testid="m-nav-sign-out" (click)="requestSignOut()">
+              <sd-icon name="user" size="sm" /> <span>Sign out</span>
+            </button>
+          </li>
+        }
         <li>
           <a class="m-nav__link" routerLink="/wishlist" (click)="closed.emit()">
             <sd-icon name="heart" size="sm" /> <span>Wishlist ({{ wishlistCount() }})</span>
@@ -170,6 +197,26 @@ export class MobileNav {
   readonly open = input.required<boolean>();
   readonly closed = output<void>();
 
+  /**
+   * The shopper asked to sign out (W3-01, ACC-01).
+   *
+   * An output rather than the work, because `SiteHeader` owns what has to happen afterwards: the bag is
+   * re-read (doc 11 P11 step B.7 — the guest bag is not restored, so the badge really is zero) and focus
+   * is re-homed onto the wordmark, because this button is destroyed by its own success. Doing it here as
+   * well would be two answers to one question.
+   */
+  readonly signOutRequested = output<void>();
+
+  /**
+   * The signed-in customer, or null (W3-01).
+   *
+   * Null on the server for everyone and null until `GET /api/account/session` answers, which is why the
+   * `@else` branch in the template — "Sign in / Register" — is both the server's markup and the
+   * signed-out state. `AccountStore` keeps "nobody has asked" and "signed out" apart, so this drawer
+   * never greets somebody and then takes it back.
+   */
+  protected readonly customer = inject(AccountStore).customer;
+
   private readonly navigation = inject(NavigationService);
   private readonly counts = inject(StorefrontCounts);
 
@@ -180,6 +227,12 @@ export class MobileNav {
 
   /** <inheritdoc cref="WhatsappButton.url" /> — the same setting, the same fallback (ADM-22). */
   protected readonly whatsApp = computed(() => whatsAppUrl(this.siteConfig, this.whatsAppNumber()));
+
+  /** Closes the drawer and asks the header to sign out. In that order, so the focus trap is gone. */
+  protected requestSignOut(): void {
+    this.closed.emit();
+    this.signOutRequested.emit();
+  }
 
   private readonly expanded = signal<string | null>(null);
 
