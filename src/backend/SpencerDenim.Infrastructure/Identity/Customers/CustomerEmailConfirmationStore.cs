@@ -239,8 +239,11 @@ internal sealed class CustomerEmailConfirmationStore(
         //
         // The order *numbers* go in the JSON as well as the ids. An id is what the rule names and what a
         // later query joins on; a number is what a staff member reading the trail can type into the admin
-        // search. The email does not: the row's own UserEmail carries it, and PDPA anonymisation scrubs
-        // that column for this EntityType and id (§3.1 step 6).
+        // search. **The email is not recorded at all**: UserEmail is null and the JSON carries none.
+        // UserId names the account, which is enough to find its address on identity.Users for as long as
+        // the account exists, and leaves this row holding no address for PDPA anonymisation to scrub.
+        // (An earlier version of this comment said "the row's own UserEmail carries it", which the code
+        // below has never done — independent tester, W3-01.)
         auditLog.Enlist(new AuditLog
         {
             OccurredAtUtc = clock.UtcNow.UtcDateTime,

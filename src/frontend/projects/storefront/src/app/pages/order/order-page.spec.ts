@@ -293,6 +293,61 @@ describe('OrderPage (CHK-04)', () => {
     });
   });
 
+  /**
+   * The heading follows the order's status (independent tester, W3-01). This page is the guest's
+   * permanent link, opened again days later, and it used to say "Your order is placed ... waiting for
+   * payment" for an order that had shipped, been cancelled or been refunded.
+   */
+  describe('the heading, as the order moves on', () => {
+    function headline(): string {
+      return element.querySelector('[data-testid="order-headline"]')?.textContent?.trim() ?? '';
+    }
+
+    function sentence(): string {
+      return element.querySelector('[data-testid="order-head-sentence"]')?.textContent?.trim() ?? '';
+    }
+
+    it('says placed and waiting for payment while it is', async () => {
+      await open(order());
+
+      expect(headline()).toBe('Your order is placed');
+      expect(sentence()).toContain('waiting for payment');
+      expect(text()).toContain('Thank you');
+    });
+
+    it('says the payment is in once the order is paid', async () => {
+      await open(order({ status: 'Paid', statusLabel: 'Paid', payment: null, canCancel: false }));
+
+      expect(headline()).toBe('Your order is placed');
+      expect(sentence()).toContain('We have your payment');
+      expect(sentence()).not.toContain('waiting for payment');
+    });
+
+    it('uses the server’s label once it has shipped, so a pickup order reads as ready to collect', async () => {
+      await open(
+        order({ status: 'Shipped', statusLabel: 'Ready for collection', payment: null, canCancel: false }),
+      );
+
+      expect(headline()).toBe('Your order');
+      expect(sentence()).toContain('This order is ready for collection.');
+      expect(sentence()).not.toContain('waiting for payment');
+    });
+
+    it('does not thank anyone for a cancelled order or call it placed', async () => {
+      await open(order({ status: 'Cancelled', statusLabel: 'Cancelled', payment: null, canCancel: false }));
+
+      expect(headline()).toBe('Your order');
+      expect(sentence()).toContain('This order is cancelled.');
+      expect(element.querySelector('.order__eyebrow')).toBeNull();
+    });
+
+    it('still tells every shopper to keep the address, which is their only way back', async () => {
+      await open(order({ status: 'Delivered', statusLabel: 'Delivered', payment: null, canCancel: false }));
+
+      expect(sentence()).toContain("Keep this page's address");
+    });
+  });
+
   /** Doc 11 P10 flow A: the shopper's own Cancel order, confirmed before it fires. */
   function cancelRequest(): TestRequest {
     return http.expectOne(

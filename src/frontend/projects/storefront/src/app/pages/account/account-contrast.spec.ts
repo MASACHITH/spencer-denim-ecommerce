@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
 import { contrastRatio } from '../../core/platform/contrast';
 
 /**
@@ -9,23 +12,54 @@ import { contrastRatio } from '../../core/platform/contrast';
  * digit. So the numbers live here, computed by the same `contrastRatio` the sold-out slash is chosen
  * with, and a token that moves takes a test with it rather than quietly lowering the guarantee.
  *
- * The tokens are transcribed from `projects/shared/src/styles/tokens.css`. That duplication is the
- * weakness of this file and is named rather than hidden: CSS custom properties are not readable from a
- * jsdom test without a layout engine, so the alternative is no check at all. A token changed in one
- * place and not the other fails here, which is the behaviour that matters.
+ * **The colours are read from `projects/shared/src/styles/tokens.css` itself**, not transcribed. The
+ * first version of this file hand-copied them, so a token changed in the stylesheet left the copy here
+ * untouched and every assertion kept passing — the independent tester's finding that this spec could not
+ * fail (W3-01). CSS custom properties cannot be read from jsdom without a layout engine, but the file is
+ * plain text: the specs run under Node, so it is read with `node:fs` and the first declaration of each
+ * token is taken, with `var(--other)` references resolved, which is what a browser does for `:root`.
  */
+const TOKENS_CSS = resolve(process.cwd(), 'projects/shared/src/styles/tokens.css');
+
+/** Every `--name: value;` in the file, first declaration wins, `var()` references resolved. */
+function readTokens(css: string): (name: string) => string {
+  const declared = new Map<string, string>();
+
+  for (const match of css.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/(--[a-z0-9-]+)\s*:\s*([^;]+);/gi)) {
+    if (!declared.has(match[1])) {
+      declared.set(match[1], match[2].trim());
+    }
+  }
+
+  const value = (name: string, depth = 0): string => {
+    const raw = declared.get(name);
+
+    if (raw === undefined || depth > 10) {
+      throw new Error(`${name} is not declared in tokens.css`);
+    }
+
+    const reference = /^var\((--[a-z0-9-]+)\)$/i.exec(raw);
+
+    return reference ? value(reference[1], depth + 1) : raw.toLowerCase();
+  };
+
+  return value;
+}
+
+const token = readTokens(readFileSync(TOKENS_CSS, 'utf8'));
+
 const TOKENS = {
-  bg: '#ffffff',
-  bgAlt: '#f7f5f1',
-  surface: '#ffffff',
-  text: '#1a1a1a',
-  textMuted: '#6b6b6b',
-  border: '#e3e0da',
-  borderStrong: '#6b6b6b',
-  primary: '#1a1a1a',
-  onPrimary: '#ffffff',
-  sale: '#b3261e',
-  success: '#2e7d4f',
+  bg: token('--color-bg'),
+  bgAlt: token('--color-bg-alt'),
+  surface: token('--color-surface'),
+  text: token('--color-text'),
+  textMuted: token('--color-text-muted'),
+  border: token('--color-border'),
+  borderStrong: token('--color-border-strong'),
+  primary: token('--color-primary'),
+  onPrimary: token('--color-on-primary'),
+  sale: token('--color-sale'),
+  success: token('--color-success'),
 } as const;
 
 /** WCAG 2.2 AA: 4.5:1 for body text, 3:1 for large text and for non-text contrast (1.4.11). */
@@ -117,6 +151,17 @@ describe('the account pages’ contrast (WCAG 2.2 AA)', () => {
    * became a slightly different pass. Ran on this machine; `contrastRatio` is the project's own
    * implementation of the WCAG 2.1 formula and `contrast.spec.ts` walks the colour cube against it.
    */
+  /** The reader itself, so a parse that quietly found nothing cannot pass every ratio above. */
+  it('reads real colours out of the stylesheet, resolving var() references', () => {
+    for (const colour of Object.values(TOKENS)) {
+      expect(colour).toMatch(/^#[0-9a-f]{6}$/);
+    }
+
+    const read = readTokens(':root { --a: #ABCDEF; --b: var(--a); /* --a: #000000; */ } .dark { --a: #111111; }');
+    expect(read('--b')).toBe('#abcdef');
+    expect(() => read('--missing')).toThrow();
+  });
+
   it('measures the figures this task quotes', () => {
     expect(ratio(TOKENS.sale, TOKENS.bg)).toBe(6.54);
     expect(ratio(TOKENS.success, TOKENS.bg)).toBe(5.05);

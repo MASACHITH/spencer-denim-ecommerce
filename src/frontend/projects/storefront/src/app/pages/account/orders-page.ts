@@ -318,6 +318,16 @@ import { privatePage } from '../../core/platform/private-page';
     .acc-order__courier {
       color: var(--color-text-muted);
     }
+    /* **A tracking number is one unbroken word of whatever length the courier chose**, and a flex item's
+       automatic minimum width is its longest word, so a 60-character number pushed the page 127 / 100 /
+       92 px sideways at 320 / 375 / 390 (independent tester, W3-01). 'min-width: 0' lets the item be
+       narrower than that word and 'overflow-wrap: anywhere' lets the word break; 'anywhere' rather than
+       'break-word' because only 'anywhere' lowers the min-content size that flex layout reads. */
+    .acc-order__tracking > * {
+      min-width: 0;
+      max-width: 100%;
+      overflow-wrap: anywhere;
+    }
     .acc-pager {
       display: flex;
       flex-wrap: wrap;

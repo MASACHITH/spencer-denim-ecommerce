@@ -232,6 +232,67 @@ public sealed class EmailOutboxSendingTests(SqlServerDatabaseFixture sqlServer)
     }
 
     /// <summary>
+    /// G-03 on <c>Dead</c> too: a token-bearing message whose last attempt fails loses its body, and an
+    /// ordinary one keeps it (independent tester, W3-01).
+    /// </summary>
+    /// <remarks>
+    /// The link in a reset or confirmation body still works whether or not the message was delivered, and
+    /// a dead message is never sent, so its body has no use left — only a risk. Before the fix only
+    /// <c>Sent</c> cleared it, so every undeliverable reset link sat in the table for thirty days.
+    /// </remarks>
+    [Theory]
+    [InlineData(EmailTemplateCodes.PasswordReset, true)]
+    [InlineData(EmailTemplateCodes.EmailConfirmation, true)]
+    [InlineData(EmailTemplateCodes.Welcome, false)]
+    public async Task A_message_that_dies_on_its_last_failure_loses_its_body_only_if_it_carries_a_token(
+        string template,
+        bool cleared)
+    {
+        await ResetAsync();
+
+        var id = await InsertAsync(
+            template: template,
+            status: EmailOutboxStatus.Failed,
+            attemptCount: (short)(EmailBackoff.MaxAttempts - 1),
+            nextAttemptAtUtc: Now.AddMinutes(-1));
+
+        var claim = Assert.Single(await ClaimAsync(), row => row.Id == id);
+        Assert.Equal(EmailFailureOutcome.Dead, await MarkFailedAsync(claim, "550 refused, finally"));
+
+        var stored = await RowAsync(id);
+        Assert.Equal(EmailOutboxStatus.Dead, stored.Status);
+        Assert.Equal(cleared, stored.BodyHtml is null);
+        Assert.Equal(cleared, stored.BodyText is null);
+    }
+
+    /// <summary>
+    /// And on the other path to <c>Dead</c>: a sender that died holding the message's last attempt.
+    /// </summary>
+    [Theory]
+    [InlineData(EmailTemplateCodes.PasswordReset, true)]
+    [InlineData(EmailTemplateCodes.EmailConfirmation, true)]
+    [InlineData(EmailTemplateCodes.OrderPlaced, false)]
+    public async Task A_stranded_message_killed_on_its_last_attempt_loses_its_body_only_if_it_carries_a_token(
+        string template,
+        bool cleared)
+    {
+        await ResetAsync();
+
+        var id = await InsertAsync(
+            template: template,
+            status: EmailOutboxStatus.Sending,
+            attemptCount: EmailBackoff.MaxAttempts,
+            lockedUntilUtc: Now.AddMinutes(-1));
+
+        Assert.Equal([id], await KillStrandedAsync());
+
+        var stored = await RowAsync(id);
+        Assert.Equal(EmailOutboxStatus.Dead, stored.Status);
+        Assert.Equal(cleared, stored.BodyHtml is null);
+        Assert.Equal(cleared, stored.BodyText is null);
+    }
+
+    /// <summary>
     /// A failed attempt moves the row on to the next rung of the ladder, and no further.
     /// </summary>
     [Theory]

@@ -158,6 +158,17 @@ public sealed class CustomerAccountTesterGapTests(SqlServerDatabaseFixture sqlSe
         }
     }
 
+    private static async Task<bool> HasUnsentAsync(ApiFactory factory, string email)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        return await db.EmailOutbox.AnyAsync(
+            message => message.ToEmail == email
+                && (message.Status == EmailOutboxStatus.Pending || message.Status == EmailOutboxStatus.Failed),
+            Token);
+    }
+
     [Fact]
     public async Task A_reset_email_loses_its_body_when_sent_and_the_sent_link_still_works()
     {
@@ -187,7 +198,14 @@ public sealed class CustomerAccountTesterGapTests(SqlServerDatabaseFixture sqlSe
 
         // Swept until the queue is empty rather than once: one sweep claims a batch, and the order the
         // three messages are claimed in is not this test's business.
-        for (var sweep = 0; sweep < 3; sweep++)
+        //
+        // **Until this test's own messages have left the queue, not three times** (developer, W3-01
+        // round 2). The suite shares one outbox and nothing else sweeps it, so every registration earlier
+        // in the run leaves its two messages Pending, and the claim takes the oldest first, twenty at a
+        // time. Three sweeps reach sixty rows; once the backlog was longer than that, this test's rows
+        // were never claimed and it failed with "Expected Sent, Actual Pending" — intermittently, by run
+        // order. Bounded so a sender that stopped claiming at all still fails here rather than hanging.
+        for (var sweep = 0; sweep < 500 && await HasUnsentAsync(factory, email); sweep++)
         {
             await sender.SweepAsync(Token);
         }
