@@ -56,7 +56,7 @@ public sealed class AdminCustomerQueryPlanTests(SqlServerDatabaseFixture sqlServ
         Assert.DoesNotContain(StatisticsIndex, plan.UnmatchedIndexes);
 
         // **Deliberately not asserted: that PK_Orders is never read.** The first version asserted it, and it
-        // failed in two runs of five with the same code — on the suite's tiny tables the optimiser sometimes
+        // failed in one of three back-to-back runs of the same code — on the suite's tiny tables the optimiser sometimes
         // costs one of the three aggregates cheaper as a clustered read. That is a cost decision on test-sized
         // data, not the defect this test exists for (a filtered index the query *cannot* match).
     }
