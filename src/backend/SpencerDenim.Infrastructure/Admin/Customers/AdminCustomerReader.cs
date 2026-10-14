@@ -286,8 +286,21 @@ internal sealed class AdminCustomerReader(AppDbContext dbContext) : IAdminCustom
             // The last digits, so a caller's 0771234567 finds a stored +94771234567. A suffix cannot seek
             // an index, and there is none on PhoneNumber to seek: this is a scan of the customer rows,
             // which is the cost of finding a customer by the number they are calling from.
+            //
+            // **The stored number is compared without its separators.** Registration keeps the number as
+            // typed (Trim only) and LooksLikePhone accepts spaces, hyphens, dots, slashes and parentheses,
+            // so "077 123 4567" is a stored value a plain EndsWith never matched (W3-07 tester). The six
+            // REPLACEs are exactly IsPhonePunctuation's set; a leading '+' is before the suffix and harmless.
             AdminCustomerSearchKind.Phone => customers.Where(user =>
-                user.PhoneNumber != null && user.PhoneNumber.EndsWith(value)),
+                user.PhoneNumber != null
+                && user.PhoneNumber
+                    .Replace(" ", string.Empty)
+                    .Replace("-", string.Empty)
+                    .Replace(".", string.Empty)
+                    .Replace("/", string.Empty)
+                    .Replace("(", string.Empty)
+                    .Replace(")", string.Empty)
+                    .EndsWith(value)),
 
             // Part of a name — first, last, or "first last" typed together — or part of the address, since
             // "nimali" is as likely to be the start of an email as a first name. A scan of the customer

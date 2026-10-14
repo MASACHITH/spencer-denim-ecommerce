@@ -30,8 +30,8 @@ public sealed class W307TesterProbeTests(SqlServerDatabaseFixture sqlServer)
     /// found by its digits, typed in any of the forms the search box promises.
     /// </summary>
     [Theory]
-    [InlineData("077 {0} {1}", "07{0}{1}")]
-    [InlineData("077-{0}-{1}", "+947{0}{1}")]
+    [InlineData("077 {0} {1}", "077{0}{1}")]
+    [InlineData("077-{0}-{1}", "+9477{0}{1}")]
     [InlineData("(077) {0}{1}", "77{0}{1}")]
     [InlineData("+94 77 {0} {1}", "077{0}{1}")]
     [InlineData("077.{0}.{1}", "077 {0} {1}")]
