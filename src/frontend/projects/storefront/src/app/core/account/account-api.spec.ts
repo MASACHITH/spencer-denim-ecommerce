@@ -224,6 +224,17 @@ describe('AccountApi (ACC-01, ACC-02)', () => {
       expect(accountFailure(problem(401, null))).toBe('signedOut');
     });
 
+    /** W3-01 Blocker 2: a confirmation link opened signed out is neither of those. */
+    it('tells a confirmation that needs a session from both, by its code', () => {
+      expect(accountFailure(problem(401, { code: 'sign_in_required' }))).toBe('signInRequired');
+      expect(
+        accountErrorMessage(problem(401, { code: 'sign_in_required', detail: 'Sign in, then open the link.' })),
+      ).toBe('Sign in, then open the link.');
+      expect(accountErrorMessage(problem(401, { code: 'sign_in_required' }))).toBe(
+        'Sign in to your account, then open this link again.',
+      );
+    });
+
     it('classifies the rest by status', () => {
       expect(accountFailure(problem(423, { code: 'locked_out' }))).toBe('lockedOut');
       expect(accountFailure(problem(429, { code: 'rate_limited' }))).toBe('rateLimited');
@@ -342,6 +353,7 @@ describe('AccountApi (ACC-01, ACC-02)', () => {
         [0, null],
         [401, null],
         [401, { code: 'invalid_credentials' }],
+        [401, { code: 'sign_in_required' }],
         [404, { code: 'address_not_found' }],
         [500, null],
         [400, { errors: {} }],

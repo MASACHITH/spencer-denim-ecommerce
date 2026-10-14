@@ -333,19 +333,29 @@ describe('SignInPage (ACC-01)', () => {
       expect(document.activeElement).not.toBe(document.body);
     });
 
-    it('keeps what was typed, so a lockout does not cost the shopper their email address', async () => {
+    /**
+     * A locked account answers the same 401 as a wrong password (W3-01 Major 4), so "locked" reaches
+     * this page only as the server's own sentence, which mentions the pause without saying whether one
+     * applies.
+     */
+    it('keeps what was typed, so a refusal does not cost the shopper their email address', async () => {
       await settle();
       type('sign-in-email', 'nimal@example.invalid');
       type('sign-in-password', 'wrong');
       submit();
       signInRequest().flush(
-        { code: 'locked_out', detail: 'Too many attempts. Try again in a few minutes.' },
-        { status: 423, statusText: 'Locked' },
+        {
+          code: 'invalid_credentials',
+          detail:
+            'That email address and password do not match an account. After several attempts, '
+            + 'sign-in pauses for a few minutes; try again later or use Forgot password.',
+        },
+        { status: 401, statusText: 'Unauthorized' },
       );
       await settle();
 
       expect(field('sign-in-email').value).toBe('nimal@example.invalid');
-      expect(alertRegion().textContent).toContain('Try again in a few minutes');
+      expect(alertRegion().textContent).toContain('sign-in pauses for a few minutes');
     });
 
     it('shows the field message a 400 names, beside its own box', async () => {

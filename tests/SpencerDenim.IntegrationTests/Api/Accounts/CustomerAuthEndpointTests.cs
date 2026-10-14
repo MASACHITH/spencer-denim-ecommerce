@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using Microsoft.EntityFrameworkCore;
 using System.Net;
 using System.Net.Http.Json;
@@ -379,15 +378,23 @@ public sealed class CustomerAuthEndpointTests(SqlServerDatabaseFixture sqlServer
         Assert.Equal(HttpStatusCode.Unauthorized, signedOut.StatusCode);
     }
 
-    /// <summary>Doc 11 P11 step B.5: the lockout, and the end time the reply carries.</summary>
+    /// <summary>
+    /// Doc 11 P11 step B.5: the account locks after the configured number of failures, refuses even the
+    /// right password while locked, and never says so in its reply.
+    /// </summary>
     /// <remarks>
     /// <b>The threshold is configured down to three rather than defaulted to ten</b>, so the test is
     /// about the mechanism rather than about the number, and so it does not spend ten password hashes to
     /// find out. The real default is pinned separately, against doc 08 §3.8's own figure, in
     /// <c>SettingKeySpecificationTests</c>.
+    /// <para>
+    /// <b>Until W3-01 round 2 this asserted a 423 with the end time</b>, and the independent tester showed
+    /// that reply was an enumeration oracle (Major 4): only an address with an account can lock. The lock
+    /// is now read from the database, and the reply is asserted to be the wrong-password reply.
+    /// </para>
     /// </remarks>
     [Fact]
-    public async Task The_account_locks_after_the_configured_number_of_failures_and_says_when_it_clears()
+    public async Task The_account_locks_after_the_configured_number_of_failures_without_saying_so()
     {
         await ReadyAsync();
 
@@ -401,6 +408,8 @@ public sealed class CustomerAuthEndpointTests(SqlServerDatabaseFixture sqlServer
         var email = UniqueEmail("lockout");
         await RegisterAsync(client, email);
 
+        string? wrongPasswordReply = null;
+
         for (var attempt = 1; attempt <= 2; attempt++)
         {
             using var refused = await client.PostAsJsonAsync(
@@ -409,26 +418,84 @@ public sealed class CustomerAuthEndpointTests(SqlServerDatabaseFixture sqlServer
                 Token);
 
             Assert.Equal(HttpStatusCode.Unauthorized, refused.StatusCode);
+            wrongPasswordReply = WithoutTraceId(await refused.Content.ReadAsStringAsync(Token));
         }
 
         using var third = await client.PostAsJsonAsync(LoginUrl, new { email, password = "Wrong-Password-9!" }, Token);
-        Assert.Equal(HttpStatusCode.Locked, third.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, third.StatusCode);
+        Assert.Equal(wrongPasswordReply, WithoutTraceId(await third.Content.ReadAsStringAsync(Token)));
 
-        var body = await third.Content.ReadFromJsonAsync<JsonElement>(Token);
-        Assert.Equal("locked_out", body.GetProperty("code").GetString());
+        // The lock is real: it is on the row, and it ends in the future.
+        var locked = await ReadCustomerAsync(factory, email);
+        Assert.NotNull(locked);
         Assert.True(
-            DateTime.TryParse(
-                body.GetProperty("lockoutEndUtc").GetString(),
-                System.Globalization.CultureInfo.InvariantCulture,
-                System.Globalization.DateTimeStyles.RoundtripKind,
-                out var end),
-            "The 423 did not carry a parseable lockoutEndUtc.");
+            locked.LockoutEnd > DateTimeOffset.UtcNow,
+            "Three wrong passwords did not lock the account.");
 
-        Assert.True(end > DateTime.UtcNow, "The lockout end is not in the future.");
-
-        // And the correct password is refused while the lock holds, which is the whole point of it.
+        // And the correct password is refused while the lock holds, which is the whole point of it,
+        // with the same reply a wrong password gets.
         using var correct = await client.PostAsJsonAsync(LoginUrl, new { email, password = GoodPassword }, Token);
-        Assert.Equal(HttpStatusCode.Locked, correct.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, correct.StatusCode);
+        Assert.Equal(wrongPasswordReply, WithoutTraceId(await correct.Content.ReadAsStringAsync(Token)));
+
+        using var me = await client.GetAsync(new Uri(MeUrl, UriKind.Relative), Token);
+        Assert.Equal(HttpStatusCode.Unauthorized, me.StatusCode);
+    }
+
+    /// <summary>
+    /// W3-01 Major 4: eleven wrong passwords against a real account and against an address with no
+    /// account get the same eleven replies.
+    /// </summary>
+    /// <remarks>
+    /// <b>The tester's reproduction, kept as a test.</b> Before the fix an unknown address answered 401
+    /// eleven times and a customer answered 401 eight times then 423 three times, so anybody with a list
+    /// of addresses could sort it into "has an account" and "does not" — and lock every real one while
+    /// doing it. The comparison is of status and whole body (less <c>traceId</c>), attempt by attempt, so
+    /// a field added later that differs only when locked would fail it too. The last attempt is the
+    /// <i>correct</i> password for the customer, refused because the account is locked, and it must still
+    /// read exactly like the stranger's refusal.
+    /// </remarks>
+    [Fact]
+    public async Task A_locked_account_answers_exactly_what_an_address_with_no_account_answers()
+    {
+        await ReadyAsync();
+
+        await using var factory = CreateHost(new Dictionary<string, string?>(StringComparer.Ordinal)
+        {
+            ["CustomerSecurity:LockoutMaxFailedAttempts"] = "3",
+            ["CustomerSecurity:LockoutMinutes"] = "15",
+            ["CustomerSecurity:SignInAttemptsPerWindow"] = "200",
+        });
+
+        using var client = CreateClient(factory);
+        var customer = UniqueEmail("enum-customer");
+        var nobody = UniqueEmail("enum-nobody");
+        await RegisterAsync(client, customer);
+
+        async Task<List<string>> AttemptsAsync(string email, string lastPassword)
+        {
+            var replies = new List<string>();
+
+            for (var attempt = 1; attempt <= 11; attempt++)
+            {
+                var password = attempt == 11 ? lastPassword : "Wrong-Password-9!";
+                using var response = await client.PostAsJsonAsync(LoginUrl, new { email, password }, Token);
+                var body = WithoutTraceId(await response.Content.ReadAsStringAsync(Token));
+                replies.Add($"{(int)response.StatusCode} {body}");
+            }
+
+            return replies;
+        }
+
+        var customerReplies = await AttemptsAsync(customer, GoodPassword);
+        var nobodyReplies = await AttemptsAsync(nobody, GoodPassword);
+
+        // The customer really is locked, so the identical replies are hiding a lock rather than missing one.
+        var row = await ReadCustomerAsync(factory, customer);
+        Assert.NotNull(row);
+        Assert.True(row.LockoutEnd > DateTimeOffset.UtcNow, "The customer was never locked.");
+
+        Assert.Equal(nobodyReplies, customerReplies);
     }
 
     /// <summary>
@@ -476,81 +543,12 @@ public sealed class CustomerAuthEndpointTests(SqlServerDatabaseFixture sqlServer
                 new { email, password = "Wrong-Password-9!" },
                 Token);
 
-            Assert.Equal(HttpStatusCode.Locked, again.StatusCode);
+            Assert.Equal(HttpStatusCode.Unauthorized, again.StatusCode);
         }
 
         var after = await ReadCustomerAsync(factory, email);
         Assert.NotNull(after);
         Assert.Equal(locked.LockoutEnd, after.LockoutEnd);
-    }
-
-    /// <summary>
-    /// #101's timing oracle, measured: an unknown address, a staff address and a wrong password all cost
-    /// the password hash.
-    /// </summary>
-    /// <remarks>
-    /// <b>This is a ratio test and not a threshold test, and it is deliberately loose.</b> A wall-clock
-    /// assertion on a shared developer machine is the kind of test that fails on a Tuesday for no reason,
-    /// so what is asserted is that the cheap paths are not an <i>order of magnitude</i> faster than the
-    /// expensive one — which is what an unequalised endpoint looks like (a dictionary read against a
-    /// PBKDF2 verification). The real figures are in the task report.
-    /// <para>
-    /// <b>It can fail, and that is the point.</b> Removing
-    /// <c>CustomerUserLookup.SpendPasswordHashCost</c> from the unknown-address path makes it red —
-    /// recorded in the task report as one of the mutations.
-    /// </para>
-    /// <para>
-    /// The median of several rounds, not one sample: one sample on a machine that is also running a
-    /// database and a test host is noise.
-    /// </para>
-    /// </remarks>
-    [Fact]
-    public async Task An_unknown_address_costs_about_what_a_wrong_password_costs()
-    {
-        await ReadyAsync();
-
-        await using var factory = CreateHost();
-        using var client = CreateClient(factory);
-
-        var customer = UniqueEmail("timing-real");
-        var staff = UniqueEmail("timing-staff");
-        await RegisterAsync(client, customer);
-        await CreateStaffUserAsync(factory, staff, GoodPassword);
-
-        // One round each first, so neither path is paying for a cold cache, a cold query plan or the
-        // first PBKDF2 call in the process.
-        await MeasureAsync(client, customer, "Wrong-Password-9!");
-        await MeasureAsync(client, UniqueEmail("timing-warm"), GoodPassword);
-        await MeasureAsync(client, staff, GoodPassword);
-
-        const int rounds = 7;
-        var wrongPassword = new List<double>(rounds);
-        var unknownAddress = new List<double>(rounds);
-        var staffAddress = new List<double>(rounds);
-
-        for (var round = 0; round < rounds; round++)
-        {
-            wrongPassword.Add(await MeasureAsync(client, customer, "Wrong-Password-9!"));
-            unknownAddress.Add(await MeasureAsync(client, UniqueEmail("timing-nobody"), GoodPassword));
-            staffAddress.Add(await MeasureAsync(client, staff, GoodPassword));
-        }
-
-        var realCost = Median(wrongPassword);
-        var unknownCost = Median(unknownAddress);
-        var staffCost = Median(staffAddress);
-
-        // A tenth of the real cost is what "no hash was computed" looks like. Anything above that is
-        // within the noise of a developer machine and is not a distinguishable signal.
-        Assert.True(
-            unknownCost > realCost / 10,
-            $"An unknown address answered in {unknownCost:F1} ms against {realCost:F1} ms for a wrong "
-            + "password: the unknown-email path is not spending the password-hash cost, so the sign-in "
-            + "form is a username-enumeration timing oracle (#101).");
-
-        Assert.True(
-            staffCost > realCost / 10,
-            $"A staff address answered in {staffCost:F1} ms against {realCost:F1} ms for a wrong "
-            + "password: the wrong-user-type path is not spending the password-hash cost.");
     }
 
     /// <summary>
@@ -590,27 +588,6 @@ public sealed class CustomerAuthEndpointTests(SqlServerDatabaseFixture sqlServer
         await DbContext.Database.ExecuteSqlAsync(
             $"UPDATE [identity].[Users] SET [IsActive] = 0 WHERE [Id] = {userId}",
             Token);
-    }
-
-    private static async Task<double> MeasureAsync(HttpClient client, string email, string password)
-    {
-        var stopwatch = Stopwatch.StartNew();
-
-        using var response = await client.PostAsJsonAsync("/api/account/login", new { email, password }, Token);
-        _ = await response.Content.ReadAsStringAsync(Token);
-
-        stopwatch.Stop();
-
-        return stopwatch.Elapsed.TotalMilliseconds;
-    }
-
-    private static double Median(List<double> samples)
-    {
-        var ordered = samples.Order().ToList();
-
-        return ordered.Count % 2 == 1
-            ? ordered[ordered.Count / 2]
-            : (ordered[(ordered.Count / 2) - 1] + ordered[ordered.Count / 2]) / 2;
     }
 
     /// <summary>

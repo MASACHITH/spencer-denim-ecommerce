@@ -49,9 +49,15 @@ internal sealed class CustomerRegistrationStore(
 
         return owner switch
         {
-            CustomerUserLookup.EmailOwner.Staff => StaffAddress(),
+            // **Both refusals pay for a password hash, because creating an account does.** The
+            // independent tester measured registration at 76.9 ms for a free address, 2.5 ms for a
+            // customer's and 1.1 ms for a staff member's: 30-70x, which told anybody timing the form
+            // whether an address had an account — and staff-versus-customer at 2.3x singled out admin
+            // addresses. The dummy hash removes the dominant term; the endpoint's response floor
+            // removes the rest (see CustomerAuthEndpoints).
+            CustomerUserLookup.EmailOwner.Staff => StaffAddress(registration.Password),
             CustomerUserLookup.EmailOwner.Customer =>
-                await QueueAccountExistsAsync(registration, cancellationToken),
+                await QueueAccountExistsAsync(registration, cancellationToken, spendHashCost: true),
             _ => await CreateAsync(registration, cancellationToken),
         };
     }
@@ -95,8 +101,10 @@ internal sealed class CustomerRegistrationStore(
         });
     }
 
-    private CustomerRegistrationOutcome StaffAddress()
+    private CustomerRegistrationOutcome StaffAddress(string password)
     {
+        lookup.SpendPasswordHashCost(password);
+
         // Doc 08 §3.1 DB10: "a staff match sends nothing". Logged at information level because it is
         // either a staff member who forgot doc 08 D7 and needs telling, or somebody probing — and
         // neither is visible anywhere else, since no message is sent and no row is written.
@@ -118,8 +126,15 @@ internal sealed class CustomerRegistrationStore(
     /// </remarks>
     private async Task<CustomerRegistrationOutcome> QueueAccountExistsAsync(
         CustomerRegistration registration,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool spendHashCost = false)
     {
+        // Not on the lost-race path, which already paid for a real hash inside UserManager.CreateAsync.
+        if (spendHashCost)
+        {
+            lookup.SpendPasswordHashCost(registration.Password);
+        }
+
         var existing = await lookup.FindCustomerByEmailAsync(registration.Email, cancellationToken);
 
         if (existing?.Email is null)

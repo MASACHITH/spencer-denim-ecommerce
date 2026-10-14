@@ -33,9 +33,11 @@ const SERVER_REFUSAL =
  *
  * The two properties this file exists for:
  *
- * - **the server must not redeem the token.** The reply carries a `Set-Cookie`, which on the SSR process
- *   would be set on a response to nobody, and the token is single-use, so a prefetch or a crawl would
- *   spend it and the shopper would open their own live link to be told it had been used.
+ * - **the server must not redeem the token.** Confirming needs the shopper's own session, which only the
+ *   browser has, and the token is single-use, so a prefetch or a crawl would spend it and the shopper
+ *   would open their own live link to be told it had been used.
+ * - **a signed-out browser is sent to sign in and brought back** (W3-01 Blocker 2): the server confirms
+ *   only for the account's own session and signs nobody in.
  * - **"no answer yet" must not render as "refused."** Those are the same falsy value, and rendering the
  *   refusal branch for the whole of the server's response would tell every shopper their link had failed.
  */
@@ -105,10 +107,8 @@ describe('ConfirmEmailPage (ACC-01)', () => {
 
   describe('what the server does with a one-time token', () => {
     /**
-     * **Nothing, and both reasons are enough on their own.** The reply carries a `Set-Cookie` — the
-     * holder of a live confirmation link is the account's owner, so the server signs them in — which on
-     * the SSR process would be set on a response to nobody; and the token is single-use, so a render is
-     * not an intention.
+     * **Nothing, and both reasons are enough on their own.** Confirming needs the shopper's own session,
+     * which the SSR process does not hold; and the token is single-use, so a render is not an intention.
      */
     it('posts nothing during a server render', async () => {
       await open('/account/confirm-email?token=a-single-use-token', 'server');
@@ -240,17 +240,18 @@ describe('ConfirmEmailPage (ACC-01)', () => {
     });
 
     /**
-     * The confirmation signs the shopper in, and signing in is what merges the guest bag on the server —
-     * so the header's badge is stale by exactly the lines that moved.
+     * Confirming signs nobody in and merges no bag (W3-01 Blocker 2) — the shopper was already signed
+     * in — so there is nothing new in the bag to read. The first version re-read it because the
+     * confirmation used to issue a session; that session is what the takeover rode on.
      */
-    it('re-reads the bag, because confirming signed the shopper in', async () => {
+    it('does not re-read the bag, because confirming signs nobody in', async () => {
       await open('/account/confirm-email?token=a-token');
       request().flush({ customer: CUSTOMER, linkedOrderNumbers: [] });
       await settle();
 
       expect(
         http.match((candidate) => candidate.url === CartApi.url && candidate.method === 'GET'),
-      ).toHaveLength(1);
+      ).toHaveLength(0);
     });
 
     it('moves focus to the confirmation', async () => {
@@ -318,6 +319,68 @@ describe('ConfirmEmailPage (ACC-01)', () => {
         statusText: 'Bad Request',
       });
       await settle();
+
+      expect(TestBed.inject(AccountStore).customer()).toBeNull();
+      expect(http.match(() => true)).toEqual([]);
+    });
+  });
+
+  describe('when the browser is not signed in (W3-01 Blocker 2)', () => {
+    const SIGN_IN_FIRST =
+      'Sign in to your account, then open this link again. If you cannot sign in, use Forgot password '
+      + 'to set a password first.';
+
+    async function refusedForSession(token = 'a-live-token'): Promise<void> {
+      await open(`/account/confirm-email?token=${encodeURIComponent(token)}`);
+      request().flush(
+        {
+          code: 'sign_in_required',
+          title: 'Sign in to confirm your email address',
+          detail: SIGN_IN_FIRST,
+        },
+        { status: 401, statusText: 'Unauthorized' },
+      );
+      await settle();
+    }
+
+    it('says to sign in, in the server’s words, and moves focus there', async () => {
+      await refusedForSession();
+
+      expect(alertRegion().textContent).toBe(SIGN_IN_FIRST);
+      expect(document.activeElement).toBe(alertRegion());
+    });
+
+    /**
+     * The server answered before it looked at the token, so the link is still live: signing in has to
+     * bring the shopper straight back to it, token and all, or they would be asked for a new link they
+     * do not need.
+     */
+    it('links to sign-in with a returnTo that comes back to this link', async () => {
+      await refusedForSession('tok/en+1');
+
+      const link = element.querySelector('[data-testid="confirm-email-sign-in"]') as HTMLAnchorElement;
+      const target = new URL(link.href, 'https://shop.test');
+
+      expect(target.pathname).toBe('/account/sign-in');
+      expect(target.searchParams.get('returnTo')).toBe('/account/confirm-email?token=tok%2Fen%2B1');
+    });
+
+    /** The way in for somebody who never chose this address's password: the victim of a pre-registration. */
+    it('offers Forgot password', async () => {
+      await refusedForSession();
+
+      const forgot = element.querySelector('[data-testid="confirm-email-forgot"]') as HTMLAnchorElement;
+      expect(new URL(forgot.href, 'https://shop.test').pathname).toBe('/account/forgot-password');
+    });
+
+    it('does not offer a new link, which the shopper does not need', async () => {
+      await refusedForSession();
+
+      expect(text()).not.toContain('Ask for a new link');
+    });
+
+    it('signs nobody in and touches nothing else', async () => {
+      await refusedForSession();
 
       expect(TestBed.inject(AccountStore).customer()).toBeNull();
       expect(http.match(() => true)).toEqual([]);

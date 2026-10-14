@@ -86,6 +86,10 @@ public abstract class CustomerAccountTestBase(SqlServerDatabaseFixture sqlServer
         var configuration = new Dictionary<string, string?>(StringComparer.Ordinal)
         {
             ["Email:StorefrontBaseUrl"] = StorefrontOrigin,
+
+            // Zero rather than the production quarter-second, so the suite does not spend 250 ms on every
+            // sign-in and registration it makes. The timing tests put the real default back explicitly.
+            ["CustomerSecurity:AnonymousResponseFloorMilliseconds"] = "0",
         };
 
         if (extra is not null)

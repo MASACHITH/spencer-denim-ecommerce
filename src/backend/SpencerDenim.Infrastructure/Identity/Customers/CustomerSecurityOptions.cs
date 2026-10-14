@@ -143,6 +143,32 @@ public sealed class CustomerSecurityOptions
     public int LinkRedemptionsPerWindow { get; set; } = 20;
 
     /// <summary>
+    /// The least time, in milliseconds, that sign-in, registration and forgot-password take to answer —
+    /// whatever the answer is.
+    /// </summary>
+    /// <remarks>
+    /// <b>Why a floor as well as the dummy password hash.</b> The independent tester measured
+    /// forgot-password at 4.6 ms for a customer and 1.2 ms for an unknown or staff address — 3.8x, and it
+    /// passed my own 10x test. That difference is not a hash at all: it is the token insert and the outbox
+    /// row a customer match writes, which an unknown address cannot write. Equalising the <i>work</i>
+    /// would mean doing database writes for addresses that have no account; equalising the <i>time</i>
+    /// costs nothing but latency. So each of the three endpoints waits until this much time has passed
+    /// before answering, and every path — free, taken, staff, unknown, locked — answers at the floor.
+    /// <para>
+    /// <b>250 ms</b>: about three times the slowest genuine path measured (registering a free address,
+    /// ~77 ms, which is a PBKDF2 hash and four inserts), so ordinary load does not push a real path past
+    /// it; short enough that a shopper does not notice it on a form they submit once. A path that ever
+    /// exceeds the floor leaks its own time again, which is why the dummy hash stays — it keeps the
+    /// expensive term equal even then. The delay is a timer, not work, so it costs no CPU.
+    /// </para>
+    /// <para>
+    /// A setting so the rest of the integration suite can set it to zero rather than spend a quarter of a
+    /// second on every sign-in it makes; the timing test runs at the real default.
+    /// </para>
+    /// </remarks>
+    public int AnonymousResponseFloorMilliseconds { get; set; } = 250;
+
+    /// <summary>
     /// Whether the customer auth cookie requires HTTPS (<c>Always</c> versus <c>SameAsRequest</c>).
     /// </summary>
     /// <remarks>

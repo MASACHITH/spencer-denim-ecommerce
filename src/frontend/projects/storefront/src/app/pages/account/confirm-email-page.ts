@@ -13,9 +13,8 @@ import {
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 
 import { AccountNotice } from './account-notice';
-import { AccountApi, accountErrorMessage } from '../../core/account/account-api';
+import { AccountApi, accountErrorMessage, accountFailure } from '../../core/account/account-api';
 import { AccountStore } from '../../core/account/account.store';
-import { CartStore } from '../../core/cart/cart.store';
 import { privatePage } from '../../core/platform/private-page';
 
 /**
@@ -26,11 +25,13 @@ import { privatePage } from '../../core/platform/private-page';
  *
  * Two independent reasons, either of which would be enough:
  *
- * 1. **The server's reply carries a `Set-Cookie`.** Confirming issues a session — the holder of a live
- *    confirmation link for an account *is* that account's owner, so the server signs them in rather than
- *    making them type a password they just proved they control. If the SSR process made the call, that
- *    cookie would be set on the Node process's own response to nobody, and the shopper would be
- *    confirmed and signed out at the same time.
+ * 1. **Confirming needs the shopper's own session, and only the browser has it.** The server confirms
+ *    only for a browser already signed in as the account the link names, and it issues no session of
+ *    its own (W3-01 Blocker 2). The first version did sign the link's holder in, on the reasoning that
+ *    the holder of the link is the owner — and the independent tester showed why that is wrong: somebody
+ *    who registers *your* address before you do chooses the password, and the moment you click the
+ *    link, your guest orders were theirs and your browser was signed in to their account. The link
+ *    proves the mailbox; the session proves the password; linking now needs both.
  * 2. **The token is single-use.** A render is not an intention: a link prefetch, a crawler, a preview
  *    card or a duplicated SSR pass would spend the token and the shopper would open their own link to be
  *    told it had already been used. Which is also why it is not posted twice in the browser — see
@@ -118,6 +119,26 @@ import { privatePage } from '../../core/platform/private-page';
             >See your orders</a
           >
         </p>
+      } @else if (phase() === 'sign-in') {
+        <!-- Not signed in. The server answered before looking at the token, so the link is still good:
+             sign in and come straight back to it. "Forgot password" is the route for somebody who never
+             chose a password for this address, which is exactly the person a pre-registered address
+             would strand — resetting proves the mailbox and replaces whatever password was set. -->
+        <p class="acc-actions">
+          <a
+            class="btn btn--primary"
+            routerLink="/account/sign-in"
+            [queryParams]="{ returnTo: returnHere() }"
+            data-testid="confirm-email-sign-in"
+            >Sign in</a
+          >
+          <a
+            class="link acc-inline-action"
+            routerLink="/account/forgot-password"
+            data-testid="confirm-email-forgot"
+            >Forgot password</a
+          >
+        </p>
       } @else {
         <!-- Refused. The sentence is in the alert region above, which has had focus moved into it. -->
         <p class="acc-actions">
@@ -131,7 +152,6 @@ import { privatePage } from '../../core/platform/private-page';
 export class ConfirmEmailPage {
   private readonly api = inject(AccountApi);
   private readonly store = inject(AccountStore);
-  private readonly cart = inject(CartStore);
   private readonly router = inject(Router);
   private readonly injector = inject(Injector);
   private readonly notice = viewChild.required(AccountNotice);
@@ -155,7 +175,7 @@ export class ConfirmEmailPage {
    * `waiting` is the state the server renders in and the browser's first frame, and it is **not** the
    * same as `refused`: see the template. It only ever moves forward, and only in the browser.
    */
-  private readonly state = signal<'waiting' | 'confirmed' | 'refused'>('waiting');
+  private readonly state = signal<'waiting' | 'confirmed' | 'sign-in' | 'refused'>('waiting');
 
   private readonly failure = signal<string | null>(null);
   private readonly confirmed = signal<string | null>(null);
@@ -170,6 +190,15 @@ export class ConfirmEmailPage {
   protected readonly phase = this.state.asReadonly();
 
   protected readonly hasToken = computed(() => (this.token ?? '').trim().length > 0);
+
+  /**
+   * This page with its token, for the sign-in form's `returnTo`, so signing in lands back here and the
+   * confirmation runs. The address bar no longer has the token in it, so it is rebuilt from the copy read
+   * at construction. `returnPath` on the sign-in page accepts it because it is a same-origin path.
+   */
+  protected readonly returnHere = computed(
+    () => `/account/confirm-email?token=${encodeURIComponent(this.token ?? '')}`,
+  );
 
   constructor() {
     privatePage(
@@ -197,14 +226,11 @@ export class ConfirmEmailPage {
         this.linkedOrders.set(result.linkedOrderNumbers);
         this.state.set('confirmed');
 
-        // Told rather than asked: the response carries the whole session, so the header greets them in
-        // the same frame the page confirms them.
+        // Told rather than asked: the shopper was already signed in as this customer, and the reply
+        // carries the session with `emailConfirmed` now true, so the header and the profile agree with
+        // the page in the same frame. Confirming merges no bag and issues no cookie, so the bag is not
+        // re-read.
         this.store.accept(result.customer);
-
-        // The confirmation signs the shopper in, and signing in is what merges the guest bag on the
-        // server — so the header's badge is stale by exactly the lines that moved, for the reason
-        // `sign-in-page.ts` records.
-        this.cart.load();
 
         // **The server's wording and not ours.** The only sentence written here is the one the server
         // does not send: a 200 carries the customer and the order numbers but no `message`, so this page
@@ -215,7 +241,7 @@ export class ConfirmEmailPage {
         afterNextRender(() => this.notice().focusStatus(), { injector: this.injector });
       },
       error: (error: unknown) => {
-        this.state.set('refused');
+        this.state.set(accountFailure(error) === 'signInRequired' ? 'sign-in' : 'refused');
         this.failure.set(accountErrorMessage(error));
 
         afterNextRender(() => this.notice().focusAlert(), { injector: this.injector });

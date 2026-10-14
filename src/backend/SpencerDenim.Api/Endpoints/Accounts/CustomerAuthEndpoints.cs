@@ -1,6 +1,8 @@
+using System.Diagnostics;
 using System.Globalization;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 using SpencerDenim.Api.Http;
 using SpencerDenim.Application.Abstractions.Messaging;
 using SpencerDenim.Application.Abstractions.Results;
@@ -37,7 +39,9 @@ namespace SpencerDenim.Api.Endpoints.Accounts;
 /// <item><description>
 /// <b>Every refusal costs what a success costs.</b> #101 is open on the staff routes.
 /// <c>CustomerUserLookup.SpendPasswordHashCost</c> runs the configured hasher against a fixed dummy hash
-/// on every early-return path, so the cheap answers are not a timing oracle.
+/// on every early-return path, and sign-in, registration and forgot-password each hold their reply until
+/// <c>CustomerSecurity:AnonymousResponseFloorMilliseconds</c> has passed, so no answer is a timing oracle
+/// (W3-01 Major 3: the hash alone left forgot-password at 3.8x).
 /// </description></item>
 /// </list>
 /// <para>
@@ -105,15 +109,16 @@ internal static class CustomerAuthEndpoints
             .WithName("CustomerSignIn")
             .WithSummary("Sign in (ACC-01, doc 11 P11 step B).")
             .WithDescription(
-                "One 401 for a wrong password, an unknown address, a staff address and a deactivated "
-                + "account alike, and each costs the same password-hash work (doc 08 §3.1 DB10, #101). "
-                + "423 with the end time once an account is locked after "
-                + "`CustomerSecurity:LockoutMaxFailedAttempts` failures. On success the guest bag is "
-                + "merged into the account bag (doc 11 P11 step B.6) and the session cookie is issued.")
+                "One 401, byte for byte, for a wrong password, an unknown address, a staff address, a "
+                + "deactivated account and a locked one alike (doc 08 §3.1 DB10, #101, W3-01 Major 4): "
+                + "an account locks after `CustomerSecurity:LockoutMaxFailedAttempts` failures and "
+                + "refuses even the right password until it clears, but the reply never says so. Every "
+                + "answer except 429 waits for `CustomerSecurity:AnonymousResponseFloorMilliseconds`, so "
+                + "its timing says nothing either. On success the guest bag is merged into the account "
+                + "bag (doc 11 P11 step B.6) and the session cookie is issued.")
             .Produces<CustomerSessionResponse>()
             .ProducesValidationProblem()
             .ProducesProblem(StatusCodes.Status401Unauthorized)
-            .ProducesProblem(StatusCodes.Status423Locked)
             .ProducesProblem(StatusCodes.Status429TooManyRequests);
 
         api.MapPost("/logout", (Delegate)SignOutEndpointAsync)
@@ -221,6 +226,7 @@ internal static class CustomerAuthEndpoints
             [FromBody] CustomerRegisterRequest? request,
             ICommandHandler<RegisterCustomerCommand, Result<RegisterCustomerResult>> handler,
             AccountRequestThrottle throttle,
+            IOptions<CustomerSecurityOptions> security,
             HttpContext httpContext,
             CancellationToken cancellationToken)
     {
@@ -230,6 +236,8 @@ internal static class CustomerAuthEndpoints
         {
             return TooMany(httpContext, "Too many accounts have been created from here recently.");
         }
+
+        var started = Stopwatch.GetTimestamp();
 
         var result = await handler.HandleAsync(
             new RegisterCustomerCommand(
@@ -242,6 +250,8 @@ internal static class CustomerAuthEndpoints
                 httpContext.Request.Headers.UserAgent.ToString()),
             cancellationToken);
 
+        await WaitForResponseFloorAsync(started, security.Value, cancellationToken);
+
         return result.IsSuccess
             ? TypedResults.Accepted((string?)null, new AccountMessageResponse(RegistrationReply))
             : ToValidationProblem(result.Errors);
@@ -252,6 +262,7 @@ internal static class CustomerAuthEndpoints
         ICommandHandler<CustomerSignInCommand, Result<CustomerSignInResult>> handler,
         ICartStore carts,
         AccountRequestThrottle throttle,
+        IOptions<CustomerSecurityOptions> security,
         HttpContext httpContext,
         TimeProvider clock,
         CancellationToken cancellationToken)
@@ -263,6 +274,8 @@ internal static class CustomerAuthEndpoints
             return TooMany(httpContext, "Too many sign-in attempts have been made from here recently.");
         }
 
+        var started = Stopwatch.GetTimestamp();
+
         var result = await handler.HandleAsync(
             new CustomerSignInCommand(
                 request?.Email,
@@ -273,38 +286,71 @@ internal static class CustomerAuthEndpoints
 
         if (!result.IsSuccess)
         {
+            await WaitForResponseFloorAsync(started, security.Value, cancellationToken);
             return ToValidationProblem(result.Errors);
         }
 
-        switch (result.Value)
+        if (result.Value is CustomerSignInResult.Success success)
         {
-            case CustomerSignInResult.Success success:
-                await CustomerSessionCookie.SignInAsync(httpContext, success.Session);
-                await MergeGuestBagAsync(httpContext, carts, success.Session.UserId, clock, cancellationToken);
-                return TypedResults.Ok(CustomerSessionResponse.From(success.Session));
+            await CustomerSessionCookie.SignInAsync(httpContext, success.Session);
+            await MergeGuestBagAsync(httpContext, carts, success.Session.UserId, clock, cancellationToken);
+            await WaitForResponseFloorAsync(started, security.Value, cancellationToken);
+            return TypedResults.Ok(CustomerSessionResponse.From(success.Session));
+        }
 
-            case CustomerSignInResult.LockedOut lockedOut:
-                return TypedResults.Problem(
-                    title: "This account is temporarily locked",
-                    detail:
-                        "Too many sign-in attempts. Try again in a few minutes — the lock clears by "
-                        + "itself.",
-                    statusCode: StatusCodes.Status423Locked,
-                    extensions: new Dictionary<string, object?>(StringComparer.Ordinal)
-                    {
-                        ["code"] = "locked_out",
-                        ["lockoutEndUtc"] = lockedOut.LockoutEndUtc.ToString("o", CultureInfo.InvariantCulture),
-                    });
+        // **A locked account answers exactly what a wrong password answers**: same status, same body,
+        // same time. The independent tester found the 423 was an enumeration oracle: eleven wrong
+        // passwords against an unknown address answered 401 eleven times, against a real customer 401
+        // eight times then 423, which told anybody with a list of addresses which ones have accounts
+        // (and locked those accounts as a side effect of finding out). A locked-out shopper learns it
+        // from the wording, which mentions the pause without saying whether one applies, and can use
+        // Forgot password. The lock itself still holds: the correct password gets this same reply until
+        // it clears. The lockout is still audited server-side, where nobody outside can read it.
+        await WaitForResponseFloorAsync(started, security.Value, cancellationToken);
+        return InvalidCredentials();
+    }
 
-            default:
-                return TypedResults.Problem(
-                    title: "We could not sign you in",
-                    detail: "That email address and password do not match an account.",
-                    statusCode: StatusCodes.Status401Unauthorized,
-                    extensions: new Dictionary<string, object?>(StringComparer.Ordinal)
-                    {
-                        ["code"] = "invalid_credentials",
-                    });
+    /// <summary>
+    /// The one refusal sign-in gives: a wrong password, an unknown address, a staff address, a
+    /// deactivated account and a locked account all answer this, byte for byte.
+    /// </summary>
+    private static ProblemHttpResult InvalidCredentials() =>
+        TypedResults.Problem(
+            title: "We could not sign you in",
+            detail:
+                "That email address and password do not match an account. After several attempts, "
+                + "sign-in pauses for a few minutes; try again later or use Forgot password.",
+            statusCode: StatusCodes.Status401Unauthorized,
+            extensions: new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["code"] = "invalid_credentials",
+            });
+
+    /// <summary>
+    /// Holds the reply until <see cref="CustomerSecurityOptions.AnonymousResponseFloorMilliseconds"/>
+    /// have passed since the request began its work.
+    /// </summary>
+    /// <remarks>
+    /// <b>Every answer from sign-in, registration and forgot-password waits for this</b>, whatever the
+    /// answer is, so the time a reply takes says nothing about the address in it (W3-01 Major 3; the
+    /// options property says why a floor and why 250 ms). Measured from after the rate limiter, because a
+    /// 429 is about the caller's own request count and says nothing about an account, and holding a
+    /// refused flood open for a quarter of a second each would only hold connections for an attacker.
+    /// A path slower than the floor answers when it is done: the dummy password hash keeps the expensive
+    /// term equal even then.
+    /// </remarks>
+    private static async Task WaitForResponseFloorAsync(
+        long started,
+        CustomerSecurityOptions security,
+        CancellationToken cancellationToken)
+    {
+        var remaining =
+            TimeSpan.FromMilliseconds(security.AnonymousResponseFloorMilliseconds)
+            - Stopwatch.GetElapsedTime(started);
+
+        if (remaining > TimeSpan.Zero)
+        {
+            await Task.Delay(remaining, cancellationToken);
         }
     }
 
@@ -438,6 +484,7 @@ internal static class CustomerAuthEndpoints
             [FromBody] CustomerForgotPasswordRequest? request,
             ICommandHandler<RequestCustomerPasswordResetCommand, Result<bool>> handler,
             AccountRequestThrottle throttle,
+            IOptions<CustomerSecurityOptions> security,
             HttpContext httpContext,
             CancellationToken cancellationToken)
     {
@@ -448,9 +495,13 @@ internal static class CustomerAuthEndpoints
             return TooMany(httpContext, "Too many reset links have been asked for from here recently.");
         }
 
+        var started = Stopwatch.GetTimestamp();
+
         var result = await handler.HandleAsync(
             new RequestCustomerPasswordResetCommand(request?.Email),
             cancellationToken);
+
+        await WaitForResponseFloorAsync(started, security.Value, cancellationToken);
 
         return result.IsSuccess
             ? TypedResults.Accepted((string?)null, new AccountMessageResponse(ForgotPasswordReply))

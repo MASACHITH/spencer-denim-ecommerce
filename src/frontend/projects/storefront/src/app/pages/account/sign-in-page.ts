@@ -59,12 +59,13 @@ import { privatePage } from '../../core/platform/private-page';
  *
  * ## One refusal, whatever went wrong
  *
- * The server answers one 401 for a wrong password, an unknown address, a staff address and a deactivated
- * account alike, each at the same password-hash cost (doc 08 §3.1 DB10, #101). This page must not undo
- * that at the last step, so it prints the server's sentence and adds nothing: no "we don't recognise
- * that email", and no field-level mark on `email` rather than `password`. A 423 is different and is
- * allowed to be — the lock is a fact about an account the holder of its password can see anyway, and the
- * server's own sentence says it clears by itself.
+ * The server answers one 401 for a wrong password, an unknown address, a staff address, a deactivated
+ * account and a locked one alike, in the same time (doc 08 §3.1 DB10, #101, W3-01 Majors 3 and 4). This
+ * page must not undo that at the last step, so it prints the server's sentence and adds nothing: no "we
+ * don't recognise that email", and no field-level mark on `email` rather than `password`. **There is no
+ * lockout message on this page any more**, deliberately: the 423 it used to show was only possible for
+ * an address with an account, which made the form an enumeration oracle. The server's one sentence
+ * mentions that sign-in pauses after several attempts, which is all a locked-out shopper needs.
  */
 @Component({
   selector: 'sd-sign-in-page',

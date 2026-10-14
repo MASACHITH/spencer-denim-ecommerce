@@ -84,6 +84,11 @@ export class AccountApi {
   /**
    * Redeems a confirmation link and links the guest orders placed with that address (doc 08 §3.1 D5).
    *
+   * **Only for a browser already signed in as the account the link names**, and it signs nobody in. A
+   * signed-out browser gets 401 `sign_in_required` before the token is even looked at, so the token is
+   * not spent (W3-01 Blocker 2: without this, whoever registered somebody else's address first received
+   * that person's guest orders the moment the real owner clicked the link).
+   *
    * **The token goes in the body although it arrived in the page's URL.** A token in a request URL lands
    * in the API's access log and in any proxy's; the page's own address is the browser's business. The
    * page strips it from the address bar after reading it, so it does not sit in history either.
@@ -212,10 +217,16 @@ export class AccountApi {
  *   an address the account no longer uses. One opaque case for all four, deliberately, so a holder is
  *   never told a token was once real.
  * - `credentials` — **401** `code: "invalid_credentials"`: a wrong password, an unknown address, a staff
- *   address or a deactivated account. One refusal, and each costs the same password-hash work.
+ *   address, a deactivated account or a locked one. One refusal, byte for byte, and each takes the same
+ *   time.
+ * - `signInRequired` — **401** `code: "sign_in_required"`: a confirmation link opened in a browser that
+ *   is not signed in. The link proves the mailbox; the session proves the password; both are needed.
  * - `signedOut` — **401** with no such code: the session is gone or was never there. Every route except
  *   the five public ones answers this, and it means "sign in again", not "you got it wrong".
- * - `lockedOut` — **423** `code: "locked_out"`, from sign-in and from change-password alike.
+ * - `lockedOut` — **423** `code: "locked_out"`, from change-password only. Sign-in never answers it:
+ *   a lock is only possible on an address that has an account, so announcing one told a stranger which
+ *   addresses do (W3-01 Major 4). A signed-in customer changing their password already owns the account,
+ *   so the lock is no secret from them.
  * - `rateLimited` — **429** `code: "rate_limited"`: too many attempts from this address.
  * - `addressLimit` — **409** `code: "address_limit_reached"`, carrying the server's own `limit`.
  * - `notFound` — **404** `code: "address_not_found"`: no such address, or not this customer's. One
@@ -227,6 +238,7 @@ export type AccountFailure =
   | 'invalid'
   | 'invalidLink'
   | 'credentials'
+  | 'signInRequired'
   | 'signedOut'
   | 'lockedOut'
   | 'rateLimited'
@@ -265,7 +277,11 @@ export function accountFailure(error: unknown): AccountFailure {
       return body?.code === 'invalid_link' ? 'invalidLink' : 'invalid';
 
     case 401:
-      return body?.code === 'invalid_credentials' ? 'credentials' : 'signedOut';
+      if (body?.code === 'invalid_credentials') {
+        return 'credentials';
+      }
+
+      return body?.code === 'sign_in_required' ? 'signInRequired' : 'signedOut';
 
     case 404:
       return 'notFound';
@@ -329,12 +345,13 @@ export function addressLimitOf(error: unknown): number | null {
  * **The gate is the `code` and not the presence of `detail`.** ASP.NET's own problem details carry a
  * `detail` for an unhandled 500 ("An error occurred while processing your request.") and a reverse proxy
  * can put anything in a body, so trusting every `detail` would eventually print infrastructure prose at a
- * shopper. These six are set by `CustomerAuthEndpoints` and `CustomerAccountEndpoints` next to the
+ * shopper. These are set by `CustomerAuthEndpoints` and `CustomerAccountEndpoints` next to the
  * sentence they are paired with.
  */
 const SERVER_WORDED_CODES: readonly string[] = [
   'invalid_link',
   'invalid_credentials',
+  'sign_in_required',
   'locked_out',
   'rate_limited',
   'address_limit_reached',
@@ -389,6 +406,7 @@ const FALLBACKS: Record<AccountFailure, string> = {
   invalid: 'Please check the details above and try again.',
   invalidLink: 'That link cannot be used. Ask for a new one and use the newest message.',
   credentials: 'That email address and password do not match an account.',
+  signInRequired: 'Sign in to your account, then open this link again.',
   signedOut: 'You are not signed in any more. Sign in again to carry on.',
   lockedOut: 'Too many attempts. Try again in a few minutes — the lock clears by itself.',
   rateLimited: 'Too many attempts from here. Please try again shortly.',

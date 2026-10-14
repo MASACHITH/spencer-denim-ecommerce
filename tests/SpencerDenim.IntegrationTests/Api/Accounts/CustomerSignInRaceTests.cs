@@ -82,7 +82,7 @@ public sealed class CustomerSignInRaceTests(SqlServerDatabaseFixture sqlServer)
         Assert.All(
             statuses,
             status => Assert.True(
-                status is HttpStatusCode.Unauthorized or HttpStatusCode.Locked,
+                status is HttpStatusCode.Unauthorized,
                 $"A wrong password answered {(int)status}."));
 
         // The end state: locked. A read-modify-write counter loses increments under this load and leaves
@@ -98,7 +98,9 @@ public sealed class CustomerSignInRaceTests(SqlServerDatabaseFixture sqlServer)
         // And the lock is real, not merely recorded.
         using var correct = CreateClient(factory);
         using var refused = await correct.PostAsJsonAsync(LoginUrl, new { email, password = GoodPassword }, Token);
-        Assert.Equal(HttpStatusCode.Locked, refused.StatusCode);
+
+        // 401 and not 423: a locked account answers what a wrong password answers (W3-01 Major 4).
+        Assert.Equal(HttpStatusCode.Unauthorized, refused.StatusCode);
     }
 
     /// <summary>
@@ -206,7 +208,8 @@ public sealed class CustomerSignInRaceTests(SqlServerDatabaseFixture sqlServer)
 
         using var response = await client.PostAsJsonAsync(LoginUrl, new { email, password = GoodPassword }, Token);
 
-        Assert.Equal(HttpStatusCode.Locked, response.StatusCode);
+        // The wrong-password reply, because a lock is never announced (W3-01 Major 4).
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
 
         // And no session was issued, which is the part that matters.
         using var me = await client.GetAsync(new Uri(MeUrl, UriKind.Relative), Token);
