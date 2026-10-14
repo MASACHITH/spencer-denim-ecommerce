@@ -99,6 +99,15 @@ describe('SalesTrendChart (ADM-04)', () => {
     expect(byTestId('trend-chart')!.getAttribute('aria-label')).toContain('none in any week');
   });
 
+  it('puts each figure in its own column of the table (W4-02 tester)', async () => {
+    http.expectOne((candidate) => candidate.url === '/api/admin/dashboard/trend').flush(trend('Month', [0, 3000, 1500]));
+    await settle();
+
+    // September: Rs. 3,000.00 gross, 1 paid order, 2 orders placed — three different numbers.
+    const cells = [...byTestId<HTMLTableElement>('trend-table')!.tBodies[0].rows[1].cells].map((cell) => cell.textContent!.trim());
+    expect(cells.slice(1)).toEqual(['Rs. 3,000.00', '1', '2']);
+  });
+
   it('keeps only the latest answer when the interval changes before the first one arrives', async () => {
     const monthly = http.expectOne((candidate) => candidate.url === '/api/admin/dashboard/trend');
 
