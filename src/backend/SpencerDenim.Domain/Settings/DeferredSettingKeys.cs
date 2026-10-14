@@ -123,12 +123,6 @@ public static class DeferredSettingKeys
             + "payment deadline two sources that could disagree, on the path that decides when an unpaid "
             + "order is cancelled. Moving it is owed to ADM-22 and is listed in W3-03's journal entry."),
 
-        new(
-            "Orders.PayPalExpiryMinutes",
-            SettingKeyDeferralKind.AwaitingItsFeature,
-            "There is no PayPal provider to expire anything (W4-01). Nothing reads it, in configuration "
-            + "or otherwise."),
-
         // ---- Inventory and Catalog ---------------------------------------------------------------------
         new(
             "Inventory.DefaultLowStockThreshold",
@@ -184,23 +178,6 @@ public static class DeferredSettingKeys
             SettingKeyDeferralKind.AwaitingItsFeature,
             "See Traffic.RawRetentionDays: no analytics tables, no retention job."),
 
-        // ---- Payments.PayPal -------------------------------------------------------------------------
-        // Eleven keys, one reason: there is no PayPal provider (W4-01), the credentials are the client's
-        // and are not held, and ClientSecret is a Secret row whose first write is also the first write
-        // that needs doc 08 §3.8 N2's sensitive-change alert. Seeding the group would put a payment
-        // configuration form in front of a Super Admin for a provider that cannot be enabled.
-        new("Payments.PayPal.Mode", SettingKeyDeferralKind.AwaitingItsFeature, PayPalReason),
-        new("Payments.PayPal.ClientId", SettingKeyDeferralKind.AwaitingItsFeature, PayPalReason),
-        new("Payments.PayPal.ClientSecret", SettingKeyDeferralKind.AwaitingItsFeature, PayPalReason),
-        new("Payments.PayPal.WebhookId", SettingKeyDeferralKind.AwaitingItsFeature, PayPalReason),
-        new("Payments.PayPal.LkrPerUsd", SettingKeyDeferralKind.AwaitingItsFeature, PayPalReason),
-        new("Payments.PayPal.FxBufferPercent", SettingKeyDeferralKind.AwaitingItsFeature, PayPalReason),
-        new("Payments.PayPal.RateMaxAgeDays", SettingKeyDeferralKind.AwaitingItsFeature, PayPalReason),
-        new("Payments.PayPal.RateUpdatedAtUtc", SettingKeyDeferralKind.AwaitingItsFeature, PayPalReason),
-        new("Payments.PayPal.CaptureLockHours", SettingKeyDeferralKind.AwaitingItsFeature, PayPalReason),
-        new("Payments.PayPal.CaptureRecoveryMaxHours", SettingKeyDeferralKind.AwaitingItsFeature, PayPalReason),
-        new("Payments.PayPal.PendingCaptureMaxDays", SettingKeyDeferralKind.AwaitingItsFeature, PayPalReason),
-
         // ---- Email.Smtp ------------------------------------------------------------------------------
         // Seven keys, one reason. ops.EmailOutbox now exists (#133) and so does ops.AdminAlerts (#138),
         // so the tables are no longer the blocker — #113 guessed they were, and that guess is out of date.
@@ -244,12 +221,6 @@ public static class DeferredSettingKeys
             SettingKeyDeferralKind.AwaitingItsFeature,
             "See Security.CustomerLockoutMaxFailures: no customer sign-in exists."),
     ];
-
-    private const string PayPalReason =
-        "No PayPal provider exists (W4-01) and the credentials are the client's and are not held. "
-        + "ClientSecret is also the first Secret row in the system, whose write needs doc 08 §3.8 N2's "
-        + "sensitive-change alert; every Payments.* key is on N2's trigger list. A seeded group would be a "
-        + "payment configuration form for a provider that cannot be enabled.";
 
     private const string SmtpReason =
         "The transport is handed the bound EmailOptions singleton — Email__Smtp__*, bound once at "

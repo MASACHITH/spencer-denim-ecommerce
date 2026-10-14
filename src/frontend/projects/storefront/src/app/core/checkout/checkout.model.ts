@@ -264,6 +264,18 @@ export interface OrderConfirmationDto {
   readonly canCancel: boolean;
 
   /**
+   * Something to tell the shopper about money that has already arrived, or null/absent when there is nothing.
+   * Currently only `'received'`: a payment landed and could not settle this order (it had expired or been
+   * cancelled, was paid already, or the amount differed), and staff will be in touch - doc 11 P8 step 6.
+   *
+   * **Provider-neutral and a code, not a sentence**: the page picks the wording (`paymentNoticeMessage`), a
+   * code it does not know shows nothing, and no provider, amount or payment id travels with it. While it is
+   * set the server sends no `payment` either, so there is no way to pay again beside it. Optional because a
+   * payload from before this field existed has none.
+   */
+  readonly paymentNotice?: string | null;
+
+  /**
    * How to follow the parcel, or absent until it ships (W3-01; doc 11 P11 step 14's "view status,
    * **tracking**").
    *

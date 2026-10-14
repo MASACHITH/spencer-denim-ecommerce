@@ -136,6 +136,24 @@ public sealed record OrderDeliveryDto(
 /// refunded and never cancelled — and this build has no refund path, so the page must not offer one.
 /// </para>
 /// </param>
+/// <param name="PaymentNotice">
+/// Something the shopper must be told about money that has <b>already arrived</b>, or <see langword="null"/>
+/// when there is nothing to say. One of <see cref="OrderPaymentNotices"/>.
+/// <para>
+/// <b>Provider-neutral and read from the payment's status, not from a gateway's wording.</b> It is
+/// <see cref="OrderPaymentNotices.Received"/> when any payment of the order is
+/// <c>CapturedRequiresRefund</c> (doc 08 §4.2 step 4): the money landed but could not settle the order
+/// because it had expired or been cancelled, was paid already, or the amount differed. Doc 11 P8 step 6
+/// gives the customer exactly one sentence for all of those: "We received your payment, our team will
+/// contact you". It is derived from the database on every read, so a shopper who comes back tomorrow, or
+/// whose payment was confirmed by a notification while their browser was closed, still sees it.
+/// </para>
+/// <para>
+/// <b>Nothing else travels with it</b>: no provider, no amount, no payment id. The order link is the whole
+/// credential, and what the money was or how it was paid is for staff. While it is set the order carries no
+/// <paramref name="Payment"/> either, so the page can never offer a way to pay again beside it.
+/// </para>
+/// </param>
 public sealed record OrderConfirmationDto(
     string OrderNumber,
     Guid PublicId,
@@ -164,7 +182,21 @@ public sealed record OrderConfirmationDto(
     OrderPaymentInstructionsDto? Payment = null,
     OrderPaymentProofDto? Proof = null,
     bool CanCancel = false,
+    string? PaymentNotice = null,
     CustomerOrderTrackingDto? Tracking = null);
+
+/// <summary>
+/// The values <see cref="OrderConfirmationDto.PaymentNotice"/> can take. Strings rather than an enum for the
+/// reason <see cref="OrderConfirmationDto.Status"/> is one: the storefront switches on a fixed word, and a
+/// word it does not know shows nothing rather than failing to parse.
+/// </summary>
+public static class OrderPaymentNotices
+{
+    /// <summary>
+    /// A payment arrived that could not settle this order; staff will be in touch (doc 11 P8 step 6, P8b step 4).
+    /// </summary>
+    public const string Received = "received";
+}
 
 /// <summary>
 /// What <c>POST /api/orders/{token}/cancel</c> answers (doc 11 P10 flow A).

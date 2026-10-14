@@ -34,6 +34,7 @@ builder.Services.AddApiHealthChecks();
 builder.Services.AddApiForwardedHeaders();
 builder.Services.AddNewsletterSignupThrottle();
 builder.Services.AddPaymentSlipUploadThrottle();
+builder.Services.AddPayPalEndpointThrottle();
 builder.Services.AddAccountRequestThrottle();
 builder.Services.AddContactEnquiryThrottle();
 // Output caching, with no base policy: only the sitemap feed opts in (see SitemapOutputCache for the
@@ -103,6 +104,7 @@ app.MapAdminProductEndpoints();
 app.MapContentEndpoints();
 app.MapSiteSettingsEndpoints();
 app.MapAdminSettingsEndpoints();
+app.MapAdminPayPalSettingsEndpoints();
 app.MapAdminBankTransferEndpoints();
 app.MapAdminOrderEndpoints();
 app.MapPaymentSlipEndpoints();
@@ -112,6 +114,7 @@ app.MapAdminSaleCampaignEndpoints();
 app.MapCartEndpoints();
 app.MapWishlistEndpoints();
 app.MapCheckoutEndpoints();
+app.MapPayPalEndpoints();
 
 // Customer accounts (W3-01, ACC-01/02; doc 11 P11).
 app.MapCustomerAuthEndpoints();

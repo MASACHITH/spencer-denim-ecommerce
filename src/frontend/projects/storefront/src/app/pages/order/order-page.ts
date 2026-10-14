@@ -24,6 +24,14 @@ import {
   OrderPaymentProofDto,
   formatColomboDateTime,
 } from '../../core/checkout/checkout.model';
+import {
+  PAY_HINT_PARAMETER,
+  PAY_POLL_INTERVAL_MS,
+  PAY_POLL_MAX_ATTEMPTS,
+  payHintIsProcessing,
+  payHintMessage,
+} from '../../core/checkout/payment-hint';
+import { paymentNoticeMessage } from '../../core/checkout/payment-notice';
 import { paymentRedirect } from '../../core/checkout/payment-redirect';
 import { RobotsMeta } from '../../core/platform/robots-meta';
 import { ServerHandover } from '../../core/platform/server-handover';
@@ -322,6 +330,12 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
           data-testid="pay-announcement"
         >{{ announcement() }}</p>
 
+        <!-- Why the shopper is here, when the payment page sent them back with a reason (see
+             payment-hint.ts). A fixed sentence picked by a whitelist, never the address's own text. -->
+        @if (hintMessage(placed); as said) {
+          <p class="order__panel" role="status" data-testid="pay-hint">{{ said }}</p>
+        }
+
         <!-- **An online provider's panel comes first, and the bank panel below is the else branch, so the
              bank rendering is untouched when there is no redirect.** payRedirect() is null unless the
              server sent a redirect this page is willing to follow (see payment-redirect.ts); then the
@@ -334,7 +348,18 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
              works before hydration and without script. The proof comment further down explains why a
              form with no action is dangerous before hydration; this one always has an absolute https
              action that was checked before it was rendered, so a pre-hydration press goes where it should. -->
-        @if (payRedirect(); as go) {
+        @if (paymentNotice(placed); as notice) {
+          <!-- **Money has already arrived for this order and could not settle it** (doc 11 P8 step 6): the
+               order expired or was cancelled first, was paid already, or the amount differed. Read from the
+               order's payments on every visit, so it is here after a reload, tomorrow, and when a provider's
+               notification landed while the browser was closed - not only on the return that said so.
+               It replaces every way to pay below: the server sends no instructions for this order, and this
+               branch is first in the chain so that a bank panel or a Pay now button cannot appear beside it. -->
+          <section class="order__panel pay" aria-labelledby="pay-notice-title" data-testid="pay-notice">
+            <h2 class="order__panel-title" id="pay-notice-title">Your payment</h2>
+            <p class="pay__lead" data-testid="pay-notice-text">{{ notice }}</p>
+          </section>
+        } @else if (payRedirect(); as go) {
           <section class="order__panel pay" aria-labelledby="pay-title" data-testid="pay-panel">
             <h2 class="order__panel-title" id="pay-title">Pay online</h2>
 
@@ -347,11 +372,35 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
                 <strong data-testid="pay-due">{{ dueAt(placed) }}</strong>.
               </p>
             } @else {
-              <p class="pay__lead">
-                You will be taken to our secure payment page to pay
-                <strong data-testid="pay-amount">{{ money(go.amountLkr) }}</strong>. Your order is held
-                until <strong data-testid="pay-due">{{ dueAt(placed) }}</strong>.
-              </p>
+              @if (go.kind !== 'notice') {
+                <p class="pay__lead">
+                  You will be taken to our secure payment page to pay
+                  <strong data-testid="pay-amount">{{ money(go.amountLkr) }}</strong>. Your order is held
+                  until <strong data-testid="pay-due">{{ dueAt(placed) }}</strong>.
+                </p>
+              }
+
+              <!-- What the provider has to say before (or instead of) the button: the amount it will
+                   actually charge and how it was worked out, or where the payment stands. Both arrive as
+                   text from the server and are interpolated as text - the same rule as the bank notes. -->
+              @if (placed.payment; as how) {
+                @if (how.fields.length > 0) {
+                  <dl class="pay__details" data-testid="pay-redirect-fields">
+                    @for (field of how.fields; track field.label) {
+                      <div class="pay__detail">
+                        <dt>{{ field.label }}</dt>
+                        <dd>
+                          <span class="pay__value" [attr.data-testid]="fieldTestId(field)">{{ field.value }}</span>
+                        </dd>
+                      </div>
+                    }
+                  </dl>
+                }
+
+                @if (how.notes) {
+                  <p class="pay__notes" data-testid="pay-redirect-notes">{{ how.notes }}</p>
+                }
+              }
 
               @if (go.kind === 'form') {
                 <!-- pay__actions is a flex row that wraps, so the button never forces the page wider at
@@ -369,7 +418,7 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
                   }
                   <button class="btn btn--primary" type="submit" data-testid="pay-now">Pay now</button>
                 </form>
-              } @else {
+              } @else if (go.kind === 'link') {
                 <div class="pay__actions">
                   <a
                     class="btn btn--primary"
@@ -1019,6 +1068,17 @@ export class OrderPage {
   private readonly document = inject(DOCUMENT);
   private readonly injector = inject(Injector);
 
+  /**
+   * The `pay` hint the payment page's return left on the address, read once. Read from the route's snapshot
+   * (optional chaining, because a test double may have no query map): a client-side navigation to another
+   * order builds a new page, and the hint is a one-shot explanation, not state to keep in step.
+   */
+  private readonly hint: string | null =
+    this.route.snapshot.queryParamMap?.get(PAY_HINT_PARAMETER) ?? null;
+
+  private pollTimer: ReturnType<typeof setTimeout> | null = null;
+  private pollAttempts = 0;
+
   constructor() {
     inject(Title).setTitle(brandPageTitle('Your order'));
     inject(Meta).updateTag({
@@ -1045,12 +1105,66 @@ export class OrderPage {
     }
 
     this.read();
+
+    // A return that said "being processed" is waiting for PayPal's answer to reach the shop. Ask again every
+    // few seconds - in the browser only - until the order stops waiting or a minute has gone by, so the
+    // shopper sees "paid" without reloading (doc 08 section 4.2 step 1: "the page polls order status").
+    afterNextRender(() => this.pollWhileProcessing());
+    this.destroyRef.onDestroy(() => {
+      if (this.pollTimer !== null) {
+        clearTimeout(this.pollTimer);
+      }
+    });
   }
 
   protected readonly order = this.current.asReadonly();
   protected readonly isLoading = this.loading.asReadonly();
   protected readonly error = this.failure.asReadonly();
   protected readonly notFound = computed(() => this.missing() && this.current() === null);
+
+  /**
+   * The sentence the return hint selects, or null. See `payHintMessage` for why it is never the hint itself.
+   *
+   * The "received" hint is left out when the order itself carries the notice: the notice says the same thing
+   * from the database, and two paragraphs saying one thing read as two events.
+   */
+  protected hintMessage(order: OrderConfirmationDto): string | null {
+    if (this.hint === 'received' && paymentNoticeMessage(order.paymentNotice, order.status) !== null) {
+      return null;
+    }
+
+    return payHintMessage(this.hint, order.status);
+  }
+
+  /** The sentence for money that arrived and could not settle the order, or null. See `paymentNoticeMessage`. */
+  protected paymentNotice(order: OrderConfirmationDto): string | null {
+    return paymentNoticeMessage(order.paymentNotice, order.status);
+  }
+
+  private pollWhileProcessing(): void {
+    if (!payHintIsProcessing(this.hint)) {
+      return;
+    }
+
+    this.pollTimer = setTimeout(() => {
+      this.pollTimer = null;
+
+      // Only while there is still something to wait for: an order that has moved on needs no more asking,
+      // and one that has not loaded yet is simply asked about again.
+      const status = this.current()?.status;
+
+      if (
+        (status !== undefined && status !== 'PendingPayment')
+        || this.current()?.paymentNotice
+        || this.pollAttempts >= PAY_POLL_MAX_ATTEMPTS
+      ) {
+        return;
+      }
+
+      this.pollAttempts++;
+      this.read(() => this.pollWhileProcessing());
+    }, PAY_POLL_INTERVAL_MS);
+  }
 
   /** What the media endpoint takes for a slip. Checked on the server by file signature, not by name. */
   protected readonly slipAccept = 'image/jpeg,image/png,image/webp,application/pdf';
@@ -1140,7 +1254,7 @@ export class OrderPage {
   protected readonly payRedirect = computed(() => {
     const placed = this.current();
 
-    return placed !== null && this.awaitingPayment(placed) && placed.payment !== null
+    return placed !== null && this.awaitingPayment(placed) && !placed.paymentNotice && placed.payment !== null
       ? paymentRedirect(placed.payment)
       : null;
   });
@@ -1159,6 +1273,12 @@ export class OrderPage {
       return order.status === 'Paid'
         ? 'Paid. Thank you — we are getting your order ready.'
         : `This order is ${order.statusLabel.toLowerCase()}.`;
+    }
+
+    // A payment has arrived and could not settle the order: "awaiting payment" would send the shopper to pay
+    // again, which is the one thing they must not do.
+    if (paymentNoticeMessage(order.paymentNotice, order.status) !== null) {
+      return 'We have received a payment for this order. Our team will contact you.';
     }
 
     return `Awaiting payment. We hold your items until ${this.dueAt(order)}.`;

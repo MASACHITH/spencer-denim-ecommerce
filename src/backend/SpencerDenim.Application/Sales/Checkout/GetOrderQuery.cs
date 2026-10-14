@@ -87,6 +87,15 @@ public sealed class GetOrderQueryHandler(
             return order;
         }
 
+        // Money has arrived for this order and could not settle it (see OrderConfirmationDto.PaymentNotice),
+        // so staff are dealing with it and the shopper is told so. No provider is asked how to pay: whatever
+        // it would say - a bank account, a Pay now button - would invite a second payment next to the one
+        // already received, and the page must never do that. The order is returned as read, notice included.
+        if (order.PaymentNotice is not null)
+        {
+            return order;
+        }
+
         var provider = providers.Find(order.PaymentMethodCode);
 
         if (provider is null)
