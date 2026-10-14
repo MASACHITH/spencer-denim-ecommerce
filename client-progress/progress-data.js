@@ -17,7 +17,7 @@ const progressData = {
     endDate: "2026-10-15"
   },
 
-  lastUpdated: "2026-10-13",
+  lastUpdated: "2026-10-14",
 
   milestones: [
     { week: "Week 0", title: "Setup & design", start: "2026-09-15", end: "2026-09-18" },
@@ -90,8 +90,8 @@ const progressData = {
     {
       name: "Customer Account",
       features: [
-        { name: "Register & login", status: "planned", progress: 0 },
-        { name: "Order history with tracking", status: "planned", progress: 0 },
+        { name: "Register & login", status: "done", progress: 100 },
+        { name: "Order history with tracking", status: "done", progress: 100 },
         { name: "Order & shipping emails", status: "done", progress: 100 }
       ]
     },
@@ -128,6 +128,11 @@ const progressData = {
 
   // Newest first.
   updates: [
+    {
+      date: "2026-10-14",
+      title: "Customer accounts",
+      text: "Customers can now create an account, sign in, reset their password, save delivery addresses, and see their past orders with the courier and tracking link.",
+    },
     {
       date: "2026-10-13",
       title: "Discount codes and seasonal sales are both in, and one is already fixed",
