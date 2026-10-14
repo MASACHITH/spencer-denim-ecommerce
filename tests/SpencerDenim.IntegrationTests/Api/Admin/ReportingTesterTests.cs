@@ -190,8 +190,18 @@ public sealed class ReportingTesterTests(SqlServerDatabaseFixture sqlServer) : R
         Assert.Equal(366, year.GetProperty("period").GetProperty("days").GetInt32());
         Assert.Equal("2002-12-31", year.GetProperty("previousPeriod").GetProperty("from").GetString());
         Assert.Equal("2003-12-31", year.GetProperty("previousPeriod").GetProperty("to").GetString());
-        Assert.Equal(inside2002.GrandTotal, Previous(year.GetProperty("kpis"), "grossRevenue"));
-        Assert.NotEqual(outside2002.GrandTotal + inside2002.GrandTotal, Previous(year.GetProperty("kpis"), "grossRevenue"));
+
+        // 2003 is shared with the ISO-week test, so compare with the sales report over the exact window rather
+        // than a fixed sum: 31 Dec 2002 is in the previous period, 30 Dec 2002 is not.
+        var previous = Previous(year.GetProperty("kpis"), "grossRevenue");
+        using var reporter = await host.SignInAsync(Permissions.Reports.View);
+        var exact = await GetJsonAsync(reporter, $"/api/admin/reports/sales?from={Day(2002, 12, 31)}&to={Day(2003, 12, 31)}&groupBy=Month");
+        var edge = (await GetJsonAsync(reporter, $"/api/admin/reports/sales?from={Day(2002, 12, 30)}&to={Day(2002, 12, 31)}&groupBy=Day"))
+            .GetProperty("rows").EnumerateArray().ToList();
+        Assert.Equal(Money(exact.GetProperty("totals").GetProperty("grossRevenue")), previous);
+        Assert.Equal(outside2002.GrandTotal, Money(edge[0].GetProperty("grossRevenue")));
+        Assert.Equal(inside2002.GrandTotal, Money(edge[1].GetProperty("grossRevenue")));
+        Assert.Equal(inside2002.GrandTotal, Money(exact.GetProperty("rows")[0].GetProperty("grossRevenue")));
     }
 
     /// <summary>
