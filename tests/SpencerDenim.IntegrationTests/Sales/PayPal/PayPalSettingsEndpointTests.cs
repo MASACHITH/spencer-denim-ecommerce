@@ -43,11 +43,34 @@ public sealed class PayPalSettingsEndpointTests(SqlServerDatabaseFixture sqlServ
     private readonly DateTime _startedAt = DateTime.UtcNow.AddSeconds(-1);
     private readonly Dictionary<string, string?> _original = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// The newest audit row that existed when this test began. <see cref="_startedAt"/> alone cannot say which
+    /// rows are this test's: it looks back a second, audit rows cannot be deleted, and the previous test in the
+    /// class may have saved the same key well inside that second - so <c>Assert.Single</c> counted its row too
+    /// (it failed in the class run and passed alone). An id is exact.
+    /// </summary>
+    private long? _auditBaseline;
+
     /// <summary>A Super Admin: both settings permissions, which is what the panel's fields need between them.</summary>
     private async Task<HttpClient> SuperAdminAsync()
     {
         await RememberAsync();
+        await RememberAuditBaselineAsync();
         return await MediaTestHost.SignInAsync(Factory, Permissions.Settings.Payments, Permissions.Settings.Edit);
+    }
+
+    private async Task RememberAuditBaselineAsync()
+    {
+        if (_auditBaseline is not null)
+        {
+            return;
+        }
+
+        using var scope = CreateScope();
+
+        _auditBaseline = await scope.ServiceProvider.GetRequiredService<AppDbContext>().AuditLogs
+            .AsNoTracking()
+            .MaxAsync(log => (long?)log.Id, Token) ?? 0;
     }
 
     private async Task RememberAsync()
@@ -107,11 +130,13 @@ public sealed class PayPalSettingsEndpointTests(SqlServerDatabaseFixture sqlServ
     private async Task<List<AuditLog>> AuditRowsAsync(string key)
     {
         using var scope = CreateScope();
+        var baseline = _auditBaseline ?? 0;
 
         return await scope.ServiceProvider.GetRequiredService<AppDbContext>().AuditLogs
             .AsNoTracking()
             .Where(log => log.EntityType == SettingsAuditTrail.EntityType
                 && log.EntityId == key
+                && log.Id > baseline
                 && log.OccurredAtUtc >= _startedAt)
             .OrderBy(log => log.Id)
             .ToListAsync(Token);
