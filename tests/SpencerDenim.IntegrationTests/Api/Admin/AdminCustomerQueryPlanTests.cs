@@ -55,9 +55,10 @@ public sealed class AdminCustomerQueryPlanTests(SqlServerDatabaseFixture sqlServ
         Assert.Contains(StatisticsIndex, plan.UsedIndexes);
         Assert.DoesNotContain(StatisticsIndex, plan.UnmatchedIndexes);
 
-        // And the orders table's clustered index is not read at all: every aggregate is answered from the
-        // filtered index's key and its INCLUDE columns.
-        Assert.DoesNotContain("PK_Orders", plan.UsedIndexes);
+        // **Deliberately not asserted: that PK_Orders is never read.** The first version asserted it, and it
+        // failed in two runs of five with the same code — on the suite's tiny tables the optimiser sometimes
+        // costs one of the three aggregates cheaper as a clustered read. That is a cost decision on test-sized
+        // data, not the defect this test exists for (a filtered index the query *cannot* match).
     }
 
     /// <summary>
