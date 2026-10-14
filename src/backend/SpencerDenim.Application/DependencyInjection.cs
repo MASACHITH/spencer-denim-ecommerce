@@ -40,6 +40,7 @@ using SpencerDenim.Application.Sales.Orders.Customer;
 using SpencerDenim.Application.Sales.Payments.Admin;
 using SpencerDenim.Application.Sales.Payments.Contracts;
 using SpencerDenim.Application.Sales.Payments.Customer;
+using SpencerDenim.Application.Sales.Payments.PayPal.Admin;
 using SpencerDenim.Application.Sales.Wishlist;
 using SpencerDenim.Application.Sales.Wishlist.Contracts;
 using SpencerDenim.Application.Sales.Checkout;
@@ -473,6 +474,11 @@ public static class DependencyInjection
         services.AddScoped<
             ICommandHandler<UpdateBankDetailsCommand, SettingsWriteResult>,
             UpdateBankDetailsCommandHandler>();
+
+        // PayPal's credentials, rate and timings (W4-01, PAY-02), under Settings.Payments.
+        services.AddScoped<
+            ICommandHandler<UpdatePayPalSettingsCommand, SettingsWriteResult>,
+            UpdatePayPalSettingsCommandHandler>();
 
         return services;
     }

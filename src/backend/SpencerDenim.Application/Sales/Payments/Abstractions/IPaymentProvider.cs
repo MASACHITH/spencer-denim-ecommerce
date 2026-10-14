@@ -110,4 +110,17 @@ public interface IPaymentProvider
     Task<PaymentInstructions?> DescribeAsync(
         PaymentInstructionsRequest request,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Whether the provider can take a payment <b>right now</b>, over and above the shop's own on/off switch
+    /// (<c>sales.PaymentProviders.IsEnabled</c>) — the third question checkout puts, added by W4-01.
+    /// <para>
+    /// Checkout lists a method only when its row is enabled <i>and</i> this answers true, and refuses an
+    /// order for one that answers false. A gateway that needs credentials and an up-to-date exchange rate
+    /// answers false until they are in place (doc 11 P8: "PayPal is hidden at checkout when its rate is
+    /// older than 7 days"). <b>The default is true</b>, which is the whole of what a bank transfer says, so a
+    /// provider that has no such conditions overrides nothing. Must not throw: it runs on every checkout view.
+    /// </para>
+    /// </summary>
+    ValueTask<bool> IsAvailableAsync(CancellationToken cancellationToken) => ValueTask.FromResult(true);
 }

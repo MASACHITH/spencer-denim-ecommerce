@@ -8,6 +8,7 @@ using SpencerDenim.Application.Marketing.Promotions.Abstractions;
 using SpencerDenim.Application.Sales.Checkout.Abstractions;
 using SpencerDenim.Application.Sales.Checkout.Contracts;
 using SpencerDenim.Application.Sales.Orders.Contracts;
+using SpencerDenim.Application.Sales.Payments.Abstractions;
 using SpencerDenim.Domain.Catalog;
 using SpencerDenim.Domain.Media;
 using SpencerDenim.Domain.Reference;
@@ -41,6 +42,7 @@ internal sealed class CheckoutReader(
     AppDbContext dbContext,
     IOptions<CatalogOptions> options,
     IClock clock,
+    IPaymentProviderRegistry paymentProviders,
     ICampaignOfferReader campaigns) : ICheckoutReader
 {
     private readonly CatalogOptions _options = options.Value;
@@ -177,9 +179,28 @@ internal sealed class CheckoutReader(
         return row is null ? null : ToPickupLocation(row.location, row.district);
     }
 
+    /// <summary>
+    /// The payment methods a shopper may choose: the providers the shop has switched on
+    /// (<c>sales.PaymentProviders.IsEnabled</c>) <b>that can take a payment right now</b>.
+    /// </summary>
+    /// <remarks>
+    /// <b>Two questions, asked of two different owners (W4-01).</b> Whether a provider is <i>enabled</i> is
+    /// the shop's decision and lives in the table. Whether it is <i>available</i> is the provider's own fact —
+    /// PayPal needs credentials and an exchange rate updated within its age limit (doc 11 P8: "PayPal is hidden
+    /// at checkout when its rate is older than 7 days") — and is asked through
+    /// <see cref="IPaymentProvider.IsAvailableAsync"/>, which answers true for a provider with no such
+    /// conditions. This reader names no provider; it only declines to list one that says it cannot work.
+    /// <para>
+    /// A provider that is enabled but has <b>no code in this build</b> is still listed, as it always was, so
+    /// that <c>PlaceOrderCommandHandler</c>'s own refusal ("cannot be used yet") is the one a shopper reads.
+    /// Because the placement handler resolves the shopper's choice from this same list, a method that is
+    /// hidden here is also refused there.
+    /// </para>
+    /// </remarks>
     public async Task<IReadOnlyList<CheckoutPaymentMethod>> EnabledPaymentMethodsAsync(
-        CancellationToken cancellationToken) =>
-        await dbContext.PaymentProviders
+        CancellationToken cancellationToken)
+    {
+        var enabled = await dbContext.PaymentProviders
             .AsNoTracking()
             .Where(provider => provider.IsEnabled)
             .OrderBy(provider => provider.DisplayOrder)
@@ -189,6 +210,22 @@ internal sealed class CheckoutReader(
                 provider.DisplayName,
                 provider.CheckoutDescription))
             .ToListAsync(cancellationToken);
+
+        var offered = new List<CheckoutPaymentMethod>(enabled.Count);
+
+        foreach (var method in enabled)
+        {
+            if (paymentProviders.Find(method.Code) is { } provider
+                && !await provider.IsAvailableAsync(cancellationToken))
+            {
+                continue;
+            }
+
+            offered.Add(method);
+        }
+
+        return offered;
+    }
 
     /// <inheritdoc />
     /// <remarks>
@@ -452,6 +489,11 @@ internal sealed class CheckoutReader(
                     payment.ProviderCode == PaymentProviderCodes.PayPal
                     && payment.Status == PaymentStatus.Pending),
 
+                // Money that arrived and could not settle the order, from any provider: the notice below.
+                // Read from the payment *status*, which is the one provider-neutral fact (doc 08 §4.2 step 4),
+                // so a provider added later is covered without this reader hearing its name.
+                order.Payments.Any(payment => payment.Status == PaymentStatus.CapturedRequiresRefund),
+
                 // W3-01: doc 11 P11 step 14 says a guest following their emailed link sees "status,
                 // tracking", and this payload carried neither — the only place in the system that showed
                 // a tracking number was the admin panel. Joined by the id the order kept, so a courier
@@ -572,6 +614,10 @@ internal sealed class CheckoutReader(
             // being set. Positional would mean restating a default — and `IsDuplicateSubmission` is a
             // fact about a *submission*, which a read of an order by its token can never be.
             CanCancel: CanCancel(row, nowUtc),
+
+            // Doc 11 P8 step 6: "We received your payment, our team will contact you". A code and nothing
+            // else - no provider, no amount, no payment id - because the order link is the whole credential.
+            PaymentNotice: row.HasUnsettledPayment ? OrderPaymentNotices.Received : null,
 
             // W3-01: present only when all three parts of the dispatch snapshot are. Doc 08 §3.5 makes
             // them nullable and doc 11 P9's dispatch writes them together, but a null block and a block
@@ -736,6 +782,7 @@ internal sealed class CheckoutReader(
         DateTime? CaptureLockedUntilUtc,
         bool HasSettlementPayment,
         bool HasPayPalPendingPayment,
+        bool HasUnsettledPayment,
 
         // W3-01 (ACC-02, doc 11 P11 steps 12 and 14): the dispatch snapshot and the courier's *current*
         // template. Doc 08 §3.5 keeps the name and the number on the order and never a built URL, so
