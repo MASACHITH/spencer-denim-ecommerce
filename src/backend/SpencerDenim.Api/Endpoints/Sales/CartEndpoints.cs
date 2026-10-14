@@ -14,7 +14,7 @@ namespace SpencerDenim.Api.Endpoints.Sales;
 /// <b>No authentication, and that is not the same as no identity.</b> Doc 08 §3.5 makes the cart
 /// server-side for everyone: a signed-in customer's bag is found by their user id, a guest's by the
 /// token in <c>sd_cart</c>. There is no customer sign-in in the repository yet (ACC-01), so every
-/// request today is a guest — see <see cref="ReadLookup"/>, which is the one line that changes.
+/// request is identified by <see cref="SignedInCustomer.ReadCartLookupAsync"/>: the account's bag when a customer is signed in, the guest cookie's otherwise.
 /// </para>
 /// </summary>
 internal static class CartEndpoints
@@ -69,7 +69,7 @@ internal static class CartEndpoints
         TimeProvider clock,
         CancellationToken cancellationToken)
     {
-        var view = await handler.HandleAsync(new GetCartQuery(ReadLookup(httpContext)), cancellationToken);
+        var view = await handler.HandleAsync(new GetCartQuery(await SignedInCustomer.ReadCartLookupAsync(httpContext)), cancellationToken);
         return Answer(httpContext, clock, view);
     }
 
@@ -81,7 +81,7 @@ internal static class CartEndpoints
         CancellationToken cancellationToken)
     {
         var result = await handler.HandleAsync(
-            new AddToCartCommand(ReadLookup(httpContext), request?.VariantId ?? 0, request?.Quantity ?? 0),
+            new AddToCartCommand(await SignedInCustomer.ReadCartLookupAsync(httpContext), request?.VariantId ?? 0, request?.Quantity ?? 0),
             cancellationToken);
 
         return Answer(httpContext, clock, result);
@@ -96,7 +96,7 @@ internal static class CartEndpoints
         CancellationToken cancellationToken)
     {
         var result = await handler.HandleAsync(
-            new SetCartItemQuantityCommand(ReadLookup(httpContext), variantId, request?.Quantity ?? 0),
+            new SetCartItemQuantityCommand(await SignedInCustomer.ReadCartLookupAsync(httpContext), variantId, request?.Quantity ?? 0),
             cancellationToken);
 
         return Answer(httpContext, clock, result);
@@ -110,25 +110,11 @@ internal static class CartEndpoints
         CancellationToken cancellationToken)
     {
         var result = await handler.HandleAsync(
-            new RemoveCartItemCommand(ReadLookup(httpContext), variantId),
+            new RemoveCartItemCommand(await SignedInCustomer.ReadCartLookupAsync(httpContext), variantId),
             cancellationToken);
 
         return Answer(httpContext, clock, result);
     }
-
-    /// <summary>
-    /// Who is asking.
-    /// <para>
-    /// <b>The customer branch is unreachable today and deliberately written anyway.</b> The only cookie
-    /// authentication scheme in this application is the admin one, and an admin principal is not a
-    /// customer: reading <c>httpContext.User</c> for a customer id here would be reading an identity that
-    /// cannot exist, so it is not read at all. ACC-01 adds the customer scheme and this becomes a lookup
-    /// of the customer claim; <c>CartStore</c>, <c>GetCartQueryHandler</c> and
-    /// <c>MergeGuestCartCommandHandler</c> already handle both branches and are tested on both.
-    /// </para>
-    /// </summary>
-    private static CartLookup ReadLookup(HttpContext httpContext) =>
-        CartLookup.ForGuest(CartCookie.Read(httpContext.Request));
 
     private static Ok<CartDto> Answer(HttpContext httpContext, TimeProvider clock, CartView view)
     {

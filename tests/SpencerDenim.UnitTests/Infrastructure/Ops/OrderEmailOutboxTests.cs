@@ -139,10 +139,16 @@ public sealed class OrderEmailOutboxTests
     /// destroyed on send, and nothing else does.
     /// </summary>
     /// <remarks>
-    /// <b>Neither template exists yet</b> — both are W3-01's — so this is the outbox being <i>ready</i>
-    /// for them, which is the only part of W3-01 this task was asked to prepare. The negative half is
-    /// equally load-bearing: a rule that cleared every body on send would destroy the record of what the
-    /// shop told a customer about their order, thirty days early.
+    /// <b>Both templates now exist</b> — W3-01 built them — so these cases are asserted against real
+    /// producers rather than against values nothing could write. The negative half is equally
+    /// load-bearing: a rule that cleared every body on send would destroy the record of what the shop
+    /// told a customer about their order, thirty days early.
+    /// <para>
+    /// <b><c>Welcome</c> and <c>AccountExists</c> are account emails and are in the <i>false</i> half.</b>
+    /// They carry no token, and that is why W3-01 split them off instead of sending one message with the
+    /// link in it: the record of what the shop told a new customer survives the ordinary thirty days, and
+    /// only the credential is destroyed on send.
+    /// </para>
     /// </remarks>
     [Theory]
     [InlineData("PasswordReset", true)]
@@ -154,33 +160,37 @@ public sealed class OrderEmailOutboxTests
     [InlineData("OrderShipped", false)]
     [InlineData("OrderExpired", false)]
     [InlineData("OrderCancelled", false)]
+    [InlineData("Welcome", false)]
+    [InlineData("AccountExists", false)]
     public void Only_the_token_bearing_templates_lose_their_body_on_send(string templateCode, bool expected)
     {
         Assert.Equal(expected, EmailOutboxMessage.BodyIsClearedOnSend(templateCode));
     }
 
     /// <summary>
-    /// The G-03 rule is keyed on two string literals that <b>nothing in this build can produce</b>, and
-    /// this is what stops that going quiet when W3-01 arrives.
+    /// Every declared template code is on exactly one side of the G-03 rule, and which side is decided
+    /// here rather than left to whoever declares the next code.
     /// </summary>
     /// <remarks>
-    /// <b>The theory above asserts the rule against values no producer writes.</b>
-    /// <c>EmailOutboxMessage.BodyClearedOnSend</c> holds the literals <c>"PasswordReset"</c> and
-    /// <c>"EmailConfirmation"</c>; <c>EmailTemplateCodes</c> declares neither, because neither template
-    /// exists. So if W3-01 declares <c>EmailTemplateCodes.PasswordReset = "PasswordResetLink"</c> — any
-    /// value but the literal — the privacy rule doc 08 §3.8 G-03 states ("the body must not sit in the
-    /// outbox table or in a backup") silently stops applying to the one template it was written for, and
-    /// every case of the theory above still passes. That is the shape of defect this suite has shipped
-    /// several times, and a comment cannot catch it.
+    /// <b>This test was written by W3-06's tester as a hand-off, and W3-01 has taken it.</b> The rule was
+    /// keyed on two string literals that nothing in the build could produce, so a W3-01 that declared
+    /// <c>EmailTemplateCodes.PasswordReset = "PasswordResetLink"</c> — any value but the literal — would
+    /// have taken doc 08 §3.8 G-03's body destruction off the one template it was written for while every
+    /// case of the theory above still passed. W3-01 declared both codes and
+    /// <c>EmailOutboxMessage.BodyClearedOnSend</c> now reads those constants, which is the fix that
+    /// remark prescribed.
     /// <para>
-    /// Two assertions, both aimed at the hand-off. The first pins the declared set, so a task adding a
-    /// template code has to come here and read this remark. The second is <i>vacuous today and
-    /// load-bearing the moment either constant is declared</i>: whatever value W3-01 gives it, the rule
-    /// has to classify it. Together they mean the rule cannot be left behind silently.
+    /// <b>The shape stays, because the hazard stays.</b> The declared set is still pinned name by name, so
+    /// a task adding an eleventh code has to come here and read this remark; and each code is still
+    /// classified <i>through the constant's value</i>, so renaming one is caught rather than silently
+    /// reclassifying it. What changed is that the two token-bearing codes are now in the <c>true</c> list
+    /// instead of in an <c>if (declared.TryGetValue(...))</c> that could never run.
     /// </para>
     /// <para>
-    /// The right fix when W3-01 lands is to declare the two codes in <c>EmailTemplateCodes</c> and have
-    /// <c>BodyClearedOnSend</c> read those constants instead of its own literals. Added by W3-06's tester.
+    /// <b>The split is not "order emails versus account emails".</b> <c>Welcome</c> and
+    /// <c>AccountExists</c> are account emails with no token in them, and they keep their bodies for the
+    /// ordinary thirty days: the record of what the shop told a customer must survive, and only the
+    /// credential must not.
     /// </para>
     /// </remarks>
     [Fact]
@@ -191,40 +201,53 @@ public sealed class OrderEmailOutboxTests
             .Where(field => field is { IsLiteral: true } && field.FieldType == typeof(string))
             .ToDictionary(field => field.Name, field => (string)field.GetRawConstantValue()!, StringComparer.Ordinal);
 
+        // The codes whose body G-03 destroys on send, by name. Both carry a single-use token in a link.
+        string[] tokenBearing =
+        [
+            nameof(EmailTemplateCodes.EmailConfirmation),
+            nameof(EmailTemplateCodes.PasswordReset),
+        ];
+
         // Doc 08 §3.8's five order codes, plus the cancellation, which is doc 11 §7 G-14's recommendation
-        // and not in doc 08's list (see EmailTemplateCodes). A task that adds a seventh fails here.
+        // and not in doc 08's list (see EmailTemplateCodes), plus W3-01's two tokenless account emails.
+        // A task that adds a ninth of these fails here and has to decide which side it is on.
+        string[] bodyKeptForThirtyDays =
+        [
+            nameof(EmailTemplateCodes.AccountExists),
+            nameof(EmailTemplateCodes.BankTransferInstructions),
+            nameof(EmailTemplateCodes.OrderCancelled),
+            nameof(EmailTemplateCodes.OrderExpired),
+            nameof(EmailTemplateCodes.OrderPlaced),
+            nameof(EmailTemplateCodes.OrderShipped),
+            nameof(EmailTemplateCodes.PaymentConfirmed),
+            nameof(EmailTemplateCodes.Welcome),
+        ];
+
         Assert.Equal(
-            [
-                nameof(EmailTemplateCodes.BankTransferInstructions),
-                nameof(EmailTemplateCodes.OrderCancelled),
-                nameof(EmailTemplateCodes.OrderExpired),
-                nameof(EmailTemplateCodes.OrderPlaced),
-                nameof(EmailTemplateCodes.OrderShipped),
-                nameof(EmailTemplateCodes.PaymentConfirmed),
-            ],
+            tokenBearing.Concat(bodyKeptForThirtyDays).Order(StringComparer.Ordinal),
             declared.Keys.Order(StringComparer.Ordinal));
 
-        // None of the six loses its body on send: the record of what the shop told a customer about
-        // their order survives until the thirty-day purge.
-        foreach (var (name, code) in declared)
+        // Classified through the constant's *value*, which is what makes a rename fail rather than
+        // silently move a template to the other side of the rule.
+        foreach (var name in tokenBearing)
         {
-            Assert.False(
+            var code = declared[name];
+
+            Assert.True(
                 EmailOutboxMessage.BodyIsClearedOnSend(code),
-                $"{name} (\"{code}\") is an order email and must keep its body until the thirty-day rule.");
+                $"{name} is declared as \"{code}\", which EmailOutboxMessage.BodyClearedOnSend does "
+                + "not match, so doc 08 §3.8 G-03's immediate body destruction would not apply to it. "
+                + "BodyClearedOnSend must read EmailTemplateCodes rather than its own literals.");
         }
 
-        // And the day either token-bearing template is declared, G-03 must cover whatever value it was
-        // given — not the literal this rule happens to hold today.
-        foreach (var name in new[] { "PasswordReset", "EmailConfirmation" })
+        foreach (var name in bodyKeptForThirtyDays)
         {
-            if (declared.TryGetValue(name, out var code))
-            {
-                Assert.True(
-                    EmailOutboxMessage.BodyIsClearedOnSend(code),
-                    $"{name} is declared as \"{code}\", which EmailOutboxMessage.BodyClearedOnSend does "
-                    + "not match, so doc 08 §3.8 G-03's immediate body destruction would not apply to it. "
-                    + "Make BodyClearedOnSend read EmailTemplateCodes rather than its own literals.");
-            }
+            var code = declared[name];
+
+            Assert.False(
+                EmailOutboxMessage.BodyIsClearedOnSend(code),
+                $"{name} (\"{code}\") carries no token, so its body must survive until the thirty-day "
+                + "rule: it is the record of what the shop told a customer.");
         }
     }
 

@@ -736,12 +736,15 @@ test.describe('an address this site does not have (#28)', () => {
   // what released them: the redirect was the price of the shell linking to an address with no page,
   // and the footer now links a content page only once it is published. So an unpublished one is no
   // longer linked from anywhere and is free to answer the honest thing. See the loop below.
+  // `/account` was the last address here, and W3-01 built it: it is a private page now, so it is a
+  // 200 at its own address with `noindex`, not the home page.
   for (const path of ['/account']) {
-    test(`${path} still reaches the home page while its page is unbuilt`, async ({ request }) => {
+    test(`${path} is the account area, private and not indexed`, async ({ request }) => {
       const response = await request.get(path);
 
       expect(response.status()).toBe(200);
-      expect(new URL(response.url()).pathname).toBe('/');
+      expect(new URL(response.url()).pathname).toBe('/account/orders');
+      expect(await response.text()).toContain('noindex');
     });
   }
 
@@ -778,7 +781,8 @@ test.describe('an address this site does not have (#28)', () => {
    * and the answer was a 404 with a **zero-byte body** — a blank screen for a shopper and nothing for
    * a crawler, which is worse than the soft 404 this change exists to remove. Measured on all three.
    */
-  for (const path of ['/account/orders', '/bag/checkout', '/about/x']) {
+  // `/account/x` rather than `/account/orders`, which W3-01 made a real page.
+  for (const path of ['/account/x', '/bag/checkout', '/about/x']) {
     test(`${path} is a 404 with the not-found page in it, not an empty body`, async ({ request }) => {
       const response = await request.get(path);
 

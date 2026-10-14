@@ -1,6 +1,8 @@
 using Microsoft.Extensions.DependencyInjection;
 using SpencerDenim.Application.Abstractions.Messaging;
 using SpencerDenim.Application.Abstractions.Results;
+using SpencerDenim.Application.Accounts;
+using SpencerDenim.Application.Accounts.Contracts;
 using SpencerDenim.Application.Admin.Account;
 using SpencerDenim.Application.Admin.Authentication;
 using SpencerDenim.Application.Admin.Auditing;
@@ -21,6 +23,7 @@ using SpencerDenim.Application.Content.Abstractions;
 using SpencerDenim.Application.Content.Announcements;
 using SpencerDenim.Application.Content.Contracts;
 using SpencerDenim.Application.Content.Admin;
+using SpencerDenim.Application.Marketing.Promotions;
 using SpencerDenim.Application.Content.Admin.Contracts;
 using SpencerDenim.Application.Content.Contact;
 using SpencerDenim.Application.Content.Home;
@@ -34,6 +37,7 @@ using SpencerDenim.Application.Sales.Orders.Customer;
 using SpencerDenim.Application.Sales.Payments.Admin;
 using SpencerDenim.Application.Sales.Payments.Contracts;
 using SpencerDenim.Application.Sales.Payments.Customer;
+using SpencerDenim.Application.Sales.Payments.PayPal.Admin;
 using SpencerDenim.Application.Sales.Wishlist;
 using SpencerDenim.Application.Sales.Wishlist.Contracts;
 using SpencerDenim.Application.Sales.Checkout;
@@ -249,6 +253,27 @@ public static class DependencyInjection
         services.AddScoped<ICommandHandler<DeleteContentPageCommand, ContentWriteResult>>(
             provider => provider.GetRequiredService<ContentPageWriteHandlers>());
 
+        // The admin promo-code screen (ADM-13, W3-05). Three writes in one class because they share every
+        // rule; registered once per interface so each endpoint asks for the one command it sends.
+        services.AddScoped<PromoCodeWriteHandlers>();
+        services.AddScoped<ICommandHandler<CreatePromoCodeCommand, PromoWriteResult>>(
+            provider => provider.GetRequiredService<PromoCodeWriteHandlers>());
+        services.AddScoped<ICommandHandler<UpdatePromoCodeCommand, PromoWriteResult>>(
+            provider => provider.GetRequiredService<PromoCodeWriteHandlers>());
+        services.AddScoped<ICommandHandler<DeletePromoCodeCommand, PromoWriteResult>>(
+            provider => provider.GetRequiredService<PromoCodeWriteHandlers>());
+
+        // ADM-14 (W3-05b). One class per interface, so each endpoint asks for the one command it sends;
+        // the three writes share every rule, including doc 11 P3 step 3's recompute of the affected
+        // products' stored price summary.
+        services.AddScoped<SaleCampaignWriteHandlers>();
+        services.AddScoped<ICommandHandler<CreateSaleCampaignCommand, SaleCampaignWriteResult>>(
+            provider => provider.GetRequiredService<SaleCampaignWriteHandlers>());
+        services.AddScoped<ICommandHandler<UpdateSaleCampaignCommand, SaleCampaignWriteResult>>(
+            provider => provider.GetRequiredService<SaleCampaignWriteHandlers>());
+        services.AddScoped<ICommandHandler<DeleteSaleCampaignCommand, SaleCampaignWriteResult>>(
+            provider => provider.GetRequiredService<SaleCampaignWriteHandlers>());
+
         services.AddScoped<ContactEnquiryWriteHandlers>();
         services.AddScoped<ICommandHandler<OpenContactSubmissionCommand, ContactSubmissionWriteOutcome>>(
             provider => provider.GetRequiredService<ContactEnquiryWriteHandlers>());
@@ -297,6 +322,65 @@ public static class DependencyInjection
                 provider.GetRequiredKeyedService<IQueryHandler<GetSiteSettingsQuery, SiteSettingsDto>>(
                     UncachedSiteSettings),
                 provider.GetRequiredService<ISiteSettingsCache>()));
+
+        // Customer accounts (W3-01, ACC-01/02; doc 11 P11). Thin orchestration: validation, the port
+        // call, and the one audit row a customer sign-in produces. Everything that touches the identity
+        // store is a port Infrastructure registers.
+        services.AddScoped<
+            ICommandHandler<RegisterCustomerCommand, Result<RegisterCustomerResult>>,
+            RegisterCustomerCommandHandler>();
+
+        services.AddScoped<
+            ICommandHandler<CustomerSignInCommand, Result<CustomerSignInResult>>,
+            CustomerSignInCommandHandler>();
+
+        services.AddScoped<
+            ICommandHandler<RequestCustomerPasswordResetCommand, Result<bool>>,
+            RequestCustomerPasswordResetCommandHandler>();
+
+        services.AddScoped<
+            ICommandHandler<ResetCustomerPasswordCommand, Result<CustomerPasswordResetResult>>,
+            ResetCustomerPasswordCommandHandler>();
+
+        services.AddScoped<
+            ICommandHandler<ChangeCustomerPasswordCommand, Result<CustomerPasswordChangeResult>>,
+            ChangeCustomerPasswordCommandHandler>();
+
+        services.AddScoped<
+            ICommandHandler<ConfirmCustomerEmailCommand, CustomerEmailConfirmationResult>,
+            ConfirmCustomerEmailCommandHandler>();
+
+        services.AddScoped<
+            ICommandHandler<ResendCustomerConfirmationCommand, bool>,
+            ResendCustomerConfirmationCommandHandler>();
+
+        services.AddScoped<
+            IQueryHandler<GetCustomerProfileQuery, CustomerProfile?>,
+            GetCustomerProfileQueryHandler>();
+
+        services.AddScoped<
+            ICommandHandler<SaveCustomerProfileCommand, Result<CustomerProfile?>>,
+            SaveCustomerProfileCommandHandler>();
+
+        services.AddScoped<
+            IQueryHandler<GetCustomerAddressesQuery, IReadOnlyList<CustomerAddressDto>>,
+            GetCustomerAddressesQueryHandler>();
+
+        services.AddScoped<
+            ICommandHandler<SaveCustomerAddressCommand, Result<CustomerAddressResult>>,
+            SaveCustomerAddressCommandHandler>();
+
+        services.AddScoped<
+            ICommandHandler<DeleteCustomerAddressCommand, CustomerAddressResult>,
+            DeleteCustomerAddressCommandHandler>();
+
+        services.AddScoped<
+            ICommandHandler<SetDefaultCustomerAddressCommand, CustomerAddressResult>,
+            SetDefaultCustomerAddressCommandHandler>();
+
+        services.AddScoped<
+            IQueryHandler<GetCustomerOrdersQuery, CustomerOrderPageDto>,
+            GetCustomerOrdersQueryHandler>();
 
         // Checkout (W3-02, CHK-01..04). The reads, the number series and the one placement transaction are
         // ports Infrastructure registers; the arithmetic is the Domain's `OrderPricing`.
@@ -365,6 +449,11 @@ public static class DependencyInjection
         services.AddScoped<
             ICommandHandler<UpdateBankDetailsCommand, SettingsWriteResult>,
             UpdateBankDetailsCommandHandler>();
+
+        // PayPal's credentials, rate and timings (W4-01, PAY-02), under Settings.Payments.
+        services.AddScoped<
+            ICommandHandler<UpdatePayPalSettingsCommand, SettingsWriteResult>,
+            UpdatePayPalSettingsCommandHandler>();
 
         return services;
     }

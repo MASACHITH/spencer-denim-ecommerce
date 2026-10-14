@@ -374,7 +374,8 @@ public sealed class CheckoutApiClient(HttpClient client)
     public async Task<(HttpResponseMessage Response, CheckoutSessionDto? Session)> GetAsync(
         int? districtId,
         int? deliveryMethodId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? promoCode = null)
     {
         var query = new List<string>();
 
@@ -386,6 +387,13 @@ public sealed class CheckoutApiClient(HttpClient client)
         if (deliveryMethodId is { } method)
         {
             query.Add($"deliveryMethodId={method}");
+        }
+
+        // ADM-13: escaped, because a shopper can type anything into the box and the suite sends what
+        // they typed rather than a sanitised copy of it.
+        if (promoCode is not null)
+        {
+            query.Add($"promoCode={Uri.EscapeDataString(promoCode)}");
         }
 
         var path = query.Count == 0 ? Path : $"{Path}?{string.Join('&', query)}";

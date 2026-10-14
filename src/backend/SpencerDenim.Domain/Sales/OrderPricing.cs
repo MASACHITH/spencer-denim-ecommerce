@@ -8,12 +8,20 @@ namespace SpencerDenim.Domain.Sales;
 /// <param name="UnitOriginalPrice">Step 2's "was" price. Never below <paramref name="UnitListPrice"/>.</param>
 /// <param name="UnitListPrice">Step 1's list price.</param>
 /// <param name="UnitPrice">Step 3's sale price — what one unit is actually charged at.</param>
+/// <param name="SaleCampaignId">
+/// Which campaign produced <paramref name="UnitPrice"/>, for <c>sales.OrderLines.SaleCampaignId</c>, or
+/// <see langword="null"/> when no campaign did (ADM-14). <b>It takes no part in the arithmetic</b> — the
+/// totals are computed from the three prices and nothing else — and is carried here so that the one
+/// mapping from a checkout line to a priced line does not have to be done twice. Optional, so the
+/// hundreds of existing positional constructions in tests of steps 5 to 12 still read as they did.
+/// </param>
 public readonly record struct OrderPricingLine(
     int VariantId,
     short Quantity,
     decimal UnitOriginalPrice,
     decimal UnitListPrice,
-    decimal UnitPrice);
+    decimal UnitPrice,
+    int? SaleCampaignId = null);
 
 /// <summary>
 /// The delivery rate that applies, as doc 08 §6 step 10 reads it off one
@@ -32,10 +40,10 @@ public readonly record struct DeliveryCharge(decimal Fee, decimal? FreeAboveAmou
 /// <remarks>
 /// <b>Steps 7 and 8 of doc 08 §6 are deliberately not in this file.</b> Eligibility (active, in date,
 /// under both usage limits, minimum spend, <c>ExcludeSaleItems</c>) and the percent/fixed/cap arithmetic
-/// all read columns of <c>marketing.PromoCodes</c>, which no migration has created (ADM-13, W3-05). What
-/// this type carries is the *outcome* of those steps, so that steps 9, 10 and 11 — allocation, delivery
-/// and the minimum-total clamp — can be built, tested and relied on now, and W3-05 plugs into them
-/// without reopening the totals.
+/// all read columns of <c>marketing.PromoCodes</c>, and they live in <c>PromoEvaluator</c> (ADM-13,
+/// W3-05 — the table was created by <c>20261012084301_MarketingPromoCodes</c>). What this type carries
+/// is the *outcome* of those steps, so steps 9, 10 and 11 — allocation, delivery and the minimum-total
+/// clamp — decide a total without reopening eligibility.
 /// </remarks>
 /// <param name="Amount">The discount in LKR, before the step 11 clamp. Never negative.</param>
 /// <param name="FreeDelivery">
@@ -43,7 +51,8 @@ public readonly record struct DeliveryCharge(decimal Fee, decimal? FreeAboveAmou
 /// </param>
 /// <param name="EligibleVariantIds">
 /// The lines the discount may be spread over, or <see langword="null"/> for all of them. This is where
-/// <c>ExcludeSaleItems</c> lands once it exists.
+/// <c>ExcludeSaleItems</c> lands: <c>PromoEvaluator</c> fills it with the lines no campaign priced when
+/// the flag is on, and leaves it null when every line is eligible.
 /// </param>
 public sealed record PromoCharge(
     decimal Amount,
@@ -59,7 +68,8 @@ public sealed record PricedOrderLine(
     decimal UnitPrice,
     decimal LineSubtotal,
     decimal PromoDiscountAllocated,
-    decimal LineTotal);
+    decimal LineTotal,
+    int? SaleCampaignId = null);
 
 /// <summary>
 /// Every money column of <c>sales.Orders</c>, computed once. The names are the column names on purpose:
@@ -350,7 +360,12 @@ public static class OrderPricing
                 line.UnitPrice,
                 lineSubtotals[index],
                 shares[index],
-                lineSubtotals[index] - shares[index]));
+                lineSubtotals[index] - shares[index],
+
+                // Carried through untouched. The campaign id is a record of which campaign set
+                // `UnitPrice`, not an input to any total, and the placement writes it to
+                // `sales.OrderLines.SaleCampaignId` (ADM-14).
+                line.SaleCampaignId));
         }
 
         return priced;

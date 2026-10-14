@@ -24,6 +24,15 @@ import {
   OrderPaymentProofDto,
   formatColomboDateTime,
 } from '../../core/checkout/checkout.model';
+import {
+  PAY_HINT_PARAMETER,
+  PAY_POLL_INTERVAL_MS,
+  PAY_POLL_MAX_ATTEMPTS,
+  payHintIsProcessing,
+  payHintMessage,
+} from '../../core/checkout/payment-hint';
+import { paymentNoticeMessage } from '../../core/checkout/payment-notice';
+import { paymentRedirect } from '../../core/checkout/payment-redirect';
 import { RobotsMeta } from '../../core/platform/robots-meta';
 import { ServerHandover } from '../../core/platform/server-handover';
 
@@ -75,6 +84,13 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
  * who has not paid yet. If the shop has not filled its bank details in, the panel says the details are
  * being confirmed rather than printing an empty account number somebody might transfer money to.
  *
+ * **The same panel hands over to an online provider when the server says so, and knows nothing about
+ * which.** If the instructions carry a `redirectForm` (a POST) or a `redirectUrl` (a GET) whose address is
+ * an absolute `https:` one, the panel is "Pay online" with a single "Pay now" control — a real form or a
+ * real link, in the same tab — and none of the bank-only parts: no reference to quote, no copy buttons, no
+ * proof or slip upload. An address the page will not follow gets no control at all (see
+ * `payment-redirect.ts`). With neither field set the bank panel renders exactly as it always did.
+ *
  * **It still does not claim an email has been sent**, because nothing sends one: `ops.EmailOutbox` and
  * ACC-03's templates are W3-06. The order's own link is what a shopper is told to keep, and the panel
  * repeats that beside the deadline.
@@ -103,8 +119,10 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
         </div>
       } @else if (order(); as placed) {
         <header class="order__head">
-          <p class="order__eyebrow">Thank you</p>
-          <h1 class="order__title" id="order-title">Your order is placed</h1>
+          @if (isUnderWay(placed)) {
+            <p class="order__eyebrow">Thank you</p>
+          }
+          <h1 class="order__title" id="order-title" data-testid="order-headline">{{ headline(placed) }}</h1>
 
           <!-- The order number is the one thing a shopper will be asked for on the phone, so it is the
                largest thing on the page and is selectable text rather than part of a sentence. -->
@@ -113,9 +131,8 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
             <strong class="order__number-value" data-order-number>{{ placed.orderNumber }}</strong>
           </p>
 
-          <p class="order__muted">
-            We have your order and it is waiting for payment. Keep this page's address: it is the link to
-            your order.
+          <p class="order__muted" data-testid="order-head-sentence">
+            {{ headSentence(placed) }} Keep this page's address: it is the link to your order.
           </p>
         </header>
 
@@ -235,6 +252,47 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
                   <span class="order__block order__muted">Estimated {{ estimate(placed) }}</span>
                 </dd>
               </div>
+              <!-- Doc 11 P11 step 14's tracking, on the guest's own link. Before W3-01 this payload
+                   carried neither the courier nor the number, so the only place in the system that
+                   showed a tracking number was the admin panel - and step 14 says a guest following
+                   the secure link from their order emails sees "status, tracking".
+
+                   The block is absent rather than full of nulls when there is nothing to follow: an
+                   order that has not shipped, or a pickup order, which has no courier. So this one
+                   condition is the whole three-way check rather than three in the body.
+
+                   The number is what the shopper quotes on the telephone, so when the courier has no
+                   online tracking - or has been deleted since, which doc 08 section 3.5 allows - it is
+                   printed as text rather than hidden. -->
+              @if (placed.tracking; as tracking) {
+                <div>
+                  <dt>Tracking</dt>
+                  <dd data-testid="order-page-tracking">
+                    <span class="order__block">{{ tracking.courierName }}</span>
+                    @if (tracking.trackingUrl; as url) {
+                      <!-- A new tab, because a shopper following a courier's site must not lose
+                           their order page - this address is a guest's only way back to it. The rel
+                           is noopener noreferrer: noopener so the courier's page cannot reach back
+                           through window.opener, and noreferrer so the order's own unguessable token
+                           is not sent to them as a Referer, which would hand a third party a working
+                           credential for somebody else's order. -->
+                      <a
+                        class="order__block order__track-link link"
+                        [href]="url"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        data-testid="order-page-tracking-link"
+                        >{{ tracking.trackingNumber
+                        }}<span class="sr-only"> (opens in a new tab)</span></a
+                      >
+                    } @else {
+                      <span class="order__block" data-testid="order-page-tracking-number">{{
+                        tracking.trackingNumber
+                      }}</span>
+                    }
+                  </dd>
+                </div>
+              }
               <div>
                 <dt>Payment</dt>
                 <dd>
@@ -272,7 +330,107 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
           data-testid="pay-announcement"
         >{{ announcement() }}</p>
 
-        @if (awaitingPayment(placed)) {
+        <!-- Why the shopper is here, when the payment page sent them back with a reason (see
+             payment-hint.ts). A fixed sentence picked by a whitelist, never the address's own text. -->
+        @if (hintMessage(placed); as said) {
+          <p class="order__panel" role="status" data-testid="pay-hint">{{ said }}</p>
+        }
+
+        <!-- **An online provider's panel comes first, and the bank panel below is the else branch, so the
+             bank rendering is untouched when there is no redirect.** payRedirect() is null unless the
+             server sent a redirect this page is willing to follow (see payment-redirect.ts); then the
+             shopper is handed over with a real form or a real link, and none of the bank-only parts below
+             - the reference to quote, the copy buttons, the proof and slip upload - belong here. Nothing in
+             this block names a provider: the server says how to get there, the page does it.
+
+             A form rather than a link when the server sends one, because a provider that cannot be reached
+             by GET needs the fields POSTed. It is a native submission with no handler of ours on it, so it
+             works before hydration and without script. The proof comment further down explains why a
+             form with no action is dangerous before hydration; this one always has an absolute https
+             action that was checked before it was rendered, so a pre-hydration press goes where it should. -->
+        @if (paymentNotice(placed); as notice) {
+          <!-- **Money has already arrived for this order and could not settle it** (doc 11 P8 step 6): the
+               order expired or was cancelled first, was paid already, or the amount differed. Read from the
+               order's payments on every visit, so it is here after a reload, tomorrow, and when a provider's
+               notification landed while the browser was closed - not only on the return that said so.
+               It replaces every way to pay below: the server sends no instructions for this order, and this
+               branch is first in the chain so that a bank panel or a Pay now button cannot appear beside it. -->
+          <section class="order__panel pay" aria-labelledby="pay-notice-title" data-testid="pay-notice">
+            <h2 class="order__panel-title" id="pay-notice-title">Your payment</h2>
+            <p class="pay__lead" data-testid="pay-notice-text">{{ notice }}</p>
+          </section>
+        } @else if (payRedirect(); as go) {
+          <section class="order__panel pay" aria-labelledby="pay-title" data-testid="pay-panel">
+            <h2 class="order__panel-title" id="pay-title">Pay online</h2>
+
+            @if (go.kind === 'unavailable') {
+              <!-- Asked for a redirect and refused it, with no bank details to fall back on. Saying so beats
+                   a button that goes nowhere or a "transfer to the account below" with no account. -->
+              <p class="pay__lead" data-testid="pay-redirect-unavailable">
+                The payment page for this order is not available right now. Reload this page in a moment to
+                try again. We hold your items until
+                <strong data-testid="pay-due">{{ dueAt(placed) }}</strong>.
+              </p>
+            } @else {
+              @if (go.kind !== 'notice') {
+                <p class="pay__lead">
+                  You will be taken to our secure payment page to pay
+                  <strong data-testid="pay-amount">{{ money(go.amountLkr) }}</strong>. Your order is held
+                  until <strong data-testid="pay-due">{{ dueAt(placed) }}</strong>.
+                </p>
+              }
+
+              <!-- What the provider has to say before (or instead of) the button: the amount it will
+                   actually charge and how it was worked out, or where the payment stands. Both arrive as
+                   text from the server and are interpolated as text - the same rule as the bank notes. -->
+              @if (placed.payment; as how) {
+                @if (how.fields.length > 0) {
+                  <dl class="pay__details" data-testid="pay-redirect-fields">
+                    @for (field of how.fields; track field.label) {
+                      <div class="pay__detail">
+                        <dt>{{ field.label }}</dt>
+                        <dd>
+                          <span class="pay__value" [attr.data-testid]="fieldTestId(field)">{{ field.value }}</span>
+                        </dd>
+                      </div>
+                    }
+                  </dl>
+                }
+
+                @if (how.notes) {
+                  <p class="pay__notes" data-testid="pay-redirect-notes">{{ how.notes }}</p>
+                }
+              }
+
+              @if (go.kind === 'form') {
+                <!-- pay__actions is a flex row that wraps, so the button never forces the page wider at
+                     320 px; the hidden fields are display: none and take no part in it. attr.name and
+                     attr.value rather than the properties, so the fields are in the markup the server
+                     renders and not only in the DOM the browser builds after hydration. -->
+                <form
+                  class="pay__actions"
+                  method="post"
+                  [attr.action]="go.action"
+                  data-testid="pay-redirect-form"
+                >
+                  @for (field of go.fields; track $index) {
+                    <input type="hidden" [attr.name]="field.name" [attr.value]="field.value" />
+                  }
+                  <button class="btn btn--primary" type="submit" data-testid="pay-now">Pay now</button>
+                </form>
+              } @else if (go.kind === 'link') {
+                <div class="pay__actions">
+                  <a
+                    class="btn btn--primary"
+                    [href]="go.href"
+                    rel="noopener"
+                    data-testid="pay-now"
+                  >Pay now</a>
+                </div>
+              }
+            }
+          </section>
+        } @else if (awaitingPayment(placed)) {
           <section class="order__panel pay" aria-labelledby="pay-title" data-testid="pay-panel">
             <h2 class="order__panel-title" id="pay-title">How to pay</h2>
 
@@ -589,7 +747,10 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
     .order__line-meta {
       color: var(--color-text-muted);
     }
-    .order__error {
+    /* One rule for both refusals; it was two identical ones, and the bytes paid for the 44 px tracking
+       link under this component's 4 kB style budget (W3-01). */
+    .order__error,
+    .pay__error {
       padding: var(--space-1-5);
       border: 1px solid var(--color-sale);
       color: var(--color-sale);
@@ -707,11 +868,6 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
     }
     .pay__sent {
       color: var(--color-text-muted);
-    }
-    .pay__error {
-      padding: var(--space-1-5);
-      border: 1px solid var(--color-sale);
-      color: var(--color-sale);
     }
     /* The write controls say aria-disabled rather than disabled, so a press does not throw the shopper's
        focus to the document body. That leaves the unavailable look to be drawn here. Opacity only: a
@@ -840,6 +996,16 @@ const MAX_SLIP_BYTES = 5 * 1024 * 1024;
       display: block;
     }
 
+    /* WCAG 2.2 SC 2.5.8 asks for 24 px; this project's own rule (docs/04) is 44 px for every control a
+       thumb has to hit, and the link measured 26 px tall (independent tester, W3-01). The box grows; the
+       text stays where it was, aligned with the courier name above it. A long number still breaks
+       rather than widening the page, because the facts list's dd already sets overflow-wrap. */
+    .order__track-link {
+      display: flex;
+      align-items: center;
+      min-height: var(--tap);
+    }
+
     @media (min-width: 64rem) {
       .order__layout {
         grid-template-columns: minmax(0, 1fr) minmax(18rem, 24rem);
@@ -902,6 +1068,17 @@ export class OrderPage {
   private readonly document = inject(DOCUMENT);
   private readonly injector = inject(Injector);
 
+  /**
+   * The `pay` hint the payment page's return left on the address, read once. Read from the route's snapshot
+   * (optional chaining, because a test double may have no query map): a client-side navigation to another
+   * order builds a new page, and the hint is a one-shot explanation, not state to keep in step.
+   */
+  private readonly hint: string | null =
+    this.route.snapshot.queryParamMap?.get(PAY_HINT_PARAMETER) ?? null;
+
+  private pollTimer: ReturnType<typeof setTimeout> | null = null;
+  private pollAttempts = 0;
+
   constructor() {
     inject(Title).setTitle(brandPageTitle('Your order'));
     inject(Meta).updateTag({
@@ -928,12 +1105,66 @@ export class OrderPage {
     }
 
     this.read();
+
+    // A return that said "being processed" is waiting for PayPal's answer to reach the shop. Ask again every
+    // few seconds - in the browser only - until the order stops waiting or a minute has gone by, so the
+    // shopper sees "paid" without reloading (doc 08 section 4.2 step 1: "the page polls order status").
+    afterNextRender(() => this.pollWhileProcessing());
+    this.destroyRef.onDestroy(() => {
+      if (this.pollTimer !== null) {
+        clearTimeout(this.pollTimer);
+      }
+    });
   }
 
   protected readonly order = this.current.asReadonly();
   protected readonly isLoading = this.loading.asReadonly();
   protected readonly error = this.failure.asReadonly();
   protected readonly notFound = computed(() => this.missing() && this.current() === null);
+
+  /**
+   * The sentence the return hint selects, or null. See `payHintMessage` for why it is never the hint itself.
+   *
+   * The "received" hint is left out when the order itself carries the notice: the notice says the same thing
+   * from the database, and two paragraphs saying one thing read as two events.
+   */
+  protected hintMessage(order: OrderConfirmationDto): string | null {
+    if (this.hint === 'received' && paymentNoticeMessage(order.paymentNotice, order.status) !== null) {
+      return null;
+    }
+
+    return payHintMessage(this.hint, order.status);
+  }
+
+  /** The sentence for money that arrived and could not settle the order, or null. See `paymentNoticeMessage`. */
+  protected paymentNotice(order: OrderConfirmationDto): string | null {
+    return paymentNoticeMessage(order.paymentNotice, order.status);
+  }
+
+  private pollWhileProcessing(): void {
+    if (!payHintIsProcessing(this.hint)) {
+      return;
+    }
+
+    this.pollTimer = setTimeout(() => {
+      this.pollTimer = null;
+
+      // Only while there is still something to wait for: an order that has moved on needs no more asking,
+      // and one that has not loaded yet is simply asked about again.
+      const status = this.current()?.status;
+
+      if (
+        (status !== undefined && status !== 'PendingPayment')
+        || this.current()?.paymentNotice
+        || this.pollAttempts >= PAY_POLL_MAX_ATTEMPTS
+      ) {
+        return;
+      }
+
+      this.pollAttempts++;
+      this.read(() => this.pollWhileProcessing());
+    }, PAY_POLL_INTERVAL_MS);
+  }
 
   /** What the media endpoint takes for a slip. Checked on the server by file signature, not by name. */
   protected readonly slipAccept = 'image/jpeg,image/png,image/webp,application/pdf';
@@ -976,6 +1207,59 @@ export class OrderPage {
   }
 
   /**
+   * Whether the order is placed and on its way through the shop: waiting for money, paid, or being
+   * prepared. These are the states where "Thank you" and "Your order is placed" are true.
+   */
+  protected isUnderWay(order: OrderConfirmationDto): boolean {
+    return order.status === 'PendingPayment' || order.status === 'Paid' || order.status === 'Processing';
+  }
+
+  /**
+   * The page's heading, **following the order's status** (independent tester, W3-01).
+   *
+   * This page is the guest's permanent link to their order, not just the screen after checkout, so it is
+   * opened again days later — and it used to say "Your order is placed" for an order that had been
+   * delivered, cancelled or refunded. Past the point of being placed, the heading names the order and the
+   * sentence under it says where it is, in the server's own `statusLabel`.
+   */
+  protected headline(order: OrderConfirmationDto): string {
+    return this.isUnderWay(order) ? 'Your order is placed' : 'Your order';
+  }
+
+  /**
+   * The sentence under the heading. `statusLabel` rather than `status`, for the reason
+   * {@link paymentState} gives: a pickup order's `Shipped` reads "Ready for collection".
+   */
+  protected headSentence(order: OrderConfirmationDto): string {
+    switch (order.status) {
+      case 'PendingPayment':
+        return 'We have your order and it is waiting for payment.';
+      case 'Paid':
+      case 'Processing':
+        return 'We have your payment and are getting your order ready.';
+      default:
+        return `This order is ${order.statusLabel.toLowerCase()}.`;
+    }
+  }
+
+  /**
+   * How to hand the shopper over to an online provider's own page, or null for a bank transfer.
+   *
+   * **Provider-neutral.** The payload says how to get there — a form to POST, or a link — and this page
+   * does it without knowing whose page it is. Null for anything that is not waiting for money, for an order
+   * with no instructions yet, and for instructions that carry no redirect, which is every bank transfer:
+   * the pay panel below it is then exactly what it was. A redirect is followed only when
+   * `paymentRedirect` says its address is safe to send a browser to; see `payment-redirect.ts`.
+   */
+  protected readonly payRedirect = computed(() => {
+    const placed = this.current();
+
+    return placed !== null && this.awaitingPayment(placed) && !placed.paymentNotice && placed.payment !== null
+      ? paymentRedirect(placed.payment)
+      : null;
+  });
+
+  /**
    * The sentence beside "Payment" in the details list.
    *
    * **The wording comes from the server, not from `status.toLowerCase()`.** Doc 11 P9's pickup variant
@@ -989,6 +1273,12 @@ export class OrderPage {
       return order.status === 'Paid'
         ? 'Paid. Thank you — we are getting your order ready.'
         : `This order is ${order.statusLabel.toLowerCase()}.`;
+    }
+
+    // A payment has arrived and could not settle the order: "awaiting payment" would send the shopper to pay
+    // again, which is the one thing they must not do.
+    if (paymentNoticeMessage(order.paymentNotice, order.status) !== null) {
+      return 'We have received a payment for this order. Our team will contact you.';
     }
 
     return `Awaiting payment. We hold your items until ${this.dueAt(order)}.`;

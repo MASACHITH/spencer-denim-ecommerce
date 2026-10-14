@@ -50,6 +50,31 @@ export const routes: Routes = [
       import('./pages/bank-transfers/bank-transfers-page').then((m) => m.BankTransfersPage),
   },
   {
+    // ADM-13 (W3-05): the promo codes the client issues. Like every other admin route the guard only
+    // asks for a session: the API is the security boundary (doc 03 §3a), and a user without
+    // Promotions.View is shown the refusal rather than bounced from a page that then cannot explain
+    // itself.
+    //
+    // Sale campaigns (ADM-14) sit beside this under the same `marketing/` prefix, which is what this
+    // route being named for the codes it serves rather than for the module was for.
+    path: 'marketing/promo-codes',
+    title: `Promo codes — ${BRAND.adminName}`,
+    canActivate: [adminSessionGuard],
+    loadComponent: () =>
+      import('./pages/marketing/promo-codes-page').then((m) => m.PromoCodesPage),
+  },
+  {
+    // ADM-14 (W3-05c): the sale campaigns the client runs. The guard asks only for a session, as every
+    // other admin route does: the API is the security boundary (doc 03 §3a), and a user without
+    // Promotions.View is shown the refusal rather than bounced from a page that then cannot explain
+    // itself.
+    path: 'marketing/sale-campaigns',
+    title: `Sale campaigns — ${BRAND.adminName}`,
+    canActivate: [adminSessionGuard],
+    loadComponent: () =>
+      import('./pages/marketing/sale-campaigns-page').then((m) => m.SaleCampaignsPage),
+  },
+  {
     // ADM-09 / ADM-22 (W3-04): the couriers the client fills in. Also before `orders/:orderPublicId`.
     path: 'orders/couriers',
     title: `Couriers — ${BRAND.adminName}`,

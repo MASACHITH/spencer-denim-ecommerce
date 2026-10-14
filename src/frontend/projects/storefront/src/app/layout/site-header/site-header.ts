@@ -2,7 +2,10 @@ import {
   ChangeDetectionStrategy,
   Component,
   ElementRef,
+  Injector,
+  afterNextRender,
   afterRenderEffect,
+  computed,
   effect,
   inject,
   signal,
@@ -21,6 +24,7 @@ import { HeaderSearch } from '../header-search/header-search';
 import { MainNav } from '../main-nav/main-nav';
 import { MiniBag } from '../mini-bag/mini-bag';
 import { MobileNav } from '../mobile-nav/mobile-nav';
+import { AccountStore } from '../../core/account/account.store';
 import { CartStore } from '../../core/cart/cart.store';
 import { SiteSettingsService } from '../../core/site-settings/site-settings.service';
 import { StorefrontCounts } from '../../core/storefront-counts.service';
@@ -67,7 +71,12 @@ import { StorefrontCounts } from '../../core/storefront-counts.service';
                width/height so the box is reserved before the bytes arrive (CLS), and alt is never
                blank: SiteSettingsService falls back to the shop's name, because this image *is* the
                site's name and a decorative-empty alt would lose it (GLB-12, WCAG 1.1.1). -->
-          <a class="wordmark site-header__wordmark" routerLink="/" data-testid="wordmark">
+          <a
+            class="wordmark site-header__wordmark"
+            routerLink="/"
+            data-testid="wordmark"
+            #wordmarkLink
+          >
             @if (logo(); as mark) {
               <img
                 class="site-header__logo"
@@ -104,10 +113,43 @@ import { StorefrontCounts } from '../../core/storefront-counts.service';
               <sd-icon name="search" />
             </button>
 
-            <a class="icon-btn site-header__account" routerLink="/account">
+            <!-- GLB-03 plus W3-01. **The anchor and its address are unchanged**: '/account' is now a
+                 real route, and the child table redirects it to '/account/orders' for a signed-in
+                 shopper and sends a signed-out one to the sign-in form with 'returnTo'. One link, two
+                 correct outcomes, and nothing here has to know which.
+
+                 What W3-01 adds is the accessible name. "Account" told a screen-reader user nothing
+                 about whether they were signed in; 'accountLabel()' names the customer once the shop
+                 knows who they are. It stays 'sr-only' because the icon is the visible control and the
+                 greeting beside it carries the name for everyone else. -->
+            <a class="icon-btn site-header__account" routerLink="/account" data-testid="account-link">
               <sd-icon name="user" />
-              <span class="sr-only">Account</span>
+              <span class="sr-only">{{ accountLabel() }}</span>
             </a>
+
+            <!-- **Only ever drawn in the browser, and never in the server's markup.** 'AccountStore'
+                 does not ask who is signed in during a server render — 'sd_customer_auth' is not
+                 forwarded to the API by 'cartCookieInterceptor', deliberately — so 'customer()' is null
+                 there for everyone. That is what keeps the rest of the shop cacheable: a first name
+                 rendered into this header would make the home page, every listing and every product
+                 page 'no-store' with 'Vary: Cookie', in order to greet one shopper a frame sooner.
+
+                 'aria-hidden' on the greeting, because the account link above already carries the name
+                 in its accessible name and a screen reader does not need it twice. -->
+            @if (customer(); as me) {
+              <span class="site-header__greeting" aria-hidden="true" data-testid="account-greeting">{{
+                me.firstName
+              }}</span>
+
+              <button
+                class="link site-header__signout"
+                type="button"
+                data-testid="sign-out"
+                (click)="signOut()"
+              >
+                Sign out
+              </button>
+            }
 
             <a class="icon-btn" routerLink="/wishlist">
               <sd-icon name="heart" />
@@ -171,7 +213,11 @@ import { StorefrontCounts } from '../../core/storefront-counts.service';
         </div>
       </div>
 
-      <sd-mobile-nav [open]="menuOpen()" (closed)="closeMenu()" />
+      <sd-mobile-nav
+        [open]="menuOpen()"
+        (closed)="closeMenu()"
+        (signOutRequested)="signOut()"
+      />
 
       <sd-mini-bag
         [open]="bagOpen()"
@@ -272,8 +318,12 @@ import { StorefrontCounts } from '../../core/storefront-counts.service';
       align-items: center;
       justify-content: flex-end;
     }
-    /* The drawer already offers Sign in / Register, so the icon would only crowd the row. */
-    .site-header__account {
+    /* The drawer already offers the account rows, so below 1024 px the icon would only crowd this row.
+       The greeting and Sign out follow it, by the same rule and for the same reason: 'mobile-nav' draws
+       both, so a phone is never without them. */
+    .site-header__account,
+    .site-header__greeting,
+    .site-header__signout {
       display: none;
     }
     .site-header__district {
@@ -332,6 +382,27 @@ import { StorefrontCounts } from '../../core/storefront-counts.service';
       .site-header__account {
         display: inline-grid;
       }
+      /* Truncated rather than wrapped: from 1024 px the bar is a 'nowrap' flex row, so an unbounded
+         name would push the navigation off the end. 10rem fits every ordinary first name, and the
+         accessible name on the account link carries the whole of it either way. */
+      .site-header__greeting {
+        display: inline-block;
+        max-width: 10rem;
+        overflow: hidden;
+        margin-inline-start: var(--space-0-5);
+        font-size: var(--text-small);
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      /* 'button.link' in base.css already gives it 44 px of height; this gives it the width, so it is
+         not a text-width target sitting inside a tall row. */
+      .site-header__signout {
+        display: inline-flex;
+        flex: none;
+        min-width: var(--tap);
+        margin-inline-start: var(--space-1-5);
+        font-size: var(--text-small);
+      }
     }
 
     @media (min-width: 1440px) {
@@ -367,6 +438,30 @@ export class SiteHeader {
    */
   protected readonly brand = BRAND.name;
 
+  private readonly account = inject(AccountStore);
+
+  /**
+   * The signed-in customer, or null (W3-01, ACC-01).
+   *
+   * Null on the server for everyone, and null in the browser until `GET /api/account/session` answers. It is
+   * **not** read as "signed out": `AccountStore` keeps `unknown` and `signedOut` apart, so this header
+   * never draws a greeting it has to take back, and never claims a shopper is signed out because the
+   * read is still in flight.
+   */
+  protected readonly customer = this.account.customer;
+
+  /**
+   * The account link's accessible name.
+   *
+   * "Account" while the shop does not know, the customer's own name once it does. The link's
+   * *destination* does not change — see the template.
+   */
+  protected readonly accountLabel = computed(() => {
+    const customer = this.customer();
+
+    return customer === null ? 'Account' : `Your account, ${customer.firstName}`;
+  });
+
   /**
    * The uploaded logo, or null for the text wordmark (GLB-02, ADM-22).
    *
@@ -383,6 +478,8 @@ export class SiteHeader {
   private readonly panelSearch = viewChild<HeaderSearch>('panelSearch');
   private readonly searchToggle = viewChild<ElementRef<HTMLButtonElement>>('searchToggle');
   private readonly bagToggle = viewChild<ElementRef<HTMLAnchorElement>>('bagToggle');
+  private readonly wordmark = viewChild<ElementRef<HTMLAnchorElement>>('wordmarkLink');
+  private readonly injector = inject(Injector);
 
   protected readonly wishlistCount = this.counts.wishlist;
   protected readonly bagCount = this.counts.bag;
@@ -396,10 +493,27 @@ export class SiteHeader {
   readonly bagOpen = this.bag.asReadonly();
 
   constructor() {
+    // **The one read of who is signed in, and it happens after the first render.** `AccountStore.load`
+    // is single-flight, so this and the signed-in route guard — which runs *during* the first navigation
+    // on a cold load — are one `GET /api/account/session` rather than two racing each other, whichever asks
+    // first. `afterNextRender` so it does not compete with the catalogue calls the first paint needs,
+    // and so it never runs during a server render: there is no cookie to read there, and a request made
+    // then would answer 401 for every visitor.
+    afterNextRender(() => this.account.load().subscribe());
+
     // Navigating away always leaves the shell tidy, whichever link was used.
+    //
+    // **Not on the first navigation, which is not "navigating away".** On a server-rendered load the
+    // initial navigation ends only once the requests in flight at start-up have answered, which is after
+    // hydration: the header is already live, and a shopper can have opened the search panel, the menu
+    // or the bag by then. Closing them on that NavigationEnd shut a panel the shopper had just opened.
+    // W3-01 made the window wider and constant — the header's `GET /api/account/session` is the last
+    // start-up request to answer — and `search.e2e.ts` "one Escape" went from 1 in 10 failing on the base
+    // commit to 10 in 10 (round-2 independent tester, measured: the initial `replaceState` landed
+    // 1–100 ms after the hydrated click on every run of the branch, and 46–322 ms before it on base).
     this.router.events
       .pipe(
-        filter((event) => event instanceof NavigationEnd),
+        filter((event) => event instanceof NavigationEnd && event.id > 1),
         takeUntilDestroyed(),
       )
       .subscribe(() => {
@@ -500,6 +614,34 @@ export class SiteHeader {
    */
   recoverBagFocus(): void {
     this.bagToggle()?.nativeElement.focus();
+  }
+
+  /**
+   * Signs out (ACC-01, doc 11 P11 step B.7).
+   *
+   * **The bag is re-read, and that is not tidying up.** Step B.7 is explicit that the browser's guest bag
+   * is not restored, and the guest cart was deleted by the merge at sign-in — so after this the bag
+   * genuinely is empty, and the badge beside this button would otherwise keep showing the count from an
+   * account bag that is no longer this visitor's. `AccountStore.signOut` clears its own state whatever
+   * the server answered, including on a 401, because a 401 here means the session had already gone.
+   *
+   * **No `[disabled]` while it is in flight** (#109): disabling the control that currently has focus
+   * throws focus to `<body>`, which is exactly what would happen to the keyboard user who just pressed
+   * this. The button disappears on success instead — the `@if` above it stops matching — which is a
+   * removal and the other half of the same defect, so focus is sent to the wordmark: the shopper is about
+   * to be on the home page, and the wordmark is the one control certainly on it.
+   */
+  signOut(): void {
+    this.account.signOut().subscribe(() => {
+      this.cart.load();
+
+      void this.router.navigateByUrl('/');
+
+      // After the render that removes this button. `afterNextRender` and never `queueMicrotask`: a
+      // signal write schedules change detection as a task, so a microtask would run while the button is
+      // still there and focus would land on a node about to be destroyed.
+      afterNextRender(() => this.wordmark()?.nativeElement.focus(), { injector: this.injector });
+    });
   }
 
   private focusSearchToggle(): void {

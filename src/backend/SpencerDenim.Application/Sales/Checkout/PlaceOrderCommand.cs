@@ -1,6 +1,7 @@
 using SpencerDenim.Application.Abstractions.Results;
 using SpencerDenim.Application.Sales.Cart;
 using SpencerDenim.Application.Sales.Checkout.Contracts;
+using SpencerDenim.Domain.Marketing;
 
 namespace SpencerDenim.Application.Sales.Checkout;
 
@@ -55,7 +56,8 @@ public sealed record PlaceOrderCommand(
     string? PaymentMethodCode,
     decimal? ExpectedGrandTotal,
     string? CustomerNote,
-    string? PlacedIpAddress)
+    string? PlacedIpAddress,
+    string? PromoCode = null)
 {
     /// <summary>
     /// The account placing it, or <see langword="null"/> for a guest.
@@ -102,6 +104,20 @@ public enum PlaceOrderStatus : byte
     /// <see cref="PlaceOrderResult.Totals"/> is the new ladder, for the page to show before asking again.
     /// </summary>
     TotalChanged = 6,
+
+    /// <summary>
+    /// The promo code could not be used (ADM-13). Nothing was placed and nothing was reserved.
+    /// <see cref="PlaceOrderResult.PromoRefusal"/> says why and
+    /// <see cref="PlaceOrderResult.PromoMinimumSpend"/> carries the threshold when that is the reason.
+    /// <para>
+    /// <b>Its own status rather than a field error, because two different things happen on the way to
+    /// it.</b> A code can stop qualifying between the quote and the press — the window closed, the bag
+    /// changed, someone took the last use — and a code can be refused <i>inside</i> the transaction by
+    /// the conditional UPDATE or the per-customer count under the app lock. Both leave the shopper in
+    /// the same place and are reported the same way, so the page has one branch and not two.
+    /// </para>
+    /// </summary>
+    PromoRejected = 7,
 }
 
 /// <summary>The outcome of <see cref="PlaceOrderCommand"/>.</summary>
@@ -111,7 +127,9 @@ public sealed record PlaceOrderResult(
     IReadOnlyList<ValidationError> Errors,
     IReadOnlyList<CheckoutBlocker> Blockers,
     IReadOnlyDictionary<int, int> ShortLines,
-    CheckoutTotalsDto? Totals)
+    CheckoutTotalsDto? Totals,
+    PromoRefusal? PromoRefusal = null,
+    decimal? PromoMinimumSpend = null)
 {
     private static readonly IReadOnlyList<ValidationError> NoErrors = [];
     private static readonly IReadOnlyList<CheckoutBlocker> NoBlockers = [];
@@ -140,4 +158,16 @@ public sealed record PlaceOrderResult(
 
     public static PlaceOrderResult TotalChanged(CheckoutTotalsDto totals) =>
         new(PlaceOrderStatus.TotalChanged, null, NoErrors, NoBlockers, NoShortLines, totals);
+
+    /// <summary>The code was refused, before or inside the transaction (ADM-13).</summary>
+    public static PlaceOrderResult PromoRejected(PromoRefusal refusal, decimal? minimumSpend = null) =>
+        new(
+            PlaceOrderStatus.PromoRejected,
+            null,
+            NoErrors,
+            NoBlockers,
+            NoShortLines,
+            null,
+            refusal,
+            minimumSpend);
 }

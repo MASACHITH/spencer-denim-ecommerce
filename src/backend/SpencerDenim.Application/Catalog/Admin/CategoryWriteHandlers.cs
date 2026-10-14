@@ -4,6 +4,7 @@ using SpencerDenim.Application.Abstractions.Messaging;
 using SpencerDenim.Application.Abstractions.Results;
 using SpencerDenim.Application.Abstractions.Time;
 using SpencerDenim.Application.Catalog.Admin.Abstractions;
+using SpencerDenim.Application.Marketing.Promotions.Abstractions;
 using SpencerDenim.Domain.Auditing;
 using SpencerDenim.Domain.Catalog;
 
@@ -243,7 +244,8 @@ public sealed class CreateCategoryCommandHandler(
 public sealed class UpdateCategoryCommandHandler(
     ICatalogStructureStore store,
     IAuditLogWriter auditLog,
-    IClock clock)
+    IClock clock,
+    ICampaignPricingRefresher campaigns)
     : ICommandHandler<UpdateCategoryCommand, CatalogWriteResult>
 {
     public async Task<CatalogWriteResult> HandleAsync(UpdateCategoryCommand command, CancellationToken cancellationToken)
@@ -318,6 +320,18 @@ public sealed class UpdateCategoryCommandHandler(
         // Read before anything is re-pathed: this is the set whose paths the move rewrites.
         var subtree = moving
             ? await store.ListSubtreeAsync(category.Path, cancellationToken)
+            : [];
+
+        // The products whose stored sale price this move can change, taken while the ids are still
+        // reachable — see `ICampaignPricingRefresher.ProductsLinkedToCategoriesAsync`. The *set* is the
+        // same before and after the move, because moving a category changes no product's links; what
+        // changes is which campaigns' subtree predicates reach them. Only a move needs it: a rename, a
+        // re-slug, a reorder and switching a category off leave every `Path` alone, and no campaign
+        // predicate reads a category's `IsActive`.
+        var repriced = moving
+            ? await campaigns.ProductsLinkedToCategoriesAsync(
+                subtree.Select(node => node.Id).ToList(),
+                cancellationToken)
             : [];
 
         if (moving)
@@ -427,9 +441,17 @@ public sealed class UpdateCategoryCommandHandler(
         }
 
         auditLog.Enlist(audit);
-        return CatalogWriteSupport.ToResult(
-            await store.SaveAsync(command.Actor.UserId, cancellationToken),
-            category.Id);
+
+        // The stored summary is put right in the same request, so a shopper is never shown a discount the
+        // bag will refuse — nor denied one the bag would give. On anything but a move `repriced` is empty
+        // and this is one branch, not a query.
+        return await CatalogWriteSupport.WithCampaignPricingForAsync(
+            CatalogWriteSupport.ToResult(
+                await store.SaveAsync(command.Actor.UserId, cancellationToken),
+                category.Id),
+            campaigns,
+            repriced,
+            cancellationToken);
     }
 }
 

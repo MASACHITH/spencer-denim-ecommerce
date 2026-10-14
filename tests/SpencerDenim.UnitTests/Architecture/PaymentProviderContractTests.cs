@@ -3,8 +3,11 @@ using System.Reflection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
+using SpencerDenim.Application.Abstractions.Time;
+using SpencerDenim.Application.Ops.Email;
 using SpencerDenim.Application.Sales.Payments.Abstractions;
 using SpencerDenim.Application.Sales.Payments.Contracts;
+using SpencerDenim.Application.Sales.Payments.PayPal;
 using SpencerDenim.Domain.Sales;
 using SpencerDenim.Infrastructure.Persistence.Seeding;
 using SpencerDenim.Infrastructure.Sales.Payments;
@@ -143,6 +146,178 @@ public sealed class PaymentProviderContractTests
         {
             Assert.False(string.IsNullOrWhiteSpace(field.Label));
             Assert.False(string.IsNullOrWhiteSpace(field.Value));
+        }
+    }
+
+    /// <summary>
+    /// Asking for the instructions of an order that already has a payment attempt is as safe as asking at
+    /// placement, when there is none (<see cref="PaymentInstructionsRequest.PaymentId"/>).
+    /// </summary>
+    /// <remarks>
+    /// <b>The order page fills the attempt in; checkout cannot</b> — the payment row does not exist yet when
+    /// checkout asks — so a provider must answer for both shapes of request. This runs the provider with an
+    /// attempt present and holds the answer to the same consistency rules as the one without, including the
+    /// redirect rules a gateway that sends the customer elsewhere has to meet.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(ProviderTypeNames))]
+    public async Task A_provider_describes_itself_for_an_attempt_that_already_exists(string typeName)
+    {
+        var provider = Build(typeName);
+
+        var instructions = await provider.DescribeAsync(
+            new PaymentInstructionsRequest(
+                "SD-2026-000123",
+                9_184m,
+                new DateTime(2026, 10, 8, 9, 0, 0, DateTimeKind.Utc),
+                OrderUrl: null,
+                PaymentId: 4711,
+                ProviderReference: "REF-4711"),
+            TestContext.Current.CancellationToken);
+
+        if (instructions is null)
+        {
+            return;
+        }
+
+        AssertInstructionsAreConsistent(provider.Code, 9_184m, instructions);
+    }
+
+    /// <summary>
+    /// The rules a provider's instructions must meet, held in one place so the redirect rules are checked
+    /// the day a redirecting provider is added — and exercised here with instructions of the kind that does
+    /// not exist yet, so the checker itself is not untested code waiting for its first use.
+    /// </summary>
+    [Fact]
+    public void The_consistency_rules_accept_a_well_formed_redirect_and_a_well_formed_bank_transfer()
+    {
+        var due = new DateTime(2026, 10, 8, 9, 0, 0, DateTimeKind.Utc);
+
+        AssertInstructionsAreConsistent(
+            "Gateway",
+            9_184m,
+            new PaymentInstructions("Gateway", null, 9_184m, due, [], null, "https://pay.example.test/x", false));
+
+        AssertInstructionsAreConsistent(
+            "Gateway",
+            9_184m,
+            new PaymentInstructions(
+                "Gateway",
+                null,
+                9_184m,
+                due,
+                [],
+                null,
+                RedirectUrl: null,
+                AcceptsProof: false,
+                RedirectForm: PaymentRedirectForm.Post(
+                    "https://pay.example.test/checkout",
+                    [new PaymentRedirectFormField("order_id", "SD-2026-000123-1")])));
+
+        AssertInstructionsAreConsistent(
+            "BankTransfer",
+            9_184m,
+            new PaymentInstructions(
+                "BankTransfer",
+                "SD-2026-000123",
+                9_184m,
+                due,
+                [new PaymentInstructionField("Account number", "123", Copyable: true)],
+                null,
+                RedirectUrl: null,
+                AcceptsProof: true));
+    }
+
+    [Fact]
+    public void The_consistency_rules_reject_a_redirect_the_order_page_would_not_follow()
+    {
+        var due = new DateTime(2026, 10, 8, 9, 0, 0, DateTimeKind.Utc);
+
+        // A link to a non-https address.
+        Assert.ThrowsAny<Exception>(() => AssertInstructionsAreConsistent(
+            "Gateway",
+            9_184m,
+            new PaymentInstructions("Gateway", null, 9_184m, due, [], null, "http://pay.example.test/x", false)));
+
+        // A form whose action is not safe, built by hand because the factory refuses to.
+        Assert.ThrowsAny<Exception>(() => AssertInstructionsAreConsistent(
+            "Gateway",
+            9_184m,
+            new PaymentInstructions(
+                "Gateway",
+                null,
+                9_184m,
+                due,
+                [],
+                null,
+                RedirectUrl: null,
+                AcceptsProof: false,
+                RedirectForm: new PaymentRedirectForm("POST", "javascript:alert(1)", []))));
+
+        // A form that is not a POST: the order page renders a POST form and nothing else.
+        Assert.ThrowsAny<Exception>(() => AssertInstructionsAreConsistent(
+            "Gateway",
+            9_184m,
+            new PaymentInstructions(
+                "Gateway",
+                null,
+                9_184m,
+                due,
+                [],
+                null,
+                RedirectUrl: null,
+                AcceptsProof: false,
+                RedirectForm: new PaymentRedirectForm("GET", "https://pay.example.test/x", []))));
+
+        // A gateway that confirms itself does not take a bank slip.
+        Assert.ThrowsAny<Exception>(() => AssertInstructionsAreConsistent(
+            "Gateway",
+            9_184m,
+            new PaymentInstructions("Gateway", null, 9_184m, due, [], null, "https://pay.example.test/x", true)));
+    }
+
+    /// <summary>
+    /// What a non-null answer from <c>DescribeAsync</c> must satisfy, for any provider.
+    /// </summary>
+    private static void AssertInstructionsAreConsistent(
+        string providerCode,
+        decimal amountLkr,
+        PaymentInstructions instructions)
+    {
+        Assert.Equal(providerCode, instructions.ProviderCode);
+        Assert.Equal(amountLkr, instructions.AmountLkr);
+
+        foreach (var field in instructions.Fields)
+        {
+            Assert.False(string.IsNullOrWhiteSpace(field.Label));
+            Assert.False(string.IsNullOrWhiteSpace(field.Value));
+        }
+
+        if (instructions.RedirectUrl is not null)
+        {
+            // The order page follows only what PaymentRedirectForm.IsSafeAbsoluteUrl accepts - the
+            // storefront's own rule, run on one shared list by both suites (PaymentRedirectFormTests).
+            Assert.True(
+                PaymentRedirectForm.IsSafeAbsoluteUrl(instructions.RedirectUrl),
+                $"{providerCode} returned a redirect URL the order page would not follow.");
+        }
+
+        if (instructions.RedirectForm is { } form)
+        {
+            Assert.Equal(PaymentRedirectForm.PostMethod, form.Method);
+            Assert.True(
+                PaymentRedirectForm.IsSafeAbsoluteUrl(form.Action),
+                $"{providerCode} returned a redirect form whose action the order page would not follow.");
+            Assert.All(form.Fields, field => Assert.False(string.IsNullOrWhiteSpace(field.Name)));
+        }
+
+        if (instructions.RedirectUrl is not null || instructions.RedirectForm is not null)
+        {
+            // A gateway confirms itself (doc 11 P8: only the provider's server confirms payment), so the
+            // customer has no slip to send. The order page also shows no upload for a redirect.
+            Assert.False(
+                instructions.AcceptsProof,
+                $"{providerCode} redirects the customer to pay but also says it takes a bank slip.");
         }
     }
 
@@ -323,6 +498,50 @@ public sealed class PaymentProviderContractTests
                 typeof(NullLogger<>).MakeGenericType(type.GetGenericArguments()))!;
         }
 
+        // The ports a provider confirmed by the provider itself builds on (W4-01 groundwork). **Stubs that
+        // refuse, except the reader**, and that is the assertion: answering "what is the payment row and
+        // what do I tell the customer" must not need to settle an order or write an event - those are the
+        // webhook's business, not checkout's or the order page's. The attempt reader answers "none", which
+        // is a real answer for an order that has no live attempt, so a provider may ask it.
+        if (type == typeof(IOrderSettlementStore))
+        {
+            return new RefusingSettlementStore();
+        }
+
+        if (type == typeof(IPaymentEventStore))
+        {
+            return new RefusingEventStore();
+        }
+
+        if (type == typeof(IPaymentAttemptReader))
+        {
+            return new NoPaymentAttempt();
+        }
+
+        if (type == typeof(IClock))
+        {
+            return new FixedClock(new DateTimeOffset(2026, 10, 6, 9, 0, 0, TimeSpan.Zero));
+        }
+
+        // PayPal (W4-01). **Configured, with a fresh rate**, because the contract asks every provider to open
+        // a payment: an unconfigured PayPal correctly refuses to (it is not offered at checkout), and the
+        // contract is about a provider that is. The store is the same kind of stub as the others: it knows no
+        // orders, and refuses to move anything.
+        if (type == typeof(IPayPalSettingsReader))
+        {
+            return new ConfiguredPayPal();
+        }
+
+        if (type == typeof(IPayPalPaymentStore))
+        {
+            return new NoPayPalOrders();
+        }
+
+        if (type == typeof(PayPalLinks))
+        {
+            return new PayPalLinks(new EmailOptions { StorefrontBaseUrl = "https://shop.example.test" });
+        }
+
         throw new NotSupportedException(
             $"A payment provider now depends on {type.Name}, which this contract test has no stub for. "
             + "Add one: the contract has to be provable without a database.");
@@ -336,5 +555,164 @@ public sealed class PaymentProviderContractTests
     {
         public Task<BankTransferDetails?> ReadAsync(CancellationToken cancellationToken) =>
             Task.FromResult<BankTransferDetails?>(null);
+    }
+
+    /// <summary>An order with no live payment attempt - the state at placement, and after a rejection.</summary>
+    private sealed class NoPaymentAttempt : IPaymentAttemptReader
+    {
+        public Task<PaymentAttempt?> FindInFlightAsync(Guid orderPublicId, CancellationToken cancellationToken) =>
+            Task.FromResult<PaymentAttempt?>(null);
+    }
+
+    /// <summary>Settling an order is not something answering the two PAY-03 questions may do.</summary>
+    private sealed class RefusingSettlementStore : IOrderSettlementStore
+    {
+        public Task<PaymentSettlementResult> SettleAsync(
+            PaymentSettlement settlement,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException("A provider's contract questions must not settle an order.");
+
+        public Task<PaymentSettlementResult> RouteToExceptionAsync(
+            PaymentExceptionRouting routing,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException("A provider's contract questions must not route a payment.");
+    }
+
+    /// <summary>Recording an event is the webhook endpoint's job, not InitiateAsync's or DescribeAsync's.</summary>
+    private sealed class RefusingEventStore : IPaymentEventStore
+    {
+        public Task<PaymentEventReceipt> RecordAsync(PaymentEventRecord record, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("A provider's contract questions must not record an event.");
+
+        public Task<bool> MarkProcessedAsync(long eventId, DateTime nowUtc, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<bool> MarkIgnoredAsync(long eventId, DateTime nowUtc, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<bool> MarkFailedAsync(
+            long eventId,
+            string failure,
+            DateTime? retryAtUtc,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<bool> LinkAsync(long eventId, int? paymentId, int? orderId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+    }
+
+    /// <summary>PayPal as a Super Admin leaves it when it is ready: credentials, webhook id and yesterday's rate.</summary>
+    private sealed class ConfiguredPayPal : IPayPalSettingsReader
+    {
+        public Task<PayPalSettings> ReadAsync(CancellationToken cancellationToken) =>
+            Task.FromResult(new PayPalSettings
+            {
+                ClientId = "client-id",
+                ClientSecret = "client-secret",
+                WebhookId = "webhook-id",
+                LkrPerUsd = 300m,
+                RateUpdatedAtUtc = new DateTime(2026, 10, 5, 9, 0, 0, DateTimeKind.Utc),
+            });
+    }
+
+    /// <summary>A shop with no PayPal orders: every question gets "none", and nothing may be moved.</summary>
+    private sealed class NoPayPalOrders : IPayPalPaymentStore
+    {
+        public Task<PayPalOrderView?> FindOrderAsync(Guid orderPublicId, CancellationToken cancellationToken) =>
+            Task.FromResult<PayPalOrderView?>(null);
+
+        public Task<PayPalOrderView?> FindOrderByNumberAsync(string orderNumber, CancellationToken cancellationToken) =>
+            Task.FromResult<PayPalOrderView?>(null);
+
+        public Task<PayPalPaymentRef?> FindPaymentAsync(int paymentId, CancellationToken cancellationToken) =>
+            Task.FromResult<PayPalPaymentRef?>(null);
+
+        public Task<PayPalPaymentRef?> FindPaymentForEventAsync(
+            string? captureId,
+            string? paypalOrderId,
+            int? paymentIdFromCustomId,
+            CancellationToken cancellationToken) =>
+            Task.FromResult<PayPalPaymentRef?>(null);
+
+        public Task<OpenAttemptResult> OpenAttemptAsync(
+            int orderId,
+            PaymentInitiation? initiation,
+            DateTime nowUtc,
+            CancellationToken cancellationToken) => throw Refused();
+
+        public Task<bool> SetProviderReferenceAsync(
+            int paymentId,
+            string providerReference,
+            DateTime nowUtc,
+            CancellationToken cancellationToken) => throw Refused();
+
+        public Task<bool> CancelInitiatedAsync(
+            int orderId,
+            int paymentId,
+            DateTime nowUtc,
+            CancellationToken cancellationToken) => throw Refused();
+
+        public Task<ClaimResult> ClaimCaptureAsync(
+            int orderId,
+            int paymentId,
+            DateTime nowUtc,
+            TimeSpan lockFor,
+            CancellationToken cancellationToken) => throw Refused();
+
+        public Task<bool> ReleaseClaimAsync(
+            int orderId,
+            int paymentId,
+            DateTime nowUtc,
+            CancellationToken cancellationToken) => throw Refused();
+
+        public Task<PayPalMoveResult> RecordPendingAsync(
+            int orderId,
+            int paymentId,
+            string? captureId,
+            int pendingMaxDays,
+            DateTime nowUtc,
+            CancellationToken cancellationToken) => throw Refused();
+
+        public Task<PayPalMoveResult> RecordDeclinedAsync(
+            int orderId,
+            int paymentId,
+            string failureCode,
+            string? failureMessage,
+            int expiryMinutes,
+            DateTime nowUtc,
+            CancellationToken cancellationToken) => throw Refused();
+
+        public Task<PayPalMoveResult> RecordFailedAsync(
+            int orderId,
+            int paymentId,
+            string failureCode,
+            string? failureMessage,
+            DateTime nowUtc,
+            SpencerDenim.Domain.Ops.AdminAlert? alert,
+            CancellationToken cancellationToken) => throw Refused();
+
+        public Task<IReadOnlyList<CapturingPayment>> FindCapturingAsync(
+            DateTime startedBeforeUtc,
+            int take,
+            CancellationToken cancellationToken) => throw Refused();
+
+        public Task<bool> RecordRecoveryAttemptAsync(
+            int paymentId,
+            DateTime nowUtc,
+            CancellationToken cancellationToken) => throw Refused();
+
+        public Task<bool> ReclaimOrderLockAsync(
+            int orderId,
+            DateTime nowUtc,
+            TimeSpan lockFor,
+            CancellationToken cancellationToken) => throw Refused();
+
+        private static NotSupportedException Refused() =>
+            new("A provider's contract questions must not move a payment.");
+    }
+
+    private sealed class FixedClock(DateTimeOffset now) : IClock
+    {
+        public DateTimeOffset UtcNow => now;
     }
 }

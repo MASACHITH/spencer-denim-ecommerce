@@ -103,7 +103,24 @@ public static class Permissions
     public static class Promotions
     {
         public const string View = "Promotions.View";
+
+        /// <summary>
+        /// Add a promo code or a sale campaign (ADM-13 / ADM-14, W3-05). Added here because doc 11 P3's
+        /// own permission table names <c>Promotions.View/Create/Edit</c> for both the promo-code and the
+        /// sale-campaign screens, and doc 08 §9 grants Store Manager every <c>Module.Action</c> bar
+        /// <c>Users.*</c>, <c>Settings.Payments</c> and <c>Settings.Security</c> — so the value has to
+        /// exist rather than a create route borrowing <see cref="Edit"/>.
+        /// </summary>
+        public const string Create = "Promotions.Create";
+
         public const string Edit = "Promotions.Edit";
+
+        /// <summary>
+        /// Doc 11 P3's permission table: "Remove campaign or code — <c>Promotions.Delete</c>". A soft
+        /// delete, which releases the code string for reuse and leaves placed orders alone (doc 08 §3.6
+        /// DB19). Both halves exist here rather than only the one this build happened to need first.
+        /// </summary>
+        public const string Delete = "Promotions.Delete";
     }
 
     public static class Content
