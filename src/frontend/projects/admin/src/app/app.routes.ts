@@ -97,6 +97,31 @@ export const routes: Routes = [
     loadComponent: () => import('./pages/orders/order-invoice-page').then((m) => m.OrderInvoicePage),
   },
   {
+    // ADM-15 (W3-07): registered customers. Like every other admin route the guard only asks for a session:
+    // the API is the security boundary (doc 03 §3a), and a user without Customers.View is shown the refusal
+    // rather than bounced from a page that then cannot explain itself.
+    path: 'customers',
+    title: `Customers — ${BRAND.adminName}`,
+    canActivate: [adminSessionGuard],
+    loadComponent: () =>
+      import('./pages/customers/customers-list-page').then((m) => m.CustomersListPage),
+  },
+  {
+    path: 'customers/:customerId',
+    title: `Customer — ${BRAND.adminName}`,
+    canActivate: [adminSessionGuard],
+    loadComponent: () =>
+      import('./pages/customers/customer-detail-page').then((m) => m.CustomerDetailPage),
+  },
+  {
+    // ADM-21 (W3-07): newsletter subscribers and their audited export (Newsletter.View / Newsletter.Export).
+    path: 'marketing/newsletter',
+    title: `Newsletter subscribers — ${BRAND.adminName}`,
+    canActivate: [adminSessionGuard],
+    loadComponent: () =>
+      import('./pages/newsletter/newsletter-subscribers-page').then((m) => m.NewsletterSubscribersPage),
+  },
+  {
     // ADM-11 (W1-12). Like every other admin route the guard only asks for a session: the API is the
     // security boundary (doc 03 §3a), and a user without Categories.View is shown the refusal rather than
     // bounced from a page that then cannot explain itself.
