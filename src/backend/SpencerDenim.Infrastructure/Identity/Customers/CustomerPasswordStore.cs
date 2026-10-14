@@ -181,22 +181,28 @@ internal sealed class CustomerPasswordStore(
                 CustomerAccountTokens.LoginProvider,
                 CustomerAccountTokens.PasswordResetName);
 
-            if (CustomerAccountTokens.Verify(token, stored) is not { } redeemed
-                || redeemed.ExpiresAtUtc <= clock.UtcNow.UtcDateTime)
+            var verified = CustomerAccountTokens.Verify(token, stored);
+
+            if (verified is null)
             {
-                // An expired row is removed on the way past, so a spent credential does not sit in the
-                // table until something else happens to the account. The answer is the same either way:
-                // telling a holder that a token is "expired" rather than "wrong" tells them it was once
-                // real.
-                if (stored is not null)
-                {
-                    await SpendTokenAsync(userId, CustomerAccountTokens.PasswordResetName, stored, cancellationToken);
-                    await transaction.CommitAsync(cancellationToken);
-                }
-                else
-                {
-                    await transaction.RollbackAsync(cancellationToken);
-                }
+                // **The row is deliberately left alone**, for the reason
+                // `CustomerEmailConfirmationStore` records at length: removing it here would mean a stale
+                // link deletes the row holding the *live* token, so opening an old message kills the new
+                // one — and anyone holding any old link could invalidate a stranger's pending reset. A
+                // token that does not verify is not a token this account has.
+                await transaction.RollbackAsync(cancellationToken);
+                return (CustomerPasswordResetResult)new CustomerPasswordResetResult.InvalidToken();
+            }
+
+            var redeemed = verified.Value;
+
+            if (redeemed.ExpiresAtUtc <= clock.UtcNow.UtcDateTime)
+            {
+                // The verifier matched, so this is the account's own token: spending it keeps a dead
+                // credential out of the table. The reply is the same as for a wrong one — telling a
+                // holder that a token is "expired" rather than "wrong" tells them it was once real.
+                await SpendTokenAsync(userId, CustomerAccountTokens.PasswordResetName, stored, cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
 
                 return (CustomerPasswordResetResult)new CustomerPasswordResetResult.InvalidToken();
             }

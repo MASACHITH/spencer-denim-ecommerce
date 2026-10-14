@@ -88,19 +88,30 @@ internal sealed class CustomerEmailConfirmationStore(
                 CustomerAccountTokens.LoginProvider,
                 CustomerAccountTokens.EmailConfirmationName);
 
-            if (CustomerAccountTokens.Verify(token, stored) is not { } redeemed
-                || redeemed.ExpiresAtUtc <= clock.UtcNow.UtcDateTime
-                || redeemed.Subject is null)
+            var verified = CustomerAccountTokens.Verify(token, stored);
+
+            if (verified is null)
             {
-                if (stored is not null)
-                {
-                    await SpendTokenAsync(userId, stored, cancellationToken);
-                    await transaction.CommitAsync(cancellationToken);
-                }
-                else
-                {
-                    await transaction.RollbackAsync(cancellationToken);
-                }
+                // **The row is deliberately left alone.** An earlier version removed it here, and this
+                // test caught what that meant: a *stale* link — one the customer replaced by asking for
+                // a new one — would delete the row holding the **new** token, so opening the old message
+                // killed the live link. Worse, anyone holding any old link, or guessing at the shape of
+                // one, could invalidate a stranger's pending confirmation. A token that does not verify
+                // is not a token this account has, and nothing about it is ours to spend.
+                await transaction.RollbackAsync(cancellationToken);
+                return (CustomerEmailConfirmationResult)new CustomerEmailConfirmationResult.InvalidToken();
+            }
+
+            var redeemed = verified.Value;
+
+            if (redeemed.ExpiresAtUtc <= clock.UtcNow.UtcDateTime || redeemed.Subject is null)
+            {
+                // Here the verifier *did* match, so this is the account's own token and spending it is
+                // right: a dead credential should not sit in the table until something else happens to
+                // the account. The answer is the same as for a wrong token either way — saying "expired"
+                // rather than "wrong" would tell a holder it was once real.
+                await SpendTokenAsync(userId, stored, cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
 
                 return (CustomerEmailConfirmationResult)new CustomerEmailConfirmationResult.InvalidToken();
             }
