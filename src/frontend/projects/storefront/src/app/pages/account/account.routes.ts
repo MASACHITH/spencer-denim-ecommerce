@@ -39,12 +39,17 @@ import { customerSignedIn } from '../../core/account/signed-in.guard';
  * a page a shopper deliberately opened that bounces them elsewhere fights the back button, so it says
  * "you are already signed in as …" and offers the way on instead.
  *
- * ## One chunk, lazily
+ * ## Lazy, and `loadChildren` over eight top-level routes
  *
- * `loadChildren` rather than eight `loadComponent`s, because these eight pages share four of this task's
- * files ({@link AccountNotice}, {@link AccountNav}, the API client, the store) and splitting them into
- * eight chunks would either duplicate those or create a shared chunk every one of them waits on. Nobody
- * who is not signed in pays for any of it: the chunk is fetched when `/account` is first visited.
+ * `loadChildren` is here so the route *table* is one entry and one file rather than eight entries in
+ * `app.routes.ts`, and so `/account`'s redirect and the guard live beside the pages they govern.
+ *
+ * **It is not one bundle, and a first draft of this comment claimed it was.** The build splits per
+ * `loadComponent`, so each page is still its own chunk — measured on this machine: `addresses-page`
+ * 19.35 kB, `profile-page` 12.23 kB, `orders-page` 8.02 kB, `register-page` 6.57 kB, with the smaller
+ * forms folded into shared chunks. What they share — {@link AccountNotice}, {@link AccountNav}, the API
+ * client and the store — lands in a common chunk the first of them pulls in. Nobody who never opens
+ * `/account` downloads any of it, which was the point.
  */
 export const accountRoutes: Routes = [
   {

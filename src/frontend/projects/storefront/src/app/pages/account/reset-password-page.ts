@@ -103,7 +103,7 @@ import { privatePage } from '../../core/platform/private-page';
             />
             @if (messageFor('password'); as message) {
               <!-- The rule comes from the server, which is the thing that enforces it: see
-                   `CustomerPasswordPolicy`, whose own remarks say the front end must not hold a second
+                   'CustomerPasswordPolicy', whose own remarks say the front end must not hold a second
                    copy of the number. -->
               <p class="acc-error" id="rp-password-error">{{ message }}</p>
             }

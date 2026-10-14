@@ -123,7 +123,7 @@ import { privatePage } from '../../core/platform/private-page';
         </div>
 
         <div class="acc-actions">
-          <!-- `aria-disabled`, never `disabled`: see the class docblock and #109. -->
+          <!-- 'aria-disabled', never 'disabled': see the class docblock and #109. -->
           <button
             class="btn btn--primary"
             type="submit"
@@ -149,7 +149,7 @@ import { privatePage } from '../../core/platform/private-page';
   styles: `
     /* The one rule this page needs that the shared account stylesheet does not already give: the
        "New here?" line sits well below the form rather than looking like part of it. Everything else
-       is `.acc-*` in `storefront/src/styles.css`, which exists because eight account pages drawing
+       is '.acc-*' in 'storefront/src/styles.css', which exists because eight account pages drawing
        the same field from eight copies is how one of them ends up 36 px tall. */
     .acc__section {
       padding-top: var(--space-4);

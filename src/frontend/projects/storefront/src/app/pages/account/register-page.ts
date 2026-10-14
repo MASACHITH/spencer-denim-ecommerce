@@ -207,7 +207,7 @@ import { privatePage } from '../../core/platform/private-page';
             {{ busy() ? 'Creating…' : 'Create account' }}
           </button>
           <a class="link acc-inline-action" routerLink="/account/sign-in" data-testid="register-sign-in"
-            >I already have an account</a
+            >Sign in instead</a
           >
         </div>
       </form>

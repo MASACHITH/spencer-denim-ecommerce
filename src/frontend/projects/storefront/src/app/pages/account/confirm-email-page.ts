@@ -75,12 +75,12 @@ import { privatePage } from '../../core/platform/private-page';
           one from your profile.
         </p>
       } @else if (phase() === 'waiting') {
-        <!-- **The page gates on having an answer, not on `linked()` being empty.** The server cannot
+        <!-- **The page gates on having an answer, not on 'linked()' being empty.** The server cannot
              redeem the token, so its markup and the browser's first frame are this: a wait, not an
              outcome. Rendering the refusal branch here instead — which the first version of this
              template did, because "no linked orders yet" and "refused" are both falsy — would tell a
              shopper their own live link had failed, every time, for one frame and for the whole of the
-             server's response. That is the confident wrong value `wishlist-page.ts` records two red
+             server's response. That is the confident wrong value 'wishlist-page.ts' records two red
              branches having been built on. -->
         <p class="acc__lead" role="status" data-testid="confirm-email-working">
           Confirming your email address…
@@ -88,8 +88,8 @@ import { privatePage } from '../../core/platform/private-page';
       } @else if (phase() === 'confirmed') {
         @if (linked(); as orders) {
           @if (orders.length > 0) {
-          <!-- Doc 11 P11's own example, answered. A heading rather than a bare list, and `h2` because
-               the page's `h1` is above it: no level is skipped. -->
+          <!-- Doc 11 P11's own example, answered. A heading rather than a bare list, and 'h2' because
+               the page's 'h1' is above it: no level is skipped. -->
             <h2 class="acc__subtitle">
               {{
                 orders.length === 1

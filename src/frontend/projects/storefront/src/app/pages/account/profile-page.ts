@@ -201,7 +201,7 @@ import { privatePage } from '../../core/platform/private-page';
                 >
                   <!-- "No default" is also what a district the shop has **stopped serving** shows as:
                        the list offers only active districts, so an id that is not in it has no option
-                       to select, and a `<select>` with nothing selected shows its first option — which
+                       to select, and a '<select>' with nothing selected shows its first option — which
                        would read as the shopper having chosen a district they never chose. The stored id
                        is left alone until they save, and the server drops it then, which is what makes
                        the display and the stored value agree afterwards. -->
@@ -283,7 +283,7 @@ import { privatePage } from '../../core/platform/private-page';
               />
               @if (messageFor('newPassword'); as message) {
                 <!-- The rule is the server's, which is the thing that enforces it: see
-                     `CustomerPasswordPolicy`, whose own remarks say the front end must not keep a
+                     'CustomerPasswordPolicy', whose own remarks say the front end must not keep a
                      second copy of the number. -->
                 <p class="acc-error" id="pr-new-error">{{ message }}</p>
               }

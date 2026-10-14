@@ -106,7 +106,7 @@ import { privatePage } from '../../core/platform/private-page';
         <!-- The read failed and there is nothing in hand, so there is nothing true to draw. **Not the
              empty state**, which would tell a customer with thirty orders that they have none because
              the shop was briefly unreachable. The sentence is in the alert region above; this is the
-             way to try again. `wishlist-page.ts` makes the same distinction, and keeps the rows it
+             way to try again. 'wishlist-page.ts' makes the same distinction, and keeps the rows it
              already had — which the branch below does too, by not existing. -->
         <p class="acc-actions">
           <button class="btn btn--secondary" type="button" data-testid="orders-retry" (click)="retry()">
@@ -125,7 +125,7 @@ import { privatePage } from '../../core/platform/private-page';
           @for (order of orders(); track order.token) {
             <li class="acc-order" [attr.data-order]="order.orderNumber">
               <!-- A second link to the same place, taken out of the accessibility tree and out of the
-                   tab order — the shape `bag-page.ts` uses. A picture is a bigger target than a line of
+                   tab order — the shape 'bag-page.ts' uses. A picture is a bigger target than a line of
                    text on a telephone, and a screen reader hearing the same destination twice is noise. -->
               <a
                 class="acc-order__thumb"
@@ -163,8 +163,8 @@ import { privatePage } from '../../core/platform/private-page';
                   </div>
                   <div>
                     <dt>Status</dt>
-                    <!-- The server's own label, never `status` lower-cased: doc 11 P9's pickup variant
-                         reads `Shipped` as "Ready for collection". -->
+                    <!-- The server's own label, never 'status' lower-cased: doc 11 P9's pickup variant
+                         reads 'Shipped' as "Ready for collection". -->
                     <dd data-testid="order-status">{{ order.statusLabel }}</dd>
                   </div>
                   <div>
@@ -184,7 +184,7 @@ import { privatePage } from '../../core/platform/private-page';
                   <p class="acc-order__tracking" data-testid="order-tracking">
                     <span class="acc-order__courier">{{ tracking.courierName }}</span>
                     @if (tracking.trackingUrl; as url) {
-                      <!-- `rel="noopener noreferrer"` because the template this was built from is
+                      <!-- 'rel="noopener noreferrer"' because the template this was built from is
                            admin-editable (doc 08 §3.5), so the destination is not the shop's own; and
                            the new tab is announced, because WCAG 2.2 SC 3.2.5 asks for a warning rather
                            than a surprise. -->
@@ -210,19 +210,19 @@ import { privatePage } from '../../core/platform/private-page';
 
         @if (totalPages() > 1) {
           <nav class="acc-pager" aria-label="Order history pages">
-            <!-- Neither control is ever removed or `disabled`. See the class docblock. -->
+            <!-- Neither control is ever removed or 'disabled'. See the class docblock. -->
             <button
               class="btn btn--secondary"
               type="button"
-              [attr.aria-disabled]="page() <= 1 ? 'true' : null"
+              [attr.aria-disabled]="pageNumber() <= 1 ? 'true' : null"
               data-testid="orders-previous"
-              (click)="goTo(page() - 1)"
+              (click)="goTo(pageNumber() - 1)"
             >
               Previous
             </button>
 
             <p class="acc-pager__at" data-testid="orders-pager-at">
-              Page {{ page() }} of {{ totalPages() }}
+              Page {{ pageNumber() }} of {{ totalPages() }}
             </p>
 
             <button
@@ -230,7 +230,7 @@ import { privatePage } from '../../core/platform/private-page';
               type="button"
               [attr.aria-disabled]="hasMore() ? null : 'true'"
               data-testid="orders-next"
-              (click)="goTo(page() + 1)"
+              (click)="goTo(pageNumber() + 1)"
             >
               Next
             </button>
@@ -255,7 +255,7 @@ import { privatePage } from '../../core/platform/private-page';
     }
     /* The thumbnail beside the detail at every width, because a 72 px picture does not need a
        breakpoint to fit next to text at 320 px: 16 px gutter + 72 + 16 gap leaves 216 px, and the
-       facts list below wraps inside it. `minmax(0, 1fr)` is what keeps a long order number or a long
+       facts list below wraps inside it. 'minmax(0, 1fr)' is what keeps a long order number or a long
        courier name from pushing the row — and therefore the page — wider than the viewport. */
     .acc-order {
       display: grid;
@@ -281,7 +281,7 @@ import { privatePage } from '../../core/platform/private-page';
       min-width: 0;
     }
     /* Full tap height, because it is the row's primary control (GLB-09's 44 px floor), and
-       `overflow-wrap` because an order number is a long unbroken string. */
+       'overflow-wrap' because an order number is a long unbroken string. */
     .acc-order__number {
       display: inline-flex;
       align-items: center;
@@ -338,7 +338,7 @@ export class OrdersPage {
    * be a page number this component decides rather than a `NaN` it passes on. {@link page} is the
    * decision.
    */
-  readonly pageParam = input<string | undefined>(undefined, { alias: 'page' });
+  readonly page = input<string | undefined>();
 
   private readonly api = inject(AccountApi);
   private readonly router = inject(Router);
@@ -381,8 +381,8 @@ export class OrdersPage {
    * both are needed: this one decides what the controls say and what is asked for, the server's decides
    * what is answered.
    */
-  protected readonly page = computed(() => {
-    const raw = this.pageParam();
+  protected readonly pageNumber = computed(() => {
+    const raw = this.page();
     const parsed = Number(raw);
 
     return raw !== undefined && Number.isSafeInteger(parsed) && parsed >= 1 ? parsed : 1;
@@ -430,7 +430,7 @@ export class OrdersPage {
       // so it fires once on hydration and once per page change and never on an answer arriving.
       effect(() => {
         const ready = this.asked();
-        const page = this.page();
+        const page = this.pageNumber();
 
         untracked(() => {
           if (ready) {
@@ -476,7 +476,7 @@ export class OrdersPage {
    * where the shopper put it. `hasMore` is the server's own flag rather than arithmetic here.
    */
   protected goTo(page: number): void {
-    if (page < 1 || (page > this.page() && !this.hasMore())) {
+    if (page < 1 || (page > this.pageNumber() && !this.hasMore())) {
       return;
     }
 
@@ -522,6 +522,6 @@ export class OrdersPage {
 
   /** Asks again for the page the address bar names. The only control the failed state offers. */
   protected retry(): void {
-    this.read(this.page());
+    this.read(this.pageNumber());
   }
 }

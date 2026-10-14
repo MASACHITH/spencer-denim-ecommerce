@@ -1,9 +1,12 @@
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
+import { ApplicationRef } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { provideRouter } from '@angular/router';
+import { Router, provideRouter } from '@angular/router';
 
 import { SiteHeader } from './site-header';
+import { AccountApi } from '../../core/account/account-api';
+import { CustomerSessionDto } from '../../core/account/account.model';
 import { CartApi } from '../../core/cart/cart-api';
 import { CartDto } from '../../core/cart/cart.model';
 import { CartStore } from '../../core/cart/cart.store';
@@ -11,6 +14,21 @@ import { SiteSettingsDto } from '../../core/site-settings/site-settings.model';
 
 /** The honest default: the client has uploaded no logo and supplied no profile addresses (ADM-22). */
 const NO_SETTINGS: SiteSettingsDto = { logo: null, whatsAppNumber: null, social: [] };
+
+/**
+ * A signed-in customer, for the greeting and the sign-out control (W3-01, ACC-01).
+ *
+ * `emailConfirmed: true`, because confirmation has nothing to do with the header: doc 11 §7 G-24 lets an
+ * unconfirmed customer sign in, shop and check out, and the note about confirming lives on the account
+ * pages. A header that drew anything different for an unconfirmed customer would be inventing a gate.
+ */
+const CUSTOMER: CustomerSessionDto = {
+  userId: 7,
+  email: 'nimal@example.invalid',
+  firstName: 'Nimal',
+  lastName: 'Perera',
+  emailConfirmed: true,
+};
 
 const EMPTY_BAG: CartDto = {
   lines: [],
@@ -70,6 +88,7 @@ describe('SiteHeader shell (GLB-04, GLB-05)', () => {
    */
   async function rebuild(
     answerSettings: (http: HttpTestingController) => void,
+    session: CustomerSessionDto | null = null,
   ): Promise<HTMLElement> {
     TestBed.resetTestingModule();
     TestBed.configureTestingModule({
@@ -95,6 +114,7 @@ describe('SiteHeader shell (GLB-04, GLB-05)', () => {
     http.match((request) => request.url === '/api/catalog/departments').forEach((request) => request.flush([]));
     http.match((request) => request.url === CartApi.url && request.method === 'GET')
       .forEach((request) => request.flush(EMPTY_BAG));
+    flushSession(session);
     answerSettings(http);
 
     rebuilt.detectChanges();
@@ -115,7 +135,27 @@ describe('SiteHeader shell (GLB-04, GLB-05)', () => {
     http.match((request) => request.url === '/api/content/announcements').forEach((request) => request.flush([]));
     http.match((request) => request.url === '/api/catalog/departments').forEach((request) => request.flush([]));
     http.match((request) => request.url === '/api/site/settings').forEach((request) => request.flush(settings));
+    flushSession(null);
     flushBag(cart);
+  }
+
+  /**
+   * Answers the one session read the header makes on its own behalf (W3-01).
+   *
+   * **401 is the default, because it is the ordinary answer**: most visitors are not signed in, and
+   * `AccountStore` treats it as an answer rather than an error. `match` rather than `expectOne`, for the
+   * reason the shell's other reads use it: the request is made from `afterNextRender`, so a test that
+   * never renders does not make it, and a helper that insisted on one would fail those tests for the
+   * wrong reason.
+   */
+  function flushSession(session: CustomerSessionDto | null): void {
+    TestBed.inject(HttpTestingController)
+      .match((request) => request.url === `${AccountApi.url}/me`)
+      .forEach((request) =>
+        session === null
+          ? request.flush(null, { status: 401, statusText: 'Unauthorized' })
+          : request.flush(session),
+      );
   }
 
   /** Answers the bag read the header makes on its own behalf, if one is outstanding. */
@@ -408,6 +448,165 @@ describe('SiteHeader shell (GLB-04, GLB-05)', () => {
 
       expect(element.textContent).toContain('Bag, 1 item');
       expect(element.querySelector('.count')?.textContent?.trim()).toBe('1');
+    });
+  });
+
+  /**
+   * Who is signed in, in the shell (W3-01, ACC-01).
+   *
+   * The header is on every page of the shop, so this is also where the decision not to read the session
+   * on the server is visible: a first name rendered here would make the home page, every listing and
+   * every product page `no-store` with `Vary: Cookie`.
+   */
+  describe('the signed-in customer (W3-01)', () => {
+    function accountLink(root: HTMLElement = element): HTMLAnchorElement {
+      return root.querySelector('[data-testid="account-link"]') as HTMLAnchorElement;
+    }
+
+    it('reads the session once, and once only, however many times it renders', async () => {
+      // `beforeEach` has already rendered and answered. Three more renders must ask nothing more:
+      // `AccountStore.load` is single-flight, and the guard on an account route shares the same answer.
+      await settle();
+      await settle();
+      await settle();
+
+      expect(
+        TestBed.inject(HttpTestingController).match(
+          (request) => request.url === `${AccountApi.url}/me`,
+        ),
+      ).toEqual([]);
+    });
+
+    it('offers Account and no greeting while nobody is signed in', () => {
+      expect(accountLink().textContent?.trim()).toBe('Account');
+      expect(element.querySelector('[data-testid="account-greeting"]')).toBeNull();
+      expect(element.querySelector('[data-testid="sign-out"]')).toBeNull();
+    });
+
+    /**
+     * **The link's address does not change, and that is the point of the account routes' redirect.**
+     * `/account` serves a signed-in shopper their orders and sends a signed-out one to the sign-in form
+     * with `returnTo`, so this one anchor is correct in both states and the header does not have to know
+     * which it is in.
+     */
+    it('keeps the /account link whatever the session says', async () => {
+      expect(accountLink().getAttribute('href')).toBe('/account');
+
+      const signedIn = await rebuild(
+        (http) =>
+          http
+            .match((request) => request.url === '/api/site/settings')
+            .forEach((request) => request.flush(NO_SETTINGS)),
+        CUSTOMER,
+      );
+
+      expect(accountLink(signedIn).getAttribute('href')).toBe('/account');
+    });
+
+    it('greets the customer by name and offers Sign out once the session answers', async () => {
+      const signedIn = await rebuild(
+        (http) =>
+          http
+            .match((request) => request.url === '/api/site/settings')
+            .forEach((request) => request.flush(NO_SETTINGS)),
+        CUSTOMER,
+      );
+
+      expect(signedIn.querySelector('[data-testid="account-greeting"]')?.textContent?.trim()).toBe(
+        'Nimal',
+      );
+      expect(signedIn.querySelector('[data-testid="sign-out"]')).not.toBeNull();
+    });
+
+    /**
+     * The icon is the visible control, so the *name* a screen reader reads is the only place the account
+     * link can say who is signed in. "Account" told a screen-reader user nothing about that.
+     *
+     * The greeting beside it is `aria-hidden`, so the name is announced once rather than twice.
+     */
+    it('names the customer in the account link, and only once', async () => {
+      const signedIn = await rebuild(
+        (http) =>
+          http
+            .match((request) => request.url === '/api/site/settings')
+            .forEach((request) => request.flush(NO_SETTINGS)),
+        CUSTOMER,
+      );
+
+      expect(accountLink(signedIn).textContent).toContain('Your account, Nimal');
+      expect(
+        signedIn.querySelector('[data-testid="account-greeting"]')?.getAttribute('aria-hidden'),
+      ).toBe('true');
+    });
+
+    /**
+     * Doc 11 P11 step B.7: the cookie goes and **the browser's guest bag is not restored**. The bag was
+     * merged into the account bag at sign-in, so after signing out there is genuinely nothing in it —
+     * and the badge beside the button has to be told, which is what the re-read is for.
+     */
+    it('signs out, re-reads the bag and goes to the home page', async () => {
+      const signedIn = await rebuild(
+        (http) =>
+          http
+            .match((request) => request.url === '/api/site/settings')
+            .forEach((request) => request.flush(NO_SETTINGS)),
+        CUSTOMER,
+      );
+
+      (signedIn.querySelector('[data-testid="sign-out"]') as HTMLButtonElement).click();
+
+      const http = TestBed.inject(HttpTestingController);
+      http
+        .expectOne(
+          (request) => request.url === `${AccountApi.url}/logout` && request.method === 'POST',
+        )
+        .flush(null, { status: 204, statusText: 'No Content' });
+
+      // The bag is re-read on the way out.
+      http
+        .match((request) => request.url === CartApi.url && request.method === 'GET')
+        .forEach((request) => request.flush(EMPTY_BAG));
+
+      expect(TestBed.inject(Router).url).toBe('/');
+    });
+
+    /**
+     * **No `disabled` on the sign-out button** (#109): disabling the control that currently has focus
+     * throws focus to `<body>` and fires no `focusin`, so the press would throw the keyboard shopper's
+     * place away. The button is removed by its own success instead, which is the same defect by the
+     * other route — so focus is sent to the wordmark, the one control certainly on the page the shopper
+     * is about to be looking at.
+     */
+    it('leaves focus on a real control after the button that was pressed is destroyed', async () => {
+      const signedIn = await rebuild(
+        (http) =>
+          http
+            .match((request) => request.url === '/api/site/settings')
+            .forEach((request) => request.flush(NO_SETTINGS)),
+        CUSTOMER,
+      );
+
+      const button = signedIn.querySelector('[data-testid="sign-out"]') as HTMLButtonElement;
+      expect(button.hasAttribute('disabled')).toBe(false);
+
+      button.focus();
+      button.click();
+
+      const http = TestBed.inject(HttpTestingController);
+      http
+        .expectOne(
+          (request) => request.url === `${AccountApi.url}/logout` && request.method === 'POST',
+        )
+        .flush(null, { status: 204, statusText: 'No Content' });
+      http
+        .match((request) => request.url === CartApi.url && request.method === 'GET')
+        .forEach((request) => request.flush(EMPTY_BAG));
+
+      await TestBed.inject(ApplicationRef).whenStable();
+
+      expect(signedIn.querySelector('[data-testid="sign-out"]')).toBeNull();
+      expect(document.activeElement).toBe(signedIn.querySelector('[data-testid="wordmark"]'));
+      expect(document.activeElement).not.toBe(document.body);
     });
   });
 });

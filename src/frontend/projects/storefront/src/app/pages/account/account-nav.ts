@@ -74,10 +74,10 @@ import { AccountStore } from '../../core/account/account.store';
       </ul>
     </nav>
 
-    <!-- **No `role` on this one, and that is the deliberate opposite of `AccountNotice`.** It is a
+    <!-- **No 'role' on this one, and that is the deliberate opposite of 'AccountNotice'.** It is a
          standing condition of the account rather than something that just changed, so it is page
          content a screen reader reads in order — which also means it is exempt from the rule that a
-         live region must exist before its text does, instead of pretending to keep it with an `@if`
+         live region must exist before its text does, instead of pretending to keep it with an '@if'
          that creates the node and its sentence in the same update. Making it a live region would also
          re-announce the same sentence on each of the three account pages. -->
     @if (needsConfirmation()) {

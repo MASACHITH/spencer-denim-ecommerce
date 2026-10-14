@@ -323,40 +323,58 @@ export function addressLimitOf(error: unknown): number | null {
 }
 
 /**
+ * The problem `code`s the API sets deliberately, and therefore the ones whose `detail` is a sentence
+ * written for a shopper.
+ *
+ * **The gate is the `code` and not the presence of `detail`.** ASP.NET's own problem details carry a
+ * `detail` for an unhandled 500 ("An error occurred while processing your request.") and a reverse proxy
+ * can put anything in a body, so trusting every `detail` would eventually print infrastructure prose at a
+ * shopper. These six are set by `CustomerAuthEndpoints` and `CustomerAccountEndpoints` next to the
+ * sentence they are paired with.
+ */
+const SERVER_WORDED_CODES: readonly string[] = [
+  'invalid_link',
+  'invalid_credentials',
+  'locked_out',
+  'rate_limited',
+  'address_limit_reached',
+  'address_not_found',
+];
+
+/**
  * A sentence for the shopper.
  *
- * **Three of these come from the server and are passed through.** A 400's field message, a spent link's
- * refusal and a lockout's detail are all written on the server, where the reason is known, and the server
- * has already been careful about two things this function must not undo: it never reveals whether an
- * address has an account, and it never promises an email. Everything else gets a fixed sentence here: no
- * status codes and no stack traces in front of a shopper.
+ * **Where the server wrote one, it is passed through.** A 400's field message and the six refusals in
+ * {@link SERVER_WORDED_CODES} are written on the server, where the reason is known, and the server has
+ * already been careful about two things this function must not undo: it never reveals whether an address
+ * has an account, and it never promises an email. Writing a second sentence here would be a second,
+ * vaguer account of the same refusal, and the brief is explicit — pass the server's wording through
+ * rather than inventing one where it gives you one.
  *
- * `signedOut` is the one that reads oddly out of context and is right in it: a shopper whose session
- * expired while they were on the addresses page has done nothing wrong, so it says what happened and what
- * to do rather than refusing them.
+ * Everything else gets a fixed sentence from {@link FALLBACKS}: no status codes and no stack traces in
+ * front of a shopper. `signedOut` is the one that reads oddly out of context and is right in it — a
+ * shopper whose session expired while they were on the addresses page has done nothing wrong, so it says
+ * what happened and what to do rather than refusing them.
  */
 export function accountErrorMessage(error: unknown): string {
   const failure = accountFailure(error);
   const body = problemBody(error);
 
-  switch (failure) {
-    case 'invalid': {
-      const first = fieldErrorsOf(error).values().next();
-      return first.done ? 'Please check the details above and try again.' : first.value;
-    }
+  if (failure === 'invalid') {
+    const first = fieldErrorsOf(error).values().next();
 
-    case 'invalidLink':
-    case 'lockedOut':
-    case 'rateLimited':
-    case 'addressLimit':
-      // The server's own `detail`. These four are the cases where it carries the reason — a spent link,
-      // a lock that clears by itself, a budget that refills, the cap and what to do about it — and a
-      // sentence written here instead would be a second, vaguer account of the same refusal.
-      return body?.detail ?? FALLBACKS[failure];
-
-    default:
-      return FALLBACKS[failure];
+    return first.done ? FALLBACKS.invalid : first.value;
   }
+
+  const code = body?.code;
+  const detail = body?.detail;
+
+  return typeof detail === 'string' &&
+    detail.trim().length > 0 &&
+    typeof code === 'string' &&
+    SERVER_WORDED_CODES.includes(code)
+    ? detail
+    : FALLBACKS[failure];
 }
 
 /**

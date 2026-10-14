@@ -145,7 +145,7 @@ const EMPTY_DRAFT: AddressDraft = {
             class="btn btn--secondary"
             type="button"
             data-testid="addresses-retry"
-            (click)="read()"
+            (click)="retry()"
           >
             Try again
           </button>
@@ -194,16 +194,16 @@ const EMPTY_DRAFT: AddressDraft = {
                 }
 
                 @if (confirmingId() === address.id) {
-                  <!-- Inline rather than `window.confirm`, which cannot be styled, is announced badly
+                  <!-- Inline rather than 'window.confirm', which cannot be styled, is announced badly
                        and does not exist during a server render. It names the address, because "Remove
                        this address?" in a book of ten is not a question anybody can answer.
 
-                       **No `role` on it, and that is deliberate.** This row replaces the row holding
+                       **No 'role' on it, and that is deliberate.** This row replaces the row holding
                        the Remove button that was just pressed, so that button is destroyed — which
-                       throws focus to `<body>` exactly as `[disabled]` does. Focus is moved into "Yes,
+                       throws focus to '<body>' exactly as '[disabled]' does. Focus is moved into "Yes,
                        remove it" instead, which announces the question by reading it, and a live region
                        created in the same update as its own text is the thing that does not get
-                       announced. `wishlist-page.ts` makes the same two-step confirmation and does not
+                       announced. 'wishlist-page.ts' makes the same two-step confirmation and does not
                        move focus on the asking step; this does. -->
                   <p class="acc-card__actions">
                     <span>{{ removeQuestion(address) }}</span>
@@ -669,10 +669,23 @@ export class AddressesPage {
     }
   }
 
-  /** Reads the book. The only control the failed state offers, so it is callable from the template. */
-  protected read(): void {
+  /**
+   * Asks for the book again after a failed read, and clears the reason first.
+   *
+   * **Separate from {@link read} because {@link read} must not clear the message.** Two write paths
+   * re-read the book precisely *because* they failed — a 409 means another tab filled it, a 404 means
+   * the address had already gone — and the first version of this file called `read()` from both, which
+   * cleared the sentence it had just set and left the shopper with an empty alert region and no
+   * explanation. Caught by `addresses-page.spec.ts`; the two tests that found it are the ones about the
+   * cap being hit mid-form and about removing an address that had already gone.
+   */
+  protected retry(): void {
     this.failure.set(null);
+    this.read();
+  }
 
+  /** Reads the book. It does **not** touch {@link failure} — see {@link retry}. */
+  private read(): void {
     this.api.addresses().subscribe({
       next: (book) => {
         this.addresses.set(book);
