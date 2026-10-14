@@ -21,10 +21,15 @@ namespace SpencerDenim.IntegrationTests.Api.Accounts;
 /// wide — and that PR is open, not merged, so the customer side has its own atomic counting
 /// (<c>CustomerAccountLockout</c>) and its own tests here.
 /// <para>
-/// <b>Every test in this file fails against the obvious implementation</b>, which is the only reason it
-/// is worth having. The task report records which mutation killed which: reverting
-/// <c>RecordFailureAsync</c> to a read-then-write, and removing the post-verification
-/// <c>IsStillUnlockedAsync</c> check from the success branch.
+/// <b>Not every test here can fail, and the tester pass measured which.</b> Removing the
+/// post-verification <c>IsStillUnlockedAsync</c> check is killed by
+/// <c>A_correct_password_is_refused_if_the_account_locks_while_it_is_being_verified</c>. Reverting
+/// <c>RecordFailureAsync</c> to a read-then-write is <b>not</b> killed by anything in this file — only by
+/// <c>CustomerLockoutConcurrencyTests</c>. The reason is not that these requests fail to overlap: with a
+/// 30 ms delay injected at the counter statement, 24 HTTP sign-ins had 20 in flight at once. It is that
+/// thirty attempts against a threshold of five reach the threshold even when increments are lost, so the
+/// end state asserted here is the same either way. Treat the HTTP tests as end-to-end checks of the
+/// lockout reply, and the store-level tests as the atomicity proof.
 /// </para>
 /// <para>
 /// <b>Separate <see cref="HttpClient"/> instances, not one client sending in parallel.</b> A shared
