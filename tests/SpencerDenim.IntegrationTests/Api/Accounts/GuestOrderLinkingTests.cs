@@ -150,13 +150,24 @@ public sealed class GuestOrderLinkingTests(SqlServerDatabaseFixture sqlServer)
     }
 
     /// <summary>
-    /// Doc 08 §3.1 D5 names <c>EmailNormalized</c>, and that is what makes a differently-cased address
-    /// the same person.
+    /// A shopper who checked out with one casing and registered with another is one person, and their
+    /// orders link.
     /// </summary>
     /// <remarks>
-    /// <b>A shopper who checked out as <c>Nimal.Perera@…</c> and registered as <c>nimal.perera@…</c> is one
-    /// person</b>, and matching the display column would silently not link their orders — the exact defect
-    /// this feature exists to prevent, wearing a different hat.
+    /// <b>What this proves, and what it does not.</b> It proves the behaviour: a guest order placed as
+    /// <c>NIMAL.PERERA@…</c> links to an account registered as <c>nimal.perera@…</c>. It does <b>not</b>
+    /// prove that D5 reads <c>EmailNormalized</c> rather than <c>Email</c> — the mutation that swaps the
+    /// two columns leaves this test green, and that is not a weakness in the test but a fact about the
+    /// database: the collation is <c>Latin1_General_100_CI_AS_SC</c> (<c>SqlServerDatabaseFixture</c>,
+    /// doc 08 §1.1), so <c>=</c> is case-insensitive and the two columns answer identically for any value
+    /// that differs only in case. Checked by running that mutation: 14/14 still passed.
+    /// <para>
+    /// <b>The column choice is still right and is still doc 08 §3.1 D5's own</b>, because it does not
+    /// depend on a collation nobody will remember is case-insensitive: <c>EmailNormalized</c> is upper
+    /// case by construction, so the comparison is correct under any collation the database might later be
+    /// restored with. That is an argument, not a test, and this remark is where it is written down rather
+    /// than claimed as coverage.
+    /// </para>
     /// </remarks>
     [Fact]
     public async Task A_differently_cased_address_is_the_same_address()

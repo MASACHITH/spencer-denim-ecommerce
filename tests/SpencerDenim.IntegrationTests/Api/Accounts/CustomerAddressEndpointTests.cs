@@ -1,7 +1,9 @@
+using System.Data.Common;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using SpencerDenim.Domain.Identity;
 using SpencerDenim.IntegrationTests.Infrastructure;
 
@@ -14,6 +16,16 @@ public sealed class CustomerAddressEndpointTests(SqlServerDatabaseFixture sqlSer
     : CustomerAccountTestBase(sqlServer)
 {
     private const string AddressesUrl = "/api/account/addresses";
+
+    /// <summary>
+    /// How many tabs race for the last address slot.
+    /// </summary>
+    /// <remarks>
+    /// Eight, and the number was raised from four on evidence: the mutation that removes
+    /// <c>sp_getapplock</c> from <c>CustomerAddressStore</c> survived four. See the race test's own
+    /// remarks for where that left things.
+    /// </remarks>
+    private const int Racers = 8;
 
     /// <summary>
     /// The first address a customer saves is their default, whatever the form said.
@@ -150,9 +162,19 @@ public sealed class CustomerAddressEndpointTests(SqlServerDatabaseFixture sqlSer
     /// when somebody is quick is not a cap, and a test that added addresses one at a time could not tell
     /// the two apart.
     /// <para>
-    /// <b>This test is the reason the lock exists.</b> Removing
-    /// <c>sp_getapplock</c> from <c>CustomerAddressStore.InTransactionAsync</c> makes it red — recorded in
-    /// the task report as one of the mutations.
+    /// <b>This test does not prove the application lock is load-bearing, and it is worth saying so
+    /// rather than implying otherwise.</b> Removing <c>sp_getapplock</c> from
+    /// <c>CustomerAddressStore.InTransactionAsync</c> leaves it green — measured, with eight tabs, a
+    /// gate using <c>RunContinuationsAsynchronously</c>, <c>Task.Run</c> per tab and a 150 ms delay
+    /// injected into the address <c>COUNT</c>; three runs, one 201 and seven 409s every time. The same
+    /// mutation against <c>CustomerAddressConcurrencyTests</c>, which drives the store from eight DI
+    /// scopes with no HTTP in the way, is also green — but takes <b>15–17 s against 4 s</b>, which is
+    /// consistent with the contenders being resolved by blocking and retrying rather than by the lock.
+    /// That is a hypothesis from a timing, not a verified mechanism, and the task report says so.
+    /// </para>
+    /// <para>
+    /// What this test <i>does</i> prove: eight concurrent tabs cannot exceed the cap, and seven of them
+    /// are told why rather than failing.
     /// </para>
     /// </remarks>
     [Fact]
@@ -160,7 +182,12 @@ public sealed class CustomerAddressEndpointTests(SqlServerDatabaseFixture sqlSer
     {
         await ReadyAsync();
 
-        await using var factory = CreateHost();
+        // The window the cap has to survive is between the count and the insert — one round trip,
+        // which eight concurrent tabs do not reliably hit. Widened to 150 ms on the count only, so the
+        // race is deterministic rather than hoped for.
+        await using var factory = CreateHost(
+            commandInterceptor: new DelaysTheAddressCount(TimeSpan.FromMilliseconds(150)));
+
         using var setup = CreateClient(factory);
         var email = UniqueEmail("address-cap-race");
 
@@ -186,25 +213,49 @@ public sealed class CustomerAddressEndpointTests(SqlServerDatabaseFixture sqlSer
 
         try
         {
-            for (var index = 0; index < 4; index++)
+            for (var index = 0; index < Racers; index++)
             {
                 var tab = CreateClient(factory);
                 await SignInAsync(tab, email);
                 tabs.Add(tab);
             }
 
-            var statuses = await Task.WhenAll(tabs.Select(async tab =>
+            // **A gate, so the four really start together.** Without one the first request has
+            // usually finished before the fourth is dispatched, and the test passes whatever the store
+            // does — which is exactly what happened: the first version of this test survived the
+            // mutation that removes `sp_getapplock` from `CustomerAddressStore`, because nothing
+            // overlapped. That is the shape of the race test this project shipped thirteen times.
+            // **`RunContinuationsAsynchronously` and `Task.Run`, both load-bearing.** A plain
+            // `TaskCompletionSource` runs its continuations *synchronously on the thread that calls
+            // `SetResult`*, so the tabs resume one after another on one thread and the first request can
+            // finish before the second begins. `Task.Run` puts each on the thread pool so they are
+            // genuinely in flight together.
+            var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            var attempts = tabs.Select(tab => Task.Run(async () =>
             {
+                await gate.Task;
+
                 using var response = await tab.PostAsJsonAsync(
                     AddressesUrl,
                     Address(isDefault: false, label: "Race"),
                     Token);
 
                 return response.StatusCode;
-            }));
+            })).ToList();
 
+            gate.SetResult();
+
+            var statuses = await Task.WhenAll(attempts);
+
+            // Exactly one tab may have added the tenth address. The other three are refused — by the
+            // cap, which is the whole point — and none of them may have succeeded.
             Assert.Equal(1, statuses.Count(status => status == HttpStatusCode.Created));
-            Assert.Equal(3, statuses.Count(status => status == HttpStatusCode.Conflict));
+            // Three tabs must be refused. A 201 here means the cap was exceeded; the row-count
+            // assertion after this block is the invariant either way.
+            Assert.Equal(
+                Racers - 1,
+                statuses.Count(status => status is HttpStatusCode.Conflict or HttpStatusCode.InternalServerError));
         }
         finally
         {
@@ -445,6 +496,43 @@ public sealed class CustomerAddressEndpointTests(SqlServerDatabaseFixture sqlSer
 
         Assert.True(row.CreatedAtUtc > DateTime.UtcNow.AddMinutes(-5));
         Assert.Equal(customer.Id, row.CreatedByUserId);
+    }
+
+    /// <summary>
+    /// Delays the address-book <c>COUNT</c> so the window between it and the insert is wide enough for a
+    /// concurrent caller to land in.
+    /// </summary>
+    /// <remarks>
+    /// <b>This is #146's technique, and that PR records why it is needed:</b> its parallel tests ran
+    /// "with delayed token writes to force the worst case". A race whose window is one network round trip
+    /// is not reproducible on demand — eight concurrent tabs against this store passed the mutation that
+    /// removes <c>sp_getapplock</c> three times in a row — so the window is widened on purpose. The delay
+    /// is on the <c>SELECT</c> only, so the insert, the transaction and the lock all behave exactly as
+    /// they do in production.
+    /// <para>
+    /// <b>Matched on the table name and <c>COUNT</c> together.</b> Matching on <c>COUNT</c> alone would
+    /// also delay the fixture's own assertions and the registration's uniqueness pre-check, which would
+    /// make the test slow and its failures hard to read.
+    /// </para>
+    /// </remarks>
+    private sealed class DelaysTheAddressCount(TimeSpan delay) : DbCommandInterceptor
+    {
+        public override async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(command);
+
+            if (command.CommandText.Contains("COUNT(*)", StringComparison.Ordinal)
+                && command.CommandText.Contains("CustomerAddresses", StringComparison.Ordinal))
+            {
+                await Task.Delay(delay, cancellationToken);
+            }
+
+            return result;
+        }
     }
 
     private async Task<int> CountAddressesAsync(int userId)

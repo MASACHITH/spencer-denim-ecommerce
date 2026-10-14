@@ -2,6 +2,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using SpencerDenim.Domain.Identity;
@@ -71,9 +72,16 @@ public abstract class CustomerAccountTestBase(SqlServerDatabaseFixture sqlServer
     /// replaces the password hasher with one that locks the account mid-verification, which is the only
     /// deterministic way to reach the post-verification lockout guard.
     /// </param>
+    /// <param name="commandInterceptor">
+    /// An EF command interceptor — how the address-cap race widens the window between the count and the
+    /// insert so that eight concurrent tabs really do overlap. #146's own tests do the same thing
+    /// ("with delayed token writes to force the worst case"); without it the window is one round trip
+    /// and the race is not reliably reproducible at all.
+    /// </param>
     protected ApiFactory CreateHost(
         IReadOnlyDictionary<string, string?>? extra = null,
-        Action<IServiceCollection>? configureServices = null)
+        Action<IServiceCollection>? configureServices = null,
+        DbCommandInterceptor? commandInterceptor = null)
     {
         var configuration = new Dictionary<string, string?>(StringComparer.Ordinal)
         {
@@ -91,6 +99,7 @@ public abstract class CustomerAccountTestBase(SqlServerDatabaseFixture sqlServer
         return new ApiFactory(
             SqlServer.ConnectionString,
             additionalConfiguration: configuration,
+            commandInterceptor: commandInterceptor,
             configureServices: configureServices);
     }
 
