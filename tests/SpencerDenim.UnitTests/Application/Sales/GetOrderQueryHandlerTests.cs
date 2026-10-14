@@ -3,6 +3,7 @@ using SpencerDenim.Application.Sales.Checkout.Abstractions;
 using SpencerDenim.Application.Sales.Checkout.Contracts;
 using SpencerDenim.Application.Sales.Payments.Abstractions;
 using SpencerDenim.Application.Sales.Payments.Contracts;
+using SpencerDenim.Domain.Marketing;
 using SpencerDenim.Domain.Sales;
 using SpencerDenim.UnitTests.Support;
 
@@ -180,6 +181,10 @@ public sealed class GetOrderQueryHandlerTests
 
         public Task<OrderConfirmationDto?> FindOrderByCheckoutKeyAsync(
             Guid checkoutIdempotencyKey,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<PromoCodeTerms?> FindPromoCodeAsync(
+            string normalisedCode,
             CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 
