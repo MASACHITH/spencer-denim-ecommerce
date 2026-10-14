@@ -32,6 +32,7 @@ using SpencerDenim.Infrastructure.Media;
 using SpencerDenim.Infrastructure.Ops.Email;
 using SpencerDenim.Infrastructure.Health;
 using SpencerDenim.Infrastructure.Identity;
+using SpencerDenim.Infrastructure.Identity.Customers;
 using SpencerDenim.Infrastructure.Persistence;
 using SpencerDenim.Infrastructure.Persistence.Interceptors;
 using SpencerDenim.Infrastructure.Persistence.Seeding;
@@ -389,6 +390,11 @@ public static class DependencyInjection
                 tags: [HealthCheckTags.Ready]);
 
         services.AddAdminIdentity();
+
+        // ACC-01 / ACC-02 (W3-01): the second cookie scheme doc 08 §3.1 DB10 asks for, and the customer
+        // account use cases behind it. **After** AddAdminIdentity, because that call establishes the
+        // Identity core services both share (one store, doc 08 D7) and names the default scheme.
+        services.AddCustomerIdentity();
 
         return services;
     }
