@@ -295,11 +295,11 @@ only that the 55 nearest to it do, and that nothing in the 242 failed for a reas
 | File | Tests |
 |---|---|
 | `Identity/CustomerAddressSchemaTests` | 6 |
-| `Api/Accounts/CustomerAuthEndpointTests` | 35 (34 measured + the one added after) |
-| `Api/Accounts/GuestOrderLinkingTests` | 15 (14 measured + one) |
+| `Api/Accounts/CustomerAuthEndpointTests` | 35 |
+| `Api/Accounts/GuestOrderLinkingTests` | 15 |
 | `Api/Accounts/CustomerPasswordEndpointTests` | 12 |
 | `Api/Accounts/CustomerAddressEndpointTests` | 10 |
-| `Api/Accounts/CustomerOrderHistoryTests` | 14 (13 measured + one) |
+| `Api/Accounts/CustomerOrderHistoryTests` | 14 |
 | `Api/Accounts/CustomerSignInRaceTests` | 5 |
 | `Api/Accounts/CustomerLockoutConcurrencyTests` | 3 |
 | `Api/Accounts/CustomerAddressConcurrencyTests` | 1 |
@@ -308,11 +308,14 @@ only that the 55 nearest to it do, and that nothing in the 242 failed for a reas
 | `UnitTests/.../CustomerAccountValidatorTests` | 27 |
 | `UnitTests/Architecture/CustomerPasswordHintConventionTests` | 5 |
 
-The three files marked "+ one" were measured at the figure shown in brackets and then gained
-exactly one test each, which were run together and passed (3/3). **That is a measured base plus a
-measured addition, not a count from arithmetic** — the brief notes that a count from arithmetic has
-been wrong five times on this project, and the unit figures above were each obtained by running that
-one file and reading the number off.
+**`Api.Accounts` as one filter: 95/95, measured, 2 m 45 s.** Plus `CustomerAddressSchemaTests` 6/6, which
+is in the `Identity` namespace. So **101 new integration tests**, and the per-file figures above add to
+that — which is the check worth making, because this project's own history has a count from arithmetic
+being wrong five times.
+
+Every figure above was obtained by running that one file (or that one filter) and reading the number off,
+never by counting `[Fact]` attributes. 35 + 15 + 12 + 10 + 14 + 5 + 3 + 1 = 95, which is what the
+`Api.Accounts` filter reports — so the parts and the whole agree.
 
 ### The HTTP race tests could not fail, and that is worth recording
 
