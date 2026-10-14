@@ -212,11 +212,26 @@ public sealed class SettingKeySpecificationTests
             Assert.Equal(expected, definition.SeedValue);
         }
 
-        // One today, and the test says which, so a second one arriving is a decision somebody made rather
-        // than a line that slipped in.
+        // Eight today, and the test says which, so another one arriving is a decision somebody made rather
+        // than a line that slipped in. The seven PayPal keys came with W4-01: each is a figure doc 08 §3.8
+        // and §9 state outright (Mode = sandbox, 3.00, 7, 3, 24, 5 and 60), and the loop above has just
+        // compared every one with the document. The credentials, the webhook id and the exchange rate are
+        // deliberately not here - the document gives them no default, so they stay empty.
+        string[] expectedSeeded =
+        [
+            SettingKeys.Orders.AutoDeliverAfterDays,
+            SettingKeys.PayPal.Mode,
+            SettingKeys.PayPal.FxBufferPercent,
+            SettingKeys.PayPal.RateMaxAgeDays,
+            SettingKeys.PayPal.CaptureLockHours,
+            SettingKeys.PayPal.CaptureRecoveryMaxHours,
+            SettingKeys.PayPal.PendingCaptureMaxDays,
+            SettingKeys.PayPal.ExpiryMinutes,
+        ];
+
         Assert.Equal(
-            [SettingKeys.Orders.AutoDeliverAfterDays],
-            seededWithAValue.Select(definition => definition.Key).ToList());
+            expectedSeeded.Order(StringComparer.Ordinal),
+            seededWithAValue.Select(definition => definition.Key).Order(StringComparer.Ordinal));
     }
 
     /// <summary>
@@ -369,7 +384,9 @@ public sealed class SettingKeySpecificationTests
             foreach (var match in Regex
                 .Matches(
                     cells[1],
-                    @"(?<name>[A-Za-z][A-Za-z0-9]*)\s*\((?<value>-?\d+(?:\.\d+)?|true|false)\)",
+                    // `sandbox` is spelled out rather than matching any word: the same cells carry
+                    // annotations such as `ClientSecret (secret)`, which is a marker and not a default.
+                    @"(?<name>[A-Za-z][A-Za-z0-9]*)\s*\((?<value>-?\d+(?:\.\d+)?|true|false|sandbox)\)",
                     RegexOptions.None,
                     TimeSpan.FromSeconds(5))
                 .Cast<Match>())

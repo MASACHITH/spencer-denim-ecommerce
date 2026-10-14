@@ -4,8 +4,10 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
 using SpencerDenim.Application.Abstractions.Time;
+using SpencerDenim.Application.Ops.Email;
 using SpencerDenim.Application.Sales.Payments.Abstractions;
 using SpencerDenim.Application.Sales.Payments.Contracts;
+using SpencerDenim.Application.Sales.Payments.PayPal;
 using SpencerDenim.Domain.Sales;
 using SpencerDenim.Infrastructure.Persistence.Seeding;
 using SpencerDenim.Infrastructure.Sales.Payments;
@@ -521,6 +523,25 @@ public sealed class PaymentProviderContractTests
             return new FixedClock(new DateTimeOffset(2026, 10, 6, 9, 0, 0, TimeSpan.Zero));
         }
 
+        // PayPal (W4-01). **Configured, with a fresh rate**, because the contract asks every provider to open
+        // a payment: an unconfigured PayPal correctly refuses to (it is not offered at checkout), and the
+        // contract is about a provider that is. The store is the same kind of stub as the others: it knows no
+        // orders, and refuses to move anything.
+        if (type == typeof(IPayPalSettingsReader))
+        {
+            return new ConfiguredPayPal();
+        }
+
+        if (type == typeof(IPayPalPaymentStore))
+        {
+            return new NoPayPalOrders();
+        }
+
+        if (type == typeof(PayPalLinks))
+        {
+            return new PayPalLinks(new EmailOptions { StorefrontBaseUrl = "https://shop.example.test" });
+        }
+
         throw new NotSupportedException(
             $"A payment provider now depends on {type.Name}, which this contract test has no stub for. "
             + "Add one: the contract has to be provable without a database.");
@@ -578,6 +599,116 @@ public sealed class PaymentProviderContractTests
 
         public Task<bool> LinkAsync(long eventId, int? paymentId, int? orderId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+    }
+
+    /// <summary>PayPal as a Super Admin leaves it when it is ready: credentials, webhook id and yesterday's rate.</summary>
+    private sealed class ConfiguredPayPal : IPayPalSettingsReader
+    {
+        public Task<PayPalSettings> ReadAsync(CancellationToken cancellationToken) =>
+            Task.FromResult(new PayPalSettings
+            {
+                ClientId = "client-id",
+                ClientSecret = "client-secret",
+                WebhookId = "webhook-id",
+                LkrPerUsd = 300m,
+                RateUpdatedAtUtc = new DateTime(2026, 10, 5, 9, 0, 0, DateTimeKind.Utc),
+            });
+    }
+
+    /// <summary>A shop with no PayPal orders: every question gets "none", and nothing may be moved.</summary>
+    private sealed class NoPayPalOrders : IPayPalPaymentStore
+    {
+        public Task<PayPalOrderView?> FindOrderAsync(Guid orderPublicId, CancellationToken cancellationToken) =>
+            Task.FromResult<PayPalOrderView?>(null);
+
+        public Task<PayPalOrderView?> FindOrderByNumberAsync(string orderNumber, CancellationToken cancellationToken) =>
+            Task.FromResult<PayPalOrderView?>(null);
+
+        public Task<PayPalPaymentRef?> FindPaymentAsync(int paymentId, CancellationToken cancellationToken) =>
+            Task.FromResult<PayPalPaymentRef?>(null);
+
+        public Task<PayPalPaymentRef?> FindPaymentForEventAsync(
+            string? captureId,
+            string? paypalOrderId,
+            int? paymentIdFromCustomId,
+            CancellationToken cancellationToken) =>
+            Task.FromResult<PayPalPaymentRef?>(null);
+
+        public Task<OpenAttemptResult> OpenAttemptAsync(
+            int orderId,
+            PaymentInitiation? initiation,
+            DateTime nowUtc,
+            CancellationToken cancellationToken) => throw Refused();
+
+        public Task<bool> SetProviderReferenceAsync(
+            int paymentId,
+            string providerReference,
+            DateTime nowUtc,
+            CancellationToken cancellationToken) => throw Refused();
+
+        public Task<bool> CancelInitiatedAsync(
+            int orderId,
+            int paymentId,
+            DateTime nowUtc,
+            CancellationToken cancellationToken) => throw Refused();
+
+        public Task<ClaimResult> ClaimCaptureAsync(
+            int orderId,
+            int paymentId,
+            DateTime nowUtc,
+            TimeSpan lockFor,
+            CancellationToken cancellationToken) => throw Refused();
+
+        public Task<bool> ReleaseClaimAsync(
+            int orderId,
+            int paymentId,
+            DateTime nowUtc,
+            CancellationToken cancellationToken) => throw Refused();
+
+        public Task<PayPalMoveResult> RecordPendingAsync(
+            int orderId,
+            int paymentId,
+            string? captureId,
+            int pendingMaxDays,
+            DateTime nowUtc,
+            CancellationToken cancellationToken) => throw Refused();
+
+        public Task<PayPalMoveResult> RecordDeclinedAsync(
+            int orderId,
+            int paymentId,
+            string failureCode,
+            string? failureMessage,
+            int expiryMinutes,
+            DateTime nowUtc,
+            CancellationToken cancellationToken) => throw Refused();
+
+        public Task<PayPalMoveResult> RecordFailedAsync(
+            int orderId,
+            int paymentId,
+            string failureCode,
+            string? failureMessage,
+            DateTime nowUtc,
+            SpencerDenim.Domain.Ops.AdminAlert? alert,
+            CancellationToken cancellationToken) => throw Refused();
+
+        public Task<IReadOnlyList<CapturingPayment>> FindCapturingAsync(
+            DateTime startedBeforeUtc,
+            int take,
+            CancellationToken cancellationToken) => throw Refused();
+
+        public Task<bool> RecordRecoveryAttemptAsync(
+            int paymentId,
+            DateTime nowUtc,
+            CancellationToken cancellationToken) => throw Refused();
+
+        public Task<bool> ReclaimOrderLockAsync(
+            int orderId,
+            DateTime nowUtc,
+            TimeSpan lockFor,
+            CancellationToken cancellationToken) => throw Refused();
+
+        private static NotSupportedException Refused() =>
+            new("A provider's contract questions must not move a payment.");
     }
 
     private sealed class FixedClock(DateTimeOffset now) : IClock

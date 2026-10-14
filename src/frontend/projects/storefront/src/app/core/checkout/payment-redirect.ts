@@ -19,6 +19,13 @@ export type PaymentRedirect = { readonly amountLkr: number } & (
     }
   /** A real `<a href>`, followed in the same tab. */
   | { readonly kind: 'link'; readonly href: string }
+  /**
+   * An online provider with **nothing to click**: it sent no redirect, takes no slip, and has something to
+   * say - "your payment is being processed", "pending", "declined, try again later". The panel prints its
+   * notes and fields and offers no button. Distinct from `unavailable`, which is a redirect that was asked
+   * for and refused.
+   */
+  | { readonly kind: 'notice' }
   /** The server asked for a redirect that this page will not perform. Says so, and offers nothing to click. */
   | { readonly kind: 'unavailable' }
 );
@@ -107,12 +114,21 @@ export function paymentRedirect(how: OrderPaymentInstructionsDto): PaymentRedire
   const url = typeof how.redirectUrl === 'string' ? how.redirectUrl.trim() : '';
 
   if (url.length === 0) {
-    return null;
+    // No redirect at all. A bank transfer takes a slip and prints its details: the bank rendering. An online
+    // provider that takes no slip and has something to say - a payment that is pending, or being processed
+    // - is a notice, and printing "transfer to the account below" for it would tell a shopper something false.
+    return !how.acceptsProof && (hasText(how.notes) || how.fields.length > 0)
+      ? { amountLkr, kind: 'notice' }
+      : null;
   }
 
   const href = safeRedirectUrl(url);
 
   return href === null ? refused(how) : { amountLkr, kind: 'link', href };
+}
+
+function hasText(value: string | null | undefined): boolean {
+  return typeof value === 'string' && value.trim().length > 0;
 }
 
 function refused(how: OrderPaymentInstructionsDto): PaymentRedirect | null {

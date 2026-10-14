@@ -275,6 +275,10 @@ public static class SettingCatalog
             + "collected has not been delivered. Between 1 and 90 days.",
             SeedValue: SettingKeys.Orders.AutoDeliverAfterDaysDefault.ToString(
                 System.Globalization.CultureInfo.InvariantCulture)),
+
+        // Group Payments.PayPal (doc 08 §3.8, W4-01), and Orders.PayPalExpiryMinutes. Their own file, so the
+        // payment providers that follow add theirs beside these.
+        .. PayPalSettingDefinitions.All,
     ];
 
     /// <summary>
@@ -332,6 +336,12 @@ public static class SettingCatalog
         // they are guarded by a different permission from every other group — a save unit that spanned both
         // would hand a Settings.Edit holder a token covering rows they may not write.
         [SettingKeys.Bank.Group],
+
+        // PayPal's credentials, rate and timings: one form, one permission (Settings.Payments).
+        // Orders.PayPalExpiryMinutes is written by this form too but lives in the Orders group (doc 08 §3.8's
+        // name and permission for it, Settings.Edit), so it is covered by the Store-and-Orders token above
+        // and not by this one - a unit may not span two permissions.
+        [SettingKeys.PayPal.Group],
     ];
 
     /// <summary>
