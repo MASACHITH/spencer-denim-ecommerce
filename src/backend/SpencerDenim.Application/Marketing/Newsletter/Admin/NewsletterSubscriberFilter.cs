@@ -43,13 +43,17 @@ public sealed record NewsletterSubscriberFilter(
     /// <summary>
     /// The UTC instant the from-day starts at in Colombo (00:00 +05:30), or null.
     /// </summary>
-    public DateTime? FromUtc => ConsentFrom is { } day ? ColomboMidnightUtc(day) : null;
+    // The first and last representable days are open-ended rather than converted: Colombo midnight on
+    // 0001-01-01 is before DateTime.MinValue in UTC, and the day after 9999-12-31 does not exist — both
+    // threw and answered 500 (W3-07 tester). Every consent date lies inside them, so the result is the same.
+    public DateTime? FromUtc => ConsentFrom is { } day && day > DateOnly.MinValue ? ColomboMidnightUtc(day) : null;
 
     /// <summary>
     /// The UTC instant the day <b>after</b> the to-day starts at in Colombo — an exclusive upper bound, so
     /// the whole of the last day is included without guessing at its final millisecond.
     /// </summary>
-    public DateTime? ToUtcExclusive => ConsentTo is { } day ? ColomboMidnightUtc(day.AddDays(1)) : null;
+    public DateTime? ToUtcExclusive =>
+        ConsentTo is { } day && day < DateOnly.MaxValue ? ColomboMidnightUtc(day.AddDays(1)) : null;
 
     private static DateTime ColomboMidnightUtc(DateOnly day) =>
         new DateTimeOffset(day.ToDateTime(TimeOnly.MinValue), ColomboTime.Offset).UtcDateTime;

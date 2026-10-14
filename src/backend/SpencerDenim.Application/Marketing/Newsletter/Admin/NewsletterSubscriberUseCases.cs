@@ -31,7 +31,8 @@ public sealed class GetNewsletterSubscribersQueryHandler(INewsletterSubscriberRe
 
         return reader.ReadPageAsync(
             query.Filter,
-            Math.Max(1, query.Page ?? 1),
+            // Capped so (page - 1) * pageSize cannot wrap negative (see AdminCustomerPaging.MaxPage).
+            Math.Clamp(query.Page ?? 1, 1, int.MaxValue / MaxPageSize),
             Math.Clamp(query.PageSize ?? DefaultPageSize, 1, MaxPageSize),
             cancellationToken);
     }

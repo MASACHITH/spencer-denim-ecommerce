@@ -36,8 +36,15 @@ public static class AdminCustomerPaging
     /// </summary>
     public const int MaxPageSize = 100;
 
+    /// <summary>
+    /// The highest page honoured: <c>(page - 1) * pageSize</c> must fit an <c>int</c> at the largest page
+    /// size, or it wraps negative and SQL Server refuses the OFFSET (W3-07 tester: page=2147483647 with
+    /// pageSize=100 answered 500). Twenty-one million pages of a hundred is far past any real list.
+    /// </summary>
+    public const int MaxPage = int.MaxValue / MaxPageSize;
+
     public static (int Page, int PageSize) Clamp(int? page, int? pageSize) =>
-        (Math.Max(1, page ?? 1), Math.Clamp(pageSize ?? DefaultPageSize, 1, MaxPageSize));
+        (Math.Clamp(page ?? 1, 1, MaxPage), Math.Clamp(pageSize ?? DefaultPageSize, 1, MaxPageSize));
 }
 
 public sealed class GetAdminCustomersQueryHandler(IAdminCustomerReader reader)
