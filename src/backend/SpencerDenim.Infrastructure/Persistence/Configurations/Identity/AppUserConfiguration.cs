@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using SpencerDenim.Domain.Reference;
 using SpencerDenim.Infrastructure.Identity;
 
 namespace SpencerDenim.Infrastructure.Persistence.Configurations.Identity;
@@ -47,5 +48,25 @@ public sealed class AppUserConfiguration : IEntityTypeConfiguration<AppUser>
             .HasFilter("[NormalizedUserName] IS NOT NULL");
 
         builder.HasIndex(u => new { u.UserType, u.CreatedAtUtc }).HasDatabaseName("IX_Users_UserType_CreatedAtUtc");
+
+        // Doc 08 §3.1 gives `DefaultDistrictId` as "FK Districts", and until W3-01 the column had neither
+        // the constraint nor an index: there was no customer sign-in, so nothing could set or read it.
+        // `AppUser.DefaultDistrictId`'s own remark names this change as the one that owes both, "in the
+        // change that gives the column its first reader" — the account profile (doc 11 P11 step 10) is
+        // that reader, so both land here.
+        //
+        // The index is doc 08 §1.6's DB7 rule (every FK column leads at least one index) and nothing more:
+        // no screen asks "which customers default to Jaffna". It is the price of the constraint, which is
+        // worth paying — without it a profile save could store a district id that names no district, and
+        // the delivery estimate GLB-06 draws from it would then have no zone.
+        builder.HasIndex(u => u.DefaultDistrictId).HasDatabaseName("IX_Users_DefaultDistrictId");
+
+        // NO ACTION (doc 08 §1.6's default): a district is deactivated, never deleted, and a customer
+        // whose district the shop stops serving keeps their profile and simply gets no estimate.
+        builder
+            .HasOne<District>()
+            .WithMany()
+            .HasForeignKey(u => u.DefaultDistrictId)
+            .OnDelete(DeleteBehavior.NoAction);
     }
 }

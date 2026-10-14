@@ -148,13 +148,17 @@ public sealed class Order : IAuditable
     public decimal CampaignDiscountTotal { get; set; }
 
     /// <summary>
-    /// FK <c>marketing.PromoCodes</c> in doc 08 §3.5. <b>The column is here, the constraint is not</b>:
-    /// <c>marketing.PromoCodes</c> is ADM-13 and no migration has created it. <see cref="PromoCodeText"/>
-    /// is what the order displays either way.
+    /// FK <c>marketing.PromoCodes</c> in doc 08 §3.5, and a real constraint since W3-05 created the
+    /// table (ADM-13). Null for an order placed without a code, which is most of them.
+    /// <see cref="PromoCodeText"/> is what the order <i>displays</i> either way, because a code that is
+    /// later soft-deleted must still read back on the invoice (doc 08 §3.6 DB19).
     /// </summary>
     public int? PromoCodeId { get; set; }
 
-    /// <summary>The code as the customer typed it, kept even if the promo is later deleted.</summary>
+    /// <summary>
+    /// The code as it was matched, upper-cased, kept even if the promo is later deleted. It is the
+    /// snapshot every order screen and the invoice read, so a removed code still prints.
+    /// </summary>
     public string? PromoCodeText { get; set; }
 
     public decimal PromoDiscountAmount { get; set; }

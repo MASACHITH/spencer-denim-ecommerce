@@ -123,12 +123,21 @@ public sealed class AdminSeedHostedService(
     /// <summary>
     /// Doc 08 §9: "The seeder creates default roles and their claims only when the role doesn't exist. A later
     /// permission reaches default roles only through an explicit, idempotent, versioned seeder step (recorded
-    /// in the setting Seed.Version), never by overwriting admin edits." <c>ops.Settings</c> (where Seed.Version
-    /// would live) does not exist in this codebase yet (ADM-22, W3-07 — see <c>CatalogOptions</c>'s remarks), so
-    /// there is nothing to version against yet: this only ever creates a role that is missing by name, exactly
-    /// like <see cref="EnsureSuperAdminRoleAsync"/> above, and never touches one that already exists — so it can
-    /// never overwrite an admin's own edits to that role's claims. Adding the versioned upgrade path is a
-    /// follow-up once a default role's permission list needs to change after its first seed.
+    /// in the setting Seed.Version), never by overwriting admin edits." This half only ever creates a role that is
+    /// missing by name, exactly like <see cref="EnsureSuperAdminRoleAsync"/> above, and never touches one that
+    /// already exists — so it can never overwrite an admin's own edits to that role's claims. A role it creates
+    /// is created from the <b>whole current</b> definition, which is what makes every interleaving with the
+    /// versioned step safe.
+    /// <para>
+    /// <b>The versioned half now exists and is not here</b> (issue #122):
+    /// <c>SpencerDenim.Infrastructure.Identity.Seeding.DefaultRoleSeedUpgrader</c>, a step of
+    /// <c>CatalogSeedRunner.RunReferenceDataAsync</c>, applies the permissions added to a default role's
+    /// definition since a database's recorded <c>Seed.Version</c> and reports the rest by name. It is
+    /// deliberately outside this hosted service, because <c>Seed:Admin:Enabled</c> is turned off after go-live
+    /// and an upgrade step has to keep working. A new permission therefore belongs in
+    /// <see cref="DefaultRoleSeedVersions"/> as a new increment, never only in
+    /// <see cref="DefaultRoleDefinitions"/> and never in its frozen baseline.
+    /// </para>
     /// </summary>
     private static async Task EnsureDefaultRolesAsync(RoleManager<AppRole> roleManager)
     {

@@ -244,8 +244,9 @@ internal static class ContentEndpoints
         var command = new SubscribeToNewsletterCommand(
             request?.Email,
             ReadSource(request?.Source),
-            // The real socket peer. X-Forwarded-For processing is deliberately off (W1-01 round 3),
-            // so a caller cannot write someone else's address into the consent record.
+            // The visitor's address: the socket peer, corrected from X-Forwarded-For only when that
+            // peer is the trusted web gateway (ForwardedHeadersSetup, W0-15). A caller cannot write
+            // someone else's address into the consent record by sending the header themselves.
             httpContext.Connection.RemoteIpAddress?.ToString());
 
         var outcome = await handler.HandleAsync(command, cancellationToken);

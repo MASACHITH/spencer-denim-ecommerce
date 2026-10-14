@@ -1,6 +1,7 @@
 using SpencerDenim.Application.Abstractions.Auditing;
 using SpencerDenim.Application.Catalog.Admin;
 using SpencerDenim.Application.Catalog.Admin.Abstractions;
+using SpencerDenim.Application.Marketing.Promotions.Abstractions;
 using SpencerDenim.Domain.Auditing;
 using SpencerDenim.Domain.Catalog;
 
@@ -232,6 +233,56 @@ public sealed class CategoryWriteHandlerTests
         var row = Assert.Single(_audit.Enlisted);
         Assert.Contains("\"path\":\"/11/\"", row.AfterJson!, StringComparison.Ordinal);
         Assert.Contains("\"subtreeCategoriesRepathed\":2", row.AfterJson!, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// <b>A move recomputes the stored sale price of every product under the subtree it moved.</b>
+    /// </summary>
+    /// <remarks>
+    /// This is W3-05c's third item and a real defect before it. A campaign targeting a category with
+    /// <c>IncludeSubcategories</c> reaches products through <c>Categories.Path</c>, and a move rebases
+    /// <c>Path</c> for the whole subtree — so the live price (the bag, the checkout) changes at once while
+    /// <c>catalog.ProductStats</c> keeps the old figure until the campaign ends.
+    /// <c>RefreshCampaignPricing</c> does not correct it, because no boundary has moved.
+    /// <para>
+    /// The ids asserted are the subtree's, <b>including the category itself</b>: a campaign may target
+    /// Dresses directly, so moving Dresses changes what reaches Dresses' own products as well as Midi's.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task Moving_a_category_recomputes_the_stored_price_of_the_products_under_it()
+    {
+        var dresses = _store.Categories.Single(candidate => candidate.Id == 11);
+
+        _campaigns.ProductsUnderCategories.AddRange([41, 42]);
+
+        Assert.IsType<CatalogWriteResult.Succeeded>(
+            await Update(Edit(dresses) with { ParentCategoryId = null }));
+
+        // Dresses and Midi — the whole subtree the move re-paths.
+        Assert.Equal([11, 12], _campaigns.AskedAboutCategories.Order().ToList());
+        Assert.Equal([41, 42], _campaigns.Refreshed.Order().ToList());
+    }
+
+    /// <summary>
+    /// <b>An edit that is not a move asks for nothing</b>, which is the half that keeps this cheap.
+    /// </summary>
+    /// <remarks>
+    /// A rename, a re-slug, a reorder and switching a category off all leave every <c>Path</c> alone, and
+    /// no campaign predicate reads a category's <c>IsActive</c> — so there is nothing for the recompute to
+    /// put right. Asserted rather than assumed: a handler that refreshed on every edit would run a
+    /// set-based <c>UPDATE</c> over a department's whole catalogue every time somebody fixed a typo.
+    /// </remarks>
+    [Fact]
+    public async Task Renaming_a_category_asks_for_no_recompute()
+    {
+        var dresses = _store.Categories.Single(candidate => candidate.Id == 11);
+
+        Assert.IsType<CatalogWriteResult.Succeeded>(
+            await Update(Edit(dresses) with { Name = "Dresses and skirts" }));
+
+        Assert.Empty(_campaigns.AskedAboutCategories);
+        Assert.Empty(_campaigns.Refreshed);
     }
 
     [Fact]
@@ -480,8 +531,65 @@ public sealed class CategoryWriteHandlerTests
             .HandleAsync(command, TestContext.Current.CancellationToken);
 
     private Task<CatalogWriteResult> Update(UpdateCategoryCommand command) =>
-        new UpdateCategoryCommandHandler(_store, _audit, new FixedClock(Now))
+        new UpdateCategoryCommandHandler(_store, _audit, new FixedClock(Now), _campaigns)
             .HandleAsync(command, TestContext.Current.CancellationToken);
+
+    private readonly RecordingCampaignRefresher _campaigns = new();
+
+    /// <summary>
+    /// The campaign recompute a category <b>move</b> owes (W3-05c, doc 08 §7.4).
+    /// </summary>
+    /// <remarks>
+    /// It records what it was asked, so the two tests above it can assert that a move asks and a rename
+    /// does not. A move that stopped asking would leave the stored summary advertising a discount the bag
+    /// refuses — or withholding one the bag gives — until the campaign ended, because
+    /// <c>RefreshCampaignPricing</c> only looks at campaigns whose boundary has passed and a category
+    /// move moves no boundary.
+    /// </remarks>
+    private sealed class RecordingCampaignRefresher : ICampaignPricingRefresher
+    {
+        /// <summary>The category ids the handler asked about, in the order it asked.</summary>
+        public List<int> AskedAboutCategories { get; } = [];
+
+        /// <summary>The product ids it then asked to have recomputed.</summary>
+        public List<int> Refreshed { get; } = [];
+
+        /// <summary>What <see cref="ProductsLinkedToCategoriesAsync"/> answers.</summary>
+        public List<int> ProductsUnderCategories { get; } = [];
+
+        public Task<CampaignPricingRefreshPass> RefreshProductsAsync(
+            IReadOnlyCollection<int> productIds,
+            CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(productIds);
+
+            Refreshed.AddRange(productIds);
+
+            return Task.FromResult(new CampaignPricingRefreshPass(productIds.Count, 1, productIds.Count));
+        }
+
+        public Task<IReadOnlyList<int>> ProductsTargetedByAsync(
+            IReadOnlyCollection<int> campaignIds,
+            CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<int>>([]);
+
+        public Task<IReadOnlyList<int>> ProductsLinkedToCategoriesAsync(
+            IReadOnlyCollection<int> categoryIds,
+            CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(categoryIds);
+
+            AskedAboutCategories.AddRange(categoryIds);
+
+            return Task.FromResult<IReadOnlyList<int>>(ProductsUnderCategories);
+        }
+
+        public Task<CampaignPricingRefreshPass> RefreshBoundariesAsync(
+            DateTime sinceUtc,
+            DateTime untilUtc,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new CampaignPricingRefreshPass(0, 0, 0));
+    }
 
     private Task<CatalogWriteResult> Reorder(ReorderCategoriesCommand command) =>
         new ReorderCategoriesCommandHandler(_store, _audit, new FixedClock(Now))

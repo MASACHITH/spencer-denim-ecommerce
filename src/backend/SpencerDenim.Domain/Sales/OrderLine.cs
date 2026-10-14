@@ -76,8 +76,18 @@ public sealed class OrderLine
     public decimal UnitPrice { get; set; }
 
     /// <summary>
-    /// FK <c>marketing.SaleCampaigns</c> in doc 08 §3.5. <b>The column is here, the constraint is not</b>:
-    /// <c>marketing.SaleCampaigns</c> is ADM-14 and no migration has created it.
+    /// FK <c>marketing.SaleCampaigns</c> in doc 08 §3.5: which campaign set <see cref="UnitPrice"/>, or
+    /// <see langword="null"/> when no campaign did.
+    /// <para>
+    /// <b>A real constraint since W3-05b</b>, which created <c>marketing.SaleCampaigns</c> (ADM-14) — it
+    /// was the last of the four columns the orders migration built bare because the table it pointed at
+    /// did not exist. <c>NO ACTION</c>, so ending a sale never touches an order; the campaign is
+    /// soft-deleted and the id stays resolvable.
+    /// </para>
+    /// <para>
+    /// <b>It is a record, not a price.</b> The line's own <c>UnitPrice</c> is the snapshot doc 08 §6
+    /// freezes at placement; nothing reads the campaign through this id to work out what was charged.
+    /// </para>
     /// </summary>
     public int? SaleCampaignId { get; set; }
 

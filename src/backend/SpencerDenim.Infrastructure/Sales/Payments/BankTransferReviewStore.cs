@@ -1,13 +1,8 @@
-using System.Data;
 using System.Globalization;
 using Microsoft.EntityFrameworkCore;
 using SpencerDenim.Application.Abstractions.Auditing;
-using SpencerDenim.Application.Ops.Email.Abstractions;
-using SpencerDenim.Application.Ops.Email.Contracts;
-using SpencerDenim.Application.Sales.Checkout.Abstractions;
 using SpencerDenim.Application.Sales.Payments.Abstractions;
 using SpencerDenim.Domain.Auditing;
-using SpencerDenim.Domain.Common;
 using SpencerDenim.Domain.Sales;
 using SpencerDenim.Infrastructure.Persistence;
 
@@ -43,24 +38,17 @@ namespace SpencerDenim.Infrastructure.Sales.Payments;
 /// lock, which payment is currently reviewable.
 /// </para>
 /// <para>
+/// <b>The Paid effects are not in this file.</b> Stock reserved to sold, the gapless invoice number, the
+/// history row and the <c>PaymentConfirmed</c> email are <see cref="OrderSettlementEffects"/>, which this
+/// store and <c>OrderSettlementStore</c> (the provider-facing settlement) both call; its remarks
+/// carry what is deliberately not written there (no <c>InventoryMovements</c> row, no seller snapshot; the
+/// promo use a late acceptance takes back is retaken in <see cref="AcceptLateAsync"/> itself). What stays here is the bank flow's own: the staff actor, the review of a
+/// <i>transfer</i>, the refusals worded for an approver, and the audit row.
+/// </para>
+/// <para>
 /// <b>What is not written, and why it is not quietly skipped.</b>
 /// </para>
 /// <list type="bullet">
-/// <item><description>
-/// <b>No <c>inventory.InventoryMovements</c> row.</b> The table does not exist (#108, W1-05/ADM-12), so
-/// doc 08 §5.1's <c>Sale</c> movement cannot be written for a deduction and neither could checkout's
-/// <c>Reserve</c>. The stock figures themselves are exact and doc 08 §5.9's reconciliation is unaffected
-/// (it compares <c>StockLevels.Reserved</c> with the order lines of orders in <c>StockState = 0</c>, and
-/// an approved order leaves that set). What is lost is the per-movement trail: after an approval there is
-/// no row anywhere saying "two of variant 470 moved from reserved to sold at 14:03". The order's status
-/// history and <c>PaidAtUtc</c> record that the order was paid, and the quantities are on the order lines,
-/// so the fact is reconstructible for an order — it is the <i>variant's</i> timeline that has the hole.
-/// </description></item>
-/// <item><description>
-/// <b>No promo use restored on a late acceptance.</b> Doc 08 §4.1 restores <c>UsageCount + 1</c> ignoring
-/// the limits. <c>marketing.PromoCodes</c> does not exist (ADM-13 / W3-05) and <c>Orders.PromoCodeId</c> is
-/// therefore null on every order ever placed, so there is nothing to restore and no branch that could run.
-/// </description></item>
 /// <item><description>
 /// <b>No email on a rejection, and that is doc 11's instruction rather than an omission.</b> P7's
 /// notification list says "No email on rejection" and §7 G-14 leaves the question with the client. So
@@ -68,22 +56,12 @@ namespace SpencerDenim.Infrastructure.Sales.Payments;
 /// <c>RejectAsync</c> queues nothing — the order is still PendingPayment with time left on it, and the
 /// customer finds out by looking at their order or by trying again, which is what P7 step 6b describes.
 /// </description></item>
-/// <item><description>
-/// <b>No <c>InvoiceSellerSnapshotJson</c>.</b> Doc 08 §4.1 wants the store's legal name, address and
-/// BR/VAT number frozen on to the order at issue. Those are the <c>Store.LegalName</c>,
-/// <c>Store.Address</c>, <c>Store.BRNumber</c> and <c>Store.VatNumber</c> settings, and <b>this build
-/// seeds none of them</b> — the client has not supplied them and inventing a registration number would be
-/// worse than leaving the column null. The invoice <i>number</i>, which is what doc 02 PAY-01 and doc 11
-/// P7 name, is issued and gapless. Nothing renders an invoice document yet (G-34), so the snapshot has no
-/// reader to disappoint; it is owed to ADM-22 together with the four keys.
-/// </description></item>
 /// </list>
 /// </summary>
 internal sealed class BankTransferReviewStore(
     AppDbContext dbContext,
-    INumberSeriesAllocator numbers,
-    IAuditLogWriter auditLog,
-    IOrderEmailOutbox emails) : IBankTransferReviewStore
+    OrderSettlementEffects effects,
+    IAuditLogWriter auditLog) : IBankTransferReviewStore
 {
     public async Task<BankTransferDecisionResult> ApproveAsync(
         BankTransferDecision decision,
@@ -102,38 +80,14 @@ internal sealed class BankTransferReviewStore(
 
                 // Doc 08 §4.1 "PendingPayment -> Paid": Status = 0 AND StockState = 0, plus §4.2 step
                 // 3.2's NOT EXISTS so a second settlement is impossible even if the payment update below
-                // were wrong.
-                //
-                // **PaymentProviderCode is in the claim as well as in ReadOrderAsync, and that is not
-                // belt and braces — it is the lesson from a defect this task's own test found.** The
-                // first version relied on the read alone, the read's projection could not express "no
-                // such row" (see OrderSnapshot), and a PayPal order was approved and paid by the bank
-                // flow. A guard that lives in the atomic statement cannot be defeated by a bug in a
-                // read.
-                //
-                // **The literal 1 in the NOT EXISTS stays a literal.** PaymentConfiguration's remarks
-                // record the measurement: "IsOrderSettlement = 1" implies UX_Payments_OneSettlement's own
-                // filter, so DB28 lets the optimiser seek that index; "IsOrderSettlement = @flag" does not
-                // imply it and falls back to a clustered scan of sales.Payments. Interpolating a C# value
-                // here would make it a parameter and undo that.
-                var claimed = await dbContext.Database.ExecuteSqlInterpolatedAsync(
-                    $"""
-                    UPDATE sales.Orders
-                       SET Status = {(byte)OrderStatus.Paid},
-                           StockState = {(byte)OrderStockState.Committed},
-                           PaidAtUtc = {decision.NowUtc},
-                           ClosedAtUtc = NULL,
-                           CaptureLockedUntilUtc = NULL,
-                           UpdatedAtUtc = {decision.NowUtc},
-                           UpdatedByUserId = {decision.Actor.UserId}
-                     WHERE Id = {decision.OrderId}
-                       AND PaymentProviderCode = {PaymentProviderCodes.BankTransfer}
-                       AND Status = {(byte)OrderStatus.PendingPayment}
-                       AND StockState = {(byte)OrderStockState.Reserved}
-                       AND NOT EXISTS (
-                             SELECT 1 FROM sales.Payments s
-                              WHERE s.OrderId = {decision.OrderId} AND s.IsOrderSettlement = 1);
-                    """,
+                // were wrong, and the bank-transfer pin. The statement — and the comment on why the
+                // provider code and the literal 1 are in it — is OrderSettlementEffects's, because the
+                // provider-facing settlement claims the order with exactly the same one.
+                var claimed = await effects.ClaimPendingOrderPaidAsync(
+                    decision.OrderId,
+                    PaymentProviderCodes.BankTransfer,
+                    decision.NowUtc,
+                    decision.Actor.UserId,
                     cancellationToken);
 
                 if (claimed != 1)
@@ -170,16 +124,18 @@ internal sealed class BankTransferReviewStore(
                 //
                 // It is also the safer end: allocating last means a statement that throws between the two
                 // consumes no invoice number, which is what keeps the series gapless.
-                await DeductStockAsync(decision, cancellationToken);
+                await effects.DeductStockAsync(decision.OrderId, decision.NowUtc, cancellationToken);
 
-                var invoiceNumber = await IssueInvoiceAsync(decision, cancellationToken);
+                var invoiceNumber = await effects.IssueInvoiceAsync(
+                    decision.OrderId,
+                    decision.NowUtc,
+                    cancellationToken);
 
-                await WriteHistoryAsync(
+                RecordStaffStatusChange(
                     decision,
                     OrderStatus.PendingPayment,
                     OrderStatus.Paid,
-                    Note("Bank transfer approved", decision.Note),
-                    cancellationToken);
+                    Note("Bank transfer approved", decision.Note));
 
                 EnlistAudit(
                     decision,
@@ -195,7 +151,7 @@ internal sealed class BankTransferReviewStore(
                 // (This named a distance — "four statements ago" — where the journal's own narrative said
                 // three and the count is three. A distance in a comment is wrong the first time anything
                 // is inserted between the two lines, so it names the call instead. W3-06's tester.)
-                QueuePaymentConfirmed(snapshot, invoiceNumber, decision.NowUtc, wasLatePayment: false);
+                effects.EnlistPaymentConfirmed(snapshot, invoiceNumber, decision.NowUtc, wasLatePayment: false);
 
                 await dbContext.SaveChangesAsync(cancellationToken);
 
@@ -298,12 +254,11 @@ internal sealed class BankTransferReviewStore(
                 // Doc 11 P7 requires a rejection to appear in the order's history, and the order did not
                 // move. Null would mean "came from nowhere", which is what placement's first row uses it
                 // for; two equal values read as "stayed where it was", and the note says why.
-                await WriteHistoryAsync(
+                RecordStaffStatusChange(
                     decision,
                     OrderStatus.PendingPayment,
                     OrderStatus.PendingPayment,
-                    Note("Bank transfer rejected", decision.Note),
-                    cancellationToken);
+                    Note("Bank transfer rejected", decision.Note));
 
                 EnlistAudit(
                     decision,
@@ -391,20 +346,35 @@ internal sealed class BankTransferReviewStore(
                 // Doc 08 §5.7: re-acquire the stock with a conditional deduct per line. Reserved is *not*
                 // touched — the reservation was given back when the order expired or was cancelled — so
                 // this takes from OnHand against what is available now, competing with live shoppers.
-                if (await ReacquireStockAsync(decision, snapshot.Status, cancellationToken)
+                if (await effects.ReacquireStockAsync(decision.OrderId, decision.NowUtc, cancellationToken)
                     is { } shortLines)
                 {
-                    return shortLines;
+                    // The status travels with the refusal: it is the only thing the screen is told, and
+                    // without it the screen cannot know the order is closed. See ShortStock's own remarks.
+                    return new BankTransferDecisionResult.ShortStock(shortLines, snapshot.Status);
                 }
 
-                var invoiceNumber = await IssueInvoiceAsync(decision, cancellationToken);
+                // Doc 08 §3.6's fourth usage event: "Expired → Paid: +1 unconditionally (limit ignored:
+                // the customer already paid)". The expiry or the cancel gave this order's use back, and
+                // the order holds one again now that it is Paid — so without this the cache sits below
+                // the number of orders holding a use and the total limit lets the next shopper have one
+                // the code does not have. After the stock rows, which is doc 08 §5.3's lock order.
+                //
+                // Only this path needs it: the provider-facing settlement never pays an expired or
+                // cancelled order (it records an exception for staff instead), so the one route from
+                // Expired/Cancelled to Paid is this late acceptance.
+                await OrderPromoUse.RetakeAsync(dbContext, decision.OrderId, cancellationToken);
 
-                await WriteHistoryAsync(
+                var invoiceNumber = await effects.IssueInvoiceAsync(
+                    decision.OrderId,
+                    decision.NowUtc,
+                    cancellationToken);
+
+                RecordStaffStatusChange(
                     decision,
                     snapshot.Status,
                     OrderStatus.Paid,
-                    Note("Late payment accepted", decision.Note),
-                    cancellationToken);
+                    Note("Late payment accepted", decision.Note));
 
                 EnlistAudit(
                     decision,
@@ -416,7 +386,7 @@ internal sealed class BankTransferReviewStore(
                 // and §4.1 lists `PaymentConfirmed` for "approval, PayPal capture, late acceptance". The
                 // message says so in different words, because the customer's last message from us said
                 // the order had expired — see `PaymentConfirmedEmailFacts.WasLatePayment`.
-                QueuePaymentConfirmed(snapshot, invoiceNumber, decision.NowUtc, wasLatePayment: true);
+                effects.EnlistPaymentConfirmed(snapshot, invoiceNumber, decision.NowUtc, wasLatePayment: true);
 
                 await dbContext.SaveChangesAsync(cancellationToken);
 
@@ -440,40 +410,19 @@ internal sealed class BankTransferReviewStore(
     /// rolled-back inserts, and the request's later reads must come from the database rather than from a
     /// tracker holding what we meant to write.
     /// </para>
+    /// <para>
+    /// The transaction itself is <see cref="SettlementTransaction"/>, shared with the provider-facing
+    /// settlement; what is this flow's own is the rule for when to keep it.
+    /// </para>
     /// </remarks>
-    private async Task<BankTransferDecisionResult> InTransactionAsync(
+    private Task<BankTransferDecisionResult> InTransactionAsync(
         Func<Task<BankTransferDecisionResult>> body,
-        CancellationToken cancellationToken)
-    {
-        var strategy = dbContext.Database.CreateExecutionStrategy();
-
-        return await strategy.ExecuteAsync(async () =>
-        {
-            await using var transaction = await dbContext.Database.BeginTransactionAsync(
-                IsolationLevel.ReadCommitted,
-                cancellationToken);
-
-            try
-            {
-                var result = await body();
-
-                if (result is BankTransferDecisionResult.Applied)
-                {
-                    await transaction.CommitAsync(cancellationToken);
-                }
-                else
-                {
-                    await transaction.RollbackAsync(cancellationToken);
-                }
-
-                return result;
-            }
-            finally
-            {
-                dbContext.ChangeTracker.Clear();
-            }
-        });
-    }
+        CancellationToken cancellationToken) =>
+        SettlementTransaction.RunAsync(
+            dbContext,
+            body,
+            result => result is BankTransferDecisionResult.Applied,
+            cancellationToken);
 
     /// <summary>
     /// Doc 08 §4.1's Paid effects on the payment row: <c>Succeeded</c>, flagged as the settlement, with
@@ -517,196 +466,6 @@ internal sealed class BankTransferReviewStore(
             """,
             cancellationToken);
 
-    /// <summary>
-    /// Doc 08 §5.5 step 2: deduct every line under the order's claim, sorted by <c>VariantId</c>.
-    /// </summary>
-    /// <remarks>
-    /// <b>A row count other than 1 throws, and that is doc 08 §5.5's instruction rather than this code's
-    /// choice</b> ("otherwise throw, roll back, alert; it indicates drift"). It is not a refusal a staff
-    /// member can act on: the order's reservation was made at placement and the guard
-    /// <c>Reserved &gt;= q AND OnHand &gt;= q</c> can only fail if the reservation has been lost, which
-    /// means <c>StockLevels</c> and the order lines disagree. Telling the approver "out of stock" would be
-    /// wrong — the stock was theirs — and silently approving would commit an oversell.
-    /// <para>
-    /// <b>No alert row</b>, because <c>ops.AdminAlerts</c> does not exist. The exception names the variant
-    /// and reaches the log through the endpoint's 500, and doc 08 §5.9's nightly reconciliation is the
-    /// other half of the signal.
-    /// </para>
-    /// <para>
-    /// Quantities are summed per variant before the loop. Two lines for one variant cannot happen today
-    /// (<c>UX_CartItems_Cart_Variant</c> stops the bag holding two), but doc 08 §5.3 asks for duplicates
-    /// to be merged first and one statement per variant is also what makes the row count mean what it says.
-    /// </para>
-    /// </remarks>
-    private async Task DeductStockAsync(BankTransferDecision decision, CancellationToken cancellationToken)
-    {
-        foreach (var line in await ReadLinesAsync(decision.OrderId, cancellationToken))
-        {
-            var affected = await dbContext.Database.ExecuteSqlInterpolatedAsync(
-                $"""
-                UPDATE inventory.StockLevels
-                   SET OnHand = OnHand - {line.Quantity},
-                       Reserved = Reserved - {line.Quantity},
-                       UpdatedAtUtc = {decision.NowUtc}
-                 WHERE VariantId = {line.VariantId}
-                   AND Reserved >= {line.Quantity}
-                   AND OnHand >= {line.Quantity};
-                """,
-                cancellationToken);
-
-            if (affected != 1)
-            {
-                throw new InvalidOperationException(
-                    $"Order {decision.OrderId} could not deduct {line.Quantity} of variant "
-                    + $"{line.VariantId} on approval: the reservation made at placement is no longer there. "
-                    + "Stock levels and the order lines have drifted (doc 08 §5.5, §5.9).");
-            }
-        }
-    }
-
-    /// <summary>
-    /// Doc 08 §5.7, the late-acceptance half: take the goods from <c>OnHand</c> again, competing with live
-    /// shoppers, and refuse the whole acceptance naming <b>every</b> short line.
-    /// </summary>
-    /// <returns>
-    /// <see langword="null"/> when every line was re-acquired, or the
-    /// <see cref="BankTransferDecisionResult.ShortStock"/> to answer with.
-    /// </returns>
-    /// <remarks>
-    /// <b>Every short line, not the first.</b> Doc 11 P7 step 8 says acceptance "is refused with the list
-    /// of short lines", and a staff member told about one of three missing items will press the button
-    /// again and be told about the next.
-    /// <para>
-    /// <b>The figures are corrected for this attempt's own deductions, which is why no rollback is needed
-    /// to measure them.</b> <c>OrderPlacementStore</c> reads availability <i>after</i> rolling back, for
-    /// exactly this reason: a transaction sees its own uncommitted writes, so a straight read here would
-    /// report every already-deducted line as shorter than it is and could invent a shortfall that does not
-    /// exist. Rolling back from inside is not an option — the caller's
-    /// <see cref="InTransactionAsync"/> owns the transaction's end — so the arithmetic is done instead:
-    /// each line we have already deducted gets its quantity added back, which reproduces the figure a
-    /// shopper would see. It is exact rather than approximate, because the only thing this attempt did to
-    /// <c>Available</c> was subtract those quantities from <c>OnHand</c>.
-    /// </para>
-    /// <para>
-    /// <b>No <c>Reserved</c> anywhere.</b> The reservation was given back when the order expired or was
-    /// cancelled, so a late acceptance takes from <c>OnHand</c> against what is available <i>now</i> —
-    /// which is doc 08 §5.7's statement and the reason this can fail at all.
-    /// </para>
-    /// </remarks>
-    private async Task<BankTransferDecisionResult?> ReacquireStockAsync(
-        BankTransferDecision decision,
-        OrderStatus orderStatus,
-        CancellationToken cancellationToken)
-    {
-        var lines = await ReadLinesAsync(decision.OrderId, cancellationToken);
-        var deducted = new Dictionary<int, int>();
-
-        foreach (var line in lines)
-        {
-            var affected = await dbContext.Database.ExecuteSqlInterpolatedAsync(
-                $"""
-                UPDATE inventory.StockLevels
-                   SET OnHand = OnHand - {line.Quantity},
-                       UpdatedAtUtc = {decision.NowUtc}
-                 WHERE VariantId = {line.VariantId}
-                   AND OnHand - Reserved >= {line.Quantity};
-                """,
-                cancellationToken);
-
-            if (affected == 1)
-            {
-                deducted[line.VariantId] = line.Quantity;
-                continue;
-            }
-
-            var variantIds = lines.Select(candidate => candidate.VariantId).ToList();
-
-            var rows = await dbContext.StockLevels
-                .AsNoTracking()
-                .Where(level => variantIds.Contains(level.VariantId))
-                .Select(level => new { level.VariantId, level.Available })
-                .ToListAsync(cancellationToken);
-
-            var available = rows.ToDictionary(
-                row => row.VariantId,
-
-                // Add back what this attempt took, so the figure is what the line could have had. Floored
-                // at zero because a drifted row could read negative and a negative "available" is not a
-                // fact anybody can act on.
-                row => Math.Max(0, row.Available + deducted.GetValueOrDefault(row.VariantId)));
-
-            var shortLines = lines
-                .Where(candidate =>
-                    candidate.VariantId == line.VariantId
-
-                    // The line that actually failed is always reported, even if a concurrent restock has
-                    // since made it look sufficient: it is the reason the acceptance was refused, and a
-                    // staff member told "nothing is wrong" after a refusal will simply press again.
-                    || available.GetValueOrDefault(candidate.VariantId) < candidate.Quantity)
-                .Select(candidate => new ShortStockLine(
-                    candidate.VariantId,
-                    candidate.Sku,
-                    candidate.ProductName,
-                    candidate.ColourName,
-                    candidate.SizeLabel,
-                    candidate.Quantity,
-                    available.GetValueOrDefault(candidate.VariantId)))
-                .ToList();
-
-            // The status travels with the refusal: it is the only thing the screen is told, and without
-            // it the screen cannot know the order is closed. See ShortStock's own remarks.
-            return new BankTransferDecisionResult.ShortStock(shortLines, orderStatus);
-        }
-
-        return null;
-    }
-
-    /// <summary>
-    /// A gapless invoice number, allocated <b>inside</b> this transaction, and written on to the order.
-    /// </summary>
-    /// <remarks>
-    /// <b>This is the opposite trade to the order number, and the shared primitive is what makes it
-    /// cheap.</b> <c>INumberSeriesAllocator.AllocateAsync</c> enlists in the ambient transaction, so the
-    /// series row stays locked until this decision commits and a decision that rolls back gives its number
-    /// back — which is what "gapless" means. Checkout's <c>AllocateOrderNumberAsync</c> deliberately
-    /// throws if a transaction is already open and must not be used here; order numbers are allowed gaps
-    /// precisely so that concurrent checkouts do not queue on the series row, and an invoice series is
-    /// allowed to queue because approvals are a staff member clicking a button.
-    /// <para>
-    /// It is allocated <i>after</i> the order claim rather than before, so a decision that lost the race
-    /// never touches the series at all. Either order is gapless — a rollback restores <c>NextValue</c>
-    /// — but holding that row for a transaction we already know will fail is pointless contention.
-    /// </para>
-    /// <para>
-    /// The year is the <b>Colombo</b> year (doc 08 §3.5), the same rule as the order series, so a payment
-    /// approved at 03:00 UTC on 1 January belongs to the year the shop was in.
-    /// </para>
-    /// </remarks>
-    private async Task<string> IssueInvoiceAsync(
-        BankTransferDecision decision,
-        CancellationToken cancellationToken)
-    {
-        var year = ColomboTime.YearOf(new DateTimeOffset(decision.NowUtc, TimeSpan.Zero));
-
-        var sequence = await numbers.AllocateAsync(
-            DocumentNumber.InvoiceSeriesKey(year),
-            DocumentNumber.InvoiceNumberPrefix,
-            cancellationToken);
-
-        var invoiceNumber = DocumentNumber.Format(DocumentNumber.InvoiceNumberPrefix, year, sequence);
-
-        await dbContext.Database.ExecuteSqlInterpolatedAsync(
-            $"""
-            UPDATE sales.Orders
-               SET InvoiceNumber = {invoiceNumber},
-                   InvoiceIssuedAtUtc = {decision.NowUtc}
-             WHERE Id = {decision.OrderId};
-            """,
-            cancellationToken);
-
-        return invoiceNumber;
-    }
-
     /// <summary>The order's number and current state, or <see langword="null"/> when it is not a bank order.</summary>
     /// <remarks>
     /// <b>Filtered to bank transfers here rather than at the endpoint</b>, so there is one place that
@@ -720,18 +479,7 @@ internal sealed class BankTransferReviewStore(
             .Where(order =>
                 order.Id == orderId
                 && order.PaymentProviderCode == PaymentProviderCodes.BankTransfer)
-            .Select(order => new OrderSnapshot(
-                order.OrderNumber,
-                order.PublicId,
-                order.Status,
-                order.StockState,
-
-                // For the email only (W3-06). Four more columns on a projection that already reads this
-                // row, rather than a second query inside a transaction that holds the order's lock.
-                order.Email,
-                order.FirstName,
-                order.LastName,
-                order.GrandTotal))
+            .Select(OrderSnapshot.FromOrder)
             .FirstOrDefaultAsync(cancellationToken);
 
     /// <summary>
@@ -757,44 +505,6 @@ internal sealed class BankTransferReviewStore(
             .OrderByDescending(payment => payment.Id)
             .Select(payment => new PaymentRow(payment.Id, payment.Status))
             .FirstOrDefaultAsync(cancellationToken);
-
-    /// <summary>
-    /// The order's lines, merged per variant and sorted ascending — doc 08 §5.3's lock order, which every
-    /// stock path in the system shares so that two of them cannot deadlock.
-    /// </summary>
-    private async Task<IReadOnlyList<StockLine>> ReadLinesAsync(
-        int orderId,
-        CancellationToken cancellationToken)
-    {
-        var lines = await dbContext.OrderLines
-            .AsNoTracking()
-            .Where(line => line.OrderId == orderId)
-            .Select(line => new
-            {
-                line.VariantId,
-                line.Quantity,
-                line.Sku,
-                line.ProductName,
-                line.ColourName,
-                line.SizeLabel,
-            })
-            .ToListAsync(cancellationToken);
-
-        // Grouped by variant, because two lines of one order can name the same variant and the stock
-        // statements have to move its row once. The description comes from the first of them: they are
-        // placement-time snapshots of the same variant, so they agree.
-        return lines
-            .GroupBy(line => line.VariantId)
-            .Select(group => new StockLine(
-                group.Key,
-                group.Sum(line => line.Quantity),
-                group.First().Sku,
-                group.First().ProductName,
-                group.First().ColourName,
-                group.First().SizeLabel))
-            .OrderBy(line => line.VariantId)
-            .ToList();
-    }
 
     /// <summary>
     /// The order's current state, read after a claim affected 0 rows, turned into the refusal doc 11 P7
@@ -889,32 +599,25 @@ internal sealed class BankTransferReviewStore(
             null);
 
     /// <summary>
-    /// The order's history row (doc 08 §3.5), written through EF so it joins the same unit of work as the
-    /// audit row.
+    /// The order's history row for a staff decision (doc 08 §3.5), added through EF so it joins the same
+    /// unit of work as the audit row.
     /// </summary>
-    private async Task WriteHistoryAsync(
+    private void RecordStaffStatusChange(
         BankTransferDecision decision,
         OrderStatus from,
         OrderStatus to,
-        string note,
-        CancellationToken cancellationToken)
-    {
-        dbContext.OrderStatusHistory.Add(new OrderStatusHistoryEntry
-        {
-            OrderId = decision.OrderId,
-            FromStatus = from,
-            ToStatus = to,
+        string note) =>
+        effects.RecordStatusChange(
+            decision.OrderId,
+            from,
+            to,
 
             // Doc 11 P7 step 6: source Staff. Not SystemJob, which is the expiry job's, and not
             // PaymentProvider, which doc 08 §4 reserves for a signature-verified webhook.
-            Source = OrderStatusChangeSource.Staff,
-            ChangedByUserId = decision.Actor.UserId,
-            Note = note,
-            OccurredAtUtc = decision.NowUtc,
-        });
-
-        await Task.CompletedTask;
-    }
+            OrderStatusChangeSource.Staff,
+            decision.Actor.UserId,
+            note,
+            decision.NowUtc);
 
     /// <summary>
     /// Doc 11 P7: "every approve and reject is audited". <c>sales.Payments</c> is <c>[RV]</c> and not
@@ -965,33 +668,6 @@ internal sealed class BankTransferReviewStore(
             : text[..OrderStatusHistoryEntry.NoteMaxLength];
     }
 
-    /// <summary>
-    /// Doc 11 §4.1's <c>PaymentConfirmed</c>: "Payment received, amount, invoice number, what happens
-    /// next".
-    /// </summary>
-    /// <remarks>
-    /// <b>The amount is the order's <c>GrandTotal</c>, not the payment row's.</b> They are the same
-    /// figure by construction — doc 08 §3.5 defines <c>Payments.Amount</c> as the order's grand total in
-    /// LKR, and <c>OrderPlacementStore</c> writes it from the one pricing result <c>CK_Orders_Totals</c>
-    /// checked — and the order is the record of what the customer agreed to, which is what a receipt
-    /// should repeat back. (There is no USD line: that is PayPal's and W4-01's, and this flow is reached
-    /// only by an order whose <c>PaymentProviderCode</c> the claim pinned to the bank provider.)
-    /// </remarks>
-    private void QueuePaymentConfirmed(
-        OrderSnapshot snapshot,
-        string invoiceNumber,
-        DateTime nowUtc,
-        bool wasLatePayment) =>
-        emails.EnlistPaymentConfirmed(new PaymentConfirmedEmailFacts(
-            new OrderEmailHeader(
-                snapshot.OrderNumber,
-                snapshot.PublicId,
-                new OrderEmailAddressee(snapshot.Email, snapshot.FirstName, snapshot.LastName),
-                nowUtc),
-            snapshot.GrandTotal,
-            invoiceNumber,
-            wasLatePayment));
-
     /// <summary>A JSON string literal, or <c>null</c>, for the audit row's <c>AfterJson</c> (CK ISJSON).</summary>
     private static string Json(string? value) =>
         value is null ? "null" : System.Text.Json.JsonSerializer.Serialize(value);
@@ -1006,33 +682,6 @@ internal sealed class BankTransferReviewStore(
         Closed,
     }
 
-    /// <summary>
-    /// The order, as a read answers it. <b>A record class and deliberately not a <c>record struct</c>.</b>
-    /// </summary>
-    /// <remarks>
-    /// <b>This was a struct, and that was a defect an integration test found.</b>
-    /// <c>FirstOrDefaultAsync</c> over a projection to a value type cannot return null — it returns
-    /// <c>default</c> — so <c>OrderSnapshot?</c> came back with <c>HasValue = true</c> and every field
-    /// zeroed whenever the query matched nothing. The <c>is not { }</c> guard above therefore never fired,
-    /// and a decision aimed at an order that was not a bank-transfer order carried on with
-    /// <c>Status = PendingPayment</c> (0) and <c>StockState = Reserved</c> (0) — the exact two values the
-    /// claim's own predicate was about to look for. A PayPal order was approved and paid.
-    /// <para>
-    /// A reference type makes "no such row" representable, which is the only reliable fix; the provider
-    /// guard was also moved <i>into</i> the claim statements, so the two defences no longer depend on each
-    /// other.
-    /// </para>
-    /// </remarks>
-    private sealed record OrderSnapshot(
-        string OrderNumber,
-        Guid PublicId,
-        OrderStatus Status,
-        OrderStockState StockState,
-        string Email,
-        string FirstName,
-        string? LastName,
-        decimal GrandTotal);
-
     /// <summary>One payment row. A class, for the same reason as <see cref="OrderSnapshot"/>.</summary>
     /// <remarks>
     /// As a struct, "no reviewable payment" came back as <c>Id = 0, Status = Initiated</c>, so the refusal
@@ -1041,14 +690,6 @@ internal sealed class BankTransferReviewStore(
     /// told the order's state had changed rather than that there was no transfer to review.
     /// </remarks>
     private sealed record PaymentRow(int Id, PaymentStatus Status);
-
-    private readonly record struct StockLine(
-        int VariantId,
-        int Quantity,
-        string Sku,
-        string ProductName,
-        string ColourName,
-        string SizeLabel);
 }
 
 /// <summary>

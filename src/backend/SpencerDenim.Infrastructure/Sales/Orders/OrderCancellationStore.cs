@@ -231,7 +231,9 @@ internal sealed class OrderCancellationStore(
             "cancellation",
             cancellationToken);
 
-        await OrderStockRelease.ReturnPromoUseAsync(dbContext, snapshot.OrderId, cancellationToken);
+        // Doc 08 §5.6 step 4 and doc 11 line 500: the use goes back, in this transaction, so a cancelled
+        // order's code can be used again. The same statement the expiry job runs, not a second one.
+        await OrderPromoUse.ReturnAsync(dbContext, snapshot.OrderId, cancellationToken);
 
         WriteHistory(cancellation, snapshot);
 

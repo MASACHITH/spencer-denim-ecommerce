@@ -13,6 +13,7 @@ using SpencerDenim.Application.Catalog.Admin.Products.Abstractions;
 using SpencerDenim.Application.Content.Abstractions;
 using SpencerDenim.Application.Content.Admin.Abstractions;
 using SpencerDenim.Application.Marketing.Newsletter;
+using SpencerDenim.Application.Marketing.Promotions.Abstractions;
 using SpencerDenim.Application.Ops.Email;
 using SpencerDenim.Application.Ops.Email.Abstractions;
 using SpencerDenim.Application.Sales.Cart.Abstractions;
@@ -31,12 +32,14 @@ using SpencerDenim.Infrastructure.Media;
 using SpencerDenim.Infrastructure.Ops.Email;
 using SpencerDenim.Infrastructure.Health;
 using SpencerDenim.Infrastructure.Identity;
+using SpencerDenim.Infrastructure.Identity.Customers;
 using SpencerDenim.Infrastructure.Persistence;
 using SpencerDenim.Infrastructure.Persistence.Interceptors;
 using SpencerDenim.Infrastructure.Persistence.Seeding;
 using SpencerDenim.Infrastructure.Sales;
 using SpencerDenim.Infrastructure.Sales.Orders;
 using SpencerDenim.Infrastructure.Sales.Payments;
+using SpencerDenim.Infrastructure.Sales.Payments.PayPal;
 using SpencerDenim.Infrastructure.Settings;
 using SpencerDenim.Infrastructure.Time;
 using SpencerDenim.Application.Ops.Alerts.Abstractions;
@@ -141,6 +144,9 @@ public static class DependencyInjection
         // Pure and stateless over the bound options, so one instance for the process.
         services.AddSingleton<OrderEmailComposer>();
 
+        // The four account emails of doc 11 P11 (W3-01, ACC-01). Pure over the same bound options.
+        services.AddSingleton<AccountEmailComposer>();
+
         // The SMTP boundary. A singleton over the options; it builds a fresh SmtpClient per message,
         // because SmtpClient is not thread-safe (see SmtpEmailTransport).
         services.AddSingleton<IEmailTransport, SmtpEmailTransport>();
@@ -149,6 +155,7 @@ public static class DependencyInjection
         // outbox row commit in the same transaction as the order it is about (doc 08 §3.8).
         services.AddScoped<IEmailOutboxWriter, EmailOutboxWriter>();
         services.AddScoped<IOrderEmailOutbox, OrderEmailOutbox>();
+        services.AddScoped<IAccountEmailOutbox, AccountEmailOutbox>();
         services.AddScoped<IEmailOutboxStore, EmailOutboxStore>();
 
         // ops.AdminAlerts (doc 08 §3.8 N2, W4-02a). Scoped for the same reason: the acknowledgement writes
@@ -221,7 +228,29 @@ public static class DependencyInjection
         services.AddScoped<IAdminContentReader, AdminContentReader>();
         services.AddScoped<IContentPageStore, ContentPageStore>();
         services.AddScoped<IContactEnquiryStore, ContactEnquiryStore>();
+
+        // The admin promo-code screen (ADM-13, W3-05). The reader converts the two UTC columns to Colombo
+        // wall-clock at this edge; the store keeps one unit of work so a change and its audit row commit
+        // together.
+        services.AddScoped<IPromoCodeAdminReader, PromoCodeAdminReader>();
+        services.AddScoped<IPromoCodeAdminStore, PromoCodeAdminStore>();
         services.AddScoped<INewsletterSubscriptions, NewsletterSubscriptions>();
+
+        // Sale campaigns (ADM-14, W3-05b). `ICampaignOfferReader` is the **live** side of doc 08 §6
+        // step 3, which the bag, the checkout quote and the placement all read — doc 08 §7.4's "checkout
+        // always prices live", as against the stored summary on ProductStats that listings read and that
+        // may lag five minutes at a boundary.
+        services.AddScoped<ICampaignOfferReader, CampaignOfferReader>();
+
+        // The lagging side of the same decision: doc 08 §7.4's batched recompute of the stored price
+        // summary, which the admin save path and the RefreshCampaignPricing job both drive.
+        services.AddScoped<ICampaignPricingRefresher, CampaignPricingRefresher>();
+
+        // The admin screen (ADM-14). The reader converts the two UTC columns to Colombo wall-clock at
+        // this edge and resolves each target to the name the list prints; the store keeps one unit of
+        // work so a change and its audit row commit together.
+        services.AddScoped<ISaleCampaignAdminReader, SaleCampaignAdminReader>();
+        services.AddScoped<ISaleCampaignAdminStore, SaleCampaignAdminStore>();
 
         // Doc 08 §3.7's homepage cache. A singleton, because a cache scoped to one request caches
         // nothing at all.
@@ -256,6 +285,13 @@ public static class DependencyInjection
         services.AddScoped<IPaymentProvider, BankTransferProvider>();
         services.AddScoped<IPaymentProviderRegistry, PaymentProviderRegistry>();
 
+        // PayPal (W4-01, PAY-02): the provider is this one line; the rest of what it needs (the gateway, the
+        // capture lifecycle, the webhook, the two jobs) is registered by AddPayPalPayments. The line stays
+        // here, written out, because PaymentProviderContractTests reads this file to prove every provider
+        // class is on the list.
+        services.AddScoped<IPaymentProvider, PayPalProvider>();
+        services.AddPayPalPayments();
+
         // Singleton, because "once" means once for the process: the provider itself is per request, and a
         // warning that fires per request is noise rather than a signal (see BankDetailsWarningOnce).
         services.AddSingleton<BankDetailsWarningOnce>();
@@ -274,6 +310,21 @@ public static class DependencyInjection
         services.AddScoped<IBankTransferReviewStore, BankTransferReviewStore>();
         services.AddScoped<IOrderExpiryStore, OrderExpiryStore>();
         services.AddScoped<IBankTransferProofStore, BankTransferProofStore>();
+
+        // The groundwork a provider that is confirmed by the provider itself (PayPal, W4-01; a second
+        // gateway, W4-01b) is built on, so that adding one stays "a class and a registration line" with no
+        // change to checkout (PAY-03):
+        //  - OrderSettlementEffects: the Paid effects, written once, called by the bank review above and by
+        //    the settlement below. A concrete class and not a port: it must run inside its caller's
+        //    transaction, and a port would invite a transaction of its own.
+        //  - IOrderSettlementStore: "this payment is complete" -> pay the order, or put the money on record
+        //    as a payment exception (doc 08 §4.2 step 3).
+        //  - IPaymentEventStore: the provider event log, once per idempotency key (doc 08 DB13).
+        //  - IPaymentAttemptReader: which payment the order page is describing (PaymentInstructionsRequest).
+        services.AddScoped<OrderSettlementEffects>();
+        services.AddScoped<IOrderSettlementStore, OrderSettlementStore>();
+        services.AddScoped<IPaymentEventStore, PaymentEventStore>();
+        services.AddScoped<IPaymentAttemptReader, PaymentAttemptReader>();
 
         // The admin orders screen (W3-04, ADM-09, doc 11 P9): the list and the detail, the four fulfilment
         // transitions, the couriers the client fills in, and the two settings groups an invoice and the
@@ -300,6 +351,12 @@ public static class DependencyInjection
         services.AddScoped<SalesReferenceDataSeeder>();
         services.AddScoped<HomeContentSeeder>();
         services.AddScoped<SettingsSeeder>();
+
+        // Doc 08 §9's versioned default-role permission step (issue #122). A step of the reference-data
+        // phase rather than a hosted service of its own, so it runs under that phase's applock and retry
+        // rather than growing a second copy of them — and so it is not behind `Seed:Admin:Enabled`, which
+        // is turned off after go-live.
+        services.AddScoped<Identity.Seeding.DefaultRoleSeedUpgrader>();
         services.AddScoped<DemoCatalogueSeeder>();
         services.AddScoped<CatalogSeedRunner>();
         services.AddHostedService<CatalogSeedHostedService>();
@@ -311,6 +368,11 @@ public static class DependencyInjection
         // Doc 11 P9 step 8 and doc 08 §4.1 D4: once a day, close orders that shipped more than
         // Orders.AutoDeliverAfterDays ago. **Never a store pickup order** (G-18).
         services.AddHostedService<AutoDeliverShippedService>();
+
+        // Doc 08 §7.4 and doc 11 P3 step 3 (ADM-14): every five minutes, bring the stored sale price of
+        // the products of campaigns that have just started or ended up to date, so listings and the Sale
+        // page catch up with a boundary. Never on the money path — the bag and checkout price live.
+        services.AddHostedService<RefreshCampaignPricingService>();
 
         // Doc 11 §1.4's `SendEmails` and doc 08 §3.8: hand the queued messages to the mail server with
         // the 1/5/15/60/240-minute ladder. With no SMTP configured it claims nothing and says so with a
@@ -336,6 +398,11 @@ public static class DependencyInjection
                 tags: [HealthCheckTags.Ready]);
 
         services.AddAdminIdentity();
+
+        // ACC-01 / ACC-02 (W3-01): the second cookie scheme doc 08 §3.1 DB10 asks for, and the customer
+        // account use cases behind it. **After** AddAdminIdentity, because that call establishes the
+        // Identity core services both share (one store, doc 08 D7) and names the default scheme.
+        services.AddCustomerIdentity();
 
         return services;
     }

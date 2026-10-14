@@ -1,3 +1,6 @@
+import { CustomerOrderTrackingDto } from '../account/account.model';
+
+import { formatLkr } from '../catalog/money';
 import { CartLineStatus } from '../cart/cart.model';
 
 /**
@@ -12,6 +15,24 @@ export type CheckoutBlocker =
   | 'LineNotPurchasable'
   | 'NoDeliveryMethod'
   | 'NoPaymentMethod';
+
+/**
+ * Why a promo code was not applied (ADM-13).
+ *
+ * Mirrors `SpencerDenim.Domain.Marketing.PromoRefusal`, name for name, because the API sends the member
+ * name — the same contract `CheckoutBlocker` travels under. The *wording* is this application's job: see
+ * `promoRefusalMessage`.
+ *
+ * `NotRecognised` deliberately covers five server-side states — no such code, inactive, removed, not
+ * started, over — so the box cannot be used to learn which strings the shop has ever issued. The other
+ * three each tell a shopper something they can act on.
+ */
+export type PromoRefusal =
+  | 'NotRecognised'
+  | 'FullyUsed'
+  | 'MinimumSpend'
+  | 'NoEligibleItems'
+  | 'AlreadyUsedByCustomer';
 
 /** A district a delivery address can name (CHK-01). */
 export interface DistrictDto {
@@ -128,6 +149,19 @@ export interface CheckoutSessionDto {
   readonly paymentMethods: readonly PaymentMethodDto[];
   readonly selectedDistrictId: number | null;
   readonly selectedDeliveryMethodId: number | null;
+  /**
+   * The code the quote was priced with, upper-cased, or null when none was asked for or the one asked
+   * for was refused.
+   *
+   * Echoed for the same reason `selectedDistrictId` is: the controls follow the quote rather than the
+   * other way round, so a code that stops qualifying between two reads clears the box instead of leaving
+   * a discount on screen that is not in the total.
+   */
+  readonly appliedPromoCode: string | null;
+  /** Why the code sent with this read was not applied, or null when none was sent or it was. */
+  readonly promoRefusal: PromoRefusal | null;
+  /** The threshold, set only alongside `MinimumSpend`, so the page can print the figure to reach. */
+  readonly promoMinimumSpend: number | null;
   readonly blockers: readonly CheckoutBlocker[];
 }
 
@@ -228,6 +262,34 @@ export interface OrderConfirmationDto {
    * build has no refund path, so the page must not offer one.
    */
   readonly canCancel: boolean;
+
+  /**
+   * Something to tell the shopper about money that has already arrived, or null/absent when there is nothing.
+   * Currently only `'received'`: a payment landed and could not settle this order (it had expired or been
+   * cancelled, was paid already, or the amount differed), and staff will be in touch - doc 11 P8 step 6.
+   *
+   * **Provider-neutral and a code, not a sentence**: the page picks the wording (`paymentNoticeMessage`), a
+   * code it does not know shows nothing, and no provider, amount or payment id travels with it. While it is
+   * set the server sends no `payment` either, so there is no way to pay again beside it. Optional because a
+   * payload from before this field existed has none.
+   */
+  readonly paymentNotice?: string | null;
+
+  /**
+   * How to follow the parcel, or absent until it ships (W3-01; doc 11 P11 step 14's "view status,
+   * **tracking**").
+   *
+   * **This payload carried neither the courier nor the number before W3-01**, so the only place in the
+   * whole system that showed a tracking number was the admin panel — and doc 11 P11 step 14 is explicit
+   * that a guest following the secure link from their order emails sees it. The shape is the account
+   * order list's own {@link CustomerOrderTrackingDto} rather than a copy, so the signed-in and guest
+   * views of one order cannot disagree about where it is.
+   *
+   * **Absent, not null-filled, when there is nothing to track**: an order that has not shipped, or a
+   * store-pickup order, which has no courier at all. A block of nulls would make every consumer write
+   * the same three-way check.
+   */
+  readonly tracking?: CustomerOrderTrackingDto;
 }
 
 /** The customer-facing "how to pay" (doc 11 P7 step 1). */
@@ -254,8 +316,34 @@ export interface OrderPaymentInstructionsDto {
   /** Where to go to pay, for a provider that redirects. Always null for a bank transfer. */
   readonly redirectUrl: string | null;
 
+  /**
+   * A POST form the browser must submit to reach the provider's hosted page, for a provider that cannot be
+   * reached by a plain link. Null or absent for a bank transfer and for a GET redirect.
+   *
+   * **Optional on purpose**, so an older payload and every existing fixture still type-check. When both
+   * this and `redirectUrl` are set, this one wins: it is the more specific instruction.
+   */
+  readonly redirectForm?: OrderPaymentRedirectFormDto | null;
+
   /** Whether this provider takes a customer-entered reference and a slip. */
   readonly acceptsProof: boolean;
+}
+
+/** A form to POST to a provider's hosted page. */
+export interface OrderPaymentRedirectFormDto {
+  readonly method: 'POST';
+
+  /** Absolute URL. The storefront renders it only when it is `https:` (see `paymentRedirect`). */
+  readonly action: string;
+
+  /** In the order to print them. */
+  readonly fields: readonly OrderPaymentRedirectFieldDto[];
+}
+
+/** One hidden field of a redirect form. */
+export interface OrderPaymentRedirectFieldDto {
+  readonly name: string;
+  readonly value: string;
 }
 
 /** One labelled payment detail. */
@@ -323,6 +411,15 @@ export interface PlaceOrderRequest {
   /** The total shown on the page. The order is refused if the freshly priced total differs (G-10). */
   readonly expectedGrandTotal: number | null;
   readonly customerNote: string | null;
+  /**
+   * The promo code the shopper applied, or null for none (ADM-13).
+   *
+   * Sent on every submit rather than held on the server, so the code is revalidated at placement as well
+   * as on every read (doc 11 P3 step 12). A code that has since expired, filled up or stopped meeting
+   * its minimum spend refuses the order with a 409 rather than being quietly dropped: the total the
+   * shopper agreed to included it.
+   */
+  readonly promoCode: string | null;
 }
 
 /** A checkout page with nothing in it, so the page renders a form rather than nothing at all. */
@@ -349,6 +446,9 @@ export const EMPTY_CHECKOUT: CheckoutSessionDto = {
   paymentMethods: [],
   selectedDistrictId: null,
   selectedDeliveryMethodId: null,
+  appliedPromoCode: null,
+  promoRefusal: null,
+  promoMinimumSpend: null,
   blockers: ['EmptyBag'],
 };
 
@@ -371,6 +471,38 @@ export function checkoutBlockerMessage(blocker: CheckoutBlocker): string {
       return 'No payment method is available at the moment. Please try again shortly.';
     default:
       return 'Checkout is not available at the moment.';
+  }
+}
+
+/**
+ * What a promo refusal means to a shopper.
+ *
+ * The copy lives here rather than in the template or on the server so that there is **one** sentence per
+ * state: the quote sends a reason name and so does a refused placement, and both go through this
+ * function — otherwise "that code is fully used" would exist in two places and drift. The same split
+ * `checkoutBlockerMessage` makes.
+ *
+ * `minimumSpend` is used only by `MinimumSpend`, which is the one refusal with an actionable figure in
+ * it. The sentence says what to do in every case, because a shopper who cannot make a code work and is
+ * not told why will simply retype it.
+ */
+export function promoRefusalMessage(refusal: PromoRefusal, minimumSpend: number | null): string {
+  switch (refusal) {
+    case 'NotRecognised':
+      // One sentence for five server-side states, deliberately. See `PromoRefusal`.
+      return 'We do not recognise that code. Check it and try again, or carry on without it.';
+    case 'FullyUsed':
+      return 'That code has been fully used. You can place your order without it.';
+    case 'MinimumSpend':
+      return minimumSpend === null
+        ? 'That code needs a larger order.'
+        : `That code needs an order of at least ${formatLkr(minimumSpend)}.`;
+    case 'NoEligibleItems':
+      return 'That code does not apply to anything in your bag.';
+    case 'AlreadyUsedByCustomer':
+      return 'You have already used that code. You can place your order without it.';
+    default:
+      return 'That code cannot be used at the moment.';
   }
 }
 

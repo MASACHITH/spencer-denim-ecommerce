@@ -4,6 +4,7 @@ using SpencerDenim.Application.Catalog.Admin;
 using SpencerDenim.Application.Catalog.Admin.Abstractions;
 using SpencerDenim.Application.Catalog.Admin.Products;
 using SpencerDenim.Application.Catalog.Admin.Products.Abstractions;
+using SpencerDenim.Application.Marketing.Promotions.Abstractions;
 using SpencerDenim.Domain.Auditing;
 using SpencerDenim.Domain.Catalog;
 using SpencerDenim.Domain.Media;
@@ -906,10 +907,90 @@ public sealed class ProductWriteHandlerTests
             Assert.IsType<CatalogWriteResult.Conflict>(result).Code);
     }
 
+    /// <summary>
+    /// <b>A save that wrote something asks for the product's campaign pricing to be recomputed</b>
+    /// (W3-05b, doc 08 §7.4), and a save that wrote nothing does not.
+    /// </summary>
+    /// <remarks>
+    /// <c>ProductDerivedData.RefreshStats</c> is a pure function over the aggregate and so cannot see a
+    /// campaign; it writes <c>ProductStats</c>' sale price back up to the list price. Without this call a
+    /// product edited during a live campaign would show its undiscounted price on every card and listing
+    /// for the rest of the campaign — <c>RefreshCampaignPricing</c> would not fix it, because that job
+    /// looks only at campaigns whose boundary has just passed and a product save moves no boundary.
+    /// <para>
+    /// The <c>Conflict</c> case is asserted too, because recomputing after a save that was refused would
+    /// be a statement run for nothing on every stale-row-version retry.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task A_saved_product_has_its_campaign_pricing_recomputed()
+    {
+        var created = Assert.IsType<CatalogWriteResult.Succeeded>(await Create(Form()));
+
+        Assert.Equal([created.EntityId], _campaigns.Refreshed);
+
+        _campaigns.Refreshed.Clear();
+
+        var existing = _store.Products[created.EntityId];
+        var updated = await Update(existing.Id, FormFrom(existing) with { BasePrice = 4_990m });
+
+        Assert.IsType<CatalogWriteResult.Succeeded>(updated);
+        Assert.Equal([existing.Id], _campaigns.Refreshed);
+
+        // A refused save asks for nothing.
+        _campaigns.Refreshed.Clear();
+        _store.NextSaveOutcome = CatalogSaveOutcome.ConcurrencyConflict;
+
+        Assert.IsType<CatalogWriteResult.Conflict>(
+            await Update(existing.Id, FormFrom(existing) with { BasePrice = 5_990m }));
+
+        Assert.Empty(_campaigns.Refreshed);
+    }
+
     // ---- helpers --------------------------------------------------------------------------------
 
+    /// <summary>
+    /// The campaign recompute a product save owes (W3-05b, doc 08 §7.4). It records the product ids it was
+    /// asked for, so <c>A_saved_product_has_its_campaign_pricing_recomputed</c> can assert that a save
+    /// asks — and a save that stopped asking would leave a card advertising a price the bag would not
+    /// charge for the rest of a campaign.
+    /// </summary>
+    private sealed class RecordingCampaignRefresher : ICampaignPricingRefresher
+    {
+        public List<int> Refreshed { get; } = [];
+
+        public Task<CampaignPricingRefreshPass> RefreshProductsAsync(
+            IReadOnlyCollection<int> productIds,
+            CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(productIds);
+
+            Refreshed.AddRange(productIds);
+
+            return Task.FromResult(new CampaignPricingRefreshPass(productIds.Count, 1, productIds.Count));
+        }
+
+        public Task<IReadOnlyList<int>> ProductsTargetedByAsync(
+            IReadOnlyCollection<int> campaignIds,
+            CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<int>>([]);
+
+        public Task<IReadOnlyList<int>> ProductsLinkedToCategoriesAsync(
+            IReadOnlyCollection<int> categoryIds,
+            CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<int>>([]);
+
+        public Task<CampaignPricingRefreshPass> RefreshBoundariesAsync(
+            DateTime sinceUtc,
+            DateTime untilUtc,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new CampaignPricingRefreshPass(0, 0, 0));
+    }
+
+    private readonly RecordingCampaignRefresher _campaigns = new();
+
     private Task<CatalogWriteResult> Create(ProductFormInput form) =>
-        new CreateProductCommandHandler(_store, _audit, new FixedClock(Now))
+        new CreateProductCommandHandler(_store, _audit, new FixedClock(Now), _campaigns)
             .HandleAsync(new CreateProductCommand(form, Actor), TestContext.Current.CancellationToken);
 
     private Task<CatalogWriteResult> Update(
@@ -925,7 +1006,7 @@ public sealed class ProductWriteHandlerTests
                     : BitConverter.GetBytes((long)productId))
             : rowVersion;
 
-        return new UpdateProductCommandHandler(_store, _audit, new FixedClock(Now))
+        return new UpdateProductCommandHandler(_store, _audit, new FixedClock(Now), _campaigns)
             .HandleAsync(
                 new UpdateProductCommand(productId, form, confirmSlugChange, token, Actor),
                 TestContext.Current.CancellationToken);

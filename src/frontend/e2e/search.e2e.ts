@@ -454,12 +454,14 @@ test.describe('the rest of the site still resolves', () => {
     });
   }
 
+  // `/account` is built now (W3-01): a visitor who is not signed in is sent to sign in, and never to
+  // the search page.
   for (const path of ['/account']) {
-    test(`${path} still goes to the home page`, async ({ page }) => {
+    test(`${path} opens the account area`, async ({ page }) => {
       await page.goto(path);
 
-      await expect(page).toHaveURL('/');
-      await expect(page.locator('sd-home-page')).toHaveCount(1);
+      await expect(page).toHaveURL(/\/account\/sign-in\?returnTo=%2Faccount%2Forders$/);
+      await expect(page.locator('sd-search-page')).toHaveCount(0);
     });
   }
 

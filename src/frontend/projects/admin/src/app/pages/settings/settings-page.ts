@@ -18,6 +18,7 @@ import {
   BankDetailValues,
   InvoiceAndFulfilmentValues,
   ContactAndSocialValues,
+  PayPalValues,
   SETTING_GROUPS,
   SETTING_KEYS,
 } from '../../core/settings/admin-settings.model';
@@ -370,6 +371,133 @@ const LOGO_ACCEPT = 'image/png,image/jpeg,image/webp';
           </section>
         }
 
+        @if (canEditPayPal()) {
+          <section class="adm-panel" aria-labelledby="paypal-title" data-testid="paypal-panel">
+            <h2 class="adm-panel__title" id="paypal-title">PayPal</h2>
+            <p class="adm-panel__hint">
+              PayPal cannot charge in rupees, so each order is converted to US dollars at the rate below plus
+              the buffer, and the customer sees the dollar amount before they pay. PayPal is offered at
+              checkout only when the shop has switched it on <strong>and</strong> the client ID, the secret,
+              the webhook ID and a rate that is not older than its age limit are all in place.
+            </p>
+
+            <p
+              class="adm-panel__hint"
+              [attr.data-state]="payPalReadiness().ready ? 'ready' : 'not-ready'"
+              data-testid="paypal-readiness"
+            >
+              <strong>{{ payPalReadiness().ready ? 'Ready.' : 'Not ready.' }}</strong>
+              {{ payPalReadiness().message }}
+            </p>
+
+            <form class="adm-fields" (ngSubmit)="savePayPal()" novalidate>
+              @for (field of payPalFields; track field.name) {
+                @if (field.name !== 'expiryMinutes' || hasPayPalExpiry()) {
+                  <div class="adm-field" [class.adm-field--wide]="field.wide">
+                    <label class="adm-label" [attr.for]="'paypal-' + field.name">{{ field.label }}</label>
+                    @if (field.select) {
+                      <select
+                        class="adm-input"
+                        [id]="'paypal-' + field.name"
+                        [name]="field.name"
+                        [attr.aria-invalid]="fieldError(field.name) ? 'true' : null"
+                        [attr.aria-describedby]="'paypal-hint-' + field.name"
+                        [ngModel]="payPalForm()[field.name]"
+                        (ngModelChange)="patchPayPal(field.name, $event)"
+                        [attr.data-testid]="'field-' + field.name"
+                      >
+                        <option value="sandbox">Sandbox (test money, nothing real is charged)</option>
+                        <option value="live">Live (real payments)</option>
+                      </select>
+                    } @else {
+                      <input
+                        class="adm-input"
+                        type="text"
+                        [id]="'paypal-' + field.name"
+                        [name]="field.name"
+                        autocomplete="off"
+                        spellcheck="false"
+                        [attr.inputmode]="field.numeric ? 'decimal' : null"
+                        [attr.aria-invalid]="fieldError(field.name) ? 'true' : null"
+                        [attr.aria-describedby]="'paypal-hint-' + field.name"
+                        [ngModel]="payPalForm()[field.name]"
+                        (ngModelChange)="patchPayPal(field.name, $event)"
+                        [attr.data-testid]="'field-' + field.name"
+                      />
+                    }
+                    <span class="adm-panel__hint" [id]="'paypal-hint-' + field.name">{{ field.hint }}</span>
+                    @if (fieldError(field.name); as message) {
+                      <span class="adm-field-error" [attr.data-testid]="'error-' + field.name">
+                        {{ message }}
+                      </span>
+                    }
+                  </div>
+                }
+
+                @if (field.name === 'clientId') {
+                  <!-- The secret is write-only: the server never returns it, so there is nothing to put in
+                       the box, and an empty box means keep what is saved. type password and
+                       new-password, so a browser neither fills it with the admin's own login nor offers to
+                       save it. No backticks in this comment: the whole template is a template literal. -->
+                  <div class="adm-field adm-field--wide">
+                    <label class="adm-label" for="paypal-clientSecret">Client secret</label>
+                    <input
+                      class="adm-input"
+                      type="password"
+                      id="paypal-clientSecret"
+                      name="clientSecret"
+                      autocomplete="new-password"
+                      spellcheck="false"
+                      [placeholder]="payPalSecretIsSet() ? 'A secret is saved. Type a new one to replace it.' : 'Not set'"
+                      [attr.aria-invalid]="fieldError('clientSecret') ? 'true' : null"
+                      aria-describedby="paypal-hint-clientSecret"
+                      [ngModel]="payPalSecret()"
+                      (ngModelChange)="payPalSecret.set($event)"
+                      data-testid="field-clientSecret"
+                    />
+                    <span class="adm-panel__hint" id="paypal-hint-clientSecret" data-testid="paypal-secret-state">
+                      {{ payPalSecretIsSet() ? 'A secret is saved.' : 'No secret is saved yet.' }}
+                      It is stored encrypted and is never shown again. Leave the box empty to keep the saved
+                      one.
+                    </span>
+                    @if (fieldError('clientSecret'); as message) {
+                      <span class="adm-field-error" data-testid="error-clientSecret">{{ message }}</span>
+                    }
+                  </div>
+                }
+              }
+
+              <div class="adm-actions adm-field--wide">
+                <!-- aria-disabled, not disabled, for the reason the bank form's Save records. -->
+                <button
+                  class="adm-btn--primary"
+                  type="submit"
+                  [attr.aria-disabled]="busy() ? 'true' : null"
+                  data-testid="save-paypal"
+                >
+                  {{ busy() ? 'Saving…' : 'Save PayPal settings' }}
+                </button>
+              </div>
+            </form>
+
+            <p class="adm-panel__hint" data-testid="paypal-rate-age">
+              Rate last updated: <strong>{{ payPalRateUpdated() }}</strong>.
+              Changing the rate updates this. If the rate has not moved, confirm it so PayPal stays on sale.
+            </p>
+            <div class="adm-actions">
+              <button
+                class="adm-btn"
+                type="button"
+                [attr.aria-disabled]="busy() || !payPalHasRate() ? 'true' : null"
+                (click)="confirmPayPalRate()"
+                data-testid="confirm-paypal-rate"
+              >
+                The rate is still correct
+              </button>
+            </div>
+          </section>
+        }
+
         @if (canEditInvoice()) {
           <section class="adm-panel" aria-labelledby="invoice-title">
             <h2 class="adm-panel__title" id="invoice-title">Invoice and fulfilment</h2>
@@ -441,7 +569,7 @@ const LOGO_ACCEPT = 'image/png,image/jpeg,image/webp';
           </section>
         }
 
-        @if (!canEditStore() && !canEditContact() && !canEditBank() && !canEditInvoice()) {
+        @if (!canEditStore() && !canEditContact() && !canEditBank() && !canEditInvoice() && !canEditPayPal()) {
           <p class="adm-state" data-testid="nothing-to-edit">
             There are no settings you can change here.
           </p>
@@ -694,6 +822,98 @@ export class SettingsPage {
     },
   ];
 
+  /**
+   * PayPal's boxes, as data, so the template cannot spell a field name differently from the API. The client
+   * secret is not in this list: it is write-only and has a box of its own (see the template).
+   */
+  protected readonly payPalFields = [
+    {
+      name: 'mode' as const,
+      label: 'Environment',
+      hint: 'Sandbox is PayPal\'s test system. Switch to Live only with the live credentials below; it takes '
+        + 'effect at once and needs no restart.',
+      wide: true,
+      select: true,
+      numeric: false,
+    },
+    {
+      name: 'clientId' as const,
+      label: 'Client ID',
+      hint: 'From the PayPal developer dashboard, Apps and Credentials, for the environment above.',
+      wide: true,
+      select: false,
+      numeric: false,
+    },
+    {
+      name: 'webhookId' as const,
+      label: 'Webhook ID',
+      hint: 'The ID of the webhook registered for /api/payments/paypal/webhook. Without it no notification '
+        + 'from PayPal can be trusted, so PayPal is not offered.',
+      wide: true,
+      select: false,
+      numeric: false,
+    },
+    {
+      name: 'lkrPerUsd' as const,
+      label: 'Rupees per US dollar',
+      hint: "Today's rate, for example 300.00. Customers are charged this much plus the buffer.",
+      wide: false,
+      select: false,
+      numeric: true,
+    },
+    {
+      name: 'fxBufferPercent' as const,
+      label: 'Currency buffer (%)',
+      hint: 'Between 0 and 20. Covers exchange-rate movement; customers see the final dollar amount.',
+      wide: false,
+      select: false,
+      numeric: true,
+    },
+    {
+      name: 'rateMaxAgeDays' as const,
+      label: 'Rate valid for (days)',
+      hint: 'PayPal is hidden at checkout when the rate is older than this. 1 to 30.',
+      wide: false,
+      select: false,
+      numeric: true,
+    },
+    {
+      name: 'expiryMinutes' as const,
+      label: 'Time to pay (minutes)',
+      hint: 'How long a customer has to finish paying before the order expires. 10 to 180.',
+      wide: false,
+      select: false,
+      numeric: true,
+    },
+    {
+      name: 'captureLockHours' as const,
+      label: 'Capture lock (hours)',
+      hint: 'An order being collected from PayPal cannot expire for this long. PayPal keeps an approved '
+        + 'order for about 3 hours. 1 to 24.',
+      wide: false,
+      select: false,
+      numeric: true,
+    },
+    {
+      name: 'captureRecoveryMaxHours' as const,
+      label: 'Recovery window (hours)',
+      hint: 'How long the system keeps asking PayPal about a payment that did not finish, before staff are '
+        + 'told to check PayPal. 1 to 168.',
+      wide: false,
+      select: false,
+      numeric: true,
+    },
+    {
+      name: 'pendingCaptureMaxDays' as const,
+      label: 'Hold for pending payments (days)',
+      hint: 'When PayPal reports a payment as pending (for example an eCheck), the items are held this '
+        + 'long from the day of the order. 1 to 14.',
+      wide: false,
+      select: false,
+      numeric: true,
+    },
+  ];
+
   private readonly api = inject(AdminSettingsApi);
   private readonly fileInput = viewChild<ElementRef<HTMLInputElement>>('logoFile');
 
@@ -704,6 +924,7 @@ export class SettingsPage {
   private readonly logoProblem = signal<string | null>(null);
   private readonly values = signal<ContactAndSocialValues>(EMPTY_FORM);
   private readonly bankValues = signal<BankDetailValues>(EMPTY_BANK_FORM);
+  private readonly payPalValues = signal<PayPalValues>({});
   private readonly said = signal('');
 
   /**
@@ -728,6 +949,13 @@ export class SettingsPage {
   protected readonly logoError = this.logoProblem.asReadonly();
   protected readonly form = this.values.asReadonly();
   protected readonly bankForm = this.bankValues.asReadonly();
+  protected readonly payPalForm = this.payPalValues.asReadonly();
+
+  /**
+   * What the admin has typed into the secret box, kept out of {@link payPalForm} on purpose: that form is
+   * rebuilt from the server on every read, and the server has no secret to give it. Cleared after a save.
+   */
+  protected readonly payPalSecret = signal('');
   protected readonly invoiceForm = this.invoiceValues.asReadonly();
   protected readonly announcement = this.said.asReadonly();
 
@@ -767,6 +995,76 @@ export class SettingsPage {
    * and no bank panel at all — which is the read model's per-row filter working, not a bug.
    */
   protected readonly canEditBank = computed(() => this.hasGroup(SETTING_GROUPS.bank));
+
+  /** Whether the server sent the `Payments.PayPal` group (`Settings.Payments`), and so whether its panel belongs on screen. */
+  protected readonly canEditPayPal = computed(() => this.hasGroup(SETTING_GROUPS.payPal));
+
+  /** Whether the server sent `Orders.PayPalExpiryMinutes` (`Settings.Edit`), and so whether its box is drawn. */
+  protected readonly hasPayPalExpiry = computed(() => 'expiryMinutes' in this.payPalValues());
+
+  /** Whether a client secret is saved. The only thing the server will say about it. */
+  protected readonly payPalSecretIsSet = computed(
+    () => this.settingOf(SETTING_KEYS.payPalClientSecret)?.hasValue === true,
+  );
+
+  /** Whether a rate is saved, which is what "the rate is still correct" needs. */
+  protected readonly payPalHasRate = computed(() => this.hasText(this.payPalValues().lkrPerUsd));
+
+  /** When the rate was last set or confirmed, in words, or a plain "never". */
+  protected readonly payPalRateUpdated = computed(() => {
+    const stamp = this.settingOf(SETTING_KEYS.payPalRateUpdatedAtUtc)?.value;
+
+    return stamp ? formatStamp(stamp) : 'never';
+  });
+
+  /**
+   * Whether PayPal would be offered at checkout, from what the screen was given - and, if not, what is
+   * missing. The server decides (it also knows whether the shop has switched PayPal on); this tells the admin
+   * what they can fix from here.
+   */
+  protected readonly payPalReadiness = computed(() => {
+    const missing: string[] = [];
+
+    if (!this.hasText(this.settingOf(SETTING_KEYS.payPalClientId)?.value)) {
+      missing.push('the client ID');
+    }
+
+    if (!this.payPalSecretIsSet()) {
+      missing.push('the client secret');
+    }
+
+    if (!this.hasText(this.settingOf(SETTING_KEYS.payPalWebhookId)?.value)) {
+      missing.push('the webhook ID');
+    }
+
+    const rate = this.settingOf(SETTING_KEYS.payPalLkrPerUsd)?.value;
+    const stamp = this.settingOf(SETTING_KEYS.payPalRateUpdatedAtUtc)?.value;
+
+    if (!this.hasText(rate)) {
+      missing.push('the exchange rate');
+    }
+
+    if (missing.length > 0) {
+      return {
+        ready: false,
+        message: `PayPal is not offered at checkout yet. Still needed: ${missing.join(', ')}.`,
+      };
+    }
+
+    const limit = Number(this.settingOf(SETTING_KEYS.payPalRateMaxAgeDays)?.value ?? '7') || 7;
+    const ageDays = stamp ? (Date.now() - Date.parse(stamp)) / 86_400_000 : Number.POSITIVE_INFINITY;
+
+    if (ageDays > limit) {
+      return {
+        ready: false,
+        message:
+          `The rate was last set more than ${limit} days ago, so PayPal is hidden at checkout. Update the `
+          + 'rate, or confirm it is still correct.',
+      };
+    }
+
+    return { ready: true, message: 'The credentials and a fresh rate are in place.' };
+  });
 
   /**
    * Whether the invoice form has anything to show.
@@ -887,6 +1185,20 @@ export class SettingsPage {
     }
 
     this.invoiceValues.set(invoiceFromServer as InvoiceAndFulfilmentValues);
+
+    const payPalFromServer: Record<string, string | null> = { ...toPayPalForm(settings) };
+
+    if (keepUnsavedEdits) {
+      const currentPayPal = this.payPalValues() as Record<string, string | null | undefined>;
+
+      for (const field of this.editedSinceWrite) {
+        if (field in payPalFromServer) {
+          payPalFromServer[field] = currentPayPal[field] ?? null;
+        }
+      }
+    }
+
+    this.payPalValues.set(payPalFromServer as PayPalValues);
     this.logoAltText.set(settings.logo?.altText?.trim() || BRAND.name);
   }
 
@@ -906,6 +1218,15 @@ export class SettingsPage {
   protected patchBank<K extends keyof BankDetailValues>(field: K, value: BankDetailValues[K]): void {
     this.editedSinceWrite.add(field);
     this.bankValues.update((current) => ({ ...current, [field]: value }));
+
+    this.problem.update((current) =>
+      current?.kind === 'validation' && current.fieldErrors?.[field] ? null : current,
+    );
+  }
+
+  protected patchPayPal<K extends keyof PayPalValues>(field: K, value: PayPalValues[K]): void {
+    this.editedSinceWrite.add(field);
+    this.payPalValues.update((current) => ({ ...current, [field]: value }));
 
     this.problem.update((current) =>
       current?.kind === 'validation' && current.fieldErrors?.[field] ? null : current,
@@ -961,6 +1282,49 @@ export class SettingsPage {
         this.afterWrite(
           'Bank details saved. Customers who choose bank transfer will see them on their order.',
         ),
+      error: (error: unknown) => this.afterFailure(error),
+    });
+  }
+
+  /**
+   * Saves PayPal's panel (PAY-02).
+   *
+   * Only the fields the server sent, which is what `toPayPalForm` produced - and the secret only if the
+   * admin typed one, because the server never gave us one and a blank box means "keep the saved secret".
+   */
+  protected savePayPal(): void {
+    const group = this.groupVersion(SETTING_GROUPS.payPal);
+    if (group === null || this.isBusy()) {
+      return;
+    }
+
+    const secret = this.payPalSecret().trim();
+
+    this.beforeWrite('Saving the PayPal settings…');
+
+    this.api
+      .updatePayPal({ ...this.payPalValues(), ...(secret.length > 0 ? { clientSecret: secret } : {}) }, group)
+      .subscribe({
+        next: () => {
+          // Gone from memory as soon as it is saved; the server holds it encrypted and will not return it.
+          this.payPalSecret.set('');
+          this.afterWrite('PayPal settings saved.');
+        },
+        error: (error: unknown) => this.afterFailure(error),
+      });
+  }
+
+  /** "Today's rate is still this one": re-stamps the rate's age without touching anything else. */
+  protected confirmPayPalRate(): void {
+    const group = this.groupVersion(SETTING_GROUPS.payPal);
+    if (group === null || this.isBusy() || !this.payPalHasRate()) {
+      return;
+    }
+
+    this.beforeWrite('Confirming the exchange rate…');
+
+    this.api.updatePayPal({}, group, true).subscribe({
+      next: () => this.afterWrite('The rate is confirmed. PayPal stays on sale for the rate\'s age limit.'),
       error: (error: unknown) => this.afterFailure(error),
     });
   }
@@ -1132,6 +1496,17 @@ export class SettingsPage {
     return this.groupVersion(groupKey) !== null;
   }
 
+  /** One setting by key, from whichever group carries it. */
+  private settingOf(key: string): { value: string | null; hasValue: boolean } | undefined {
+    return this.loaded()
+      ?.groups.flatMap((group) => group.settings)
+      .find((setting) => setting.key === key);
+  }
+
+  private hasText(value: string | null | undefined): boolean {
+    return typeof value === 'string' && value.trim().length > 0;
+  }
+
   private groupVersion(groupKey: string): string | null {
     return this.loaded()?.groups.find((group) => group.groupKey === groupKey)?.rowVersion ?? null;
   }
@@ -1238,6 +1613,60 @@ export function toInvoiceForm(settings: AdminSettings): InvoiceAndFulfilmentValu
   }
 
   return form as InvoiceAndFulfilmentValues;
+}
+
+/**
+ * PayPal's form values, read out of the payload by key - **only the keys the payload contained**, and never
+ * the client secret (the server returns no value for it).
+ *
+ * Exactly {@link toBankForm}'s rule, for the same reason: these keys need `Settings.Payments`, so an admin
+ * who cannot read them receives none of them, and a request carrying eleven nulls would clear the shop's
+ * PayPal credentials on their first save of anything. `expiryMinutes` is `Settings.Edit` and is present only
+ * for a caller who may read it.
+ */
+export function toPayPalForm(settings: AdminSettings): PayPalValues {
+  const byKey = new Map(
+    settings.groups.flatMap((group) => group.settings.map((setting) => [setting.key, setting.value] as const)),
+  );
+
+  const form: Record<string, string | null> = {};
+
+  for (const [field, key] of [
+    ['mode', SETTING_KEYS.payPalMode],
+    ['clientId', SETTING_KEYS.payPalClientId],
+    ['webhookId', SETTING_KEYS.payPalWebhookId],
+    ['lkrPerUsd', SETTING_KEYS.payPalLkrPerUsd],
+    ['fxBufferPercent', SETTING_KEYS.payPalFxBufferPercent],
+    ['rateMaxAgeDays', SETTING_KEYS.payPalRateMaxAgeDays],
+    ['captureLockHours', SETTING_KEYS.payPalCaptureLockHours],
+    ['captureRecoveryMaxHours', SETTING_KEYS.payPalCaptureRecoveryMaxHours],
+    ['pendingCaptureMaxDays', SETTING_KEYS.payPalPendingCaptureMaxDays],
+    ['expiryMinutes', SETTING_KEYS.payPalExpiryMinutes],
+  ] as const) {
+    if (byKey.has(key)) {
+      form[field] = byKey.get(key) ?? null;
+    }
+  }
+
+  return form as PayPalValues;
+}
+
+/**
+ * An ISO instant as Colombo date and time, for the "rate last updated" line. A value that is not a date is
+ * shown as it is rather than as "Invalid Date".
+ */
+export function formatStamp(iso: string): string {
+  const time = Date.parse(iso);
+
+  if (Number.isNaN(time)) {
+    return iso;
+  }
+
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Colombo',
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(new Date(time)) + ' (Sri Lanka time)';
 }
 
 /** Re-exported for the spec, which asserts the preview is drawn from what the server sent. */

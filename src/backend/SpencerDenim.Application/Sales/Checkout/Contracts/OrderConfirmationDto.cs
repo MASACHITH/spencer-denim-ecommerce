@@ -1,3 +1,5 @@
+using SpencerDenim.Application.Accounts.Contracts;
+
 namespace SpencerDenim.Application.Sales.Checkout.Contracts;
 
 /// <summary>One line of a placed order, read back from the snapshot columns (CHK-04).</summary>
@@ -101,6 +103,23 @@ public sealed record OrderDeliveryDto(
 /// can show it back rather than offering an empty form to somebody who filled it in yesterday.
 /// <see langword="null"/> when there is no open payment to attach anything to.
 /// </param>
+/// <param name="Tracking">
+/// How to follow the parcel, or <see langword="null"/> until it ships (ACC-02, doc 11 P11 step 12's
+/// "courier tracking link" and step 14's "view status, tracking").
+/// <para>
+/// <b>Added by W3-01, and its absence was a real gap on this page.</b> Doc 11 P11 step 14 says a guest
+/// following the secure link from their order emails sees "status, <i>tracking</i>" — and this payload
+/// carried neither the courier nor the number, so the only place in the system that showed a tracking
+/// number was the admin panel. The block is shared with My account's order list
+/// (<see cref="CustomerOrderTrackingDto"/>) rather than copied, so the signed-in and guest views of one
+/// order cannot disagree about where it is.
+/// </para>
+/// <para>
+/// <b>Absent rather than full of nulls when there is nothing to track</b>: an order that has not
+/// shipped, or a store-pickup order, which has no courier at all. A block of nulls would make every
+/// consumer write the same three-way check.
+/// </para>
+/// </param>
 /// <param name="CanCancel">
 /// Whether the shopper may cancel this order right now (doc 11 P10 flow A, W3-04b).
 /// <para>
@@ -115,6 +134,24 @@ public sealed record OrderDeliveryDto(
 /// <para>
 /// It is <see langword="false"/> for a paid order, because doc 11 P10's table says a paid order is
 /// refunded and never cancelled — and this build has no refund path, so the page must not offer one.
+/// </para>
+/// </param>
+/// <param name="PaymentNotice">
+/// Something the shopper must be told about money that has <b>already arrived</b>, or <see langword="null"/>
+/// when there is nothing to say. One of <see cref="OrderPaymentNotices"/>.
+/// <para>
+/// <b>Provider-neutral and read from the payment's status, not from a gateway's wording.</b> It is
+/// <see cref="OrderPaymentNotices.Received"/> when any payment of the order is
+/// <c>CapturedRequiresRefund</c> (doc 08 §4.2 step 4): the money landed but could not settle the order
+/// because it had expired or been cancelled, was paid already, or the amount differed. Doc 11 P8 step 6
+/// gives the customer exactly one sentence for all of those: "We received your payment, our team will
+/// contact you". It is derived from the database on every read, so a shopper who comes back tomorrow, or
+/// whose payment was confirmed by a notification while their browser was closed, still sees it.
+/// </para>
+/// <para>
+/// <b>Nothing else travels with it</b>: no provider, no amount, no payment id. The order link is the whole
+/// credential, and what the money was or how it was paid is for staff. While it is set the order carries no
+/// <paramref name="Payment"/> either, so the page can never offer a way to pay again beside it.
 /// </para>
 /// </param>
 public sealed record OrderConfirmationDto(
@@ -144,7 +181,22 @@ public sealed record OrderConfirmationDto(
     bool IsDuplicateSubmission = false,
     OrderPaymentInstructionsDto? Payment = null,
     OrderPaymentProofDto? Proof = null,
-    bool CanCancel = false);
+    bool CanCancel = false,
+    string? PaymentNotice = null,
+    CustomerOrderTrackingDto? Tracking = null);
+
+/// <summary>
+/// The values <see cref="OrderConfirmationDto.PaymentNotice"/> can take. Strings rather than an enum for the
+/// reason <see cref="OrderConfirmationDto.Status"/> is one: the storefront switches on a fixed word, and a
+/// word it does not know shows nothing rather than failing to parse.
+/// </summary>
+public static class OrderPaymentNotices
+{
+    /// <summary>
+    /// A payment arrived that could not settle this order; staff will be in touch (doc 11 P8 step 6, P8b step 4).
+    /// </summary>
+    public const string Received = "received";
+}
 
 /// <summary>
 /// What <c>POST /api/orders/{token}/cancel</c> answers (doc 11 P10 flow A).
@@ -187,6 +239,11 @@ public sealed record CancelOrderDto(string OrderNumber);
 /// </param>
 /// <param name="RedirectUrl">Where to go to pay, for a provider that redirects. Always null for a bank transfer.</param>
 /// <param name="AcceptsProof">Whether this provider takes a customer-entered reference and a slip.</param>
+/// <param name="RedirectForm">
+/// A form the page must submit (<c>POST</c>) to reach a provider's hosted page, for one that cannot be
+/// reached by a link. Null for a bank transfer and for a plain redirect; when both this and
+/// <paramref name="RedirectUrl"/> are set the page uses the form.
+/// </param>
 public sealed record OrderPaymentInstructionsDto(
     string ProviderCode,
     string? Reference,
@@ -195,7 +252,25 @@ public sealed record OrderPaymentInstructionsDto(
     IReadOnlyList<OrderPaymentFieldDto> Fields,
     string? Notes,
     string? RedirectUrl,
-    bool AcceptsProof);
+    bool AcceptsProof,
+    OrderPaymentRedirectFormDto? RedirectForm = null);
+
+/// <summary>
+/// The form the order page submits to a provider's hosted payment page (see
+/// <c>PaymentRedirectForm</c>, which this mirrors).
+/// </summary>
+/// <param name="Method">Always <c>POST</c>.</param>
+/// <param name="Action">The absolute address to post to.</param>
+/// <param name="Fields">The hidden fields, in the order to send them.</param>
+public sealed record OrderPaymentRedirectFormDto(
+    string Method,
+    string Action,
+    IReadOnlyList<OrderPaymentRedirectFieldDto> Fields);
+
+/// <summary>One hidden field of an <see cref="OrderPaymentRedirectFormDto"/>.</summary>
+/// <param name="Name">The field name.</param>
+/// <param name="Value">The value to send.</param>
+public sealed record OrderPaymentRedirectFieldDto(string Name, string Value);
 
 /// <summary>One labelled payment detail, e.g. "Account number" / "8001234567890".</summary>
 /// <param name="Label">What to print beside the value. Written by the provider, never by a client.</param>

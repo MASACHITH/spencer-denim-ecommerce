@@ -369,3 +369,297 @@
 .home-section__link:hover {
   text-decoration-thickness: 2px;
 }
+
+/* The checkout promo-code row (ADM-13, W3-05).
+
+   **Here rather than in `checkout-page.ts`'s own `styles` because that component is at its 4 kB
+   `anyComponentStyle` budget.** Measured: with these four rules in the component the build warns at
+   4.33 kB, and with them removed it does not warn at all — so the page has no room, and a warning the
+   next task inherits is worse than a rule in the one stylesheet this project already uses for
+   cross-cutting control styling (see the `.btn[aria-disabled]` note at the top of this file). It is
+   layout for one panel and nothing a theme would want to change; if the page is ever split, these move
+   with it. */
+.checkout__promo {
+  display: grid;
+  gap: var(--space-0-5);
+  padding-block: var(--space-1-5);
+  border-block-start: 1px solid var(--color-border);
+}
+.checkout__promo-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+/* Grows to fill the row and shrinks below its content, so there is no horizontal scroll at 320 px. */
+.checkout__promo-row > input {
+  flex: 1 1 8rem;
+  min-width: 0;
+  /* The shop's codes are stored upper-case (doc 08 §3.6), so the box shows what will be stored. Display
+     only: the server upper-cases the value, and a client that did so too would be a second place for
+     one rule to live. */
+  text-transform: uppercase;
+}
+.checkout__promo-said {
+  margin: 0;
+  min-height: 1.25rem;
+}
+
+/* ==========================================================================
+   The account pages (ACC-01, ACC-02, W3-01, doc 11 P11).
+
+   Eight routes — sign in, register, forgot password, reset password, confirm email, orders,
+   addresses, profile — draw the same form, the same two live regions, the same sub-navigation and
+   the same card. Scoped component styles cannot be shared between components, so the alternative
+   was eight copies of a field rule, and eight copies is how one page ends up with a 36 px control
+   and another with 44. They live here for exactly the reason the note at the top of this file
+   gives, and they carry the `acc-` prefix for the reason `.sd-swatch` does: `.field`, `.card` and
+   `.panel` are about as generic as class names get, and a silently restyled control is a worse
+   failure than an error.
+
+   **Every control in here is at least 44 px (doc 02 GLB-09, WCAG 2.2 SC 2.5.8).** axe does not
+   check target size — it passed a 20 px control on this project this week — so the floor is written
+   once, here, where one grep can confirm it rather than eight.
+   ========================================================================== */
+
+.acc {
+  padding-block: var(--space-4) var(--space-7);
+}
+/* The forms a shopper fills in to get *into* an account are one column and narrow: a 1440 px-wide
+   sign-in form puts the label and the box at opposite ends of the screen. The signed-in pages
+   (orders, addresses, profile) use the full container, because they hold lists. */
+.acc--narrow {
+  max-width: 28rem;
+}
+.acc__title {
+  font-size: var(--text-h2);
+}
+.acc__lead,
+.acc__muted {
+  color: var(--color-text-muted);
+  font-size: var(--text-small);
+  line-height: 1.5;
+  max-width: 60ch;
+}
+.acc__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-1) var(--space-3);
+  padding-bottom: var(--space-2);
+}
+.acc__section {
+  padding-top: var(--space-5);
+}
+.acc__subtitle {
+  font-size: var(--text-h3);
+  padding-bottom: var(--space-1);
+}
+
+/* ---- The two live regions every account page renders, always ----
+   They are in the markup from the **server's** first render and are never added, removed or
+   `display: none`-d: a message written into a node the same update created is a message a screen
+   reader was not watching, which has shipped twice on this project and once left a blind customer
+   pressing Cancel and hearing nothing. So only the *text* changes, and `.is-on` adds the box.
+   An empty one is a block holding an empty text node, which has no height, so it costs no layout. */
+.acc-notice {
+  margin: 0;
+  font-size: var(--text-small);
+  line-height: 1.5;
+  max-width: 70ch;
+}
+.acc-notice.is-on {
+  padding: var(--space-1-5) var(--space-2);
+  border: 1px solid currentColor;
+  margin-bottom: var(--space-3);
+}
+.acc-notice--alert.is-on {
+  color: var(--color-sale);
+}
+.acc-notice--ok.is-on {
+  color: var(--color-success);
+}
+
+/* ---- The sub-navigation on the signed-in pages ---- */
+.acc-nav {
+  padding-bottom: var(--space-3);
+}
+.acc-nav__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-0-5) var(--space-3);
+  list-style: none;
+}
+.acc-nav__link {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--tap);
+  font-size: var(--text-label);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.acc-nav__link:hover {
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+/* The page you are on, marked by more than colour (WCAG 1.4.1): an underline as well. */
+.acc-nav__link[aria-current='page'] {
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 4px;
+}
+
+/* ---- Forms ----
+   `min-width: 0` on the grid children is what keeps 320 px free of horizontal scroll: a grid child
+   defaults to `min-width: auto`, so a long unbroken value in a box — an email address with no
+   spaces — pushes its column and therefore the page wider than the viewport. Checkout's own
+   docblock records measuring exactly that. */
+.acc-form {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.acc-form__group {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: 0;
+  border: 0;
+}
+.acc-form__legend {
+  padding: 0 0 var(--space-1);
+  font-size: var(--text-label);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+.acc-field {
+  display: grid;
+  gap: var(--space-0-5);
+  min-width: 0;
+}
+/* Two fields side by side from 48rem, stacked below it, which is the order they are filled in. */
+.acc-row {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+}
+@media (min-width: 48rem) {
+  .acc-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.acc-label {
+  font-size: var(--text-small);
+  font-weight: var(--weight-medium);
+}
+.acc-optional {
+  color: var(--color-text-muted);
+  font-weight: var(--weight-regular);
+}
+/* 48 px to match `.btn`, so a field and a button beside each other line up, and above GLB-09's
+   44 px floor. `box-sizing: border-box` comes from the shared reset, which is what stops the
+   padding adding to the column's width. */
+.acc-input {
+  width: 100%;
+  min-width: 0;
+  min-height: 48px;
+  padding: var(--space-1) var(--space-1-5);
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-surface);
+}
+.acc-input[aria-invalid='true'] {
+  border-color: var(--color-sale);
+  border-width: 2px;
+}
+.acc-hint {
+  color: var(--color-text-muted);
+  font-size: var(--text-small);
+  line-height: 1.5;
+}
+/* The field's own refusal. `--color-sale` passes WCAG 2.2 AA for text at any size, and it is not the
+   only signal either — the box takes a 2 px red border and `aria-invalid="true"`, so the state does
+   not rest on colour alone (WCAG 1.4.1).
+
+   **The ratio is not written here, and the first draft's figure was wrong in the third digit.** Every
+   colour these pages draw is measured in `pages/account/account-contrast.spec.ts` with the project's
+   own `contrastRatio`, so a token that moves takes a failing test with it rather than leaving a stale
+   number in a comment nobody re-checks. */
+.acc-error {
+  color: var(--color-sale);
+  font-size: var(--text-small);
+  line-height: 1.5;
+}
+.acc-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  padding-top: var(--space-1);
+}
+/* A link-styled button in a row of its own would otherwise be a text-width target inside a 44 px
+   row; `button.link` in `base.css` gives the height, and this gives the width. */
+.acc-actions .link,
+.acc-inline-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--tap);
+  min-width: var(--tap);
+}
+
+/* ---- Cards: a saved address, a panel on the profile page ---- */
+.acc-card {
+  display: grid;
+  gap: var(--space-1);
+  align-content: start;
+  min-width: 0;
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+.acc-card__title {
+  font-size: var(--text-h4);
+  font-weight: var(--weight-medium);
+  /* A label a shopper typed, so it can be one long unbroken word on a 320 px screen. */
+  overflow-wrap: anywhere;
+}
+.acc-card__flag {
+  justify-self: start;
+  padding: 2px var(--space-1);
+  border: 1px solid var(--color-primary);
+  font-size: var(--text-label);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+.acc-card__lines {
+  font-size: var(--text-small);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.acc-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-0-5) var(--space-2);
+  padding-top: var(--space-0-5);
+}
+.acc-grid {
+  display: grid;
+  gap: var(--space-2);
+  list-style: none;
+  min-width: 0;
+}
+@media (min-width: 48rem) {
+  .acc-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (min-width: 64rem) {
+  .acc-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}

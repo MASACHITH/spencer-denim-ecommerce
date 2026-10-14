@@ -59,14 +59,20 @@ public sealed class EmailOutboxMessage
     /// outbox table or in a backup".
     /// </summary>
     /// <remarks>
-    /// <b>The two codes are literals here and are not in <see cref="EmailTemplateCodes"/>.</b> Neither
-    /// template exists — both are W3-01's (ACC-01, doc 11 P11) — and a public constant for a template
-    /// nothing can queue would read as one this build sends. The <i>rule</i> is built now because it is
-    /// four lines in the sender and because the task that adds those templates must not also have to
-    /// remember a privacy rule written in another document; <c>EmailOutboxSendingTests</c> proves it by
-    /// queueing a row under each code by hand.
+    /// <b>The two codes are now <see cref="EmailTemplateCodes"/> constants rather than literals here, and
+    /// that was the hand-off.</b> W3-06 wrote the rule before either template existed and keyed it on two
+    /// string literals; <c>OrderEmailOutboxTests</c> carried the reason in full — "if W3-01 declares
+    /// <c>EmailTemplateCodes.PasswordReset = "PasswordResetLink"</c>, any value but the literal, the
+    /// privacy rule silently stops applying to the one template it was written for". W3-01 declared both
+    /// codes, so the rule reads them.
+    /// <para>
+    /// <b>The list is deliberately not "every account email".</b> <c>Welcome</c> and
+    /// <c>AccountExists</c> carry no token, so their bodies are kept for the ordinary thirty days: the
+    /// record of what the shop told a customer must survive, and only the credential must not.
+    /// </para>
     /// </remarks>
-    private static readonly string[] BodyClearedOnSend = ["PasswordReset", "EmailConfirmation"];
+    private static readonly string[] BodyClearedOnSend =
+        [EmailTemplateCodes.PasswordReset, EmailTemplateCodes.EmailConfirmation];
 
     public long Id { get; set; }
 
@@ -168,6 +174,19 @@ public sealed class EmailOutboxMessage
     /// Whether this message's body must be destroyed as soon as it is sent rather than after thirty days
     /// (doc 08 §3.8's G-03 rule).
     /// </summary>
+    /// <remarks>
+    /// Despite the name, <b>on every terminal status and not only on <c>Sent</c></b> (independent tester,
+    /// W3-01): a reset or confirmation message that dies after its last attempt still holds a working
+    /// link in its body, and "the body must not sit in the outbox table or in a backup" does not stop
+    /// applying because the send failed. <c>EmailOutboxStore</c> clears it on <c>Sent</c> and on both
+    /// paths to <c>Dead</c>.
+    /// </remarks>
     public static bool BodyIsClearedOnSend(string templateCode) =>
         BodyClearedOnSend.Contains(templateCode, StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The template codes whose body is destroyed on a terminal status, for a set-based statement that
+    /// cannot call <see cref="BodyIsClearedOnSend"/> row by row.
+    /// </summary>
+    public static IReadOnlyList<string> TemplatesWithBodyClearedOnSend => BodyClearedOnSend;
 }
