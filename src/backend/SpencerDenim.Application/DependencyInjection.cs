@@ -1,6 +1,8 @@
 using Microsoft.Extensions.DependencyInjection;
 using SpencerDenim.Application.Abstractions.Messaging;
 using SpencerDenim.Application.Abstractions.Results;
+using SpencerDenim.Application.Accounts;
+using SpencerDenim.Application.Accounts.Contracts;
 using SpencerDenim.Application.Admin.Account;
 using SpencerDenim.Application.Admin.Authentication;
 using SpencerDenim.Application.Admin.Auditing;
@@ -319,6 +321,65 @@ public static class DependencyInjection
                 provider.GetRequiredKeyedService<IQueryHandler<GetSiteSettingsQuery, SiteSettingsDto>>(
                     UncachedSiteSettings),
                 provider.GetRequiredService<ISiteSettingsCache>()));
+
+        // Customer accounts (W3-01, ACC-01/02; doc 11 P11). Thin orchestration: validation, the port
+        // call, and the one audit row a customer sign-in produces. Everything that touches the identity
+        // store is a port Infrastructure registers.
+        services.AddScoped<
+            ICommandHandler<RegisterCustomerCommand, Result<RegisterCustomerResult>>,
+            RegisterCustomerCommandHandler>();
+
+        services.AddScoped<
+            ICommandHandler<CustomerSignInCommand, Result<CustomerSignInResult>>,
+            CustomerSignInCommandHandler>();
+
+        services.AddScoped<
+            ICommandHandler<RequestCustomerPasswordResetCommand, Result<bool>>,
+            RequestCustomerPasswordResetCommandHandler>();
+
+        services.AddScoped<
+            ICommandHandler<ResetCustomerPasswordCommand, Result<CustomerPasswordResetResult>>,
+            ResetCustomerPasswordCommandHandler>();
+
+        services.AddScoped<
+            ICommandHandler<ChangeCustomerPasswordCommand, Result<CustomerPasswordChangeResult>>,
+            ChangeCustomerPasswordCommandHandler>();
+
+        services.AddScoped<
+            ICommandHandler<ConfirmCustomerEmailCommand, CustomerEmailConfirmationResult>,
+            ConfirmCustomerEmailCommandHandler>();
+
+        services.AddScoped<
+            ICommandHandler<ResendCustomerConfirmationCommand, bool>,
+            ResendCustomerConfirmationCommandHandler>();
+
+        services.AddScoped<
+            IQueryHandler<GetCustomerProfileQuery, CustomerProfile?>,
+            GetCustomerProfileQueryHandler>();
+
+        services.AddScoped<
+            ICommandHandler<SaveCustomerProfileCommand, Result<CustomerProfile?>>,
+            SaveCustomerProfileCommandHandler>();
+
+        services.AddScoped<
+            IQueryHandler<GetCustomerAddressesQuery, IReadOnlyList<CustomerAddressDto>>,
+            GetCustomerAddressesQueryHandler>();
+
+        services.AddScoped<
+            ICommandHandler<SaveCustomerAddressCommand, Result<CustomerAddressResult>>,
+            SaveCustomerAddressCommandHandler>();
+
+        services.AddScoped<
+            ICommandHandler<DeleteCustomerAddressCommand, CustomerAddressResult>,
+            DeleteCustomerAddressCommandHandler>();
+
+        services.AddScoped<
+            ICommandHandler<SetDefaultCustomerAddressCommand, CustomerAddressResult>,
+            SetDefaultCustomerAddressCommandHandler>();
+
+        services.AddScoped<
+            IQueryHandler<GetCustomerOrdersQuery, CustomerOrderPageDto>,
+            GetCustomerOrdersQueryHandler>();
 
         // Checkout (W3-02, CHK-01..04). The reads, the number series and the one placement transaction are
         // ports Infrastructure registers; the arithmetic is the Domain's `OrderPricing`.

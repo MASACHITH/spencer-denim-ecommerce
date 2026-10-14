@@ -123,6 +123,12 @@ public static class CustomerIdentityRegistration
         services.AddScoped<ICustomerPasswords, CustomerPasswordStore>();
         services.AddScoped<ICustomerEmailConfirmation, CustomerEmailConfirmationStore>();
         services.AddScoped<ICustomerProfileStore, CustomerProfileStore>();
+        services.AddScoped<ICustomerAddressStore, CustomerAddressStore>();
+
+        // ACC-02's order history. It lives in Infrastructure/Sales/Orders beside the other order readers
+        // — it reads sales.Orders and nothing in identity — and is registered here because this is the
+        // method that owns the customer account surface.
+        services.AddScoped<ICustomerOrderReader, SpencerDenim.Infrastructure.Sales.Orders.CustomerOrderReader>();
 
         return services;
     }
