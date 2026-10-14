@@ -1,3 +1,5 @@
+using SpencerDenim.Application.Accounts.Contracts;
+
 namespace SpencerDenim.Application.Sales.Checkout.Contracts;
 
 /// <summary>One line of a placed order, read back from the snapshot columns (CHK-04).</summary>
@@ -101,6 +103,23 @@ public sealed record OrderDeliveryDto(
 /// can show it back rather than offering an empty form to somebody who filled it in yesterday.
 /// <see langword="null"/> when there is no open payment to attach anything to.
 /// </param>
+/// <param name="Tracking">
+/// How to follow the parcel, or <see langword="null"/> until it ships (ACC-02, doc 11 P11 step 12's
+/// "courier tracking link" and step 14's "view status, tracking").
+/// <para>
+/// <b>Added by W3-01, and its absence was a real gap on this page.</b> Doc 11 P11 step 14 says a guest
+/// following the secure link from their order emails sees "status, <i>tracking</i>" — and this payload
+/// carried neither the courier nor the number, so the only place in the system that showed a tracking
+/// number was the admin panel. The block is shared with My account's order list
+/// (<see cref="CustomerOrderTrackingDto"/>) rather than copied, so the signed-in and guest views of one
+/// order cannot disagree about where it is.
+/// </para>
+/// <para>
+/// <b>Absent rather than full of nulls when there is nothing to track</b>: an order that has not
+/// shipped, or a store-pickup order, which has no courier at all. A block of nulls would make every
+/// consumer write the same three-way check.
+/// </para>
+/// </param>
 /// <param name="CanCancel">
 /// Whether the shopper may cancel this order right now (doc 11 P10 flow A, W3-04b).
 /// <para>
@@ -144,7 +163,8 @@ public sealed record OrderConfirmationDto(
     bool IsDuplicateSubmission = false,
     OrderPaymentInstructionsDto? Payment = null,
     OrderPaymentProofDto? Proof = null,
-    bool CanCancel = false);
+    bool CanCancel = false,
+    CustomerOrderTrackingDto? Tracking = null);
 
 /// <summary>
 /// What <c>POST /api/orders/{token}/cancel</c> answers (doc 11 P10 flow A).

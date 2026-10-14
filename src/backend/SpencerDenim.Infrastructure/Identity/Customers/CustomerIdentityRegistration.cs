@@ -116,6 +116,26 @@ public static class CustomerIdentityRegistration
                 cookieOptions.Events.OnValidatePrincipal = ValidateCustomerPrincipalAsync;
             });
 
+        // The one policy every customer endpoint names.
+        //
+        // **It has to be a named policy and may not be a bare `RequireAuthorization()`.** The default
+        // policy carries `RequireAdminAccountGates()` — the forced-password-change and 2FA-enrolment
+        // gates — because every admin policy must, and a customer principal satisfies none of them. A
+        // customer endpoint written with no policy name would therefore 403 every signed-in shopper.
+        //
+        // `AddAuthenticationSchemes` is the other half: the default scheme is the admin cookie, so
+        // without naming this one the policy would try to authenticate a shopper against the admin
+        // scheme and find nobody. Naming it also means an admin cookie replayed at a customer endpoint
+        // authenticates as nothing at all, which is doc 08 §3.1 DB10's two-scheme separation doing its
+        // work at the routing layer as well as in `OnValidatePrincipal`.
+        services.AddAuthorizationBuilder()
+            .AddPolicy(CustomerAuthorization.PolicyName, policy => policy
+                .AddAuthenticationSchemes(CustomerAuthenticationDefaults.Scheme)
+                .RequireAuthenticatedUser()
+                .RequireClaim(
+                    CustomerAuthenticationDefaults.UserTypeClaimType,
+                    ((byte)UserType.Customer).ToString(CultureInfo.InvariantCulture)));
+
         services.AddScoped<CustomerUserLookup>();
         services.AddScoped<CustomerAccountLockout>();
         services.AddScoped<ICustomerRegistration, CustomerRegistrationStore>();
