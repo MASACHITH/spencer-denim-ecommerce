@@ -205,6 +205,70 @@ public sealed class ReportingTesterTests(SqlServerDatabaseFixture sqlServer) : R
     }
 
     /// <summary>
+    /// <b>Paid orders are orders, not buyers, on every screen.</b> One buyer paying twice on one Colombo day is two
+    /// paid orders in the KPI, the trend and the sales report. Without this case, counting distinct buyers per
+    /// day in the shared daily query survived the whole suite (tester mutation T02): no fixture had one email
+    /// paying twice on the same day, so orders and buyers coincided everywhere.
+    /// </summary>
+    [Fact]
+    public async Task One_buyer_paying_twice_in_a_day_is_two_paid_orders_everywhere()
+    {
+        await using var host = await StartAsync();
+        var catalogue = await CatalogueAsync();
+        var pick = catalogue.Picks[0];
+        var email = Email("twice");
+
+        var first = await InsertOrderAsync(catalogue, new OrderSpec(email, Colombo(2002, 6, 10, 9, 0), Colombo(2002, 6, 10, 9, 5), OrderStatus.Paid, [new LineSpec(pick, 1, 1000m)]));
+        var second = await InsertOrderAsync(catalogue, new OrderSpec(email.ToUpperInvariant(), Colombo(2002, 6, 10, 15, 0), Colombo(2002, 6, 10, 15, 5), OrderStatus.Paid, [new LineSpec(pick, 1, 2000m)]));
+
+        using var client = await host.SignInAsync(Permissions.Dashboard.View, Permissions.Reports.View);
+
+        var kpis = (await GetJsonAsync(client, $"{DashboardUrl}?from={Day(2002, 6, 1)}&to={Day(2002, 6, 30)}")).GetProperty("kpis");
+        Assert.Equal(2m, Current(kpis, "paidOrders"));
+        Assert.Equal(first.GrandTotal + second.GrandTotal, Current(kpis, "grossRevenue"));
+
+        var month = (await GetJsonAsync(client, $"{TrendUrl}?interval=Month&to={Day(2002, 6, 30)}")).GetProperty("points").EnumerateArray().Last();
+        Assert.Equal(2, month.GetProperty("paidOrders").GetInt32());
+        Assert.Equal(2, month.GetProperty("orders").GetInt32());
+
+        foreach (var groupBy in new[] { "Day", "Week", "Month" })
+        {
+            var totals = (await GetJsonAsync(client, $"/api/admin/reports/sales?from={Day(2002, 6, 1)}&to={Day(2002, 6, 30)}&groupBy={groupBy}")).GetProperty("totals");
+            Assert.Equal(2, totals.GetProperty("paidOrders").GetInt32());
+        }
+
+        // One buyer, though: the district and customers figures count people.
+        var dashboard = await GetJsonAsync(client, $"{DashboardUrl}?from={Day(2002, 6, 1)}&to={Day(2002, 6, 30)}");
+        Assert.Equal(1, dashboard.GetProperty("buyersByDistrict").GetProperty("distinctBuyers").GetInt32());
+    }
+
+    /// <summary>
+    /// <b>The configured default threshold is the one the low-stock filter uses</b>, not only the one the response
+    /// reports. Every other low-stock test runs at the default of 5, so hard-coding 5 in the SQL survived the
+    /// suite (tester mutation T18) — and a shop that set <c>Catalog__DefaultLowStockThreshold=10</c> would have
+    /// been told "threshold 10" while being alerted at 5.
+    /// </summary>
+    [Fact]
+    public async Task The_low_stock_filter_uses_the_configured_default_threshold()
+    {
+        SqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(SqlServer.ConnectionString, Token);
+
+        using var scope = SqlServer.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var reader = new SpencerDenim.Infrastructure.Admin.Reporting.ReportingReader(
+            db,
+            Microsoft.Extensions.Options.Options.Create(new SpencerDenim.Application.Catalog.CatalogOptions { DefaultLowStockThreshold = 37 }));
+
+        var sql = reader.LowStockQuery().ToQueryString();
+        Assert.Matches(@"DECLARE @\w+ int = 37;", sql);
+
+        var answer = await reader.ReadLowStockAsync(10, Token);
+        Assert.Equal(37, answer.DefaultThreshold);
+        Assert.All(answer.Rows, row => Assert.InRange(row.Available, 1, row.Threshold));
+    }
+
+    /// <summary>
     /// <b>How long the live dashboard takes at a year's volume.</b> Opt-in: set <c>REPORTING_PERF_ORDERS</c>
     /// (e.g. 36500). Seeds that many orders across 2001, four in five paid, two or three lines each, about
     /// 8,000 distinct buyers over every district, then times each route. Writes the timings to
