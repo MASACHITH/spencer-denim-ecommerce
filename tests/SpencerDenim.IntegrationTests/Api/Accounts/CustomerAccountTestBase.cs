@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using SpencerDenim.Domain.Identity;
 using SpencerDenim.Domain.Ops;
 using SpencerDenim.Infrastructure.Persistence;
@@ -65,7 +66,14 @@ public abstract class CustomerAccountTestBase(SqlServerDatabaseFixture sqlServer
     /// Further configuration, applied after the origin — how a lockout test shrinks the threshold
     /// rather than sending ten requests to discover the default.
     /// </param>
-    protected ApiFactory CreateHost(IReadOnlyDictionary<string, string?>? extra = null)
+    /// <param name="configureServices">
+    /// Service overrides, applied after the application's own registrations — how the sign-in race test
+    /// replaces the password hasher with one that locks the account mid-verification, which is the only
+    /// deterministic way to reach the post-verification lockout guard.
+    /// </param>
+    protected ApiFactory CreateHost(
+        IReadOnlyDictionary<string, string?>? extra = null,
+        Action<IServiceCollection>? configureServices = null)
     {
         var configuration = new Dictionary<string, string?>(StringComparer.Ordinal)
         {
@@ -80,7 +88,10 @@ public abstract class CustomerAccountTestBase(SqlServerDatabaseFixture sqlServer
             }
         }
 
-        return new ApiFactory(SqlServer.ConnectionString, additionalConfiguration: configuration);
+        return new ApiFactory(
+            SqlServer.ConnectionString,
+            additionalConfiguration: configuration,
+            configureServices: configureServices);
     }
 
     /// <summary>

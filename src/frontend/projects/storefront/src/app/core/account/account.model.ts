@@ -296,3 +296,18 @@ export function accountDate(stamp: string | null | undefined): string | null {
     ? null
     : parsed.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
 }
+
+/**
+ * An empty or whitespace-only box as `null`.
+ *
+ * Every optional field on these forms goes through it, because the server's validator trims and reads
+ * blank as absent: sending `''` would put an empty string into a nullable column, so a shopper who
+ * cleared their phone number would have "no phone" stored as something rather than as nothing. One
+ * function, so the registration form, the profile form and the address form cannot disagree about what
+ * an emptied box means.
+ */
+export function blankToNull(value: string): string | null {
+  const trimmed = value.trim();
+
+  return trimmed.length === 0 ? null : trimmed;
+}

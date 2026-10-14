@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Net;
 using System.Threading.RateLimiting;
+using Microsoft.Extensions.Options;
+using SpencerDenim.Infrastructure.Identity.Customers;
 
 namespace SpencerDenim.Api.Http;
 
@@ -50,52 +52,6 @@ internal enum AccountRequestKind
 /// </remarks>
 internal sealed partial class AccountRequestThrottle : IDisposable
 {
-    /// <summary>
-    /// Sign-in attempts one address may make per window.
-    /// </summary>
-    /// <remarks>
-    /// <b>Thirty per ten minutes.</b> A person signs in once and mistypes twice. The margin above that is
-    /// for carrier-grade NAT — Sri Lankan mobile networks put many subscribers behind one public address,
-    /// which is <c>NewsletterSignupThrottle</c>'s own reason for its margin — and for a household or an
-    /// office sharing a connection. Thirty caps one source at about four thousand password hashes a day,
-    /// where an unlimited endpoint caps it at whatever the network can carry.
-    /// </remarks>
-    private const int SignInPermits = 30;
-
-    /// <summary>
-    /// Registrations one address may make per window. <b>Five</b>: a person registers once, a family
-    /// behind one connection a handful of times, and every one of these writes a user row and queues two
-    /// messages.
-    /// </summary>
-    private const int RegisterPermits = 5;
-
-    /// <summary>
-    /// Reset links one address may ask for per window. <b>Five</b>, and this is the tightest of the four
-    /// because the cost lands in <i>somebody else's</i> inbox: an unlimited forgot-password form is a way
-    /// to send a stranger as many messages as you like, with the shop's name on them.
-    /// </summary>
-    private const int ForgotPasswordPermits = 5;
-
-    /// <summary>
-    /// Confirmation links a signed-in caller may ask for per window. <b>Five</b>, for
-    /// <see cref="ForgotPasswordPermits"/>'s reason: the caller is authenticated, but the message still
-    /// goes to an address they chose.
-    /// </summary>
-    private const int ResendPermits = 5;
-
-    /// <summary>
-    /// Token redemptions one address may attempt per window.
-    /// </summary>
-    /// <remarks>
-    /// <b>Twenty.</b> A genuine caller redeems once and, after a mistyped password, perhaps three more
-    /// times. The number does not have to be small to be useful: the verifier is 256 bits of
-    /// <c>RandomNumberGenerator</c> output (<c>CustomerAccountTokens</c>), so guessing is infeasible at
-    /// any rate — what this stops is somebody walking a list of leaked links or hammering the endpoint for
-    /// its SHA-256 and database work. Doc 11 §7 G-41 makes the same argument about the guest order link's
-    /// 122-bit token.
-    /// </remarks>
-    private const int RedeemPermits = 20;
-
     /// <summary>What a caller with no address at all shares. They are all one bucket.</summary>
     private const string UnknownPartition = "unknown";
 
@@ -103,13 +59,19 @@ internal sealed partial class AccountRequestThrottle : IDisposable
 
     private readonly PartitionedRateLimiter<string> _limiter;
     private readonly ILogger<AccountRequestThrottle> _logger;
+    private readonly CustomerSecurityOptions _security;
 
     /// <summary>Set once, so the shared-partition warning is logged once rather than per request.</summary>
     private int _warned;
 
-    public AccountRequestThrottle(ILogger<AccountRequestThrottle> logger)
+    public AccountRequestThrottle(
+        ILogger<AccountRequestThrottle> logger,
+        IOptions<CustomerSecurityOptions> security)
     {
+        ArgumentNullException.ThrowIfNull(security);
+
         _logger = logger;
+        _security = security.Value;
 
         _limiter = PartitionedRateLimiter.Create<string, string>(partition =>
             RateLimitPartition.GetFixedWindowLimiter(
@@ -180,13 +142,21 @@ internal sealed partial class AccountRequestThrottle : IDisposable
             : AccountRequestKind.ForgotPassword;
     }
 
-    private static int PermitsFor(AccountRequestKind kind) => kind switch
+    /// <summary>
+    /// The budget for one kind, from <see cref="CustomerSecurityOptions"/>.
+    /// </summary>
+    /// <remarks>
+    /// <b>The forgot-password and resend budgets are the same number deliberately</b>
+    /// (<c>LinkRequestsPerWindow</c>): both end with a message in somebody's inbox, and splitting them
+    /// would be two settings nobody could explain the difference between. They are separate
+    /// <i>buckets</i>, so exhausting one does not close the other.
+    /// </remarks>
+    private int PermitsFor(AccountRequestKind kind) => kind switch
     {
-        AccountRequestKind.SignIn => SignInPermits,
-        AccountRequestKind.Register => RegisterPermits,
-        AccountRequestKind.ResendConfirmation => ResendPermits,
-        AccountRequestKind.RedeemToken => RedeemPermits,
-        _ => ForgotPasswordPermits,
+        AccountRequestKind.SignIn => _security.SignInAttemptsPerWindow,
+        AccountRequestKind.Register => _security.RegistrationsPerWindow,
+        AccountRequestKind.RedeemToken => _security.LinkRedemptionsPerWindow,
+        _ => _security.LinkRequestsPerWindow,
     };
 
     /// <summary>
@@ -209,7 +179,7 @@ internal sealed partial class AccountRequestThrottle : IDisposable
             || !IPAddress.TryParse(partition, out var address)
             || IPAddress.IsLoopback(address))
         {
-            LogSharedPartition(_logger, partition, SignInPermits, (int)FixedWindow.TotalMinutes);
+            LogSharedPartition(_logger, partition, _security.SignInAttemptsPerWindow, (int)FixedWindow.TotalMinutes);
         }
     }
 

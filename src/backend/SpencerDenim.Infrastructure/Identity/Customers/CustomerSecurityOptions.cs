@@ -92,6 +92,57 @@ public sealed class CustomerSecurityOptions
     public int EmailConfirmationTokenHours { get; set; } = 24 * 7;
 
     /// <summary>
+    /// Sign-in attempts one caller may make per ten minutes (<c>AccountRequestThrottle</c>).
+    /// </summary>
+    /// <remarks>
+    /// <b>Thirty.</b> A person signs in once and mistypes twice; the margin above that is for
+    /// carrier-grade NAT — Sri Lankan mobile networks put many subscribers behind one public address,
+    /// which is <c>NewsletterSignupThrottle</c>'s own reason for its margin — and for a household or an
+    /// office sharing a connection.
+    /// <para>
+    /// <b>It is a setting and not a constant for two reasons.</b> A deployment whose reverse-proxy
+    /// headers are not trusted has every visitor in one bucket (the throttle logs a warning about
+    /// exactly that), and raising this is the stopgap while the configuration is fixed. And a test
+    /// cannot raise a compile-time constant: the sign-in race tests fire thirty attempts at one account
+    /// and would otherwise be measuring the rate limiter rather than the lockout.
+    /// </para>
+    /// <para>
+    /// <b>This is not the lockout and does not replace it.</b> The lockout protects one account from
+    /// being guessed at; this protects the shop from one source trying many accounts, which a
+    /// per-account lockout cannot see at all.
+    /// </para>
+    /// </remarks>
+    public int SignInAttemptsPerWindow { get; set; } = 30;
+
+    /// <summary>
+    /// Registrations one caller may make per ten minutes. <b>Five</b>: a person registers once, a family
+    /// behind one connection a handful of times, and each one writes a user row and queues two messages.
+    /// </summary>
+    public int RegistrationsPerWindow { get; set; } = 5;
+
+    /// <summary>
+    /// Reset or confirmation links one caller may ask for per ten minutes.
+    /// </summary>
+    /// <remarks>
+    /// <b>Five, and this is the tightest of the four</b>, because the cost lands in <i>somebody else's</i>
+    /// inbox: an unlimited forgot-password form is a way to send a stranger as many messages as you
+    /// like, with the shop's name on them.
+    /// </remarks>
+    public int LinkRequestsPerWindow { get; set; } = 5;
+
+    /// <summary>
+    /// One-time links one caller may try to redeem per ten minutes.
+    /// </summary>
+    /// <remarks>
+    /// <b>Twenty.</b> A genuine caller redeems once, and perhaps three more times after mistyping a
+    /// password. The number does not have to be small to be useful: the verifier is 256 bits of
+    /// <c>RandomNumberGenerator</c> output, so guessing is infeasible at any rate — what this stops is
+    /// somebody walking a list of leaked links or hammering the endpoint for its hash and database work.
+    /// Doc 11 §7 G-41 makes the same argument about the guest order link's 122-bit token.
+    /// </remarks>
+    public int LinkRedemptionsPerWindow { get; set; } = 20;
+
+    /// <summary>
     /// Whether the customer auth cookie requires HTTPS (<c>Always</c> versus <c>SameAsRequest</c>).
     /// </summary>
     /// <remarks>
