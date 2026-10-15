@@ -1,4 +1,5 @@
 using System.Data;
+using System.Data.Common;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using SpencerDenim.Application.Abstractions.Time;
@@ -204,57 +205,112 @@ internal sealed class CartStore(AppDbContext dbContext, IClock clock) : ICartSto
         //    guest cart and does nothing. The operation is idempotent instead of merely transactional.
         //
         // Serialisable is affordable here precisely because this is rare: one sign-in, two tiny tables.
+        //
+        // **The connection is opened here, and the isolation level put back before it is closed.** SqlClient
+        // sends `SET TRANSACTION ISOLATION LEVEL SERIALIZABLE` with the BEGIN, and nothing sets it back:
+        // `sp_reset_connection` does not reset the isolation level on this engine, so a connection this merge
+        // returned to the pool stayed SERIALIZABLE for its next borrower — every query on it took range
+        // locks, and the email outbox's claim (`READPAST`) failed outright with error 650, which is the
+        // `SendEmails` sweep silently not sending. Opening the connection ourselves stops EF closing it at
+        // the COMMIT, so the reset runs on the same session on every path out, including a throw.
+        // PooledIsolationLeakTests is the regression test.
         var strategy = dbContext.Database.CreateExecutionStrategy();
         return await strategy.ExecuteAsync(async () =>
         {
-            await using var transaction = await dbContext.Database.BeginTransactionAsync(
-                IsolationLevel.Serializable,
-                cancellationToken);
-
-            var guest = await FindAsync(CartLookup.ForGuest(guestToken), cancellationToken);
-            if (guest is null)
+            await dbContext.Database.OpenConnectionAsync(cancellationToken);
+            try
             {
-                // Nothing to merge — or a replay of a merge that already committed.
-                await transaction.RollbackAsync(cancellationToken);
-                return new CartMergeOutcome(0, false);
+                return await MergeInSerializableTransactionAsync(guestToken, customerUserId, cancellationToken);
             }
-
-            var customer = await EnsureAsync(CartLookup.ForCustomer(customerUserId, null), cancellationToken);
-            if (customer.Id == guest.Value.Id)
+            finally
             {
-                // Unreachable with the lookup above (it refuses a cart that has a CustomerUserId), but a
-                // merge that moved a cart into itself would delete the shopper's bag, so it is checked
-                // rather than reasoned about.
-                await transaction.RollbackAsync(cancellationToken);
-                return new CartMergeOutcome(0, false);
+                await RestoreReadCommittedAsync();
+                await dbContext.Database.CloseConnectionAsync();
             }
-
-            var lines = await dbContext.CartItems
-                .AsNoTracking()
-                .Where(item => item.CartId == guest.Value.Id)
-                .OrderBy(item => item.Id)
-                .Select(item => new { item.VariantId, item.Quantity, item.UnitPriceAtAdd })
-                .ToListAsync(cancellationToken);
-
-            var moved = 0;
-            foreach (var line in lines)
-            {
-                // The same upsert as Add to Bag, so a variant in both bags sums and clamps at 10. Doc 08
-                // §3.5 also caps the merge "at Available"; it is not capped here because stock is not
-                // reserved in a cart (§3.5) and the bag is priced and checked at read time — a line over
-                // stock is shown as NotEnoughStock rather than silently trimmed, which is the rule the
-                // rest of the bag follows. Checkout (W3-02) is where stock is actually claimed.
-                await AddItemAsync(customer.Id, line.VariantId, line.Quantity, line.UnitPriceAtAdd, cancellationToken);
-                moved++;
-            }
-
-            await dbContext.Carts
-                .Where(cart => cart.Id == guest.Value.Id)
-                .ExecuteDeleteAsync(cancellationToken);
-
-            await transaction.CommitAsync(cancellationToken);
-            return new CartMergeOutcome(moved, true);
         });
+    }
+
+    private async Task<CartMergeOutcome> MergeInSerializableTransactionAsync(
+        Guid guestToken,
+        int customerUserId,
+        CancellationToken cancellationToken)
+    {
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(
+            IsolationLevel.Serializable,
+            cancellationToken);
+
+        var guest = await FindAsync(CartLookup.ForGuest(guestToken), cancellationToken);
+        if (guest is null)
+        {
+            // Nothing to merge — or a replay of a merge that already committed.
+            await transaction.RollbackAsync(cancellationToken);
+            return new CartMergeOutcome(0, false);
+        }
+
+        var customer = await EnsureAsync(CartLookup.ForCustomer(customerUserId, null), cancellationToken);
+        if (customer.Id == guest.Value.Id)
+        {
+            // Unreachable with the lookup above (it refuses a cart that has a CustomerUserId), but a
+            // merge that moved a cart into itself would delete the shopper's bag, so it is checked
+            // rather than reasoned about.
+            await transaction.RollbackAsync(cancellationToken);
+            return new CartMergeOutcome(0, false);
+        }
+
+        var lines = await dbContext.CartItems
+            .AsNoTracking()
+            .Where(item => item.CartId == guest.Value.Id)
+            .OrderBy(item => item.Id)
+            .Select(item => new { item.VariantId, item.Quantity, item.UnitPriceAtAdd })
+            .ToListAsync(cancellationToken);
+
+        var moved = 0;
+        foreach (var line in lines)
+        {
+            // The same upsert as Add to Bag, so a variant in both bags sums and clamps at 10. Doc 08
+            // §3.5 also caps the merge "at Available"; it is not capped here because stock is not
+            // reserved in a cart (§3.5) and the bag is priced and checked at read time — a line over
+            // stock is shown as NotEnoughStock rather than silently trimmed, which is the rule the
+            // rest of the bag follows. Checkout (W3-02) is where stock is actually claimed.
+            await AddItemAsync(customer.Id, line.VariantId, line.Quantity, line.UnitPriceAtAdd, cancellationToken);
+            moved++;
+        }
+
+        await dbContext.Carts
+            .Where(cart => cart.Id == guest.Value.Id)
+            .ExecuteDeleteAsync(cancellationToken);
+
+        await transaction.CommitAsync(cancellationToken);
+        return new CartMergeOutcome(moved, true);
+    }
+
+    /// <summary>
+    /// Puts the open connection back to READ COMMITTED before it goes back to the pool. Never throws: if
+    /// the reset itself fails the pool is cleared instead, so a SERIALIZABLE session cannot be handed out.
+    /// Not cancellable on purpose — a cancelled request must not skip it.
+    /// </summary>
+    private async Task RestoreReadCommittedAsync()
+    {
+        var connection = dbContext.Database.GetDbConnection();
+        try
+        {
+            if (connection.State == ConnectionState.Open)
+            {
+                await using var command = connection.CreateCommand();
+                command.CommandText = "SET TRANSACTION ISOLATION LEVEL READ COMMITTED;";
+                await command.ExecuteNonQueryAsync(CancellationToken.None);
+                return;
+            }
+        }
+        catch (Exception exception) when (exception is DbException or InvalidOperationException)
+        {
+            // Fall through to the pool clear.
+        }
+
+        if (connection is SqlConnection sqlConnection)
+        {
+            SqlConnection.ClearPool(sqlConnection);
+        }
     }
 
     private async Task<CartIdentity> InsertCartAsync(int? customerUserId, CancellationToken cancellationToken)

@@ -1363,6 +1363,23 @@ describe('CheckoutPage (CHK-01..03)', () => {
       expect(element.querySelector('form')?.id).toBe('checkout-form');
       expect(placeButton().type).toBe('submit');
     });
+
+    /**
+     * **The form's native submit does nothing (#123).** The page is server rendered, so the form is usable
+     * before Angular has attached `(submit)`; with no `method` the browser then submits it itself, as a GET
+     * to this page carrying the name, email, phone and address in the query string. `method="dialog"` on a
+     * form outside a `<dialog>` is a submit that goes nowhere. jsdom has no opinion about navigation, so
+     * this pins the attribute and `pre-hydration-submit.e2e.ts` holds the scripts back to prove the
+     * behaviour in a real browser.
+     */
+    it('cannot submit natively, so nothing typed before hydration can reach the URL', async () => {
+      await openWith(session());
+
+      const form = element.querySelector('form')!;
+
+      expect(form.getAttribute('method')).toBe('dialog');
+      expect(form.hasAttribute('action')).toBe(false);
+    });
   });
 
   /**
