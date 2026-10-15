@@ -1,5 +1,10 @@
 import { provideHttpClient, withFetch, withInterceptors } from '@angular/common/http';
-import { ApplicationConfig, provideBrowserGlobalErrorListeners } from '@angular/core';
+import {
+  ApplicationConfig,
+  inject,
+  provideAppInitializer,
+  provideBrowserGlobalErrorListeners,
+} from '@angular/core';
 import {
   provideClientHydration,
   withEventReplay,
@@ -10,6 +15,7 @@ import { apiBaseUrlInterceptor } from '@spencer-denim/shared';
 
 import { cartCookieInterceptor } from './core/cart/cart-cookie.interceptor';
 import { routes } from './app.routes';
+import { PageViewTracker } from './core/traffic/page-view-tracker';
 
 export const appConfig: ApplicationConfig = {
   providers: [
@@ -27,5 +33,8 @@ export const appConfig: ApplicationConfig = {
     // same-origin request, and on the server it copies `sd_cart` (and nothing else) onto the one call
     // that needs it.
     provideHttpClient(withFetch(), withInterceptors([cartCookieInterceptor, apiBaseUrlInterceptor])),
+    // Traffic recording (W4-03): in the browser, every page reached by clicking, and the first page when
+    // the server did not record it. A no-op on the server. See `core/traffic/page-view-tracker.ts`.
+    provideAppInitializer(() => inject(PageViewTracker).start()),
   ],
 };
