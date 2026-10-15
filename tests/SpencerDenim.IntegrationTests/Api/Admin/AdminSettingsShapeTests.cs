@@ -297,6 +297,19 @@ public sealed class AdminSettingsShapeTests(SqlServerDatabaseFixture sqlServer)
             .Where(setting => keys.Contains(setting.Key))
             .ExecuteUpdateAsync(update => update.SetProperty(setting => setting.Value, (string?)null), Token);
 
+        // Then back to the seeder's value where it has one, as AdminSettingsEndpointTests.RestoreAsync does.
+        // Nulling every key left e.g. Orders.PayPalExpiryMinutes (seeded 60) null for the rest of the run, so
+        // PayPalSettingsEndpointTests failed whenever xUnit ordered it after this class.
+        foreach (var definition in SettingCatalog.All.Where(item => item.SeedValue is not null))
+        {
+            var key = definition.Key;
+            var value = definition.SeedValue;
+
+            await dbContext.Settings
+                .Where(setting => setting.Key == key)
+                .ExecuteUpdateAsync(update => update.SetProperty(setting => setting.Value, value), Token);
+        }
+
         await dbContext.MediaUsages
             .Where(usage => usage.OwnerType == SpencerDenim.Domain.Media.MediaUsageOwnerTypes.Setting)
             .ExecuteDeleteAsync(Token);
