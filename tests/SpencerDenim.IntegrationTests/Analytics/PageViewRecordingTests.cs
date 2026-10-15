@@ -242,7 +242,18 @@ public sealed class PageViewRecordingTests(SqlServerDatabaseFixture sqlServer)
                 .FirstAsync(Token);
             (categoryId, departmentSlug, categoryPath) = (category.Id, category.Department, $"/{category.Department}/{category.Slug}");
 
-            contentSlug = await db.ContentPages.AsNoTracking().Where(p => p.IsPublished).Select(p => p.Slug).FirstAsync(Token);
+            // A published page of this test's own: other suites publish and unpublish the seeded ones, so "the first
+            // published page" is an order-dependent assumption (the whole-assembly run found none left published).
+            contentSlug = "w403-page-" + Guid.NewGuid().ToString("N")[..8];
+            db.ContentPages.Add(new Domain.Content.ContentPage
+            {
+                Slug = contentSlug,
+                Title = "W4-03 traffic test page",
+                BodyHtml = "<p>Test</p>",
+                IsPublished = true,
+                PublishedAtUtc = DateTime.UtcNow,
+            });
+            await db.SaveChangesAsync(Token);
         }
 
         using var client = host.CreateClient();
@@ -263,6 +274,16 @@ public sealed class PageViewRecordingTests(SqlServerDatabaseFixture sqlServer)
 
         await host.FlushAsync(Token);
         var rows = await TrafficTestHost.RowsAsync(sqlServer, session!.Value, Token);
+
+        // The page is removed before anything is asserted, so a failure here cannot leave an extra published page
+        // for a later suite that counts them.
+        using (var cleanup = sqlServer.CreateScope())
+        {
+            await cleanup.ServiceProvider.GetRequiredService<AppDbContext>().ContentPages
+                .IgnoreQueryFilters()
+                .Where(page => page.Slug == contentSlug)
+                .ExecuteDeleteAsync(Token);
+        }
 
         Assert.Equal(
             [
