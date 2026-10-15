@@ -242,6 +242,24 @@ describe('HeaderSearch (SRCH-01)', () => {
     expect(input().hasAttribute('aria-activedescendant')).toBe(false);
   });
 
+  /**
+   * **Where a press of Enter goes before the page has hydrated (#123).** The component is server
+   * rendered on every page, so a shopper can submit the form before `(submit)` exists. With no `action`
+   * the browser sends the term to the page they are on — `?q=jeans` on the homepage — and shows them that
+   * page again; pointed at the results route it lands where `onSubmit` would have sent them. A term in the
+   * address is what a search is, which is why this form may navigate and the ones holding an email
+   * address may not. `pre-hydration-submit.e2e.ts` proves it in a browser with the scripts held back.
+   */
+  it('submits natively to the results page, so a press before hydration still searches', () => {
+    setUp();
+
+    const form = root().querySelector('form')!;
+
+    expect(form.getAttribute('action')).toBe('/search');
+    expect(form.getAttribute('method')).toBe('get');
+    expect(input().name).toBe('q');
+  });
+
   it('points aria-controls at the listbox that is really in the document', () => {
     setUp();
 

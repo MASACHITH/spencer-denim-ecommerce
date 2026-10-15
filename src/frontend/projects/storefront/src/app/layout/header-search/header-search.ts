@@ -68,9 +68,17 @@ import { SuggestionStore } from '../../core/search/suggestion-store';
   providers: [SuggestionStore],
   host: { '(focusout)': 'onFocusOut($event)' },
   template: `
+    <!-- action="/search" method="get" are the no-script, pre-hydration behaviour (#123). This is on every
+         page and server rendered, so a shopper can press Enter before the bundle has loaded; with no
+         action the browser would submit to the page they are on, ?q=jeans on the homepage, and show
+         them the homepage again. Pointed at the results route it lands exactly where onSubmit sends
+         them: the search term in the address is the intended behaviour of a search, unlike a name or
+         an email address, which is why this form, unlike the others, is allowed to navigate. -->
     <form
       class="header-search"
       role="search"
+      action="/search"
+      method="get"
       [attr.aria-label]="landmarkName()"
       (submit)="onSubmit($event)"
     >

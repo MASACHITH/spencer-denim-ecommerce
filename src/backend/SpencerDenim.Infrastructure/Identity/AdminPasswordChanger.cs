@@ -9,7 +9,7 @@ namespace SpencerDenim.Infrastructure.Identity;
 /// Changes a staff user's own password (issue #17) through <see cref="UserManager{TUser}"/>, which rehashes the
 /// password and rotates the <c>SecurityStamp</c> in the same update that clears <c>MustChangePassword</c>.
 /// </summary>
-public sealed class AdminPasswordChanger(UserManager<AppUser> userManager, SignInManager<AppUser> signInManager) : IAdminPasswordChanger
+public sealed class AdminPasswordChanger(UserManager<AppUser> userManager, StaffAccountLockout lockout) : IAdminPasswordChanger
 {
     public async Task<AdminPasswordChangeOutcome> ChangePasswordAsync(
         int userId,
@@ -29,19 +29,17 @@ public sealed class AdminPasswordChanger(UserManager<AppUser> userManager, SignI
             return AdminPasswordChangeOutcome.AccountUnavailable(userId);
         }
 
-        var wasAlreadyLockedOut = await userManager.IsLockedOutAsync(user);
-
-        // The same call and the same lockoutOnFailure: true as sign-in, so a stolen session cookie cannot be used
-        // to guess the current password any faster than the sign-in form allows (doc 08 §3.1 N14): failures here
-        // count towards the same time-boxed lockout, and an already locked account is refused without a check.
-        var checkResult = await signInManager.CheckPasswordSignInAsync(user, currentPassword, lockoutOnFailure: true);
-        if (checkResult.IsLockedOut)
+        // The same check as sign-in, so a stolen session cookie cannot be used to guess the current password any
+        // faster than the sign-in form allows (doc 08 §3.1 N14): failures here count towards the same time-boxed
+        // lockout, atomically however many arrive at once (issue #46), and an already locked account is refused
+        // without a check.
+        var check = await lockout.CheckPasswordAsync(user, currentPassword);
+        if (check is { Status: StaffSecretCheckStatus.LockedOut, LockoutEnd: { } lockoutEnd })
         {
-            var lockoutEnd = user.LockoutEnd ?? DateTimeOffset.UtcNow;
-            return AdminPasswordChangeOutcome.LockedOut(user.Id, user.Email, lockoutEnd, wasNewlyLockedOut: !wasAlreadyLockedOut);
+            return AdminPasswordChangeOutcome.LockedOut(user.Id, user.Email, lockoutEnd, check.WasNewlyLockedOut);
         }
 
-        if (!checkResult.Succeeded)
+        if (check.Status != StaffSecretCheckStatus.Succeeded)
         {
             return AdminPasswordChangeOutcome.InvalidCurrentPassword(user.Id, user.Email);
         }

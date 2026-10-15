@@ -38,7 +38,14 @@ export type NewsletterState = 'idle' | 'sending' | 'done' | 'error';
               {{ newsletterMessage() }}
             </p>
           } @else {
-            <form class="newsletter__form" novalidate (submit)="onNewsletterSubmit($event)">
+            <!-- method="dialog": a native submit that does nothing, so a press of Enter before the page has
+                 hydrated cannot put the address in the URL (#123). The reasoning is in checkout-page.ts. -->
+            <form
+              class="newsletter__form"
+              method="dialog"
+              novalidate
+              (submit)="onNewsletterSubmit($event)"
+            >
               <!-- A prefixed id, because the homepage carries a newsletter field of its own and
                    an id may appear once in a document. -->
               <label class="sr-only" for="footer-newsletter-email">Email address</label>
