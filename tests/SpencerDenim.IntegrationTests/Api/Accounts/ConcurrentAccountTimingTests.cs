@@ -55,6 +55,13 @@ namespace SpencerDenim.IntegrationTests.Api.Accounts;
 /// journal records it as open rather than hiding it behind a looser number here.
 /// </para>
 /// <para>
+/// <b>It runs on a fresh database of its own</b> (<see cref="FreshDeployment"/>), because the wait only
+/// happens while the users table is small enough to be scanned — a newly launched shop. On the shared
+/// fixture database, after the rest of the suite has registered a few hundred customers, the plan seeks
+/// and nothing blocks: measured, the first version of this test, which used the shared database,
+/// <b>passed</b> in a full-suite run with the option off, though it failed every time run alone.
+/// </para>
+/// <para>
 /// Set <c>RCSI_TIMING_OUT</c> to a file path to have every path's p50/p90/p95 appended to it.
 /// </para>
 /// </remarks>
@@ -77,10 +84,15 @@ public sealed class ConcurrentAccountTimingTests(SqlServerDatabaseFixture sqlSer
     [Fact]
     public async Task Under_concurrent_registrations_every_path_answers_correctly_and_sign_in_and_forgot_password_keep_the_same_tail()
     {
-        await ReadyAsync();
+        SqlServer.SkipIfUnavailable();
 
-        await using var factory = CreateHost(new Dictionary<string, string?>(StringComparer.Ordinal)
+        // A database of its own, never the shared fixture's: see the remarks on why a small users table
+        // is the whole point.
+        await using var deployment = await FreshDeployment.CreateAsync(SqlServer.ConnectionString, Token);
+
+        await using var factory = new ApiFactory(deployment.ConnectionString, additionalConfiguration: new Dictionary<string, string?>(StringComparer.Ordinal)
         {
+            ["Email:StorefrontBaseUrl"] = StorefrontOrigin,
             ["CustomerSecurity:AnonymousResponseFloorMilliseconds"] = "250",
             ["CustomerSecurity:SignInAttemptsPerWindow"] = "100000",
             ["CustomerSecurity:RegistrationsPerWindow"] = "100000",
