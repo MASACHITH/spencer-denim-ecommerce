@@ -1,6 +1,9 @@
 import { Route } from '@angular/router';
 
 import { UNBUILT_PATHS, routes } from './app.routes';
+import { isUnconfirmedContentPage } from './core/content/content-page.guards';
+import { isMissingCategory, isUnconfirmedCatalogue } from './core/navigation/catalog-route.guards';
+import { NOT_A_PAGE_VIEW } from './core/traffic/page-view-tracker';
 
 /**
  * The shape of the route table, where #28 lived.
@@ -186,5 +189,25 @@ describe('the storefront route table (#28)', () => {
       );
       expect(path).not.toMatch(/:id\b|\.html?$|\.aspx?$/);
     }
+  });
+});
+
+describe('the routes that are not page views (W4-03)', () => {
+  /**
+   * The 404 and 503 pages are not page views: the server records 200s only, and the browser's tracker skips a
+   * route marked `NOT_A_PAGE_VIEW`. Without the mark, a click that lands on a missing category, or a first page
+   * the server did not render, would be counted as a visit to the shop.
+   */
+  it('marks the catch-all and every 404 and 503 route, and nothing else', () => {
+    const notPageViews = new Set<unknown>([isMissingCategory, isUnconfirmedCatalogue, isUnconfirmedContentPage]);
+
+    const marked = routes.filter((route) => route.data?.['pageView'] === false);
+    const expected = routes.filter(
+      (route) => route.path === '**' || (route.canMatch ?? []).some((guard) => notPageViews.has(guard)),
+    );
+
+    expect(expected).toHaveLength(6);
+    expect(marked).toEqual(expected);
+    expect(NOT_A_PAGE_VIEW).toEqual({ pageView: false });
   });
 });
