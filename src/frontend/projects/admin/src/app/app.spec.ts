@@ -3,7 +3,6 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
-import { PingApi } from '@spencer-denim/shared';
 
 import { App } from './app';
 import { routes } from './app.routes';
@@ -81,7 +80,12 @@ describe('Admin App', () => {
     expect(banner!.compareDocumentPosition(main!) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
   });
 
-  it('dashboard shows the heading and a neutral message when the API is down', async () => {
+  /**
+   * W4-02 replaced W0-09's placeholder (the brand as the heading, and a ping panel) with the dashboard. With
+   * the API down the page still says what it is and says the figures could not be fetched, rather than going
+   * blank or showing zeros — a row of zeros would read as "the shop sold nothing".
+   */
+  it('dashboard shows the heading and a readable message when the API is down', async () => {
     const harness = await RouterTestingHarness.create();
     const controller = TestBed.inject(HttpTestingController);
 
@@ -91,12 +95,19 @@ describe('Admin App', () => {
     controller.expectOne(AdminAuthApi.whoAmIUrl).error(new ProgressEvent('error'));
     await navigation;
 
-    expect(harness.routeNativeElement?.querySelector('h1')?.textContent).toContain('Colombo Wardrobe Admin');
+    expect(harness.routeNativeElement?.querySelector('h1')?.textContent).toContain('Dashboard');
 
-    controller.expectOne(PingApi.url).error(new ProgressEvent('error'));
+    // The page's own session read fails too, so it offers the widgets and lets the API decide.
+    controller.expectOne(AdminAuthApi.whoAmIUrl).error(new ProgressEvent('error'));
     await harness.fixture.whenStable();
 
-    expect(harness.routeNativeElement?.textContent).toContain('The API is not reachable right now.');
+    for (const request of controller.match((candidate) => candidate.url.startsWith('/api/admin/'))) {
+      request.error(new ProgressEvent('error'));
+    }
+    await harness.fixture.whenStable();
+
+    expect(harness.routeNativeElement?.textContent).toContain('We could not reach the server.');
+    expect(harness.routeNativeElement?.querySelector('[data-testid="kpis"]')).toBeNull();
     controller.verify();
   });
 });
