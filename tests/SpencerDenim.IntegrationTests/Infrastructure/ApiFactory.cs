@@ -91,6 +91,11 @@ public sealed class ApiFactory(
                 ["Seed:RunOnStartup"] = "false",
                 ["Seed:IncludeDemoCatalogue"] = "false",
 
+                // The nightly traffic rollup and the raw-traffic purge (W4-03) write the shared database in the
+                // background; a background writer is what once broke OrderExpiryTests depending on run order. Off
+                // in every test host; the traffic tests run one pass directly, as of a day they choose.
+                ["Traffic:JobsEnabled"] = "false",
+
                 // **No test may reach a real mail server or send to a real address** (W3-06). These two
                 // keys are blanked rather than left out, because leaving them out is not the same thing:
                 // the in-memory provider only wins for keys it holds, and a developer with

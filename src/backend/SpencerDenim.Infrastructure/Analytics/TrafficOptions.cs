@@ -48,6 +48,33 @@ public sealed class TrafficOptions
     /// <summary>Whether the nightly <c>NightlyStats</c> traffic rollup and the <c>Retention</c> purge run on this host.</summary>
     public bool JobsEnabled { get; set; } = true;
 
+    /// <summary>Doc 08 §8.4 and §3.8's seed for <c>Traffic.RawRetentionDays</c>: 90 Colombo days of raw page views.</summary>
+    public const int DefaultRawRetentionDays = 90;
+
+    /// <summary>Doc 08 §8.4 and §3.8's seed for <c>Traffic.BotRetentionDays</c>: 7 Colombo days of bot page views.</summary>
+    public const int DefaultBotRetentionDays = 7;
+
+    /// <summary>
+    /// The shortest either period may be: the nightly rollup rebuilds the last three completed days, so a day it may
+    /// still rebuild must not have lost its raw rows. Four keeps today and those three.
+    /// </summary>
+    public const int MinimumRetentionDays = 4;
+
+    /// <summary>
+    /// How many Colombo days of raw page views are kept (<c>Traffic__RawRetentionDays</c>).
+    /// <para>
+    /// <b>Configuration for now, not <c>ops.Settings</c>.</b> Doc 08 §3.8 puts <c>Traffic.RawRetentionDays</c> and
+    /// <c>Traffic.BotRetentionDays</c> in the <c>Traffic</c> settings group with <c>Settings.Edit</c>, but the
+    /// settings screen has a form per group and no Traffic form, so a seeded row would be a value staff can see
+    /// and cannot change. The purge therefore runs on doc 08's own defaults, from configuration, and the two keys
+    /// stay in <c>DeferredSettingKeys</c> until the settings screen gains the form.
+    /// </para>
+    /// </summary>
+    public int RawRetentionDays { get; set; } = DefaultRawRetentionDays;
+
+    /// <summary>How many Colombo days of bot page views are kept (<c>Traffic__BotRetentionDays</c>).</summary>
+    public int BotRetentionDays { get; set; } = DefaultBotRetentionDays;
+
     public TimeSpan FlushInterval => TimeSpan.FromSeconds(FlushSeconds);
 
     /// <summary><see cref="InternalHosts"/> as a set, lower-cased.</summary>

@@ -48,9 +48,10 @@ public sealed record DeferredSettingKey(string Key, SettingKeyDeferralKind Kind,
 /// default.</b> <c>CatalogOptions</c> ships 5 / 30 / 10 for <c>Inventory.DefaultLowStockThreshold</c>,
 /// <c>Catalog.NewArrivalDays</c> and <c>Catalog.BestSellerTopN</c>; <c>BankTransferOptions</c> ships 48 for
 /// <c>Orders.BankTransferExpiryHours</c>; <c>AdminSecurityOptions</c> ships 5 and 15 for
-/// <c>Security.StaffLockoutMaxFailures</c> and <c>StaffLockoutMinutes</c>. So no key below is silently
+/// <c>Security.StaffLockoutMaxFailures</c> and <c>StaffLockoutMinutes</c>; <c>TrafficOptions</c> ships 90 and 7 for
+/// <c>Traffic.RawRetentionDays</c> and <c>BotRetentionDays</c> (W4-03). So no key below is silently
 /// running on a number that differs from the document, which is the half of #113 that would have been a
-/// defect rather than an omission. <c>SettingKeySpecificationTests</c> pins all six, against the
+/// defect rather than an omission. <c>SettingKeySpecificationTests</c> pins all eight, against the
 /// document's own cells rather than against a second copy of the number.
 /// </para>
 /// </summary>
@@ -169,14 +170,16 @@ public static class DeferredSettingKeys
         new(
             "Traffic.RawRetentionDays",
             SettingKeyDeferralKind.AwaitingItsFeature,
-            "The analytics schema does not exist — AppDbContext has no PageViews set and no migration "
-            + "creates analytics.PageViews — so there is nothing to retain and no Retention job to read "
-            + "it."),
+            "analytics.PageViews and the raw-traffic purge exist (W4-03), and the purge keeps doc 08 §8.4's 90 "
+            + "days — from configuration (Traffic__RawRetentionDays, TrafficOptions), not from this table. The "
+            + "settings screen has one form per group and no Traffic form, so a seeded row would be a value staff "
+            + "can see and cannot change. Seed it with the form; until then the code-side default is §3.8's own."),
 
         new(
             "Traffic.BotRetentionDays",
             SettingKeyDeferralKind.AwaitingItsFeature,
-            "See Traffic.RawRetentionDays: no analytics tables, no retention job."),
+            "See Traffic.RawRetentionDays: the purge keeps bot page views doc 08 §8.4's 7 days, from "
+            + "configuration (Traffic__BotRetentionDays), until the settings screen has a Traffic form."),
 
         // ---- Email.Smtp ------------------------------------------------------------------------------
         // Seven keys, one reason. ops.EmailOutbox now exists (#133) and so does ops.AdminAlerts (#138),

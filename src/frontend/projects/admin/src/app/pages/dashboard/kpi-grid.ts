@@ -17,8 +17,8 @@ interface Card {
  *
  * **Each card says what it counts**, in a line under the figure, because the four figures that sound alike
  * are counted on different dates: revenue on the day an order was paid, orders on the day it was placed,
- * refunds on the day they completed. **Conversion rate is not here**: it is paid orders ÷ visits, and
- * visits need the traffic tables (ADM-06/20), which are not built — so it is absent rather than invented.
+ * refunds on the day they completed. **Conversion rate is not a card here**: it is paid orders ÷ visits, so it
+ * sits with the visits it divides by, in the Traffic sources widget (`traffic-sources.ts`, W4-03).
  *
  * The direction of a change is in words and a symbol, and **not in colour at all**: green for "up" would
  * call a rise in refunds good news.

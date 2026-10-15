@@ -312,15 +312,47 @@ public sealed class PageViewRecordingTests(SqlServerDatabaseFixture sqlServer)
         Assert.Contains(host.Logs.Events, value => value.Contains("page-view queue is full", StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// The database is a socket that accepts the connection and never answers — the hung server, not the refused
+    /// one. A refused connection fails in milliseconds, so a request that waited on it would still look fast; this
+    /// one makes anything that touched the database on the request path take the full three-second connect
+    /// timeout. (The first version of this test used the refusing address and did not notice an endpoint that
+    /// called <c>Database.CanConnect()</c> on every beacon — mutation m09.)
+    /// </summary>
     [Fact]
     public async Task With_the_database_down_the_beacon_still_answers_at_once_and_the_view_is_dropped()
     {
         sqlServer.SkipIfUnavailable();
 
+        using var hung = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
+        hung.Start();
+        var accepted = new List<System.Net.Sockets.Socket>();
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                while (true)
+                {
+                    accepted.Add(await hung.AcceptSocketAsync(Token));
+                }
+            }
+            catch (Exception exception) when (exception is OperationCanceledException or System.Net.Sockets.SocketException or ObjectDisposedException)
+            {
+            }
+        }, Token);
+
+        var port = ((IPEndPoint)hung.LocalEndpoint).Port;
+        var connectionString = $"Server=127.0.0.1,{port};Database=SpencerDenim_Hung;User Id=unused;Password=unused;Connect Timeout=3;TrustServerCertificate=True";
+
         await using var host = TrafficTestHost.Create(
-            ApiFactory.UnreachableConnectionString,
+            connectionString,
             new Dictionary<string, string?> { ["Database:MaxRetryCount"] = "0" });
         using var client = host.CreateClient();
+
+        // Warm the host up first, so the measured request is the beacon and not the start-up.
+        using (await TrafficTestHost.PostAsync(client, new { path = "/warm" }, Token))
+        {
+        }
 
         var timer = Stopwatch.StartNew();
         using var response = await TrafficTestHost.PostAsync(client, new { path = "/" }, Token);
@@ -328,17 +360,23 @@ public sealed class PageViewRecordingTests(SqlServerDatabaseFixture sqlServer)
 
         Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
 
-        // Well under the unreachable server's 2 s connect timeout: the request never waited on the database.
+        // Well under the hung server's 3 s connect timeout: the request never waited on the database.
         Assert.True(timer.Elapsed < TimeSpan.FromSeconds(1.5), $"took {timer.Elapsed}");
 
         Assert.Equal(0, await host.FlushAsync(Token));
-        Assert.Equal(1, host.Queue.Dropped);
+        Assert.Equal(2, host.Queue.Dropped);
         Assert.Contains(host.Logs.Events, value => value.Contains("they were dropped", StringComparison.Ordinal));
 
         // And the next view is still accepted: a failed write does not stop recording.
         using var next = await TrafficTestHost.PostAsync(client, new { path = "/" }, Token);
         Assert.Equal(HttpStatusCode.NoContent, next.StatusCode);
         Assert.Equal(1, host.Queue.Reader.Count);
+
+        hung.Stop();
+        foreach (var socket in accepted.ToArray())
+        {
+            socket.Dispose();
+        }
     }
 
     [Fact]

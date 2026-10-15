@@ -132,6 +132,14 @@ export const routes: Routes = [
     loadComponent: () => import('./pages/reports/reports-page').then((m) => m.ReportsPage),
   },
   {
+    // ADM-20 (W4-03): visits, sources, devices and top pages. The guard asks only for a session, as every other
+    // admin route does: the API is the security boundary, and the page says so to a role without Traffic.View.
+    path: 'traffic',
+    title: `Traffic — ${BRAND.adminName}`,
+    canActivate: [adminSessionGuard],
+    loadComponent: () => import('./pages/traffic/traffic-page').then((m) => m.TrafficPage),
+  },
+  {
     // ADM-11 (W1-12). Like every other admin route the guard only asks for a session: the API is the
     // security boundary (doc 03 §3a), and a user without Categories.View is shown the refusal rather than
     // bounced from a page that then cannot explain itself.

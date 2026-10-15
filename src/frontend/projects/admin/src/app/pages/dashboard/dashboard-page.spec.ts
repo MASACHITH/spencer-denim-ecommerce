@@ -4,6 +4,7 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { Router, provideRouter } from '@angular/router';
 
 import { AdminDashboard, ComparedFigure, LowStock, SalesTrend } from '../../core/reporting/reporting.model';
+import { TrafficSources } from '../../core/traffic/traffic.model';
 import { DashboardPage } from './dashboard-page';
 
 const WHOAMI = '/api/admin/auth/whoami';
@@ -68,10 +69,27 @@ const TREND: SalesTrend = {
 
 const LOW: LowStock = { defaultThreshold: 5, totalCount: 0, rows: [] };
 
+const TRAFFIC: TrafficSources = {
+  period: { from: '2026-09-17', to: '2026-10-16', days: 30 },
+  visits: 40,
+  paidOrders: 3,
+  conversionPercent: 7.5,
+  channels: [
+    { channel: 'Direct', label: 'Direct', visits: 10, pageViews: 25, sharePercent: 25 },
+    { channel: 'Organic', label: 'Organic', visits: 20, pageViews: 60, sharePercent: 50 },
+    { channel: 'Social', label: 'Social', visits: 10, pageViews: 15, sharePercent: 25 },
+    { channel: 'Referral', label: 'Referral', visits: 0, pageViews: 0, sharePercent: 0 },
+    { channel: 'Email', label: 'Email', visits: 0, pageViews: 0, sharePercent: 0 },
+    { channel: 'Paid', label: 'Paid', visits: 0, pageViews: 0, sharePercent: 0 },
+    { channel: 'Other', label: 'Other', visits: 0, pageViews: 0, sharePercent: 0 },
+  ],
+};
+
 describe('DashboardPage (ADM-04, ADM-05, ADM-07, ADM-08)', () => {
   let fixture: ComponentFixture<DashboardPage>;
   let element: HTMLElement;
   let http: HttpTestingController;
+  let trafficRequests = 0;
 
   async function settle(): Promise<void> {
     fixture.detectChanges();
@@ -83,7 +101,11 @@ describe('DashboardPage (ADM-04, ADM-05, ADM-07, ADM-08)', () => {
   }
 
   /** Opens the page as a role holding `permissions`, answering every request it makes. */
-  async function open(permissions: string[] | 'all', payload = dashboard()): Promise<TestRequest | null> {
+  async function open(
+    permissions: string[] | 'all',
+    payload = dashboard(),
+    trafficPayload: TrafficSources = TRAFFIC,
+  ): Promise<TestRequest | null> {
     fixture = TestBed.createComponent(DashboardPage);
     element = fixture.nativeElement as HTMLElement;
     document.body.appendChild(element);
@@ -107,6 +129,11 @@ describe('DashboardPage (ADM-04, ADM-05, ADM-07, ADM-08)', () => {
       low.flush(LOW);
     }
 
+    for (const traffic of http.match((candidate) => candidate.url === '/api/admin/dashboard/traffic-sources')) {
+      trafficRequests++;
+      traffic.flush(trafficPayload);
+    }
+
     for (const orders of http.match((candidate) => candidate.url === '/api/admin/orders')) {
       orders.flush({ rows: [], page: 1, pageSize: 10, totalCount: 0, sort: 'Newest', statusCounts: {} });
     }
@@ -117,6 +144,7 @@ describe('DashboardPage (ADM-04, ADM-05, ADM-07, ADM-08)', () => {
 
   beforeEach(() => {
     vi.spyOn(Date, 'now').mockReturnValue(NOW);
+    trafficRequests = 0;
 
     TestBed.configureTestingModule({
       providers: [provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
@@ -153,10 +181,57 @@ describe('DashboardPage (ADM-04, ADM-05, ADM-07, ADM-08)', () => {
     expect(byTestId('kpi-aov')!.textContent).toContain('Previous period: —');
   });
 
-  it('has no conversion rate and no traffic widget: the analytics tables do not exist', async () => {
-    await open('all');
+  it('shows traffic sources and the conversion rate to a role with Traffic.View, for the same period (ADM-06)', async () => {
+    await open(['Dashboard.View', 'Traffic.View']);
 
-    expect(element.textContent).not.toMatch(/conversion|traffic|visits|sessions/i);
+    expect(byTestId('traffic-visits')!.textContent).toContain('40');
+    expect(byTestId('traffic-conversion')!.textContent).toContain('7.5%');
+
+    const channels = byTestId<HTMLTableElement>('traffic-sources')!;
+    expect(channels.tagName).toBe('TABLE');
+    expect(channels.tBodies[0].rows).toHaveLength(7);
+    expect(channels.tBodies[0].rows[1].textContent).toContain('Organic');
+    expect(channels.tBodies[0].rows[1].textContent).toContain('50.0%');
+    expect(byTestId('dashboard-traffic-link')).not.toBeNull();
+  });
+
+  it('asks for traffic over the dashboard’s own period', async () => {
+    fixture = TestBed.createComponent(DashboardPage);
+    element = fixture.nativeElement as HTMLElement;
+    document.body.appendChild(element);
+    await settle();
+    http.expectOne(WHOAMI).flush({ grantsAllPermissions: true, permissions: [] });
+    await settle();
+    http.expectOne((candidate) => candidate.url === '/api/admin/dashboard').flush(dashboard());
+    await settle();
+
+    const traffic = http.expectOne((candidate) => candidate.url === '/api/admin/dashboard/traffic-sources');
+    expect(traffic.request.params.get('from')).toBe('2026-09-17');
+    expect(traffic.request.params.get('to')).toBe('2026-10-16');
+    traffic.flush(TRAFFIC);
+
+    for (const other of http.match(() => true)) {
+      other.flush(other.request.url.endsWith('trend') ? TREND : other.request.url.endsWith('low-stock') ? LOW : { rows: [], page: 1, pageSize: 10, totalCount: 0, sort: 'Newest', statusCounts: {} });
+    }
+
+    await settle();
+  });
+
+  it('says there were no visits, with no rate, rather than showing a conversion of nothing', async () => {
+    await open('all', dashboard(), { ...TRAFFIC, visits: 0, paidOrders: 2, conversionPercent: null, channels: TRAFFIC.channels.map((row) => ({ ...row, visits: 0, pageViews: 0, sharePercent: 0 })) });
+
+    expect(byTestId('traffic-sources-empty')!.textContent).toContain('No visits were recorded');
+    expect(byTestId('traffic-conversion')).toBeNull();
+    expect(byTestId('traffic-sources')).toBeNull();
+  });
+
+  it('does not offer traffic, or ask for it, without Traffic.View (Order Staff see the dashboard, not traffic)', async () => {
+    await open(['Dashboard.View', 'Orders.View']);
+
+    expect(trafficRequests).toBe(0);
+    expect(byTestId('traffic-sources-figures')).toBeNull();
+    expect(byTestId('dashboard-traffic-link')).toBeNull();
+    expect(element.textContent).not.toMatch(/conversion|visits/i);
   });
 
   it('renders every breakdown as a table with its figures, not only bars', async () => {
@@ -265,6 +340,12 @@ describe('DashboardPage (ADM-04, ADM-05, ADM-07, ADM-08)', () => {
     const trend = http.expectOne((candidate) => candidate.url === '/api/admin/dashboard/trend');
     expect(trend.request.params.get('to')).toBe('2026-09-30');
     trend.flush(TREND);
+
+    // Traffic follows the period too.
+    const traffic = http.expectOne((candidate) => candidate.url === '/api/admin/dashboard/traffic-sources');
+    expect(traffic.request.params.get('from')).toBe('2026-09-01');
+    expect(traffic.request.params.get('to')).toBe('2026-09-30');
+    traffic.flush(TRAFFIC);
     await settle();
   });
 

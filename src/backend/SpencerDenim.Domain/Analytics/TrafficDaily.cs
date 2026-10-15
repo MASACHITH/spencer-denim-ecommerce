@@ -22,6 +22,9 @@ public sealed class TrafficDaily
     /// <summary>Doc 08 §8.3: "SourceKey is limited to the top 50 per day, with the rest as (other)".</summary>
     public const string OtherSourceKey = "(other)";
 
+    /// <summary>The source of a non-Direct session with no UTM source and no referrer (an untagged campaign).</summary>
+    public const string NotSetSourceKey = "(not set)";
+
     /// <summary>Doc 08 §8.3: the top 50 sources per day keep their own key.</summary>
     public const int TopSourcesPerDay = 50;
 
