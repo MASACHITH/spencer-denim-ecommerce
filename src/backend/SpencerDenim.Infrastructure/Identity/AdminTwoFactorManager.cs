@@ -13,7 +13,7 @@ namespace SpencerDenim.Infrastructure.Identity;
 /// </summary>
 public sealed class AdminTwoFactorManager(
     UserManager<AppUser> userManager,
-    SignInManager<AppUser> signInManager,
+    StaffAccountLockout lockout,
     IOptions<AdminSecurityOptions> securityOptions) : IAdminTwoFactorManager
 {
     public async Task<AdminTwoFactorState?> GetStateAsync(int userId, CancellationToken cancellationToken)
@@ -191,21 +191,20 @@ public sealed class AdminTwoFactorManager(
     }
 
     /// <summary>
-    /// The same check and the same <c>lockoutOnFailure: true</c> as sign-in and change-password, so a stolen
+    /// The same check (<see cref="StaffAccountLockout"/>, issue #46) as sign-in and change-password, so a stolen
     /// session cookie cannot be used to guess the password any faster than the sign-in form allows (doc 08 §3.1
     /// N14). Null when the password is right.
     /// </summary>
     private async Task<AdminTwoFactorOutcome?> CheckCurrentPasswordAsync(AppUser user, string currentPassword)
     {
-        var wasAlreadyLockedOut = await userManager.IsLockedOutAsync(user);
-        var checkResult = await signInManager.CheckPasswordSignInAsync(user, currentPassword, lockoutOnFailure: true);
+        var check = await lockout.CheckPasswordAsync(user, currentPassword);
 
-        if (checkResult.IsLockedOut)
+        if (check is { Status: StaffSecretCheckStatus.LockedOut, LockoutEnd: { } lockoutEnd })
         {
-            return AdminTwoFactorOutcome.LockedOut(user.Id, user.Email, user.LockoutEnd ?? DateTimeOffset.UtcNow, !wasAlreadyLockedOut);
+            return AdminTwoFactorOutcome.LockedOut(user.Id, user.Email, lockoutEnd, check.WasNewlyLockedOut);
         }
 
-        if (!checkResult.Succeeded)
+        if (check.Status != StaffSecretCheckStatus.Succeeded)
         {
             return AdminTwoFactorOutcome.Failed(AdminTwoFactorStatus.InvalidCurrentPassword, user.Id, user.Email);
         }
