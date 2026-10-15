@@ -140,7 +140,13 @@ public abstract class ReportingTestBase(SqlServerDatabaseFixture sqlServer)
         row["DeliveryDiscountAmount"] = spec.DeliveryDiscount;
         row["GrandTotal"] = grand;
         row["PlacedAtUtc"] = spec.PlacedUtc;
-        row["PaymentDueAtUtc"] = spec.PlacedUtc.AddHours(48);
+        // An unpaid order this base writes must never be due: OrderExpiryTests assert that nothing else in the
+        // database is pending and past its deadline before 2020, and a PendingPayment row dated 2007 with its
+        // deadline 48 hours later was exactly that — it broke two of them whenever they ran after this suite
+        // (W4-02 tester, found in a whole-assembly run). The reporting rules never read the deadline.
+        row["PaymentDueAtUtc"] = spec.Status == OrderStatus.PendingPayment
+            ? new DateTime(2099, 12, 31, 0, 0, 0, DateTimeKind.Utc)
+            : spec.PlacedUtc.AddHours(48);
         row["PaidAtUtc"] = spec.PaidUtc;
 
         var orderId = await writer.InsertAsync("[sales].[Orders]", row, Token);

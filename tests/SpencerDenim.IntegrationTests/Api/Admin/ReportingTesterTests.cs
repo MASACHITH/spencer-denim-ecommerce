@@ -4,6 +4,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using SpencerDenim.Application.Sales.Payments.Abstractions;
@@ -261,7 +262,11 @@ public sealed class ReportingTesterTests(SqlServerDatabaseFixture sqlServer) : R
             Microsoft.Extensions.Options.Options.Create(new SpencerDenim.Application.Catalog.CatalogOptions { DefaultLowStockThreshold = 37 }));
 
         var sql = reader.LowStockQuery().ToQueryString();
-        Assert.Matches(@"DECLARE @\w+ int = 37;", sql);
+        TestContext.Current.TestOutputHelper?.WriteLine(sql);
+        // Alone this renders "DECLARE @threshold int = 37;"; in one whole-assembly run the same build rendered it
+        // with no DECLARE at all, so the value was inlined. Accept either form: 37 is there, a literal 5 is not.
+        Assert.True(Regex.IsMatch(sql, @"(int = 37;)|(, 37\))"), sql);
+        Assert.False(Regex.IsMatch(sql, @", 5\)"), sql);
 
         var answer = await reader.ReadLowStockAsync(10, Token);
         Assert.Equal(37, answer.DefaultThreshold);
