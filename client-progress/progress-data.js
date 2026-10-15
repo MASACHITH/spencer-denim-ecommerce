@@ -108,8 +108,8 @@ const progressData = {
         { name: "Review moderation", status: "planned", progress: 0 },
         { name: "Newsletter subscriber list", status: "done", progress: 100 },
         { name: "Homepage & content management", status: "in-progress", progress: 65 },
-        { name: "Dashboard", status: "planned", progress: 0 },
-        { name: "Reports & traffic", status: "planned", progress: 0 },
+        { name: "Dashboard", status: "in-progress", progress: 90 },
+        { name: "Reports & traffic", status: "in-progress", progress: 50 },
         { name: "Settings", status: "in-progress", progress: 70 }
       ]
     },
@@ -128,6 +128,11 @@ const progressData = {
 
   // Newest first.
   updates: [
+    {
+      date: "2026-10-15",
+      title: "Dashboard and reports",
+      text: "The admin panel now opens on a dashboard of sales, orders and stock, compared with the previous period, with sales, inventory and customer reports you can download as spreadsheets.",
+    },
     {
       date: "2026-10-15",
       title: "Customers and newsletter subscribers",
