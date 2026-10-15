@@ -14,8 +14,18 @@ namespace SpencerDenim.Api.Http;
 /// they stop a script walking order links, or one customer's reload loop, from spending the shop's PayPal
 /// rate limit and database. The webhook is the more exposed route: every request that looks like a PayPal
 /// notification costs a call to PayPal to verify, so an attacker who cannot forge a signature could still try
-/// to exhaust ours by volume. A single bucket for the whole endpoint caps that; PayPal's own retries are
-/// slow, so a genuine burst is far below it.
+/// to exhaust ours by volume. A bucket for the whole endpoint caps that; PayPal's own retries are slow, so a
+/// genuine burst is far below it.
+/// </para>
+/// <para>
+/// <b>The webhook's global bucket alone was not enough (#166)</b>, because it is also the budget PayPal's
+/// <i>real</i> deliveries draw on, and pending captures settle only by webhook: about two junk POSTs a second
+/// emptied it and the real ones got 429. Two things change who can spend it. The endpoint refuses a request
+/// that cannot be a PayPal notification (<see cref="SpencerDenim.Application.Sales.Payments.PayPal.PayPalWebhookHeaders.LooksLikePayPal"/>)
+/// <i>before</i> it comes here, so that junk costs no permit at all. And what does come here is rationed per
+/// address first, so one address that sends well-formed junk runs out of its own budget and is refused without
+/// touching the shared one. Neither stops many addresses together; the global bucket is still the last cap, and
+/// that is the case the sandbox end-to-end test and the live volumes should be watched for.
 /// </para>
 /// <para>
 /// <b>The address limit is loose on purpose</b>, for the reason <c>PaymentSlipUploadThrottle</c> records at
@@ -39,6 +49,16 @@ internal sealed class PayPalEndpointThrottle : IDisposable
     /// <summary>One endpoint-wide bucket for notifications: 120 a minute.</summary>
     private const int WebhookPermitLimit = 120;
 
+    /// <summary>
+    /// Per address, for notifications that look like PayPal's: 30 a minute, a quarter of the endpoint-wide
+    /// bucket, so one address can never take more than that share of it (#166). PayPal delivers a handful of
+    /// notifications per payment from a small set of addresses, so a shop would need to be settling dozens of
+    /// payments a minute before genuine traffic got near this. <b>It is a judgement, not a measurement</b>: no
+    /// live volume exists yet. Behind a gateway whose forwarded headers are not trusted every visitor is one
+    /// address (W0-15), and then this is the limit for the whole endpoint, which is why it is not lower.
+    /// </summary>
+    private const int WebhookAddressPermitLimit = 30;
+
     private static readonly TimeSpan CustomerWindow = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan WebhookWindow = TimeSpan.FromMinutes(1);
 
@@ -47,6 +67,9 @@ internal sealed class PayPalEndpointThrottle : IDisposable
 
     private readonly PartitionedRateLimiter<string> _addresses = PartitionedRateLimiter.Create<string, string>(partition =>
         RateLimitPartition.GetFixedWindowLimiter(partition, _ => Window(AddressPermitLimit, CustomerWindow)));
+
+    private readonly PartitionedRateLimiter<string> _webhookAddresses = PartitionedRateLimiter.Create<string, string>(partition =>
+        RateLimitPartition.GetFixedWindowLimiter(partition, _ => Window(WebhookAddressPermitLimit, WebhookWindow)));
 
     private readonly FixedWindowRateLimiter _webhook = new(Window(WebhookPermitLimit, WebhookWindow));
 
@@ -66,14 +89,26 @@ internal sealed class PayPalEndpointThrottle : IDisposable
             return false;
         }
 
-        using var address = _addresses.AttemptAcquire(string.IsNullOrWhiteSpace(ipAddress) ? "unknown" : ipAddress);
+        using var address = _addresses.AttemptAcquire(Partition(ipAddress));
 
         return address.IsAcquired;
     }
 
-    /// <summary>Takes one permit from the notification bucket.</summary>
-    public bool TryAcquireWebhook()
+    /// <summary>
+    /// Takes one permit for this address and then one from the endpoint-wide bucket. <b>The address comes
+    /// first, and the order is the point</b>: an address that has spent its own budget is refused without
+    /// touching the shared one, so it cannot drain what other callers, PayPal's real deliveries among them,
+    /// are drawing on.
+    /// </summary>
+    public bool TryAcquireWebhook(string? ipAddress)
     {
+        using var address = _webhookAddresses.AttemptAcquire(Partition(ipAddress));
+
+        if (!address.IsAcquired)
+        {
+            return false;
+        }
+
         using var lease = _webhook.AttemptAcquire();
 
         return lease.IsAcquired;
@@ -83,8 +118,11 @@ internal sealed class PayPalEndpointThrottle : IDisposable
     {
         _orders.Dispose();
         _addresses.Dispose();
+        _webhookAddresses.Dispose();
         _webhook.Dispose();
     }
+
+    private static string Partition(string? ipAddress) => string.IsNullOrWhiteSpace(ipAddress) ? "unknown" : ipAddress;
 
     private static FixedWindowRateLimiterOptions Window(int permitLimit, TimeSpan window) =>
         new()

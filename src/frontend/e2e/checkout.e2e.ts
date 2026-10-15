@@ -298,7 +298,11 @@ test.describe('checkout (CHK-01..04)', () => {
       await expect(page.locator('#co-firstName')).toBeVisible();
     });
 
-    /** G-08: the button is a disabled control, not a link, while a line cannot be bought. */
+    /**
+     * G-08: the button is a blocked control, not a link, while a line cannot be bought. It is
+     * `aria-disabled` (#109); `toBeDisabled()` counts that as disabled, which is also the check that
+     * Playwright here treats it so.
+     */
     test('the bag refuses to lead to checkout while a line cannot be bought', async ({ page }) => {
       const index = 3;
       const variantId = indigoSmall(index);
@@ -312,6 +316,38 @@ test.describe('checkout (CHK-01..04)', () => {
       await expect(page.locator('#bag-checkout-blocked')).toContainText('before you check out');
 
       await resetStock(page, variantId);
+    });
+
+    /**
+     * #109. The blocked button is `aria-disabled`, not `disabled`, so the keyboard can land on it and hear
+     * why (`aria-describedby`), and pressing it still goes nowhere. A `disabled` button cannot take focus at
+     * all, which is the defect: `toBeFocused()` is what fails against the old markup.
+     */
+    test('the blocked checkout button takes focus, says why, and does nothing when pressed', async ({ page }) => {
+      const index = 3;
+      const variantId = indigoSmall(index);
+
+      await addToBag(page, index);
+      await setStock(page, variantId, { available: 0 });
+
+      try {
+        await page.goto('/bag');
+
+        const blocked = page.locator('button.bag__checkout');
+        await expect(blocked).toHaveAttribute('aria-disabled', 'true');
+
+        await blocked.focus();
+        await expect(blocked).toBeFocused();
+        await expect(blocked).toHaveAccessibleDescription(/before you check out/);
+
+        await page.keyboard.press('Enter');
+        await page.keyboard.press('Space');
+
+        await expect(page).toHaveURL(/\/bag$/);
+        await expect(blocked).toBeFocused();
+      } finally {
+        await resetStock(page, variantId);
+      }
     });
 
     test('an empty bag says so rather than showing a form', async ({ page }) => {
