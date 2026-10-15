@@ -1,6 +1,7 @@
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.DependencyInjection;
 using SpencerDenim.Application.Marketing.Promotions.Abstractions;
+using SpencerDenim.Domain.Marketing;
 using SpencerDenim.IntegrationTests.Infrastructure;
 
 namespace SpencerDenim.IntegrationTests.Sales;
@@ -59,6 +60,68 @@ public sealed class CampaignPricingRefreshLockTests(SqlServerDatabaseFixture sql
             finishedWhileTheSaveWasOpen,
             "The recompute did not wait for an uncommitted change to the variants it prices: it read them from the "
             + "version store. WITH (READCOMMITTEDLOCK) on catalog.ProductVariants is what makes it wait (doc 08 §7.4).");
+    }
+
+    /// <summary>
+    /// The product row's own hint. Added by the #163 tester: with <c>WITH (READCOMMITTEDLOCK)</c> removed from
+    /// <c>catalog.Products</c> (the first branch), the test above still passed, because it only holds variants.
+    /// </summary>
+    [Fact]
+    public async Task The_recompute_waits_for_an_uncommitted_base_price_change()
+    {
+        SqlServer.SkipIfUnavailable();
+        var product = await ProductIdAsync(ProductSlug);
+
+        await AssertRefreshWaitsForAsync(
+            "UPDATE catalog.Products SET BasePrice = BasePrice + 1.00 WHERE Id = @id",
+            product,
+            product,
+            "catalog.Products");
+    }
+
+    /// <summary>
+    /// The campaign row's hint. Added by the #163 tester: with <c>WITH (READCOMMITTEDLOCK)</c> removed from
+    /// <c>marketing.SaleCampaigns</c>, both tests above still passed. A staff member changing a live campaign's
+    /// discount is exactly the save this recompute must not price from before.
+    /// </summary>
+    [Fact]
+    public async Task The_recompute_waits_for_an_uncommitted_campaign_change()
+    {
+        SqlServer.SkipIfUnavailable();
+        var product = await ProductIdAsync(ProductSlug);
+        var campaign = await NewCampaignAsync(SaleDiscountType.Percent, 10m, [await OnProductAsync(ProductSlug)]);
+
+        await AssertRefreshWaitsForAsync(
+            "UPDATE marketing.SaleCampaigns SET DiscountValue = 20 WHERE Id = @id",
+            campaign.Id,
+            product,
+            "marketing.SaleCampaigns");
+    }
+
+    private async Task AssertRefreshWaitsForAsync(string sql, int rowId, int product, string table)
+    {
+        await using var editor = new SqlConnection(SqlServer.ConnectionString);
+        await editor.OpenAsync(Token);
+        await using var edit = (SqlTransaction)await editor.BeginTransactionAsync(Token);
+        await using (var command = new SqlCommand(sql, editor, edit))
+        {
+            command.Parameters.AddWithValue("@id", rowId);
+            Assert.True(await command.ExecuteNonQueryAsync(Token) > 0, $"'{sql}' changed no rows.");
+        }
+
+        using var scope = CreateScope();
+        var refresh = scope.ServiceProvider.GetRequiredService<ICampaignPricingRefresher>()
+            .RefreshProductsAsync([product], Token);
+
+        var finishedWhileTheSaveWasOpen = await Task.WhenAny(refresh, Task.Delay(BlockedFor, Token)) == refresh;
+
+        await edit.RollbackAsync(Token);
+        await refresh;
+
+        Assert.False(
+            finishedWhileTheSaveWasOpen,
+            $"The recompute did not wait for an uncommitted change to {table}: it read it from the version store. "
+            + $"WITH (READCOMMITTEDLOCK) on {table} is what makes it wait (doc 08 §7.4).");
     }
 
     private static async Task ExecuteAsync(SqlConnection connection, SqlTransaction transaction, string sql, int product)
