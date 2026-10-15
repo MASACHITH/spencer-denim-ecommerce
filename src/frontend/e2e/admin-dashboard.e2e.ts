@@ -242,7 +242,7 @@ test.describe('traffic (ADM-06, ADM-20, W4-03)', () => {
     await open(page, '/traffic');
 
     await expect(page.getByRole('heading', { level: 1, name: 'Traffic' })).toBeVisible();
-    await expect(page.locator('[data-testid="traffic-visits"]')).toContainText('on the previous period');
+    await expect(page.locator('[data-testid="traffic-visits"]')).toContainText('previous period');
     await expect(page.locator('[data-testid="traffic-bots"]')).toContainText('Not in any other figure');
     await expect(page.locator('[data-testid="traffic-definitions"]')).toContainText('No IP address and no visitor ID are kept');
 

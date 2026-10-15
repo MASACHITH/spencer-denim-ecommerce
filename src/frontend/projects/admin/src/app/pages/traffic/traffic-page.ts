@@ -194,6 +194,7 @@ const OPEN_DAYS = 31;
     .traffic__label { font-size: var(--text-label); letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--color-text-muted); }
     .traffic__value { font-size: var(--text-h3); font-variant-numeric: tabular-nums; }
     .traffic__hint { font-size: var(--text-small); color: var(--color-text-muted); }
+    .traffic__days { min-width: 0; max-width: 100%; }
     .traffic__days summary { display: inline-flex; align-items: center; min-height: 44px; }
     @media (min-width: 1024px) {
       .traffic__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }

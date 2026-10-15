@@ -211,7 +211,7 @@ interface Access {
             <a class="adm-link" routerLink="/reports" data-testid="dashboard-reports-link">Reports</a>
           }
           @if (access()?.traffic) {
-            <a class="adm-link" routerLink="/traffic" data-testid="dashboard-traffic-link">Traffic</a>
+            <a class="adm-link" routerLink="/traffic" data-testid="dashboard-traffic-link">Website traffic</a>
           }
           <a class="adm-link" routerLink="/settings">Settings</a>
           <a class="adm-link" routerLink="/audit-log">Audit log</a>
