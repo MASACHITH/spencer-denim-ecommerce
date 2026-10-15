@@ -17,7 +17,7 @@ const progressData = {
     endDate: "2026-10-15"
   },
 
-  lastUpdated: "2026-10-14",
+  lastUpdated: "2026-10-15",
 
   milestones: [
     { week: "Week 0", title: "Setup & design", start: "2026-09-15", end: "2026-09-18" },
@@ -104,12 +104,12 @@ const progressData = {
         { name: "Inventory", status: "in-progress", progress: 25 },
         { name: "Order management & payment approval", status: "done", progress: 100 },
         { name: "Promo codes & sale campaigns", status: "in-progress", progress: 85 },
-        { name: "Customers", status: "planned", progress: 0 },
+        { name: "Customers", status: "done", progress: 100 },
         { name: "Review moderation", status: "planned", progress: 0 },
-        { name: "Newsletter subscriber list", status: "planned", progress: 0 },
+        { name: "Newsletter subscriber list", status: "done", progress: 100 },
         { name: "Homepage & content management", status: "in-progress", progress: 65 },
-        { name: "Dashboard", status: "planned", progress: 0 },
-        { name: "Reports & traffic", status: "planned", progress: 0 },
+        { name: "Dashboard", status: "in-progress", progress: 90 },
+        { name: "Reports & traffic", status: "in-progress", progress: 50 },
         { name: "Settings", status: "in-progress", progress: 70 }
       ]
     },
@@ -128,6 +128,16 @@ const progressData = {
 
   // Newest first.
   updates: [
+    {
+      date: "2026-10-15",
+      title: "Dashboard and reports",
+      text: "The admin panel now opens on a dashboard of sales, orders and stock, compared with the previous period, with sales, inventory and customer reports you can download as spreadsheets.",
+    },
+    {
+      date: "2026-10-15",
+      title: "Customers and newsletter subscribers",
+      text: "The admin panel now lists your customers, with each one's addresses and order history, and your newsletter subscribers, which you can download as a spreadsheet.",
+    },
     {
       date: "2026-10-14",
       title: "Customer accounts",
