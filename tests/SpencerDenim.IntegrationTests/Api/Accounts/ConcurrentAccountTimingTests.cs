@@ -38,9 +38,10 @@ namespace SpencerDenim.IntegrationTests.Api.Accounts;
 /// <para>
 /// <b>Why p90, and why 2x.</b> The leak lives in the tail, because most requests do not happen to overlap
 /// an uncommitted registration. Figures from this machine are in <c>docs/journal/2026-10-15-rcsi.md</c>.
-/// Before: unknown, staff and deactivated sign-in p90 2,988–5,360 ms against 280–613 ms for a wrong
-/// password, 7.0–16.1x (three runs). After, over six runs, no such path's p90 exceeded the active
-/// customer's on either endpoint, so 2x is far from both.
+/// With the option off (three runs of this test as written): unknown, staff and deactivated sign-in p90
+/// 1,267–7,996 ms against 414–489 ms for a wrong password, the slowest 5.7–17.4x, and 3, 14 and 5
+/// free-address registrations answering 500. With it on (six runs): no such path's p90 exceeded the
+/// active customer's on either endpoint, and nothing answered 500. 2x is far from both.
 /// </para>
 /// <para>
 /// <b>What this test deliberately does not assert.</b> Registration timing is reported only: a free
