@@ -19,8 +19,8 @@ public static partial class PersonalDataPatterns
     /// True when <paramref name="value"/> contains something that looks like an email address or a
     /// telephone number.
     /// <para>
-    /// <b>"≥ 7 digits once separators are removed" is read as a run</b>: spaces, hyphens, dots, brackets,
-    /// slashes and plus signs are taken out and the longest run of consecutive digits is measured. So
+    /// <b>"≥ 7 digits once separators are removed" is read as a run</b>: separators (<see cref="IsSeparator"/>: any space or dash, dots, brackets,
+    /// slashes, plus signs, underscores and commas) are taken out and the longest run of consecutive digits is measured. So
     /// <c>077 123 4567</c> and <c>+94-77-123-4567</c> are phone numbers, and <c>levis 501 32x34</c> (runs of
     /// 5 and 2 once the spaces go) is not — a reading that counted every digit in the string would drop
     /// ordinary searches for a jeans size.
@@ -45,7 +45,7 @@ public static partial class PersonalDataPatterns
 
         foreach (var character in value)
         {
-            if (char.IsAsciiDigit(character))
+            if (char.IsDigit(character))
             {
                 run++;
 
@@ -70,8 +70,17 @@ public static partial class PersonalDataPatterns
     /// </summary>
     public static bool ContainsEmail(string value) => EmailPattern().IsMatch(value);
 
+    /// <summary>
+    /// What a person or a tool puts between the digits of a telephone number. Not only the ASCII space and hyphen:
+    /// an underscore or a comma (a mail tool's merge field, a campaign naming scheme), any Unicode space or dash (a
+    /// non-breaking hyphen or an en dash pasted from a document), brackets and dots. W3-07 found numbers stored
+    /// because a rule knew too few separators; and a digit is any decimal digit, full-width ones included, so
+    /// <c>０７７１２３４５６７</c> is the number it looks like (W4-03 tester).
+    /// </summary>
     private static bool IsSeparator(char character) =>
-        character is ' ' or '-' or '.' or '(' or ')' or '/' or '+' or '\t';
+        character is '.' or '(' or ')' or '[' or ']' or '/' or '+' or '_' or ','
+        || char.IsWhiteSpace(character)
+        || char.GetUnicodeCategory(character) == System.Globalization.UnicodeCategory.DashPunctuation;
 
     [GeneratedRegex(@"[^\s@]+@[^\s@]+", RegexOptions.CultureInvariant)]
     private static partial Regex EmailPattern();

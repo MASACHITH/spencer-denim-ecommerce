@@ -123,7 +123,9 @@ public static partial class TrafficSourceClassifier
     /// <summary>
     /// The referring host doc 08 §3.8 stores: the host of an absolute <c>http</c>, <c>https</c> or
     /// <c>android-app</c> URL, lower-cased, without a trailing dot — never its path or query, which can carry
-    /// anything at all. Null for an internal host, a malformed value or anything else.
+    /// anything at all. Null for an internal host, a malformed value or anything else, <b>and for an IP address</b>:
+    /// "no IP anywhere" is a rule about the column, not only about the visitor's address — a referrer typed as
+    /// <c>http://192.168.1.25/</c> or a shop browsed by its server's address would otherwise store one (W4-03 tester).
     /// </summary>
     public static string? ReferrerHost(string? referrer, IReadOnlySet<string> internalHosts)
     {
@@ -131,6 +133,11 @@ public static partial class TrafficSourceClassifier
 
         if (string.IsNullOrWhiteSpace(referrer) || referrer.Length > PagePath.MaxRawLength
             || !Uri.TryCreate(referrer.Trim(), UriKind.Absolute, out var uri))
+        {
+            return null;
+        }
+
+        if (uri.HostNameType is UriHostNameType.IPv4 or UriHostNameType.IPv6)
         {
             return null;
         }
