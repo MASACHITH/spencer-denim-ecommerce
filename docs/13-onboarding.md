@@ -45,8 +45,8 @@ git config core.hooksPath tools/git-hooks
 ## 4. First build (about 15 minutes)
 
 ```powershell
-# 1) Create the development database once
-sqlcmd -S "(localdb)\MSSQLLocalDB" -E -Q "IF DB_ID(N'SpencerDenim_Dev') IS NULL CREATE DATABASE [SpencerDenim_Dev] COLLATE Latin1_General_100_CI_AS_SC;"
+# 1) Create the development database once (collation + READ_COMMITTED_SNAPSHOT, same script as the live one)
+sqlcmd -S "(localdb)\MSSQLLocalDB" -E -v DbName="SpencerDenim_Dev" -i tools\db\provision-database.sql
 
 # 2) Backend
 dotnet build
