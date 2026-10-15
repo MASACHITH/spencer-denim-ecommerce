@@ -77,9 +77,10 @@ internal static class PayPalEndpoints
             .WithDescription(
                 "Called by PayPal, not by a browser. Anonymous and unauthenticated: the signature is the "
                 + "authentication, checked with PayPal before anything is stored. 200 for a verified event "
-                + "(new or already stored), 400 for an invalid signature or a body that is not an event "
-                + "(nothing stored), 503 when the signature could not be checked (nothing stored; PayPal "
-                + "resends).")
+                + "(new or already stored), 400 for headers that cannot be PayPal's (refused before any "
+                + "throttle permit is spent), an invalid signature or a body that is not an event (nothing "
+                + "stored), 429 when this address or the endpoint has used its budget (Retry-After says when), "
+                + "503 when the signature could not be checked (nothing stored; PayPal resends).")
             .DisableAntiforgery()
             .Produces(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status400BadRequest)
@@ -157,7 +158,23 @@ internal static class PayPalEndpoints
     {
         NoStore(httpContext.Response);
 
-        if (!throttle.TryAcquireWebhook())
+        var headers = new PayPalWebhookHeaders(
+            Header(httpContext, "PAYPAL-AUTH-ALGO"),
+            Header(httpContext, "PAYPAL-CERT-URL"),
+            Header(httpContext, "PAYPAL-TRANSMISSION-ID"),
+            Header(httpContext, "PAYPAL-TRANSMISSION-SIG"),
+            Header(httpContext, "PAYPAL-TRANSMISSION-TIME"));
+
+        // Refused before anything is spent (#166). The throttle's endpoint-wide bucket is also what PayPal's
+        // real deliveries draw on, and pending captures settle only by webhook, so a request that cannot be a
+        // PayPal notification must not cost a permit: about two junk POSTs a second used to empty the bucket and
+        // earn the real ones a 429. The same 400 the gateway would have given, minus reading the body.
+        if (!headers.LooksLikePayPal())
+        {
+            return TypedResults.StatusCode(StatusCodes.Status400BadRequest);
+        }
+
+        if (!throttle.TryAcquireWebhook(Address(httpContext)))
         {
             return TooManyRequests(httpContext, PayPalEndpointThrottle.WebhookRetryAfter);
         }
@@ -181,13 +198,6 @@ internal static class PayPalEndpoints
             // Over the limit, or the connection broke mid-body.
             return TypedResults.StatusCode(StatusCodes.Status400BadRequest);
         }
-
-        var headers = new PayPalWebhookHeaders(
-            Header(httpContext, "PAYPAL-AUTH-ALGO"),
-            Header(httpContext, "PAYPAL-CERT-URL"),
-            Header(httpContext, "PAYPAL-TRANSMISSION-ID"),
-            Header(httpContext, "PAYPAL-TRANSMISSION-SIG"),
-            Header(httpContext, "PAYPAL-TRANSMISSION-TIME"));
 
         return await handler.HandleAsync(headers, body, cancellationToken) switch
         {

@@ -223,7 +223,7 @@ internal sealed partial class PayPalHttpGateway(
         // Cheap refusals first: a request that does not even look like a PayPal notification never costs a
         // call to PayPal, which is what stops an attacker turning this endpoint into a way to spend our rate
         // limit. The certificate address has to be PayPal's own — PayPal's verification fetches it.
-        if (!LooksLikePayPal(headers))
+        if (!headers.LooksLikePayPal())
         {
             return PayPalWebhookVerification.Invalid;
         }
@@ -270,18 +270,6 @@ internal sealed partial class PayPalHttpGateway(
         LogServerSide(logger, "verify webhook", (int)response.Status);
         return PayPalWebhookVerification.Error;
     }
-
-    /// <summary>
-    /// Whether the five headers are present and the certificate address is on PayPal's own domain over HTTPS.
-    /// </summary>
-    internal static bool LooksLikePayPal(PayPalWebhookHeaders headers) =>
-        !string.IsNullOrWhiteSpace(headers.AuthAlgo)
-        && !string.IsNullOrWhiteSpace(headers.TransmissionId)
-        && !string.IsNullOrWhiteSpace(headers.TransmissionSig)
-        && !string.IsNullOrWhiteSpace(headers.TransmissionTime)
-        && Uri.TryCreate(headers.CertUrl, UriKind.Absolute, out var cert)
-        && cert.Scheme == Uri.UriSchemeHttps
-        && cert.Host.EndsWith(".paypal.com", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// The create-order body: intent CAPTURE, one purchase unit in USD, and the buyer's way back.
