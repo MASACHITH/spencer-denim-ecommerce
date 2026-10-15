@@ -8,6 +8,10 @@ using SpencerDenim.Application.Admin.Authentication;
 using SpencerDenim.Application.Admin.Auditing;
 using SpencerDenim.Application.Admin.Auditing.Contracts;
 using SpencerDenim.Application.Admin.CurrentUser;
+using SpencerDenim.Application.Admin.Customers;
+using SpencerDenim.Application.Admin.Customers.Contracts;
+using SpencerDenim.Application.Admin.Reporting;
+using SpencerDenim.Application.Admin.Reporting.Contracts;
 using SpencerDenim.Application.Catalog.Admin;
 using SpencerDenim.Application.Catalog.Admin.Contracts;
 using SpencerDenim.Application.Catalog.Admin.Products;
@@ -30,6 +34,7 @@ using SpencerDenim.Application.Content.Home;
 using SpencerDenim.Application.Content.Pages;
 using SpencerDenim.Application.Diagnostics.Ping;
 using SpencerDenim.Application.Marketing.Newsletter;
+using SpencerDenim.Application.Marketing.Newsletter.Admin;
 using SpencerDenim.Application.Sales.Cart;
 using SpencerDenim.Application.Sales.Orders.Admin;
 using SpencerDenim.Application.Sales.Orders.Contracts;
@@ -422,6 +427,44 @@ public static class DependencyInjection
         services.AddScoped<
             IQueryHandler<ListCouriersQuery, IReadOnlyList<AdminCourierDto>>,
             ListCouriersQueryHandler>();
+
+        // The admin customers screen (W3-07, ADM-15, doc 11 P11 step 16): read only.
+        services.AddScoped<
+            IQueryHandler<GetAdminCustomersQuery, AdminCustomerListPage>,
+            GetAdminCustomersQueryHandler>();
+
+        services.AddScoped<
+            IQueryHandler<GetAdminCustomerQuery, AdminCustomerDetailDto?>,
+            GetAdminCustomerQueryHandler>();
+
+        services.AddScoped<
+            IQueryHandler<GetAdminCustomerOrdersQuery, AdminCustomerOrderPage?>,
+            GetAdminCustomerOrdersQueryHandler>();
+
+        // The newsletter subscriber list and its audited export (W3-07, ADM-21, doc 11 P15 step 4).
+        services.AddScoped<
+            IQueryHandler<GetNewsletterSubscribersQuery, NewsletterSubscriberPage>,
+            GetNewsletterSubscribersQueryHandler>();
+
+        services.AddScoped<
+            ICommandHandler<ExportNewsletterSubscribersCommand, NewsletterExportFile>,
+            ExportNewsletterSubscribersCommandHandler>();
+
+        // The dashboard and the reports (W4-02: ADM-04, ADM-05, ADM-07, ADM-08, ADM-19; doc 11 P16). Read only,
+        // bar the three exports, which write an Export audit row each.
+        services.AddScoped<IQueryHandler<GetAdminDashboardQuery, AdminDashboardDto>, GetAdminDashboardQueryHandler>();
+        services.AddScoped<IQueryHandler<GetSalesTrendQuery, SalesTrendDto>, GetSalesTrendQueryHandler>();
+        services.AddScoped<IQueryHandler<GetLowStockQuery, LowStockDto>, GetLowStockQueryHandler>();
+        services.AddScoped<IQueryHandler<GetSalesReportQuery, SalesReportDto>, GetSalesReportQueryHandler>();
+        services.AddScoped<IQueryHandler<GetInventoryReportQuery, InventoryReportPage>, GetInventoryReportQueryHandler>();
+        services.AddScoped<IQueryHandler<GetCustomerReportQuery, CustomerReportPage>, GetCustomerReportQueryHandler>();
+        services.AddScoped<ICommandHandler<ExportSalesReportCommand, ReportExportFile>, ExportSalesReportCommandHandler>();
+        services.AddScoped<
+            ICommandHandler<ExportInventoryReportCommand, ReportExportFile>,
+            ExportInventoryReportCommandHandler>();
+        services.AddScoped<
+            ICommandHandler<ExportCustomerReportCommand, ReportExportFile>,
+            ExportCustomerReportCommandHandler>();
 
         services.AddScoped<
             ICommandHandler<TransitionOrderCommand, TransitionOrderResult>,

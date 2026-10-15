@@ -33,6 +33,8 @@ import { readFileSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { extname, join, normalize, resolve } from 'node:path';
 
+import { freshCustomerState, handleCustomerRoute } from './admin-customer-stub.mjs';
+import { freshReportingState, handleReportingRoute } from './admin-reporting-stub.mjs';
 import { freshProductState, handleProductRoute } from './admin-product-stub.mjs';
 
 const PORT = Number(process.env.E2E_ADMIN_PORT ?? 4430);
@@ -1207,6 +1209,12 @@ function freshState() {
 
     // ADM-10 (W1-03). Its own module, because this file is already a thousand lines about ADM-11.
     ...freshProductState(),
+
+    // ADM-15 / ADM-21 (W3-07): customers and newsletter subscribers, both empty until a test asks.
+    ...freshCustomerState(),
+
+    // ADM-04–08 / ADM-19 (W4-02): the dashboard and the reports, empty (real zeros) until a test asks.
+    ...freshReportingState(),
 
     /** Open admin alerts (W4-02a). Empty unless a test asks for some — see `alertsFor`. */
     alerts: [],
@@ -2508,6 +2516,16 @@ const server = createServer(async (request, response) => {
     response.writeHead(200, { 'Content-Type': 'image/webp', 'Cache-Control': 'no-store' });
     response.end(LOGO_PIXEL);
     return;
+  }
+
+  // ---- customers and newsletter subscribers (ADM-15, ADM-21, W3-07) ---------------------------
+  if (await handleCustomerRoute({ path, method: request.method, url, response, state, json })) {
+    return undefined;
+  }
+
+  // ---- dashboard and reports (ADM-04–08, ADM-19, W4-02) ---------------------------------------
+  if (await handleReportingRoute({ path, method: request.method, url, response, state, json })) {
+    return undefined;
   }
 
   // ---- products (ADM-10, W1-03) --------------------------------------------------------------

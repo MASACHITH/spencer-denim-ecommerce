@@ -66,7 +66,7 @@ async function openWithAlerts(
   await expect(page.locator('[data-testid="alert-announcement"]')).toHaveCount(1);
 }
 
-test.describe('the banner is in the shell (ADM-04 does not exist yet)', () => {
+test.describe('the banner is in the shell, the dashboard included (ADM-04 renders no second one)', () => {
   /**
    * **The design decision, asserted.** Doc 08 §3.8 calls this "the dashboard banner" and ADM-04's
    * dashboard is a scaffold placeholder; doc 11 §6.1 step 1's morning routine starts from these banners,

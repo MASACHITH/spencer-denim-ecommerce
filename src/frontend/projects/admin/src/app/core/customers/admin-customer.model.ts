@@ -1,0 +1,93 @@
+/**
+ * The admin customers screen's payloads (ADM-15, doc 11 P11 step 16), field for field with
+ * `SpencerDenim.Application.Admin.Customers.Contracts`. `AdminCustomerShapeTests` pins the pairing in both
+ * directions, so a field added on one side and not the other fails a test rather than reading `undefined`.
+ */
+
+/** One page of the customer list. */
+export interface AdminCustomerListPage {
+  readonly rows: readonly AdminCustomerListRow[];
+  readonly page: number;
+  readonly pageSize: number;
+  readonly totalCount: number;
+  /** The district filter's options, from the server, so the screen invents none. */
+  readonly districts: readonly AdminDistrictOption[];
+}
+
+export interface AdminDistrictOption {
+  readonly id: number;
+  readonly name: string;
+}
+
+/** One registered customer. */
+export interface AdminCustomerListRow {
+  readonly customerId: number;
+  readonly name: string;
+  readonly email: string;
+  readonly emailConfirmed: boolean;
+  readonly phone: string | null;
+  /** The customer's default delivery district, or null when they have not chosen one. */
+  readonly districtName: string | null;
+  readonly isActive: boolean;
+  readonly registeredAtUtc: string;
+  /** Every order on the account, paid or not. */
+  readonly orderCount: number;
+  /** The total of the account's paid orders. */
+  readonly lifetimeSpend: number;
+  readonly currency: string;
+  readonly lastOrderAtUtc: string | null;
+}
+
+/** One customer in full. There is no anonymise action: that is doc 11 P17, a separate task. */
+export interface AdminCustomerDetail {
+  readonly customerId: number;
+  readonly firstName: string;
+  readonly lastName: string | null;
+  readonly email: string;
+  readonly emailConfirmed: boolean;
+  readonly phone: string | null;
+  readonly districtName: string | null;
+  readonly isActive: boolean;
+  readonly registeredAtUtc: string;
+  readonly lastSignInAtUtc: string | null;
+  readonly orderCount: number;
+  readonly lifetimeSpend: number;
+  readonly currency: string;
+  readonly lastOrderAtUtc: string | null;
+  readonly addresses: readonly AdminCustomerAddress[];
+}
+
+/** One saved address. Default first. */
+export interface AdminCustomerAddress {
+  readonly addressId: number;
+  readonly label: string | null;
+  readonly recipientName: string;
+  readonly phone: string;
+  readonly line1: string;
+  readonly line2: string | null;
+  readonly city: string;
+  readonly districtName: string;
+  readonly postalCode: string | null;
+  readonly landmark: string | null;
+  readonly isDefault: boolean;
+}
+
+/** One page of a customer's orders, newest first. */
+export interface AdminCustomerOrderPage {
+  readonly rows: readonly AdminCustomerOrderRow[];
+  readonly page: number;
+  readonly pageSize: number;
+  readonly totalCount: number;
+}
+
+/** One order on the account. Opened on the admin order screen by its public token. */
+export interface AdminCustomerOrderRow {
+  readonly orderPublicId: string;
+  readonly orderNumber: string;
+  readonly status: string;
+  readonly statusLabel: string;
+  readonly grandTotal: number;
+  readonly currency: string;
+  readonly placedAtUtc: string;
+  readonly paidAtUtc: string | null;
+}
