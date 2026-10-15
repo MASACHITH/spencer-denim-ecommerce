@@ -9,9 +9,10 @@
 -- Who runs it:
 --   * the VPS: deploy/scripts/install.sh copies this file to /opt/server/database/<env>/scripts/ and
 --     deploy/scripts/db-provision.sh pipes it to sqlcmd as sa (docs/15 §5, step 3);
---   * every SQL Server integration test database (tests/SpencerDenim.IntegrationTests/Infrastructure/
---     TestDatabaseProvisioner.cs embeds this file), so the suite runs on a database created exactly as
---     the live one is;
+--   * the SQL Server integration tests' databases (tests/SpencerDenim.IntegrationTests/Infrastructure/
+--     TestDatabaseProvisioner.cs embeds this file), so the suite runs on databases created exactly as
+--     the live one is. The one exception is deliberate: ReadCommittedSnapshotTests creates databases the
+--     pre-#163 way in order to test this script's handling of them;
 --   * a developer, by hand, for SpencerDenim_Dev (README, docs/13).
 --
 -- Why this is a script rather than something EF Core does:
