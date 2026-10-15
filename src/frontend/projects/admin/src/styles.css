@@ -225,3 +225,47 @@ textarea.adm-input {
 .adm-muted {
   color: var(--color-text-muted);
 }
+
+/* Data tables (W4-02: the reports and the dashboard) -------------------------------------------- */
+/*
+ * A report table is wider than a phone. It sits in `.adm-table-scroll`, which scrolls **itself** sideways
+ * so the page never does (the 320 px rule); the wrapper is a focusable, labelled region so a keyboard can
+ * scroll it too (axe `scrollable-region-focusable`). Figures are right-aligned in tabular digits, so a
+ * column of rupees lines up.
+ */
+.adm-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+.adm-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-data);
+}
+.adm-table th,
+.adm-table td {
+  padding: var(--space-1);
+  border-bottom: 1px solid var(--color-border);
+  text-align: left;
+  vertical-align: top;
+}
+.adm-table thead th {
+  font-size: var(--text-label);
+  font-weight: var(--weight-regular);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+.adm-table tbody th {
+  font-weight: var(--weight-regular);
+}
+.adm-table tfoot th,
+.adm-table tfoot td {
+  font-weight: var(--weight-semibold);
+  border-top: 2px solid var(--color-border-strong);
+}
+.adm-table .adm-num {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
