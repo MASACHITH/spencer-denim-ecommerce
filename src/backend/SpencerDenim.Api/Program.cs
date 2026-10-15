@@ -109,6 +109,7 @@ app.MapAdminBankTransferEndpoints();
 app.MapAdminOrderEndpoints();
 app.MapAdminCustomerEndpoints();
 app.MapAdminNewsletterEndpoints();
+app.MapAdminReportingEndpoints();
 app.MapPaymentSlipEndpoints();
 app.MapAdminContentEndpoints();
 app.MapAdminPromotionEndpoints();
