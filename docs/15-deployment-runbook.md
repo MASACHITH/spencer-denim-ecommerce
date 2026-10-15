@@ -164,7 +164,7 @@ sudo nano /opt/server/database/<env>/config/db.env
 sudo nano /opt/apps/<env>/spencer-denim-app/config/app.env
 sudo /opt/apps/<env>/spencer-denim-app/scripts/check-env.sh <env>
 
-# 3. SQL Server up, then the database (collation Latin1_General_100_CI_AS_SC) and the two logins
+# 3. SQL Server up, then the database (collation Latin1_General_100_CI_AS_SC, READ_COMMITTED_SNAPSHOT ON) and the two logins
 sudo /opt/apps/<env>/spencer-denim-app/scripts/db-up.sh <env>
 sudo /opt/apps/<env>/spencer-denim-app/scripts/db-provision.sh <env>
 
@@ -184,7 +184,33 @@ If `SD_SEED_ADMIN_ENABLED=true` was used for the first Super Admin: sign in once
 password in `app.env`, and redeploy the same tag.
 
 Still to do on the database after provisioning (doc 08 §10.4, not automated here): recovery model FULL for
-production (SIMPLE for staging), RCSI and Query Store, and the scheduled backup job (doc 08 §8.5).
+production (SIMPLE for staging), Query Store, and the scheduled backup job (doc 08 §8.5). `READ_COMMITTED_SNAPSHOT`
+is set by `db-provision.sh` (issue #163), as long as `install.sh` has copied this commit's
+`tools/db/provision-database.sql` into `scripts/` first.
+
+**Existing database without READ_COMMITTED_SNAPSHOT** (any database created before issue #163). Check it:
+
+```bash
+cd /opt/server/database/<env>/compose
+docker compose --env-file ../config/db.env exec sqlserver /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -C -Q "SELECT name, is_read_committed_snapshot_on FROM sys.databases WHERE name = N'<database>'"
+```
+
+`db-provision.sh <env>` switches it on when nothing else is connected to the database, and otherwise stops with
+error 50001 and this command — it never disconnects anybody itself. SQL Server will not change the option while
+any other connection is open on the database, even an idle one, and without a termination clause the `ALTER`
+waits for ever. So at a quiet moment either stop the API (`$C stop api` with `$C` from §8, then re-run `db-provision.sh` and
+`$C start api`), or run as sa:
+
+```sql
+ALTER DATABASE [<database>] SET READ_COMMITTED_SNAPSHOT ON WITH ROLLBACK IMMEDIATE;
+```
+
+sqlcmd prompts for sa's password. `ROLLBACK IMMEDIATE` rolls back whatever is in flight — a checkout being placed,
+a payment settling — and disconnects it. EF Core's retry-on-failure (doc 08 §10.3) can retry a unit of work whose
+connection was cut, but treat it as an outage of a second or two and pick a quiet moment. On a developer machine
+(`SpencerDenim_Dev`, a shared database: agree it with whoever else uses it) stop the API and close any other
+connection to it (SSMS, Azure Data Studio, a running test host), then run `tools/db/provision-database.sql` with
+`-v DbName="SpencerDenim_Dev"`.
 
 ## 6. Deploy (every release)
 

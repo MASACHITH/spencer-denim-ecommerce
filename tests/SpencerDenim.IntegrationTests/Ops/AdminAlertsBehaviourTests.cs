@@ -229,6 +229,14 @@ public sealed class AdminAlertsBehaviourTests(SqlServerDatabaseFixture sqlServer
     /// asserts is absent. It needs enough wall-clock for a sweep to tick inside the window, which is why
     /// <c>origin/main</c> passes 1,381/1,381 and a longer suite does not: a latent defect, not a new one.
     /// </para>
+    /// <para>
+    /// <b>That was not the whole cause, and could not be: it does not explain a <c>Sent</c> row.</b> The
+    /// alert this test found was <c>AdminAlertsPlanTests</c>' probe data: 20,000 rows against
+    /// <c>EmailOutbox</c> with <c>RelatedEntityId</c> 1 to 20,000, every third an
+    /// <c>EmailDeliveryFailed</c>, so any planted id that was a multiple of three already "had" an alert
+    /// (#163 tester; reproduced with only these two classes running). The probe ids are now
+    /// <c>plan-n</c>; see that class's <c>SeedAsync</c>.
+    /// </para>
     /// </remarks>
     [Theory]
     [InlineData(EmailOutboxStatus.Pending)]

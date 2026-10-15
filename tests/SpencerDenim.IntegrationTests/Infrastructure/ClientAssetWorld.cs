@@ -117,12 +117,9 @@ public sealed class ClientAssetWorld : IAsyncDisposable
             InitialCatalog = databaseName,
         }.ConnectionString;
 
-        await ExecuteAsync(
-            server,
-            string.Create(
-                CultureInfo.InvariantCulture,
-                $"CREATE DATABASE [{databaseName}] COLLATE {SqlServerDatabaseFixture.Collation};"),
-            cancellationToken);
+        // Created by the live database's provisioning script (doc 08 §1.1: collation and
+        // READ_COMMITTED_SNAPSHOT, neither of which a migration can set), not by a copy of it.
+        await TestDatabaseProvisioner.ProvisionAsync(server, databaseName, cancellationToken);
 
         var root = Path.Combine(Path.GetTempPath(), "sd-client-assets-it", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(Path.Combine(root, "public-volume"));

@@ -25,7 +25,7 @@ Design only. No application code. SQL fragments illustrate intent and are not fi
 
 - **Planning scale:** ≤ 5,000 products, ≤ 50,000 variants, ≤ 30,000 orders/year, ≤ 20,000 page views/day. At this scale, live SQL over well-indexed tables serves listings and the dashboard. There is no search engine, cache server or summary tables for sales (the traffic daily tables are kept, §8).
 - **Database options:**
-  - `READ_COMMITTED_SNAPSHOT ON` (the Azure SQL default).
+  - `READ_COMMITTED_SNAPSHOT ON` (the Azure SQL default). Set by `tools/db/provision-database.sql` since issue #163 — before that nothing set it, and every database had it off. Every integration-test database is created by the same script, so the suite runs with it on. It changes plain `READ COMMITTED` reads only: they take the last committed version of a row instead of waiting for its writer. `UPDATE`/`DELETE` still lock the rows they change and re-check their predicate after waiting, so §5.2's conditional writes are unaffected; a read that *decides* a later write and relied on waiting needs `WITH (READCOMMITTEDLOCK)` (the campaign recompute, §7.4; `BankTransferProofStore.OpenPaymentAsync`).
   - Query Store ON.
   - Recovery model **FULL on production** with 15-minute log backups shipped off-server; **SIMPLE on staging** (§8.4).
 - **Collation `Latin1_General_100_CI_AS_SC`** (DB23; a **week-0 decision**, set at database creation and costly to change later):
@@ -1543,7 +1543,7 @@ OUTPUT inserted.OnHand, inserted.Reserved
 - **Atomic check-and-set under the row lock.** The second of two concurrent buyers of the last unit waits, re-evaluates the predicate and gets 0 rows. There is no read-modify-write gap and no retry storm; rowversion would give every loser a concurrency exception plus a re-read.
 - **No false conflicts.** Unrelated column edits don't fail checkouts.
 - **Backstop:** `CK_StockLevels_ReservedLeOnHand` and `OnHand ≥ 0` make an oversell impossible to commit.
-- **RCSI:** UPDATE takes update locks on qualifying rows and re-checks the predicate after waiting. This is proven by the concurrency test (§5.9); if the test ever shows an anomaly, add `WITH (READCOMMITTEDLOCK)`.
+- **RCSI:** UPDATE takes update locks on qualifying rows and re-checks the predicate after waiting. The concurrency tests (§5.9) ran on databases with RCSI **off** until issue #163; since then every test database has it on and the full suite passes. If a test ever shows an anomaly, add `WITH (READCOMMITTEDLOCK)`.
 - Rowversion is kept for admin edits (products, orders' notes and courier, promo codes, settings).
 
 ### 5.3 Lock ordering, deadlocks, retries (DB20)
@@ -1885,7 +1885,7 @@ OFFSET @skip ROWS FETCH NEXT 24 ROWS ONLY;
 ### 10.4 Migrations and logins
 - **EF migration bundle** run as a one-shot CI step before the API starts: staging first, then production after a backup. Never `Database.Migrate()` at startup.
 - **Destructive changes** follow expand → backfill → switch → contract.
-- **Provisioning script** (outside migrations): database creation with the collation, RCSI, Query Store, recovery model (FULL prod / SIMPLE staging), logins.
+- **Provisioning script** (outside migrations): database creation with the collation, RCSI, Query Store, recovery model (FULL prod / SIMPLE staging), logins. **Built so far:** collation and RCSI (`tools/db/provision-database.sql`) and logins (`deploy/database/sql/logins.sql`); Query Store and the recovery model are still manual (docs/15 §5).
 - **Logins:**
 
   | Login | Grants |

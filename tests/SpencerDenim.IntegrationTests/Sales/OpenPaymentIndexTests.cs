@@ -1,3 +1,4 @@
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using SpencerDenim.Application.Sales.Payments.Abstractions;
@@ -113,6 +114,61 @@ public sealed class OpenPaymentIndexTests(SqlServerDatabaseFixture sqlServer) : 
             Assert.Equal(row.GrandTotal, open.Amount);
             Assert.False(open.IsOrderSettlement);
         }
+    }
+
+    /// <summary>
+    /// Issue #163: with <c>READ_COMMITTED_SNAPSHOT ON</c>, opening a payment still waits for an expiry or a
+    /// cancellation that has the order row and has not committed, and then answers "not payable".
+    /// </summary>
+    /// <remarks>
+    /// <b>What the option would otherwise change.</b> <c>OpenPaymentAsync</c> decides from a read of the
+    /// order's status and then inserts a <c>Pending</c> payment. With locking <c>READ COMMITTED</c> that read
+    /// waited for any transaction holding the order row; with the option on, a plain read takes the last
+    /// committed version and does not wait, so it would see <c>PendingPayment</c> while an expiry was moving
+    /// the order to Expired and open a payment on an order that was closing. The read carries
+    /// <c>WITH (READCOMMITTEDLOCK)</c> to keep the old behaviour. Measured without the hint: the call still
+    /// takes the full two seconds (most likely the insert's foreign-key check waiting on the order row) but then
+    /// returns a new payment id on the expired order, and this test fails on that.
+    /// <para>
+    /// It does not close the race that existed before: an expiry that <i>starts</i> after this read and
+    /// commits before the insert still leaves a stray open row. That needs the order row claimed in the
+    /// same transaction as the insert, and is outside #163.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task Opening_a_payment_waits_for_an_uncommitted_expiry_and_then_refuses()
+    {
+        var (order, _) = await PlaceOrderAsync();
+        var orderId = await OrderIdAsync(order.PublicId);
+
+        // A rejection closes the placement's open row, so the open below would have to insert one.
+        Assert.IsType<BankTransferDecisionResult.Applied>(await RejectAsync(orderId));
+
+        await using var expiry = new SqlConnection(SqlServer.ConnectionString);
+        await expiry.OpenAsync(Token);
+        await using var transaction = (SqlTransaction)await expiry.BeginTransactionAsync(Token);
+        await using (var expire = new SqlCommand(
+            "UPDATE sales.Orders SET Status = @expired WHERE Id = @id AND Status = @pending", expiry, transaction))
+        {
+            expire.Parameters.AddWithValue("@expired", (byte)OrderStatus.Expired);
+            expire.Parameters.AddWithValue("@pending", (byte)OrderStatus.PendingPayment);
+            expire.Parameters.AddWithValue("@id", orderId);
+            Assert.Equal(1, await expire.ExecuteNonQueryAsync(Token));
+        }
+
+        var open = OpenPaymentAsync(order.PublicId);
+        var answeredWhileTheExpiryWasOpen = await Task.WhenAny(open, Task.Delay(TimeSpan.FromSeconds(2), Token)) == open;
+
+        await transaction.CommitAsync(Token);
+        var opened = await open;
+
+        Assert.False(
+            answeredWhileTheExpiryWasOpen,
+            "OpenPaymentAsync read the order's status without waiting for a transaction that had the order row (#163).");
+        Assert.Null(opened);
+        Assert.DoesNotContain(
+            (await ReadOrderAsync(order.PublicId)).Payments,
+            payment => payment.Status == PaymentStatus.Pending);
     }
 
     /// <summary>

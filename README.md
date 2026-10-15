@@ -67,10 +67,10 @@ Only use LocalDB and databases named `SpencerDenim_*`. Never point the app or th
 
 ### 1. Database and connection string
 
-Create the empty development database once, with the platform collation:
+Create the empty development database once, with the platform collation and `READ_COMMITTED_SNAPSHOT ON` (doc 08 §1.1), using the same script that creates the live database:
 
 ```powershell
-sqlcmd -S "(localdb)\MSSQLLocalDB" -E -Q "IF DB_ID(N'SpencerDenim_Dev') IS NULL CREATE DATABASE [SpencerDenim_Dev] COLLATE Latin1_General_100_CI_AS_SC;"
+sqlcmd -S "(localdb)\MSSQLLocalDB" -E -v DbName="SpencerDenim_Dev" -i tools\db\provision-database.sql
 ```
 
 The API reads `ConnectionStrings:Database`. In Development, `appsettings.Development.json` already holds the credential-free LocalDB value:

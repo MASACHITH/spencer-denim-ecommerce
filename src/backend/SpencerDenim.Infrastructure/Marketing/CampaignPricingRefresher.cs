@@ -23,7 +23,14 @@ namespace SpencerDenim.Infrastructure.Marketing;
 /// <c>READ_COMMITTED_SNAPSHOT ON</c> would serve the computing reads from the version store, so the
 /// statement could price from a snapshot taken before a product save that commits during it — and then
 /// write that stale answer over the save's. <c>READCOMMITTEDLOCK</c> forces the shared locks that make
-/// the two serialise.
+/// the two serialise. <b>Every</b> source table carries it, the fallback's <c>NOT EXISTS</c> included:
+/// that one was unhinted until issue #163, which would let it judge "has an active variant" from the
+/// statement's snapshot while the hinted branch beside it waits for and reads a save that deactivates the
+/// last one — neither branch then emits a row and the summary is not written. That outcome was not
+/// reproduced (a test that held the deactivation open still saw the summary written, perhaps because the
+/// plan runs the hinted branch first); the hint is there so the answer does not depend on plan order.
+/// <c>CampaignPricingRefreshLockTests</c> shows the hint makes the statement wait; every database runs with
+/// <c>READ_COMMITTED_SNAPSHOT ON</c> since #163, so it is no longer a no-op.
 /// </para>
 /// <para>
 /// <b>It is a second implementation of <see cref="CampaignPricing"/>, in T-SQL, and that is a real
@@ -132,7 +139,7 @@ internal sealed class CampaignPricingRefresher(AppDbContext dbContext, IClock cl
                       JOIN ids ON ids.ProductId = p.Id
                      WHERE p.IsDeleted = 0
                        AND NOT EXISTS (
-                           SELECT 1 FROM catalog.ProductVariants v
+                           SELECT 1 FROM catalog.ProductVariants v WITH (READCOMMITTEDLOCK)
                             WHERE v.ProductId = p.Id AND v.IsActive = 1)
                 ),
                 priced AS (

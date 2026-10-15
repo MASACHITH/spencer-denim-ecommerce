@@ -180,7 +180,12 @@ internal sealed class BankTransferProofStore(AppDbContext dbContext) : IBankTran
     {
         for (var attempt = 1; attempt <= 2; attempt++)
         {
+            // READCOMMITTEDLOCK: the database runs READ_COMMITTED_SNAPSHOT (#163), where a plain read would
+            // take the order's last committed status instead of waiting for an expiry, cancellation or
+            // approval that holds the row, and a payment would be opened beside an order that is closing.
+            // The hint keeps this decision waiting for that writer, as it did before the option was on.
             var order = await dbContext.Orders
+                .FromSql($"SELECT * FROM sales.Orders WITH (READCOMMITTEDLOCK) WHERE PublicId = {orderPublicId}")
                 .AsNoTracking()
                 .Where(candidate =>
                     candidate.PublicId == orderPublicId
