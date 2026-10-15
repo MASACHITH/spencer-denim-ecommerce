@@ -17,7 +17,9 @@ namespace SpencerDenim.IntegrationTests.Api.Admin;
 
 /// <summary>
 /// The W4-02 tester's own cases: the ones the developer's suite proved with inserted rows or did not reach.
-/// Each owns a year nobody else writes orders into (2001–2006).
+/// Each owns a year nobody else writes orders into (2001–2006), except 2004, which the ISO-week and leap-year
+/// cases share: the ISO-week case asks only about 22 December 2003 – 11 January 2004, the leap-year case only
+/// about 29 January 2004 onwards (and about 2003 through the sales report, never a fixed sum).
 /// </summary>
 public sealed class ReportingTesterTests(SqlServerDatabaseFixture sqlServer) : ReportingTestBase(sqlServer)
 {
@@ -139,9 +141,14 @@ public sealed class ReportingTesterTests(SqlServerDatabaseFixture sqlServer) : R
         Assert.Equal(mondayFirst.GrandTotal + sundayNewYear.GrandTotal, Money(rows[1].GetProperty("grossRevenue")));
         Assert.Equal(mondayNext.GrandTotal, Money(rows[2].GetProperty("grossRevenue")));
 
-        // And by month: the two December orders, the two January ones.
-        var months = (await GetJsonAsync(client, $"{TrendUrl}?interval=Month&to={Day(2004, 1, 31)}"))
+        // And by month: the two December orders, the two January ones. The trend ends on 10 January, not the
+        // 31st: 2004 is shared with the leap-year test below, whose 29 and 30 January orders are (rightly) in
+        // January's bucket. Ending the window on the 10th cuts January's bucket to 1–10 January, the same days
+        // the KPI below asks about, so the sums stay exact whichever of the two tests runs first.
+        var months = (await GetJsonAsync(client, $"{TrendUrl}?interval=Month&to={Day(2004, 1, 10)}"))
             .GetProperty("points").EnumerateArray().TakeLast(2).ToList();
+        Assert.Equal(["2003-12-01", "2004-01-01"], months.Select(month => month.GetProperty("start").GetString()!));
+        Assert.Equal(["2003-12-31", "2004-01-10"], months.Select(month => month.GetProperty("end").GetString()!));
         Assert.Equal(sundayLast.GrandTotal + mondayFirst.GrandTotal, Money(months[0].GetProperty("grossRevenue")));
         Assert.Equal(sundayNewYear.GrandTotal + mondayNext.GrandTotal, Money(months[1].GetProperty("grossRevenue")));
 
