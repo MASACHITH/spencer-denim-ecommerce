@@ -220,6 +220,13 @@ public sealed class AdminTrafficEndpointTests(SqlServerDatabaseFixture sqlServer
                 View(Colombo(2003, 8, 5, 9), Guid.NewGuid(), "/", TrafficChannel.Paid, utmSource: "google"),
                 View(Colombo(2003, 8, 6, 9), Guid.NewGuid(), "/"),
                 View(Colombo(2003, 8, 7, 9), Guid.NewGuid(), "/"),
+
+                // Crawlers and link previews, each in a "session" of its own: doc 08 §8.1 divides by human
+                // sessions, so these must not dilute the rate (W4-03 tester: nothing else held that).
+                View(Colombo(2003, 8, 4, 10), Guid.NewGuid(), "/", bot: true),
+                View(Colombo(2003, 8, 5, 10), Guid.NewGuid(), "/", TrafficChannel.Referral, bot: true, referrerHost: "l.facebook.com"),
+                View(Colombo(2003, 8, 6, 10), Guid.NewGuid(), "/", bot: true),
+                View(Colombo(2003, 8, 7, 10), Guid.NewGuid(), "/", bot: true),
             ],
             Token);
 
