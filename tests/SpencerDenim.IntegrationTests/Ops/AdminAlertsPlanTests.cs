@@ -239,8 +239,17 @@ public sealed class AdminAlertsPlanTests(SqlServerDatabaseFixture sqlServer)
     /// </para>
     /// <para>
     /// Idempotent, and left behind on purpose. The suite shares one throwaway database the fixture
-    /// created; <c>AdminAlertsBehaviourTests</c> empties this table before each of its own assertions, so
-    /// the two classes can run in either order.
+    /// created; most of <c>AdminAlertsBehaviourTests</c> empties this table before its assertions, so the
+    /// two classes can run in either order.
+    /// </para>
+    /// <para>
+    /// <b>The probe rows' <c>RelatedEntityId</c> is <c>plan-n</c>, never a bare number</b> (#163 tester).
+    /// It was <c>n</c> for n = 1 to 20,000, with every third row an <c>EmailDeliveryFailed</c> alert against
+    /// <c>EmailOutbox</c> — exactly what <c>DeadEmailAlerts</c> writes for outbox row n. The suite's outbox ids
+    /// are far below 20,000, so <c>AdminAlertsBehaviourTests.A_message_that_is_not_dead_raises_nothing</c>,
+    /// which plants a row, does not reset this table, and counts alerts for that row's id, found one of
+    /// these whenever the seed had landed and its id was a multiple of three: "Expected 0, Actual 1", on
+    /// any status, Sent included. Reproduced with the two classes alone (10 tests, 1 of 3 runs failed).
     /// </para>
     /// </remarks>
     private async Task SeedAsync()
@@ -292,7 +301,8 @@ public sealed class AdminAlertsPlanTests(SqlServerDatabaseFixture sqlServer)
                 -- rather than a row, and so is a comment that quotes one.
                 CONCAT(CHAR(123), '"probe":"', REPLICATE('x', 600), '"', CHAR(125)),
                 'EmailOutbox',
-                CAST(n AS varchar(100)),
+                -- Never an outbox id: see the remarks. 'plan-' cannot equal any bigint's text.
+                CONCAT('plan-', n),
                 DATEADD(minute, -n, SYSUTCDATETIME()),
                 CASE WHEN n > {{OpenRows}} THEN {{userId}} END,
                 CASE WHEN n > {{OpenRows}} THEN DATEADD(minute, -n, SYSUTCDATETIME()) END
