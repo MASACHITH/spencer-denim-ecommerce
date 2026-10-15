@@ -108,8 +108,8 @@ const progressData = {
         { name: "Review moderation", status: "planned", progress: 0 },
         { name: "Newsletter subscriber list", status: "done", progress: 100 },
         { name: "Homepage & content management", status: "in-progress", progress: 65 },
-        { name: "Dashboard", status: "in-progress", progress: 90 },
-        { name: "Reports & traffic", status: "in-progress", progress: 50 },
+        { name: "Dashboard", status: "done", progress: 100 },
+        { name: "Reports & traffic", status: "done", progress: 100 },
         { name: "Settings", status: "in-progress", progress: 70 }
       ]
     },
@@ -128,6 +128,11 @@ const progressData = {
 
   // Newest first.
   updates: [
+    {
+      date: "2026-10-15",
+      title: "Website traffic",
+      text: "The shop now records its visitors, and the admin panel shows visits, where they came from, the most viewed pages and the devices used.",
+    },
     {
       date: "2026-10-15",
       title: "PayPal payment and stronger admin sign-in",
