@@ -67,8 +67,10 @@ test.describe('the dashboard', () => {
     await expect(page.locator('[data-testid="dashboard-buyers"]')).toContainText('not the default district on a customer account');
     await expect(page.locator('[data-testid="low-stock"] tbody tr')).not.toHaveCount(0);
 
-    // No traffic and no conversion rate: the analytics tables they need do not exist.
-    await expect(page.locator('main')).not.toContainText(/traffic|conversion|visits/i);
+    // Traffic sources (ADM-06, W4-03): figures and a table, the conversion rate beside the visits it divides by.
+    await expect(page.locator('[data-testid="traffic-visits"]')).not.toHaveText('');
+    await expect(page.locator('[data-testid="traffic-conversion"]')).toContainText('%');
+    await expect(page.locator('[data-testid="traffic-sources"] tbody tr')).toHaveCount(7);
   });
 
   test('a new installation shows real zeros and says nothing is low, rather than inventing figures', async ({ page }) => {
@@ -79,6 +81,8 @@ test.describe('the dashboard', () => {
     await expect(page.locator('[data-testid="kpi-aov"]')).toContainText('—');
     await expect(page.locator('[data-testid="low-stock-summary"]')).toContainText('No variant is low on stock');
     await expect(page.locator('[data-testid="trend-chart"]')).toHaveAttribute('aria-label', /none in any month/);
+    await expect(page.locator('[data-testid="traffic-sources-empty"]')).toContainText('No visits were recorded');
+    await expect(page.locator('[data-testid="traffic-conversion"]')).toHaveCount(0);
   });
 
   test('the trend has a table of its figures, reached from the keyboard', async ({ page }) => {
@@ -233,6 +237,73 @@ test.describe('the reports', () => {
   });
 });
 
+test.describe('traffic (ADM-06, ADM-20, W4-03)', () => {
+  test('the Traffic page gives visits, crawlers apart, and every breakdown as a table', async ({ page }) => {
+    await open(page, '/traffic');
+
+    await expect(page.getByRole('heading', { level: 1, name: 'Traffic' })).toBeVisible();
+    await expect(page.locator('[data-testid="traffic-visits"]')).toContainText('previous period');
+    await expect(page.locator('[data-testid="traffic-bots"]')).toContainText('Not in any other figure');
+    await expect(page.locator('[data-testid="traffic-definitions"]')).toContainText('No IP address and no visitor ID are kept');
+
+    for (const table of ['traffic-days', 'traffic-channels', 'traffic-devices', 'traffic-top-sources', 'traffic-top-pages']) {
+      await expect(page.locator(`[data-testid="${table}"] caption`)).toHaveCount(1);
+    }
+
+    await expect(page.locator('[data-testid="traffic-days"] tbody tr')).toHaveCount(30);
+    await expect(page.locator('[data-testid="traffic-top-pages"] tbody tr').first()).toContainText('Fixture linen wrap dress');
+  });
+
+  test('a new installation’s Traffic page says there were no visits', async ({ page }) => {
+    await open(page, '/traffic', 'none');
+
+    await expect(page.locator('[data-testid="traffic-empty"]')).toContainText('No visits were recorded in these days.');
+    await expect(page.locator('[data-testid="traffic-channels"]')).toHaveCount(0);
+  });
+
+  test('a role without Traffic.View is told so on the page, and the dashboard neither shows nor asks for traffic', async ({ page }) => {
+    const asked: string[] = [];
+    page.on('request', (request) => {
+      if (request.url().includes('/api/admin/traffic') || request.url().includes('/traffic-sources')) {
+        asked.push(request.url());
+      }
+    });
+
+    await asRole(page, ['Dashboard.View', 'Orders.View']);
+    await open(page, '/');
+    await expect(page.locator('[data-testid="kpi-gross"]')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Traffic sources' })).toHaveCount(0);
+    await expect(page.locator('[data-testid="dashboard-traffic-link"]')).toHaveCount(0);
+
+    await page.goto(`${adminURL}/traffic`);
+    await expect(page.locator('[data-testid="traffic-forbidden"]')).toBeVisible();
+    expect(asked).toEqual([]);
+  });
+
+  test('the Traffic page has no sideways scroll and no undersized, unreachable or buried control', async ({ page }) => {
+    await open(page, '/traffic');
+    await expect(page.locator('[data-testid="traffic-top-pages"]')).toBeVisible();
+
+    await measureAtEveryWidth(page, ['[data-testid="traffic-preset"]', '[data-testid="traffic-days-toggle"]']);
+  });
+
+  // W4-03 tester: the sweep above never opened the custom period, so its two date fields and its Show button —
+  // the controls most likely to be narrow on a phone — were never measured.
+  test('the Traffic page custom period has no sideways scroll and no undersized, unreachable or buried control', async ({ page }) => {
+    await open(page, '/traffic');
+    await expect(page.locator('[data-testid="traffic-top-pages"]')).toBeVisible();
+    await page.locator('[data-testid="traffic-preset"]').selectOption('custom');
+    await expect(page.locator('[data-testid="traffic-apply"]')).toBeVisible();
+
+    await measureAtEveryWidth(page, [
+      '[data-testid="traffic-preset"]',
+      '[data-testid="traffic-from"]',
+      '[data-testid="traffic-to"]',
+      '[data-testid="traffic-apply"]',
+    ]);
+  });
+});
+
 test.describe('the screens themselves', () => {
   test('the dashboard has no sideways scroll and no undersized, unreachable or buried control', async ({ page }) => {
     await open(page, '/');
@@ -249,6 +320,8 @@ test.describe('the screens themselves', () => {
       '[data-testid="recent-search-submit"]',
       '[data-testid="low-stock-report"]',
       '[data-testid="dashboard-reports-link"]',
+      '[data-testid="dashboard-traffic-link"]',
+      '[data-testid="traffic-sources-more"]',
       '[data-testid="dashboard-logout"]',
     ]);
   });
@@ -275,6 +348,7 @@ test.describe('the screens themselves', () => {
       ['/reports?report=sales', '[data-testid="sales-table"]'],
       ['/reports?report=inventory', '[data-testid="inventory-table"]'],
       ['/reports?report=customers', '[data-testid="customers-table"]'],
+      ['/traffic', '[data-testid="traffic-top-pages"]'],
     ] as const) {
       await open(page, path);
       await expect(page.locator(ready)).toBeVisible();

@@ -9,6 +9,15 @@ import { join } from 'node:path';
 import { BRAND } from '@spencer-denim/shared';
 
 import { canonicalTarget, redirectStatusFor } from './server/canonical-path';
+import { apiInternalUrl } from './server/origins';
+import {
+  createTrafficContext,
+  sendServerPageView,
+  serverPageView,
+  shouldRecordServerView,
+  visitCookie,
+  visitSession,
+} from './server/page-view';
 import { answerRenderFailure } from './server/render-failure';
 import { ROBOTS_MAX_AGE_SECONDS, robotsTxt } from './server/robots-txt';
 import { SitemapDocument } from './server/sitemap-xml';
@@ -221,9 +230,47 @@ if (e2eMediaPassthroughUrl) {
  * Handle all other requests by rendering the Angular application.
  */
 app.use((req, res, next) => {
+  // Traffic recording (W4-03): the render is told whether this request is one the server will record, and
+  // tells us back whether it ran. `src/server/page-view.ts` has why exactly one side records each view.
+  const traffic = createTrafficContext(req.method, req.headers);
+
   angularApp
-    .handle(req)
-    .then((response) => (response ? writeResponseToNodeResponse(response, res) : next()))
+    .handle(req, traffic)
+    .then((response) => {
+      if (!response) {
+        next();
+        return;
+      }
+
+      const answer = { status: response.status, contentType: response.headers.get('content-type') };
+      const record = shouldRecordServerView(traffic, answer);
+      const session = record ? visitSession(req.headers.cookie) : null;
+
+      if (session) {
+        // On the response's own headers, so it is written with them; the page carries the visit cookie the
+        // browser's later beacons will send.
+        try {
+          response.headers.append('set-cookie', visitCookie(session));
+        } catch {
+          // A response with immutable headers: set it on the Node response, which the writer leaves alone
+          // unless the render set cookies of its own.
+          res.appendHeader('Set-Cookie', visitCookie(session));
+        }
+      }
+
+      const written = writeResponseToNodeResponse(response, res);
+
+      if (session) {
+        // After the page has been handed over, and never awaited: the recording call cannot hold it up.
+        void sendServerPageView(
+          apiInternalUrl(),
+          serverPageView(req.originalUrl, req.headers, process.env['PUBLIC_SITE_ORIGIN']),
+          session,
+        );
+      }
+
+      return written;
+    })
     .catch(next);
 });
 

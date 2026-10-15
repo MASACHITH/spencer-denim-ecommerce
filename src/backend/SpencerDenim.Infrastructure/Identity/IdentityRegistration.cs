@@ -58,6 +58,9 @@ public static class IdentityRegistration
         services.AddIdentityCore<AppUser>()
             .AddRoles<AppRole>()
             .AddEntityFrameworkStores<AppDbContext>()
+            // Issue #46: replaces the EF user store registered just above (the last IUserStore registration wins),
+            // so a save of a stale user can never write an old lockout state back — see AppUserStore.
+            .AddUserStore<AppUserStore>()
             .AddSignInManager()
             .AddDefaultTokenProviders()
             // W1-10: registered after the defaults so it replaces Identity's authenticator provider under the same
@@ -197,6 +200,7 @@ public static class IdentityRegistration
             .Configure<IOptions<AdminSecurityOptions>>((options, adminSecurity) =>
                 options.Cookie.SecurePolicy = ResolveSecurePolicy(adminSecurity.Value));
 
+        services.AddScoped<StaffAccountLockout>();
         services.AddScoped<IAdminAuthenticator, AdminAuthenticator>();
         services.AddScoped<IAdminPasswordChanger, AdminPasswordChanger>();
         services.AddScoped<IAdminTwoFactorManager, AdminTwoFactorManager>();

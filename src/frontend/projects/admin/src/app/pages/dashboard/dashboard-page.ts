@@ -20,11 +20,14 @@ import { KpiGrid } from './kpi-grid';
 import { LowStockPanel } from './low-stock-panel';
 import { RecentOrders } from './recent-orders';
 import { SalesTrendChart } from './sales-trend';
+import { TrafficSourcesPanel } from './traffic-sources';
+import { TRAFFIC_PERMISSION } from '../../core/traffic/traffic.model';
 
 interface Access {
   readonly dashboard: boolean;
   readonly orders: boolean;
   readonly reports: boolean;
+  readonly traffic: boolean;
 }
 
 /**
@@ -32,8 +35,8 @@ interface Access {
  *
  * **What is on it, and what deliberately is not.** KPIs against the previous period, the twelve-month trend,
  * sales by department, top categories and products, order status, payment methods, buyers by delivery
- * district, recent orders and low stock. **Not traffic sources (ADM-06)** and no conversion rate: both need
- * the `analytics` tables, which do not exist, and a chart of zeros would read as "no visitors". The alert
+ * district, recent orders, low stock, and — for a role with `Traffic.View` — traffic sources (ADM-06) with the
+ * conversion rate (W4-03), which needed the `analytics` tables and so arrived after the rest. The alert
  * banners are the shell's (`AlertBanner`, W4-02a), above this page as above every admin page — the
  * dashboard does not render a second one.
  *
@@ -45,7 +48,7 @@ interface Access {
  */
 @Component({
   selector: 'sda-dashboard-page',
-  imports: [RouterLink, KpiGrid, BarTable, SalesTrendChart, RecentOrders, LowStockPanel],
+  imports: [RouterLink, KpiGrid, BarTable, SalesTrendChart, RecentOrders, LowStockPanel, TrafficSourcesPanel],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <section class="dash">
@@ -114,6 +117,13 @@ interface Access {
             <h2 class="adm-panel__title" id="dash-trend">Revenue and orders, twelve months</h2>
             <sda-sales-trend [to]="period().to" />
           </section>
+
+          @if (access()!.traffic) {
+            <section class="adm-panel dash__wide" aria-labelledby="dash-traffic">
+              <h2 class="adm-panel__title" id="dash-traffic">Traffic sources</h2>
+              <sda-traffic-sources [period]="period()" />
+            </section>
+          }
 
           @if (dashboard(); as answered) {
             <section class="adm-panel" aria-labelledby="dash-departments">
@@ -199,6 +209,9 @@ interface Access {
           <a class="adm-link" routerLink="/marketing/newsletter">Newsletter subscribers</a>
           @if (access()?.reports) {
             <a class="adm-link" routerLink="/reports" data-testid="dashboard-reports-link">Reports</a>
+          }
+          @if (access()?.traffic) {
+            <a class="adm-link" routerLink="/traffic" data-testid="dashboard-traffic-link">Website traffic</a>
           }
           <a class="adm-link" routerLink="/settings">Settings</a>
           <a class="adm-link" routerLink="/audit-log">Audit log</a>
@@ -304,6 +317,7 @@ export class DashboardPage {
           dashboard: holds(REPORTING_PERMISSIONS.dashboard),
           orders: holds(REPORTING_PERMISSIONS.orders),
           reports: holds(REPORTING_PERMISSIONS.reports),
+          traffic: holds(TRAFFIC_PERMISSION),
         };
 
         this.access.set(access);
@@ -314,7 +328,7 @@ export class DashboardPage {
       },
       // The session could not be read: show the widgets and let the API decide, as the other screens do.
       error: () => {
-        this.access.set({ dashboard: true, orders: true, reports: true });
+        this.access.set({ dashboard: true, orders: true, reports: true, traffic: true });
         this.load();
       },
     });

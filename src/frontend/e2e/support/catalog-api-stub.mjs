@@ -1938,6 +1938,49 @@ function readJsonBody(request, response, then) {
   });
 }
 
+/**
+ * Page views this stub was sent (W4-03), newest last, so `traffic.e2e.ts` can count them per visit.
+ *
+ * Kept per session (the `sd_vs` cookie the request carried) because this stub is shared by every spec on
+ * the main pair at once: a test sets a session of its own and asks only about that one, so another
+ * test's page views cannot be counted in it. Bounded, so a long run cannot grow it without limit.
+ */
+const pageViews = [];
+const PAGE_VIEW_LIMIT = 5000;
+
+function visitSessionOf(request) {
+  for (const part of String(request.headers.cookie ?? '').split(';')) {
+    const [name, ...value] = part.trim().split('=');
+    if (name === 'sd_vs') {
+      return value.join('=');
+    }
+  }
+
+  return null;
+}
+
+/** `POST /api/traffic/page-views`: the API answers 204 whatever it did with the view, and so does this. */
+function recordPageView(request, response) {
+  readJsonBody(request, response, (body) => {
+    pageViews.push({
+      session: visitSessionOf(request),
+      path: typeof body.path === 'string' ? body.path : null,
+      referrer: typeof body.referrer === 'string' ? body.referrer : null,
+      // The storefront's server sends the visitor's user agent in the body; the browser never does, so
+      // this says which side recorded the view.
+      source: typeof body.userAgent === 'string' ? 'server' : 'browser',
+      at: Date.now(),
+    });
+
+    if (pageViews.length > PAGE_VIEW_LIMIT) {
+      pageViews.splice(0, pageViews.length - PAGE_VIEW_LIMIT);
+    }
+
+    response.statusCode = 204;
+    response.end();
+  });
+}
+
 /** A JSON whole number, or null. Mirrors what model binding accepts for an `int`. */
 function wholeNumber(value) {
   return typeof value === 'number' && Number.isInteger(value) ? value : null;
@@ -3586,6 +3629,18 @@ const server = createServer((request, response) => {
   // `logo=none|wide|tall` and `social=none|all|one` rather than a free-form payload, so a test names a
   // *state* and this file owns what that state's bytes are. A GET with no parameters resets it, which is
   // what makes a run that ended mid-switch harmless.
+  if (url.pathname === '/api/traffic/page-views' && request.method === 'POST') {
+    recordPageView(request, response);
+    return;
+  }
+
+  // Test-only: the page views one visit session sent, oldest first.
+  if (url.pathname === '/__test__/page-views') {
+    const session = url.searchParams.get('session');
+    response.end(JSON.stringify(pageViews.filter((view) => view.session === session)));
+    return;
+  }
+
   if (url.pathname === '/__test__/site-settings') {
     siteSettings = buildSiteSettings(
       url.searchParams.get('logo') ?? 'none',

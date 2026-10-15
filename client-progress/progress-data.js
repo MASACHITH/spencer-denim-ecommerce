@@ -83,7 +83,7 @@ const progressData = {
         { name: "Checkout & guest checkout", status: "done", progress: 100 },
         { name: "Delivery options", status: "done", progress: 100 },
         { name: "Bank transfer payment", status: "done", progress: 100 },
-        { name: "PayPal payment", status: "planned", progress: 0 },
+        { name: "PayPal payment", status: "in-progress", progress: 75 },
         { name: "Order confirmation page", status: "done", progress: 100 }
       ]
     },
@@ -98,7 +98,7 @@ const progressData = {
     {
       name: "Admin Panel",
       features: [
-        { name: "Admin login with user roles & permissions", status: "in-progress", progress: 80 },
+        { name: "Admin login with user roles & permissions", status: "in-progress", progress: 90 },
         { name: "Product management (images & video)", status: "done", progress: 100 },
         { name: "Category management", status: "done", progress: 100 },
         { name: "Inventory", status: "in-progress", progress: 25 },
@@ -128,6 +128,11 @@ const progressData = {
 
   // Newest first.
   updates: [
+    {
+      date: "2026-10-15",
+      title: "PayPal payment and stronger admin sign-in",
+      text: "PayPal checkout is now built into the shop, ready to switch on from the admin settings once it has been tested with your PayPal account. Admin sign-in is also stronger: accounts lock after repeated wrong passwords, and each two-factor code can be used only once.",
+    },
     {
       date: "2026-10-15",
       title: "Dashboard and reports",

@@ -243,7 +243,8 @@ public sealed class SettingKeySpecificationTests
     /// and not two copies of the same constant.
     /// </para>
     /// <para>
-    /// Only the six deferred keys that <i>have</i> a code-side fallback are listed. The rest are read by
+    /// Only the eight deferred keys that <i>have</i> a code-side fallback are listed (W4-03 added the two
+    /// traffic retention periods, which the raw-traffic purge reads from configuration). The rest are read by
     /// nothing at all, which <see cref="DeferredSettingKeys"/> records per key, so there is no value to
     /// compare.
     /// </para>
@@ -256,6 +257,7 @@ public sealed class SettingKeySpecificationTests
         var catalog = new CatalogOptions();
         var bankTransfer = new BankTransferOptions();
         var adminSecurity = new AdminSecurityOptions();
+        var traffic = new SpencerDenim.Infrastructure.Analytics.TrafficOptions();
 
         var fallbacks = new Dictionary<string, string>(StringComparer.Ordinal)
         {
@@ -267,6 +269,8 @@ public sealed class SettingKeySpecificationTests
                 bankTransfer.BankTransferExpiryHours.ToString(CultureInfo.InvariantCulture),
             ["Security.StaffLockoutMaxFailures"] =
                 adminSecurity.LockoutMaxFailedAttempts.ToString(CultureInfo.InvariantCulture),
+            ["Traffic.RawRetentionDays"] = traffic.RawRetentionDays.ToString(CultureInfo.InvariantCulture),
+            ["Traffic.BotRetentionDays"] = traffic.BotRetentionDays.ToString(CultureInfo.InvariantCulture),
             ["Security.StaffLockoutMinutes"] =
                 adminSecurity.LockoutMinutes.ToString(CultureInfo.InvariantCulture),
         };

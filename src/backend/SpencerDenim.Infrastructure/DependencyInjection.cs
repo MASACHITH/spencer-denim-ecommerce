@@ -27,6 +27,7 @@ using SpencerDenim.Application.Sales.Payments.Abstractions;
 using SpencerDenim.Application.Sales.Wishlist.Abstractions;
 using SpencerDenim.Application.Settings.Abstractions;
 using SpencerDenim.Infrastructure.Admin.Auditing;
+using SpencerDenim.Infrastructure.Analytics;
 using SpencerDenim.Infrastructure.Admin.Customers;
 using SpencerDenim.Infrastructure.Admin.Reporting;
 using SpencerDenim.Infrastructure.Admin.Users;
@@ -390,6 +391,8 @@ public static class DependencyInjection
         // count — see SendEmailsService, which is the behaviour that matters while the client's mail
         // credentials are outstanding.
         services.AddHostedService<SendEmailsService>();
+
+        services.AddTrafficRecording();
 
         services.AddHealthChecks()
             .AddCheck<DatabaseHealthCheck>(

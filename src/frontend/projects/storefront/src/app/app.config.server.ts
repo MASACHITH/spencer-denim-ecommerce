@@ -1,4 +1,10 @@
-import { ApplicationConfig, REQUEST, inject, mergeApplicationConfig } from '@angular/core';
+import {
+  ApplicationConfig,
+  REQUEST,
+  inject,
+  mergeApplicationConfig,
+  provideAppInitializer,
+} from '@angular/core';
 import { provideServerRendering, withRoutes } from '@angular/ssr';
 import { API_BASE_URL } from '@spencer-denim/shared';
 
@@ -6,6 +12,7 @@ import { appConfig } from './app.config';
 import { serverRoutes } from './app.routes.server';
 import { apiInternalUrl, publicOriginFor } from '../server/origins';
 import { SITE_ORIGIN } from './core/platform/site-origin';
+import { markServerPageView } from './core/traffic/traffic-render-context';
 
 const serverConfig: ApplicationConfig = {
   providers: [
@@ -20,6 +27,10 @@ const serverConfig: ApplicationConfig = {
     // PUBLIC_SITE_ORIGIN or, failing that, from a request host we recognise. `src/server/origins.ts`
     // holds the decision and the reason it refuses to echo a host it does not know.
     { provide: SITE_ORIGIN, useFactory: () => publicOriginFor(inject(REQUEST)) },
+
+    // Traffic recording (W4-03): tells `server.ts` the render ran and, when it will record this page,
+    // leaves the flag that stops the browser recording it a second time. See `src/server/page-view.ts`.
+    provideAppInitializer(markServerPageView),
   ],
 };
 

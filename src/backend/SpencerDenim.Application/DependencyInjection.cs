@@ -12,6 +12,7 @@ using SpencerDenim.Application.Admin.Customers;
 using SpencerDenim.Application.Admin.Customers.Contracts;
 using SpencerDenim.Application.Admin.Reporting;
 using SpencerDenim.Application.Admin.Reporting.Contracts;
+using SpencerDenim.Application.Analytics.Reporting;
 using SpencerDenim.Application.Catalog.Admin;
 using SpencerDenim.Application.Catalog.Admin.Contracts;
 using SpencerDenim.Application.Catalog.Admin.Products;
@@ -455,6 +456,10 @@ public static class DependencyInjection
         services.AddScoped<IQueryHandler<GetAdminDashboardQuery, AdminDashboardDto>, GetAdminDashboardQueryHandler>();
         services.AddScoped<IQueryHandler<GetSalesTrendQuery, SalesTrendDto>, GetSalesTrendQueryHandler>();
         services.AddScoped<IQueryHandler<GetLowStockQuery, LowStockDto>, GetLowStockQueryHandler>();
+
+        // Traffic (W4-03, ADM-06, ADM-20).
+        services.AddScoped<IQueryHandler<GetTrafficReportQuery, TrafficReportDto>, GetTrafficReportQueryHandler>();
+        services.AddScoped<IQueryHandler<GetTrafficSourcesQuery, TrafficSourcesDto>, GetTrafficSourcesQueryHandler>();
         services.AddScoped<IQueryHandler<GetSalesReportQuery, SalesReportDto>, GetSalesReportQueryHandler>();
         services.AddScoped<IQueryHandler<GetInventoryReportQuery, InventoryReportPage>, GetInventoryReportQueryHandler>();
         services.AddScoped<IQueryHandler<GetCustomerReportQuery, CustomerReportPage>, GetCustomerReportQueryHandler>();

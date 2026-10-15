@@ -481,9 +481,17 @@ test.describe('robots.txt', () => {
     expect(html).toContain('<sd-bag-page');
     expect(html).toMatch(/<meta[^>]*name="robots"[^>]*content="[^"]*noindex/);
 
-    // A crawler fetching the bag must not leave anything behind: doc 08 §3.5 creates the cart row on
-    // the first Add to Bag and never on a page view, so no cookie comes back either.
-    expect(response.headers()['set-cookie']).toBeUndefined();
+    // A crawler fetching the bag must not be given a bag: doc 08 §3.5 creates the cart row on the first
+    // Add to Bag and never on a page view, so no bag cookie comes back. The one cookie a server-rendered
+    // page does set is traffic recording's thirty-minute visit cookie (W4-03, `sd_vs`), which holds a
+    // random value and nothing else — no bag, no person — so it is the only one allowed here.
+    const cookies = response
+      .headersArray()
+      .filter((header) => header.name.toLowerCase() === 'set-cookie')
+      .map((header) => header.value);
+
+    expect(cookies.filter((cookie) => !cookie.startsWith('sd_vs='))).toEqual([]);
+    expect(cookies.join(';')).not.toContain('sd_cart');
   });
 
   test('answers HEAD, which link checkers and monitors lead with', async ({ request }) => {

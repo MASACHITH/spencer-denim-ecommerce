@@ -4,6 +4,7 @@ using SpencerDenim.Api.Cli;
 using SpencerDenim.Api.Endpoints;
 using SpencerDenim.Api.Endpoints.Accounts;
 using SpencerDenim.Api.Endpoints.Admin;
+using SpencerDenim.Api.Endpoints.Analytics;
 using SpencerDenim.Api.Endpoints.Catalog;
 using SpencerDenim.Api.Endpoints.Content;
 using SpencerDenim.Api.Endpoints.Media;
@@ -24,6 +25,8 @@ builder.AddSerilogLogging();
 builder.AddApiDataProtection();
 
 builder.Services.AddProblemDetails();
+// A body binding cannot read answers 400 with a problem document in every environment, not 500 (#47).
+builder.Services.AddApiBadRequestHandling();
 
 // Enums travel as their names ("Sale", "LowStock", "OutOfStock"), so a client never has to keep a
 // copy of our numeric values in sync.
@@ -110,6 +113,7 @@ app.MapAdminOrderEndpoints();
 app.MapAdminCustomerEndpoints();
 app.MapAdminNewsletterEndpoints();
 app.MapAdminReportingEndpoints();
+app.MapAdminTrafficEndpoints();
 app.MapPaymentSlipEndpoints();
 app.MapAdminContentEndpoints();
 app.MapAdminPromotionEndpoints();
@@ -118,6 +122,9 @@ app.MapCartEndpoints();
 app.MapWishlistEndpoints();
 app.MapCheckoutEndpoints();
 app.MapPayPalEndpoints();
+
+// Traffic recording (W4-03, ADM-06, ADM-20; doc 08 §3.8).
+app.MapTrafficEndpoints();
 
 // Customer accounts (W3-01, ACC-01/02; doc 11 P11).
 app.MapCustomerAuthEndpoints();
