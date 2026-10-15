@@ -222,10 +222,20 @@ public sealed class CatalogModelTests
         Assert.Equal(expected, Model.FindEntityType(entity)!.FindProperty(property)!.GetColumnType());
     }
 
-    /// <summary>Doc 08 §1.4: UTC times are datetime2(3), with a UTC-kind converter.</summary>
+    /// <summary>
+    /// Doc 08 §1.4: UTC times are datetime2(3), with a UTC-kind converter — with the one exception doc 08 itself
+    /// makes: §3.8 gives <c>analytics.PageViews.OccurredAtUtc</c> <c>datetime2(0)</c> (W4-03), a high-volume
+    /// append-only table where the second is all the reports use. The exception is named, so a second one cannot
+    /// slip in unnoticed.
+    /// </summary>
     [Fact]
     public void Every_date_time_column_is_datetime2_3_in_utc()
     {
+        var exceptions = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            [$"{nameof(SpencerDenim.Domain.Analytics.PageView)}.{nameof(SpencerDenim.Domain.Analytics.PageView.OccurredAtUtc)}"] = "datetime2(0)",
+        };
+
         var dateTimes = Model.GetEntityTypes()
             .SelectMany(entity => entity.GetProperties())
             .Where(property => property.ClrType == typeof(DateTime) || property.ClrType == typeof(DateTime?))
@@ -234,9 +244,12 @@ public sealed class CatalogModelTests
         Assert.NotEmpty(dateTimes);
         Assert.All(dateTimes, property =>
         {
-            Assert.Equal("datetime2(3)", property.GetColumnType());
+            var name = $"{property.DeclaringType.ClrType.Name}.{property.Name}";
+            Assert.Equal(exceptions.GetValueOrDefault(name, "datetime2(3)"), property.GetColumnType());
             Assert.NotNull(property.GetValueConverter());
         });
+
+        Assert.All(exceptions.Keys, name => Assert.Contains(dateTimes, property => $"{property.DeclaringType.ClrType.Name}.{property.Name}" == name));
     }
 
     /// <summary>Doc 08 §1.5: the [SD] tables carry the soft-delete filter, and nothing else does.</summary>

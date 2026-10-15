@@ -10,6 +10,7 @@ import {
   isMissingCategory,
   isUnconfirmedCatalogue,
 } from './core/navigation/catalog-route.guards';
+import { NOT_A_PAGE_VIEW } from './core/traffic/page-view-tracker';
 import { ListingMode } from './pages/listing/listing-mode';
 
 /** The listing serves a department, its category tree, New Arrivals and Sale (DEPT-01..03, PLP-01..07). */
@@ -243,11 +244,17 @@ export const routes: Routes = [
   // it may say a page is gone. Read against the frozen fallback it said so about every category
   // added since the fallback was written, and a 404 with `noindex` drops a live listing out of the
   // index for the length of an API wobble (#30).
-  { path: ':department/:category', canMatch: [isMissingCategory], loadComponent: notFoundPage },
+  {
+    path: ':department/:category',
+    canMatch: [isMissingCategory],
+    loadComponent: notFoundPage,
+    data: NOT_A_PAGE_VIEW,
+  },
   {
     path: ':department/:category/:subcategory',
     canMatch: [isMissingCategory],
     loadComponent: notFoundPage,
+    data: NOT_A_PAGE_VIEW,
   },
 
   // The catalogue could not be asked, so neither the listing nor the 404 above can be right. These
@@ -256,11 +263,13 @@ export const routes: Routes = [
     path: ':department/:category',
     canMatch: [isUnconfirmedCatalogue],
     loadComponent: catalogUnavailablePage,
+    data: NOT_A_PAGE_VIEW,
   },
   {
     path: ':department/:category/:subcategory',
     canMatch: [isUnconfirmedCatalogue],
     loadComponent: catalogUnavailablePage,
+    data: NOT_A_PAGE_VIEW,
   },
 
   // The content pages (W2-11, GLB-10): About, Contact, Returns, Shipping, Privacy, Terms, and any extra
@@ -300,6 +309,7 @@ export const routes: Routes = [
     pathMatch: 'full',
     canMatch: [isUnconfirmedContentPage],
     loadComponent: catalogUnavailablePage,
+    data: NOT_A_PAGE_VIEW,
   },
 
   // Anything left is an address this site does not have: a mistyped department (`/not-a-dept`), a
@@ -321,5 +331,5 @@ export const routes: Routes = [
   // that is not in the tree in hand is not a department whichever tree that was. The assumption worth
   // writing down: if a later migration seeds a sixth department, that fallback has to gain it in the
   // same change, or its listing will answer 404 for the length of an outage.
-  { path: '**', loadComponent: notFoundPage },
+  { path: '**', loadComponent: notFoundPage, data: NOT_A_PAGE_VIEW },
 ];

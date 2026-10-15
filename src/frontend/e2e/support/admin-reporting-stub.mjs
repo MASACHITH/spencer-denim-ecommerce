@@ -417,6 +417,121 @@ function invalid(json, response, errors) {
   return true;
 }
 
+// ---- traffic (ADM-06, ADM-20, W4-03) ---------------------------------------------------------------
+//
+// Field for field with `SpencerDenim.Application.Analytics.Reporting` (`TrafficShapeTests` reads the row
+// builders below). A new installation (`set=none`) has no traffic at all, and says so; `set=some` answers test
+// fixtures that are never shop data. Visits, page views and crawler views per day follow a fixed pattern so a test
+// can work out a total; the channels, devices, sources and pages are fixed shares of it.
+
+const CHANNELS = ['Direct', 'Organic', 'Social', 'Referral', 'Email', 'Paid', 'Other'];
+const CHANNEL_SHARES = [0.4, 0.3, 0.2, 0.1, 0, 0, 0];
+const DEVICES = ['Desktop', 'Mobile', 'Tablet', 'Other'];
+const DEVICE_SHARES = [0.3, 0.6, 0.1, 0];
+
+function eachDay(period) {
+  return Array.from({ length: period.days }, (_, index) => addDays(period.from, index));
+}
+
+function trafficDays(state, period) {
+  return eachDay(period).map((date, index) =>
+    state.reporting === null
+      ? trafficDayRow(date, 0, 0, 0)
+      : trafficDayRow(date, (index % 4) + 1, ((index % 4) + 1) * 3, index % 2),
+  );
+}
+
+function trafficDayRow(date, visits, pageViews, botPageViews) {
+  return { date, visits, pageViews, botPageViews };
+}
+
+/** Splits a whole number by shares, the remainder to the first: integers that add up to the total. */
+function splitWhole(total, shares) {
+  const parts = shares.map((share) => Math.floor(total * share));
+  parts[0] += total - parts.reduce((sum, part) => sum + part, 0);
+  return parts;
+}
+
+function sharePercent(part, whole) {
+  return whole === 0 ? 0 : Math.round((part / whole) * 1000) / 10;
+}
+
+function trafficChannelRow(channel, visits, pageViews, total) {
+  return { channel, label: channel, visits, pageViews, sharePercent: sharePercent(visits, total) };
+}
+
+function trafficDeviceRow(device, visits, pageViews, total) {
+  return { device, label: device, visits, pageViews, sharePercent: sharePercent(visits, total) };
+}
+
+function trafficSourceRow(source, visits, pageViews) {
+  return { source, visits, pageViews };
+}
+
+function trafficPageRow(path, pageType, productName, pageViews, visits) {
+  return { path, pageType, productName, pageViews, visits };
+}
+
+function channelsOf(visits, pageViews) {
+  const v = splitWhole(visits, visits === 0 ? CHANNEL_SHARES.map(() => 0) : CHANNEL_SHARES);
+  const p = splitWhole(pageViews, pageViews === 0 ? CHANNEL_SHARES.map(() => 0) : CHANNEL_SHARES);
+  return CHANNELS.map((channel, index) => trafficChannelRow(channel, v[index], p[index], visits));
+}
+
+function trafficBody(state, period) {
+  const previous = previousOf(period);
+  const days = trafficDays(state, period);
+  const before = trafficDays(state, previous);
+  const sum = (rows, key) => rows.reduce((total, row) => total + row[key], 0);
+  const visits = sum(days, 'visits');
+  const pageViews = sum(days, 'pageViews');
+  const deviceVisits = splitWhole(visits, visits === 0 ? DEVICE_SHARES.map(() => 0) : DEVICE_SHARES);
+  const devicePages = splitWhole(pageViews, pageViews === 0 ? DEVICE_SHARES.map(() => 0) : DEVICE_SHARES);
+  const some = visits > 0;
+
+  return {
+    period,
+    previousPeriod: previous,
+    liveFrom: addDays(colomboToday(), -3),
+    visits: figure(visits, sum(before, 'visits')),
+    pageViews: figure(pageViews, sum(before, 'pageViews')),
+    botPageViews: sum(days, 'botPageViews'),
+    days,
+    channels: channelsOf(visits, pageViews),
+    devices: DEVICES.map((device, index) => trafficDeviceRow(device, deviceVisits[index], devicePages[index], visits)),
+    sources: some
+      ? [
+          trafficSourceRow('www.google.com', Math.ceil(visits * 0.3), Math.ceil(pageViews * 0.3)),
+          trafficSourceRow('(direct)', Math.ceil(visits * 0.4), Math.ceil(pageViews * 0.4)),
+          trafficSourceRow('a-fixture-referrer-with-a-very-long-host-name.example', 1, 2),
+        ]
+      : [],
+    topPages: some
+      ? [
+          trafficPageRow('/product/fixture-linen-wrap-dress', 'Product', 'Fixture linen wrap dress', Math.ceil(pageViews * 0.4), Math.ceil(visits * 0.5)),
+          trafficPageRow('/women/dresses?colours=blue&colours=red&maxPrice=5000&minPrice=1000&sizes=M&sort=price-asc', 'Category', null, 3, 2),
+          trafficPageRow('/order/*', 'Order', null, 2, 2),
+          trafficPageRow('/', 'Home', null, 1, 1),
+        ]
+      : [],
+  };
+}
+
+function trafficSourcesBody(state, period) {
+  const days = trafficDays(state, period);
+  const visits = days.reduce((total, row) => total + row.visits, 0);
+  const pageViews = days.reduce((total, row) => total + row.pageViews, 0);
+  const paidOrders = state.reporting === null ? 0 : 3;
+
+  return {
+    period,
+    visits,
+    paidOrders,
+    conversionPercent: visits === 0 ? null : Math.round((paidOrders * 1000) / visits) / 10,
+    channels: channelsOf(visits, pageViews),
+  };
+}
+
 /** Returns true when it answered the request. */
 export async function handleReportingRoute({ path, method, url, response, state, json }) {
   if (path === '/__test__/reporting') {
@@ -456,6 +571,16 @@ export async function handleReportingRoute({ path, method, url, response, state,
 
     json(response, 200, { interval, window, currency: 'LKR', points });
     return true;
+  }
+
+  if (path === '/api/admin/traffic' && method === 'GET') {
+    const period = readPeriod(url, errors);
+    return period ? (json(response, 200, trafficBody(state, period)), true) : invalid(json, response, errors);
+  }
+
+  if (path === '/api/admin/dashboard/traffic-sources' && method === 'GET') {
+    const period = readPeriod(url, errors);
+    return period ? (json(response, 200, trafficSourcesBody(state, period)), true) : invalid(json, response, errors);
   }
 
   if (path === '/api/admin/dashboard/low-stock' && method === 'GET') {
