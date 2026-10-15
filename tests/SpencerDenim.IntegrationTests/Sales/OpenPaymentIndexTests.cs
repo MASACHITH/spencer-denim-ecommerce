@@ -126,7 +126,9 @@ public sealed class OpenPaymentIndexTests(SqlServerDatabaseFixture sqlServer) : 
     /// waited for any transaction holding the order row; with the option on, a plain read takes the last
     /// committed version and does not wait, so it would see <c>PendingPayment</c> while an expiry was moving
     /// the order to Expired and open a payment on an order that was closing. The read carries
-    /// <c>WITH (READCOMMITTEDLOCK)</c> to keep the old behaviour, and this test fails without it.
+    /// <c>WITH (READCOMMITTEDLOCK)</c> to keep the old behaviour. Measured without the hint: the call still
+    /// takes the full two seconds — the insert's foreign-key check on the order row waits — but it then
+    /// returns a new payment id on the expired order, and this test fails on that.
     /// <para>
     /// It does not close the race that existed before: an expiry that <i>starts</i> after this read and
     /// commits before the insert still leaves a stray open row. That needs the order row claimed in the
