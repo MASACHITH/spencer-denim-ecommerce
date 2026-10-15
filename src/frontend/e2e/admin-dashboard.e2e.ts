@@ -286,6 +286,22 @@ test.describe('traffic (ADM-06, ADM-20, W4-03)', () => {
 
     await measureAtEveryWidth(page, ['[data-testid="traffic-preset"]', '[data-testid="traffic-days-toggle"]']);
   });
+
+  // W4-03 tester: the sweep above never opened the custom period, so its two date fields and its Show button —
+  // the controls most likely to be narrow on a phone — were never measured.
+  test('the Traffic page custom period has no sideways scroll and no undersized, unreachable or buried control', async ({ page }) => {
+    await open(page, '/traffic');
+    await expect(page.locator('[data-testid="traffic-top-pages"]')).toBeVisible();
+    await page.locator('[data-testid="traffic-preset"]').selectOption('custom');
+    await expect(page.locator('[data-testid="traffic-apply"]')).toBeVisible();
+
+    await measureAtEveryWidth(page, [
+      '[data-testid="traffic-preset"]',
+      '[data-testid="traffic-from"]',
+      '[data-testid="traffic-to"]',
+      '[data-testid="traffic-apply"]',
+    ]);
+  });
 });
 
 test.describe('the screens themselves', () => {
