@@ -160,6 +160,28 @@ describe('PageViewTracker (W4-03)', () => {
     }
   });
 
+  it('records a page the browser is prerendering when it is shown, and not before', async () => {
+    // Speculation rules: the document runs while hidden, and may never be shown. W4-03 tester: no test held this.
+    Object.defineProperty(document, 'prerendering', { configurable: true, get: () => true });
+    try {
+      create();
+
+      await go('/women');
+      expect(beacons()).toEqual([]);
+
+      Object.defineProperty(document, 'prerendering', { configurable: true, get: () => false });
+      document.dispatchEvent(new Event('prerenderingchange'));
+
+      expect(beacons().map((beacon) => beacon.path)).toEqual(['/women']);
+
+      // Shown once is recorded once.
+      document.dispatchEvent(new Event('prerenderingchange'));
+      expect(beacons()).toEqual([]);
+    } finally {
+      delete (document as { prerendering?: boolean }).prerendering;
+    }
+  });
+
   it('reports a browser that is not automated as not automated', async () => {
     create();
 

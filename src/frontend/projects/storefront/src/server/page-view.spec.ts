@@ -53,6 +53,8 @@ describe('server page-view recording (W4-03)', () => {
       expect(isRecordableRequest('GET', { 'sec-purpose': 'prefetch;prerender' })).toBe(false);
       expect(isRecordableRequest('GET', { purpose: 'prefetch' })).toBe(false);
       expect(isRecordableRequest('GET', { 'x-moz': 'prefetch' })).toBe(false);
+      // Safari's Top Sites and link previews ask with X-Purpose: preview (W4-03 tester: nothing held this).
+      expect(isRecordableRequest('GET', { 'x-purpose': 'preview' })).toBe(false);
       expect(isRecordableRequest('GET', {})).toBe(true);
     });
 
