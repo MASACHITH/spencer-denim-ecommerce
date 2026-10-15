@@ -42,7 +42,9 @@ type SignupPhase = 'idle' | 'sending' | 'done' | 'error';
             {{ message() }}
           </p>
         } @else {
-          <form class="signup__form" novalidate (submit)="onSubmit($event)">
+          <!-- method="dialog": a native submit that does nothing, so a press of Enter before the page has
+               hydrated cannot put the address in the URL (#123). The reasoning is in checkout-page.ts. -->
+          <form class="signup__form" method="dialog" novalidate (submit)="onSubmit($event)">
             <div class="signup__field">
               <label class="signup__label" [attr.for]="emailId()">Email address</label>
               <input
