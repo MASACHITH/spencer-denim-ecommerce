@@ -108,7 +108,7 @@ public sealed class SaleCampaignPlanTests(SqlServerDatabaseFixture sqlServer)
     /// <c>IQueryable</c> to observe — and the next test shows what happens to the same text with the
     /// flags parameterised, which is the pair that proves the assertion means something.
     /// <para>
-    /// 3,000 ended campaigns are arranged first. With the four a behaviour test leaves behind, a
+    /// 3,000 scheduled campaigns are arranged first. With the four a behaviour test leaves behind, a
     /// clustered scan is cheaper than any seek and the plan says so — which would make this test pass or
     /// fail by how many campaigns the run before it happened to leave.
     /// </para>
@@ -130,7 +130,7 @@ public sealed class SaleCampaignPlanTests(SqlServerDatabaseFixture sqlServer)
         using var scope = sqlServer.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-        await WithManyPastCampaignsAsync(dbContext, async () =>
+        await WithManyScheduledCampaignsAsync(dbContext, async () =>
         {
             var plan = await PlanForAsync(
                 """
@@ -155,13 +155,18 @@ public sealed class SaleCampaignPlanTests(SqlServerDatabaseFixture sqlServer)
     }
 
     /// <summary>
-    /// Runs <paramref name="body"/> with 3,000 ended-but-active campaigns in the table, then purges them.
+    /// Runs <paramref name="body"/> with 3,000 scheduled (active, not yet started) campaigns in the table, then purges them.
     /// </summary>
     /// <remarks>
     /// <b>Active and undeleted, so every one of them is <i>in</i> the filtered index</b> — its filter is
     /// <c>IsActive = 1 AND IsDeleted = 0</c>, and rows outside it would not make the seek any more
-    /// attractive. Their windows are all in the past, so the date range the query asks for is selective,
-    /// which is what the index's key columns are for. <b>None of them targets anything</b>, so they cannot
+    /// attractive. <b>They all start in 2100</b>, after the instant the query asks about, so
+    /// <c>StartsAtUtc &lt;= @instant</c> — the index's leading key — excludes every one of them and the seek
+    /// touches almost nothing. They were first seeded as <i>ended</i> campaigns, and that was a coin toss:
+    /// an ended campaign also started before the instant, so the seek's range on the leading key covered all
+    /// 3,000 rows, cost about the same as the clustered scan, and the optimiser picked either (red on 4 of 7
+    /// CI runs on 2026-10-14/15, and locally, run alone). Starting in 2100 also keeps them clear of the real
+    /// clock, so no refresh job or other suite can ever see one as live. <b>None of them targets anything</b>, so they cannot
     /// change any other suite's prices even for the moment they exist.
     /// <para>
     /// <b>Purged with <c>ExecuteDeleteAsync</c>, which doc 08 §10.2 (N12) reserves for exactly this.</b> A
@@ -170,7 +175,7 @@ public sealed class SaleCampaignPlanTests(SqlServerDatabaseFixture sqlServer)
     /// assertion does not leave them.
     /// </para>
     /// </remarks>
-    private static async Task WithManyPastCampaignsAsync(AppDbContext dbContext, Func<Task> body)
+    private static async Task WithManyScheduledCampaignsAsync(AppDbContext dbContext, Func<Task> body)
     {
         try
         {
@@ -182,8 +187,8 @@ public sealed class SaleCampaignPlanTests(SqlServerDatabaseFixture sqlServer)
                 INSERT INTO marketing.SaleCampaigns
                     (Name, DiscountType, DiscountValue, StartsAtUtc, EndsAtUtc, IsActive, CreatedAtUtc, IsDeleted)
                 SELECT CONCAT('Plan test ', n.i), 1, 10.00,
-                       DATEADD(day, -(n.i + 30), '2026-10-13T09:00:00'),
-                       DATEADD(day, -(n.i + 29), '2026-10-13T09:00:00'),
+                       DATEADD(day, n.i, '2100-01-01T00:00:00'),
+                       DATEADD(day, n.i + 1, '2100-01-01T00:00:00'),
                        1, SYSUTCDATETIME(), 0
                   FROM n;
                 """,
