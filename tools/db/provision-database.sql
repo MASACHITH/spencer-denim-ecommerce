@@ -70,8 +70,10 @@ BEGIN
             PRINT N'READ_COMMITTED_SNAPSHOT is now ON for [$(DbName)].';
         END TRY
         BEGIN CATCH
+            -- Starts with a word, never with '[name]': sqlcmd strips a leading bracketed segment from a
+            -- message as if it were an ODBC driver prefix, so '[db] has ...' reached the operator as ' has ...'.
             DECLARE @Refusal nvarchar(2048) = CONCAT(
-                N'[$(DbName)] has READ_COMMITTED_SNAPSHOT OFF and other connections are open on it (',
+                N'Database [$(DbName)] has READ_COMMITTED_SNAPSHOT OFF and other connections are open on it (',
                 ERROR_NUMBER(), N': ', ERROR_MESSAGE(), N'). Stop the API, or at a quiet moment run as sa: ',
                 N'ALTER DATABASE [$(DbName)] SET READ_COMMITTED_SNAPSHOT ON WITH ROLLBACK IMMEDIATE; ',
                 N'then run this script again. See docs/15 §5.');
