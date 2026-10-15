@@ -43,8 +43,9 @@ $ExtraFiles = @(".htaccess")
 # semicolon-separated list and connects only if the server key matches one of them.
 #   1) CN=*.hstgr.io      Let's Encrypt, seen 2026-09-18, expires 2026-11-11
 #   2) CN=hostinger.com   Sectigo,       seen 2026-09-17, expires 2027-01-17
+#   3) CN=*.hstgr.io      Let's Encrypt (YE1), seen 2026-10-15, expires 2027-01-10 -- the renewal of 1)
 # Refresh with:  pwsh tools/publish-client-progress.ps1 -ShowPin     (see docs/10 §4)
-$PinnedKey  = "sha256//iD1qTPTlmilSMjmnGtuhIjGlRZY9GF4YIhDr8P0WXNw=;sha256//rRBXAmuSvqI5e99CZPWQDXLPWIlTIvu77x/aZc349JQ="
+$PinnedKey  = "sha256//iD1qTPTlmilSMjmnGtuhIjGlRZY9GF4YIhDr8P0WXNw=;sha256//rRBXAmuSvqI5e99CZPWQDXLPWIlTIvu77x/aZc349JQ=;sha256//BUI7x6sidmqoGBG2e99anTr7ngx3LqcbmtP1Riv2OB8="
 $CredFile   = Join-Path $env:USERPROFILE ".spencer-denim\tracker-ftp-credential.xml"
 
 function Save-Password {

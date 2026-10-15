@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using SpencerDenim.Api.Authorization;
 using SpencerDenim.Domain.Identity;
@@ -324,6 +325,95 @@ public sealed class AdminTwoFactorEndpointTests(SqlServerDatabaseFixture sqlServ
         Assert.Equal(HttpStatusCode.OK, nextStep.StatusCode);
     }
 
+    /// <summary>
+    /// #48, end to end: the sequential test above, fired all at once. Twenty second steps carry the same pending
+    /// cookie and the same valid code and are released together; exactly one opens a session, and every other one
+    /// is refused as an ordinary wrong or spent code (or, once the winner has closed the pending sign-in, as an
+    /// expired one) — a 401, never a 500.
+    /// <para>
+    /// <b>This is the contract end to end, not the reproducer.</b> Each second step makes several round trips
+    /// (the user, the pending sign-in, the stamp, the lockout) before it reaches the code, so how many of the
+    /// twenty arrive at the watermark together depends on the machine — on a loaded test server this passed
+    /// against the unfixed provider too. The race itself is reproduced, and its fix proved, directly against
+    /// the provider by <see cref="SpencerDenim.IntegrationTests.Identity.AuthenticatorCodeRaceTests"/>, which
+    /// the unfixed provider fails every time. What this test adds is that the whole sign-in, pending cookie
+    /// and all, keeps "one code, one session" and answers every loser with a 401 rather than a 500.
+    /// </para>
+    /// <para>
+    /// The lockout threshold is raised for this host so nineteen refusals do not lock the account part way
+    /// through. A lockout closes the pending sign-in from a losing request while the winner may be closing it
+    /// too, and whether that is safe under concurrency is #46's question (the failed-attempt counter race), not
+    /// this one. The lockout's own behaviour is covered by the sequential tests further down.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task Concurrent_second_steps_with_one_code_open_exactly_one_session()
+    {
+        const int requests = 20;
+        await using var host = await StartAsync(new Dictionary<string, string?>
+        {
+            ["AdminSecurity:LockoutMaxFailedAttempts"] = "1000",
+        });
+        var email = UniqueEmail("code-race");
+        await CreateStaffUserAsync(host, email);
+        var key = await EnrolThroughApiAsync(host, email);
+
+        using var raw = CreateClient(host, handleCookies: false);
+        using var login = await PostJsonAsync(raw, LoginUrl, new { email, password = Password });
+        Assert.True((await ReadJsonAsync(login)).GetProperty("twoFactorRequired").GetBoolean());
+        var pendingCookie = CookiePair(login, "sd_admin_2fa");
+
+        using var tokenResponse = await raw.GetAsync(new Uri(AntiforgeryUrl, UriKind.Relative), Ct);
+        var antiforgeryToken = (await ReadJsonAsync(tokenResponse)).GetProperty("token").GetString()!;
+        var antiforgeryCookie = CookiePair(tokenResponse, "sd_admin_xsrf");
+
+        // Enrolment used the current step; this is the next one, captured once and sent on every request.
+        var code = TotpTestCodes.Next(key, 1);
+        var sends = Enumerable.Range(0, requests).Select(_ =>
+        {
+            var request = new HttpRequestMessage(HttpMethod.Post, LoginTwoFactorUrl)
+            {
+                Content = JsonContent.Create(new { code, isRecoveryCode = false }),
+            };
+            request.Headers.Add("X-XSRF-TOKEN", antiforgeryToken);
+            request.Headers.Add("Cookie", $"{antiforgeryCookie}; {pendingCookie}");
+            return request;
+        }).ToList();
+
+        var responses = await Task.WhenAll(sends.Select(request => raw.SendAsync(request, Ct)));
+        try
+        {
+            var statuses = responses.Select(r => (int)r.StatusCode).OrderBy(s => s).ToList();
+            Assert.True(
+                responses.Count(r => r.StatusCode == HttpStatusCode.OK) == 1,
+                $"Expected exactly one 200; got [{string.Join(", ", statuses)}].");
+            Assert.Single(responses, r => CookiePairOrNull(r, "sd_admin_auth") is not null);
+
+            foreach (var refused in responses.Where(r => r.StatusCode != HttpStatusCode.OK))
+            {
+                Assert.True(
+                    refused.StatusCode == HttpStatusCode.Unauthorized,
+                    $"Expected every other request to be a 401; got [{string.Join(", ", statuses)}].");
+                var error = (await ReadJsonAsync(refused)).GetProperty("error").GetString();
+                Assert.True(
+                    error is "invalid_two_factor_code" or "two_factor_session_expired",
+                    $"Unexpected refusal '{error}'.");
+            }
+        }
+        finally
+        {
+            foreach (var response in responses)
+            {
+                response.Dispose();
+            }
+
+            foreach (var request in sends)
+            {
+                request.Dispose();
+            }
+        }
+    }
+
     [Fact]
     public async Task The_second_step_without_a_pending_sign_in_is_refused()
     {
@@ -425,6 +515,242 @@ public sealed class AdminTwoFactorEndpointTests(SqlServerDatabaseFixture sqlServ
         using var passwordStep = await PostJsonAsync(anonymous, LoginUrl, new { email, password = Password });
         Assert.Equal((HttpStatusCode)423, passwordStep.StatusCode);
     }
+
+    /// <summary>
+    /// Issue #46 for the second step: wrong codes sent all at once used to get 8–17 checks per lockout window instead
+    /// of five, for the same lost-update reason as parallel wrong passwords. Exactly four are now answered as wrong
+    /// codes and audited as <c>InvalidCode</c>, one locks, and the rest are refused (locked, or the pending sign-in
+    /// the lockout ended) without counting.
+    /// </summary>
+    [Fact]
+    public async Task Parallel_wrong_codes_cannot_outrun_the_lockout()
+    {
+        const int parallelAttempts = 30;
+        const int maxFailedAttempts = 5; // AdminSecurityOptions.LockoutMaxFailedAttempts default.
+        await using var host = await StartAsync();
+        var email = UniqueEmail("parallel-code-lockout");
+        var userId = await CreateStaffUserAsync(host, email);
+        var key = await EnrolThroughApiAsync(host, email);
+
+        using var client = await PendingSignInAsync(host, email);
+
+        // One antiforgery pair for every request: parallel token requests would each replace the cookie the others'
+        // header tokens belong to.
+        var token = await GetAntiforgeryTokenAsync(client);
+        var wrongCode = TotpTestCodes.Wrong(key);
+        var replies = await Task.WhenAll(Enumerable.Range(0, parallelAttempts).Select(async _ =>
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, LoginTwoFactorUrl)
+            {
+                Content = JsonContent.Create(new { code = wrongCode, isRecoveryCode = false }),
+            };
+            request.Headers.Add("X-XSRF-TOKEN", token);
+            using var response = await client.SendAsync(request, Ct);
+            var body = await response.Content.ReadAsStringAsync(Ct);
+            return (response.StatusCode, Error: ErrorCodeOf(body));
+        }));
+
+        Assert.All(replies, reply => Assert.True(
+            reply.StatusCode is HttpStatusCode.Unauthorized or (HttpStatusCode)423,
+            $"Every parallel attempt is refused or locked out, never anything else; got {reply.StatusCode} {reply.Error}."));
+        Assert.Equal(maxFailedAttempts - 1, replies.Count(r => r.Error == "invalid_two_factor_code"));
+        Assert.Contains(replies, r => r.StatusCode == (HttpStatusCode)423);
+
+        await using (var scope = host.Services.CreateAsyncScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var codeFailures = await dbContext.AuditLogs.AsNoTracking()
+                .Where(a => a.UserEmail == email && a.Action == "TwoFactorFailed")
+                .Select(a => a.AfterJson)
+                .ToListAsync(Ct);
+            Assert.Equal(maxFailedAttempts - 1, codeFailures.Count(json => json != null && json.Contains("\"InvalidCode\"", StringComparison.Ordinal)));
+            Assert.Equal(1, await dbContext.AuditLogs.CountAsync(a => a.UserEmail == email && a.Action == "Lockout", Ct));
+        }
+
+        var user = await FindUserAsync(host, userId);
+        Assert.True(user.LockoutEnd > DateTimeOffset.UtcNow);
+
+        using var anonymous = CreateClient(host);
+        using var passwordStep = await PostJsonAsync(anonymous, LoginUrl, new { email, password = Password });
+        Assert.Equal((HttpStatusCode)423, passwordStep.StatusCode);
+    }
+
+    /// <summary>
+    /// Issue #46 follow-up (tester D1): the pending sign-in is a claim. A recovery code is redeemed by a read-modify-write
+    /// save, so twelve requests carrying the same code all pass the code check; only the one whose <c>DELETE</c> of
+    /// the pending sign-in removes the row may open a session. The rest are told the sign-in is already over (a
+    /// 401, never a 200 and never a 500), and exactly one auth cookie and one recovery-code <c>Login</c> audit row result.
+    /// </summary>
+    [Fact]
+    public async Task Parallel_second_steps_with_the_same_recovery_code_open_exactly_one_session()
+    {
+        var tokenWriteDelay = new TokenWriteDelayInterceptor(TimeSpan.FromMilliseconds(750));
+        await using var host = await StartAsync(NoLockoutDuringTheRace, tokenWriteDelay);
+        var email = UniqueEmail("parallel-recovery");
+        await CreateStaffUserAsync(host, email);
+        var (_, recoveryCodes) = await EnrolThroughApiWithCodesAsync(host, email);
+
+        var replies = await ParallelSecondStepsAsync(host, tokenWriteDelay, email, recoveryCodes[0], isRecoveryCode: true, count: 12);
+
+        AssertNoServerErrors(replies);
+        Assert.True(replies.Count(r => r.StatusCode == HttpStatusCode.OK) == 1, $"Exactly one request completes the sign-in. {Describe(replies)}");
+        Assert.True(replies.Count(r => r.HasSessionCookie) == 1, $"Exactly one auth cookie is issued. {Describe(replies)}");
+        Assert.All(replies.Where(r => r.StatusCode != HttpStatusCode.OK), r => Assert.Equal(HttpStatusCode.Unauthorized, r.StatusCode));
+
+        await using var scope = host.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        // The enrolment sign-in wrote its own Login row (2FA was still off); the race wrote exactly one more.
+        var recoveryLogins = await dbContext.AuditLogs.AsNoTracking()
+            .Where(a => a.UserEmail == email && a.Action == "Login" && a.AfterJson != null && a.AfterJson.Contains("RecoveryCode"))
+            .CountAsync(Ct);
+        Assert.Equal(1, recoveryLogins);
+        Assert.Equal(1, await dbContext.AuditLogs.CountAsync(a => a.UserEmail == email && a.Action == "RecoveryCodeUsed", Ct));
+    }
+
+    /// <summary>
+    /// The same claim for an authenticator code: whatever the code check lets through (the replay protection of the
+    /// TOTP provider is a separate fix; the delayed token writes make every request pass it here), at most one of
+    /// the twelve opens a session.
+    /// </summary>
+    [Fact]
+    public async Task Parallel_second_steps_with_the_same_authenticator_code_open_at_most_one_session()
+    {
+        var tokenWriteDelay = new TokenWriteDelayInterceptor(TimeSpan.FromMilliseconds(750));
+        await using var host = await StartAsync(NoLockoutDuringTheRace, tokenWriteDelay);
+        var email = UniqueEmail("parallel-totp");
+        await CreateStaffUserAsync(host, email);
+        var key = await EnrolThroughApiAsync(host, email);
+
+        var replies = await ParallelSecondStepsAsync(host, tokenWriteDelay, email, TotpTestCodes.Next(key), isRecoveryCode: false, count: 12);
+
+        AssertNoServerErrors(replies);
+        Assert.True(replies.Count(r => r.StatusCode == HttpStatusCode.OK) == 1, $"Exactly one request completes the same pending sign-in. {Describe(replies)}");
+        Assert.True(replies.Count(r => r.HasSessionCookie) == 1, $"Exactly one auth cookie is issued for the same pending sign-in. {Describe(replies)}");
+        Assert.All(replies.Where(r => r.StatusCode != HttpStatusCode.OK), r => Assert.Equal(HttpStatusCode.Unauthorized, r.StatusCode));
+    }
+
+    /// <summary>
+    /// Issue #46, the second step's twin of <c>A_right_password_that_a_burst_of_wrong_ones_outruns_is_refused_as_locked</c>:
+    /// <c>AdminAuthenticator</c> accepts a right code only if the account is still unlocked <i>after</i> the code was
+    /// verified, because the lock check before it read the user as loaded and a burst of wrong passwords may have locked
+    /// the account since. The right code is stopped at that second look (<see cref="LockoutRecheckGateInterceptor"/>), the
+    /// account is locked with five wrong passwords while it waits, and it is let go: it must be refused as locked, with
+    /// no session. With the second look deleted the same request comes back 200 with an auth cookie.
+    /// </summary>
+    [Fact]
+    public async Task A_right_code_that_a_burst_of_wrong_passwords_outruns_is_refused_as_locked()
+    {
+        const int maxFailedAttempts = 5; // AdminSecurityOptions.LockoutMaxFailedAttempts default.
+        var gate = new LockoutRecheckGateInterceptor();
+        await using var host = await StartAsync(commandInterceptor: gate);
+        var email = UniqueEmail("right-code-after-burst");
+        await CreateStaffUserAsync(host, email);
+        var key = await EnrolThroughApiAsync(host, email);
+
+        using var client = await PendingSignInAsync(host, email);
+        var token = await GetAntiforgeryTokenAsync(client);
+        using var request = new HttpRequestMessage(HttpMethod.Post, LoginTwoFactorUrl)
+        {
+            Content = JsonContent.Create(new { code = TotpTestCodes.Next(key), isRecoveryCode = false }),
+        };
+        request.Headers.Add("X-XSRF-TOKEN", token);
+
+        gate.Arm();
+        var rightCode = client.SendAsync(request, Ct);
+        try
+        {
+            // From here the right code has been verified against an account that was unlocked.
+            await gate.WaitUntilHeldAsync(TimeSpan.FromSeconds(30), Ct);
+
+            // Wrong passwords, from another client: a wrong password opens no pending sign-in, so this cannot replace
+            // the one the held request is completing.
+            using var anonymous = CreateClient(host);
+            for (var attempt = 1; attempt <= maxFailedAttempts; attempt++)
+            {
+                using var wrong = await PostJsonAsync(anonymous, LoginUrl, new { email, password = "wrong" });
+                Assert.Equal(attempt < maxFailedAttempts ? HttpStatusCode.Unauthorized : (HttpStatusCode)423, wrong.StatusCode);
+            }
+        }
+        finally
+        {
+            gate.Release();
+        }
+
+        using var response = await rightCode;
+        var body = await response.Content.ReadAsStringAsync(Ct);
+
+        Assert.True(
+            response.StatusCode == (HttpStatusCode)423,
+            $"A right code the burst outran must be refused as locked, not accepted. Got {(int)response.StatusCode}: {body}");
+        Assert.Null(CookiePairOrNull(response, "sd_admin_auth"));
+    }
+
+    /// <summary>
+    /// The lockout threshold is raised for the same-code races above. Twelve requests with one code is the point of
+    /// those tests, but the ones that read the code after the winner redeemed it count as wrong codes, and at the
+    /// default five the account can lock before the winner's own check, which would make "exactly one session"
+    /// depend on timing. The lockout itself is covered by the parallel wrong-code test, at the default.
+    /// </summary>
+    private static readonly Dictionary<string, string?> NoLockoutDuringTheRace = new()
+    {
+        ["AdminSecurity:LockoutMaxFailedAttempts"] = "100",
+    };
+
+    private readonly record struct SecondStepReply(HttpStatusCode StatusCode, bool HasSessionCookie, string? Error);
+
+    /// <summary>
+    /// Passes the password step once with a cookie-less client, then sends <paramref name="count"/> second steps
+    /// with that one pending cookie and one antiforgery pair, all released together. Each one's record of the code
+    /// as used is delayed by <paramref name="tokenWriteDelay"/> (switched on after the password step), so none of
+    /// them can see that another has used the code: the worst case, on every run.
+    /// </summary>
+    private static async Task<SecondStepReply[]> ParallelSecondStepsAsync(
+        WebApplicationFactory<Program> host, TokenWriteDelayInterceptor tokenWriteDelay, string email, string code, bool isRecoveryCode, int count)
+    {
+        using var client = CreateClient(host, handleCookies: false);
+        using var login = await PostJsonAsync(client, LoginUrl, new { email, password = Password });
+        Assert.True((await ReadJsonAsync(login)).GetProperty("twoFactorRequired").GetBoolean());
+        var pendingCookie = CookiePair(login, "sd_admin_2fa");
+
+        using var tokenResponse = await client.GetAsync(new Uri(AntiforgeryUrl, UriKind.Relative), Ct);
+        var token = (await ReadJsonAsync(tokenResponse)).GetProperty("token").GetString()!;
+        var antiforgeryCookie = CookiePair(tokenResponse, "sd_admin_xsrf");
+
+        // From here every record of a used code is held back, so all the requests below pass the code check first.
+        tokenWriteDelay.Enabled = true;
+
+        // RunContinuationsAsynchronously: without it SetResult() below runs all the continuations inline on this
+        // thread, one after another, so the requests are dispatched in turn rather than together.
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sends = Enumerable.Range(0, count).Select(async _ =>
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, LoginTwoFactorUrl)
+            {
+                Content = JsonContent.Create(new { code, isRecoveryCode }),
+            };
+            request.Headers.Add("X-XSRF-TOKEN", token);
+            request.Headers.Add("Cookie", $"{antiforgeryCookie}; {pendingCookie}");
+
+            await gate.Task;
+            using var response = await client.SendAsync(request, Ct);
+            return new SecondStepReply(
+                response.StatusCode,
+                CookiePairOrNull(response, "sd_admin_auth") is not null,
+                ErrorCodeOf(await response.Content.ReadAsStringAsync(Ct)));
+        }).ToArray();
+
+        gate.SetResult();
+        return await Task.WhenAll(sends);
+    }
+
+    private static string Describe(IEnumerable<SecondStepReply> replies) =>
+        "Replies: " + string.Join(", ", replies.Select(r => $"{(int)r.StatusCode}/{r.Error}{(r.HasSessionCookie ? "/cookie" : string.Empty)}"));
+
+    private static void AssertNoServerErrors(IEnumerable<SecondStepReply> replies) =>
+        Assert.All(replies, r => Assert.True(
+            (int)r.StatusCode < 500,
+            $"A parallel second step must be answered, not crash: {r.StatusCode} {r.Error}"));
 
     [Fact]
     public async Task A_right_code_resets_the_failure_count()
@@ -678,13 +1004,15 @@ public sealed class AdminTwoFactorEndpointTests(SqlServerDatabaseFixture sqlServ
 
     private static string UniqueEmail(string label) => $"{label}-{Guid.NewGuid():N}@example.com";
 
-    private async Task<WebApplicationFactory<Program>> StartAsync()
+    private async Task<WebApplicationFactory<Program>> StartAsync(
+        IReadOnlyDictionary<string, string?>? configuration = null,
+        DbCommandInterceptor? commandInterceptor = null)
     {
         sqlServer.SkipIfUnavailable();
         await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, Ct);
 
         // The probe host is derived from (and owned by) this factory: disposing it disposes both.
-        var factory = new ApiFactory(sqlServer.ConnectionString);
+        var factory = new ApiFactory(sqlServer.ConnectionString, additionalConfiguration: configuration, commandInterceptor: commandInterceptor);
         return factory.WithWebHostBuilder(builder =>
             builder.ConfigureTestServices(services => services.AddTransient<IStartupFilter, ProbeEndpointsStartupFilter>()));
     }
@@ -787,6 +1115,18 @@ public sealed class AdminTwoFactorEndpointTests(SqlServerDatabaseFixture sqlServ
         using var response = await client.GetAsync(new Uri(url, UriKind.Relative), Ct);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         return await ReadJsonAsync(response);
+    }
+
+    /// <summary>The machine-readable <c>error</c> of a reply, or the raw body when it has none (a 500, say), for assertion messages.</summary>
+    private static string? ErrorCodeOf(string body)
+    {
+        if (!body.StartsWith('{'))
+        {
+            return body;
+        }
+
+        using var document = JsonDocument.Parse(body);
+        return document.RootElement.TryGetProperty("error", out var code) ? code.GetString() : body;
     }
 
     private static async Task<JsonElement> ReadJsonAsync(HttpResponseMessage response) =>

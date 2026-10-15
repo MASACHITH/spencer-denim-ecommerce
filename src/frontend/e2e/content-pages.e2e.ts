@@ -2,6 +2,13 @@ import { Page, expect, test } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 
 import { contentPagesApiURL, contentPagesURL } from '../playwright.config';
+import {
+  carriesAny,
+  holdScripts,
+  isSameDocument,
+  markDocument,
+  recordRequests,
+} from './support/hold-scripts';
 import { horizontalOverflow, undersized, unreachable } from './support/measure';
 
 /**
@@ -486,6 +493,52 @@ test.describe('the contact form (GLB-10)', () => {
     expect(
       await honeypot.evaluate((input: HTMLElement) => getComputedStyle(input).display),
     ).not.toBe('none');
+  });
+
+  /**
+   * **A press of Enter before the page is alive must not put an enquiry in the address (#123).**
+   *
+   * The form is server rendered, so it is on the screen while the bundle downloads. With no handler yet,
+   * the browser used to submit it itself: a `GET` to `/contact` with the shopper's name, email address,
+   * telephone number and whatever they wrote — which is the one field on the site where people type
+   * something private — in the query string, and so in history, `Referer` and every access log. The form
+   * is `method="dialog"`, whose native submit does nothing. The shared account is
+   * `pre-hydration-submit.e2e.ts`; this test lives here because the form needs this file's server pair.
+   */
+  test('an enquiry submitted before the page is alive stays out of the address', async ({ page }) => {
+    const release = await holdScripts(page);
+    const requests = recordRequests(page);
+
+    await page.goto('/contact', { waitUntil: 'commit' });
+    await expect(page.locator('#contact-name')).toBeVisible();
+    await markDocument(page);
+
+    await page.fill('#contact-name', 'Nimali Perera');
+    await page.fill('#contact-email', 'nimali@example.com');
+    await page.fill('#contact-message', 'A private question about an order.');
+    await page.locator('#contact-email').press('Enter');
+    await page.locator('[data-testid="contact-submit"]').click();
+
+    release();
+
+    // Retried until the component is alive, answering an empty name with the server's own refusal. Pressing
+    // Enter before then is the very thing under test, so it is safe to repeat.
+    await expect(async () => {
+      await page.fill('#contact-name', '');
+      await page.locator('#contact-name').press('Enter');
+      await expect(page.locator('#contact-name')).toHaveAttribute('aria-invalid', 'true', {
+        timeout: 1_000,
+      });
+    }).toPass();
+
+    expect(
+      requests.filter((url) =>
+        carriesAny(url, ['Nimali', 'Perera', 'nimali@example.com', 'private question']),
+      ),
+      'the enquiry reached an address',
+    ).toEqual([]);
+    expect(new URL(page.url()).pathname + new URL(page.url()).search).toBe('/contact');
+    expect(await isSameDocument(page), 'the document was replaced by a native form submission').toBe(true);
   });
 
   test('the contact details the client has set are shown, and the map is framed', async ({ page }) => {

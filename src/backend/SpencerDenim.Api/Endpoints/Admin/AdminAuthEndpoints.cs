@@ -31,6 +31,7 @@ internal static class AdminAuthEndpoints
             .WithName("AdminLogin")
             .Produces<AdminLoginResponse>()
             .Produces<AdminTwoFactorChallengeResponse>()
+            .ProducesValidationProblem()
             .Produces(401)
             .Produces(423);
 
@@ -85,9 +86,33 @@ internal static class AdminAuthEndpoints
     {
         ArgumentNullException.ThrowIfNull(request);
 
+        // Issue #47. `System.Text.Json` does not honour nullable reference annotations, so a body that omits a
+        // property ({}, or {"email":"a@b.c"}) binds that property as null, and the null used to travel into
+        // AdminAuthenticator, whose ThrowIfNull guards answered 500. Those guards are right as internal
+        // invariants; they are the wrong first check for a hostile request. An empty string is a valid, if wrong,
+        // credential and still goes through the normal path, so it costs the same as any other wrong password.
+        var missing = new Dictionary<string, string[]>(StringComparer.Ordinal);
+        if (request.Email is null)
+        {
+            missing["email"] = ["The email field is required."];
+        }
+
+        if (request.Password is null)
+        {
+            missing["password"] = ["The password field is required."];
+        }
+
+        if (missing.Count > 0)
+        {
+            return TypedResults.ValidationProblem(
+                missing,
+                title: "The sign-in request is missing a field.",
+                extensions: new Dictionary<string, object?> { ["code"] = "missing_field" });
+        }
+
         var ipAddress = httpContext.Connection.RemoteIpAddress?.ToString();
         var userAgent = httpContext.Request.Headers.UserAgent.ToString();
-        var command = new AdminLoginCommand(request.Email, request.Password, ipAddress, userAgent);
+        var command = new AdminLoginCommand(request.Email!, request.Password!, ipAddress, userAgent);
 
         var result = await handler.HandleAsync(command, cancellationToken);
 
@@ -303,7 +328,7 @@ internal static class AdminAuthEndpoints
     }
 }
 
-public sealed record AdminLoginRequest(string Email, string Password);
+public sealed record AdminLoginRequest(string? Email, string? Password);
 
 /// <summary>
 /// A completed sign-in. <see cref="TwoFactorEnrolmentRequired"/> (W1-10): a GrantsAll holder without 2FA, whom the

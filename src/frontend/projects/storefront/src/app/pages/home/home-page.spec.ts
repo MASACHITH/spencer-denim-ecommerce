@@ -679,6 +679,20 @@ describe('HomePage', () => {
       harness.detectChanges();
     }
 
+    /**
+     * A native submit before hydration would put the address in the URL (#123): `/?email=...`, in history,
+     * `Referer` and every access log. `method="dialog"` outside a `<dialog>` is a submit that goes nowhere.
+     * The browser proof is `pre-hydration-submit.e2e.ts`.
+     */
+    it('cannot submit natively, so an address typed before hydration cannot reach the URL', async () => {
+      await openNewsletter();
+
+      const form = root().querySelector<HTMLFormElement>('.signup__form')!;
+
+      expect(form.getAttribute('method')).toBe('dialog');
+      expect(form.hasAttribute('action')).toBe(false);
+    });
+
     it('posts the address and shows the sentence the server sent back', async () => {
       await openNewsletter();
       type('shopper@example.com');
