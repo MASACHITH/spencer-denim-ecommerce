@@ -22,6 +22,12 @@
     <Using Include="Xunit" />
   </ItemGroup>
 
+  <!-- The script every real database is created with (live, staging, developer). Embedded, not copied, so
+       every test database is created by exactly that text — see Infrastructure/TestDatabaseProvisioner.cs. -->
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\tools\db\provision-database.sql" LogicalName="provision-database.sql" Link="Infrastructure\provision-database.sql" />
+  </ItemGroup>
+
   <!-- Shared media fixtures: real images and MP4 containers, built byte by byte so both test projects
        exercise the same files and no binary fixture has to be trusted. -->
   <ItemGroup>

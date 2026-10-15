@@ -24,7 +24,10 @@ public sealed class SqlServerDatabaseFixture : IAsyncLifetime
     public const string ConnectionVariable = "TEST_SQL_CONNECTION";
     public const string DatabaseNamePrefix = "SpencerDenim_Test_";
 
-    /// <summary>Doc 08 §1.1: the collation is fixed at database creation.</summary>
+    /// <summary>
+    /// Doc 08 §1.1: the collation is fixed at database creation. <c>tools/db/provision-database.sql</c> sets
+    /// it; this constant is what the tests expect it to have set, so it is stated here independently.
+    /// </summary>
     public const string Collation = "Latin1_General_100_CI_AS_SC";
 
     /// <summary>Attempts for a statement on the server, for a SQL Server that is still starting up (CI).</summary>
@@ -103,9 +106,12 @@ public sealed class SqlServerDatabaseFixture : IAsyncLifetime
 
         var cancellationToken = TestContext.Current.CancellationToken;
 
-        await ExecuteOnServerAsync(
-            $"CREATE DATABASE {QuotedDatabaseName} COLLATE {Collation};",
-            cancellationToken);
+        // The live database's own provisioning script (collation, READ_COMMITTED_SNAPSHOT), not a copy
+        // of it: see TestDatabaseProvisioner. Every batch is idempotent, so a retried one is safe.
+        foreach (var batch in TestDatabaseProvisioner.Batches(DatabaseName))
+        {
+            await ExecuteOnServerAsync(batch, cancellationToken);
+        }
 
         // Siblings, never nested: MediaStorageRoots refuses a configuration where one volume can reach
         // the other, and the fixture has to satisfy the same rule the VPS does.
@@ -224,7 +230,7 @@ public sealed class SqlServerDatabaseFixture : IAsyncLifetime
         await connection.OpenAsync(cancellationToken);
 
         await using var command = connection.CreateCommand();
-#pragma warning disable CA2100 // The only dynamic part is a database name generated from a GUID in this class.
+#pragma warning disable CA2100 // The provisioning script, or a statement whose only dynamic part is this class's GUID name.
         command.CommandText = sql;
 #pragma warning restore CA2100
         command.CommandTimeout = 120;

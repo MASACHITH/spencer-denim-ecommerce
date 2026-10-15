@@ -1,4 +1,3 @@
-using System.Globalization;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -61,13 +60,9 @@ internal sealed class FreshDeployment : IAsyncDisposable
             InitialCatalog = databaseName,
         }.ConnectionString;
 
-        // Doc 08 §1.1: the collation is fixed at CREATE DATABASE and the migrations cannot set it.
-        await ExecuteAsync(
-            server,
-            string.Create(
-                CultureInfo.InvariantCulture,
-                $"CREATE DATABASE [{databaseName}] COLLATE {SqlServerDatabaseFixture.Collation};"),
-            cancellationToken);
+        // Created by the live database's provisioning script (doc 08 §1.1: collation and
+        // READ_COMMITTED_SNAPSHOT, neither of which a migration can set), not by a copy of it.
+        await TestDatabaseProvisioner.ProvisionAsync(server, databaseName, cancellationToken);
 
         if (migrate)
         {
