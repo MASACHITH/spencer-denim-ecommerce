@@ -582,19 +582,43 @@ describe('BagPage (CART-01)', () => {
     });
 
     /**
-     * **A disabled `<button>`, not a styled `<a>`.** A disabled anchor is still followable by keyboard
+     * **A blocked `<button>`, not a styled `<a>`.** A disabled anchor is still followable by keyboard
      * and by a crawler, and `pointer-events: none` is not a disabled control to anyone navigating with a
-     * keyboard — so the two states are two elements.
+     * keyboard — so the two states are two elements. It is `aria-disabled`, not `disabled` (#109): see the
+     * next test for why that matters.
      */
-    it('is a disabled button, not a link, while a line cannot be bought', async () => {
+    it('is a blocked button, not a link, while a line cannot be bought', async () => {
       await open({
         lines: [line({ status: 'OutOfStock', availableQuantity: 0, price: null, lineSubtotal: null })],
         totals: totals({ buyableItemCount: 0, itemsOriginalTotal: 0, itemsSubtotal: 0, savedTotal: 0 }),
       });
 
       expect(checkoutLink()).toBeNull();
-      expect(blockedButton()?.disabled).toBe(true);
+      expect(blockedButton()?.getAttribute('aria-disabled')).toBe('true');
       expect(text()).toContain('before you check out');
+    });
+
+    /**
+     * **#109. The keyboard has to be able to reach it.** A `disabled` button is out of the tab order, so a
+     * keyboard or screen-reader user could never land on it to hear the reason `aria-describedby` points
+     * at, and it is also why disabling a *focused* control throws focus to `<body>`. `focus()` is the
+     * observable difference: it does nothing to a `disabled` button, in jsdom and in a browser, so this
+     * fails against the old markup. (Pressing it still does nothing: it has no handler and no
+     * `routerLink`, which `e2e/bag.e2e.ts` checks in a real browser.)
+     */
+    it('can be reached by keyboard: it is not `disabled`, so it can take focus', async () => {
+      await open({
+        lines: [line({ status: 'Unavailable', price: null, lineSubtotal: null })],
+        totals: totals({ buyableItemCount: 0, itemsOriginalTotal: 0, itemsSubtotal: 0, savedTotal: 0 }),
+      });
+
+      const button = blockedButton();
+      expect(button).not.toBeNull();
+      expect(button?.disabled).toBe(false);
+      expect(button?.getAttribute('aria-disabled')).toBe('true');
+
+      button?.focus();
+      expect(document.activeElement).toBe(button);
     });
 
     /**
@@ -610,7 +634,7 @@ describe('BagPage (CART-01)', () => {
         totals: totals(),
       });
 
-      expect(blockedButton()?.disabled).toBe(true);
+      expect(blockedButton()?.getAttribute('aria-disabled')).toBe('true');
       expect(text()).not.toContain('cannot be bought at the moment and is not in this total');
       expect(sums().total).toBe(8784);
     });

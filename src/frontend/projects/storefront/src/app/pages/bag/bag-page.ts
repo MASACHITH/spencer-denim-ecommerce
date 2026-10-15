@@ -264,13 +264,17 @@ import { RobotsMeta } from '../../core/platform/robots-meta';
 
             <!-- G-08: block, do not silently fix. A short-stock line keeps the quantity the shopper
                  chose and this button waits for them to change it. "<a>" when it works and "<button
-                 disabled>" when it does not, rather than one element pretending: a disabled anchor is
-                 still followable by keyboard and by a crawler, and "pointer-events: none" is not a
-                 disabled control to anyone using a keyboard. -->
+                 aria-disabled>" when it does not, rather than one element pretending: a disabled
+                 anchor is still followable by keyboard and by a crawler, and "pointer-events: none"
+                 is not a disabled control to anyone using a keyboard.
+                 "aria-disabled", never "disabled" (#109): "disabled" takes the button out of the tab
+                 order, so a keyboard or screen-reader user could not reach it to hear WHY checkout is
+                 blocked, which is the sentence aria-describedby points at. The button has no click
+                 handler and no routerLink, so pressing it already does nothing. -->
             @if (canCheckout()) {
               <a class="btn btn--primary bag__checkout" routerLink="/checkout">Proceed to checkout</a>
             } @else {
-              <button class="btn btn--primary bag__checkout" type="button" disabled
+              <button class="btn btn--primary bag__checkout" type="button" aria-disabled="true"
                 [attr.aria-describedby]="'bag-checkout-blocked'">
                 Proceed to checkout
               </button>
@@ -464,7 +468,8 @@ import { RobotsMeta } from '../../core/platform/robots-meta';
       justify-content: center;
       text-align: center;
     }
-    .bag__checkout:disabled {
+    .bag__checkout:disabled,
+    .bag__checkout[aria-disabled='true'] {
       cursor: not-allowed;
       opacity: 0.55;
     }
