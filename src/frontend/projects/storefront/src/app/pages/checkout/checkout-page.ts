@@ -269,8 +269,29 @@ const SUMMARY_FIELDS: readonly { readonly field: string; readonly elementId: str
           <!-- The submit button lives in the summary, which is a sibling of the form, so it is
                associated with it by "form="checkout-form"" rather than by nesting. That keeps the native
                submit behaviour — Enter in any field places the order — which nesting the button inside
-               the summary would have thrown away. -->
-          <form class="checkout__form" id="checkout-form" novalidate (submit)="placeOrder($event)">
+               the summary would have thrown away.
+
+               **method="dialog" is the safety, and it is load-bearing (#123).** This page is server
+               rendered, so the form is on the screen — and Enter works in it — while the bundle is still
+               downloading, which on a slow connection is exactly when a shopper types. Before hydration
+               there is no (submit) handler, so nothing calls preventDefault and the browser submits the
+               form itself: a GET to this page's own address carrying the name, email, phone and address in
+               the query string. That lands in browser history, in the Referer of the next request and in
+               every access log on the way, and the shopper arrives back at an empty form with no message.
+               A form with method="dialog" that is not inside a <dialog> has a native submit that does
+               nothing at all (HTML, "form submission algorithm"): the submit event still fires, so
+               placeOrder is unchanged once hydrated, and nothing the shopper typed can leave the page.
+               It needs no script, so it also holds if the bundle never loads. The e2e test
+               pre-hydration-submit.e2e.ts holds the scripts back to prove it. Do not remove it, and do
+               not give this form an action, a method="get" or a method="post" without reading that
+               test. -->
+          <form
+            class="checkout__form"
+            id="checkout-form"
+            method="dialog"
+            novalidate
+            (submit)="placeOrder($event)"
+          >
             <fieldset class="checkout__group">
               <legend class="checkout__legend">Your details</legend>
 

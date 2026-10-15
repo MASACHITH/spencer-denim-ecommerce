@@ -93,7 +93,10 @@ const MESSAGE_MAX = 4000;
             </button>
           </div>
         } @else {
-          <form class="contact__form" novalidate (submit)="submit($event)">
+          <!-- method="dialog": a native submit that does nothing, so a press of Enter before the page has
+               hydrated cannot put the name, email address and message in the URL (#123). The reasoning is
+               in checkout-page.ts. -->
+          <form class="contact__form" method="dialog" novalidate (submit)="submit($event)">
             <div class="contact__field">
               <label class="contact__label" for="contact-name">Your name</label>
               <input

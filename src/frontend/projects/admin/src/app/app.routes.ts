@@ -5,6 +5,7 @@ import { BRAND } from '@spencer-denim/shared';
 
 export const routes: Routes = [
   {
+    // ADM-04, ADM-05, ADM-07, ADM-08 (W4-02): the dashboard.
     path: '',
     title: BRAND.adminName,
     canActivate: [adminSessionGuard],
@@ -95,6 +96,40 @@ export const routes: Routes = [
     title: `Invoice — ${BRAND.adminName}`,
     canActivate: [adminSessionGuard],
     loadComponent: () => import('./pages/orders/order-invoice-page').then((m) => m.OrderInvoicePage),
+  },
+  {
+    // ADM-15 (W3-07): registered customers. Like every other admin route the guard only asks for a session:
+    // the API is the security boundary (doc 03 §3a), and a user without Customers.View is shown the refusal
+    // rather than bounced from a page that then cannot explain itself.
+    path: 'customers',
+    title: `Customers — ${BRAND.adminName}`,
+    canActivate: [adminSessionGuard],
+    loadComponent: () =>
+      import('./pages/customers/customers-list-page').then((m) => m.CustomersListPage),
+  },
+  {
+    path: 'customers/:customerId',
+    title: `Customer — ${BRAND.adminName}`,
+    canActivate: [adminSessionGuard],
+    loadComponent: () =>
+      import('./pages/customers/customer-detail-page').then((m) => m.CustomerDetailPage),
+  },
+  {
+    // ADM-21 (W3-07): newsletter subscribers and their audited export (Newsletter.View / Newsletter.Export).
+    path: 'marketing/newsletter',
+    title: `Newsletter subscribers — ${BRAND.adminName}`,
+    canActivate: [adminSessionGuard],
+    loadComponent: () =>
+      import('./pages/newsletter/newsletter-subscribers-page').then((m) => m.NewsletterSubscribersPage),
+  },
+  {
+    // ADM-19 (W4-02): the Sales, Inventory and Customers reports and their audited exports. The guard asks
+    // only for a session, as every other admin route does: the API is the security boundary (doc 03 §3a),
+    // and the page itself says so to a role without Reports.View rather than bouncing it.
+    path: 'reports',
+    title: `Reports — ${BRAND.adminName}`,
+    canActivate: [adminSessionGuard],
+    loadComponent: () => import('./pages/reports/reports-page').then((m) => m.ReportsPage),
   },
   {
     // ADM-11 (W1-12). Like every other admin route the guard only asks for a session: the API is the

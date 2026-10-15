@@ -24,6 +24,8 @@ builder.AddSerilogLogging();
 builder.AddApiDataProtection();
 
 builder.Services.AddProblemDetails();
+// A body binding cannot read answers 400 with a problem document in every environment, not 500 (#47).
+builder.Services.AddApiBadRequestHandling();
 
 // Enums travel as their names ("Sale", "LowStock", "OutOfStock"), so a client never has to keep a
 // copy of our numeric values in sync.
@@ -107,6 +109,9 @@ app.MapAdminSettingsEndpoints();
 app.MapAdminPayPalSettingsEndpoints();
 app.MapAdminBankTransferEndpoints();
 app.MapAdminOrderEndpoints();
+app.MapAdminCustomerEndpoints();
+app.MapAdminNewsletterEndpoints();
+app.MapAdminReportingEndpoints();
 app.MapPaymentSlipEndpoints();
 app.MapAdminContentEndpoints();
 app.MapAdminPromotionEndpoints();
