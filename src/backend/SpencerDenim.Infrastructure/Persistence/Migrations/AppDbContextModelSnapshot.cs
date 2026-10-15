@@ -140,6 +140,150 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                     b.ToTable("UserTokens", "identity");
                 });
 
+            modelBuilder.Entity("SpencerDenim.Domain.Analytics.PageDaily", b =>
+                {
+                    b.Property<DateOnly>("Date")
+                        .HasColumnType("date");
+
+                    b.Property<byte[]>("PathHash")
+                        .HasColumnType("binary(16)");
+
+                    b.Property<byte>("PageType")
+                        .HasColumnType("tinyint");
+
+                    b.Property<int>("PageViews")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Path")
+                        .IsRequired()
+                        .HasMaxLength(400)
+                        .HasColumnType("nvarchar(400)");
+
+                    b.Property<int?>("ProductId")
+                        .HasColumnType("int");
+
+                    b.Property<int>("Sessions")
+                        .HasColumnType("int");
+
+                    b.HasKey("Date", "PathHash")
+                        .HasName("PK_PageDaily");
+
+                    b.ToTable("PageDaily", "analytics", t =>
+                        {
+                            t.HasCheckConstraint("CK_PageDaily_Counts", "[PageViews] >= 0 AND [Sessions] >= 0 AND [Sessions] <= [PageViews]");
+
+                            t.HasCheckConstraint("CK_PageDaily_PageType", "[PageType] IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 99)");
+                        });
+                });
+
+            modelBuilder.Entity("SpencerDenim.Domain.Analytics.PageView", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<int?>("CategoryId")
+                        .HasColumnType("int");
+
+                    b.Property<byte>("Channel")
+                        .HasColumnType("tinyint");
+
+                    b.Property<byte>("DeviceType")
+                        .HasColumnType("tinyint");
+
+                    b.Property<bool>("IsBot")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false);
+
+                    b.Property<DateTime>("OccurredAtUtc")
+                        .HasColumnType("datetime2(0)");
+
+                    b.Property<byte>("PageType")
+                        .HasColumnType("tinyint");
+
+                    b.Property<string>("Path")
+                        .IsRequired()
+                        .HasMaxLength(400)
+                        .HasColumnType("nvarchar(400)");
+
+                    b.Property<int?>("ProductId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("ReferrerHost")
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<Guid>("SessionId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("UtmCampaign")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<string>("UtmMedium")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<string>("UtmSource")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OccurredAtUtc")
+                        .HasDatabaseName("IX_PageViews_Occurred");
+
+                    SqlServerIndexBuilderExtensions.IncludeProperties(b.HasIndex("OccurredAtUtc"), new[] { "SessionId", "IsBot", "Channel", "DeviceType" });
+
+                    b.ToTable("PageViews", "analytics", t =>
+                        {
+                            t.HasCheckConstraint("CK_PageViews_Channel", "[Channel] BETWEEN 1 AND 7");
+
+                            t.HasCheckConstraint("CK_PageViews_DeviceType", "[DeviceType] IN (1, 2, 3, 9)");
+
+                            t.HasCheckConstraint("CK_PageViews_PageType", "[PageType] IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 99)");
+                        });
+                });
+
+            modelBuilder.Entity("SpencerDenim.Domain.Analytics.TrafficDaily", b =>
+                {
+                    b.Property<DateOnly>("Date")
+                        .HasColumnType("date");
+
+                    b.Property<byte>("Channel")
+                        .HasColumnType("tinyint");
+
+                    b.Property<byte>("DeviceType")
+                        .HasColumnType("tinyint");
+
+                    b.Property<string>("SourceKey")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<int>("BotPageViews")
+                        .HasColumnType("int");
+
+                    b.Property<int>("PageViews")
+                        .HasColumnType("int");
+
+                    b.Property<int>("Sessions")
+                        .HasColumnType("int");
+
+                    b.HasKey("Date", "Channel", "DeviceType", "SourceKey")
+                        .HasName("PK_TrafficDaily");
+
+                    b.ToTable("TrafficDaily", "analytics", t =>
+                        {
+                            t.HasCheckConstraint("CK_TrafficDaily_Channel", "[Channel] BETWEEN 1 AND 7");
+
+                            t.HasCheckConstraint("CK_TrafficDaily_Counts", "[PageViews] >= 0 AND [Sessions] >= 0 AND [BotPageViews] >= 0 AND [Sessions] <= [PageViews]");
+
+                            t.HasCheckConstraint("CK_TrafficDaily_DeviceType", "[DeviceType] IN (1, 2, 3, 9)");
+                        });
+                });
+
             modelBuilder.Entity("SpencerDenim.Domain.Auditing.AuditLog", b =>
                 {
                     b.Property<long>("Id")

@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using SpencerDenim.Domain.Analytics;
 using SpencerDenim.Domain.Auditing;
 using SpencerDenim.Domain.Catalog;
 using SpencerDenim.Domain.Content;
@@ -81,6 +82,12 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     /// last of them, <c>WishlistItems</c>, so §3.5's fifteen tables are now all here.
     /// </summary>
     public const string SalesSchema = "sales";
+
+    /// <summary>
+    /// Doc 08 §1.2: raw traffic and the daily traffic and search aggregates. Created by W4-03's migration
+    /// (ADM-06, ADM-20).
+    /// </summary>
+    public const string AnalyticsSchema = "analytics";
 
     /// <summary>Name of the EF Core 10 named query filter that hides soft-deleted rows (doc 08 §10.2).</summary>
     public const string SoftDeleteFilter = "SoftDelete";
@@ -246,6 +253,18 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     /// </para>
     /// </summary>
     public DbSet<AdminAlert> AdminAlerts => Set<AdminAlert>();
+
+    /// <summary>
+    /// <c>analytics.PageViews</c> (doc 08 §3.8; ADM-06, ADM-20). Appended in batches by
+    /// <c>PageViewWriterService</c>; no IP address and no persistent visitor ID are stored.
+    /// </summary>
+    public DbSet<PageView> PageViews => Set<PageView>();
+
+    /// <summary><c>analytics.TrafficDaily</c> (doc 08 §3.8), rebuilt nightly by the traffic rollup.</summary>
+    public DbSet<TrafficDaily> TrafficDaily => Set<TrafficDaily>();
+
+    /// <summary><c>analytics.PageDaily</c> (doc 08 §3.8), rebuilt nightly by the traffic rollup.</summary>
+    public DbSet<PageDaily> PageDaily => Set<PageDaily>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
