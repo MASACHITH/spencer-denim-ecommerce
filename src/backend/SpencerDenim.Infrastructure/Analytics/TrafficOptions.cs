@@ -5,8 +5,9 @@ namespace SpencerDenim.Infrastructure.Analytics;
 /// section — <c>Traffic__RecordingEnabled</c>, <c>Traffic__InternalHosts</c> and so on.
 /// <para>
 /// <b>Configuration, not <c>ops.Settings</c>.</b> These are how the machinery runs, which a shop has no
-/// opinion about. The two retention periods doc 08 §3.8 does put in <c>ops.Settings</c>
-/// (<c>Traffic.RawRetentionDays</c>, <c>Traffic.BotRetentionDays</c>) are read from there.
+/// opinion about. The two retention periods doc 08 §3.8 puts in <c>ops.Settings</c>
+/// (<c>Traffic.RawRetentionDays</c>, <c>Traffic.BotRetentionDays</c>) are configuration here <i>for now</i> — see
+/// <see cref="RawRetentionDays"/> for why — and move to <c>ops.Settings</c> with the Traffic settings form.
 /// </para>
 /// </summary>
 public sealed class TrafficOptions
