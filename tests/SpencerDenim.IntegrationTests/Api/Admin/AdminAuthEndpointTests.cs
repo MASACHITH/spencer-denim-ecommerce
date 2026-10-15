@@ -150,6 +150,249 @@ public sealed class AdminAuthEndpointTests(SqlServerDatabaseFixture sqlServer)
     }
 
     /// <summary>
+    /// Issue #46: sixty wrong passwords fired at once used to come back as sixty 401s with
+    /// <c>AccessFailedCount = 4</c> and no lockout, because Identity's <c>AccessFailedAsync</c> read the counter into
+    /// memory, added one and saved the whole row, so parallel failures overwrote each other. Now every failure is
+    /// one atomic <c>UPDATE</c> that refuses an account already locked, so however many arrive together exactly
+    /// <c>LockoutMaxFailedAttempts</c> are counted: four plain 401s, the fifth locks (423 plus the one
+    /// <c>Lockout</c> audit row), and everything else is turned away as locked without being counted.
+    /// </summary>
+    [Fact]
+    public async Task Parallel_wrong_passwords_cannot_outrun_the_lockout()
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, TestContext.Current.CancellationToken);
+
+        const int parallelAttempts = 30;
+        const int maxFailedAttempts = 5; // AdminSecurityOptions.LockoutMaxFailedAttempts default.
+        var email = UniqueEmail("parallel-lockout");
+        const string password = "Correct-Password-1!";
+        await using var factory = new ApiFactory(sqlServer.ConnectionString);
+        var userId = await CreateStaffUserAsync(factory, email, password, isActive: true);
+        using var client = CreateClient(factory);
+
+        var responses = await Task.WhenAll(Enumerable.Range(0, parallelAttempts).Select(async _ =>
+        {
+            using var response = await client.PostAsJsonAsync(LoginUrl, new { email, password = "wrong" }, TestContext.Current.CancellationToken);
+            return response.StatusCode;
+        }));
+
+        Assert.All(responses, status => Assert.True(
+            status is HttpStatusCode.Unauthorized or (HttpStatusCode)423,
+            $"Every parallel attempt is either refused or locked out, never anything else; got {status}."));
+        Assert.Equal(maxFailedAttempts - 1, responses.Count(status => status == HttpStatusCode.Unauthorized));
+        Assert.Equal(parallelAttempts - (maxFailedAttempts - 1), responses.Count(status => status == (HttpStatusCode)423));
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var user = await dbContext.Users.AsNoTracking().SingleAsync(u => u.Id == userId, TestContext.Current.CancellationToken);
+            Assert.NotNull(user.LockoutEnd);
+            Assert.True(user.LockoutEnd > DateTimeOffset.UtcNow);
+            Assert.Equal(0, user.AccessFailedCount);
+
+            // One attempt tripped the lock, so exactly one Lockout row; every attempt is still a LoginFailed row.
+            Assert.Equal(1, await dbContext.AuditLogs.CountAsync(a => a.UserEmail == email && a.Action == "Lockout", TestContext.Current.CancellationToken));
+            Assert.Equal(parallelAttempts, await dbContext.AuditLogs.CountAsync(a => a.UserEmail == email && a.Action == "LoginFailed", TestContext.Current.CancellationToken));
+        }
+
+        using var rightPassword = await client.PostAsJsonAsync(LoginUrl, new { email, password }, TestContext.Current.CancellationToken);
+        Assert.Equal((HttpStatusCode)423, rightPassword.StatusCode);
+    }
+
+    /// <summary>
+    /// Issue #46, the guard the test above cannot reach: <c>StaffAccountLockout</c>'s "a right secret racing a lockout is
+    /// refused too". The lock check Identity makes before a password check reads the user as loaded at the start of the
+    /// request, and the hash takes long enough for a burst of wrong passwords to lock the account meanwhile. So a
+    /// <b>right</b> password whose hash was verified against an unlocked account must still be refused if the account is
+    /// locked by the time it is accepted.
+    /// <para>
+    /// The right password is stopped at that second look (<see cref="LockoutRecheckGateInterceptor"/>), the account is
+    /// locked with five wrong passwords while it waits, and it is let go. A final right password sent as a fresh request
+    /// would be stopped by Identity's own check and prove nothing; this is the only shape in which the second look is
+    /// the thing that refuses. With the second look deleted the right password comes back 200 with a session.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task A_right_password_that_a_burst_of_wrong_ones_outruns_is_refused_as_locked()
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, TestContext.Current.CancellationToken);
+
+        const int maxFailedAttempts = 5; // AdminSecurityOptions.LockoutMaxFailedAttempts default.
+        var email = UniqueEmail("right-after-burst");
+        const string password = "Correct-Password-1!";
+        var gate = new LockoutRecheckGateInterceptor();
+        await using var factory = new ApiFactory(sqlServer.ConnectionString, commandInterceptor: gate);
+        await CreateStaffUserAsync(factory, email, password, isActive: true);
+        using var client = CreateClient(factory);
+
+        gate.Arm();
+        var rightPassword = client.PostAsJsonAsync(LoginUrl, new { email, password }, TestContext.Current.CancellationToken);
+        try
+        {
+            // From here the right password has been verified against an account that was unlocked.
+            await gate.WaitUntilHeldAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+
+            for (var attempt = 1; attempt <= maxFailedAttempts; attempt++)
+            {
+                using var wrong = await client.PostAsJsonAsync(LoginUrl, new { email, password = "wrong" }, TestContext.Current.CancellationToken);
+                Assert.Equal(attempt < maxFailedAttempts ? HttpStatusCode.Unauthorized : (HttpStatusCode)423, wrong.StatusCode);
+            }
+        }
+        finally
+        {
+            gate.Release();
+        }
+
+        using var response = await rightPassword;
+        var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+
+        Assert.True(
+            response.StatusCode == (HttpStatusCode)423,
+            $"A right password the burst outran must be refused as locked, not accepted. Got {(int)response.StatusCode}: {body}");
+        Assert.Contains("locked_out", body, StringComparison.Ordinal);
+
+        // Refused means no session: the same client, which keeps its cookies, is still anonymous.
+        using var whoAmI = await client.GetAsync(new Uri(WhoAmIUrl, UriKind.Relative), TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.Unauthorized, whoAmI.StatusCode);
+    }
+
+    /// <summary>
+    /// Issue #46, the other half of the race: Identity's <c>UserStore.UpdateAsync</c> marks every column of the user
+    /// modified, so any save of a copy of the user loaded before a lockout — the 2FA password step storing its
+    /// pending sign-in, a successful sign-in stamping <c>LastLoginAtUtc</c> — wrote the old
+    /// <c>AccessFailedCount</c> and <c>LockoutEnd</c> back and silently unlocked the account. The lockout columns
+    /// are now written only by the atomic statements, or by a save that actually changed them.
+    /// </summary>
+    [Fact]
+    public async Task A_stale_copy_of_the_user_saved_after_a_lockout_neither_unlocks_the_account_nor_resets_its_count()
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, TestContext.Current.CancellationToken);
+
+        var email = UniqueEmail("stale-save");
+        const string password = "Correct-Password-1!";
+        await using var factory = new ApiFactory(sqlServer.ConnectionString);
+        var userId = await CreateStaffUserAsync(factory, email, password, isActive: true);
+        using var client = CreateClient(factory);
+
+        await using var staleScope = factory.Services.CreateAsyncScope();
+        var staleUserManager = staleScope.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
+        var staleUser = await staleUserManager.FindByIdAsync(userId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        Assert.NotNull(staleUser);
+        Assert.Equal(0, staleUser.AccessFailedCount);
+
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            using var failed = await client.PostAsJsonAsync(LoginUrl, new { email, password = "wrong" }, TestContext.Current.CancellationToken);
+            Assert.Equal(HttpStatusCode.Unauthorized, failed.StatusCode);
+        }
+
+        staleUser.LastName = "Renamed";
+        var firstSave = await staleUserManager.UpdateAsync(staleUser);
+        Assert.True(firstSave.Succeeded, string.Join("; ", firstSave.Errors.Select(e => e.Description)));
+        Assert.Equal(3, (await FindUserAsync(factory, userId)).AccessFailedCount);
+
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            using var failed = await client.PostAsJsonAsync(LoginUrl, new { email, password = "wrong" }, TestContext.Current.CancellationToken);
+            Assert.True(failed.StatusCode is HttpStatusCode.Unauthorized or (HttpStatusCode)423);
+        }
+
+        Assert.NotNull((await FindUserAsync(factory, userId)).LockoutEnd);
+
+        staleUser.LastName = "Renamed again";
+        var secondSave = await staleUserManager.UpdateAsync(staleUser);
+        Assert.True(secondSave.Succeeded, string.Join("; ", secondSave.Errors.Select(e => e.Description)));
+
+        var afterStaleSave = await FindUserAsync(factory, userId);
+        Assert.Equal("Renamed again", afterStaleSave.LastName);
+        Assert.NotNull(afterStaleSave.LockoutEnd);
+        Assert.True(afterStaleSave.LockoutEnd > DateTimeOffset.UtcNow);
+
+        using var rightPassword = await client.PostAsJsonAsync(LoginUrl, new { email, password }, TestContext.Current.CancellationToken);
+        Assert.Equal((HttpStatusCode)423, rightPassword.StatusCode);
+    }
+
+    /// <summary>
+    /// Issue #46 follow-up (tester D2): an account with <c>LockoutEnabled = 0</c> is never locked and never counted,
+    /// as in Identity. The atomic statement must not lock it (and report a <c>Lockout</c>) on the fifth failure just
+    /// because it counts there.
+    /// </summary>
+    [Fact]
+    public async Task An_account_with_lockout_switched_off_is_never_locked_by_wrong_passwords()
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, TestContext.Current.CancellationToken);
+
+        var email = UniqueEmail("no-lockout");
+        const string password = "Correct-Password-1!";
+        await using var factory = new ApiFactory(sqlServer.ConnectionString);
+        var userId = await CreateStaffUserAsync(factory, email, password, isActive: true);
+        using var client = CreateClient(factory);
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            await dbContext.Users.Where(u => u.Id == userId)
+                .ExecuteUpdateAsync(set => set.SetProperty(u => u.LockoutEnabled, false), TestContext.Current.CancellationToken);
+        }
+
+        for (var attempt = 0; attempt < 7; attempt++)
+        {
+            using var failed = await client.PostAsJsonAsync(LoginUrl, new { email, password = "wrong" }, TestContext.Current.CancellationToken);
+            Assert.Equal(HttpStatusCode.Unauthorized, failed.StatusCode);
+        }
+
+        var user = await FindUserAsync(factory, userId);
+        Assert.Null(user.LockoutEnd);
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            Assert.Equal(0, await dbContext.AuditLogs.CountAsync(a => a.UserEmail == email && a.Action == "Lockout", TestContext.Current.CancellationToken));
+            Assert.Equal(7, await dbContext.AuditLogs.CountAsync(a => a.UserEmail == email && a.Action == "LoginFailed", TestContext.Current.CancellationToken));
+        }
+
+        using var succeeded = await client.PostAsJsonAsync(LoginUrl, new { email, password }, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, succeeded.StatusCode);
+    }
+
+    /// <summary>
+    /// Issue #46 guard for the sequential caller: with the lockout columns kept out of stale saves, Identity's own
+    /// counter reset on a right password (a deliberate change, saved through the same store) must still land.
+    /// </summary>
+    [Fact]
+    public async Task A_right_password_still_resets_the_failure_count()
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, TestContext.Current.CancellationToken);
+
+        var email = UniqueEmail("reset-count");
+        const string password = "Correct-Password-1!";
+        await using var factory = new ApiFactory(sqlServer.ConnectionString);
+        var userId = await CreateStaffUserAsync(factory, email, password, isActive: true);
+        using var client = CreateClient(factory);
+
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            using var failed = await client.PostAsJsonAsync(LoginUrl, new { email, password = "wrong" }, TestContext.Current.CancellationToken);
+            Assert.Equal(HttpStatusCode.Unauthorized, failed.StatusCode);
+        }
+
+        Assert.Equal(3, (await FindUserAsync(factory, userId)).AccessFailedCount);
+
+        using var succeeded = await client.PostAsJsonAsync(LoginUrl, new { email, password }, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, succeeded.StatusCode);
+
+        var afterSuccess = await FindUserAsync(factory, userId);
+        Assert.Equal(0, afterSuccess.AccessFailedCount);
+        Assert.Null(afterSuccess.LockoutEnd);
+        Assert.NotNull(afterSuccess.LastLoginAtUtc);
+    }
+
+    /// <summary>
     /// Regression test for the defect in issue #16: before this fix, <c>IsActive</c> was only checked at login and
     /// on <c>/whoami</c>, so a deactivated staff account's cookie kept authenticating every other endpoint for the
     /// rest of its 60-minute sliding lifetime. <c>AdminSecurity:SecurityStampValidationIntervalSeconds</c> is
@@ -503,6 +746,13 @@ public sealed class AdminAuthEndpointTests(SqlServerDatabaseFixture sqlServer)
         Assert.NotNull(user);
         var result = await userManager.UpdateSecurityStampAsync(user);
         Assert.True(result.Succeeded, string.Join("; ", result.Errors.Select(e => e.Description)));
+    }
+
+    private static async Task<AppUser> FindUserAsync(ApiFactory factory, int userId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        return await dbContext.Users.AsNoTracking().SingleAsync(u => u.Id == userId, TestContext.Current.CancellationToken);
     }
 
     private static async Task AssertAuditActionWrittenAsync(ApiFactory factory, string email, string action)

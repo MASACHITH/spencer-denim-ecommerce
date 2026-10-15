@@ -397,6 +397,18 @@ describe('SiteFooter (GLB-07)', () => {
     expect(hrefs).toEqual(['https://www.tiktok.com/@colombowardrobe']);
   });
 
+  /**
+   * A native submit before hydration would put the address in the URL (#123): `?email=...` on whatever
+   * page the shopper is on, in history, `Referer` and every access log. `method="dialog"` outside a
+   * `<dialog>` is a submit that goes nowhere. The browser proof is `pre-hydration-submit.e2e.ts`.
+   */
+  it('cannot submit natively, so an address typed before hydration cannot reach the URL', () => {
+    const form = element.querySelector('form.newsletter__form')!;
+
+    expect(form.getAttribute('method')).toBe('dialog');
+    expect(form.hasAttribute('action')).toBe(false);
+  });
+
   it('says nothing until the newsletter form is used', () => {
     expect(status()).toBe('');
     expect(fixture.componentInstance.newsletterState()).toBe('idle');
