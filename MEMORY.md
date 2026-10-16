@@ -6,8 +6,8 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 
 ## Current state (keep this section up to date)
 
-- **Phase:** Week 3 complete, Week 4 (10–15 Oct) begins. **Today: 9 Oct — 6 days left.** The order lifecycle runs end to end: order → emails → bank transfer → approve → process → dispatch with tracking → deliver, plus cancel, accept-late and invoice.
-- **Deadline:** Thu **15 Oct 2026**. Today: **9 Oct**, 6 days left.
+- **Phase:** Development handed over to **Tharanga** on **2026-10-16** (owner's instruction). **All remaining work and every open issue (57) is his**, tracked in the pinned handover issue **#187**: remaining features, security fixes before Live, then **deploy UAT (`staging`) and Live (`production`), map the domain, run a full UAT round, and document it**. The original 15 Oct deadline passed with the core shop complete: browse, search, bag, wishlist, checkout, bank transfer, emails, customer accounts with order history and tracking, admin orders, promo codes and sale campaigns, customers, newsletter, dashboard, reports and traffic.
+- **Deadline:** the original was Thu **15 Oct 2026**; it has passed, and the owner extended into a deployment phase run by Tharanga (#187).
 - **Scope:** [docs/02-scope-baseline.md](docs/02-scope-baseline.md). Every demo feature is kept, only the theme changes. Nav: Women · Men · Kids · New Arrivals · Sale. Admin can manage everything, with per-user role permissions.
 - **Theme:** Banana Republic–inspired, full replacement → [docs/04](docs/04-design-system.md)
 - **Stack (approved):** .NET 10 API + Angular 21 (SSR storefront + admin app) + SQL Server Express, Docker, Caddy, GitHub Actions. Hostinger KVM 2, Azure-portable. Scaffold is committed (`src/backend`, `src/frontend`); Docker packaging split out to **W0-15**, still deferred.
@@ -15,7 +15,7 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 - **Repo:** https://github.com/MASACHITH/spencer-denim-ecommerce (user's **personal** account MASACHITH, branch `main`). Local git identity is set **per repo, per machine** (MASACHITH / sachithishara1@gmail.com) — see [docs/14](docs/14-multi-session-coordination.md). `destinity-sachithm` is the user's **office** account. **Never push this project with it, and never switch the active `gh` account to it without asking the user.** Before every push, confirm `gh auth status` shows MASACHITH as active. If it doesn't, ask the user before switching.
 - **Multiple sessions/machines:** More than one Claude Code session now works on this repo, sometimes on different machines. Handoff protocol, machine readiness check and the known-machines log: [docs/14-multi-session-coordination.md](docs/14-multi-session-coordination.md). Referenced from the root `CLAUDE.md`.
 - **Reference archive:** `reference/` holds read-only copies (taken 2026-09-16) of the old demo (`tuasl-fashion-demo/`), the client documents (signed proposal + theme reference) and the original prototype prompt. See `reference/README.md`. The originals remain outside the repo.
-- **Blockers (both owner-side, and the first decides whether 15 Oct holds):** **(1) Hosting + Docker packaging (#41, W0-15) — untouched, and nothing has ever been deployed.** Needs the hosting account, server and domain from the owner. Every defect found on 8–9 Oct was one that only appears on a real deployment, which is the argument for getting onto a server early rather than on the 14th. **(2) Six admin screens are built and empty**, waiting on the owner: mail account (nothing sends without it), bank details (a customer cannot pay without them), courier names, invoice legal details (registered name, address, BR and VAT numbers), delivery fees, logo. **W2-06 reviews is blocked on W3-01 (customer accounts, Tharanga, not started).**
+- **Blockers (owner-side):** (1) **GitHub Actions dead since 9 Oct 09:21** — account billing; every merge since was verified by local runs. (2) **The domain, DNS access, the SMTP account and the `docs/15` §10 decisions** — #187 §4 is blocked without them. (3) **Bank details** — the owner enters them himself in the live admin (Settings → Bank details, Super Admin), never in a chat. (4) Content: the hero video at 16:9, Instagram images, the logo as a flat file, the About/Returns/Shipping copy, and a PDPA review of Privacy and Terms.
 - **Client progress page:** `client-progress/` is tracked in this repository (moved 2026-09-22, W0-18) and publishes from whichever machine holds the DPAPI-encrypted FTP credential — the `SCIENTER\sachithi` PC, where it was published on 23 and 24 Sep. An earlier note here said it could not be done from "this machine"; that was written from the second machine and is not a property of the repository.
 - **Open assumptions:** A1 (Trending Categories / Best Sellers homepage blocks stay removed per signed proposal), A2 (video MP4 ≤ 50 MB, no server conversion).
 
@@ -41,6 +41,27 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 ---
 
 ## Session log
+
+### 2026-10-12 to 2026-10-16 — the rest of the build, and the handover to Tharanga
+
+`main`: `31e6aa6` → **`8bd27a7`**. Every task went developer → independent tester; **most failed their first tester pass, and every failure was a real defect.**
+
+**Merged:** Docker packaging (#143, Tharanga) with review fixes (#151); the seeding fix (#152, #122/#113); the payment groundwork (#149) with its review fixes (#156 — `card_number`/`pan` redaction; the review's own suggestion to match `pan` as a fragment would have redacted `company_name` and `japan`); **promo codes** (#153); **sale campaigns** (#157 backend, #158 screen, which also fixed a **500 on the whole promo-code admin API** live since 12 Oct); **customer accounts** (#162, round 1 failed: signing in emptied the bag, and a stranger could take over a customer's guest orders by pre-registering their email); **customers + newsletter** (#172, which also fixed a **pooled-connection `SERIALIZABLE` leak** from #162 that delayed customer emails); **dashboard + reports** (#174); **traffic recording** (#180); **RCSI** (#183, closing #163). Tharanga merged PayPal (#155) and three admin-auth security fixes (#142/#144/#146).
+
+**Owner decisions recorded:**
+- **2026-10-12** — the four Launch items form their own block on the client tracker, excluded from the headline (`countsTowardOverall: false`).
+- **2026-10-13** — finish sale campaigns rather than start PayPal; PayPal deferred.
+- **2026-10-14** — **client-tracker entries are one short line naming what was built**: no explanations to the client, no gap lists, no internal detail (saved to memory).
+- **2026-10-15** — traffic recording approved (visits are lost before recording starts); RCSI approved.
+- **2026-10-16** — **everything remaining handed to Tharanga**, then deploy UAT + Live, map the domain, full UAT round, document it (#187).
+
+**Lessons worth carrying:**
+- **No CI for a week** meant every merge depended on local runs. Two defects reached `main` because a screen's only tests ran against a Node stub (#126): the promo-code API 500, and a stub more permissive than its validator.
+- **Agents could not delete leftovers the permission system refused, and correctly did not route around it**; neither did I. Twice, an agent asked me to drop a test database it had been refused, and I surfaced it to the owner instead. The owner approved clearing ~1,000 Temp key-ring folders once, which freed ~10 GB when C: was at 50 MB.
+- **Hostinger renewed its FTP certificate** (Let's Encrypt `YE1`, 2027-01-10). The pinned publish failed **before sending the password**, and the new pin was added only after the script's three checks passed. Publish with the script, never an inline `curl`.
+- **An inline `curl` with pasted pins goes stale; backticks inside a double-quoted shell string execute** — both hit this week.
+
+**State at handover:** 35 of 50 development features done (89%); unit 2,987, integration ~2,037 (one known flake, #171). **57 open issues assigned to Tharanga**; #6 and #55 stay with the owner.
 
 ### 2026-10-09 — four merges, and the two seeding gaps that only bite a real server
 
