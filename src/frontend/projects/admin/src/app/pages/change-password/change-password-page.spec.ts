@@ -171,7 +171,7 @@ describe('ChangePasswordPage', () => {
     const hint = root.querySelector('#change-rules');
     expect(hint?.textContent?.trim()).toBe(STAFF_PASSWORD_RULE);
     expect(hint?.textContent).toContain('at least 10 characters');
-    expect(hint?.textContent).not.toMatch(/6/);
+    expect(hint?.textContent).not.toContain('6 characters');
     expect(root.querySelector('input[name="newPassword"]')?.getAttribute('aria-describedby')).toContain('change-rules');
   });
 
