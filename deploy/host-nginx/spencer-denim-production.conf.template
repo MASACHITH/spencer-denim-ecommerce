@@ -25,6 +25,12 @@ server {
     listen [::]:80;
     server_name __SERVER_NAME__;
 
+    # Logged nowhere (issue #179). Without this the redirect below, which carries the whole address, would go to
+    # the server-wide access log in the combined format: visitor address, query string and Referer, in a file
+    # that also belongs to the client's other sites. See the 443 server for the reasoning.
+    access_log off;
+    error_log  /var/log/nginx/spencer-denim/production.error.log crit;
+
     # certbot's HTTP-01 challenge, then everything else to HTTPS.
     location ^~ /.well-known/acme-challenge/ {
         root /var/www/certbot;
@@ -50,8 +56,19 @@ server {
     # One year, this host only. Add includeSubDomains / preload only once every subdomain is HTTPS-only.
     add_header Strict-Transport-Security "max-age=31536000" always;
 
-    access_log /var/log/nginx/spencer-denim-production.access.log;
-    error_log  /var/log/nginx/spencer-denim-production.error.log warn;
+    # Logs (issue #179, docs/15 section 8a). Both of nginx's logs copy the visitor's address and the whole
+    # request into a file on this server: the access log in the default combined format, the error log on every
+    # upstream failure ("client: 203.0.113.9 ... request: "GET /order/<token>?..." ... referrer: ..."). This shop
+    # puts credentials in addresses (/order/{token}, ?token= on password reset and email confirmation), so
+    # either would hand anyone who can read the file a customer's order or account.
+    #
+    # So there is no access log here at all: the gateway container logs every request after removing the
+    # addresses and credentials (docs/15 section 8a), and a 502 from this hop means the gateway is down, which
+    # `docker compose ps` says. The error log is kept to crit, which never carries a request in normal operation
+    # (a crashed worker, a failed reload, a full disk), in its own directory so that deploy/host-nginx/
+    # spencer-denim.logrotate can keep it for days instead of weeks. Create the directory before `nginx -t`.
+    access_log off;
+    error_log  /var/log/nginx/spencer-denim/production.error.log crit;
 
     # 2 MB by default, matching the gateway; only the two upload routes below take more.
     #
