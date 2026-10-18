@@ -93,6 +93,40 @@ server {
         proxy_pass http://spencer_denim_staging;
     }
 
+    # --- UAT is not for search engines, and must not look like the live shop to a crawler (#195) ---------------
+    # Nothing else in this repository sets noindex on staging: the storefront builds the same robots.txt for every
+    # environment ("Allow: /" plus a Sitemap line), so without this block a crawler that finds the host is invited
+    # to index a copy of the shop. These two are a request to well-behaved crawlers, not a lock; the lock is the
+    # optional password block below.
+    #
+    # X-Robots-Tag goes on every response from this host, errors and the API included ("always" covers 4xx/5xx).
+    # Every location below inherits it, because none of them sets an add_header of its own: nginx drops the
+    # inherited ones as soon as a location sets any. Keep it that way, or repeat this line and the HSTS one.
+    add_header X-Robots-Tag "noindex, nofollow" always;
+
+    # robots.txt is answered HERE, not by the storefront, so it says "keep out" whatever the storefront does.
+    # (The two-line body is a literal multi-line string on purpose: no reliance on how \n is read.)
+    location = /robots.txt {
+        default_type text/plain;
+        return 200 "User-agent: *
+Disallow: /
+";
+    }
+
+    # --- OPTIONAL, OFF by default: HTTP basic auth for UAT -------------------------------------------------------
+    # The only thing that really keeps the public out. Exact commands: docs/16 §B "Optional: password-protect UAT".
+    # To switch it on, create the password file, then uncomment the two lines and the webhook location, nginx -t,
+    # reload. It then covers the whole host, robots.txt and the API included, so scripts/verify-public.sh needs
+    # SD_VERIFY_BASIC_AUTH=user:password.
+    #   auth_basic           "UAT";
+    #   auth_basic_user_file /etc/nginx/spencer-denim-staging.htpasswd;
+    # PayPal's servers cannot answer a password prompt, so if (and only if) a PayPal SANDBOX is wired to UAT, its
+    # webhook must stay reachable:
+    #   location = /api/payments/paypal/webhook {
+    #       auth_basic off;
+    #       proxy_pass http://spencer_denim_staging;
+    #   }
+
     location / {
         proxy_pass http://spencer_denim_staging;
     }
