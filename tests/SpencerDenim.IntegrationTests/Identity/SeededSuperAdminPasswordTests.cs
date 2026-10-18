@@ -1,9 +1,9 @@
 using System.Collections.Concurrent;
 using System.Globalization;
-using Microsoft.AspNetCore.Hosting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
+using Serilog.Core;
+using Serilog.Events;
 using SpencerDenim.Domain.Identity;
 using SpencerDenim.Infrastructure.Identity.Seeding;
 using SpencerDenim.Infrastructure.Persistence;
@@ -83,8 +83,11 @@ public sealed class SeededSuperAdminPasswordTests(SqlServerDatabaseFixture sqlSe
         string password,
         CancellationToken cancellationToken)
     {
-        var logs = new CapturingLoggerProvider();
+        var errors = new ErrorSink();
 
+        // Serilog replaces the logging providers and reads its sinks from the container, so a sink is the only
+        // way to see the host's own log lines (MalformedRequestBodyTests records the same). An ILoggerProvider
+        // here would be accepted, never called, and look like a host that logged nothing.
         await using var factory = new ApiFactory(
             deployment.ConnectionString,
             additionalConfiguration: new Dictionary<string, string?>
@@ -92,17 +95,16 @@ public sealed class SeededSuperAdminPasswordTests(SqlServerDatabaseFixture sqlSe
                 ["Seed:Admin:Enabled"] = "true",
                 ["Seed:Admin:Email"] = email,
                 ["Seed:Admin:Password"] = password,
-            });
-        await using var host = factory.WithWebHostBuilder(builder =>
-            builder.ConfigureLogging(logging => logging.AddProvider(logs)));
+            },
+            configureServices: services => services.AddSingleton<ILogEventSink>(errors));
 
         // The host starts, runs every hosted service to completion, and answers: a short seed password must not
         // stop the API from booting.
-        using var client = host.CreateClient();
+        using var client = factory.CreateClient();
         using var ready = await client.GetAsync(new Uri("/health/ready", UriKind.Relative), cancellationToken);
         Assert.Equal(System.Net.HttpStatusCode.OK, ready.StatusCode);
 
-        return logs.Errors;
+        return errors.Messages;
     }
 
     private static async Task<int> CountAccountsAsync(FreshDeployment deployment, string email, CancellationToken cancellationToken)
@@ -122,31 +124,18 @@ public sealed class SeededSuperAdminPasswordTests(SqlServerDatabaseFixture sqlSe
         return await db.Roles.AsNoTracking().AnyAsync(role => role.Name == AdminSeedHostedService.SuperAdminRoleName, cancellationToken);
     }
 
-    private sealed class CapturingLoggerProvider : ILoggerProvider
+    /// <summary>Every message the host logged at Error, rendered.</summary>
+    private sealed class ErrorSink : ILogEventSink
     {
-        private readonly ConcurrentQueue<string> _errors = new();
+        private readonly ConcurrentQueue<string> _messages = new();
 
-        public IReadOnlyList<string> Errors => [.. _errors];
+        public IReadOnlyList<string> Messages => [.. _messages];
 
-        public ILogger CreateLogger(string categoryName) => new CapturingLogger(_errors);
-
-        public void Dispose()
+        public void Emit(LogEvent logEvent)
         {
-        }
-
-        private sealed class CapturingLogger(ConcurrentQueue<string> errors) : ILogger
-        {
-            public IDisposable? BeginScope<TState>(TState state)
-                where TState : notnull => null;
-
-            public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Error;
-
-            public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+            if (logEvent.Level >= LogEventLevel.Error)
             {
-                if (logLevel >= LogLevel.Error)
-                {
-                    errors.Enqueue(formatter(state, exception));
-                }
+                _messages.Enqueue(logEvent.RenderMessage(CultureInfo.InvariantCulture));
             }
         }
     }
