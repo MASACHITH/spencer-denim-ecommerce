@@ -269,6 +269,12 @@ public sealed class CheckoutPlacementThrottleTests(SqlServerDatabaseFixture sqlS
 
         var statuses = responses.Select(response => response.StatusCode).ToList();
 
+        var placedNumbers = new List<string>();
+        foreach (var created in responses.Where(response => response.StatusCode == HttpStatusCode.Created))
+        {
+            placedNumbers.Add((await ReadOrderAsync(created)).OrderNumber);
+        }
+
         Assert.Equal(permits, statuses.Count(status => status == HttpStatusCode.Created));
         Assert.Equal(contenders - permits, statuses.Count(status => status == HttpStatusCode.TooManyRequests));
         Assert.DoesNotContain(statuses, status => (int)status >= 500);
@@ -279,7 +285,16 @@ public sealed class CheckoutPlacementThrottleTests(SqlServerDatabaseFixture sqlS
         Assert.Equal(permits * quantity, reserved);
         Assert.Equal(100 - (permits * quantity), available);
         Assert.Equal(100, onHand);
-        Assert.Equal(reserved, await HeldByReservedOrdersAsync(variantId));
+
+        // Reconciled against the orders this test placed, summed from their lines: `SetStockAsync` zeroes
+        // `Reserved` while earlier tests' orders on the same variant still exist, so a sum over every
+        // reserved order on the variant would be measuring those (CheckoutTestBase.SetStockAsync says so).
+        var held = (await OrdersByNumberAsync(placedNumbers))
+            .Where(placed => placed.StockState == OrderStockState.Reserved)
+            .SelectMany(placed => placed.Lines)
+            .Sum(line => (int)line.Quantity);
+        Assert.Equal(permits, placedNumbers.Count);
+        Assert.Equal(reserved, held);
 
         // Every refused shopper still has their bag.
         foreach (var (shopper, response) in shoppers.Zip(responses).Where(pair => pair.Second.StatusCode != HttpStatusCode.Created))
@@ -384,19 +399,6 @@ public sealed class CheckoutPlacementThrottleTests(SqlServerDatabaseFixture sqlS
             Token);
 
         return Assert.IsType<OrderConfirmationDto>(order);
-    }
-
-    /// <summary>
-    /// What the orders that hold stock say they hold for this variant: doc 08 §5.9's reconciliation
-    /// definition of <c>Reserved</c>, computed independently of the column it is compared with.
-    /// </summary>
-    private async Task<int> HeldByReservedOrdersAsync(int variantId)
-    {
-        using var scope = CreateScope();
-        return await scope.ServiceProvider.GetRequiredService<AppDbContext>().OrderLines
-            .AsNoTracking()
-            .Where(line => line.VariantId == variantId && line.Order!.StockState == OrderStockState.Reserved)
-            .SumAsync(line => (int)line.Quantity, Token);
     }
 
     /// <summary>One shopper: a client with a bag, and the body that places what is in it.</summary>
