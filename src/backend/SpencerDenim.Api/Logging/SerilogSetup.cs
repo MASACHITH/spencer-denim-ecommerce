@@ -51,6 +51,26 @@ internal static class SerilogSetup
     }
 
     /// <summary>
+    /// The four properties of Serilog's default request-completion template (<c>HTTP {RequestMethod}
+    /// {RequestPath} responded {StatusCode} in {Elapsed} ms</c>), under the same names, with the one that can hold
+    /// a credential redacted. <see cref="RequestPathRedactingEnricher"/> would redact it as well; this keeps the
+    /// request line safe on its own.
+    /// </summary>
+    internal static IEnumerable<LogEventProperty> RequestMessageTemplateProperties(
+        HttpContext httpContext, string requestPath, double elapsedMilliseconds, int statusCode)
+    {
+        ArgumentNullException.ThrowIfNull(httpContext);
+
+        return
+        [
+            new LogEventProperty("RequestMethod", new ScalarValue(httpContext.Request.Method)),
+            new LogEventProperty(RequestPathRedactingEnricher.PropertyName, new ScalarValue(RequestPathRedaction.ForLog(requestPath))),
+            new LogEventProperty("StatusCode", new ScalarValue(statusCode)),
+            new LogEventProperty("Elapsed", new ScalarValue(elapsedMilliseconds)),
+        ];
+    }
+
+    /// <summary>
     /// True for an event below Warning from a <c>Microsoft.AspNetCore</c> category (issue #201).
     /// <para>
     /// <b>Why not leave it to the configured level.</b> <c>appsettings.json</c> already sets
@@ -93,14 +113,7 @@ internal static class SerilogSetup
         {
             options.IncludeQueryInRequestPath = false;
 
-            // The four properties of the default template, with the one that can hold a credential redacted.
-            options.GetMessageTemplateProperties = (httpContext, requestPath, elapsedMilliseconds, statusCode) =>
-            [
-                new LogEventProperty("RequestMethod", new ScalarValue(httpContext.Request.Method)),
-                new LogEventProperty("RequestPath", new ScalarValue(RequestPathRedaction.ForLog(requestPath))),
-                new LogEventProperty("StatusCode", new ScalarValue(statusCode)),
-                new LogEventProperty("Elapsed", new ScalarValue(elapsedMilliseconds)),
-            ];
+            options.GetMessageTemplateProperties = RequestMessageTemplateProperties;
 
             options.GetLevel = (httpContext, _, exception) =>
             {

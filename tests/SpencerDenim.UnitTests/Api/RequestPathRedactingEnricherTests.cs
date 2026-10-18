@@ -66,6 +66,40 @@ public sealed class RequestPathRedactingEnricherTests
         Assert.Equal("/api/admin/orders/bank-transfers/*", Path(logged));
     }
 
+    /// <summary>
+    /// The request-completion line is safe on its own, without the enricher: same four property names as Serilog's
+    /// default template (what any consumer of the log keys on), the path redacted, nothing else added.
+    /// </summary>
+    [Fact]
+    public void The_request_line_keeps_serilogs_property_names_and_redacts_only_the_path()
+    {
+        var context = new DefaultHttpContext();
+        context.Request.Method = "GET";
+        context.Request.QueryString = new QueryString("?token=qs-Zk93TmXp41");
+
+        var properties = SerilogSetup.RequestMessageTemplateProperties(
+            context, $"/api/orders/{OrderToken}/payment-slip", 12.5, 404).ToList();
+
+        Assert.Equal(["RequestMethod", "RequestPath", "StatusCode", "Elapsed"], properties.Select(property => property.Name));
+        Assert.Equal("GET", ((ScalarValue)properties[0].Value).Value);
+        Assert.Equal("/api/orders/*", ((ScalarValue)properties[1].Value).Value);
+        Assert.Equal(404, ((ScalarValue)properties[2].Value).Value);
+        Assert.Equal(12.5, ((ScalarValue)properties[3].Value).Value);
+        Assert.DoesNotContain("qs-Zk93TmXp41", string.Join(' ', properties.Select(property => property.Value.ToString())), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_request_line_never_carries_the_query_even_if_the_path_handed_over_has_one()
+    {
+        var context = new DefaultHttpContext();
+        context.Request.Method = "POST";
+
+        var properties = SerilogSetup.RequestMessageTemplateProperties(
+            context, "/account/reset-password?token=CfDJ8Abc", 1, 200).ToList();
+
+        Assert.Equal("/account/reset-password", ((ScalarValue)properties[1].Value).Value);
+    }
+
     private static string? Path(LogEvent logged) => ((ScalarValue)logged.Properties["RequestPath"]).Value as string;
 
     private static LogEvent Write(Action<ILogger> act)
