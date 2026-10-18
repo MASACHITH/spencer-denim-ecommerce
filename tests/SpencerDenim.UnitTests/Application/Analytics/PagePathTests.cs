@@ -187,4 +187,29 @@ public sealed class PagePathTests
         Assert.NotNull(page);
         Assert.Equal(PageView.UtmMaxLength, page.Campaign.Campaign!.Length);
     }
+
+    /// <summary>
+    /// Issue #201: in .NET a regex <c>$</c> also matches before a final line feed, so "women\n" (what a decoded
+    /// <c>%0A</c> is) was a slug, was stored in <c>PageViews.Path</c> and would have written a line break into a
+    /// log line once the log started printing the same segments.
+    /// </summary>
+    [Theory]
+    [InlineData("women\n")]
+    [InlineData("women\r\n")]
+    [InlineData("\nwomen")]
+    [InlineData("wo\nmen")]
+    public void A_line_break_is_never_part_of_a_slug(string value)
+    {
+        Assert.False(PagePath.IsSafeSlug(value));
+        Assert.Equal(PagePath.Redacted, PagePath.SafeSegment(Uri.EscapeDataString(value)));
+    }
+
+    [Fact]
+    public void An_address_with_an_encoded_line_feed_is_stored_with_the_segment_starred()
+    {
+        var page = PagePath.Normalise("/women%0A");
+
+        Assert.NotNull(page);
+        Assert.Equal("/*", page.Path);
+    }
 }
