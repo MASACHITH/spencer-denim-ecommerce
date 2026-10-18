@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { BRAND } from '@spencer-denim/shared';
 
 import { canonicalTarget, redirectStatusFor } from './server/canonical-path';
+import { installConsoleRedaction } from './server/log-redaction';
 import { apiInternalUrl } from './server/origins';
 import {
   createTrafficContext,
@@ -21,6 +22,17 @@ import {
 import { answerRenderFailure } from './server/render-failure';
 import { ROBOTS_MAX_AGE_SECONDS, robotsTxt } from './server/robots-txt';
 import { SitemapDocument } from './server/sitemap-xml';
+
+/**
+ * **Before anything can print: nothing this process writes to its log may carry a credential (#201).**
+ *
+ * `@angular/ssr` prints the request URL, query string included, when it cannot write a response body, when it
+ * cannot inline critical CSS and for every request whose `Host` it will not trust; Node prints the offending
+ * URL of an invalid-URL error. None of that is code this project writes, so the console is wrapped once and every
+ * line passes through the redaction in `src/server/log-redaction.ts`. The lines this server writes itself are
+ * redacted at the source as well (`render-failure.ts`); this is the net under the ones it does not.
+ */
+installConsoleRedaction();
 
 const browserDistFolder = join(import.meta.dirname, '../browser');
 

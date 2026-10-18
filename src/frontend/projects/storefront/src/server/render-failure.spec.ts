@@ -77,7 +77,7 @@ describe('answerRenderFailure', () => {
       }
     });
 
-    it('still records the whole error, including the stack, in the log', () => {
+    it('still records the error, including its message and its stack, in the log', () => {
       const logged: [string, unknown][] = [];
       answerRenderFailure(failure, request('/women'), response(), (message, cause) =>
         logged.push([message, cause]),
@@ -85,7 +85,78 @@ describe('answerRenderFailure', () => {
 
       expect(logged).toHaveLength(1);
       expect(logged[0][0]).toBe('GET /women failed');
-      expect(logged[0][1]).toBe(failure);
+      // Described, not the object itself (#201): the text of the error, so nothing Node attaches to it prints.
+      expect(typeof logged[0][1]).toBe('string');
+      expect(logged[0][1]).toContain('NG05702: Protocol relative URLs are not allowed in this context');
+      expect(logged[0][1]).toContain('main.server.mjs:1:2');
+    });
+  });
+
+  /**
+   * **Issue #201: the line that says a render failed names the path and never the query string.**
+   *
+   * A failed server render of `/account/reset-password?token=…` or `/account/confirm-email?token=…` logged
+   * `originalUrl` as it came, so a live credential went to the container's log, which Docker keeps. Everything
+   * the request could put in front of the log is searched, not only the message: the error that goes with it
+   * is a Node `TypeError [ERR_INVALID_URL]` whose `input` property is the whole URL.
+   */
+  describe('what it writes to the log about the request (#201)', () => {
+    const orderToken = '7d1e5c0a-4b3f-4a8e-9c2d-1f6b8a3e5d90';
+    const resetToken = 'CfDJ8Abc-reset-Zk93TmXp41';
+
+    /** Everything the handler logged for one failed request, as one string. */
+    function logFor(url: string, error: unknown = failure): string {
+      const lines: string[] = [];
+      answerRenderFailure(
+        error,
+        request(url.split('?')[0], { originalUrl: url }),
+        response(),
+        (message, cause) => lines.push(message, String(cause)),
+      );
+
+      return lines.join('\n');
+    }
+
+    it.each([
+      [`/account/reset-password?token=${resetToken}&email=jane%40example.com`, 'GET /account/reset-password failed'],
+      [`/account/confirm-email?token=${resetToken}&userId=42`, 'GET /account/confirm-email failed'],
+      [`/search?q=0771234567`, 'GET /search failed'],
+      [`/order/${orderToken}?paypal=return&token=EC-8AB12345CD678901E&PayerID=ABC123`, 'GET /order/* failed'],
+      [`/women?sort=price-asc#top`, 'GET /women failed'],
+    ])('logs %s as the path only', (url, expected) => {
+      const lines: string[] = [];
+      answerRenderFailure(failure, request(url.split('?')[0], { originalUrl: url }), response(), (message) =>
+        lines.push(message),
+      );
+
+      expect(lines).toEqual([expected]);
+    });
+
+    it('prints no credential from the address, in the message or in the error', () => {
+      const urls = [
+        `/account/reset-password?token=${resetToken}&email=jane%40example.com`,
+        `/order/${orderToken}?token=${resetToken}`,
+      ];
+      const invalidUrl = (url: string) =>
+        Object.assign(new TypeError('Invalid URL'), { code: 'ERR_INVALID_URL', input: `http://localhost:4000${url}` });
+
+      for (const url of urls) {
+        const text = logFor(url, invalidUrl(url));
+
+        for (const secret of [resetToken, orderToken, 'jane%40example.com', 'jane@example.com', 'token=', 'input']) {
+          expect(text, `${secret} in the log of ${url}`).not.toContain(secret);
+        }
+
+        expect(text).toContain('ERR_INVALID_URL');
+      }
+    });
+
+    it('prints no credential an error message carries from the address either', () => {
+      const url = `/account/reset-password?token=${resetToken}`;
+      const text = logFor(url, new Error(`Render of ${url} failed: cannot read 'x' (http://localhost:4000${url})`));
+
+      expect(text).not.toContain(resetToken);
+      expect(text).toContain('Render of /account/reset-password');
     });
   });
 
