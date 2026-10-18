@@ -25,6 +25,10 @@ services:
       ASPNETCORE_ENVIRONMENT: Staging
 
   api:
+    # compose.yml mounts ../config/dataprotection, a server-layout path that would be created inside the repository
+    # on a laptop. Same container path, so this entry replaces that one, under the data directory instead.
+    volumes:
+      - ${SD_DATA_DIR:-../data}/dataprotection-cert:/etc/spencer-denim/dataprotection:ro
     environment:
       ASPNETCORE_ENVIRONMENT: Staging
       ForwardedHeaders__KnownProxies: *gateway_ip
