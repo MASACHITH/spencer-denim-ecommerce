@@ -96,6 +96,16 @@ public sealed class ApiFactory(
                 // in every test host; the traffic tests run one pass directly, as of a day they choose.
                 ["Traffic:JobsEnabled"] = "false",
 
+                // The order-placement limit (issue #107) is per visitor address, and a test host has exactly
+                // one: TestServer reports no address at all, so every shopper in every test lands in the
+                // shared bucket. The checkout suites place hundreds of orders from it (the concurrency
+                // rounds alone place several hundred), which no real address does, so the limit is lifted
+                // out of their way. It is lifted, not removed: `CheckoutPlacementThrottleTests` sets it
+                // back to a few permits through `additionalConfiguration`, which is applied after this, and
+                // `OrderPlacementThrottleTests` pins the shipped defaults.
+                ["OrderPlacementThrottle:PermitsPerWindow"] = "1000000",
+                ["OrderPlacementThrottle:SharedAddressPermitsPerWindow"] = "1000000",
+
                 // **No test may reach a real mail server or send to a real address** (W3-06). These two
                 // keys are blanked rather than left out, because leaving them out is not the same thing:
                 // the in-memory provider only wins for keys it holds, and a developer with

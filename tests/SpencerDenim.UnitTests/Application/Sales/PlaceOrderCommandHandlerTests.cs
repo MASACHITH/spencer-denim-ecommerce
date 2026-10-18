@@ -168,28 +168,171 @@ public sealed class PlaceOrderCommandHandlerTests
         Assert.Null(request.ProviderReference);
     }
 
+    // ------------------------------------------------------------------------------------------------
+    // Issue #107: the placement throttle. Same stubs as the race tests above, because the question is the
+    // same one asked from the other side: which requests count as "a new order about to hold stock"?
+    // ------------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// A new placement takes exactly one permit, for the visitor's address and nobody else's.
+    /// </summary>
+    [Fact]
+    public async Task A_new_placement_takes_one_permit_for_the_visitors_address()
+    {
+        var throttle = new RecordingThrottle(allow: true);
+        var reader = new RacingCheckoutReader { Lines = [Line(CartLineStatus.Buyable)], WinnerExists = false };
+        var placements = new StubPlacementStore(OrderPlacementResult.Placed(Guid.NewGuid()));
+
+        var result = await HandleAsync(reader, placements, throttle: throttle, ipAddress: "203.0.113.7");
+
+        Assert.Equal(PlaceOrderStatus.Placed, result.Status);
+        Assert.Equal(["203.0.113.7"], throttle.Partitions);
+        Assert.Equal(1, placements.Calls);
+    }
+
+    /// <summary>
+    /// <b>The whole point.</b> With the permit refused, the handler stops before it allocates an order
+    /// number, before it asks the payment provider anything and before the placement transaction opens —
+    /// so nothing is reserved and nothing is written. The refusal is a status, not an exception.
+    /// </summary>
+    [Fact]
+    public async Task A_refused_permit_places_nothing_and_spends_no_order_number()
+    {
+        var throttle = new RecordingThrottle(allow: false);
+        var provider = new StubPaymentProvider();
+        var numbers = new CountingNumberSeriesAllocator();
+        var reader = new RacingCheckoutReader { Lines = [Line(CartLineStatus.Buyable)], WinnerExists = false };
+        var placements = new StubPlacementStore(OrderPlacementResult.Placed(Guid.NewGuid()));
+
+        var result = await HandleAsync(reader, placements, provider, throttle, numbers, ipAddress: "203.0.113.7");
+
+        Assert.Equal(PlaceOrderStatus.RateLimited, result.Status);
+        Assert.Null(result.Confirmation);
+        Assert.Equal(1, throttle.Calls);
+        Assert.Equal(0, placements.Calls);
+        Assert.Equal(0, numbers.Allocations);
+        Assert.Equal(0, provider.Initiations);
+    }
+
+    /// <summary>
+    /// <b>Replay exemption, sequential half.</b> A key that has already placed an order is answered with
+    /// that order before the limit is consulted — so a shopper retrying on a bad connection is neither
+    /// counted nor refused, however spent the address is. The throttle is never even asked.
+    /// </summary>
+    [Fact]
+    public async Task A_replay_of_a_placed_key_is_answered_with_its_order_without_touching_the_limit()
+    {
+        var throttle = new RecordingThrottle(allow: false);
+        var reader = new RacingCheckoutReader { Lines = [], WinnerFoundOnFirstLook = true };
+
+        var result = await HandleAsync(reader, throttle: throttle, ipAddress: "203.0.113.7");
+
+        Assert.Equal(PlaceOrderStatus.AlreadyPlaced, result.Status);
+        Assert.True(result.Confirmation!.IsDuplicateSubmission);
+        Assert.Equal(0, throttle.Calls);
+    }
+
+    /// <summary>
+    /// <b>Replay exemption, racing half.</b> The first submission commits after the pre-check and before
+    /// this request's permit. The permit is refused, but the order exists, so the honest answer is the
+    /// order — the same re-check every other refusal in this handler makes.
+    /// </summary>
+    [Fact]
+    public async Task A_refused_permit_still_replays_an_order_that_committed_in_the_meantime()
+    {
+        var throttle = new RecordingThrottle(allow: false);
+        var reader = new RacingCheckoutReader { Lines = [Line(CartLineStatus.Buyable)] };
+        var placements = new StubPlacementStore(OrderPlacementResult.Placed(Guid.NewGuid()));
+
+        var result = await HandleAsync(reader, placements, throttle: throttle, ipAddress: "203.0.113.7");
+
+        Assert.Equal(PlaceOrderStatus.AlreadyPlaced, result.Status);
+        Assert.Equal(RacingCheckoutReader.WinningOrderNumber, result.Confirmation!.OrderNumber);
+        Assert.Equal(0, placements.Calls);
+    }
+
+    /// <summary>
+    /// A request that is refused on its own merits — a missing field, an empty bag, a line that cannot be
+    /// bought, a total that moved — has reserved nothing and so costs no permit. This is the newsletter's
+    /// "a mistyped address costs nothing" for a form with many more ways to be wrong, and it is what keeps
+    /// a shopper who fixes three typos from being locked out by their own corrections.
+    /// </summary>
+    [Fact]
+    public async Task A_request_refused_on_its_own_merits_costs_no_permit()
+    {
+        var throttle = new RecordingThrottle(allow: true);
+        var buyable = new RacingCheckoutReader { Lines = [Line(CartLineStatus.Buyable)], WinnerExists = false };
+
+        var invalid = await HandleAsync(buyable, throttle: throttle, firstName: null);
+        Assert.Equal(PlaceOrderStatus.Invalid, invalid.Status);
+
+        var emptyBag = await HandleAsync(
+            new RacingCheckoutReader { Lines = [], WinnerExists = false },
+            throttle: throttle);
+        Assert.Equal(PlaceOrderStatus.Blocked, emptyBag.Status);
+
+        var unbuyable = await HandleAsync(
+            new RacingCheckoutReader { Lines = [Line(CartLineStatus.OutOfStock)], WinnerExists = false },
+            throttle: throttle);
+        Assert.Equal(PlaceOrderStatus.Blocked, unbuyable.Status);
+
+        var moved = await HandleAsync(buyable, throttle: throttle, expectedGrandTotal: 1m);
+        Assert.Equal(PlaceOrderStatus.TotalChanged, moved.Status);
+
+        Assert.Equal(0, throttle.Calls);
+    }
+
+    /// <summary>
+    /// The accepted imprecision, pinned so it is a decision and not an accident: once the permit is taken
+    /// the request is a real placement attempt, and losing the stock race inside the transaction does not
+    /// give it back. A fixed window cannot return a permit, and an address that keeps losing races is
+    /// exactly the one that should be slowed.
+    /// </summary>
+    [Fact]
+    public async Task A_placement_that_loses_the_stock_race_has_still_spent_its_permit()
+    {
+        var throttle = new RecordingThrottle(allow: true);
+        var reader = new RacingCheckoutReader { Lines = [Line(CartLineStatus.Buyable)], WinnerExists = false };
+        var placements = new StubPlacementStore(
+            OrderPlacementResult.OutOfStock(new Dictionary<int, int> { [VariantId] = 0 }));
+
+        var result = await HandleAsync(reader, placements, throttle: throttle);
+
+        Assert.Equal(PlaceOrderStatus.OutOfStock, result.Status);
+        Assert.Equal(1, throttle.Calls);
+    }
+
     private static Task<PlaceOrderResult> HandleAsync(
         RacingCheckoutReader reader,
         IOrderPlacementStore? placements = null,
-        IPaymentProvider? provider = null)
+        IPaymentProvider? provider = null,
+        IOrderPlacementThrottle? throttle = null,
+        INumberSeriesAllocator? numbers = null,
+        string? firstName = "Nimali",
+        decimal? expectedGrandTotal = 1350m,
+        string? ipAddress = null)
     {
         var handler = new PlaceOrderCommandHandler(
             new StubCartStore(),
             reader,
-            new ThrowingNumberSeriesAllocator(),
+            numbers ?? new ThrowingNumberSeriesAllocator(),
             placements ?? new StubPlacementStore(OrderPlacementResult.DuplicateSubmission),
             new FixedClock(new DateTimeOffset(2026, 10, 6, 9, 0, 0, TimeSpan.Zero)),
 
             // PAY-03: the handler takes a registry, not a bank-transfer setting. The race tests never
             // reach the provider — they all refuse before the initiation call — but the registry has to be
             // real enough to resolve the provider code the command carries.
-            new StubPaymentProviderRegistry(provider));
+            new StubPaymentProviderRegistry(provider),
+
+            // Issue #107. Open by default, so the race tests above stay about the race: a test about the
+            // limit passes a throttle of its own.
+            throttle ?? new RecordingThrottle(allow: true));
 
         return handler.HandleAsync(
             new PlaceOrderCommand(
                 CartLookup.ForGuest(CartToken),
                 CheckoutKey,
-                "Nimali",
+                firstName,
                 "Perera",
                 "nimali@example.com",
                 "0771234567",
@@ -207,9 +350,9 @@ public sealed class PlaceOrderCommandHandlerTests
                 PaymentProviderCodes.BankTransfer,
 
                 // One buyable unit at Rs. 1,000 plus a Rs. 350 fee, so G-10 agrees when a line is priced.
-                1350m,
+                expectedGrandTotal,
                 null,
-                null),
+                ipAddress),
             TestContext.Current.CancellationToken);
     }
 
@@ -436,10 +579,52 @@ public sealed class PlaceOrderCommandHandlerTests
 
     private sealed class StubPlacementStore(OrderPlacementResult result) : IOrderPlacementStore
     {
+        /// <summary>How many times the placement transaction was asked for. Zero proves nothing was written.</summary>
+        public int Calls { get; private set; }
+
         public Task<OrderPlacementResult> PlaceAsync(
             OrderPlacement placement,
+            CancellationToken cancellationToken)
+        {
+            Calls++;
+            return Task.FromResult(result);
+        }
+    }
+
+    /// <summary>A throttle that answers what a test told it to and records every address it was asked about.</summary>
+    private sealed class RecordingThrottle(bool allow) : IOrderPlacementThrottle
+    {
+        public List<string?> Partitions { get; } = [];
+
+        public int Calls => Partitions.Count;
+
+        public TimeSpan Window => TimeSpan.FromMinutes(10);
+
+        public bool TryAcquire(string? partitionKey)
+        {
+            Partitions.Add(partitionKey);
+            return allow;
+        }
+    }
+
+    /// <summary>Counts the order numbers handed out, so a test can show a refusal burned none.</summary>
+    private sealed class CountingNumberSeriesAllocator : INumberSeriesAllocator
+    {
+        public int Allocations { get; private set; }
+
+        public Task<string> AllocateOrderNumberAsync(
+            DateTimeOffset placedAt,
+            CancellationToken cancellationToken)
+        {
+            Allocations++;
+            return Task.FromResult("CW-2026-000999");
+        }
+
+        public Task<int> AllocateAsync(
+            string seriesKey,
+            string prefix,
             CancellationToken cancellationToken) =>
-            Task.FromResult(result);
+            throw new NotSupportedException();
     }
 
     /// <summary>

@@ -103,6 +103,12 @@ the first install, check on the server that neither the ports nor the subnets ar
    rate limit read — is therefore the visitor. The newsletter limit is now per visitor: **20 signups per address
    per 10 minutes** (was 600 while every visitor shared the proxy's address). If it logs warning 1101
    ("signups are arriving from … not a visitor's own address"), step 2 or 3 is misconfigured.
+   The **order-placement limit** (`POST /api/checkout/orders`, #107) reads the same address: **20 orders per
+   address per 10 minutes**, answering 429 with `Retry-After`; a resend of an order that was already placed is
+   never counted or refused. Tune it with `OrderPlacementThrottle__PermitsPerWindow`,
+   `OrderPlacementThrottle__SharedAddressPermitsPerWindow` (the budget when the address is the proxy's, default
+   200) and `OrderPlacementThrottle__WindowSeconds`. Warning 3311 ("orders are arriving from … not a visitor's
+   own address") means step 2 or 3 is misconfigured, as for 1101.
 
 5. The **storefront** gets only `X-Forwarded-Host` and `X-Forwarded-Proto` (both overwritten by the gateway) and
    trusts exactly those (`NG_TRUST_PROXY_HEADERS`). Angular's SSR engine falls back to the **empty client-side
