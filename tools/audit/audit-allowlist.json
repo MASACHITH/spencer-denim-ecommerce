@@ -1,0 +1,20 @@
+{
+  "purpose": "Advisories (npm and NuGet) that the dependency gate tools/audit/audit-gate.mjs tolerates for now. An entry is a dated decision, not a permanent exception. Rules and routine: docs/06-engineering-process.md section 4.",
+  "entryFormat": {
+    "ecosystem": "npm | nuget",
+    "advisory": "GHSA id exactly as the report prints it, e.g. GHSA-xxxx-xxxx-xxxx",
+    "package": "the vulnerable package, not the package that depends on it",
+    "severity": "what the report says, for the reader (the gate matches on advisory and package)",
+    "reason": "why it is acceptable and what would end it: at least 30 characters, say why it cannot reach a shopper or staff user, and what fix you are waiting for",
+    "acceptedBy": "the person who accepted it (GitHub username)",
+    "acceptedOn": "YYYY-MM-DD",
+    "reviewBy": "YYYY-MM-DD, after acceptedOn and no more than 90 days after it; the gate fails the day after this date",
+    "issue": "optional: the GitHub issue that tracks removing it"
+  },
+  "notes": [
+    "Only HIGH and CRITICAL advisories need an entry; the gate ignores the rest.",
+    "A NuGet advisory also fails restore in the build jobs (warnings are errors). Accepting one needs a NuGetAuditSuppress item as well, which is a coordinated change to Directory.Build.props or Directory.Packages.props; the suppression alone does not satisfy this gate.",
+    "The gate fails on an entry whose advisory is no longer reported. Delete it, do not leave it to pre-approve the next advisory."
+  ],
+  "entries": []
+}
