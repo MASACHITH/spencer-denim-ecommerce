@@ -174,6 +174,14 @@ describe('parseNpmAudit', () => {
     assert.throws(() => parseNpmAudit(JSON.stringify(offline)), (e) => e instanceof GateError && /ENOTFOUND/.test(e.message));
   });
 
+  test('the offline report npm really prints names the reason, from the top-level message', () => {
+    const offline = {
+      message: 'request to https://registry.npmjs.org/-/npm/v1/security/advisories/bulk failed, reason: getaddrinfo ENOTFOUND registry.npmjs.org',
+      error: { summary: '', detail: '' },
+    };
+    assert.throws(() => parseNpmAudit(JSON.stringify(offline)), (e) => e instanceof GateError && /ENOTFOUND registry.npmjs.org/.test(e.message));
+  });
+
   test('output that is empty, not JSON, or from another report version is an error', () => {
     assert.throws(() => parseNpmAudit(''), GateError);
     assert.throws(() => parseNpmAudit('npm ERR! something'), GateError);

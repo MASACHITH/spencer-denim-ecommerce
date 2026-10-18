@@ -148,8 +148,11 @@ export function parseNpmAudit(text) {
   const report = parseJson(text, 'npm audit');
 
   if (report?.error) {
+    // Offline, npm prints { message: "request to ... failed, reason: ...", error: { summary: "", detail: "" } }:
+    // the useful text is the top-level message and the error's own fields are empty strings.
     const { code, summary, detail } = report.error;
-    throw new GateError(`npm audit could not run (${code ?? 'no code'}): ${summary ?? detail ?? 'no detail'}`);
+    const why = report.message || summary || detail || 'no detail given';
+    throw new GateError(`npm audit could not run${code ? ` (${code})` : ''}: ${why}`);
   }
   if (
     report === null ||
@@ -379,7 +382,7 @@ export function isPassing(result, invalid = []) {
 // Reporting
 // ---------------------------------------------------------------------------------------------
 
-const LABELS = { npm: 'npm (src/frontend)', nuget: 'NuGet (SpencerDenim.sln)' };
+const LABELS = { npm: 'npm', nuget: 'NuGet' };
 
 export function render(result, invalid = []) {
   const lines = [];
