@@ -4,6 +4,7 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { ActivatedRoute, Router, convertToParamMap, provideRouter } from '@angular/router';
 
 import { AdminAuthApi } from '../../core/auth/admin-auth-api';
+import { STAFF_PASSWORD_RULE } from '../../core/auth/password-rule';
 import { UsersApi } from '../../core/users/users-api';
 import { UserFormPage } from './user-form-page';
 
@@ -137,6 +138,51 @@ describe('UserFormPage (create mode)', () => {
     fixture.detectChanges();
 
     expect((fixture.nativeElement as HTMLElement).textContent).toContain('Email is required.');
+  });
+
+  // Issue #200: the initial password needs the same ten characters a customer's does, and the form says so
+  // before anything is typed (it used to state no rule at all, so the admin learned it from a refusal).
+  it('states the password rule beside the initial password and ties it to the field', async () => {
+    const fixture = await create();
+
+    const root = fixture.nativeElement as HTMLElement;
+    const hint = root.querySelector('#initial-password-rule');
+    expect(hint?.textContent?.trim()).toBe(STAFF_PASSWORD_RULE);
+    expect(hint?.textContent).toContain('at least 10 characters');
+    expect(root.querySelector('input[name="initialPassword"]')?.getAttribute('aria-describedby')).toBe(
+      'initial-password-rule',
+    );
+  });
+
+  it('shows the rule the API refused the initial password with, under the form', async () => {
+    const fixture = await create();
+
+    const component = fixture.componentInstance as unknown as {
+      email: { set(v: string): void };
+      firstName: { set(v: string): void };
+      initialPassword: { set(v: string): void };
+      saveProfile(): void;
+    };
+    component.email.set('new@example.com');
+    component.firstName.set('New');
+    component.initialPassword.set('Aa1!xxxxx');
+
+    component.saveProfile();
+
+    flushAntiforgery(controller);
+    controller.expectOne(UsersApi.usersUrl).flush(
+      {
+        title: 'The initial password does not meet the password rules.',
+        errors: { initialPassword: [STAFF_PASSWORD_RULE] },
+      },
+      { status: 400, statusText: 'Bad Request' },
+    );
+    fixture.detectChanges();
+
+    const alerts = Array.from((fixture.nativeElement as HTMLElement).querySelectorAll('[role="alert"]')).map(
+      (element) => element.textContent,
+    );
+    expect(alerts.some((text) => text?.includes('at least 10 characters'))).toBe(true);
   });
 });
 

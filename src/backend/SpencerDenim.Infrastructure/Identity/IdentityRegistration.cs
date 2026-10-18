@@ -62,6 +62,8 @@ public static class IdentityRegistration
             // so a save of a stale user can never write an old lockout state back — see AppUserStore.
             .AddUserStore<AppUserStore>()
             .AddSignInManager()
+            // Issue #200: a too-short password is refused with the policy's own sentence, on every path.
+            .AddErrorDescriber<PasswordPolicyErrorDescriber>()
             .AddDefaultTokenProviders()
             // W1-10: registered after the defaults so it replaces Identity's authenticator provider under the same
             // name, and every authenticator check (sign-in and enrolment) refuses a code that was already used.
@@ -76,6 +78,20 @@ public static class IdentityRegistration
                 identityOptions.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(security.LockoutMinutes);
                 identityOptions.User.RequireUniqueEmail = true;
                 identityOptions.SignIn.RequireConfirmedAccount = false;
+
+                // Issue #200: the password rule for EVERY account, from the one place it is written. These options
+                // are global, so this is the staff rule and the customer rule at once: creating a staff user, a
+                // staff member's own change (and the forced first one), the seeded first Super Admin and a
+                // customer's register / change / reset all end in UserManager's validators and are refused here.
+                // Before, nothing set RequiredLength, so staff passwords sat at Identity's default of six while
+                // customers (who had a separate pre-check) needed ten. The four character classes below are
+                // Identity's defaults, stated so the sentence PasswordPolicy.Requirement promises them is a fact
+                // of the configuration and not an accident of a default (PasswordRuleWiringTests pins them).
+                identityOptions.Password.RequiredLength = PasswordPolicy.MinimumLength;
+                identityOptions.Password.RequireDigit = true;
+                identityOptions.Password.RequireLowercase = true;
+                identityOptions.Password.RequireUppercase = true;
+                identityOptions.Password.RequireNonAlphanumeric = true;
             });
 
         services.AddAuthentication(AdminAuthenticationDefaults.Scheme)

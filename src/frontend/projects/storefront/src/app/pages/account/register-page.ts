@@ -44,7 +44,7 @@ import { privatePage } from '../../core/platform/private-page';
  *
  * ## No password rule is printed, and that is the server's decision rather than an omission
  *
- * `CustomerPasswordPolicy` holds the minimum length and the sentence that describes it, and its own
+ * `PasswordPolicy` holds the minimum length and the sentence that describes it, and its own
  * remarks say "the front end reads it from the registration endpoint's problem details rather than
  * holding a second copy" — because #126 shipped a `maxlength` of 120 against a 100-character column, and
  * a form promising eight characters against an API refusing nine is the same defect. So a refused
@@ -231,7 +231,7 @@ export class RegisterPage {
   /**
    * The one sentence the server's validator and this form both state.
    *
-   * Pinned to `CustomerPasswordPolicy.Requirement` by a C# convention test; see
+   * Pinned to `PasswordPolicy.Requirement` by a C# convention test; see
    * {@link PASSWORD_RULE}.
    */
   protected readonly PASSWORD_RULE = PASSWORD_RULE;

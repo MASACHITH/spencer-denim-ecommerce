@@ -4,6 +4,7 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { ActivatedRoute, Router, convertToParamMap, provideRouter } from '@angular/router';
 
 import { AdminAuthApi } from '../../core/auth/admin-auth-api';
+import { STAFF_PASSWORD_RULE } from '../../core/auth/password-rule';
 import { ChangePasswordPage } from './change-password-page';
 
 /** Stands in for the ActivatedRoute the router would give this page when it was reached via `?returnUrl=…`. */
@@ -143,7 +144,12 @@ describe('ChangePasswordPage', () => {
       {
         status: 400,
         error: 'new_password_rejected',
-        errors: { newPassword: ['Passwords must be at least 6 characters.', 'Passwords must have at least one digit.'] },
+        errors: {
+          newPassword: [
+            'Use at least 10 characters, including an upper-case letter, a lower-case letter, a number and a symbol.',
+            'Passwords must have at least one digit.',
+          ],
+        },
       },
       { status: 400, statusText: 'Bad Request' },
     );
@@ -152,7 +158,42 @@ describe('ChangePasswordPage', () => {
 
     const items = (fixture.nativeElement as HTMLElement).querySelectorAll('[role="alert"] li');
     expect(items.length).toBe(2);
+    expect(items[0].textContent).toContain('at least 10 characters');
     expect(items[1].textContent).toContain('at least one digit');
+  });
+
+  // Issue #200: staff passwords now need the same ten characters customers do, and the screen must say so
+  // BEFORE the person types — the old hint promised six, which the server now refuses.
+  it('states the ten-character rule above the new-password box and ties it to the field', () => {
+    const fixture = create();
+
+    const root = fixture.nativeElement as HTMLElement;
+    const hint = root.querySelector('#change-rules');
+    expect(hint?.textContent?.trim()).toBe(STAFF_PASSWORD_RULE);
+    expect(hint?.textContent).toContain('at least 10 characters');
+    expect(hint?.textContent).not.toMatch(/6/);
+    expect(root.querySelector('input[name="newPassword"]')?.getAttribute('aria-describedby')).toContain('change-rules');
+  });
+
+  it('keeps the rule linked to the field while an error is showing', async () => {
+    const fixture = create();
+    fill(fixture, 'Bootstrap-1!', 'Aa1!xxxxx');
+
+    submitWithToken(fixture).flush(
+      {
+        status: 400,
+        error: 'new_password_rejected',
+        errors: { newPassword: [STAFF_PASSWORD_RULE] },
+      },
+      { status: 400, statusText: 'Bad Request' },
+    );
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const describedBy = (fixture.nativeElement as HTMLElement)
+      .querySelector('input[name="newPassword"]')
+      ?.getAttribute('aria-describedby');
+    expect(describedBy).toBe('change-rules change-error');
   });
 
   function input(fixture: ComponentFixture<ChangePasswordPage>, name: string): HTMLInputElement {

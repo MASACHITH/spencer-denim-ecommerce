@@ -413,7 +413,7 @@ public sealed class UserEndpointTests(SqlServerDatabaseFixture sqlServer)
         Assert.Equal("The initial password does not meet the password rules.", body.GetProperty("title").GetString());
 
         var messages = body.GetProperty("errors").GetProperty("initialPassword").EnumerateArray().Select(e => e.GetString()).ToList();
-        Assert.Contains(CustomerPasswordPolicy.Requirement, messages);
+        Assert.Contains(PasswordPolicy.Requirement, messages);
 
         // The refusal rolled back: there is no half-made account to find.
         Assert.Null(created);

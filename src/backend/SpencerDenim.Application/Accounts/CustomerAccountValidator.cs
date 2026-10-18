@@ -171,9 +171,9 @@ internal static class CustomerAccountValidator
         // store, against the user being created, and their messages come back from there: they are the
         // ones that match what is actually enforced, and a second wording here would be a second source
         // of truth about the rule.
-        if (!CustomerPasswordPolicy.IsLongEnough(value))
+        if (!PasswordPolicy.IsLongEnough(value))
         {
-            errors.Add(new ValidationError(field, CustomerPasswordPolicy.Requirement));
+            errors.Add(new ValidationError(field, PasswordPolicy.Requirement));
         }
     }
 

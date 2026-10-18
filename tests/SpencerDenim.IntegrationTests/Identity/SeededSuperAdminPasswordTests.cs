@@ -63,7 +63,7 @@ public sealed class SeededSuperAdminPasswordTests(SqlServerDatabaseFixture sqlSe
 
             // And the operator is told why, in the rule's own words.
             var logged = Assert.Single(errors, message => message.Contains("Failed to seed the initial Super Admin", StringComparison.Ordinal));
-            Assert.Contains(CustomerPasswordPolicy.Requirement, logged, StringComparison.Ordinal);
+            Assert.Contains(PasswordPolicy.Requirement, logged, StringComparison.Ordinal);
         }
 
         // The same host, the same empty deployment, a password that is exactly long enough: now it seeds.

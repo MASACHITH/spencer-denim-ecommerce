@@ -60,7 +60,7 @@ public sealed class CustomerAccountValidatorTests
         var errors = CustomerAccountValidator.ValidateRegistration(Registration(password: "Ab1!cdef"));
 
         var message = Assert.Single(errors, error => error.Field == "password").Message;
-        Assert.Equal(CustomerPasswordPolicy.Requirement, message);
+        Assert.Equal(PasswordPolicy.Requirement, message);
     }
 
     /// <summary>
@@ -74,10 +74,10 @@ public sealed class CustomerAccountValidatorTests
     [Fact]
     public void The_minimum_length_is_inclusive()
     {
-        var atTheLimit = "Aa1!" + new string('x', CustomerPasswordPolicy.MinimumLength - 4);
+        var atTheLimit = "Aa1!" + new string('x', PasswordPolicy.MinimumLength - 4);
         var oneShort = atTheLimit[..^1];
 
-        Assert.Equal(CustomerPasswordPolicy.MinimumLength, atTheLimit.Length);
+        Assert.Equal(PasswordPolicy.MinimumLength, atTheLimit.Length);
         Assert.Empty(CustomerAccountValidator.ValidateRegistration(Registration(password: atTheLimit)));
         Assert.NotEmpty(CustomerAccountValidator.ValidateRegistration(Registration(password: oneShort)));
     }
@@ -327,10 +327,10 @@ public sealed class CustomerAccountValidatorTests
     [Fact]
     public void The_password_hint_names_every_rule_that_is_enforced()
     {
-        var hint = CustomerPasswordPolicy.Requirement;
+        var hint = PasswordPolicy.Requirement;
 
         Assert.Contains(
-            CustomerPasswordPolicy.MinimumLength.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            PasswordPolicy.MinimumLength.ToString(System.Globalization.CultureInfo.InvariantCulture),
             hint,
             StringComparison.Ordinal);
 

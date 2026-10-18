@@ -111,7 +111,7 @@ public sealed class PasswordRuleWiringTests
         // can act on and the one the shopper-facing form already uses — not a second wording of the rule.
         var tooShort = Assert.Single(result.Errors);
         Assert.Equal(nameof(IdentityErrorDescriber.PasswordTooShort), tooShort.Code);
-        Assert.Equal(CustomerPasswordPolicy.Requirement, tooShort.Description);
+        Assert.Equal(PasswordPolicy.Requirement, tooShort.Description);
     }
 
     [Fact]
@@ -146,7 +146,7 @@ public sealed class PasswordRuleWiringTests
     /// </summary>
     /// <remarks>
     /// The four character-class flags are asserted as well because the sentence every screen shows
-    /// (<see cref="CustomerPasswordPolicy.Requirement"/>) promises all four. They are Identity's defaults
+    /// (<see cref="PasswordPolicy.Requirement"/>) promises all four. They are Identity's defaults
     /// and nothing sets them, so this is what turns "somebody relaxed one" into a red build instead of a
     /// hint that is quietly untrue.
     /// </remarks>
@@ -157,7 +157,7 @@ public sealed class PasswordRuleWiringTests
 
         var password = provider.GetRequiredService<IOptions<IdentityOptions>>().Value.Password;
 
-        Assert.Equal(CustomerPasswordPolicy.MinimumLength, password.RequiredLength);
+        Assert.Equal(PasswordPolicy.MinimumLength, password.RequiredLength);
         Assert.True(password.RequireUppercase);
         Assert.True(password.RequireLowercase);
         Assert.True(password.RequireDigit);

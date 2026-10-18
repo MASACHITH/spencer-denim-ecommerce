@@ -424,7 +424,7 @@ public sealed class CustomerPasswordEndpointTests(SqlServerDatabaseFixture sqlSe
     /// A weak new password is refused on both routes, with the rule the shopper was shown.
     /// </summary>
     /// <remarks>
-    /// <b>The message is asserted, not just the field.</b> <c>CustomerPasswordPolicy.Requirement</c> is
+    /// <b>The message is asserted, not just the field.</b> <c>PasswordPolicy.Requirement</c> is
     /// the one sentence the form's hint and the server's refusal both read from — #126's defect was a
     /// form and a column disagreeing about a number, and the cure is one value with one name. If the
     /// two ever diverge, this goes red.
@@ -454,7 +454,7 @@ public sealed class CustomerPasswordEndpointTests(SqlServerDatabaseFixture sqlSe
             .Select(element => element.GetString())
             .ToList();
 
-        Assert.Contains(SpencerDenim.Domain.Identity.CustomerPasswordPolicy.Requirement, messages);
+        Assert.Contains(SpencerDenim.Domain.Identity.PasswordPolicy.Requirement, messages);
     }
 
     /// <summary>

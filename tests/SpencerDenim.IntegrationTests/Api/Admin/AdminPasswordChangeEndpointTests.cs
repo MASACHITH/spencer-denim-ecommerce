@@ -402,7 +402,7 @@ public sealed class AdminPasswordChangeEndpointTests(SqlServerDatabaseFixture sq
 
         // A 400 that names the rule, not a bare "rejected": the screen renders these lines as they are.
         var reasons = body.GetProperty("errors").GetProperty("newPassword").EnumerateArray().Select(e => e.GetString()).ToList();
-        Assert.Contains(CustomerPasswordPolicy.Requirement, reasons);
+        Assert.Contains(PasswordPolicy.Requirement, reasons);
 
         Assert.True(user.MustChangePassword);
         Assert.Equal(stampBefore, user.SecurityStamp);
@@ -450,7 +450,7 @@ public sealed class AdminPasswordChangeEndpointTests(SqlServerDatabaseFixture sq
         await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, TestContext.Current.CancellationToken);
 
         const string legacyPassword = "Aa1!xx";
-        Assert.True(legacyPassword.Length < CustomerPasswordPolicy.MinimumLength, "The premise: this password is under today's minimum.");
+        Assert.True(legacyPassword.Length < PasswordPolicy.MinimumLength, "The premise: this password is under today's minimum.");
 
         var email = UniqueEmail("legacy-short");
         await using var factory = new ApiFactory(sqlServer.ConnectionString);
