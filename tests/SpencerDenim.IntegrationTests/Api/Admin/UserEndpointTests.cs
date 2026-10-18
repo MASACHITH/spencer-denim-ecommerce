@@ -351,6 +351,74 @@ public sealed class UserEndpointTests(SqlServerDatabaseFixture sqlServer)
         Assert.Equal("The initial password does not meet the password rules.", body.GetProperty("title").GetString());
     }
 
+    /// <summary>
+    /// Issue #200. The initial password of a new staff user must reach the same minimum a customer's must
+    /// (ten, W3-01): nine is a 400 keyed on <c>initialPassword</c> that states the rule and leaves no user
+    /// behind, ten is a 201, and six, the old Identity default, is refused.
+    /// </summary>
+    /// <remarks>
+    /// <b>The lengths are written out rather than read from the policy</b>, so this test is an oracle that
+    /// stays independent of the constant it is checking: if the constant were lowered, a test built from it
+    /// would follow it down and pass. Raising the minimum on purpose means updating these rows with it.
+    /// Every candidate carries all four character classes, so length is the only thing that can decide the
+    /// outcome.
+    /// </remarks>
+    [Theory]
+    [InlineData(6, false)]
+    [InlineData(9, false)]
+    [InlineData(10, true)]
+    public async Task A_new_staff_users_initial_password_must_reach_the_customer_minimum(int length, bool accepted)
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, TestContext.Current.CancellationToken);
+
+        await using var factory = new ApiFactory(sqlServer.ConnectionString);
+        var actorRoleId = await CreateRoleAsync(factory, UniqueName("creator-min-pw"), [Permissions.Users.Manage, Permissions.Orders.View]);
+        var newUserRoleId = await CreateRoleAsync(factory, UniqueName("created-min-pw"), [Permissions.Orders.View]);
+
+        var (actorEmail, actorPassword) = UniqueCredentials("actor-create-min-pw");
+        await CreateStaffUserWithRolesAsync(factory, actorEmail, actorPassword, [actorRoleId]);
+
+        using var client = CreateClient(factory);
+        await LoginAsync(client, actorEmail, actorPassword);
+        var token = await GetAntiforgeryTokenAsync(client);
+
+        var targetEmail = UniqueEmail("min-pw-target");
+        using var response = await PostJsonAsync(
+            client,
+            UsersUrl,
+            new
+            {
+                email = targetEmail,
+                firstName = "Min",
+                lastName = "Password",
+                initialPassword = "Aa1!" + new string('x', length - 4),
+                roleIds = new[] { newUserRoleId },
+            },
+            token);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var created = await scope.ServiceProvider.GetRequiredService<UserManager<AppUser>>().FindByEmailAsync(targetEmail);
+
+        if (accepted)
+        {
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+            Assert.NotNull(created);
+            Assert.True(created.MustChangePassword);
+            return;
+        }
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
+        Assert.Equal("The initial password does not meet the password rules.", body.GetProperty("title").GetString());
+
+        var messages = body.GetProperty("errors").GetProperty("initialPassword").EnumerateArray().Select(e => e.GetString()).ToList();
+        Assert.Contains(CustomerPasswordPolicy.Requirement, messages);
+
+        // The refusal rolled back: there is no half-made account to find.
+        Assert.Null(created);
+    }
+
     [Fact]
     public async Task Self_role_edit_is_always_blocked()
     {

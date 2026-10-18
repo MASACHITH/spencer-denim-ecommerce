@@ -353,9 +353,139 @@ public sealed class AdminPasswordChangeEndpointTests(SqlServerDatabaseFixture sq
         Assert.Equal((HttpStatusCode)423, stillLocked.StatusCode);
     }
 
+    /// <summary>
+    /// Issue #200. The password a staff member changes to must be at least as long as a customer's (ten,
+    /// W3-01): nine is a 400 that names the rule, ten is accepted, and nothing about the account changes on
+    /// a refusal.
+    /// </summary>
+    /// <remarks>
+    /// <b>The same route is the forced first-sign-in change</b> (<c>MustChangePassword</c> is set here), so
+    /// this covers that path as well as an ordinary change. Both candidates carry all four character classes,
+    /// so length is the only thing that can decide the outcome. The lengths are written out rather than read
+    /// from the policy so the test stays an independent oracle: a test built from the constant would follow
+    /// it down if it were ever lowered, and pass.
+    /// </remarks>
+    [Theory]
+    [InlineData(9, false)]
+    [InlineData(10, true)]
+    public async Task The_new_password_must_reach_the_same_minimum_a_customers_does(int length, bool accepted)
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, TestContext.Current.CancellationToken);
+
+        var email = UniqueEmail(accepted ? "at-minimum" : "under-minimum");
+        await using var factory = new ApiFactory(sqlServer.ConnectionString);
+        var userId = await CreateStaffUserAsync(factory, email, BootstrapPassword, mustChangePassword: true);
+        using var client = await SignedInClientAsync(factory, email, BootstrapPassword);
+        var stampBefore = (await FindUserAsync(factory, userId)).SecurityStamp;
+
+        var candidate = StrongPasswordOfLength(length);
+        using var change = await PostChangePasswordAsync(client, BootstrapPassword, candidate);
+
+        var user = await FindUserAsync(factory, userId);
+        if (accepted)
+        {
+            Assert.Equal(HttpStatusCode.NoContent, change.StatusCode);
+            Assert.False(user.MustChangePassword);
+
+            using var anonymous = CreateClient(factory);
+            using var login = await anonymous.PostAsJsonAsync(LoginUrl, new { email, password = candidate }, Ct);
+            Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+            return;
+        }
+
+        // Status first: an accepted change answers 204 with no body, and reading that as JSON would hide the
+        // real failure ("it was accepted") behind a parser error.
+        Assert.Equal(HttpStatusCode.BadRequest, change.StatusCode);
+        var body = await change.Content.ReadFromJsonAsync<JsonElement>(Ct);
+        Assert.Equal("new_password_rejected", body.GetProperty("error").GetString());
+
+        // A 400 that names the rule, not a bare "rejected": the screen renders these lines as they are.
+        var reasons = body.GetProperty("errors").GetProperty("newPassword").EnumerateArray().Select(e => e.GetString()).ToList();
+        Assert.Contains(CustomerPasswordPolicy.Requirement, reasons);
+
+        Assert.True(user.MustChangePassword);
+        Assert.Equal(stampBefore, user.SecurityStamp);
+    }
+
+    /// <summary>
+    /// Issue #200: the value that used to pass. Six characters with every class is what Identity's default
+    /// allowed, and it must be refused now; a later change that put the default back would turn this red.
+    /// </summary>
+    [Fact]
+    public async Task The_old_six_character_minimum_no_longer_passes()
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, TestContext.Current.CancellationToken);
+
+        var email = UniqueEmail("old-six");
+        await using var factory = new ApiFactory(sqlServer.ConnectionString);
+        var userId = await CreateStaffUserAsync(factory, email, BootstrapPassword, mustChangePassword: true);
+        using var client = await SignedInClientAsync(factory, email, BootstrapPassword);
+
+        using var change = await PostChangePasswordAsync(client, BootstrapPassword, "Aa1!xx");
+
+        Assert.Equal(HttpStatusCode.BadRequest, change.StatusCode);
+        var body = await change.Content.ReadFromJsonAsync<JsonElement>(Ct);
+        Assert.Equal("new_password_rejected", body.GetProperty("error").GetString());
+        Assert.True((await FindUserAsync(factory, userId)).MustChangePassword);
+    }
+
+    /// <summary>
+    /// Issue #200, "existing staff are not locked out". An account whose password was set while the minimum
+    /// was Identity's six keeps signing in, and keeps working as the <i>current</i> password of the change:
+    /// the minimum is a rule about the password being chosen, never about the one being proved.
+    /// </summary>
+    /// <remarks>
+    /// <b>Built the way such an account really exists</b>: the hash is made from the old, short password
+    /// directly, because <c>UserManager.CreateAsync(user, password)</c> would now refuse to create it, and a
+    /// fixture that quietly used a longer password would prove nothing about the accounts already in a
+    /// database. It is also the forced-change case (the seeded Super Admin's bootstrap password is the
+    /// likeliest short one), so the whole sign-in then change then sign-in sequence is exercised.
+    /// </remarks>
+    [Fact]
+    public async Task A_staff_member_whose_password_predates_the_minimum_can_still_sign_in_and_change_it()
+    {
+        sqlServer.SkipIfUnavailable();
+        await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, TestContext.Current.CancellationToken);
+
+        const string legacyPassword = "Aa1!xx";
+        Assert.True(legacyPassword.Length < CustomerPasswordPolicy.MinimumLength, "The premise: this password is under today's minimum.");
+
+        var email = UniqueEmail("legacy-short");
+        await using var factory = new ApiFactory(sqlServer.ConnectionString);
+        var userId = await CreateStaffUserWithLegacyPasswordAsync(factory, email, legacyPassword, mustChangePassword: true);
+
+        // Still accepted at sign-in: no password rule is applied to a password that is only being checked.
+        using var client = await SignedInClientAsync(factory, email, legacyPassword);
+
+        // A refused NEW password is about the new one: the legacy password was right, so the refusal is
+        // reported against the new password and not as a wrong current password.
+        using var refused = await PostChangePasswordAsync(client, legacyPassword, StrongPasswordOfLength(9));
+        Assert.Equal(HttpStatusCode.BadRequest, refused.StatusCode);
+        var refusedBody = await refused.Content.ReadFromJsonAsync<JsonElement>(Ct);
+        Assert.Equal("new_password_rejected", refusedBody.GetProperty("error").GetString());
+
+        using var change = await PostChangePasswordAsync(client, legacyPassword, NewPassword);
+        Assert.Equal(HttpStatusCode.NoContent, change.StatusCode);
+        Assert.False((await FindUserAsync(factory, userId)).MustChangePassword);
+
+        using var anonymous = CreateClient(factory);
+        using var oldLogin = await anonymous.PostAsJsonAsync(LoginUrl, new { email, password = legacyPassword }, Ct);
+        Assert.Equal(HttpStatusCode.Unauthorized, oldLogin.StatusCode);
+        using var newLogin = await anonymous.PostAsJsonAsync(LoginUrl, new { email, password = NewPassword }, Ct);
+        Assert.Equal(HttpStatusCode.OK, newLogin.StatusCode);
+    }
+
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     private static string UniqueEmail(string label) => $"{label}-{Guid.NewGuid():N}@example.com";
+
+    /// <summary>
+    /// A password with an upper-case letter, a lower-case letter, a digit and a symbol of exactly
+    /// <paramref name="length"/> characters, so a test about length cannot be decided by anything else.
+    /// </summary>
+    private static string StrongPasswordOfLength(int length) => "Aa1!" + new string('x', length - 4);
 
     /// <summary>HTTPS base address so the Secure admin cookie round-trips (see <see cref="AdminAuthEndpointTests"/>).</summary>
     private static HttpClient CreateClient(WebApplicationFactory<Program> factory) =>
@@ -421,6 +551,43 @@ public sealed class AdminPasswordChangeEndpointTests(SqlServerDatabaseFixture sq
 
         var result = await userManager.CreateAsync(user, password);
         Assert.True(result.Succeeded, string.Join("; ", result.Errors.Select(e => e.Description)));
+        return user.Id;
+    }
+
+    /// <summary>
+    /// A staff account whose password hash was made before the minimum was raised. <c>CreateAsync(user,
+    /// password)</c> validates the password, so the account is created without one and the hash is written
+    /// afterwards; <c>UpdateAsync</c> validates the user and never the password.
+    /// </summary>
+    private static async Task<int> CreateStaffUserWithLegacyPasswordAsync(
+        WebApplicationFactory<Program> factory,
+        string email,
+        string legacyPassword,
+        bool mustChangePassword)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var userManager = scope.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
+
+        var user = new AppUser
+        {
+            UserName = email,
+            Email = email,
+            EmailConfirmed = true,
+            UserType = UserType.Staff,
+            FirstName = "Test",
+            LastName = "Staff",
+            IsActive = true,
+            MustChangePassword = mustChangePassword,
+            CreatedAtUtc = DateTime.UtcNow,
+        };
+
+        var created = await userManager.CreateAsync(user);
+        Assert.True(created.Succeeded, string.Join("; ", created.Errors.Select(e => e.Description)));
+
+        user.PasswordHash = userManager.PasswordHasher.HashPassword(user, legacyPassword);
+        var updated = await userManager.UpdateAsync(user);
+        Assert.True(updated.Succeeded, string.Join("; ", updated.Errors.Select(e => e.Description)));
+
         return user.Id;
     }
 
