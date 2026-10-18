@@ -50,7 +50,7 @@ W="$(mktemp -d)"
 pass=0; failed=0
 ok()   { pass=$((pass + 1)); printf '  PASS  %s\n' "$*"; }
 bad()  { failed=$((failed + 1)); printf '  FAIL  %s\n' "$*"; }
-say()  { printf '\n== %s\n' "$*"; }
+say()  { printf '\n== %s  [%ss]\n' "$*" "$SECONDS"; }
 win()  { cygpath -m "$1" 2>/dev/null || printf '%s' "$1"; }
 
 cleanup() {
@@ -370,6 +370,10 @@ done
 
 grep -qE '"status":50[24]' "$W/gw.log" && ok "the gateway's access log recorded the failures (status 502/504)"   || bad "the gateway's access log shows no 502/504 although the stub was stopped"
 
+sampled="$(grep -cE '"path":"/api/traffic/page-views","status":204,[^}]*"upstream":""' "$W/gw.log")"
+if [ "$sampled" -ge 1 ] && [ "$sampled" -le 60 ]; then ok "throttled beacons are sampled into the access log, not logged one by one ($sampled lines for about 3,000 throttled requests)"
+else bad "expected a few sampled throttle lines (status 204, empty upstream) in the gateway log, found $sampled"; fi
+
 # --- gateway JSON: structure, path table, no address in any field -------------------------------------------------
 cat > "$W/check.py" <<'EOF'
 import json, re, sys
@@ -424,9 +428,19 @@ python3 "$(win "$W/check.py")" "$(win "$W/gw.log")" "$(win "$W/expected.tsv")" "
 cat "$W/check.out"
 p2=$(grep -c '^  PASS' "$W/check.out"); f2=$(grep -c '^  FAIL' "$W/check.out")
 pass=$((pass + p2)); failed=$((failed + f2))
-if [ "$p2" -lt 1 ] || { [ "$chk" != 0 ] && [ "$f2" = 0 ]; }; then
+if [ $((p2 + f2)) -lt 1 ] || { [ "$chk" != 0 ] && [ "$chk" != 1 ]; }; then
   bad "the gateway-log checks did not run to completion (python exit $chk, $p2 passes): see above"
 fi
+
+# --- the error logs: nginx quotes the whole request (client address, request line, Referer) on an error line ----
+# These came from the outages above (stub down, gateway down); in the old configuration they are at error level.
+for pair in "gateway error log (stderr):$W/gw.log" "host nginx error files:$W/host.log"; do
+  label="${pair%%:*}"; file="${pair#*:}"
+  if grep -qE 'request: "(GET|POST|PUT|HEAD)' "$file"; then
+    bad "$label quotes requests (client, request line, upstream, referrer)"
+    grep -E -m2 'request: "' "$file" | cut -c1-260 | sed 's/^/        > /'
+  else ok "$label quotes no request"; fi
+done
 
 # --- what the host nginx wrote to its files --------------------------------------------------------------------------
 if grep -qE 'GET /|POST /|HTTP/[12]' "$W/host.log"; then

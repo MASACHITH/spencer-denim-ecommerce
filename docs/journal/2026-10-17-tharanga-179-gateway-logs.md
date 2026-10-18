@@ -53,7 +53,7 @@ because the VPS runs Ubuntu 24.04's 1.24).
 ## Not done, found on the way
 
 - **The API's request log writes the order token** (`UseSerilogRequestLogging`: `RequestPath` is the path, query
-  excluded, and the hosting scope puts the same path on every other event in the request). No IP, no query string.
+  excluded; confirmed by running the built API image and calling `GET /api/orders/<guid>?token=abc`). No IP, no query string.
   Needs a change in `SerilogSetup.cs`; left alone, reported in docs/15 §8a "Still open".
 - **The storefront's `answerRenderFailure` logs `GET <originalUrl> failed`** with the query string, on an
   unexpected render failure. Frontend code; left alone.

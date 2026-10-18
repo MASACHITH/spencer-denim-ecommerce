@@ -443,9 +443,9 @@ in the log by default.
 
 - **The API's request log writes the order token.** `UseSerilogRequestLogging` logs
   `HTTP GET /api/orders/{publicId} responded 200 in …` at `Information` for every request, with `RequestPath`
-  holding the **path** (not the query), and the same path rides as `RequestPath` on every other event logged while a
-  request is in flight (a warning, an error, an EF message). So the order token, the PayPal path ids and staff's
-  order ids are in the API container's log. No IP and no query string. A fix needs a small change in
+  holding the **path** (not the query; confirmed on the built API image: a `GET /api/orders/<guid>?token=abc` logs the
+  GUID and not `abc`). So the order token, the PayPal path ids and staff's order ids are in the API container's log.
+  No IP and no query string. A fix needs a small change in
   `SerilogSetup.cs` (redact `RequestPath` with the same rules as the gateway's) and is a separate issue.
 - **The storefront's render-failure line writes the full address.** `server/render-failure.ts` logs
   `GET <originalUrl> failed` with the query string, to stderr, when a render fails unexpectedly. Rare, but
