@@ -81,13 +81,31 @@ library is a coordinated change, so it is left as two pinned copies.
 
 ## Verification notes
 
-- Red first (run against `154b5e4`'s behaviour with the new tests only): unit 4 of 6 failed (configured length
-  6 not 10; 6-, 8- and 9-character passwords accepted); integration change-password at 9 and at 6 answered
-  204 instead of 400; the legacy-account test failed on the same accepted 9-character password. Green after the
-  change; mutation checks (minimum put back to Identity's default, describer removed, check-env constant
-  changed) are in the task report.
-- Integration tests ran on **LocalDB**, not the `TEST_SQL_CONNECTION` this machine had set. That variable
+- **Red first**, with only the new tests on `154b5e4`'s behaviour: unit 4 of 6 failed (configured length 6, not 10;
+  6-, 8- and 9-character passwords accepted); integration change-password at 9 and at six answered 204 instead of
+  400, and the legacy-account test failed on the same accepted password. The create-user and seed tests were
+  not reached by that run (it was interrupted), so their red comes from mutation A below, which restores the old
+  configuration exactly.
+- **Green** on the committed tree: unit 61/61 (wiring, convention, customer validator, the two staff handlers),
+  integration 56/56 (the new tests plus `CustomerPasswordEndpointTests` and `CustomerAuthEndpointTests`), earlier
+  64/65 over `AdminPasswordChangeEndpointTests`, `UserEndpointTests`, `StaffUserRoleManagementStoreTests`,
+  `AdminAuthEndpointTests` seeding and `CustomerPasswordEndpointTests` (the one failure was the seed test's log
+  capture, fixed: Serilog replaces logger providers, so a sink is the only way to see the host's log), admin
+  Angular specs 26/26, eslint clean on the changed admin files.
+- **Mutation checks** (each reverted with `git checkout`): A `RequiredLength = 6` -> 4/6 unit and 6/8 new
+  integration tests fail (create-user at 6 and 9, change-password at 9, the six-character test, the legacy test,
+  the seed test; only the two accepted-at-ten cases stay green, as they should). B describer words the length
+  its own way -> the refusal-states-the-rule test fails. C `MinimumLength = 9` -> sentence-vs-number, validator
+  hint, 9-characters-refused and the deploy pin fail. D `lib.sh` minimum 6 -> deploy pin fails. E1 admin
+  sentence back to six characters -> the pinned-copy test fails. E2 change-password page hard-codes the old hint
+  -> the page spec fails (`expected 'Use at least 6 characters...'`) and the "only one file spells the rule out"
+  test fails.
+- The legacy-account test cannot be red against the old code (it asserts something that was always true plus the
+  refusal); its protection is the premise assertion and that it builds the account from a six-character hash.
+- Integration tests ran on **LocalDB**, never on the `TEST_SQL_CONNECTION` this machine had set. That variable
   pointed at the default SQL Server instance (`SW-LAP-0043`, as `sa`), which holds a dozen unrelated databases
-  (`daycare_db`, `Fixed_Asset`, `PurchaseOrderDb`, `ReportServer*` ...) — exactly what doc 06 §4 / doc 13 say
-  never to do. The fixture only creates and drops `SpencerDenim_Test_<guid>`, so nothing was touched, but the
-  variable should be repointed at LocalDB.
+  (`daycare_db`, `Fixed_Asset`, `PurchaseOrderDb`, `ReportServer*` ...) - exactly what doc 06 section 4 and doc 13
+  say never to do. Nothing was created, altered or dropped there; the only contact was one read-only
+  `sys.databases` listing to confirm what it was. The variable should be repointed at LocalDB.
+- Not run, by instruction: the full integration suite and Playwright. The storefront specs were not run either;
+  the storefront edits are comments that name the renamed class.
