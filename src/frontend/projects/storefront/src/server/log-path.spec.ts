@@ -87,7 +87,10 @@ describe('logPath', () => {
       const logged = logPath(input);
 
       expect(logged.startsWith('/'), `${input} -> ${logged}`).toBe(true);
-      expect(/[\u0000-\u001f]/.test(logged), `control character: ${JSON.stringify(logged)}`).toBe(false);
+      // charCodeAt rather than /[\u0000-\u001f]/, which `no-control-regex` refuses (and `ng lint` is a CI step).
+      const hasControlCharacter = [...logged].some((character) => character.charCodeAt(0) <= 0x1f);
+
+      expect(hasControlCharacter, `control character: ${JSON.stringify(logged)}`).toBe(false);
       expect(logged).not.toContain('7d1e5c0a');
 
       for (const segment of logged.split('/').filter((part) => part.length > 0)) {
