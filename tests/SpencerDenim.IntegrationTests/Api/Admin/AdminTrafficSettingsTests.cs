@@ -801,6 +801,110 @@ public sealed class AdminTrafficSettingsTests(SqlServerDatabaseFixture sqlServer
         }
     }
 
+    /// <summary>
+    /// Tester, round 3: <b>a backlog longer than one night's cap</b>, through the real nightly services only. Saved
+    /// 30 days; 45 never-built days, one view each, all past the raw period. Night 1 builds the 31 oldest and the
+    /// purge then deletes exactly those, keeping the other 14 (still unbuilt). Night 2 builds and purges the rest.
+    /// Every day ends with its true total of one page view: nothing is lost and nothing is counted from a day whose
+    /// raw rows were already gone.
+    /// </summary>
+    [Fact]
+    public async Task A_backlog_longer_than_one_nights_cap_clears_over_two_nights_with_true_totals()
+    {
+        await using var factory = await StartAsync();
+        using var client = await MediaTestHost.SignInAsync(factory, Permissions.Settings.Edit);
+        await ClearYearAsync(sqlServer, 1994, Token);
+
+        try
+        {
+            Assert.Equal(
+                HttpStatusCode.NoContent,
+                (await PutAsync(client, new { rawRetentionDays = "30", rowVersion = await TrafficVersionAsync(factory) })).Status);
+
+            var days = Enumerable.Range(0, 45).Select(offset => new DateOnly(1994, 3, 1).AddDays(offset)).ToList();
+            await InsertAsync(
+                sqlServer,
+                days.Select(day => View(Colombo(day.Year, day.Month, day.Day, 10), Guid.NewGuid(), "/backlog")).ToList(),
+                Token);
+
+            var rollup = factory.Services.GetRequiredService<TrafficRollupService>();
+            var purge = factory.Services.GetRequiredService<TrafficRetentionService>();
+
+            await rollup.RunOnceAsync(new DateTimeOffset(1994, 12, 20, 0, 30, 0, TimeSpan.FromMinutes(330)), Token);
+            await purge.RunOnceAsync(new DateTimeOffset(1994, 12, 20, 1, 30, 0, TimeSpan.FromMinutes(330)), Token);
+
+            var builtAfterNight1 = (await TrafficDailyAsync(sqlServer, days[0], days[^1], Token)).Select(row => row.Date).Distinct().Order().ToList();
+            Assert.Equal(days.Take(TrafficRollupService.MaxCatchUpDaysPerRun), builtAfterNight1);
+            Assert.Equal(45 - TrafficRollupService.MaxCatchUpDaysPerRun, (await PathsAsync(1994)).Count);
+
+            await rollup.RunOnceAsync(new DateTimeOffset(1994, 12, 21, 0, 30, 0, TimeSpan.FromMinutes(330)), Token);
+            await purge.RunOnceAsync(new DateTimeOffset(1994, 12, 21, 1, 30, 0, TimeSpan.FromMinutes(330)), Token);
+
+            var stored = await TrafficDailyAsync(sqlServer, days[0], days[^1], Token);
+            Assert.Equal(days, stored.Select(row => row.Date).Distinct().Order());
+            Assert.All(days, day => Assert.Equal(1, stored.Where(row => row.Date == day).Sum(row => row.PageViews)));
+            Assert.Empty(await PathsAsync(1994));
+        }
+        finally
+        {
+            await ClearYearAsync(sqlServer, 1994, Token);
+            await RestoreAsync(factory);
+        }
+    }
+
+    /// <summary>
+    /// Tester, round 3: <b>can the catch-up count a day whose raw rows are already partly gone?</b> The purge runs
+    /// before the rollup has ever built two days (at start-up the purge follows the rollup by a minute, and a failing
+    /// rollup never builds them): a day inside the raw period but past the bot period, with a human and a bot view,
+    /// and a bot-only day past both periods. The guard must keep the bot rows of both, so the rollup that follows
+    /// stores the true totals (1 human and 1 bot; 1 bot), and only then does the purge take what is past retention.
+    /// </summary>
+    [Fact]
+    public async Task A_day_past_the_bot_period_is_never_half_purged_before_the_rollup_counts_it()
+    {
+        await using var factory = await StartAsync();
+        using var client = await MediaTestHost.SignInAsync(factory, Permissions.Settings.Edit);
+        await ClearYearAsync(sqlServer, 1995, Token);
+
+        try
+        {
+            Assert.Equal(
+                HttpStatusCode.NoContent,
+                (await PutAsync(client, new { rawRetentionDays = "30", botRetentionDays = "7", rowVersion = await TrafficVersionAsync(factory) })).Status);
+
+            await InsertAsync(
+                sqlServer,
+                [
+                    View(Colombo(1995, 6, 5, 10), Guid.NewGuid(), "/inside-raw-human"),
+                    View(Colombo(1995, 6, 5, 11), Guid.NewGuid(), "/inside-raw-bot", bot: true),
+                    View(Colombo(1995, 4, 1, 9), Guid.NewGuid(), "/old-bot-only", bot: true),
+                ],
+                Token);
+
+            var purge = factory.Services.GetRequiredService<TrafficRetentionService>();
+            var rollup = factory.Services.GetRequiredService<TrafficRollupService>();
+
+            // Purge first: nothing has been built, so nothing may go.
+            await purge.RunOnceAsync(new DateTimeOffset(1995, 6, 20, 1, 30, 0, TimeSpan.FromMinutes(330)), Token);
+            Assert.Equal(["/inside-raw-bot", "/inside-raw-human", "/old-bot-only"], await PathsAsync(1995));
+
+            await rollup.RunOnceAsync(new DateTimeOffset(1995, 6, 21, 0, 30, 0, TimeSpan.FromMinutes(330)), Token);
+
+            var june5 = await TrafficDailyAsync(sqlServer, new DateOnly(1995, 6, 5), new DateOnly(1995, 6, 5), Token);
+            Assert.Equal((1, 1), (june5.Sum(row => row.PageViews), june5.Sum(row => row.BotPageViews)));
+            var april1 = await TrafficDailyAsync(sqlServer, new DateOnly(1995, 4, 1), new DateOnly(1995, 4, 1), Token);
+            Assert.Equal((0, 1), (april1.Sum(row => row.PageViews), april1.Sum(row => row.BotPageViews)));
+
+            await purge.RunOnceAsync(new DateTimeOffset(1995, 6, 21, 1, 30, 0, TimeSpan.FromMinutes(330)), Token);
+            Assert.Equal(["/inside-raw-human"], await PathsAsync(1995));
+        }
+        finally
+        {
+            await ClearYearAsync(sqlServer, 1995, Token);
+            await RestoreAsync(factory);
+        }
+    }
+
     // ---- helpers --------------------------------------------------------------------------------------
 
     private async Task<ApiFactory> StartAsync(IReadOnlyDictionary<string, string?>? configuration = null)
