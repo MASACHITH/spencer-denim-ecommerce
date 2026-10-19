@@ -220,6 +220,25 @@ test.describe('the dashboard charts (#186)', () => {
     expect(painted).toBeGreaterThan(500);
   });
 
+  test('the Traffic page and the sales and inventory reports draw their charts, each named in one sentence', async ({ page }) => {
+    for (const [path, ids] of [
+      ['/traffic', ['traffic-days-chart', 'traffic-channels-chart', 'traffic-devices-chart']],
+      ['/reports?report=sales', ['sales-chart']],
+      ['/reports?report=inventory', ['inventory-chart']],
+    ] as const) {
+      await open(page, path);
+      for (const id of ids) {
+        await expect(page.locator(`[data-testid="${id}"]`), `${id} on ${path}`).toHaveAttribute('role', 'img');
+        await expect(page.locator(`[data-testid="${id}"]`), `${id} on ${path}`).toHaveAttribute('aria-label', /\d/);
+      }
+    }
+
+    // The inventory doughnut is the report's own counts: the stub's thirty variants.
+    await expect(page.locator('[data-testid="inventory-chart-legend"]')).toContainText('In stock');
+    const figures = await page.locator('[data-testid="inventory-chart-table"] tbody td:first-of-type').allTextContents();
+    expect(figures.reduce((total, cell) => total + Number(cell.replace(/,/g, '')), 0)).toBe(30);
+  });
+
   test('the alert strip counts work waiting and links to it', async ({ page }) => {
     await open(page, '/');
 

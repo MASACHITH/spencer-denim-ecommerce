@@ -314,6 +314,11 @@ textarea.adm-input {
   --trend-up: #2e7d4f;
   --trend-down: #b3261e;
 
+  /* The inventory report's stock-status doughnut: the order statuses' green, amber and rust, by meaning. */
+  --stock-in: var(--status-paid);
+  --stock-low: var(--status-awaiting);
+  --stock-out: var(--status-refunded);
+
   --chart-on-dark-1: #8fb3e0;
   --chart-on-dark-2: #d9a66b;
   --chart-on-dark-3: #6cc3bb;
