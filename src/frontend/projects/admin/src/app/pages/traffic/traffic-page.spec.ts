@@ -1,7 +1,9 @@
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { By } from '@angular/platform-browser';
 import { provideRouter } from '@angular/router';
+import { BaseChartDirective } from 'ng2-charts';
 
 import { TrafficReport } from '../../core/traffic/traffic.model';
 import { TrafficPage } from './traffic-page';
@@ -154,6 +156,19 @@ describe('TrafficPage (ADM-20)', () => {
     expect(pages[0].textContent).toContain('Product');
     expect(pages[1].textContent).toContain('Order confirmation');
     expect(pages[1].textContent).toContain('/order/*');
+  });
+
+  it('draws visits and page views by day, and channels and devices as doughnuts, from the same figures (#186)', async () => {
+    await open('all');
+
+    const byId = (id: string) => fixture.debugElement.query(By.css(`canvas[data-testid="${id}"]`)).injector.get(BaseChartDirective);
+
+    expect(byId('traffic-days-chart').data!.datasets.map((set) => set.data)).toEqual([[5, 7, 0], [20, 20, 0]]);
+    expect(byId('traffic-channels-chart').data!.datasets[0].data).toEqual([6, 6, 0, 0, 0, 0, 0]);
+    expect(byId('traffic-devices-chart').data!.datasets[0].data).toEqual([4, 8, 0, 0]);
+    expect(byTestId('traffic-days-chart')!.getAttribute('aria-label')).toMatch(/Busiest: 15 Oct 2026, 7 visits and 20 page views\./);
+    // Shares in the legend are the API's own.
+    expect(byTestId('traffic-devices-chart-legend')!.textContent).toContain('66.7%');
   });
 
   it('says an empty period is empty instead of drawing zeros', async () => {

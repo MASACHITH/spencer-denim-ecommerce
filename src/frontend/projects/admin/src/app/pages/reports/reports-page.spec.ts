@@ -1,10 +1,13 @@
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { By } from '@angular/platform-browser';
 import { ActivatedRoute, convertToParamMap, provideRouter } from '@angular/router';
 import { of } from 'rxjs';
 
 import { InventoryReportPage, SalesReport } from '../../core/reporting/reporting.model';
+import { ChartView } from '../../core/charts/chart';
+import { DoughnutSpec } from '../../core/charts/chart-config';
 import { ReportsPage } from './reports-page';
 
 const WHOAMI = '/api/admin/auth/whoami';
@@ -211,5 +214,46 @@ describe('ReportsPage (ADM-19)', () => {
     expect(byTestId('inventory-next')).toBeNull();
     expect(document.activeElement).toBe(byTestId('inventory-status-message'));
     expect(byTestId('inventory-status-message')!.textContent).toContain('Something went wrong');
+  });
+
+  // ---- #186 tester: the report charts' figures, which no spec read before -------------------------------------
+
+  function chartNamed(testId: string): ChartView {
+    const found = fixture.debugElement.queryAll(By.directive(ChartView)).map((debug) => debug.componentInstance as ChartView).find((chart) => chart.testId() === testId);
+    expect(found, `no sda-chart ${testId}`).toBeDefined();
+    return found!;
+  }
+
+  it('draws the stock-status doughnut from the report counts, each status in its own colour and share (#186 tester)', async () => {
+    configure({ report: 'inventory' });
+    await open(['Reports.View']);
+    http.expectOne((candidate) => candidate.url === '/api/admin/reports/inventory').flush(inventory(1, 1));
+    await settle();
+
+    const chart = chartNamed('inventory-chart');
+    const spec = chart.spec() as DoughnutSpec;
+    expect(spec.slices.map(({ key, value, share, token }) => ({ key, value, share, token }))).toEqual([
+      { key: 'InStock', value: 10, share: 76.9, token: '--stock-in' },
+      { key: 'LowStock', value: 1, share: 7.7, token: '--stock-low' },
+      { key: 'OutOfStock', value: 2, share: 15.4, token: '--stock-out' },
+    ]);
+    expect(chart.summary()).toBe('Active variants by stock status: 10 variants in stock, 1 variant low, 2 variants out of stock.');
+  });
+
+  it('draws gross revenue, not net, one bar per row, and names the highest row and the gross total (#186 tester)', async () => {
+    configure({});
+    await open(['Reports.View']);
+    const row = (start: string, grossRevenue: number, netRevenue: number) => ({ start, end: start, orders: 1, paidOrders: 1, grossRevenue, itemsRevenue: grossRevenue, deliveryRevenue: 0, refundsCompleted: grossRevenue - netRevenue, netRevenue });
+    http.expectOne((candidate) => candidate.url === '/api/admin/reports/sales').flush({
+      ...SALES,
+      rows: [row('2026-10-01', 1000, 1000), row('2026-10-02', 5000, 2000), row('2026-10-03', 3000, 3000)],
+      totals: { ...row('2026-09-16', 9000, 6000), end: '2026-10-15' },
+    });
+    await settle();
+
+    const chart = chartNamed('sales-chart');
+    const spec = chart.spec();
+    expect(spec.kind === 'bar' ? spec.values : null).toEqual([1000, 5000, 3000]);
+    expect(chart.summary()).toMatch(/^Gross revenue by day, Rs\. 9,000\.00 in all\. Highest: 2 Oct 2026, Rs\. 5,000\.00\.$/);
   });
 });

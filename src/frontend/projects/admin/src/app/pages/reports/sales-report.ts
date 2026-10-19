@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, Injector, inject, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, Injector, computed, inject, input, signal } from '@angular/core';
 import { DOCUMENT } from '@angular/common';
 
 import { CatalogFailure, toCatalogFailure } from '../../core/catalog/admin-catalog-api';
@@ -7,6 +7,8 @@ import { PeriodQuery, ReportingApi } from '../../core/reporting/reporting-api';
 import { addDays, colomboToday, count, formatDay, presetPeriod } from '../../core/reporting/reporting-format';
 import { SalesGrouping, SalesReport, SalesReportRow } from '../../core/reporting/reporting.model';
 import { Announcer, periodProblem, saveFile } from './report-shared';
+import { ChartView } from '../../core/charts/chart';
+import { BarSpec, compactRupees } from '../../core/charts/chart-config';
 
 /**
  * The sales report (ADM-19): one row per day, ISO week or month, and a total.
@@ -14,9 +16,13 @@ import { Announcer, periodProblem, saveFile } from './report-shared';
  * The columns say how the figures fit together: <b>items + delivery = gross revenue</b>, and net revenue is
  * gross less the refunds that completed on those days. Department figures on the dashboard are the items
  * column, which is why they do not add up to gross revenue.
+ *
+ * **A bar chart of gross revenue sits above the table** (#186), one bar per row of it; the table under it is the
+ * chart's figures, so the chart needs no folded copy of its own.
  */
 @Component({
   selector: 'sda-sales-report',
+  imports: [ChartView],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <form class="rpt__filters" aria-label="Sales report filters" (submit)="apply($event)">
@@ -56,6 +62,13 @@ import { Announcer, periodProblem, saveFile } from './report-shared';
     @if (problem(); as failure) {
       <div class="adm-state adm-state--error" data-testid="sales-problem"><p>{{ failure.message }}</p></div>
     } @else if (report(); as answered) {
+      <div class="adm-card">
+        <div>
+          <h3 class="adm-card__title">Gross revenue by {{ answered.groupBy.toLowerCase() }}</h3>
+          <p class="adm-card__sub">Orders by the day they were paid; the figures are in the table below</p>
+        </div>
+        <sda-chart testId="sales-chart" [spec]="chart()" [summary]="chartSummary()" [height]="220" />
+      </div>
       <div class="adm-table-scroll" tabindex="0" role="region" aria-label="Sales report">
         <table class="adm-table" data-testid="sales-table">
           <caption class="sr-only">Sales from {{ day(answered.period.from) }} to {{ day(answered.period.to) }}, one row per {{ answered.groupBy.toLowerCase() }}</caption>
@@ -179,6 +192,30 @@ export class SalesReportView {
       },
     });
   }
+
+  protected readonly chart = computed<BarSpec>(() => {
+    const rows = this.report()?.rows ?? [];
+
+    return {
+      kind: 'bar',
+      indexAxis: 'x',
+      highlightFirst: false,
+      seriesLabel: 'Gross revenue',
+      labels: rows.map((row) => this.span(row)),
+      values: rows.map((row) => row.grossRevenue),
+      format: (value) => this.rupees(value),
+      tick: compactRupees,
+    };
+  });
+
+  protected readonly chartSummary = computed(() => {
+    const answered = this.report();
+    const best = answered?.rows.reduce<SalesReportRow | null>((top, row) => (top === null || row.grossRevenue > top.grossRevenue ? row : top), null) ?? null;
+
+    return !answered || best === null || best.grossRevenue <= 0
+      ? 'Gross revenue by period: none in these days.'
+      : `Gross revenue by ${answered.groupBy.toLowerCase()}, ${this.rupees(answered.totals.grossRevenue)} in all. Highest: ${this.span(best)}, ${this.rupees(best.grossRevenue)}.`;
+  });
 
   protected span(row: SalesReportRow): string {
     return row.start === row.end ? formatDay(row.start) : `${formatDay(row.start)} – ${formatDay(row.end)}`;
