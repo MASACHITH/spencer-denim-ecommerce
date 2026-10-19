@@ -143,7 +143,78 @@ internal static partial class AdminSettingsEndpoints
             .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status500InternalServerError);
 
+        api.MapPut("/traffic", UpdateTrafficAsync)
+            .RequirePermission(Permissions.Settings.Edit)
+            .WithName("AdminUpdateTrafficSettings")
+            .WithSummary("How long raw page views are kept before the nightly purge (ADM-20, doc 08 §8.4).")
+            .WithDescription(
+                "Whole days as digits: rawRetentionDays 30 to 365, botRetentionDays 7 to 90 and never more than "
+                + "rawRetentionDays. A field the body leaves out is not written; an empty or null one is refused, "
+                + "because an unset period would silently hand the purge back to the server's configuration. The "
+                + "saved values win over Traffic__RawRetentionDays and Traffic__BotRetentionDays from the next "
+                + "nightly run. The daily totals the Traffic page shows are kept whatever these say.")
+            .Accepts<UpdateTrafficSettingsRequest>("application/json")
+            .Produces(StatusCodes.Status204NoContent)
+            .ProducesValidationProblem()
+            .Produces(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status500InternalServerError);
+
         return endpoints;
+    }
+
+    /// <summary>The Traffic form's two retention periods (issue #193).</summary>
+    /// <remarks>
+    /// Presence-aware like every other settings write: a field the body omits is not written. Numbers arrive as
+    /// text, as the screen's other numeric boxes send them; a JSON number is a named field error rather than a
+    /// silent coercion, for the reason <see cref="ReadString"/> gives.
+    /// </remarks>
+    private static async Task<IResult> UpdateTrafficAsync(
+        HttpContext httpContext,
+        IAntiforgery antiforgery,
+        ICommandHandler<UpdateTrafficSettingsCommand, SettingsWriteResult> handler,
+        CancellationToken cancellationToken)
+    {
+        if (await AdminWriteRequest.ValidateAntiforgeryAsync(httpContext, antiforgery) is { } forged)
+        {
+            return forged;
+        }
+
+        var (body, problem) = await AdminWriteRequest.ReadJsonAsync<JsonObject>(
+            httpContext.Request, cancellationToken);
+        if (problem is not null)
+        {
+            return problem;
+        }
+
+        var fields = new Dictionary<string, string?>(StringComparer.Ordinal);
+
+        foreach (var field in UpdateTrafficSettingsCommandHandler.Fields)
+        {
+            if (ReadString(body!, field, out var value, out var present) is { } badField)
+            {
+                return badField;
+            }
+
+            if (present)
+            {
+                fields[field] = value;
+            }
+        }
+
+        if (ReadString(body!, "rowVersion", out var rowVersion, out _) is { } badVersion)
+        {
+            return badVersion;
+        }
+
+        var result = await handler.HandleAsync(
+            new UpdateTrafficSettingsCommand(
+                fields,
+                AdminWriteRequest.RowVersion(httpContext.Request, rowVersion),
+                AdminWriteRequest.Actor(httpContext)),
+            cancellationToken);
+
+        return ToHttp(result);
     }
 
     /// <summary>
@@ -420,6 +491,7 @@ internal static partial class AdminSettingsEndpoints
         "facebookUrl",
         "instagramUrl",
         "tikTokUrl",
+        "youTubeUrl",
     ];
 
     /// <summary>The fields the bank body may carry, in the order the screen shows them.</summary>

@@ -321,6 +321,11 @@ public static class DependencyInjection
         services.AddScoped<
             ICommandHandler<UpdateContactAndSocialCommand, SettingsWriteResult>,
             UpdateContactAndSocialCommandHandler>();
+
+        // Issue #193: the Traffic form — how long the nightly purge keeps raw page views (Settings.Edit).
+        services.AddScoped<
+            ICommandHandler<UpdateTrafficSettingsCommand, SettingsWriteResult>,
+            UpdateTrafficSettingsCommandHandler>();
         services.AddKeyedScoped<IQueryHandler<GetSiteSettingsQuery, SiteSettingsDto>, GetSiteSettingsQueryHandler>(
             UncachedSiteSettings);
         services.AddScoped<IQueryHandler<GetSiteSettingsQuery, SiteSettingsDto>>(provider =>

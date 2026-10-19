@@ -6,8 +6,9 @@ namespace SpencerDenim.Infrastructure.Analytics;
 /// <para>
 /// <b>Configuration, not <c>ops.Settings</c>.</b> These are how the machinery runs, which a shop has no
 /// opinion about. The two retention periods doc 08 §3.8 puts in <c>ops.Settings</c>
-/// (<c>Traffic.RawRetentionDays</c>, <c>Traffic.BotRetentionDays</c>) are configuration here <i>for now</i> — see
-/// <see cref="RawRetentionDays"/> for why — and move to <c>ops.Settings</c> with the Traffic settings form.
+/// (<c>Traffic.RawRetentionDays</c>, <c>Traffic.BotRetentionDays</c>) are there since issue #193, edited on the
+/// Settings screen's Traffic form; <see cref="RawRetentionDays"/> and <see cref="BotRetentionDays"/> here are only
+/// the fallback — see <see cref="RawRetentionDays"/>.
 /// </para>
 /// </summary>
 public sealed class TrafficOptions
@@ -62,18 +63,21 @@ public sealed class TrafficOptions
     public const int MinimumRetentionDays = 4;
 
     /// <summary>
-    /// How many Colombo days of raw page views are kept (<c>Traffic__RawRetentionDays</c>).
+    /// The <b>fallback</b> number of Colombo days of raw page views kept (<c>Traffic__RawRetentionDays</c>).
     /// <para>
-    /// <b>Configuration for now, not <c>ops.Settings</c>.</b> Doc 08 §3.8 puts <c>Traffic.RawRetentionDays</c> and
-    /// <c>Traffic.BotRetentionDays</c> in the <c>Traffic</c> settings group with <c>Settings.Edit</c>, but the
-    /// settings screen has a form per group and no Traffic form, so a seeded row would be a value staff can see
-    /// and cannot change. The purge therefore runs on doc 08's own defaults, from configuration, and the two keys
-    /// stay in <c>DeferredSettingKeys</c> until the settings screen gains the form.
+    /// <b>The settings row wins.</b> Since issue #193 the purge and the rollup's catch-up read
+    /// <c>Traffic.RawRetentionDays</c> from <c>ops.Settings</c> (seeded 90, edited on the Settings screen) and use
+    /// this figure only while that row is unset or holds something outside the form's bounds
+    /// (<c>TrafficRetentionPeriods.Resolve</c>). The default stays doc 08's 90, the same as the seed, so a
+    /// deployment that sets nothing behaves identically whether or not the seeder has run.
     /// </para>
     /// </summary>
     public int RawRetentionDays { get; set; } = DefaultRawRetentionDays;
 
-    /// <summary>How many Colombo days of bot page views are kept (<c>Traffic__BotRetentionDays</c>).</summary>
+    /// <summary>
+    /// The <b>fallback</b> number of Colombo days of bot page views kept (<c>Traffic__BotRetentionDays</c>); the
+    /// <c>Traffic.BotRetentionDays</c> settings row wins, as for <see cref="RawRetentionDays"/>.
+    /// </summary>
     public int BotRetentionDays { get; set; } = DefaultBotRetentionDays;
 
     public TimeSpan FlushInterval => TimeSpan.FromSeconds(FlushSeconds);

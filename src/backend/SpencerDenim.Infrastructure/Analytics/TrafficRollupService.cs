@@ -63,7 +63,9 @@ internal sealed partial class TrafficRollupService(
             rebuilt.Add(day);
         }
 
-        var rawDays = options.RawRetentionDays;
+        // The same raw period the purge will apply tonight — the settings row, falling back to configuration — so
+        // the catch-up never builds a day the purge has already emptied, nor skips one it has kept (issue #193).
+        var rawDays = (await scope.ServiceProvider.GetRequiredService<TrafficRetentionSettings>().ReadAsync(cancellationToken)).RawDays;
 
         foreach (var day in await rollup.FindUnbuiltDaysAsync(today.AddDays(-rawDays), firstRecent, cancellationToken))
         {

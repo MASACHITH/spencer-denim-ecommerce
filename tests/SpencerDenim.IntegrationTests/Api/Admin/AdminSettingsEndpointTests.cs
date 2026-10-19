@@ -128,7 +128,7 @@ public sealed class AdminSettingsEndpointTests(SqlServerDatabaseFixture sqlServe
 
         // `Bank` is absent for a Settings.Edit holder and that is the point of the filter (doc 08 §3.8
         // DB2); `Orders` arrived with W3-04 and is Settings.Edit, so it is here.
-        Assert.Equal(["Store", "Contact", "Social", "Orders"], groups);
+        Assert.Equal(["Store", "Contact", "Social", "Orders", "Traffic"], groups);
 
         foreach (var group in body.GetProperty("groups").EnumerateArray())
         {
@@ -1555,6 +1555,61 @@ public sealed class AdminSettingsEndpointTests(SqlServerDatabaseFixture sqlServe
     }
 
     /// <summary>
+    /// Issue #193: <c>Social.YouTubeUrl</c> reaches the storefront as a <c>youtube</c> link when it is set — last,
+    /// after the other three, as the footer draws them — and disappears again when it is cleared. An address that is
+    /// not a safe absolute http(s) URL is refused like the other three.
+    /// </summary>
+    [Fact]
+    public async Task The_youtube_channel_appears_in_the_storefront_payload_when_set_and_not_when_cleared()
+    {
+        await using var host = await StartAsync();
+        using var admin = await host.SignInAsync(Permissions.Settings.Edit);
+        using var visitor = host.CreateAnonymousClient();
+
+        try
+        {
+            var (refused, problem) = await PutAsync(admin, ContactSocialUrl, new
+            {
+                youTubeUrl = "javascript:alert(1)",
+                rowVersion = await ContactVersionAsync(admin),
+            });
+            Assert.Equal(HttpStatusCode.BadRequest, refused);
+            Assert.True(problem.GetProperty("errors").TryGetProperty("youTubeUrl", out _));
+
+            var (saved, _) = await PutAsync(admin, ContactSocialUrl, new
+            {
+                facebookUrl = "https://www.facebook.com/colombowardrobe",
+                youTubeUrl = "https://www.youtube.com/@colombowardrobe",
+                rowVersion = await ContactVersionAsync(admin),
+            });
+            Assert.Equal(HttpStatusCode.NoContent, saved);
+            Assert.Equal("https://www.youtube.com/@colombowardrobe", await ValueAsync(host, SettingKeys.Social.YouTubeUrl));
+
+            var configured = await GetJsonAsync(visitor, SiteSettingsUrl);
+            var links = configured.GetProperty("social").EnumerateArray().ToList();
+
+            Assert.Equal(["facebook", "youtube"], links.Select(link => link.GetProperty("network").GetString()));
+            Assert.Equal("https://www.youtube.com/@colombowardrobe", links[1].GetProperty("url").GetString());
+
+            var (cleared, _) = await PutAsync(admin, ContactSocialUrl, new
+            {
+                youTubeUrl = (string?)null,
+                rowVersion = await ContactVersionAsync(admin),
+            });
+            Assert.Equal(HttpStatusCode.NoContent, cleared);
+
+            var after = await GetJsonAsync(visitor, SiteSettingsUrl);
+            Assert.Equal(
+                ["facebook"],
+                after.GetProperty("social").EnumerateArray().Select(link => link.GetProperty("network").GetString()));
+        }
+        finally
+        {
+            await RestoreAsync(host);
+        }
+    }
+
+    /// <summary>
     /// A value the current rule would refuse, written straight into the row — an earlier build, a migration,
     /// a database edit. The read model refuses it on the way out as well, so the link disappears rather than
     /// going live.
@@ -2062,6 +2117,9 @@ public sealed class AdminSettingsEndpointTests(SqlServerDatabaseFixture sqlServe
         // "refuses an anonymous caller" nor "refuses a signed-in caller without Settings.Edit" covered the
         // newest write route in the file - the exact gap this helper exists to close.
         yield return (HttpMethod.Put, InvoiceUrl);
+
+        // Issue #193's Traffic form, Settings.Edit like the rest.
+        yield return (HttpMethod.Put, "/api/admin/settings/traffic");
     }
 
     private async Task<MediaTestHost> StartAsync(string environment = "Testing")

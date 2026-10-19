@@ -5,14 +5,16 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using SpencerDenim.Application.Abstractions.Time;
 using SpencerDenim.Application.Admin.Reporting;
+using SpencerDenim.Domain.Analytics;
 using SpencerDenim.Domain.Common;
 using SpencerDenim.Infrastructure.Persistence;
 
 namespace SpencerDenim.Infrastructure.Analytics;
 
 /// <summary>
-/// Doc 08 §8.4's purge of raw traffic: page views are kept <see cref="TrafficOptions.RawRetentionDays"/> Colombo
-/// days (90), bot page views <see cref="TrafficOptions.BotRetentionDays"/> (7). The daily tables are kept
+/// Doc 08 §8.4's purge of raw traffic: page views are kept <c>Traffic.RawRetentionDays</c> Colombo days (90), bot
+/// page views <c>Traffic.BotRetentionDays</c> (7) — the settings rows, falling back to
+/// <see cref="TrafficOptions"/> (issue #193; see <see cref="TrafficRetentionSettings"/>). The daily tables are kept
 /// indefinitely (doc 08 §8.4: "tens of MB/year"), which is what lets the Traffic page show a year after the raw
 /// rows are gone.
 /// <para>
@@ -23,7 +25,8 @@ namespace SpencerDenim.Infrastructure.Analytics;
 /// <para>
 /// <b>Whole Colombo days.</b> The cut-off is a Colombo midnight, so "90 days" keeps today and the 89 before it
 /// whole, and a day the nightly rollup may still rebuild (the last three) is never purged: both periods must be at
-/// least four days, which <c>TrafficOptions</c>' validation enforces.
+/// least four days, which <c>TrafficOptions</c>' validation enforces for configuration and the settings form's
+/// bounds (30 and 7) enforce, more strictly, for the rows.
 /// </para>
 /// </summary>
 internal sealed class TrafficRetention(AppDbContext dbContext)
@@ -102,12 +105,22 @@ internal sealed partial class TrafficRetentionService(
         return candidate > local ? candidate : candidate.AddDays(1);
     }
 
-    public async Task<(int Human, int Bot)> RunOnceAsync(DateTimeOffset now, CancellationToken cancellationToken)
+    /// <summary>
+    /// One purge as of <paramref name="now"/>, with the periods read from the settings rows at the start of the run
+    /// (configuration as the fallback), and those periods returned so the log line says what was applied.
+    /// </summary>
+    public async Task<(int Human, int Bot, TrafficRetentionPeriods Periods)> RunOnceAsync(
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
     {
         await using var scope = scopeFactory.CreateAsyncScope();
 
-        return await scope.ServiceProvider.GetRequiredService<TrafficRetention>()
-            .PurgeAsync(ReportPeriod.ColomboDayOf(now), options.RawRetentionDays, options.BotRetentionDays, cancellationToken);
+        var periods = await scope.ServiceProvider.GetRequiredService<TrafficRetentionSettings>().ReadAsync(cancellationToken);
+
+        var (human, bot) = await scope.ServiceProvider.GetRequiredService<TrafficRetention>()
+            .PurgeAsync(ReportPeriod.ColomboDayOf(now), periods.RawDays, periods.BotDays, cancellationToken);
+
+        return (human, bot, periods);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -132,8 +145,8 @@ internal sealed partial class TrafficRetentionService(
 
             try
             {
-                var (human, bot) = await RunOnceAsync(clock.UtcNow, stoppingToken);
-                LogPurged(human, bot, options.RawRetentionDays, options.BotRetentionDays);
+                var (human, bot, periods) = await RunOnceAsync(clock.UtcNow, stoppingToken);
+                LogPurged(human, bot, periods.RawDays, periods.RawSource, periods.BotDays, periods.BotSource);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -152,8 +165,15 @@ internal sealed partial class TrafficRetentionService(
     [LoggerMessage(
         EventId = 7131,
         Level = LogLevel.Information,
-        Message = "Purged {Human} page view(s) older than {RawDays} days and {Bot} bot page view(s) older than {BotDays} days.")]
-    private partial void LogPurged(int human, int bot, int rawDays, int botDays);
+        Message = "Purged {Human} page view(s) older than {RawDays} days (from {RawSource}) and {Bot} bot page view(s) older "
+            + "than {BotDays} days (from {BotSource}).")]
+    private partial void LogPurged(
+        int human,
+        int bot,
+        int rawDays,
+        TrafficRetentionSource rawSource,
+        int botDays,
+        TrafficRetentionSource botSource);
 
     [LoggerMessage(EventId = 7132, Level = LogLevel.Error, Message = "The traffic retention purge failed; it will try again tomorrow.")]
     private partial void LogFailed(Exception exception);
