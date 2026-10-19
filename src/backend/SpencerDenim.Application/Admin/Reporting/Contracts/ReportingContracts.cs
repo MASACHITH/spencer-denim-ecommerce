@@ -252,5 +252,45 @@ public sealed record CustomerReportRow(
     DateOnly FirstPaidOn,
     DateOnly LastPaidOn);
 
+/// <summary>
+/// The customers report's chart (#186b): buyers per day, ISO week or month of the period, each split into
+/// first-time and returning. The same population as <see cref="CustomerReportPage"/> — the same period, the
+/// same email search — so <see cref="Buyers"/> is that page's <c>TotalCount</c>.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <b>A buyer</b> is a distinct email address (compared as <c>EmailNormalized</c>, so case does not matter)
+/// on at least one order <b>paid</b> in the days counted: an order with a <c>PaidAtUtc</c> there. As
+/// everywhere in the reports, an order refunded later keeps its paid date and still counts; an order never
+/// paid — awaiting payment, cancelled or expired — does not.
+/// </para>
+/// <para>
+/// <b>First-time</b>: the buyer's first paid order <b>in this shop, ever</b>, is in those days.
+/// <b>Returning</b>: the buyer had a paid order here <b>before</b> those days began. Every buyer is exactly
+/// one of the two. The shop's history starts when it opened, so in its first weeks nearly everyone is
+/// first-time — which is the truth, not a gap.
+/// </para>
+/// </remarks>
+/// <param name="Interval"><c>Day</c>, <c>Week</c> or <c>Month</c>, chosen from the period's length.</param>
+/// <param name="Buyers">Distinct buyers over the whole period. <b>Not the sum of the points</b>: a buyer who
+/// paid in two weeks is one buyer here and one in each week.</param>
+/// <param name="FirstTimeBuyers">Buyers whose first paid order ever is in the period. This one <b>is</b> the sum
+/// of the points' first-time figures: a first order happens once.</param>
+/// <param name="ReturningBuyers">Buyers who had paid before the period began: <c>Buyers − FirstTimeBuyers</c>.</param>
+public sealed record CustomerBuyersDto(
+    ReportPeriodDto Period,
+    string Interval,
+    int Buyers,
+    int FirstTimeBuyers,
+    int ReturningBuyers,
+    IReadOnlyList<CustomerBuyersPoint> Points);
+
+/// <summary>
+/// One day, ISO week or month (cut to the period, as the sales report's rows are). <c>FirstTimeBuyers</c> +
+/// <c>ReturningBuyers</c> = <c>Buyers</c>; returning here means paid before <b>this point</b> began, which can
+/// be earlier in the same period.
+/// </summary>
+public sealed record CustomerBuyersPoint(DateOnly Start, DateOnly End, int Buyers, int FirstTimeBuyers, int ReturningBuyers);
+
 /// <summary>A report export, ready to send.</summary>
 public sealed record ReportExportFile(byte[] Content, string FileName, int RowCount);

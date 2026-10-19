@@ -233,5 +233,7 @@ public sealed class ReportExportCommandHandlerTests
         public Task<BuyersByDistrict> ReadBuyersByDistrictAsync(UtcRange range, CancellationToken cancellationToken) => throw new NotSupportedException();
 
         public Task<LowStockDto> ReadLowStockAsync(int take, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<BuyerCounts> ReadBuyerCountsAsync(ReportPeriod period, ReportInterval interval, string? emailPrefix, CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 }

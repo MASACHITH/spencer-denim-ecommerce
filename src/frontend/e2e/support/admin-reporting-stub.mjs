@@ -206,6 +206,16 @@ function customerRow(email, name, district, hasAccount, paidOrders, grossRevenue
   return { email, name, district, hasAccount, paidOrders, grossRevenue, firstPaidOn, lastPaidOn };
 }
 
+function buyersPoint(start, end, buyers, firstTimeBuyers) {
+  return {
+    start,
+    end,
+    buyers,
+    firstTimeBuyers,
+    returningBuyers: buyers - firstTimeBuyers,
+  };
+}
+
 function lowStockRow(row) {
   return {
     variantId: row.variantId,
@@ -233,6 +243,9 @@ function fixtures() {
       customer('=HYPERLINK("http://evil.example";"x")@example.com', '-2+3', 'Kandy', false, 1, 6600),
       customer('nimali@example.lk', 'නිමාලි පෙරේරා', 'Jaffna', false, 1, 3200),
     ],
+    // For the customers chart (#186b): which fixture buyers had paid before any period a test asks about.
+    // Kept beside the rows, never on them, so `customerRow` stays field for field with the contract.
+    paidBefore: ['dilani@example.com'],
   };
 }
 
@@ -373,6 +386,44 @@ function matchingCustomers(state, url, period) {
   const paid = state.reporting ? inPeriod(state.reporting.sales, period).length > 0 : false;
 
   return paid ? state.reporting.customers.filter((row) => search === '' || row.email.toLowerCase().startsWith(search)) : [];
+}
+
+/** `GetCustomerBuyersQueryHandler.IntervalFor`: Day up to 31 days, Week up to 182, Month beyond. */
+function buyersInterval(period) {
+  return period.days <= 31 ? 'Day' : period.days <= 182 ? 'Week' : 'Month';
+}
+
+/**
+ * The customers chart (#186b) over exactly the report's matching buyers. A fixture buyer paid on their
+ * `firstPaidOn` and `lastPaidOn` days (those inside the period); a buyer is first-time in
+ * the bucket of their `firstPaidOn` unless `paidBefore` names them, and returning in any other bucket they
+ * paid in. Returning = buyers - first-time, per point and over the period, as the server works it out.
+ */
+function buyersBody(state, url, period) {
+  const matching = matchingCustomers(state, url, period);
+  const before = new Set(state.reporting?.paidBefore ?? []);
+  const interval = buyersInterval(period);
+  const within = (day, start, end) => day >= start && day <= end;
+  const paidDays = (row) => [row.firstPaidOn, row.lastPaidOn].filter((day) => within(day, period.from, period.to));
+  const firstTime = (row, start, end) => !before.has(row.email) && within(row.firstPaidOn, start, end);
+
+  const points = split(period, interval).map(({ start, end }) => {
+    const inside = matching.filter((row) => paidDays(row).some((day) => within(day, start, end)));
+    return buyersPoint(start, end, inside.length, inside.filter((row) => firstTime(row, start, end)).length);
+  });
+
+  // The report's own count: every fixture buyer it lists paid on one of the fixture's sale days.
+  const buyers = matching.length;
+  const firstTimeBuyers = matching.filter((row) => firstTime(row, period.from, period.to)).length;
+
+  return {
+    period,
+    interval,
+    buyers,
+    firstTimeBuyers,
+    returningBuyers: buyers - firstTimeBuyers,
+    points,
+  };
 }
 
 function counts(rows) {
@@ -649,6 +700,11 @@ export async function handleReportingRoute({ path, method, url, response, state,
       ...matching.map((row) => [row.productName, row.productCode, row.department, row.sku, row.colour, row.size, row.onHand, row.reserved, row.available, row.threshold, row.thresholdIsDefault ? 'Shop default' : 'This variant', { InStock: 'In stock', LowStock: 'Low stock', OutOfStock: 'Out of stock' }[row.stockStatus]]),
     ]);
     return true;
+  }
+
+  if (path === '/api/admin/reports/customers/buyers' && method === 'GET') {
+    const period = readPeriod(url, errors);
+    return period ? (json(response, 200, buyersBody(state, url, period)), true) : invalid(json, response, errors);
   }
 
   const customers = /^\/api\/admin\/reports\/customers(\/export)?$/.exec(path);

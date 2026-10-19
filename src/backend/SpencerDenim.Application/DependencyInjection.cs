@@ -480,6 +480,7 @@ public static class DependencyInjection
         services.AddScoped<ICommandHandler<SetLowStockThresholdCommand, InventoryWriteResult>>(
             provider => provider.GetRequiredService<InventoryWriteHandlers>());
 
+        services.AddScoped<IQueryHandler<GetCustomerBuyersQuery, CustomerBuyersDto>, GetCustomerBuyersQueryHandler>();
         services.AddScoped<ICommandHandler<ExportSalesReportCommand, ReportExportFile>, ExportSalesReportCommandHandler>();
         services.AddScoped<
             ICommandHandler<ExportInventoryReportCommand, ReportExportFile>,
