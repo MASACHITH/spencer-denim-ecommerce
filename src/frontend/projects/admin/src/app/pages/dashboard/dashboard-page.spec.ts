@@ -300,6 +300,15 @@ describe('DashboardPage (ADM-04, ADM-05, ADM-07, ADM-08)', () => {
     expect(byTestId('kpis')).not.toBeNull();
   });
 
+  it('offers the Inventory screen in the sections only with Inventory.View', async () => {
+    await open(['Dashboard.View']);
+    expect(byTestId('dashboard-inventory-link')).toBeNull();
+    element.remove();
+
+    await open(['Dashboard.View', 'Inventory.View']);
+    expect(byTestId('dashboard-inventory-link')!.getAttribute('href')).toBe('/inventory');
+  });
+
   it('asks the order list for the ten newest when Orders.View is held', async () => {
     fixture = TestBed.createComponent(DashboardPage);
     element = fixture.nativeElement as HTMLElement;

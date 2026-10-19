@@ -409,11 +409,15 @@ test.describe('the screens themselves', () => {
     test(`the ${report} report has no sideways scroll and no undersized, unreachable or buried control`, async ({ page }) => {
       await open(page, `/reports?report=${report}`);
       await expect(page.locator(`[data-testid="${report}-table"]`)).toBeVisible();
+      // #186b: the customers report's buyers chart and its folded table are part of the page that is measured.
+      if (report === 'customers') {
+        await expect(page.locator('[data-testid="customers-chart"]')).toBeVisible();
+      }
 
       const controls = {
         sales: ['[data-testid="sales-from"]', '[data-testid="sales-to"]', '[data-testid="sales-group"]', '[data-testid="sales-apply"]', '[data-testid="sales-export"]'],
         inventory: ['[data-testid="inventory-status"]', '[data-testid="inventory-search"]', '[data-testid="inventory-apply"]', '[data-testid="inventory-export"]', '[data-testid="inventory-prev"]', '[data-testid="inventory-next"]'],
-        customers: ['[data-testid="customers-from"]', '[data-testid="customers-to"]', '[data-testid="customers-search"]', '[data-testid="customers-apply"]', '[data-testid="customers-export"]', '[data-testid="customers-prev"]', '[data-testid="customers-next"]'],
+        customers: ['[data-testid="customers-from"]', '[data-testid="customers-to"]', '[data-testid="customers-search"]', '[data-testid="customers-apply"]', '[data-testid="customers-export"]', '[data-testid="customers-prev"]', '[data-testid="customers-next"]', '[data-testid="customers-chart-card"] summary'],
       }[report];
 
       await measureAtEveryWidth(page, [...controls, `[data-testid="report-tab-${report}"]`]);

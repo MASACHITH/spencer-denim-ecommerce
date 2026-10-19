@@ -306,7 +306,19 @@ internal sealed class ProductWriteStore(AppDbContext dbContext, AuditAndSoftDele
             .Select(stock => stock.VariantId)
             .ToListAsync(cancellationToken);
 
-        return new VariantDeleteGuards(ids.ToHashSet(), stocked.ToHashSet());
+        // And the third, added by ADM-12 (#108): inventory.InventoryMovements is append-only and kept for the
+        // life of the system (doc 08 §3.4, §1.6), and its foreign key to the variant is NO ACTION. A variant
+        // whose stock was ever changed by hand therefore has a history that pins it, exactly as an order line
+        // does, and is switched off rather than deleted. It joins the "stock recorded against it" set because
+        // that is what the staff member is told, and it is true: its stock history is recorded against it.
+        var withHistory = await dbContext.InventoryMovements
+            .AsNoTracking()
+            .Where(movement => movement.Variant!.ProductId == productId)
+            .Select(movement => movement.VariantId)
+            .Distinct()
+            .ToListAsync(cancellationToken);
+
+        return new VariantDeleteGuards(ids.ToHashSet(), stocked.Concat(withHistory).ToHashSet());
     }
 
     public async Task SyncProductMediaUsagesAsync(

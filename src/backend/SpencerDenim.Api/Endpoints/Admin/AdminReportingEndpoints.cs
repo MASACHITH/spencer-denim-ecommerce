@@ -126,6 +126,19 @@ internal static class AdminReportingEndpoints
             .ProducesValidationProblem()
             .Produces(StatusCodes.Status403Forbidden);
 
+        reports.MapGet("/customers/buyers", GetCustomerBuyersAsync)
+            .RequirePermission(Permissions.Reports.View)
+            .WithName("AdminGetCustomerBuyers")
+            .WithSummary("The customers report's chart: buyers per day, ISO week or month, first-time and returning.")
+            .WithDescription(
+                "?from=, ?to= and ?search= as the customers report, whose population this is. A buyer is a "
+                + "distinct email on an order paid in the days counted; first-time means their first paid order "
+                + "ever is in those days, returning that they had paid before. One point per day up to 31 days, "
+                + "per ISO week up to 182, per month beyond.")
+            .Produces<CustomerBuyersDto>()
+            .ProducesValidationProblem()
+            .Produces(StatusCodes.Status403Forbidden);
+
         reports.MapPost("/customers/export", ExportCustomerReportAsync)
             .RequirePermission(Permissions.Reports.Export)
             .WithName("AdminExportCustomerReport")
@@ -307,6 +320,27 @@ internal static class AdminReportingEndpoints
 
         return TypedResults.Ok(
             await handler.HandleAsync(new GetCustomerReportQuery(period, search, page, pageSize), cancellationToken));
+    }
+
+    private static async Task<IResult> GetCustomerBuyersAsync(
+        HttpContext httpContext,
+        IClock clock,
+        IQueryHandler<GetCustomerBuyersQuery, CustomerBuyersDto> handler,
+        string? from,
+        string? to,
+        string? search,
+        CancellationToken cancellationToken)
+    {
+        NoStore(httpContext.Response);
+
+        var errors = new List<ValidationError>();
+
+        if (ReportPeriod.Parse(from, to, Today(clock), errors) is not { } period)
+        {
+            return Invalid(errors);
+        }
+
+        return TypedResults.Ok(await handler.HandleAsync(new GetCustomerBuyersQuery(period, search), cancellationToken));
     }
 
     private static async Task<IResult> ExportCustomerReportAsync(

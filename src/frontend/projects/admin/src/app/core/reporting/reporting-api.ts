@@ -5,6 +5,7 @@ import { Observable, map } from 'rxjs';
 import { AdminAuthApi } from '../auth/admin-auth-api';
 import {
   AdminDashboard,
+  CustomerBuyers,
   CustomerReportPage,
   InventoryReportPage,
   InventoryStockFilter,
@@ -66,6 +67,13 @@ export class ReportingApi {
   customers(period: PeriodQuery, search: string, page: number, pageSize: number): Observable<CustomerReportPage> {
     return this.http.get<CustomerReportPage>(`${ReportingApi.reportsUrl}/customers`, {
       params: searchParam(periodParams(period), search).set('page', String(page)).set('pageSize', String(pageSize)),
+    });
+  }
+
+  /** The customers report's chart: the same period and search as `customers`, no paging (#186b). */
+  customerBuyers(period: PeriodQuery, search: string): Observable<CustomerBuyers> {
+    return this.http.get<CustomerBuyers>(`${ReportingApi.reportsUrl}/customers/buyers`, {
+      params: searchParam(periodParams(period), search),
     });
   }
 

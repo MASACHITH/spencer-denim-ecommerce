@@ -113,6 +113,7 @@ app.MapAdminOrderEndpoints();
 app.MapAdminCustomerEndpoints();
 app.MapAdminNewsletterEndpoints();
 app.MapAdminReportingEndpoints();
+app.MapAdminInventoryEndpoints();
 app.MapAdminTrafficEndpoints();
 app.MapPaymentSlipEndpoints();
 app.MapAdminContentEndpoints();

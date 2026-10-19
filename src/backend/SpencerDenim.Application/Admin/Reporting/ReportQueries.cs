@@ -20,6 +20,10 @@ public sealed record GetInventoryReportQuery(InventoryReportFilter Filter, int? 
 /// <param name="Search">The start of an email address, or null.</param>
 public sealed record GetCustomerReportQuery(ReportPeriod Period, string? Search, int? Page, int? PageSize);
 
+/// <summary>The customers report's chart: buyers per day, week or month, first-time and returning (#186b; <c>Reports.View</c>).</summary>
+/// <param name="Search">The same search as the report's: the start of an email address, or null.</param>
+public sealed record GetCustomerBuyersQuery(ReportPeriod Period, string? Search);
+
 /// <summary>Export the sales report (<c>Reports.Export</c>).</summary>
 public sealed record ExportSalesReportCommand(ReportPeriod Period, ReportInterval GroupBy, AdminActor Actor);
 
@@ -126,6 +130,80 @@ public sealed class GetCustomerReportQueryHandler(IReportingReader reader)
             total,
             revenue);
     }
+}
+
+/// <summary>
+/// The customers report's chart (#186b). The reader counts in SQL; this picks the grouping, lays the counts
+/// on the period's buckets (a bucket with nobody is a zero, so the chart has no gaps) and derives returning
+/// as buyers − first-time, which holds because every buyer in a bucket either paid for the first time ever in
+/// it or had paid before it began.
+/// </summary>
+public sealed class GetCustomerBuyersQueryHandler(IReportingReader reader)
+    : IQueryHandler<GetCustomerBuyersQuery, CustomerBuyersDto>
+{
+    /// <summary>Up to this many days, one point per day (a month of bars).</summary>
+    public const int MaxDailyDays = 31;
+
+    /// <summary>Up to this many days, one point per ISO week (26 or 27 bars); longer, one per month.</summary>
+    public const int MaxWeeklyDays = 182;
+
+    public async Task<CustomerBuyersDto> HandleAsync(GetCustomerBuyersQuery query, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+
+        var interval = IntervalFor(query.Period);
+
+        var counts = await reader.ReadBuyerCountsAsync(
+            query.Period,
+            interval,
+            ReportPaging.EmailPrefix(query.Search),
+            cancellationToken);
+
+        return Build(query.Period, interval, counts);
+    }
+
+    /// <summary>Day up to a month, ISO week up to half a year, month beyond: never more than 31 bars.</summary>
+    public static ReportInterval IntervalFor(ReportPeriod period)
+    {
+        ArgumentNullException.ThrowIfNull(period);
+
+        return period.Days <= MaxDailyDays ? ReportInterval.Day
+            : period.Days <= MaxWeeklyDays ? ReportInterval.Week
+            : ReportInterval.Month;
+    }
+
+    public static CustomerBuyersDto Build(ReportPeriod period, ReportInterval interval, BuyerCounts counts)
+    {
+        ArgumentNullException.ThrowIfNull(period);
+        ArgumentNullException.ThrowIfNull(counts);
+
+        var buckets = ReportBuckets.Split(period, interval);
+        var buyers = Totals(counts.Buyers);
+        var firstTime = Totals(counts.FirstTime);
+
+        var points = buckets
+            .Select((bucket, index) =>
+            {
+                var all = buyers.GetValueOrDefault(index);
+                var first = firstTime.GetValueOrDefault(index);
+
+                return new CustomerBuyersPoint(bucket.Start, bucket.End, all, first, all - first);
+            })
+            .ToList();
+
+        var firstTimeTotal = points.Sum(point => point.FirstTimeBuyers);
+
+        return new CustomerBuyersDto(
+            ReportPeriodDto.Of(period),
+            interval.ToString(),
+            counts.DistinctBuyers,
+            firstTimeTotal,
+            counts.DistinctBuyers - firstTimeTotal,
+            points);
+    }
+
+    private static Dictionary<int, int> Totals(IReadOnlyList<BucketCount> counts) =>
+        counts.GroupBy(count => count.Index).ToDictionary(group => group.Key, group => group.Sum(count => count.Count));
 }
 
 /// <summary>
