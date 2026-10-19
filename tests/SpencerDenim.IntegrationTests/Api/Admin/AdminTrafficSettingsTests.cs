@@ -447,9 +447,16 @@ public sealed class AdminTrafficSettingsTests(SqlServerDatabaseFixture sqlServer
             Assert.Equal(
                 new TrafficRetentionPeriods(45, 5, TrafficRetentionSource.Settings, TrafficRetentionSource.Configuration),
                 await ResolveAsync(factory));
+
+            // A row flipped to Secret by hand holds ciphertext, not a number: it is never read, even when its
+            // stored text would parse. (CK_Settings_IsSecret moves both columns together.)
+            await SetSecretAsync(factory, SettingKeys.Traffic.RawRetentionDays, secret: true);
+
+            Assert.Equal(60, (await ResolveAsync(factory)).RawDays);
         }
         finally
         {
+            await SetSecretAsync(factory, SettingKeys.Traffic.RawRetentionDays, secret: false);
             await RestoreAsync(factory);
         }
     }
@@ -624,6 +631,20 @@ public sealed class AdminTrafficSettingsTests(SqlServerDatabaseFixture sqlServer
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
         await db.Settings.Where(row => row.Key == key).ExecuteUpdateAsync(update => update.SetProperty(row => row.Value, value), Token);
+    }
+
+    private static async Task SetSecretAsync(ApiFactory factory, string key, bool secret)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        await db.Settings
+            .Where(row => row.Key == key)
+            .ExecuteUpdateAsync(
+                update => update
+                    .SetProperty(row => row.IsSecret, secret)
+                    .SetProperty(row => row.ValueType, secret ? SettingValueType.Secret : SettingValueType.Int),
+                Token);
     }
 
     private static async Task<TrafficRetentionPeriods> ResolveAsync(ApiFactory factory)

@@ -51,7 +51,7 @@ const LOGO_CSS_HEIGHT = { mobile: 24, desktop: 32 } as const;
 
 /** The desktop cap on the logo's width, from `site-header.ts`. */
 const LOGO_MAX_WIDTH = 220;
-type SocialState = 'none' | 'one' | 'all';
+type SocialState = 'none' | 'one' | 'all' | 'four';
 
 /**
  * Puts the stub into a named state **before** the page is opened.
@@ -427,6 +427,58 @@ test.describe('the footer social links (GLB-07, ADM-22)', () => {
       'https://www.instagram.com/colombowardrobe',
       'https://www.tiktok.com/@colombowardrobe',
     ]);
+  });
+
+  /**
+   * Issue #193: a YouTube channel is the fourth icon, last as the API sends it, drawn with the shared set's own
+   * outline glyph and named in words for a screen reader. The three-network state above has no YouTube address
+   * and draws no YouTube icon, which is the "hidden when empty" half.
+   */
+  test('a YouTube channel is drawn as the fourth icon when it is set', async ({ page }) => {
+    await useSettings(page, 'none', 'four');
+    await page.goto('/');
+
+    const links = page.locator('.site-footer__social a');
+    await expect(links).toHaveCount(4);
+
+    const youTube = links.nth(3);
+    await expect(youTube).toHaveAttribute('href', 'https://www.youtube.com/@colombowardrobe');
+    await expect(youTube).toHaveAttribute('rel', /noopener/);
+    await expect(youTube.locator('.sr-only')).toHaveText('Colombo Wardrobe on YouTube');
+    await expect(youTube.locator('svg rect[width="19"]')).toHaveCount(1);
+
+    // Rendered by the server, not added by hydration: the footer is in the HTML a crawler reads.
+    const html = await (await page.request.get('/')).text();
+    expect(html).toContain('https://www.youtube.com/@colombowardrobe');
+  });
+
+  test('no YouTube icon is drawn when no channel is set', async ({ page }) => {
+    await useSettings(page, 'none', 'all');
+    await page.goto('/');
+
+    await expect(page.locator('.site-footer__social a')).toHaveCount(3);
+    await expect(page.locator('.site-footer__social a[href*="youtube"]')).toHaveCount(0);
+    await expect(page.locator('footer')).not.toContainText('YouTube');
+  });
+
+  test('four social icons fit every breakpoint with real tap targets and no sideways scroll', async ({ page }) => {
+    await useSettings(page, 'none', 'four');
+
+    for (const width of BREAKPOINTS) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto('/');
+
+      const rendered = await page.evaluate(
+        () =>
+          [...document.querySelectorAll<HTMLElement>('.site-footer__social a')].filter(
+            (element) => element.getClientRects().length > 0,
+          ).length,
+      );
+
+      expect(rendered, `four social links rendered at ${width}px`).toBe(4);
+      expect(await undersized(page, '.site-footer__social a'), `tap targets at ${width}px`).toEqual([]);
+      expect(await horizontalOverflow(page), `horizontal overflow at ${width}px`).toBeLessThanOrEqual(0);
+    }
   });
 
   test('the social icons meet the tap minimum at every breakpoint', async ({ page }) => {

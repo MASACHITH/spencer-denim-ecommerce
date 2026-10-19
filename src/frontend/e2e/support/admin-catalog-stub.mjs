@@ -1072,6 +1072,7 @@ function freshState() {
       'Social.FacebookUrl': null,
       'Social.InstagramUrl': null,
       'Social.TikTokUrl': null,
+      'Social.YouTubeUrl': null,
 
       // PAY-01 / doc 11 P7's preconditions. Seeded null, like the real seeder: the client fills them in.
       'Bank.BankName': null,
@@ -1233,7 +1234,24 @@ function freshState() {
  * The one catalogued key the real seeder writes a value for (doc 08 section 3.8's 7). Seeded here too, so
  * the screen opens showing what production shows rather than an empty box.
  */
-const SEEDED_SETTINGS = { 'Orders.AutoDeliverAfterDays': '7' };
+const SEEDED_SETTINGS = {
+  'Orders.AutoDeliverAfterDays': '7',
+
+  // Issue #193: doc 08 section 3.8's own 90 and 7, which the real seeder writes into the Traffic rows.
+  'Traffic.RawRetentionDays': '90',
+  'Traffic.BotRetentionDays': '7',
+};
+
+/**
+ * The Traffic form's bounds (issue #193), the same figures as `SettingKeys.Traffic` on the server. The stub
+ * refuses what the server refuses — out of bounds, empty, not digits, a JSON number, bots longer than people —
+ * so a screen that stopped showing those errors fails a browser test rather than passing against a stub that
+ * took anything.
+ */
+const TRAFFIC_BOUNDS = {
+  rawRetentionDays: { key: 'Traffic.RawRetentionDays', min: 30, max: 365 },
+  botRetentionDays: { key: 'Traffic.BotRetentionDays', min: 7, max: 90 },
+};
 
 function settingsPayload(state) {
   for (const [key, value] of Object.entries(SEEDED_SETTINGS)) {
@@ -1261,8 +1279,15 @@ function settingsPayload(state) {
     { groupKey: 'Contact', keys: ['Contact.WhatsApp'], types: {} },
     {
       groupKey: 'Social',
-      keys: ['Social.FacebookUrl', 'Social.InstagramUrl', 'Social.TikTokUrl'],
+      keys: ['Social.FacebookUrl', 'Social.InstagramUrl', 'Social.TikTokUrl', 'Social.YouTubeUrl'],
       types: {},
+    },
+
+    // Issue #193: the purge's retention periods. Settings.Edit, its own save unit.
+    {
+      groupKey: 'Traffic',
+      keys: ['Traffic.RawRetentionDays', 'Traffic.BotRetentionDays'],
+      types: { 'Traffic.RawRetentionDays': 'Int', 'Traffic.BotRetentionDays': 'Int' },
     },
 
     // PAY-01. Its own group and its own save unit, because it is the one group guarded by a different
@@ -1307,7 +1332,11 @@ function settingsPayload(state) {
       return bankKeys;
     }
 
-    return ['Contact.WhatsApp', 'Social.FacebookUrl', 'Social.InstagramUrl', 'Social.TikTokUrl'];
+    if (groupKey === 'Traffic') {
+      return ['Traffic.RawRetentionDays', 'Traffic.BotRetentionDays'];
+    }
+
+    return ['Contact.WhatsApp', 'Social.FacebookUrl', 'Social.InstagramUrl', 'Social.TikTokUrl', 'Social.YouTubeUrl'];
   };
 
   const tokenFor = (groupKey) =>
@@ -2447,6 +2476,90 @@ const server = createServer(async (request, response) => {
     return noContent(response);
   }
 
+  // Issue #193: the Traffic form. Mirrors UpdateTrafficSettingsCommandHandler's rules and order: field errors,
+  // then the token, then bots-not-longer-than-people against the value each key will hold. Only the fields the
+  // body carried are written.
+  if (path === '/api/admin/settings/traffic' && request.method === 'PUT') {
+    const body = await readBody(request);
+    if (body === undefined || body === null) {
+      return problem(response, 400, 'Malformed JSON', 'The request body is not valid JSON.', 'malformed_json');
+    }
+
+    const errors = {};
+    const wanted = {};
+
+    for (const [field, rule] of Object.entries(TRAFFIC_BOUNDS)) {
+      if (!Object.hasOwn(body, field)) {
+        continue;
+      }
+
+      const raw = body[field];
+
+      if (raw !== null && typeof raw !== 'string') {
+        errors[field] = ['Send this field as text, or as null to clear it.'];
+        continue;
+      }
+
+      const text = raw === null ? '' : raw.trim();
+
+      if (text === '') {
+        errors[field] = [`Enter how many days to keep them, between ${rule.min} and ${rule.max}. This cannot be left empty.`];
+        continue;
+      }
+
+      if (!/^[0-9]+$/.test(text)) {
+        errors[field] = [`Enter a whole number of days, in digits, between ${rule.min} and ${rule.max}.`];
+        continue;
+      }
+
+      const days = Number(text);
+
+      if (days < rule.min || days > rule.max) {
+        errors[field] = [`Use between ${rule.min} and ${rule.max} days.`];
+        continue;
+      }
+
+      wanted[field] = days;
+    }
+
+    if (Object.keys(errors).length > 0) {
+      return json(response, 400, { title: 'One or more fields are invalid.', status: 400, errors });
+    }
+
+    if (body.rowVersion !== settingsToken(state, 'Traffic')) {
+      return problem(
+        response,
+        409,
+        'This change cannot be applied',
+        'Somebody else changed the traffic settings while you were editing them.',
+        'stale_row_version',
+      );
+    }
+
+    const effective = (field) =>
+      Object.hasOwn(wanted, field) ? wanted[field] : Number(state.settings[TRAFFIC_BOUNDS[field].key]);
+    const raw = effective('rawRetentionDays');
+    const bot = effective('botRetentionDays');
+
+    if (Number.isFinite(raw) && Number.isFinite(bot) && bot > raw) {
+      const field = Object.hasOwn(wanted, 'botRetentionDays') ? 'botRetentionDays' : 'rawRetentionDays';
+
+      return json(response, 400, {
+        title: 'One or more fields are invalid.',
+        status: 400,
+        errors: {
+          [field]: [`Bot page views cannot be kept longer than page views (${bot} days against ${raw}).`],
+        },
+      });
+    }
+
+    for (const [field, days] of Object.entries(wanted)) {
+      state.settings[TRAFFIC_BOUNDS[field].key] = String(days);
+    }
+
+    return noContent(response);
+  }
+
   if (path === '/api/admin/settings/contact-social' && request.method === 'PUT') {
     const body = await readBody(request);
     if (body === undefined || body === null) {
@@ -2470,9 +2583,10 @@ const server = createServer(async (request, response) => {
       facebookUrl: 'Social.FacebookUrl',
       instagramUrl: 'Social.InstagramUrl',
       tikTokUrl: 'Social.TikTokUrl',
+      youTubeUrl: 'Social.YouTubeUrl',
     };
 
-    for (const field of ['facebookUrl', 'instagramUrl', 'tikTokUrl']) {
+    for (const field of ['facebookUrl', 'instagramUrl', 'tikTokUrl', 'youTubeUrl']) {
       const value = body[field];
       if (value !== null && value !== undefined && String(value).trim() !== '' && !acceptableProfileUrl(value)) {
         errors[field] = [

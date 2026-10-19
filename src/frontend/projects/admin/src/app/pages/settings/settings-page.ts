@@ -21,6 +21,8 @@ import {
   PayPalValues,
   SETTING_GROUPS,
   SETTING_KEYS,
+  TRAFFIC_BOUNDS,
+  TrafficValues,
 } from '../../core/settings/admin-settings.model';
 
 /** The largest logo file this screen will send. The media library's own limit is higher. */
@@ -569,7 +571,62 @@ const LOGO_ACCEPT = 'image/png,image/jpeg,image/webp';
           </section>
         }
 
-        @if (!canEditStore() && !canEditContact() && !canEditBank() && !canEditInvoice() && !canEditPayPal()) {
+        @if (canEditTraffic()) {
+          <section class="adm-panel" aria-labelledby="traffic-title" data-testid="traffic-panel">
+            <h2 class="adm-panel__title" id="traffic-title">Traffic</h2>
+            <p class="adm-panel__hint">
+              How long individual page views are kept before the nightly clean-up deletes them. <strong>The daily
+              totals on the Traffic page are kept for ever</strong>, whatever you choose here — this only decides
+              how long the visit-by-visit records exist. A change applies from the next night's clean-up.
+            </p>
+
+            <form class="adm-fields" (ngSubmit)="saveTraffic()" novalidate>
+              @for (field of trafficFields; track field.name) {
+                <div class="adm-field">
+                  <!-- An explicit for/id pair, as the invoice form above. No backticks in this comment; the whole
+                       template is a template literal and one would end it. -->
+                  <label class="adm-label" [attr.for]="'traffic-' + field.name">{{ field.label }}</label>
+                  <input
+                    class="adm-input"
+                    type="text"
+                    inputmode="numeric"
+                    [id]="'traffic-' + field.name"
+                    [name]="field.name"
+                    autocomplete="off"
+                    [attr.aria-invalid]="fieldError(field.name) ? 'true' : null"
+                    [attr.aria-describedby]="'traffic-hint-' + field.name"
+                    [ngModel]="trafficForm()[field.name]"
+                    (ngModelChange)="patchTraffic(field.name, $event)"
+                    [attr.data-testid]="'field-' + field.name"
+                  />
+                  <span class="adm-panel__hint" [id]="'traffic-hint-' + field.name">{{ field.hint }}</span>
+                  @if (fieldError(field.name); as message) {
+                    <span class="adm-field-error" [attr.data-testid]="'error-' + field.name">
+                      {{ message }}
+                    </span>
+                  }
+                </div>
+              }
+
+              <div class="adm-actions adm-field--wide">
+                <!-- aria-disabled, not disabled, for the reason the invoice form's button gives. -->
+                <button
+                  class="adm-btn--primary"
+                  type="submit"
+                  [attr.aria-disabled]="busy() ? 'true' : null"
+                  data-testid="save-traffic"
+                >
+                  {{ busy() ? 'Saving…' : 'Save traffic settings' }}
+                </button>
+              </div>
+            </form>
+          </section>
+        }
+
+        @if (
+          !canEditStore() && !canEditContact() && !canEditBank() && !canEditInvoice() && !canEditPayPal()
+          && !canEditTraffic()
+        ) {
           <p class="adm-state" data-testid="nothing-to-edit">
             There are no settings you can change here.
           </p>
@@ -691,7 +748,7 @@ export class SettingsPage {
     },
   ];
 
-  /** The three social boxes, as data, so the template cannot spell a field name differently from the API. */
+  /** The four social boxes (YouTube since issue #193), as data, so the template cannot spell a field name differently from the API. */
   protected readonly socialFields = [
     {
       name: 'facebookUrl' as const,
@@ -704,6 +761,32 @@ export class SettingsPage {
       placeholder: 'https://www.instagram.com/yourshop',
     },
     { name: 'tikTokUrl' as const, label: 'TikTok profile', placeholder: 'https://www.tiktok.com/@yourshop' },
+    {
+      name: 'youTubeUrl' as const,
+      label: 'YouTube channel',
+      placeholder: 'https://www.youtube.com/@yourshop',
+    },
+  ];
+
+  /**
+   * The Traffic form's two boxes (issue #193), as data for the same reason the other forms' are. The hints carry
+   * the bounds from {@link TRAFFIC_BOUNDS}, which match the server's; the server is still the one that refuses.
+   * The only examples are doc 08's own 90 and 7, which are also what a new shop starts with.
+   */
+  protected readonly trafficFields = [
+    {
+      name: 'rawRetentionDays' as const,
+      label: 'Keep page views for (days)',
+      hint: `Between ${TRAFFIC_BOUNDS.rawMin} and ${TRAFFIC_BOUNDS.rawMax} days, today included — 90 is the `
+        + 'default. It cannot go lower because the nightly totals are rebuilt from these records, and a few '
+        + 'weeks leaves time to notice if that ever stops.',
+    },
+    {
+      name: 'botRetentionDays' as const,
+      label: 'Keep bot page views for (days)',
+      hint: `Search engines and link previews, never counted as visitors. Between ${TRAFFIC_BOUNDS.botMin} and `
+        + `${TRAFFIC_BOUNDS.botMax} days — 7 is the default — and no longer than page views are kept.`,
+    },
   ];
 
   /**
@@ -942,6 +1025,9 @@ export class SettingsPage {
    */
   private readonly invoiceValues = signal<InvoiceAndFulfilmentValues>({});
 
+  /** The Traffic form's two periods, holding **only the keys the server sent** — see `toTrafficForm`. */
+  private readonly trafficValues = signal<TrafficValues>({});
+
   protected readonly settings = this.loaded.asReadonly();
   protected readonly loading = this.isLoading.asReadonly();
   protected readonly busy = this.isBusy.asReadonly();
@@ -957,6 +1043,7 @@ export class SettingsPage {
    */
   protected readonly payPalSecret = signal('');
   protected readonly invoiceForm = this.invoiceValues.asReadonly();
+  protected readonly trafficForm = this.trafficValues.asReadonly();
   protected readonly announcement = this.said.asReadonly();
 
   /**
@@ -1074,6 +1161,12 @@ export class SettingsPage {
    * `Settings.Edit` today, so in practice they arrive together.
    */
   protected readonly canEditInvoice = computed(() => this.hasGroup(SETTING_GROUPS.orders));
+
+  /**
+   * Whether the server sent the `Traffic` group (issue #193). `Settings.Edit`, so a Super Admin and a Store
+   * Manager see it and a payments-only caller does not — the read model's per-row filter, not a rule here.
+   */
+  protected readonly canEditTraffic = computed(() => this.hasGroup(SETTING_GROUPS.traffic));
 
   constructor() {
     this.load();
@@ -1199,6 +1292,20 @@ export class SettingsPage {
     }
 
     this.payPalValues.set(payPalFromServer as PayPalValues);
+
+    const trafficFromServer: Record<string, string | null> = { ...toTrafficForm(settings) };
+
+    if (keepUnsavedEdits) {
+      const currentTraffic = this.trafficValues() as Record<string, string | null | undefined>;
+
+      for (const field of this.editedSinceWrite) {
+        if (field in trafficFromServer) {
+          trafficFromServer[field] = currentTraffic[field] ?? null;
+        }
+      }
+    }
+
+    this.trafficValues.set(trafficFromServer as TrafficValues);
     this.logoAltText.set(settings.logo?.altText?.trim() || BRAND.name);
   }
 
@@ -1239,6 +1346,15 @@ export class SettingsPage {
   ): void {
     this.editedSinceWrite.add(field);
     this.invoiceValues.update((current) => ({ ...current, [field]: value }));
+
+    this.problem.update((current) =>
+      current?.kind === 'validation' && current.fieldErrors?.[field] ? null : current,
+    );
+  }
+
+  protected patchTraffic<K extends keyof TrafficValues>(field: K, value: TrafficValues[K]): void {
+    this.editedSinceWrite.add(field);
+    this.trafficValues.update((current) => ({ ...current, [field]: value }));
 
     this.problem.update((current) =>
       current?.kind === 'validation' && current.fieldErrors?.[field] ? null : current,
@@ -1348,6 +1464,24 @@ export class SettingsPage {
     // is a field the API leaves alone (W1-12).
     this.api.updateInvoiceAndFulfilment(this.invoiceValues(), group).subscribe({
       next: () => this.afterWrite('Invoice details saved. New invoices will print them.'),
+      error: (error: unknown) => this.afterFailure(error),
+    });
+  }
+
+  /**
+   * Saves the two traffic retention periods (issue #193). Only the fields the server sent, which is what
+   * `toTrafficForm` produced; the server validates the bounds and that bots are not kept longer than people.
+   */
+  protected saveTraffic(): void {
+    const group = this.groupVersion(SETTING_GROUPS.traffic);
+    if (group === null || this.isBusy()) {
+      return;
+    }
+
+    this.beforeWrite('Saving the traffic settings…');
+
+    this.api.updateTraffic(this.trafficValues(), group).subscribe({
+      next: () => this.afterWrite('Traffic settings saved. They apply from the next nightly clean-up.'),
       error: (error: unknown) => this.afterFailure(error),
     });
   }
@@ -1548,6 +1682,7 @@ export function toForm(settings: AdminSettings): ContactAndSocialValues {
     ['facebookUrl', SETTING_KEYS.facebookUrl],
     ['instagramUrl', SETTING_KEYS.instagramUrl],
     ['tikTokUrl', SETTING_KEYS.tikTokUrl],
+    ['youTubeUrl', SETTING_KEYS.youTubeUrl],
   ] as const) {
     if (byKey.has(key)) {
       form[field] = byKey.get(key) ?? null;
@@ -1649,6 +1784,29 @@ export function toPayPalForm(settings: AdminSettings): PayPalValues {
   }
 
   return form as PayPalValues;
+}
+
+/**
+ * The Traffic form's values, read out of the payload by key — **only the keys the payload contained**, exactly
+ * {@link toBankForm}'s rule, so a caller who did not receive the group sends nothing for it.
+ */
+export function toTrafficForm(settings: AdminSettings): TrafficValues {
+  const byKey = new Map(
+    settings.groups.flatMap((group) => group.settings.map((setting) => [setting.key, setting.value] as const)),
+  );
+
+  const form: Record<string, string | null> = {};
+
+  for (const [field, key] of [
+    ['rawRetentionDays', SETTING_KEYS.trafficRawRetentionDays],
+    ['botRetentionDays', SETTING_KEYS.trafficBotRetentionDays],
+  ] as const) {
+    if (byKey.has(key)) {
+      form[field] = byKey.get(key) ?? null;
+    }
+  }
+
+  return form as TrafficValues;
 }
 
 /**

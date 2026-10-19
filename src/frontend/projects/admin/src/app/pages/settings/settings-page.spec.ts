@@ -4,7 +4,7 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 
 import { AdminSettingsApi } from '../../core/settings/admin-settings-api';
 import { AdminSettings, SETTING_KEYS } from '../../core/settings/admin-settings.model';
-import { SettingsPage, formatStamp, toForm, toPayPalForm } from './settings-page';
+import { SettingsPage, formatStamp, toForm, toPayPalForm, toTrafficForm } from './settings-page';
 
 /**
  * ADM-22 and GLB-02: the settings screen.
@@ -50,6 +50,7 @@ describe('SettingsPage (ADM-22)', () => {
             setting(SETTING_KEYS.facebookUrl),
             setting(SETTING_KEYS.instagramUrl),
             setting(SETTING_KEYS.tikTokUrl),
+            setting(SETTING_KEYS.youTubeUrl),
           ],
         },
       ],
@@ -395,9 +396,11 @@ describe('SettingsPage (ADM-22)', () => {
         [SETTING_KEYS.facebookUrl]: 'https://www.facebook.com/shop',
         [SETTING_KEYS.instagramUrl]: 'https://www.instagram.com/shop',
         [SETTING_KEYS.tikTokUrl]: 'https://www.tiktok.com/@shop',
+        [SETTING_KEYS.youTubeUrl]: 'https://www.youtube.com/@shop',
       }),
     );
 
+    expect(field('youTubeUrl').value).toBe('https://www.youtube.com/@shop');
     expect(field('whatsApp').value).toBe('94771234567');
     expect(field('facebookUrl').value).toBe('https://www.facebook.com/shop');
     expect(field('instagramUrl').value).toBe('https://www.instagram.com/shop');
@@ -459,6 +462,7 @@ describe('SettingsPage (ADM-22)', () => {
       'rowVersion',
       'tikTokUrl',
       'whatsApp',
+      'youTubeUrl',
     ]);
 
     expect(body['whatsApp']).toBe('94771234567');
@@ -469,6 +473,20 @@ describe('SettingsPage (ADM-22)', () => {
     // And the ones nobody filled in are sent as null rather than omitted, so "clear it" is explicit.
     expect(body['instagramUrl']).toBeNull();
     expect(body['tikTokUrl']).toBeNull();
+    expect(body['youTubeUrl']).toBeNull();
+  });
+
+  /** Issue #193: the fourth social box. Typed in, it reaches the PUT under the name the API reads. */
+  it('sends the YouTube channel typed into its box', async () => {
+    await open();
+
+    await type('youTubeUrl', 'https://www.youtube.com/@colombowardrobe');
+    await save();
+
+    const body = writeTo(AdminSettingsApi.contactSocialUrl).request.body as Record<string, unknown>;
+
+    expect(body['youTubeUrl']).toBe('https://www.youtube.com/@colombowardrobe');
+    expect(field('youTubeUrl').getAttribute('placeholder')).toBe('https://www.youtube.com/@yourshop');
   });
 
   it('sends the row version the API handed it', async () => {
@@ -1245,6 +1263,200 @@ describe('SettingsPage (ADM-22)', () => {
 
       expect(readiness().dataset['state']).toBe('not-ready');
       expect(readiness().textContent).toContain('more than 2 days ago');
+    });
+  });
+
+  describe('traffic (issue #193)', () => {
+    /**
+     * The ordinary payload plus the `Traffic` group (`Settings.Edit`), with its own token as the server sends it
+     * (`SettingCatalog.SaveUnits` gives it a save unit of its own). Non-null values, for the reason `payload()`
+     * gives.
+     */
+    function payloadWithTraffic(values: Partial<Record<string, string | null>> = {}): AdminSettings {
+      const traffic = {
+        [SETTING_KEYS.trafficRawRetentionDays]: '90',
+        [SETTING_KEYS.trafficBotRetentionDays]: '7',
+        ...values,
+      } as Record<string, string | null>;
+
+      const base = payload();
+
+      return {
+        ...base,
+        groups: [
+          ...base.groups,
+          {
+            groupKey: 'Traffic',
+            rowVersion: 'traffic-rv-1',
+            settings: Object.keys(traffic).map((key) => ({
+              key,
+              valueType: 'Int' as const,
+              value: traffic[key] ?? null,
+              isSecret: false,
+              hasValue: Boolean(traffic[key]),
+              requiredPermission: 'Settings.Edit',
+              description: `What ${key} is for.`,
+              updatedAtUtc: null,
+            })),
+          },
+        ],
+      };
+    }
+
+    async function clickSaveTraffic(): Promise<void> {
+      (element.querySelector('[data-testid="save-traffic"]') as HTMLButtonElement).click();
+      fixture.detectChanges();
+      await fixture.whenStable();
+    }
+
+    it('is absent for a caller who does not receive the Traffic group', async () => {
+      await open(payload());
+
+      expect(element.querySelector('[data-testid="traffic-panel"]')).toBeNull();
+      expect(field('rawRetentionDays')).toBeNull();
+    });
+
+    it('shows the two periods the server sent, with numeric keyboards and the bounds in the hints', async () => {
+      await open(payloadWithTraffic({ [SETTING_KEYS.trafficRawRetentionDays]: '120', [SETTING_KEYS.trafficBotRetentionDays]: '14' }));
+
+      expect(field('rawRetentionDays').value).toBe('120');
+      expect(field('botRetentionDays').value).toBe('14');
+      expect(field('rawRetentionDays').getAttribute('inputmode')).toBe('numeric');
+
+      const panel = element.querySelector('[data-testid="traffic-panel"]')!.textContent!;
+      expect(panel).toContain('Between 30 and 365 days');
+      expect(panel).toContain('Between 7 and');
+      expect(panel).toContain('90 days');
+      expect(panel).toContain('kept for ever');
+    });
+
+    it('sends both periods with the Traffic token, then re-reads', async () => {
+      await open(payloadWithTraffic());
+
+      await type('rawRetentionDays', '180');
+      await type('botRetentionDays', '21');
+      await clickSaveTraffic();
+
+      const saved = writeTo(AdminSettingsApi.trafficUrl);
+
+      expect(saved.request.method).toBe('PUT');
+      expect(saved.request.body).toEqual({
+        rawRetentionDays: '180',
+        botRetentionDays: '21',
+        rowVersion: 'traffic-rv-1',
+      });
+
+      saved.flush(null);
+      fixture.detectChanges();
+      await fixture.whenStable();
+
+      controller.expectOne(AdminSettingsApi.settingsUrl).flush(
+        payloadWithTraffic({ [SETTING_KEYS.trafficRawRetentionDays]: '180', [SETTING_KEYS.trafficBotRetentionDays]: '21' }),
+      );
+      fixture.detectChanges();
+      await fixture.whenStable();
+
+      expect(element.querySelector('[data-testid="announcement"]')!.textContent).toContain('Traffic settings saved');
+    });
+
+    it('omits a key the server did not send, rather than sending null', async () => {
+      const full = payloadWithTraffic();
+      const narrowed: AdminSettings = {
+        ...full,
+        groups: full.groups.map((group) =>
+          group.groupKey === 'Traffic'
+            ? { ...group, settings: group.settings.filter((row) => row.key === SETTING_KEYS.trafficBotRetentionDays) }
+            : group,
+        ),
+      };
+
+      await open(narrowed);
+      await type('botRetentionDays', '30');
+      await clickSaveTraffic();
+
+      const saved = writeTo(AdminSettingsApi.trafficUrl);
+      expect(saved.request.body).toEqual({ botRetentionDays: '30', rowVersion: 'traffic-rv-1' });
+      saved.flush(null);
+      controller.expectOne(AdminSettingsApi.settingsUrl).flush(narrowed);
+    });
+
+    it('shows the server\'s refusal beside the box it is about', async () => {
+      await open(payloadWithTraffic());
+
+      await type('rawRetentionDays', '10');
+      await clickSaveTraffic();
+
+      writeTo(AdminSettingsApi.trafficUrl).flush(
+        {
+          title: 'One or more fields are invalid.',
+          status: 400,
+          errors: { rawRetentionDays: ['Use between 30 and 365 days.'] },
+        },
+        { status: 400, statusText: 'Bad Request' },
+      );
+      fixture.detectChanges();
+      await fixture.whenStable();
+
+      expect(element.querySelector('[data-testid="error-rawRetentionDays"]')!.textContent).toContain('between 30 and 365');
+      expect(field('rawRetentionDays').getAttribute('aria-invalid')).toBe('true');
+
+      // Typing into the box clears the message about the value that is no longer there.
+      await type('rawRetentionDays', '45');
+      expect(element.querySelector('[data-testid="error-rawRetentionDays"]')).toBeNull();
+    });
+
+    it('does not send a second save while one is in flight', async () => {
+      await open(payloadWithTraffic());
+
+      await type('rawRetentionDays', '100');
+      await clickSaveTraffic();
+      await clickSaveTraffic();
+
+      const saved = writeTo(AdminSettingsApi.trafficUrl);
+      saved.flush(null);
+      controller.expectOne(AdminSettingsApi.settingsUrl).flush(payloadWithTraffic());
+    });
+
+    it('is something to edit on its own', async () => {
+      const only: AdminSettings = {
+        logo: null,
+        groups: payloadWithTraffic().groups.filter((group) => group.groupKey === 'Traffic'),
+      };
+
+      await open(only);
+
+      expect(element.querySelector('[data-testid="nothing-to-edit"]')).toBeNull();
+      expect(element.querySelector('[data-testid="traffic-panel"]')).not.toBeNull();
+    });
+  });
+
+  describe('toTrafficForm', () => {
+    it('reads only the keys the payload carries', () => {
+      expect(toTrafficForm({ groups: [], logo: null })).toEqual({});
+
+      const form = toTrafficForm({
+        logo: null,
+        groups: [
+          {
+            groupKey: 'Traffic',
+            rowVersion: 'rv',
+            settings: [
+              {
+                key: SETTING_KEYS.trafficRawRetentionDays,
+                valueType: 'Int',
+                value: '60',
+                isSecret: false,
+                hasValue: true,
+                requiredPermission: 'Settings.Edit',
+                description: null,
+                updatedAtUtc: null,
+              },
+            ],
+          },
+        ],
+      });
+
+      expect(form).toEqual({ rawRetentionDays: '60' });
     });
   });
 

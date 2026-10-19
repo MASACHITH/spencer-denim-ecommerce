@@ -2285,6 +2285,14 @@ function buildSiteSettings(logo, social, whatsApp, contact) {
       { network: 'instagram', url: 'https://www.instagram.com/colombowardrobe' },
       { network: 'tiktok', url: 'https://www.tiktok.com/@colombowardrobe' },
     ],
+
+    // Issue #193: the fourth network, in the order the API sends it (last).
+    four: [
+      { network: 'facebook', url: 'https://www.facebook.com/colombowardrobe' },
+      { network: 'instagram', url: 'https://www.instagram.com/colombowardrobe' },
+      { network: 'tiktok', url: 'https://www.tiktok.com/@colombowardrobe' },
+      { network: 'youtube', url: 'https://www.youtube.com/@colombowardrobe' },
+    ],
   };
 
   // The declared dimensions are the served bytes' real dimensions (see LOGO_SHAPES). They used to be a fiction
@@ -3626,7 +3634,7 @@ const server = createServer((request, response) => {
   // because under `destroy` it never answers. Probing this resets the fault on the way in.
   // Test-only, like the departments fault below: sets what `/api/site/settings` answers next.
   //
-  // `logo=none|wide|tall` and `social=none|all|one` rather than a free-form payload, so a test names a
+  // `logo=none|wide|tall` and `social=none|all|one|four` rather than a free-form payload, so a test names a
   // *state* and this file owns what that state's bytes are. A GET with no parameters resets it, which is
   // what makes a run that ended mid-switch harmless.
   if (url.pathname === '/api/traffic/page-views' && request.method === 'POST') {
