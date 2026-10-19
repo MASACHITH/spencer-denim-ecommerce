@@ -1339,6 +1339,8 @@ describe('SettingsPage (ADM-22)', () => {
 
       const saved = writeTo(AdminSettingsApi.trafficUrl);
 
+      // The literal route, not only the constant: a mistyped constant would otherwise agree with itself.
+      expect(saved.request.url).toBe('/api/admin/settings/traffic');
       expect(saved.request.method).toBe('PUT');
       expect(saved.request.body).toEqual({
         rawRetentionDays: '180',
