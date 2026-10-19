@@ -224,10 +224,11 @@ public sealed class AdminPromoCodeEndpointTests(SqlServerDatabaseFixture sqlServ
             ["maxDiscountAmount"] = null,
             ["minSpendAmount"] = null,
 
-            // Fixed dates rather than "now", so nothing here depends on the clock. They bracket the day
-            // the suite was written and the window is never asserted, only sent.
-            ["startsAt"] = "2026-10-13T00:00",
-            ["endsAt"] = "2026-10-20T00:00",
+            // The window is never asserted, only sent, but it is kept current — today's Colombo midnight
+            // to a week later — so every code these tests create is Live rather than quietly Ended (a
+            // fixed 2026-10-13 to 2026-10-20 window ended that evening and only drew a warning).
+            ["startsAt"] = ShopTime.Midnight(0),
+            ["endsAt"] = ShopTime.Midnight(7),
             ["excludeSaleItems"] = excludeSaleItems,
             ["totalUsageLimit"] = null,
             ["perCustomerLimit"] = null,
