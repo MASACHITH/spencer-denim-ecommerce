@@ -217,16 +217,26 @@ public sealed class AdminCustomerBuyersEdgeTests(SqlServerDatabaseFixture sqlSer
 
     /// <summary>
     /// The search is a parameter, and LIKE's own characters in it are literal: <c>_</c> matches only an
-    /// underscore, <c>%</c> and <c>[</c> match nothing here, and a quote is harmless. The chart and the report
+    /// underscore, <c>%</c> and <c>[</c> match nothing here, a backslash and <c>]</c> are themselves, Sinhala
+    /// matches, and quotes, comments and a NUL are harmless (round 2: the query is raw SQL now). The chart and the report
     /// agree on every one.
     /// </summary>
     [Theory]
     [InlineData(".a_", 1)]
-    [InlineData(".a", 2)]
+    [InlineData(".a", 4)]
     [InlineData(".a%", 0)]
     [InlineData(".[a]", 0)]
     [InlineData(".a'; DROP TABLE sales.Orders; --", 0)]
-    [InlineData("", 3)]
+    [InlineData("", 6)]
+    [InlineData(".a\\", 1)]
+    [InlineData(".a\\_", 0)]
+    [InlineData(".a]", 1)]
+    [InlineData(".a[]", 0)]
+    [InlineData(".a\\%", 0)]
+    [InlineData(".a' OR '1'='1", 0)]
+    [InlineData(".a\u0000", 4)] // The collation gives NUL no weight, so ".a" + NUL compares as ".a", in the report too.
+    [InlineData(".නි", 1)]
+    [InlineData(".න", 1)]
     public async Task The_search_is_a_literal_email_prefix(string suffix, int expected)
     {
         await using var host = await StartAsync();
@@ -235,6 +245,9 @@ public sealed class AdminCustomerBuyersEdgeTests(SqlServerDatabaseFixture sqlSer
         await InsertPaidAsync(catalogue, Buyer("a_b"), Colombo(2018, 4, 10));
         await InsertPaidAsync(catalogue, Buyer("axb"), Colombo(2018, 4, 11));
         await InsertPaidAsync(catalogue, Buyer("zed"), Colombo(2018, 4, 12));
+        await InsertPaidAsync(catalogue, Buyer("a\\b"), Colombo(2018, 4, 13));
+        await InsertPaidAsync(catalogue, Buyer("a]b"), Colombo(2018, 4, 14));
+        await InsertPaidAsync(catalogue, Buyer("නිමාලි"), Colombo(2018, 4, 15));
 
         using var client = await host.SignInAsync(Permissions.Reports.View);
         var from = new DateOnly(2018, 4, 1);
@@ -269,6 +282,34 @@ public sealed class AdminCustomerBuyersEdgeTests(SqlServerDatabaseFixture sqlSer
         Assert.Equal((0, 0, 0), Figures(chart));
         Assert.All(chart.GetProperty("points").EnumerateArray(), point => Assert.Equal((0, 0, 0), Figures(point)));
         await AssertSameAsReportAsync(client, chart, from, to, middle);
+    }
+
+    /// <summary>
+    /// A search far longer than an address (300+ characters, beyond the 256 of the column and the parameter)
+    /// is cut to 100 by the report's own rule and answers 200 with nobody, as the report does.
+    /// </summary>
+    [Fact]
+    public async Task A_search_longer_than_the_column_is_harmless()
+    {
+        await using var host = await StartAsync();
+        var catalogue = await CatalogueAsync();
+        await InsertPaidAsync(catalogue, Buyer("long"), Colombo(2018, 8, 10));
+
+        using var client = await host.SignInAsync(Permissions.Reports.View);
+        var from = new DateOnly(2018, 8, 1);
+        var to = new DateOnly(2018, 8, 31);
+
+        foreach (var search in new[] { Marker + ".long" + new string('\\', 300), Marker + new string('%', 300), new string('[', 400) })
+        {
+            var chart = await GetJsonAsync(client, Query(Url, from, to, search));
+            Assert.Equal((0, 0, 0), Figures(chart));
+            await AssertSameAsReportAsync(client, chart, from, to, search);
+        }
+
+        // A 100-character prefix that is the whole address still matches: the cut keeps the start.
+        var exact = Buyer("long");
+        var found = await GetJsonAsync(client, Query(Url, from, to, exact));
+        Assert.Equal((1, 1, 0), Figures(found));
     }
 
     /// <summary>A bare <c>%</c> is not "everyone": with the LIKE escaped it matches no address at all.</summary>
