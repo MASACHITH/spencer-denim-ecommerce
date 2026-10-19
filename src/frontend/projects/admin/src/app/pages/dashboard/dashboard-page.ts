@@ -277,7 +277,7 @@ interface Access {
                     </li>
                   }
                 </ul>
-                <details>
+                <details class="dash__figures">
                   <summary class="adm-link">Show the figures as a table</summary>
                   <div class="adm-table-scroll" tabindex="0" role="region" aria-label="Buyers by delivery district">
                     <table class="adm-table" data-testid="dashboard-districts">
@@ -355,6 +355,7 @@ interface Access {
     .dash__track span { display: block; height: 100%; background: var(--chart-accent); }
     .dash__count { min-width: 2rem; text-align: right; font-weight: var(--weight-semibold); }
     .dash__links { display: flex; flex-wrap: wrap; gap: 0 var(--space-2); }
+    .dash__figures { min-width: 0; }
     @media (min-width: 900px) { .dash__row--three { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
     @media (min-width: 1100px) {
       .dash__row--two { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }

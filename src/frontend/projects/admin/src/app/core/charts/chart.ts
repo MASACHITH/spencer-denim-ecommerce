@@ -113,6 +113,9 @@ export interface ChartTable {
     .chart__name { flex: 1; min-width: 0; overflow-wrap: anywhere; color: var(--color-text-muted); }
     .chart__figure, .chart__share { font-variant-numeric: tabular-nums; white-space: nowrap; }
     .chart__share { min-width: 3.5em; text-align: right; font-weight: var(--weight-semibold); }
+    /* min-width: 0, or the grid item grows to the open table's width and the page scrolls sideways; the
+       .adm-table-scroll inside it is what scrolls (#186 tester). */
+    .chart__table { min-width: 0; }
     .chart__table summary { width: fit-content; }
   `,
 })

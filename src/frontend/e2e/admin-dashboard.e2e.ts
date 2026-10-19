@@ -471,6 +471,20 @@ async function measureAtEveryWidth(page: Page, clauses: readonly string[]): Prom
 
     expect(await horizontalOverflow(page), `horizontal overflow at ${width}px`).toBe(0);
 
+    // #186 tester: the folded "Show the figures as a table" tables are the widest thing on these pages, so the
+    // sweep measures them open too, and closes them again so the control checks below see the page as shipped.
+    await page.evaluate(() => document.querySelectorAll('details').forEach((details) => details.setAttribute('data-sweep-was-open', String(details.open))));
+    await page.evaluate(() => document.querySelectorAll('details').forEach((details) => (details.open = true)));
+    await page.waitForTimeout(150);
+    expect(await horizontalOverflow(page), `horizontal overflow at ${width}px with every table open`).toBe(0);
+    await page.evaluate(() =>
+      document.querySelectorAll<HTMLDetailsElement>('details[data-sweep-was-open]').forEach((details) => {
+        details.open = details.getAttribute('data-sweep-was-open') === 'true';
+        details.removeAttribute('data-sweep-was-open');
+      }),
+    );
+    await page.waitForTimeout(150);
+
     for (const clause of clauses) {
       await expect(page.locator(clause), `${clause} at ${width}px`).toHaveCount(1);
       expect(await undersized(page, clause), `tap target ${clause} at ${width}px`).toEqual([]);

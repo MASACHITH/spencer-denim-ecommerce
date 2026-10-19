@@ -282,11 +282,12 @@ textarea.adm-input {
  * blue — not the client demo's maroon, which is TU@SL's brand.
  *
  * **Measured, not guessed.** Each mark colour is at least 3:1 against white (WCAG 2.2 SC 1.4.11, non-text
- * contrast): chart-1 5.2, chart-2 3.2, chart-3 3.7, chart-4 4.6, chart-5 5.7, chart-6 3.3, chart-7 3.6,
- * chart-8 3.7; status 3.0 (expired) to 7.6 (cancelled). The trend colours are used for small text, so they meet
- * 4.5:1: trend-up 5.0, trend-down 4.8. Neighbours are ordered so no two adjacent colours differ only in red
- * against green: under simulated protanopia, deuteranopia and tritanopia the closest adjacent categorical pair
- * is still 14.5 apart (CIELAB ΔE). Colour is never the only cue: every chart has a text legend, a table and a
+ * contrast): chart-1 5.2, chart-2 3.2, chart-3 3.7, chart-4 4.6, chart-5 9.0, chart-6 3.3, chart-7 7.1,
+ * chart-8 4.1; status 3.0 (expired) to 7.6 (cancelled). The trend colours are used for small text, so they meet
+ * 4.5:1: trend-up 5.0, trend-down 4.8. **Every pair of the eight, not only neighbours**, is at least 30.3 apart
+ * (CIELAB ΔE, normal vision: blue against deep violet) and at least 6.7 apart under simulated protanopia,
+ * deuteranopia and tritanopia (teal against green, tritanopia); neighbours, which touch in a doughnut, at least
+ * 12.2 (blue against sky, which only meet when a chart has all eight). Amber and umber: 31.7 / 23.6. Colour is never the only cue: every chart has a text legend, a table and a
  * one-sentence summary, and a trend has its arrow and its words.
  *
  * **The dark variants** (each 3.5:1 or more against #1a1a1a, most above 6) are defined for `[data-theme='dark']`.
@@ -298,10 +299,10 @@ textarea.adm-input {
   --chart-2: #d97706; /* amber */
   --chart-3: #0d9488; /* teal */
   --chart-4: #db2777; /* berry pink */
-  --chart-5: #7c3aed; /* violet */
+  --chart-5: #5b21b6; /* deep violet */
   --chart-6: #16a34a; /* green */
-  --chart-7: #ea580c; /* coral orange */
-  --chart-8: #0891b2; /* cyan */
+  --chart-7: #92400e; /* umber */
+  --chart-8: #0284c7; /* sky */
   --chart-accent: var(--chart-1);
   --chart-grid: #ece9e3;
   --chart-ink: var(--color-text-muted);
@@ -343,8 +344,8 @@ textarea.adm-input {
   --chart-4: #f472b6;
   --chart-5: #a78bfa;
   --chart-6: #4ade80;
-  --chart-7: #fb923c;
-  --chart-8: #22d3ee;
+  --chart-7: #d6a06a;
+  --chart-8: #38bdf8;
   --chart-grid: #333333;
   --status-awaiting: #fbbf24;
   --status-paid: #4ade80;
@@ -369,6 +370,9 @@ textarea.adm-input {
   border-radius: var(--card-radius);
   box-shadow: var(--card-shadow);
   font-size: var(--text-data);
+}
+.adm-card > * {
+  min-width: 0;
 }
 .adm-card__hd {
   display: flex;
@@ -396,7 +400,7 @@ textarea.adm-input {
   font-size: var(--text-label);
   font-weight: var(--weight-semibold);
   white-space: nowrap;
-  color: color-mix(in srgb, var(--badge, var(--color-text)) 70%, var(--color-text));
+  color: color-mix(in srgb, var(--badge, var(--color-text)) var(--badge-ink, 70%), var(--color-text));
   background: color-mix(in srgb, var(--badge, var(--color-text)) 12%, var(--color-surface));
 }
 .adm-badge[data-status='PendingPayment'] { --badge: var(--status-awaiting); }
@@ -405,7 +409,9 @@ textarea.adm-input {
 .adm-badge[data-status='Shipped'] { --badge: var(--status-dispatched); }
 .adm-badge[data-status='Delivered'] { --badge: var(--status-delivered); }
 .adm-badge[data-status='Cancelled'] { --badge: var(--status-cancelled); }
-.adm-badge[data-status='Expired'] { --badge: var(--status-cancelled); }
+/* Expired is the lightest status colour, so its text is mixed further towards the text colour: 4.46:1 at
+   70%, 5.35:1 at 60%. Its colour still matches its doughnut slice. */
+.adm-badge[data-status='Expired'] { --badge: var(--status-expired); --badge-ink: 60%; }
 .adm-badge[data-status='Refunded'] { --badge: var(--status-refunded); }
 .adm-badge--alert { --badge: var(--trend-down); }
 
