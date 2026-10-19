@@ -141,3 +141,27 @@ that would be a second export with its own audit shape, which is a scope questio
 
 `2026-10-19-186b-customers-chart/ours-reports-customers-1440.png`, `…-1440-table-open.png` and `…-390.png` were
 taken against the Node stub (`set=some`) at exact CSS widths. Horizontal overflow measured at 0 in all three.
+
+## Tester (independent), 2026-10-19
+
+**Verdict: PASS.** No High or Medium defects. Tests added in `d31b15d`.
+
+- Hand-worked SQL Server cases all matched the first time: an ISO week across the year end (Mon 31 Dec 2035 to
+  Sun 6 Jan 2036) with the same orders by month and by day, the leap day ending an ISO week (2032), 31/32/182/183-day
+  edges, a mid-month monthly period, refunded-after-paid first orders, an old unpaid order that is not history,
+  23:59/00:01 across bar boundaries, and the search (LIKE `_ % [` and a quote are literal; the middle of an address
+  does not match). The chart's `buyers` equals the report's `totalCount` in every case.
+- 401/403 match doc 08 §9: Content Editor, Order Staff and Reports.Export alone are refused; Store Manager is allowed.
+  Eight bad periods give a 400 body identical to the customers report's.
+- Plans: the forced-index (8622) technique is used correctly, with a control. Added: no key lookup under the forced
+  index for the buyers and first-time queries, with a control that does need one.
+- Mutations: 13 backend mutations (10 killed; the developer's tests would have missed T6, search `Contains` rather
+  than `StartsWith`; 3 are equivalent). 12 frontend mutations (10 killed; FM1–FM7 and FM11 needed the new tests;
+  FM8 equivalent; FM9 is a compile error that the developer's E2 also covers).
+- Low: the three aggregates run as separate statements under RCSI. An order paid between statements 1 and 2 on
+  "today" could make first-time > buyers on that bar, which shows returning as −1. A snapshot transaction around the
+  three reads, or clamping returning at zero, would close it.
+- Low: the third aggregate (distinct buyers over the period) has no plan test of its own. It uses the same
+  `PaidIn` predicate.
+- Not this branch: `admin-sale-campaigns.e2e.ts:192` hard-codes a campaign start of 2026-10-19T00:00. From today
+  that campaign is "Live", not "Starts later", so the test fails on any branch.
