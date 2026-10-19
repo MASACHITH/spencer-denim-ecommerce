@@ -35,7 +35,14 @@ public sealed class ReportingQueryPlanTests(SqlServerDatabaseFixture sqlServer)
 
     private static CancellationToken Token => TestContext.Current.CancellationToken;
 
-    public static TheoryData<string> PaidQueries => ["totals", "daily", "districts", "departments"];
+    private static readonly ReportPeriod Period = new(new DateOnly(2015, 1, 2), new DateOnly(2015, 4, 1));
+
+    public static TheoryData<string> PaidQueries =>
+    [
+        "totals", "daily", "districts", "departments",
+        "buyers-day", "buyers-week", "buyers-month", "buyers-search",
+        "first-time-day", "first-time-week", "first-time-month", "first-time-search",
+    ];
 
     [Theory]
     [MemberData(nameof(PaidQueries))]
@@ -50,6 +57,14 @@ public sealed class ReportingQueryPlanTests(SqlServerDatabaseFixture sqlServer)
             "daily" => reader.PaidDailyQuery(Range).ToQueryString(),
             "districts" => reader.BuyersByDistrictQuery(Range).ToQueryString(),
             "departments" => reader.DepartmentSalesQuery(Range).ToQueryString(),
+            "buyers-day" => reader.BuyersPerBucketQuery(Period, ReportInterval.Day, null).ToQueryString(),
+            "buyers-week" => reader.BuyersPerBucketQuery(Period, ReportInterval.Week, null).ToQueryString(),
+            "buyers-month" => reader.BuyersPerBucketQuery(Period, ReportInterval.Month, null).ToQueryString(),
+            "buyers-search" => reader.BuyersPerBucketQuery(Period, ReportInterval.Day, "NIMALI").ToQueryString(),
+            "first-time-day" => reader.FirstTimeBuyersPerBucketQuery(Period, ReportInterval.Day, null).ToQueryString(),
+            "first-time-week" => reader.FirstTimeBuyersPerBucketQuery(Period, ReportInterval.Week, null).ToQueryString(),
+            "first-time-month" => reader.FirstTimeBuyersPerBucketQuery(Period, ReportInterval.Month, null).ToQueryString(),
+            "first-time-search" => reader.FirstTimeBuyersPerBucketQuery(Period, ReportInterval.Day, "NIMALI").ToQueryString(),
             _ => throw new ArgumentOutOfRangeException(nameof(query)),
         };
 

@@ -485,6 +485,26 @@ internal sealed class ReportingReader(AppDbContext dbContext, IOptions<CatalogOp
             revenue);
     }
 
+    public async Task<BuyerCounts> ReadBuyerCountsAsync(
+        ReportPeriod period,
+        ReportInterval interval,
+        string? emailPrefix,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(period);
+
+        var range = UtcRange.Of(period);
+
+        var buyers = await BuyersPerBucketQuery(period, interval, emailPrefix).ToListAsync(cancellationToken);
+        var firstTime = await FirstTimeBuyersPerBucketQuery(period, interval, emailPrefix).ToListAsync(cancellationToken);
+        var distinct = await PaidByEmail(range, emailPrefix)
+            .Select(order => order.EmailNormalized)
+            .Distinct()
+            .CountAsync(cancellationToken);
+
+        return new BuyerCounts(buyers, firstTime, distinct);
+    }
+
     // -----------------------------------------------------------------------------------------------------
     // The shared predicates. Internal so the plan tests can render exactly these queries.
     // -----------------------------------------------------------------------------------------------------
@@ -550,6 +570,74 @@ internal sealed class ReportingReader(AppDbContext dbContext, IOptions<CatalogOp
                 group.Select(order => order.EmailNormalized).Distinct().Count(),
                 group.Count(),
                 group.Sum(order => order.GrandTotal)));
+
+    /// <summary>Orders paid in the range, narrowed to an email prefix when the report has a search.</summary>
+    private IQueryable<Order> PaidByEmail(UtcRange range, string? emailPrefix) =>
+        emailPrefix is null
+            ? PaidIn(range)
+            : PaidIn(range).Where(order => order.EmailNormalized.StartsWith(emailPrefix));
+
+    /// <summary>
+    /// Distinct buyers per bucket (#186b): each paid order in the period as (email, paid instant), grouped by
+    /// the bucket of its Colombo day, emails counted once per bucket.
+    /// </summary>
+    internal IQueryable<BucketCount> BuyersPerBucketQuery(ReportPeriod period, ReportInterval interval, string? emailPrefix) =>
+        PaidByEmail(UtcRange.Of(period), emailPrefix)
+            .Select(order => new PaidStamp { Email = order.EmailNormalized, PaidAtUtc = order.PaidAtUtc!.Value })
+            .GroupBy(BucketOf(period, interval))
+            .Select(bucket => new BucketCount(bucket.Key, bucket.Select(stamp => stamp.Email).Distinct().Count()));
+
+    /// <summary>
+    /// First-time buyers per bucket (#186b): every email's <b>first paid order ever</b> — the minimum paid
+    /// instant over all its paid orders up to the period's end — kept when that first order is inside the
+    /// period, then counted per bucket. One row per email, so a plain count.
+    /// <para>
+    /// It reads every paid order before the period's end, not only the period's, because "first" needs the
+    /// history. <c>IX_Orders_Paid</c> carries <c>EmailNormalized</c>, so that is a range scan of a narrow
+    /// covering index and one hash aggregate — <c>ReportingQueryPlanTests</c> proves the index can serve it.
+    /// </para>
+    /// </summary>
+    internal IQueryable<BucketCount> FirstTimeBuyersPerBucketQuery(ReportPeriod period, ReportInterval interval, string? emailPrefix)
+    {
+        var range = UtcRange.Of(period);
+
+        var history = dbContext.Orders
+            .AsNoTracking()
+            .Where(order => order.PaidAtUtc != null && order.PaidAtUtc < range.ToUtcExclusive);
+
+        if (emailPrefix is not null)
+        {
+            history = history.Where(order => order.EmailNormalized.StartsWith(emailPrefix));
+        }
+
+        return history
+            .GroupBy(order => order.EmailNormalized)
+            .Select(email => new PaidStamp { Email = email.Key, PaidAtUtc = email.Min(order => order.PaidAtUtc!.Value) })
+            .Where(first => first.PaidAtUtc >= range.FromUtc)
+            .GroupBy(BucketOf(period, interval))
+            .Select(bucket => new BucketCount(bucket.Key, bucket.Count()));
+    }
+
+    /// <summary>
+    /// The index, in <see cref="ReportBuckets.Split"/>'s list, of the bucket a paid instant falls in, as SQL:
+    /// <c>DATEDIFF(day|month, @anchor, DATEADD(minute, 330, PaidAtUtc))</c>. <c>DATEDIFF</c> counts the
+    /// midnights (or month starts) crossed, which for a midnight anchor is exactly the difference in Colombo
+    /// calendar days (or months). Weeks are days from the Monday on or before the period's first day, divided
+    /// by seven — so the first, partial week is bucket 0, as in <c>Split</c>.
+    /// </summary>
+    private static Expression<Func<PaidStamp, int>> BucketOf(ReportPeriod period, ReportInterval interval)
+    {
+        var first = period.From.ToDateTime(TimeOnly.MinValue);
+        var monday = ReportBuckets.WeekStart(period.From).ToDateTime(TimeOnly.MinValue);
+
+        return interval switch
+        {
+            ReportInterval.Day => stamp => EF.Functions.DateDiffDay(first, stamp.PaidAtUtc.AddMinutes(ColomboOffsetMinutes)),
+            ReportInterval.Week => stamp => EF.Functions.DateDiffDay(monday, stamp.PaidAtUtc.AddMinutes(ColomboOffsetMinutes)) / 7,
+            ReportInterval.Month => stamp => EF.Functions.DateDiffMonth(first, stamp.PaidAtUtc.AddMinutes(ColomboOffsetMinutes)),
+            _ => throw new ArgumentOutOfRangeException(nameof(interval), interval, null),
+        };
+    }
 
     /// <summary>Line revenue per department at purchase, on orders paid in the range.</summary>
     internal IQueryable<GroupSales> DepartmentSalesQuery(UtcRange range) =>
@@ -629,4 +717,15 @@ internal sealed class ReportingReader(AppDbContext dbContext, IOptions<CatalogOp
 
     /// <summary>One department's line sales.</summary>
     internal sealed record GroupSales(int Id, int Units, decimal Revenue);
+
+    /// <summary>
+    /// An email and a paid instant, mid-query. A class with settable members, not a positional record, so EF
+    /// can see through it when the next operator groups on <see cref="PaidAtUtc"/>.
+    /// </summary>
+    internal sealed class PaidStamp
+    {
+        public string Email { get; init; } = "";
+
+        public DateTime PaidAtUtc { get; init; }
+    }
 }
