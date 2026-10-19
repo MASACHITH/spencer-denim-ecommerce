@@ -201,7 +201,7 @@ public sealed class AdminCustomerBuyersTests(SqlServerDatabaseFixture sqlServer)
 
         await InsertPaidAsync(catalogue, Buyer("Mixed"), Colombo(2013, 3, 8, 10));
         await InsertPaidAsync(catalogue, Buyer("mixed").ToUpperInvariant(), Colombo(2013, 3, 8, 15));
-        await InsertPaidAsync(catalogue, Buyer("HISTORY"), Colombo(2012, 12, 1));
+        await InsertPaidAsync(catalogue, Buyer("HISTORY"), Colombo(2013, 1, 10)); // 2012 belongs to AdminDashboardEndpointTests.
         await InsertPaidAsync(catalogue, Buyer("history"), Colombo(2013, 3, 9));
 
         using var client = await host.SignInAsync(Permissions.Reports.View);

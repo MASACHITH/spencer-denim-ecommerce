@@ -165,3 +165,60 @@ taken against the Node stub (`set=some`) at exact CSS widths. Horizontal overflo
   `PaidIn` predicate.
 - Not this branch: `admin-sale-campaigns.e2e.ts:192` hard-codes a campaign start of 2026-10-19T00:00. From today
   that campaign is "Live", not "Starts later", so the test fails on any branch.
+
+## Fix round (developer, 2026-10-19): one consistent read, plan test for the total
+
+**1. Negative returning buyers (tester Low).** The first version ran three statements. Under
+READ_COMMITTED_SNAPSHOT each statement reads its own committed snapshot, so an order committed between them could
+show up in the first-time count and be missing from the buyers count.
+
+- **Why not a SNAPSHOT transaction.** `tools/db/provision-database.sql` enables only READ_COMMITTED_SNAPSHOT, not
+  ALLOW_SNAPSHOT_ISOLATION. Turning that on is a database change this chart does not justify, so it is not used.
+- **Why not clamping.** Clamping returning at zero would hide the symptom, but the period total could still
+  disagree with the bars.
+- **What it does instead: one statement.** `BuyerCountsQuery` reads the period's paid orders as (email, bucket)
+  and inner-joins each email's first paid instant (its whole history up to the period end). It groups by
+  `GROUPING SETS ((Bucket), ())`, so the bars and the period's distinct total come out of the same statement. On
+  the total row, the first-time test still compares each row's own bucket with the first order's bucket, which is
+  true for exactly the buyers whose first order is in the period.
+- **Why one statement is enough.** Under RCSI a single statement sees a single snapshot across both references to
+  the orders table, so every count comes from the same data.
+- **Nothing to restore on the pooled connection.** There is no transaction and no isolation change, so nothing can
+  leak into the pool (#172). `PooledIsolationLeakTests` still passes.
+- **Why raw SQL.** LINQ cannot express GROUPING SETS. Every value is a typed `SqlParameter`: `datetime2(3)` like
+  the column, and `nvarchar(256)` like `EmailNormalized`. The search's `%`, `_`, `[` and `\` are escaped, the same
+  as EF's `StartsWith` does it. The only text spliced into the SQL is one of three fixed bucket expressions and an
+  optional fixed `LIKE` clause. The tester's LIKE and quote cases pass unchanged.
+- **New test: `AdminCustomerBuyersConsistencyTests`.** It makes the race deterministic. A command interceptor
+  commits a new first-time buyer's paid order from another connection as soon as the reader's first command starts.
+  The test asserts:
+  - exactly one command was sent;
+  - no bar has returning below zero;
+  - on every bar, first-time + returning = buyers;
+  - the bars' first-time figures add up to the period's first-time total;
+  - the result is the state before the new order: (1, 1, 0).
+- **Proof that the test catches the defect.** With the first-time counts taken from a second statement (and the
+  one-command check switched off), it fails with exactly the reported defect: `Buyers = 1, FirstTimeBuyers = 2,
+  ReturningBuyers = -1` on 10 Jul 2013. With the total taken from a second statement, the one-command check fails.
+
+**2. Plan test for the third aggregate.** The distinct total is now the grand-total row of the same statement. For
+day, week, month and the search, `ReportingQueryPlanTests` forces `IX_Orders_Paid` on **both** references to the
+orders table (it asserts there are 2, and that GROUPING SETS is present). The statement compiles, which would fail
+with error 8622 if a predicate could not use the filtered index. It also shows no key lookup, so the index covers
+the whole statement, distinct total included.
+
+**3. Test-data fix.** My email-casing test put a "history" order in **2012**, a year that belongs to
+`AdminDashboardEndpointTests`. The combined filtered run caught it: "Department, category and product sales…"
+failed, and passed when run alone. That order is now on 10 Jan 2013.
+
+**Numbers:**
+
+| Check | Result |
+|---|---|
+| Release build | 0 warnings, 0 errors (`--no-incremental`) |
+| Unit tests (full suite) | 3002 passed |
+| Integration, filtered (`~Report`, `~AdminCustomerBuyers`, `~Dashboard`, `~PooledIsolationLeak`) on LocalDB | 136 passed, 0 failed, 1 skipped |
+
+The skip is `ReportingTesterTests.The_live_dashboard_at_a_year_of_orders`, which was already skipped before this branch.
+
+`admin-sale-campaigns.e2e.ts:192` is untouched; it is being fixed on another branch.

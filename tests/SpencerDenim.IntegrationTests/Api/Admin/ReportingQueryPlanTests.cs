@@ -40,8 +40,7 @@ public sealed class ReportingQueryPlanTests(SqlServerDatabaseFixture sqlServer)
     public static TheoryData<string> PaidQueries =>
     [
         "totals", "daily", "districts", "departments",
-        "buyers-day", "buyers-week", "buyers-month", "buyers-search",
-        "first-time-day", "first-time-week", "first-time-month", "first-time-search",
+        "buyer-counts-day", "buyer-counts-week", "buyer-counts-month", "buyer-counts-search",
     ];
 
     [Theory]
@@ -57,14 +56,10 @@ public sealed class ReportingQueryPlanTests(SqlServerDatabaseFixture sqlServer)
             "daily" => reader.PaidDailyQuery(Range).ToQueryString(),
             "districts" => reader.BuyersByDistrictQuery(Range).ToQueryString(),
             "departments" => reader.DepartmentSalesQuery(Range).ToQueryString(),
-            "buyers-day" => reader.BuyersPerBucketQuery(Period, ReportInterval.Day, null).ToQueryString(),
-            "buyers-week" => reader.BuyersPerBucketQuery(Period, ReportInterval.Week, null).ToQueryString(),
-            "buyers-month" => reader.BuyersPerBucketQuery(Period, ReportInterval.Month, null).ToQueryString(),
-            "buyers-search" => reader.BuyersPerBucketQuery(Period, ReportInterval.Day, "NIMALI").ToQueryString(),
-            "first-time-day" => reader.FirstTimeBuyersPerBucketQuery(Period, ReportInterval.Day, null).ToQueryString(),
-            "first-time-week" => reader.FirstTimeBuyersPerBucketQuery(Period, ReportInterval.Week, null).ToQueryString(),
-            "first-time-month" => reader.FirstTimeBuyersPerBucketQuery(Period, ReportInterval.Month, null).ToQueryString(),
-            "first-time-search" => reader.FirstTimeBuyersPerBucketQuery(Period, ReportInterval.Day, "NIMALI").ToQueryString(),
+            "buyer-counts-day" => reader.BuyerCountsQuery(Period, ReportInterval.Day, null).ToQueryString(),
+            "buyer-counts-week" => reader.BuyerCountsQuery(Period, ReportInterval.Week, null).ToQueryString(),
+            "buyer-counts-month" => reader.BuyerCountsQuery(Period, ReportInterval.Month, null).ToQueryString(),
+            "buyer-counts-search" => reader.BuyerCountsQuery(Period, ReportInterval.Day, "NIMALI").ToQueryString(),
             _ => throw new ArgumentOutOfRangeException(nameof(query)),
         };
 
@@ -83,7 +78,7 @@ public sealed class ReportingQueryPlanTests(SqlServerDatabaseFixture sqlServer)
 
     public static TheoryData<string> BuyerQueries =>
     [
-        "buyers-week", "buyers-search", "first-time-month", "first-time-search",
+        "buyer-counts-day", "buyer-counts-week", "buyer-counts-month", "buyer-counts-search",
     ];
 
     /// <summary>
@@ -100,12 +95,17 @@ public sealed class ReportingQueryPlanTests(SqlServerDatabaseFixture sqlServer)
 
         var sql = query switch
         {
-            "buyers-week" => reader.BuyersPerBucketQuery(Period, ReportInterval.Week, null).ToQueryString(),
-            "buyers-search" => reader.BuyersPerBucketQuery(Period, ReportInterval.Day, "NIMALI").ToQueryString(),
-            "first-time-month" => reader.FirstTimeBuyersPerBucketQuery(Period, ReportInterval.Month, null).ToQueryString(),
-            "first-time-search" => reader.FirstTimeBuyersPerBucketQuery(Period, ReportInterval.Day, "NIMALI").ToQueryString(),
+            "buyer-counts-day" => reader.BuyerCountsQuery(Period, ReportInterval.Day, null).ToQueryString(),
+            "buyer-counts-week" => reader.BuyerCountsQuery(Period, ReportInterval.Week, null).ToQueryString(),
+            "buyer-counts-month" => reader.BuyerCountsQuery(Period, ReportInterval.Month, null).ToQueryString(),
+            "buyer-counts-search" => reader.BuyerCountsQuery(Period, ReportInterval.Day, "NIMALI").ToQueryString(),
             _ => throw new ArgumentOutOfRangeException(nameof(query)),
         };
+
+        // One statement now (#186b fix): the period's buyers per bucket, the first-time history and the
+        // distinct total (the GROUPING SETS grand-total row) all read the orders table, both references hinted.
+        Assert.Equal(2, OrdersReference.Count(sql));
+        Assert.Contains("GROUPING SETS", sql, StringComparison.Ordinal);
 
         var plan = await PlanForAsync(OrdersReference.Replace(sql, "$1 WITH (INDEX([" + PaidIndex + "]))"));
 
