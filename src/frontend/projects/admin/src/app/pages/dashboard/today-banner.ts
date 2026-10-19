@@ -61,7 +61,7 @@ interface TodayCard {
     .today__title { margin: 0; font-size: var(--text-label); font-weight: var(--weight-semibold); letter-spacing: var(--tracking-label); text-transform: uppercase; }
     .today__when { display: block; font-weight: var(--weight-regular); letter-spacing: 0; text-transform: none; color: var(--dash-banner-muted); }
     .today__cards { display: grid; flex: 1 1 32rem; gap: var(--space-1-5); grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr)); margin: 0; padding: 0; list-style: none; }
-    .today__card { display: flex; align-items: center; gap: var(--space-1-5); min-width: 0; padding: var(--space-1) var(--space-1-5); border-radius: 8px; background: rgb(255 255 255 / 0.06); }
+    .today__card { display: flex; align-items: center; gap: var(--space-1-5); min-width: 0; padding: var(--space-1) var(--space-1-5); border-radius: 8px; background: var(--dash-banner-card); }
     .today__card p { margin: 0; overflow-wrap: anywhere; }
     .today__value { font-size: var(--text-h4); font-weight: var(--weight-semibold); font-variant-numeric: tabular-nums; color: var(--icon-colour); }
     .today__label { font-size: var(--text-label); color: var(--dash-banner-muted); }
