@@ -107,10 +107,12 @@ public sealed class AdminSaleCampaignEndpointTests(SqlServerDatabaseFixture sqlS
         var categoryId = await CategoryIdAsync(host, "women", "shirts-blouses");
         var productId = await ProductIdAsync(host, "relaxed-linen-blend-shirt");
 
-        var created = await PostAsync(client, Body(
+        var body = Body(
             name: "Linen Week",
             discountValue: 20m,
-            targets: [Category(categoryId)]));
+            targets: [Category(categoryId)]);
+
+        var created = await PostAsync(client, body);
 
         try
         {
@@ -123,10 +125,10 @@ public sealed class AdminSaleCampaignEndpointTests(SqlServerDatabaseFixture sqlS
             Assert.Equal(20m, campaign.GetProperty("discountValue").GetDecimal());
             Assert.Equal("Live", campaign.GetProperty("status").GetString());
 
-            // Colombo wall-clock in and the same wall-clock out. A server that treated the input as UTC
-            // would answer 2026-10-13T05:30.
-            Assert.Equal("2026-10-13T00:00:00", campaign.GetProperty("startsAt").GetString());
-            Assert.Equal("2026-10-20T00:00:00", campaign.GetProperty("endsAt").GetString());
+            // Colombo wall-clock in and the same wall-clock out: exactly what was sent, plus the seconds.
+            // A server that treated the input as UTC would answer midnight plus 05:30.
+            Assert.Equal($"{body["startsAt"]}:00", campaign.GetProperty("startsAt").GetString());
+            Assert.Equal($"{body["endsAt"]}:00", campaign.GetProperty("endsAt").GetString());
 
             var target = campaign.GetProperty("targets").EnumerateArray().Single();
 
@@ -412,6 +414,14 @@ public sealed class AdminSaleCampaignEndpointTests(SqlServerDatabaseFixture sqlS
     /// no test had shown), <c>bannerAssetId</c> null because the screen does not choose one, and
     /// <c>description</c> null because the optional note was left blank.
     /// </para>
+    /// <para>
+    /// <b>The two dates are the one thing that is not a literal copy.</b> The Vitest's
+    /// <c>2026-10-19T00:00</c> is only bytes the screen passes through, against a mocked API; here the
+    /// real API derives the status from its real clock, and the status is asserted. So the window is a week to a
+    /// fortnight from today (<see cref="ShopTime.Midnight"/>), in the same <c>yyyy-MM-ddTHH:mm</c> shape
+    /// the screen's <c>datetime-local</c> boxes send. A fixed <c>2026-10-19T00:00</c> made this test fail
+    /// from that day on, when the campaign it created was already Live.
+    /// </para>
     /// </remarks>
     [Fact]
     public async Task The_screens_own_body_creates_a_campaign()
@@ -431,8 +441,8 @@ public sealed class AdminSaleCampaignEndpointTests(SqlServerDatabaseFixture sqlS
             ["description"] = null,
             ["discountType"] = "Percent",
             ["discountValue"] = 20m,
-            ["startsAt"] = "2026-10-19T00:00",
-            ["endsAt"] = "2026-10-26T00:00",
+            ["startsAt"] = ShopTime.Midnight(7),
+            ["endsAt"] = ShopTime.Midnight(14),
             ["isActive"] = true,
             ["bannerAssetId"] = null,
             ["targets"] = new[]
@@ -463,8 +473,8 @@ public sealed class AdminSaleCampaignEndpointTests(SqlServerDatabaseFixture sqlS
             // The window is in the future, so this one is Scheduled rather than Live — which is also the
             // status the screen's own Playwright test reads back as "Starts later".
             Assert.Equal("Scheduled", campaign.GetProperty("status").GetString());
-            Assert.Equal("2026-10-19T00:00:00", campaign.GetProperty("startsAt").GetString());
-            Assert.Equal("2026-10-26T00:00:00", campaign.GetProperty("endsAt").GetString());
+            Assert.Equal($"{screenBody["startsAt"]}:00", campaign.GetProperty("startsAt").GetString());
+            Assert.Equal($"{screenBody["endsAt"]}:00", campaign.GetProperty("endsAt").GetString());
 
             var target = campaign.GetProperty("targets").EnumerateArray().Single();
 
@@ -687,10 +697,11 @@ public sealed class AdminSaleCampaignEndpointTests(SqlServerDatabaseFixture sqlS
             ["discountType"] = discountType,
             ["discountValue"] = discountValue,
 
-            // Fixed dates rather than "now", so the Colombo round-trip can be asserted exactly. They
-            // bracket today — 2026-10-13 — which is what makes the campaign Live.
-            ["startsAt"] = "2026-10-13T00:00",
-            ["endsAt"] = "2026-10-20T00:00",
+            // From today's Colombo midnight to a week later, so the campaign is Live whenever this runs
+            // (fixed dates expired: 2026-10-13 to 2026-10-20 ended that evening). Still whole wall-clock
+            // values, so a test can assert the Colombo round-trip against exactly what it sent.
+            ["startsAt"] = ShopTime.Midnight(0),
+            ["endsAt"] = ShopTime.Midnight(7),
             ["isActive"] = true,
             ["bannerAssetId"] = null,
             ["targets"] = targets,
