@@ -157,6 +157,10 @@ export class ChartView {
     const spec = this.spec();
     const palette = this.palette();
 
+    if (spec.kind === 'stacked') {
+      return spec.series.map((series) => ({ label: series.label, dashed: false, colour: palette?.token(series.token) ?? '' }));
+    }
+
     return spec.kind === 'line'
       ? spec.series.map((series) => ({ label: series.label, dashed: series.dashed, colour: palette?.token(series.token) ?? '' }))
       : [];

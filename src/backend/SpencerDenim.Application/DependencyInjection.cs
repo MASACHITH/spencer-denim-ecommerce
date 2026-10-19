@@ -463,6 +463,7 @@ public static class DependencyInjection
         services.AddScoped<IQueryHandler<GetSalesReportQuery, SalesReportDto>, GetSalesReportQueryHandler>();
         services.AddScoped<IQueryHandler<GetInventoryReportQuery, InventoryReportPage>, GetInventoryReportQueryHandler>();
         services.AddScoped<IQueryHandler<GetCustomerReportQuery, CustomerReportPage>, GetCustomerReportQueryHandler>();
+        services.AddScoped<IQueryHandler<GetCustomerBuyersQuery, CustomerBuyersDto>, GetCustomerBuyersQueryHandler>();
         services.AddScoped<ICommandHandler<ExportSalesReportCommand, ReportExportFile>, ExportSalesReportCommandHandler>();
         services.AddScoped<
             ICommandHandler<ExportInventoryReportCommand, ReportExportFile>,
