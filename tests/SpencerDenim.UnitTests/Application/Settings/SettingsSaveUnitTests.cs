@@ -49,6 +49,7 @@ public sealed class SettingsSaveUnitTests
                 new[] { SettingKeys.Contact.Group, SettingKeys.Social.Group },
                 new[] { SettingKeys.Bank.Group },
                 new[] { SettingKeys.PayPal.Group },
+                new[] { SettingKeys.Traffic.Group },
             ],
             SettingCatalog.SaveUnits);
     }
@@ -155,6 +156,7 @@ public sealed class SettingsSaveUnitTests
             SettingKeys.Social.FacebookUrl,
             SettingKeys.Social.InstagramUrl,
             SettingKeys.Social.TikTokUrl,
+            SettingKeys.Social.YouTubeUrl,
         ];
 
         // Both group names answer with the same set — that is the whole point: the screen may have read the

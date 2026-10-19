@@ -100,6 +100,8 @@ export interface ContactAndSocialValues {
   readonly facebookUrl?: string | null;
   readonly instagramUrl?: string | null;
   readonly tikTokUrl?: string | null;
+  /** The shop's YouTube channel (issue #193). Empty hides the footer icon, as for the other three. */
+  readonly youTubeUrl?: string | null;
 }
 
 /**
@@ -180,6 +182,28 @@ export interface PayPalValues {
   readonly expiryMinutes?: string | null;
 }
 
+/**
+ * How long the nightly purge keeps raw page views (issue #193, doc 08 §3.8 group `Traffic`, `Settings.Edit`).
+ *
+ * **Optional for the same reason {@link BankDetailValues}' fields are**: a field this object omits is one the API
+ * leaves alone. Unlike the text groups, a field it carries may not be empty — the API refuses an empty period
+ * rather than clearing it, because an unset period would quietly hand the purge back to server configuration.
+ *
+ * Whole days as typed digits, as the API reads them: raw 30–365, bots 7–90 and never more than raw.
+ */
+export interface TrafficValues {
+  readonly rawRetentionDays?: string | null;
+  readonly botRetentionDays?: string | null;
+}
+
+/** Issue #193's bounds, the same figures as `SettingKeys.Traffic` on the server, for the hints and a pre-check. */
+export const TRAFFIC_BOUNDS = {
+  rawMin: 30,
+  rawMax: 365,
+  botMin: 7,
+  botMax: 90,
+} as const;
+
 /** The settings keys this screen edits, so the template and the mapping cannot disagree about a name. */
 export const SETTING_KEYS = {
   logoAssetId: 'Store.LogoAssetId',
@@ -192,6 +216,7 @@ export const SETTING_KEYS = {
   facebookUrl: 'Social.FacebookUrl',
   instagramUrl: 'Social.InstagramUrl',
   tikTokUrl: 'Social.TikTokUrl',
+  youTubeUrl: 'Social.YouTubeUrl',
   bankName: 'Bank.BankName',
   branch: 'Bank.Branch',
   accountName: 'Bank.AccountName',
@@ -214,6 +239,8 @@ export const SETTING_KEYS = {
   payPalCaptureRecoveryMaxHours: 'Payments.PayPal.CaptureRecoveryMaxHours',
   payPalPendingCaptureMaxDays: 'Payments.PayPal.PendingCaptureMaxDays',
   payPalExpiryMinutes: 'Orders.PayPalExpiryMinutes',
+  trafficRawRetentionDays: 'Traffic.RawRetentionDays',
+  trafficBotRetentionDays: 'Traffic.BotRetentionDays',
 } as const;
 
 /** Doc 08 §3.8's group names. */
@@ -233,4 +260,7 @@ export const SETTING_GROUPS = {
 
   /** PayPal's own panel and save unit; `Settings.Payments`, so a Store Manager never receives it. */
   payPal: 'Payments.PayPal',
+
+  /** The raw-traffic retention periods (issue #193): their own panel and save unit, `Settings.Edit`. */
+  traffic: 'Traffic',
 } as const;
