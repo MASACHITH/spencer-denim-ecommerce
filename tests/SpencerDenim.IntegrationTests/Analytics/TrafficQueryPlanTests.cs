@@ -48,11 +48,11 @@ public sealed class TrafficQueryPlanTests(SqlServerDatabaseFixture sqlServer)
 
     /// <summary>
     /// #193's purge guard: finding the never-built days past retention reads PageViews through the covering index
-    /// alone (it needs only <c>OccurredAtUtc</c>) — no lookup, no table scan. The join to <c>TrafficDaily</c> is the
-    /// optimiser's choice and is not pinned.
+    /// alone (it needs only <c>OccurredAtUtc</c>) — no Key Lookup and no read of <c>PK_PageViews</c>. The join to
+    /// <c>TrafficDaily</c> is the optimiser's choice and is not pinned.
     /// </summary>
     [Fact]
-    public async Task The_purge_guards_unbuilt_day_check_reads_the_covering_index_and_seeks_the_daily_table()
+    public async Task The_purge_guards_unbuilt_day_check_reads_page_views_from_the_covering_index_alone()
     {
         var plan = await ForcedPlanAsync(
             TrafficRetention.UnbuiltDaysBefore,
@@ -60,14 +60,13 @@ public sealed class TrafficQueryPlanTests(SqlServerDatabaseFixture sqlServer)
 
         Assert.Contains(Index, plan, StringComparison.Ordinal);
         Assert.DoesNotContain("Lookup", plan, StringComparison.Ordinal);
-        var ops = string.Join(" | ", Regex.Matches(plan, "PhysicalOp=\"([^\"]+)\"", RegexOptions.None, TimeSpan.FromSeconds(5)).Select(m => m.Groups[1].Value));
         var objs = string.Join(" | ", Regex.Matches(plan, "Index=\"([^\"]+)\"", RegexOptions.None, TimeSpan.FromSeconds(5)).Select(m => m.Groups[1].Value));
         // Only what matters, not the join: the optimiser picks Nested Loops on an empty daily table and a Merge Join
         // once it fills (both fine — that pinned join was a flake). What must hold is that PageViews is read through
-        // the covering index alone: no Key Lookup, no table scan and no read of its clustered key.
+        // the covering index alone: no Key Lookup and no read of its clustered key. (No "Table Scan" check: PageViews
+        // is a clustered table, so a full read would show as a scan of PK_PageViews, which the assertion below covers.)
         Assert.Contains("[IX_PageViews_Occurred]", objs, StringComparison.Ordinal);
         Assert.DoesNotContain("[PK_PageViews]", objs, StringComparison.Ordinal);
-        Assert.DoesNotContain("Table Scan", ops, StringComparison.Ordinal);
     }
 
     private async Task<string> ForcedPlanAsync(string sql, string? declarations = null)
