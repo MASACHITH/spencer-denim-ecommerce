@@ -72,6 +72,8 @@ describe('ChartView (#186)', () => {
       ['Awaiting payment', '1 order', '20.0%'],
     ]);
     expect((items[0].querySelector('.chart__dot') as HTMLElement).style.background).toBe('rgb(46, 125, 79)');
+    // #186 tester: each dot is its own slice's colour, not the first slice's for all (the second is chart-2).
+    expect((items[1].querySelector('.chart__dot') as HTMLElement).style.background).toBe('rgb(176, 119, 58)');
   });
 
   it('says an empty period in words, draws no canvas, and still offers the figures table', async () => {

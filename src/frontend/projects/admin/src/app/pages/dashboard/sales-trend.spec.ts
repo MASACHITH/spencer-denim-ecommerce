@@ -126,4 +126,25 @@ describe('SalesTrendChart (ADM-04)', () => {
     expect(byTestId('trend-window')!.textContent).toContain('Weekly');
     expect(drawn()[0].data).toEqual([1, 2, 3]);
   });
+
+  it('heads the first column Month or Week starting, as the interval is (#186 tester)', async () => {
+    http.expectOne((candidate) => candidate.url === '/api/admin/dashboard/trend').flush(trend('Month', [0, 3000, 1500]));
+    await settle();
+    expect(byTestId<HTMLTableElement>('trend-table')!.tHead!.rows[0].cells[0].textContent!.trim()).toBe('Month');
+
+    byTestId<HTMLButtonElement>('trend-week')!.click();
+    await settle();
+    http.expectOne((candidate) => candidate.url === '/api/admin/dashboard/trend').flush(trend('Week', [1, 2, 3]));
+    await settle();
+    expect(byTestId<HTMLTableElement>('trend-table')!.tHead!.rows[0].cells[0].textContent!.trim()).toBe('Week starting');
+  });
+
+  it('names no highest month in the table caption when every month is zero (#186 tester)', async () => {
+    http.expectOne((candidate) => candidate.url === '/api/admin/dashboard/trend').flush(trend('Month', [0, 0, 0]));
+    await settle();
+
+    const caption = byTestId<HTMLTableElement>('trend-table')!.caption!.textContent!;
+    expect(caption).toContain('none in any month');
+    expect(caption).not.toContain('Highest');
+  });
 });

@@ -97,4 +97,87 @@ describe('chart-config (#186)', () => {
     expect(withAlpha('#abc', 1)).toBe('rgb(170 187 204 / 1)');
     expect(withAlpha('navy', 0.5)).toBe('navy');
   });
+
+  // ---- #186 tester: mutations that survived the developer's specs ----------------------------------------------
+
+  it('calls a bar chart of zeros empty, and one positive bar data (tester)', () => {
+    const bars = (values: number[]): BarSpec => ({ kind: 'bar', indexAxis: 'x', highlightFirst: false, seriesLabel: '', labels: values.map(String), values, format: String, tick: String });
+
+    expect(hasData(bars([0, 0, 0]))).toBe(false);
+    expect(hasData(bars([0, 5, 0]))).toBe(true);
+  });
+
+  it('never lets a negative value into a share, or make the others add past 100% (tester)', () => {
+    expect(sharesOf([-5, 5])).toEqual([0, 100]);
+    expect(sharesOf([-5, 0])).toEqual([0, 0]);
+  });
+
+  it('switches to K at exactly one thousand and to M at exactly one million (tester)', () => {
+    expect(compactRupees(999)).toBe('Rs.999');
+    expect(compactRupees(1_000)).toBe('Rs.1K');
+    expect(compactRupees(999_999)).toBe('Rs.1,000K');
+    expect(compactRupees(1_000_000)).toBe('Rs.1M');
+    expect(compactRupees(12_345_678.9)).toBe('Rs.12.3M');
+  });
+
+  it('starts every value axis at zero, so a small rise is not drawn as a steep one (tester)', () => {
+    const line: LineSpec = {
+      kind: 'line',
+      labels: ['Sep'],
+      series: [
+        { key: 'r', label: 'Revenue', values: [100], axis: 'left', token: '--chart-accent', fill: true, dashed: false, format: String, tick: String },
+        { key: 'o', label: 'Orders', values: [3], axis: 'right', token: '--chart-2', fill: false, dashed: true, format: String, tick: String },
+      ],
+    };
+    const scales = buildChartConfig(line, PALETTE).options!.scales as Record<string, { beginAtZero?: boolean }>;
+
+    expect(scales['y'].beginAtZero).toBe(true);
+    expect(scales['y1'].beginAtZero).toBe(true);
+  });
+
+  it('leaves an unfilled line without an area colour (tester)', () => {
+    const line: LineSpec = {
+      kind: 'line',
+      labels: ['Sep'],
+      series: [{ key: 'o', label: 'Orders', values: [3], axis: 'left', token: '--chart-2', fill: false, dashed: true, format: String, tick: String }],
+    };
+
+    expect((buildChartConfig(line, PALETTE).data.datasets[0] as { backgroundColor: string }).backgroundColor).toBe('transparent');
+  });
+
+  it("words each tooltip from the point's own value: the line's y, the doughnut's share, the bar's value axis (tester)", () => {
+    type Label = (item: unknown) => string;
+    const labelOf = (config: ReturnType<typeof buildChartConfig>) => (config.options!.plugins!.tooltip!.callbacks as unknown as { label: Label }).label;
+
+    const line: LineSpec = {
+      kind: 'line',
+      labels: ['Sep', 'Oct'],
+      series: [{ key: 'r', label: 'Revenue', values: [100, 200], axis: 'left', token: '--chart-accent', fill: true, dashed: false, format: (value) => `Rs. ${value}`, tick: String }],
+    };
+    expect(labelOf(buildChartConfig(line, PALETTE))({ datasetIndex: 0, dataset: { label: 'Revenue' }, parsed: { x: 1, y: 200 } })).toBe(' Revenue: Rs. 200');
+
+    const doughnut: DoughnutSpec = { kind: 'doughnut', cutout: 65, slices: [{ key: 'a', label: 'A', value: 3, display: 'Rs. 3.00', share: 75 }] };
+    expect(labelOf(buildChartConfig(doughnut, PALETTE))({ dataIndex: 0 })).toBe(' Rs. 3.00 (75.0%)');
+
+    const horizontal: BarSpec = { kind: 'bar', indexAxis: 'y', highlightFirst: true, seriesLabel: 'Sales', labels: ['A'], values: [9000], format: (value) => `Rs. ${value}`, tick: String };
+    expect(labelOf(buildChartConfig(horizontal, PALETTE))({ parsed: { x: 9000, y: 0 } })).toBe(' Rs. 9000');
+
+    const vertical: BarSpec = { ...horizontal, indexAxis: 'x' };
+    expect(labelOf(buildChartConfig(vertical, PALETTE))({ parsed: { x: 0, y: 9000 } })).toBe(' Rs. 9000');
+  });
+
+  it('puts the value scale (gridlines and rupee ticks) on the value axis of a horizontal bar chart (tester)', () => {
+    const spec: BarSpec = { kind: 'bar', indexAxis: 'y', highlightFirst: true, seriesLabel: 'Sales', labels: ['A'], values: [9], format: String, tick: (value) => `Rs.${value}` };
+    const scales = buildChartConfig(spec, PALETTE).options!.scales as Record<string, { beginAtZero?: boolean; grid: { color?: string; display?: boolean } }>;
+
+    expect(scales['x'].beginAtZero).toBe(true);
+    expect(scales['x'].grid.color).toBe('#eeeeee');
+    expect(scales['y'].grid.display).toBe(false);
+  });
+
+  it("draws the doughnut's gap between slices in the card's own surface colour (tester)", () => {
+    const spec: DoughnutSpec = { kind: 'doughnut', cutout: 65, slices: [{ key: 'a', label: 'A', value: 1, display: '1', share: 100 }] };
+
+    expect((buildChartConfig(spec, PALETTE).data.datasets[0] as { borderColor: string }).borderColor).toBe('#ffffff');
+  });
 });

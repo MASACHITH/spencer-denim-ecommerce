@@ -1,10 +1,13 @@
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, TestRequest, provideHttpClientTesting } from '@angular/common/http/testing';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { By } from '@angular/platform-browser';
 import { Router, provideRouter } from '@angular/router';
 
 import { AdminDashboard, ComparedFigure, LowStock, SalesTrend } from '../../core/reporting/reporting.model';
 import { TrafficSources } from '../../core/traffic/traffic.model';
+import { ChartView } from '../../core/charts/chart';
+import { DoughnutSpec } from '../../core/charts/chart-config';
 import { DashboardPage } from './dashboard-page';
 
 const WHOAMI = '/api/admin/auth/whoami';
@@ -385,5 +388,87 @@ describe('DashboardPage (ADM-04, ADM-05, ADM-07, ADM-08)', () => {
     await settle();
     http.expectOne('/api/admin/auth/antiforgery-token').flush({ token: 't' });
     http.expectOne('/api/admin/auth/logout').flush(null);
+  });
+
+  // ---- #186 tester: the dashboard's own chart arithmetic, which mutations showed no spec read ------------------
+
+  /** The `sda-chart` with this test id: what the page handed it to draw, sum up and table. */
+  function chartNamed(testId: string): ChartView {
+    const found = fixture.debugElement.queryAll(By.directive(ChartView)).map((debug) => debug.componentInstance as ChartView).find((chart) => chart.testId() === testId);
+    expect(found, `no sda-chart ${testId}`).toBeDefined();
+    return found!;
+  }
+
+  function slices(testId: string): { value: number; share: number; token?: string }[] {
+    return (chartNamed(testId).spec() as DoughnutSpec).slices.map(({ value, share, token }) => ({ value, share, token }));
+  }
+
+  it('draws order status by count, each with its own share and its own status colour (tester)', async () => {
+    await open('all');
+
+    expect(slices('dashboard-statuses-chart')).toEqual([
+      { value: 1, share: 25, token: '--status-awaiting' },
+      { value: 3, share: 75, token: '--status-paid' },
+    ]);
+    expect([...byTestId<HTMLTableElement>('dashboard-statuses')!.tBodies[0].rows].map((row) => row.cells[2].textContent!.trim())).toEqual(['25.0%', '75.0%']);
+  });
+
+  it('draws payment methods by paid orders, as labelled, and tables each share of paid orders (tester)', async () => {
+    await open('all');
+
+    expect(slices('dashboard-methods-chart').map(({ value, share }) => [value, share])).toEqual([[2, 66.7], [1, 33.3]]);
+    expect([...byTestId<HTMLTableElement>('dashboard-methods')!.tBodies[0].rows].map((row) => row.cells[3].textContent!.trim())).toEqual(['66.7%', '33.3%']);
+  });
+
+  it("draws departments with the API's own shares, and top categories by sales, not units (tester)", async () => {
+    await open('all');
+
+    expect(slices('dashboard-departments-chart').map(({ value, share }) => [value, share])).toEqual([[90000, 75], [30000, 25], [0, 0]]);
+    const bars = chartNamed('dashboard-categories-chart').spec();
+    expect(bars.kind === 'bar' ? bars.values : null).toEqual([90000]);
+    expect([...byTestId<HTMLTableElement>('dashboard-categories')!.tBodies[0].rows[0].cells].map((cell) => cell.textContent!.trim())).toEqual(['Women · Dresses', '4', 'Rs. 90,000.00', '75.0%']);
+  });
+
+  it('names the largest part in each summary, and none when every part is zero (tester)', async () => {
+    await open('all');
+
+    expect(chartNamed('dashboard-statuses-chart').summary()).toBe('Orders placed in these days, by status now. Largest: Paid, 3 (75.0%).');
+    expect(chartNamed('dashboard-departments-chart').summary()).toBe('Item sales by department. Largest: Women, Rs. 90,000.00 (75.0%).');
+  });
+
+  it('names no largest part when every part is zero (tester)', async () => {
+    await open('all', dashboard({ orderStatuses: [{ status: 'Paid', label: 'Paid', count: 0 }, { status: 'Cancelled', label: 'Cancelled', count: 0 }] }));
+    expect(chartNamed('dashboard-statuses-chart').summary()).toBe('Orders placed in these days, by status now: no orders were placed in these days.');
+  });
+
+  it('grows the top-categories chart so ten categories each get a readable bar (tester)', async () => {
+    const ten = Array.from({ length: 10 }, (_, index) => ({ id: index + 1, name: `Category ${index + 1}`, units: 1, revenue: 1000 - index, sharePercent: 10 }));
+    await open('all', dashboard({ topCategories: ten }));
+
+    expect(chartNamed('dashboard-categories-chart').height()).toBe(360);
+  });
+
+  it('shows a falling product as ▼ and minus in red, and a rising one as ▲ and plus in green (tester)', async () => {
+    await open(
+      'all',
+      dashboard({
+        topProducts: [
+          { productId: 5, name: 'Rising dress', productCode: 'SD-0005', units: 4, revenue: compared(90000, 60000, 30000, 50) },
+          { productId: 6, name: 'Falling shirt', productCode: 'SD-0006', units: 1, revenue: compared(45000, 60000, -15000, -25) },
+          { productId: 7, name: 'Flat skirt', productCode: 'SD-0007', units: 1, revenue: compared(1000, 1000, 0, 0) },
+        ],
+      }),
+    );
+
+    const trends = [...byTestId<HTMLTableElement>('dashboard-products')!.tBodies[0].rows].map((row) => row.querySelector<HTMLElement>('.adm-trend')!);
+    expect(trends.map((trend) => trend.textContent!.replace(/\s+/g, ' ').trim())).toEqual(['▲ +50.0%', '▼ −25.0%', '– No change']);
+    expect(trends.map((trend) => trend.getAttribute('data-tone'))).toEqual(['good', 'bad', 'flat']);
+  });
+
+  it('draws each district bar against the district with the most buyers (tester)', async () => {
+    await open('all');
+
+    const widths = [...byTestId('dashboard-district-bars')!.querySelectorAll<HTMLElement>('.dash__track span')].map((bar) => bar.style.width);
+    expect(widths).toEqual(['100%', '50%']);
   });
 });
