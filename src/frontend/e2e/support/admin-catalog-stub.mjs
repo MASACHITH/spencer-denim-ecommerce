@@ -35,6 +35,7 @@ import { extname, join, normalize, resolve } from 'node:path';
 
 import { freshCustomerState, handleCustomerRoute } from './admin-customer-stub.mjs';
 import { freshReportingState, handleReportingRoute } from './admin-reporting-stub.mjs';
+import { freshInventoryState, handleInventoryRoute } from './admin-inventory-stub.mjs';
 import { freshProductState, handleProductRoute } from './admin-product-stub.mjs';
 
 const PORT = Number(process.env.E2E_ADMIN_PORT ?? 4430);
@@ -1215,6 +1216,9 @@ function freshState() {
 
     // ADM-04–08 / ADM-19 (W4-02): the dashboard and the reports, empty (real zeros) until a test asks.
     ...freshReportingState(),
+
+    // ADM-12 (#190): the inventory screen, empty until a test asks.
+    ...freshInventoryState(),
 
     /** Open admin alerts (W4-02a). Empty unless a test asks for some — see `alertsFor`. */
     alerts: [],
@@ -2525,6 +2529,11 @@ const server = createServer(async (request, response) => {
 
   // ---- dashboard and reports (ADM-04–08, ADM-19, W4-02) ---------------------------------------
   if (await handleReportingRoute({ path, method: request.method, url, response, state, json })) {
+    return undefined;
+  }
+
+  // ---- inventory (ADM-12, #190) ---------------------------------------------------------------
+  if (await handleInventoryRoute({ path, method: request.method, url, request, response, state, json, readBody })) {
     return undefined;
   }
 
