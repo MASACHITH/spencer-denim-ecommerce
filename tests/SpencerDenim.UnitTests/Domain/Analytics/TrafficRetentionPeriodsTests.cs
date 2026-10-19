@@ -141,6 +141,71 @@ public sealed class TrafficRetentionPeriodsTests
         Assert.Equal((60, 60), (periods.RawDays, periods.BotDays));
     }
 
+    // ---- independent tester (issue #193) ---------------------------------------------------------------
+
+    /// <summary>
+    /// The cap is against the <b>resolved</b> raw period, not the configured one. A valid raw row of 30 beside a
+    /// valid bot row of 60 (scripted in by hand; the form refuses it) must purge bots at 30 — capping against the
+    /// configured 90 would keep bot rows twice as long as people's. The developer's cap test had the raw period
+    /// falling back to configuration, so it could not tell the two apart.
+    /// </summary>
+    [Fact]
+    public void Bots_are_cut_to_the_raw_row_when_the_raw_row_is_what_is_in_force()
+    {
+        var periods = TrafficRetentionPeriods.Resolve("30", "60", 90, 7);
+
+        Assert.Equal((30, 30), (periods.RawDays, periods.BotDays));
+    }
+
+    /// <summary>
+    /// The same cap when the bot period itself comes from configuration: a configured 60 bot days (valid against
+    /// the configured 90 raw at start-up) is cut to the 30 the raw row now says.
+    /// </summary>
+    [Fact]
+    public void A_configured_bot_period_is_cut_to_a_shorter_raw_row()
+    {
+        var periods = TrafficRetentionPeriods.Resolve("30", null, 90, 60);
+
+        Assert.Equal(
+            new TrafficRetentionPeriods(30, 30, TrafficRetentionSource.Settings, TrafficRetentionSource.Configuration),
+            periods);
+    }
+
+    /// <summary>Full-width and other non-ASCII digits are not invariant digits; a hand-written one falls back.</summary>
+    [Theory]
+    [InlineData("６０")]
+    [InlineData("6 0")]
+    [InlineData("\t60")]
+    [InlineData("60\n")]
+    [InlineData("2147483648")]
+    public void A_raw_row_with_non_ascii_digits_or_control_characters_falls_back(string row)
+    {
+        var periods = TrafficRetentionPeriods.Resolve(row, null, 75, 7);
+
+        Assert.Equal((75, TrafficRetentionSource.Configuration), (periods.RawDays, periods.RawSource));
+    }
+
+    /// <summary>
+    /// <b>No row can push the purge below the form's floor.</b> Whatever the rows hold, the resolved raw period is
+    /// either inside 30–365 or exactly the configured figure, and bots never exceed raw.
+    /// </summary>
+    [Theory]
+    [InlineData("0", "0")]
+    [InlineData("-1", "-1")]
+    [InlineData("1", "1")]
+    [InlineData("29", "6")]
+    [InlineData("3650", "3650")]
+    [InlineData("2147483647", "2147483647")]
+    [InlineData("30", "365")]
+    public void No_row_value_drives_either_period_outside_its_bounds_or_bots_past_raw(string raw, string bot)
+    {
+        var periods = TrafficRetentionPeriods.Resolve(raw, bot, 90, 7);
+
+        Assert.True(periods.RawDays == 90 || periods.RawDays is >= 30 and <= 365, $"raw {periods.RawDays}");
+        Assert.True(periods.BotDays == 7 || periods.BotDays is >= 7 and <= 90, $"bot {periods.BotDays}");
+        Assert.True(periods.BotDays <= periods.RawDays);
+    }
+
     [Theory]
     [InlineData(null, 4, 4, null)]
     [InlineData("4", 4, 4, 4)]

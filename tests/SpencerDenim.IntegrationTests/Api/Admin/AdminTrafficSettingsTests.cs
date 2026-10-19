@@ -570,6 +570,184 @@ public sealed class AdminTrafficSettingsTests(SqlServerDatabaseFixture sqlServer
         }
     }
 
+    // ---- independent tester (issue #193) ---------------------------------------------------------------
+
+    /// <summary>
+    /// The Traffic route is a state-changing admin write, so it must refuse a request without the anti-forgery
+    /// header exactly as the other settings routes do (<c>A_mutating_request_without_the_antiforgery_header_is_refused</c>),
+    /// and write nothing. Without this, removing the check from <c>UpdateTrafficAsync</c> left every test green.
+    /// </summary>
+    [Fact]
+    public async Task The_traffic_route_refuses_a_request_without_the_antiforgery_header()
+    {
+        await using var factory = await StartAsync();
+        using var client = await MediaTestHost.SignInAsync(factory, Permissions.Settings.Edit);
+
+        try
+        {
+            var version = await TrafficVersionAsync(factory);
+            client.DefaultRequestHeaders.Remove(MediaTestHost.AntiforgeryHeader);
+
+            var (status, problem) = await PutAsync(client, new { rawRetentionDays = "45", rowVersion = version });
+
+            Assert.Equal(HttpStatusCode.BadRequest, status);
+            Assert.Equal("invalid_antiforgery_token", problem.GetProperty("code").GetString());
+            Assert.Equal("90", await ValueAsync(factory, SettingKeys.Traffic.RawRetentionDays));
+        }
+        finally
+        {
+            await RestoreAsync(factory);
+        }
+    }
+
+    /// <summary>
+    /// JSON type confusion and number spellings over the wire: each is a 400 naming the field, nothing is written
+    /// and no audit row appears. A purge period is irreversible, so nothing but plain digits in bounds may land.
+    /// </summary>
+    [Theory]
+    [InlineData("null")]
+    [InlineData("true")]
+    [InlineData("[]")]
+    [InlineData("{}")]
+    [InlineData("60.0")]
+    [InlineData("\"60.0\"")]
+    [InlineData("\"+60\"")]
+    [InlineData("\"-30\"")]
+    [InlineData("\"0x3C\"")]
+    [InlineData("\"6e1\"")]
+    [InlineData("\"\\uFF16\\uFF10\"")]
+    [InlineData("\"99999999999\"")]
+    [InlineData("\"0\"")]
+    public async Task A_period_that_is_not_plain_digits_is_a_400_and_nothing_is_written(string rawJson)
+    {
+        await using var factory = await StartAsync();
+        using var client = await MediaTestHost.SignInAsync(factory, Permissions.Settings.Edit);
+
+        try
+        {
+            var start = await AuditMaxIdAsync(factory);
+            var version = await TrafficVersionAsync(factory);
+            var body = "{\"rawRetentionDays\":" + rawJson + ",\"rowVersion\":\"" + version + "\"}";
+
+            using var content = new StringContent(body, System.Text.Encoding.UTF8, "application/json");
+            using var response = await client.PutAsync(new Uri(TrafficUrl, UriKind.Relative), content, Token);
+            var problem = await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions, Token);
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            Assert.True(problem.GetProperty("errors").TryGetProperty("rawRetentionDays", out _), body);
+            Assert.Equal("90", await ValueAsync(factory, SettingKeys.Traffic.RawRetentionDays));
+            Assert.Equal(start, await AuditMaxIdAsync(factory));
+        }
+        finally
+        {
+            await RestoreAsync(factory);
+        }
+    }
+
+    /// <summary>
+    /// Spaces and leading zeros are tolerated on the way in but never stored: the row holds canonical digits, so
+    /// the purge's stricter reader (no whitespace) uses it rather than silently falling back to configuration.
+    /// </summary>
+    [Fact]
+    public async Task A_padded_period_is_stored_as_canonical_digits_that_the_purge_then_uses()
+    {
+        await using var factory = await StartAsync(new Dictionary<string, string?>
+        {
+            ["Traffic:RawRetentionDays"] = "75",
+        });
+        using var client = await MediaTestHost.SignInAsync(factory, Permissions.Settings.Edit);
+
+        try
+        {
+            var (status, _) = await PutAsync(client, new { rawRetentionDays = " 060 ", rowVersion = await TrafficVersionAsync(factory) });
+
+            Assert.Equal(HttpStatusCode.NoContent, status);
+            Assert.Equal("60", await ValueAsync(factory, SettingKeys.Traffic.RawRetentionDays));
+
+            var periods = await ResolveAsync(factory);
+            Assert.Equal((60, TrafficRetentionSource.Settings), (periods.RawDays, periods.RawSource));
+        }
+        finally
+        {
+            await RestoreAsync(factory);
+        }
+    }
+
+    /// <summary>
+    /// Doc 08 §3.8 DB2: one audit row per changed key with <b>its own</b> before and after values. The developer's
+    /// test checks the raw row by substring; this pins both rows exactly, so an audit row that carried the other
+    /// key's figures, or the new value as "before", fails.
+    /// </summary>
+    [Fact]
+    public async Task Each_audit_row_carries_its_own_keys_exact_before_and_after_values()
+    {
+        await using var factory = await StartAsync();
+        using var client = await MediaTestHost.SignInAsync(factory, Permissions.Settings.Edit);
+
+        try
+        {
+            var start = await AuditMaxIdAsync(factory);
+
+            Assert.Equal(
+                HttpStatusCode.NoContent,
+                (await PutAsync(client, new { rawRetentionDays = "120", botRetentionDays = "21", rowVersion = await TrafficVersionAsync(factory) })).Status);
+
+            var rows = (await AuditRowsAsync(factory, start)).ToDictionary(row => row.EntityId!, StringComparer.Ordinal);
+
+            Assert.Equal(2, rows.Count);
+            Assert.Equal(("90", "120"), (ValueOf(rows[SettingKeys.Traffic.RawRetentionDays].BeforeJson), ValueOf(rows[SettingKeys.Traffic.RawRetentionDays].AfterJson)));
+            Assert.Equal(("7", "21"), (ValueOf(rows[SettingKeys.Traffic.BotRetentionDays].BeforeJson), ValueOf(rows[SettingKeys.Traffic.BotRetentionDays].AfterJson)));
+            Assert.All(rows.Values, row => Assert.Equal("SettingChange", row.Action));
+        }
+        finally
+        {
+            await RestoreAsync(factory);
+        }
+
+        static string? ValueOf(string? json) =>
+            JsonSerializer.Deserialize<JsonElement>(json!).GetProperty("value").GetString();
+    }
+
+    /// <summary>
+    /// <b>The catch-up boundary, to the day.</b> With 30 saved, last night's 01:30 purge kept the thirty Colombo days
+    /// ending yesterday, so at 00:30 the oldest day still holding raw rows is <c>today - 30</c>. The catch-up must
+    /// reach exactly that day (one day shorter and an unbuilt day is purged at 01:30 before anything counted it, a
+    /// permanent gap in the history the daily tables keep for ever) and must not reach <c>today - 31</c>.
+    /// </summary>
+    [Fact]
+    public async Task The_rollups_catch_up_reaches_the_oldest_day_the_purge_has_kept_and_no_further()
+    {
+        await using var factory = await StartAsync();
+        using var client = await MediaTestHost.SignInAsync(factory, Permissions.Settings.Edit);
+        await ClearYearAsync(sqlServer, 1992, Token);
+
+        try
+        {
+            Assert.Equal(
+                HttpStatusCode.NoContent,
+                (await PutAsync(client, new { rawRetentionDays = "30", rowVersion = await TrafficVersionAsync(factory) })).Status);
+
+            await InsertAsync(
+                sqlServer,
+                [
+                    View(Colombo(1992, 5, 21, 0, 0, 0), Guid.NewGuid(), "/today-minus-30"),
+                    View(Colombo(1992, 5, 20, 23, 59, 59), Guid.NewGuid(), "/today-minus-31"),
+                ],
+                Token);
+
+            var rebuilt = await factory.Services.GetRequiredService<TrafficRollupService>()
+                .RunOnceAsync(new DateTimeOffset(1992, 6, 20, 0, 30, 0, TimeSpan.FromMinutes(330)), Token);
+
+            Assert.Contains(new DateOnly(1992, 5, 21), rebuilt);
+            Assert.DoesNotContain(new DateOnly(1992, 5, 20), rebuilt);
+        }
+        finally
+        {
+            await ClearYearAsync(sqlServer, 1992, Token);
+            await RestoreAsync(factory);
+        }
+    }
+
     // ---- helpers --------------------------------------------------------------------------------------
 
     private async Task<ApiFactory> StartAsync(IReadOnlyDictionary<string, string?>? configuration = null)
