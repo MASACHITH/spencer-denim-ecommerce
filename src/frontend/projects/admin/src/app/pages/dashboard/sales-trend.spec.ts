@@ -2,6 +2,9 @@ import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 
+import { By } from '@angular/platform-browser';
+import { BaseChartDirective } from 'ng2-charts';
+
 import { SalesTrend } from '../../core/reporting/reporting.model';
 import { SalesTrendChart } from './sales-trend';
 
@@ -28,6 +31,12 @@ describe('SalesTrendChart (ADM-04)', () => {
   async function settle(): Promise<void> {
     fixture.detectChanges();
     await fixture.whenStable();
+  }
+
+  /** What the chart was given to draw: the datasets Chart.js receives. */
+  function drawn(): { label: string; data: number[]; yAxisID: string }[] {
+    const chart = fixture.debugElement.query(By.directive(BaseChartDirective)).injector.get(BaseChartDirective);
+    return (chart.data!.datasets as { label: string; data: number[]; yAxisID: string }[]).map(({ label, data, yAxisID }) => ({ label, data, yAxisID }));
   }
 
   function byTestId<T extends Element = HTMLElement>(testId: string): T | null {
@@ -57,46 +66,41 @@ describe('SalesTrendChart (ADM-04)', () => {
     request.flush(trend('Month', [0, 3000, 1500]));
     await settle();
 
-    const chart = byTestId<SVGElement>('trend-chart')!;
+    const chart = byTestId('trend-chart')!;
+    expect(chart.tagName).toBe('CANVAS');
     expect(chart.getAttribute('role')).toBe('img');
-    expect(chart.getAttribute('aria-label')).toMatch(/^Gross revenue by month, .* Highest: Sept? 2026, Rs\. 3,000\.00\.$/);
+    expect(chart.getAttribute('aria-label')).toMatch(/^Gross revenue and paid orders by month, .* Highest revenue: Sept? 2026, Rs\. 3,000\.00; 2 paid orders in all\.$/);
 
-    // A zero month is a zero-height bar; the tallest is the full height.
-    const heights = [...chart.querySelectorAll('rect')].map((bar) => Number(bar.getAttribute('height')));
-    expect(heights).toEqual([0, 100, 50]);
+    // #186: revenue on the left axis and paid orders on the right, each the API's own figure for each month.
+    expect(drawn()).toEqual([
+      { label: 'Gross revenue (Rs.)', data: [0, 3000, 1500], yAxisID: 'y' },
+      { label: 'Paid orders', data: [0, 1, 1], yAxisID: 'y1' },
+    ]);
+    // The series names are text beside the canvas, not drawn on it.
+    expect(byTestId('trend-chart-keys')!.textContent).toMatch(/Gross revenue \(Rs\.\)\s*Paid orders/);
 
     const rows = byTestId<HTMLTableElement>('trend-table')!.tBodies[0].rows;
     expect(rows).toHaveLength(3);
     expect(rows[1].textContent).toContain('Rs. 3,000.00');
   });
 
-  it('asks for weeks when Weekly is pressed, and shows orders from the same points when Orders is', async () => {
+  it('asks for weeks when Weekly is pressed, and says so in words when there were no sales', async () => {
     http.expectOne((candidate) => candidate.url === '/api/admin/dashboard/trend').flush(trend('Month', [0, 3000, 1500]));
     await settle();
-
-    byTestId<HTMLButtonElement>('trend-orders')!.click();
-    await settle();
-    http.expectNone((candidate) => candidate.url === '/api/admin/dashboard/trend');
-    expect(byTestId('trend-chart')!.getAttribute('aria-label')).toContain('Orders placed by month');
-    expect([...byTestId('trend-chart')!.querySelectorAll('rect')].map((bar) => Math.round(Number(bar.getAttribute('height'))))).toEqual([
-      33,
-      67,
-      100,
-    ]);
 
     byTestId<HTMLButtonElement>('trend-week')!.click();
     await settle();
     expect(byTestId('trend-week')!.getAttribute('aria-pressed')).toBe('true');
+    expect(byTestId('trend-month')!.getAttribute('aria-pressed')).toBe('false');
     const weekly = http.expectOne((candidate) => candidate.url === '/api/admin/dashboard/trend');
     expect(weekly.request.params.get('interval')).toBe('Week');
     weekly.flush(trend('Week', [0, 0, 0]));
     await settle();
 
-    // Back to revenue, which is zero in every week: said in words, not drawn as an empty chart.
-    byTestId<HTMLButtonElement>('trend-revenue')!.click();
-    await settle();
-
-    expect(byTestId('trend-chart')!.getAttribute('aria-label')).toContain('none in any week');
+    // Zero in every week: said in words, not drawn as a flat line — and the table is still there.
+    expect(byTestId('trend-chart')).toBeNull();
+    expect(byTestId('trend-chart-empty')!.textContent).toContain('No sales in');
+    expect(byTestId<HTMLTableElement>('trend-table')!.tBodies[0].rows).toHaveLength(3);
   });
 
   it('puts each figure in its own column of the table (W4-02 tester)', async () => {
@@ -119,6 +123,7 @@ describe('SalesTrendChart (ADM-04)', () => {
     monthly.flush(trend('Month', [9, 9, 9]));
     await settle();
 
-    expect(byTestId('trend-window')!.textContent).toContain('by week');
+    expect(byTestId('trend-window')!.textContent).toContain('Weekly');
+    expect(drawn()[0].data).toEqual([1, 2, 3]);
   });
 });

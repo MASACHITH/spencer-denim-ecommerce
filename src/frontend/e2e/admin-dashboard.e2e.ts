@@ -60,9 +60,11 @@ test.describe('the dashboard', () => {
     await expect(page.locator('[data-testid="kpi-gross"]')).toContainText('Up from none in the previous period');
     await expect(page.locator('[data-testid="dashboard-period"]')).toContainText('(30 days), compared with');
 
-    for (const table of ['departments', 'categories', 'products', 'statuses', 'methods', 'districts']) {
-      await expect(page.locator(`[data-testid="dashboard-${table}"] tbody tr`).first()).toBeVisible();
+    // Under each chart, folded inside "Show the figures as a table" (#186); top products is a table outright.
+    for (const table of ['departments', 'categories', 'statuses', 'methods', 'districts']) {
+      await expect(page.locator(`[data-testid="dashboard-${table}"] tbody tr`).first()).toBeAttached();
     }
+    await expect(page.locator('[data-testid="dashboard-products"] tbody tr').first()).toBeVisible();
 
     await expect(page.locator('[data-testid="dashboard-buyers"]')).toContainText('not the default district on a customer account');
     await expect(page.locator('[data-testid="low-stock"] tbody tr')).not.toHaveCount(0);
@@ -80,16 +82,20 @@ test.describe('the dashboard', () => {
     await expect(page.locator('[data-testid="kpi-gross"]')).toContainText('No change from the previous period');
     await expect(page.locator('[data-testid="kpi-aov"]')).toContainText('—');
     await expect(page.locator('[data-testid="low-stock-summary"]')).toContainText('No variant is low on stock');
-    await expect(page.locator('[data-testid="trend-chart"]')).toHaveAttribute('aria-label', /none in any month/);
+    // #186: an empty period is said in words, not drawn as a flat line or an empty doughnut.
+    await expect(page.locator('[data-testid="trend-chart"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="trend-chart-empty"]')).toContainText('No sales in');
+    await expect(page.locator('[data-testid="dashboard-departments-chart-empty"]')).toContainText('No sales in this period');
+    await expect(page.locator('[data-testid="dashboard-statuses-chart-empty"]')).toContainText('No orders were placed in these days');
     await expect(page.locator('[data-testid="traffic-sources-empty"]')).toContainText('No visits were recorded');
     await expect(page.locator('[data-testid="traffic-conversion"]')).toHaveCount(0);
   });
 
   test('the trend has a table of its figures, reached from the keyboard', async ({ page }) => {
     await open(page, '/');
-    await expect(page.locator('[data-testid="trend-chart"]')).toHaveAttribute('aria-label', /Highest:/);
+    await expect(page.locator('[data-testid="trend-chart"]')).toHaveAttribute('aria-label', /Highest revenue:/);
 
-    await page.locator('summary', { hasText: 'Show the figures as a table' }).focus();
+    await page.locator('sda-sales-trend summary', { hasText: 'Show the figures as a table' }).focus();
     await page.keyboard.press('Enter');
 
     const rows = page.locator('[data-testid="trend-table"] tbody tr');
@@ -130,7 +136,7 @@ test.describe('the dashboard', () => {
 
     await page.locator('[data-testid="recent-search"]').fill(number);
     await page.locator('[data-testid="recent-search-submit"]').click();
-    await expect(page.locator('[data-testid="recent-orders"] li')).toHaveCount(1);
+    await expect(page.locator('[data-testid="recent-orders"] tbody tr')).toHaveCount(1);
 
     await page.locator('[data-testid="recent-orders"] a').first().click();
     await expect(page).toHaveURL(/\/orders\/[0-9a-f-]{36}$/);
@@ -169,6 +175,57 @@ test.describe('the dashboard', () => {
     await expect(page).toHaveURL(/\/reports\?report=inventory&status=LowStock$/);
     await expect(page.locator('[data-testid="inventory-status"]')).toHaveValue('LowStock');
     await expect(page.locator('[data-testid="inventory-table"] tbody tr').first()).toContainText('Low stock');
+  });
+});
+
+test.describe('the dashboard charts (#186)', () => {
+  test('draws each chart on a canvas named in one sentence, with a text legend whose figures match the table', async ({ page }) => {
+    await open(page, '/');
+
+    for (const id of ['trend-chart', 'dashboard-departments-chart', 'dashboard-statuses-chart', 'dashboard-methods-chart', 'dashboard-categories-chart', 'traffic-sources-chart']) {
+      const canvas = page.locator(`[data-testid="${id}"]`);
+      await expect(canvas, id).toHaveAttribute('role', 'img');
+      await expect(canvas, id).toHaveAttribute('aria-label', /\w.*\./);
+    }
+
+    // The stub's departments: Women 75% and Men 25% of item sales. The legend says the same as the table.
+    const legend = page.locator('[data-testid="dashboard-departments-chart-legend"] li');
+    await expect(legend).toHaveCount(3);
+    await expect(legend.nth(0)).toContainText('Women');
+    await expect(legend.nth(0)).toContainText('75.0%');
+    const table = page.locator('[data-testid="dashboard-departments"] tbody tr').nth(0);
+    const legendFigure = (await legend.nth(0).locator('.chart__figure').textContent())!.trim();
+    await expect(table).toContainText(legendFigure);
+  });
+
+  test('Chart.js really painted the canvases, in the theme colours rather than none', async ({ page }) => {
+    await open(page, '/');
+    await expect(page.locator('[data-testid="dashboard-departments-chart"]')).toBeVisible();
+
+    const painted = await page.locator('[data-testid="dashboard-departments-chart"]').evaluate((canvas: HTMLCanvasElement) => {
+      const context = canvas.getContext('2d')!;
+      const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
+      const accent = getComputedStyle(document.documentElement).getPropertyValue('--chart-1').trim();
+      const [r, g, b] = [1, 3, 5].map((offset) => parseInt(accent.slice(offset, offset + 2), 16));
+      let accentPixels = 0;
+      for (let index = 0; index < data.length; index += 4) {
+        if (data[index + 3] > 200 && Math.abs(data[index] - r) < 6 && Math.abs(data[index + 1] - g) < 6 && Math.abs(data[index + 2] - b) < 6) {
+          accentPixels++;
+        }
+      }
+      return accentPixels;
+    });
+
+    // Women, the largest slice, is drawn in --chart-1.
+    expect(painted).toBeGreaterThan(500);
+  });
+
+  test('the alert strip counts work waiting and links to it', async ({ page }) => {
+    await open(page, '/');
+
+    await expect(page.locator('[data-testid="alert-strip-low-stock"]')).toContainText(/\d+\s*variants? low on stock/);
+    await page.locator('[data-testid="alert-strip-low-stock"] a').click();
+    await expect(page).toHaveURL(/\/reports\?report=inventory&status=LowStock$/);
   });
 });
 
@@ -314,8 +371,11 @@ test.describe('the screens themselves', () => {
       '[data-testid="dashboard-preset"]',
       '[data-testid="trend-month"]',
       '[data-testid="trend-week"]',
-      '[data-testid="trend-revenue"]',
-      '[data-testid="trend-orders"]',
+      '[data-testid="recent-all"]',
+      '[data-testid="alert-strip-dispatch"] a',
+      '[data-testid="alert-strip-low-stock"] a',
+      'sda-sales-trend summary',
+      '[aria-labelledby="dash-departments"] summary',
       '[data-testid="recent-search"]',
       '[data-testid="recent-search-submit"]',
       '[data-testid="low-stock-report"]',

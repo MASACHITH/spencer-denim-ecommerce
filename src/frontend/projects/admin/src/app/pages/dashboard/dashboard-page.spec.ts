@@ -85,6 +85,16 @@ const TRAFFIC: TrafficSources = {
   ],
 };
 
+/** Colombo's today at NOW: the Today banner asks for this one day (#186). */
+const TODAY = '2026-10-16';
+
+/** A request for the one day that is today — the Today banner's, not the period's. */
+function forToday(request: TestRequest): boolean {
+  return request.request.params.get('from') === TODAY && request.request.params.get('to') === TODAY;
+}
+
+const ORDERS_PAGE = { rows: [], page: 1, pageSize: 10, totalCount: 0, sort: 'Newest', statusCounts: {} };
+
 describe('DashboardPage (ADM-04, ADM-05, ADM-07, ADM-08)', () => {
   let fixture: ComponentFixture<DashboardPage>;
   let element: HTMLElement;
@@ -117,7 +127,11 @@ describe('DashboardPage (ADM-04, ADM-05, ADM-07, ADM-08)', () => {
     });
     await settle();
 
-    const request = http.match((candidate) => candidate.url === '/api/admin/dashboard')[0] ?? null;
+    const asked = http.match((candidate) => candidate.url === '/api/admin/dashboard');
+    const request = asked.find((candidate) => !forToday(candidate)) ?? null;
+    for (const today of asked.filter(forToday)) {
+      today.flush(payload);
+    }
     request?.flush(payload);
     await settle();
 
@@ -135,7 +149,7 @@ describe('DashboardPage (ADM-04, ADM-05, ADM-07, ADM-08)', () => {
     }
 
     for (const orders of http.match((candidate) => candidate.url === '/api/admin/orders')) {
-      orders.flush({ rows: [], page: 1, pageSize: 10, totalCount: 0, sort: 'Newest', statusCounts: {} });
+      orders.flush(ORDERS_PAGE);
     }
 
     await settle();
@@ -202,16 +216,18 @@ describe('DashboardPage (ADM-04, ADM-05, ADM-07, ADM-08)', () => {
     await settle();
     http.expectOne(WHOAMI).flush({ grantsAllPermissions: true, permissions: [] });
     await settle();
-    http.expectOne((candidate) => candidate.url === '/api/admin/dashboard').flush(dashboard());
+    for (const asked of http.match((candidate) => candidate.url === '/api/admin/dashboard')) {
+      asked.flush(dashboard());
+    }
     await settle();
 
-    const traffic = http.expectOne((candidate) => candidate.url === '/api/admin/dashboard/traffic-sources');
-    expect(traffic.request.params.get('from')).toBe('2026-09-17');
-    expect(traffic.request.params.get('to')).toBe('2026-10-16');
-    traffic.flush(TRAFFIC);
+    // Two traffic requests: the period's, and the Today banner's one day.
+    const traffic = http.match((candidate) => candidate.url === '/api/admin/dashboard/traffic-sources');
+    expect(traffic.map((asked) => `${asked.request.params.get('from')}..${asked.request.params.get('to')}`).sort()).toEqual(['2026-09-17..2026-10-16', `${TODAY}..${TODAY}`]);
+    traffic.forEach((asked) => asked.flush(TRAFFIC));
 
     for (const other of http.match(() => true)) {
-      other.flush(other.request.url.endsWith('trend') ? TREND : other.request.url.endsWith('low-stock') ? LOW : { rows: [], page: 1, pageSize: 10, totalCount: 0, sort: 'Newest', statusCounts: {} });
+      other.flush(other.request.url.endsWith('trend') ? TREND : other.request.url.endsWith('low-stock') ? LOW : ORDERS_PAGE);
     }
 
     await settle();
@@ -234,7 +250,7 @@ describe('DashboardPage (ADM-04, ADM-05, ADM-07, ADM-08)', () => {
     expect(element.textContent).not.toMatch(/conversion|visits/i);
   });
 
-  it('renders every breakdown as a table with its figures, not only bars', async () => {
+  it('renders every breakdown as a table with its figures, not only a chart', async () => {
     await open('all');
 
     const departments = byTestId<HTMLTableElement>('dashboard-departments')!;
@@ -245,10 +261,10 @@ describe('DashboardPage (ADM-04, ADM-05, ADM-07, ADM-08)', () => {
     expect(departments.tBodies[0].rows[0].textContent).toContain('Rs. 90,000.00');
     expect(departments.tBodies[0].rows[0].textContent).toContain('75.0%');
 
-    // A zero is a zero-length bar beside a printed zero.
+    // A zero is a printed zero, in the legend as in the table.
     const kids = departments.tBodies[0].rows[2];
     expect(kids.textContent).toContain('Rs. 0.00');
-    expect((kids.querySelector('.bar-table__bar') as HTMLElement).style.width).toBe('0%');
+    expect(byTestId('dashboard-departments-chart-legend')!.textContent).toMatch(/Kids\s*Rs\. 0\.00\s*0\.0%/);
 
     expect(byTestId('dashboard-products')!.textContent).toContain('New');
     expect(byTestId('dashboard-statuses')!.textContent).toContain('Awaiting payment');
@@ -288,14 +304,16 @@ describe('DashboardPage (ADM-04, ADM-05, ADM-07, ADM-08)', () => {
     http.expectOne(WHOAMI).flush({ grantsAllPermissions: false, permissions: ['Dashboard.View', 'Orders.View', 'Reports.View'] });
     await settle();
 
-    const orders = http.expectOne((candidate) => candidate.url === '/api/admin/orders');
-    expect(orders.request.params.get('pageSize')).toBe('10');
+    const orders = http.expectOne((candidate) => candidate.url === '/api/admin/orders' && candidate.params.get('pageSize') === '10');
     expect(orders.request.params.get('sort')).toBe('Newest');
-    orders.flush({ rows: [], page: 1, pageSize: 10, totalCount: 0, sort: 'Newest', statusCounts: {} });
+    orders.flush(ORDERS_PAGE);
 
-    http.expectOne((candidate) => candidate.url === '/api/admin/dashboard').flush(dashboard());
+    // The alert strip's own count of orders waiting (#186): one row, for the whole table's statusCounts.
+    http.expectOne((candidate) => candidate.url === '/api/admin/orders' && candidate.params.get('pageSize') === '1').flush(ORDERS_PAGE);
+
+    http.match((candidate) => candidate.url === '/api/admin/dashboard').forEach((asked) => asked.flush(dashboard()));
     http.expectOne((candidate) => candidate.url === '/api/admin/dashboard/trend').flush(TREND);
-    http.expectOne((candidate) => candidate.url === '/api/admin/dashboard/low-stock').flush(LOW);
+    http.match((candidate) => candidate.url === '/api/admin/dashboard/low-stock').forEach((asked) => asked.flush(LOW));
     await settle();
 
     expect(byTestId('recent-empty')!.textContent).toContain('No orders have been placed yet.');
@@ -342,7 +360,7 @@ describe('DashboardPage (ADM-04, ADM-05, ADM-07, ADM-08)', () => {
     trend.flush(TREND);
 
     // Traffic follows the period too.
-    const traffic = http.expectOne((candidate) => candidate.url === '/api/admin/dashboard/traffic-sources');
+    const traffic = http.expectOne((candidate) => candidate.url === '/api/admin/dashboard/traffic-sources' && candidate.params.get('from') !== TODAY);
     expect(traffic.request.params.get('from')).toBe('2026-09-01');
     expect(traffic.request.params.get('to')).toBe('2026-09-30');
     traffic.flush(TRAFFIC);

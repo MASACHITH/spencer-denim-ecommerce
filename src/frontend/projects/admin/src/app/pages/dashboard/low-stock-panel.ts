@@ -11,12 +11,33 @@ import { LowStock } from '../../core/reporting/reporting.model';
  *
  * The threshold column says whose threshold applied, because a variant with its own threshold and one on
  * the shop default can sit side by side and only one of them is the default the panel names.
+ *
+ * **Laid out as the client demo's Low Stock Alerts** (#186): a count badge in the title and a bar of how much is
+ * left against the threshold. The demo's Department and Category columns and its Critical / Low / Reorder badge
+ * are left out: the low-stock rows carry neither department nor category, and every row here is low by
+ * definition (out-of-stock variants are not in this list), so a badge would say the same word on every row.
  */
 @Component({
   selector: 'sda-low-stock',
   imports: [RouterLink],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
+    <div class="adm-card__hd">
+      <h2 class="adm-card__title" id="dash-low">
+        Low stock
+        @if (stock(); as answered) {
+          @if (answered.totalCount > 0) {
+            <span class="adm-badge adm-badge--alert low__count" data-testid="low-stock-count">{{ number(answered.totalCount) }} {{ answered.totalCount === 1 ? 'variant' : 'variants' }}</span>
+          }
+        }
+      </h2>
+      @if (canSeeReports() && (stock()?.totalCount ?? 0) > 0) {
+        <a class="adm-link" routerLink="/reports" [queryParams]="{ report: 'inventory', status: 'LowStock' }" data-testid="low-stock-report">
+          Every low-stock variant in the inventory report
+        </a>
+      }
+    </div>
+
     @if (problem(); as failure) {
       <div class="adm-state adm-state--error" data-testid="low-stock-problem">
         <p>{{ failure.message }}</p>
@@ -40,19 +61,20 @@ import { LowStock } from '../../core/reporting/reporting.model';
             <thead>
               <tr>
                 <th scope="col">Product</th>
-                <th scope="col">Colour / size</th>
                 <th scope="col">SKU</th>
-                <th scope="col" class="adm-num">Available</th>
+                <th scope="col">Available</th>
                 <th scope="col" class="adm-num">Threshold</th>
               </tr>
             </thead>
             <tbody>
               @for (row of answered.rows; track row.variantId) {
                 <tr>
-                  <th scope="row" class="low__wrap">{{ row.productName }}</th>
-                  <td>{{ row.colour }} / {{ row.size }}</td>
+                  <th scope="row" class="low__wrap"><span>{{ row.productName }}</span><span class="low__sub">{{ row.colour }} / {{ row.size }}</span></th>
                   <td class="low__wrap">{{ row.sku }}</td>
-                  <td class="adm-num">{{ row.available }}</td>
+                  <td>
+                    <span class="low__bar" aria-hidden="true"><span [style.width.%]="fill(row.available, row.threshold)"></span></span>
+                    <span class="low__sub">{{ row.available }} of {{ row.threshold }}</span>
+                  </td>
                   <td class="adm-num">{{ row.threshold }}</td>
                 </tr>
               }
@@ -60,19 +82,17 @@ import { LowStock } from '../../core/reporting/reporting.model';
           </table>
         </div>
       }
-
-      @if (canSeeReports() && answered.totalCount > 0) {
-        <a class="adm-link" routerLink="/reports" [queryParams]="{ report: 'inventory', status: 'LowStock' }" data-testid="low-stock-report">
-          Every low-stock variant in the inventory report
-        </a>
-      }
     } @else {
       <p class="adm-muted">Loading stock…</p>
     }
   `,
   styles: `
-    :host { display: grid; gap: var(--space-1); min-width: 0; }
+    :host { display: grid; gap: var(--space-1-5); min-width: 0; }
+    .low__count { margin-inline-start: var(--space-1); vertical-align: middle; }
     .low__wrap { overflow-wrap: anywhere; }
+    .low__sub { display: block; font-size: var(--text-label); color: var(--color-text-muted); }
+    .low__bar { display: block; width: 6rem; height: 6px; border-radius: 999px; overflow: hidden; background: var(--chart-grid); }
+    .low__bar span { display: block; height: 100%; background: var(--status-awaiting); }
   `,
 })
 export class LowStockPanel {
@@ -86,6 +106,11 @@ export class LowStockPanel {
 
   constructor() {
     this.load();
+  }
+
+  /** How full the bar is: available as a share of the threshold it is measured against, never past full. */
+  protected fill(available: number, threshold: number): number {
+    return threshold <= 0 ? 0 : Math.min(100, Math.max(0, (available / threshold) * 100));
   }
 
   protected number(value: number): string {

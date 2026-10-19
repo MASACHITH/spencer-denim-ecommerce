@@ -269,3 +269,138 @@ textarea.adm-input {
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
+
+/* Charts and dashboard cards (#186) ----------------------------------------------------------------- */
+/*
+ * **The one chart palette.** Every chart on the Dashboard, Traffic and Reports pages reads its colours from
+ * these tokens — `core/charts/chart-palette.ts` resolves them with `getComputedStyle` because a canvas cannot
+ * take a `var()` — and no chart component names a colour of its own.
+ *
+ * Banana Republic's neutrals rather than the client demo's: the demo's maroon is TU@SL's brand, so the
+ * "accent" role it plays (the main series, the leading bar) is ink navy here. Each value is at least 3:1
+ * against white (WCAG 2.2 SC 1.4.11, non-text contrast), measured: chart-1 11.5, chart-2 3.8, chart-3 4.7,
+ * chart-4 6.0, chart-5 5.9, chart-6 5.8, chart-7 4.2, chart-8 6.8; status 3.4 (expired) to 8.5 (cancelled);
+ * trend-up 5.1, trend-down 6.5. Neighbours are ordered so the next colour differs in lightness as well as
+ * hue, which is what keeps them apart for red-green and blue-yellow colour blindness. Colour is never the
+ * only cue: every chart has a text legend, a table and a one-sentence summary, and a trend has its arrow
+ * and its words.
+ *
+ * **The dark variants** (each 5:1 or more against #1a1a1a) are defined for `[data-theme='dark']`. The admin
+ * has no dark theme today, so nothing sets that attribute and they are not on screen yet — except on the
+ * Today banner, whose ink background is the one dark surface, and which uses the `--chart-on-dark-*` set.
+ */
+:root {
+  --chart-1: #1f3a5f; /* ink navy */
+  --chart-2: #b0773a; /* camel */
+  --chart-3: #2f7f7a; /* muted teal */
+  --chart-4: #a8432a; /* rust */
+  --chart-5: #5b6b2f; /* olive */
+  --chart-6: #7a5a82; /* heather */
+  --chart-7: #8a7a55; /* stone */
+  --chart-8: #4f5d6b; /* slate */
+  --chart-accent: var(--chart-1);
+  --chart-grid: #ece9e3;
+  --chart-ink: var(--color-text-muted);
+
+  --status-awaiting: #9a6700;
+  --status-paid: #2e7d4f;
+  --status-processing: #6b4e71;
+  --status-dispatched: #2f5f9e;
+  --status-delivered: #2f7f7a;
+  --status-cancelled: #4d4d4d;
+  --status-expired: #8c8c8c;
+  --status-refunded: #a8432a;
+
+  --trend-up: #2e7d4f;
+  --trend-down: #b3261e;
+
+  --chart-on-dark-1: #8fb3e0;
+  --chart-on-dark-2: #d9a66b;
+  --chart-on-dark-3: #6cc3bb;
+  --chart-on-dark-4: #e58a70;
+  --dash-banner-bg: #16273f;
+  --dash-banner-text: #ffffff;
+  --dash-banner-muted: #c9d3e0;
+
+  --card-radius: 12px;
+  --card-shadow: 0 1px 3px rgb(26 26 26 / 0.08), 0 1px 2px rgb(26 26 26 / 0.04);
+}
+
+:root[data-theme='dark'] {
+  --chart-1: #8fb3e0;
+  --chart-2: #d9a66b;
+  --chart-3: #6cc3bb;
+  --chart-4: #e58a70;
+  --chart-5: #a9bb6a;
+  --chart-6: #c7a2cf;
+  --chart-7: #c9b88d;
+  --chart-8: #a9b6c4;
+  --chart-grid: #333333;
+  --status-awaiting: #e0b040;
+  --status-paid: #6cc08a;
+  --status-processing: #c7a2cf;
+  --status-dispatched: #7fa8e6;
+  --status-delivered: #6cc3bb;
+  --status-cancelled: #a8a8a8;
+  --status-expired: #8a8a8a;
+  --status-refunded: #e58a70;
+  --trend-up: #6cc08a;
+  --trend-down: #f08a80;
+}
+
+/* A card: the demo's white panel with a soft shadow and rounded corners, a title and a grey subtitle. */
+.adm-card {
+  display: grid;
+  gap: var(--space-2);
+  align-content: start;
+  min-width: 0;
+  padding: var(--space-2);
+  background: var(--color-surface);
+  border-radius: var(--card-radius);
+  box-shadow: var(--card-shadow);
+  font-size: var(--text-data);
+}
+.adm-card__hd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-1);
+}
+.adm-card__title {
+  font-size: var(--text-h4);
+  font-weight: var(--weight-semibold);
+}
+.adm-card__sub {
+  margin: 2px 0 0;
+  font-size: var(--text-label);
+  color: var(--color-text-muted);
+}
+
+/* A status badge, coloured by the order status it names: the status colour darkened 30% towards the text
+   colour on a 12% tint of it, which keeps every badge at 4.5:1 or more (lowest: Delivered, measured 6.1). */
+.adm-badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: var(--text-label);
+  font-weight: var(--weight-semibold);
+  white-space: nowrap;
+  color: color-mix(in srgb, var(--badge, var(--color-text)) 70%, var(--color-text));
+  background: color-mix(in srgb, var(--badge, var(--color-text)) 12%, var(--color-surface));
+}
+.adm-badge[data-status='PendingPayment'] { --badge: var(--status-awaiting); }
+.adm-badge[data-status='Paid'] { --badge: var(--status-paid); }
+.adm-badge[data-status='Processing'] { --badge: var(--status-processing); }
+.adm-badge[data-status='Shipped'] { --badge: var(--status-dispatched); }
+.adm-badge[data-status='Delivered'] { --badge: var(--status-delivered); }
+.adm-badge[data-status='Cancelled'] { --badge: var(--status-cancelled); }
+.adm-badge[data-status='Expired'] { --badge: var(--status-cancelled); }
+.adm-badge[data-status='Refunded'] { --badge: var(--status-refunded); }
+.adm-badge--alert { --badge: var(--trend-down); }
+
+/* ▲ / ▼ beside a figure: green when the move is good news, red when it is bad (refunds rising is bad). */
+.adm-trend { font-weight: var(--weight-semibold); white-space: nowrap; }
+.adm-trend[data-tone='good'] { color: var(--trend-up); }
+.adm-trend[data-tone='bad'] { color: var(--trend-down); }
+.adm-trend[data-tone='flat'] { color: var(--color-text-muted); }
