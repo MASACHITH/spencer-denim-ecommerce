@@ -46,7 +46,30 @@ public sealed class TrafficQueryPlanTests(SqlServerDatabaseFixture sqlServer)
         Assert.Contains("Lookup", plan, StringComparison.Ordinal);
     }
 
-    private async Task<string> ForcedPlanAsync(string sql)
+    /// <summary>
+    /// #193's purge guard: finding the never-built days past retention is a range read of the covering index (it
+    /// needs only <c>OccurredAtUtc</c>) and a seek into <c>TrafficDaily</c>'s clustered key on <c>Date</c> — no
+    /// lookup, no scan of the daily table.
+    /// </summary>
+    [Fact]
+    public async Task The_purge_guards_unbuilt_day_check_reads_the_covering_index_and_seeks_the_daily_table()
+    {
+        var plan = await ForcedPlanAsync(
+            TrafficRetention.UnbuiltDaysBefore,
+            "DECLARE @cutoff datetime2(0) = '2026-07-17T18:30:00';");
+
+        Assert.Contains(Index, plan, StringComparison.Ordinal);
+        Assert.DoesNotContain("Lookup", plan, StringComparison.Ordinal);
+        var ops = string.Join(" | ", Regex.Matches(plan, "PhysicalOp=\"([^\"]+)\"", RegexOptions.None, TimeSpan.FromSeconds(5)).Select(m => m.Groups[1].Value));
+        var objs = string.Join(" | ", Regex.Matches(plan, "Index=\"([^\"]+)\"", RegexOptions.None, TimeSpan.FromSeconds(5)).Select(m => m.Groups[1].Value));
+        // Measured: Sort | Nested Loops | Compute Scalar | Index Seek | Clustered Index Seek over
+        // [IX_PageViews_Occurred] and [PK_TrafficDaily].
+        Assert.Contains("[PK_TrafficDaily]", objs, StringComparison.Ordinal);
+        Assert.Contains("Clustered Index Seek", ops, StringComparison.Ordinal);
+        Assert.DoesNotContain("Scan", ops.Replace("Compute Scalar", string.Empty, StringComparison.Ordinal), StringComparison.Ordinal);
+    }
+
+    private async Task<string> ForcedPlanAsync(string sql, string? declarations = null)
     {
         sqlServer.SkipIfUnavailable();
         await TestDatabaseMigrator.MigrateAsync(sqlServer.ConnectionString, Token);
@@ -67,7 +90,7 @@ public sealed class TrafficQueryPlanTests(SqlServerDatabaseFixture sqlServer)
 
         await using (var command = connection.CreateCommand())
         {
-            command.CommandText = Declarations + hinted;
+            command.CommandText = (declarations ?? Declarations) + hinted;
 
             await using var reader = await command.ExecuteReaderAsync(Token);
             do

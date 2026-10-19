@@ -349,6 +349,13 @@ public sealed class AdminTrafficSettingsTests(SqlServerDatabaseFixture sqlServer
                 ],
                 Token);
 
+            // Rolled up first: the purge never deletes a day the rollup has not built (#193).
+            using (var seed = sqlServer.CreateScope())
+            {
+                await seed.ServiceProvider.GetRequiredService<TrafficRollup>()
+                    .RebuildAsync(new DateOnly(1990, 12, 1), new DateOnly(1990, 12, 31), Token);
+            }
+
             var service = factory.Services.GetRequiredService<TrafficRetentionService>();
             var (human, bot, periods) = await service.RunOnceAsync(ColomboNoon(1990, 12, 31), Token);
 

@@ -157,7 +157,10 @@ something outside those bounds (written by hand, say) — so setting them in `ap
 owner chose on the screen. The defaults are the same 90 and 7, so a deployment that sets nothing purges exactly as
 it did before the form existed. Each purge logs the periods it applied and where each came from (`from Settings` /
 `from Configuration`, event 7131); a row that was ignored logs a warning (event 7133) — re-save it on the screen.
-The daily totals the Traffic page shows are never purged, whatever the periods say.
+The daily totals the Traffic page shows are never purged, whatever the periods say. **The purge never deletes a
+day the nightly rollup has not counted**: such a day keeps its raw page views and the purge logs a warning naming
+it (event 7134); it goes on the first night after the rollup has built it. Seeing 7134 more than once means the
+rollup is failing — check its log (events 7121–7123) before anything else.
 
 `Traffic__JobsEnabled` (default `true`) runs the nightly rollup and purge on this host; set it `false` only on a
 second API host, if there ever is one. `Traffic__QueueCapacity`, `Traffic__BatchSize` and `Traffic__FlushSeconds`

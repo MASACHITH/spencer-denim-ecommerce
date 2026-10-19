@@ -159,9 +159,10 @@ public static class DeferredSettingKeys
         new(
             "Privacy.RetainInvoiceBillTo",
             SettingKeyDeferralKind.AwaitingItsFeature,
-            "Settings.Security (R12), and nothing reads it: the PDPA anonymisation path that would honour "
-            + "it is not built. It also needs the doc 08 §3.8 N2 sensitive-change alert, because every "
-            + "Settings.Security key is in N2's trigger list."),
+            "Settings.Security (R12), and nothing reads it: no PDPA anonymisation path exists to honour it, "
+            + "so a row would be a box with no consumer. (The single-send SensitiveSettingsChangedAlert its "
+            + "save would raise already exists — the Bank and PayPal handlers use it — so that is not the "
+            + "blocker.)"),
 
         // ---- Email.Smtp ------------------------------------------------------------------------------
         // Seven keys, one reason. ops.EmailOutbox now exists (#133) and so does ops.AdminAlerts (#138),
@@ -186,9 +187,10 @@ public static class DeferredSettingKeys
             "Security.StaffLockoutMaxFailures",
             SettingKeyDeferralKind.AwaitingItsFeature,
             "Applied to IdentityOptions.Lockout at startup from AdminSecurityOptions, whose default is "
-            + "doc 08 §3.8's 5. The options object is built once and cached by the options system, so a "
-            + "live-editable row needs the value read per sign-in attempt instead, as well as N2's "
-            + "sensitive-change alert — this group is on N2's trigger list."),
+            + "doc 08 §3.8's 5. Read once at start-up and cached by the options system, so a live-editable "
+            + "row needs the sign-in path to read the value per attempt instead; until then a row would be a "
+            + "value the screen changes and the lockout ignores. (The single-send sensitive-change alert a "
+            + "save would raise already exists.)"),
 
         new(
             "Security.StaffLockoutMinutes",
@@ -201,9 +203,8 @@ public static class DeferredSettingKeys
             SettingKeyDeferralKind.AwaitingItsFeature,
             "Customer accounts exist (W3-01, #162) and CustomerAccountLockout applies this figure from "
             + "configuration (CustomerSecurity__LockoutMaxFailedAttempts, CustomerSecurityOptions), whose "
-            + "default is doc 08 §3.8's 10. A live-editable row needs the value read per sign-in attempt from "
-            + "this table, and it is Settings.Security, whose N2 dual-send alert does not exist — as for the "
-            + "staff pair."),
+            + "default is doc 08 §3.8's 10. Read once at start-up; a live-editable row needs the value read "
+            + "per sign-in attempt from this table — as for the staff pair."),
 
         new(
             "Security.CustomerLockoutMinutes",

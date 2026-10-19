@@ -14,7 +14,9 @@ namespace SpencerDenim.Domain.Settings;
 /// prerequisite of taking money at all. <c>Payments.PayPal.*</c> is here since W4-01 (see
 /// <c>SettingKeys.PayPal</c>); <c>Social.YouTubeUrl</c> and <c>Traffic.*</c> since issue #193.
 /// <c>Email.Smtp.*</c>, <c>Security.*</c> and <c>Privacy.RetainInvoiceBillTo</c> are <c>Settings.Security</c>
-/// and need doc 08 §3.8 N2's dual-send alert, which does not exist (the <c>ops.AdminAlerts</c> banner does);
+/// and deferred for their own reasons: SMTP needs doc 08 §3.8 N2's <i>dual</i> send (the only part of N2 missing —
+/// the single-send <c>SensitiveSettingsChangedAlert</c> exists), the lockout figures are read once at start-up
+/// rather than per attempt, and no anonymisation path exists to honour the privacy key;
 /// <c>Delivery</c>, the couriers and the delivery methods need <c>sales.DeliveryMethods</c> and friends,
 /// which are tables #53 creates. A key seeded here would be a key a screen offers and nothing honours —
 /// the shape of defect this project has twice decided against (the bag's promo code, "popular searches").
