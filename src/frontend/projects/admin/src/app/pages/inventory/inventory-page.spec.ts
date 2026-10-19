@@ -377,6 +377,30 @@ describe('InventoryPage (ADM-12)', () => {
     expect(byTestId('bulk-row-12')!.textContent).toContain('SD-0003-WHT-L');
     expect(byTestId('on-hand-11')!.textContent).toBe('15');
     expect(byTestId('bulk-bar')!.textContent).toContain('1 selected');
+
+    // Tester #190: it is the row that was NOT changed that stays selected, not the one that was.
+    expect(byTestId<HTMLInputElement>('select-12')!.checked).toBe(true);
+    expect(byTestId<HTMLInputElement>('select-11')!.checked).toBe(false);
+  });
+
+  it('puts a 400 on rows[0].quantity next to the quantity box (tester #190)', async () => {
+    configure();
+    await open(['Inventory.View', 'Inventory.Edit']);
+    byTestId<HTMLButtonElement>('change-11')!.click();
+    await settle();
+
+    type('stock-quantity', '3');
+    type('stock-reason', 'Delivery');
+    await submit('stock-form');
+
+    (await write()).flush(
+      { title: 'Invalid', status: 400, errors: { 'rows[0].quantity': ['Receive between 1 and 100,000 units.'] } },
+      { status: 400, statusText: 'Bad Request' },
+    );
+    await settle();
+
+    expect(byTestId('stock-quantity-error')!.textContent).toContain('Receive between 1 and 100,000 units.');
+    expect(byTestId('stock-refusal')).toBeNull();
   });
 
   it('loads a variant’s history and labels an order’s movement with its number', async () => {
