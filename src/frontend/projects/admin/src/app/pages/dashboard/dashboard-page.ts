@@ -27,12 +27,14 @@ import { RecentOrders } from './recent-orders';
 import { SalesTrendChart } from './sales-trend';
 import { TrafficSourcesPanel } from './traffic-sources';
 import { TRAFFIC_PERMISSION } from '../../core/traffic/traffic.model';
+import { INVENTORY_PERMISSIONS } from '../../core/inventory/inventory.model';
 
 interface Access {
   readonly dashboard: boolean;
   readonly orders: boolean;
   readonly reports: boolean;
   readonly traffic: boolean;
+  readonly inventory: boolean;
 }
 
 /**
@@ -247,7 +249,7 @@ interface Access {
 
         <div class="dash__row dash__row--tables">
           <section class="adm-card" aria-labelledby="dash-low">
-            <sda-low-stock [canSeeReports]="access()!.reports" />
+            <sda-low-stock [canSeeReports]="access()!.reports" [canSeeInventory]="access()!.inventory" />
           </section>
 
           @if (dashboard(); as answered) {
@@ -307,6 +309,9 @@ interface Access {
           <a class="adm-link" routerLink="/orders/couriers">Couriers</a>
           <a class="adm-link" routerLink="/customers">Customers</a>
           <a class="adm-link" routerLink="/products">Products</a>
+          @if (access()?.inventory) {
+            <a class="adm-link" routerLink="/inventory" data-testid="dashboard-inventory-link">Inventory</a>
+          }
           <a class="adm-link" routerLink="/catalog">Departments and categories</a>
           <a class="adm-link" routerLink="/marketing/promo-codes">Promo codes</a>
           <a class="adm-link" routerLink="/marketing/sale-campaigns">Sale campaigns</a>
@@ -504,6 +509,7 @@ export class DashboardPage {
           orders: holds(REPORTING_PERMISSIONS.orders),
           reports: holds(REPORTING_PERMISSIONS.reports),
           traffic: holds(TRAFFIC_PERMISSION),
+          inventory: holds(INVENTORY_PERMISSIONS.view),
         };
 
         this.access.set(access);
@@ -514,7 +520,7 @@ export class DashboardPage {
       },
       // The session could not be read: show the widgets and let the API decide, as the other screens do.
       error: () => {
-        this.access.set({ dashboard: true, orders: true, reports: true, traffic: true });
+        this.access.set({ dashboard: true, orders: true, reports: true, traffic: true, inventory: true });
         this.load();
       },
     });

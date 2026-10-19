@@ -167,14 +167,11 @@ public sealed record ProductMediaUsage(int MediaAssetId, string UsageRole);
 /// </summary>
 /// <param name="Ordered">An order line names it.</param>
 /// <param name="HoldingStock">
-/// <c>inventory.StockLevels</c> records some on hand, or some reserved.
-/// <para>
-/// <b>And a forward note for ADM-12.</b> <c>inventory.InventoryMovements</c> does not exist yet. When it
-/// does it is append-only and never deleted (doc 08 §1.6), so a variant with a movement row will not be
-/// deletable either and this guard will need a third set. Until then the only foreign key in the way is
-/// <c>FK_StockLevels_ProductVariants_VariantId</c>, which is <c>NO ACTION</c> — a DELETE through it is the
-/// 500 this whole pair of members exists because of.
-/// </para>
+/// <c>inventory.StockLevels</c> records some on hand, or some reserved — <b>or</b> the variant has a row in
+/// <c>inventory.InventoryMovements</c> (ADM-12, #108). The ledger is append-only and never deleted (doc 08
+/// §1.6) and its foreign key is <c>NO ACTION</c>, so a variant with a movement cannot be deleted either; it
+/// shares this set rather than a third one because the staff member's sentence ("stock recorded against
+/// it") is the same and true of both.
 /// </param>
 public sealed record VariantDeleteGuards(IReadOnlySet<int> Ordered, IReadOnlySet<int> HoldingStock)
 {

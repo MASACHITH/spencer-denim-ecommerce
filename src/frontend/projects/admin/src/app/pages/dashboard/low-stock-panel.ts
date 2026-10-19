@@ -31,6 +31,11 @@ import { LowStock } from '../../core/reporting/reporting.model';
           }
         }
       </h2>
+      @if (canSeeInventory() && (stock()?.totalCount ?? 0) > 0) {
+        <a class="adm-link" routerLink="/inventory" [queryParams]="{ status: 'LowStock' }" data-testid="low-stock-inventory">
+          Restock or adjust every low-stock variant on the Inventory screen
+        </a>
+      }
       @if (canSeeReports() && (stock()?.totalCount ?? 0) > 0) {
         <a class="adm-link" routerLink="/reports" [queryParams]="{ report: 'inventory', status: 'LowStock' }" data-testid="low-stock-report">
           Every low-stock variant in the inventory report
@@ -98,6 +103,9 @@ import { LowStock } from '../../core/reporting/reporting.model';
 export class LowStockPanel {
   /** Whether to offer the inventory report — only to a role that can open it. */
   readonly canSeeReports = input(false);
+
+  /** Whether to offer the inventory screen (ADM-12) — only to a role holding Inventory.View. */
+  readonly canSeeInventory = input(false);
 
   private readonly api = inject(ReportingApi);
 

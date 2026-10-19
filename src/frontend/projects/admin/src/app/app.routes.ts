@@ -123,6 +123,16 @@ export const routes: Routes = [
       import('./pages/newsletter/newsletter-subscribers-page').then((m) => m.NewsletterSubscribersPage),
   },
   {
+    // ADM-12 (W1-05, #190): stock per variant, the bulk update, the low-stock threshold and the movement
+    // history. The guard asks only for a session, as every other admin route does: the API is the security
+    // boundary (Inventory.View to look, Inventory.Edit to change), and the page says so to a role without
+    // Inventory.View rather than bouncing it.
+    path: 'inventory',
+    title: `Inventory — ${BRAND.adminName}`,
+    canActivate: [adminSessionGuard],
+    loadComponent: () => import('./pages/inventory/inventory-page').then((m) => m.InventoryPage),
+  },
+  {
     // ADM-19 (W4-02): the Sales, Inventory and Customers reports and their audited exports. The guard asks
     // only for a session, as every other admin route does: the API is the security boundary (doc 03 §3a),
     // and the page itself says so to a role without Reports.View rather than bouncing it.

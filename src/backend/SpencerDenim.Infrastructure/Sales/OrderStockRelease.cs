@@ -1,4 +1,6 @@
 using Microsoft.EntityFrameworkCore;
+using SpencerDenim.Domain.Inventory;
+using SpencerDenim.Infrastructure.Inventory;
 using SpencerDenim.Infrastructure.Persistence;
 
 namespace SpencerDenim.Infrastructure.Sales;
@@ -40,9 +42,9 @@ namespace SpencerDenim.Infrastructure.Sales;
 /// exception reaching the caller; doc 08 §5.9's nightly reconciliation is the other half of the signal.
 /// </para>
 /// <para>
-/// <b>What it does not do.</b> Doc 08 §5.6 step 4 also writes <c>Release</c> movements and returns the
-/// promo use. <c>inventory.InventoryMovements</c> still does not exist (#108, W1-05), so the stock
-/// figures are exact and the per-movement trail is a no-op with nothing to write to.
+/// <b>The movements.</b> Doc 08 §5.6 step 4 also writes <c>Release</c> movements. ADM-12 (#190) created
+/// <c>inventory.InventoryMovements</c> and each released line now writes one through
+/// <see cref="StockLedger.AppendAsync"/>, straight after its update and under the same lock (#108).
 /// <para>
 /// <b>The promo decrement is no longer one of them.</b> It was a documented no-op in this file while
 /// <c>marketing.PromoCodes</c> did not exist; W3-05 created the table and moved the statement to
@@ -105,6 +107,17 @@ internal static class OrderStockRelease
                     + $"{because}: the reservation made at placement is no longer there. Stock levels and "
                     + "the order lines have drifted (doc 08 §5.6, §5.9).");
             }
+
+            // Doc 08 §5.6 step 4: the Release movement, under the lock the update above still holds (#108).
+            await StockLedger.AppendAsync(
+                dbContext,
+                line.VariantId,
+                InventoryMovementType.Release,
+                onHandDelta: 0,
+                reservedDelta: -line.Quantity,
+                orderId,
+                nowUtc,
+                cancellationToken);
         }
     }
 }

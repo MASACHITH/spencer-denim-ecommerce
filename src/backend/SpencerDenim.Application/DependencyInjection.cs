@@ -34,6 +34,8 @@ using SpencerDenim.Application.Content.Contact;
 using SpencerDenim.Application.Content.Home;
 using SpencerDenim.Application.Content.Pages;
 using SpencerDenim.Application.Diagnostics.Ping;
+using SpencerDenim.Application.Inventory;
+using SpencerDenim.Application.Inventory.Contracts;
 using SpencerDenim.Application.Marketing.Newsletter;
 using SpencerDenim.Application.Marketing.Newsletter.Admin;
 using SpencerDenim.Application.Sales.Cart;
@@ -463,6 +465,21 @@ public static class DependencyInjection
         services.AddScoped<IQueryHandler<GetSalesReportQuery, SalesReportDto>, GetSalesReportQueryHandler>();
         services.AddScoped<IQueryHandler<GetInventoryReportQuery, InventoryReportPage>, GetInventoryReportQueryHandler>();
         services.AddScoped<IQueryHandler<GetCustomerReportQuery, CustomerReportPage>, GetCustomerReportQueryHandler>();
+
+        // The inventory screen (ADM-12, W1-05, #190): reads on Inventory.View, writes on Inventory.Edit.
+        services.AddScoped<InventoryQueryHandlers>();
+        services.AddScoped<IQueryHandler<GetInventoryListQuery, InventoryListPage>>(
+            provider => provider.GetRequiredService<InventoryQueryHandlers>());
+        services.AddScoped<IQueryHandler<GetInventoryFilterOptionsQuery, InventoryFilterOptions>>(
+            provider => provider.GetRequiredService<InventoryQueryHandlers>());
+        services.AddScoped<IQueryHandler<GetInventoryHistoryQuery, InventoryHistoryPage?>>(
+            provider => provider.GetRequiredService<InventoryQueryHandlers>());
+        services.AddScoped<InventoryWriteHandlers>();
+        services.AddScoped<ICommandHandler<ApplyStockChangesCommand, InventoryWriteResult>>(
+            provider => provider.GetRequiredService<InventoryWriteHandlers>());
+        services.AddScoped<ICommandHandler<SetLowStockThresholdCommand, InventoryWriteResult>>(
+            provider => provider.GetRequiredService<InventoryWriteHandlers>());
+
         services.AddScoped<IQueryHandler<GetCustomerBuyersQuery, CustomerBuyersDto>, GetCustomerBuyersQueryHandler>();
         services.AddScoped<ICommandHandler<ExportSalesReportCommand, ReportExportFile>, ExportSalesReportCommandHandler>();
         services.AddScoped<
