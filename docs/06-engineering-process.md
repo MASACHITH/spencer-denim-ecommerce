@@ -76,7 +76,7 @@ verified free: [14](14-multi-session-coordination.md) "Scratch scripts and ports
 
 **Dependency audit gate (decided 2026-10-17, #84).** A published advisory sat in the npm tree with nothing
 watching for it (the same gap #65 recorded for `axe-core`: listed in this document, not enforced anywhere).
-The gate is `tools/audit/audit-gate.mjs`; it runs as the `Dependency audit` job in `.github/workflows/ci.yml`
+The gate is `tools/audit/audit-gate.mjs`; it runs as the `Dependency audit (npm and NuGet advisories)` job (id `dependency-audit`) in `.github/workflows/ci.yml`
 on every PR and every push to `main`, in about a minute and separate from the 35-minute backend job.
 
 | Run it yourself | Does |
@@ -97,7 +97,11 @@ printed, not gated. It also fails when an allow-list entry
 
 It **fails closed** (exit 2, never green) when an audit could not run or its report is not understood: offline,
 a registry error, an unfamiliar report version, a NuGet restore or `list package` problem. `GITHUB_ACTIONS=true`
-adds `::error` annotations.
+adds `::error` annotations. Two consequences worth knowing: a registry or NuGet outage that lasts the whole job also reds the PR (there is no
+retry; re-run the job), and the gate always asks npm for the dev dependencies too (`--include=dev`), whatever `NODE_ENV`,
+`npm_config_omit` or an `.npmrc` say, because build tooling is where the advisories behind #84 were and `npm audit` would otherwise leave
+it out under `NODE_ENV=production`. A report it cannot fully read (no summary count, no NuGet projects, packages under an unfamiliar key)
+is exit 2 as well.
 
 When it goes red:
 1. **Fix the dependency.** Look for a newer patch in the same major (`npm view <pkg> dist-tags`; `npm audit fix`
@@ -107,7 +111,8 @@ When it goes red:
    believing it: for the 2026-10 `piscina` advisory it was `@angular/build@19.2.27`, a downgrade from 21.
 3. Only if no safe fix exists, add an entry (the file documents the format). The reason must say why it cannot
    reach a shopper or a staff user (build-time only, say) and what fix you are waiting for. Set `reviewBy` no more
-   than 90 days out. A review means: fix it, or re-accept with a new reason and new dates. The entry is a decision
+   than 90 days out. **Dates are UTC.** The gate compares them with today's UTC date, so in Sri Lanka (UTC+5:30) an `acceptedOn`
+   written with the local date between 00:00 and 05:30 is still "in the future" and is refused until the UTC day catches up: use the UTC date. A review means: fix it, or re-accept with a new reason and new dates. The entry is a decision
    with an owner and an end date, not an exemption; ask the project owner before adding one.
 4. NuGet is stricter at restore: with `TreatWarningsAsErrors`, NuGet's own audit fails the **build jobs'** restore
    on an advisory of any severity (that is how 2026-10-14 broke `main`). Accepting a NuGet advisory therefore needs
