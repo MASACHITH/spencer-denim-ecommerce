@@ -213,7 +213,8 @@ public sealed class InventoryTesterAttackTests(SqlServerDatabaseFixture sqlServe
             var (order, variantId) = await PlaceOrderAsync(quantity: 6, onHand: 6);
             var orderId = await OrderIdAsync(order.PublicId);
 
-            var expiring = ExpireAsync(orderId);
+            await MakeDueAsync(orderId);
+            var expiring = ExpireAsync(orderId, DateTime.UtcNow);
             var removing = PostAsync(manager, new { reason = "Damaged", rows = new[] { Row(variantId, "Adjust", -6) } });
             await Task.WhenAll(expiring, removing);
 
@@ -294,7 +295,11 @@ public sealed class InventoryTesterAttackTests(SqlServerDatabaseFixture sqlServe
 
         await WithFailingTriggerAsync(
             $"MovementType = {(byte)InventoryMovementType.Release} AND VariantId = {variantId.ToString(CultureInfo.InvariantCulture)}",
-            async () => await Assert.ThrowsAnyAsync<Exception>(() => ExpireAsync(orderId)));
+            async () =>
+            {
+                await MakeDueAsync(orderId);
+                await Assert.ThrowsAnyAsync<Exception>(() => ExpireAsync(orderId, DateTime.UtcNow));
+            });
 
         Assert.Equal((10, 3, 7), await StockAsync(variantId));
         Assert.Empty(await MovementsAfterAsync(mark, variantId));
@@ -382,7 +387,8 @@ public sealed class InventoryTesterAttackTests(SqlServerDatabaseFixture sqlServe
         var (_, order) = await shopper.PlaceAsync(ValidBody(session!.CheckoutKey, standard, colombo, QuotedTotal(session)), Token);
         var orderId = await OrderIdAsync(order!.PublicId);
 
-        Assert.True(await ExpireAsync(orderId));
+        await MakeDueAsync(orderId);
+        Assert.True(await ExpireAsync(orderId, DateTime.UtcNow));
         Assert.IsType<BankTransferDecisionResult.Applied>(await AcceptLateAsync(orderId));
 
         var first = await MovementsAfterAsync(mark, ids[0]);
@@ -859,6 +865,15 @@ public sealed class InventoryTesterAttackTests(SqlServerDatabaseFixture sqlServe
             await ExecuteAsync($"DROP TRIGGER IF EXISTS inventory.{FailingTrigger};", 0);
         }
     }
+
+    /// <summary>
+    /// Moves the order's deadline into the past so it can be expired at the real "now". Moving the clock
+    /// 49 hours ahead instead (the base class's default) stamps the Release movement in the future, and a
+    /// future-dated movement then sorts as the newest in that variant's history for every later test —
+    /// which is exactly how this class first broke <c>Every_applied_change_writes_one_movement_and_one_audit_row</c>.
+    /// </summary>
+    private Task MakeDueAsync(int orderId) =>
+        ExecuteAsync("UPDATE sales.Orders SET PaymentDueAtUtc = DATEADD(MINUTE, -1, SYSUTCDATETIME()) WHERE Id = @v;", orderId);
 
     private async Task ExecuteAsync(string sql, int variantId)
     {
