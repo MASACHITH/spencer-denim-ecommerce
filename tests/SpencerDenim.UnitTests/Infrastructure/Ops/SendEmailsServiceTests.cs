@@ -374,7 +374,11 @@ public sealed class SendEmailsServiceTests
             Func<TState, Exception?, string> formatter)
         {
             var properties = state as IReadOnlyList<KeyValuePair<string, object?>> ?? [];
-            Entries.Add((logLevel, formatter(state, exception), properties));
+            // The exception is part of the text searched: a logger that is handed an exception writes its message and stack.
+            var rendered = formatter(state, exception);
+            var text = exception is null ? rendered : $"{rendered}{Environment.NewLine}{exception}";
+
+            Entries.Add((logLevel, text, properties));
         }
     }
 

@@ -154,3 +154,23 @@ requests, 30,650-input C#/TypeScript differential, 100k/1M-character inputs in a
 Release build of the solution 0 warnings 0 errors; `SendEmailsServiceTests` 25/25; storefront server specs 272/272;
 `ng lint storefront` clean. The full unit project and the 11 `RequestLogRedactionTests` were not re-run after this
 round (the changes do not touch them); the tester's re-check will.
+
+## Tester re-check (2026-10-19): PASS
+
+Same tester, HEAD `1c8792a`: lint clean; unit project 3137 passed / 0 failed / 3 skipped (the 3 are `GatewayLogMapParityTests`,
+by design until #179); `RequestLogRedactionTests` 11/11; storefront server specs 272/272; Release build 0 warnings. Re-grep of
+every backend log template, exception message and storefront server print found no other order id, `RelatedEntityId`, reset
+or confirm token, or visitor address.
+
+Its remaining points:
+- **Blind spot in my new dead-email test: it never read the exception text** (a token in the exception handed to the logger
+  stayed green) and its logger drops scopes. **Fixed the first:** the capture logger now appends the exception to the text
+  that is searched; with the transport's exception quoting the order token the test goes red ("Sub-string found"), green
+  without. Scopes are not captured: an ad-hoc log call cannot be added without the source generator (analyzers CA1848/CA1873
+  fail the build), which is the practical guard there.
+- The wiring spec catches `void`, a call after `express()`, an aliased import, comments and indented code; it is fooled by a
+  call left at column 0 inside a never-called block or a template literal, which Prettier or review would catch. It needs
+  `ng test` run from the Angular workspace root (as it always is).
+- **Outside #201's wording, unconfirmed:** the dead-email Error line still attaches the transport exception, and
+  `System.Net.Mail.SmtpClient` failure messages typically quote the failed recipient's address, so a customer's e-mail address
+  may reach the retained log. Not reproduced (no real SMTP failure was run). Filed as its own issue.
