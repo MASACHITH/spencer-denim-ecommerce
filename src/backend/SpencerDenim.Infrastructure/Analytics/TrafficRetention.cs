@@ -76,11 +76,12 @@ internal sealed partial class TrafficRetention(AppDbContext dbContext, ILogger<T
     /// Deletes what is past retention as of <paramref name="today"/>, <b>except on days the rollup has never
     /// built</b>, and answers how many human and bot rows went and which days were kept.
     /// <para>
-    /// <b>Why the guard (#193).</b> The raw rows are the only source a missing day can be rebuilt from, and the
-    /// rollup's catch-up only looks back as far as the raw period. Shortening that period (365 → 30, say) after the
-    /// rollup has silently failed for a while would otherwise delete days that were never counted — a permanent
-    /// gap in the Traffic page's history. So a Colombo day past retention with no <c>TrafficDaily</c> row keeps its
-    /// raw rows, a warning names it, and the next purge after the rollup has built it deletes it as normal.
+    /// <b>Why the guard (#193).</b> The raw rows are the only source a missing day can be rebuilt from. Shortening the
+    /// raw period (365 → 30, say) after the rollup has silently failed for a while would otherwise delete days that
+    /// were never counted — a permanent gap in the Traffic page's history. So a Colombo day past retention with no
+    /// <c>TrafficDaily</c> row keeps its raw rows and a warning names it. The 00:30 rollup's catch-up looks for
+    /// never-built days with raw rows <b>with no lower bound</b> (<c>TrafficRollupService</c>), so it builds the kept
+    /// day on its next run (oldest first, up to a month of days a night) and the 01:30 purge then deletes it.
     /// </para>
     /// <para>
     /// <b>It cannot block for ever on an empty day.</b> The rollup writes at least one <c>TrafficDaily</c> row for
@@ -202,8 +203,8 @@ internal sealed partial class TrafficRetention(AppDbContext dbContext, ILogger<T
         EventId = 7134,
         Level = LogLevel.Warning,
         Message = "The traffic purge kept the raw page views of {Count} day(s) past retention because the nightly rollup "
-            + "has never built them: {Days}. They will be purged once the rollup has counted them; if this repeats, "
-            + "the rollup is failing.")]
+            + "has not built them yet: {Days}. The 00:30 rollup builds such days (oldest first, up to 31 a night) and "
+            + "the next purge deletes them; if the same day is reported night after night, the rollup is failing.")]
     private partial void LogKeptUnbuiltDays(int count, string days);
 }
 

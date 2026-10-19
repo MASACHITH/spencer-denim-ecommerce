@@ -349,12 +349,10 @@ public sealed class AdminTrafficSettingsTests(SqlServerDatabaseFixture sqlServer
                 ],
                 Token);
 
-            // Rolled up first: the purge never deletes a day the rollup has not built (#193).
-            using (var seed = sqlServer.CreateScope())
-            {
-                await seed.ServiceProvider.GetRequiredService<TrafficRollup>()
-                    .RebuildAsync(new DateOnly(1990, 12, 1), new DateOnly(1990, 12, 31), Token);
-            }
+            // The 00:30 rollup runs first, as in production: the purge never deletes a day it has not built (#193),
+            // and its catch-up builds these never-built days however old they are.
+            await factory.Services.GetRequiredService<TrafficRollupService>()
+                .RunOnceAsync(new DateTimeOffset(1990, 12, 31, 0, 30, 0, TimeSpan.FromMinutes(330)), Token);
 
             var service = factory.Services.GetRequiredService<TrafficRetentionService>();
             var (human, bot, periods) = await service.RunOnceAsync(ColomboNoon(1990, 12, 31), Token);
@@ -373,12 +371,12 @@ public sealed class AdminTrafficSettingsTests(SqlServerDatabaseFixture sqlServer
     }
 
     /// <summary>
-    /// The rollup's catch-up builds a never-built day only while it is within raw retention — the same period the
-    /// purge applies, read from the same row, so it never rebuilds a day the purge has emptied (which would store
-    /// zero) nor skips one it has kept.
+    /// The rollup's catch-up builds every never-built day that still has raw rows, inside or outside the saved raw
+    /// period: since the purge keeps such days (#193), a catch-up bounded by the period would leave a kept day unbuilt
+    /// for ever. It cannot store a zero over a purged day, because a purged day has no raw rows to be found by.
     /// </summary>
     [Fact]
-    public async Task The_rollups_catch_up_uses_the_saved_raw_period()
+    public async Task The_rollups_catch_up_builds_never_built_days_inside_and_outside_the_saved_raw_period()
     {
         await using var factory = await StartAsync();
         using var client = await MediaTestHost.SignInAsync(factory, Permissions.Settings.Edit);
@@ -402,7 +400,7 @@ public sealed class AdminTrafficSettingsTests(SqlServerDatabaseFixture sqlServer
                 .RunOnceAsync(new DateTimeOffset(1991, 6, 20, 1, 0, 0, TimeSpan.FromMinutes(330)), Token);
 
             Assert.Contains(new DateOnly(1991, 6, 1), rebuilt);
-            Assert.DoesNotContain(new DateOnly(1991, 5, 1), rebuilt);
+            Assert.Contains(new DateOnly(1991, 5, 1), rebuilt);
         }
         finally
         {
@@ -716,13 +714,13 @@ public sealed class AdminTrafficSettingsTests(SqlServerDatabaseFixture sqlServer
     }
 
     /// <summary>
-    /// <b>The catch-up boundary, to the day.</b> With 30 saved, last night's 01:30 purge kept the thirty Colombo days
-    /// ending yesterday, so at 00:30 the oldest day still holding raw rows is <c>today - 30</c>. The catch-up must
-    /// reach exactly that day (one day shorter and an unbuilt day is purged at 01:30 before anything counted it, a
-    /// permanent gap in the history the daily tables keep for ever) and must not reach <c>today - 31</c>.
+    /// <b>The catch-up boundary, to the day — revised by the #193 fix round.</b> The tester's version pinned that the
+    /// catch-up reaches <c>today - 30</c> and not <c>today - 31</c>. With the purge guard, a never-built
+    /// <c>today - 31</c> still has its raw rows (the purge kept it), so the catch-up must reach it too; both are built,
+    /// and the purge that follows deletes neither before it is counted.
     /// </summary>
     [Fact]
-    public async Task The_rollups_catch_up_reaches_the_oldest_day_the_purge_has_kept_and_no_further()
+    public async Task The_rollups_catch_up_reaches_the_oldest_day_the_purge_has_kept_and_beyond_it()
     {
         await using var factory = await StartAsync();
         using var client = await MediaTestHost.SignInAsync(factory, Permissions.Settings.Edit);
@@ -746,7 +744,7 @@ public sealed class AdminTrafficSettingsTests(SqlServerDatabaseFixture sqlServer
                 .RunOnceAsync(new DateTimeOffset(1992, 6, 20, 0, 30, 0, TimeSpan.FromMinutes(330)), Token);
 
             Assert.Contains(new DateOnly(1992, 5, 21), rebuilt);
-            Assert.DoesNotContain(new DateOnly(1992, 5, 20), rebuilt);
+            Assert.Contains(new DateOnly(1992, 5, 20), rebuilt);
         }
         finally
         {

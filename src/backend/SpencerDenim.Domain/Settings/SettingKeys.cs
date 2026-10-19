@@ -242,10 +242,9 @@ public static partial class SettingKeys
         public const int BotRetentionDaysDefault = 7;
 
         /// <summary>
-        /// Thirty days. The rollup rebuilds the last three days and then any older day <i>within raw retention</i>
-        /// that was never built, and a rollup failure reaches only the log. A short raw period therefore turns an
-        /// unnoticed rollup outage into a permanent gap in the traffic history; thirty gives about four weeks to
-        /// notice and fix it.
+        /// Thirty days: a month of visit-level rows to look back at when a figure on the Traffic page needs
+        /// explaining. (Losing history to a short period is not the reason — the purge never deletes a day the rollup
+        /// has not built, and the rollup's catch-up finds such days however old they are.)
         /// </summary>
         public const int RawRetentionDaysMin = 30;
 

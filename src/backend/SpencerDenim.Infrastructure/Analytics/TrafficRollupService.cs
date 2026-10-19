@@ -12,8 +12,15 @@ namespace SpencerDenim.Infrastructure.Analytics;
 /// same section asks for.
 /// <para>
 /// <b>What one pass does</b> (<see cref="RunOnceAsync"/>): rebuild the last three completed Colombo days, then
-/// build any older day within raw retention that has page views and was never rolled up — the host was down at
-/// 00:30, or for longer than three days. Today is never stored: the Traffic page reads it live.
+/// build the oldest never-built days that still have raw page views — the host was down at 00:30, or the rollup
+/// failed — up to <see cref="MaxCatchUpDaysPerRun"/> a night, <b>however old they are</b>. Today is never stored:
+/// the Traffic page reads it live.
+/// <para>
+/// <b>Why no lower bound (#193).</b> The 01:30 purge never deletes a day this job has not built, so such a day keeps
+/// its raw rows past retention and this catch-up is the only thing that can count it; bounding the search by the raw
+/// period would leave it kept and warned about for ever. A day the purge has emptied has no raw rows and is never
+/// found, so the catch-up cannot store a zero over a real day.
+/// </para>
 /// </para>
 /// <para>
 /// <b>No <c>ops.JobLeases</c>.</b> Doc 08 §3.8 specifies it and it does not exist, so "last completion" cannot be
@@ -42,6 +49,12 @@ internal sealed partial class TrafficRollupService(
     /// <summary>Doc 08 §8.3: "NightlyStats job (00:30 Colombo)".</summary>
     public static readonly TimeOnly RunsAt = new(0, 30);
 
+    /// <summary>
+    /// The most never-built days one pass builds, oldest first. A month: after a long outage the backlog clears over
+    /// a few nights (the purge keeps those days meanwhile) instead of one pass holding the rollup lock for hours.
+    /// </summary>
+    public const int MaxCatchUpDaysPerRun = 31;
+
     /// <summary>How long after start-up the catch-up runs: after the host is listening, not before.</summary>
     private static readonly TimeSpan StartupDelay = TimeSpan.FromMinutes(1);
 
@@ -63,11 +76,9 @@ internal sealed partial class TrafficRollupService(
             rebuilt.Add(day);
         }
 
-        // The same raw period the purge will apply tonight — the settings row, falling back to configuration — so
-        // the catch-up never builds a day the purge has already emptied, nor skips one it has kept (issue #193).
-        var rawDays = (await scope.ServiceProvider.GetRequiredService<TrafficRetentionSettings>().ReadAsync(cancellationToken)).RawDays;
-
-        foreach (var day in await rollup.FindUnbuiltDaysAsync(today.AddDays(-rawDays), firstRecent, cancellationToken))
+        // Every never-built day that still has raw rows, wherever it is: the purge keeps such days until this has
+        // counted them (#193). Only days with raw rows are found, oldest first, capped per night.
+        foreach (var day in await rollup.FindOldestUnbuiltDaysAsync(firstRecent, MaxCatchUpDaysPerRun, cancellationToken))
         {
             await rollup.RebuildAsync(day, day, cancellationToken);
             rebuilt.Add(day);

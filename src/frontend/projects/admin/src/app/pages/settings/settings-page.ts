@@ -778,8 +778,8 @@ export class SettingsPage {
       name: 'rawRetentionDays' as const,
       label: 'Keep page views for (days)',
       hint: `Between ${TRAFFIC_BOUNDS.rawMin} and ${TRAFFIC_BOUNDS.rawMax} days, today included — 90 is the `
-        + 'default. It cannot go lower because the nightly totals are rebuilt from these records, and a few '
-        + 'weeks leaves time to notice if that ever stops.',
+        + 'default. At least a month, so there are visit-level records to explain a figure from; a day the '
+        + 'nightly totals have not counted yet is never deleted.',
     },
     {
       name: 'botRetentionDays' as const,

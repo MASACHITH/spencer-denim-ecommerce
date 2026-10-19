@@ -120,7 +120,11 @@ public sealed class TrafficRetentionTests(SqlServerDatabaseFixture sqlServer)
         Assert.DoesNotContain("2000-06-02", warning.Message, StringComparison.Ordinal);
     }
 
-    /// <summary>Once the rollup has caught up on the kept day, the next purge deletes it as normal and says nothing.</summary>
+    /// <summary>
+    /// Once the rollup has caught up on the kept day, the next purge deletes it as normal and says nothing — through
+    /// the real nightly rollup (<c>TrafficRollupService.RunOnceAsync</c>), not a hand-called rebuild, because the
+    /// first version of this test called <c>RebuildAsync</c> and so hid that nothing in production ever built the day.
+    /// </summary>
     [Fact]
     public async Task After_the_rollup_builds_the_kept_day_the_next_purge_deletes_it()
     {
@@ -138,7 +142,12 @@ public sealed class TrafficRetentionTests(SqlServerDatabaseFixture sqlServer)
         Assert.Equal([new DateOnly(2000, 6, 1)], In2000(first.SkippedDays));
         Assert.Equal(2, (await Paths2000Async()).Count);
 
-        await RebuildAsync(new DateOnly(2000, 6, 1), new DateOnly(2000, 6, 1));
+        using (var scope = sqlServer.CreateScope())
+        {
+            var rebuilt = await scope.ServiceProvider.GetRequiredService<TrafficRollupService>()
+                .RunOnceAsync(new DateTimeOffset(2000, 12, 31, 0, 30, 0, TimeSpan.FromMinutes(330)), Token);
+            Assert.Contains(new DateOnly(2000, 6, 1), rebuilt);
+        }
 
         var logger = new ListLogger<TrafficRetention>();
         var second = await PurgeWithAsync(logger, 30, 7);

@@ -22,6 +22,38 @@ public sealed class TrafficRollupTests(SqlServerDatabaseFixture sqlServer)
         return scope.ServiceProvider.GetRequiredService<TrafficRollup>();
     }
 
+    private static List<DateOnly> In2005(IEnumerable<DateOnly> days) => days.Where(day => day.Year == 2005).ToList();
+
+    /// <summary>
+    /// #193: the catch-up builds the oldest never-built days first and at most
+    /// <see cref="TrafficRollupService.MaxCatchUpDaysPerRun"/> a pass, and finds only days that have raw rows — it
+    /// never walks empty calendar days.
+    /// </summary>
+    [Fact]
+    public async Task The_catch_up_builds_the_oldest_unbuilt_days_first_and_caps_one_pass()
+    {
+        using var scope = Scope();
+        await RollupAsync(scope, 2006);
+        var service = scope.ServiceProvider.GetRequiredService<TrafficRollupService>();
+
+        // Two views a week apart for 40 weeks: 40 never-built days scattered over most of a year, empty days between.
+        var views = Enumerable.Range(0, TrafficRollupService.MaxCatchUpDaysPerRun + 9)
+            .Select(week => View(Colombo(2006, 1, 2).AddDays(7 * week), Guid.NewGuid(), "/w"))
+            .ToList();
+        await InsertAsync(sqlServer, views, Token);
+
+        var expected = views.Select(view => DateOnly.FromDateTime(view.OccurredAtUtc.AddMinutes(330))).Order().ToList();
+        var now = new DateTimeOffset(2006, 12, 31, 0, 30, 0, TimeSpan.FromMinutes(330));
+        var recent = new[] { new DateOnly(2006, 12, 28), new DateOnly(2006, 12, 29), new DateOnly(2006, 12, 30) };
+
+        var first = (await service.RunOnceAsync(now, Token)).Where(day => day.Year == 2006 && !recent.Contains(day)).ToList();
+        var second = (await service.RunOnceAsync(now, Token)).Where(day => day.Year == 2006 && !recent.Contains(day)).ToList();
+
+        Assert.True(first.Count <= TrafficRollupService.MaxCatchUpDaysPerRun, $"{first.Count} days in one pass");
+        Assert.Equal(expected.Take(first.Count), first);
+        Assert.Equal(expected, first.Concat(second).Order());
+    }
+
     private IServiceScope Scope()
     {
         sqlServer.SkipIfUnavailable();
@@ -166,19 +198,23 @@ public sealed class TrafficRollupTests(SqlServerDatabaseFixture sqlServer)
                 View(Colombo(2005, 5, 1), Guid.NewGuid(), "/a"),      // never built, inside 90 days: built
                 View(Colombo(2005, 6, 18), Guid.NewGuid(), "/b"),     // in the last three days: rebuilt
                 View(Colombo(2005, 6, 20, 0, 30), Guid.NewGuid(), "/c"), // today: never stored
-                View(Colombo(2005, 1, 2), Guid.NewGuid(), "/d"),      // older than raw retention: left alone
+                View(Colombo(2005, 1, 2), Guid.NewGuid(), "/d"),      // older than any raw period, never built: built too (#193)
             ],
             Token);
 
-        var rebuilt = await service.RunOnceAsync(now, Token);
+        // Filtered to this test's year: the catch-up has no lower bound, so it also builds any never-built day another
+        // class left in the shared database, which is correct and not this test's subject.
+        var rebuilt = In2005(await service.RunOnceAsync(now, Token));
 
-        Assert.Equal([new DateOnly(2005, 5, 1), new DateOnly(2005, 6, 17), new DateOnly(2005, 6, 18), new DateOnly(2005, 6, 19)], rebuilt);
+        Assert.Equal(
+            [new DateOnly(2005, 1, 2), new DateOnly(2005, 5, 1), new DateOnly(2005, 6, 17), new DateOnly(2005, 6, 18), new DateOnly(2005, 6, 19)],
+            rebuilt);
 
         var stored = await TrafficDailyAsync(sqlServer, new DateOnly(2005, 1, 1), new DateOnly(2005, 12, 31), Token);
-        Assert.Equal([new DateOnly(2005, 5, 1), new DateOnly(2005, 6, 18)], stored.Select(row => row.Date));
+        Assert.Equal([new DateOnly(2005, 1, 2), new DateOnly(2005, 5, 1), new DateOnly(2005, 6, 18)], stored.Select(row => row.Date));
 
-        // A second pass finds nothing older to build: 1 May has its row now.
-        Assert.Equal([new DateOnly(2005, 6, 17), new DateOnly(2005, 6, 18), new DateOnly(2005, 6, 19)], await service.RunOnceAsync(now, Token));
+        // A second pass finds nothing older to build: those days have their rows now.
+        Assert.Equal([new DateOnly(2005, 6, 17), new DateOnly(2005, 6, 18), new DateOnly(2005, 6, 19)], In2005(await service.RunOnceAsync(now, Token)));
     }
 
     [Fact]

@@ -237,9 +237,9 @@ public sealed class UpdateTrafficSettingsCommandHandler(
             errors.Add(new ValidationError(
                 field,
                 field == RawField
-                    ? $"Use between {min} and {max} days. Fewer than {min} leaves too little time to notice a "
-                      + "nightly totals job that has stopped before the raw page views it needs are deleted; "
-                      + $"more than {max} keeps visit-level data a year after any report could use it."
+                    ? $"Use between {min} and {max} days. Fewer than {min} leaves less than a month of visit-level "
+                      + $"records to explain a figure from; more than {max} keeps them a year after any report "
+                      + "could use them."
                     : $"Use between {min} and {max} days."));
 
             return null;
