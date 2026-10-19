@@ -557,10 +557,10 @@ public sealed class InventoryTesterAttackTests(SqlServerDatabaseFixture sqlServe
     [InlineData("""{"reason":"x","rows":[{"variantId":{v},"kind":"Adjust","quantity":1.0,"expectedOnHand":null}]}""", "rows[0].quantity")]
     [InlineData("""{"reason":"x","rows":[{"variantId":{v},"kind":"Adjust","quantity":[1],"expectedOnHand":null}]}""", "rows[0].quantity")]
     [InlineData("""{"reason":"x","rows":[{"variantId":{v},"kind":2,"quantity":1,"expectedOnHand":null}]}""", "rows[0].kind")]
-    [InlineData("""{"reason":"x","rows":[{"variantId":{v},"kind":"Receive, Adjust","quantity":1,"expectedOnHand":5}]}""", "rows[0].kind", Skip = "Tester #190 defect D2: ReadRow's Enum.TryParse accepts \"+2\" and comma lists (\"Receive, Adjust\" = SetCount). Unskip when fixed.")]
+    [InlineData("""{"reason":"x","rows":[{"variantId":{v},"kind":"Receive, Adjust","quantity":1,"expectedOnHand":5}]}""", "rows[0].kind")]
     [InlineData("""{"reason":"x","rows":[{"variantId":{v},"kind":"0x2","quantity":1,"expectedOnHand":null}]}""", "rows[0].kind")]
-    [InlineData("""{"reason":"x","rows":[{"variantId":{v},"kind":"+2","quantity":1,"expectedOnHand":null}]}""", "rows[0].kind", Skip = "Tester #190 defect D2: ReadRow's Enum.TryParse accepts \"+2\" and comma lists (\"Receive, Adjust\" = SetCount). Unskip when fixed.")]
-    [InlineData("""{"reason":"x","rows":[{"variantId":{v},"kind":"Adjust,Adjust","quantity":1,"expectedOnHand":null}]}""", "rows[0].kind", Skip = "Tester #190 defect D2: ReadRow's Enum.TryParse accepts \"+2\" and comma lists (\"Receive, Adjust\" = SetCount). Unskip when fixed.")]
+    [InlineData("""{"reason":"x","rows":[{"variantId":{v},"kind":"+2","quantity":1,"expectedOnHand":null}]}""", "rows[0].kind")]
+    [InlineData("""{"reason":"x","rows":[{"variantId":{v},"kind":"Adjust,Adjust","quantity":1,"expectedOnHand":null}]}""", "rows[0].kind")]
     [InlineData("""{"reason":5,"rows":[{"variantId":{v},"kind":"Adjust","quantity":1,"expectedOnHand":null}]}""", "reason")]
     [InlineData("""{"reason":"x","rows":{"variantId":{v}}}""", "rows")]
     [InlineData("""{"reason":"x","rows":[5]}""", "rows[0]")]
@@ -690,7 +690,7 @@ public sealed class InventoryTesterAttackTests(SqlServerDatabaseFixture sqlServe
     /// <summary>
     /// IDOR-style probe by id: a variant of a soft-deleted product. A 404 must mean nothing was written.
     /// </summary>
-    [Fact(Skip = "Tester #190 defect D3: SetThresholdAsync commits and audits, then FindAsync filters the deleted product and the API answers 404. Unskip when fixed.")]
+    [Fact]
     public async Task A_404_on_a_deleted_product_s_variant_means_nothing_was_written()
     {
         var variantId = await CheckoutVariantIdAsync();

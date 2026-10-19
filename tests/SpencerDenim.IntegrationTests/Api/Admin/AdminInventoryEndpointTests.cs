@@ -223,11 +223,12 @@ public sealed class AdminInventoryEndpointTests(SqlServerDatabaseFixture sqlServ
         Assert.Equal("CountCorrection", last.GetProperty("movementType").GetString());
         Assert.Equal(14, JsonDocument.Parse(rows[3].BeforeJson!).RootElement.GetProperty("onHand").GetInt32());
 
-        // The history reads them back newest first, with who did it.
-        var (_, history) = await GetAsync(manager, $"{ListUrl}/{variantId}/movements?pageSize=4");
-        var types = history.GetProperty("rows").EnumerateArray().Select(row => row.GetProperty("movementType").GetString()).ToList();
-        Assert.Equal(["CountCorrection", "AdjustOut", "AdjustIn", "Receive"], types);
-        Assert.EndsWith("@example.com", history.GetProperty("rows")[0].GetProperty("createdBy").GetString(), StringComparison.Ordinal);
+        // The history reads them back newest first, with who did it. Scoped to this test's own movements:
+        // the variant is shared with other suites and its older history is theirs.
+        var (_, history) = await GetAsync(manager, $"{ListUrl}/{variantId}/movements?pageSize=100");
+        var mine = history.GetProperty("rows").EnumerateArray().Where(row => row.GetProperty("movementId").GetInt64() > mark).ToList();
+        Assert.Equal(["CountCorrection", "AdjustOut", "AdjustIn", "Receive"], mine.Select(row => row.GetProperty("movementType").GetString()));
+        Assert.EndsWith("@example.com", mine[0].GetProperty("createdBy").GetString(), StringComparison.Ordinal);
         Assert.Equal(20, history.GetProperty("variant").GetProperty("onHand").GetInt32());
     }
 
@@ -560,6 +561,125 @@ public sealed class AdminInventoryEndpointTests(SqlServerDatabaseFixture sqlServ
         Assert.Equal(HttpStatusCode.BadRequest, (await GetAsync(viewer, $"{ListUrl}?sort=2")).Status);
         Assert.Equal(HttpStatusCode.BadRequest, (await GetAsync(viewer, $"{ListUrl}?status=1")).Status);
         Assert.Equal(HttpStatusCode.BadRequest, (await GetAsync(viewer, $"{ListUrl}?direction=Sideways")).Status);
+    }
+
+    // ---- tester #190 findings D1–D3 -----------------------------------------------------------------------
+
+    /// <summary>
+    /// D1: the ledger itself refuses an Adjust or CountCorrection with no reason, NULL included. Before the
+    /// fix the CHECK evaluated to UNKNOWN for NULL and let it through.
+    /// </summary>
+    [Theory]
+    [InlineData(3, null)]
+    [InlineData(4, null)]
+    [InlineData(9, null)]
+    [InlineData(4, "")]
+    [InlineData(4, "   ")]
+    public async Task The_ledger_refuses_a_manual_movement_with_no_reason(int movementType, string? reason)
+    {
+        var variantId = await CheckoutVariantIdAsync();
+        using var scope = CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        var error = await Assert.ThrowsAsync<Microsoft.Data.SqlClient.SqlException>(() => db.Database.ExecuteSqlRawAsync(
+            "INSERT INTO inventory.InventoryMovements (VariantId, MovementType, OnHandDelta, ReservedDelta, OnHandAfter, ReservedAfter, Reason) "
+            + "VALUES (@variant, @type, -1, 0, 1, 0, @reason);",
+            [
+                new Microsoft.Data.SqlClient.SqlParameter("@variant", variantId),
+                new Microsoft.Data.SqlClient.SqlParameter("@type", (byte)movementType),
+                new Microsoft.Data.SqlClient.SqlParameter("@reason", System.Data.SqlDbType.NVarChar, 250) { Value = (object?)reason ?? DBNull.Value },
+            ],
+            Token));
+
+        Assert.Equal(547, error.Number);
+        Assert.Contains("CK_InventoryMovements_Reason", error.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>D1's control: an automatic movement (Reserve) needs no reason, so the CHECK is not simply "always".</summary>
+    [Fact]
+    public async Task The_ledger_accepts_an_automatic_movement_with_no_reason()
+    {
+        var variantId = await CheckoutVariantIdAsync();
+        using var scope = CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        await using var transaction = await db.Database.BeginTransactionAsync(Token);
+        var written = await db.Database.ExecuteSqlRawAsync(
+            "INSERT INTO inventory.InventoryMovements (VariantId, MovementType, OnHandDelta, ReservedDelta, OnHandAfter, ReservedAfter, Reason) "
+            + "VALUES ({0}, 5, 0, 1, 1, 1, NULL);",
+            [variantId],
+            Token);
+        await transaction.RollbackAsync(Token);
+
+        Assert.Equal(1, written);
+    }
+
+    /// <summary>D2: the list's names are names — no numbers with a sign, no comma lists.</summary>
+    [Theory]
+    [InlineData("status=+1")]
+    [InlineData("status=LowStock,OutOfStock")]
+    [InlineData("sort=Sku,OnHand")]
+    [InlineData("sort=+2")]
+    [InlineData("direction=Asc,Desc")]
+    [InlineData("direction=%201")]
+    public async Task The_list_refuses_a_name_that_is_a_number_or_a_list(string query)
+    {
+        using var viewer = await StaffAsync(Permissions.Inventory.View);
+
+        Assert.Equal(HttpStatusCode.BadRequest, (await GetAsync(viewer, $"{ListUrl}?{query}")).Status);
+    }
+
+    [Fact]
+    public async Task The_list_accepts_its_names_in_any_case()
+    {
+        using var viewer = await StaffAsync(Permissions.Inventory.View);
+
+        Assert.Equal(HttpStatusCode.OK, (await GetAsync(viewer, $"{ListUrl}?status=lowstock&sort=SKU&direction=desc")).Status);
+    }
+
+    /// <summary>
+    /// D3: a variant of a removed product cannot be changed. The stock change answers NotFound and writes no
+    /// stock figure, no movement and no audit row — the refusal and the write are one statement.
+    /// </summary>
+    [Fact]
+    public async Task A_stock_change_to_a_removed_product_s_variant_is_NotFound_and_writes_nothing()
+    {
+        var variantId = await CheckoutVariantIdAsync();
+        await ArrangeAsync(variantId, onHand: 10);
+        using var manager = await StaffAsync(Permissions.Inventory.View, Permissions.Inventory.Edit);
+        await SetProductDeletedAsync(variantId, true);
+        var mark = await MovementMarkAsync();
+        var audit = await AuditMarkAsync();
+
+        try
+        {
+            var result = await AdjustAsync(manager, "Delivery", Row(variantId, "Receive", 5));
+            var count = await AdjustAsync(manager, "Stock-take", Row(variantId, "SetCount", 3, expectedOnHand: 10));
+
+            Assert.Equal("NotFound", result.GetProperty("rows")[0].GetProperty("outcome").GetString());
+            Assert.Equal("NotFound", count.GetProperty("rows")[0].GetProperty("outcome").GetString());
+            Assert.Equal(10, (await StockAsync(variantId)).OnHand);
+            Assert.Empty(await MovementsAfterAsync(mark, variantId));
+            Assert.Empty(await StockAuditAfterAsync(audit));
+
+            Assert.Equal(HttpStatusCode.NotFound, (await PutAsync(manager, $"{ListUrl}/{variantId}/threshold", new { lowStockThreshold = 7 })).Status);
+            Assert.Null(await OwnThresholdAsync(variantId));
+            Assert.Empty(await StockAuditAfterAsync(audit));
+            Assert.Equal(HttpStatusCode.NotFound, (await GetAsync(manager, $"{ListUrl}/{variantId}/movements")).Status);
+        }
+        finally
+        {
+            await SetProductDeletedAsync(variantId, false);
+        }
+    }
+
+    private async Task SetProductDeletedAsync(int variantId, bool deleted)
+    {
+        using var scope = CreateScope();
+        await scope.ServiceProvider.GetRequiredService<AppDbContext>().Database.ExecuteSqlRawAsync(
+            "UPDATE catalog.Products SET IsDeleted = {0} WHERE Id = (SELECT ProductId FROM catalog.ProductVariants WHERE Id = {1});",
+            [deleted, variantId],
+            CancellationToken.None);
     }
 
     [Fact]

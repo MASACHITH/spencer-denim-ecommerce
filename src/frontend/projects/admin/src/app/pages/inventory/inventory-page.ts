@@ -257,10 +257,10 @@ interface Access {
                       <td>
                         <div class="adm-actions inv__row-actions">
                           @if (access()!.edit && row.hasStockRecord) {
-                            <button class="adm-btn" type="button" [attr.data-testid]="'change-' + row.variantId" [attr.aria-label]="'Change stock for ' + row.sku" (click)="open('stock', row.variantId, $event)">Change stock</button>
-                            <button class="adm-btn" type="button" [attr.data-testid]="'set-threshold-' + row.variantId" [attr.aria-label]="'Low-stock threshold for ' + row.sku" (click)="open('threshold', row.variantId, $event)">Threshold</button>
+                            <button class="adm-btn inv__act" type="button" [attr.data-testid]="'change-' + row.variantId" [attr.aria-label]="'Change stock for ' + row.sku" (click)="open('stock', row.variantId, $event)">Stock</button>
+                            <button class="adm-btn inv__act" type="button" [attr.data-testid]="'set-threshold-' + row.variantId" [attr.aria-label]="'Low-stock threshold for ' + row.sku" (click)="open('threshold', row.variantId, $event)">Threshold</button>
                           }
-                          <button class="adm-btn" type="button" [attr.data-testid]="'history-' + row.variantId" [attr.aria-label]="'Stock history for ' + row.sku" (click)="open('history', row.variantId, $event)">History</button>
+                          <button class="adm-btn inv__act" type="button" [attr.data-testid]="'history-' + row.variantId" [attr.aria-label]="'Stock history for ' + row.sku" (click)="open('history', row.variantId, $event)">History</button>
                         </div>
                       </td>
                     </tr>
@@ -293,10 +293,13 @@ interface Access {
     .inv__filters { display: grid; gap: var(--space-2); align-items: end; grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr)); }
     .inv__go, .inv__paging, .inv__bar { align-items: center; }
     .inv__bar { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--space-1); }
-    .inv__product { min-width: 10rem; overflow-wrap: anywhere; }
+    .inv__product { min-width: 8rem; overflow-wrap: anywhere; }
     .inv__meta { display: block; font-size: var(--text-small); }
-    .inv__wrap { overflow-wrap: anywhere; min-width: 9rem; }
-    .inv__row-actions { flex-wrap: nowrap; white-space: nowrap; }
+    .inv__wrap { overflow-wrap: anywhere; min-width: 6.5rem; }
+    .inv__row-actions { flex-wrap: nowrap; white-space: nowrap; gap: var(--space-0-5); }
+    /* Compact row buttons (tester #190, D4a): the three must fit beside the figures at 1280 px and up
+       without the table scrolling inside its card. Still 44 px tall and at least 44 px wide. */
+    .inv__act { padding-inline: var(--space-1); letter-spacing: normal; }
     .inv__pick { min-width: var(--tap); justify-content: center; }
     .inv__low { color: var(--color-warning); border-color: var(--color-warning); }
     .inv__results { margin: 0; padding-inline-start: var(--space-2); display: grid; gap: var(--space-0-5); overflow-wrap: anywhere; }

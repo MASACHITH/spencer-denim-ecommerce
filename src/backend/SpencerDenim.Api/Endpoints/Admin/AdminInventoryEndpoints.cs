@@ -270,14 +270,9 @@ internal static class AdminInventoryEndpoints
         }
         else if (node is not null)
         {
-            // A name, never a number: Enum.TryParse would accept "2", which would make a number part of the contract.
             if (node is not JsonValue json
                 || !json.TryGetValue<string>(out var text)
-                || string.IsNullOrWhiteSpace(text)
-                || char.IsAsciiDigit(text.Trim()[0])
-                || text.Trim()[0] == '-'
-                || !Enum.TryParse(text.Trim(), ignoreCase: true, out StockChangeKind parsed)
-                || !Enum.IsDefined(parsed))
+                || !TryExactName(text, out StockChangeKind parsed))
             {
                 errors.Add(new ValidationError(prefix + "kind", "Use kind Receive, Adjust or SetCount."));
             }
@@ -321,18 +316,43 @@ internal static class AdminInventoryEndpoints
             return fallback;
         }
 
-        var trimmed = raw.Trim();
-
-        if (!char.IsAsciiDigit(trimmed[0])
-            && trimmed[0] != '-'
-            && Enum.TryParse(trimmed, ignoreCase: true, out TEnum parsed)
-            && Enum.IsDefined(parsed))
+        if (TryExactName(raw, out TEnum parsed))
         {
             return parsed;
         }
 
         errors.Add(new ValidationError(field, $"Use {field}={string.Join(", ", Enum.GetNames<TEnum>())}."));
         return fallback;
+    }
+
+    /// <summary>
+    /// One of the enum's own names, compared without case after trimming — and nothing else.
+    /// </summary>
+    /// <remarks>
+    /// <b>Not <c>Enum.TryParse</c></b> (tester #190, D2): it also accepts a number ("2", "+2", " 2"), and a
+    /// comma list that it ORs together as flags — "Receive, Adjust" is 1|2, which is SetCount. A name match
+    /// against <c>Enum.GetNames</c> refuses all of those by construction.
+    /// </remarks>
+    internal static bool TryExactName<TEnum>(string? raw, out TEnum value)
+        where TEnum : struct, Enum
+    {
+        value = default;
+
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return false;
+        }
+
+        var trimmed = raw.Trim();
+        var name = Enum.GetNames<TEnum>().FirstOrDefault(candidate => string.Equals(candidate, trimmed, StringComparison.OrdinalIgnoreCase));
+
+        if (name is null)
+        {
+            return false;
+        }
+
+        value = Enum.Parse<TEnum>(name);
+        return true;
     }
 
     private static ProblemHttpResult NotFound(string message) =>

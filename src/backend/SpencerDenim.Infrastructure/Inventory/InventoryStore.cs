@@ -41,6 +41,12 @@ namespace SpencerDenim.Infrastructure.Inventory;
 /// </list>
 /// </para>
 /// <para>
+/// <b>A variant of a removed (soft-deleted) product cannot be changed</b>: every statement joins to the
+/// product and requires <c>IsDeleted = 0</c> in the same conditional statement, so the refusal and the
+/// write cannot disagree (tester #190, D3). Before this, a threshold change committed and audited and then
+/// answered 404, because the read-back filtered the product the write had not.
+/// </para>
+/// <para>
 /// <b>The reserved floor.</b> Both shapes refuse to leave <c>OnHand</c> below <c>Reserved</c>, i.e. they
 /// never take <c>Available</c> below 0 and never take away units an unpaid order is holding (doc 11 P2's
 /// "12 units are reserved for unpaid orders"). <c>CK_StockLevels_ReservedLeOnHand</c> is the backstop that
@@ -130,10 +136,14 @@ internal sealed class InventoryStore(AppDbContext dbContext, IAuditLogWriter aud
                 // threshold is not a figure, so it is left alone.
                 var change = await ReadPairAsync(
                     """
-                    UPDATE inventory.StockLevels
+                    UPDATE stock
                        SET LowStockThreshold = @threshold
                     OUTPUT deleted.LowStockThreshold, inserted.LowStockThreshold
-                     WHERE VariantId = @variantId;
+                      FROM inventory.StockLevels AS stock
+                      JOIN catalog.ProductVariants AS variant ON variant.Id = stock.VariantId
+                      JOIN catalog.Products AS product ON product.Id = variant.ProductId
+                     WHERE stock.VariantId = @variantId
+                       AND product.IsDeleted = 0;
                     """,
                     cancellationToken,
                     ("@threshold", (object?)threshold ?? DBNull.Value),
@@ -190,12 +200,16 @@ internal sealed class InventoryStore(AppDbContext dbContext, IAuditLogWriter aud
 
             after = await ReadFiguresAsync(
                 """
-                UPDATE inventory.StockLevels
+                UPDATE stock
                    SET OnHand = @newOnHand, UpdatedAtUtc = @now
                 OUTPUT inserted.OnHand, inserted.Reserved
-                 WHERE VariantId = @variantId
-                   AND OnHand = @expectedOnHand
-                   AND @newOnHand >= Reserved;
+                  FROM inventory.StockLevels AS stock
+                  JOIN catalog.ProductVariants AS variant ON variant.Id = stock.VariantId
+                  JOIN catalog.Products AS product ON product.Id = variant.ProductId
+                 WHERE stock.VariantId = @variantId
+                   AND product.IsDeleted = 0
+                   AND stock.OnHand = @expectedOnHand
+                   AND @newOnHand >= stock.Reserved;
                 """,
                 cancellationToken,
                 ("@newOnHand", request.Quantity),
@@ -211,12 +225,16 @@ internal sealed class InventoryStore(AppDbContext dbContext, IAuditLogWriter aud
             // would otherwise overflow inside the predicate and fail the whole batch with an arithmetic error.
             after = await ReadFiguresAsync(
                 """
-                UPDATE inventory.StockLevels
-                   SET OnHand = OnHand + @delta, UpdatedAtUtc = @now
+                UPDATE stock
+                   SET OnHand = stock.OnHand + @delta, UpdatedAtUtc = @now
                 OUTPUT inserted.OnHand, inserted.Reserved
-                 WHERE VariantId = @variantId
-                   AND CAST(OnHand AS bigint) + @delta >= Reserved
-                   AND CAST(OnHand AS bigint) + @delta <= @maxOnHand;
+                  FROM inventory.StockLevels AS stock
+                  JOIN catalog.ProductVariants AS variant ON variant.Id = stock.VariantId
+                  JOIN catalog.Products AS product ON product.Id = variant.ProductId
+                 WHERE stock.VariantId = @variantId
+                   AND product.IsDeleted = 0
+                   AND CAST(stock.OnHand AS bigint) + @delta >= stock.Reserved
+                   AND CAST(stock.OnHand AS bigint) + @delta <= @maxOnHand;
                 """,
                 cancellationToken,
                 ("@delta", onHandDelta),
@@ -280,13 +298,18 @@ internal sealed class InventoryStore(AppDbContext dbContext, IAuditLogWriter aud
     {
         var current = await ReadFiguresAsync(
             """
-            SELECT OnHand, Reserved
-              FROM inventory.StockLevels WITH (READCOMMITTEDLOCK)
-             WHERE VariantId = @variantId;
+            SELECT stock.OnHand, stock.Reserved
+              FROM inventory.StockLevels AS stock WITH (READCOMMITTEDLOCK)
+              JOIN catalog.ProductVariants AS variant ON variant.Id = stock.VariantId
+              JOIN catalog.Products AS product ON product.Id = variant.ProductId
+             WHERE stock.VariantId = @variantId
+               AND product.IsDeleted = 0;
             """,
             cancellationToken,
             ("@variantId", request.VariantId));
 
+        // A removed product's variant reads as not there, exactly as the list and the history treat it: the
+        // update's own join refused it, so nothing was written (tester #190, D3).
         if (current is not { } now)
         {
             return new StockChangeRowResult(

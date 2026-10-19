@@ -107,7 +107,17 @@ export class StockChangeForm {
     const now = `On hand now ${row.onHand}, of which ${row.reserved} ${row.reserved === 1 ? 'is' : 'are'} held by unpaid orders.`;
     const typed = readQuantity(this.action(), this.quantity());
 
-    return 'value' in typed ? `${now} After saving: ${onHandAfter(this.action(), typed.value, row.onHand)} on hand.` : now;
+    if (!('value' in typed)) {
+      return now;
+    }
+
+    const after = onHandAfter(this.action(), typed.value, row.onHand);
+    const floor = floorProblem(after, row.reserved);
+
+    // A warning, not a block: the figures are from when the page loaded, and the shop checks them again.
+    return floor
+      ? `${now} After saving: ${after} on hand. When this page loaded, ${floor} The shop will refuse it if that is still so.`
+      : `${now} After saving: ${after} on hand.`;
   });
 
   protected read(event: Event): string {
@@ -132,11 +142,15 @@ export class StockChangeForm {
     const quantity = readQuantity(this.action(), this.quantity());
     const reason = readReason(this.reason());
 
-    this.quantityError.set('problem' in quantity ? quantity.problem : floorProblem(onHandAfter(this.action(), quantity.value, row.onHand), row.reserved));
+    // The reserved floor is **not** checked here (tester #190, D4b). `row.reserved` is the figure from when
+    // the page loaded, and an order paid or expired since may have freed those units; a stale figure must
+    // never stop a change the server would accept. The server decides, under the row lock, and its
+    // Refused or Changed answer is shown below. The preview still warns.
+    this.quantityError.set('problem' in quantity ? quantity.problem : null);
     this.reasonError.set('problem' in reason ? reason.problem : null);
     this.refusal.set(null);
 
-    if ('problem' in quantity || 'problem' in reason || this.quantityError()) {
+    if ('problem' in quantity || 'problem' in reason) {
       return;
     }
 

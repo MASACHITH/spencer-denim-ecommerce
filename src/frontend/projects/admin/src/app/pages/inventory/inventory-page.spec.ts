@@ -254,7 +254,7 @@ describe('InventoryPage (ADM-12)', () => {
     expect(byTestId('inventory-said')!.textContent).toContain('8 on hand');
   });
 
-  it('refuses before sending: no reason, a fraction, and a removal below what orders hold', async () => {
+  it('refuses before sending only what it can know: no reason, a fraction', async () => {
     configure();
     await open(['Inventory.View', 'Inventory.Edit']);
     byTestId<HTMLButtonElement>('change-11')!.click();
@@ -266,12 +266,57 @@ describe('InventoryPage (ADM-12)', () => {
     expect(byTestId('stock-quantity-error')!.textContent).toContain('whole number');
     expect(byTestId('stock-reason-error')!.textContent).toContain('Give a reason');
 
+    http.expectNone(`${InventoryApi.url}/adjustments`);
+  });
+
+  it('warns about the reserved figure from page load but lets the server decide (D4b)', async () => {
+    configure();
+    await open(['Inventory.View', 'Inventory.Edit']);
+    byTestId<HTMLButtonElement>('change-11')!.click();
+    await settle();
+
+    choose('stock-action', 'remove');
+    type('stock-quantity', '7');
+    type('stock-reason', 'Lost');
+    await settle();
+    expect(byTestId('stock-preview')!.textContent).toContain('When this page loaded, 4 units are reserved');
+
+    // The orders holding those units may have been paid or expired since: the change is sent, not blocked.
+    await submit('stock-form');
+    expect(byTestId('stock-quantity-error')).toBeNull();
+    const request = await write();
+    expect(request.request.body.rows).toEqual([{ variantId: 11, kind: 'Adjust', quantity: -7, expectedOnHand: null }]);
+    request.flush({
+      batchId: null,
+      appliedCount: 1,
+      notAppliedCount: 0,
+      rows: [{ variantId: 11, outcome: 'Applied', message: null, onHandDelta: -7, onHand: 3, reserved: 0, available: 3 }],
+    } satisfies StockChangeResult);
+    await settle();
+
+    expect(byTestId('on-hand-11')!.textContent).toBe('3');
+  });
+
+  it('shows the server’s refusal when the reserved floor still holds', async () => {
+    configure();
+    await open(['Inventory.View', 'Inventory.Edit']);
+    byTestId<HTMLButtonElement>('change-11')!.click();
+    await settle();
+
+    choose('stock-action', 'remove');
     type('stock-quantity', '7');
     type('stock-reason', 'Lost');
     await submit('stock-form');
-    expect(byTestId('stock-quantity-error')!.textContent).toContain('4 units are reserved for unpaid orders');
+    (await write()).flush({
+      batchId: null,
+      appliedCount: 0,
+      notAppliedCount: 1,
+      rows: [{ variantId: 11, outcome: 'Refused', message: '5 units are reserved for unpaid orders, so on hand cannot go below 5. Nothing was changed.', onHandDelta: 0, onHand: 10, reserved: 5, available: 5 }],
+    } satisfies StockChangeResult);
+    await settle();
 
-    http.expectNone(`${InventoryApi.url}/adjustments`);
+    expect(byTestId('stock-refusal')!.textContent).toContain('5 units are reserved');
+    expect(byTestId('available-11')!.textContent).toBe('5');
   });
 
   it('sends a count with the figure on screen, and shows a Changed answer with the new figure', async () => {

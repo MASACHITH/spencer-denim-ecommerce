@@ -331,7 +331,8 @@ function validate(body) {
     if (!Object.hasOwn(row, 'kind')) {
       shapeErrors[`${prefix}kind`] = ['Send kind.'];
     } else if (row.kind !== null
-      && (typeof row.kind !== 'string' || /^[\s]*[\d-]/.test(row.kind) || !['receive', 'adjust', 'setcount'].includes(row.kind.trim().toLowerCase()))) {
+      // Exact names only, case-insensitive: no number ("2", "+2"), no comma list ("Receive, Adjust").
+      && (typeof row.kind !== 'string' || !['receive', 'adjust', 'setcount'].includes(row.kind.trim().toLowerCase()))) {
       shapeErrors[`${prefix}kind`] = ['Use kind Receive, Adjust or SetCount.'];
     }
   });
@@ -472,8 +473,40 @@ function adjust(state, body, json, response) {
   return json(response, 200, { batchId, appliedCount, notAppliedCount: answered.length - appliedCount, rows: answered });
 }
 
+/**
+ * The body, parsed so that a whole-number field written with a fraction or an exponent (`1.0`, `1e3`) stays
+ * distinguishable from the integer. The API reads these with `JsonValue.TryGetValue<int>`, which refuses
+ * `1.0`; `JSON.parse` would turn it into 1 and make this stub more permissive than the API (tester #190, D2).
+ * Such a number is replaced by a string before parsing, which every integer check below then refuses.
+ */
+function readStrictBody(request) {
+  return new Promise((done) => {
+    let raw = '';
+    request.on('data', (chunk) => {
+      raw += chunk;
+    });
+    request.on('end', () => {
+      if (raw.length === 0) {
+        done(null);
+        return;
+      }
+
+      const marked = raw.replace(
+        /("(?:variantId|quantity|expectedOnHand|lowStockThreshold)"\s*:\s*)(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g,
+        (match, key, number) => (/[.eE]/.test(number) ? `${key}"not-a-whole-number"` : match),
+      );
+
+      try {
+        done(JSON.parse(marked));
+      } catch {
+        done(undefined);
+      }
+    });
+  });
+}
+
 /** Returns true when it answered the request. */
-export async function handleInventoryRoute({ path, method, url, request, response, state, json, readBody }) {
+export async function handleInventoryRoute({ path, method, url, request, response, state, json }) {
   if (path === '/__test__/inventory') {
     state.inventory = inventoryFor(url.searchParams.get('set') ?? 'some');
     state.movements = [
@@ -495,6 +528,16 @@ export async function handleInventoryRoute({ path, method, url, request, respons
     ];
     state.nextMovementId = 1000;
     json(response, 200, { count: state.inventory.length });
+    return true;
+  }
+
+  // Test-only: the orders holding this variant were paid or expired, so its units are free again.
+  if (path === '/__test__/inventory-release') {
+    const stock = state.inventory.find((candidate) => candidate.variantId === Number(url.searchParams.get('variantId')));
+    if (stock) {
+      stock.reserved = 0;
+    }
+    json(response, stock ? 200 : 404, { ok: Boolean(stock) });
     return true;
   }
 
@@ -538,13 +581,13 @@ export async function handleInventoryRoute({ path, method, url, request, respons
   }
 
   if (path === '/api/admin/inventory/adjustments' && method === 'POST') {
-    adjust(state, await readBody(request), json, response);
+    adjust(state, await readStrictBody(request), json, response);
     return true;
   }
 
   const threshold = /^\/api\/admin\/inventory\/(\d+)\/threshold$/.exec(path);
   if (threshold && method === 'PUT') {
-    const body = await readBody(request);
+    const body = await readStrictBody(request);
 
     if (body === undefined || body === null || typeof body !== 'object' || Array.isArray(body)) {
       json(response, 400, { title: 'Malformed JSON', status: 400, code: 'malformed_json' });

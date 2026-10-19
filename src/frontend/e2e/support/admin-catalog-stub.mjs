@@ -2533,7 +2533,7 @@ const server = createServer(async (request, response) => {
   }
 
   // ---- inventory (ADM-12, #190) ---------------------------------------------------------------
-  if (await handleInventoryRoute({ path, method: request.method, url, request, response, state, json, readBody })) {
+  if (await handleInventoryRoute({ path, method: request.method, url, request, response, state, json })) {
     return undefined;
   }
 

@@ -164,11 +164,11 @@ test.describe('changing stock', () => {
     await expect(page.locator('[data-testid="history-table"] tbody tr').first()).toContainText('Damaged in store');
   });
 
-  test('refuses before sending: no reason, and a removal below what unpaid orders hold', async ({ page }) => {
-    await open(page);
-    let sent = false;
+  test('refuses before sending only a missing reason; the reserved floor is the server’s to decide', async ({ page }) => {
+    const state = await open(page);
+    let sent = 0;
     page.on('request', (request) => {
-      sent ||= request.url().endsWith('/adjustments');
+      sent += request.url().endsWith('/adjustments') ? 1 : 0;
     });
 
     await page.locator('[data-testid="change-1"]').click();
@@ -176,11 +176,23 @@ test.describe('changing stock', () => {
     await page.locator('[data-testid="stock-quantity"]').fill('9');
     await page.locator('[data-testid="stock-save"]').click();
 
-    await expect(page.locator('[data-testid="stock-quantity-error"]')).toContainText('4 units are reserved for unpaid orders');
     await expect(page.locator('[data-testid="stock-reason-error"]')).toContainText('Give a reason');
-    expect(sent).toBe(false);
+    await expect(page.locator('[data-testid="stock-quantity-error"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="stock-preview"]')).toContainText('When this page loaded, 4 units are reserved');
+    expect(sent).toBe(0);
 
-    await page.locator('[data-testid="stock-cancel"]').click();
+    // With the reserved figure still true on the server, its refusal is shown and the row refreshed.
+    await page.locator('[data-testid="stock-reason"]').fill('Lost');
+    await page.locator('[data-testid="stock-save"]').click();
+    await expect(page.locator('[data-testid="stock-refusal"]')).toContainText('4 units are reserved for unpaid orders');
+    expect(sent).toBe(1);
+
+    // The figure on screen goes stale: an order's units are released on the server. The same removal is
+    // no longer blocked by the page's old figure — the server accepts it.
+    expect((await page.request.get(`${adminURL}/__test__/inventory-release?variantId=1`, { headers: { Cookie: `e2e_state=${state}` } })).ok()).toBe(true);
+    await page.locator('[data-testid="stock-save"]').click();
+    await expect(page.locator('[data-testid="inventory-editor"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="on-hand-1"]')).toHaveText('3');
     await expect(page.locator('[data-testid="change-1"]')).toBeFocused();
   });
 
@@ -272,6 +284,9 @@ test.describe('the stub is no more permissive than the API', () => {
       [{ reason: 'x', rows: [{ variantId: 1, kind: 'Receive', quantity: 5, expectedOnHand: 3 }] }, 'rows[0].expectedOnHand'],
       [{ reason: 'x', rows: [{ variantId: 1, kind: 'Receive', quantity: 1, expectedOnHand: null }, { variantId: 1, kind: 'Receive', quantity: 1, expectedOnHand: null }] }, 'rows[1].variantId'],
       [{ reason: 'x', rows: [] }, 'rows'],
+      // D2: names only — no signed numbers, no comma lists — and 1.0 is not a whole number.
+      [{ reason: 'x', rows: [{ variantId: 1, kind: '+2', quantity: 1, expectedOnHand: null }] }, 'rows[0].kind'],
+      [{ reason: 'x', rows: [{ variantId: 1, kind: 'Receive, Adjust', quantity: 1, expectedOnHand: 5 }] }, 'rows[0].kind'],
     ];
 
     for (const [data, field] of cases) {
@@ -280,8 +295,24 @@ test.describe('the stub is no more permissive than the API', () => {
       expect(Object.keys((await response.json()).errors), JSON.stringify(data)).toContain(field);
     }
 
-    const list = await page.request.get(`${adminURL}/api/admin/inventory?status=1`, { headers: { Cookie: `e2e_state=${state}` } });
-    expect(list.status()).toBe(400);
+    // `1.0` has to travel as raw JSON text: a JS object would serialise it as `1`.
+    const fraction = await page.request.post(`${adminURL}/api/admin/inventory/adjustments`, {
+      headers: { Cookie: `e2e_state=${state}`, 'X-XSRF-TOKEN': 'e2e-antiforgery-token', 'Content-Type': 'application/json' },
+      data: '{"reason":"x","rows":[{"variantId":1,"kind":"Adjust","quantity":1.0,"expectedOnHand":null}]}',
+    });
+    expect(fraction.status()).toBe(400);
+    expect(Object.keys((await fraction.json()).errors)).toContain('rows[0].quantity');
+
+    const threshold = await page.request.put(`${adminURL}/api/admin/inventory/1/threshold`, {
+      headers: { Cookie: `e2e_state=${state}`, 'X-XSRF-TOKEN': 'e2e-antiforgery-token', 'Content-Type': 'application/json' },
+      data: '{"lowStockThreshold":3.0}',
+    });
+    expect(threshold.status()).toBe(400);
+
+    for (const query of ['status=1', 'status=+1', 'status=LowStock,OutOfStock', 'sort=Sku,OnHand', 'direction=Asc,Desc']) {
+      const list = await page.request.get(`${adminURL}/api/admin/inventory?${query}`, { headers: { Cookie: `e2e_state=${state}` } });
+      expect(list.status(), query).toBe(400);
+    }
   });
 });
 
@@ -364,6 +395,12 @@ async function measureAtEveryWidth(page: Page, clauses: readonly string[]): Prom
     await page.setViewportSize({ width, height: 900 });
 
     expect(await horizontalOverflow(page), `horizontal overflow at ${width}px`).toBe(0);
+
+    // D4a: from 1280 up the list fits its card; below that it may scroll inside it, never the page.
+    if (width >= 1280) {
+      const inner = await page.locator('[data-testid="inventory-table"]').locator('xpath=..').evaluate((element) => element.scrollWidth - element.clientWidth);
+      expect(inner, `the table scrolls inside its card at ${width}px`).toBeLessThanOrEqual(0);
+    }
 
     for (const clause of clauses) {
       await expect(page.locator(clause), `${clause} at ${width}px`).toHaveCount(1);

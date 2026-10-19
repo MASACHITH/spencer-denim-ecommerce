@@ -35,7 +35,7 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                     table.PrimaryKey("PK_InventoryMovements", x => x.Id);
                     table.CheckConstraint("CK_InventoryMovements_After", "[OnHandAfter] >= 0 AND [ReservedAfter] >= 0 AND [ReservedAfter] <= [OnHandAfter]");
                     table.CheckConstraint("CK_InventoryMovements_MovementType", "[MovementType] BETWEEN 1 AND 9");
-                    table.CheckConstraint("CK_InventoryMovements_Reason", "[MovementType] NOT IN (3, 4, 9) OR LEN([Reason]) > 0");
+                    table.CheckConstraint("CK_InventoryMovements_Reason", "[MovementType] NOT IN (3, 4, 9) OR ISNULL(LEN([Reason]), 0) > 0");
                     table.ForeignKey(
                         name: "FK_InventoryMovements_Orders_OrderId",
                         column: x => x.OrderId,

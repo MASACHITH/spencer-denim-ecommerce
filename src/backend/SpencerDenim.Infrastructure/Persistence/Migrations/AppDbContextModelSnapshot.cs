@@ -1888,7 +1888,7 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
 
                             t.HasCheckConstraint("CK_InventoryMovements_MovementType", "[MovementType] BETWEEN 1 AND 9");
 
-                            t.HasCheckConstraint("CK_InventoryMovements_Reason", "[MovementType] NOT IN (3, 4, 9) OR LEN([Reason]) > 0");
+                            t.HasCheckConstraint("CK_InventoryMovements_Reason", "[MovementType] NOT IN (3, 4, 9) OR ISNULL(LEN([Reason]), 0) > 0");
                         });
                 });
 

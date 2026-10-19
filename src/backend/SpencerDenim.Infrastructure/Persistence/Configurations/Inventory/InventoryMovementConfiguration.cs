@@ -22,11 +22,12 @@ internal sealed class InventoryMovementConfiguration : IEntityTypeConfiguration<
                 // Doc 08 §3.4: 1 Initial … 9 CountCorrection.
                 table.HasCheckConstraint("CK_InventoryMovements_MovementType", "[MovementType] BETWEEN 1 AND 9");
 
-                // Doc 08 §3.4: "Required for Adjust and CountCorrection". LEN ignores trailing spaces, so a
-                // reason of blanks is refused as well as a NULL one.
+                // Doc 08 §3.4: "Required for Adjust and CountCorrection". ISNULL matters: LEN(NULL) is NULL,
+                // NULL > 0 is UNKNOWN, and a CHECK that evaluates to UNKNOWN passes — so without it a NULL
+                // reason got through (tester #190, D1). LEN ignores trailing spaces, so blanks are refused too.
                 table.HasCheckConstraint(
                     "CK_InventoryMovements_Reason",
-                    "[MovementType] NOT IN (3, 4, 9) OR LEN([Reason]) > 0");
+                    "[MovementType] NOT IN (3, 4, 9) OR ISNULL(LEN([Reason]), 0) > 0");
 
                 // The figures a change left behind are a StockLevels row's, which cannot be negative.
                 table.HasCheckConstraint(

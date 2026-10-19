@@ -45,7 +45,8 @@ public sealed class OrderStockMovementTests(SqlServerDatabaseFixture sqlServer) 
         var (order, variantId) = await PlaceOrderAsync(quantity: 3, onHand: 10);
         var orderId = await OrderIdAsync(order.PublicId);
 
-        Assert.True(await ExpireAsync(orderId));
+        await MakeDueAsync(orderId);
+        Assert.True(await ExpireAsync(orderId, DateTime.UtcNow));
 
         var release = (await MovementsAfterAsync(mark, variantId))[^1];
         Assert.Equal(InventoryMovementType.Release, release.MovementType);
@@ -87,7 +88,8 @@ public sealed class OrderStockMovementTests(SqlServerDatabaseFixture sqlServer) 
         var mark = await MarkAsync();
         var (order, variantId) = await PlaceOrderAsync(quantity: 2, onHand: 2);
         var orderId = await OrderIdAsync(order.PublicId);
-        Assert.True(await ExpireAsync(orderId));
+        await MakeDueAsync(orderId);
+        Assert.True(await ExpireAsync(orderId, DateTime.UtcNow));
 
         // Somebody else buys the shelf empty while the order is closed.
         using (var scope = CreateScope())
@@ -102,6 +104,19 @@ public sealed class OrderStockMovementTests(SqlServerDatabaseFixture sqlServer) 
         Assert.DoesNotContain(
             await MovementsAfterAsync(mark, variantId),
             movement => movement.MovementType == InventoryMovementType.Sale);
+    }
+
+    /// <summary>
+    /// Moves the order's deadline into the past so it expires at the real "now". Moving the clock ahead
+    /// instead (the base class's default) stamps the Release movement in the future, and a future-dated
+    /// movement then sorts first in that variant's history for every later test (tester #190, D5).
+    /// </summary>
+    private async Task MakeDueAsync(int orderId)
+    {
+        using var scope = CreateScope();
+        await scope.ServiceProvider.GetRequiredService<AppDbContext>().Orders
+            .Where(order => order.Id == orderId)
+            .ExecuteUpdateAsync(order => order.SetProperty(row => row.PaymentDueAtUtc, DateTime.UtcNow.AddMinutes(-1)), Token);
     }
 
     private async Task<long> MarkAsync()
