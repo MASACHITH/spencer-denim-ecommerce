@@ -125,3 +125,20 @@ with other sessions' builds running; the same test passes on the final run below
 `CheckoutPlacementThrottleTests` (7) + `ExpireUnpaidOrdersHostingTests` (2) + the whole of `CheckoutConcurrencyTests` (6):
 **15 / 15**; storefront `checkout-api.spec.ts` + `checkout-page.spec.ts`: **75 / 75**. Not run, as instructed: the full
 integration suite and Playwright.
+
+## Tester round 1 (2026-10-19): PASS, one Major fixed
+
+The independent tester passed the code and tests (all six mutations caught: permit before replay, off-by-one, one
+global bucket, storefront 429 mapping, focus call, expiry-service registration; 108 checkout/expiry integration tests,
+57 unit, 208 storefront checkout specs, 0 flaky) and raised:
+
+| # | Finding | Status |
+|---|---|---|
+| 1 Major | **The tuning knob the docs promise cannot be turned in the deployed stack.** The API container in `deploy/app/compose.yml` has an explicit `environment:` list and no `env_file`; `OrderPlacementThrottle__*` set in `config/app.env` reached nothing | **Fixed.** compose maps `SD_ORDER_THROTTLE_PERMITS`, `_SHARED_PERMITS`, `_WINDOW_SECONDS` onto the three settings with the code's own defaults; `.env.example`, `docs/15` §3 and the README say so. New `OrderPlacementThrottleDeploymentTests` (4): red against the original compose.yml (3 fail, "does not pass … to the API container") and red when a compose default is drifted (20 -> 25), green now. **Not run:** `docker compose config` (Docker is off); indentation was checked against the neighbouring lines and there are no tabs |
+| 3 Minor | `SharedAddressPermitsPerWindow` below `PermitsPerWindow` stops the API at start-up (by name) | Documented next to the variables in `.env.example` and `docs/15`; the start-up refusal is deliberate |
+| 2 Minor | A double-submit of one key at the edge of the limit (address with one permit left) answers `201` and `429`, where before this change it was `201` and `200`; the replay re-check only sees an order that has committed. Pressing again returns 200 with the order | Left; rare, and the message to the shopper is correct on a retry |
+| 4 Minor | `Retry-After` is always the full window (600 s), not the time to the next replenishment | Left; it is an upper bound and never 0 or negative |
+
+Judgement calls the tester left to the owner: the default (20 per 10 minutes) is right for shoppers and weak against a
+determined squatter (no cap on distinct cart lines, no cap on open unpaid orders per contact — see section 3 above);
+and a CDN in front of the VPS would put every shopper on the CDN's edge addresses (the runbook plans none).

@@ -105,9 +105,12 @@ the first install, check on the server that neither the ports nor the subnets ar
    ("signups are arriving from … not a visitor's own address"), step 2 or 3 is misconfigured.
    The **order-placement limit** (`POST /api/checkout/orders`, #107) reads the same address: **20 orders per
    address per 10 minutes**, answering 429 with `Retry-After`; a resend of an order that was already placed is
-   never counted or refused. Tune it with `OrderPlacementThrottle__PermitsPerWindow`,
-   `OrderPlacementThrottle__SharedAddressPermitsPerWindow` (the budget when the address is the proxy's, default
-   200) and `OrderPlacementThrottle__WindowSeconds`. Warning 3311 ("orders are arriving from … not a visitor's
+   never counted or refused. Tune it in `config/app.env` with `SD_ORDER_THROTTLE_PERMITS`,
+   `SD_ORDER_THROTTLE_SHARED_PERMITS` (the budget when the address is the proxy's, default 200 and never below the
+   first) and `SD_ORDER_THROTTLE_WINDOW_SECONDS`, then redeploy: the API container has no `env_file`, so these reach
+   it only through the lines in `compose.yml` that map them to `OrderPlacementThrottle__PermitsPerWindow`,
+   `…SharedAddressPermitsPerWindow` and `…WindowSeconds`. A shared figure below the per-address one stops the API
+   at start-up, by name. Warning 3311 ("orders are arriving from … not a visitor's
    own address") means step 2 or 3 is misconfigured, as for 1101.
 
 5. The **storefront** gets only `X-Forwarded-Host` and `X-Forwarded-Proto` (both overwritten by the gateway) and
