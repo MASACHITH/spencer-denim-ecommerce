@@ -368,4 +368,104 @@ describe('ReportsPage (ADM-19)', () => {
     expect(byTestId('customers-empty')).not.toBeNull();
     expect(byTestId('customers-chart-card')).toBeNull();
   });
+
+  // ---- #186b tester: weekly wording, a failure followed by success, and a late answer to an old Show -----------
+
+  function weekly(points: { start: string; end: string; buyers: number; firstTimeBuyers: number }[], totals: { buyers: number; firstTimeBuyers: number }): CustomerBuyers {
+    return {
+      period: { from: '2026-08-01', to: '2026-10-15', days: 76 },
+      interval: 'Week',
+      buyers: totals.buyers,
+      firstTimeBuyers: totals.firstTimeBuyers,
+      returningBuyers: totals.buyers - totals.firstTimeBuyers,
+      points: points.map((point) => ({ ...point, returningBuyers: point.buyers - point.firstTimeBuyers })),
+    };
+  }
+
+  it('labels weekly bars by their first and last day, heads the table "Week" and says "weeks" and "1 buyer" (#186b tester)', async () => {
+    configure({ report: 'customers' });
+    await open(['Reports.View']);
+    http.expectOne((candidate) => candidate.url === '/api/admin/reports/customers').flush(customerPage(1, 1));
+    http.expectOne((candidate) => candidate.url === '/api/admin/reports/customers/buyers').flush(
+      weekly([{ start: '2026-10-05', end: '2026-10-11', buyers: 1, firstTimeBuyers: 1 }, { start: '2026-10-12', end: '2026-10-15', buyers: 0, firstTimeBuyers: 0 }], { buyers: 1, firstTimeBuyers: 1 }),
+    );
+    await settle();
+
+    const chart = chartNamed('customers-chart');
+    expect((chart.spec() as StackedBarSpec).labels).toEqual(['5 Oct 2026 – 11 Oct 2026', '12 Oct 2026 – 15 Oct 2026']);
+    expect(chart.summary()).toBe('Buyers by week: 1 buyer in all, 1 first-time and 0 returning; the most in one week was 1 buyer, 5 Oct 2026 – 11 Oct 2026.');
+    expect(byTestId('customers-chart-card')!.querySelector('h3')!.textContent).toContain('Buyers by week, first-time and returning');
+    expect(byTestId('customers-chart-totals')!.textContent!.trim()).toBe('1 buyer: 1 first-time, 0 returning');
+    expect(byTestId('customers-chart-defs')!.textContent).toContain('paid in two weeks is in both bars');
+
+    const table = byTestId('customers-chart-table')!;
+    expect([...table.querySelectorAll('thead th')].map((cell) => cell.textContent!.trim())).toEqual(['Week', 'Buyers', 'First-time', 'Returning']);
+    expect([...table.querySelectorAll('tbody tr')].map((row) => row.children[0].textContent!.trim())).toEqual([
+      '5 Oct 2026 – 11 Oct 2026',
+      '12 Oct 2026 – 15 Oct 2026',
+      'Whole period (each buyer once)',
+    ]);
+  });
+
+  it('clears a chart failure when Show brings a chart back (#186b tester)', async () => {
+    configure({ report: 'customers' });
+    await open(['Reports.View']);
+    http.expectOne((candidate) => candidate.url === '/api/admin/reports/customers').flush(customerPage(1, 2));
+    http.expectOne((candidate) => candidate.url === '/api/admin/reports/customers/buyers').flush(null, { status: 500, statusText: 'Server Error' });
+    await settle();
+    expect(byTestId('customers-chart-problem')).not.toBeNull();
+
+    byTestId<HTMLButtonElement>('customers-apply')!.click();
+    await settle();
+    http.expectOne((candidate) => candidate.url === '/api/admin/reports/customers').flush(customerPage(1, 2));
+    http.expectOne((candidate) => candidate.url === '/api/admin/reports/customers/buyers').flush(buyers([{ start: '2026-10-01', buyers: 2, firstTimeBuyers: 1 }]));
+    await settle();
+
+    expect(byTestId('customers-chart-problem')).toBeNull();
+    expect(byTestId('customers-chart-card')).not.toBeNull();
+  });
+
+  it('ignores a late chart answer to an earlier Show (#186b tester)', async () => {
+    configure({ report: 'customers' });
+    await open(['Reports.View']);
+    http.expectOne((candidate) => candidate.url === '/api/admin/reports/customers').flush(customerPage(1, 5));
+    http.expectOne((candidate) => candidate.url === '/api/admin/reports/customers/buyers').flush(buyers([{ start: '2026-10-01', buyers: 5, firstTimeBuyers: 5 }]));
+    await settle();
+
+    byTestId<HTMLButtonElement>('customers-apply')!.click();
+    await settle();
+    byTestId<HTMLButtonElement>('customers-apply')!.click();
+    await settle();
+
+    const reports = http.match((candidate) => candidate.url === '/api/admin/reports/customers');
+    const charts = http.match((candidate) => candidate.url === '/api/admin/reports/customers/buyers');
+    expect(charts.length).toBe(2);
+    reports.forEach((request) => request.flush(customerPage(1, 5)));
+
+    charts[1].flush(buyers([{ start: '2026-10-01', buyers: 5, firstTimeBuyers: 2 }]));
+    await settle();
+    charts[0].flush(buyers([{ start: '2026-10-01', buyers: 5, firstTimeBuyers: 4 }]));
+    await settle();
+
+    expect((chartNamed('customers-chart').spec() as StackedBarSpec).series[0].values).toEqual([2]);
+  });
+
+  it('names the first of two equally busy days, and says nobody when every bar is zero (#186b tester)', async () => {
+    configure({ report: 'customers' });
+    await open(['Reports.View']);
+    http.expectOne((candidate) => candidate.url === '/api/admin/reports/customers').flush(customerPage(1, 3));
+    http.expectOne((candidate) => candidate.url === '/api/admin/reports/customers/buyers').flush(
+      buyers([{ start: '2026-10-01', buyers: 2, firstTimeBuyers: 2 }, { start: '2026-10-02', buyers: 2, firstTimeBuyers: 1 }], { buyers: 3, firstTimeBuyers: 3 }),
+    );
+    await settle();
+    expect(chartNamed('customers-chart').summary()).toMatch(/the most in one day was 2 buyers, 1 Oct 2026\.$/);
+
+    // The report and the chart are two requests; if the chart comes back empty, its name must not invent a busiest day.
+    byTestId<HTMLButtonElement>('customers-apply')!.click();
+    await settle();
+    http.expectOne((candidate) => candidate.url === '/api/admin/reports/customers').flush(customerPage(1, 1));
+    http.expectOne((candidate) => candidate.url === '/api/admin/reports/customers/buyers').flush(buyers([{ start: '2026-10-01', buyers: 0, firstTimeBuyers: 0 }]));
+    await settle();
+    expect(chartNamed('customers-chart').summary()).toBe('Buyers by period: nobody paid for an order in these days.');
+  });
 });

@@ -1,3 +1,4 @@
+import AxeBuilder from '@axe-core/playwright';
 import { Page, Route, expect, test } from '@playwright/test';
 
 import { adminURL, adminWorktreeRoot } from '../playwright.config';
@@ -160,5 +161,27 @@ test.describe("the customers report's buyers chart (#186b)", () => {
 
     await expect(page.locator('[data-testid="customers-table"]')).toBeVisible();
     await expect(page.locator('[data-testid="customers-chart-problem"]')).toContainText('The buyers chart could not be loaded.');
+  });
+
+  // #186b tester: the dashboard's axe sweep waits for the customers table, not the chart, so it can run before the
+  // card (and its h3) exists. Here axe and the heading order are checked with the chart drawn and its table open.
+  test('passes axe with the chart drawn and its table open, and its heading sits under the page heading (#186b tester)', async ({ page }) => {
+    await open(page);
+    await expect(page.locator('[data-testid="customers-chart"]')).toBeVisible();
+    await page.locator('[data-testid="customers-chart-card"] summary').click();
+    await expect(page.locator('[data-testid="customers-chart-table"]')).toBeVisible();
+
+    const levels = await page.locator('main h1, main h2, main h3, main h4').evaluateAll((headings) => headings.map((heading) => Number(heading.tagName.slice(1))));
+    expect(levels).toContain(3);
+    for (let index = 1; index < levels.length; index++) {
+      expect(levels[index] - levels[index - 1], `heading ${index} skips a level: ${levels.join(',')}`).toBeLessThanOrEqual(1);
+    }
+
+    const summary = await page.locator('[data-testid="customers-chart"]').getAttribute('aria-label');
+    expect(summary).toMatch(/^Buyers by day: /);
+
+    const results = await new AxeBuilder({ page }).analyze();
+    const blocking = results.violations.filter((violation) => ['serious', 'critical'].includes(violation.impact ?? ''));
+    expect(blocking.map((violation) => `${violation.id}: ${violation.help}`)).toEqual([]);
   });
 });

@@ -81,6 +81,50 @@ public sealed class ReportingQueryPlanTests(SqlServerDatabaseFixture sqlServer)
         Assert.Contains(PaidIndex, plan);
     }
 
+    public static TheoryData<string> BuyerQueries =>
+    [
+        "buyers-week", "buyers-search", "first-time-month", "first-time-search",
+    ];
+
+    /// <summary>
+    /// The customers chart's queries (#186b) are <b>covered</b> by <c>IX_Orders_Paid</c>: with the index
+    /// forced, the plan has no key lookup back to the clustered table. Reading the whole paid history for
+    /// "first-time" is only cheap because it touches the narrow index alone (tester, #186b).
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(BuyerQueries))]
+    public async Task The_buyers_queries_are_covered_by_the_paid_index_with_no_lookup(string query)
+    {
+        using var scope = await ScopeAsync();
+        var reader = Reader(scope);
+
+        var sql = query switch
+        {
+            "buyers-week" => reader.BuyersPerBucketQuery(Period, ReportInterval.Week, null).ToQueryString(),
+            "buyers-search" => reader.BuyersPerBucketQuery(Period, ReportInterval.Day, "NIMALI").ToQueryString(),
+            "first-time-month" => reader.FirstTimeBuyersPerBucketQuery(Period, ReportInterval.Month, null).ToQueryString(),
+            "first-time-search" => reader.FirstTimeBuyersPerBucketQuery(Period, ReportInterval.Day, "NIMALI").ToQueryString(),
+            _ => throw new ArgumentOutOfRangeException(nameof(query)),
+        };
+
+        var plan = await PlanForAsync(OrdersReference.Replace(sql, "$1 WITH (INDEX([" + PaidIndex + "]))"));
+
+        Assert.Contains(PaidIndex, plan);
+        Assert.DoesNotContain("Lookup=\"1\"", plan, StringComparison.Ordinal);
+    }
+
+    /// <summary>The control for the lookup check: a column the index does not carry does need one.</summary>
+    [Fact]
+    public async Task A_paid_query_on_a_column_the_index_lacks_shows_a_lookup()
+    {
+        using var scope = await ScopeAsync();
+
+        const string sql = "SELECT MAX([o].[FirstName]) FROM [sales].[Orders] AS [o] WHERE [o].[PaidAtUtc] IS NOT NULL AND [o].[PaidAtUtc] >= '2015-01-01'";
+        var plan = await PlanForAsync(OrdersReference.Replace(sql, "$1 WITH (INDEX([" + PaidIndex + "]))"));
+
+        Assert.Contains("Lookup=\"1\"", plan, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task The_refund_query_can_be_answered_from_the_filtered_completed_index()
     {
