@@ -295,8 +295,8 @@ interface Access {
     .inv__bar { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--space-1); }
     .inv__product { min-width: 10rem; overflow-wrap: anywhere; }
     .inv__meta { display: block; font-size: var(--text-small); }
-    .inv__wrap { overflow-wrap: anywhere; }
-    .inv__row-actions { flex-wrap: nowrap; }
+    .inv__wrap { overflow-wrap: anywhere; min-width: 9rem; }
+    .inv__row-actions { flex-wrap: nowrap; white-space: nowrap; }
     .inv__pick { min-width: var(--tap); justify-content: center; }
     .inv__low { color: var(--color-warning); border-color: var(--color-warning); }
     .inv__results { margin: 0; padding-inline-start: var(--space-2); display: grid; gap: var(--space-0-5); overflow-wrap: anywhere; }
