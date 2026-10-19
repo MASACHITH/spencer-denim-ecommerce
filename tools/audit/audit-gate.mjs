@@ -132,11 +132,12 @@ export function utcToday() {
 // ---------------------------------------------------------------------------------------------
 
 function describeNpmFix(fixAvailable) {
-  if (fixAvailable === false || fixAvailable === undefined) {
-    return 'npm reports no fix is published';
-  }
   if (fixAvailable === true) {
     return 'npm reports a fix inside the current version ranges (npm audit fix, never --force)';
+  }
+  // false, undefined, null or anything that is not the { name, version } object npm uses: no fix to describe.
+  if (fixAvailable === null || typeof fixAvailable !== 'object') {
+    return 'npm reports no fix is published';
   }
   const target = `${fixAvailable.name}@${fixAvailable.version}`;
   return fixAvailable.isSemVerMajor
@@ -166,8 +167,20 @@ export function parseNpmAudit(text) {
     );
   }
 
+  // The summary is how this gate knows it read everything npm found. A report without it cannot be checked, so it is
+  // an error and not a clean bill of health (a report with no `metadata` and no vulnerabilities used to pass).
+  const reported = report.metadata?.vulnerabilities?.total;
+  if (!Number.isFinite(reported)) {
+    throw new GateError(
+      'npm audit returned a report without its vulnerability summary (metadata.vulnerabilities.total), so this gate cannot tell that it read every advisory.'
+    );
+  }
+
   const findings = new Map();
   for (const [name, entry] of Object.entries(report.vulnerabilities)) {
+    if (entry?.via !== undefined && !Array.isArray(entry.via)) {
+      throw new GateError(`npm audit listed "via" on ${name} in a shape this gate does not understand (expected a list).`);
+    }
     for (const via of entry?.via ?? []) {
       // A string names another vulnerable package: the advisory itself is listed under that package.
       if (via === null || typeof via !== 'object') {
@@ -196,7 +209,6 @@ export function parseNpmAudit(text) {
 
   // The summary counts vulnerable packages. If it says there are some and we read no advisory, the
   // format has moved under us: that is an error, not a clean bill of health.
-  const reported = report.metadata?.vulnerabilities?.total ?? 0;
   if (reported > 0 && findings.size === 0) {
     throw new GateError(`npm audit reports ${reported} vulnerable packages but no advisory could be read from it.`);
   }
@@ -214,10 +226,23 @@ export function parseDotnetList(text) {
     throw new GateError(`dotnet list package reported problems, so its report may be incomplete:\n  ${lines.join('\n  ')}`);
   }
 
+  // A solution always has projects. An empty list means the tool audited nothing, which is not the same as clean.
+  if (report.projects.length === 0) {
+    throw new GateError('dotnet list package listed no projects, so nothing was audited.');
+  }
+
   const findings = new Map();
   for (const project of report.projects) {
     const projectName = String(project.path ?? '').split('/').pop();
     for (const framework of project.frameworks ?? []) {
+      // The report names its packages `topLevelPackages` and `transitivePackages`. Another key that mentions packages
+      // is the format moving under us, and reading past it would report a vulnerable tree as clean.
+      const unknown = Object.keys(framework).filter(
+        (key) => /package/i.test(key) && key !== 'topLevelPackages' && key !== 'transitivePackages'
+      );
+      if (unknown.length > 0) {
+        throw new GateError(`dotnet list package listed packages under "${unknown.join('", "')}", which this gate does not read.`);
+      }
       const packages = [...(framework.topLevelPackages ?? []), ...(framework.transitivePackages ?? [])];
       for (const pkg of packages) {
         for (const vulnerability of pkg.vulnerabilities ?? []) {
@@ -455,7 +480,13 @@ const MAX_BUFFER = 256 * 1024 * 1024;
 function runNpmAudit(frontendDir) {
   // `npm` is npm.cmd on Windows, which only a shell resolves. The command is a constant string with
   // nothing interpolated, which also avoids Node's warning about passing an args array with a shell.
-  const run = spawnSync('npm audit --json', {
+  //
+  // `--include=dev` is load-bearing. `npm audit` honours NODE_ENV=production, npm_config_omit=dev,
+  // npm_config_production=true and an `omit=dev` line in any .npmrc, and then leaves the dev dependencies out of the
+  // report. Every advisory behind #84 was in a dev dependency (build tooling), so with any of those set this gate
+  // read 0 advisories off the very lockfile it exists to catch (found by #84's tester: a Docker stage sets
+  // NODE_ENV=production). A flag on the command line outranks the environment and every config file.
+  const run = spawnSync('npm audit --include=dev --json', {
     cwd: frontendDir,
     encoding: 'utf8',
     maxBuffer: MAX_BUFFER,
@@ -613,12 +644,12 @@ export function main(argv) {
         exit = Math.max(exit, EXIT_POLICY);
       }
     } catch (error) {
-      if (!(error instanceof GateError)) {
-        throw error;
-      }
-      console.error(`ERROR: the ${ecosystem} audit could not be carried out, which is NOT the same as clean.\n${error.message}`);
+      // Anything this gate did not foresee (an unreadable input, a report of a shape no check names) is still "could not
+      // be carried out": exit 2 with the reason, never a stack trace and never green.
+      const reason = error instanceof GateError ? error.message : `unexpected failure: ${error?.stack ?? error}`;
+      console.error(`ERROR: the ${ecosystem} audit could not be carried out, which is NOT the same as clean.\n${reason}`);
       if (inCi) {
-        console.log(`::error title=Dependency audit (${ecosystem})::${error.message.split('\n')[0]}`);
+        console.log(`::error title=Dependency audit (${ecosystem})::${reason.split('\n')[0]}`);
       }
       exit = Math.max(exit, EXIT_TOOL);
     }

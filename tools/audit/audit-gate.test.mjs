@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { after, describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
@@ -193,6 +193,26 @@ describe('parseNpmAudit', () => {
     const report = { auditReportVersion: 2, vulnerabilities: { x: { name: 'x', via: ['y'] } }, metadata: { vulnerabilities: { total: 1 } } };
     assert.throws(() => parseNpmAudit(JSON.stringify(report)), (e) => e instanceof GateError && /no advisory could be read/.test(e.message));
   });
+
+  test('a report with no vulnerability summary is an error, not a clean bill of health', () => {
+    // It used to pass: no `metadata` and no vulnerabilities read as zero advisories (#84's tester).
+    const noMetadata = { auditReportVersion: 2, vulnerabilities: {} };
+    assert.throws(() => parseNpmAudit(JSON.stringify(noMetadata)), (e) => e instanceof GateError && /summary/.test(e.message));
+    assert.throws(() => parseNpmAudit(JSON.stringify({ ...noMetadata, metadata: { vulnerabilities: {} } })), GateError);
+    assert.throws(() => parseNpmAudit(JSON.stringify({ ...noMetadata, metadata: { vulnerabilities: { total: '0' } } })), GateError);
+  });
+
+  test('a shape inside a report that the gate does not know is an error it names, never an uncaught exception', () => {
+    const odd = npmReport();
+    odd.vulnerabilities.piscina.via = { not: 'a list' };
+    assert.throws(() => parseNpmAudit(JSON.stringify(odd)), (e) => e instanceof GateError && /via/.test(e.message));
+
+    // `fixAvailable: null` used to throw a TypeError out of the describer.
+    const noFix = npmReport();
+    noFix.vulnerabilities.piscina.fixAvailable = null;
+    const [finding] = parseNpmAudit(JSON.stringify(noFix));
+    assert.match(finding.fix, /no fix is published/);
+  });
 });
 
 // ---- the NuGet report ------------------------------------------------------------------------
@@ -224,6 +244,16 @@ describe('parseDotnetList', () => {
     assert.throws(() => parseDotnetList(JSON.stringify({ ...nugetReport(undefined), version: 2 })), GateError);
     assert.throws(() => parseDotnetList('error: Unable to load the service index for source https://example.invalid'), GateError);
     assert.throws(() => parseDotnetList(''), GateError);
+  });
+
+  test('a report with no projects, or with packages under a key the gate does not read, is an error', () => {
+    // Both used to read as "0 advisories" (#84's tester): nothing audited, or the format moved under us.
+    assert.throws(
+      () => parseDotnetList(JSON.stringify({ ...nugetReport(undefined), projects: [] })),
+      (e) => e instanceof GateError && /no projects/.test(e.message)
+    );
+    const moved = nugetReport([{ framework: 'net10.0', packages: NUGET_FRAMEWORK.topLevelPackages }]);
+    assert.throws(() => parseDotnetList(JSON.stringify(moved)), (e) => e instanceof GateError && /"packages"/.test(e.message));
   });
 });
 
@@ -443,6 +473,101 @@ describe('command line', () => {
     const ci = spawnSync(process.execPath, args, { encoding: 'utf8', env: { ...process.env, GITHUB_ACTIONS: 'true' } });
     assert.doesNotMatch(local.stdout, /::error/);
     assert.match(ci.stdout, /::error title=Dependency audit \(npm\)::npm critical advisory GHSA-67c8-pqhq-4rmx in piscina is not allow-listed/);
+  });
+
+  test('an allow-list entry close to its review date is a warning, annotated under GitHub Actions only', () => {
+    const args = [GATE, 'npm', '--input', write('r.json', npmReport()), '--allowlist', write('a.json', allowlist(entry({ reviewBy: '2026-10-22' }))), '--today', TODAY];
+    const local = spawnSync(process.execPath, args, { encoding: 'utf8', env: { ...process.env, GITHUB_ACTIONS: '' } });
+    const ci = spawnSync(process.execPath, args, { encoding: 'utf8', env: { ...process.env, GITHUB_ACTIONS: 'true' } });
+    assert.equal(local.status, 0, local.stdout + local.stderr);
+    assert.doesNotMatch(local.stdout, /::warning/);
+    assert.equal(ci.status, 0, ci.stdout + ci.stderr);
+    assert.match(ci.stdout, /::warning title=Dependency audit \(npm\)::Allow-list entry for GHSA-67c8-pqhq-4rmx \(piscina\) is due for review by 2026-10-22/);
+  });
+
+  test('ERROR (2): an input that cannot be read is reported, not thrown (no stack trace, never green)', () => {
+    const run = spawnSync(process.execPath, [GATE, 'npm', '--input', dir, '--allowlist', write('a.json', allowlist())], { encoding: 'utf8' });
+    assert.equal(run.status, 2, run.stdout + run.stderr);
+    assert.match(run.stderr, /NOT the same as clean/);
+    assert.match(run.stderr, /unexpected failure/);
+  });
+
+  // ---- the real spawn paths, against a fake `npm` and `dotnet` placed first on PATH ----------------------------
+  //
+  // Every test above feeds the gate a saved report. These run the command the gate actually spawns, which is where
+  // #84's tester found it green on the vulnerable lockfile (NODE_ENV=production hid every dev dependency).
+
+  const AMBIENT = ['NODE_ENV', 'npm_config_omit', 'npm_config_production', 'npm_config_include'];
+
+  /** A folder holding fake tools. Each is a node script; a shim makes it run as `<name>` from a shell or a spawn. */
+  function fakeTools(tools) {
+    const bin = mkdtempSync(join(dir, 'bin-'));
+    for (const [name, source] of Object.entries(tools)) {
+      writeFileSync(join(bin, `${name}.mjs`), source);
+      if (process.platform === 'win32') {
+        writeFileSync(join(bin, `${name}.cmd`), `@echo off\r\n"${process.execPath}" "%~dp0${name}.mjs" %*\r\n`);
+      } else {
+        writeFileSync(join(bin, name), `#!/bin/sh\nexec "${process.execPath}" "$(dirname "$0")/${name}.mjs" "$@"\n`, { mode: 0o755 });
+      }
+    }
+    return bin;
+  }
+
+  /** The environment with the fake tools first on PATH and none of npm's own switches set unless asked for. */
+  function envWith(bin, extra = {}) {
+    const env = { ...process.env, GITHUB_ACTIONS: '' };
+    for (const name of AMBIENT) {
+      delete env[name];
+    }
+    const pathKey = Object.keys(env).find((key) => key.toUpperCase() === 'PATH') ?? 'PATH';
+    env[pathKey] = `${bin}${delimiter}${env[pathKey] ?? ''}`;
+    return { ...env, ...extra };
+  }
+
+  /** What `npm audit` does: leaves the dev dependencies out when told to by the environment, unless `--include=dev`. */
+  const FAKE_NPM = `
+const args = process.argv.slice(2);
+const e = process.env;
+const omitsDev = !args.includes('--include=dev') &&
+  (e.NODE_ENV === 'production' || e.npm_config_omit === 'dev' || e.npm_config_production === 'true');
+process.stdout.write(JSON.stringify(omitsDev ? ${JSON.stringify(cleanNpm())} : ${JSON.stringify(npmReport())}));
+process.exit(omitsDev ? 0 : 1);
+`;
+
+  for (const [label, ambient] of [
+    ['nothing set', {}],
+    ['NODE_ENV=production', { NODE_ENV: 'production' }],
+    ['npm_config_omit=dev', { npm_config_omit: 'dev' }],
+    ['npm_config_production=true', { npm_config_production: 'true' }],
+  ]) {
+    test(`RED whatever npm is told to omit: ${label}`, () => {
+      const bin = fakeTools({ npm: FAKE_NPM });
+      const frontend = mkdtempSync(join(dir, 'frontend-'));
+      const run = spawnSync(process.execPath, [GATE, 'npm', '--frontend', frontend, '--allowlist', write('a.json', allowlist()), '--today', TODAY], {
+        encoding: 'utf8',
+        env: envWith(bin, ambient),
+      });
+      assert.equal(run.status, 1, run.stdout + run.stderr);
+      assert.match(run.stdout, /BLOCKED\s+GHSA-67c8-pqhq-4rmx\s+piscina/);
+    });
+  }
+
+  test('ERROR (2): a NuGet restore that fails stops the audit instead of being ignored', {
+    skip: process.platform === 'win32' && 'a fake dotnet is a POSIX shim; Node will not spawn a .cmd without a shell',
+  }, () => {
+    const bin = fakeTools({
+      dotnet: `
+const args = process.argv.slice(2);
+if (args[0] === 'restore') { console.error('error NU1301: Unable to load the service index'); process.exit(1); }
+process.stdout.write(JSON.stringify(${JSON.stringify(nugetReport(undefined))}));
+`,
+    });
+    const run = spawnSync(process.execPath, [GATE, 'nuget', '--solution', join(dir, 'x.sln'), '--allowlist', write('a.json', allowlist()), '--today', TODAY], {
+      encoding: 'utf8',
+      env: envWith(bin),
+    });
+    assert.equal(run.status, 2, run.stdout + run.stderr);
+    assert.match(run.stderr, /dotnet restore failed/);
   });
 });
 
