@@ -755,6 +755,54 @@ public sealed class AdminTrafficSettingsTests(SqlServerDatabaseFixture sqlServer
         }
     }
 
+    /// <summary>
+    /// <b>Tester, fix round: the kept day must be recoverable by the jobs as they actually run.</b> The guard keeps
+    /// a never-built day past retention "until the rollup has counted it", but the rollup's catch-up only looks back
+    /// as far as the raw period, which is exactly the window the kept day has fallen out of. Saved 30, a day 50 days
+    /// back that the rollup never built: after a night of the real rollup service and the real purge service, the
+    /// day must have its totals (and then its raw rows may go). Driven through the two hosted services' own
+    /// <c>RunOnceAsync</c>, not <c>TrafficRollup.RebuildAsync</c> called by hand, because nothing in production
+    /// calls a rebuild for an arbitrary old day.
+    /// </summary>
+    [Fact]
+    public async Task A_day_the_purge_keeps_as_unbuilt_is_built_by_the_nightly_jobs_and_then_purged()
+    {
+        await using var factory = await StartAsync();
+        using var client = await MediaTestHost.SignInAsync(factory, Permissions.Settings.Edit);
+        await ClearYearAsync(sqlServer, 1993, Token);
+
+        try
+        {
+            Assert.Equal(
+                HttpStatusCode.NoContent,
+                (await PutAsync(client, new { rawRetentionDays = "30", rowVersion = await TrafficVersionAsync(factory) })).Status);
+
+            await InsertAsync(sqlServer, [View(Colombo(1993, 5, 1, 10), Guid.NewGuid(), "/never-built")], Token);
+
+            var rollup = factory.Services.GetRequiredService<TrafficRollupService>();
+            var purge = factory.Services.GetRequiredService<TrafficRetentionService>();
+
+            // Three nights: 00:30 rollup, 01:30 purge.
+            for (var night = 20; night <= 22; night++)
+            {
+                await rollup.RunOnceAsync(new DateTimeOffset(1993, 6, night, 0, 30, 0, TimeSpan.FromMinutes(330)), Token);
+                await purge.RunOnceAsync(new DateTimeOffset(1993, 6, night, 1, 30, 0, TimeSpan.FromMinutes(330)), Token);
+            }
+
+            var stored = await TrafficDailyAsync(sqlServer, new DateOnly(1993, 5, 1), new DateOnly(1993, 5, 1), Token);
+            Assert.True(
+                stored.Sum(row => row.PageViews) == 1,
+                "1 May 1993 was kept by the purge guard but never built by the nightly rollup: its raw rows will be "
+                + "kept and warned about every night for ever, and its totals never reach the Traffic page.");
+            Assert.Empty(await PathsAsync(1993));
+        }
+        finally
+        {
+            await ClearYearAsync(sqlServer, 1993, Token);
+            await RestoreAsync(factory);
+        }
+    }
+
     // ---- helpers --------------------------------------------------------------------------------------
 
     private async Task<ApiFactory> StartAsync(IReadOnlyDictionary<string, string?>? configuration = null)

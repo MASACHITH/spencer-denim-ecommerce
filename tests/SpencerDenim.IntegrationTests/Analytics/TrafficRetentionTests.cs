@@ -228,6 +228,89 @@ public sealed class TrafficRetentionTests(SqlServerDatabaseFixture sqlServer)
         Assert.Equal(["/unbuilt-early-morning", "/unbuilt-last-second"], await Paths2000Async());
     }
 
+    // ---- tester, fix round (#193) ------------------------------------------------------------------------
+
+    /// <summary>
+    /// The UTC-midnight crossing inside one Colombo day. 05:29:59 and 05:30:00 Colombo on 9 August are 23:59:59
+    /// on 8 August and 00:00:00 on 9 August in UTC: two UTC dates, one Colombo day. With 9 August unbuilt, both are
+    /// kept; with 8 and 10 August built, a view at 05:29:59 Colombo on 10 August (UTC 9 August, the unbuilt day's
+    /// UTC date) goes, and so does 8 August's last second.
+    /// </summary>
+    [Fact]
+    public async Task An_unbuilt_Colombo_day_is_kept_whole_across_the_UTC_midnight_inside_it()
+    {
+        await StartAsync();
+
+        await InsertAsync(
+            sqlServer,
+            [
+                View(Colombo(2000, 8, 8, 23, 59, 59), Guid.NewGuid(), "/built-8-last-second"),
+                View(Colombo(2000, 8, 9, 0, 0, 0), Guid.NewGuid(), "/unbuilt-9-first-second"),
+                View(Colombo(2000, 8, 9, 5, 29, 59), Guid.NewGuid(), "/unbuilt-9-0529"),
+                View(Colombo(2000, 8, 9, 5, 30, 0), Guid.NewGuid(), "/unbuilt-9-0530"),
+                View(Colombo(2000, 8, 9, 5, 31, 0), Guid.NewGuid(), "/unbuilt-9-0531"),
+                View(Colombo(2000, 8, 9, 23, 59, 59), Guid.NewGuid(), "/unbuilt-9-last-second"),
+                View(Colombo(2000, 8, 10, 0, 0, 0), Guid.NewGuid(), "/built-10-first-second"),
+                View(Colombo(2000, 8, 10, 5, 29, 59), Guid.NewGuid(), "/built-10-0529"),
+            ],
+            Token);
+
+        await RebuildAsync(new DateOnly(2000, 8, 8), new DateOnly(2000, 8, 8));
+        await RebuildAsync(new DateOnly(2000, 8, 10), new DateOnly(2000, 8, 10));
+
+        var result = await PurgeWithAsync(new ListLogger<TrafficRetention>(), 30, 7);
+
+        Assert.Equal([new DateOnly(2000, 8, 9)], In2000(result.SkippedDays));
+        Assert.Equal(
+            ["/unbuilt-9-0529", "/unbuilt-9-0530", "/unbuilt-9-0531", "/unbuilt-9-first-second", "/unbuilt-9-last-second"],
+            await Paths2000Async());
+        Assert.Equal(3, result.Human);
+    }
+
+    /// <summary>
+    /// Scattered and adjacent unbuilt days with a raw period (30) and a bot period (7) that differ, in one purge:
+    /// a run of three adjacent unbuilt days, a lone one, built days between and around them, and — inside the raw
+    /// period but past the bot one — an unbuilt day whose bot row is kept beside a built day whose bot row goes and
+    /// whose human row stays (still inside raw retention).
+    /// </summary>
+    [Fact]
+    public async Task Scattered_and_adjacent_unbuilt_days_are_kept_under_different_raw_and_bot_periods()
+    {
+        await StartAsync();
+
+        await InsertAsync(
+            sqlServer,
+            [
+                View(Colombo(2000, 7, 31, 12), Guid.NewGuid(), "/built-jul31"),
+                View(Colombo(2000, 8, 1, 12), Guid.NewGuid(), "/unbuilt-aug1"),
+                View(Colombo(2000, 8, 2, 12), Guid.NewGuid(), "/unbuilt-aug2-bot", bot: true),
+                View(Colombo(2000, 8, 3, 12), Guid.NewGuid(), "/unbuilt-aug3"),
+                View(Colombo(2000, 8, 4, 12), Guid.NewGuid(), "/built-aug4-bot", bot: true),
+                View(Colombo(2000, 8, 5, 12), Guid.NewGuid(), "/built-aug5"),
+                View(Colombo(2000, 8, 10, 12), Guid.NewGuid(), "/unbuilt-aug10"),
+                View(Colombo(2000, 8, 12, 12), Guid.NewGuid(), "/built-aug12"),
+                View(Colombo(2000, 12, 15, 12), Guid.NewGuid(), "/unbuilt-dec15-bot", bot: true),
+                View(Colombo(2000, 12, 16, 12), Guid.NewGuid(), "/built-dec16-bot", bot: true),
+                View(Colombo(2000, 12, 16, 13), Guid.NewGuid(), "/built-dec16-human"),
+            ],
+            Token);
+
+        await RebuildAsync(new DateOnly(2000, 7, 31), new DateOnly(2000, 7, 31));
+        await RebuildAsync(new DateOnly(2000, 8, 4), new DateOnly(2000, 8, 5));
+        await RebuildAsync(new DateOnly(2000, 8, 12), new DateOnly(2000, 8, 12));
+        await RebuildAsync(new DateOnly(2000, 12, 16), new DateOnly(2000, 12, 16));
+
+        var result = await PurgeWithAsync(new ListLogger<TrafficRetention>(), 30, 7);
+
+        Assert.Equal(
+            [new DateOnly(2000, 8, 1), new DateOnly(2000, 8, 2), new DateOnly(2000, 8, 3), new DateOnly(2000, 8, 10), new DateOnly(2000, 12, 15)],
+            In2000(result.SkippedDays));
+        Assert.Equal(
+            ["/built-dec16-human", "/unbuilt-aug1", "/unbuilt-aug10", "/unbuilt-aug2-bot", "/unbuilt-aug3", "/unbuilt-dec15-bot"],
+            await Paths2000Async());
+        Assert.Equal((3, 2), (result.Human, result.Bot));
+    }
+
     /// <summary>
     /// Only this class's year: the shared database can hold never-rolled-up rows from other classes' earlier years,
     /// which the purge (rightly) now keeps and reports too.
