@@ -455,6 +455,11 @@ public sealed class CustomerPasswordEndpointTests(SqlServerDatabaseFixture sqlSe
             .ToList();
 
         Assert.Contains(SpencerDenim.Domain.Identity.PasswordPolicy.Requirement, messages);
+
+        // Said once. Identity's own validator and the store's own length check both refuse this password with
+        // the same sentence (issue #200); CustomerPasswordStore.ValidatePasswordAsync drops the repeat. Without
+        // this line removing that Distinct() leaves every test green and a shopper reading the rule twice.
+        Assert.Single(messages, message => message == SpencerDenim.Domain.Identity.PasswordPolicy.Requirement);
     }
 
     /// <summary>
