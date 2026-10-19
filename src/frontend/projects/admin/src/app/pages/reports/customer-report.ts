@@ -1,11 +1,13 @@
-import { ChangeDetectionStrategy, Component, Injector, inject, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, Injector, computed, inject, input, signal } from '@angular/core';
 import { DOCUMENT } from '@angular/common';
 
 import { CatalogFailure, toCatalogFailure } from '../../core/catalog/admin-catalog-api';
 import { money } from '../../core/orders/order-formatting';
 import { PeriodQuery, ReportingApi } from '../../core/reporting/reporting-api';
 import { addDays, colomboToday, count, formatDay, presetPeriod } from '../../core/reporting/reporting-format';
-import { CustomerReportPage } from '../../core/reporting/reporting.model';
+import { CustomerBuyers, CustomerBuyersPoint, CustomerReportPage } from '../../core/reporting/reporting.model';
+import { ChartTable, ChartView } from '../../core/charts/chart';
+import { StackedBarSpec } from '../../core/charts/chart-config';
 import { Announcer, canGo, periodProblem, rehomeFocus, saveFile, showing } from './report-shared';
 
 const PAGE_SIZE = 25;
@@ -14,9 +16,14 @@ const PAGE_SIZE = 25;
  * The customers report (ADM-19): everyone who paid for an order in the period, by email address, highest
  * spend first — guests included, because a guest is a customer who did not register. Spend is gross: an
  * order refunded later still counts, as on the Customers screen.
+ *
+ * **A stacked bar chart of buyers per day, week or month sits above the table** (#186b), each bar split into
+ * first-time and returning buyers, with the figures as a table under it. It comes from its own request
+ * (`/customers/buyers`, same period and search), made when the filters are applied and not on every page turn.
  */
 @Component({
   selector: 'sda-customer-report',
+  imports: [ChartView],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <form class="rpt__filters" aria-label="Customers report filters" (submit)="apply($event)">
@@ -58,6 +65,20 @@ const PAGE_SIZE = 25;
       @if (answered.totalCount === 0) {
         <p class="adm-muted" data-testid="customers-empty">Nobody paid for an order in these days.</p>
       } @else {
+        @if (buyersProblem(); as failure) {
+          <p class="adm-muted" data-testid="customers-chart-problem">The buyers chart could not be loaded. {{ failure.message }}</p>
+        } @else if (buyers(); as chartData) {
+          <div class="adm-card" data-testid="customers-chart-card">
+            <div>
+              <h3 class="adm-card__title">Buyers by {{ chartData.interval.toLowerCase() }}, first-time and returning</h3>
+              <p class="adm-card__sub" data-testid="customers-chart-totals">{{ totalsLine(chartData) }}</p>
+            </div>
+            <sda-chart testId="customers-chart" [spec]="chart()" [summary]="chartSummary()" [table]="chartTable()" [height]="220" emptyText="Nobody paid for an order in these days." />
+            <p class="adm-panel__hint rpt__defs" data-testid="customers-chart-defs">
+              A buyer is an email address with at least one paid order in the days shown (an order refunded later still counts). First-time: their first paid order in this shop, ever, is in those days. Returning: they had paid for an order here before those days began. Someone who paid in two {{ plural(chartData.interval) }} is in both bars, and once in the totals.
+            </p>
+          </div>
+        }
         <div class="adm-table-scroll" tabindex="0" role="region" aria-label="Customers report">
           <table class="adm-table" data-testid="customers-table">
             <caption class="sr-only">Buyers, highest spend first</caption>
@@ -106,6 +127,7 @@ const PAGE_SIZE = 25;
     .rpt__wide { grid-column: 1 / -1; margin: 0; }
     .rpt__paging { align-items: center; }
     .rpt__email { overflow-wrap: anywhere; }
+    .rpt__defs { margin: 0; }
   `,
 })
 export class CustomerReportView {
@@ -129,10 +151,76 @@ export class CustomerReportView {
   protected readonly problem = signal<CatalogFailure | null>(null);
   protected readonly exporting = signal(false);
 
+  protected readonly buyers = signal<CustomerBuyers | null>(null);
+  protected readonly buyersProblem = signal<CatalogFailure | null>(null);
+
   private requests = 0;
+  private buyerRequests = 0;
 
   constructor() {
     this.load(1);
+    this.loadBuyers();
+  }
+
+  /** First-time at the bottom in blue, returning on top in amber: a vivid pair that stays apart for colour-blind readers. */
+  protected readonly chart = computed<StackedBarSpec>(() => {
+    const points = this.buyers()?.points ?? [];
+
+    return {
+      kind: 'stacked',
+      labels: points.map((point) => this.span(point)),
+      series: [
+        { key: 'firstTime', label: 'First-time buyers', values: points.map((point) => point.firstTimeBuyers), token: '--chart-1' },
+        { key: 'returning', label: 'Returning buyers', values: points.map((point) => point.returningBuyers), token: '--chart-2' },
+      ],
+      format: (value) => this.buyerCount(value),
+      tick: (value) => count(value),
+    };
+  });
+
+  protected readonly chartSummary = computed(() => {
+    const answered = this.buyers();
+    const busiest = answered?.points.reduce<CustomerBuyersPoint | null>((top, point) => (top === null || point.buyers > top.buyers ? point : top), null) ?? null;
+
+    return !answered || busiest === null || busiest.buyers <= 0
+      ? 'Buyers by period: nobody paid for an order in these days.'
+      : `Buyers by ${answered.interval.toLowerCase()}: ${this.buyerCount(answered.buyers)} in all, ${count(answered.firstTimeBuyers)} first-time and ${count(answered.returningBuyers)} returning; the most in one ${answered.interval.toLowerCase()} was ${this.buyerCount(busiest.buyers)}, ${this.span(busiest)}.`;
+  });
+
+  protected readonly chartTable = computed<ChartTable | null>(() => {
+    const answered = this.buyers();
+
+    if (!answered) {
+      return null;
+    }
+
+    const cells = (figures: { buyers: number; firstTimeBuyers: number; returningBuyers: number }) => [count(figures.buyers), count(figures.firstTimeBuyers), count(figures.returningBuyers)];
+
+    return {
+      caption: `Buyers by ${answered.interval.toLowerCase()}, first-time and returning`,
+      testId: 'customers-chart-table',
+      headers: [answered.interval, 'Buyers', 'First-time', 'Returning'],
+      rows: [
+        ...answered.points.map((point) => ({ key: point.start, label: this.span(point), cells: cells(point) })),
+        { key: 'period', label: 'Whole period (each buyer once)', cells: cells(answered) },
+      ],
+    };
+  });
+
+  protected totalsLine(answered: CustomerBuyers): string {
+    return `${this.buyerCount(answered.buyers)}: ${count(answered.firstTimeBuyers)} first-time, ${count(answered.returningBuyers)} returning`;
+  }
+
+  protected plural(interval: string): string {
+    return ({ Day: 'days', Week: 'weeks', Month: 'months' } as Record<string, string>)[interval] ?? 'periods';
+  }
+
+  private span(point: CustomerBuyersPoint): string {
+    return point.start === point.end ? formatDay(point.start) : `${formatDay(point.start)} – ${formatDay(point.end)}`;
+  }
+
+  private buyerCount(value: number): string {
+    return `${count(value)} ${value === 1 ? 'buyer' : 'buyers'}`;
   }
 
   protected read(event: Event): string {
@@ -152,6 +240,7 @@ export class CustomerReportView {
 
     this.applied.set({ period: { from: this.from(), to: this.to() }, search: this.search().trim() });
     this.load(1);
+    this.loadBuyers();
   }
 
   protected go(target: number): void {
@@ -201,6 +290,28 @@ export class CustomerReportView {
 
   protected number(value: number): string {
     return count(value);
+  }
+
+  /** The chart for the applied filters; a failure here leaves the table alone and says so in the card's place. */
+  private loadBuyers(): void {
+    const request = ++this.buyerRequests;
+    const { period, search } = this.applied();
+
+    this.buyers.set(null);
+    this.buyersProblem.set(null);
+
+    this.api.customerBuyers(period, search).subscribe({
+      next: (answered) => {
+        if (request === this.buyerRequests) {
+          this.buyers.set(answered);
+        }
+      },
+      error: (error: unknown) => {
+        if (request === this.buyerRequests) {
+          this.buyersProblem.set(toCatalogFailure(error));
+        }
+      },
+    });
   }
 
   /** The current page stays until the next arrives, so the paging buttons are never removed under the keyboard. */

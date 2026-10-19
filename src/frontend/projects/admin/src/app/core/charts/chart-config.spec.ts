@@ -1,4 +1,4 @@
-import { BarSpec, DoughnutSpec, LineSpec, buildChartConfig, compactRupees, hasData, sharesOf } from './chart-config';
+import { BarSpec, DoughnutSpec, LineSpec, StackedBarSpec, buildChartConfig, chartType, compactRupees, hasData, sharesOf } from './chart-config';
 import { ChartPalette, withAlpha } from './chart-palette';
 
 /**
@@ -179,5 +179,53 @@ describe('chart-config (#186)', () => {
     const spec: DoughnutSpec = { kind: 'doughnut', cutout: 65, slices: [{ key: 'a', label: 'A', value: 1, display: '1', share: 100 }] };
 
     expect((buildChartConfig(spec, PALETTE).data.datasets[0] as { borderColor: string }).borderColor).toBe('#ffffff');
+  });
+
+  // ---- #186b: the stacked bar (the customers report's first-time and returning buyers) ------------------------
+
+  const stacked = (first: number[], returning: number[]): StackedBarSpec => ({
+    kind: 'stacked',
+    labels: first.map((_, index) => `Day ${index + 1}`),
+    series: [
+      { key: 'firstTime', label: 'First-time buyers', values: first, token: '--chart-1' },
+      { key: 'returning', label: 'Returning buyers', values: returning, token: '--chart-2' },
+    ],
+    format: (value) => `${value} buyers`,
+    tick: String,
+  });
+
+  it('stacks each series on one bar per label, each in its own token, first series at the bottom (#186b)', () => {
+    const config = buildChartConfig(stacked([3, 0, 1], [1, 2, 0]), PALETTE);
+    const datasets = config.data.datasets as { label: string; data: number[]; backgroundColor: string; stack: string; borderColor: string }[];
+
+    expect(config.type).toBe('bar');
+    expect(chartType(stacked([1], [0]))).toBe('bar');
+    expect(config.data.labels).toEqual(['Day 1', 'Day 2', 'Day 3']);
+    expect(datasets.map(({ label, data, backgroundColor, stack }) => ({ label, data, backgroundColor, stack }))).toEqual([
+      { label: 'First-time buyers', data: [3, 0, 1], backgroundColor: '#101010', stack: 'one' },
+      { label: 'Returning buyers', data: [1, 2, 0], backgroundColor: '#202020', stack: 'one' },
+    ]);
+    expect(datasets[0].borderColor).toBe('#ffffff');
+
+    const scales = config.options!.scales as Record<string, { stacked?: boolean; beginAtZero?: boolean; ticks: { precision?: number } }>;
+    expect(scales['x'].stacked).toBe(true);
+    expect(scales['y'].stacked).toBe(true);
+    expect(scales['y'].beginAtZero).toBe(true);
+    // Buyers are whole people: no 0.5 on the axis.
+    expect(scales['y'].ticks.precision).toBe(0);
+    expect(config.options?.plugins?.legend?.display).toBe(false);
+  });
+
+  it("words a stacked bar's tooltip from its series and its own value (#186b)", () => {
+    type Label = (item: unknown) => string;
+    const label = (buildChartConfig(stacked([3], [1]), PALETTE).options!.plugins!.tooltip!.callbacks as unknown as { label: Label }).label;
+
+    expect(label({ dataset: { label: 'Returning buyers' }, parsed: { x: 0, y: 1 } })).toBe(' Returning buyers: 1 buyers');
+  });
+
+  it('calls a stacked chart of zeros empty, and one with any buyer data (#186b)', () => {
+    expect(hasData(stacked([0, 0], [0, 0]))).toBe(false);
+    expect(hasData(stacked([0, 0], [0, 1]))).toBe(true);
+    expect(hasData(stacked([1, 0], [0, 0]))).toBe(true);
   });
 });

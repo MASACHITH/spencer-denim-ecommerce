@@ -13,6 +13,10 @@ import { ChartPalette, withAlpha } from './chart-palette';
  * Orders), a doughnut with a text legend beside it (Sales by department, Order status, Traffic sources,
  * Payment methods), and a bar chart whose first bar is the accent and the rest the accent at 55% (Top
  * categories, horizontal; the reports' per-period bars, vertical).
+ *
+ * A fourth, the **stacked bar** (#186b), splits each period's bar into parts with a fixed token each — the
+ * customers report's first-time and returning buyers — with the series names as text keys beside the canvas,
+ * as the line chart's are.
  */
 
 /** One slice of a doughnut, and one row of its legend. */
@@ -72,7 +76,25 @@ export interface BarSpec {
   readonly tick: (value: number) => string;
 }
 
-export type ChartSpec = LineSpec | DoughnutSpec | BarSpec;
+/** One part of every stacked bar: first-time buyers, say. */
+export interface StackSeries {
+  readonly key: string;
+  readonly label: string;
+  readonly values: readonly number[];
+  /** Its fixed colour token, e.g. `--chart-1`. */
+  readonly token: string;
+}
+
+export interface StackedBarSpec {
+  readonly kind: 'stacked';
+  readonly labels: readonly string[];
+  /** Bottom part first. */
+  readonly series: readonly StackSeries[];
+  readonly format: (value: number) => string;
+  readonly tick: (value: number) => string;
+}
+
+export type ChartSpec = LineSpec | DoughnutSpec | BarSpec | StackedBarSpec;
 
 /** The share the demo dims every bar after the first to. */
 export const DIMMED_ALPHA = 0.55;
@@ -88,6 +110,7 @@ export function hasData(spec: ChartSpec): boolean {
     case 'bar':
       return spec.values.some((value) => value > 0);
     case 'line':
+    case 'stacked':
       return spec.series.some((series) => series.values.some((value) => value > 0));
   }
 }
@@ -132,6 +155,8 @@ export function buildChartConfig(spec: ChartSpec, palette: ChartPalette): ChartC
       return doughnutConfig(spec, palette);
     case 'bar':
       return barConfig(spec, palette);
+    case 'stacked':
+      return stackedConfig(spec, palette);
   }
 }
 
@@ -278,6 +303,47 @@ function barConfig(spec: BarSpec, palette: ChartPalette): ChartConfiguration<'ba
   };
 }
 
+function stackedConfig(spec: StackedBarSpec, palette: ChartPalette): ChartConfiguration<'bar'> {
+  return {
+    type: 'bar',
+    data: {
+      labels: [...spec.labels],
+      datasets: spec.series.map((series) => ({
+        label: series.label,
+        data: [...series.values],
+        backgroundColor: palette.token(series.token),
+        // A thin gap of the card's own colour between the parts, so they read as two even where they meet.
+        borderColor: palette.surface,
+        borderWidth: 1,
+        borderSkipped: false,
+        maxBarThickness: 28,
+        stack: 'one',
+      })),
+    },
+    options: {
+      ...base(palette),
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: (item: TooltipItem<'bar'>) => ` ${item.dataset.label}: ${spec.format(Number(item.parsed.y) || 0)}`,
+          },
+        },
+      },
+      scales: {
+        x: { stacked: true, grid: { display: false }, ticks: { color: palette.ink, autoSkip: true, maxRotation: 0 } },
+        y: {
+          stacked: true,
+          beginAtZero: true,
+          grid: { color: palette.grid },
+          ticks: { color: palette.ink, precision: 0, callback: (tick: string | number) => spec.tick(Number(tick)) },
+        },
+      },
+    },
+  };
+}
+
 /** `75.0%`. */
 export function shareText(share: number): string {
   return `${share.toLocaleString('en-LK', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
@@ -285,5 +351,5 @@ export function shareText(share: number): string {
 
 /** The type Chart.js is given, for the template's `[type]`. */
 export function chartType(spec: ChartSpec): ChartType {
-  return spec.kind;
+  return spec.kind === 'stacked' ? 'bar' : spec.kind;
 }

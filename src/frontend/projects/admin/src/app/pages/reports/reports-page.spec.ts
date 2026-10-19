@@ -5,9 +5,9 @@ import { By } from '@angular/platform-browser';
 import { ActivatedRoute, convertToParamMap, provideRouter } from '@angular/router';
 import { of } from 'rxjs';
 
-import { InventoryReportPage, SalesReport } from '../../core/reporting/reporting.model';
+import { CustomerBuyers, CustomerReportPage, InventoryReportPage, SalesReport } from '../../core/reporting/reporting.model';
 import { ChartView } from '../../core/charts/chart';
-import { DoughnutSpec } from '../../core/charts/chart-config';
+import { DoughnutSpec, StackedBarSpec } from '../../core/charts/chart-config';
 import { ReportsPage } from './reports-page';
 
 const WHOAMI = '/api/admin/auth/whoami';
@@ -33,6 +33,31 @@ function inventory(page: number, totalCount: number): InventoryReportPage {
     totalCount,
     defaultThreshold: 5,
     counts: { inStock: 10, lowStock: 1, outOfStock: 2 },
+  };
+}
+
+function buyers(points: { start: string; buyers: number; firstTimeBuyers: number }[], totals?: { buyers: number; firstTimeBuyers: number }): CustomerBuyers {
+  const whole = totals ?? { buyers: points.reduce((sum, point) => sum + point.buyers, 0), firstTimeBuyers: points.reduce((sum, point) => sum + point.firstTimeBuyers, 0) };
+
+  return {
+    period: { from: '2026-09-16', to: '2026-10-15', days: 30 },
+    interval: 'Day',
+    buyers: whole.buyers,
+    firstTimeBuyers: whole.firstTimeBuyers,
+    returningBuyers: whole.buyers - whole.firstTimeBuyers,
+    points: points.map((point) => ({ start: point.start, end: point.start, buyers: point.buyers, firstTimeBuyers: point.firstTimeBuyers, returningBuyers: point.buyers - point.firstTimeBuyers })),
+  };
+}
+
+function customerPage(page: number, totalCount: number): CustomerReportPage {
+  return {
+    period: { from: '2026-09-16', to: '2026-10-15', days: 30 },
+    currency: 'LKR',
+    rows: [{ email: `buyer${page}@example.com`, name: 'Nimali Perera', district: 'Colombo', hasAccount: false, paidOrders: 1, grossRevenue: 2400, firstPaidOn: '2026-10-01', lastPaidOn: '2026-10-01' }],
+    page,
+    pageSize: 25,
+    totalCount,
+    totalRevenue: 2400 * totalCount,
   };
 }
 
@@ -147,6 +172,7 @@ describe('ReportsPage (ADM-19)', () => {
     http.expectOne((candidate) => candidate.url === '/api/admin/reports/customers').flush({
       period: { from: '2026-09-16', to: '2026-10-15', days: 30 }, currency: 'LKR', rows: [], page: 1, pageSize: 25, totalCount: 0, totalRevenue: 0,
     });
+    http.expectOne((candidate) => candidate.url === '/api/admin/reports/customers/buyers').flush(buyers([]));
     await settle();
 
     const from = byTestId<HTMLInputElement>('customers-from')!;
@@ -156,6 +182,7 @@ describe('ReportsPage (ADM-19)', () => {
     await settle();
 
     http.expectNone((candidate) => candidate.url === '/api/admin/reports/customers');
+    http.expectNone((candidate) => candidate.url === '/api/admin/reports/customers/buyers');
     expect(byTestId('customers-error')!.textContent).toContain('at most 366 days');
   });
 
@@ -255,5 +282,90 @@ describe('ReportsPage (ADM-19)', () => {
     const spec = chart.spec();
     expect(spec.kind === 'bar' ? spec.values : null).toEqual([1000, 5000, 3000]);
     expect(chart.summary()).toMatch(/^Gross revenue by day, Rs\. 9,000\.00 in all\. Highest: 2 Oct 2026, Rs\. 5,000\.00\.$/);
+  });
+
+  // ---- #186b: the customers report's buyers chart ---------------------------------------------------------------
+
+  it('draws first-time and returning buyers stacked, one bar per day, with the same figures in its table (#186b)', async () => {
+    configure({ report: 'customers' });
+    await open(['Reports.View']);
+    http.expectOne((candidate) => candidate.url === '/api/admin/reports/customers').flush(customerPage(1, 3));
+    const chartRequest = http.expectOne((candidate) => candidate.url === '/api/admin/reports/customers/buyers');
+    expect(chartRequest.request.params.get('from')).toBe('2026-09-16');
+    expect(chartRequest.request.params.get('to')).toBe('2026-10-15');
+    expect(chartRequest.request.params.has('page')).toBe(false);
+    // One buyer paid on both days: three buyers in the period, not four.
+    chartRequest.flush(buyers([{ start: '2026-10-01', buyers: 1, firstTimeBuyers: 1 }, { start: '2026-10-02', buyers: 3, firstTimeBuyers: 1 }], { buyers: 3, firstTimeBuyers: 2 }));
+    await settle();
+
+    const chart = chartNamed('customers-chart');
+    const spec = chart.spec() as StackedBarSpec;
+    expect(spec.kind).toBe('stacked');
+    expect(spec.labels).toEqual(['1 Oct 2026', '2 Oct 2026']);
+    expect(spec.series.map(({ key, values, token }) => ({ key, values, token }))).toEqual([
+      { key: 'firstTime', values: [1, 1], token: '--chart-1' },
+      { key: 'returning', values: [0, 2], token: '--chart-2' },
+    ]);
+    expect(chart.summary()).toBe('Buyers by day: 3 buyers in all, 2 first-time and 1 returning; the most in one day was 3 buyers, 2 Oct 2026.');
+    expect(byTestId('customers-chart-totals')!.textContent).toContain('3 buyers: 2 first-time, 1 returning');
+    expect(byTestId('customers-chart-defs')!.textContent).toContain('first paid order in this shop, ever');
+
+    const rows = [...byTestId('customers-chart-table')!.querySelectorAll('tbody tr')].map((row) => [...row.children].map((cell) => cell.textContent!.trim()));
+    expect(rows).toEqual([
+      ['1 Oct 2026', '1', '1', '0'],
+      ['2 Oct 2026', '3', '1', '2'],
+      ['Whole period (each buyer once)', '3', '2', '1'],
+    ]);
+  });
+
+  it('asks for the chart again on Show, with the search, but not when the page turns (#186b)', async () => {
+    configure({ report: 'customers' });
+    await open(['Reports.View']);
+    http.expectOne((candidate) => candidate.url === '/api/admin/reports/customers').flush(customerPage(1, 30));
+    http.expectOne((candidate) => candidate.url === '/api/admin/reports/customers/buyers').flush(buyers([{ start: '2026-10-01', buyers: 30, firstTimeBuyers: 30 }]));
+    await settle();
+
+    byTestId<HTMLButtonElement>('customers-next')!.click();
+    await settle();
+    http.expectOne((candidate) => candidate.url === '/api/admin/reports/customers').flush(customerPage(2, 30));
+    http.expectNone((candidate) => candidate.url === '/api/admin/reports/customers/buyers');
+    await settle();
+
+    const search = byTestId<HTMLInputElement>('customers-search')!;
+    search.value = ' nimali ';
+    search.dispatchEvent(new Event('input'));
+    byTestId<HTMLButtonElement>('customers-apply')!.click();
+    await settle();
+
+    http.expectOne((candidate) => candidate.url === '/api/admin/reports/customers').flush(customerPage(1, 1));
+    const again = http.expectOne((candidate) => candidate.url === '/api/admin/reports/customers/buyers');
+    expect(again.request.params.get('search')).toBe('nimali');
+    again.flush(buyers([{ start: '2026-10-01', buyers: 1, firstTimeBuyers: 0 }]));
+    await settle();
+
+    expect((chartNamed('customers-chart').spec() as StackedBarSpec).series[1].values).toEqual([1]);
+  });
+
+  it('keeps the table when only the chart fails, and says the chart could not be loaded (#186b)', async () => {
+    configure({ report: 'customers' });
+    await open(['Reports.View']);
+    http.expectOne((candidate) => candidate.url === '/api/admin/reports/customers').flush(customerPage(1, 1));
+    http.expectOne((candidate) => candidate.url === '/api/admin/reports/customers/buyers').flush(null, { status: 500, statusText: 'Server Error' });
+    await settle();
+
+    expect(byTestId('customers-table')).not.toBeNull();
+    expect(byTestId('customers-chart-problem')!.textContent).toContain('The buyers chart could not be loaded.');
+    expect(byTestId('customers-chart-card')).toBeNull();
+  });
+
+  it('shows no chart, only the sentence, when nobody paid (#186b)', async () => {
+    configure({ report: 'customers' });
+    await open(['Reports.View']);
+    http.expectOne((candidate) => candidate.url === '/api/admin/reports/customers').flush({ ...customerPage(1, 0), rows: [], totalRevenue: 0 });
+    http.expectOne((candidate) => candidate.url === '/api/admin/reports/customers/buyers').flush(buyers([{ start: '2026-10-01', buyers: 0, firstTimeBuyers: 0 }]));
+    await settle();
+
+    expect(byTestId('customers-empty')).not.toBeNull();
+    expect(byTestId('customers-chart-card')).toBeNull();
   });
 });
