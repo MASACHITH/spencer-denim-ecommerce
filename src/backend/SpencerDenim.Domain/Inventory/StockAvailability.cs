@@ -31,6 +31,13 @@ public static class StockAvailability
         return totalAvailable <= totalThreshold ? StockStatus.LowStock : StockStatus.InStock;
     }
 
+    /// <summary>
+    /// One variant's status on the inventory screen (ADM-12): out of stock at 0 available or below, low at
+    /// 1 to its threshold, in stock above. Out of stock is <b>never</b> low (doc 11 P2 step 9, P16).
+    /// </summary>
+    public static StockStatus ForVariant(int available, int? ownThreshold, int defaultThreshold) =>
+        Evaluate(available, ResolveThreshold(ownThreshold, defaultThreshold));
+
     /// <summary>Resolves one variant's threshold against the store-wide default.</summary>
     public static int ResolveThreshold(int? variantThreshold, int defaultThreshold) =>
         variantThreshold ?? defaultThreshold;

@@ -66,6 +66,9 @@ public sealed class CatalogModelTests
             "catalog.ProductStats", "catalog.ProductSearchIndex", "catalog.ProductCategories",
             "catalog.ProductColours", "catalog.ProductVariants", "catalog.ProductMedia",
             "catalog.RelatedProducts", "media.MediaAssets", "media.MediaUsages", "inventory.StockLevels",
+
+            // ADM-12 (#190, #108): doc 08 §3.4's ledger, the second inventory table.
+            "inventory.InventoryMovements",
         ];
 
         Assert.Equal(expected.Length, tables.Count);
