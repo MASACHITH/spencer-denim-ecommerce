@@ -243,7 +243,10 @@ internal sealed class BankTransferProofStore(AppDbContext dbContext) : IBankTran
             }
         }
 
+        // The order's public id is deliberately not in this message: it is the order page's only credential
+        // (issue #201), and the exception handler writes this text to the log at Error. The request's own
+        // trace identifier is on the log line, and the payment row that refused the insert is in the database.
         throw new InvalidOperationException(
-            $"Could not open a bank payment for order {orderPublicId} after two attempts.");
+            "Could not open a bank payment after two attempts: UX_Payments_OneOpen refused both inserts.");
     }
 }

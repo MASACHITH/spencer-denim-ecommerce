@@ -273,7 +273,11 @@ internal sealed partial class SendEmailsService(
             switch (outcome)
             {
                 case EmailFailureOutcome.Dead:
-                    LogMessageDead(logger, claim.TemplateCode, claim.RelatedEntityId, claim.Id, exception);
+                    // The row id, never claim.RelatedEntityId: for an order email that is the order's public
+                    // token, the order page's only credential (issue #201), and this line is written at Error
+                    // to a log Docker keeps. The banner raised just below carries the order for the people
+                    // who are allowed to see it.
+                    LogMessageDead(logger, claim.TemplateCode, claim.Id, exception);
                     await RaiseDeadAlertAsync(alerts, claim.Id, stoppingToken);
                     return SendOutcome.Dead;
 
@@ -404,16 +408,15 @@ internal sealed partial class SendEmailsService(
     [LoggerMessage(
         EventId = 3404,
         Level = LogLevel.Error,
-        Message = "Email {TemplateCode} for order {OrderPublicId} (outbox row {MessageId}) has failed "
+        Message = "Email {TemplateCode} (outbox row {MessageId}) has failed "
             + "every attempt and will not be retried, so that customer has not been told. An "
             + "EmailDeliveryFailed alert is raised for it (doc 11 §4, G-37) and shows as a banner to "
-            + "every Super Admin until one of them acknowledges it. Open the order and contact the "
-            + "customer by telephone or WhatsApp (doc 11 §6.1 step 6): there is no resend action in this "
-            + "build (doc 11 §7 G-42).")]
+            + "every Super Admin until one of them acknowledges it; the banner names the order. Open the "
+            + "order and contact the customer by telephone or WhatsApp (doc 11 §6.1 step 6): there is no "
+            + "resend action in this build (doc 11 §7 G-42).")]
     private static partial void LogMessageDead(
         ILogger logger,
         string templateCode,
-        string? orderPublicId,
         long messageId,
         Exception exception);
 
