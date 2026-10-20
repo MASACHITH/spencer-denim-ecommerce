@@ -22,6 +22,26 @@ export interface CategoryNodeDto {
   readonly children: readonly CategoryNodeDto[];
 }
 
+/**
+ * One mega-menu card the API says may be drawn right now (GLB-05, ADM-17; #215). Mirrors
+ * `SpencerDenim.Application.Catalog.Contracts.MegaMenuPromoCardDto`. Every string is plain text typed by staff
+ * and is only ever interpolated, never bound as HTML; the link is vetted again by `toLink` before it reaches an
+ * `href`.
+ */
+export interface MegaMenuPromoCardDto {
+  readonly id: number;
+  readonly title: string;
+  readonly subtitle: string | null;
+  readonly buttonLabel: string;
+  /** A path on this site or a full http(s) address. */
+  readonly linkUrl: string;
+  /** The **card** rendition; `imageSrcSet` is its candidate list, `null` without renditions. */
+  readonly imageUrl: string | null;
+  readonly imageSrcSet: string | null;
+  /** The picture's alt text from the media library. */
+  readonly imageAlt: string | null;
+}
+
 export interface DepartmentDto {
   readonly id: number;
   readonly name: string;
@@ -33,4 +53,9 @@ export interface DepartmentDto {
   readonly seoTitle: string | null;
   readonly seoDescription: string | null;
   readonly categories: readonly CategoryNodeDto[];
+  /**
+   * The cards that may be drawn now, best first (#215). **Optional on purpose:** the frozen fallback tree and
+   * an API from before #215 have none, and a department without one keeps the card it always had.
+   */
+  readonly promoCards?: readonly MegaMenuPromoCardDto[];
 }

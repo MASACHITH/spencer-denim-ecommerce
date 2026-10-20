@@ -849,6 +849,18 @@ public sealed class MediaService(
                         cancellationToken);
                     break;
 
+                case MediaUsageOwnerTypes.MegaMenuPromoCard:
+                    // The card's heading and the menu it sits in, which is how the mega-menu screen lists it
+                    // (#215). A removed card owns no usage row, so there is nothing here to label.
+                    await AddLabelsAsync(
+                        labels,
+                        group.Key,
+                        dbContext.MegaMenuPromoCards.AsNoTracking()
+                            .Where(card => ids.Contains(card.Id))
+                            .Select(card => new LabelRow(card.Id, card.Department!.Name + " menu: " + card.Title)),
+                        cancellationToken);
+                    break;
+
                 case MediaUsageOwnerTypes.HomeSectionItem:
                     // The tile's own heading is what an operator looks for on the homepage admin screen;
                     // a department tile has no heading of its own, so it borrows the department's name.

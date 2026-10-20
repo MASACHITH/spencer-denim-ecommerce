@@ -140,6 +140,11 @@ public static class ContentConflictCodes
     public const string TooManyAnnouncements = "too_many_announcements";
 
     /// <summary>
+    /// The department already holds <c>MegaMenuPromoCardLimits.MaxCardsPerDepartment</c> mega-menu cards (#215).
+    /// </summary>
+    public const string TooManyMegaMenuCards = "too_many_mega_menu_cards";
+
+    /// <summary>
     /// A size guide a category or product still points at. Refused rather than soft-deleted from under
     /// them: the product page would lose its size chart with nothing on the category saying why.
     /// </summary>

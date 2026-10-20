@@ -123,28 +123,70 @@ const PROMO_SIZES =
                   }
 
                   @if (item.promo; as promo) {
-                    <a class="mega__promo" [routerLink]="promo.cta.path" (click)="close(item.id)">
-                      <span class="mega__promo-media">
-                        @if (promo.imageUrl) {
-                          <img
-                            [src]="promo.imageUrl"
-                            [attr.srcset]="promo.imageSrcSet"
-                            [attr.sizes]="promo.imageSrcSet ? promoSizes : null"
-                            alt=""
-                          />
-                        } @else {
-                          <span class="mega__promo-tag">Promo image</span>
+                    <!-- #215: an admin card may point off the site; that is an ordinary anchor in a new tab.
+                         The card's insides are written out twice on purpose: a shared ng-template needed
+                         NgTemplateOutlet, which cost the initial bundle 2 kB more than the copy does. Every
+                         string is interpolated, so it is text. -->
+                    @if (promo.cta.target.kind === 'internal') {
+                      <a
+                        class="mega__promo"
+                        data-testid="mega-promo"
+                        [routerLink]="promo.cta.target.path"
+                        [queryParams]="promo.cta.target.queryParams"
+                        (click)="close(item.id)"
+                      >
+                        <span class="mega__promo-media">
+                          @if (promo.imageUrl) {
+                            <img
+                              [src]="promo.imageUrl"
+                              [attr.srcset]="promo.imageSrcSet"
+                              [attr.sizes]="promo.imageSrcSet ? promoSizes : null"
+                              [alt]="promo.imageAlt"
+                            />
+                          } @else {
+                            <span class="mega__promo-tag">Promo image</span>
+                          }
+                        </span>
+                        <span class="mega__promo-title">{{ promo.title }}</span>
+                        @if (promo.caption) {
+                          <span class="mega__promo-caption">{{ promo.caption }}</span>
                         }
-                      </span>
-                      <span class="mega__promo-title">{{ promo.title }}</span>
-                      @if (promo.caption) {
-                        <span class="mega__promo-caption">{{ promo.caption }}</span>
-                      }
-                      <span class="mega__promo-cta">
-                        {{ promo.cta.label }}
-                        <sd-icon name="chevron-right" size="sm" />
-                      </span>
-                    </a>
+                        <span class="mega__promo-cta">
+                          {{ promo.cta.label }}
+                          <sd-icon name="chevron-right" size="sm" />
+                        </span>
+                      </a>
+                    } @else {
+                      <a
+                        class="mega__promo"
+                        data-testid="mega-promo"
+                        [href]="promo.cta.target.href"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        (click)="close(item.id)"
+                      >
+                        <span class="mega__promo-media">
+                          @if (promo.imageUrl) {
+                            <img
+                              [src]="promo.imageUrl"
+                              [attr.srcset]="promo.imageSrcSet"
+                              [attr.sizes]="promo.imageSrcSet ? promoSizes : null"
+                              [alt]="promo.imageAlt"
+                            />
+                          } @else {
+                            <span class="mega__promo-tag">Promo image</span>
+                          }
+                        </span>
+                        <span class="mega__promo-title">{{ promo.title }}</span>
+                        @if (promo.caption) {
+                          <span class="mega__promo-caption">{{ promo.caption }}</span>
+                        }
+                        <span class="mega__promo-cta">
+                          {{ promo.cta.label }}
+                          <sd-icon name="chevron-right" size="sm" />
+                        </span>
+                      </a>
+                    }
                   }
                 </div>
               </div>
@@ -267,6 +309,10 @@ const PROMO_SIZES =
       gap: var(--space-0-5);
       align-content: start;
       text-decoration: none;
+      /* #215: the words are an admin's now, and a long unbroken one (a 100-character heading, a pasted
+         address) pushed the card past its column and the page sideways at 1024 px. It wraps instead. */
+      min-width: 0;
+      overflow-wrap: anywhere;
     }
     .mega__promo-media {
       display: grid;

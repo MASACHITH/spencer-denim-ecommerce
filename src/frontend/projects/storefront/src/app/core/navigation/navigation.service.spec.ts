@@ -156,7 +156,8 @@ describe('NavigationService', () => {
   it('gives every department a promo card slot', () => {
     for (const item of service.itemsWithMenu()) {
       expect(item.promo).not.toBeNull();
-      expect(item.promo?.cta.path.length).toBeGreaterThan(0);
+      const target = item.promo?.cta.target;
+      expect(target?.kind === 'internal' ? target.path.length : 0).toBeGreaterThan(0);
     }
   });
 

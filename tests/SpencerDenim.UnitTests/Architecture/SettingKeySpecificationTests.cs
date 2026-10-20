@@ -172,6 +172,17 @@ public sealed class SettingKeySpecificationTests
         Assert.DoesNotContain(SettingKeys.Seed.Version, SpecifiedKeys());
     }
 
+    /// <summary>The seeder's other two markers (#63, #215) are bookkeeping in the same way, for the same reason.</summary>
+    [Theory]
+    [InlineData(SettingKeys.Seed.HomeContentVersion)]
+    [InlineData(SettingKeys.Seed.MegaMenuCardsVersion)]
+    public void The_content_seed_markers_are_not_catalogue_keys(string key)
+    {
+        Assert.Null(SettingCatalog.Find(key));
+        Assert.DoesNotContain(key, SpecifiedKeys());
+        Assert.StartsWith(SettingKeys.Seed.Group + ".", key, StringComparison.Ordinal);
+    }
+
     /// <summary>
     /// <b>A seeded key carries a value only where doc 08 §3.8 states the default, and then that exact
     /// value.</b>

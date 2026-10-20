@@ -46,6 +46,53 @@ public sealed class ContentFieldRulesParityTests
         }
     }
 
+    /// <summary>
+    /// #215: the mega-menu card's link and heading, asked through the card handler itself rather than the rule it
+    /// calls, so a handler that stopped calling the shared rule would fail here as the stub would fail in
+    /// <c>admin-content-stub-parity.e2e.ts</c>. A card link may leave the site, so it is good when either table
+    /// says so.
+    /// </summary>
+    [Fact]
+    public async Task The_mega_menu_card_link_and_heading_agree_with_the_shared_table()
+    {
+        var sitePaths = Cases.GetProperty("sitePath").EnumerateArray().ToList();
+        var webAddresses = Cases.GetProperty("webAddress").EnumerateArray().ToList();
+
+        foreach (var entry in sitePaths.Concat(webAddresses))
+        {
+            var value = entry.GetProperty("value").GetString()!;
+            var ok = sitePaths.Concat(webAddresses).Any(other => other.GetProperty("value").GetString() == value && other.GetProperty("ok").GetBoolean());
+
+            var fields = await CardErrorsAsync(CardFields() with { LinkUrl = value });
+            Assert.True(ok == !fields.Contains("linkUrl"), $"card linkUrl {value}");
+        }
+
+        foreach (var entry in Cases.GetProperty("text").EnumerateArray().Where(entry => entry.GetProperty("max").GetInt32() >= 100))
+        {
+            var value = entry.GetProperty("value").GetString();
+            var fields = await CardErrorsAsync(CardFields() with { Title = value });
+            Assert.True(entry.GetProperty("ok").GetBoolean() == !fields.Contains("title"), $"card title {value}");
+        }
+    }
+
+    private static async Task<List<string>> CardErrorsAsync(SpencerDenim.Application.Content.Admin.MegaMenu.MegaMenuCardFields fields)
+    {
+        var handlers = new SpencerDenim.Application.Content.Admin.MegaMenu.MegaMenuCardWriteHandlers(
+            new FakeMegaMenuCardAdminStore(),
+            new RecordingAuditLogWriter(),
+            new RecordingHomePageCache(),
+            new FixedClock(new DateTimeOffset(2026, 10, 20, 6, 0, 0, TimeSpan.Zero)));
+
+        var result = await handlers.HandleAsync(
+            new SpencerDenim.Application.Content.Admin.MegaMenu.CreateMegaMenuCardCommand(fields, TestActors.Editor),
+            TestContext.Current.CancellationToken);
+
+        return result is ContentWriteResult.Invalid invalid ? invalid.Errors.Select(error => error.Field).ToList() : [];
+    }
+
+    private static SpencerDenim.Application.Content.Admin.MegaMenu.MegaMenuCardFields CardFields() =>
+        new(1, "New in Women", null, "Shop now", "/new-arrivals", null, 0, false, null, null);
+
     private static string RepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

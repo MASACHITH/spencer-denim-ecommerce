@@ -11,7 +11,7 @@ using SpencerDenim.Infrastructure.Persistence.Interceptors;
 namespace SpencerDenim.Infrastructure.Content;
 
 /// <summary>
-/// The EF Core side of the ADM-17 homepage, announcement and size-guide writes (#192).
+/// The EF Core side of the ADM-17 homepage, announcement, size-guide (#192) and mega-menu card (#215) writes.
 /// <para>
 /// The arrangement <see cref="ContentPageStore"/> established — tracked entities out, one unit of work in —
 /// plus the one thing these rows need that a content page does not: <c>media.MediaUsages</c>. Doc 08
@@ -25,7 +25,7 @@ internal sealed class ContentAdminStores(
     AppDbContext dbContext,
     AuditAndSoftDeleteInterceptor auditColumns,
     IClock clock)
-    : IHomeContentAdminStore, IAnnouncementAdminStore, ISizeGuideAdminStore
+    : IHomeContentAdminStore, IAnnouncementAdminStore, ISizeGuideAdminStore, IMegaMenuCardAdminStore
 {
     // ------------------------------------------------------------------ shared
 
@@ -154,6 +154,32 @@ internal sealed class ContentAdminStores(
     }
 
     Task<ContentSaveOutcome> ISizeGuideAdminStore.SaveAsync(
+        int? actingUserId,
+        ContentMediaUsageChange? usage,
+        CancellationToken cancellationToken) =>
+        SaveWithUsageAsync(actingUserId, usage, cancellationToken);
+
+    // ------------------------------------------------------------------ mega-menu cards (#215)
+
+    Task<MegaMenuPromoCard?> IMegaMenuCardAdminStore.FindAsync(int cardId, CancellationToken cancellationToken) =>
+        dbContext.MegaMenuPromoCards.FirstOrDefaultAsync(card => card.Id == cardId, cancellationToken);
+
+    public Task<int> CountForDepartmentAsync(int departmentId, CancellationToken cancellationToken) =>
+        dbContext.MegaMenuPromoCards.CountAsync(card => card.DepartmentId == departmentId, cancellationToken);
+
+    public void Add(MegaMenuPromoCard card)
+    {
+        ArgumentNullException.ThrowIfNull(card);
+        dbContext.MegaMenuPromoCards.Add(card);
+    }
+
+    public void Remove(MegaMenuPromoCard card)
+    {
+        ArgumentNullException.ThrowIfNull(card);
+        dbContext.MegaMenuPromoCards.Remove(card);
+    }
+
+    Task<ContentSaveOutcome> IMegaMenuCardAdminStore.SaveAsync(
         int? actingUserId,
         ContentMediaUsageChange? usage,
         CancellationToken cancellationToken) =>

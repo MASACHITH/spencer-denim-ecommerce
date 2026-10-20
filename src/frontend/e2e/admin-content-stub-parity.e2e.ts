@@ -99,6 +99,52 @@ test.describe('the content stub is no more permissive than the API (#192)', () =
     }
   });
   /**
+   * #215: the mega-menu card route answers to the same table. Its link may leave the site, so a value is good
+   * when either table says so; its heading is plain text up to 100. The card is switched off with no picture, so
+   * nothing but the field under test can be refused. `ContentFieldRulesParityTests` asks the API's card handler
+   * the same questions.
+   */
+  test('the mega-menu card route agrees with every link and text case', async ({ page }) => {
+    const post = await poster(page);
+    const cases = JSON.parse(readFileSync(resolve(__dirname, 'support', 'content-rule-cases.json'), 'utf8')) as {
+      sitePath: { value: string; ok: boolean }[];
+      webAddress: { value: string; ok: boolean }[];
+      text: { value: string; max: number; ok: boolean }[];
+    };
+
+    const card = (overrides: Record<string, unknown>): Record<string, unknown> => ({
+      departmentId: 1,
+      title: 'Parity',
+      subtitle: null,
+      buttonLabel: 'Shop now',
+      linkUrl: '/new-arrivals',
+      imagePublicId: null,
+      sortOrder: 1,
+      isActive: false,
+      startsAt: null,
+      endsAt: null,
+      ...overrides,
+    });
+
+    const all = [...cases.sitePath, ...cases.webAddress];
+    for (const { value } of all) {
+      const accepted = all.some((other) => other.value === value && other.ok);
+      const answer = await post('/api/admin/content/mega-menu/cards', card({ linkUrl: value }));
+      expect(answer.fields.includes('linkUrl'), `card linkUrl ${JSON.stringify(value)} answered ${answer.status}`).toBe(!accepted);
+    }
+
+    for (const { value, ok } of cases.text.filter((entry) => entry.max >= 100)) {
+      const answer = await post('/api/admin/content/mega-menu/cards', card({ title: value }));
+      expect(answer.fields.includes('title'), `card title ${JSON.stringify(value)}`).toBe(!ok);
+    }
+
+    // And the rule of its own: switched on without a picture is refused on the picture.
+    const noPicture = await post('/api/admin/content/mega-menu/cards', card({ isActive: true }));
+    expect(noPicture.status).toBe(400);
+    expect(noPicture.fields).toContain('imagePublicId');
+  });
+
+  /**
    * Tester round 2: the announcement route lets a link leave the site, so it cannot tell a site path from a web
    * address. A homepage block that keeps shoppers on the site (trending items) must hold every `sitePath` case
    * exactly — an off-site address the API refuses there must be refused here too. The row version is stale on

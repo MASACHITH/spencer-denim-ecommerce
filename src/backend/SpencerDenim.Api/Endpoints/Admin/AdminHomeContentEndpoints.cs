@@ -20,7 +20,8 @@ namespace SpencerDenim.Api.Endpoints.Admin;
 
 /// <summary>
 /// The rest of the ADM-17 content screens (#192; doc 11 P13 parts B, C and E): the homepage blocks, the
-/// announcement strip and the size guides. Content pages are <see cref="AdminContentEndpoints"/>.
+/// announcement strip and the size guides — and part D, the mega-menu cards (#215), in
+/// <c>AdminHomeContentEndpoints.MegaMenu.cs</c>. Content pages are <see cref="AdminContentEndpoints"/>.
 /// <para>
 /// <b>Content.View/Create/Edit/Delete, one per route</b>, which is doc 11 P13's own table — "Homepage
 /// blocks, announcement bar, mega menu cards, size guides, content pages: Content.View/Create/Edit/Delete"
@@ -37,7 +38,7 @@ namespace SpencerDenim.Api.Endpoints.Admin;
 /// after the save, so the next visitor sees the change rather than a five-minute-old page.
 /// </para>
 /// </summary>
-internal static class AdminHomeContentEndpoints
+internal static partial class AdminHomeContentEndpoints
 {
     /// <summary>
     /// The largest body a size-guide save may send (#192 tester D4). Without it the whole body was parsed
@@ -55,6 +56,7 @@ internal static class AdminHomeContentEndpoints
         MapHome(endpoints);
         MapAnnouncements(endpoints);
         MapSizeGuides(endpoints);
+        MapMegaMenuCards(endpoints);
 
         return endpoints;
     }

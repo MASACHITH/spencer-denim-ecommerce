@@ -191,6 +191,46 @@ internal static class HomeContentData
     public const int SeedVersion = 2;
 
     /// <summary>
+    /// The mega-menu card seed version this build ships, recorded in <c>Seed.MegaMenuCardsVersion</c> (#215).
+    /// <list type="number">
+    /// <item><description>One switched-off card per department in the words the storefront hard-coded before
+    /// #215.</description></item>
+    /// </list>
+    /// </summary>
+    public const int MegaMenuCardSeedVersion = 1;
+
+    /// <summary>The button the storefront hard-coded on every mega-menu card before #215.</summary>
+    public const string MegaMenuCardButtonLabel = "Shop now";
+
+    /// <summary>The link the storefront hard-coded on every mega-menu card before #215.</summary>
+    public const string MegaMenuCardLinkUrl = "/new-arrivals";
+
+    /// <summary>
+    /// The card the storefront used to draw for a department, as a switched-off row: "New in {name}", the
+    /// description (when it fits the card's 200 characters; the menu's own fallback still shows the whole of
+    /// it), "Shop now" and <c>/new-arrivals</c>. A name too long for the heading is cut, never refused.
+    /// </summary>
+    public static MegaMenuPromoCard MegaMenuCardFor(string departmentName, string? description)
+    {
+        ArgumentNullException.ThrowIfNull(departmentName);
+
+        var title = "New in " + departmentName.Trim();
+        var subtitle = string.IsNullOrWhiteSpace(description) ? null : description.Trim();
+
+        return new MegaMenuPromoCard
+        {
+            Title = title.Length > MegaMenuPromoCardLimits.TitleMaxLength
+                ? title[..MegaMenuPromoCardLimits.TitleMaxLength]
+                : title,
+            Subtitle = subtitle is { Length: <= MegaMenuPromoCardLimits.SubtitleMaxLength } ? subtitle : null,
+            ButtonLabel = MegaMenuCardButtonLabel,
+            LinkUrl = MegaMenuCardLinkUrl,
+            SortOrder = 0,
+            IsActive = false,
+        };
+    }
+
+    /// <summary>
     /// The homepage's words and links for every block whose picture comes from the client (#63): the hero,
     /// the two banners, the four trending tiles and the six social tiles.
     /// <para>

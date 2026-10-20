@@ -239,6 +239,13 @@ export const routes: Routes = [
       import('./pages/content/announcements-page').then((m) => m.AnnouncementsPage),
   },
   {
+    // GLB-05 (#215): the picture card at the end of each department's mega menu.
+    path: 'content/mega-menu',
+    title: `Mega menu cards â€” ${BRAND.adminName}`,
+    canActivate: [adminSessionGuard],
+    loadComponent: () => import('./pages/content/mega-menu-page').then((m) => m.MegaMenuPage),
+  },
+  {
     // PDP-04 (#192): size guides. `new` is declared before `:id` so it is not read as an id.
     path: 'content/size-guides',
     title: `Size guides — ${BRAND.adminName}`,

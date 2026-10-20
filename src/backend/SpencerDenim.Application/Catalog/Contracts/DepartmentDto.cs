@@ -25,6 +25,28 @@ public sealed record CategoryNodeDto(
     string? AgeGroupSlug,
     IReadOnlyList<CategoryNodeDto> Children);
 
+/// <summary>
+/// One mega-menu card the storefront may draw for a department (GLB-05, ADM-17; #215). Only cards that are
+/// switched on, inside their schedule and carry a ready, public picture are sent, best first; the storefront
+/// draws the first. All text is plain and is rendered by interpolation.
+/// </summary>
+/// <param name="Title">The card's heading.</param>
+/// <param name="Subtitle">The line under it, or null.</param>
+/// <param name="ButtonLabel">The button's words.</param>
+/// <param name="LinkUrl">A path on this site or a full http(s) address, as ADM-17's link rules allow.</param>
+/// <param name="ImageUrl">The <c>card</c> rendition, or the original when there is none.</param>
+/// <param name="ImageSrcSet">Candidate widths for <paramref name="ImageUrl"/>; null without renditions.</param>
+/// <param name="ImageAlt">The picture's alt text from the media library.</param>
+public sealed record MegaMenuPromoCardDto(
+    int Id,
+    string Title,
+    string? Subtitle,
+    string ButtonLabel,
+    string LinkUrl,
+    string? ImageUrl,
+    string? ImageSrcSet,
+    string? ImageAlt);
+
 /// <summary>A department with its whole category tree (GLB-05, DEPT-01).</summary>
 /// <param name="HeroImageUrl">
 /// The department banner: the <c>large</c> rendition, since it is drawn full-bleed.
@@ -32,6 +54,10 @@ public sealed record CategoryNodeDto(
 /// <param name="HeroImageSrcSet">
 /// Candidate widths for <paramref name="HeroImageUrl"/>, up to <c>zoom</c> — a full-bleed banner on a
 /// wide retina screen is the one storefront slot that can genuinely use the largest rendition.
+/// </param>
+/// <param name="PromoCards">
+/// The mega-menu cards that may be drawn right now, best first (#215). Empty when there are none, and the
+/// storefront then draws the card it always has, from the department's own picture and description.
 /// </param>
 public sealed record DepartmentDto(
     int Id,
@@ -42,4 +68,5 @@ public sealed record DepartmentDto(
     string? HeroImageSrcSet,
     string? SeoTitle,
     string? SeoDescription,
-    IReadOnlyList<CategoryNodeDto> Categories);
+    IReadOnlyList<CategoryNodeDto> Categories,
+    IReadOnlyList<MegaMenuPromoCardDto> PromoCards);

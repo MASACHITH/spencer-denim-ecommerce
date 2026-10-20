@@ -7,6 +7,7 @@ using SpencerDenim.Application.Content.Admin;
 using SpencerDenim.Application.Content.Admin.Abstractions;
 using SpencerDenim.Application.Content.Admin.Announcements;
 using SpencerDenim.Application.Content.Admin.Home;
+using SpencerDenim.Application.Content.Admin.MegaMenu;
 using SpencerDenim.Application.Content.Admin.SizeGuides;
 using SpencerDenim.Domain.Content;
 using SpencerDenim.Domain.Media;
@@ -16,7 +17,7 @@ using SpencerDenim.Infrastructure.Persistence;
 namespace SpencerDenim.Infrastructure.Content;
 
 /// <summary>
-/// The read side of the ADM-17 homepage, announcement and size-guide screens (#192).
+/// The read side of the ADM-17 homepage, announcement and size-guide screens (#192) and the mega-menu cards (#215).
 /// <para>
 /// <b>Unlike <see cref="HomeContentReader"/>, nothing here filters on the switch or the schedule.</b> A
 /// screen that could not see a block that is switched off could not switch it on — the same reason
@@ -26,7 +27,7 @@ namespace SpencerDenim.Infrastructure.Content;
 /// </para>
 /// </summary>
 internal sealed class ContentAdminReaders(AppDbContext dbContext, IOptions<CatalogOptions> options)
-    : IHomeContentAdminReader, IAnnouncementAdminReader, ISizeGuideAdminReader
+    : IHomeContentAdminReader, IAnnouncementAdminReader, ISizeGuideAdminReader, IMegaMenuCardAdminReader
 {
     private readonly string? _mediaBaseUrl = options.Value.MediaBaseUrl;
 
@@ -246,6 +247,102 @@ internal sealed class ContentAdminReaders(AppDbContext dbContext, IOptions<Catal
                 row.Products,
                 Convert.ToBase64String(row.RowVersion ?? []),
                 SizeGuideLimitsDto.Current);
+    }
+
+    // ------------------------------------------------------------------ mega-menu cards (#215)
+
+    async Task<AdminMegaMenuContentDto> IMegaMenuCardAdminReader.GetAsync(DateTime utcNow, CancellationToken cancellationToken)
+    {
+        var departments = await dbContext.Departments
+            .AsNoTracking()
+            .OrderBy(department => department.SortOrder)
+            .ThenBy(department => department.Id)
+            .Select(department => new
+            {
+                department.Id,
+                department.Name,
+                department.Slug,
+                department.IsActive,
+                department.Description,
+                Hero = department.HeroImageAsset != null
+                    ? new AssetRow(
+                        new MediaRef(department.HeroImageAsset.StorageKey, department.HeroImageAsset.PublicId, department.HeroImageAsset.RenditionSetVersion, department.HeroImageAsset.Width),
+                        department.HeroImageAsset.AltText,
+                        null)
+                    : null,
+            })
+            .ToListAsync(cancellationToken);
+
+        var cards = await dbContext.MegaMenuPromoCards
+            .AsNoTracking()
+            .OrderBy(card => card.DepartmentId)
+            .ThenBy(card => card.SortOrder)
+            .ThenBy(card => card.Id)
+            .Select(card => new
+            {
+                card.Id,
+                card.DepartmentId,
+                card.Title,
+                card.Subtitle,
+                card.ButtonLabel,
+                card.LinkUrl,
+                Image = card.ImageAsset != null
+                    ? new AssetRow(
+                        new MediaRef(card.ImageAsset.StorageKey, card.ImageAsset.PublicId, card.ImageAsset.RenditionSetVersion, card.ImageAsset.Width),
+                        card.ImageAsset.AltText,
+                        null)
+                    : null,
+                card.SortOrder,
+                card.IsActive,
+                card.StartsAtUtc,
+                card.EndsAtUtc,
+                card.RowVersion,
+            })
+            .ToListAsync(cancellationToken);
+
+        // The storefront's own rule, asked in the same query shape the departments feed asks it, so "on the
+        // menu now" here is exactly the card a shopper sees.
+        var shown = (await dbContext.MegaMenuPromoCards
+                .AsNoTracking()
+                .Where(MegaMenuCardVisibility.DrawableAt(utcNow))
+                .OrderBy(card => card.SortOrder)
+                .ThenBy(card => card.Id)
+                .Select(card => new { card.Id, card.DepartmentId })
+                .ToListAsync(cancellationToken))
+            .GroupBy(card => card.DepartmentId)
+            .Select(group => group.First().Id)
+            .ToHashSet();
+
+        var byDepartment = cards.ToLookup(card => card.DepartmentId);
+
+        var dtos = departments
+            .Select(department => new AdminMegaMenuDepartmentDto(
+                department.Id,
+                department.Name,
+                department.Slug,
+                department.IsActive,
+                department.Description,
+                ToImage(department.Hero),
+                byDepartment[department.Id]
+                    .Select(card => new AdminMegaMenuCardDto(
+                        card.Id,
+                        card.DepartmentId,
+                        card.Title,
+                        card.Subtitle,
+                        card.ButtonLabel,
+                        card.LinkUrl,
+                        ToImage(card.Image),
+                        card.SortOrder,
+                        card.IsActive,
+                        ContentFieldRules.ToColomboText(card.StartsAtUtc),
+                        ContentFieldRules.ToColomboText(card.EndsAtUtc),
+                        ContentSchedule.IsLive(card.IsActive, card.StartsAtUtc, card.EndsAtUtc, utcNow),
+                        shown.Contains(card.Id),
+                        Convert.ToBase64String(card.RowVersion ?? [])))
+                    .ToList()))
+            .ToList();
+
+        return new AdminMegaMenuContentDto(dtos, MegaMenuPromoCardLimits.MaxCardsPerDepartment);
     }
 
     private sealed record AssetRow(MediaRef Media, string? AltText, string? PosterKey);

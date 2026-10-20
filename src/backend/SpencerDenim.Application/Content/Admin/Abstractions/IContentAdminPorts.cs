@@ -1,5 +1,6 @@
 using SpencerDenim.Application.Content.Admin.Home;
 using SpencerDenim.Application.Content.Admin.Announcements;
+using SpencerDenim.Application.Content.Admin.MegaMenu;
 using SpencerDenim.Application.Content.Admin.SizeGuides;
 using SpencerDenim.Domain.Catalog;
 using SpencerDenim.Domain.Content;
@@ -152,4 +153,35 @@ public interface ISizeGuideAdminReader
     Task<IReadOnlyList<AdminSizeGuideListItemDto>> ListAsync(CancellationToken cancellationToken);
 
     Task<AdminSizeGuideDto?> GetAsync(int sizeGuideId, CancellationToken cancellationToken);
+}
+
+/// <summary>Write port for the mega-menu cards (ADM-17, GLB-05; #215).</summary>
+public interface IMegaMenuCardAdminStore : IContentLookups
+{
+    /// <summary>One card for update, or <see langword="null"/>.</summary>
+    Task<MegaMenuPromoCard?> FindAsync(int cardId, CancellationToken cancellationToken);
+
+    /// <summary>Whether a department with this id exists.</summary>
+    Task<bool> DepartmentExistsAsync(int departmentId, CancellationToken cancellationToken);
+
+    /// <summary>How many cards the department holds, on or off.</summary>
+    Task<int> CountForDepartmentAsync(int departmentId, CancellationToken cancellationToken);
+
+    void Add(MegaMenuPromoCard card);
+
+    /// <summary>A hard delete: the table has no soft-delete flag (doc 08 §3.7).</summary>
+    void Remove(MegaMenuPromoCard card);
+
+    /// <inheritdoc cref="IHomeContentAdminStore.SaveAsync"/>
+    Task<ContentSaveOutcome> SaveAsync(
+        int? actingUserId,
+        ContentMediaUsageChange? usage,
+        CancellationToken cancellationToken);
+}
+
+/// <summary>Read port for the mega-menu card editor.</summary>
+public interface IMegaMenuCardAdminReader
+{
+    /// <summary>Every department and every card, with <c>IsLiveNow</c>/<c>IsShownNow</c> at <paramref name="utcNow"/>.</summary>
+    Task<AdminMegaMenuContentDto> GetAsync(DateTime utcNow, CancellationToken cancellationToken);
 }
