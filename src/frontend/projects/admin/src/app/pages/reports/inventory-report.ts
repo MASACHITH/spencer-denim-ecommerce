@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, Injector, OnInit, inject, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, Injector, OnInit, computed, inject, input, signal } from '@angular/core';
 import { DOCUMENT } from '@angular/common';
 
 import { CatalogFailure, toCatalogFailure } from '../../core/catalog/admin-catalog-api';
@@ -6,6 +6,8 @@ import { ReportingApi } from '../../core/reporting/reporting-api';
 import { count } from '../../core/reporting/reporting-format';
 import { INVENTORY_FILTERS, InventoryReportPage, InventoryStockFilter } from '../../core/reporting/reporting.model';
 import { Announcer, canGo, rehomeFocus, saveFile, showing } from './report-shared';
+import { ChartTable, ChartView } from '../../core/charts/chart';
+import { DoughnutSpec, shareText, sharesOf } from '../../core/charts/chart-config';
 
 const PAGE_SIZE = 25;
 
@@ -19,9 +21,13 @@ const FILTER_LABELS: Record<InventoryStockFilter, string> = {
 /**
  * The inventory report (ADM-19): every active variant's stock now, filtered by stock status and searchable.
  * Live — it has no period. The export is every matching variant, not this page.
+ *
+ * **A doughnut of in stock / low / out of stock sits above the table** (#186), from the report's own `counts`,
+ * which cover every active variant whatever the filter and search — so the chart says so.
  */
 @Component({
   selector: 'sda-inventory-report',
+  imports: [ChartView],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <form class="rpt__filters" aria-label="Inventory report filters" (submit)="apply($event)">
@@ -53,6 +59,13 @@ const FILTER_LABELS: Record<InventoryStockFilter, string> = {
     @if (problem(); as failure) {
       <div class="adm-state adm-state--error" data-testid="inventory-problem"><p>{{ failure.message }}</p></div>
     } @else if (page(); as answered) {
+      <div class="adm-card">
+        <div>
+          <h3 class="adm-card__title">Stock status</h3>
+          <p class="adm-card__sub">Every active variant now, whatever the filter</p>
+        </div>
+        <sda-chart testId="inventory-chart" [spec]="chart()" [summary]="chartSummary()" [height]="180" [table]="chartTable()" emptyText="There are no active variants yet." />
+      </div>
       <p class="adm-panel__hint" data-testid="inventory-counts">
         {{ number(answered.counts.inStock) }} in stock · {{ number(answered.counts.lowStock) }} low · {{ number(answered.counts.outOfStock) }} out of stock.
         Low means 1 to the variant's threshold available; the shop default threshold is {{ answered.defaultThreshold }}.
@@ -148,6 +161,31 @@ export class InventoryReportView implements OnInit {
   protected label(filter: InventoryStockFilter): string {
     return FILTER_LABELS[filter];
   }
+
+  private readonly statuses = computed(() => {
+    const counts = this.page()?.counts ?? { inStock: 0, lowStock: 0, outOfStock: 0 };
+    const rows = [
+      { key: 'InStock', label: 'In stock', value: counts.inStock, token: '--stock-in' },
+      { key: 'LowStock', label: 'Low stock', value: counts.lowStock, token: '--stock-low' },
+      { key: 'OutOfStock', label: 'Out of stock', value: counts.outOfStock, token: '--stock-out' },
+    ];
+    const shares = sharesOf(rows.map((row) => row.value));
+    return rows.map((row, index) => ({ ...row, share: shares[index], display: `${count(row.value)} ${row.value === 1 ? 'variant' : 'variants'}` }));
+  });
+
+  protected readonly chart = computed<DoughnutSpec>(() => ({ kind: 'doughnut', cutout: 65, slices: this.statuses() }));
+
+  protected readonly chartTable = computed<ChartTable>(() => ({
+    caption: 'Active variants by stock status',
+    testId: 'inventory-chart-table',
+    headers: ['Status', 'Variants', 'Share'],
+    rows: this.statuses().map((row) => ({ key: row.key, label: row.label, cells: [count(row.value), shareText(row.share)] })),
+  }));
+
+  protected readonly chartSummary = computed(() => {
+    const [inStock, low, out] = this.statuses();
+    return `Active variants by stock status: ${inStock.display} in stock, ${low.display} low, ${out.display} out of stock.`;
+  });
 
   protected number(value: number): string {
     return count(value);

@@ -256,7 +256,7 @@ public sealed class AdminAlertsBehaviourTests(SqlServerDatabaseFixture sqlServer
             // is due now, with its attempts exhausted, is exactly what `ClaimAsync` takes and
             // `SendOneAsync` then kills, raising the alert this test says is absent. A host started by
             // another suite is still sweeping this shared database. See the parameter's own remarks.
-            nextAttemptAtUtc: Now.AddYears(1));
+            nextAttemptAtUtc: DateTime.UtcNow.AddYears(1));
 
         Assert.False(await RaiseAsync(messageId));
 

@@ -6,6 +6,7 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 
 ## Current state (keep this section up to date)
 
+- **2026-10-20:** the owner took four items back from #187 and Sachith's side built them: **#186 demo-style admin charts** (plus a Customers report chart), **#190 inventory screen + `InventoryMovements` ledger**, **#193 settings remainder**, and the sale-campaign test time-bomb. All are merged (#208–#212); the rest of #187 is still Tharanga's.
 - **Phase:** Development handed over to **Tharanga** on **2026-10-16** (owner's instruction). **All remaining work and every open issue (57) is his**, tracked in the pinned handover issue **#187**: remaining features, security fixes before Live, then **deploy UAT (`staging`) and Live (`production`), map the domain, run a full UAT round, and document it**. The original 15 Oct deadline passed with the core shop complete: browse, search, bag, wishlist, checkout, bank transfer, emails, customer accounts with order history and tracking, admin orders, promo codes and sale campaigns, customers, newsletter, dashboard, reports and traffic.
 - **Deadline:** the original was Thu **15 Oct 2026**; it has passed, and the owner extended into a deployment phase run by Tharanga (#187).
 - **Scope:** [docs/02-scope-baseline.md](docs/02-scope-baseline.md). Every demo feature is kept, only the theme changes. Nav: Women · Men · Kids · New Arrivals · Sale. Admin can manage everything, with per-user role permissions.
@@ -15,7 +16,7 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 - **Repo:** https://github.com/MASACHITH/spencer-denim-ecommerce (user's **personal** account MASACHITH, branch `main`). Local git identity is set **per repo, per machine** (MASACHITH / sachithishara1@gmail.com) — see [docs/14](docs/14-multi-session-coordination.md). `destinity-sachithm` is the user's **office** account. **Never push this project with it, and never switch the active `gh` account to it without asking the user.** Before every push, confirm `gh auth status` shows MASACHITH as active. If it doesn't, ask the user before switching.
 - **Multiple sessions/machines:** More than one Claude Code session now works on this repo, sometimes on different machines. Handoff protocol, machine readiness check and the known-machines log: [docs/14-multi-session-coordination.md](docs/14-multi-session-coordination.md). Referenced from the root `CLAUDE.md`.
 - **Reference archive:** `reference/` holds read-only copies (taken 2026-09-16) of the old demo (`tuasl-fashion-demo/`), the client documents (signed proposal + theme reference) and the original prototype prompt. See `reference/README.md`. The originals remain outside the repo.
-- **Blockers (owner-side):** (1) **GitHub Actions dead since 9 Oct 09:21** — account billing; every merge since was verified by local runs. (2) **The domain, DNS access, the SMTP account and the `docs/15` §10 decisions** — #187 §4 is blocked without them. (3) **Bank details** — the owner enters them himself in the live admin (Settings → Bank details, Super Admin), never in a chat. (4) Content: the hero video at 16:9, Instagram images, the logo as a flat file, the About/Returns/Shipping copy, and a PDPA review of Privacy and Terms.
+- **Blockers (owner-side):** (1) ~~GitHub Actions dead since 9 Oct~~ — **working again since 2026-10-16**; every merge on 2026-10-20 passed CI. (2) **The domain, DNS access, the SMTP account and the `docs/15` §10 decisions** — #187 §4 is blocked without them. (3) **Bank details** — the owner enters them himself in the live admin (Settings → Bank details, Super Admin), never in a chat. (4) Content: the hero video at 16:9, Instagram images, the logo as a flat file, the About/Returns/Shipping copy, and a PDPA review of Privacy and Terms.
 - **Client progress page:** `client-progress/` is tracked in this repository (moved 2026-09-22, W0-18) and publishes from whichever machine holds the DPAPI-encrypted FTP credential — the `SCIENTER\sachithi` PC, where it was published on 23 and 24 Sep. An earlier note here said it could not be done from "this machine"; that was written from the second machine and is not a property of the repository.
 - **Open assumptions:** A1 (Trending Categories / Best Sellers homepage blocks stay removed per signed proposal), A2 (video MP4 ≤ 50 MB, no server conversion).
 
@@ -41,6 +42,35 @@ Running record of what was done, what was decided, and what's next. **Newest ent
 ---
 
 ## Session log
+
+### 2026-10-19 to 2026-10-20 — admin charts, inventory, settings (taken back from #187)
+
+`main`: `154b5e4` → **`2ff24f1`**. Owner said "do 186 first", then added the Customers chart, inventory and settings. Every task went developer → independent tester; **three of the five failed a tester round, each on a real defect.**
+
+**Merged:**
+- **#208, test time-bombs.** `admin-sale-campaigns.e2e.ts` and `AdminSaleCampaignEndpointTests` hard-coded 2026-10-19 as "later". More fixed windows were due to break on 2026-10-20, and `AdminAlertsBehaviourTests` had one set for 2027-10-09. Dates are now relative (`shopMidnight` in e2e, `ShopTime.Midnight` in integration tests).
+- **#209, demo-style charts (#186)** on the Dashboard, Traffic and Reports pages. Chart.js is lazy-loaded in the admin only, and the storefront bundle is unchanged. **Owner decision: vivid chart colours, not the BR neutrals**; the shop keeps its BR look. Round 1 failed: opening a figures table made the page scroll sideways (`min-width: 0` on grid children).
+- **#212, Customers report chart.** First-time vs returning buyers in a single `GROUPING SETS` statement, so the bars and the total share one RCSI snapshot. Round 1 found that returning could show −1 when the counts came from separate statements.
+- **#210, inventory (#190).**
+  - Delta and set-count changes run as conditional `UPDATE`s; the reserved floor is enforced inside the statement, and the check constraint is the backstop.
+  - Bulk updates apply per row, in VariantId order.
+  - New migration `InventoryMovements`, with order-path movements (part of #108).
+  - Round 1 found: a NULL reason passing the CHECK, `Enum.TryParse` turning `"Receive, Adjust"` into SetCount, writes to deleted products, and a stale client floor.
+- **#211, settings (#193).**
+  - Traffic retention form (`Settings.Edit`), the YouTube link, and `Traffic__*` in compose.
+  - Reviewed the deferred keys: 27, not 39; 3 seeded.
+  - Round 2 failed: the new purge guard kept un-rolled-up days, but nothing ever built them. The rollup catch-up now builds the oldest unbuilt days, up to 31 a night.
+
+**Owner decisions still open** (safe choice taken and recorded in each journal):
+- Card radius and shadow follow the demo, not docs/04 (`--card-radius`/`--card-shadow`).
+- Inventory: the report is not widened to `Inventory.View`; no CSV bulk; no Initial movement; switched-off variants hidden but changeable.
+- Traffic retention is editable by Store Manager; the tester agrees doc 08 §3.8 supports this.
+
+**Lessons:**
+- **A date in a test is a time-bomb.** Grep for literal dates in assertions that depend on "now".
+- **Sibling agents share the scratchpad.** Two testers overwrote each other's `mutate.py`. Give every agent its own subfolder.
+- **A squash merge of a base branch makes its stacked branch conflict on every shared file.** Resolve with the branch side only after checking that `main`'s version equals the old base.
+- `CheckoutPromoRaceTests.Four_simultaneous_checkouts…` asserts that at least 2 contenders reached the promo section. On a slow CI runner it failed once and passed on re-run: a scheduling-sensitive test.
 
 ### 2026-10-12 to 2026-10-16 — the rest of the build, and the handover to Tharanga
 

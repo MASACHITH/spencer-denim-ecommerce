@@ -5,8 +5,10 @@ import { CatalogFailure, toCatalogFailure } from '../../core/catalog/admin-catal
 import { PeriodQuery } from '../../core/reporting/reporting-api';
 import { count } from '../../core/reporting/reporting-format';
 import { TrafficApi } from '../../core/traffic/traffic-api';
-import { CHANNEL_MEANINGS, TrafficSources } from '../../core/traffic/traffic.model';
-import { BarRow, BarTable } from './bar-table';
+import { TrafficSources } from '../../core/traffic/traffic.model';
+import { ChartTable, ChartView } from '../../core/charts/chart';
+import { DoughnutSpec } from '../../core/charts/chart-config';
+import { channelDoughnut, channelSummary, channelTable } from '../traffic/traffic-charts';
 
 /**
  * The dashboard's Traffic Sources widget (ADM-06) and its conversion rate (doc 11 P16: "Paid orders ÷ human
@@ -16,11 +18,12 @@ import { BarRow, BarTable } from './bar-table';
  * API refuses the same request without it. Visits are people, not crawlers. With no visits in the period the
  * widget says so and shows no rate: a conversion rate of "0 %" over no visits would be invented.
  *
- * Like every dashboard breakdown it is a table with figures; the bars are decoration on it.
+ * Drawn as the client demo's small Traffic Sources doughnut with its text legend (#186), and the same figures as
+ * a table under it.
  */
 @Component({
   selector: 'sda-traffic-sources',
-  imports: [BarTable, RouterLink],
+  imports: [ChartView, RouterLink],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @if (problem(); as failure) {
@@ -40,15 +43,15 @@ import { BarRow, BarTable } from './bar-table';
           <div><dt>Visits</dt><dd data-testid="traffic-visits">{{ number(answered.visits) }}</dd></div>
           <div><dt>Paid orders</dt><dd>{{ number(answered.paidOrders) }}</dd></div>
           <div>
-            <dt>Conversion rate</dt>
+            <dt>Conversion</dt>
             <dd data-testid="traffic-conversion">{{ percent(answered.conversionPercent) }}</dd>
           </div>
         </dl>
+        <sda-chart testId="traffic-sources-chart" [spec]="spec()" [summary]="summary()" [height]="160" [table]="table()" emptyText="No visits in this period." />
         <p class="adm-panel__hint">
           Visits are people (crawlers are left out); a visit is one person's pages on one day, credited to where their
           first page came from. Conversion is paid orders divided by visits.
         </p>
-        <sda-bar-table caption="Visits by traffic source" testId="traffic-sources" [headers]="['Source', 'Visits', 'Page views', 'Share']" [rows]="rows()" />
       }
       <p><a class="adm-link" routerLink="/traffic" data-testid="traffic-sources-more">Open the Traffic page</a></p>
     } @else {
@@ -56,11 +59,11 @@ import { BarRow, BarTable } from './bar-table';
     }
   `,
   styles: `
-    :host { display: grid; gap: var(--space-1); min-width: 0; }
-    .traffic__figures { display: grid; gap: var(--space-1); grid-template-columns: repeat(auto-fit, minmax(min(100%, 8rem), 1fr)); margin: 0; }
-    .traffic__figures div { min-width: 0; }
-    .traffic__figures dt { font-size: var(--text-label); letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--color-text-muted); }
-    .traffic__figures dd { margin: 0; font-size: var(--text-h3); font-variant-numeric: tabular-nums; }
+    :host { display: grid; gap: var(--space-1-5); min-width: 0; }
+    .traffic__figures { display: grid; gap: var(--space-1); grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0; }
+    .traffic__figures div { min-width: 0; padding: var(--space-1); text-align: center; background: var(--color-bg-alt); border-radius: 8px; }
+    .traffic__figures dt { font-size: var(--text-label); color: var(--color-text-muted); }
+    .traffic__figures dd { margin: 0; font-size: var(--text-h4); font-weight: var(--weight-semibold); font-variant-numeric: tabular-nums; }
     p { margin: 0; }
   `,
 })
@@ -72,14 +75,11 @@ export class TrafficSourcesPanel {
   protected readonly sources = signal<TrafficSources | null>(null);
   protected readonly problem = signal<CatalogFailure | null>(null);
 
-  protected readonly rows = computed<readonly BarRow[]>(() =>
-    (this.sources()?.channels ?? []).map((row) => ({
-      key: row.channel,
-      label: `${row.label} — ${CHANNEL_MEANINGS[row.channel] ?? ''}`,
-      cells: [count(row.visits), count(row.pageViews), `${row.sharePercent.toLocaleString('en-LK', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`],
-      value: row.visits,
-    })),
-  );
+  protected readonly spec = computed<DoughnutSpec>(() => channelDoughnut(this.sources()?.channels ?? []));
+
+  protected readonly table = computed<ChartTable>(() => channelTable(this.sources()?.channels ?? [], 'traffic-sources'));
+
+  protected readonly summary = computed(() => channelSummary(this.sources()?.channels ?? []));
 
   private requests = 0;
 

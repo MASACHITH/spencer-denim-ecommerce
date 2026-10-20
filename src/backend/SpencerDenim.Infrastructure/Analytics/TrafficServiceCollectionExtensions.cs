@@ -50,6 +50,7 @@ internal static class TrafficServiceCollectionExtensions
         // stand down when Traffic:JobsEnabled is false, which every test host sets.
         services.AddScoped<TrafficRollup>();
         services.AddScoped<TrafficRetention>();
+        services.AddScoped<TrafficRetentionSettings>();
         services.AddSingleton<TrafficRollupService>();
         services.AddHostedService(provider => provider.GetRequiredService<TrafficRollupService>());
         services.AddSingleton<TrafficRetentionService>();

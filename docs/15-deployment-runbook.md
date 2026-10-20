@@ -135,6 +135,9 @@ quoted values, `$` (compose would interpolate it), the same login for API and mi
 | `config/app.env` | `SD_PUBLIC_HOSTS` | Public host name(s), comma-separated; the SSR engine renders only for these (`NG_ALLOWED_HOSTS`) |
 | | `SD_PUBLIC_ORIGIN` | `https://<host>`, scheme and host only. robots.txt, sitemap.xml, og:url (#86) and every link in an order email. Never derived from the request |
 | | `SD_SMTP_HOST/PORT/USERNAME/PASSWORD/FROM_ADDRESS/FROM_NAME` | Optional until the client's SMTP account exists; unset, emails queue unsent and the admin banner says so |
+| | `SD_TRAFFIC_RECORDING_ENABLED` | Optional, default `true` → `Traffic__RecordingEnabled`. `false` stops page views being recorded (the beacon still answers 204). Visits not recorded cannot be recovered later, so leave it on |
+| | `SD_TRAFFIC_INTERNAL_HOSTS` | Optional → `Traffic__InternalHosts`. The shop's own host names, comma-separated (e.g. `colombowardrobecompany.com,www.colombowardrobecompany.com`), so a click from one to the other is not counted as a traffic source. The host a page view was sent to is always internal; this is only for the second name |
+| | `SD_TRAFFIC_RAW_RETENTION_DAYS` / `SD_TRAFFIC_BOT_RETENTION_DAYS` | Optional, default `90` / `7` → `Traffic__RawRetentionDays` / `Traffic__BotRetentionDays`. **A fallback only** — see "Traffic retention" below. Start-up refuses anything outside 4–3,650 days, or bots longer than people |
 | | `SD_APP_DB_CONNECTION` | API login `sd_<env>_app` (read/write). `Server=sqlserver,1433;…;TrustServerCertificate=True` |
 | | `SD_MIGRATOR_DB_CONNECTION` | Migrator login `sd_<env>_migrator` (db_owner). The API never sees it |
 | | `SD_DB_COMPATIBILITY_LEVEL` | `170` (SQL Server 2025) |
@@ -151,6 +154,26 @@ start without `DataProtection__KeysPath`**: a key ring inside the container woul
 restart and make encrypted settings unreadable (#96). To encrypt the key ring at rest (doc 03 §4), add
 `DataProtection__CertificatePath` (a `.pfx` mounted read-only) and `DataProtection__CertificatePassword`; keep a
 copy of the certificate and its password off the server, because without them a restored key ring is useless.
+
+**Traffic retention: the Settings screen wins, configuration is the fallback (#193).** The nightly purge (01:30
+Colombo) deletes page views older than `Traffic.RawRetentionDays` and bot page views older than
+`Traffic.BotRetentionDays`. Both are `ops.Settings` rows, seeded **90** and **7** (doc 08 §3.8) by the start-up
+seeder on a new *and* an existing database, and edited in the admin under **Settings → Traffic** by a Super Admin
+or a Store Manager (`Settings.Edit`; every change is audited). The purge reads the rows every night and uses a row
+whenever it holds a whole number of days inside the form's bounds (30–365, bots 7–90 and never longer than page
+views). `Traffic__RawRetentionDays` / `Traffic__BotRetentionDays` are used **only** while a row is empty or holds
+something outside those bounds (written by hand, say) — so setting them in `app.env` does **not** override what the
+owner chose on the screen. The defaults are the same 90 and 7, so a deployment that sets nothing purges exactly as
+it did before the form existed. Each purge logs the periods it applied and where each came from (`from Settings` /
+`from Configuration`, event 7131); a row that was ignored logs a warning (event 7133) — re-save it on the screen.
+The daily totals the Traffic page shows are never purged, whatever the periods say. **The purge never deletes a
+day the nightly rollup has not counted**: such a day keeps its raw page views and the purge logs a warning naming
+it (event 7134); it goes on the first night after the rollup has built it. Seeing 7134 more than once means the
+rollup is failing — check its log (events 7121–7123) before anything else.
+
+`Traffic__JobsEnabled` (default `true`) runs the nightly rollup and purge on this host; set it `false` only on a
+second API host, if there ever is one. `Traffic__QueueCapacity`, `Traffic__BatchSize` and `Traffic__FlushSeconds`
+tune the in-memory page-view queue and have no reason to change.
 
 Everything else the API reads (README "Other settings") can be added to the `api` service's `environment:` in
 `compose.<env>.yml`. Database names: `SpencerDenim` (production), `SpencerDenim_Staging` (staging).

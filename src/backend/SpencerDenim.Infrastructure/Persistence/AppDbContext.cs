@@ -155,6 +155,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
 
     public DbSet<StockLevel> StockLevels => Set<StockLevel>();
 
+    public DbSet<InventoryMovement> InventoryMovements => Set<InventoryMovement>();
+
     public DbSet<HomeSection> HomeSections => Set<HomeSection>();
 
     public DbSet<HomeSectionItem> HomeSectionItems => Set<HomeSectionItem>();
