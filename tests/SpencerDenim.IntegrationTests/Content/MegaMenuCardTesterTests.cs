@@ -316,6 +316,62 @@ public sealed class MegaMenuCardTesterTests(SqlServerDatabaseFixture sqlServer)
         }
     }
 
+    /// <summary>
+    /// Round 2: moves into a department race creates into it. Cards wait in Men and are all moved to Kids at once,
+    /// alongside creates in Kids: Kids still ends at six at most.
+    /// </summary>
+    [Fact]
+    public async Task Parallel_moves_and_creates_cannot_take_a_department_past_the_limit()
+    {
+        await using var host = await StartAsync();
+        using var client = await host.SignInAsync(Everything);
+        var kids = await DepartmentIdAsync(host, "kids");
+        var men = await DepartmentIdAsync(host, "men");
+        var beforeKids = await CardIdsAsync(host, kids);
+        var beforeMen = await CardIdsAsync(host, men);
+        var movers = new List<(int Id, string? Version)>();
+
+        try
+        {
+            for (var index = beforeMen.Count; index < MegaMenuPromoCardLimits.MaxCardsPerDepartment; index++)
+            {
+                using var created = await SendAsync(client, "POST", CardsUrl, Body(men, $"Mover {index} {Suffix()}"));
+                Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+                var saved = await created.Content.ReadFromJsonAsync<JsonElement>(JsonOptions, Token);
+                movers.Add((saved.GetProperty("id").GetInt32(), saved.GetProperty("rowVersion").GetString()));
+            }
+
+            var writes = movers.Select(mover =>
+                {
+                    var body = Body(kids, "Moved " + Suffix());
+                    body["rowVersion"] = mover.Version;
+                    return SendAsync(client, "PUT", $"{CardsUrl}/{mover.Id}", body);
+                })
+                .Concat(Enumerable.Range(0, 6).Select(index => SendAsync(client, "POST", CardsUrl, Body(kids, $"Rival {index} {Suffix()}"))))
+                .ToList();
+
+            var codes = new List<HttpStatusCode>();
+            foreach (var answer in await Task.WhenAll(writes))
+            {
+                codes.Add(answer.StatusCode);
+                answer.Dispose();
+            }
+
+            var after = await CardIdsAsync(host, kids);
+            Assert.True(
+                after.Count <= MegaMenuPromoCardLimits.MaxCardsPerDepartment,
+                string.Create(CultureInfo.InvariantCulture, $"Kids holds {after.Count} cards after moves and creates."));
+            Assert.DoesNotContain(codes, code => (int)code >= 500);
+        }
+        finally
+        {
+            foreach (var id in (await CardIdsAsync(host, kids)).Except(beforeKids).Concat((await CardIdsAsync(host, men)).Except(beforeMen)))
+            {
+                await RemoveCardAsync(host, id);
+            }
+        }
+    }
+
     // ================================================================== helpers
 
     private static async Task<(string? Opening, string? Closing)> DrawnAsync(FreshDeployment deployment, DateTime utcNow)
