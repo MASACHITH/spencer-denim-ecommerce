@@ -483,7 +483,11 @@ public sealed class AdminSaleCampaignTargetsAndBannerTests(SqlServerDatabaseFixt
         var created = await SendAsync(admin, HttpMethod.Post, Url, body);
 
         Assert.Equal(HttpStatusCode.BadRequest, created.Status);
-        Assert.True(created.Body.GetProperty("errors").TryGetProperty("bannerPublicId", out _));
+        Assert.True(created.Body.GetProperty("errors").TryGetProperty("bannerPublicId", out var message));
+
+        // Refused for its *shape*, before any lookup: a braced GUID is not quietly read and then refused
+        // as an unknown picture (a mutation of the parser to Guid.TryParse survived until this line).
+        Assert.Contains("as an identifier like", message[0].GetString(), StringComparison.Ordinal);
     }
 
     /// <summary>
