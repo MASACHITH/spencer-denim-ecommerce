@@ -285,15 +285,26 @@ app_stg=$((512 + 384 + 96))                 # compose.staging.yml
 migrator=384                                # one-shot, only while a deploy runs
 need_two=$((sql_prod + sql_stg + app_prod + app_stg + migrator))
 need_shared=$((sql_prod + app_prod + app_stg + migrator))
-info "budget (container ceilings): production SQL ${sql_prod} + staging SQL ${sql_stg} + production app ${app_prod} + staging app ${app_stg} + migrator ${migrator} = ${need_two} MB with two SQL Server instances; ${need_shared} MB if UAT shares the production instance"
+need_stg=$((sql_stg + app_stg + migrator))
+need_prod=$((sql_prod + app_prod + migrator))
+# What this run is for decides the budget: asking about staging alone must not be told it needs a production SQL
+# Server that is not going to exist yet (the first UAT on a server that already hosts other things).
+case "$want" in
+  staging)    need_here=$need_stg;  plan="the staging environment alone (its own SQL Server ${sql_stg} + app ${app_stg} + migrator ${migrator})" ;;
+  production) need_here=$need_prod; plan="the production environment alone (its own SQL Server ${sql_prod} + app ${app_prod} + migrator ${migrator})" ;;
+  *)          need_here=$need_two;  plan="both environments with their own SQL Server" ;;
+esac
+info "budget (container ceilings): production SQL ${sql_prod} + staging SQL ${sql_stg} + production app ${app_prod} + staging app ${app_stg} + migrator ${migrator} = ${need_two} MB with two SQL Server instances; ${need_shared} MB if UAT shares the production instance; ${need_stg} MB for staging alone, ${need_prod} MB for production alone"
 if [ "$mem_total" -gt 0 ]; then
   info "this machine: ${mem_total} MB RAM, ${mem_avail} MB available now (what the sites already running here leave free), ${swap_total} MB swap"
-  if [ "$mem_avail" -ge "$need_two" ]; then
-    pass "memory: ${mem_avail} MB available covers both environments with their own SQL Server (${need_two} MB)"
-  elif [ "$mem_avail" -ge "$need_shared" ]; then
+  if [ "$mem_avail" -ge "$need_here" ]; then
+    pass "memory: ${mem_avail} MB available covers ${plan} (${need_here} MB)"
+  elif [ "$want" = both ] && [ "$mem_avail" -ge "$need_shared" ]; then
     warnl "memory: ${mem_avail} MB available is below ${need_two} MB (two SQL Server instances) but covers ${need_shared} MB. Use the docs/15 §10 #2 fallback: point UAT's connection strings at the PRODUCTION SQL instance (database SpencerDenim_Staging, its own logins) and do not start the staging database stack. Decide before step B3"
-  else
+  elif [ "$want" = both ]; then
     fail "memory: only ${mem_avail} MB available; even the shared-instance plan needs ${need_shared} MB. Free memory (stop something), resize the VPS, or run only one environment for now"
+  else
+    fail "memory: only ${mem_avail} MB available; ${plan} needs ${need_here} MB. Free memory (stop something) or resize the VPS"
   fi
   if [ "$swap_total" -eq 0 ]; then
     warnl "no swap is configured: a spike during an image build (Angular + .NET) is then an out-of-memory kill. Watch 'free -m' during the first build-images.sh, or build elsewhere (docs/15 §10 #4)"
@@ -371,6 +382,17 @@ for e in "${envs[@]}"; do
     fi
   else
     info "$e: install.sh has NOT been run yet (nothing under $a or $d): expected before step B4"
+    # install.sh sets owner and mode on the directories below $d and $a. If something else already lives there (another
+    # project's data, a SQL Server's files), changing them can break it. An empty skeleton is fine.
+    for x in "$a" "$d"; do
+      if [ -d "$x" ]; then
+        found="$(find "$x" -type f 2>/dev/null | head -n 5)"
+        if [ -n "$found" ]; then
+          warnl "$e: $x already holds files ($(printf '%s' "$found" | tr '
+' ' ')) although install.sh has not been run. Look with 'ls -laR $x' and make sure nothing there belongs to another project or a running container before step B4: install.sh sets the owner and mode of the directories it uses. (Empty sub-directories are fine: that is an unused skeleton.)"
+        fi
+      fi
+    done
   fi
 done
 if [ -n "$repo" ]; then
@@ -559,7 +581,9 @@ else
         line ~ /server_name/ { n = split(line, t, /[ \t;]+/); for (i = 1; i <= n; i++) if (t[i] == h) { print file; exit } }')"
       if [ -n "$dup" ]; then
         case "$dup" in
-          *spencer-denim*) info "$h: already named in $dup (this project's own site file)" ;;
+          */spencer-denim-staging|*/spencer-denim-staging.conf|*/spencer-denim-production|*/spencer-denim-production.conf)
+            info "$h: already named in $dup (this project's own staging/production site file)" ;;
+          *spencer-denim*) warnl "$h is already a server_name in $dup: a site file of THIS project but not the staging/production one (an earlier stack, e.g. spencer-denim-development, that is serving this name today). Enabling the staging/production site for the same name gives 'conflicting server name', nginx ignores the later block and the earlier stack keeps the traffic. Plan the cut-over (docs/16 §D) before enabling it" ;;
           *) warnl "$h is already a server_name in $dup (not ours): two server blocks for one name; nginx warns and the first wins. Decide who owns it" ;;
         esac
       fi

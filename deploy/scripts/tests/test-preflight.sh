@@ -24,7 +24,7 @@ export NO_COLOR=1
 
 # ---- the whitelist of ordinary utilities ---------------------------------------------------------------------------------
 base="$work/base"; mkdir -p "$base"
-for u in awk sed grep cut tr sort head tail wc cat date df uname hostname nproc readlink dirname basename cmp stat git openssl id; do
+for u in awk sed grep cut tr sort head tail wc cat date df uname hostname nproc readlink dirname basename cmp stat git openssl id ls find; do
   real="$(command -v "$u" 2>/dev/null)" || continue
   printf '#!/bin/sh\nexec "%s" "$@"\n' "$real" > "$base/$u"; chmod +x "$base/$u"
 done
@@ -362,7 +362,47 @@ server { listen 80; server_name staging.example.test www.old.example; }
 server { listen 80; server_name shop.example.test; }" > "$fx/nginx_T"
   run_pf "$fx" both staging.example.test shop.example.test
   check WARN "staging.example.test is already a server_name in /etc/nginx/sites-enabled/old-site.conf (not ours)"
-  check INFO "shop.example.test: already named in /etc/nginx/sites-enabled/spencer-denim-production.conf (this project's own site file)"
+  check INFO "shop.example.test: already named in /etc/nginx/sites-enabled/spencer-denim-production.conf (this project's own staging/production site file)"
+}
+# The first UAT on a server that already runs an earlier stack of this project under its own site file.
+sc_server_name_earlier_stack() {
+  local fx="$1"; fx_baseline "$fx"
+  printf '%s
+' "$nginx_all_defaults
+# configuration file /etc/nginx/sites-enabled/spencer-denim-development:
+server { listen 443 ssl; server_name shop.example.test www.shop.example.test; }" > "$fx/nginx_T"
+  run_pf "$fx" production shop.example.test
+  check WARN "shop.example.test is already a server_name in /etc/nginx/sites-enabled/spencer-denim-development: a site file of THIS project but not the staging/production one"
+  refute INFO "shop.example.test: already named in"
+}
+# Asking about staging alone must budget for staging alone, not for a production SQL Server that does not exist yet.
+sc_memory_staging_alone() {
+  local fx="$1"; fx_baseline "$fx"
+  printf 'MemTotal: 8192000 kB
+MemAvailable: 3072000 kB
+SwapTotal: 4194304 kB
+' > "$fx/meminfo"
+  run_pf "$fx" staging --skip-dns
+  rc_is 0; no_failures
+  check PASS "memory: 3000 MB available covers the staging environment alone"
+  refute WARN "UAT on the production"
+  printf 'MemTotal: 8192000 kB
+MemAvailable: 2048000 kB
+SwapTotal: 4194304 kB
+' > "$fx/meminfo"
+  run_pf "$fx" staging --skip-dns
+  rc_is 1
+  check FAIL "memory: only 2000 MB available; the staging environment alone"
+}
+# A directory below the install base that already holds files, before install.sh has been run, may be another project's.
+sc_install_dir_not_empty() {
+  local fx="$1"; fx_baseline "$fx"
+  mkdir -p "$fx/db/staging/data" "$fx/db/staging/config"; echo x > "$fx/db/staging/data/foreign.mdf"
+  run_pf "$fx" staging --skip-dns
+  check WARN "staging: $fx/db/staging already holds files"
+  rm -rf "$fx/db/staging"; mkdir -p "$fx/db/staging/data" "$fx/db/staging/config"
+  run_pf "$fx" staging --skip-dns
+  refute WARN "already holds files"
 }
 sc_dns_public_ip() {
   local fx="$1"; fx_baseline "$fx"
@@ -446,7 +486,7 @@ run_sc() {
 }
 for s in good everything_wrong missing_tools engine_down own_resources foreign_container_on_port memory_fallback \
          installed_stale installed_without_rcsi installed_current nginx_none nginx_partial nginx_ours nginx_unreadable \
-         server_name_conflict dns_public_ip dns_public_ip_unknown dns_given_ip old_checkout not_root read_only; do
+         server_name_conflict server_name_earlier_stack memory_staging_alone install_dir_not_empty dns_public_ip dns_public_ip_unknown dns_given_ip old_checkout not_root read_only; do
   run_sc "$s"
 done
 wait
