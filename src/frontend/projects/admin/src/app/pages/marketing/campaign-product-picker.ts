@@ -156,6 +156,11 @@ interface SearchPage {
     </div>
   `,
   styles: `
+    :host {
+      display: block;
+      grid-column: 1 / -1;
+      min-width: 0;
+    }
     .picker {
       display: grid;
       gap: var(--space-0-5);

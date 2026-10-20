@@ -126,6 +126,10 @@ import { toCatalogFailure } from '../../core/catalog/admin-catalog-api';
     </div>
   `,
   styles: `
+    :host {
+      display: block;
+      margin-block-end: var(--space-2);
+    }
     .banner {
       display: grid;
       gap: var(--space-1);
