@@ -316,6 +316,19 @@ public static class SettingCatalog
             + "as visitors. Between 7 and 90 days, and no longer than page views are kept.",
             SeedValue: SettingKeys.Traffic.BotRetentionDaysDefault.ToString(
                 System.Globalization.CultureInfo.InvariantCulture)),
+
+        // Group Reviews (doc 08 §3.8, doc 11 P12; issue #189). Seeded "true", doc 08's own "(true)", so a new
+        // database starts with every review waiting for a moderator. The seeder never overwrites a saved value.
+        new(
+            SettingKeys.Reviews.RequireApproval,
+            SettingKeys.Reviews.Group,
+            SettingValueType.Bool,
+            Permissions.Settings.Edit,
+            "Approve reviews before they appear",
+            "When this is on, a customer's new or edited review waits on the Reviews screen until somebody "
+            + "approves it. When it is off, reviews appear on the product page as soon as they are written. A "
+            + "review staff have hidden stays hidden either way.",
+            SeedValue: SettingKeys.Reviews.RequireApprovalDefault ? "true" : "false"),
     ];
 
     /// <summary>
@@ -383,6 +396,9 @@ public static class SettingCatalog
         // The two retention periods: one form, one permission (Settings.Edit), and a cross-field rule (bots never
         // longer than people) that only holds if both are compared under one token.
         [SettingKeys.Traffic.Group],
+
+        // The review approval switch (issue #189): one form, one permission (Settings.Edit).
+        [SettingKeys.Reviews.Group],
     ];
 
     /// <summary>

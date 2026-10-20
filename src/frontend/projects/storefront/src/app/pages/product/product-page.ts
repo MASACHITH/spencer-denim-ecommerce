@@ -16,6 +16,7 @@ import { BRAND, Icon, brandPageTitle } from '@spencer-denim/shared';
 
 import { ProductDetails } from './product-details';
 import { ProductGallery } from './product-gallery';
+import { ProductReviews } from './product-reviews';
 import { SizeGuideModal } from './size-guide-modal';
 import { NotFoundPage } from '../not-found/not-found-page';
 import { FULL_WIDTH_GRID_CARD_SIZES, ProductCard } from '../../ui/product-card/product-card';
@@ -114,7 +115,7 @@ const RECENT_SHOWN = 6;
  * Bag followed by checkout, and checkout is W3-02 — a button that looked like it worked and did
  * nothing would be worse than no button, which is the same judgement that kept Add to Bag off this page
  * until the bag API existed. The heart writes to the same per-browser list the product card uses, which
- * W2-08's `/wishlist` page reads; a guest's wishlist lives in the browser by design (doc 08 §1.7). Reviews are PDP-08 (W2-06) and Quick View is QV-01 (W2-04).
+ * W2-08's `/wishlist` page reads; a guest's wishlist lives in the browser by design (doc 08 §1.7). Reviews (PDP-08, #189) are `ProductReviews`, below the details; Quick View is QV-01 (W2-04).
  */
 @Component({
   selector: 'sd-product-page',
@@ -124,6 +125,7 @@ const RECENT_SHOWN = 6;
     ProductCard,
     ProductDetails,
     ProductGallery,
+    ProductReviews,
     RouterLink,
     SizeGuideModal,
   ],
@@ -359,6 +361,8 @@ const RECENT_SHOWN = 6;
           </div>
         </div>
 
+        <sd-product-reviews class="pdp__reviews" [productId]="item.id" [slug]="item.slug" />
+
         @if (item.relatedProducts.length > 0) {
           <section class="pdp__row" aria-labelledby="pdp-related">
             <h2 class="pdp__row-title" id="pdp-related">You may also like</h2>
@@ -515,6 +519,10 @@ const RECENT_SHOWN = 6;
     }
 
     .pdp__row {
+      padding-top: var(--space-8);
+    }
+    .pdp__reviews {
+      display: block;
       padding-top: var(--space-8);
     }
     .pdp__row-title {

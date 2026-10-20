@@ -550,9 +550,11 @@ public sealed class SaleCampaignWriteHandlerTests
     {
         public int Evictions { get; private set; }
 
+        public long Generation => Evictions;
+
         public HomePageDto? GetPage() => null;
 
-        public void SetPage(HomePageDto page)
+        public void SetPage(HomePageDto page, DateTime? validUntilUtc, long generation)
         {
         }
 

@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using SpencerDenim.Application.Abstractions.Messaging;
 using SpencerDenim.Application.Abstractions.Results;
+using SpencerDenim.Application.Abstractions.Time;
 using SpencerDenim.Application.Accounts;
 using SpencerDenim.Application.Accounts.Contracts;
 using SpencerDenim.Application.Admin.Account;
@@ -22,12 +23,16 @@ using SpencerDenim.Application.Admin.Users.Contracts;
 using SpencerDenim.Application.Catalog.Contracts;
 using SpencerDenim.Application.Catalog.Departments;
 using SpencerDenim.Application.Catalog.Products;
+using SpencerDenim.Application.Catalog.Reviews;
 using SpencerDenim.Application.Catalog.Search;
 using SpencerDenim.Application.Catalog.Sitemap;
 using SpencerDenim.Application.Content.Abstractions;
 using SpencerDenim.Application.Content.Announcements;
 using SpencerDenim.Application.Content.Contracts;
 using SpencerDenim.Application.Content.Admin;
+using SpencerDenim.Application.Content.Admin.Announcements;
+using SpencerDenim.Application.Content.Admin.Home;
+using SpencerDenim.Application.Content.Admin.SizeGuides;
 using SpencerDenim.Application.Marketing.Promotions;
 using SpencerDenim.Application.Content.Admin.Contracts;
 using SpencerDenim.Application.Content.Contact;
@@ -222,7 +227,9 @@ public static class DependencyInjection
         services.AddScoped<IQueryHandler<GetHomePageQuery, HomePageDto>>(provider =>
             new CachedHomePageQueryHandler(
                 provider.GetRequiredKeyedService<IQueryHandler<GetHomePageQuery, HomePageDto>>(UncachedHomePage),
-                provider.GetRequiredService<IHomePageCache>()));
+                provider.GetRequiredService<IHomePageCache>(),
+                provider.GetRequiredService<IHomeContentReader>(),
+                provider.GetRequiredService<IClock>()));
         services.AddScoped<
             IQueryHandler<GetAnnouncementsQuery, IReadOnlyList<AnnouncementDto>>,
             GetAnnouncementsQueryHandler>();
@@ -264,6 +271,34 @@ public static class DependencyInjection
             provider => provider.GetRequiredService<ContentPageWriteHandlers>());
         services.AddScoped<ICommandHandler<DeleteContentPageCommand, ContentWriteResult>>(
             provider => provider.GetRequiredService<ContentPageWriteHandlers>());
+
+        // The rest of the ADM-17 content screens (#192): the homepage blocks, the announcement strip and the
+        // size guides. Each group is one class registered once per interface, like the page writes above.
+        services.AddScoped<HomeContentWriteHandlers>();
+        services.AddScoped<ICommandHandler<UpdateHomeSectionCommand, ContentWriteResult>>(
+            provider => provider.GetRequiredService<HomeContentWriteHandlers>());
+        services.AddScoped<ICommandHandler<CreateHomeSectionItemCommand, ContentWriteResult>>(
+            provider => provider.GetRequiredService<HomeContentWriteHandlers>());
+        services.AddScoped<ICommandHandler<UpdateHomeSectionItemCommand, ContentWriteResult>>(
+            provider => provider.GetRequiredService<HomeContentWriteHandlers>());
+        services.AddScoped<ICommandHandler<DeleteHomeSectionItemCommand, ContentWriteResult>>(
+            provider => provider.GetRequiredService<HomeContentWriteHandlers>());
+
+        services.AddScoped<AnnouncementWriteHandlers>();
+        services.AddScoped<ICommandHandler<CreateAnnouncementCommand, ContentWriteResult>>(
+            provider => provider.GetRequiredService<AnnouncementWriteHandlers>());
+        services.AddScoped<ICommandHandler<UpdateAnnouncementCommand, ContentWriteResult>>(
+            provider => provider.GetRequiredService<AnnouncementWriteHandlers>());
+        services.AddScoped<ICommandHandler<DeleteAnnouncementCommand, ContentWriteResult>>(
+            provider => provider.GetRequiredService<AnnouncementWriteHandlers>());
+
+        services.AddScoped<SizeGuideWriteHandlers>();
+        services.AddScoped<ICommandHandler<CreateSizeGuideCommand, ContentWriteResult>>(
+            provider => provider.GetRequiredService<SizeGuideWriteHandlers>());
+        services.AddScoped<ICommandHandler<UpdateSizeGuideCommand, ContentWriteResult>>(
+            provider => provider.GetRequiredService<SizeGuideWriteHandlers>());
+        services.AddScoped<ICommandHandler<DeleteSizeGuideCommand, ContentWriteResult>>(
+            provider => provider.GetRequiredService<SizeGuideWriteHandlers>());
 
         // The admin promo-code screen (ADM-13, W3-05). Three writes in one class because they share every
         // rule; registered once per interface so each endpoint asks for the one command it sends.
@@ -332,6 +367,11 @@ public static class DependencyInjection
         services.AddScoped<
             ICommandHandler<UpdateTrafficSettingsCommand, SettingsWriteResult>,
             UpdateTrafficSettingsCommandHandler>();
+
+        // Issue #189: the review approval switch (Settings.Edit).
+        services.AddScoped<
+            ICommandHandler<UpdateReviewSettingsCommand, SettingsWriteResult>,
+            UpdateReviewSettingsCommandHandler>();
         services.AddKeyedScoped<IQueryHandler<GetSiteSettingsQuery, SiteSettingsDto>, GetSiteSettingsQueryHandler>(
             UncachedSiteSettings);
         services.AddScoped<IQueryHandler<GetSiteSettingsQuery, SiteSettingsDto>>(provider =>
@@ -488,6 +528,21 @@ public static class DependencyInjection
             provider => provider.GetRequiredService<InventoryWriteHandlers>());
         services.AddScoped<ICommandHandler<SetLowStockThresholdCommand, InventoryWriteResult>>(
             provider => provider.GetRequiredService<InventoryWriteHandlers>());
+
+        // Reviews and ratings (PDP-08) and their moderation (ADM-16), issue #189.
+        services.AddScoped<ReviewQueryHandlers>();
+        services.AddScoped<IQueryHandler<GetProductReviewsQuery, ProductReviewPageDto?>>(
+            provider => provider.GetRequiredService<ReviewQueryHandlers>());
+        services.AddScoped<IQueryHandler<GetMyProductReviewQuery, MyProductReviewDto?>>(
+            provider => provider.GetRequiredService<ReviewQueryHandlers>());
+        services.AddScoped<IQueryHandler<GetAdminReviewsQuery, AdminReviewListPage>>(
+            provider => provider.GetRequiredService<ReviewQueryHandlers>());
+        services.AddScoped<ReviewWriteHandlers>();
+        services.AddScoped<ICommandHandler<CreateReviewCommand, ReviewCommandResult>>(
+            provider => provider.GetRequiredService<ReviewWriteHandlers>());
+        services.AddScoped<ICommandHandler<EditReviewCommand, ReviewCommandResult>>(
+            provider => provider.GetRequiredService<ReviewWriteHandlers>());
+        services.AddScoped<ICommandHandler<ModerateReviewCommand, ModerationResult>, ModerateReviewHandler>();
 
         services.AddScoped<IQueryHandler<GetCustomerBuyersQuery, CustomerBuyersDto>, GetCustomerBuyersQueryHandler>();
         services.AddScoped<ICommandHandler<ExportSalesReportCommand, ReportExportFile>, ExportSalesReportCommandHandler>();

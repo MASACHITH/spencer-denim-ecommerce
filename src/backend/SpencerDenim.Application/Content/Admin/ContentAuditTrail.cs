@@ -69,6 +69,10 @@ public static class ContentAuditTrail
     /// Fields whose value must not reach the audit row — the content page's body, and anything else
     /// later. They are compared normally and then replaced with <see cref="DescribeBody"/>'s summary.
     /// </param>
+    /// <param name="describeRedacted">
+    /// How a redacted field is described instead, when a length of HTML is the wrong summary — a size
+    /// guide's table reads better as "6 columns × 8 rows". Called with the field name and the real value.
+    /// </param>
     public static AuditLog? ForChange(
         string action,
         string entityType,
@@ -77,7 +81,8 @@ public static class ContentAuditTrail
         IReadOnlyDictionary<string, object?> after,
         AdminActor actor,
         DateTime occurredAtUtc,
-        IReadOnlySet<string>? redactedFields = null)
+        IReadOnlySet<string>? redactedFields = null,
+        Func<string, object?, object?>? describeRedacted = null)
     {
         ArgumentNullException.ThrowIfNull(before);
         ArgumentNullException.ThrowIfNull(after);
@@ -95,14 +100,17 @@ public static class ContentAuditTrail
 
             var redact = redactedFields?.Contains(field) == true;
 
-            changedBefore[field] = redact ? DescribeBody(beforeValue as string) : beforeValue;
-            changedAfter[field] = redact ? DescribeBody(afterValue as string) : afterValue;
+            changedBefore[field] = redact ? Redact(field, beforeValue, describeRedacted) : beforeValue;
+            changedAfter[field] = redact ? Redact(field, afterValue, describeRedacted) : afterValue;
         }
 
         return changedAfter.Count == 0
             ? null
             : Row(action, entityType, entityId, changedBefore, changedAfter, actor, occurredAtUtc);
     }
+
+    private static object? Redact(string field, object? value, Func<string, object?, object?>? describe) =>
+        describe is null ? DescribeBody(value as string) : describe(field, value);
 
     /// <summary>The fields a content-page row redacts. One set, so the two callers cannot disagree.</summary>
     public static IReadOnlySet<string> RedactedContentPageFields { get; } =

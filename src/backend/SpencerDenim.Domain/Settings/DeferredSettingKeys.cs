@@ -138,13 +138,6 @@ public static class DeferredSettingKeys
             SettingKeyDeferralKind.AwaitingItsFeature,
             "As Inventory.DefaultLowStockThreshold: CatalogOptions, default 10, doc 08 §3.8's own figure."),
 
-        // ---- Reviews -----------------------------------------------------------------------------------
-        new(
-            "Reviews.RequireApproval",
-            SettingKeyDeferralKind.AwaitingItsFeature,
-            "There is no review submission or moderation path yet, so nothing reads it in any form — not "
-            + "even a configuration fallback. It belongs to the task that lets a customer write a review."),
-
         // ---- Delivery ----------------------------------------------------------------------------------
         new(
             "Delivery.DefaultZone",

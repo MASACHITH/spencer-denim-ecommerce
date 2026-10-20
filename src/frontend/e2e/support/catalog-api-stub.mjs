@@ -15,6 +15,8 @@ import { randomUUID } from 'node:crypto';
 import { deflateSync } from 'node:zlib';
 import { createServer } from 'node:http';
 
+import { handleReviewRoute } from './review-stub.mjs';
+
 const PORT = Number(process.env.E2E_API_PORT ?? 4421);
 
 /**
@@ -1601,6 +1603,34 @@ const ANNOUNCEMENTS = [
   { id: 2, message: 'Shop the season sale', linkUrl: '/sale' },
   { id: 3, message: 'Stitched in Sri Lanka since 2011', linkUrl: null },
 ];
+
+/**
+ * The strips `/__test__/announcements` can switch to (#36). `long` is the 200-character maximum an admin may
+ * type, with a link, beside a short one — the tallest and shortest a header can be in one rotation.
+ */
+const LONG_ANNOUNCEMENT =
+  'Free island-wide delivery on every order this week, and exchanges in any of our Colombo, Kandy and Galle '
+  + 'stores within thirty days of purchase, so try it at home and decide later. Terms on the returns page.';
+
+const ANNOUNCEMENT_STATES = {
+  default: ANNOUNCEMENTS,
+  empty: [],
+  single: [{ id: 1, message: 'Stitched in Sri Lanka', linkUrl: null }],
+  long: [
+    { id: 1, message: LONG_ANNOUNCEMENT.slice(0, 200), linkUrl: '/sale' },
+    { id: 2, message: 'Sale', linkUrl: null },
+    { id: 3, message: LONG_ANNOUNCEMENT.slice(0, 120), linkUrl: null },
+  ],
+  // Tester #192: markup and hostile links an older row (or a bypassed validator) could hold. The strip must
+  // render the words as text, and must never put a script or an off-site path in an href.
+  hostile: [
+    { id: 1, message: '<img src=x onerror="window.__xss=1">Sale <b>now</b>', linkUrl: 'javascript:window.__xss=2' },
+    { id: 2, message: '</script><script>window.__xss=3</script>', linkUrl: '/.//evil.example' },
+    { id: 3, message: '{{constructor.constructor("window.__xss=4")()}}', linkUrl: '//evil.example' },
+  ],
+};
+
+let announcementsState = 'default';
 
 /** A slow answer, so a test can prove the menu does not hold the page open waiting for it. */
 const DELAY_MS = Number(process.env.E2E_API_DELAY_MS ?? 0);
@@ -3668,6 +3698,12 @@ const server = createServer((request, response) => {
   response.setHeader('Content-Type', 'application/json; charset=utf-8');
   response.setHeader('Cache-Control', 'no-store');
 
+  // PDP-08 (#189): the review routes, and the signed-in session they depend on. Before every other route so
+  // `/api/catalog/products/{slug}/reviews` is not read as a product slug.
+  if (handleReviewRoute(request, response, url, { totalProducts: TOTAL_PRODUCTS, slugPattern: SLUG_PATTERN })) {
+    return;
+  }
+
   // Test-only, and deliberately named so: it is a switch on a fixture, not an API the storefront
   // knows about. Nothing in `src/` ever asks for this path.
   //
@@ -3881,8 +3917,23 @@ const server = createServer((request, response) => {
     return;
   }
 
+  // #36: the announcement strip is admin text (ADM-17), so the header's height follows whatever an admin
+  // writes. `/__test__/announcements?state=long|empty|single|default` switches the strip on this process;
+  // like the site-settings switch it has to live here, because the storefront reads the strip during the
+  // **server** render. Only the serial specs on the branding pair turn it.
+  if (url.pathname === '/__test__/announcements') {
+    announcementsState = url.searchParams.get('state') ?? 'default';
+    response.end(JSON.stringify({ state: announcementsState }));
+    return;
+  }
+
   if (url.pathname === '/api/content/announcements') {
-    response.end(JSON.stringify(process.env.E2E_CONTENT === 'empty' ? [] : ANNOUNCEMENTS));
+    if (process.env.E2E_CONTENT === 'empty') {
+      response.end('[]');
+      return;
+    }
+
+    response.end(JSON.stringify(ANNOUNCEMENT_STATES[announcementsState] ?? ANNOUNCEMENTS));
     return;
   }
 

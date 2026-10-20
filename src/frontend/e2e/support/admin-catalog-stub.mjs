@@ -33,9 +33,11 @@ import { readFileSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { extname, join, normalize, resolve } from 'node:path';
 
+import { handleContentRoute } from './admin-content-stub.mjs';
 import { freshCustomerState, handleCustomerRoute } from './admin-customer-stub.mjs';
 import { freshReportingState, handleReportingRoute } from './admin-reporting-stub.mjs';
 import { freshInventoryState, handleInventoryRoute } from './admin-inventory-stub.mjs';
+import { freshReviewState, handleReviewRoute } from './admin-review-stub.mjs';
 import { addManyProducts, freshProductState, handleProductRoute } from './admin-product-stub.mjs';
 
 const PORT = Number(process.env.E2E_ADMIN_PORT ?? 4430);
@@ -1300,6 +1302,9 @@ function freshState() {
     // ADM-12 (#190): the inventory screen, empty until a test asks.
     ...freshInventoryState(),
 
+    // ADM-16 (#189): review moderation, empty until a test asks.
+    ...freshReviewState(),
+
     /** Open admin alerts (W4-02a). Empty unless a test asks for some — see `alertsFor`. */
     alerts: [],
   };
@@ -1323,6 +1328,9 @@ const SEEDED_SETTINGS = {
   // Issue #193: doc 08 section 3.8's own 90 and 7, which the real seeder writes into the Traffic rows.
   'Traffic.RawRetentionDays': '90',
   'Traffic.BotRetentionDays': '7',
+
+  // Issue #189: doc 08 section 3.8's own "(true)".
+  'Reviews.RequireApproval': 'true',
 };
 
 /**
@@ -1373,6 +1381,9 @@ function settingsPayload(state) {
       types: { 'Traffic.RawRetentionDays': 'Int', 'Traffic.BotRetentionDays': 'Int' },
     },
 
+    // Issue #189: the review approval switch. Settings.Edit, its own save unit.
+    { groupKey: 'Reviews', keys: ['Reviews.RequireApproval'], types: { 'Reviews.RequireApproval': 'Bool' } },
+
     // PAY-01. Its own group and its own save unit, because it is the one group guarded by a different
     // permission (Settings.Payments) — see SettingCatalog.SaveUnits.
     {
@@ -1417,6 +1428,10 @@ function settingsPayload(state) {
 
     if (groupKey === 'Traffic') {
       return ['Traffic.RawRetentionDays', 'Traffic.BotRetentionDays'];
+    }
+
+    if (groupKey === 'Reviews') {
+      return ['Reviews.RequireApproval'];
     }
 
     return ['Contact.WhatsApp', 'Social.FacebookUrl', 'Social.InstagramUrl', 'Social.TikTokUrl', 'Social.YouTubeUrl'];
@@ -2567,6 +2582,36 @@ const server = createServer(async (request, response) => {
     return noContent(response);
   }
 
+  // Issue #189: the review approval switch. Mirrors AdminSettingsEndpoints.UpdateReviewsAsync and
+  // UpdateReviewSettingsCommandHandler: requireApproval, when sent, is a JSON true or false (null and text are
+  // refused), then the token. Left out, nothing is written.
+  if (path === '/api/admin/settings/reviews' && request.method === 'PUT') {
+    const body = await readBody(request);
+    if (body === undefined || body === null || typeof body !== 'object' || Array.isArray(body)) {
+      return problem(response, 400, 'Malformed JSON', 'The request body is not valid JSON.', 'malformed_json');
+    }
+
+    if (Object.hasOwn(body, 'requireApproval') && typeof body.requireApproval !== 'boolean') {
+      return json(response, 400, {
+        title: 'One or more fields need correcting.',
+        status: 400,
+        errors: {
+          requireApproval: [body.requireApproval === null ? 'Choose on or off; this cannot be left empty.' : 'Send requireApproval as true or false.'],
+        },
+      });
+    }
+
+    if (body.rowVersion !== settingsToken(state, 'Reviews')) {
+      return problem(response, 409, 'This change cannot be applied', 'Somebody else changed the review settings while you were editing them.', 'stale_row_version');
+    }
+
+    if (Object.hasOwn(body, 'requireApproval')) {
+      state.settings['Reviews.RequireApproval'] = body.requireApproval ? 'true' : 'false';
+    }
+
+    return noContent(response);
+  }
+
   // Issue #193: the Traffic form. Mirrors UpdateTrafficSettingsCommandHandler's rules and order: field errors,
   // then the token, then bots-not-longer-than-people against the value each key will hold. Only the fields the
   // body carried are written.
@@ -2723,6 +2768,24 @@ const server = createServer(async (request, response) => {
     return;
   }
 
+  // ---- homepage blocks, announcement bar, size guides (#192) ----------------------------------
+  if (
+    await handleContentRoute({
+      path,
+      method: request.method,
+      url,
+      request,
+      response,
+      state,
+      json,
+      problem,
+      noContent,
+      readBody,
+    })
+  ) {
+    return undefined;
+  }
+
   // ---- customers and newsletter subscribers (ADM-15, ADM-21, W3-07) ---------------------------
   if (await handleCustomerRoute({ path, method: request.method, url, response, state, json })) {
     return undefined;
@@ -2730,6 +2793,11 @@ const server = createServer(async (request, response) => {
 
   // ---- dashboard and reports (ADM-04–08, ADM-19, W4-02) ---------------------------------------
   if (await handleReportingRoute({ path, method: request.method, url, response, state, json })) {
+    return undefined;
+  }
+
+  // ---- reviews (ADM-16, #189) -----------------------------------------------------------------
+  if (await handleReviewRoute({ path, method: request.method, url, request, response, state, json, problem, readBody })) {
     return undefined;
   }
 

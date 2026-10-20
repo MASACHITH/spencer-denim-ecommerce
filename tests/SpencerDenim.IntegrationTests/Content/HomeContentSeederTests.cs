@@ -79,8 +79,12 @@ public sealed class HomeContentSeederTests(SqlServerDatabaseFixture sqlServer)
         using var scope = sqlServer.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
+        // #63 also seeds the artwork blocks' words as switched-off rows (HomeContentSeedVersionTests); this
+        // test is about the two blocks that need no media at all.
         var items = await dbContext.HomeSectionItems
             .Include(item => item.HomeSection)
+            .Where(item => item.HomeSection!.SectionType == HomeSectionType.ShopByDepartment
+                || item.HomeSection!.SectionType == HomeSectionType.Benefits)
             .OrderBy(item => item.HomeSectionId)
             .ThenBy(item => item.SortOrder)
             .ToListAsync(Token);

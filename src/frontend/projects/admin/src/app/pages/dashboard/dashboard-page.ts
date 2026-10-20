@@ -28,6 +28,7 @@ import { SalesTrendChart } from './sales-trend';
 import { TrafficSourcesPanel } from './traffic-sources';
 import { TRAFFIC_PERMISSION } from '../../core/traffic/traffic.model';
 import { INVENTORY_PERMISSIONS } from '../../core/inventory/inventory.model';
+import { REVIEW_PERMISSIONS } from '../../core/reviews/reviews.model';
 
 interface Access {
   readonly dashboard: boolean;
@@ -35,6 +36,7 @@ interface Access {
   readonly reports: boolean;
   readonly traffic: boolean;
   readonly inventory: boolean;
+  readonly reviews: boolean;
 }
 
 /**
@@ -312,10 +314,17 @@ interface Access {
           @if (access()?.inventory) {
             <a class="adm-link" routerLink="/inventory" data-testid="dashboard-inventory-link">Inventory</a>
           }
+          @if (access()?.reviews) {
+            <a class="adm-link" routerLink="/reviews" data-testid="dashboard-reviews-link">Reviews</a>
+          }
           <a class="adm-link" routerLink="/catalog">Departments and categories</a>
           <a class="adm-link" routerLink="/marketing/promo-codes">Promo codes</a>
           <a class="adm-link" routerLink="/marketing/sale-campaigns">Sale campaigns</a>
           <a class="adm-link" routerLink="/marketing/newsletter">Newsletter subscribers</a>
+          <a class="adm-link" routerLink="/content/home" data-testid="dashboard-home-content-link">Homepage</a>
+          <a class="adm-link" routerLink="/content/announcements" data-testid="dashboard-announcements-link">Announcement bar</a>
+          <a class="adm-link" routerLink="/content/size-guides" data-testid="dashboard-size-guides-link">Size guides</a>
+          <a class="adm-link" routerLink="/content/pages" data-testid="dashboard-content-pages-link">Content pages</a>
           @if (access()?.reports) {
             <a class="adm-link" routerLink="/reports" data-testid="dashboard-reports-link">Reports</a>
           }
@@ -510,6 +519,7 @@ export class DashboardPage {
           reports: holds(REPORTING_PERMISSIONS.reports),
           traffic: holds(TRAFFIC_PERMISSION),
           inventory: holds(INVENTORY_PERMISSIONS.view),
+          reviews: holds(REVIEW_PERMISSIONS.view),
         };
 
         this.access.set(access);
@@ -520,7 +530,7 @@ export class DashboardPage {
       },
       // The session could not be read: show the widgets and let the API decide, as the other screens do.
       error: () => {
-        this.access.set({ dashboard: true, orders: true, reports: true, traffic: true, inventory: true });
+        this.access.set({ dashboard: true, orders: true, reports: true, traffic: true, inventory: true, reviews: true });
         this.load();
       },
     });
