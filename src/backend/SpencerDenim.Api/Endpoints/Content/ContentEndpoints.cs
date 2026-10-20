@@ -11,6 +11,7 @@ using SpencerDenim.Application.Content.Contracts;
 using SpencerDenim.Application.Content.Home;
 using SpencerDenim.Application.Content.Pages;
 using SpencerDenim.Application.Marketing.Newsletter;
+using SpencerDenim.Application.Marketing.SaleBanner;
 using SpencerDenim.Domain.Marketing;
 
 namespace SpencerDenim.Api.Endpoints.Content;
@@ -48,6 +49,20 @@ internal static class ContentEndpoints
             .WithSummary("The announcement strip above the header.")
             .WithDescription("GLB-03. Active messages inside their schedule, in order. Blank messages are dropped.")
             .Produces<IReadOnlyList<AnnouncementDto>>();
+
+        content.MapMethods("/sale-banner", ReadMethods, GetSaleBannerAsync)
+            .WithName("GetSaleBanner")
+            .WithSummary("The live sale campaign's banner, for the top of the Sale page.")
+            .WithDescription(
+                "ADM-14, DEPT-03. The banner image staff chose for a sale campaign, while that campaign is "
+                + "live in the shop's time (active, start inclusive, end exclusive) and only then. When "
+                + "several live campaigns have one, the one that started most recently is shown. `banner` is "
+                + "null on the ordinary day with no such campaign, which is a normal 200 rather than a 404. "
+                + "`altText` is empty, never null, for a picture with no description. Read live on every "
+                + "request, so the banner appears and disappears on the campaign's own boundaries; listing "
+                + "prices may take up to five minutes to follow (doc 08 §7.4). The same answer for every "
+                + "visitor.")
+            .Produces<SaleBannerDto>();
 
         content.MapMethods("/pages", ReadMethods, GetPagesAsync)
             .WithName("GetContentPages")
@@ -108,6 +123,11 @@ internal static class ContentEndpoints
         var page = await handler.HandleAsync(new GetHomePageQuery(), cancellationToken);
         return TypedResults.Ok(page);
     }
+
+    private static async Task<Ok<SaleBannerDto>> GetSaleBannerAsync(
+        IQueryHandler<GetSaleBannerQuery, SaleBannerDto> handler,
+        CancellationToken cancellationToken) =>
+        TypedResults.Ok(await handler.HandleAsync(new GetSaleBannerQuery(), cancellationToken));
 
     private static async Task<Ok<ContentPageLinksDto>> GetPagesAsync(
         IQueryHandler<GetContentPageLinksQuery, ContentPageLinksDto> handler,

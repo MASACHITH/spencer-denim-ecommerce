@@ -64,19 +64,46 @@ public interface ISaleCampaignAdminStore
         CancellationToken cancellationToken);
 
     /// <summary>
-    /// Whether this <c>media.MediaAssets</c> id exists, is ready and is not deleted — doc 11 P3 step 1's
-    /// optional banner.
+    /// The media-library asset with this <c>publicId</c>, when it can be a campaign banner — doc 11 P3 step
+    /// 1's optional banner — or <see langword="null"/> when it cannot.
     /// </summary>
-    Task<bool> BannerExistsAsync(int mediaAssetId, CancellationToken cancellationToken);
+    /// <remarks>
+    /// <b>Four conditions, and each one is a way the Sale page would otherwise break or leak.</b> Ready
+    /// (a row still processing has no file behind it), not deleted, an <i>image</i> (a video's row would
+    /// render as a broken <c>&lt;img&gt;</c>), and <i>public</i> — a private asset is a customer's bank slip,
+    /// and a banner is shown to everyone. The first version of this check tested only the first two.
+    /// </remarks>
+    Task<SaleCampaignBannerCandidate?> FindBannerAsync(Guid publicId, CancellationToken cancellationToken);
 
-    /// <summary>Commits the unit of work, stamping the audit columns of doc 08 §1.5.</summary>
+    /// <summary>
+    /// Commits the unit of work, stamping the audit columns of doc 08 §1.5, and brings this campaign's
+    /// <c>media.MediaUsages</c> row in line with its banner <b>in the same transaction</b> (doc 08 §3.3:
+    /// "an owner's save rewrites its usage rows in the same transaction").
+    /// </summary>
+    /// <param name="campaign">
+    /// The campaign being saved. A removed campaign, or one with no banner, owns no usage row; otherwise it
+    /// owns exactly one, for its banner.
+    /// </param>
     /// <param name="actingUserId">
     /// Who is saving. Passed in rather than read from a context, because the Application layer has no
     /// request to read one from.
     /// </param>
     /// <param name="cancellationToken">Cancellation.</param>
-    Task<SaleCampaignSaveOutcome> SaveAsync(int? actingUserId, CancellationToken cancellationToken);
+    Task<SaleCampaignSaveOutcome> SaveAsync(
+        SaleCampaign campaign,
+        int? actingUserId,
+        CancellationToken cancellationToken);
 }
+
+/// <summary>
+/// A media-library asset that may be a campaign banner: its internal id, which the column stores, and the
+/// description the Sale page will read aloud.
+/// </summary>
+/// <remarks>
+/// The internal id stays on the server. The admin screen names an asset by its <c>publicId</c>, the way the
+/// product form and the logo setting do.
+/// </remarks>
+public sealed record SaleCampaignBannerCandidate(int MediaAssetId, string? AltText);
 
 /// <summary>
 /// How a sale-campaign save ended.
@@ -94,4 +121,11 @@ public enum SaleCampaignSaveOutcome
 
     /// <summary>The row version did not match; nothing was written.</summary>
     ConcurrencyConflict = 1,
+
+    /// <summary>
+    /// The banner stopped being a ready public image between the handler's check and the save (it was
+    /// deleted from the media library in between); nothing was written. Decided under the asset row's
+    /// update lock, which the library's delete also takes, so the two cannot both succeed.
+    /// </summary>
+    BannerUnavailable = 2,
 }

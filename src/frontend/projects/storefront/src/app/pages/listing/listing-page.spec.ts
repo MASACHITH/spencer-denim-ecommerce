@@ -245,6 +245,17 @@ describe('ListingPage', () => {
     });
   }
 
+  /**
+   * Answers the Sale page's banner request (#191), which only the Sale listing makes. `match` rather than
+   * `expectOne`, so a test that navigated twice answers both.
+   */
+  function flushSaleBanner(payload: object = { banner: null }): void {
+    http
+      .match((request) => request.url === '/api/content/sale-banner')
+      .forEach((request) => request.flush(payload));
+    harness.detectChanges();
+  }
+
   /** Answers a restore that needs more than one request. */
   function flushAll(requests: readonly TestRequest[], total: number): void {
     requests.forEach((request) => answer(request, total));
@@ -583,6 +594,7 @@ describe('ListingPage', () => {
 
     it('asks the API for the sale', async () => {
       await goTo('/sale');
+      flushSaleBanner();
 
       const request = productRequest();
       expect(request.request.params.get('onSale')).toBe('true');
@@ -595,12 +607,14 @@ describe('ListingPage', () => {
 
     it("does not offer the listing's own filter as a chip to take off", async () => {
       await open('/sale', page(3));
+      flushSaleBanner();
 
       expect(queryAll('.chips .chip')).toHaveLength(0);
     });
 
     it('still lets a shopper narrow the sale, and take that back off', async () => {
       await goTo('/sale?minDiscountPercent=50');
+      flushSaleBanner();
       productRequest().flush(page(3));
       harness.detectChanges();
 
@@ -613,6 +627,83 @@ describe('ListingPage', () => {
 
       expect(TestBed.inject(Router).url).toBe('/sale');
       expect(productRequest().request.params.get('onSale')).toBe('true');
+    });
+
+    /**
+     * **The live campaign's banner heads the Sale page** (#191): the picture, its description as the
+     * alt text, the candidate widths with the layout's own `sizes`, and its true size reserved so the
+     * products do not jump when it loads.
+     */
+    it('draws the live campaign banner at the top of the Sale page', async () => {
+      await open('/sale', page(3));
+      flushSaleBanner({
+        banner: {
+          imageUrl: '/media/renditions/b/large.webp',
+          imageSrcSet: '/media/renditions/b/card.webp 600w, /media/renditions/b/large.webp 1200w',
+          width: 1600,
+          height: 500,
+          altText: 'Linen Week: 20% off shirts',
+        },
+      });
+
+      const image = query<HTMLImageElement>('[data-testid="sale-banner"] img');
+
+      expect(image?.getAttribute('src')).toBe('/media/renditions/b/large.webp');
+      expect(image?.getAttribute('alt')).toBe('Linen Week: 20% off shirts');
+      expect(image?.getAttribute('srcset')).toContain('1200w');
+      expect(image?.getAttribute('sizes')).toContain('100vw');
+      expect(image?.getAttribute('width')).toBe('1600');
+      expect(image?.getAttribute('height')).toBe('500');
+      expect(image?.getAttribute('loading')).toBeNull();
+
+      // Under the heading, above the bar that counts the products: the page's own header slot.
+      const order = queryAll('h1, [data-testid="sale-banner"], .plp__bar').map((node) =>
+        node.tagName === 'H1' ? 'h1' : node.classList.contains('plp__bar') ? 'bar' : 'banner',
+      );
+      expect(order).toEqual(['h1', 'banner', 'bar']);
+    });
+
+    it('marks a banner with no description as decorative rather than naming the file', async () => {
+      await open('/sale', page(3));
+      flushSaleBanner({
+        banner: { imageUrl: '/media/b.jpg', imageSrcSet: null, width: null, height: null, altText: '' },
+      });
+
+      const image = query<HTMLImageElement>('[data-testid="sale-banner"] img');
+
+      expect(image?.getAttribute('alt')).toBe('');
+      expect(image?.hasAttribute('srcset')).toBe(false);
+      expect(image?.hasAttribute('sizes')).toBe(false);
+      expect(image?.hasAttribute('width')).toBe(false);
+    });
+
+    it('draws no banner on a day with no live campaign banner', async () => {
+      await open('/sale', page(3));
+      flushSaleBanner({ banner: null });
+
+      expect(query('[data-testid="sale-banner"]')).toBeNull();
+      expect(query('.plp__promo')).toBeNull();
+    });
+
+    it('leaves the Sale listing whole when the banner cannot be read', async () => {
+      await open('/sale', page(3));
+      http
+        .expectOne('/api/content/sale-banner')
+        .flush(null, { status: 500, statusText: 'Server Error' });
+      harness.detectChanges();
+
+      expect(query('[data-testid="sale-banner"]')).toBeNull();
+      expect(queryAll('.product-grid > li')).toHaveLength(3);
+    });
+
+    it('asks for no banner on New Arrivals', async () => {
+      await open('/new-arrivals', page(3));
+      http.expectNone('/api/content/sale-banner');
+    });
+
+    it('asks for no banner on a department listing', async () => {
+      await open('/women', page(3));
+      http.expectNone('/api/content/sale-banner');
     });
 
     it('offers no department or category group: the listing has neither', async () => {

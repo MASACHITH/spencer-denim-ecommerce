@@ -79,6 +79,17 @@ public static class MediaUsageOwnerTypes
     /// </para>
     /// </summary>
     public const string Setting = "Setting";
+
+    /// <summary>
+    /// A sale campaign's banner (<c>marketing.SaleCampaigns.BannerAssetId</c>, ADM-14, doc 11 P3 step 1).
+    /// <para>
+    /// The column has a real foreign key, but a foreign key only refuses a <i>purge</i>: the media
+    /// library's delete is a soft delete, and without this row it would let a staff member delete the
+    /// picture the Sale page is showing. <see cref="MediaUsage.OwnerId"/> is the campaign's id, and the
+    /// row goes when the campaign is removed or its banner is cleared or replaced.
+    /// </para>
+    /// </summary>
+    public const string SaleCampaign = "SaleCampaign";
 }
 
 /// <summary>The <see cref="MediaUsage.UsageRole"/> values this milestone writes.</summary>

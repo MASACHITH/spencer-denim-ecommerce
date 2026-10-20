@@ -3,6 +3,7 @@ import {
   Component,
   Injector,
   afterNextRender,
+  computed,
   inject,
   signal,
 } from '@angular/core';
@@ -13,7 +14,8 @@ import { catchError } from 'rxjs/operators';
 import { AdminCampaignApi } from '../../core/marketing/admin-campaign-api';
 import {
   AdminSaleCampaign,
-  AdminSaleCampaignTargetRequest,
+  AdminSaleCampaignBanner,
+  SaleCampaignTargetType,
   SaleDiscountType,
   campaignDiscountLabel,
   campaignStatusLabel,
@@ -21,6 +23,9 @@ import {
 } from '../../core/marketing/admin-campaign.model';
 import { AdminCatalogApi, CatalogFailure, toCatalogFailure } from '../../core/catalog/admin-catalog-api';
 import { AdminCategoryNode, AdminDepartment } from '../../core/catalog/admin-catalog.model';
+import { AdminProductListItem } from '../../core/products/admin-product.model';
+import { CampaignBannerPicker } from './campaign-banner-picker';
+import { CampaignProductPicker } from './campaign-product-picker';
 
 /** One department or category a campaign can be pointed at, as the two selects list them. */
 interface TargetOption {
@@ -31,7 +36,7 @@ interface TargetOption {
 
 /** A target on the form, before it is saved. Carries its own label so the chip can name it. */
 interface DraftTarget {
-  readonly targetType: 'Department' | 'Category';
+  readonly targetType: SaleCampaignTargetType;
   readonly id: number;
   readonly includeSubcategories: boolean;
   readonly label: string;
@@ -40,17 +45,16 @@ interface DraftTarget {
 /**
  * Sale campaigns (ADM-14, doc 11 P3 section A).
  *
- * **Departments and categories only; product targets are deliberately not on this screen.** The API
- * supports all three and nothing is thrown away by leaving one out. The reason is that a department and a
- * category are a few dozen rows that this screen can load whole and offer as a plain `<select>`, while a
- * product target is a picker over thousands of rows — search, paging, a chosen-list — and a rushed
- * version of that is the part that would be wrong. Doc 11 line 450's own worked example, *"Linen Week,
- * 20% off Women › Shirts & Blouses"*, is a category campaign. The screen says so in as many words rather
- * than leaving a staff member to wonder whether the option is missing or broken.
+ * **Departments, categories and individual products (#191).** A department and a category are a few
+ * dozen rows that this screen loads whole and offers as a plain `<select>`; a product is one of thousands,
+ * so it is chosen through {@link CampaignProductPicker}, a search-as-you-type combobox over the product
+ * list's own paged endpoint. Every kind of target lands in the same chip list, and every chip can be
+ * removed. A campaign may name a product that a department or category on it already covers: that changes
+ * nothing, because a campaign discounts a product once, and two campaigns on one product never add up —
+ * the lower price wins (doc 08 §6 step 3).
  *
- * **The banner is not set here either**, for a smaller reason: `bannerAssetId` is stored and returned by
- * the API, it needs ADM-18's media picker to choose one, and nothing on the storefront renders a campaign
- * banner today. Doc 11 P3 step 1 calls it optional. The form sends `null` and says so.
+ * **The banner** is chosen through {@link CampaignBannerPicker}, which uploads to the media library the
+ * way the product form and the logo setting do, and is shown on the Sale page while the campaign is live.
  *
  * **Nothing is seeded and no example campaign is shown.** No default name, no default percentage, no
  * placeholder that renders — a plausible-looking campaign anywhere here would be a discount the client
@@ -76,13 +80,14 @@ interface DraftTarget {
 @Component({
   selector: 'sda-sale-campaigns-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
+  imports: [CampaignBannerPicker, CampaignProductPicker],
   template: `
     <section class="adm-panel">
       <h1 class="adm-panel__title">Sale campaigns</h1>
       <p class="adm-panel__hint">
-        A campaign takes a percentage or an amount off everything in the departments and categories you
-        choose, between a start and an end. Nothing is set up in advance — which sales this shop runs is
-        yours to decide.
+        A campaign takes a percentage or an amount off everything in the departments, categories and
+        products you choose, between a start and an end. Nothing is set up in advance — which sales this
+        shop runs is yours to decide.
       </p>
       <p class="adm-panel__hint">
         Dates and times are this shop's own time. The bag and the checkout always charge the campaign
@@ -90,8 +95,8 @@ interface DraftTarget {
         catch up at the start and at the end.
       </p>
       <p class="adm-panel__hint" data-testid="campaign-scope-note">
-        Campaigns here apply to departments and categories. Choosing individual products, and choosing a
-        banner image for a campaign, are not on this screen yet.
+        A product on two campaigns, or reached twice by one, gets the lower price once — campaigns never
+        add up. A campaign's banner shows at the top of the Sale page while the campaign is live.
       </p>
     </section>
 
@@ -309,10 +314,17 @@ interface DraftTarget {
             >
               <option value="Department">A whole department</option>
               <option value="Category">One category</option>
+              <option value="Product">Individual products</option>
             </select>
           </label>
 
-          @if (targetType() === 'Department') {
+          @if (targetType() === 'Product') {
+            <sda-campaign-product-picker
+              [chosen]="chosenProductIds()"
+              (picked)="addProduct($event)"
+              (refused)="refuseTarget($event)"
+            />
+          } @else if (targetType() === 'Department') {
             <label class="adm-field">
               <span class="adm-label">Department</span>
               <select
@@ -365,17 +377,31 @@ interface DraftTarget {
           }
         </div>
 
-        <div class="adm-actions">
-          <button
-            class="adm-btn"
-            type="button"
-            [attr.aria-disabled]="isBusy() ? 'true' : null"
-            data-testid="add-target"
-            (click)="addTarget()"
-          >
-            Add to the campaign
-          </button>
-        </div>
+        <!-- A product is added the moment it is chosen from the list, so this button is for a department
+             or a category only. -->
+        @if (targetType() !== 'Product') {
+          <div class="adm-actions">
+            <button
+              class="adm-btn"
+              type="button"
+              [attr.aria-disabled]="isBusy() ? 'true' : null"
+              data-testid="add-target"
+              (click)="addTarget()"
+            >
+              Add to the campaign
+            </button>
+          </div>
+        }
+
+        <sda-campaign-banner-picker
+          [banner]="banner()"
+          [unavailable]="bannerGone()"
+          (bannerChange)="chooseBanner($event)"
+          (said)="announce($event)"
+        />
+        @if (errorFor('bannerPublicId'); as message) {
+          <p class="adm-field-error" role="alert" data-testid="error-banner">{{ message }}</p>
+        }
 
         <div class="adm-actions">
           <button
@@ -431,6 +457,16 @@ interface DraftTarget {
               </dd>
               <dt>Window</dt>
               <dd>{{ campaign.startsAt }} &ndash; {{ campaign.endsAt }}</dd>
+              <dt>Banner</dt>
+              <dd [attr.data-testid]="'banner-' + campaign.id">
+                @if (campaign.banner; as chosen) {
+                  {{ chosen.altText ?? 'A picture with no description' }}
+                } @else if (campaign.bannerUnavailable) {
+                  No longer available in the media library
+                } @else {
+                  None
+                }
+              </dd>
               @if (campaign.description) {
                 <dt>Note</dt>
                 <dd>{{ campaign.description }}</dd>
@@ -487,6 +523,11 @@ interface DraftTarget {
       font-size: var(--text-data);
       font-weight: var(--weight-semibold);
       margin-block: var(--space-2) var(--space-1);
+    }
+    /* A product name is staff text with no guaranteed break in it; the status line must wrap it rather
+       than widen the page (#191 tester). */
+    [data-testid='campaign-said'] {
+      overflow-wrap: anywhere;
     }
     .campaign-row {
       display: grid;
@@ -601,7 +642,23 @@ export class SaleCampaignsPage {
 
   protected readonly targets = signal<readonly DraftTarget[]>([]);
 
-  protected readonly targetType = signal<'Department' | 'Category'>('Category');
+  /** The ids of the products on the form, so the picker can mark them and refuse a repeat. */
+  protected readonly chosenProductIds = computed(() =>
+    this.targets()
+      .filter((target) => target.targetType === 'Product')
+      .map((target) => target.id),
+  );
+
+  /** The banner the form will save, or null for none. */
+  protected readonly banner = signal<AdminSaleCampaignBanner | null>(null);
+
+  /**
+   * The campaign being edited names a banner the library can no longer show. Said beside the picker, so
+   * that clearing it on save is something the staff member was told about rather than a silent change.
+   */
+  protected readonly bannerGone = signal(false);
+
+  protected readonly targetType = signal<SaleCampaignTargetType>('Category');
   protected readonly targetDepartmentId = signal('');
   protected readonly targetCategoryId = signal('');
   protected readonly includeSubcategories = signal(true);
@@ -675,7 +732,50 @@ export class SaleCampaignsPage {
 
   protected chooseTargetType(event: Event): void {
     this.targetType.set(
-      ((event.target as HTMLSelectElement | null)?.value ?? 'Category') as 'Department' | 'Category',
+      ((event.target as HTMLSelectElement | null)?.value ?? 'Category') as SaleCampaignTargetType,
+    );
+  }
+
+  /**
+   * Adds a product the picker offered.
+   *
+   * The label names the product code as well as the name, because two products in a fashion catalogue
+   * often share a name across colours or seasons, and the code is what is on the label in the stockroom.
+   */
+  protected addProduct(product: AdminProductListItem): void {
+    if (this.targets().some((target) => target.targetType === 'Product' && target.id === product.id)) {
+      this.refuseTarget(`${product.name} is already on this campaign.`);
+      return;
+    }
+
+    this.targets.set([
+      ...this.targets(),
+      {
+        targetType: 'Product',
+        id: product.id,
+        includeSubcategories: true,
+        label: `${product.name} (${product.productCode})`,
+      },
+    ]);
+
+    this.fieldErrors.set({});
+    this.announce(`${product.name} added. ${this.targets().length} chosen.`);
+  }
+
+  /** A target the form would not add, said beside the chip list and out loud. */
+  protected refuseTarget(message: string): void {
+    this.fieldErrors.set({ targets: message });
+    this.announce(message);
+  }
+
+  protected chooseBanner(banner: AdminSaleCampaignBanner | null): void {
+    this.banner.set(banner);
+    this.bannerGone.set(false);
+
+    this.fieldErrors.set(
+      Object.fromEntries(
+        Object.entries(this.fieldErrors()).filter(([field]) => field !== 'bannerPublicId'),
+      ),
     );
   }
 
@@ -738,7 +838,18 @@ export class SaleCampaignsPage {
     this.announce(`${option.label} added. ${this.targets().length} chosen.`);
   }
 
+  /**
+   * Removes a chosen target.
+   *
+   * **Focus moves to the chip that took its place**, or the one before it, or the "Add" control when the
+   * list is empty. The pressed button is gone after this, and a keyboard user removing six products in a
+   * row would otherwise be thrown back to the top of the page after each one (#109's shape).
+   */
   protected dropTarget(target: DraftTarget): void {
+    const index = this.targets().findIndex(
+      (candidate) => candidate.targetType === target.targetType && candidate.id === target.id,
+    );
+
     this.targets.set(
       this.targets().filter(
         (candidate) => candidate.targetType !== target.targetType || candidate.id !== target.id,
@@ -746,6 +857,18 @@ export class SaleCampaignsPage {
     );
 
     this.announce(`${target.label} removed. ${this.targets().length} chosen.`);
+
+    afterNextRender(
+      () => {
+        const buttons = this.document.querySelectorAll<HTMLElement>(
+          '[data-testid="campaign-targets"] button',
+        );
+        const next = buttons[Math.min(index, buttons.length - 1)];
+
+        (next ?? this.document.querySelector<HTMLElement>('[data-testid="target-type"]'))?.focus();
+      },
+      { injector: this.injector },
+    );
   }
 
   protected startNew(): void {
@@ -769,14 +892,12 @@ export class SaleCampaignsPage {
     this.startsAt.set('');
     this.endsAt.set('');
     this.isActive.set(true);
-    this.targets.set([]);
 
-    // **Cleared here, and leaving it out was a real defect in this file.** `edit` fills it with the
-    // product targets this screen cannot show, and `startNew` runs after every save and on Cancel — so a
-    // form that did not clear it would carry the last-edited campaign's products into the next campaign
-    // a staff member created. That is a product put on a sale nobody chose, by a screen that never showed
-    // it.
-    this.keptProductTargets = [];
+    // Products included: `startNew` runs after every save and on Cancel, and a form that kept the last
+    // campaign's chips would put those products on the next sale a staff member created.
+    this.targets.set([]);
+    this.banner.set(null);
+    this.bannerGone.set(false);
     this.targetType.set('Category');
     this.targetDepartmentId.set('');
     this.targetCategoryId.set('');
@@ -787,11 +908,10 @@ export class SaleCampaignsPage {
   /**
    * Loads a saved campaign into the form.
    *
-   * **A product target survives an edit it cannot be seen in.** This screen offers departments and
-   * categories, but the API accepts all three and a campaign created elsewhere may carry a product — so
-   * those targets are kept in a field of their own and sent back untouched, because a full replacement
-   * that dropped them would silently take products off a sale. The row's "Applies to" line still names
-   * them, and the staff member is told.
+   * **Every target becomes a chip, products included**, so what the save sends is exactly what the staff
+   * member can see and remove. A product that has since been removed from the catalogue keeps its chip,
+   * named "(removed from the catalogue)", because the API refuses a save that still names it and the chip
+   * is how the staff member takes it off.
    */
   protected edit(campaign: AdminSaleCampaign): void {
     this.editingId.set(campaign.id);
@@ -815,46 +935,24 @@ export class SaleCampaignsPage {
     this.isActive.set(campaign.isActive);
 
     this.targets.set(
-      campaign.targets
-        .filter((target) => target.targetType !== 'Product')
-        .map((target) => ({
-          targetType: target.targetType === 'Department' ? 'Department' : 'Category',
-          id: (target.targetType === 'Department' ? target.departmentId : target.categoryId) ?? 0,
-          includeSubcategories: target.includeSubcategories,
-          label: campaignTargetLabel(target),
-        })),
+      campaign.targets.map((target) => ({
+        targetType: target.targetType,
+        id:
+          (target.targetType === 'Department'
+            ? target.departmentId
+            : target.targetType === 'Category'
+              ? target.categoryId
+              : target.productId) ?? 0,
+        includeSubcategories: target.includeSubcategories,
+        label: campaignTargetLabel(target),
+      })),
     );
 
-    this.keptProductTargets = campaign.targets
-      .filter((target) => target.targetType === 'Product')
-      .map((target) => ({
-        targetType: 'Product' as const,
-        departmentId: null,
-        categoryId: null,
-        productId: target.productId,
-        includeSubcategories: true,
-      }));
-
+    this.banner.set(campaign.banner);
+    this.bannerGone.set(campaign.banner === null && campaign.bannerUnavailable);
     this.fieldErrors.set({});
-
-    const kept = this.keptProductTargets.length;
-
-    this.announce(
-      kept === 0
-        ? `Editing ${campaign.name}.`
-        : `Editing ${campaign.name}. It also applies to ${kept} individual `
-          + `${kept === 1 ? 'product it names' : 'products it names'}, which this screen cannot change `
-          + 'and will keep as they are.',
-    );
+    this.announce(`Editing ${campaign.name}.`);
   }
-
-  /**
-   * Product targets on the campaign being edited, kept so a save does not drop them.
-   *
-   * A plain field rather than a signal: nothing renders it, and the sentence that tells the staff member
-   * about it is written once, by {@link edit}.
-   */
-  private keptProductTargets: readonly AdminSaleCampaignTargetRequest[] = [];
 
   /**
    * Saves the form.
@@ -877,10 +975,11 @@ export class SaleCampaignsPage {
       return;
     }
 
-    if (this.targets().length === 0 && this.keptProductTargets.length === 0) {
+    if (this.targets().length === 0) {
       const message =
-        'Choose at least one department or category for the campaign to apply to, and press "Add to the '
-        + 'campaign".';
+        'Choose at least one department, category or product for the campaign to apply to. A department '
+        + 'or a category is added with "Add to the campaign"; a product is added by choosing it from the '
+        + 'list.';
 
       this.fieldErrors.set({ targets: message });
       this.announce(message);
@@ -907,20 +1006,19 @@ export class SaleCampaignsPage {
           endsAt: this.endsAt().trim(),
           isActive: this.isActive(),
 
-          // Always null: this screen does not choose a banner, and sending anything else would be a
-          // value the staff member never picked. The key is still present, because the endpoint refuses
-          // a body that leaves one out.
-          bannerAssetId: null,
-          targets: [
-            ...this.targets().map((target) => ({
-              targetType: target.targetType,
-              departmentId: target.targetType === 'Department' ? target.id : null,
-              categoryId: target.targetType === 'Category' ? target.id : null,
-              productId: null,
-              includeSubcategories: target.includeSubcategories,
-            })),
-            ...this.keptProductTargets,
-          ],
+          // The key is always present, null for no banner, because the endpoint refuses a body that
+          // leaves one out.
+          bannerPublicId: this.banner()?.publicId ?? null,
+          targets: this.targets().map((target) => ({
+            targetType: target.targetType,
+            departmentId: target.targetType === 'Department' ? target.id : null,
+            categoryId: target.targetType === 'Category' ? target.id : null,
+            productId: target.targetType === 'Product' ? target.id : null,
+
+            // Forced on for a department and a product, as the API itself forces it: the flag only
+            // means something for a category.
+            includeSubcategories: target.targetType === 'Category' ? target.includeSubcategories : true,
+          })),
         },
         this.rowVersion,
       )
@@ -1151,7 +1249,7 @@ export class SaleCampaignsPage {
   }
 
   /** @see CouriersPage.announce — a repeated identical announcement has to re-fire (ADM-22). */
-  private announce(message: string): void {
+  protected announce(message: string): void {
     if (this.said() !== message) {
       this.said.set(message);
       return;

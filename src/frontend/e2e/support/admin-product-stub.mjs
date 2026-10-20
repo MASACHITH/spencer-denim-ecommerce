@@ -189,6 +189,55 @@ export function freshProductState() {
   };
 }
 
+/**
+ * Adds `count` plain, published products to this context's catalogue (#191), so a test can page through
+ * a search the way the campaign product picker does against thousands of real rows. Named "Linen Shirt
+ * 001"… so one term matches them all, with codes and SKUs a search can also find.
+ */
+export function addManyProducts(state, count) {
+  for (let index = 1; index <= count; index++) {
+    const id = state.nextProductId++;
+    const number = String(index).padStart(3, '0');
+
+    state.products.push({
+      id,
+      productCode: `SD-T-${number}`,
+      name: `Linen Shirt ${number}`,
+      slug: `linen-shirt-${number}`,
+      departmentId: 1,
+      primaryCategoryId: 20,
+      extraCategoryIds: [],
+      ageGroupId: null,
+      shortDescription: null,
+      description: null,
+      careInstructions: null,
+      materialId: null,
+      fitId: null,
+      occasionId: null,
+      basePrice: 4990,
+      compareAtPrice: null,
+      badgeOverride: null,
+      newUntilUtc: null,
+      recommendedRank: null,
+      sizeGuideId: null,
+      seoTitle: null,
+      seoDescription: null,
+      isPublished: index % 7 !== 0,
+      firstPublishedAtUtc: null,
+      cardImageUrl: null,
+      hoverImageUrl: null,
+      colours: [],
+      variants: [
+        { id: 10_000 + id, colourName: 'White', sizeId: 81, sizeLabel: 'S', sizeScaleName: 'Alpha', sku: `SD-T-${number}-W-S`, barcode: null, priceOverride: null, compareAtPriceOverride: null, isActive: true, sortOrder: 0, hasOrders: false, onHand: 1 },
+      ],
+      media: [],
+      relatedProducts: [],
+      rowVersion: rowVersion(id),
+      updatedAtUtc: '2026-10-01T09:00:00Z',
+    });
+  }
+}
+
 /** Doc 11 §7 G-01, the same three rules the API refuses with. */
 function publishBlockers(product) {
   const blockers = [];
@@ -469,14 +518,28 @@ export async function handleProductRoute({
       items = items.filter((product) => product.departmentId === departmentId);
     }
 
+    // `sort=name` orders by name then id, as `AdminProductReader` does; the default (most recently
+    // updated) is left as the seeded order, which the Products screen's tests already depend on.
+    if (url.searchParams.get('sort') === 'name') {
+      items.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : a.id - b.id));
+    }
+
+    // Paged on the server, with the real bounds (#191): `AdminProductListQueryHandler` reads a missing or
+    // non-positive page size as 24, caps it at 96, and reads a page below one as the first. The campaign
+    // product picker depends on these being real; before #191 this answered every row as page one.
+    const askedSize = Number(url.searchParams.get('pageSize') ?? '0');
+    const pageSize = !Number.isFinite(askedSize) || askedSize <= 0 ? 24 : Math.min(askedSize, 96);
+    const page = Math.max(1, Math.trunc(Number(url.searchParams.get('page') ?? '1')) || 1);
+    const totalPages = Math.ceil(items.length / pageSize);
+
     json(response, 200, {
-      items: items.map(listItem),
-      page: 1,
-      pageSize: 24,
+      items: items.slice((page - 1) * pageSize, page * pageSize).map(listItem),
+      page,
+      pageSize,
       totalCount: items.length,
-      totalPages: items.length === 0 ? 0 : 1,
-      hasPreviousPage: false,
-      hasNextPage: false,
+      totalPages,
+      hasPreviousPage: page > 1 && items.length > 0,
+      hasNextPage: page < totalPages,
     });
 
     return true;
