@@ -71,14 +71,14 @@ commits). The same gap exists today for #192's homepage items and size guides, w
 | Suite | Result |
 |---|---|
 | Unit (`SpencerDenim.UnitTests`) | **3,666 passed**, 0 skipped. New: `MegaMenuCardWriteHandlerTests` (50), `MegaMenuCardSeedDataTests`, the content seed-marker theory, card parity through the handler in `ContentFieldRulesParityTests` |
-| Integration, filtered (#126) | see §3a |
+| Integration, filtered (#126) | **`~MegaMenu`: 50/50**. Broad filter (all Content, Catalog, Media, FreshDeployment, FreshDeploymentSettingKeys, AdminCatalogEndpointTests, SettingsSchemaAndSeed): **629/629**, before the 2 picture-flaw cases were added. LocalDB, started only after 60 s with no other testhost |
 | Vitest storefront | **1,960 passed** (new `navigation.promo.spec.ts`) |
 | Vitest admin | **814 passed** (new `mega-menu-page.spec.ts`, `admin-mega-menu-api.spec.ts`) |
 | `ng lint` | clean (all three projects) |
 | `npm run build` | storefront initial **448.74 kB** (brief's main figure 446.80 kB; **+1.94 kB**). A shared `ng-template` + `NgTemplateOutlet` version measured 450.75 kB, so the card's insides are written out twice instead |
 | `npm run build:admin` | clean, 313.98 kB initial (page lazy-loaded) |
 | Playwright (ports 6700–6718) | new: `storefront-mega-menu` 9, `admin-mega-menu` 14, card parity 1; regression set with them (accessibility, storefront-shell, home-page, header-height, admin home/announcements/size-guides/dashboard, parity): **282 passed** |
-| Release build | see §3a |
+| Release build | **0 warnings, 0 errors** |
 
 Integration classes: `AdminMegaMenuCardEndpointTests` (permissions on all 4 routes for no-permission and anonymous
 callers, per-action permissions, antiforgery on each write, whole-form, 15 bad values by field, picture/schedule
@@ -90,10 +90,6 @@ named indexes; throwaway databases).
 E2E found one real defect: **a long unbroken heading pushed the page 293 px sideways at 1024 px** (the card's grid
 item had no `min-width: 0`). Fixed with `min-width: 0; overflow-wrap: anywhere` on `.mega__promo`; the test failed
 before and passes after.
-
-### 3a. Numbers filled in after the background runs
-
-(see the end of this file)
 
 ## 4. Mutation testing
 
@@ -107,7 +103,12 @@ did not compile under warnings-as-errors were rewritten so they compile, not cou
 - Frontend (Vitest): **10 of 10 killed** — mapper draws a card without a picture / with an unsafe link / with a
   blank heading, ignores cards, fallback alt or link changed; admin page drops the row version or the picture,
   offers Add past the limit; status marks a waiting card as shown.
-- Integration mutants: see the end of this file.
+- Integration (`mutate_it.py`, filtered integration runs): **10 of 10 killed, after one survivor was fixed**. The
+  feed ignoring a window's end; cards in reverse order; card saves skipping MediaUsages; the editor marking every
+  live card as shown; the card usage left unlabelled; seeder ignoring its marker, using a picture without alt text,
+  overwriting a department that has a card, writing no usage row. **Round-1 survivor:** the feed drawing a card whose
+  picture is not ready or not public. No test had a live card whose picture later changed state; added
+  `A_card_whose_picture_cannot_be_shown_is_not_drawn` (private, processing), which kills it.
 
 ## 5. Owner decisions (safe choice taken)
 
