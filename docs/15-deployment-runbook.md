@@ -378,7 +378,7 @@ and full address to a log.
 | Log | Holds | Kept |
 |---|---|---|
 | **Gateway access log** (`$C logs web`) | One JSON line per request: method, the **rewritten path**, status, bytes, duration, upstream and its status, `Host`, the **referring host name** only, user agent. No address of any kind, no query string | Docker `json-file`, 10 MB × 5 files: at most 50 MB, and a deploy that changes the image recreates the container, which deletes its log. Docker has no time limit; the size cap is the limit |
-| Gateway error log (same stream) | Level `crit` only: a crashed worker, a failed start or reload | as above |
+| Gateway error log (same stream) | Level `crit` only: a crashed worker, a failed start or reload, and (rarely) a temporary file nginx could not write, which DOES carry the request: see the paragraph below | as above |
 | **Host nginx access log** (production and staging sites) | **Off.** The gateway's log is the only access log. The port-80 redirect is off too, because it would otherwise land in the server-wide log the client's other sites share | — |
 | Host nginx error log | `/var/log/nginx/spencer-denim/<env>.error.log`, level `crit`: normally empty | 3 days (`/etc/logrotate.d/spencer-denim`, from `deploy/host-nginx/spencer-denim.logrotate`) |
 | API (Serilog, JSON) | See "Still open" below | Docker, 10 MB × 5 |
@@ -445,7 +445,8 @@ guarantee that no request is ever written**: when nginx cannot write a temporary
 not write) it logs `[crit] pwrite() "…" failed (28: No space left on device), client: <IP>, request: "POST …?token=…",
 referrer: "…"` — the address, the whole request line and the Referer (the #179 tester reproduced it on both tiers). Two
 settings keep that rare: `proxy_max_temp_file_size 0` on the gateway **and on both host sites**, so a response is never
-spilled to disk, and the gateway's `/tmp` being a tmpfs sized for request bodies. What remains is a request body larger
+spilled to disk, and the host tier buffering a request body before it reaches the gateway (the gateway's own `/tmp` is a tmpfs inside its
+128 MB memory limit, so a body that does not fit there is an out-of-memory kill, not a disk-full line). What remains is a request body larger
 than `client_body_buffer_size` arriving while a disk is full or unwritable. Such a line means something is badly wrong;
 **treat the host error files and the gateway's container log as sensitive** (next section). The access log still records
 every failure (status 502/504, the upstream tried, the time taken) without the secret. What is lost is nginx's own
@@ -457,7 +458,7 @@ data if you can. Otherwise change `crit` to `error` in `deploy/gateway/nginx.con
 site file, then `nginx -t && systemctl reload nginx`), redeploy, reproduce once, **change it back**, redeploy, and
 then delete what it wrote: `$C up -d --force-recreate web` removes the gateway's container log; for the host,
 `sudo truncate -s 0 /var/log/nginx/spencer-denim/<env>.error.log` **and delete the rotated copies** that were made
-while the level was lowered (`sudo rm -f /var/log/nginx/spencer-denim/<env>.error.log.*`: a daily rotation leaves
+while the level was lowered (`sudo sh -c 'rm -f /var/log/nginx/spencer-denim/<env>.error.log.*'` (inside `sh -c`, so that root expands the glob: the directory is `0750 www-data:adm`, and a sudoer who is not in group `adm` would otherwise get a glob that matches nothing and no error): a daily rotation leaves
 `.1`, `.2.gz`, `.3.gz`, and each keeps what it held). Treat the window as one in which the logs hold credentials.
 
 ### Retention, and who can read it

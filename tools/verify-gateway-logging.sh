@@ -193,7 +193,7 @@ say "Configuration is valid (nginx -t)"
 if out="$(docker exec "$P-gw" nginx -t 2>&1)"; then ok "gateway: nginx -t"; else bad "gateway: nginx -t"; echo "$out" | sed 's/^/        /'; fi
 if out="$(docker exec "$P-host" nginx -t 2>&1)"; then ok "host nginx, production and staging site files: nginx -t"; else bad "host nginx: nginx -t"; echo "$out" | sed 's/^/        /'; fi
 # No response may be spilled to a temporary file on the host tier: a spill that cannot be written is logged at crit WITH the request.
-if [ "$(docker exec "$P-host" nginx -T 2>/dev/null | grep -c 'proxy_max_temp_file_size 0;')" -ge 2 ]; then ok "host nginx: both site files set proxy_max_temp_file_size 0 (no spilled response, no request in a crit line)"; else bad "host nginx: fewer than two proxy_max_temp_file_size 0 lines"; fi
+if [ "$(docker exec "$P-host" nginx -T 2>/dev/null | grep -c -E '^[[:space:]]*proxy_max_temp_file_size 0;')" -ge 2 ]; then ok "host nginx: both site files set proxy_max_temp_file_size 0 (no spilled response, no request in a crit line)"; else bad "host nginx: fewer than two proxy_max_temp_file_size 0 lines"; fi
 
 # ---------------------------------------------------------------------------------------------------------------
 say "Requests that carry credentials, an address and a Referer"
