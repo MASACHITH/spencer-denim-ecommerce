@@ -146,3 +146,20 @@ internal sealed class RecordingLinksCache : IContentPageLinksCache
 
     public void Evict() => Evictions++;
 }
+
+/// <summary>
+/// Records the homepage cache's evictions (#192: every content write evicts it, doc 08 §3.7 "evicted on
+/// save"). The page is never served from here; these tests assert the write side only.
+/// </summary>
+internal sealed class RecordingHomePageCache : IHomePageCache
+{
+    public int Evictions { get; private set; }
+
+    public HomePageDto? GetPage() => null;
+
+    public void SetPage(HomePageDto page, DateTime? validUntilUtc)
+    {
+    }
+
+    public void Evict() => Evictions++;
+}
