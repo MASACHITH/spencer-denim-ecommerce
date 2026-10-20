@@ -340,6 +340,15 @@ public static partial class SettingKeys
         /// nothing else.
         /// </summary>
         public const string Version = "Seed.Version";
+
+        /// <summary>
+        /// The highest <c>HomeContentData</c> seed version applied to this database (#63, #192). The same
+        /// versioned-increment rule as <see cref="Version"/>: content introduced in a version above the one
+        /// recorded here cannot have been edited or removed by this database's owner, because it did not
+        /// exist for them to touch — so it is offered once, and never again. An
+        /// <see cref="SettingValueType.Int"/> row, written by the seeder and read by nothing else.
+        /// </summary>
+        public const string HomeContentVersion = "Seed.HomeContentVersion";
     }
 
     /// <summary><c>ops.Settings.Key</c> is <c>varchar(100)</c>.</summary>

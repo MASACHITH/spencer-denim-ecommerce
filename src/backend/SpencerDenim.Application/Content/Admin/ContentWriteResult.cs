@@ -24,7 +24,19 @@ public abstract record ContentWriteResult
     /// still has to be told that their pasted <c>&lt;iframe&gt;</c> is not on the page. A silent save that
     /// dropped part of a paste is the defect shape this project has shipped three times.
     /// </param>
-    public sealed record Succeeded(int EntityId, IReadOnlyList<string> RemovedFromBody) : ContentWriteResult
+    /// <param name="RowVersion">
+    /// The concurrency token the row (for a homepage item, its <b>section</b>) carries after the save, so a
+    /// screen can keep editing without a reload. Null where a caller has no use for it.
+    /// </param>
+    /// <param name="RemovedFromSecondary">
+    /// What the sanitiser took out of a second rich-text field on the same row — a size guide's measuring
+    /// tips beside its intro. Null where the row has only one.
+    /// </param>
+    public sealed record Succeeded(
+        int EntityId,
+        IReadOnlyList<string> RemovedFromBody,
+        string? RowVersion = null,
+        IReadOnlyList<string>? RemovedFromSecondary = null) : ContentWriteResult
     {
         public Succeeded(int entityId)
             : this(entityId, [])
@@ -111,4 +123,25 @@ public static class ContentConflictCodes
     /// </para>
     /// </summary>
     public const string BodyNotReadable = "body_not_readable";
+
+    /// <summary>
+    /// The block draws no items of its own — New Arrivals and Sale are drawn from a listing, the newsletter
+    /// is a form (ADM-17). A 409 because the request is well formed and the block is simply not that kind.
+    /// </summary>
+    public const string ItemsNotSupported = "items_not_supported";
+
+    /// <summary>The block already holds as many items as it draws (see <c>HomeBlockRule.MaxItems</c>).</summary>
+    public const string SectionFull = "section_full";
+
+    /// <summary>
+    /// The announcement strip already holds <c>AnnouncementWriteHandlers.MaxMessages</c> messages. A strip
+    /// that rotates through more than that is one nobody reads to the end.
+    /// </summary>
+    public const string TooManyAnnouncements = "too_many_announcements";
+
+    /// <summary>
+    /// A size guide a category or product still points at. Refused rather than soft-deleted from under
+    /// them: the product page would lose its size chart with nothing on the category saying why.
+    /// </summary>
+    public const string SizeGuideInUse = "size_guide_in_use";
 }
