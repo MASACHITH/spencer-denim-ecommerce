@@ -1,0 +1,520 @@
+{
+ "about": "One table of request paths and what a log may print for each (issue #201). It is run through RequestPathRedaction (C#, tests/SpencerDenim.UnitTests/Privacy/RequestPathRedactionTests.cs) and logPath (TypeScript, src/frontend/projects/storefront/src/server/log-path.spec.ts), and every row was checked against the gateway's $sd_log_path map in deploy/gateway/nginx.conf (#179). Keep the three in step: a row added here fails whichever implementation disagrees. The gateway also keeps a static file name as the last segment (main-AB12CD.js), which the API and the SSR server do not, and it drops a final line feed from a path where they star the segment (both print no line break): no row here has one. The fixed token 7d1e5c0a-4b3f-4a8e-9c2d-1f6b8a3e5d90 belongs to no order.",
+ "cases": [
+  {
+   "name": "order page",
+   "path": "/order/7d1e5c0a-4b3f-4a8e-9c2d-1f6b8a3e5d90",
+   "expected": "/order/*"
+  },
+  {
+   "name": "order page, upper-case token",
+   "path": "/order/7D1E5C0A-4B3F-4A8E-9C2D-1F6B8A3E5D90",
+   "expected": "/order/*"
+  },
+  {
+   "name": "order page, a token that is not a guid",
+   "path": "/order/not-a-guid-but-still-the-secret",
+   "expected": "/order/*"
+  },
+  {
+   "name": "order page, upper-case route",
+   "path": "/ORDER/7d1e5c0a-4b3f-4a8e-9c2d-1f6b8a3e5d90",
+   "expected": "/order/*"
+  },
+  {
+   "name": "order page, matrix parameter on the route",
+   "path": "/order;x=1/7d1e5c0a-4b3f-4a8e-9c2d-1f6b8a3e5d90",
+   "expected": "/order/*"
+  },
+  {
+   "name": "order page, token with a matrix parameter",
+   "path": "/order/7d1e5c0a-4b3f-4a8e-9c2d-1f6b8a3e5d90;x=1",
+   "expected": "/order/*"
+  },
+  {
+   "name": "order page, no token",
+   "path": "/order",
+   "expected": "/order/*"
+  },
+  {
+   "name": "order page, trailing slash only",
+   "path": "/order/",
+   "expected": "/order/*"
+  },
+  {
+   "name": "order page, deeper path",
+   "path": "/order/7d1e5c0a-4b3f-4a8e-9c2d-1f6b8a3e5d90/invoice/print",
+   "expected": "/order/*"
+  },
+  {
+   "name": "a route that only starts with the word",
+   "path": "/orders",
+   "expected": "/orders"
+  },
+  {
+   "name": "a route that only starts with the word, deeper",
+   "path": "/orderly/new",
+   "expected": "/orderly/new"
+  },
+  {
+   "name": "api order",
+   "path": "/api/orders/7d1e5c0a-4b3f-4a8e-9c2d-1f6b8a3e5d90",
+   "expected": "/api/orders/*"
+  },
+  {
+   "name": "api order, upper-case token",
+   "path": "/api/orders/7D1E5C0A-4B3F-4A8E-9C2D-1F6B8A3E5D90",
+   "expected": "/api/orders/*"
+  },
+  {
+   "name": "api order, upper-case route",
+   "path": "/API/ORDERS/7D1E5C0A-4B3F-4A8E-9C2D-1F6B8A3E5D90",
+   "expected": "/api/orders/*"
+  },
+  {
+   "name": "api order payment reference",
+   "path": "/api/orders/7d1e5c0a-4b3f-4a8e-9c2d-1f6b8a3e5d90/payment-reference",
+   "expected": "/api/orders/*"
+  },
+  {
+   "name": "api order cancel",
+   "path": "/api/orders/7d1e5c0a-4b3f-4a8e-9c2d-1f6b8a3e5d90/cancel",
+   "expected": "/api/orders/*"
+  },
+  {
+   "name": "api order payment slip",
+   "path": "/api/orders/7d1e5c0a-4b3f-4a8e-9c2d-1f6b8a3e5d90/payment-slip",
+   "expected": "/api/orders/*"
+  },
+  {
+   "name": "api order, token without hyphens",
+   "path": "/api/orders/7d1e5c0a4b3f4a8e9c2d1f6b8a3e5d90",
+   "expected": "/api/orders/*"
+  },
+  {
+   "name": "api order, trailing slash",
+   "path": "/api/orders/7d1e5c0a-4b3f-4a8e-9c2d-1f6b8a3e5d90/",
+   "expected": "/api/orders/*"
+  },
+  {
+   "name": "api order, double slash after the route",
+   "path": "/api/orders//7d1e5c0a-4b3f-4a8e-9c2d-1f6b8a3e5d90",
+   "expected": "/api/orders/*"
+  },
+  {
+   "name": "api order, matrix parameter on the route",
+   "path": "/api/orders;x=1/7d1e5c0a-4b3f-4a8e-9c2d-1f6b8a3e5d90",
+   "expected": "/api/orders/*"
+  },
+  {
+   "name": "api order, matrix parameter on the token",
+   "path": "/api/orders/7d1e5c0a-4b3f-4a8e-9c2d-1f6b8a3e5d90;x=1",
+   "expected": "/api/orders/*"
+  },
+  {
+   "name": "api order, no token",
+   "path": "/api/orders",
+   "expected": "/api/orders/*"
+  },
+  {
+   "name": "api order, a token of any other shape",
+   "path": "/api/orders/short",
+   "expected": "/api/orders/*"
+  },
+  {
+   "name": "api order, 400 letters then the token",
+   "path": "/api/orders/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa7d1e5c0a-4b3f-4a8e-9c2d-1f6b8a3e5d90",
+   "expected": "/api/orders/*"
+  },
+  {
+   "name": "api order, separator percent-encoded: the segment is no slug",
+   "path": "/api/orders%2F7d1e5c0a-4b3f-4a8e-9c2d-1f6b8a3e5d90",
+   "expected": "/api/*"
+  },
+  {
+   "name": "api order, separator percent-encoded after the token",
+   "path": "/api/orders/7d1e5c0a-4b3f-4a8e-9c2d-1f6b8a3e5d90%2Fcancel",
+   "expected": "/api/orders/*"
+  },
+  {
+   "name": "paypal start",
+   "path": "/api/payments/paypal/start/7d1e5c0a-4b3f-4a8e-9c2d-1f6b8a3e5d90",
+   "expected": "/api/payments/paypal/start/*"
+  },
+  {
+   "name": "paypal return",
+   "path": "/api/payments/paypal/return/7d1e5c0a-4b3f-4a8e-9c2d-1f6b8a3e5d90",
+   "expected": "/api/payments/paypal/return/*"
+  },
+  {
+   "name": "paypal cancel",
+   "path": "/api/payments/paypal/cancel/7d1e5c0a-4b3f-4a8e-9c2d-1f6b8a3e5d90",
+   "expected": "/api/payments/paypal/cancel/*"
+  },
+  {
+   "name": "paypal action keeps the spelling it came in",
+   "path": "/api/payments/paypal/RETURN/7d1e5c0a-4b3f-4a8e-9c2d-1f6b8a3e5d90",
+   "expected": "/api/payments/paypal/RETURN/*"
+  },
+  {
+   "name": "paypal action, no token",
+   "path": "/api/payments/paypal/start",
+   "expected": "/api/payments/paypal/start/*"
+  },
+  {
+   "name": "paypal action, matrix parameter",
+   "path": "/api/payments/paypal/start;x=1/7d1e5c0a-4b3f-4a8e-9c2d-1f6b8a3e5d90",
+   "expected": "/api/payments/paypal/start/*"
+  },
+  {
+   "name": "paypal webhook has no secret in its path",
+   "path": "/api/payments/paypal/webhook",
+   "expected": "/api/payments/paypal/webhook"
+  },
+  {
+   "name": "paypal, an action that is not one",
+   "path": "/api/payments/paypal/starter/x",
+   "expected": "/api/payments/paypal/starter/x"
+  },
+  {
+   "name": "admin order",
+   "path": "/api/admin/orders/7d1e5c0a-4b3f-4a8e-9c2d-1f6b8a3e5d90",
+   "expected": "/api/admin/orders/*"
+  },
+  {
+   "name": "admin order invoice",
+   "path": "/api/admin/orders/7d1e5c0a-4b3f-4a8e-9c2d-1f6b8a3e5d90/invoice",
+   "expected": "/api/admin/orders/*"
+  },
+  {
+   "name": "admin order transition",
+   "path": "/api/admin/orders/7d1e5c0a-4b3f-4a8e-9c2d-1f6b8a3e5d90/ship",
+   "expected": "/api/admin/orders/*"
+  },
+  {
+   "name": "admin order, upper-case route and token",
+   "path": "/API/ADMIN/ORDERS/7D1E5C0A-4B3F-4A8E-9C2D-1F6B8A3E5D90/invoice",
+   "expected": "/api/admin/orders/*"
+  },
+  {
+   "name": "admin order list",
+   "path": "/api/admin/orders",
+   "expected": "/api/admin/orders"
+  },
+  {
+   "name": "admin order list, trailing slash",
+   "path": "/api/admin/orders/",
+   "expected": "/api/admin/orders"
+  },
+  {
+   "name": "bank transfer queue",
+   "path": "/api/admin/orders/bank-transfers",
+   "expected": "/api/admin/orders/bank-transfers"
+  },
+  {
+   "name": "bank transfer queue, trailing slash",
+   "path": "/api/admin/orders/bank-transfers/",
+   "expected": "/api/admin/orders/bank-transfers"
+  },
+  {
+   "name": "bank transfer approve",
+   "path": "/api/admin/orders/bank-transfers/7d1e5c0a-4b3f-4a8e-9c2d-1f6b8a3e5d90/approve",
+   "expected": "/api/admin/orders/bank-transfers/*"
+  },
+  {
+   "name": "bank transfer reject",
+   "path": "/api/admin/orders/bank-transfers/7d1e5c0a-4b3f-4a8e-9c2d-1f6b8a3e5d90/reject",
+   "expected": "/api/admin/orders/bank-transfers/*"
+  },
+  {
+   "name": "bank transfer slip",
+   "path": "/api/admin/orders/bank-transfers/7D1E5C0A-4B3F-4A8E-9C2D-1F6B8A3E5D90/slip",
+   "expected": "/api/admin/orders/bank-transfers/*"
+  },
+  {
+   "name": "bank transfer, matrix parameter on the segment",
+   "path": "/api/admin/orders/bank-transfers;x=1/7d1e5c0a-4b3f-4a8e-9c2d-1f6b8a3e5d90",
+   "expected": "/api/admin/orders/*"
+  },
+  {
+   "name": "root",
+   "path": "/",
+   "expected": "/"
+  },
+  {
+   "name": "a page",
+   "path": "/women",
+   "expected": "/women"
+  },
+  {
+   "name": "a page, trailing slash",
+   "path": "/women/",
+   "expected": "/women"
+  },
+  {
+   "name": "a listing",
+   "path": "/women/dresses",
+   "expected": "/women/dresses"
+  },
+  {
+   "name": "a listing, trailing slash",
+   "path": "/women/dresses/",
+   "expected": "/women/dresses"
+  },
+  {
+   "name": "a product",
+   "path": "/product/linen-shirt-12",
+   "expected": "/product/linen-shirt-12"
+  },
+  {
+   "name": "an api read",
+   "path": "/api/catalog/products/linen-shirt",
+   "expected": "/api/catalog/products/linen-shirt"
+  },
+  {
+   "name": "the page-view beacon",
+   "path": "/api/traffic/page-views",
+   "expected": "/api/traffic/page-views"
+  },
+  {
+   "name": "an account page",
+   "path": "/account/reset-password",
+   "expected": "/account/reset-password"
+  },
+  {
+   "name": "an admin route with a numeric id",
+   "path": "/api/admin/products/12/published",
+   "expected": "/api/admin/products/12/published"
+  },
+  {
+   "name": "six digits are a number",
+   "path": "/product/123456",
+   "expected": "/product/123456"
+  },
+  {
+   "name": "seven digits are a phone number or an id",
+   "path": "/product/1234567",
+   "expected": "/product/*"
+  },
+  {
+   "name": "seven digits with hyphens between them",
+   "path": "/product/12-34-567",
+   "expected": "/product/*"
+  },
+  {
+   "name": "an admin id that long",
+   "path": "/api/admin/customers/1234567/orders",
+   "expected": "/api/admin/customers/*"
+  },
+  {
+   "name": "fifteen letters are a word",
+   "path": "/product/abcdefghijklmno",
+   "expected": "/product/abcdefghijklmno"
+  },
+  {
+   "name": "sixteen letters are a token",
+   "path": "/product/abcdefghijklmnop",
+   "expected": "/product/*"
+  },
+  {
+   "name": "sixteen letters and digits are a token",
+   "path": "/product/ab12cd34ef56gh78",
+   "expected": "/product/*"
+  },
+  {
+   "name": "hyphens split a long run",
+   "path": "/product/abcdefghij-klmnopqrstuv",
+   "expected": "/product/abcdefghij-klmnopqrstuv"
+  },
+  {
+   "name": "a hundred characters",
+   "path": "/x/ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-a",
+   "expected": "/x/ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-a"
+  },
+  {
+   "name": "a hundred and one characters",
+   "path": "/x/ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab",
+   "expected": "/x/*"
+  },
+  {
+   "name": "upper case is no slug",
+   "path": "/product/Linen-Shirt",
+   "expected": "/product/*"
+  },
+  {
+   "name": "a guid",
+   "path": "/x/7d1e5c0a-4b3f-4a8e-9c2d-1f6b8a3e5d90",
+   "expected": "/x/*"
+  },
+  {
+   "name": "a guid, upper case",
+   "path": "/x/7D1E5C0A-4B3F-4A8E-9C2D-1F6B8A3E5D90",
+   "expected": "/x/*"
+  },
+  {
+   "name": "a guid, no hyphens",
+   "path": "/x/7d1e5c0a4b3f4a8e9c2d1f6b8a3e5d90",
+   "expected": "/x/*"
+  },
+  {
+   "name": "a guid with its hyphens in odd places",
+   "path": "/x/7d1e5c0a-4b3f4a8e-9c2d-1f6b8a3e5d90",
+   "expected": "/x/*"
+  },
+  {
+   "name": "a reference with a prefix",
+   "path": "/foo/EC-8AB12345CD678901E",
+   "expected": "/foo/*"
+  },
+  {
+   "name": "a token of letters",
+   "path": "/foo/eyJhbGciOiJIUzI1NiJ9",
+   "expected": "/foo/*"
+  },
+  {
+   "name": "an email address",
+   "path": "/foo/jane@example.com",
+   "expected": "/foo/*"
+  },
+  {
+   "name": "an unknown route with a token-looking segment",
+   "path": "/something/else/7d1e5c0a-4b3f-4a8e-9c2d-1f6b8a3e5d90/more",
+   "expected": "/something/else/*"
+  },
+  {
+   "name": "a hyphen at the start",
+   "path": "/foo/-bar",
+   "expected": "/foo/*"
+  },
+  {
+   "name": "two hyphens in a row",
+   "path": "/foo/a--b",
+   "expected": "/foo/*"
+  },
+  {
+   "name": "a dot segment",
+   "path": "/women/..",
+   "expected": "/women/*"
+  },
+  {
+   "name": "a double slash in the middle",
+   "path": "/women//dresses",
+   "expected": "/women/*"
+  },
+  {
+   "name": "a double slash at the start",
+   "path": "//women",
+   "expected": "/*"
+  },
+  {
+   "name": "a matrix parameter",
+   "path": "/women;x=1",
+   "expected": "/*"
+  },
+  {
+   "name": "a matrix parameter on the second segment",
+   "path": "/women/dresses;x=1",
+   "expected": "/women/*"
+  },
+  {
+   "name": "a percent sign that was not decoded",
+   "path": "/women%2Fdresses",
+   "expected": "/*"
+  },
+  {
+   "name": "a line feed in the middle",
+   "path": "/women\ndresses",
+   "expected": "/*"
+  },
+  {
+   "name": "a carriage return and a line feed",
+   "path": "/women/dresses\r\n",
+   "expected": "/women/*"
+  },
+  {
+   "name": "a space",
+   "path": "/wo men",
+   "expected": "/*"
+  },
+  {
+   "name": "a unicode letter",
+   "path": "/women/d\u00e9cor",
+   "expected": "/women/*"
+  },
+  {
+   "name": "no leading slash",
+   "path": "women",
+   "expected": "/*"
+  },
+  {
+   "name": "a whole url passed by mistake",
+   "path": "http://localhost/order/7d1e5c0a-4b3f-4a8e-9c2d-1f6b8a3e5d90",
+   "expected": "/*"
+  },
+  {
+   "name": "seven segments are kept",
+   "path": "/a/b/c/d/e/f/g",
+   "expected": "/a/b/c/d/e/f/g"
+  },
+  {
+   "name": "seven segments and a trailing slash",
+   "path": "/a/b/c/d/e/f/g/",
+   "expected": "/a/b/c/d/e/f/g"
+  },
+  {
+   "name": "an eighth segment is starred",
+   "path": "/a/b/c/d/e/f/g/h",
+   "expected": "/a/b/c/d/e/f/g/*"
+  },
+  {
+   "name": "a public upload",
+   "path": "/media/public/originals/ab12cd34ef56ab12cd34ef56ab12cd34/x.webp",
+   "expected": "/media/public/originals/*"
+  },
+  {
+   "name": "query on a page",
+   "path": "/account/reset-password?token=CfDJ8AbcDef&email=jane%40example.com",
+   "expected": "/account/reset-password"
+  },
+  {
+   "name": "query on the confirmation page",
+   "path": "/account/confirm-email?token=CfDJ8Abc&userId=42",
+   "expected": "/account/confirm-email"
+  },
+  {
+   "name": "query on the search page",
+   "path": "/search?q=jane%40example.com",
+   "expected": "/search"
+  },
+  {
+   "name": "query on the root",
+   "path": "/?utm_source=newsletter&gclid=abc",
+   "expected": "/"
+  },
+  {
+   "name": "query on an order",
+   "path": "/order/7d1e5c0a-4b3f-4a8e-9c2d-1f6b8a3e5d90?paypal=return&token=EC-8AB12345CD678901E&PayerID=ABC123",
+   "expected": "/order/*"
+  },
+  {
+   "name": "query on an api order",
+   "path": "/api/orders/7d1e5c0a-4b3f-4a8e-9c2d-1f6b8a3e5d90?token=x",
+   "expected": "/api/orders/*"
+  },
+  {
+   "name": "fragment",
+   "path": "/women#top",
+   "expected": "/women"
+  },
+  {
+   "name": "query then fragment",
+   "path": "/women?sort=price#top",
+   "expected": "/women"
+  },
+  {
+   "name": "the query is cut before the segments are judged",
+   "path": "/women/dresses?next=/order/7d1e5c0a-4b3f-4a8e-9c2d-1f6b8a3e5d90",
+   "expected": "/women/dresses"
+  }
+ ]
+}
