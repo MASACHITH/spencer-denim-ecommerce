@@ -1030,6 +1030,104 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("SpencerDenim.Domain.Catalog.ProductReview", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("Body")
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2(3)")
+                        .HasDefaultValueSql("sysutcdatetime()");
+
+                    b.Property<int>("CustomerUserId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("DisplayName")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("nvarchar(60)");
+
+                    b.Property<bool>("IsVerifiedBuyer")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false);
+
+                    b.Property<DateTime?>("ModeratedAtUtc")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<int?>("ModeratedByUserId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("ModerationNote")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<int?>("OrderId")
+                        .HasColumnType("int");
+
+                    b.Property<int>("ProductId")
+                        .HasColumnType("int");
+
+                    b.Property<byte>("Rating")
+                        .HasColumnType("tinyint");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.Property<byte>("Status")
+                        .HasColumnType("tinyint");
+
+                    b.Property<string>("Title")
+                        .HasMaxLength(120)
+                        .HasColumnType("nvarchar(120)");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("datetime2(3)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CustomerUserId")
+                        .HasDatabaseName("IX_ProductReviews_Customer");
+
+                    b.HasIndex("OrderId")
+                        .HasDatabaseName("IX_ProductReviews_Order")
+                        .HasFilter("[OrderId] IS NOT NULL");
+
+                    b.HasIndex("ProductId", "CustomerUserId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_ProductReviews_Product_Customer");
+
+                    b.HasIndex("Status", "CreatedAtUtc", "Id")
+                        .HasDatabaseName("IX_ProductReviews_Status_Created");
+
+                    b.HasIndex("ProductId", "Status", "CreatedAtUtc", "Id")
+                        .IsDescending(false, false, true, true)
+                        .HasDatabaseName("IX_ProductReviews_Product_Status_Created");
+
+                    SqlServerIndexBuilderExtensions.IncludeProperties(b.HasIndex("ProductId", "Status", "CreatedAtUtc", "Id"), new[] { "Rating" });
+
+                    b.ToTable("ProductReviews", "catalog", t =>
+                        {
+                            t.HasCheckConstraint("CK_ProductReviews_DisplayName", "ISNULL(LEN([DisplayName]), 0) > 0");
+
+                            t.HasCheckConstraint("CK_ProductReviews_Rating", "[Rating] BETWEEN 1 AND 5");
+
+                            t.HasCheckConstraint("CK_ProductReviews_Status", "[Status] IN (0, 1, 2)");
+
+                            t.HasCheckConstraint("CK_ProductReviews_Verified", "([IsVerifiedBuyer] = 1 AND [OrderId] IS NOT NULL) OR ([IsVerifiedBuyer] = 0 AND [OrderId] IS NULL)");
+                        });
+                });
+
             modelBuilder.Entity("SpencerDenim.Domain.Catalog.ProductSearchIndex", b =>
                 {
                     b.Property<int>("ProductId")
@@ -4475,6 +4573,28 @@ namespace SpencerDenim.Infrastructure.Persistence.Migrations
                     b.Navigation("Product");
 
                     b.Navigation("ProductColour");
+                });
+
+            modelBuilder.Entity("SpencerDenim.Domain.Catalog.ProductReview", b =>
+                {
+                    b.HasOne("SpencerDenim.Infrastructure.Identity.AppUser", null)
+                        .WithMany()
+                        .HasForeignKey("CustomerUserId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
+                    b.HasOne("SpencerDenim.Domain.Sales.Order", null)
+                        .WithMany()
+                        .HasForeignKey("OrderId")
+                        .OnDelete(DeleteBehavior.NoAction);
+
+                    b.HasOne("SpencerDenim.Domain.Catalog.Product", "Product")
+                        .WithMany()
+                        .HasForeignKey("ProductId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
+                    b.Navigation("Product");
                 });
 
             modelBuilder.Entity("SpencerDenim.Domain.Catalog.ProductSearchIndex", b =>

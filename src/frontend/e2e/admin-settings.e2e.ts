@@ -523,6 +523,9 @@ test.describe('the settings screen is usable and accessible', () => {
 
       // Issue #193: how long the nightly purge keeps raw page views.
       'h2:Traffic',
+
+      // Issue #189: whether customers' reviews wait for approval.
+      'h2:Reviews',
     ]);
   });
 
