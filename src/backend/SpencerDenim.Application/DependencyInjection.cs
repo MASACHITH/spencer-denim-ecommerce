@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using SpencerDenim.Application.Abstractions.Messaging;
 using SpencerDenim.Application.Abstractions.Results;
+using SpencerDenim.Application.Abstractions.Time;
 using SpencerDenim.Application.Accounts;
 using SpencerDenim.Application.Accounts.Contracts;
 using SpencerDenim.Application.Admin.Account;
@@ -29,6 +30,9 @@ using SpencerDenim.Application.Content.Abstractions;
 using SpencerDenim.Application.Content.Announcements;
 using SpencerDenim.Application.Content.Contracts;
 using SpencerDenim.Application.Content.Admin;
+using SpencerDenim.Application.Content.Admin.Announcements;
+using SpencerDenim.Application.Content.Admin.Home;
+using SpencerDenim.Application.Content.Admin.SizeGuides;
 using SpencerDenim.Application.Marketing.Promotions;
 using SpencerDenim.Application.Content.Admin.Contracts;
 using SpencerDenim.Application.Content.Contact;
@@ -222,7 +226,9 @@ public static class DependencyInjection
         services.AddScoped<IQueryHandler<GetHomePageQuery, HomePageDto>>(provider =>
             new CachedHomePageQueryHandler(
                 provider.GetRequiredKeyedService<IQueryHandler<GetHomePageQuery, HomePageDto>>(UncachedHomePage),
-                provider.GetRequiredService<IHomePageCache>()));
+                provider.GetRequiredService<IHomePageCache>(),
+                provider.GetRequiredService<IHomeContentReader>(),
+                provider.GetRequiredService<IClock>()));
         services.AddScoped<
             IQueryHandler<GetAnnouncementsQuery, IReadOnlyList<AnnouncementDto>>,
             GetAnnouncementsQueryHandler>();
@@ -261,6 +267,34 @@ public static class DependencyInjection
             provider => provider.GetRequiredService<ContentPageWriteHandlers>());
         services.AddScoped<ICommandHandler<DeleteContentPageCommand, ContentWriteResult>>(
             provider => provider.GetRequiredService<ContentPageWriteHandlers>());
+
+        // The rest of the ADM-17 content screens (#192): the homepage blocks, the announcement strip and the
+        // size guides. Each group is one class registered once per interface, like the page writes above.
+        services.AddScoped<HomeContentWriteHandlers>();
+        services.AddScoped<ICommandHandler<UpdateHomeSectionCommand, ContentWriteResult>>(
+            provider => provider.GetRequiredService<HomeContentWriteHandlers>());
+        services.AddScoped<ICommandHandler<CreateHomeSectionItemCommand, ContentWriteResult>>(
+            provider => provider.GetRequiredService<HomeContentWriteHandlers>());
+        services.AddScoped<ICommandHandler<UpdateHomeSectionItemCommand, ContentWriteResult>>(
+            provider => provider.GetRequiredService<HomeContentWriteHandlers>());
+        services.AddScoped<ICommandHandler<DeleteHomeSectionItemCommand, ContentWriteResult>>(
+            provider => provider.GetRequiredService<HomeContentWriteHandlers>());
+
+        services.AddScoped<AnnouncementWriteHandlers>();
+        services.AddScoped<ICommandHandler<CreateAnnouncementCommand, ContentWriteResult>>(
+            provider => provider.GetRequiredService<AnnouncementWriteHandlers>());
+        services.AddScoped<ICommandHandler<UpdateAnnouncementCommand, ContentWriteResult>>(
+            provider => provider.GetRequiredService<AnnouncementWriteHandlers>());
+        services.AddScoped<ICommandHandler<DeleteAnnouncementCommand, ContentWriteResult>>(
+            provider => provider.GetRequiredService<AnnouncementWriteHandlers>());
+
+        services.AddScoped<SizeGuideWriteHandlers>();
+        services.AddScoped<ICommandHandler<CreateSizeGuideCommand, ContentWriteResult>>(
+            provider => provider.GetRequiredService<SizeGuideWriteHandlers>());
+        services.AddScoped<ICommandHandler<UpdateSizeGuideCommand, ContentWriteResult>>(
+            provider => provider.GetRequiredService<SizeGuideWriteHandlers>());
+        services.AddScoped<ICommandHandler<DeleteSizeGuideCommand, ContentWriteResult>>(
+            provider => provider.GetRequiredService<SizeGuideWriteHandlers>());
 
         // The admin promo-code screen (ADM-13, W3-05). Three writes in one class because they share every
         // rule; registered once per interface so each endpoint asks for the one command it sends.

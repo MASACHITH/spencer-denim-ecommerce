@@ -33,6 +33,7 @@ import { readFileSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { extname, join, normalize, resolve } from 'node:path';
 
+import { handleContentRoute } from './admin-content-stub.mjs';
 import { freshCustomerState, handleCustomerRoute } from './admin-customer-stub.mjs';
 import { freshReportingState, handleReportingRoute } from './admin-reporting-stub.mjs';
 import { freshInventoryState, handleInventoryRoute } from './admin-inventory-stub.mjs';
@@ -2678,6 +2679,24 @@ const server = createServer(async (request, response) => {
     response.writeHead(200, { 'Content-Type': 'image/webp', 'Cache-Control': 'no-store' });
     response.end(LOGO_PIXEL);
     return;
+  }
+
+  // ---- homepage blocks, announcement bar, size guides (#192) ----------------------------------
+  if (
+    await handleContentRoute({
+      path,
+      method: request.method,
+      url,
+      request,
+      response,
+      state,
+      json,
+      problem,
+      noContent,
+      readBody,
+    })
+  ) {
+    return undefined;
   }
 
   // ---- customers and newsletter subscribers (ADM-15, ADM-21, W3-07) ---------------------------

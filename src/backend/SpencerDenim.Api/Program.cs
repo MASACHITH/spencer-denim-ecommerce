@@ -120,6 +120,7 @@ app.MapAdminReviewEndpoints();
 app.MapAdminTrafficEndpoints();
 app.MapPaymentSlipEndpoints();
 app.MapAdminContentEndpoints();
+app.MapAdminHomeContentEndpoints();
 app.MapAdminPromotionEndpoints();
 app.MapAdminSaleCampaignEndpoints();
 app.MapCartEndpoints();

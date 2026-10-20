@@ -239,6 +239,18 @@ public static class DependencyInjection
         services.AddScoped<IContentPageStore, ContentPageStore>();
         services.AddScoped<IContactEnquiryStore, ContactEnquiryStore>();
 
+        // The rest of the ADM-17 content screens (#192): homepage blocks, announcement strip, size guides.
+        // One store and one reader class each serve the three, registered per port so a handler asks for
+        // only what it uses.
+        services.AddScoped<ContentAdminStores>();
+        services.AddScoped<IHomeContentAdminStore>(provider => provider.GetRequiredService<ContentAdminStores>());
+        services.AddScoped<IAnnouncementAdminStore>(provider => provider.GetRequiredService<ContentAdminStores>());
+        services.AddScoped<ISizeGuideAdminStore>(provider => provider.GetRequiredService<ContentAdminStores>());
+        services.AddScoped<ContentAdminReaders>();
+        services.AddScoped<IHomeContentAdminReader>(provider => provider.GetRequiredService<ContentAdminReaders>());
+        services.AddScoped<IAnnouncementAdminReader>(provider => provider.GetRequiredService<ContentAdminReaders>());
+        services.AddScoped<ISizeGuideAdminReader>(provider => provider.GetRequiredService<ContentAdminReaders>());
+
         // The admin promo-code screen (ADM-13, W3-05). The reader converts the two UTC columns to Colombo
         // wall-clock at this edge; the store keeps one unit of work so a change and its audit row commit
         // together.

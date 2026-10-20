@@ -321,6 +321,10 @@ interface Access {
           <a class="adm-link" routerLink="/marketing/promo-codes">Promo codes</a>
           <a class="adm-link" routerLink="/marketing/sale-campaigns">Sale campaigns</a>
           <a class="adm-link" routerLink="/marketing/newsletter">Newsletter subscribers</a>
+          <a class="adm-link" routerLink="/content/home" data-testid="dashboard-home-content-link">Homepage</a>
+          <a class="adm-link" routerLink="/content/announcements" data-testid="dashboard-announcements-link">Announcement bar</a>
+          <a class="adm-link" routerLink="/content/size-guides" data-testid="dashboard-size-guides-link">Size guides</a>
+          <a class="adm-link" routerLink="/content/pages" data-testid="dashboard-content-pages-link">Content pages</a>
           @if (access()?.reports) {
             <a class="adm-link" routerLink="/reports" data-testid="dashboard-reports-link">Reports</a>
           }

@@ -135,6 +135,38 @@ internal sealed class HomeContentReader(AppDbContext dbContext, IOptions<Catalog
             .AsReadOnly();
     }
 
+    /// <summary>
+    /// Four small aggregates rather than one query over a union: each reads a handful of rows through
+    /// <c>IX (IsEnabled, SortOrder)</c> and the item ones join their section, so an item inside a section
+    /// that is switched off — which cannot change the page — is not a boundary.
+    /// </summary>
+    public async Task<DateTime?> GetNextScheduleBoundaryAsync(DateTime utcNow, CancellationToken cancellationToken)
+    {
+        var sections = dbContext.HomeSections.AsNoTracking().Where(section => section.IsEnabled);
+
+        var items = dbContext.HomeSectionItems
+            .AsNoTracking()
+            .Where(item => item.IsEnabled && item.HomeSection!.IsEnabled);
+
+        DateTime?[] candidates =
+        [
+            await sections
+                .Where(section => section.StartsAtUtc > utcNow)
+                .MinAsync(section => section.StartsAtUtc, cancellationToken),
+            await sections
+                .Where(section => section.EndsAtUtc > utcNow)
+                .MinAsync(section => section.EndsAtUtc, cancellationToken),
+            await items
+                .Where(item => item.StartsAtUtc > utcNow)
+                .MinAsync(item => item.StartsAtUtc, cancellationToken),
+            await items
+                .Where(item => item.EndsAtUtc > utcNow)
+                .MinAsync(item => item.EndsAtUtc, cancellationToken),
+        ];
+
+        return candidates.Where(candidate => candidate is not null).Min();
+    }
+
     public async Task<IReadOnlyList<AnnouncementDto>> GetLiveAnnouncementsAsync(
         DateTime utcNow,
         CancellationToken cancellationToken)
