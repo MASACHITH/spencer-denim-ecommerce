@@ -410,6 +410,8 @@ function megaMenuDto(state) {
             endsAt: card.endsAt,
             isLiveNow: isLive(card.isActive, card.startsAt, card.endsAt),
             isShownNow: card === shown,
+            isEnded: card.isActive && card.endsAt !== null && card.endsAt.slice(0, 16) <= colomboNow(),
+            isPictureUnavailable: isLive(card.isActive, card.startsAt, card.endsAt) && mediaRef(state, card.imagePublicId) === null,
             rowVersion: card.rowVersion,
           };
         }),

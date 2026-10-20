@@ -448,6 +448,64 @@ public sealed class MegaMenuCardWriteHandlerTests
         Assert.Equal(0, _cache.Evictions);
     }
 
+    /// <summary>
+    /// Tester M2: a create, and only a move, asks the store to hold the department's limit under its lock; an edit
+    /// in place asks nothing (it cannot add a card to its department).
+    /// </summary>
+    [Fact]
+    public async Task A_create_and_a_move_ask_the_store_to_hold_the_limit_and_an_edit_in_place_does_not()
+    {
+        await Handlers().HandleAsync(new CreateMegaMenuCardCommand(Fields(), TestActors.Editor), Token);
+        Assert.Equal(new MegaMenuCardLimit(1, MegaMenuPromoCardLimits.MaxCardsPerDepartment, null), _store.LastLimit);
+
+        var card = _store.Cards.Single();
+        await Handlers().HandleAsync(
+            new UpdateMegaMenuCardCommand(card.Id, Fields() with { Title = "Renamed" }, Version(card), TestActors.Editor), Token);
+        Assert.Null(_store.LastLimit);
+
+        await Handlers().HandleAsync(
+            new UpdateMegaMenuCardCommand(card.Id, Fields() with { DepartmentId = 2 }, Version(card), TestActors.Editor), Token);
+        Assert.Equal(new MegaMenuCardLimit(2, MegaMenuPromoCardLimits.MaxCardsPerDepartment, card.Id), _store.LastLimit);
+    }
+
+    [Fact]
+    public async Task A_limit_reached_under_the_lock_is_the_too_many_conflict_and_does_not_evict()
+    {
+        _store.NextOutcome = ContentSaveOutcome.LimitReached;
+
+        var result = await Handlers().HandleAsync(new CreateMegaMenuCardCommand(Fields(), TestActors.Editor), Token);
+
+        Assert.Equal(ContentConflictCodes.TooManyMegaMenuCards, Assert.IsType<ContentWriteResult.Conflict>(result).Code);
+        Assert.Equal(0, _cache.Evictions);
+    }
+
+    [Fact]
+    public async Task A_picture_gone_by_the_time_of_the_save_is_a_field_error_and_does_not_evict()
+    {
+        _store.NextOutcome = ContentSaveOutcome.MediaUnavailable;
+
+        var result = await Handlers().HandleAsync(new CreateMegaMenuCardCommand(Fields(), TestActors.Editor), Token);
+
+        var error = Assert.Single(Assert.IsType<ContentWriteResult.Invalid>(result).Errors);
+        Assert.Equal("imagePublicId", error.Field);
+        Assert.Equal(0, _cache.Evictions);
+    }
+
+    /// <summary>The locked re-check names each slot by the request field that carries it (homepage items have three).</summary>
+    [Fact]
+    public void An_unavailable_usage_is_reported_against_its_own_field()
+    {
+        var errors = ContentMediaRules.UnavailableErrors(
+        [
+            new ContentMediaUsage(1, MediaUsageRoles.Banner),
+            new ContentMediaUsage(2, MediaUsageRoles.Image),
+            new ContentMediaUsage(3, MediaUsageRoles.MobileImage),
+            new ContentMediaUsage(4, MediaUsageRoles.Video),
+        ]);
+
+        Assert.Equal(["imagePublicId", "mobileImagePublicId", "videoPublicId"], errors.Select(error => error.Field));
+    }
+
     private static string Version(MegaMenuPromoCard card) => Convert.ToBase64String(card.RowVersion!);
 
     private static MegaMenuCardFields Fields() =>
@@ -517,12 +575,25 @@ internal sealed class FakeMegaMenuCardAdminStore : IMegaMenuCardAdminStore
 
     public void Remove(MegaMenuPromoCard card) => Cards.Remove(card);
 
-    public Task<ContentSaveOutcome> SaveAsync(int? actingUserId, ContentMediaUsageChange? usage, CancellationToken cancellationToken)
+    /// <summary>The limit the last save was asked to hold under the department's lock.</summary>
+    public MegaMenuCardLimit? LastLimit { get; private set; }
+
+    public Task<ContentSaveOutcome> SaveAsync(
+        int? actingUserId,
+        ContentMediaUsageChange? usage,
+        MegaMenuCardLimit? limit,
+        CancellationToken cancellationToken)
     {
         Saves++;
+        LastLimit = limit;
 
         if (NextOutcome != ContentSaveOutcome.Saved)
         {
+            if (NextOutcome == ContentSaveOutcome.MediaUnavailable && usage is not null)
+            {
+                usage.Unavailable = [.. usage.Desired];
+            }
+
             return Task.FromResult(NextOutcome);
         }
 

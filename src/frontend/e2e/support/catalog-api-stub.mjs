@@ -1633,16 +1633,16 @@ const ANNOUNCEMENT_STATES = {
 let announcementsState = 'default';
 
 /**
- * The mega-menu cards the departments feed carries (#215), switched by `/__test__/mega-menu-cards?state=â€¦` on the
- * mega-menu pair only. `none` sends the tree exactly as before â€” no `promoCards` key at all, the shape of an API
- * from before #215 â€” so every other spec meets the menu it always has.
+ * The mega-menu cards the departments feed carries (#215), switched by `/__test__/mega-menu-cards?state=…` on the
+ * mega-menu pair only. `none` sends the tree exactly as before — no `promoCards` key at all, the shape of an API
+ * from before #215 — so every other spec meets the menu it always has.
  *
- * - `card`     â€” Women gets an admin card with an internal, filtered link; Men and Kids keep the fallback.
- * - `empty`    â€” every department sends `promoCards: []`, what a fresh database answers (its seeded cards are off).
- * - `external` â€” Women's card points at an http(s) address.
- * - `hostile`  â€” Women's first card carries markup in every text field and a `javascript:` link (so the menu must
+ * - `card`     — Women gets an admin card with an internal, filtered link; Men and Kids keep the fallback.
+ * - `empty`    — every department sends `promoCards: []`, what a fresh database answers (its seeded cards are off).
+ * - `external` — Women's card points at an http(s) address.
+ * - `hostile`  — Women's first card carries markup in every text field and a `javascript:` link (so the menu must
  *                skip it), and the second carries markup and a good link (so the menu must draw it as text).
- * - `long`     â€” Women's card carries the longest heading, line and button the API allows.
+ * - `long`     — Women's card carries the longest heading, line and button the API allows.
  */
 const MEGA_MENU_CARD_STATES = {
   card: {
@@ -1685,6 +1685,9 @@ const MEGA_MENU_CARD_STATES = {
 
 let megaMenuCardsState = 'none';
 
+/** When the switch was last turned, so `closing` can end a few seconds after it (#215 tester: window re-check). */
+let megaMenuCardsSwitchedAt = Date.now();
+
 /** One card as `MegaMenuPromoCardDto` sends it, with a real rendition ladder the stub serves. */
 function megaMenuCard(seed, overrides) {
   const id = publicId(seed);
@@ -1707,7 +1710,19 @@ function withMegaMenuCards(body) {
     return body;
   }
 
-  const cards = MEGA_MENU_CARD_STATES[megaMenuCardsState] ?? {};
+  // `closing`: Women's card ends four seconds after the switch, so a test can watch an open page drop it.
+  const cards =
+    megaMenuCardsState === 'closing'
+      ? {
+          women: [
+            megaMenuCard(906, {
+              title: 'Closing soon',
+              startsAtUtc: new Date(megaMenuCardsSwitchedAt - 60_000).toISOString(),
+              endsAtUtc: new Date(megaMenuCardsSwitchedAt + 4_000).toISOString(),
+            }),
+          ],
+        }
+      : (MEGA_MENU_CARD_STATES[megaMenuCardsState] ?? {});
   return body.map((department) => ({ ...department, promoCards: cards[department.slug] ?? [] }));
 }
 
@@ -3829,7 +3844,9 @@ const server = createServer((request, response) => {
 
   if (url.pathname === '/__test__/mega-menu-cards') {
     const state = url.searchParams.get('state') ?? 'none';
-    megaMenuCardsState = state === 'empty' || Object.hasOwn(MEGA_MENU_CARD_STATES, state) ? state : 'none';
+    megaMenuCardsState =
+      state === 'empty' || state === 'closing' || Object.hasOwn(MEGA_MENU_CARD_STATES, state) ? state : 'none';
+    megaMenuCardsSwitchedAt = Date.now();
     response.end(JSON.stringify({ state: megaMenuCardsState }));
     return;
   }

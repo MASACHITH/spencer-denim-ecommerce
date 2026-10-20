@@ -97,10 +97,12 @@ describe('AdminSiteContentApi — mega-menu cards (#215)', () => {
 
 describe('cardStatus (#215)', () => {
   it.each([
-    [{ isActive: true, isLiveNow: true, isShownNow: true }, 'On the menu now'],
-    [{ isActive: true, isLiveNow: true, isShownNow: false }, 'Waiting its turn'],
-    [{ isActive: true, isLiveNow: false, isShownNow: false }, 'Scheduled'],
-    [{ isActive: false, isLiveNow: false, isShownNow: false }, 'Off'],
+    [{ isActive: true, isLiveNow: true, isShownNow: true, isEnded: false, isPictureUnavailable: false }, 'On the menu now'],
+    [{ isActive: true, isLiveNow: true, isShownNow: false, isEnded: false, isPictureUnavailable: false }, 'Waiting its turn'],
+    [{ isActive: true, isLiveNow: true, isShownNow: false, isEnded: false, isPictureUnavailable: true }, 'Picture unavailable'],
+    [{ isActive: true, isLiveNow: false, isShownNow: false, isEnded: false, isPictureUnavailable: false }, 'Scheduled'],
+    [{ isActive: true, isLiveNow: false, isShownNow: false, isEnded: true, isPictureUnavailable: false }, 'Ended'],
+    [{ isActive: false, isLiveNow: false, isShownNow: false, isEnded: true, isPictureUnavailable: false }, 'Off'],
   ])('%o reads %s', (card, label) => {
     expect(cardStatus(card)).toBe(label);
   });

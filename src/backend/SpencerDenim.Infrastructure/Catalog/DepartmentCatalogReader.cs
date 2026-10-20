@@ -89,7 +89,9 @@ internal sealed class DepartmentCatalogReader(AppDbContext dbContext, IOptions<C
                     card.ImageAsset.PublicId,
                     card.ImageAsset.RenditionSetVersion,
                     card.ImageAsset.Width),
-                card.ImageAsset.AltText))
+                card.ImageAsset.AltText,
+                card.StartsAtUtc,
+                card.EndsAtUtc))
             .ToListAsync(cancellationToken);
 
         var cardsByDepartment = cards.ToLookup(card => card.DepartmentId);
@@ -176,8 +178,14 @@ internal sealed class DepartmentCatalogReader(AppDbContext dbContext, IOptions<C
             card.LinkUrl,
             image.Url,
             image.SrcSet,
-            card.AltText);
+            card.AltText,
+            AsUtc(card.StartsAtUtc),
+            AsUtc(card.EndsAtUtc));
     }
+
+    /// <summary>The column is UTC by convention; marking it so makes the JSON carry its <c>Z</c>.</summary>
+    private static DateTime? AsUtc(DateTime? value) =>
+        value is { } instant ? DateTime.SpecifyKind(instant, DateTimeKind.Utc) : null;
 
     private sealed record CardRow(
         int Id,
@@ -187,7 +195,9 @@ internal sealed class DepartmentCatalogReader(AppDbContext dbContext, IOptions<C
         string ButtonLabel,
         string LinkUrl,
         MediaRef Image,
-        string? AltText);
+        string? AltText,
+        DateTime? StartsAtUtc,
+        DateTime? EndsAtUtc);
 
     private sealed record DepartmentRow(
         int Id,

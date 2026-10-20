@@ -135,9 +135,9 @@ export const brandingURL = `http://localhost:${BRANDING_PORT}`;
 export const brandingApiURL = `http://localhost:${BRANDING_API_PORT}`;
 
 /**
- * The mega-menu pair (#215). Its stub's `/__test__/mega-menu-cards?state=â€¦` switch puts admin cards on the
- * departments feed the SSR server reads, so the spec can measure the server-rendered HTML â€” the only place
- * escaping is proved â€” as well as the browser. A pair of its own for the reason the branding pair gives: a
+ * The mega-menu pair (#215). Its stub's `/__test__/mega-menu-cards?state=…` switch puts admin cards on the
+ * departments feed the SSR server reads, so the spec can measure the server-rendered HTML — the only place
+ * escaping is proved — as well as the browser. A pair of its own for the reason the branding pair gives: a
  * switch on a stub every other spec shares changes the header under them.
  */
 const MEGAMENU_PORT = Number(process.env['E2E_MEGAMENU_PORT'] ?? 4438);

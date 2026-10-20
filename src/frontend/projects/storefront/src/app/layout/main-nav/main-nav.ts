@@ -3,7 +3,7 @@ import { RouterLink, RouterLinkActive } from '@angular/router';
 import { Icon } from '@spencer-denim/shared';
 
 import { NavigationService } from '../../core/navigation/navigation.service';
-import { MegaMenuGroup, NavItem, hasMenu } from '../../core/navigation/navigation.model';
+import { MegaMenuGroup, MegaMenuPromo, NavItem, hasMenu, promoAt } from '../../core/navigation/navigation.model';
 
 /**
  * The promo card's column in `.mega__grid` below — `repeat(4, 1fr) minmax(200px, 1.1fr)` with a
@@ -122,7 +122,7 @@ const PROMO_SIZES =
                     </div>
                   }
 
-                  @if (item.promo; as promo) {
+                  @if (promoOf(item); as promo) {
                     <!-- #215: an admin card may point off the site; that is an ordinary anchor in a new tab.
                          The card's insides are written out twice on purpose: a shared ng-template needed
                          NgTemplateOutlet, which cost the initial bundle 2 kB more than the copy does. Every
@@ -130,7 +130,6 @@ const PROMO_SIZES =
                     @if (promo.cta.target.kind === 'internal') {
                       <a
                         class="mega__promo"
-                        data-testid="mega-promo"
                         [routerLink]="promo.cta.target.path"
                         [queryParams]="promo.cta.target.queryParams"
                         (click)="close(item.id)"
@@ -159,7 +158,6 @@ const PROMO_SIZES =
                     } @else {
                       <a
                         class="mega__promo"
-                        data-testid="mega-promo"
                         [href]="promo.cta.target.href"
                         target="_blank"
                         rel="noopener noreferrer"
@@ -360,6 +358,12 @@ export class MainNav {
 
   private readonly expanded = signal<string | null>(null);
 
+  /**
+   * The moment the menu last opened. A card is chosen for this moment rather than for when the tree arrived,
+   * because the tree is kept for the life of the page and a card's window may close while it is open (#215).
+   */
+  private readonly now = signal(Date.now());
+
   /** The id of the department whose mega menu is open, or `null`. */
   readonly openId = this.expanded.asReadonly();
 
@@ -376,6 +380,11 @@ export class MainNav {
 
   protected menuOf(item: NavItem): boolean {
     return hasMenu(item);
+  }
+
+  /** The card this department's menu draws now: the first whose window includes the moment it opened. */
+  protected promoOf(item: NavItem): MegaMenuPromo | null {
+    return item.promos.length > 0 ? promoAt(item.promos, this.now()) : item.promo;
   }
 
   protected panelId(item: NavItem): string {
@@ -423,6 +432,7 @@ export class MainNav {
   }
 
   private show(item: NavItem): void {
+    this.now.set(Date.now());
     this.expanded.set(hasMenu(item) ? item.id : null);
   }
 

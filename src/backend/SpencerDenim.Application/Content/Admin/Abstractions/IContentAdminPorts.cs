@@ -37,7 +37,21 @@ public sealed record ContentMediaUsage(int MediaAssetId, string UsageRole);
 public sealed record ContentMediaUsageChange(
     string OwnerType,
     Func<int> OwnerId,
-    IReadOnlyCollection<ContentMediaUsage> Desired);
+    IReadOnlyCollection<ContentMediaUsage> Desired)
+{
+    /// <summary>
+    /// Set by the store when the save answers <see cref="ContentSaveOutcome.MediaUnavailable"/>: the usages whose
+    /// asset was no longer usable when it was locked. The handler turns each into a field error.
+    /// </summary>
+    public IReadOnlyList<ContentMediaUsage> Unavailable { get; set; } = [];
+}
+
+/// <summary>
+/// The rule that keeps a mega-menu department to its limit under concurrency (#215 tester M2): inside the save's
+/// transaction the store locks the department row, counts its cards other than <see cref="ExceptCardId"/>, and
+/// answers <see cref="ContentSaveOutcome.LimitReached"/> at <see cref="Max"/>.
+/// </summary>
+public sealed record MegaMenuCardLimit(int DepartmentId, int Max, int? ExceptCardId);
 
 /// <summary>Lookups every content write shares.</summary>
 public interface IContentLookups
@@ -172,10 +186,15 @@ public interface IMegaMenuCardAdminStore : IContentLookups
     /// <summary>A hard delete: the table has no soft-delete flag (doc 08 §3.7).</summary>
     void Remove(MegaMenuPromoCard card);
 
-    /// <inheritdoc cref="IHomeContentAdminStore.SaveAsync"/>
+    /// <summary>
+    /// <see cref="IHomeContentAdminStore.SaveAsync"/>, plus <paramref name="limit"/>: when given (a create, or a
+    /// move into another department), the department row is locked and counted inside the transaction first.
+    /// Lock order: the department row, then the media asset rows by ascending id, then the writes (doc 08 §5.3).
+    /// </summary>
     Task<ContentSaveOutcome> SaveAsync(
         int? actingUserId,
         ContentMediaUsageChange? usage,
+        MegaMenuCardLimit? limit,
         CancellationToken cancellationToken);
 }
 

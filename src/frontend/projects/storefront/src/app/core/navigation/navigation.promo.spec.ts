@@ -1,6 +1,6 @@
 import { DepartmentDto, MegaMenuPromoCardDto } from './catalog-departments.model';
 import { toNavigation, toPromo } from './navigation.mapper';
-import { MegaMenuPromo } from './navigation.model';
+import { MegaMenuPromo, promoAt } from './navigation.model';
 
 /**
  * The mega-menu promo card (GLB-05, ADM-17; #215): the first drawable admin card, or — with none — exactly the card
@@ -158,5 +158,46 @@ describe('toPromo (#215)', () => {
     const [women] = toNavigation([department({ categories: [], promoCards: [card()] })]);
 
     expect(women.promo).toBeNull();
+  });
+});
+
+/**
+ * #215 tester: the tree is kept for the life of the page (`shareReplay`), so the menu re-checks a card's window
+ * when it opens. Times are explicit instants, never "now".
+ */
+describe('the card window, re-checked where the menu opens (#215)', () => {
+  const start = Date.parse('2026-11-01T03:30:00Z');
+  const end = Date.parse('2026-11-08T03:30:00Z');
+  const windowed = card({ title: 'Week card', startsAtUtc: '2026-11-01T03:30:00Z', endsAtUtc: '2026-11-08T03:30:00Z' });
+
+  it('draws the card inside its window, start inclusive and end exclusive', () => {
+    const dept = department({ promoCards: [windowed] });
+
+    expect(toPromo(dept, start - 1).title).toBe('New in Women');
+    expect(toPromo(dept, start).title).toBe('Week card');
+    expect(toPromo(dept, end - 1).title).toBe('Week card');
+    expect(toPromo(dept, end).title).toBe('New in Women');
+  });
+
+  it('a closed card gives way to the next card, not only to the fallback', () => {
+    const dept = department({ promoCards: [windowed, card({ id: 9, title: 'Always on' })] });
+
+    expect(toPromo(dept, end + 60_000).title).toBe('Always on');
+  });
+
+  it('every menu item carries its candidates, ending with the fallback; other items carry none', () => {
+    const items = toNavigation([department({ promoCards: [windowed] })]);
+    const women = items.find((item) => item.id === 'women')!;
+
+    expect(women.promos.map((candidate) => candidate.promo.title)).toEqual(['Week card', 'New in Women']);
+    expect(women.promos[0].endsAt).toBe(end);
+    expect(promoAt(women.promos, end)?.title).toBe('New in Women');
+    expect(items.find((item) => item.id === 'sale')!.promos).toEqual([]);
+  });
+
+  it('an unreadable instant is treated as open-ended', () => {
+    const dept = department({ promoCards: [card({ title: 'Odd', endsAtUtc: 'not a date' })] });
+
+    expect(toPromo(dept, end).title).toBe('Odd');
   });
 });

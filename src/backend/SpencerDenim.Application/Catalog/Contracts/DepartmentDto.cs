@@ -37,6 +37,9 @@ public sealed record CategoryNodeDto(
 /// <param name="ImageUrl">The <c>card</c> rendition, or the original when there is none.</param>
 /// <param name="ImageSrcSet">Candidate widths for <paramref name="ImageUrl"/>; null without renditions.</param>
 /// <param name="ImageAlt">The picture's alt text from the media library.</param>
+/// <param name="StartsAtUtc">The window's start (UTC), or null. The storefront re-checks the window when the menu
+/// opens, because it keeps the tree for the life of the page (#215 tester).</param>
+/// <param name="EndsAtUtc">The window's end (UTC, exclusive), or null.</param>
 public sealed record MegaMenuPromoCardDto(
     int Id,
     string Title,
@@ -45,7 +48,9 @@ public sealed record MegaMenuPromoCardDto(
     string LinkUrl,
     string? ImageUrl,
     string? ImageSrcSet,
-    string? ImageAlt);
+    string? ImageAlt,
+    DateTime? StartsAtUtc,
+    DateTime? EndsAtUtc);
 
 /// <summary>A department with its whole category tree (GLB-05, DEPT-01).</summary>
 /// <param name="HeroImageUrl">

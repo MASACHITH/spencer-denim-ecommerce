@@ -69,6 +69,22 @@ test.describe('the mega-menu card screen (#215)', () => {
     await expect(page.locator('[data-testid="mm-fallback-women"]')).toHaveCount(0);
   });
 
+  test('the status pill stays inside its card at every width (#215 tester: 7 px over at 390)', async ({ page }) => {
+    await open(page);
+    await page.locator('[data-testid="mm-edit-1"]').click();
+    await uploadPicture(page);
+    await page.locator('[data-testid="mm-active"]').check();
+    await page.locator('[data-testid="mm-save"]').click();
+    await expect(page.locator('[data-testid="mm-status-1"]')).toHaveText('On the menu now');
+
+    for (const width of [320, 375, 390, 768]) {
+      await page.setViewportSize({ width, height: 900 });
+      const pill = await page.locator('[data-testid="mm-status-1"]').boundingBox();
+      const card = await page.locator('[data-testid="mm-card-1"]').boundingBox();
+      expect(pill!.x + pill!.width, `pill right edge at ${width}px`).toBeLessThanOrEqual(card!.x + card!.width);
+    }
+  });
+
   test('adds a scheduled card for a department, starting from today’s words', async ({ page }) => {
     await open(page);
 

@@ -358,6 +358,13 @@ public sealed class HomeContentWriteHandlers(
             return StaleSection();
         }
 
+        // Re-checked under the asset's lock in the save (#215 tester M1): the picture or video was deleted or
+        // changed between the check and the save, and nothing was written.
+        if (outcome == ContentSaveOutcome.MediaUnavailable && usage is not null)
+        {
+            return new ContentWriteResult.Invalid(ContentMediaRules.UnavailableErrors(usage.Unavailable));
+        }
+
         homePageCache.Evict();
 
         return new ContentWriteResult.Succeeded(

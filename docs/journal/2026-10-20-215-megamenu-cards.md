@@ -127,3 +127,30 @@ did not compile under warnings-as-errors were rewritten so they compile, not cou
 
 - #191 lock order for card saves (§2), after both merge.
 - MEMORY.md, TASKS.md and `client-progress/progress-data.js` are left to the lead.
+
+## 7. Round 2: the independent tester's findings (tester commits `4170e19`, `9287f51`)
+
+`origin/main` merged first (`03ac6e3`: #191 / PR #220 with its `MediaAssets` UPDLOCK and doc 08 §5.3 lock order, plus
+#217, #218, #205). No conflicts.
+
+| # | Finding | Fix | Proof |
+|---|---|---|---|
+| M1 (Medium) | A card save racing a media delete of its picture: both succeeded 14–15 of 15 rounds, leaving the card and a usage row on a deleted asset | #191's pattern in the **shared** `ContentAdminStores.SaveWithUsageAsync` (cards, #192 homepage items, size guides): inside the save's transaction, before any write, `UPDLOCK, READCOMMITTEDLOCK, ROWLOCK` on every referenced `media.MediaAssets` row **by ascending Id**, then re-check not deleted / ready / public / right kind / alt text on an image. A failed re-check rolls back and answers the existing 400 on that slot's field (`ContentSaveOutcome.MediaUnavailable`, `ContentMediaRules.UnavailableErrors`) | Tester's `A_card_save_racing_a_delete_of_its_picture…` and new `ContentMediaLockRaceTests.A_homepage_item_save_racing_a_delete…`: **3 of 3 runs green**. Mutants: re-check skipped → both fail; read without the lock (plain RCSI) → both fail |
+| M2 (Medium) | 20 parallel creates put 10–11 cards in one department (limit 6) | Inside the same transaction, **first**, `UPDLOCK, READCOMMITTEDLOCK, ROWLOCK` on the `catalog.Departments` row, then count its cards (excluding the card itself on a move) and answer `ContentSaveOutcome.LimitReached` → 409 `too_many_mega_menu_cards`. Applies to a create and to a move into another department; an edit in place takes no department lock. The handler's earlier count stays for the plain answer | `Parallel_creates_cannot_take_a_department_past_the_limit`: **5 of 5 runs green**. Mutants: department not locked → fails; locked count ignored → fails |
+| Lock order | — | **Department row → asset rows (ascending id) → writes**, recorded in doc 08 §5.3. The media delete takes only its asset row, so no cycle | — |
+| L (users see it) | Admin tab title `Mega menu cards â€” …`; 15 more mis-encoded comment lines | My heredoc-fed edit helper read stdin as cp1252. Fixed in `app.routes.ts`, `navigation.mapper.ts`, `catalog-api-stub.mjs`, `playwright.config.ts`; every text file the branch touches rescanned (only `app.routes.titles.spec.ts` holds the sequence, on purpose) | `app.routes.titles.spec.ts` green |
+| L | Fallback card markup differed from main | `data-testid` removed from both card anchors (tests target `.mega__promo`); the fallback anchor's attributes, classes, `alt=""` and inner markup are main's | **Not identical, and why:** choosing between a router link and an off-site anchor needs one control-flow block, which leaves one extra hydration comment (`<!--container-->`) beside the card, and the anchor carries `[queryParams]` (null for the fallback, so no attribute). A single anchor cannot be both a `routerLink` and a plain `href`. Nothing a shopper or a crawler sees differs |
+| L | `cardStatus` said "Scheduled" for an ended card and "Waiting its turn" for a card whose picture cannot be shown | Server sends `isEnded` and `isPictureUnavailable` (computed with the storefront's rule); statuses now include "Ended" and "Picture unavailable" | Vitest theory over all six states |
+| L | Admin 390 px: "ON THE MENU NOW" pill 7 px past its card | `.mm-card__facts .adm-pill { white-space: normal; max-width: 100% }` and `min-width: 0` on the cell | New e2e at 320/375/390/768; it fails without the CSS (379 px > 342 px) |
+| L | Seeder copied the description raw | `HomeContentData.SubtitleFrom`: control characters become spaces, spaces collapse, cut at a word with "…" at 200; the result passes `ContentFieldRules.OptionalText` | 3 new unit tests |
+| L | A card past its end stayed until a full page load (`shareReplay`) | The feed now carries `startsAtUtc`/`endsAtUtc`; `NavItem.promos` holds every candidate with its window, ending with the fallback; `MainNav` picks the first live one **at the moment the menu opens** (`promoAt`) | Vitest (start inclusive, end exclusive, next card, unreadable instant); e2e `closing` state: the card is gone on the next open without a reload; it fails with the re-check removed |
+
+**Round 2 numbers** (after the merge): unit **3,914** passed; integration filtered (MegaMenu, Content, Home, SizeGuide,
+Media, SaleCampaign, Migration, Seed) **526 / 526**; race tests 3/3, parallel 5/5; Vitest storefront **2,130**, admin
+**861**; `ng lint` clean; storefront initial **449.83 kB** (448.74 before round 2: +1.09 kB for the window re-check),
+admin 316.22 kB; Release build **0 warnings**; e2e (mega-menu storefront and admin, stub parity, admin home /
+announcements / size guides, home page, sale banner, sale campaigns) **174 passed**, then the two new e2e tests each
+proved to fail without their fix.
+
+**#223:** item 3 is now closed for homepage items, size guides and mega-menu cards. Product media and category
+images are a separate write path and still to do.

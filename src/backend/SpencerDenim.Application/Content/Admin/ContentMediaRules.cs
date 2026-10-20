@@ -69,4 +69,29 @@ public static class ContentMediaRules
 
         return asset.Id;
     }
+
+    /// <summary>
+    /// The field errors for usages whose asset stopped being usable between the check above and the save
+    /// (<see cref="ContentSaveOutcome.MediaUnavailable"/>), each against the request field that carries its role.
+    /// </summary>
+    public static IReadOnlyList<ValidationError> UnavailableErrors(IEnumerable<ContentMediaUsage> unavailable)
+    {
+        ArgumentNullException.ThrowIfNull(unavailable);
+
+        return unavailable
+            .Select(usage => FieldFor(usage.UsageRole))
+            .Distinct(StringComparer.Ordinal)
+            .Select(field => new ValidationError(
+                field,
+                "That file was removed from the media library or is no longer ready to show. Choose it again."))
+            .ToList();
+    }
+
+    /// <summary>The request field that carries a usage role.</summary>
+    public static string FieldFor(string usageRole) => usageRole switch
+    {
+        MediaUsageRoles.MobileImage => "mobileImagePublicId",
+        MediaUsageRoles.Video => "videoPublicId",
+        _ => "imagePublicId",
+    };
 }

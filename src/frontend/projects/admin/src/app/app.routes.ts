@@ -241,7 +241,7 @@ export const routes: Routes = [
   {
     // GLB-05 (#215): the picture card at the end of each department's mega menu.
     path: 'content/mega-menu',
-    title: `Mega menu cards â€” ${BRAND.adminName}`,
+    title: `Mega menu cards — ${BRAND.adminName}`,
     canActivate: [adminSessionGuard],
     loadComponent: () => import('./pages/content/mega-menu-page').then((m) => m.MegaMenuPage),
   },

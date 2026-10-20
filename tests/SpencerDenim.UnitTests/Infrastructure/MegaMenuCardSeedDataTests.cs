@@ -32,13 +32,48 @@ public sealed class MegaMenuCardSeedDataTests
     }
 
     [Fact]
-    public void A_description_that_fits_is_kept_and_one_that_does_not_is_left_to_the_fallback()
+    public void A_description_that_fits_is_kept_whole()
     {
         var fits = new string('a', MegaMenuPromoCardLimits.SubtitleMaxLength);
-        var over = new string('a', MegaMenuPromoCardLimits.SubtitleMaxLength + 1);
 
         Assert.Equal(fits, HomeContentData.MegaMenuCardFor("Men", fits).Subtitle);
-        Assert.Null(HomeContentData.MegaMenuCardFor("Men", over).Subtitle);
+    }
+
+    /// <summary>#215 tester: the seeded line is one the API's own subtitle rules accept, so the editor can save it back.</summary>
+    [Fact]
+    public void A_long_description_is_cut_at_a_word_within_the_limit()
+    {
+        var words = string.Join(' ', Enumerable.Repeat("linen", 60));
+
+        var subtitle = HomeContentData.MegaMenuCardFor("Men", words).Subtitle!;
+
+        Assert.True(subtitle.Length <= MegaMenuPromoCardLimits.SubtitleMaxLength, subtitle.Length.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        Assert.EndsWith("linen…", subtitle, StringComparison.Ordinal);
+        Assert.Empty(OptionalTextErrors(subtitle));
+    }
+
+    [Fact]
+    public void A_description_with_line_breaks_becomes_one_line_the_api_accepts()
+    {
+        var subtitle = HomeContentData.MegaMenuCardFor("Kids", "  Soft fabrics.\r\n\tRoom to grow.  ").Subtitle!;
+
+        Assert.Equal("Soft fabrics. Room to grow.", subtitle);
+        Assert.Empty(OptionalTextErrors(subtitle));
+    }
+
+    [Fact]
+    public void An_unbroken_description_too_long_for_the_card_is_cut_hard()
+    {
+        var subtitle = HomeContentData.MegaMenuCardFor("Men", new string('a', 500)).Subtitle!;
+
+        Assert.Equal(MegaMenuPromoCardLimits.SubtitleMaxLength, subtitle.Length);
+    }
+
+    private static List<SpencerDenim.Application.Abstractions.Results.ValidationError> OptionalTextErrors(string value)
+    {
+        var errors = new List<SpencerDenim.Application.Abstractions.Results.ValidationError>();
+        SpencerDenim.Application.Content.Admin.ContentFieldRules.OptionalText(errors, "subtitle", value, MegaMenuPromoCardLimits.SubtitleMaxLength);
+        return errors;
     }
 
     [Fact]

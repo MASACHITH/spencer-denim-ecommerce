@@ -430,6 +430,12 @@ const SHOWN_FIELDS = [
     .mm-card__facts dd {
       margin: 0;
       overflow-wrap: anywhere;
+      min-width: 0;
+    }
+    /* The pill is nowrap everywhere else; here the column can be narrower than "On the menu now" (390 px). */
+    .mm-card__facts .adm-pill {
+      white-space: normal;
+      max-width: 100%;
     }
     @media (max-width: 374px) {
       .mm-card {

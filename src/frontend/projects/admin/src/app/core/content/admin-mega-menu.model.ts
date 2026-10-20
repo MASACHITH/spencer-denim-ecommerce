@@ -25,6 +25,10 @@ export interface AdminMegaMenuCard {
   readonly isLiveNow: boolean;
   /** The one card the shop's menu draws for this department right now. */
   readonly isShownNow: boolean;
+  /** Switched on, but its window has closed. */
+  readonly isEnded: boolean;
+  /** Switched on and in its window, but its picture is missing, private, processing or not an image. */
+  readonly isPictureUnavailable: boolean;
   readonly rowVersion: string;
 }
 
@@ -72,16 +76,25 @@ export const MEGA_MENU_CARD_LIMITS = {
   linkUrl: 500,
 } as const;
 
-/** "On the menu now" / "Waiting its turn" / "Scheduled" / "Off" for one card. */
-export function cardStatus(card: Pick<AdminMegaMenuCard, 'isActive' | 'isLiveNow' | 'isShownNow'>): string {
+/**
+ * One card's status: "On the menu now", "Picture unavailable", "Waiting its turn", "Ended", "Scheduled" or "Off".
+ * The flags come from the server, which asks the storefront's own rule (#215 tester).
+ */
+export function cardStatus(
+  card: Pick<AdminMegaMenuCard, 'isActive' | 'isLiveNow' | 'isShownNow' | 'isEnded' | 'isPictureUnavailable'>,
+): string {
   if (card.isShownNow) {
     return 'On the menu now';
   }
 
   if (card.isLiveNow) {
-    // On, in its window, and behind an earlier card (or without a usable picture).
-    return 'Waiting its turn';
+    // On and in its window: either its picture cannot be shown, or an earlier card is drawn first.
+    return card.isPictureUnavailable ? 'Picture unavailable' : 'Waiting its turn';
   }
 
-  return card.isActive ? 'Scheduled' : 'Off';
+  if (!card.isActive) {
+    return 'Off';
+  }
+
+  return card.isEnded ? 'Ended' : 'Scheduled';
 }

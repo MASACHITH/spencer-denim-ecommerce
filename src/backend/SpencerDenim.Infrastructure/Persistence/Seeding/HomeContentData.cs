@@ -207,27 +207,55 @@ internal static class HomeContentData
 
     /// <summary>
     /// The card the storefront used to draw for a department, as a switched-off row: "New in {name}", the
-    /// description (when it fits the card's 200 characters; the menu's own fallback still shows the whole of
-    /// it), "Shop now" and <c>/new-arrivals</c>. A name too long for the heading is cut, never refused.
+    /// description, "Shop now" and <c>/new-arrivals</c>. A name too long for the heading is cut, never refused.
+    /// <para>
+    /// The description goes through the API's subtitle rules first (#215 tester), because the seeded row must be
+    /// one the editor can save back untouched: line breaks and other control characters become spaces, runs of
+    /// space collapse, and a description longer than the card's 200 characters is cut at a word with an ellipsis.
+    /// </para>
     /// </summary>
     public static MegaMenuPromoCard MegaMenuCardFor(string departmentName, string? description)
     {
         ArgumentNullException.ThrowIfNull(departmentName);
 
         var title = "New in " + departmentName.Trim();
-        var subtitle = string.IsNullOrWhiteSpace(description) ? null : description.Trim();
+        var subtitle = SubtitleFrom(description);
 
         return new MegaMenuPromoCard
         {
             Title = title.Length > MegaMenuPromoCardLimits.TitleMaxLength
                 ? title[..MegaMenuPromoCardLimits.TitleMaxLength]
                 : title,
-            Subtitle = subtitle is { Length: <= MegaMenuPromoCardLimits.SubtitleMaxLength } ? subtitle : null,
+            Subtitle = subtitle,
             ButtonLabel = MegaMenuCardButtonLabel,
             LinkUrl = MegaMenuCardLinkUrl,
             SortOrder = 0,
             IsActive = false,
         };
+    }
+
+    /// <summary>A department description as a card's line: one line of plain text within the card's width.</summary>
+    internal static string? SubtitleFrom(string? description)
+    {
+        if (string.IsNullOrWhiteSpace(description))
+        {
+            return null;
+        }
+
+        var oneLine = string.Join(
+            ' ',
+            new string(description.Select(character => char.IsControl(character) ? ' ' : character).ToArray())
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries));
+
+        const int max = MegaMenuPromoCardLimits.SubtitleMaxLength;
+        if (oneLine.Length <= max)
+        {
+            return oneLine;
+        }
+
+        var cut = oneLine[..(max - 1)];
+        var space = cut.LastIndexOf(' ');
+        return (space > max / 2 ? cut[..space] : cut).TrimEnd() + "…";
     }
 
     /// <summary>

@@ -296,6 +296,10 @@ internal sealed class ContentAdminReaders(AppDbContext dbContext, IOptions<Catal
                 card.IsActive,
                 card.StartsAtUtc,
                 card.EndsAtUtc,
+                PictureUsable = card.ImageAsset != null
+                    && card.ImageAsset.Status == MediaAssetStatus.Ready
+                    && card.ImageAsset.Visibility == MediaVisibility.Public
+                    && card.ImageAsset.MediaType == MediaAssetType.Image,
                 card.RowVersion,
             })
             .ToListAsync(cancellationToken);
@@ -338,6 +342,8 @@ internal sealed class ContentAdminReaders(AppDbContext dbContext, IOptions<Catal
                         ContentFieldRules.ToColomboText(card.EndsAtUtc),
                         ContentSchedule.IsLive(card.IsActive, card.StartsAtUtc, card.EndsAtUtc, utcNow),
                         shown.Contains(card.Id),
+                        card.IsActive && card.EndsAtUtc is { } ends && ends <= utcNow,
+                        ContentSchedule.IsLive(card.IsActive, card.StartsAtUtc, card.EndsAtUtc, utcNow) && !card.PictureUsable,
                         Convert.ToBase64String(card.RowVersion ?? [])))
                     .ToList()))
             .ToList();

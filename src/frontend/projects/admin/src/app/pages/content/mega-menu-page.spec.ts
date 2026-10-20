@@ -43,6 +43,8 @@ describe('MegaMenuPage (#215, GLB-05)', () => {
       endsAt: null,
       isLiveNow: true,
       isShownNow: true,
+      isEnded: false,
+      isPictureUnavailable: false,
       rowVersion: 'rv1',
       ...overrides,
     };

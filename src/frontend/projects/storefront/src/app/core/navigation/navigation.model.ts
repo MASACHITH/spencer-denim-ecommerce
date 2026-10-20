@@ -57,6 +57,16 @@ export interface MegaMenuPromo {
   readonly imageAlt: string;
 }
 
+/**
+ * A promo card with the window it may be drawn in, in epoch milliseconds (`null` for open-ended). The department
+ * fallback is always last and has no window, so a department's list always draws something (#215).
+ */
+export interface MegaMenuPromoCandidate {
+  readonly promo: MegaMenuPromo;
+  readonly startsAt: number | null;
+  readonly endsAt: number | null;
+}
+
 /** `sale` paints the label in the sale colour; nothing else changes. */
 export type NavTone = 'default' | 'sale';
 
@@ -73,6 +83,22 @@ export interface NavItem {
   readonly shopAll: NavLink | null;
   readonly columns: readonly MegaMenuColumn[];
   readonly promo: MegaMenuPromo | null;
+  /**
+   * Every card that could be drawn, best first, ending with the department fallback; empty without a menu. The
+   * desktop menu picks the first whose window includes the moment it opens (`promoAt`), so a long-lived page does
+   * not keep showing a card past its end.
+   */
+  readonly promos: readonly MegaMenuPromoCandidate[];
+}
+
+/** The first candidate live at `now` (epoch ms), or `null` when there are none. */
+export function promoAt(promos: readonly MegaMenuPromoCandidate[], now: number): MegaMenuPromo | null {
+  const live = promos.find(
+    (candidate) =>
+      (candidate.startsAt === null || candidate.startsAt <= now) && (candidate.endsAt === null || candidate.endsAt > now),
+  );
+
+  return live?.promo ?? null;
 }
 
 /** Whether this entry opens a mega menu (desktop) or an expandable section (mobile drawer). */

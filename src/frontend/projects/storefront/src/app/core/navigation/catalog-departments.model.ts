@@ -40,6 +40,12 @@ export interface MegaMenuPromoCardDto {
   readonly imageSrcSet: string | null;
   /** The picture's alt text from the media library. */
   readonly imageAlt: string | null;
+  /**
+   * The card's window, ISO 8601 UTC, or null for open-ended. The feed only sends cards live when it answered; the
+   * menu re-checks these when it opens, so a page left open does not keep a card past its end (#215 tester).
+   */
+  readonly startsAtUtc?: string | null;
+  readonly endsAtUtc?: string | null;
 }
 
 export interface DepartmentDto {

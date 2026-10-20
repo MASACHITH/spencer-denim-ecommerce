@@ -18,7 +18,7 @@ test.use({ baseURL: megaMenuURL });
 
 const BREAKPOINTS = [320, 375, 390, 768, 1024, 1280, 1440, 1920] as const;
 
-type CardState = 'none' | 'empty' | 'card' | 'external' | 'hostile' | 'long';
+type CardState = 'none' | 'empty' | 'card' | 'external' | 'hostile' | 'long' | 'closing';
 
 async function useCards(page: Page, state: CardState): Promise<void> {
   const switched = await page.request.get(`${megaMenuApiURL}/__test__/mega-menu-cards?state=${state}`);
@@ -69,7 +69,7 @@ test.describe('the fallback: no card means today’s card', () => {
       }
 
       const menu = await openWomen(page);
-      const promo = menu.getByTestId('mega-promo');
+      const promo = menu.locator('.mega__promo');
       await expect(promo).toHaveAttribute('href', '/new-arrivals');
       await expect(promo).toContainText('New in Women');
       await expect(promo).toContainText('Everyday essentials and occasion pieces, cut for Sri Lankan weather.');
@@ -96,7 +96,7 @@ test.describe('an admin card', () => {
     expect(html).toContain('New in Kids');
 
     const menu = await openWomen(page);
-    const promo = menu.getByTestId('mega-promo');
+    const promo = menu.locator('.mega__promo');
     await expect(promo).toHaveAttribute('href', '/women/dresses?material=linen');
     const image = promo.locator('img');
     await expect(image).toHaveAttribute('alt', 'A model in a linen dress');
@@ -123,7 +123,7 @@ test.describe('an admin card', () => {
     await department(page, 'Women').focus();
     await expect(page.locator('#mega-women')).toBeVisible();
 
-    const promo = page.locator('#mega-women').getByTestId('mega-promo');
+    const promo = page.locator('#mega-women').locator('.mega__promo');
     let reached = false;
     for (let step = 0; step < 40 && !reached; step += 1) {
       await page.keyboard.press('Tab');
@@ -131,7 +131,7 @@ test.describe('an admin card', () => {
     }
     expect(reached, 'Tab never reached the promo card').toBe(true);
     await expect(page.locator('#mega-women')).toBeVisible();
-    expect(await undersized(page, '#mega-women [data-testid="mega-promo"] .mega__promo-cta')).toEqual([]);
+    expect(await undersized(page, '#mega-women .mega__promo .mega__promo-cta')).toEqual([]);
 
     await page.keyboard.press('Enter');
     await expect(page).toHaveURL(/\/women\/dresses\?material=linen$/);
@@ -140,7 +140,7 @@ test.describe('an admin card', () => {
   test('pointing off the site is an ordinary anchor that opens in a new tab', async ({ page }) => {
     await useCards(page, 'external');
 
-    const promo = (await openWomen(page)).getByTestId('mega-promo');
+    const promo = (await openWomen(page)).locator('.mega__promo');
     await expect(promo).toHaveAttribute('href', 'https://instagram.com/colombowardrobe');
     await expect(promo).toHaveAttribute('target', '_blank');
     await expect(promo).toHaveAttribute('rel', 'noopener noreferrer');
@@ -163,7 +163,7 @@ test.describe('an admin card', () => {
     expect(html).toContain('{{constructor.constructor(');
 
     const menu = await openWomen(page);
-    const promos = menu.getByTestId('mega-promo');
+    const promos = menu.locator('.mega__promo');
     await expect(promos).toHaveCount(1);
     await expect(promos).toHaveAttribute('href', '/women/dresses');
     await expect(promos).toContainText('<img src=x onerror="window.__xss=1">Linen <b>days</b>');
@@ -184,6 +184,24 @@ test.describe('an admin card', () => {
   });
 });
 
+test.describe('a card whose window closes while the page is open (#215 tester)', () => {
+  test('is dropped the next time the menu opens, without a page load', async ({ page }) => {
+    await useCards(page, 'closing');
+
+    const menu = await openWomen(page);
+    await expect(menu.locator('.mega__promo')).toContainText('Closing soon');
+
+    await page.mouse.move(0, 800);
+    await expect(menu).toBeHidden();
+    await page.waitForTimeout(4_500);
+
+    await department(page, 'Women').hover();
+    await expect(menu).toBeVisible();
+    await expect(menu.locator('.mega__promo')).toContainText('New in Women');
+    await expect(menu.locator('.mega__promo')).toHaveAttribute('href', '/new-arrivals');
+  });
+});
+
 test.describe('the longest card the API allows', () => {
   test('never scrolls the page sideways, menu open on desktop and drawer open on phones', async ({ page }) => {
     await useCards(page, 'long');
@@ -195,7 +213,7 @@ test.describe('the longest card the API allows', () => {
       if (width >= 1024) {
         await department(page, 'Women').hover();
         await expect(page.locator('#mega-women')).toBeVisible();
-        await expect(page.locator('#mega-women').getByTestId('mega-promo')).toContainText('L'.repeat(100));
+        await expect(page.locator('#mega-women').locator('.mega__promo')).toContainText('L'.repeat(100));
       } else {
         await expect(page.locator('#mega-women')).toBeHidden();
       }
@@ -214,7 +232,7 @@ test.describe('the longest card the API allows', () => {
     const drawer = page.locator('#storefront-menu');
     await expect(drawer).toBeVisible();
     await expect(drawer).not.toContainText('Linen days');
-    await expect(drawer.getByTestId('mega-promo')).toHaveCount(0);
+    await expect(drawer.locator('.mega__promo')).toHaveCount(0);
 
     await drawer.getByRole('button', { name: /Women/ }).first().click();
     await expect(drawer.getByRole('link', { name: 'Dresses', exact: true })).toBeVisible();

@@ -42,6 +42,11 @@ public sealed record AdminMegaMenuDepartmentDto(
 /// The one card the storefront draws for this department right now: the first live card, by position, whose
 /// picture is ready. At most one per department.
 /// </param>
+/// <param name="IsEnded">Switched on, but its window has closed: it will not come back by itself.</param>
+/// <param name="IsPictureUnavailable">
+/// Switched on and in its window, but its picture is missing, private, still processing or not an image, so the shop
+/// cannot draw it.
+/// </param>
 /// <param name="RowVersion">The concurrency token to send back, base64.</param>
 public sealed record AdminMegaMenuCardDto(
     int Id,
@@ -57,6 +62,8 @@ public sealed record AdminMegaMenuCardDto(
     string? EndsAt,
     bool IsLiveNow,
     bool IsShownNow,
+    bool IsEnded,
+    bool IsPictureUnavailable,
     string RowVersion);
 
 /// <summary>What a card write answers with.</summary>
@@ -142,7 +149,11 @@ public sealed class MegaMenuCardWriteHandlers(
             command.Actor,
             clock.UtcNow.UtcDateTime));
 
-        return await SavedAsync(card, command.Actor, cancellationToken);
+        return await SavedAsync(
+            card,
+            command.Actor,
+            new MegaMenuCardLimit(values.DepartmentId, MegaMenuPromoCardLimits.MaxCardsPerDepartment, ExceptCardId: null),
+            cancellationToken);
     }
 
     public async Task<ContentWriteResult> HandleAsync(UpdateMegaMenuCardCommand command, CancellationToken cancellationToken)
@@ -169,7 +180,9 @@ public sealed class MegaMenuCardWriteHandlers(
         }
 
         // Moving a card to another department counts against that department's limit; staying put does not.
-        if (values.DepartmentId != card.DepartmentId
+        // Checked here for the plain answer, and again under the department's lock in the save (tester M2).
+        var moving = values.DepartmentId != card.DepartmentId;
+        if (moving
             && await store.CountForDepartmentAsync(values.DepartmentId, cancellationToken)
                 >= MegaMenuPromoCardLimits.MaxCardsPerDepartment)
         {
@@ -195,7 +208,11 @@ public sealed class MegaMenuCardWriteHandlers(
 
         auditLog.Enlist(audit);
 
-        return await SavedAsync(card, command.Actor, cancellationToken);
+        return await SavedAsync(
+            card,
+            command.Actor,
+            moving ? new MegaMenuCardLimit(values.DepartmentId, MegaMenuPromoCardLimits.MaxCardsPerDepartment, card.Id) : null,
+            cancellationToken);
     }
 
     public async Task<ContentWriteResult> HandleAsync(DeleteMegaMenuCardCommand command, CancellationToken cancellationToken)
@@ -230,6 +247,7 @@ public sealed class MegaMenuCardWriteHandlers(
         var outcome = await store.SaveAsync(
             command.Actor.UserId,
             new ContentMediaUsageChange(MediaUsageOwnerTypes.MegaMenuPromoCard, () => cardId, []),
+            limit: null,
             cancellationToken);
 
         if (outcome == ContentSaveOutcome.ConcurrencyConflict)
@@ -301,13 +319,30 @@ public sealed class MegaMenuCardWriteHandlers(
             endsAtUtc);
     }
 
-    private async Task<ContentWriteResult> SavedAsync(MegaMenuPromoCard card, AdminActor actor, CancellationToken cancellationToken)
+    private async Task<ContentWriteResult> SavedAsync(
+        MegaMenuPromoCard card,
+        AdminActor actor,
+        MegaMenuCardLimit? limit,
+        CancellationToken cancellationToken)
     {
-        var outcome = await store.SaveAsync(actor.UserId, Usage(card), cancellationToken);
+        var usage = Usage(card);
+        var outcome = await store.SaveAsync(actor.UserId, usage, limit, cancellationToken);
 
-        if (outcome == ContentSaveOutcome.ConcurrencyConflict)
+        switch (outcome)
         {
-            return StaleConflict();
+            case ContentSaveOutcome.ConcurrencyConflict:
+                return StaleConflict();
+
+            // Counted under the department's lock (tester M2): another save filled the last place first.
+            case ContentSaveOutcome.LimitReached:
+                return TooMany();
+
+            // Re-checked under the asset's lock (tester M1): the picture was deleted or changed meanwhile.
+            case ContentSaveOutcome.MediaUnavailable:
+                return new ContentWriteResult.Invalid(ContentMediaRules.UnavailableErrors(usage.Unavailable));
+
+            default:
+                break;
         }
 
         homePageCache.Evict();
