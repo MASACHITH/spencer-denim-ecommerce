@@ -28,6 +28,7 @@ export class AdminSettingsApi {
   static readonly invoiceAndFulfilmentUrl = '/api/admin/settings/invoice-and-fulfilment';
   static readonly payPalUrl = '/api/admin/settings/paypal';
   static readonly trafficUrl = '/api/admin/settings/traffic';
+  static readonly reviewsUrl = '/api/admin/settings/reviews';
   static readonly imagesUrl = '/api/admin/media/images';
 
   private readonly http = inject(HttpClient);
@@ -131,6 +132,11 @@ export class AdminSettingsApi {
    */
   updateTraffic(values: TrafficValues, rowVersion: string): Observable<void> {
     return this.put(AdminSettingsApi.trafficUrl, { ...values, rowVersion });
+  }
+
+  /** Whether reviews wait for approval (issue #189): a JSON true or false, never null. */
+  updateReviews(requireApproval: boolean, rowVersion: string): Observable<void> {
+    return this.put(AdminSettingsApi.reviewsUrl, { requireApproval, rowVersion });
   }
 
   private put(url: string, body: unknown): Observable<void> {

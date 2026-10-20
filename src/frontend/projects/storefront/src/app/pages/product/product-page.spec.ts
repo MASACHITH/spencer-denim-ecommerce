@@ -4,12 +4,14 @@ import {
   TestRequest,
   provideHttpClientTesting,
 } from '@angular/common/http/testing';
-import { ApplicationRef } from '@angular/core';
+import { ApplicationRef, Component, input } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { Router, provideRouter } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 
 import { routes } from '../../app.routes';
+import { ProductPage } from './product-page';
+import { ProductReviews } from './product-reviews';
 import {
   ColourSwatchDto,
   PriceDto,
@@ -175,6 +177,21 @@ const DEPARTMENTS: readonly DepartmentDto[] = [
   },
 ];
 
+/**
+ * The reviews block (PDP-08, #189) stood in for: it has its own spec (`product-reviews.spec.ts`) and its own
+ * requests, which every test here would otherwise have to answer. What this page owes it is the product's id and
+ * slug, and one test below checks exactly that.
+ */
+@Component({ selector: 'sd-product-reviews', template: '<p data-testid="reviews-stub">{{ productId() }}:{{ slug() }}</p>' })
+class ReviewsStub {
+  readonly productId = input.required<number>();
+  readonly slug = input.required<string>();
+}
+
+function stubReviews(): void {
+  TestBed.overrideComponent(ProductPage, { remove: { imports: [ProductReviews] }, add: { imports: [ReviewsStub] } });
+}
+
 describe('ProductPage (PDP-01..07)', () => {
   let http: HttpTestingController;
   let harness: RouterTestingHarness;
@@ -236,6 +253,7 @@ describe('ProductPage (PDP-01..07)', () => {
     TestBed.configureTestingModule({
       providers: [provideRouter(routes), provideHttpClient(), provideHttpClientTesting()],
     });
+    stubReviews();
   });
 
   afterEach(() => TestBed.inject(HttpTestingController).verify());
@@ -245,6 +263,12 @@ describe('ProductPage (PDP-01..07)', () => {
   });
 
   describe('the request it makes', () => {
+    it('hands the reviews block the product it is showing (PDP-08)', async () => {
+      await open('/product/high-rise-straight-jean');
+
+      expect(query('[data-testid="reviews-stub"]')?.textContent).toBe(`${detail('high-rise-straight-jean').id}:high-rise-straight-jean`);
+    });
+
     it('asks the API for the slug in the address', async () => {
       const request = await open('/product/high-rise-straight-jean');
 
@@ -720,6 +744,7 @@ describe('ProductPage (PDP-01..07)', () => {
           },
         ],
       });
+      stubReviews();
       http = TestBed.inject(HttpTestingController);
 
       await open('/product/high-rise-straight-jean');
@@ -766,6 +791,7 @@ describe('ProductPage (PDP-01..07)', () => {
           },
         ],
       });
+      stubReviews();
       http = TestBed.inject(HttpTestingController);
 
       await open('/product/high-rise-straight-jean');
