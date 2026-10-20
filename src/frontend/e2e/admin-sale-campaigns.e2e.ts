@@ -181,7 +181,7 @@ test.describe('the sale-campaign screen (ADM-14)', () => {
     await page.locator('[data-testid="campaign-save"]').click();
 
     await expect(page.locator('[data-testid="error-targets"]')).toContainText(
-      'at least one department or category',
+      'at least one department, category or product',
     );
     await expect(page.locator('[data-testid="campaign-empty"]')).toBeVisible();
   });
@@ -255,14 +255,14 @@ test.describe('the sale-campaign screen (ADM-14)', () => {
     await expect(page.locator('[data-testid="campaign-save"]')).not.toHaveAttribute('disabled', '');
   });
 
-  /** The screen says what it does not do, so nobody hunts for an option that is not there. */
-  test('says that product targets and banners are not on this screen', async ({ page }) => {
+  /** The screen says how overlapping campaigns price a product, and where the banner shows (#191). */
+  test('says that campaigns never add up and where the banner shows', async ({ page }) => {
     await open(page);
 
     const note = page.locator('[data-testid="campaign-scope-note"]');
 
-    await expect(note).toContainText('individual products');
-    await expect(note).toContainText('banner');
+    await expect(note).toContainText('never add up');
+    await expect(note).toContainText('Sale page');
   });
 
   test('names no example campaign or discount anywhere on the page', async ({ page }) => {
@@ -339,6 +339,9 @@ test.describe('the sale-campaign screen (ADM-14)', () => {
       '[data-testid="target-category"]',
       '[data-testid="target-subcategories-field"]',
       '[data-testid="add-target"]',
+      '[data-testid="banner-alt"]',
+      '[data-testid="banner-file"]',
+      '[data-testid="banner-upload"]',
       '[data-testid="campaign-save"]',
       '[data-testid="edit-1"]',
       '[data-testid="remove-1"]',
@@ -374,6 +377,263 @@ test.describe('the sale-campaign screen (ADM-14)', () => {
       await expect(page.locator(chip), `${chip} at ${width}px`).toHaveCount(1);
       expect(await undersized(page, chip), `tap target ${chip} at ${width}px`).toEqual([]);
       expect(await unreachable(page, chip), `reachability of ${chip} at ${width}px`).toEqual([]);
+    }
+  });
+});
+
+/**
+ * #191: individual products, through a search-as-you-type combobox over the paged product list, and the
+ * campaign banner, through the media library's upload.
+ *
+ * The stub pages `GET /api/admin/products` with the real bounds and `/__test__/many-products` adds 25
+ * "Linen Shirt" rows to this browser context, so a search really does span three pages (26 matches, with
+ * the seeded "Linen Shirt Dress"). Every assertion
+ * about the keyboard is made with real key presses, because the ARIA 1.2 pattern is only right if focus
+ * stays in the box while the highlight moves.
+ */
+test.describe('individual products and the banner (#191)', () => {
+  const search = '[data-testid="product-search"]';
+
+  async function withManyProducts(page: Page): Promise<void> {
+    await open(page);
+
+    const added = await page.request.get(`${adminURL}/__test__/many-products?count=25`);
+    expect(added.ok()).toBe(true);
+
+    await page.locator('[data-testid="target-type"]').selectOption('Product');
+    await expect(page.locator(search)).toBeVisible();
+  }
+
+  async function searchFor(page: Page, term: string): Promise<void> {
+    await page.locator(search).fill(term);
+    await expect(page.locator('[data-testid="product-search-status"]')).not.toContainText('Searching');
+  }
+
+  test('finds, pages through and adds products with the keyboard alone', async ({ page }) => {
+    await withManyProducts(page);
+
+    await page.locator(search).focus();
+    await page.keyboard.type('linen shirt');
+
+    const status = page.locator('[data-testid="product-search-status"]');
+    // 25 added rows and the seeded "Linen Shirt Dress", which the same term matches.
+    await expect(status).toHaveText('26 products match. Showing 1 to 10.');
+
+    const box = page.locator(search);
+    await expect(box).toHaveAttribute('aria-expanded', 'true');
+    await expect(box).toHaveAttribute('aria-activedescendant', /campaign-product-option-/);
+    await expect(page.locator('[role="option"]')).toHaveCount(10);
+
+    // Down once: the second option is highlighted, and focus has not left the box.
+    await page.keyboard.press('ArrowDown');
+    const second = await page.locator('[role="option"]').nth(1).getAttribute('id');
+    await expect(box).toHaveAttribute('aria-activedescendant', second!);
+    await expect(page.locator('[role="option"]').nth(1)).toHaveAttribute('aria-selected', 'true');
+    await expect(box).toBeFocused();
+
+    await page.keyboard.press('Enter');
+
+    await expect(page.locator('[data-testid="campaign-targets"]')).toContainText(
+      'Linen Shirt 002 (SD-T-002)',
+    );
+    await expect(page.locator('[data-testid="campaign-said"]')).toContainText('Linen Shirt 002 added');
+    await expect(box).toBeFocused();
+
+    // Page Down asks the server for the next ten.
+    await page.keyboard.press('PageDown');
+    await expect(status).toHaveText('26 products match. Showing 11 to 20.');
+    await expect(page.locator('[role="option"]').first()).toContainText('Linen Shirt 011');
+
+    await page.keyboard.press('Enter');
+    await expect(page.locator('[data-testid="campaign-targets"]')).toContainText('Linen Shirt 011');
+
+    // The last page, by the button this time.
+    await page.locator('[data-testid="product-results-next"]').click();
+    await expect(status).toHaveText('26 products match. Showing 21 to 26.');
+    await expect(page.locator('[role="option"]')).toHaveCount(6);
+    await expect(page.locator('[data-testid="product-results-next"]')).toHaveAttribute('aria-disabled', 'true');
+
+    // Escape closes the list and leaves the term; a second Escape clears it.
+    await box.focus();
+    await page.keyboard.press('Escape');
+    await expect(box).toHaveAttribute('aria-expanded', 'false');
+    await expect(box).toHaveValue('linen shirt');
+    await page.keyboard.press('Escape');
+    await expect(box).toHaveValue('');
+  });
+
+  test('marks a product already chosen and refuses it a second time', async ({ page }) => {
+    await withManyProducts(page);
+    await searchFor(page, 'Linen Shirt 003');
+
+    await page.locator('[role="option"]').first().click();
+    await expect(page.locator('[data-testid="campaign-targets"] li')).toHaveCount(1);
+
+    await page.locator('[role="option"]').first().click();
+
+    await expect(page.locator('[data-testid="campaign-targets"] li')).toHaveCount(1);
+    await expect(page.locator('[data-testid="error-targets"]')).toContainText('already on this campaign');
+    await expect(page.locator('[role="option"]').first()).toContainText('already on this campaign');
+  });
+
+  test('says plainly when nothing matches', async ({ page }) => {
+    await withManyProducts(page);
+    await searchFor(page, 'nothing-like-this');
+
+    await expect(page.locator('[data-testid="product-search-status"]')).toContainText('No product matches');
+    await expect(page.locator(search)).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  /**
+   * Removing chips from the keyboard: focus goes to the chip that took the removed one's place, and to
+   * the "Add" control when the last one goes, never to the top of the page.
+   */
+  test('removes product chips from the keyboard without losing focus', async ({ page }) => {
+    await withManyProducts(page);
+    await searchFor(page, 'linen shirt');
+
+    await page.locator('[role="option"]').nth(0).click();
+    await page.locator('[role="option"]').nth(1).click();
+    await expect(page.locator('[data-testid="campaign-targets"] li')).toHaveCount(2);
+
+    const first = page.locator('[data-testid="campaign-targets"] button').first();
+    await first.focus();
+    await page.keyboard.press('Enter');
+
+    await expect(page.locator('[data-testid="campaign-targets"] li')).toHaveCount(1);
+    await expect(page.locator('[data-testid="campaign-targets"] button').first()).toBeFocused();
+    await expect(page.locator('[data-testid="campaign-said"]')).toContainText('removed. 1 chosen.');
+
+    await page.keyboard.press('Space');
+
+    await expect(page.locator('[data-testid="campaign-no-targets"]')).toBeVisible();
+    await expect(page.locator('[data-testid="target-type"]')).toBeFocused();
+  });
+
+  test('saves products with a category, lists them, and shows them as chips on edit', async ({ page }) => {
+    await withManyProducts(page);
+
+    await page.locator('[data-testid="campaign-name"]').fill('E2EPRODUCTS');
+    await page.locator('[data-testid="campaign-value"]').fill('15');
+    await page.locator('[data-testid="campaign-starts"]').fill(STARTS);
+    await page.locator('[data-testid="campaign-ends"]').fill(ENDS);
+
+    await searchFor(page, 'Linen Shirt 004');
+    await page.locator('[role="option"]').first().click();
+
+    await page.locator('[data-testid="target-type"]').selectOption('Category');
+    await page.locator('[data-testid="target-category"]').selectOption({ label: 'Women › Dresses' });
+    await page.locator('[data-testid="add-target"]').click();
+
+    await page.locator('[data-testid="campaign-save"]').click();
+    await expect(page.locator('[data-testid="campaign-said"]')).toContainText('is saved');
+
+    const row = page.locator('[data-testid="targets-1"]');
+    await expect(row).toContainText('Linen Shirt 004');
+    await expect(row).toContainText('Women › Dresses');
+
+    await page.locator('[data-testid="edit-1"]').click();
+
+    await expect(page.locator('[data-testid="campaign-targets"] li')).toHaveCount(2);
+    await expect(page.locator('[data-testid="campaign-targets"]')).toContainText('Linen Shirt 004');
+  });
+
+  test('uploads a banner, saves it, and takes it off again', async ({ page }) => {
+    await open(page);
+    await fillCampaign(page, 'E2EBANNER');
+
+    await page.locator('[data-testid="banner-file"]').setInputFiles({
+      name: 'banner.png',
+      mimeType: 'image/png',
+      buffer: Buffer.from('89504e470d0a1a0a', 'hex'),
+    });
+    await page.locator('[data-testid="banner-alt"]').fill('Linen Week: 20% off dresses');
+    await page.locator('[data-testid="banner-upload"]').click();
+
+    const preview = page.locator('[data-testid="banner-preview"]');
+    await expect(preview).toContainText('Linen Week: 20% off dresses');
+    await expect(preview.locator('img')).toHaveAttribute('alt', 'Linen Week: 20% off dresses');
+
+    await page.locator('[data-testid="campaign-save"]').click();
+    await expect(page.locator('[data-testid="campaign-said"]')).toContainText('is saved');
+    await expect(page.locator('[data-testid="banner-1"]')).toContainText('Linen Week: 20% off dresses');
+
+    await page.locator('[data-testid="edit-1"]').click();
+    await expect(page.locator('[data-testid="banner-preview"]')).toBeVisible();
+
+    await page.locator('[data-testid="banner-remove"]').click();
+    await expect(page.locator('[data-testid="banner-empty"]')).toBeVisible();
+    await expect(page.locator('[data-testid="banner-file"]')).toBeFocused();
+
+    await page.locator('[data-testid="campaign-save"]').click();
+    await expect(page.locator('[data-testid="campaign-said"]')).toContainText('is saved');
+    await expect(page.locator('[data-testid="banner-1"]')).toContainText('None');
+  });
+
+  test('asks for a description before uploading a banner', async ({ page }) => {
+    await open(page);
+
+    await page.locator('[data-testid="banner-file"]').setInputFiles({
+      name: 'banner.png',
+      mimeType: 'image/png',
+      buffer: Buffer.from('89504e470d0a1a0a', 'hex'),
+    });
+    await page.locator('[data-testid="banner-upload"]').click();
+
+    await expect(page.locator('[data-testid="banner-error"]')).toContainText('Describe the picture first');
+    await expect(page.locator('[data-testid="banner-alt"]')).toHaveAttribute('aria-invalid', 'true');
+    await expect(page.locator('[data-testid="banner-empty"]')).toBeVisible();
+  });
+
+  test('has no axe violations with the product list open and a banner chosen', async ({ page }) => {
+    await withManyProducts(page);
+    await searchFor(page, 'linen shirt');
+
+    await page.locator('[data-testid="banner-file"]').setInputFiles({
+      name: 'banner.png',
+      mimeType: 'image/png',
+      buffer: Buffer.from('89504e470d0a1a0a', 'hex'),
+    });
+    await page.locator('[data-testid="banner-alt"]').fill('A described banner');
+    await page.locator('[data-testid="banner-upload"]').click();
+    await expect(page.locator('[data-testid="banner-preview"]')).toBeVisible();
+
+    await page.locator('[role="option"]').first().click();
+    await expect(page.locator(search)).toHaveAttribute('aria-expanded', 'true');
+
+    const results = await new AxeBuilder({ page }).analyze();
+
+    expect(results.violations).toEqual([]);
+  });
+
+  test('fits at every width with the product list open and every new control reachable', async ({ page }) => {
+    await withManyProducts(page);
+    await searchFor(page, 'linen shirt');
+    await page.locator('[role="option"]').first().click();
+
+    const controls = [
+      search,
+      '[data-testid="product-results-next"]',
+      '[data-testid="product-results-previous"]',
+      '[data-testid="drop-target-Product-400"]',
+      '[data-testid="banner-alt"]',
+      '[data-testid="banner-file"]',
+      '[data-testid="banner-upload"]',
+    ] as const;
+
+    for (const width of BREAKPOINTS) {
+      await page.setViewportSize({ width, height: 900 });
+
+      expect(await horizontalOverflow(page), `horizontal overflow at ${width}px`).toBe(0);
+
+      for (const control of controls) {
+        await expect(page.locator(control), `${control} at ${width}px`).toHaveCount(1);
+        expect(await undersized(page, control), `tap target ${control} at ${width}px`).toEqual([]);
+        expect(await unreachable(page, control), `reachability of ${control} at ${width}px`).toEqual([]);
+      }
+
+      // Every option is a 44 px row a finger can hit.
+      expect(await undersized(page, '[role="option"]'), `options at ${width}px`).toEqual([]);
     }
   });
 });

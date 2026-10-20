@@ -36,7 +36,7 @@ import { extname, join, normalize, resolve } from 'node:path';
 import { freshCustomerState, handleCustomerRoute } from './admin-customer-stub.mjs';
 import { freshReportingState, handleReportingRoute } from './admin-reporting-stub.mjs';
 import { freshInventoryState, handleInventoryRoute } from './admin-inventory-stub.mjs';
-import { freshProductState, handleProductRoute } from './admin-product-stub.mjs';
+import { addManyProducts, freshProductState, handleProductRoute } from './admin-product-stub.mjs';
 
 const PORT = Number(process.env.E2E_ADMIN_PORT ?? 4430);
 const DIST = resolve(process.env.E2E_ADMIN_DIST ?? 'dist/admin/browser');
@@ -623,6 +623,12 @@ function promoWarnings(body, promoCode) {
  * to (#126): every key must be *present* including `targets`, the percentage ceiling is 90 and not 100,
  * `endsAt` is required and must be after `startsAt`, a date carries no offset, a target names exactly one
  * of the three ids, and the same target twice is refused rather than tidied away.
+ *
+ * **#191 added the rest of the validator's refusals the screen can now reach:** the 200-target cap, a
+ * target naming two ids, a product that is not in the catalogue, and `bannerPublicId` — present, a
+ * canonical GUID string or null, and the `publicId` of an *image* this context uploaded (the real API
+ * also refuses a private, processing or deleted asset; this stub only ever holds ready public images and
+ * videos, so a video is how that refusal is reached here).
  */
 function saleCampaignErrors(state, body) {
   const errors = {};
@@ -635,7 +641,7 @@ function saleCampaignErrors(state, body) {
     'startsAt',
     'endsAt',
     'isActive',
-    'bannerAssetId',
+    'bannerPublicId',
     'targets',
   ]) {
     if (!Object.hasOwn(body, field)) {
@@ -687,9 +693,35 @@ function saleCampaignErrors(state, body) {
     errors.endsAt = ['The end must be after the start.'];
   }
 
+  if (body.bannerPublicId !== null) {
+    const canonical =
+      typeof body.bannerPublicId === 'string' &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(body.bannerPublicId);
+
+    if (!canonical) {
+      errors.bannerPublicId = [
+        'Send bannerPublicId as an identifier like 0000f00d-0000-4000-8000-000000000001.',
+      ];
+    } else if (state.uploads.get(body.bannerPublicId)?.mediaType !== 'Image') {
+      errors.bannerPublicId = [
+        'That banner is not a ready public image in the media library. Upload a picture, or leave ' +
+          'the banner empty.',
+      ];
+    }
+  }
+
   if (!Array.isArray(body.targets) || body.targets.length === 0) {
     errors.targets = [
       'Choose at least one department, category or product for the campaign to apply to.',
+    ];
+
+    return errors;
+  }
+
+  // `SaleCampaignWriteHandlers.MaxTargets`, counted across every type.
+  if (body.targets.length > 200) {
+    errors.targets = [
+      'A campaign may have at most 200 targets. Use a department or a category instead of listing products.',
     ];
 
     return errors;
@@ -717,6 +749,18 @@ function saleCampaignErrors(state, body) {
       return;
     }
 
+    const others =
+      target.targetType === 'Department'
+        ? [target.categoryId, target.productId]
+        : target.targetType === 'Category'
+          ? [target.departmentId, target.productId]
+          : [target.departmentId, target.categoryId];
+
+    if (others.some((other) => other !== null && other !== undefined)) {
+      errors[field] = ['A target names one department, one category or one product, not more than one.'];
+      return;
+    }
+
     const key = `${target.targetType}:${id}`;
 
     if (seen.has(key)) {
@@ -732,6 +776,10 @@ function saleCampaignErrors(state, body) {
 
     if (target.targetType === 'Category' && categoryNode(state, id) === undefined) {
       errors[field] = [`No category has the id ${id}.`];
+    }
+
+    if (target.targetType === 'Product' && !state.products.some((own) => own.id === id)) {
+      errors[field] = ['That no longer exists in the catalogue. Remove it from the campaign.'];
     }
   });
 
@@ -752,7 +800,10 @@ function buildCampaign(state, body, id) {
     startsAt,
     endsAt,
     isActive: body.isActive === true,
-    bannerAssetId: body.bannerAssetId,
+
+    // `AdminSaleCampaignBannerDto`: the publicId, a preview URL and the description, never the internal
+    // asset id (#191).
+    banner: campaignBanner(state, body.bannerPublicId),
     targets: body.targets.map((target) => ({
       targetType: target.targetType,
       departmentId: target.departmentId ?? null,
@@ -795,9 +846,22 @@ function campaignTargetName(state, target) {
     return department === undefined ? node.name : `${department.name} \u203a ${node.name}`;
   }
 
-  // No product is reachable through this stub's catalogue state, so a product target can only come from
-  // a test that sent one deliberately. Named rather than left blank, which is what the API does.
-  return '(removed from the catalogue)';
+  // A product's own name, from the product half of this stub (#191), which is the catalogue the
+  // picker searches.
+  return state.products.find((own) => own.id === target.productId)?.name ?? '(removed from the catalogue)';
+}
+
+/** The banner a campaign carries, from the upload this context made, or null. */
+function campaignBanner(state, publicId) {
+  if (publicId === null || publicId === undefined) {
+    return null;
+  }
+
+  const asset = state.uploads.get(publicId);
+
+  return asset === undefined
+    ? null
+    : { publicId, url: asset.url ?? null, altText: asset.altText ? asset.altText : null };
 }
 
 function categoryNode(state, categoryId) {
@@ -858,7 +922,11 @@ function campaignProductsRepriced(state, campaign) {
       total += target.includeSubcategories
         ? flatten([node]).reduce((sum, candidate) => sum + candidate.productCount, 0)
         : node.productCount;
+      continue;
     }
+
+    // A product target reaches exactly that product.
+    total += 1;
   }
 
   return total;
@@ -876,6 +944,13 @@ function campaignWarnings(campaign, productsRepriced) {
     warnings.push(
       "This campaign's targets do not reach any product, so no price has changed. Check the " +
         'departments, categories and products it applies to.',
+    );
+  }
+
+  if (campaign.banner !== null && !campaign.banner.altText) {
+    warnings.push(
+      'The banner image has no description, so people using a screen reader will not hear what it ' +
+        'says. Upload it with a description if it carries words or an offer.',
     );
   }
 
@@ -1839,6 +1914,14 @@ const server = createServer(async (request, response) => {
   if (path === '/__test__/transition-outcome') {
     state.transitionOutcome = url.searchParams.get('outcome') ?? 'ok';
     return json(response, 200, { outcome: state.transitionOutcome });
+  }
+
+  // Test-only, and named so (#191). `count=N` adds N searchable products to this context, so the campaign
+  // product picker's server paging is reachable; the two seeded products are not enough to page.
+  if (path === '/__test__/many-products') {
+    const count = Math.min(200, Math.max(0, Number(url.searchParams.get('count') ?? '0')));
+    addManyProducts(state, count);
+    return json(response, 200, { count: state.products.length });
   }
 
   if (path === '/__test__/store-legal-details') {
