@@ -14,13 +14,10 @@ namespace SpencerDenim.Infrastructure.Content;
 /// exist.
 /// </para>
 /// <para>
-/// <b>The lifetime is also the limit of this page's scheduling accuracy.</b> Every entry expires at
-/// <c>now + 5 minutes</c> regardless of what is in it, so a section whose <c>EndsAtUtc</c> falls
-/// inside a warm entry keeps being served until that entry goes — a campaign set to end at midnight
-/// is still on screen at 00:05. It is within doc 08 §3.7's five minutes and it harms no data, but
-/// the schedule itself is enforced to the millisecond, and nothing else says that caching rounds it
-/// off. Issue <b>#37</b> carries the fix: clamp the expiry to
-/// <c>Min(now + Lifetime, nextScheduleBoundaryUtc)</c>.
+/// <b>An entry never outlives the content in it</b> (issue #37). It expires at the earlier of
+/// <c>now + 5 minutes</c> and the next schedule boundary the caller hands over, so a section whose
+/// <c>EndsAtUtc</c> falls inside a warm entry goes at that instant rather than up to five minutes later. A
+/// boundary that is already due means the page is not stored at all: it would be stale on arrival.
 /// </para>
 /// </summary>
 internal sealed class HomePageCache(TimeProvider timeProvider) : IHomePageCache
@@ -46,14 +43,32 @@ internal sealed class HomePageCache(TimeProvider timeProvider) : IHomePageCache
         }
     }
 
-    public void SetPage(HomePageDto page)
+    public void SetPage(HomePageDto page, DateTime? validUntilUtc)
     {
         ArgumentNullException.ThrowIfNull(page);
 
+        var now = timeProvider.GetUtcNow();
+        var expiresAt = now + HomePageCachePolicy.Lifetime;
+
+        if (validUntilUtc is { } boundary)
+        {
+            var boundaryAt = new DateTimeOffset(DateTime.SpecifyKind(boundary, DateTimeKind.Utc));
+            if (boundaryAt < expiresAt)
+            {
+                expiresAt = boundaryAt;
+            }
+        }
+
         lock (_gate)
         {
+            if (expiresAt <= now)
+            {
+                _page = null;
+                return;
+            }
+
             _page = page;
-            _expiresAt = timeProvider.GetUtcNow() + HomePageCachePolicy.Lifetime;
+            _expiresAt = expiresAt;
         }
     }
 

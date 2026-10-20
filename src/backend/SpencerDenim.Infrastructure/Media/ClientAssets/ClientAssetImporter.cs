@@ -71,81 +71,11 @@ public sealed partial class ClientAssetImporter(
 
     private const short HoverSortOrder = -1;
 
-    /// <summary>The campaign banner's words (HOME-05). Nothing before them to supersede.</summary>
-    private static readonly BannerCopy CampaignCopy = new(
-        "The new season",
-        "Linen, denim and everything in between.",
-        "/new-arrivals",
-        "Shop new arrivals",
-        FrozenSet<string>.Empty);
-
-    /// <summary>
-    /// The HOME-06 banner's words (W1-14), written to match the photograph the client actually sent.
-    /// <para>
-    /// <b>The picture, the words and the link have to agree, and this is where all three are decided.</b>
-    /// The delivered <c>activewear.jpg</c> is a flat-lay of a white linen co-ord and a mid-blue denim
-    /// co-ord with a straw basket — nothing athletic — so the slot said "Activewear … Pieces that move
-    /// with you" over linen and pointed at <c>/women/activewear</c>, which holds leggings and a sports
-    /// bra. That contradiction is issue #63 and is why W1-13 held the section off the front page.
-    /// </para>
-    /// <para>
-    /// The destination is a <b>listing that genuinely contains what the picture shows</b> rather than a
-    /// department that happens to include it: <c>/women?material=linen&amp;material=linen-blend&amp;material=denim</c>
-    /// returns the relaxed linen-blend shirt, the linen drawstring trousers, both jeans and the denim
-    /// wrap skirt — a linen shirt and wide linen trousers and wide-leg denim, which is the flat-lay.
-    /// The copy says fabrics, not sets, because the catalogue sells separates and promising a co-ord
-    /// would be the same mistake one step further on.
-    /// </para>
-    /// </summary>
-    private static readonly BannerCopy ActivewearCopy = new(
-        "Linen and denim",
-        "Breathable linen for the heat, washed indigo for everything else.",
-        "/women?material=linen&material=linen-blend&material=denim",
-        "Shop linen and denim",
-        new[]
-        {
-            BannerCopy.Retracted(nameof(HomeSectionItem.Title), "Activewear"),
-            BannerCopy.Retracted(nameof(HomeSectionItem.Subtitle), "Pieces that move with you."),
-            BannerCopy.Retracted(nameof(HomeSectionItem.LinkUrl), "/women/activewear"),
-            BannerCopy.Retracted(nameof(HomeSectionItem.ButtonLabel), "Shop activewear"),
-        }.ToFrozenSet(StringComparer.Ordinal));
-
-    /// <summary>
-    /// The social gallery's six tiles and the dummy destinations they carry until the client sends the
-    /// real account URLs.
-    /// <para>
-    /// <b>The host is <c>example.invalid</c> on purpose.</b> RFC 2606 reserves the <c>.invalid</c>
-    /// top-level domain so that it can never be registered and never resolves, and the label says what
-    /// it is in the accessible name a screen reader reads out. A plausible-looking
-    /// <c>instagram.com/colombowardrobe</c> would test exactly as well and could ship by accident; this
-    /// cannot — it is wrong in the data, wrong on the screen and wrong in the DNS.
-    /// </para>
-    /// </summary>
-    private static readonly (string Network, string Url)[] SocialPlaceholders =
-    [
-        ("Instagram", "https://example.invalid/PLACEHOLDER/instagram"),
-        ("Facebook", "https://example.invalid/PLACEHOLDER/facebook"),
-        ("TikTok", "https://example.invalid/PLACEHOLDER/tiktok"),
-        ("Pinterest", "https://example.invalid/PLACEHOLDER/pinterest"),
-        ("YouTube", "https://example.invalid/PLACEHOLDER/youtube"),
-        ("WhatsApp", "https://example.invalid/PLACEHOLDER/whatsapp"),
-    ];
-
-    /// <summary>
-    /// The four trending tiles (HOME-04), each opening a listing the catalogue can really serve.
-    /// <para>
-    /// The copy follows the photographs the client delivered, in their numbered order: a leather bag, a
-    /// stack of linen shirts, a dress with raffia slides, and children's knitwear. A tile whose picture
-    /// and link disagree is worse than no tile.
-    /// </para>
-    /// </summary>
-    private static readonly (string Title, string Url)[] TrendingTiles =
-    [
-        ("Bags and accessories", "/women/accessories"),
-        ("Linen shirts", "/men/shirts"),
-        ("Dresses and sandals", "/women/dresses"),
-        ("Kids' new in", "/kids?sort=newest"),
-    ];
+    // The homepage's words and links are not this class's (#63). They are seeded, switched off, by
+    // HomeContentSeeder from HomeContentData.ArtworkItems, and this importer only finds the row waiting
+    // for a picture, attaches the picture and switches the row on. Deciding the copy here is what let a
+    // linen flat-lay be published under the heading "Activewear": nothing ever asked whether the words
+    // the importer wrote matched the photograph it chose.
 
     /// <summary>
     /// The reference rows that already exist, read once per attempt as <b>tracked</b> entities.
@@ -620,7 +550,7 @@ public sealed partial class ClientAssetImporter(
                 var tile = tiles.FirstOrDefault(item => item.DepartmentId == department.Id);
                 if (tile is not null)
                 {
-                    var tileOutcome = await PlaceItemImageAsync(tile, assetId, MediaUsageRoles.Image, run, cancellationToken);
+                    var tileOutcome = PlaceItemImage(tile, assetId, MediaUsageRoles.Image, run);
                     outcome = Worse(outcome, tileOutcome);
                 }
             }
@@ -651,14 +581,12 @@ public sealed partial class ClientAssetImporter(
         await ImportBannerAsync(
             HomeSectionType.CampaignBanner,
             ClientAssetNaming.CampaignFile,
-            CampaignCopy,
             files,
             run,
             cancellationToken);
         await ImportBannerAsync(
             HomeSectionType.ActivewearFeature,
             ClientAssetNaming.ActivewearFile,
-            ActivewearCopy,
             files,
             run,
             cancellationToken);
@@ -704,6 +632,12 @@ public sealed partial class ClientAssetImporter(
 
         run.Touch(Path.GetFileName(videoPath));
         run.Touch(Path.GetFileName(posterPath));
+
+        if (WaitingItem(section, sortOrder: 1) is null)
+        {
+            run.Fail(NoWaitingRow("the hero", HomeSectionType.HeroVideo, 1));
+            return;
+        }
 
         const string alt = "A linen outfit from the new season, photographed in Colombo";
 
@@ -774,7 +708,7 @@ public sealed partial class ClientAssetImporter(
             ? await AssetIdAsync(posterPublicId, cancellationToken)
             : throw new InvalidOperationException("A stored video has no poster, which the schema forbids.");
 
-        var item = await ItemAtAsync(section, sortOrder: 1, cancellationToken);
+        var item = WaitingItem(section, sortOrder: 1)!;
 
         var videoSlot = Fill(
             item.VideoAssetId,
@@ -802,10 +736,7 @@ public sealed partial class ClientAssetImporter(
             AddUsage(posterAssetId, MediaUsageOwnerTypes.HomeSectionItem, item.Id, MediaUsageRoles.Image);
         }
 
-        item.Title ??= "Dressed for Colombo";
-        item.Subtitle ??= "Linen, denim and everyday pieces made for the weather here.";
-        item.ButtonLabel ??= "Shop new arrivals";
-        item.LinkUrl ??= "/new-arrivals";
+        SwitchOnIfPlaced(item, videoSlot, posterSlot);
 
         run.Add(Describe(
             ClientAssetFolder.Home,
@@ -840,7 +771,7 @@ public sealed partial class ClientAssetImporter(
         var video = await PlanAsync(videoPath, MediaAssetType.Video, run, cancellationToken);
         var poster = await PlanAsync(posterPath, MediaAssetType.Image, run, cancellationToken);
 
-        var item = await ItemAtAsync(section, sortOrder: 1, cancellationToken);
+        var item = WaitingItem(section, sortOrder: 1)!;
 
         var videoSlot = Fill(item.VideoAssetId, video.AssetId!.Value, run.Replace, value => item.VideoAssetId = value, _ => { });
         var posterSlot = Fill(item.ImageAssetId, poster.AssetId!.Value, run.Replace, value => item.ImageAssetId = value, _ => { });
@@ -861,13 +792,10 @@ public sealed partial class ClientAssetImporter(
     private async Task ImportBannerAsync(
         HomeSectionType type,
         string contractFile,
-        BannerCopy copy,
         IReadOnlyList<string> files,
         Run run,
         CancellationToken cancellationToken)
     {
-        var (title, subtitle, linkUrl, buttonLabel, _) = copy;
-
         var path = files.FirstOrDefault(candidate => ClientAssetNaming.IsNamed(Path.GetFileName(candidate), contractFile));
         if (path is null)
         {
@@ -884,7 +812,18 @@ public sealed partial class ClientAssetImporter(
             return;
         }
 
-        var stored = await StoreImageAsync(path, $"{title} — {subtitle}", title, run, cancellationToken);
+        // The row says what the picture is for — its heading was written before the picture existed — so
+        // the picture's alt text and library title are taken from it rather than invented here.
+        var item = WaitingItem(section, sortOrder: 1);
+        if (item is null)
+        {
+            run.Fail(NoWaitingRow($"'{contractFile}'", type, 1));
+            return;
+        }
+
+        var label = item.Title ?? type.ToString();
+        var alt = string.IsNullOrWhiteSpace(item.Subtitle) ? label : $"{label} — {item.Subtitle}";
+        var stored = await StoreImageAsync(path, alt, label, run, cancellationToken);
 
         if (stored.Refusal is { } refusal)
         {
@@ -898,84 +837,17 @@ public sealed partial class ClientAssetImporter(
 
         if (stored.AssetId is { } assetId)
         {
-            var item = await ItemAtAsync(section, sortOrder: 1, cancellationToken);
-            outcome = await PlaceItemImageAsync(item, assetId, MediaUsageRoles.Banner, run, cancellationToken);
-
-            Reword(item, copy, type, run);
-
+            outcome = PlaceItemImage(item, assetId, MediaUsageRoles.Banner, run);
             run.WhenDone(section, type.ToString());
         }
 
-        run.Add(Describe(ClientAssetFolder.Home, Path.GetFileName(path), outcome, stored, $"the {type} banner"));
+        run.Add(Describe(
+            ClientAssetFolder.Home,
+            Path.GetFileName(path),
+            outcome,
+            stored,
+            $"the {type} banner, under the heading \"{label}\""));
     }
-
-    /// <summary>
-    /// Puts the banner's words in the item, honouring the same "never overwrite a person" rule the
-    /// picture slots use.
-    /// <para>
-    /// <b>Why this is not just <c>??=</c> any more.</b> A re-run is how a corrected delivery reaches the
-    /// site, and in W1-14 what was corrected was the <i>copy</i>: the heading, standfirst, button and
-    /// link the previous version of this importer wrote for HOME-06 described activewear and the
-    /// photograph does not. With <c>??=</c> those fields are already non-null, so a re-import would have
-    /// switched the section on and left the contradiction on the front page — the exact failure the hold
-    /// existed for (issue #63). A picture, its words and its destination arrive together or not at all.
-    /// </para>
-    /// <para>
-    /// <b>And it is not an unconditional write either.</b> The only values it may overwrite are the ones
-    /// it put there itself and has now retracted (<see cref="BannerCopy.Supersedes"/>) — the same
-    /// reasoning as "a placeholder was never a choice". Anything else is somebody's editorial decision
-    /// in ADM-17 and survives, with a note saying it did, because an import that silently rewrote the
-    /// client's own headline would be far worse than one that leaves a stale one.
-    /// </para>
-    /// </summary>
-    private static void Reword(HomeSectionItem item, BannerCopy copy, HomeSectionType type, Run run)
-    {
-        var kept = new List<string>();
-
-        item.Title = Pick(item.Title, copy.Title, nameof(item.Title), "heading");
-        item.Subtitle = Pick(item.Subtitle, copy.Subtitle, nameof(item.Subtitle), "standfirst");
-        item.LinkUrl = Pick(item.LinkUrl, copy.LinkUrl, nameof(item.LinkUrl), "link");
-        item.ButtonLabel = Pick(item.ButtonLabel, copy.ButtonLabel, nameof(item.ButtonLabel), "button label");
-
-        if (kept.Count > 0)
-        {
-            run.Note(
-                $"{type}: the {Listed(kept)} on that banner "
-                + $"{(kept.Count == 1 ? "was" : "were")} left as "
-                + $"{(kept.Count == 1 ? "it is" : "they are")} — somebody wrote "
-                + $"{(kept.Count == 1 ? "it" : "them")} in ADM-17. Check that the picture, the words and "
-                + "the link still agree.");
-        }
-
-        // The field is part of the key, not just part of the message. A flat set of the four
-        // retracted strings was tested against every field, so an admin who typed "Activewear" as
-        // the *button label* had it silently overwritten by a retraction that was only ever about
-        // the heading — the exact thing the summary above says must never happen, and with no note
-        // either, because the write looked like a retraction rather than a kept value.
-        string Pick(string? current, string replacement, string key, string field)
-        {
-            if (string.IsNullOrWhiteSpace(current)
-                || copy.Supersedes.Contains(BannerCopy.Retracted(key, current)))
-            {
-                return replacement;
-            }
-
-            if (current != replacement)
-            {
-                kept.Add(field);
-            }
-
-            return current;
-        }
-    }
-
-    /// <summary>Names in a sentence: "the heading", "the heading and the link", "a, b and c".</summary>
-    private static string Listed(List<string> names) => names.Count switch
-    {
-        0 => string.Empty,
-        1 => names[0],
-        _ => $"{string.Join(", ", names.Take(names.Count - 1))} and {names[^1]}",
-    };
 
     private async Task ImportTrendingAsync(
         IReadOnlyList<string> files,
@@ -1006,17 +878,21 @@ public sealed partial class ClientAssetImporter(
             var fileName = Path.GetFileName(path);
             run.Touch(fileName);
 
-            if (index is null || index.Value > TrendingTiles.Length)
+            // The tile is the seeded row at this position, which already says what it is and where it goes.
+            var item = index is null ? null : WaitingItem(section, (short)index.Value);
+            if (item is null)
             {
                 run.Add(new ClientAssetEntry(
                     ClientAssetFolder.Home,
                     fileName,
                     ClientAssetOutcome.NotInContract,
-                    $"there are only {TrendingTiles.Length} trending tiles with a listing to open"));
+                    $"no trending tile {index} is waiting for a picture — there are {section.Items.Count}. "
+                    + "Add the tile in ADM-17 first, with its heading and the listing it opens."));
                 continue;
             }
 
-            var (title, url) = TrendingTiles[index.Value - 1];
+            var title = item.Title ?? $"Trending {index}";
+            var url = item.LinkUrl ?? "(no link yet)";
             var stored = await StoreImageAsync(path, title, title, run, cancellationToken);
 
             if (stored.Refusal is { } refusal)
@@ -1031,11 +907,7 @@ public sealed partial class ClientAssetImporter(
 
             if (stored.AssetId is { } assetId)
             {
-                var item = await ItemAtAsync(section, (short)index.Value, cancellationToken);
-                outcome = await PlaceItemImageAsync(item, assetId, MediaUsageRoles.Image, run, cancellationToken);
-
-                item.Title ??= title;
-                item.LinkUrl ??= url;
+                outcome = PlaceItemImage(item, assetId, MediaUsageRoles.Image, run);
             }
 
             run.Add(Describe(
@@ -1043,7 +915,7 @@ public sealed partial class ClientAssetImporter(
                 fileName,
                 outcome,
                 stored,
-                $"trending tile {index.Value} — \"{title}\", opening {url}"));
+                $"trending tile {index} — \"{title}\", opening {url}"));
         }
 
         run.WhenDone(section, "HOME-04 trending");
@@ -1072,18 +944,20 @@ public sealed partial class ClientAssetImporter(
             var fileName = Path.GetFileName(path);
             var index = ClientAssetNaming.SocialIndexOf(fileName);
 
-            if (index is null || index.Value > SocialPlaceholders.Length)
+            var item = index is null ? null : WaitingItem(section, (short)index.Value);
+            if (item is null)
             {
                 run.Add(new ClientAssetEntry(
                     ClientAssetFolder.Social,
                     fileName,
                     ClientAssetOutcome.NotInContract,
-                    $"the contract is social-1 … social-{SocialPlaceholders.Length}"));
+                    $"no social tile {index} is waiting for a picture — the contract is social-1 … "
+                    + $"social-{section.Items.Count}"));
                 continue;
             }
 
-            var (network, url) = SocialPlaceholders[index.Value - 1];
-            var label = $"{network} — PLACEHOLDER LINK, the real account URL has not been supplied yet";
+            var label = item.Title ?? $"Social {index}";
+            var url = item.LinkUrl ?? "(no link yet)";
 
             var stored = await StoreImageAsync(
                 path,
@@ -1104,13 +978,7 @@ public sealed partial class ClientAssetImporter(
 
             if (stored.AssetId is { } assetId)
             {
-                var item = await ItemAtAsync(section, (short)index.Value, cancellationToken);
-                outcome = await PlaceItemImageAsync(item, assetId, MediaUsageRoles.Image, run, cancellationToken);
-
-                // Ordinary admin-editable content: a row in content.HomeSectionItems that ADM-17 will
-                // rewrite the moment the client sends the real account URLs.
-                item.Title ??= label;
-                item.LinkUrl ??= url;
+                outcome = PlaceItemImage(item, assetId, MediaUsageRoles.Image, run);
             }
 
             run.Add(Describe(
@@ -1118,15 +986,18 @@ public sealed partial class ClientAssetImporter(
                 fileName,
                 outcome,
                 stored,
-                $"social tile {index.Value} — {network}, linked to the dummy {url}"));
+                $"social tile {index} — linked to {url}"));
         }
 
         run.WhenDone(section, "HOME-08 social gallery");
 
-        run.Note(
-            "The six social tiles carry dummy destinations on example.invalid (RFC 2606: a domain that "
-            + "can never be registered), and each tile's accessible name says PLACEHOLDER LINK out loud. "
-            + "Replace them in ADM-17 when the client sends the real account URLs.");
+        if (section.Items.Any(item => item.LinkUrl?.Contains("example.invalid", StringComparison.OrdinalIgnoreCase) == true))
+        {
+            run.Note(
+                "Some social tiles still carry the seeded dummy destinations on example.invalid (RFC 2606: a "
+                + "domain that can never be registered), and their accessible names say PLACEHOLDER LINK out "
+                + "loud. Replace them in ADM-17 when the client sends the real account URLs.");
+        }
     }
 
     // ---------------------------------------------------------------------- logo
@@ -1203,9 +1074,10 @@ public sealed partial class ClientAssetImporter(
             }
 
             var hasArtwork = section.Items.Any(
-                item => item.ImageAssetId is not null
-                    || item.MobileImageAssetId is not null
-                    || item.VideoAssetId is not null);
+                item => item.IsEnabled
+                    && (item.ImageAssetId is not null
+                        || item.MobileImageAssetId is not null
+                        || item.VideoAssetId is not null));
 
             if (!hasArtwork)
             {
@@ -1224,55 +1096,38 @@ public sealed partial class ClientAssetImporter(
     }
 
     /// <summary>
-    /// The item at a section's sort order, created when there is none. Saved immediately, because a
-    /// <c>MediaUsages</c> row names the item by id (doc 08 §3.3) and a new item has none until it is.
-    /// The save is inside this run's transaction, so it is still all or nothing.
+    /// The seeded row waiting at this position of a section, or <see langword="null"/> (#63). The importer
+    /// no longer creates one: a row with no words would be a tile nobody wrote, and a row the client
+    /// deleted in ADM-17 is one they did not want.
     /// </summary>
-    private async Task<HomeSectionItem> ItemAtAsync(
-        HomeSection section,
-        short sortOrder,
-        CancellationToken cancellationToken)
+    private static HomeSectionItem? WaitingItem(HomeSection section, short sortOrder) =>
+        section.Items.FirstOrDefault(candidate => candidate.SortOrder == sortOrder);
+
+    /// <summary>The failure for a slot whose row is missing, naming the way to put it back.</summary>
+    private static string NoWaitingRow(string what, HomeSectionType type, short sortOrder) => string.Create(
+        CultureInfo.InvariantCulture,
+        $"There is no {type} row at position {sortOrder} waiting for {what}. Run the content seeder first, or add the row in ADM-17 with its heading and link, then import again.");
+
+    /// <summary>
+    /// Switches a row on once a picture has actually been put in it. A row whose slot was already this
+    /// picture, or which kept somebody else's picture, keeps whatever switch it has — a staff member may
+    /// have switched it off on purpose.
+    /// </summary>
+    private static void SwitchOnIfPlaced(HomeSectionItem item, params SlotOutcome[] outcomes)
     {
-        var existing = section.Items.FirstOrDefault(candidate => candidate.SortOrder == sortOrder);
-        if (existing is not null)
+        if (outcomes.Any(outcome => outcome is SlotOutcome.Filled or SlotOutcome.Replaced))
         {
-            return existing;
+            item.IsEnabled = true;
         }
-
-        var item = new HomeSectionItem
-        {
-            HomeSectionId = section.Id,
-            SortOrder = sortOrder,
-            IsEnabled = true,
-        };
-
-        section.Items.Add(item);
-
-        if (!_dryRun)
-        {
-            dbContext.HomeSectionItems.Add(item);
-
-            // Saved now because a MediaUsages row names the item by id (doc 08 §3.3) and a new item has
-            // none until it is. The save is inside this run's transaction, so it is still all or nothing.
-            await dbContext.SaveChangesAsync(cancellationToken);
-        }
-
-        return item;
     }
 
     /// <summary>Puts an asset in a homepage item's image slot, with the usage row that names the item.</summary>
-    private async Task<SlotOutcome> PlaceItemImageAsync(
+    private SlotOutcome PlaceItemImage(
         HomeSectionItem item,
         int assetId,
         string usageRole,
-        Run run,
-        CancellationToken cancellationToken)
+        Run run)
     {
-        if (item.Id == 0 && !_dryRun)
-        {
-            await dbContext.SaveChangesAsync(cancellationToken);
-        }
-
         var outcome = Fill(
             item.ImageAssetId,
             assetId,
@@ -1284,6 +1139,8 @@ public sealed partial class ClientAssetImporter(
         {
             AddUsage(assetId, MediaUsageOwnerTypes.HomeSectionItem, item.Id, usageRole);
         }
+
+        SwitchOnIfPlaced(item, outcome);
 
         return outcome;
     }
@@ -1956,39 +1813,6 @@ public sealed partial class ClientAssetImporter(
     /// products and only one of them named it.
     /// </param>
     private sealed record StoredAsset(int? AssetId, bool WasExisting, string? Refusal, string? AltText = null);
-
-    /// <summary>
-    /// The words one banner carries, and the words this import is allowed to take back.
-    /// </summary>
-    /// <param name="Supersedes">
-    /// Exact <b>(field, value)</b> pairs an <b>earlier version of this importer</b> wrote into the slot
-    /// and that are now wrong, built with <see cref="Retracted"/>. They are the only stored copy
-    /// <see cref="Reword"/> may overwrite: everything else is treated as somebody's editorial decision.
-    /// Keyed on the literal strings rather than on a flag or a version number for the reason
-    /// <see cref="ClientAssetHolds"/> is keyed on a checksum — it expires by itself. Once the client
-    /// edits the heading in ADM-17 the old string is gone, and so is this entry's power over it.
-    /// <para>
-    /// <b>The field belongs in the key.</b> A flat set of values was tested against every field, so a
-    /// retraction of one field reached across to another that happened to hold the same words — an admin
-    /// button label of "Activewear" was overwritten by the heading's retraction, silently, because the
-    /// write looked like a retraction and not like a value being kept.
-    /// </para>
-    /// </param>
-    private sealed record BannerCopy(
-        string Title,
-        string Subtitle,
-        string LinkUrl,
-        string ButtonLabel,
-        IReadOnlySet<string> Supersedes)
-    {
-        /// <summary>One retracted value, scoped to the field it was written into.</summary>
-        /// <remarks>
-        /// <c>\0</c> cannot appear in either half: <c>HomeSectionItem</c>'s names are C# identifiers and
-        /// the stored copy comes from a form, so there is no pair of different (field, value) inputs that
-        /// can collide on one key.
-        /// </remarks>
-        public static string Retracted(string field, string value) => $"{field}\0{value}";
-    }
 
     /// <summary>Everything one attempt accumulates, so the methods above stay about the import.</summary>
     private sealed class Run(ClientAssetImportRequest request)

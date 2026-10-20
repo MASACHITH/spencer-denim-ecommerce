@@ -31,7 +31,7 @@ public sealed class HomePageCacheTests
     {
         var cache = new HomePageCache(new FakeTimeProvider(Now));
 
-        cache.SetPage(Page);
+        cache.SetPage(Page, null);
 
         Assert.Same(Page, cache.GetPage());
     }
@@ -42,7 +42,7 @@ public sealed class HomePageCacheTests
         var time = new FakeTimeProvider(Now);
         var cache = new HomePageCache(time);
 
-        cache.SetPage(Page);
+        cache.SetPage(Page, null);
         time.Advance(HomePageCachePolicy.Lifetime - TimeSpan.FromTicks(1));
 
         Assert.Same(Page, cache.GetPage());
@@ -58,7 +58,7 @@ public sealed class HomePageCacheTests
         var time = new FakeTimeProvider(Now);
         var cache = new HomePageCache(time);
 
-        cache.SetPage(Page);
+        cache.SetPage(Page, null);
         time.Advance(HomePageCachePolicy.Lifetime);
 
         Assert.Null(cache.GetPage());
@@ -69,7 +69,7 @@ public sealed class HomePageCacheTests
     {
         var cache = new HomePageCache(new FakeTimeProvider(Now));
 
-        cache.SetPage(Page);
+        cache.SetPage(Page, null);
         cache.Evict();
 
         Assert.Null(cache.GetPage());
@@ -81,12 +81,79 @@ public sealed class HomePageCacheTests
         var time = new FakeTimeProvider(Now);
         var cache = new HomePageCache(time);
 
-        cache.SetPage(Page);
+        cache.SetPage(Page, null);
         time.Advance(TimeSpan.FromMinutes(4));
-        cache.SetPage(Page);
+        cache.SetPage(Page, null);
         time.Advance(TimeSpan.FromMinutes(4));
 
         Assert.Same(Page, cache.GetPage());
+    }
+
+    // ---- issue #37: an entry never outlives the content in it -------------------------------------
+
+    /// <summary>
+    /// A section that ends two minutes into a warm entry is gone at two minutes, not at five. Measured
+    /// before the fix: the API served it ~250 s after its end.
+    /// </summary>
+    [Fact]
+    public void An_entry_expires_at_the_next_schedule_boundary_when_that_comes_first()
+    {
+        var time = new FakeTimeProvider(Now);
+        var cache = new HomePageCache(time);
+        var boundary = Now.UtcDateTime.AddMinutes(2);
+
+        cache.SetPage(Page, boundary);
+
+        time.Advance(TimeSpan.FromMinutes(2) - TimeSpan.FromTicks(1));
+        Assert.Same(Page, cache.GetPage());
+
+        // Exactly at the boundary: ContentSchedule's end is exclusive, so a window ending at 18:00 is
+        // over at 18:00, and the page that still showed it must be too.
+        time.Advance(TimeSpan.FromTicks(1));
+        Assert.Null(cache.GetPage());
+    }
+
+    [Fact]
+    public void A_boundary_beyond_five_minutes_leaves_the_five_minute_cap_in_charge()
+    {
+        var time = new FakeTimeProvider(Now);
+        var cache = new HomePageCache(time);
+
+        cache.SetPage(Page, Now.UtcDateTime.AddMinutes(30));
+
+        time.Advance(HomePageCachePolicy.Lifetime - TimeSpan.FromTicks(1));
+        Assert.Same(Page, cache.GetPage());
+
+        time.Advance(TimeSpan.FromTicks(1));
+        Assert.Null(cache.GetPage());
+    }
+
+    /// <summary>
+    /// A boundary that is already due means the page is stale on arrival, and it is not kept even for an
+    /// instant: the next request assembles a fresh one.
+    /// </summary>
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void A_boundary_that_is_already_due_is_not_cached_at_all(int secondsFromNow)
+    {
+        var cache = new HomePageCache(new FakeTimeProvider(Now));
+
+        cache.SetPage(Page, Now.UtcDateTime.AddSeconds(secondsFromNow));
+
+        Assert.Null(cache.GetPage());
+    }
+
+    /// <summary>A page that is stale on arrival must also drop the one cached before it.</summary>
+    [Fact]
+    public void Storing_a_page_that_is_already_stale_drops_the_one_before_it()
+    {
+        var cache = new HomePageCache(new FakeTimeProvider(Now));
+        cache.SetPage(Page, null);
+
+        cache.SetPage(new HomePageDto([]), Now.UtcDateTime);
+
+        Assert.Null(cache.GetPage());
     }
 
     [Fact]
@@ -108,11 +175,14 @@ public sealed class CachedHomePageQueryHandlerTests
 {
     private static CancellationToken Token => TestContext.Current.CancellationToken;
 
+    private static readonly DateTimeOffset Now = new(2026, 10, 1, 12, 0, 0, TimeSpan.Zero);
+
     [Fact]
     public async Task The_page_is_assembled_once_and_served_from_memory_after_that()
     {
         var inner = new CountingInner();
-        var handler = new CachedHomePageQueryHandler(inner, new CountingCache());
+        var handler = new CachedHomePageQueryHandler(
+            inner, new CountingCache(), new BoundaryReader(null), new FixedClock(Now));
 
         var first = await handler.HandleAsync(new GetHomePageQuery(), Token);
         var second = await handler.HandleAsync(new GetHomePageQuery(), Token);
@@ -128,7 +198,7 @@ public sealed class CachedHomePageQueryHandlerTests
     {
         var inner = new CountingInner();
         var cache = new CountingCache();
-        var handler = new CachedHomePageQueryHandler(inner, cache);
+        var handler = new CachedHomePageQueryHandler(inner, cache, new BoundaryReader(null), new FixedClock(Now));
 
         var before = await handler.HandleAsync(new GetHomePageQuery(), Token);
         cache.Evict();
@@ -136,6 +206,80 @@ public sealed class CachedHomePageQueryHandlerTests
 
         Assert.Equal(2, inner.Count);
         Assert.NotSame(before, after);
+    }
+
+    /// <summary>
+    /// Issue #37: the decorator hands the cache the next schedule boundary, asked for from the instant
+    /// <b>before</b> the page was assembled, so it can only ever expire the entry early, never late.
+    /// </summary>
+    [Fact]
+    public async Task The_next_schedule_boundary_reaches_the_cache_measured_from_before_the_assembly()
+    {
+        var boundary = Now.UtcDateTime.AddSeconds(90);
+        var reader = new BoundaryReader(boundary);
+        var cache = new CountingCache();
+        var handler = new CachedHomePageQueryHandler(new CountingInner(), cache, reader, new FixedClock(Now));
+
+        await handler.HandleAsync(new GetHomePageQuery(), Token);
+
+        Assert.Equal(boundary, cache.ValidUntil);
+        Assert.Equal(Now.UtcDateTime, reader.AskedFrom);
+    }
+
+    [Fact]
+    public async Task Nothing_scheduled_means_no_boundary_and_the_lifetime_alone_applies()
+    {
+        var cache = new CountingCache();
+        var handler = new CachedHomePageQueryHandler(
+            new CountingInner(), cache, new BoundaryReader(null), new FixedClock(Now));
+
+        await handler.HandleAsync(new GetHomePageQuery(), Token);
+
+        Assert.True(cache.WasSet);
+        Assert.Null(cache.ValidUntil);
+    }
+
+    /// <summary>A cache hit asks nothing of the content store: the boundary query is a miss's cost only.</summary>
+    [Fact]
+    public async Task A_cache_hit_does_not_ask_for_the_boundary()
+    {
+        var reader = new BoundaryReader(null);
+        var handler = new CachedHomePageQueryHandler(
+            new CountingInner(), new CountingCache(), reader, new FixedClock(Now));
+
+        await handler.HandleAsync(new GetHomePageQuery(), Token);
+        await handler.HandleAsync(new GetHomePageQuery(), Token);
+
+        Assert.Equal(1, reader.Asked);
+    }
+
+    private sealed class FixedClock(DateTimeOffset now) : SpencerDenim.Application.Abstractions.Time.IClock
+    {
+        public DateTimeOffset UtcNow => now;
+    }
+
+    private sealed class BoundaryReader(DateTime? boundary) : IHomeContentReader
+    {
+        public DateTime? AskedFrom { get; private set; }
+
+        public int Asked { get; private set; }
+
+        public Task<DateTime?> GetNextScheduleBoundaryAsync(DateTime utcNow, CancellationToken cancellationToken)
+        {
+            Asked++;
+            AskedFrom = utcNow;
+            return Task.FromResult(boundary);
+        }
+
+        public Task<IReadOnlyList<HomeSectionContent>> GetLiveSectionsAsync(
+            DateTime utcNow,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException("The decorator never reads sections itself.");
+
+        public Task<IReadOnlyList<AnnouncementDto>> GetLiveAnnouncementsAsync(
+            DateTime utcNow,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException("The decorator never reads announcements.");
     }
 
     /// <summary>
@@ -167,7 +311,16 @@ public sealed class CachedHomePageQueryHandlerTests
 
         public HomePageDto? GetPage() => _page;
 
-        public void SetPage(HomePageDto page) => _page = page;
+        public DateTime? ValidUntil { get; private set; }
+
+        public bool WasSet { get; private set; }
+
+        public void SetPage(HomePageDto page, DateTime? validUntilUtc)
+        {
+            _page = page;
+            ValidUntil = validUntilUtc;
+            WasSet = true;
+        }
 
         public void Evict() => _page = null;
     }
