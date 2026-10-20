@@ -1619,6 +1619,13 @@ const ANNOUNCEMENT_STATES = {
     { id: 2, message: 'Sale', linkUrl: null },
     { id: 3, message: LONG_ANNOUNCEMENT.slice(0, 120), linkUrl: null },
   ],
+  // Tester #192: markup and hostile links an older row (or a bypassed validator) could hold. The strip must
+  // render the words as text, and must never put a script or an off-site path in an href.
+  hostile: [
+    { id: 1, message: '<img src=x onerror="window.__xss=1">Sale <b>now</b>', linkUrl: 'javascript:window.__xss=2' },
+    { id: 2, message: '</script><script>window.__xss=3</script>', linkUrl: '/.//evil.example' },
+    { id: 3, message: '{{constructor.constructor("window.__xss=4")()}}', linkUrl: '//evil.example' },
+  ],
 };
 
 let announcementsState = 'default';

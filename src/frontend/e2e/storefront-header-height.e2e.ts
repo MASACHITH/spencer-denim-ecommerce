@@ -25,7 +25,9 @@ test.use({ baseURL: brandingURL });
 const WIDTHS = [320, 375, 390, 768, 1024, 1280, 1440, 1920];
 const STATES = ['long', 'empty', 'single', 'default'] as const;
 
-async function useStrip(page: Page, state: (typeof STATES)[number]): Promise<void> {
+type Strip = (typeof STATES)[number] | 'hostile';
+
+async function useStrip(page: Page, state: Strip): Promise<void> {
   const switched = await page.request.get(`${brandingApiURL}/__test__/announcements?state=${state}`);
   expect(switched.ok()).toBe(true);
 }
@@ -141,4 +143,133 @@ test('the long strip passes axe at 320px and 1280px', async ({ page }) => {
     const results = await new AxeBuilder({ page }).include('sd-site-header').analyze();
     expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([]);
   }
+});
+
+// ---- independent tester's additions (#192 / #36) -------------------------------------------------------
+
+/** A phone turned on its side re-lays the strip; the token follows the header both ways. */
+test('rotating a phone keeps the token on the header, both ways', async ({ page }) => {
+  await useStrip(page, 'long');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/');
+  await expectTokenMatchesHeader(page, 'long portrait');
+
+  await page.setViewportSize({ width: 844, height: 390 });
+  await expectTokenMatchesHeader(page, 'long landscape');
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expectTokenMatchesHeader(page, 'long portrait again');
+});
+
+/** Text enlarged to 200% (browser or OS font scaling) makes the strip wrap further; the token follows. */
+test('enlarged text at 375px: the token follows the taller header', async ({ page }) => {
+  await useStrip(page, 'long');
+  await page.setViewportSize({ width: 375, height: 800 });
+  await page.goto('/');
+  await expectTokenMatchesHeader(page, 'long @375 100%');
+  const before = (await measure(page)).header;
+
+  await page.addStyleTag({ content: 'html { font-size: 200% !important; }' });
+  await expectTokenMatchesHeader(page, 'long @375 200%');
+  expect((await measure(page)).header).toBeGreaterThan(before);
+});
+
+/**
+ * A ResizeObserver whose callback changes layout can loop, and the browser reports it as an error. Stepping
+ * every message, resizing across the 1024 breakpoint and scrolling must leave the console clean.
+ */
+test('no ResizeObserver loop or script error while the strip rotates and the window resizes', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('console', (message) => {
+    if (message.type() === 'error') {
+      errors.push(message.text());
+    }
+  });
+  page.on('pageerror', (error) => errors.push(error.message));
+
+  await useStrip(page, 'long');
+  await page.setViewportSize({ width: 320, height: 700 });
+  await page.goto('/');
+  await expectTokenMatchesHeader(page, 'long @320');
+
+  const pause = page.getByTestId('announcement-pause');
+  if (await pause.count()) {
+    await pause.click();
+  }
+  const next = page.getByRole('button', { name: 'Next announcement' });
+  for (const width of [320, 1023, 1024, 1920, 375]) {
+    await page.setViewportSize({ width, height: 700 });
+    await next.click();
+    await page.mouse.wheel(0, 600);
+    await expectTokenMatchesHeader(page, `long @${width} after a step`);
+  }
+
+  expect(errors.filter((text) => /ResizeObserver/i.test(text))).toEqual([]);
+  // The stub serves no artwork files, so a missing-image 404 is the stub's, not the header's.
+  expect(errors.filter((text) => !text.startsWith('Failed to load resource'))).toEqual([]);
+});
+
+/**
+ * Publishing the token must not move anything on the server-rendered page: it only feeds scroll-padding, so
+ * hydration with the long strip shifts no layout.
+ */
+test('hydration with the long strip causes no layout shift', async ({ page }) => {
+  await useStrip(page, 'long');
+  await page.setViewportSize({ width: 320, height: 700 });
+  await page.addInitScript(() => {
+    (window as unknown as { __cls: number }).__cls = 0;
+    new PerformanceObserver((list) => {
+      for (const entry of list.getEntries() as (PerformanceEntry & { value: number; hadRecentInput: boolean })[]) {
+        if (!entry.hadRecentInput) {
+          (window as unknown as { __cls: number }).__cls += entry.value;
+        }
+      }
+    }).observe({ type: 'layout-shift', buffered: true });
+  });
+
+  await page.goto('/');
+  await expectTokenMatchesHeader(page, 'long @320 after hydration');
+  await page.waitForTimeout(1_000);
+
+  const cls = await page.evaluate(() => (window as unknown as { __cls: number }).__cls);
+  expect(cls, `cumulative layout shift ${cls}`).toBeLessThan(0.1);
+});
+
+/**
+ * Admin text is text. Markup in a message is shown escaped in the server render and never runs; a script or
+ * protocol-relative link never reaches an href; and a path that only looks odd stays on this site.
+ */
+test('a hostile strip renders escaped on the server and in the browser, and no link leaves the site', async ({ page }) => {
+  await useStrip(page, 'hostile');
+
+  const html = await (await page.request.get('/')).text();
+  expect(html).not.toContain('<img src=x onerror');
+  expect(html).not.toContain('<script>window.__xss');
+  expect(html).toContain('&lt;img src=x onerror');
+
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto('/');
+  await expect(page.getByTestId('announcement')).toBeVisible();
+
+  const pause = page.getByTestId('announcement-pause');
+  if (await pause.count()) {
+    await pause.click();
+  }
+
+  const next = page.getByRole('button', { name: 'Next announcement' });
+  for (let step = 0; step < 3; step++) {
+    const hrefs = await page
+      .getByTestId('announcement')
+      .locator('a[href]')
+      .evaluateAll((links) => links.map((link) => (link as HTMLAnchorElement).href));
+
+    for (const href of hrefs) {
+      expect(href.toLowerCase()).not.toContain('javascript:');
+      expect(new URL(href).origin, `href ${href}`).toBe(new URL(page.url()).origin);
+    }
+
+    await next.click();
+  }
+
+  expect(await page.evaluate(() => (window as unknown as { __xss?: number }).__xss)).toBeUndefined();
 });
