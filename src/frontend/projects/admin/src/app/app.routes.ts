@@ -133,6 +133,14 @@ export const routes: Routes = [
     loadComponent: () => import('./pages/inventory/inventory-page').then((m) => m.InventoryPage),
   },
   {
+    // ADM-16 (#189): review moderation. Session guard only, like every admin route; the API enforces
+    // Reviews.View / Reviews.Approve / Reviews.Edit and the page says so to a role without them.
+    path: 'reviews',
+    title: `Reviews — ${BRAND.adminName}`,
+    canActivate: [adminSessionGuard],
+    loadComponent: () => import('./pages/reviews/reviews-page').then((m) => m.ReviewsPage),
+  },
+  {
     // ADM-19 (W4-02): the Sales, Inventory and Customers reports and their audited exports. The guard asks
     // only for a session, as every other admin route does: the API is the security boundary (doc 03 §3a),
     // and the page itself says so to a role without Reports.View rather than bouncing it.
