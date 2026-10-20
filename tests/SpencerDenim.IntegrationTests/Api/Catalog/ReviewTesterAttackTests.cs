@@ -475,10 +475,10 @@ public sealed class ReviewTesterAttackTests(SqlServerDatabaseFixture sqlServer) 
     // ---- content rules the display name and the title bypass (defects found by the tester) ------------------------
 
     /// <summary>
-    /// DEFECT (tester, #189): the review text refuses bidi controls ("Trojan Source"), but the display name is copied
-    /// from the profile's first and last name, which registration does not check, so a first name carrying U+202E
-    /// reaches every product page and the admin screen. In the meta line it reverses the "Verified buyer" badge and
-    /// the date that follow it in the same paragraph.
+    /// Found by the tester as D1, fixed in round 2: the display name is copied from the profile, and a first name
+    /// carrying U+202E used to reach every product page, reversing the "Verified buyer" badge and date after it.
+    /// Registration now refuses such names, so the setup writes them straight into the row, as a name saved before
+    /// that rule would be; the display name must still come out clean.
     /// </summary>
     [Fact]
     public async Task A_display_name_never_carries_bidi_or_control_characters_from_the_profile()
@@ -512,8 +512,8 @@ public sealed class ReviewTesterAttackTests(SqlServerDatabaseFixture sqlServer) 
     }
 
     /// <summary>
-    /// DEFECT (tester, #189, low): "a title on two lines" is refused for \n and \r, but U+2028 LINE SEPARATOR and
-    /// U+2029 PARAGRAPH SEPARATOR are neither control characters nor checked, so they pass.
+    /// Found by the tester as D2 (low), fixed in round 2: "a title on two lines" was refused for \n and \r only, and
+    /// U+2028 LINE SEPARATOR and U+2029 PARAGRAPH SEPARATOR, which are not control characters, used to pass.
     /// </summary>
     [Theory]
     [InlineData(0x2028)]
@@ -531,6 +531,56 @@ public sealed class ReviewTesterAttackTests(SqlServerDatabaseFixture sqlServer) 
 
         Assert.True(status == HttpStatusCode.BadRequest, $"A title with a line separator answered {(int)status}: {body}");
         Assert.True(body.GetProperty("errors").TryGetProperty("title", out _));
+    }
+
+    /// <summary>
+    /// Round 2 (#189 D1): the new name rules must not cost Sri Lankan customers their names. Sinhala conjuncts need
+    /// ZWJ (U+200D: "Sri" is SHA, AL-LAKUNA, ZWJ, RA, II) and Tamil needs ZWNJ (U+200C) and combining vowel signs.
+    /// Registration through the real endpoint accepts them, the review's display name keeps them byte for byte, and
+    /// review text with them is stored as typed.
+    /// </summary>
+    [Fact]
+    public async Task Sinhala_and_tamil_names_and_text_with_zwj_and_zwnj_are_accepted_and_kept()
+    {
+        await ReadyAsync();
+        await SetRequireApprovalAsync(false);
+        var product = await ProductAsync();
+        await using var factory = CreateHost();
+
+        var sri = new string([(char)0x0DC1, (char)0x0DCA, (char)0x200D, (char)0x0DBB, (char)0x0DD3]);
+        var sinhalaFirst = sri + new string([(char)0x0DB1, (char)0x0DD2, (char)0x0DB8, (char)0x0DBD, (char)0x0DCA]);
+        var tamilLast = new string([(char)0x0B95, (char)0x0BCD, (char)0x200C, (char)0x0BB7, (char)0x0BC7, (char)0x0BA4, (char)0x0BCD]);
+
+        var customer = await CustomerAsync(factory, "sinhala", sinhalaFirst, tamilLast);
+
+        var title = sri + " " + tamilLast;
+        var text = sinhalaFirst + (char)0x200D + " " + tamilLast + (char)0x200C;
+        var (status, body) = await CreateReviewAsync(customer.Client, product, new { rating = 5, title, body = text });
+
+        Assert.True(status == HttpStatusCode.Created, $"A Sinhala/Tamil review answered {(int)status}: {body}");
+        var review = body.GetProperty("review");
+        Assert.Equal(sinhalaFirst + " " + tamilLast[..1] + ".", review.GetProperty("displayName").GetString());
+        Assert.Contains((char)0x200D, review.GetProperty("displayName").GetString()!);
+        Assert.Equal(title, review.GetProperty("title").GetString());
+        Assert.Equal(text, review.GetProperty("body").GetString());
+    }
+
+    /// <summary>Round 2 (#189 D2): a body keeps a Unicode line or paragraph separator as the one line break it stores.</summary>
+    [Theory]
+    [InlineData(0x2028)]
+    [InlineData(0x2029)]
+    [InlineData(0x0085)]
+    public async Task A_body_stores_a_unicode_line_separator_as_a_newline(int separator)
+    {
+        await ReadyAsync();
+        var product = await ProductAsync();
+        await using var factory = CreateHost();
+        var customer = await CustomerAsync(factory, "bodysep");
+
+        var (status, body) = await CreateReviewAsync(customer.Client, product, new { rating = 3, body = "One" + (char)separator + "Two" });
+
+        Assert.Equal(HttpStatusCode.Created, status);
+        Assert.Equal("One\nTwo", body.GetProperty("review").GetProperty("body").GetString());
     }
 
     // ---- a removed product ------------------------------------------------------------------------------------------
