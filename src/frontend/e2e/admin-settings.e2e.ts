@@ -520,6 +520,9 @@ test.describe('the settings screen is usable and accessible', () => {
       'h2:Contact and social',
       'h2:Bank transfer',
       'h2:Invoice and fulfilment',
+
+      // Issue #193: how long the nightly purge keeps raw page views.
+      'h2:Traffic',
     ]);
   });
 
@@ -527,7 +530,17 @@ test.describe('the settings screen is usable and accessible', () => {
     await openSettings(page);
 
     // A name on every form control, which is what makes the screen usable without sight.
-    for (const testId of ['logo-alt-input', 'logo-file', 'field-whatsApp', 'field-facebookUrl', 'field-instagramUrl', 'field-tikTokUrl']) {
+    for (const testId of [
+      'logo-alt-input',
+      'logo-file',
+      'field-whatsApp',
+      'field-facebookUrl',
+      'field-instagramUrl',
+      'field-tikTokUrl',
+      'field-youTubeUrl',
+      'field-rawRetentionDays',
+      'field-botRetentionDays',
+    ]) {
       const name = await page
         .locator(`[data-testid="${testId}"]`)
         .evaluate((input: HTMLInputElement) => input.labels?.[0]?.textContent?.trim() ?? '');
@@ -539,7 +552,8 @@ test.describe('the settings screen is usable and accessible', () => {
   test('the save button is reachable by keyboard from the last field', async ({ page }) => {
     await openSettings(page);
 
-    await page.locator('[data-testid="field-tikTokUrl"]').focus();
+    // The YouTube box is the last field since issue #193 (it was TikTok before).
+    await page.locator('[data-testid="field-youTubeUrl"]').focus();
     await page.keyboard.press('Tab');
 
     await expect(page.locator('[data-testid="save-contact-social"]')).toBeFocused();
@@ -563,7 +577,7 @@ test.describe('the settings screen is usable and accessible', () => {
     await page.locator('[data-testid="field-whatsApp"]').fill('94771234567');
 
     const save = page.locator('[data-testid="save-contact-social"]');
-    await page.locator('[data-testid="field-tikTokUrl"]').focus();
+    await page.locator('[data-testid="field-youTubeUrl"]').focus();
     await page.keyboard.press('Tab');
     await expect(save, 'Tab from the last field did not reach Save').toBeFocused();
 
@@ -796,5 +810,150 @@ test.describe('the settings screen is usable and accessible', () => {
     await openSettings(page);
 
     await expect(page.locator('[data-testid="field-autoDeliverAfterDays"]')).toHaveValue('7');
+  });
+});
+
+// ---- issue #193: the YouTube channel and the Traffic form ------------------------------------------------
+
+test.describe('the YouTube channel (issue #193)', () => {
+  test('is saved with the other addresses and comes back from the server', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await openSettings(page);
+
+    await page.locator('[data-testid="field-youTubeUrl"]').fill('https://www.youtube.com/@colombowardrobe');
+
+    const saved = page.waitForResponse(
+      (response: Response) =>
+        response.url().includes('/api/admin/settings/contact-social') && response.request().method() === 'PUT',
+    );
+    await page.locator('[data-testid="save-contact-social"]').click();
+    expect((await saved).status()).toBe(204);
+
+    await reopenSettings(page);
+
+    await expect(page.locator('[data-testid="field-youTubeUrl"]')).toHaveValue(
+      'https://www.youtube.com/@colombowardrobe',
+    );
+  });
+
+  test('an address a browser should not follow is refused against its own box', async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 900 });
+    await openSettings(page);
+
+    await page.locator('[data-testid="field-youTubeUrl"]').fill('javascript:alert(1)');
+    await page.locator('[data-testid="save-contact-social"]').click();
+
+    await expect(page.locator('[data-testid="error-youTubeUrl"]')).toBeVisible();
+    expect(await horizontalOverflow(page), 'horizontal overflow at 320px with a field error').toBeLessThanOrEqual(0);
+  });
+});
+
+test.describe('the Traffic form (issue #193)', () => {
+  const trafficFields = [
+    '[data-testid="field-rawRetentionDays"]',
+    '[data-testid="field-botRetentionDays"]',
+    '[data-testid="save-traffic"]',
+  ];
+
+  async function saveTraffic(page: Page): Promise<Response> {
+    const saved = page.waitForResponse(
+      (response: Response) =>
+        response.url().includes('/api/admin/settings/traffic') && response.request().method() === 'PUT',
+    );
+
+    await page.locator('[data-testid="save-traffic"]').click();
+
+    return saved;
+  }
+
+  /** The seeded periods are on screen, which tells a staff member what the purge is doing today. */
+  test('opens on the seeded 90 and 7 days', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await openSettings(page);
+
+    await expect(page.locator('[data-testid="field-rawRetentionDays"]')).toHaveValue('90');
+    await expect(page.locator('[data-testid="field-botRetentionDays"]')).toHaveValue('7');
+    await expect(page.locator('[data-testid="traffic-panel"]')).toContainText('kept for ever');
+  });
+
+  test('saving sends both periods and shows what the server now holds', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await openSettings(page);
+
+    await page.locator('[data-testid="field-rawRetentionDays"]').fill('180');
+    await page.locator('[data-testid="field-botRetentionDays"]').fill('21');
+
+    const saved = await saveTraffic(page);
+    expect(saved.status()).toBe(204);
+    expect(saved.request().postDataJSON()).toMatchObject({ rawRetentionDays: '180', botRetentionDays: '21' });
+
+    await expect(page.locator('[data-testid="announcement"]')).toContainText('Traffic settings saved');
+
+    await reopenSettings(page);
+
+    await expect(page.locator('[data-testid="field-rawRetentionDays"]')).toHaveValue('180');
+    await expect(page.locator('[data-testid="field-botRetentionDays"]')).toHaveValue('21');
+  });
+
+  test('a period outside its bounds is refused against its own box, and nothing is stored', async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 900 });
+    await openSettings(page);
+
+    await page.locator('[data-testid="field-rawRetentionDays"]').fill('10');
+    expect((await saveTraffic(page)).status()).toBe(400);
+
+    await expect(page.locator('[data-testid="error-rawRetentionDays"]')).toContainText('between 30 and 365');
+    await expect(page.locator('[data-testid="field-rawRetentionDays"]')).toHaveAttribute('aria-invalid', 'true');
+    expect(await horizontalOverflow(page), 'horizontal overflow at 320px with a field error').toBeLessThanOrEqual(0);
+
+    await reopenSettings(page);
+    await expect(page.locator('[data-testid="field-rawRetentionDays"]')).toHaveValue('90');
+  });
+
+  test('an emptied box is refused rather than cleared', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await openSettings(page);
+
+    await page.locator('[data-testid="field-botRetentionDays"]').fill('');
+    expect((await saveTraffic(page)).status()).toBe(400);
+
+    await expect(page.locator('[data-testid="error-botRetentionDays"]')).toContainText('cannot be left empty');
+  });
+
+  test('bots kept longer than people is refused against the bot box', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await openSettings(page);
+
+    await page.locator('[data-testid="field-rawRetentionDays"]').fill('40');
+    await page.locator('[data-testid="field-botRetentionDays"]').fill('60');
+    expect((await saveTraffic(page)).status()).toBe(400);
+
+    await expect(page.locator('[data-testid="error-botRetentionDays"]')).toContainText('cannot be kept longer');
+  });
+
+  /** The project's responsive rule, applied to the new panel: every breakpoint, no sideways scroll, real targets. */
+  test('fits every breakpoint with no horizontal scroll and real tap targets', async ({ page }) => {
+    for (const width of BREAKPOINTS) {
+      await page.setViewportSize({ width, height: 900 });
+      await openSettings(page);
+
+      expect(
+        await horizontalOverflow(page),
+        `horizontal overflow at ${width}px with the Traffic form on screen`,
+      ).toBeLessThanOrEqual(0);
+
+      // #80: each selector guarded on its own, so the sweep cannot pass by matching nothing.
+      for (const selector of [...trafficFields, '[data-testid="field-youTubeUrl"]']) {
+        const rendered = await page.evaluate(
+          (one) =>
+            [...document.querySelectorAll<HTMLElement>(one)].filter((element) => element.getClientRects().length > 0)
+              .length,
+          selector,
+        );
+
+        expect(rendered, `nothing rendered matches "${selector}" at ${width}px`).toBeGreaterThan(0);
+        expect(await undersized(page, selector), `${selector} at ${width}px`).toEqual([]);
+      }
+    }
   });
 });

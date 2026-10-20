@@ -4,6 +4,8 @@ using SpencerDenim.Application.Ops.Email.Abstractions;
 using SpencerDenim.Application.Ops.Email.Contracts;
 using SpencerDenim.Application.Sales.Checkout.Abstractions;
 using SpencerDenim.Domain.Sales;
+using SpencerDenim.Domain.Inventory;
+using SpencerDenim.Infrastructure.Inventory;
 using SpencerDenim.Infrastructure.Persistence;
 
 namespace SpencerDenim.Infrastructure.Sales;
@@ -199,6 +201,22 @@ internal sealed class OrderPlacementStore(
             {
                 DetachAll();
                 throw;
+            }
+
+            // Doc 08 §5.4 step 5: the Reserve movements, one per line (#108). After the save because a
+            // movement names its order and the order's id exists only now; still inside the transaction, so
+            // every stock row is still locked by the reservation above and the figures copied are its own.
+            foreach (var line in ordered)
+            {
+                await StockLedger.AppendAsync(
+                    dbContext,
+                    line.Priced.VariantId,
+                    InventoryMovementType.Reserve,
+                    onHandDelta: 0,
+                    reservedDelta: line.Priced.Quantity,
+                    order.Id,
+                    placement.PlacedAtUtc,
+                    cancellationToken);
             }
 
             // Doc 08 §1.6 (N12): cart deletes are set-based, never a tracked Remove(). The *items* go and

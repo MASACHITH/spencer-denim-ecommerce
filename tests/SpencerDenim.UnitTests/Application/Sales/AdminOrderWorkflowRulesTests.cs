@@ -241,6 +241,10 @@ public sealed class AdminOrderWorkflowRulesTests
                 SettingKeys.PayPal.CaptureRecoveryMaxHours,
                 SettingKeys.PayPal.PendingCaptureMaxDays,
                 SettingKeys.PayPal.ExpiryMinutes,
+
+                // Issue #193: doc 08 §3.8's own 90 and 7, the purge's retention periods. Not a client fact.
+                SettingKeys.Traffic.RawRetentionDays,
+                SettingKeys.Traffic.BotRetentionDays,
             ],
             seeded);
 

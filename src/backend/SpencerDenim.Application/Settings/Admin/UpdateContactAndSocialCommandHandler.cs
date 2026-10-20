@@ -78,6 +78,7 @@ public sealed class UpdateContactAndSocialCommandHandler(
         (SettingKeys.Social.FacebookUrl, "facebookUrl"),
         (SettingKeys.Social.InstagramUrl, "instagramUrl"),
         (SettingKeys.Social.TikTokUrl, "tikTokUrl"),
+        (SettingKeys.Social.YouTubeUrl, "youTubeUrl"),
     ];
 
     public async Task<SettingsWriteResult> HandleAsync(
@@ -144,7 +145,8 @@ public sealed class UpdateContactAndSocialCommandHandler(
             {
                 "facebookUrl" => "Facebook",
                 "instagramUrl" => "Instagram",
-                _ => "TikTok",
+                "tikTokUrl" => "TikTok",
+                _ => "YouTube",
             };
 
             SettingFieldRules.CheckProfileUrl(errors, field, raw, label);

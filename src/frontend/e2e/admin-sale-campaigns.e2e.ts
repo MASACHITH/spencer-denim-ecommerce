@@ -40,6 +40,31 @@ test.beforeAll(async ({ request }) => {
   ).toBe(adminWorktreeRoot.replace(/\\/g, '/').toLowerCase());
 });
 
+/**
+ * **A campaign window relative to today, never a calendar date.**
+ *
+ * The status is derived by the stub against its own clock (`campaignStatus` in
+ * `admin-catalog-stub.mjs`, as `CampaignWindow.StatusOf` does on the real API), so a hard-coded window
+ * is a test that changes its answer as the calendar moves: `2026-10-19T00:00` read "Starts later" until
+ * that very day, then "Live", then "Ended" a week later. `page.clock` cannot help, because the clock that
+ * decides is the stub's Node process, not the browser's.
+ *
+ * The value is what a `datetime-local` box holds — the shop's wall-clock time, `yyyy-MM-ddTHH:mm` with no
+ * offset — at midnight `days` from today in the shop's time zone (UTC+05:30, no daylight saving, which is
+ * `ColomboTime.Offset` and the stub's own arithmetic). Midnight a whole day ahead is in the future at any
+ * moment of today, so a window starting there is "Scheduled" whenever this runs.
+ */
+function shopMidnight(days: number): string {
+  const shopToday = new Date(Date.now() + 330 * 60 * 1000).toISOString().slice(0, 10);
+  const day = new Date(Date.parse(`${shopToday}T00:00:00Z`) + days * 24 * 60 * 60 * 1000);
+
+  return `${day.toISOString().slice(0, 10)}T00:00`;
+}
+
+/** A week ahead to a fortnight ahead: always in the future, and a window that ends after it starts. */
+const STARTS = shopMidnight(7);
+const ENDS = shopMidnight(14);
+
 async function open(page: Page): Promise<void> {
   const state = `campaign-${Math.random().toString(36).slice(2)}`;
 
@@ -64,8 +89,8 @@ async function open(page: Page): Promise<void> {
 async function fillCampaign(page: Page, name: string, categoryLabel = 'Women › Dresses'): Promise<void> {
   await page.locator('[data-testid="campaign-name"]').fill(name);
   await page.locator('[data-testid="campaign-value"]').fill('20');
-  await page.locator('[data-testid="campaign-starts"]').fill('2026-10-19T00:00');
-  await page.locator('[data-testid="campaign-ends"]').fill('2026-10-26T00:00');
+  await page.locator('[data-testid="campaign-starts"]').fill(STARTS);
+  await page.locator('[data-testid="campaign-ends"]').fill(ENDS);
   await page.locator('[data-testid="target-category"]').selectOption({ label: categoryLabel });
   await page.locator('[data-testid="add-target"]').click();
 
@@ -135,7 +160,8 @@ test.describe('the sale-campaign screen (ADM-14)', () => {
     await open(page);
 
     await fillCampaign(page, 'E2EWINDOW');
-    await page.locator('[data-testid="campaign-ends"]').fill('2026-10-12T00:00');
+    // A week before the start, wherever the start is: the refusal is about the order, not the calendar.
+    await page.locator('[data-testid="campaign-ends"]').fill(shopMidnight(0));
     await page.locator('[data-testid="campaign-save"]').click();
 
     await expect(page.locator('[data-testid="error-ends"]')).toContainText('after the start');
@@ -150,8 +176,8 @@ test.describe('the sale-campaign screen (ADM-14)', () => {
 
     await page.locator('[data-testid="campaign-name"]').fill('E2ENOTHING');
     await page.locator('[data-testid="campaign-value"]').fill('20');
-    await page.locator('[data-testid="campaign-starts"]').fill('2026-10-19T00:00');
-    await page.locator('[data-testid="campaign-ends"]').fill('2026-10-26T00:00');
+    await page.locator('[data-testid="campaign-starts"]').fill(STARTS);
+    await page.locator('[data-testid="campaign-ends"]').fill(ENDS);
     await page.locator('[data-testid="campaign-save"]').click();
 
     await expect(page.locator('[data-testid="error-targets"]')).toContainText(
@@ -187,7 +213,8 @@ test.describe('the sale-campaign screen (ADM-14)', () => {
 
   /**
    * The derived status, which doc 11 line 474 says is computed and never stored. A campaign whose window
-   * is in the future says so, and the form has no status control to contradict it.
+   * is in the future says so, and the form has no status control to contradict it. The window is a week
+   * from today (`STARTS`), so this holds on whatever day it runs.
    */
   test('shows the derived status and offers no status control', async ({ page }) => {
     await open(page);

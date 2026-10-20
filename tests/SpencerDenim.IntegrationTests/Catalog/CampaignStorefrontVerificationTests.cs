@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using SpencerDenim.Application.Abstractions.Time;
 using SpencerDenim.Application.Marketing.Promotions.Abstractions;
 using SpencerDenim.Domain.Identity;
 using SpencerDenim.Domain.Marketing;
@@ -169,7 +170,8 @@ public sealed class CampaignStorefrontVerificationTests(SqlServerDatabaseFixture
         using var scope = host.Factory.Services.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-        var now = DateTime.UtcNow;
+        // The API's own clock, which is what decides whether the campaign is live.
+        var now = scope.ServiceProvider.GetRequiredService<IClock>().UtcNow.UtcDateTime;
         var campaign = new SaleCampaign
         {
             Name = string.Create(CultureInfo.InvariantCulture, $"Verification {Guid.NewGuid():N}"),
@@ -271,8 +273,10 @@ public sealed class CampaignStorefrontVerificationTests(SqlServerDatabaseFixture
             ["description"] = "Arranged by the W3-05b verification.",
             ["discountType"] = "Percent",
             ["discountValue"] = 20m,
-            ["startsAt"] = "2026-10-13T00:00",
-            ["endsAt"] = "2026-10-20T00:00",
+            // Live whenever this runs: today's Colombo midnight to a week later. The storefront prices
+            // asserted above only exist while the campaign is Live.
+            ["startsAt"] = ShopTime.Midnight(0),
+            ["endsAt"] = ShopTime.Midnight(7),
             ["isActive"] = true,
             ["bannerAssetId"] = null,
             ["targets"] = new[]

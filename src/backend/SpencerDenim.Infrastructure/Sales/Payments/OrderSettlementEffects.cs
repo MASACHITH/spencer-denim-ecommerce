@@ -5,6 +5,8 @@ using SpencerDenim.Application.Sales.Checkout.Abstractions;
 using SpencerDenim.Application.Sales.Payments.Abstractions;
 using SpencerDenim.Domain.Common;
 using SpencerDenim.Domain.Sales;
+using SpencerDenim.Domain.Inventory;
+using SpencerDenim.Infrastructure.Inventory;
 using SpencerDenim.Infrastructure.Persistence;
 
 namespace SpencerDenim.Infrastructure.Sales.Payments;
@@ -170,6 +172,17 @@ internal sealed class OrderSettlementEffects(
                     + $"{line.VariantId} on approval: the reservation made at placement is no longer there. "
                     + "Stock levels and the order lines have drifted (doc 08 §5.5, §5.9).");
             }
+
+            // Doc 08 §5.5 step 3: the Sale movement, under the lock the update above still holds (#108).
+            await StockLedger.AppendAsync(
+                dbContext,
+                line.VariantId,
+                InventoryMovementType.Sale,
+                onHandDelta: -line.Quantity,
+                reservedDelta: -line.Quantity,
+                orderId,
+                nowUtc,
+                cancellationToken);
         }
     }
 
@@ -223,6 +236,19 @@ internal sealed class OrderSettlementEffects(
             if (affected == 1)
             {
                 deducted[line.VariantId] = line.Quantity;
+
+                // Doc 08 §5.7 / doc 11 P2 part C: a late acceptance is a Sale from on hand alone (#108). If a
+                // later line is short the caller rolls the whole acceptance back, and this row with it.
+                await StockLedger.AppendAsync(
+                    dbContext,
+                    line.VariantId,
+                    InventoryMovementType.Sale,
+                    onHandDelta: -line.Quantity,
+                    reservedDelta: 0,
+                    orderId,
+                    nowUtc,
+                    cancellationToken);
+
                 continue;
             }
 

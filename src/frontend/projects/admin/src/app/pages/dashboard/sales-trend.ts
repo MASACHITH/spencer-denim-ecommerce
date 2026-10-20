@@ -1,41 +1,39 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal, untracked } from '@angular/core';
 
+import { ChartTable, ChartView } from '../../core/charts/chart';
+import { ChartSpec, compactRupees } from '../../core/charts/chart-config';
 import { CatalogFailure, toCatalogFailure } from '../../core/catalog/admin-catalog-api';
 import { money } from '../../core/orders/order-formatting';
 import { ReportingApi } from '../../core/reporting/reporting-api';
 import { bucketLabel, count, formatPeriod } from '../../core/reporting/reporting-format';
 import { SalesTrend, SalesTrendPoint, TrendInterval } from '../../core/reporting/reporting.model';
 
-type Measure = 'revenue' | 'orders';
-
-/** Width of one point in the chart's own coordinates; the SVG scales to its container. */
-const STEP = 12;
-const BAR = 8;
-const HEIGHT = 100;
-
 /**
- * The Revenue &amp; Orders trend (ADM-04): twelve months, monthly or by ISO week, ending on the period's last
- * day. It fetches for itself, so the dashboard only says which day it ends on.
+ * The Revenue &amp; Orders card (ADM-04): twelve months, monthly or by ISO week, ending on the period's last day.
+ * It fetches for itself, so the dashboard only says which day it ends on.
  *
- * **The chart has a table beside it, not instead of it.** The SVG is `role="img"` with a one-sentence summary
- * (the window, the highest point and its value); the full figures are a real table one tap away, under
- * "Show the figures as a table". Both are drawn from the same points.
+ * **Drawn as the client demo draws it** (#186): gross revenue as a filled, smoothed line on the left axis, and
+ * paid orders as a dashed line on a second axis on the right. Both are counted on the day an order was paid, so
+ * the two lines describe the same orders; orders *placed* (paid or not) are a different count, and are in the
+ * table rather than on a third line. Each axis is labelled with what it measures, and the series names are a
+ * text key above the chart, so the two scales cannot be read against each other by mistake.
  *
- * **Revenue and orders are separate views of the same points**, not two scales on one chart: a line of
- * order counts over bars of rupees invites reading one against the other's axis.
+ * **The chart has a table beside it, not instead of it**: the canvas is `role="img"` with a one-sentence summary,
+ * and every figure is a real table under "Show the figures as a table". Both are drawn from the same points.
  */
 @Component({
   selector: 'sda-sales-trend',
+  imports: [ChartView],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <div class="trend__controls">
+    <div class="adm-card__hd">
+      <div>
+        <h2 class="adm-card__title" id="dash-trend">Revenue and orders</h2>
+        <p class="adm-card__sub" data-testid="trend-window">{{ windowText() }}</p>
+      </div>
       <div class="trend__group" role="group" aria-label="Group by">
         <button class="adm-btn" type="button" data-testid="trend-month" [attr.aria-pressed]="interval() === 'Month'" (click)="setInterval('Month')">Monthly</button>
         <button class="adm-btn" type="button" data-testid="trend-week" [attr.aria-pressed]="interval() === 'Week'" (click)="setInterval('Week')">Weekly</button>
-      </div>
-      <div class="trend__group" role="group" aria-label="Show">
-        <button class="adm-btn" type="button" data-testid="trend-revenue" [attr.aria-pressed]="measure() === 'revenue'" (click)="measure.set('revenue')">Revenue</button>
-        <button class="adm-btn" type="button" data-testid="trend-orders" [attr.aria-pressed]="measure() === 'orders'" (click)="measure.set('orders')">Orders</button>
       </div>
     </div>
 
@@ -46,65 +44,24 @@ const HEIGHT = 100;
           <div class="adm-actions"><button class="adm-btn" type="button" (click)="load()">Try again</button></div>
         }
       </div>
-    } @else if (trend(); as answered) {
-      <p class="adm-panel__hint" data-testid="trend-window">{{ windowText() }}</p>
-      <svg
-        class="trend__chart"
-        role="img"
-        data-testid="trend-chart"
-        [attr.aria-label]="summary()"
-        [attr.viewBox]="'0 0 ' + answered.points.length * step + ' ' + (height + 2)"
-        preserveAspectRatio="none"
-      >
-        <line x1="0" [attr.x2]="answered.points.length * step" [attr.y1]="height" [attr.y2]="height" class="trend__axis" />
-        @for (bar of bars(); track bar.key) {
-          <rect class="trend__bar" [attr.x]="bar.x" [attr.y]="bar.y" [attr.width]="barWidth" [attr.height]="bar.h" />
-        }
-      </svg>
-      <div class="trend__ends" aria-hidden="true">
-        <span>{{ label(answered.points[0]) }}</span>
-        <span>{{ label(answered.points[answered.points.length - 1]) }}</span>
-      </div>
-
-      <details class="trend__table">
-        <summary class="adm-link">Show the figures as a table</summary>
-        <div class="adm-table-scroll" tabindex="0" role="region" aria-label="Revenue and orders by period">
-          <table class="adm-table" data-testid="trend-table">
-            <caption class="sr-only">{{ summary() }}</caption>
-            <thead>
-              <tr>
-                <th scope="col">{{ answered.interval === 'Month' ? 'Month' : 'Week starting' }}</th>
-                <th scope="col" class="adm-num">Gross revenue</th>
-                <th scope="col" class="adm-num">Paid orders</th>
-                <th scope="col" class="adm-num">Orders placed</th>
-              </tr>
-            </thead>
-            <tbody>
-              @for (point of answered.points; track point.start) {
-                <tr>
-                  <th scope="row">{{ label(point) }}</th>
-                  <td class="adm-num">{{ rupees(point.grossRevenue) }}</td>
-                  <td class="adm-num">{{ number(point.paidOrders) }}</td>
-                  <td class="adm-num">{{ number(point.orders) }}</td>
-                </tr>
-              }
-            </tbody>
-          </table>
-        </div>
-      </details>
+    } @else if (spec(); as drawn) {
+      <sda-chart
+        testId="trend-chart"
+        [spec]="drawn"
+        [summary]="summary()"
+        [height]="260"
+        [table]="table()"
+        [emptyText]="emptyText()"
+      />
     } @else {
       <p class="adm-muted">Loading the trend…</p>
     }
   `,
   styles: `
-    :host { display: grid; gap: var(--space-1); min-width: 0; }
-    .trend__controls { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+    :host { display: grid; gap: var(--space-2); min-width: 0; }
     .trend__group { display: flex; }
-    .trend__group .adm-btn[aria-pressed='true'] { color: var(--color-on-primary); background: var(--color-primary); }
-    .trend__chart { display: block; width: 100%; height: 160px; }
-    .trend__bar { fill: var(--color-primary); }
-    .trend__axis { stroke: var(--color-border-strong); stroke-width: 1; vector-effect: non-scaling-stroke; }
-    .trend__ends { display: flex; justify-content: space-between; font-size: var(--text-small); color: var(--color-text-muted); }
+    .trend__group .adm-btn { padding-inline: var(--space-1-5); }
+    .trend__group .adm-btn[aria-pressed='true'] { color: var(--color-on-primary); background: var(--chart-accent); border-color: var(--chart-accent); }
   `,
 })
 export class SalesTrendChart {
@@ -113,29 +70,74 @@ export class SalesTrendChart {
 
   private readonly api = inject(ReportingApi);
 
-  protected readonly step = STEP;
-  protected readonly barWidth = BAR;
-  protected readonly height = HEIGHT;
-
   protected readonly interval = signal<TrendInterval>('Month');
-  protected readonly measure = signal<Measure>('revenue');
   protected readonly trend = signal<SalesTrend | null>(null);
   protected readonly problem = signal<CatalogFailure | null>(null);
 
-  protected readonly bars = computed(() => {
-    const points = this.trend()?.points ?? [];
-    const values = points.map((point) => this.valueOf(point));
-    const largest = Math.max(0, ...values);
-
-    return points.map((point, index) => {
-      const h = largest <= 0 ? 0 : (values[index] / largest) * HEIGHT;
-      return { key: point.start, x: index * STEP + (STEP - BAR) / 2, y: HEIGHT - h, h };
-    });
-  });
-
   protected readonly windowText = computed(() => {
     const answered = this.trend();
-    return answered ? `${formatPeriod(answered.window)}, ${answered.interval === 'Month' ? 'by month' : 'by week (Monday to Sunday)'}.` : '';
+    return answered
+      ? `${answered.interval === 'Month' ? 'Monthly' : 'Weekly (Monday to Sunday)'}, ${formatPeriod(answered.window)}`
+      : `${this.interval() === 'Month' ? 'Monthly' : 'Weekly'} trend, last twelve months`;
+  });
+
+  protected readonly spec = computed<ChartSpec | null>(() => {
+    const answered = this.trend();
+
+    if (!answered) {
+      return null;
+    }
+
+    return {
+      kind: 'line',
+      labels: answered.points.map((point) => this.label(point)),
+      series: [
+        {
+          key: 'revenue',
+          label: 'Gross revenue (Rs.)',
+          values: answered.points.map((point) => point.grossRevenue),
+          axis: 'left',
+          token: '--chart-accent',
+          fill: true,
+          dashed: false,
+          format: (value) => this.rupees(value),
+          tick: compactRupees,
+        },
+        {
+          key: 'paid',
+          label: 'Paid orders',
+          values: answered.points.map((point) => point.paidOrders),
+          axis: 'right',
+          token: '--chart-2',
+          fill: false,
+          dashed: true,
+          format: (value) => `${count(value)} ${value === 1 ? 'order' : 'orders'}`,
+          tick: (value) => count(value),
+        },
+      ],
+    };
+  });
+
+  protected readonly table = computed<ChartTable | null>(() => {
+    const answered = this.trend();
+
+    return answered
+      ? {
+          caption: this.summary(),
+          testId: 'trend-table',
+          headers: [answered.interval === 'Month' ? 'Month' : 'Week starting', 'Gross revenue', 'Paid orders', 'Orders placed'],
+          rows: answered.points.map((point) => ({
+            key: point.start,
+            label: this.label(point),
+            cells: [this.rupees(point.grossRevenue), count(point.paidOrders), count(point.orders)],
+          })),
+        }
+      : null;
+  });
+
+  protected readonly emptyText = computed(() => {
+    const answered = this.trend();
+    return answered ? `No sales in ${formatPeriod(answered.window)}.` : '';
   });
 
   /** One sentence: what is drawn, over which days, and its highest point. */
@@ -146,14 +148,13 @@ export class SalesTrendChart {
       return '';
     }
 
-    const what = this.measure() === 'revenue' ? 'Gross revenue' : 'Orders placed';
     const by = answered.interval === 'Month' ? 'month' : 'week';
-    const highest = answered.points.reduce((best, point) => (this.valueOf(point) > this.valueOf(best) ? point : best));
-    const top = this.valueOf(highest);
+    const highest = answered.points.reduce((best, point) => (point.grossRevenue > best.grossRevenue ? point : best));
+    const paid = answered.points.reduce((total, point) => total + point.paidOrders, 0);
 
-    return top <= 0
-      ? `${what} by ${by}, ${formatPeriod(answered.window)}: none in any ${by}.`
-      : `${what} by ${by}, ${formatPeriod(answered.window)}. Highest: ${this.label(highest)}, ${this.measure() === 'revenue' ? this.rupees(top) : this.number(top)}.`;
+    return highest.grossRevenue <= 0
+      ? `Gross revenue and paid orders by ${by}, ${formatPeriod(answered.window)}: none in any ${by}.`
+      : `Gross revenue and paid orders by ${by}, ${formatPeriod(answered.window)}. Highest revenue: ${this.label(highest)}, ${this.rupees(highest.grossRevenue)}; ${count(paid)} paid ${paid === 1 ? 'order' : 'orders'} in all.`;
   });
 
   constructor() {
@@ -174,10 +175,6 @@ export class SalesTrendChart {
 
   protected rupees(amount: number): string {
     return money(amount, this.trend()?.currency ?? 'LKR');
-  }
-
-  protected number(value: number): string {
-    return count(value);
   }
 
   load(): void {
@@ -202,8 +199,4 @@ export class SalesTrendChart {
   }
 
   private requests = 0;
-
-  private valueOf(point: SalesTrendPoint): number {
-    return this.measure() === 'revenue' ? point.grossRevenue : point.orders;
-  }
 }

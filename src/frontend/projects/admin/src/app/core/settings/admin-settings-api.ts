@@ -9,6 +9,7 @@ import {
   InvoiceAndFulfilmentValues,
   ContactAndSocialValues,
   PayPalValues,
+  TrafficValues,
   UploadedMediaAsset,
 } from './admin-settings.model';
 
@@ -26,6 +27,7 @@ export class AdminSettingsApi {
   static readonly bankUrl = '/api/admin/settings/bank';
   static readonly invoiceAndFulfilmentUrl = '/api/admin/settings/invoice-and-fulfilment';
   static readonly payPalUrl = '/api/admin/settings/paypal';
+  static readonly trafficUrl = '/api/admin/settings/traffic';
   static readonly imagesUrl = '/api/admin/media/images';
 
   private readonly http = inject(HttpClient);
@@ -119,6 +121,16 @@ export class AdminSettingsApi {
       ...(confirmRate ? { confirmRate: true } : {}),
       rowVersion,
     });
+  }
+
+  /**
+   * How long the nightly purge keeps raw page views (issue #193).
+   *
+   * **Only the fields the screen was given**, the bank group's rule: a field this object omits is one the API
+   * leaves alone.
+   */
+  updateTraffic(values: TrafficValues, rowVersion: string): Observable<void> {
+    return this.put(AdminSettingsApi.trafficUrl, { ...values, rowVersion });
   }
 
   private put(url: string, body: unknown): Observable<void> {

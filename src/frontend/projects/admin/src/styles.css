@@ -269,3 +269,154 @@ textarea.adm-input {
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
+
+/* Charts and dashboard cards (#186) ----------------------------------------------------------------- */
+/*
+ * **The one chart palette.** Every chart on the Dashboard, Traffic and Reports pages reads its colours from
+ * these tokens — `core/charts/chart-palette.ts` resolves them with `getComputedStyle` because a canvas cannot
+ * take a `var()` — and no chart component names a colour of its own.
+ *
+ * **Vivid on purpose** (owner, 2026-10-19: "use better colours, not only black and white"). The shop's own
+ * Banana Republic neutrals stay on the cards, headings and text around the charts; only the marks are bright,
+ * so a slice or a bar can be told apart at a glance. The accent (the main series, the leading bar) is a clear
+ * blue — not the client demo's maroon, which is TU@SL's brand.
+ *
+ * **Measured, not guessed.** Each mark colour is at least 3:1 against white (WCAG 2.2 SC 1.4.11, non-text
+ * contrast): chart-1 5.2, chart-2 3.2, chart-3 3.7, chart-4 4.6, chart-5 9.0, chart-6 3.3, chart-7 7.1,
+ * chart-8 4.1; status 3.0 (expired) to 7.6 (cancelled). The trend colours are used for small text, so they meet
+ * 4.5:1: trend-up 5.0, trend-down 4.8. **Every pair of the eight, not only neighbours**, is at least 30.3 apart
+ * (CIELAB ΔE, normal vision: blue against deep violet) and at least 6.7 apart under simulated protanopia,
+ * deuteranopia and tritanopia (teal against green, tritanopia); neighbours, which touch in a doughnut, at least
+ * 12.2 (blue against sky, which only meet when a chart has all eight). Amber and umber: 31.7 / 23.6. Colour is never the only cue: every chart has a text legend, a table and a
+ * one-sentence summary, and a trend has its arrow and its words.
+ *
+ * **The dark variants** (each 3.5:1 or more against #1a1a1a, most above 6) are defined for `[data-theme='dark']`.
+ * The admin has no dark theme today, so nothing sets that attribute yet — except on the Today banner, whose ink
+ * background is the one dark surface, and which uses the `--chart-on-dark-*` set (8.3:1 and up on it).
+ */
+:root {
+  --chart-1: #2563eb; /* blue */
+  --chart-2: #d97706; /* amber */
+  --chart-3: #0d9488; /* teal */
+  --chart-4: #db2777; /* berry pink */
+  --chart-5: #5b21b6; /* deep violet */
+  --chart-6: #16a34a; /* green */
+  --chart-7: #92400e; /* umber */
+  --chart-8: #0284c7; /* sky */
+  --chart-accent: var(--chart-1);
+  --chart-grid: #ece9e3;
+  --chart-ink: var(--color-text-muted);
+
+  --status-awaiting: #d97706;
+  --status-paid: #16a34a;
+  --status-processing: #c026d3;
+  --status-dispatched: #2563eb;
+  --status-delivered: #0d9488;
+  --status-cancelled: #475569;
+  --status-expired: #8b95a5;
+  --status-refunded: #db2777;
+
+  --trend-up: #15803d;
+  --trend-down: #dc2626;
+
+  /* The inventory report's stock-status doughnut: the order statuses' green, amber and berry, by meaning. */
+  --stock-in: var(--status-paid);
+  --stock-low: var(--status-awaiting);
+  --stock-out: var(--status-refunded);
+
+  --chart-on-dark-1: #93c5fd;
+  --chart-on-dark-2: #fcd34d;
+  --chart-on-dark-3: #5eead4;
+  --chart-on-dark-4: #f9a8d4;
+  --dash-banner-bg: #16273f;
+  --dash-banner-text: #ffffff;
+  --dash-banner-muted: #c9d3e0;
+  --dash-banner-card: rgb(255 255 255 / 0.06);
+
+  --card-radius: 12px;
+  --card-shadow: 0 1px 3px rgb(26 26 26 / 0.08), 0 1px 2px rgb(26 26 26 / 0.04);
+}
+
+:root[data-theme='dark'] {
+  --chart-1: #60a5fa;
+  --chart-2: #fbbf24;
+  --chart-3: #2dd4bf;
+  --chart-4: #f472b6;
+  --chart-5: #a78bfa;
+  --chart-6: #4ade80;
+  --chart-7: #d6a06a;
+  --chart-8: #38bdf8;
+  --chart-grid: #333333;
+  --status-awaiting: #fbbf24;
+  --status-paid: #4ade80;
+  --status-processing: #e879f9;
+  --status-dispatched: #60a5fa;
+  --status-delivered: #2dd4bf;
+  --status-cancelled: #94a3b8;
+  --status-expired: #64748b;
+  --status-refunded: #f472b6;
+  --trend-up: #4ade80;
+  --trend-down: #f87171;
+}
+
+/* A card: the demo's white panel with a soft shadow and rounded corners, a title and a grey subtitle. */
+.adm-card {
+  display: grid;
+  gap: var(--space-2);
+  align-content: start;
+  min-width: 0;
+  padding: var(--space-2);
+  background: var(--color-surface);
+  border-radius: var(--card-radius);
+  box-shadow: var(--card-shadow);
+  font-size: var(--text-data);
+}
+.adm-card > * {
+  min-width: 0;
+}
+.adm-card__hd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-1);
+}
+.adm-card__title {
+  font-size: var(--text-h4);
+  font-weight: var(--weight-semibold);
+}
+.adm-card__sub {
+  margin: 2px 0 0;
+  font-size: var(--text-label);
+  color: var(--color-text-muted);
+}
+
+/* A status badge, coloured by the order status it names: the status colour darkened 30% towards the text
+   colour on a 12% tint of it, which keeps every badge at 4.5:1 or more (lowest: Awaiting payment, measured 4.6). */
+.adm-badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: var(--text-label);
+  font-weight: var(--weight-semibold);
+  white-space: nowrap;
+  color: color-mix(in srgb, var(--badge, var(--color-text)) var(--badge-ink, 70%), var(--color-text));
+  background: color-mix(in srgb, var(--badge, var(--color-text)) 12%, var(--color-surface));
+}
+.adm-badge[data-status='PendingPayment'] { --badge: var(--status-awaiting); }
+.adm-badge[data-status='Paid'] { --badge: var(--status-paid); }
+.adm-badge[data-status='Processing'] { --badge: var(--status-processing); }
+.adm-badge[data-status='Shipped'] { --badge: var(--status-dispatched); }
+.adm-badge[data-status='Delivered'] { --badge: var(--status-delivered); }
+.adm-badge[data-status='Cancelled'] { --badge: var(--status-cancelled); }
+/* Expired is the lightest status colour, so its text is mixed further towards the text colour: 4.46:1 at
+   70%, 5.35:1 at 60%. Its colour still matches its doughnut slice. */
+.adm-badge[data-status='Expired'] { --badge: var(--status-expired); --badge-ink: 60%; }
+.adm-badge[data-status='Refunded'] { --badge: var(--status-refunded); }
+.adm-badge--alert { --badge: var(--trend-down); }
+
+/* ▲ / ▼ beside a figure: green when the move is good news, red when it is bad (refunds rising is bad). */
+.adm-trend { font-weight: var(--weight-semibold); white-space: nowrap; }
+.adm-trend[data-tone='good'] { color: var(--trend-up); }
+.adm-trend[data-tone='bad'] { color: var(--trend-down); }
+.adm-trend[data-tone='flat'] { color: var(--color-text-muted); }

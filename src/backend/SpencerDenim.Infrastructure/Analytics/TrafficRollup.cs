@@ -91,6 +91,27 @@ internal sealed class TrafficRollup(AppDbContext dbContext)
         return days.Order().ToList();
     }
 
+    /// <summary>
+    /// The oldest <paramref name="take"/> never-built days before <paramref name="before"/> that still have raw rows,
+    /// oldest first, with no lower bound (<see cref="TrafficSql.OldestUnbuiltDaysBefore"/>).
+    /// </summary>
+    public async Task<IReadOnlyList<DateOnly>> FindOldestUnbuiltDaysAsync(DateOnly before, int take, CancellationToken cancellationToken)
+    {
+        if (take <= 0)
+        {
+            return [];
+        }
+
+        var days = await dbContext.Database
+            .SqlQueryRaw<DateOnly>(
+                TrafficSql.OldestUnbuiltDaysBefore,
+                Utc(TrafficSql.ToUtc, ReportPeriod.ColomboMidnightUtc(before)),
+                new SqlParameter("@take", System.Data.SqlDbType.Int) { Value = take })
+            .ToListAsync(cancellationToken);
+
+        return days.Order().ToList();
+    }
+
     internal static SqlParameter Utc(string name, DateTime value) =>
         new(name, System.Data.SqlDbType.DateTime2) { Value = value, Scale = 0 };
 
