@@ -157,18 +157,21 @@ public sealed class SizeGuideWriteHandlerTests
         Assert.Equal("Men's shirts", guide.Name);
     }
 
-    [Fact]
-    public async Task A_guide_in_use_is_not_removed_and_the_answer_says_by_what()
+    [Theory]
+    [InlineData(2, 1)]
+    [InlineData(1, 0)]
+    [InlineData(0, 1)]
+    public async Task A_guide_in_use_is_not_removed_and_the_answer_says_by_what(int categories, int products)
     {
         var guide = _store.AddExisting("Kids");
-        _store.Usage[guide.Id] = (2, 1);
+        _store.Usage[guide.Id] = (categories, products);
 
         var result = await Handlers().HandleAsync(new DeleteSizeGuideCommand(guide.Id, Version(guide), TestActors.Editor), Token);
 
         var conflict = Assert.IsType<ContentWriteResult.Conflict>(result);
         Assert.Equal(ContentConflictCodes.SizeGuideInUse, conflict.Code);
-        Assert.Equal(2, conflict.Details!["categoryCount"]);
-        Assert.Equal(1, conflict.Details["productCount"]);
+        Assert.Equal(categories, conflict.Details!["categoryCount"]);
+        Assert.Equal(products, conflict.Details["productCount"]);
         Assert.False(guide.IsDeleted);
     }
 

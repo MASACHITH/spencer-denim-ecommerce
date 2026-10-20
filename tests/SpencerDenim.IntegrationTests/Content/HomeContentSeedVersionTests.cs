@@ -135,6 +135,7 @@ public sealed class HomeContentSeedVersionTests(SqlServerDatabaseFixture sqlServ
 
             var activewear = await SectionIdAsync(dbContext, HomeSectionType.ActivewearFeature);
             var trending = await SectionIdAsync(dbContext, HomeSectionType.TrendingItems);
+            var campaign = await SectionIdAsync(dbContext, HomeSectionType.CampaignBanner);
 
             dbContext.HomeSectionItems.AddRange(
                 new HomeSectionItem
@@ -154,6 +155,13 @@ public sealed class HomeContentSeedVersionTests(SqlServerDatabaseFixture sqlServ
                     IsEnabled = true,
                     Title = "Our linen edit",               // somebody's own words
                     LinkUrl = "/men/shirts?material=linen",
+                },
+                new HomeSectionItem
+                {
+                    HomeSectionId = campaign,
+                    SortOrder = 1,
+                    IsEnabled = false,                      // switched off on purpose: still somebody's row
+                    Title = "Monsoon edit",
                 });
             await dbContext.SaveChangesAsync(Token);
         }
@@ -163,8 +171,8 @@ public sealed class HomeContentSeedVersionTests(SqlServerDatabaseFixture sqlServ
             var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var counts = await Seeder(dbContext).SeedAsync(Token);
 
-            // Every artwork slot but the two that were already filled.
-            Assert.Equal(HomeContentData.ArtworkItems.Count - 2, counts.SectionItems);
+            // Every artwork slot but the three that were already filled, switched on or not.
+            Assert.Equal(HomeContentData.ArtworkItems.Count - 3, counts.SectionItems);
         }
 
         await using (var scope = deployment.Services.CreateAsyncScope())
@@ -188,6 +196,11 @@ public sealed class HomeContentSeedVersionTests(SqlServerDatabaseFixture sqlServ
             Assert.Equal("/men/shirts?material=linen", trending[1].LinkUrl);
             Assert.True(trending[1].IsEnabled);
             Assert.False(trending[0].IsEnabled);
+
+            var banner = Assert.Single(await dbContext.HomeSectionItems.AsNoTracking()
+                .Where(item => item.HomeSection!.SectionType == HomeSectionType.CampaignBanner)
+                .ToListAsync(Token));
+            Assert.Equal("Monsoon edit", banner.Title);
 
             Assert.Equal("2", await MarkerAsync(dbContext));
         }

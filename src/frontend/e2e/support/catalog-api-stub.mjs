@@ -1602,6 +1602,27 @@ const ANNOUNCEMENTS = [
   { id: 3, message: 'Stitched in Sri Lanka since 2011', linkUrl: null },
 ];
 
+/**
+ * The strips `/__test__/announcements` can switch to (#36). `long` is the 200-character maximum an admin may
+ * type, with a link, beside a short one — the tallest and shortest a header can be in one rotation.
+ */
+const LONG_ANNOUNCEMENT =
+  'Free island-wide delivery on every order this week, and exchanges in any of our Colombo, Kandy and Galle '
+  + 'stores within thirty days of purchase, so try it at home and decide later. Terms on the returns page.';
+
+const ANNOUNCEMENT_STATES = {
+  default: ANNOUNCEMENTS,
+  empty: [],
+  single: [{ id: 1, message: 'Stitched in Sri Lanka', linkUrl: null }],
+  long: [
+    { id: 1, message: LONG_ANNOUNCEMENT.slice(0, 200), linkUrl: '/sale' },
+    { id: 2, message: 'Sale', linkUrl: null },
+    { id: 3, message: LONG_ANNOUNCEMENT.slice(0, 120), linkUrl: null },
+  ],
+};
+
+let announcementsState = 'default';
+
 /** A slow answer, so a test can prove the menu does not hold the page open waiting for it. */
 const DELAY_MS = Number(process.env.E2E_API_DELAY_MS ?? 0);
 
@@ -3813,8 +3834,23 @@ const server = createServer((request, response) => {
     return;
   }
 
+  // #36: the announcement strip is admin text (ADM-17), so the header's height follows whatever an admin
+  // writes. `/__test__/announcements?state=long|empty|single|default` switches the strip on this process;
+  // like the site-settings switch it has to live here, because the storefront reads the strip during the
+  // **server** render. Only the serial specs on the branding pair turn it.
+  if (url.pathname === '/__test__/announcements') {
+    announcementsState = url.searchParams.get('state') ?? 'default';
+    response.end(JSON.stringify({ state: announcementsState }));
+    return;
+  }
+
   if (url.pathname === '/api/content/announcements') {
-    response.end(JSON.stringify(process.env.E2E_CONTENT === 'empty' ? [] : ANNOUNCEMENTS));
+    if (process.env.E2E_CONTENT === 'empty') {
+      response.end('[]');
+      return;
+    }
+
+    response.end(JSON.stringify(ANNOUNCEMENT_STATES[announcementsState] ?? ANNOUNCEMENTS));
     return;
   }
 
