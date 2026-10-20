@@ -98,4 +98,46 @@ test.describe('the content stub is no more permissive than the API (#192)', () =
       expect(answer.fields.includes('message'), `message ${JSON.stringify(value)}`).toBe(!ok);
     }
   });
+  /**
+   * Tester round 2: the announcement route lets a link leave the site, so it cannot tell a site path from a web
+   * address. A homepage block that keeps shoppers on the site (trending items) must hold every `sitePath` case
+   * exactly — an off-site address the API refuses there must be refused here too. The row version is stale on
+   * purpose: validation answers first (400), and a value that passes it meets the stale version (409), so
+   * nothing is written.
+   */
+  test('a block that keeps shoppers on the site agrees with every sitePath and webAddress case', async ({ page }) => {
+    await ownState(page, 'parity');
+    const cookies = await page.context().cookies(adminURL);
+    const state = cookies.find((cookie) => cookie.name === 'e2e_state')!.value;
+    const headers = { Cookie: `e2e_state=${state}`, 'X-XSRF-TOKEN': 'e2e-antiforgery-token' };
+
+    const home = (await (await page.request.get(`${adminURL}/api/admin/content/home`, { headers })).json()) as {
+      sections: { id: number; type: string }[];
+    };
+    const trending = home.sections.find((section) => section.type === 'TrendingItems')!;
+
+    const cases = JSON.parse(readFileSync(resolve(__dirname, 'support', 'content-rule-cases.json'), 'utf8')) as {
+      sitePath: { value: string; ok: boolean }[];
+      webAddress: { value: string; ok: boolean }[];
+    };
+
+    const onSiteOnly = [
+      ...cases.sitePath,
+      // A web address is never a site path, whatever the webAddress table says of it.
+      ...cases.webAddress.map(({ value }) => ({ value, ok: cases.sitePath.some((other) => other.value === value && other.ok) })),
+    ];
+
+    for (const { value, ok } of onSiteOnly) {
+      const response = await page.request.post(`${adminURL}/api/admin/content/home/sections/${trending.id}/items`, {
+        headers,
+        data: {
+          title: 'Parity', subtitle: null, body: null, buttonLabel: null, linkUrl: value, imagePublicId: null,
+          mobileImagePublicId: null, videoPublicId: null, departmentId: null, productSlug: null, iconKey: null,
+          sortOrder: 1, isEnabled: false, startsAt: null, endsAt: null, rowVersion: 'stale',
+        },
+      });
+      const fields = response.status() === 400 ? Object.keys(((await response.json()) as { errors: object }).errors) : [];
+      expect(fields.includes('linkUrl'), `on-site linkUrl ${JSON.stringify(value)} answered ${response.status()}`).toBe(!ok);
+    }
+  });
 });

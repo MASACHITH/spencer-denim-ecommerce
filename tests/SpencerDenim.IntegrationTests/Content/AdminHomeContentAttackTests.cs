@@ -272,6 +272,17 @@ public sealed class AdminHomeContentAttackTests(SqlServerDatabaseFixture sqlServ
 
             try
             {
+                // Odd rounds race from a row that has been edited once, so the token is a real UpdatedAtUtc
+                // and not the IS NULL of a row never edited (tester round 2).
+                if (round % 2 == 1)
+                {
+                    var edit = AnnouncementBody("Edited " + Suffix());
+                    edit["version"] = version;
+                    using var edited = await SendAsync(first, "PUT", $"{AnnouncementsUrl}/{id}", edit);
+                    Assert.Equal(HttpStatusCode.OK, edited.StatusCode);
+                    version = (await edited.Content.ReadFromJsonAsync<JsonElement>(JsonOptions, Token)).GetProperty("version").GetString();
+                }
+
                 var a = AnnouncementBody("Editor A " + Suffix());
                 a["version"] = version;
                 var b = AnnouncementBody("Editor B " + Suffix());
@@ -298,6 +309,81 @@ public sealed class AdminHomeContentAttackTests(SqlServerDatabaseFixture sqlServ
         }
 
         Assert.Equal(0, lostUpdates);
+    }
+
+    /// <summary>
+    /// The token survives its round trip: one editor saving the same message back to back, each time with the
+    /// version the last save returned, is never told somebody else changed it — however close together the
+    /// saves land (datetime2(3) against .NET ticks).
+    /// </summary>
+    [Fact]
+    public async Task Back_to_back_saves_with_the_returned_version_are_never_a_false_conflict()
+    {
+        await using var host = await StartAsync();
+        using var client = await host.SignInAsync(Everything);
+
+        using var created = await SendAsync(client, "POST", AnnouncementsUrl, AnnouncementBody("Rapid " + Suffix()));
+        var saved = await created.Content.ReadFromJsonAsync<JsonElement>(JsonOptions, Token);
+        var id = saved.GetProperty("id").GetInt32();
+        var version = saved.GetProperty("version").GetString();
+
+        try
+        {
+            for (var step = 0; step < 25; step++)
+            {
+                var body = AnnouncementBody($"Rapid {step} {Suffix()}");
+                body["version"] = version;
+                using var response = await SendAsync(client, "PUT", $"{AnnouncementsUrl}/{id}", body);
+                Assert.True(response.StatusCode == HttpStatusCode.OK, $"step {step}: {(int)response.StatusCode}");
+
+                var next = (await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions, Token)).GetProperty("version").GetString();
+                Assert.NotEqual(version, next);
+                version = next;
+            }
+
+            // And the old version is refused afterwards.
+            var stale = AnnouncementBody("Stale " + Suffix());
+            stale["version"] = saved.GetProperty("version").GetString();
+            using var refused = await SendAsync(client, "PUT", $"{AnnouncementsUrl}/{id}", stale);
+            Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode);
+        }
+        finally
+        {
+            await DeleteAnnouncementAsync(host, id);
+        }
+    }
+
+    /// <summary>
+    /// A size-guide body sent chunked (no Content-Length) cannot use the early 413. The test server does not
+    /// offer Kestrel's body-size feature, so this proves only that the fallback refuses it, never 201 or 5xx;
+    /// under Kestrel the route's RequestSizeLimit metadata stops it at 512 KiB as it streams.
+    /// </summary>
+    [Fact]
+    public async Task A_chunked_oversized_size_guide_body_is_refused()
+    {
+        await using var host = await StartAsync();
+        using var client = await host.SignInAsync(Everything);
+
+        var json = JsonSerializer.Serialize(new Dictionary<string, object?>
+        {
+            ["name"] = "Chunked",
+            ["introHtml"] = null,
+            ["tableJson"] = "{\"columns\":[\"Size\"],\"rows\":[[\"" + new string('x', 2 * 1024 * 1024) + "\"]]}",
+            ["measuringTipsHtml"] = null,
+            ["imagePublicId"] = null,
+        });
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(SizeGuidesUrl, UriKind.Relative));
+        var content = new StreamContent(new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json)));
+        content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
+        request.Content = content;
+        request.Headers.TransferEncodingChunked = true;
+
+        using var response = await client.SendAsync(request, Token);
+
+        Assert.True(
+            response.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.RequestEntityTooLarge,
+            $"answered {(int)response.StatusCode}: {await response.Content.ReadAsStringAsync(Token)}");
     }
 
     // ================================================================== media
