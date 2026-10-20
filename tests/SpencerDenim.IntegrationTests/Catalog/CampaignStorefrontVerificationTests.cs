@@ -278,7 +278,7 @@ public sealed class CampaignStorefrontVerificationTests(SqlServerDatabaseFixture
             ["startsAt"] = ShopTime.Midnight(0),
             ["endsAt"] = ShopTime.Midnight(7),
             ["isActive"] = true,
-            ["bannerAssetId"] = null,
+            ["bannerPublicId"] = null,
             ["targets"] = new[]
             {
                 new Dictionary<string, object?>(StringComparer.Ordinal)

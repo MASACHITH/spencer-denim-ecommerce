@@ -8,6 +8,7 @@ using SpencerDenim.Application.Catalog.Admin.Abstractions;
 using SpencerDenim.Application.Marketing.Promotions.Abstractions;
 using SpencerDenim.Domain.Catalog;
 using SpencerDenim.Domain.Marketing;
+using SpencerDenim.Infrastructure.Marketing;
 using SpencerDenim.Infrastructure.Persistence;
 using SpencerDenim.IntegrationTests.Infrastructure;
 
@@ -153,6 +154,150 @@ public sealed class CampaignCategoryMoveTests(SqlServerDatabaseFixture sqlServer
         Assert.Empty(await refresher.ProductsLinkedToCategoriesAsync([], Token));
     }
 
+    /// <summary>
+    /// <b>A move re-paths the whole subtree, so the products under the moved category's children are
+    /// repriced too</b>, not only those filed directly under it. Issue #191's nested fixture, because the
+    /// seeded catalogue is flat and could not tell "the subtree" from "the category alone" (#158's first
+    /// surviving mutant).
+    /// </summary>
+    /// <remarks>
+    /// Three scratch categories: <c>target</c>, which the campaign covers with its subtree; <c>parent</c>;
+    /// and <c>child</c> under <c>parent</c>. The shirt is linked to <c>child</c> <b>only</b>, as an extra
+    /// category beside its own. Moving <c>parent</c> under <c>target</c> puts the shirt inside the
+    /// campaign's reach two levels down, and nothing links the shirt to <c>parent</c> itself, so a handler
+    /// that handed the refresher the moved category's own id rather than the subtree's would leave the
+    /// shirt's stored price at Rs. 5,490.00 while the bag charged Rs. 4,392.00. Then back out again.
+    /// </remarks>
+    [Fact]
+    public async Task Moving_a_parent_reprices_the_products_in_its_child_categories()
+    {
+        SqlServer.SkipIfUnavailable();
+
+        var shirt = await ProductIdAsync("relaxed-linen-blend-shirt");
+
+        var targetId = await NewScratchCategoryAsync();
+        var parentId = await NewScratchCategoryAsync();
+        var childId = await NewScratchCategoryAsync(parentId);
+
+        try
+        {
+            await LinkAsync(shirt, childId);
+
+            await NewCampaignAsync(
+                SaleDiscountType.Percent,
+                20m,
+                [new SaleCampaignTarget
+                {
+                    TargetType = SaleCampaignTargetType.Category,
+                    CategoryId = targetId,
+                    IncludeSubcategories = true,
+                }]);
+
+            Assert.Equal(MarkdownPrice, (await StoredSummaryAsync(shirt)).MinSalePrice);
+
+            // ---- the parent in: the shirt is two levels below the target now ------------------------
+            Assert.IsType<CatalogWriteResult.Succeeded>(await MoveAsync(parentId, targetId));
+
+            var moved = await StoredSummaryAsync(shirt);
+            Assert.Equal(CampaignPrice, moved.MinSalePrice);
+            Assert.Equal(CampaignPercent, moved.MaxDiscountPercent);
+
+            // ---- and out ----------------------------------------------------------------------------
+            Assert.IsType<CatalogWriteResult.Succeeded>(await MoveAsync(parentId, null));
+
+            var back = await StoredSummaryAsync(shirt);
+            Assert.Equal(MarkdownPrice, back.MinSalePrice);
+            Assert.Equal(MarkdownPercent, back.MaxDiscountPercent);
+        }
+        finally
+        {
+            try
+            {
+                await UnlinkAsync(shirt, childId);
+            }
+            finally
+            {
+                await SoftDeleteCategoryAsync(childId);
+                await SoftDeleteCategoryAsync(parentId);
+                await SoftDeleteCategoryAsync(targetId);
+
+                // Recomputed from committed rows whatever happened above, so a failure mid-test cannot
+                // leave the shirt mispriced for the suites that run afterwards.
+                await RefreshAsync(shirt);
+            }
+        }
+    }
+
+    /// <summary>
+    /// <b>No categories, no round trip.</b> #158's second surviving mutant: deleting the empty-set guard
+    /// left the answer right, because <c>Contains</c> over an empty list matches no row, and ran a
+    /// statement for nothing. Counted rather than asserted empty, the way <c>AdminAlertsBehaviourTests</c>
+    /// pins its own empty-audience guard.
+    /// </summary>
+    [Fact]
+    public async Task Asking_for_the_products_under_no_categories_runs_no_statement()
+    {
+        SqlServer.SkipIfUnavailable();
+
+        var counter = new CommandCountingInterceptor();
+
+        var services = new ServiceCollection();
+        services.AddDbContext<AppDbContext>(builder => builder
+            .UseSqlServer(SqlServer.ConnectionString)
+            .AddInterceptors(counter));
+
+        await using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+
+        var refresher = new CampaignPricingRefresher(
+            scope.ServiceProvider.GetRequiredService<AppDbContext>(),
+            new SystemClockForTests());
+
+        counter.Reset();
+
+        Assert.Empty(await refresher.ProductsLinkedToCategoriesAsync([], Token));
+        Assert.Equal(0, counter.Count);
+
+        // And the counter does see this method's statement when there is something to ask, so the zero
+        // above is a measurement and not a counter that was never attached.
+        await refresher.ProductsLinkedToCategoriesAsync([int.MaxValue], Token);
+        Assert.Equal(1, counter.Count);
+    }
+
+    /// <summary>Links a product to one more category, the way a staff member files it in two places.</summary>
+    private async Task LinkAsync(int productId, int categoryId)
+    {
+        using var scope = CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        dbContext.ProductCategories.Add(new ProductCategory { ProductId = productId, CategoryId = categoryId });
+        await dbContext.SaveChangesAsync(Token);
+    }
+
+    /// <summary>Removes that link: a pure child row, so a set-based hard delete (doc 08 §1.6, N12).</summary>
+    private async Task UnlinkAsync(int productId, int categoryId)
+    {
+        using var scope = SqlServer.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        await dbContext.ProductCategories
+            .Where(link => link.ProductId == productId && link.CategoryId == categoryId)
+            .ExecuteDeleteAsync(CancellationToken.None);
+    }
+
+    private async Task RefreshAsync(int productId)
+    {
+        using var scope = SqlServer.CreateScope();
+
+        await scope.ServiceProvider.GetRequiredService<ICampaignPricingRefresher>()
+            .RefreshProductsAsync([productId], CancellationToken.None);
+    }
+
+    private sealed class SystemClockForTests : IClock
+    {
+        public DateTimeOffset UtcNow => DateTimeOffset.UtcNow;
+    }
+
     /// <summary>The id of the seeded category with this slug, qualified by department.</summary>
     /// <remarks>
     /// Qualified because <c>UX_Categories_Slug</c> is scoped to the department (doc 08 §3.2) and the
@@ -180,7 +325,7 @@ public sealed class CampaignCategoryMoveTests(SqlServerDatabaseFixture sqlServer
     /// offered an empty category even for the seconds this test runs. Neither flag affects the campaign —
     /// no campaign predicate reads a category's <c>IsActive</c>.
     /// </remarks>
-    private async Task<int> NewScratchCategoryAsync()
+    private async Task<int> NewScratchCategoryAsync(int? parentCategoryId = null)
     {
         using var scope = CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -192,12 +337,22 @@ public sealed class CampaignCategoryMoveTests(SqlServerDatabaseFixture sqlServer
 
         var suffix = Guid.NewGuid().ToString("N")[..8];
 
+        // A child of another scratch category when asked for one (#191's nested fixture), so the move
+        // below re-paths a real subtree rather than a single row.
+        var parentPath = parentCategoryId is { } parentId
+            ? await dbContext.Categories
+                .Where(candidate => candidate.Id == parentId)
+                .Select(candidate => candidate.Path)
+                .SingleAsync(Token)
+            : null;
+
         var category = new Category
         {
             DepartmentId = departmentId,
+            ParentCategoryId = parentCategoryId,
             Name = "Suite move " + suffix,
             Slug = "suite-move-" + suffix,
-            Depth = 1,
+            Depth = (byte)(parentPath is null ? 1 : 2),
             SortOrder = 9_100,
             ShowInMegaMenu = false,
             IsActive = false,
@@ -206,7 +361,7 @@ public sealed class CampaignCategoryMoveTests(SqlServerDatabaseFixture sqlServer
         dbContext.Categories.Add(category);
         await dbContext.SaveChangesAsync(Token);
 
-        category.Path = CategoryPath.Build(null, category.Id);
+        category.Path = CategoryPath.Build(parentPath, category.Id);
         await dbContext.SaveChangesAsync(Token);
 
         return category.Id;

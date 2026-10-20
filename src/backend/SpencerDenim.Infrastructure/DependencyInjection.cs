@@ -18,6 +18,7 @@ using SpencerDenim.Application.Inventory.Abstractions;
 using SpencerDenim.Application.Marketing.Newsletter;
 using SpencerDenim.Application.Marketing.Newsletter.Admin;
 using SpencerDenim.Application.Marketing.Promotions.Abstractions;
+using SpencerDenim.Application.Marketing.SaleBanner;
 using SpencerDenim.Application.Ops.Email;
 using SpencerDenim.Application.Ops.Email.Abstractions;
 using SpencerDenim.Application.Sales.Cart.Abstractions;
@@ -259,6 +260,7 @@ public static class DependencyInjection
         // work so a change and its audit row commit together.
         services.AddScoped<ISaleCampaignAdminReader, SaleCampaignAdminReader>();
         services.AddScoped<ISaleCampaignAdminStore, SaleCampaignAdminStore>();
+        services.AddScoped<ISaleBannerReader, SaleBannerReader>();
 
         // Doc 08 §3.7's homepage cache. A singleton, because a cache scoped to one request caches
         // nothing at all.

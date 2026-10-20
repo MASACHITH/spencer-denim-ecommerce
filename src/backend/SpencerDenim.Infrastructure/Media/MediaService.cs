@@ -863,6 +863,19 @@ public sealed class MediaService(
                         cancellationToken);
                     break;
 
+                case MediaUsageOwnerTypes.SaleCampaign:
+                    // The campaign's own name, which is what the sale-campaign screen lists it by. A
+                    // removed campaign owns no usage row (SaleCampaignAdminStore), so the soft-delete
+                    // filter here hides nothing that should be labelled.
+                    await AddLabelsAsync(
+                        labels,
+                        group.Key,
+                        dbContext.SaleCampaigns.AsNoTracking()
+                            .Where(campaign => ids.Contains(campaign.Id))
+                            .Select(campaign => new LabelRow(campaign.Id, campaign.Name)),
+                        cancellationToken);
+                    break;
+
                 default:
                     // SizeGuide, ContentPage … : their tables arrive with later milestones, and a missing
                     // label is a display fallback, not a failure.

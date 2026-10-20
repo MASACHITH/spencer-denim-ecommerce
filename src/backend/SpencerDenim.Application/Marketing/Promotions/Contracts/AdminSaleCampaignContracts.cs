@@ -41,6 +41,12 @@ public sealed record AdminSaleCampaignTargetDto(
 /// 23:59 in the shop. Sent back the same way on a save.
 /// </param>
 /// <param name="EndsAt">Also Colombo wall-clock. <b>Required</b>: doc 02 line 119 is "for a date range".</param>
+/// <param name="Banner">
+/// Doc 11 P3 step 1's optional banner, or <see langword="null"/> when the campaign has none — or when the
+/// asset it pointed at is no longer a ready image in the media library, which the storefront would not
+/// show either. Named by its <c>publicId</c>, the way every other admin screen names an asset; the internal
+/// id never reaches a client (ADM-18).
+/// </param>
 /// <param name="Status">
 /// Doc 11 P3's derived status — Scheduled, Live, Ended or Inactive. Not stored, so the list cannot
 /// disagree with what the shop actually charges.
@@ -58,10 +64,21 @@ public sealed record AdminSaleCampaignDto(
     DateTime StartsAt,
     DateTime EndsAt,
     bool IsActive,
-    int? BannerAssetId,
+    AdminSaleCampaignBannerDto? Banner,
     IReadOnlyList<AdminSaleCampaignTargetDto> Targets,
     PromoCodeStatus Status,
     string RowVersion);
+
+/// <summary>
+/// A campaign's banner image as the admin screen previews it (ADM-14, doc 11 P3 step 1).
+/// </summary>
+/// <param name="PublicId">What the form sends back as <c>bannerPublicId</c> to keep it.</param>
+/// <param name="Url">A rendition the preview can draw, or the original when the asset has none.</param>
+/// <param name="AltText">
+/// The description the media library holds for it, which is what the Sale page reads aloud. Null when it
+/// has none, and a save then answers a warning saying so.
+/// </param>
+public sealed record AdminSaleCampaignBannerDto(Guid PublicId, string? Url, string? AltText);
 
 /// <summary>
 /// What a save answers: the row, anything the staff member has to be told although it worked, and what
