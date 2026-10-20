@@ -16,8 +16,11 @@ import {
   presetPeriod,
 } from '../../core/reporting/reporting-format';
 import { TrafficApi } from '../../core/traffic/traffic-api';
-import { CHANNEL_MEANINGS, TRAFFIC_PERMISSION, TrafficReport } from '../../core/traffic/traffic.model';
+import { TRAFFIC_PERMISSION, TrafficReport } from '../../core/traffic/traffic.model';
 import { BarRow, BarTable } from '../dashboard/bar-table';
+import { ChartTable, ChartView } from '../../core/charts/chart';
+import { DoughnutSpec, LineSpec } from '../../core/charts/chart-config';
+import { channelDoughnut, channelSummary, channelTable, deviceDoughnut, deviceSummary, deviceTable } from './traffic-charts';
 
 /** The page families of `PageType`, as staff read them. */
 const PAGE_TYPE_LABELS: Readonly<Record<string, string>> = {
@@ -47,13 +50,15 @@ const OPEN_DAYS = 31;
  * came from; crawlers are counted apart and in nothing else. Today and the three days before it are counted live,
  * older days from the nightly totals — the page says which days are live.
  *
- * **Every figure is in a table** (the bars are decoration on it), so there is no chart without its text, and an
- * empty period says it is empty instead of drawing zeros. The API needs `Traffic.View`; a role without it is told
+ * **Charts in the dashboard's style (#186)**: visits and page views by day as the dashboard's filled line, and
+ * where visitors came from and their devices as its doughnuts with a text legend. **Every figure is still in a
+ * table** — under each chart, or the day-by-day table under the line — so there is no chart without its text, and
+ * an empty period says it is empty instead of drawing zeros. The API needs `Traffic.View`; a role without it is told
  * so rather than shown an error.
  */
 @Component({
   selector: 'sda-traffic-page',
-  imports: [BarTable, RouterLink],
+  imports: [BarTable, ChartView, RouterLink],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <section class="traffic">
@@ -134,26 +139,36 @@ const OPEN_DAYS = 31;
             <p class="adm-state" data-testid="traffic-empty">No visits were recorded in these days.</p>
           } @else {
             <div class="traffic__grid">
-              <section class="adm-panel traffic__wide" aria-labelledby="traffic-days">
-                <h2 class="adm-panel__title" id="traffic-days">Visits by day</h2>
+              <section class="adm-card traffic__wide" aria-labelledby="traffic-days">
+                <div>
+                  <h2 class="adm-card__title" id="traffic-days">Visits by day</h2>
+                  <p class="adm-card__sub">Visits and page views, each Colombo day</p>
+                </div>
+                <sda-chart testId="traffic-days-chart" [spec]="dayChart()" [summary]="daySummary()" [height]="240" emptyText="No visits in this period." />
                 <details class="traffic__days" [open]="answered.days.length <= openDays">
-                  <summary class="adm-link" data-testid="traffic-days-toggle">Day by day ({{ answered.days.length }} {{ answered.days.length === 1 ? 'day' : 'days' }})</summary>
+                  <summary class="adm-link" data-testid="traffic-days-toggle">Show the figures as a table ({{ answered.days.length }} {{ answered.days.length === 1 ? 'day' : 'days' }})</summary>
                   <sda-bar-table caption="Visits and page views by day" testId="traffic-days" [headers]="['Day', 'Visits', 'Page views', 'Crawler views']" [rows]="days()" />
                 </details>
               </section>
 
-              <section class="adm-panel" aria-labelledby="traffic-channels">
-                <h2 class="adm-panel__title" id="traffic-channels">Where visitors came from</h2>
-                <sda-bar-table caption="Visits by traffic source" testId="traffic-channels" [headers]="['Source', 'Visits', 'Page views', 'Share']" [rows]="channels()" />
+              <section class="adm-card" aria-labelledby="traffic-channels">
+                <div>
+                  <h2 class="adm-card__title" id="traffic-channels">Where visitors came from</h2>
+                  <p class="adm-card__sub">Visits by traffic source</p>
+                </div>
+                <sda-chart testId="traffic-channels-chart" [spec]="channelChart()" [summary]="channelText()" [height]="200" [table]="channelFigures()" emptyText="No visits in this period." />
               </section>
 
-              <section class="adm-panel" aria-labelledby="traffic-devices">
-                <h2 class="adm-panel__title" id="traffic-devices">Devices</h2>
-                <sda-bar-table caption="Visits by device" testId="traffic-devices" [headers]="['Device', 'Visits', 'Page views', 'Share']" [rows]="devices()" />
+              <section class="adm-card" aria-labelledby="traffic-devices">
+                <div>
+                  <h2 class="adm-card__title" id="traffic-devices">Devices</h2>
+                  <p class="adm-card__sub">Visits by device</p>
+                </div>
+                <sda-chart testId="traffic-devices-chart" [spec]="deviceChart()" [summary]="deviceText()" [height]="200" [table]="deviceFigures()" emptyText="No visits in this period." />
               </section>
 
-              <section class="adm-panel" aria-labelledby="traffic-sources">
-                <h2 class="adm-panel__title" id="traffic-sources">Top referring sites and campaigns</h2>
+              <section class="adm-card" aria-labelledby="traffic-sources">
+                <h2 class="adm-card__title" id="traffic-sources">Top referring sites and campaigns</h2>
                 <p class="adm-panel__hint">
                   The campaign source when a link was tagged, otherwise the site the visitor came from. "(direct)" is no
                   source at all; "(other)" gathers the smaller sources of a busy day.
@@ -161,8 +176,8 @@ const OPEN_DAYS = 31;
                 <sda-bar-table caption="Top sources by visits" testId="traffic-top-sources" [headers]="['Source', 'Visits', 'Page views']" [rows]="sources()" />
               </section>
 
-              <section class="adm-panel" aria-labelledby="traffic-pages">
-                <h2 class="adm-panel__title" id="traffic-pages">Top pages</h2>
+              <section class="adm-card" aria-labelledby="traffic-pages">
+                <h2 class="adm-card__title" id="traffic-pages">Top pages</h2>
                 <p class="adm-panel__hint">
                   By page views. Addresses keep only the listing's filters; anything private in an address, such as an order
                   link, is never stored.
@@ -240,23 +255,35 @@ export class TrafficPage {
     })),
   );
 
-  protected readonly channels = computed<readonly BarRow[]>(() =>
-    (this.report()?.channels ?? []).map((row) => ({
-      key: row.channel,
-      label: `${row.label} — ${CHANNEL_MEANINGS[row.channel] ?? ''}`,
-      cells: [count(row.visits), count(row.pageViews), this.share(row.sharePercent)],
-      value: row.visits,
-    })),
-  );
+  protected readonly dayChart = computed<LineSpec>(() => {
+    const days = this.report()?.days ?? [];
 
-  protected readonly devices = computed<readonly BarRow[]>(() =>
-    (this.report()?.devices ?? []).map((row) => ({
-      key: row.device,
-      label: row.label,
-      cells: [count(row.visits), count(row.pageViews), this.share(row.sharePercent)],
-      value: row.visits,
-    })),
-  );
+    return {
+      kind: 'line',
+      labels: days.map((row) => formatDay(row.date)),
+      series: [
+        { key: 'visits', label: 'Visits', values: days.map((row) => row.visits), axis: 'left', token: '--chart-accent', fill: true, dashed: false, format: (value) => count(value), tick: (value) => count(value) },
+        { key: 'views', label: 'Page views', values: days.map((row) => row.pageViews), axis: 'left', token: '--chart-2', fill: false, dashed: true, format: (value) => count(value), tick: (value) => count(value) },
+      ],
+    };
+  });
+
+  protected readonly daySummary = computed(() => {
+    const answered = this.report();
+    const days = answered?.days ?? [];
+    const busiest = days.reduce<(typeof days)[number] | null>((best, row) => (best === null || row.visits > best.visits ? row : best), null);
+
+    return !answered || busiest === null || busiest.visits === 0
+      ? 'Visits and page views by day: none in these days.'
+      : `Visits and page views by day, ${formatPeriod(answered.period)}. Busiest: ${formatDay(busiest.date)}, ${count(busiest.visits)} ${busiest.visits === 1 ? 'visit' : 'visits'} and ${count(busiest.pageViews)} page views.`;
+  });
+
+  protected readonly channelChart = computed<DoughnutSpec>(() => channelDoughnut(this.report()?.channels ?? []));
+  protected readonly channelFigures = computed<ChartTable>(() => channelTable(this.report()?.channels ?? [], 'traffic-channels'));
+  protected readonly channelText = computed(() => channelSummary(this.report()?.channels ?? []));
+  protected readonly deviceChart = computed<DoughnutSpec>(() => deviceDoughnut(this.report()?.devices ?? []));
+  protected readonly deviceFigures = computed<ChartTable>(() => deviceTable(this.report()?.devices ?? [], 'traffic-devices'));
+  protected readonly deviceText = computed(() => deviceSummary(this.report()?.devices ?? []));
 
   protected readonly sources = computed<readonly BarRow[]>(() =>
     (this.report()?.sources ?? []).map((row) => ({
@@ -382,10 +409,6 @@ export class TrafficPage {
 
   protected day(value: string): string {
     return formatDay(value);
-  }
-
-  private share(value: number): string {
-    return `${value.toLocaleString('en-LK', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
   }
 
   /** The one live region; never inside a block an update removes. */

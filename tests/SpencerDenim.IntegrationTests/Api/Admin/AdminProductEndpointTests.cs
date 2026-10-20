@@ -1143,6 +1143,89 @@ public sealed class AdminProductEndpointTests(SqlServerDatabaseFixture sqlServer
     }
 
     /// <summary>
+    /// Tester, #190: a variant with stock <b>history</b> but nothing on hand and no order line is refused the
+    /// same way, through <c>stockedSkus</c> — rather than reaching the delete and breaking
+    /// <c>FK_InventoryMovements_ProductVariants_VariantId</c> with a 500. Nothing else covered the
+    /// <c>withHistory</c> half of <c>VariantDeleteGuardsAsync</c>.
+    /// </summary>
+    [Fact]
+    public async Task A_variant_with_stock_history_and_nothing_on_hand_is_refused_rather_than_breaking_the_ledger()
+    {
+        var factory = await HostAsync();
+        var seed = await ReferenceDataAsync(factory);
+        var client = await AdminCatalogApiClient.SignInAsync(factory, "t190-history", FullProductRights, Token);
+
+        var body = Body(seed, "t190-history");
+        body["colours"] = new object[] { Colour("Indigo Rinse", seed.ColourFamilyId) };
+        body["variants"] = new object[]
+        {
+            Variant("Indigo Rinse", seed.SizeIds[0], "T190-HIS-S"),
+            Variant("Indigo Rinse", seed.SizeIds[1], "T190-HIS-M"),
+        };
+
+        var (_, created) = await client.PostAsync(ProductsUrl, body, Token);
+        var productId = created.GetProperty("id").GetInt32();
+
+        try
+        {
+            await using (var scope = factory.Services.CreateAsyncScope())
+            {
+                var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+                var variantId = await dbContext.ProductVariants
+                    .AsNoTracking()
+                    .Where(variant => variant.ProductId == productId && variant.Sku == "T190-HIS-S")
+                    .Select(variant => variant.Id)
+                    .SingleAsync(Token);
+
+                // Received and then counted back to zero: history, but nothing on hand.
+                await dbContext.Database.ExecuteSqlRawAsync(
+                    """
+                    INSERT INTO inventory.InventoryMovements (VariantId, MovementType, OnHandDelta, ReservedDelta, OnHandAfter, ReservedAfter, Reason, CreatedAtUtc)
+                    VALUES ({0}, 2, 5, 0, 5, 0, N'Delivery', SYSUTCDATETIME()),
+                           ({0}, 9, -5, 0, 0, 0, N'Count', SYSUTCDATETIME());
+                    """,
+                    [variantId],
+                    Token);
+
+                Assert.Equal(
+                    0,
+                    await dbContext.StockLevels.Where(level => level.VariantId == variantId).Select(level => level.OnHand).SingleAsync(Token));
+            }
+
+            body["variants"] = new object[] { Variant("Indigo Rinse", seed.SizeIds[1], "T190-HIS-M") };
+            body["rowVersion"] = await RowVersionAsync(factory, productId);
+
+            var (status, problem) = await client.PutAsync($"{ProductsUrl}/{productId}", body, Token);
+
+            Assert.Equal(HttpStatusCode.Conflict, status);
+            Assert.Equal("variant_not_deletable", problem.GetProperty("code").GetString());
+            Assert.Contains(
+                "T190-HIS-S",
+                problem.GetProperty("stockedSkus").EnumerateArray().Select(sku => sku.GetString()));
+
+            await using (var scope = factory.Services.CreateAsyncScope())
+            {
+                var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                Assert.Equal(2, await dbContext.ProductVariants.CountAsync(variant => variant.ProductId == productId, Token));
+            }
+        }
+        finally
+        {
+            await using (var cleanup = factory.Services.CreateAsyncScope())
+            {
+                var dbContext = cleanup.ServiceProvider.GetRequiredService<AppDbContext>();
+                await dbContext.Database.ExecuteSqlRawAsync(
+                    "DELETE m FROM inventory.InventoryMovements m JOIN catalog.ProductVariants v ON v.Id = m.VariantId WHERE v.ProductId = {0};",
+                    [productId],
+                    Token);
+            }
+
+            await HardDeleteAsync(factory, productId);
+        }
+    }
+
+    /// <summary>
     /// <b>A published product cannot be edited into a state its own checklist forbids.</b>
     /// <para>
     /// The checklist of doc 11 §7 G-01 ran only on the publish <i>transition</i>, so <c>media: []</c> on a

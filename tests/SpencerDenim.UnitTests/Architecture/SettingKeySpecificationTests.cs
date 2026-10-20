@@ -227,6 +227,10 @@ public sealed class SettingKeySpecificationTests
             SettingKeys.PayPal.CaptureRecoveryMaxHours,
             SettingKeys.PayPal.PendingCaptureMaxDays,
             SettingKeys.PayPal.ExpiryMinutes,
+
+            // Issue #193: doc 08 §3.8's Traffic cell, "RawRetentionDays (90), BotRetentionDays (7)".
+            SettingKeys.Traffic.RawRetentionDays,
+            SettingKeys.Traffic.BotRetentionDays,
         ];
 
         Assert.Equal(
@@ -243,8 +247,10 @@ public sealed class SettingKeySpecificationTests
     /// and not two copies of the same constant.
     /// </para>
     /// <para>
-    /// Only the eight deferred keys that <i>have</i> a code-side fallback are listed (W4-03 added the two
-    /// traffic retention periods, which the raw-traffic purge reads from configuration). The rest are read by
+    /// Only the eight deferred keys that <i>have</i> a code-side fallback are listed. The two traffic retention
+    /// periods W4-03 added here left with issue #193, which seeded them — their configuration fallback is pinned
+    /// by <see cref="The_traffic_retention_fallback_is_the_seeded_value_and_the_documented_default"/> — and the
+    /// two customer lockout figures took their place. The rest are read by
     /// nothing at all, which <see cref="DeferredSettingKeys"/> records per key, so there is no value to
     /// compare.
     /// </para>
@@ -257,7 +263,7 @@ public sealed class SettingKeySpecificationTests
         var catalog = new CatalogOptions();
         var bankTransfer = new BankTransferOptions();
         var adminSecurity = new AdminSecurityOptions();
-        var traffic = new SpencerDenim.Infrastructure.Analytics.TrafficOptions();
+        var customerSecurity = new SpencerDenim.Infrastructure.Identity.Customers.CustomerSecurityOptions();
 
         var fallbacks = new Dictionary<string, string>(StringComparer.Ordinal)
         {
@@ -269,10 +275,15 @@ public sealed class SettingKeySpecificationTests
                 bankTransfer.BankTransferExpiryHours.ToString(CultureInfo.InvariantCulture),
             ["Security.StaffLockoutMaxFailures"] =
                 adminSecurity.LockoutMaxFailedAttempts.ToString(CultureInfo.InvariantCulture),
-            ["Traffic.RawRetentionDays"] = traffic.RawRetentionDays.ToString(CultureInfo.InvariantCulture),
-            ["Traffic.BotRetentionDays"] = traffic.BotRetentionDays.ToString(CultureInfo.InvariantCulture),
             ["Security.StaffLockoutMinutes"] =
                 adminSecurity.LockoutMinutes.ToString(CultureInfo.InvariantCulture),
+
+            // CustomerSecurityOptions' docblock has claimed since W3-01 that this test pins these two; until
+            // issue #193 it did not. It does now.
+            ["Security.CustomerLockoutMaxFailures"] =
+                customerSecurity.LockoutMaxFailedAttempts.ToString(CultureInfo.InvariantCulture),
+            ["Security.CustomerLockoutMinutes"] =
+                customerSecurity.LockoutMinutes.ToString(CultureInfo.InvariantCulture),
         };
 
         foreach (var (key, fallback) in fallbacks)
@@ -286,6 +297,34 @@ public sealed class SettingKeySpecificationTests
                 $"doc 08 §3.8 states no default for {key}, so there is nothing to pin here.");
 
             Assert.Equal(expected, fallback);
+        }
+    }
+
+    /// <summary>
+    /// <b>The traffic purge's configuration fallback, its seed and doc 08 §3.8 say the same number</b> (issue #193).
+    /// <para>
+    /// The settings row wins, and configuration is used only while it is unset (<c>TrafficRetentionPeriods</c>).
+    /// That is safe to ship to an existing database only if the two agree out of the box: a deployment that sets
+    /// no <c>Traffic__*</c> variable then purges at the same age before the seeder runs, after it runs, and after
+    /// somebody damages the row. Three copies of 90 and 7 — the document's cell, <c>SettingKeys.Traffic</c>'s
+    /// defaults and <c>TrafficOptions</c>' — pinned against the first.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void The_traffic_retention_fallback_is_the_seeded_value_and_the_documented_default()
+    {
+        var documented = SpecifiedDefaults();
+        var traffic = new SpencerDenim.Infrastructure.Analytics.TrafficOptions();
+
+        foreach (var (key, configured) in new[]
+        {
+            (SettingKeys.Traffic.RawRetentionDays, traffic.RawRetentionDays),
+            (SettingKeys.Traffic.BotRetentionDays, traffic.BotRetentionDays),
+        })
+        {
+            Assert.True(documented.TryGetValue(key, out var expected), $"doc 08 §3.8 states no default for {key}.");
+            Assert.Equal(expected, SettingCatalog.Find(key)!.SeedValue);
+            Assert.Equal(expected, configured.ToString(CultureInfo.InvariantCulture));
         }
     }
 

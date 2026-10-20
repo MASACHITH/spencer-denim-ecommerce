@@ -1,4 +1,7 @@
+using System.Data;
 using System.Linq.Expressions;
+using System.Runtime.CompilerServices;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using SpencerDenim.Application.Admin.Reporting;
@@ -485,6 +488,26 @@ internal sealed class ReportingReader(AppDbContext dbContext, IOptions<CatalogOp
             revenue);
     }
 
+    public async Task<BuyerCounts> ReadBuyerCountsAsync(
+        ReportPeriod period,
+        ReportInterval interval,
+        string? emailPrefix,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(period);
+
+        // One statement, so one consistent view of the orders (see BuyerCountsQuery).
+        var rows = await BuyerCountsQuery(period, interval, emailPrefix).ToListAsync(cancellationToken);
+
+        var buckets = rows.Where(row => !row.IsTotal).ToList();
+        var total = rows.SingleOrDefault(row => row.IsTotal);
+
+        return new BuyerCounts(
+            buckets.Select(row => new BucketCount(row.Bucket!.Value, row.Buyers)).ToList(),
+            buckets.Where(row => row.FirstTime > 0).Select(row => new BucketCount(row.Bucket!.Value, row.FirstTime)).ToList(),
+            total?.Buyers ?? 0);
+    }
+
     // -----------------------------------------------------------------------------------------------------
     // The shared predicates. Internal so the plan tests can render exactly these queries.
     // -----------------------------------------------------------------------------------------------------
@@ -550,6 +573,91 @@ internal sealed class ReportingReader(AppDbContext dbContext, IOptions<CatalogOp
                 group.Select(order => order.EmailNormalized).Distinct().Count(),
                 group.Count(),
                 group.Sum(order => order.GrandTotal)));
+
+    /// <summary>
+    /// The customers chart's counts (#186b) in <b>one statement</b>: per bucket, distinct buyers and how many of
+    /// them paid for the first time ever in it, plus a grand-total row (<c>GROUPING SETS ((Bucket), ())</c>) with
+    /// the period's distinct buyers and first-time buyers.
+    /// <para>
+    /// <b>Why one statement.</b> As three statements (the first version), each saw the orders at its own moment
+    /// under READ COMMITTED SNAPSHOT, so an order paid between them could make a bar's first-time count exceed its
+    /// buyers (returning −1) or the total disagree with the bars (#186b tester). A SNAPSHOT transaction would fix
+    /// that, but the database has only READ_COMMITTED_SNAPSHOT on, not ALLOW_SNAPSHOT_ISOLATION
+    /// (<c>tools/db/provision-database.sql</c>), and turning it on is a database change this chart does not
+    /// justify. Under RCSI <b>one statement reads one committed snapshot</b> across every table reference, so
+    /// buyers, first-time and the total are taken from the same data, and no transaction or isolation level is
+    /// touched — nothing can leak into the pooled connection (#172).
+    /// </para>
+    /// <para>
+    /// <c>p</c> is the period's paid orders as (email, bucket); <c>f</c> is each email's first paid instant over
+    /// its whole history up to the period's end. An inner join keeps only the period's buyers. On the total row
+    /// the first-time test still compares each order row's own bucket with the first order's bucket, which
+    /// holds for exactly the buyers whose first order is in the period. The bucket is
+    /// <c>DATEDIFF(day|month, @anchor, DATEADD(minute, 330, PaidAtUtc))</c> — the midnights or month starts
+    /// crossed, which for a midnight anchor is the difference in Colombo days or months; weeks count days from
+    /// the Monday on or before the period's first day, divided by seven, so the partial first week is bucket 0
+    /// as in <see cref="ReportBuckets.Split"/>. Both references to the orders table are filtered on
+    /// <c>PaidAtUtc IS NOT NULL</c> and a range, so <c>IX_Orders_Paid</c>, which carries
+    /// <c>EmailNormalized</c>, covers them (<c>ReportingQueryPlanTests</c>).
+    /// </para>
+    /// <para>
+    /// Raw SQL rather than LINQ because LINQ cannot say <c>GROUPING SETS</c>. Every value is a parameter; the
+    /// only text spliced in is one of three fixed bucket expressions and an optional fixed <c>LIKE</c> clause.
+    /// </para>
+    /// </summary>
+    internal IQueryable<BuyerBucketRow> BuyerCountsQuery(ReportPeriod period, ReportInterval interval, string? emailPrefix)
+    {
+        ArgumentNullException.ThrowIfNull(period);
+
+        var range = UtcRange.Of(period);
+        var anchor = (interval == ReportInterval.Week ? ReportBuckets.WeekStart(period.From) : period.From).ToDateTime(TimeOnly.MinValue);
+
+        string Bucket(string column) => interval switch
+        {
+            ReportInterval.Day => $"DATEDIFF(day, {{2}}, DATEADD(minute, {ColomboOffsetMinutes}, {column}))",
+            ReportInterval.Week => $"DATEDIFF(day, {{2}}, DATEADD(minute, {ColomboOffsetMinutes}, {column})) / 7",
+            ReportInterval.Month => $"DATEDIFF(month, {{2}}, DATEADD(minute, {ColomboOffsetMinutes}, {column}))",
+            _ => throw new ArgumentOutOfRangeException(nameof(interval), interval, null),
+        };
+
+        string Search(string alias) => emailPrefix is null ? "" : $" AND [{alias}].[EmailNormalized] LIKE {{3}} ESCAPE N'\\'";
+
+        var format =
+            "SELECT [p].[Bucket] AS [Bucket], CAST(GROUPING([p].[Bucket]) AS bit) AS [IsTotal], "
+            + "COUNT(DISTINCT [p].[Email]) AS [Buyers], "
+            + "COUNT(DISTINCT CASE WHEN [f].[FirstPaidAtUtc] >= {0} AND " + Bucket("[f].[FirstPaidAtUtc]") + " = [p].[Bucket] THEN [p].[Email] END) AS [FirstTime] "
+            + "FROM ("
+            + "SELECT [o].[EmailNormalized] AS [Email], " + Bucket("[o].[PaidAtUtc]") + " AS [Bucket] "
+            + "FROM [sales].[Orders] AS [o] "
+            + "WHERE [o].[PaidAtUtc] IS NOT NULL AND [o].[PaidAtUtc] >= {0} AND [o].[PaidAtUtc] < {1}" + Search("o")
+            + ") AS [p] "
+            + "INNER JOIN ("
+            + "SELECT [h].[EmailNormalized] AS [Email], MIN([h].[PaidAtUtc]) AS [FirstPaidAtUtc] "
+            + "FROM [sales].[Orders] AS [h] "
+            + "WHERE [h].[PaidAtUtc] IS NOT NULL AND [h].[PaidAtUtc] < {1}" + Search("h") + " "
+            + "GROUP BY [h].[EmailNormalized]"
+            + ") AS [f] ON [f].[Email] = [p].[Email] "
+            + "GROUP BY GROUPING SETS (([p].[Bucket]), ())";
+
+        // Named and typed parameters: datetime2(3) as the column is, nvarchar(256) as EmailNormalized is.
+        object[] arguments = emailPrefix is null
+            ? [Instant("@from", range.FromUtc), Instant("@to", range.ToUtcExclusive), Instant("@anchor", anchor)]
+            : [Instant("@from", range.FromUtc), Instant("@to", range.ToUtcExclusive), Instant("@anchor", anchor),
+                new SqlParameter("@emailPattern", SqlDbType.NVarChar, 256) { Value = LikePrefix(emailPrefix) }];
+
+        return dbContext.Database.SqlQuery<BuyerBucketRow>(FormattableStringFactory.Create(format, arguments));
+    }
+
+    private static SqlParameter Instant(string name, DateTime value) =>
+        new(name, SqlDbType.DateTime2) { Scale = 3, Value = value };
+
+    /// <summary>A <c>LIKE</c> pattern for "starts with", with the search's own wildcards escaped (as EF's <c>StartsWith</c>).</summary>
+    internal static string LikePrefix(string prefix) =>
+        prefix.Replace("\\", "\\\\", StringComparison.Ordinal)
+            .Replace("%", "\\%", StringComparison.Ordinal)
+            .Replace("_", "\\_", StringComparison.Ordinal)
+            .Replace("[", "\\[", StringComparison.Ordinal)
+        + "%";
 
     /// <summary>Line revenue per department at purchase, on orders paid in the range.</summary>
     internal IQueryable<GroupSales> DepartmentSalesQuery(UtcRange range) =>
@@ -629,4 +737,16 @@ internal sealed class ReportingReader(AppDbContext dbContext, IOptions<CatalogOp
 
     /// <summary>One department's line sales.</summary>
     internal sealed record GroupSales(int Id, int Units, decimal Revenue);
+
+    /// <summary>One row of <see cref="BuyerCountsQuery"/>: a bucket, or the period's total when <see cref="IsTotal"/>.</summary>
+    internal sealed class BuyerBucketRow
+    {
+        public int? Bucket { get; init; }
+
+        public bool IsTotal { get; init; }
+
+        public int Buyers { get; init; }
+
+        public int FirstTime { get; init; }
+    }
 }

@@ -73,10 +73,10 @@ public static class SizeGuideTable
     /// bound belongs on the write path regardless (issue #70).
     /// </para>
     /// </summary>
-    private const int MaxColumns = 40;
+    public const int MaxColumns = 40;
 
     /// <inheritdoc cref="MaxColumns"/>
-    private const int MaxRows = 200;
+    public const int MaxRows = 200;
 
     /// <summary>
     /// The grid, or <see langword="null"/> when the stored text holds no table a shopper could read.

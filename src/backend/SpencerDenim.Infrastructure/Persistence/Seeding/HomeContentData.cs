@@ -179,6 +179,115 @@ internal static class HomeContentData
         new("Questions? Message us on WhatsApp", SortOrder: 3),
     ];
 
+    /// <summary>
+    /// The seed version this build ships, recorded in <c>Seed.HomeContentVersion</c>.
+    /// <list type="number">
+    /// <item><description>The sections, department tiles, benefits and announcements above (the baseline,
+    /// seeded idempotently on every start, as before).</description></item>
+    /// <item><description>#63: the artwork rows below, offered <b>once</b>, and the retraction of the
+    /// words an earlier importer wrote over HOME-06.</description></item>
+    /// </list>
+    /// </summary>
+    public const int SeedVersion = 2;
+
+    /// <summary>
+    /// The homepage's words and links for every block whose picture comes from the client (#63): the hero,
+    /// the two banners, the four trending tiles and the six social tiles.
+    /// <para>
+    /// <b>These used to be written by <c>ClientAssetImporter</c>, and that was the defect.</b> A class whose
+    /// job is to move bytes was also deciding what the homepage says, so there was no moment at which a row
+    /// said what it was <i>for</i> before a photograph arrived — and a linen flat-lay went in under the
+    /// heading "Activewear". Now each row exists from the first start, says what it is waiting for, and is
+    /// <b>switched off</b> until a picture is attached: by the importer (which only attaches, and switches
+    /// the row on) or by a staff member in ADM-17. Their sections are switched off as well, so a fresh
+    /// shop's homepage looks exactly as it did.
+    /// </para>
+    /// <para>
+    /// <b>Keyed on (section type, sort order)</b> — the slot the importer's filename contract names
+    /// (<c>trending-3.jpg</c> is the trending row at position 3) — and offered once, by version: a row the
+    /// client deletes is not put back by the next deployment.
+    /// </para>
+    /// <para>
+    /// The copy is the copy the importer used to write, word for word, so a database the importer filled
+    /// before this change and one seeded after it say the same thing. The social links are dummies on
+    /// <c>example.invalid</c> (RFC 2606: a domain that can never be registered) and each label says
+    /// PLACEHOLDER out loud, until the client sends the real account addresses.
+    /// </para>
+    /// </summary>
+    public static IReadOnlyList<ArtworkItemSeed> ArtworkItems { get; } =
+    [
+        new(
+            HomeSectionType.HeroVideo,
+            SortOrder: 1,
+            Title: "Dressed for Colombo",
+            Subtitle: "Linen, denim and everyday pieces made for the weather here.",
+            ButtonLabel: "Shop new arrivals",
+            LinkUrl: "/new-arrivals"),
+
+        new(
+            HomeSectionType.CampaignBanner,
+            SortOrder: 1,
+            Title: "The new season",
+            Subtitle: "Linen, denim and everything in between.",
+            ButtonLabel: "Shop new arrivals",
+            LinkUrl: "/new-arrivals"),
+
+        // W1-14: the words follow the photograph the client actually sent — a white linen co-ord and a
+        // mid-blue denim co-ord — and the link is a listing that genuinely holds those fabrics.
+        new(
+            HomeSectionType.ActivewearFeature,
+            SortOrder: 1,
+            Title: "Linen and denim",
+            Subtitle: "Breathable linen for the heat, washed indigo for everything else.",
+            ButtonLabel: "Shop linen and denim",
+            LinkUrl: "/women?material=linen&material=linen-blend&material=denim"),
+
+        // HOME-04, in the delivered photographs' numbered order: a leather bag, a stack of linen shirts, a
+        // dress with raffia slides, children's knitwear. Each opens a listing the catalogue can serve.
+        new(HomeSectionType.TrendingItems, SortOrder: 1, Title: "Bags and accessories", LinkUrl: "/women/accessories"),
+        new(HomeSectionType.TrendingItems, SortOrder: 2, Title: "Linen shirts", LinkUrl: "/men/shirts"),
+        new(HomeSectionType.TrendingItems, SortOrder: 3, Title: "Dresses and sandals", LinkUrl: "/women/dresses"),
+        new(HomeSectionType.TrendingItems, SortOrder: 4, Title: "Kids' new in", LinkUrl: "/kids?sort=newest"),
+
+        Social(1, "Instagram", "instagram"),
+        Social(2, "Facebook", "facebook"),
+        Social(3, "TikTok", "tiktok"),
+        Social(4, "Pinterest", "pinterest"),
+        Social(5, "YouTube", "youtube"),
+        Social(6, "WhatsApp", "whatsapp"),
+    ];
+
+    /// <summary>
+    /// Words an earlier <c>ClientAssetImporter</c> wrote over HOME-06 and then took back (W1-14), keyed by
+    /// <b>field</b>: "Activewear" is retracted as a heading, not wherever it appears, because a staff member
+    /// may type it into the button label on purpose. Applied once, with version 2, to an item that still
+    /// holds exactly the retracted value in exactly that field.
+    /// </summary>
+    public static IReadOnlyList<RetractedCopy> Retractions { get; } =
+    [
+        new(HomeSectionType.ActivewearFeature, 1, nameof(HomeSectionItem.Title), "Activewear"),
+        new(HomeSectionType.ActivewearFeature, 1, nameof(HomeSectionItem.Subtitle), "Pieces that move with you."),
+        new(HomeSectionType.ActivewearFeature, 1, nameof(HomeSectionItem.LinkUrl), "/women/activewear"),
+        new(HomeSectionType.ActivewearFeature, 1, nameof(HomeSectionItem.ButtonLabel), "Shop activewear"),
+    ];
+
+    private static ArtworkItemSeed Social(short sortOrder, string network, string slug) =>
+        new(
+            HomeSectionType.SocialGallery,
+            sortOrder,
+            Title: $"{network} — PLACEHOLDER LINK, the real account URL has not been supplied yet",
+            LinkUrl: $"https://example.invalid/PLACEHOLDER/{slug}");
+
+    internal sealed record ArtworkItemSeed(
+        HomeSectionType SectionType,
+        short SortOrder,
+        string Title,
+        string LinkUrl,
+        string? Subtitle = null,
+        string? ButtonLabel = null);
+
+    internal sealed record RetractedCopy(HomeSectionType SectionType, short SortOrder, string Field, string Value);
+
     internal sealed record HomeSectionSeed(
         HomeSectionType SectionType,
         short SortOrder,

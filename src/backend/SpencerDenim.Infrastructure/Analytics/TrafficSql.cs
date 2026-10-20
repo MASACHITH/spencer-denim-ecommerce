@@ -209,6 +209,28 @@ internal static class TrafficSql
         """;
 
     /// <summary>
+    /// The oldest <c>@take</c> Colombo days before <see cref="ToUtc"/> that still have raw views and no
+    /// <c>TrafficDaily</c> row — the nightly catch-up's work list (issue #193).
+    /// <para>
+    /// <b>No lower bound, on purpose.</b> The purge never deletes a day the rollup has not built, so a never-built day
+    /// keeps all of its raw rows however old it is, and this finds it wherever it is. It reads only days that have
+    /// raw rows (a range of <c>IX_PageViews_Occurred</c>, which holds everything the purge has kept, i.e. roughly the
+    /// raw period) and never enumerates empty calendar days; <c>TOP</c> caps one night's work.
+    /// </para>
+    /// </summary>
+    public const string OldestUnbuiltDaysBefore = """
+        SELECT TOP (@take) d.[Date] AS [Value]
+        FROM (
+            SELECT CONVERT(date, DATEADD(minute, 330, pv.[OccurredAtUtc])) AS [Date]
+            FROM [analytics].[PageViews] AS pv
+            WHERE pv.[OccurredAtUtc] < @toUtc
+        ) AS d
+        WHERE NOT EXISTS (SELECT 1 FROM [analytics].[TrafficDaily] AS t WHERE t.[Date] = d.[Date])
+        GROUP BY d.[Date]
+        ORDER BY d.[Date]
+        """;
+
+    /// <summary>
     /// Colombo days in [<see cref="FromUtc"/>, <see cref="ToUtc"/>) that have raw views and no <c>TrafficDaily</c> row:
     /// days the rollup never built (the host was down at 00:30, or for longer than three days).
     /// </summary>

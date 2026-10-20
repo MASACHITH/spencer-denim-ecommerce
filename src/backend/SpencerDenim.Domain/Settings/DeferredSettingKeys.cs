@@ -48,11 +48,12 @@ public sealed record DeferredSettingKey(string Key, SettingKeyDeferralKind Kind,
 /// default.</b> <c>CatalogOptions</c> ships 5 / 30 / 10 for <c>Inventory.DefaultLowStockThreshold</c>,
 /// <c>Catalog.NewArrivalDays</c> and <c>Catalog.BestSellerTopN</c>; <c>BankTransferOptions</c> ships 48 for
 /// <c>Orders.BankTransferExpiryHours</c>; <c>AdminSecurityOptions</c> ships 5 and 15 for
-/// <c>Security.StaffLockoutMaxFailures</c> and <c>StaffLockoutMinutes</c>; <c>TrafficOptions</c> ships 90 and 7 for
-/// <c>Traffic.RawRetentionDays</c> and <c>BotRetentionDays</c> (W4-03). So no key below is silently
-/// running on a number that differs from the document, which is the half of #113 that would have been a
-/// defect rather than an omission. <c>SettingKeySpecificationTests</c> pins all eight, against the
-/// document's own cells rather than against a second copy of the number.
+/// <c>Security.StaffLockoutMaxFailures</c> and <c>StaffLockoutMinutes</c>; <c>CustomerSecurityOptions</c> ships 10
+/// and 15 for <c>Security.CustomerLockoutMaxFailures</c> and <c>CustomerLockoutMinutes</c> (W3-01). So no key
+/// below is silently running on a number that differs from the document, which is the half of #113 that would
+/// have been a defect rather than an omission. <c>SettingKeySpecificationTests</c> pins all eight, against the
+/// document's own cells rather than against a second copy of the number. (The two <c>Traffic.*</c> periods were
+/// pinned here until issue #193 seeded them; their seed values are now checked against the same cells.)
 /// </para>
 /// </summary>
 public static class DeferredSettingKeys
@@ -94,14 +95,6 @@ public static class DeferredSettingKeys
             "See Store.FaviconAssetId: nothing reads it, and PageMetadata takes og:image from the page's "
             + "own media."),
 
-        // ---- Social ------------------------------------------------------------------------------------
-        new(
-            "Social.YouTubeUrl",
-            SettingKeyDeferralKind.AwaitingItsFeature,
-            "The footer renders one icon per configured social address and @spencer-denim/shared's "
-            + "IconName has no YouTube glyph, so a value typed here would have nowhere to render. It is a "
-            + "row and an icon away; the other three of doc 08's four are seeded."),
-
         // ---- Content -----------------------------------------------------------------------------------
         new(
             "Content.PdpReturnsInfoHtml",
@@ -131,7 +124,9 @@ public static class DeferredSettingKeys
             "Read from configuration as Catalog__DefaultLowStockThreshold (CatalogOptions), whose default "
             + "is doc 08 §3.8's 5. The reader is on the catalogue's hot path and moving it to ops.Settings "
             + "needs the cached options wiring SiteSettingsCache has; until then a seeded row would be an "
-            + "editable box the shop does not read."),
+            + "editable box the shop does not read. The inventory screen (ADM-12, #190) was being built on "
+            + "another branch when #193 reviewed this list, so the key was left for that task to seed with "
+            + "its form rather than raced."),
 
         new(
             "Catalog.NewArrivalDays",
@@ -155,31 +150,19 @@ public static class DeferredSettingKeys
             "Delivery.DefaultZone",
             SettingKeyDeferralKind.AwaitingItsFeature,
             "Checkout prices per district and asks for one before it quotes (GetCheckoutQuery), so there "
-            + "is no path that needs a zone with no district. The key is for the signed-in-customer "
-            + "default of R7, which waits on customer accounts (W3-01, ACC-01)."),
+            + "is no path that needs a zone with no district. The key is for doc 08 §3.5 R7's default quote "
+            + "before a district is chosen. Customer accounts now exist (W3-01, #162), but checkout still "
+            + "asks rather than defaults and nothing reads the key, so a row would be a box with no "
+            + "consumer."),
 
         // ---- Privacy -----------------------------------------------------------------------------------
         new(
             "Privacy.RetainInvoiceBillTo",
             SettingKeyDeferralKind.AwaitingItsFeature,
-            "Settings.Security (R12), and nothing reads it: the PDPA anonymisation path that would honour "
-            + "it is not built. It also needs the doc 08 §3.8 N2 sensitive-change alert, because every "
-            + "Settings.Security key is in N2's trigger list."),
-
-        // ---- Traffic -----------------------------------------------------------------------------------
-        new(
-            "Traffic.RawRetentionDays",
-            SettingKeyDeferralKind.AwaitingItsFeature,
-            "analytics.PageViews and the raw-traffic purge exist (W4-03), and the purge keeps doc 08 §8.4's 90 "
-            + "days — from configuration (Traffic__RawRetentionDays, TrafficOptions), not from this table. The "
-            + "settings screen has one form per group and no Traffic form, so a seeded row would be a value staff "
-            + "can see and cannot change. Seed it with the form; until then the code-side default is §3.8's own."),
-
-        new(
-            "Traffic.BotRetentionDays",
-            SettingKeyDeferralKind.AwaitingItsFeature,
-            "See Traffic.RawRetentionDays: the purge keeps bot page views doc 08 §8.4's 7 days, from "
-            + "configuration (Traffic__BotRetentionDays), until the settings screen has a Traffic form."),
+            "Settings.Security (R12), and nothing reads it: no PDPA anonymisation path exists to honour it, "
+            + "so a row would be a box with no consumer. (The single-send SensitiveSettingsChangedAlert its "
+            + "save would raise already exists — the Bank and PayPal handlers use it — so that is not the "
+            + "blocker.)"),
 
         // ---- Email.Smtp ------------------------------------------------------------------------------
         // Seven keys, one reason. ops.EmailOutbox now exists (#133) and so does ops.AdminAlerts (#138),
@@ -204,9 +187,10 @@ public static class DeferredSettingKeys
             "Security.StaffLockoutMaxFailures",
             SettingKeyDeferralKind.AwaitingItsFeature,
             "Applied to IdentityOptions.Lockout at startup from AdminSecurityOptions, whose default is "
-            + "doc 08 §3.8's 5. The options object is built once and cached by the options system, so a "
-            + "live-editable row needs the value read per sign-in attempt instead, as well as N2's "
-            + "sensitive-change alert — this group is on N2's trigger list."),
+            + "doc 08 §3.8's 5. Read once at start-up and cached by the options system, so a live-editable "
+            + "row needs the sign-in path to read the value per attempt instead; until then a row would be a "
+            + "value the screen changes and the lockout ignores. (The single-send sensitive-change alert a "
+            + "save would raise already exists.)"),
 
         new(
             "Security.StaffLockoutMinutes",
@@ -217,12 +201,16 @@ public static class DeferredSettingKeys
         new(
             "Security.CustomerLockoutMaxFailures",
             SettingKeyDeferralKind.AwaitingItsFeature,
-            "There are no customer accounts to lock out (W3-01, ACC-01), so nothing reads it in any form."),
+            "Customer accounts exist (W3-01, #162) and CustomerAccountLockout applies this figure from "
+            + "configuration (CustomerSecurity__LockoutMaxFailedAttempts, CustomerSecurityOptions), whose "
+            + "default is doc 08 §3.8's 10. Read once at start-up; a live-editable row needs the value read "
+            + "per sign-in attempt from this table — as for the staff pair."),
 
         new(
             "Security.CustomerLockoutMinutes",
             SettingKeyDeferralKind.AwaitingItsFeature,
-            "See Security.CustomerLockoutMaxFailures: no customer sign-in exists."),
+            "As Security.CustomerLockoutMaxFailures: CustomerSecurityOptions.LockoutMinutes, default 15, "
+            + "doc 08 §3.8's own figure."),
     ];
 
     private const string SmtpReason =
