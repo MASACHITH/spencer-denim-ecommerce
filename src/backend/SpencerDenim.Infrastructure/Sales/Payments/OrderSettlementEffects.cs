@@ -97,6 +97,16 @@ internal sealed class OrderSettlementEffects(
         // filter, so DB28 lets the optimiser seek that index; "IsOrderSettlement = @flag" does not
         // imply it and falls back to a clustered scan of sales.Payments. Interpolating a C# value
         // here would make it a parameter and undo that.
+        //
+        // **`sales.Payments` is read WITH (READCOMMITTEDLOCK) (issue #185).** Every database runs
+        // READ_COMMITTED_SNAPSHOT since #163, where a plain read takes the last committed version of a row
+        // instead of waiting for the transaction that holds it, so an unhinted guard cannot see a settlement
+        // that has not committed. Here `UX_Payments_OneSettlement` still refuses a second settlement, which would
+        // turn a stale read into a thrown unique-key error after the order had been claimed; with the hint the
+        // claim waits for the other settlement and affects 0 rows, the ordinary refusal, in whatever order the
+        // plan reads the two tables. The hint does not change which index the guard seeks, and the literal 1
+        // above is unaffected. `PaymentGuardLockTests` fails without it. The same hint is on the late
+        // acceptance's copy of this guard (`BankTransferReviewStore.AcceptLateAsync`).
         await dbContext.Database.ExecuteSqlInterpolatedAsync(
             $"""
             UPDATE sales.Orders
@@ -112,7 +122,7 @@ internal sealed class OrderSettlementEffects(
                AND Status = {(byte)OrderStatus.PendingPayment}
                AND StockState = {(byte)OrderStockState.Reserved}
                AND NOT EXISTS (
-                     SELECT 1 FROM sales.Payments s
+                     SELECT 1 FROM sales.Payments s WITH (READCOMMITTEDLOCK)
                       WHERE s.OrderId = {orderId} AND s.IsOrderSettlement = 1);
             """,
             cancellationToken);
