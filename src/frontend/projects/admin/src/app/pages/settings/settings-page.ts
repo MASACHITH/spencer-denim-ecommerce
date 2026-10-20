@@ -623,9 +623,48 @@ const LOGO_ACCEPT = 'image/png,image/jpeg,image/webp';
           </section>
         }
 
+        @if (canEditReviews()) {
+          <section class="adm-panel" aria-labelledby="reviews-title" data-testid="reviews-panel">
+            <h2 class="adm-panel__title" id="reviews-title">Reviews</h2>
+            <form class="adm-fields" (ngSubmit)="saveReviews()" novalidate>
+              <div class="adm-field adm-field--wide">
+                <label class="adm-check">
+                  <input
+                    type="checkbox"
+                    name="requireApproval"
+                    data-testid="field-requireApproval"
+                    aria-describedby="reviews-hint"
+                    [checked]="requireApproval()"
+                    (change)="patchRequireApproval($event)"
+                  />
+                  <span>Approve reviews before they appear</span>
+                </label>
+                <span class="adm-panel__hint" id="reviews-hint">
+                  On: a customer's new or edited review waits on the Reviews screen until somebody approves it. Off:
+                  reviews appear on the product page as soon as they are written. A review you have hidden stays
+                  hidden either way.
+                </span>
+                @if (fieldError('requireApproval'); as message) {
+                  <span class="adm-field-error" data-testid="error-requireApproval">{{ message }}</span>
+                }
+              </div>
+              <div class="adm-actions adm-field--wide">
+                <button
+                  class="adm-btn--primary"
+                  type="submit"
+                  [attr.aria-disabled]="busy() ? 'true' : null"
+                  data-testid="save-reviews"
+                >
+                  {{ busy() ? 'Saving…' : 'Save review settings' }}
+                </button>
+              </div>
+            </form>
+          </section>
+        }
+
         @if (
           !canEditStore() && !canEditContact() && !canEditBank() && !canEditInvoice() && !canEditPayPal()
-          && !canEditTraffic()
+          && !canEditTraffic() && !canEditReviews()
         ) {
           <p class="adm-state" data-testid="nothing-to-edit">
             There are no settings you can change here.
@@ -1168,6 +1207,15 @@ export class SettingsPage {
    */
   protected readonly canEditTraffic = computed(() => this.hasGroup(SETTING_GROUPS.traffic));
 
+  /** Whether the server sent the `Reviews` group (issue #189, `Settings.Edit`). */
+  protected readonly canEditReviews = computed(() => this.hasGroup(SETTING_GROUPS.reviews));
+
+  /**
+   * The approval switch as the server sent it, or as the checkbox now says. Anything but a readable "false"
+   * reads as on, the server's own rule (`ReviewSettingsReader`), so the box never shows off while reviews wait.
+   */
+  protected readonly requireApproval = signal(true);
+
   constructor() {
     this.load();
   }
@@ -1306,6 +1354,10 @@ export class SettingsPage {
     }
 
     this.trafficValues.set(trafficFromServer as TrafficValues);
+
+    if (!(keepUnsavedEdits && this.editedSinceWrite.has('requireApproval'))) {
+      this.requireApproval.set(toRequireApproval(settings));
+    }
     this.logoAltText.set(settings.logo?.altText?.trim() || BRAND.name);
   }
 
@@ -1482,6 +1534,32 @@ export class SettingsPage {
 
     this.api.updateTraffic(this.trafficValues(), group).subscribe({
       next: () => this.afterWrite('Traffic settings saved. They apply from the next nightly clean-up.'),
+      error: (error: unknown) => this.afterFailure(error),
+    });
+  }
+
+  protected patchRequireApproval(event: Event): void {
+    this.editedSinceWrite.add('requireApproval');
+    this.requireApproval.set((event.target as HTMLInputElement | null)?.checked ?? true);
+  }
+
+  /** Saves the review approval switch (issue #189). */
+  protected saveReviews(): void {
+    const group = this.groupVersion(SETTING_GROUPS.reviews);
+    if (group === null || this.isBusy()) {
+      return;
+    }
+
+    const on = this.requireApproval();
+    this.beforeWrite('Saving the review settings…');
+
+    this.api.updateReviews(on, group).subscribe({
+      next: () =>
+        this.afterWrite(
+          on
+            ? 'Review settings saved. New and edited reviews will wait for approval.'
+            : 'Review settings saved. New reviews will appear as soon as they are written.',
+        ),
       error: (error: unknown) => this.afterFailure(error),
     });
   }
@@ -1807,6 +1885,15 @@ export function toTrafficForm(settings: AdminSettings): TrafficValues {
   }
 
   return form as TrafficValues;
+}
+
+/** `Reviews.RequireApproval` from the payload: on unless it reads exactly "false" (case and spaces aside). */
+export function toRequireApproval(settings: AdminSettings): boolean {
+  const value = settings.groups
+    .flatMap((group) => group.settings)
+    .find((setting) => setting.key === SETTING_KEYS.reviewsRequireApproval)?.value;
+
+  return (value ?? '').trim().toLowerCase() !== 'false';
 }
 
 /**

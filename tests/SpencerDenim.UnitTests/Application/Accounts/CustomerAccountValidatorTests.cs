@@ -339,4 +339,39 @@ public sealed class CustomerAccountValidatorTests
         Assert.Contains("number", hint, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("symbol", hint, StringComparison.OrdinalIgnoreCase);
     }
+
+    /// <summary>
+    /// #189 D1: a name becomes the public name on every review, so registration and the profile refuse the hidden
+    /// characters review text refuses — control characters, bidi controls, Unicode line breaks, broken surrogates.
+    /// </summary>
+    [Theory]
+    [InlineData(0x202E)]
+    [InlineData(0x2066)]
+    [InlineData(0x200F)]
+    [InlineData(0x0007)]
+    [InlineData(0x0009)]
+    [InlineData(0x2028)]
+    [InlineData(0x0085)]
+    [InlineData(0xD800)]
+    public void A_name_with_a_hidden_character_is_refused_on_registration_and_profile(int code)
+    {
+        var hidden = "Ni" + (char)code + "mal";
+
+        var first = Assert.Single(CustomerAccountValidator.ValidateRegistration(Registration(firstName: hidden)));
+        Assert.Equal("firstName", first.Field);
+        Assert.Equal("This contains a hidden control character. Please retype it.", first.Message);
+
+        Assert.Equal("lastName", Assert.Single(CustomerAccountValidator.ValidateRegistration(Registration(lastName: "Pe" + (char)code + "rera"))).Field);
+
+        Assert.Equal("firstName", Assert.Single(CustomerAccountValidator.ValidateProfile(new CustomerProfileEdit(hidden, null, null, null))).Field);
+        Assert.Equal("lastName", Assert.Single(CustomerAccountValidator.ValidateProfile(new CustomerProfileEdit("Nimal", "Pe" + (char)code + "rera", null, null))).Field);
+    }
+
+    [Fact]
+    public void Names_in_any_script_with_accents_hyphens_and_emoji_are_still_accepted()
+    {
+        Assert.Empty(CustomerAccountValidator.ValidateRegistration(Registration(firstName: "Anne-Marie", lastName: "O'Neil")));
+        Assert.Empty(CustomerAccountValidator.ValidateRegistration(Registration(firstName: "නිමල්", lastName: "பெரேரா")));
+        Assert.Empty(CustomerAccountValidator.ValidateProfile(new CustomerProfileEdit("José " + char.ConvertFromUtf32(0x1F600), null, null, null)));
+    }
 }

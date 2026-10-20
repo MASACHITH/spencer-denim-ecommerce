@@ -69,6 +69,9 @@ public sealed class CatalogModelTests
 
             // ADM-12 (#190, #108): doc 08 §3.4's ledger, the second inventory table.
             "inventory.InventoryMovements",
+
+            // PDP-08, ADM-16 (#189): doc 08 §3.2's reviews.
+            "catalog.ProductReviews",
         ];
 
         Assert.Equal(expected.Length, tables.Count);
