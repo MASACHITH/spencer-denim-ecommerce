@@ -115,6 +115,7 @@ function campaign(overrides: Partial<AdminSaleCampaign> = {}): AdminSaleCampaign
     endsAt: '2026-10-26T00:00:00',
     isActive: true,
     banner: null,
+    bannerUnavailable: false,
     targets: [target()],
     status: 'Scheduled',
     rowVersion: 'AAAAAAAACl8=',
@@ -1403,5 +1404,71 @@ describe('SaleCampaignsPage (ADM-14)', () => {
     expect(element.querySelector('[data-testid="error-banner"]')?.textContent).toContain(
       'not a ready public image',
     );
+  });
+
+  // ---- #191 second round ----------------------------------------------------------------------
+
+  /**
+   * **A banner that is no longer available is said before a save clears it.** The payload carries no
+   * banner for it, so the form would otherwise show "no banner" and quietly drop the old reference.
+   */
+  it('says when the saved banner is no longer available, before the save clears it', async () => {
+    await open([campaign({ banner: null, bannerUnavailable: true })]);
+
+    expect(element.querySelector('[data-testid="banner-4"]')?.textContent).toContain(
+      'No longer available',
+    );
+
+    click('edit-4');
+    await settle();
+
+    expect(element.querySelector('[data-testid="banner-unavailable"]')?.textContent).toContain(
+      'The banner previously chosen is no longer available',
+    );
+    expect(element.querySelector('[data-testid="banner-empty"]')).toBeNull();
+
+    click('campaign-save');
+    answerAntiforgery();
+    await settle();
+
+    const request = http.expectOne(
+      (candidate) => candidate.url.endsWith('/4') && candidate.method === 'PUT',
+    );
+    expect((request.request.body as { bannerPublicId: string | null }).bannerPublicId).toBeNull();
+
+    request.flush(saved());
+    http.expectOne(AdminCampaignApi.campaignsUrl).flush([campaign()]);
+    await settle();
+
+    // The next campaign starts without the notice.
+    expect(element.querySelector('[data-testid="banner-unavailable"]')).toBeNull();
+  });
+
+  it('drops the notice once a new banner is chosen', async () => {
+    await open([campaign({ banner: null, bannerUnavailable: true })]);
+
+    click('edit-4');
+    await settle();
+
+    attachFile(
+      'banner-file',
+      new File([new Uint8Array([0xff, 0xd8, 0xff])], 'banner.jpg', { type: 'image/jpeg' }),
+    );
+    type('banner-alt', 'A new banner');
+    click('banner-upload');
+    answerAntiforgery();
+    await settle();
+
+    http.expectOne(AdminProductApi.mediaImagesUrl).flush({
+      publicId: '0000f00d-0000-4000-8000-000000000009',
+      mediaType: 'Image',
+      url: '/media/new.webp',
+      posterUrl: null,
+      altText: 'A new banner',
+    });
+    await settle();
+
+    expect(element.querySelector('[data-testid="banner-unavailable"]')).toBeNull();
+    expect(element.querySelector('[data-testid="banner-preview"]')).not.toBeNull();
   });
 });

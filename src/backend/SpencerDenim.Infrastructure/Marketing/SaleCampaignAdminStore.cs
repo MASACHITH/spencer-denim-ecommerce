@@ -91,6 +91,7 @@ internal sealed class SaleCampaignAdminReader(
                 campaign.StartsAtUtc,
                 campaign.EndsAtUtc,
                 campaign.IsActive,
+                campaign.BannerAssetId,
 
                 // The banner, only when the storefront would show it: ready, a public image, and not
                 // deleted (the global filter turns a deleted asset's navigation into null). Anything
@@ -190,6 +191,9 @@ internal sealed class SaleCampaignAdminReader(
                         MediaRenditions.Card),
                     string.IsNullOrWhiteSpace(banner.AltText) ? null : banner.AltText)
                 : null,
+
+            // The column still names a picture, but not one the shop can show any more.
+            row.Banner is null && row.BannerAssetId is not null,
             targets.Select(ToTargetDto).ToList().AsReadOnly(),
             CampaignWindow.StatusOf(row.IsActive, row.StartsAtUtc, row.EndsAtUtc, utcNow),
             row.RowVersion is { } bytes ? Convert.ToBase64String(bytes) : string.Empty);
@@ -236,6 +240,7 @@ internal sealed class SaleCampaignAdminReader(
         DateTime StartsAtUtc,
         DateTime EndsAtUtc,
         bool IsActive,
+        int? BannerAssetId,
         BannerRow? Banner,
         byte[]? RowVersion);
 
@@ -386,15 +391,9 @@ internal sealed class SaleCampaignAdminStore(
 
         try
         {
-            if (campaign.Id != 0)
-            {
-                await SyncBannerUsageAsync(campaign, cancellationToken);
-                await dbContext.SaveChangesAsync(cancellationToken);
-                return SaleCampaignSaveOutcome.Saved;
-            }
-
-            await InsertAsync(campaign, cancellationToken);
-            return SaleCampaignSaveOutcome.Saved;
+            return campaign.Id != 0
+                ? await UpdateAsync(campaign, cancellationToken)
+                : await InsertAsync(campaign, cancellationToken);
         }
         catch (DbUpdateConcurrencyException)
         {
@@ -404,7 +403,82 @@ internal sealed class SaleCampaignAdminStore(
         }
     }
 
-    private async Task InsertAsync(SaleCampaign campaign, CancellationToken cancellationToken)
+    /// <summary>
+    /// An edit or a removal: the banner check under the asset lock, then one <c>SaveChanges</c>, in one
+    /// transaction.
+    /// </summary>
+    /// <remarks>
+    /// The usage rows are enlisted <i>before</i> the execution strategy, because a retried attempt that
+    /// enlisted them again would add a second, duplicate row. Changes are accepted only after the commit,
+    /// so a retried attempt still has every change to write.
+    /// </remarks>
+    private async Task<SaleCampaignSaveOutcome> UpdateAsync(SaleCampaign campaign, CancellationToken cancellationToken)
+    {
+        await SyncBannerUsageAsync(campaign, cancellationToken);
+
+        var strategy = dbContext.Database.CreateExecutionStrategy();
+
+        var outcome = await strategy.ExecuteAsync(
+            async token =>
+            {
+                await using var transaction = await dbContext.Database.BeginTransactionAsync(token);
+
+                if (!await BannerStillUsableAsync(campaign, token))
+                {
+                    await transaction.RollbackAsync(token);
+                    return SaleCampaignSaveOutcome.BannerUnavailable;
+                }
+
+                await dbContext.SaveChangesAsync(acceptAllChangesOnSuccess: false, token);
+                await transaction.CommitAsync(token);
+
+                return SaleCampaignSaveOutcome.Saved;
+            },
+            cancellationToken);
+
+        if (outcome == SaleCampaignSaveOutcome.Saved)
+        {
+            dbContext.ChangeTracker.AcceptAllChanges();
+        }
+
+        return outcome;
+    }
+
+    /// <summary>
+    /// <b>The banner is re-checked under an update lock on its <c>media.MediaAssets</c> row</b>, inside the
+    /// save's transaction, and <c>MediaService.DeleteAsync</c> takes the same lock before its own checks.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The handler's earlier check (<see cref="FindBannerAsync"/>) is an RCSI read, so a library delete
+    /// could commit between it and this save, and the campaign would then commit a usage row for a deleted
+    /// picture. With both paths locking the asset row first, exactly one of them wins. If the save goes
+    /// first, the delete waits, then finds the usage row and refuses with 409. If the delete goes first,
+    /// this read waits, then sees the asset deleted and the save is refused.
+    /// </para>
+    /// <para>
+    /// <c>READCOMMITTEDLOCK</c> with <c>UPDLOCK</c>, so the read takes the lock and waits for the delete's
+    /// commit rather than reading the last committed version (doc 08 §5.2's RCSI rule). Lock order is
+    /// "the asset row first" in both paths, and neither path takes a second lock the other already holds, so
+    /// they cannot deadlock (doc 08 §5.3). A removed campaign, or one with no banner, locks nothing.
+    /// </para>
+    /// </remarks>
+    private async Task<bool> BannerStillUsableAsync(SaleCampaign campaign, CancellationToken cancellationToken)
+    {
+        if (campaign.IsDeleted || campaign.BannerAssetId is not { } assetId)
+        {
+            return true;
+        }
+
+        var usable = await dbContext.Database
+            .SqlQuery<int>(
+                $"SELECT CASE WHEN a.IsDeleted = 0 AND a.Status = 1 AND a.MediaType = 1 AND a.Visibility = 1 THEN 1 ELSE 0 END AS Value FROM media.MediaAssets a WITH (UPDLOCK, READCOMMITTEDLOCK, ROWLOCK) WHERE a.Id = {assetId}")
+            .ToListAsync(cancellationToken);
+
+        return usable.Count == 1 && usable[0] == 1;
+    }
+
+    private async Task<SaleCampaignSaveOutcome> InsertAsync(SaleCampaign campaign, CancellationToken cancellationToken)
     {
         // What this unit of work is about to insert: the campaign, its targets and the audit row the
         // handler enlisted. Captured once, so a retried attempt can put exactly these back.
@@ -417,7 +491,7 @@ internal sealed class SaleCampaignAdminStore(
         var strategy = dbContext.Database.CreateExecutionStrategy();
         var attempt = 0;
 
-        await strategy.ExecuteAsync(
+        return await strategy.ExecuteAsync(
             async token =>
             {
                 if (attempt++ > 0)
@@ -437,11 +511,20 @@ internal sealed class SaleCampaignAdminStore(
 
                 await using var transaction = await dbContext.Database.BeginTransactionAsync(token);
 
+                // First, before anything is written: see BannerStillUsableAsync.
+                if (!await BannerStillUsableAsync(campaign, token))
+                {
+                    await transaction.RollbackAsync(token);
+                    return SaleCampaignSaveOutcome.BannerUnavailable;
+                }
+
                 await dbContext.SaveChangesAsync(token);
                 await SyncBannerUsageAsync(campaign, token);
                 await dbContext.SaveChangesAsync(token);
 
                 await transaction.CommitAsync(token);
+
+                return SaleCampaignSaveOutcome.Saved;
             },
             cancellationToken);
     }

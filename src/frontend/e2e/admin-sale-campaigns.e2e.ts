@@ -648,10 +648,8 @@ test.describe('the product picker at its limits (#191 tester)', () => {
   const LONG_NAME = `Ultra${'Longunbrokenproductname'.repeat(8)}Shirt`;
 
   test('a very long product name never makes the page scroll sideways, in the list or as a chip', async ({ page }) => {
-    // KNOWN DEFECT (#191 tester): the list option and the chip wrap, but the form's live region
-    // (`campaign-said`, "<name> added. 1 chosen.") has no `overflow-wrap`, so a name with no space to break
-    // at widens the whole page (665 px at 320 for a 74-character name). Remove this line with the fix.
-    test.fail(true, 'campaign-said does not wrap a long unbroken product name');
+    // Found by the #191 tester: the form's live region (`campaign-said`, "<name> added. 1 chosen.") had no
+    // `overflow-wrap`, so a name with no space to break at widened the page (665 px at 320). Fixed.
     await open(page);
 
     // The admin app renders in the browser, so the product list can be rewritten on its way in.

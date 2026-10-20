@@ -395,6 +395,7 @@ interface DraftTarget {
 
         <sda-campaign-banner-picker
           [banner]="banner()"
+          [unavailable]="bannerGone()"
           (bannerChange)="chooseBanner($event)"
           (said)="announce($event)"
         />
@@ -460,6 +461,8 @@ interface DraftTarget {
               <dd [attr.data-testid]="'banner-' + campaign.id">
                 @if (campaign.banner; as chosen) {
                   {{ chosen.altText ?? 'A picture with no description' }}
+                } @else if (campaign.bannerUnavailable) {
+                  No longer available in the media library
                 } @else {
                   None
                 }
@@ -520,6 +523,11 @@ interface DraftTarget {
       font-size: var(--text-data);
       font-weight: var(--weight-semibold);
       margin-block: var(--space-2) var(--space-1);
+    }
+    /* A product name is staff text with no guaranteed break in it; the status line must wrap it rather
+       than widen the page (#191 tester). */
+    [data-testid='campaign-said'] {
+      overflow-wrap: anywhere;
     }
     .campaign-row {
       display: grid;
@@ -644,6 +652,12 @@ export class SaleCampaignsPage {
   /** The banner the form will save, or null for none. */
   protected readonly banner = signal<AdminSaleCampaignBanner | null>(null);
 
+  /**
+   * The campaign being edited names a banner the library can no longer show. Said beside the picker, so
+   * that clearing it on save is something the staff member was told about rather than a silent change.
+   */
+  protected readonly bannerGone = signal(false);
+
   protected readonly targetType = signal<SaleCampaignTargetType>('Category');
   protected readonly targetDepartmentId = signal('');
   protected readonly targetCategoryId = signal('');
@@ -756,6 +770,7 @@ export class SaleCampaignsPage {
 
   protected chooseBanner(banner: AdminSaleCampaignBanner | null): void {
     this.banner.set(banner);
+    this.bannerGone.set(false);
 
     this.fieldErrors.set(
       Object.fromEntries(
@@ -882,6 +897,7 @@ export class SaleCampaignsPage {
     // campaign's chips would put those products on the next sale a staff member created.
     this.targets.set([]);
     this.banner.set(null);
+    this.bannerGone.set(false);
     this.targetType.set('Category');
     this.targetDepartmentId.set('');
     this.targetCategoryId.set('');
@@ -933,6 +949,7 @@ export class SaleCampaignsPage {
     );
 
     this.banner.set(campaign.banner);
+    this.bannerGone.set(campaign.banner === null && campaign.bannerUnavailable);
     this.fieldErrors.set({});
     this.announce(`Editing ${campaign.name}.`);
   }

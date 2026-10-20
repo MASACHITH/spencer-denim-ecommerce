@@ -1551,6 +1551,7 @@ OUTPUT inserted.OnHand, inserted.Reserved
 - **Paths that start from an existing order** claim the **order row first** (the conditional status/StockState UPDATE), then the stock rows, then `PromoCodes`. Placement has no existing order row: it takes stock rows (sorted), then the promo row, then inserts.
 - **Error 1205 (deadlock victim):** the whole unit of work is retried by the EF execution strategy, up to 3 attempts. EF Core's SQL Server retry strategy **already classifies 1205 as transient**, so no `errorNumbersToAdd` is needed (N12). Retries are safe because every step is conditional.
 - **Capture apply (N6)** follows the same order: order row, payment row, stock rows, promo.
+- **A media asset row (#191).** A sale campaign's save that puts a banner on and the media library's delete both take `WITH (UPDLOCK, READCOMMITTEDLOCK, ROWLOCK)` on the asset's `media.MediaAssets` row **first**, inside their transaction, before any other read or write. Exactly one wins: a save that got the row first commits its `MediaUsages` row and the delete then refuses (409); a delete that got it first commits the soft delete and the save then finds the asset deleted and writes nothing. Neither path takes another lock the other holds, so they cannot deadlock.
 
 ### 5.4 Place order
 1. **Before the transaction:** price the cart (§6) and allocate the order number (short separate transaction).

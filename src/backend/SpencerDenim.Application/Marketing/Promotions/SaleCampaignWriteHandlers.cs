@@ -140,6 +140,11 @@ public sealed class SaleCampaignWriteHandlers(
     /// </remarks>
     public const int MaxTargets = 200;
 
+    /// <summary>Why a banner was refused: it is not, or is no longer, a ready public image.</summary>
+    private const string BannerUnavailableMessage =
+        "That banner is not a ready public image in the media library. Upload a picture, or leave the "
+        + "banner empty.";
+
     public async Task<SaleCampaignWriteResult> HandleAsync(
         CreateSaleCampaignCommand command,
         CancellationToken cancellationToken)
@@ -300,6 +305,13 @@ public sealed class SaleCampaignWriteHandlers(
         if (outcome == SaleCampaignSaveOutcome.ConcurrencyConflict)
         {
             return StaleRowVersion();
+        }
+
+        if (outcome == SaleCampaignSaveOutcome.BannerUnavailable)
+        {
+            // Deleted from the media library after CheckReferencesAsync looked, and caught by the save's
+            // locked re-check: the same sentence the earlier check would have given.
+            return new SaleCampaignWriteResult.Invalid("bannerPublicId", BannerUnavailableMessage);
         }
 
         var now = clock.UtcNow.UtcDateTime;
@@ -673,10 +685,7 @@ public sealed class SaleCampaignWriteHandlers(
             }
             else
             {
-                errors.Add(new ValidationError(
-                    "bannerPublicId",
-                    "That banner is not a ready public image in the media library. Upload a picture, or "
-                    + "leave the banner empty."));
+                errors.Add(new ValidationError("bannerPublicId", BannerUnavailableMessage));
             }
         }
 
@@ -802,6 +811,7 @@ public sealed class SaleCampaignWriteHandlers(
             // Null on a delete's response: the row is gone from the screen, and resolving the asset's URL
             // is the reader's job.
             null,
+            false,
 
             // Empty, and deliberately not the entity's own targets: resolving them to the names the DTO
             // carries needs the catalogue, which is the reader's job, and a removed campaign's targets are

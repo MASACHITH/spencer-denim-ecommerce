@@ -307,6 +307,11 @@ export class CampaignProductPicker {
       return;
     }
 
+    // The list on screen belongs to the previous term, so it goes while the new search waits: an Enter
+    // pressed during the pause must not add a product from a list the staff member has typed past.
+    this.results.set([]);
+    this.totalCount.set(0);
+    this.close();
     this.status.set('Searching…');
     this.requests.next({ term: value.trim(), page: 1, typed: true });
   }

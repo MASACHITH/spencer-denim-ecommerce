@@ -804,6 +804,10 @@ function buildCampaign(state, body, id) {
     // `AdminSaleCampaignBannerDto`: the publicId, a preview URL and the description, never the internal
     // asset id (#191).
     banner: campaignBanner(state, body.bannerPublicId),
+
+    // `AdminSaleCampaignDto.BannerUnavailable`. Every banner this stub accepts is an uploaded image that
+    // stays one, so it is never true here; the screen's notice is proved in Vitest.
+    bannerUnavailable: false,
     targets: body.targets.map((target) => ({
       targetType: target.targetType,
       departmentId: target.departmentId ?? null,

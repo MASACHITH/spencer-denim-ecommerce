@@ -47,6 +47,11 @@ public sealed record AdminSaleCampaignTargetDto(
 /// show either. Named by its <c>publicId</c>, the way every other admin screen names an asset; the internal
 /// id never reaches a client (ADM-18).
 /// </param>
+/// <param name="BannerUnavailable">
+/// True when the campaign still names a banner that is no longer a ready public image (deleted, or a
+/// picture saved before #191 that is private or not an image). <see cref="Banner"/> is then null, and the
+/// form says so out loud, because saving the campaign will clear the old reference.
+/// </param>
 /// <param name="Status">
 /// Doc 11 P3's derived status — Scheduled, Live, Ended or Inactive. Not stored, so the list cannot
 /// disagree with what the shop actually charges.
@@ -65,6 +70,7 @@ public sealed record AdminSaleCampaignDto(
     DateTime EndsAt,
     bool IsActive,
     AdminSaleCampaignBannerDto? Banner,
+    bool BannerUnavailable,
     IReadOnlyList<AdminSaleCampaignTargetDto> Targets,
     PromoCodeStatus Status,
     string RowVersion);

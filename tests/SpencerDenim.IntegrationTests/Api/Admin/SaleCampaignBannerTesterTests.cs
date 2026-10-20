@@ -69,11 +69,17 @@ public sealed class SaleCampaignBannerTesterTests(SqlServerDatabaseFixture sqlSe
             var id = created.Body.GetProperty("campaign").GetProperty("id").GetInt32();
 
             Assert.Contains(banner.ToString(), await ShownUrlAsync(shopper) ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+            Assert.False((await AdminRowAsync(admin, id)).GetProperty("bannerUnavailable").GetBoolean());
 
             await ChangeAssetAsync(host, banner, change);
 
             Assert.DoesNotContain(banner.ToString(), await ShownUrlAsync(shopper) ?? string.Empty, StringComparison.OrdinalIgnoreCase);
-            Assert.Equal(JsonValueKind.Null, (await AdminRowAsync(admin, id)).GetProperty("banner").ValueKind);
+            var row = await AdminRowAsync(admin, id);
+            Assert.Equal(JsonValueKind.Null, row.GetProperty("banner").ValueKind);
+
+            // And the admin payload says the old banner has gone, so the form can say so before a save
+            // clears the reference (#191 second round).
+            Assert.True(row.GetProperty("bannerUnavailable").GetBoolean());
         }
         finally
         {
@@ -395,14 +401,12 @@ public sealed class SaleCampaignBannerTesterTests(SqlServerDatabaseFixture sqlSe
     }
 
     /// <summary>
-    /// <b>KNOWN DEFECT (#191 tester).</b> A campaign saved before #191 with a banner has no
-    /// <c>MediaUsages</c> row (no migration backfills one), and <c>MediaService.DeleteAsync</c> guards a
-    /// banner only through that row — unlike the poster and the payment slip, which it checks by their real
-    /// foreign key "so it also protects the ones attached before this check existed". So the library
-    /// deletes the picture of a live campaign. Nothing leaks (the readers filter deleted assets), but the
-    /// Sale page silently loses its banner. Un-skip with the fix.
+    /// <b>Found as a defect by the #191 tester, fixed in the developer's second round.</b> A campaign saved
+    /// before #191 with a banner has no <c>MediaUsages</c> row (no migration backfills one), and
+    /// <c>MediaService.DeleteAsync</c> used to guard a banner only through that row. It now also checks
+    /// <c>SaleCampaigns.BannerAssetId</c> directly, as it does the poster and the payment slip.
     /// </summary>
-    [Fact(Skip = "Known defect #191: a pre-#191 banner has no usage row and can be deleted while live")]
+    [Fact]
     public async Task A_legacy_banner_without_a_usage_row_still_cannot_be_deleted_while_its_campaign_uses_it()
     {
         sqlServer.SkipIfUnavailable();
@@ -428,6 +432,14 @@ public sealed class SaleCampaignBannerTesterTests(SqlServerDatabaseFixture sqlSe
 
             using var deleted = await admin.DeleteAsync(new Uri($"/api/admin/media/{banner}", UriKind.Relative), Token);
             Assert.Equal(HttpStatusCode.Conflict, deleted.StatusCode);
+
+            // Named the way every other refusal names its holder: the campaign, as a Banner.
+            var problem = await deleted.Content.ReadFromJsonAsync<JsonElement>(Token);
+            var usage = problem.GetProperty("usages").EnumerateArray().Single();
+            Assert.Equal("SaleCampaign", usage.GetProperty("ownerType").GetString());
+            Assert.Equal("Banner", usage.GetProperty("usageRole").GetString());
+            Assert.Equal("Tester legacy public", usage.GetProperty("ownerLabel").GetString());
+            Assert.False(await AssetDeletedAsync(host, banner));
         }
         finally
         {

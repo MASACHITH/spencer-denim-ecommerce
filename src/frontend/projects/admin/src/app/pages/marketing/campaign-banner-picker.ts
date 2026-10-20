@@ -68,6 +68,11 @@ import { toCatalogFailure } from '../../core/catalog/admin-catalog-api';
             Remove the banner
           </button>
         </div>
+      } @else if (unavailable()) {
+        <p class="adm-state adm-state--warning" role="note" data-testid="banner-unavailable">
+          The banner previously chosen is no longer available in the media library, so saving this
+          campaign will remove it. Upload a picture below to keep a banner.
+        </p>
       } @else {
         <p class="adm-muted" data-testid="banner-empty">
           No banner. The Sale page shows its heading and the products only.
@@ -166,6 +171,9 @@ export class CampaignBannerPicker {
 
   /** The banner the form currently holds, or null. */
   readonly banner = input<AdminSaleCampaignBanner | null>(null);
+
+  /** The campaign being edited names a banner the library can no longer show (#191 second round). */
+  readonly unavailable = input(false);
 
   /** The staff member chose a picture, or removed it. */
   readonly bannerChange = output<AdminSaleCampaignBanner | null>();

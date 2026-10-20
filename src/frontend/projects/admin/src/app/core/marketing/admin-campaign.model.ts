@@ -88,6 +88,12 @@ export interface AdminSaleCampaign {
    * never reaches this screen.
    */
   readonly banner: AdminSaleCampaignBanner | null;
+  /**
+   * True when the campaign still names a banner that is no longer a ready public image in the media
+   * library. `banner` is then null, and saving the campaign clears the old reference, so the form says so
+   * first.
+   */
+  readonly bannerUnavailable: boolean;
   readonly targets: readonly AdminSaleCampaignTarget[];
   readonly status: SaleCampaignStatus;
   /** Base64 `rowversion`, round-tripped as an ETag so two staff members cannot overwrite each other. */

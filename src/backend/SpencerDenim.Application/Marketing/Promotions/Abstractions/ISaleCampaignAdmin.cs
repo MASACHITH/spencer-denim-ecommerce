@@ -121,4 +121,11 @@ public enum SaleCampaignSaveOutcome
 
     /// <summary>The row version did not match; nothing was written.</summary>
     ConcurrencyConflict = 1,
+
+    /// <summary>
+    /// The banner stopped being a ready public image between the handler's check and the save (it was
+    /// deleted from the media library in between); nothing was written. Decided under the asset row's
+    /// update lock, which the library's delete also takes, so the two cannot both succeed.
+    /// </summary>
+    BannerUnavailable = 2,
 }

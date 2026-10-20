@@ -507,6 +507,7 @@ public sealed class SaleCampaignWriteHandlerTests
                     campaign.EndsAtUtc,
                     campaign.IsActive,
                     null,
+                    false,
                     [],
                     PromoCodeStatus.Live,
                     "AAAAAAAAAAI="));

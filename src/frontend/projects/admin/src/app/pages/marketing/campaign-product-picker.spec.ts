@@ -346,4 +346,39 @@ describe('CampaignProductPicker (#191)', () => {
     expect(status()).toContain('could not be searched');
     expect(box().value).toBe('lin');
   });
+
+  /**
+   * **Enter during the pause adds nothing** (#191 tester observation). The list on screen belongs to the
+   * previous term, so it is taken away the moment the term changes, and comes back only with the new
+   * term's own results.
+   */
+  it('takes the old list away while a new search waits, so Enter cannot add from it', async () => {
+    await searchFor('lin', [product(1), product(2)]);
+    expect(box().getAttribute('aria-expanded')).toBe('true');
+
+    typeTerm('linx');
+    await settle();
+
+    expect(box().getAttribute('aria-expanded')).toBe('false');
+    expect(box().hasAttribute('aria-activedescendant')).toBe(false);
+    expect(options().length).toBe(0);
+    expect(status()).toBe('Searching…');
+
+    const enter = press('Enter');
+    press('ArrowDown');
+    await settle();
+
+    expect(enter.defaultPrevented).toBe(true);
+    expect(picked).toEqual([]);
+    expect(box().getAttribute('aria-expanded')).toBe('false');
+
+    await pause(PRODUCT_PICKER_DEBOUNCE_MS + 50);
+    answer(pending(), [product(9)]);
+    await settle();
+
+    press('Enter');
+    await settle();
+
+    expect(picked.map((item) => item.id)).toEqual([9]);
+  });
 });
