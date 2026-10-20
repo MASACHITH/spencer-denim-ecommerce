@@ -120,7 +120,9 @@ Never set `ASPNETCORE_FORWARDEDHEADERS_ENABLED`: that framework switch trusts ev
 Secrets live only in the two env files on the server (root-owned, mode 600), never in git or an image.
 `scripts/check-env.sh <env>` validates both without printing a secret: it refuses `CHANGE_ME` placeholders,
 quoted values, `$` (compose would interpolate it), the same login for API and migrator, and passwords containing
-`' " ] \ ; $` (they are embedded in T-SQL and connection strings).
+`' " ] \ ; $` (they are embedded in T-SQL and connection strings). With `SD_SEED_ADMIN_ENABLED=true` it also refuses
+a `SD_SEED_ADMIN_PASSWORD` shorter than 10 characters, because the API would create no first Super Admin with it
+(issue #200).
 
 | File | Variable | Meaning |
 |---|---|---|
@@ -133,7 +135,7 @@ quoted values, `$` (compose would interpolate it), the same login for API and mi
 | | `SD_APP_DB_CONNECTION` | API login `sd_<env>_app` (read/write). `Server=sqlserver,1433;…;TrustServerCertificate=True` |
 | | `SD_MIGRATOR_DB_CONNECTION` | Migrator login `sd_<env>_migrator` (db_owner). The API never sees it |
 | | `SD_DB_COMPATIBILITY_LEVEL` | `170` (SQL Server 2025) |
-| | `SD_SEED_ADMIN_ENABLED/EMAIL/PASSWORD` | First Super Admin, first install only; set back to `false` afterwards |
+| | `SD_SEED_ADMIN_ENABLED/EMAIL/PASSWORD` | First Super Admin, first install only; set back to `false` afterwards. The password is held to the same rule as every account: **at least 10 characters** with an upper-case letter, a lower-case letter, a number and a symbol (not `$`, and not starting with a quote: compose reads the file literally). A shorter one creates no account, so `check-env.sh` refuses it while the seed is on |
 | | `SD_IMAGE_REPOSITORY` | `spencer-denim` (image name prefix) |
 | `config/db.env` | `SD_ENV` | `production` / `staging` |
 | | `SD_MSSQL_SA_PASSWORD` | sa: healthcheck and provisioning only |

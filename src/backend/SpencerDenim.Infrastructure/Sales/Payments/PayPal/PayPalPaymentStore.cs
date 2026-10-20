@@ -282,6 +282,14 @@ internal sealed class PayPalPaymentStore(AppDbContext dbContext, IAdminAlertWrit
                 // that cuts the hold, behind the order row's lock, so two racing DENIED events cannot both
                 // see Pending — and the second one's payment update then finds nothing to move and rolls the
                 // whole thing back.
+                //
+                // **The `EXISTS` reads `sales.Payments` WITH (READCOMMITTEDLOCK) (issue #185).** Every database
+                // runs READ_COMMITTED_SNAPSHOT since #163, where a plain read takes the last committed version
+                // of a row instead of waiting for the transaction that holds it. Nothing backs this decision up:
+                // an unhinted read of a payment whose move to Pending has not committed says "not Pending", and
+                // the long hold is left in place after a decline although doc 08 §4.2 R2 cuts it. The hint makes
+                // the read wait for that writer, in whatever order the plan reads the two tables.
+                // `PaymentGuardLockTests` fails without it.
                 var cutBack = nowUtc.AddMinutes(expiryMinutes);
 
                 await dbContext.Database.ExecuteSqlInterpolatedAsync(
@@ -292,7 +300,7 @@ internal sealed class PayPalPaymentStore(AppDbContext dbContext, IAdminAlertWrit
                                WHEN Status = {(byte)OrderStatus.PendingPayment}
                                 AND PaymentDueAtUtc > {cutBack}
                                 AND EXISTS (
-                                      SELECT 1 FROM sales.Payments pending
+                                      SELECT 1 FROM sales.Payments pending WITH (READCOMMITTEDLOCK)
                                        WHERE pending.Id = {paymentId}
                                          AND pending.Status = {(byte)PaymentStatus.Pending})
                                THEN {cutBack}

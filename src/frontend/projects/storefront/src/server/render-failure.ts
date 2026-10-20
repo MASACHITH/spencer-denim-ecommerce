@@ -1,4 +1,6 @@
 import { effectivePath } from './canonical-path';
+import { logPath } from './log-path';
+import { describeError } from './log-redaction';
 import { RequestHeaders } from './origins';
 import { robotsTxt } from './robots-txt';
 
@@ -20,6 +22,13 @@ import { robotsTxt } from './robots-txt';
  *    a constant plus this request's own origin — so there is no reading of a failure here in which 5xx
  *    is the honest answer, and 5xx on that file tells a crawler the **entire site** is disallowed. A
  *    404 would at least mean "crawl freely"; the file itself is better than either.
+ *
+ * 3. **The log line names the path, never the address (#201).** `originalUrl` carries the query string, and a
+ *    failed render of `/account/reset-password?token=…` or `/account/confirm-email?token=…` used to write that
+ *    live credential into the container's log, which Docker keeps. The line now prints {@link logPath} of the
+ *    request (the same redaction the API's and the gateway's logs follow: a slug path, `/order/*`, no query), and
+ *    the error that goes with it is {@link describeError}, not the raw object, which Node prints with its
+ *    `input` property in full.
  *
  * The types are structural rather than Express's own, so a test needs no HTTP server and no fakes
  * beyond an object literal. Express's `Request` and `Response` satisfy them.
@@ -58,8 +67,8 @@ export function answerRenderFailure(
   response: FailingResponse,
   log: (message: string, error: unknown) => void = (message, cause) => console.error(message, cause),
 ): FailureOutcome {
-  // The whole error, including the stack, but only here.
-  log(`${request.method} ${request.originalUrl} failed`, error);
+  // The whole error, including the stack, but only here. The path, not the address: see the file comment (3).
+  log(`${request.method} ${logPath(request.originalUrl)} failed`, describeError(error));
 
   if (response.headersSent) {
     // Something already started writing. Anything more would corrupt the body.

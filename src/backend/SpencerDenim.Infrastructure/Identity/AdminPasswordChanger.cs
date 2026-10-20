@@ -85,6 +85,10 @@ public sealed class AdminPasswordChanger(UserManager<AppUser> userManager, Staff
             return errors;
         }
 
+        // The password rule itself: Identity's validators, which IdentityRegistration configures from
+        // PasswordPolicy (issue #200) — the same minimum a customer's password has. Only the NEW password goes
+        // through them; the current one is merely verified above, so an account whose password predates the
+        // minimum keeps signing in and can still make this change.
         foreach (var validator in userManager.PasswordValidators)
         {
             var result = await validator.ValidateAsync(userManager, user, newPassword);
