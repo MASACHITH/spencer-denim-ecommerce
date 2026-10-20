@@ -160,7 +160,73 @@ internal static partial class AdminSettingsEndpoints
             .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status500InternalServerError);
 
+        api.MapPut("/reviews", UpdateReviewsAsync)
+            .RequirePermission(Permissions.Settings.Edit)
+            .WithName("AdminUpdateReviewSettings")
+            .WithSummary("Whether customers' reviews wait for approval before they appear (PDP-08, doc 11 P12).")
+            .WithDescription(
+                "Body: { requireApproval, rowVersion }. requireApproval is true or false; left out, nothing is "
+                + "written; null is refused. On (the default) a new or edited review waits on the Reviews screen; off, "
+                + "it appears at once. A review staff have hidden stays hidden either way. Audited; applies to the "
+                + "next review written.")
+            .Accepts<UpdateReviewSettingsRequest>("application/json")
+            .Produces(StatusCodes.Status204NoContent)
+            .ProducesValidationProblem()
+            .Produces(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status500InternalServerError);
+
         return endpoints;
+    }
+
+    /// <summary>The review approval switch (issue #189).</summary>
+    private static async Task<IResult> UpdateReviewsAsync(
+        HttpContext httpContext,
+        IAntiforgery antiforgery,
+        ICommandHandler<UpdateReviewSettingsCommand, SettingsWriteResult> handler,
+        CancellationToken cancellationToken)
+    {
+        if (await AdminWriteRequest.ValidateAntiforgeryAsync(httpContext, antiforgery) is { } forged)
+        {
+            return forged;
+        }
+
+        var (body, problem) = await AdminWriteRequest.ReadJsonAsync<JsonObject>(
+            httpContext.Request, cancellationToken);
+        if (problem is not null)
+        {
+            return problem;
+        }
+
+        bool? requireApproval = null;
+        const string field = UpdateReviewSettingsCommandHandler.RequireApprovalField;
+
+        if (body!.ContainsKey(field))
+        {
+            if (AdminJsonBody.ReadBool(body, field, out requireApproval) is { } badFlag)
+            {
+                return badFlag;
+            }
+
+            if (requireApproval is null)
+            {
+                return AdminJsonBody.Problem([new ValidationError(field, "Choose on or off; this cannot be left empty.")]);
+            }
+        }
+
+        if (ReadString(body, "rowVersion", out var rowVersion, out _) is { } badVersion)
+        {
+            return badVersion;
+        }
+
+        var result = await handler.HandleAsync(
+            new UpdateReviewSettingsCommand(
+                requireApproval,
+                AdminWriteRequest.RowVersion(httpContext.Request, rowVersion),
+                AdminWriteRequest.Actor(httpContext)),
+            cancellationToken);
+
+        return ToHttp(result);
     }
 
     /// <summary>The Traffic form's two retention periods (issue #193).</summary>
