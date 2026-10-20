@@ -93,6 +93,11 @@ server {
     proxy_read_timeout    60s;
     proxy_send_timeout    60s;
 
+    # Never spill a response to a temporary file on this host's disk (the gateway sets the same, issue #179). A
+    # spilled response that cannot be written (a full disk) is logged at crit WITH the client address, the request
+    # line, its query string and the Referer, which is exactly what error_log crit above is meant to avoid.
+    proxy_max_temp_file_size 0;
+
     # A product video (MediaLimits.MaxVideoBytes, 50 MB) travels with its poster (MaxImageBytes, 15 MB) in one
     # request: 66 MiB plus multipart overhead, staff only. proxy_request_buffering off streams it through
     # rather than landing it on this host's disk first, which is what makes "streamed, not buffered" true end

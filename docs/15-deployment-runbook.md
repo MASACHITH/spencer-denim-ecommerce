@@ -440,7 +440,14 @@ request: "GET /order/<token>?x=y HTTP/1.1", upstream: "http://10.251.0.130:4000/
 and no `log_format` redacts it. Those lines are written at `error` (upstream refused, timed out, not resolved;
 request body too large) and `warn` (a body or response spilled to a temporary file) — **so they appear during every
 deploy**, while the gateway or the storefront restarts. The mitigation is the level: the gateway's `error_log` is
-`crit` and so are the host sites', which never carry a request in normal operation. The access log still records
+`crit` and so are the host sites'. At that level the ordinary failures above are not written at all, but **`crit` is not a
+guarantee that no request is ever written**: when nginx cannot write a temporary file (a full disk, a directory it may
+not write) it logs `[crit] pwrite() "…" failed (28: No space left on device), client: <IP>, request: "POST …?token=…",
+referrer: "…"` — the address, the whole request line and the Referer (the #179 tester reproduced it on both tiers). Two
+settings keep that rare: `proxy_max_temp_file_size 0` on the gateway **and on both host sites**, so a response is never
+spilled to disk, and the gateway's `/tmp` being a tmpfs sized for request bodies. What remains is a request body larger
+than `client_body_buffer_size` arriving while a disk is full or unwritable. Such a line means something is badly wrong;
+**treat the host error files and the gateway's container log as sensitive** (next section). The access log still records
 every failure (status 502/504, the upstream tried, the time taken) without the secret. What is lost is nginx's own
 explanation of a failure (refused, timed out, not resolved). The rate limit's refusals are logged at `info`, so
 they stay out of the error log even if its level is lowered.
@@ -449,15 +456,17 @@ they stay out of the error log even if its level is lowered.
 data if you can. Otherwise change `crit` to `error` in `deploy/gateway/nginx.conf` (and, for the TLS hop, in the
 site file, then `nginx -t && systemctl reload nginx`), redeploy, reproduce once, **change it back**, redeploy, and
 then delete what it wrote: `$C up -d --force-recreate web` removes the gateway's container log; for the host,
-`truncate -s 0 /var/log/nginx/spencer-denim/<env>.error.log`. Treat the window as one in which the logs hold
-credentials.
+`sudo truncate -s 0 /var/log/nginx/spencer-denim/<env>.error.log` **and delete the rotated copies** that were made
+while the level was lowered (`sudo rm -f /var/log/nginx/spencer-denim/<env>.error.log.*`: a daily rotation leaves
+`.1`, `.2.gz`, `.3.gz`, and each keeps what it held). Treat the window as one in which the logs hold credentials.
 
 ### Retention, and who can read it
 
 The gateway log holds no personal data and no credential, so its size cap (50 MB; a deploy resets it) is a
 sensible limit; it is not a time limit. Docker's container logs (`/var/lib/docker/containers/…`) are readable by root and
-the `docker` group only: keep that group to the people who deploy. The host error files are `0640 www-data:adm` and
-rotate daily for 3 days. Nothing here needs months of history. **If an address is ever wanted for abuse
+the `docker` group only: keep that group to the people who deploy. The host error files are created by nginx as `root:root 0644`
+(logrotate's `create 0640 www-data adm` applies only to the files it recreates after a rotation); what keeps other users out
+is the directory, `0750 www-data:adm` (§5 step 5). They rotate daily for 3 days. Nothing here needs months of history. **If an address is ever wanted for abuse
 investigation** (a flood from one source, a fraud pattern), decide it with the owner as an exception, truncated
 (IPv4 `/24`, IPv6 `/48`, by a `map` on `$remote_addr`), in its own field, and with a retention of days. It is not
 in the log by default.
@@ -492,8 +501,9 @@ second, wrote 138,000 rows (each a visit in the owner's figures) in 20 seconds a
   *path*, matched case-insensitively with an optional trailing slash, because the API's routing ignores both.
 - **The storefront's own (server-side) recording is never throttled**: it posts to `http://api:8080` directly and
   does not pass through the gateway.
-- **To see that it trips**, one throttled request in 256 is logged: `$C logs web | grep '"path":"/api/traffic/page-views"' | grep '"upstream":""'`
-  (a normal hit has an upstream address). A flood would otherwise write a line per request and push every other
+- **To see that it trips**, one throttled request in 256 is logged: `$C logs web | grep '"method":"POST"' | grep '"upstream":""' | grep -E '"path":"(/api/traffic/page-views|/\*)"'`
+  (a normal hit has an upstream address). A request spelled in capitals, or with `%2D` or `//`, is logged as `/*`, which is why
+  the last grep accepts both. A flood would otherwise write a line per request and push every other
   line out of the 50 MB.
 - **It does not stop** a determined attacker: an IPv6 visitor can send from any address in a /64, and many
   addresses each get their own bucket. It stops a runaway client or a script on one machine. The API's 10,000-row

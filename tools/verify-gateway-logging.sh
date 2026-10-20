@@ -13,7 +13,8 @@
 #   tools/verify-gateway-logging.sh --deploy-dir /tmp/sd-old/deploy
 #
 # What it builds, on a private network (default 10.251.179.0/24, prefix sd179: docs/14 "Scratch scripts and ports
-# are shared", so override both if another session holds them: SD_VERIFY_PREFIX, SD_VERIFY_NET):
+# are shared", so override both if another session holds them: SD_VERIFY_PREFIX, and SD_VERIFY_NET as the first
+# three octets only, e.g. SD_VERIFY_NET=10.251.189 (the script appends .0/24 and the host numbers itself):
 #
 #   client  (.50)  the "visitor": curl, with an address that must never reach a log
 #   host    (.20)  nginx 1.24, the production and staging site files from deploy/host-nginx with their two
@@ -191,6 +192,8 @@ say "Configuration is valid (nginx -t)"
 # ---------------------------------------------------------------------------------------------------------------
 if out="$(docker exec "$P-gw" nginx -t 2>&1)"; then ok "gateway: nginx -t"; else bad "gateway: nginx -t"; echo "$out" | sed 's/^/        /'; fi
 if out="$(docker exec "$P-host" nginx -t 2>&1)"; then ok "host nginx, production and staging site files: nginx -t"; else bad "host nginx: nginx -t"; echo "$out" | sed 's/^/        /'; fi
+# No response may be spilled to a temporary file on the host tier: a spill that cannot be written is logged at crit WITH the request.
+if [ "$(docker exec "$P-host" nginx -T 2>/dev/null | grep -c 'proxy_max_temp_file_size 0;')" -ge 2 ]; then ok "host nginx: both site files set proxy_max_temp_file_size 0 (no spilled response, no request in a crit line)"; else bad "host nginx: fewer than two proxy_max_temp_file_size 0 lines"; fi
 
 # ---------------------------------------------------------------------------------------------------------------
 say "Requests that carry credentials, an address and a Referer"
@@ -287,6 +290,11 @@ cx -o /dev/null -A "$P-ref-1" -H "Referer: https://www.example.org/some/path?utm
 cx -o /dev/null -A "$P-ref-2" -H "Referer: http://$CLIENT_IP/x" "https://$PROD_HOST/"
 cx -o /dev/null -A "$P-ref-3" -H "Referer: https://user:pw@evil.example.org/x" "https://$PROD_HOST/"
 cx -o /dev/null -A "$P-ref-4" "https://$PROD_HOST/"
+cx -o /dev/null -A "$P-ref-5" -H "Referer: http://tok3n.user:pw@evil.example.org/" "https://$PROD_HOST/"   # dotted user name before ":"
+cx -o /dev/null -A "$P-ref-6" -H "Referer: https://a.b:80@c.example.org/" "https://$PROD_HOST/"                  # port-shaped userinfo
+cx -o /dev/null -A "$P-ref-7" -H "Referer: https://www.example.org:8443/x" "https://$PROD_HOST/"                 # a real port is fine
+cx -o /dev/null -A "$P-ref-8" -H "Referer: https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.org/x" "https://$PROD_HOST/"               # over 253 characters
+cx -o /dev/null -A "$P-longua-$(printf 'x%.0s' $(seq 1 600))" "https://$PROD_HOST/"                              # 600-character User-Agent
 
 # ---------------------------------------------------------------------------------------------------------------
 say "Page-view beacon rate limit"
@@ -418,10 +426,13 @@ for row in open(expected_tsv, encoding="utf-8"):
 report(failures == 0, f"the logged path is right for all {checked} table cases ({failures} wrong)")
 
 # 3. referer host
-want = {"1": "www.example.org", "2": "", "3": "", "4": ""}
+want = {"1": "www.example.org", "2": "", "3": "", "4": "", "5": "", "6": "", "7": "www.example.org", "8": ""}
 for suffix, host in want.items():
     got = [e.get("referer_host") for e in by_ua.get(sys.argv[3] + "-ref-" + suffix, [])]
     report(got == [host], f"Referer case {suffix} is logged as host {host!r} (got {got!r})")
+# 4. an unbounded client-supplied field is capped
+long_ua = [ua for ua in by_ua if ua.startswith(sys.argv[3] + "-longua-")]
+report(len(long_ua) == 1 and len(long_ua[0]) == 200, f"a 600-character User-Agent is logged at 200 characters (got {[len(u) for u in long_ua]})")
 sys.exit(1 if bad else 0)
 EOF
 python3 "$(win "$W/check.py")" "$(win "$W/gw.log")" "$(win "$W/expected.tsv")" "$P" > "$W/check.out" 2>&1; chk=$?
