@@ -11,7 +11,9 @@ using SpencerDenim.Domain.Catalog;
 using SpencerDenim.Domain.Content;
 using SpencerDenim.Domain.Identity;
 using SpencerDenim.Domain.Media;
+using SpencerDenim.Application.Content.Admin.Abstractions;
 using SpencerDenim.Infrastructure.Catalog;
+using SpencerDenim.Infrastructure.Content;
 using SpencerDenim.Infrastructure.Persistence;
 using SpencerDenim.IntegrationTests.Infrastructure;
 
@@ -127,6 +129,52 @@ public sealed class MegaMenuCardTesterTests(SqlServerDatabaseFixture sqlServer)
 
         var feed = await FeedAsync(deployment, DateTime.UtcNow);
         Assert.Equal(["Good"], feed.Single().PromoCards.Select(card => card.Title).ToList());
+    }
+
+    /// <summary>
+    /// The feed sends the card's own rendition (not the large one) with the card-to-large candidate list, and the
+    /// editor's "live now" honours the schedule, not only the switch.
+    /// </summary>
+    [Fact]
+    public async Task The_feed_sends_the_card_rendition_and_the_editor_knows_a_scheduled_card_is_not_live()
+    {
+        sqlServer.SkipIfUnavailable();
+        await using var deployment = await FreshDeployment.CreateAsync(sqlServer.ConnectionString, Token);
+        var now = new DateTime(2026, 11, 1, 12, 0, 0, DateTimeKind.Utc);
+        MediaAsset asset;
+
+        await using (var scope = deployment.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var picture = await AddImageAsync(db);
+            asset = await db.MediaAssets.AsNoTracking().SingleAsync(candidate => candidate.Id == picture, Token);
+            var department = await AddDepartmentAsync(db, "renditions", 1);
+
+            db.MegaMenuPromoCards.Add(Card(department, picture, "Now", sortOrder: 1));
+            db.MegaMenuPromoCards.Add(Card(department, picture, "Later", sortOrder: 0, startsAt: now.AddDays(1)));
+            await db.SaveChangesAsync(Token);
+        }
+
+        var media = new MediaRef(asset.StorageKey, asset.PublicId, asset.RenditionSetVersion, asset.Width);
+        var expected = MediaUrlBuilder.ToImageSources("/media", media, MediaRenditions.Card, MediaRenditions.Large);
+        var drawn = (await FeedAsync(deployment, now)).Single().PromoCards.Single();
+        Assert.Equal("Now", drawn.Title);
+        Assert.Equal(expected.Url, drawn.ImageUrl);
+        Assert.Equal(expected.SrcSet, drawn.ImageSrcSet);
+
+        await using (var scope = deployment.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            IMegaMenuCardAdminReader reader = new ContentAdminReaders(db, Options.Create(new CatalogOptions()));
+            var cards = (await reader.GetAsync(now, Token)).Departments.Single().Cards;
+
+            var later = cards.Single(card => card.Title == "Later");
+            Assert.False(later.IsLiveNow);
+            Assert.False(later.IsShownNow);
+            var current = cards.Single(card => card.Title == "Now");
+            Assert.True(current.IsLiveNow);
+            Assert.True(current.IsShownNow);
+        }
     }
 
     // ================================================================== concurrency, through the API
