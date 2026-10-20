@@ -487,7 +487,19 @@ public sealed class ReviewTesterAttackTests(SqlServerDatabaseFixture sqlServer) 
         await SetRequireApprovalAsync(false);
         var product = await ProductAsync();
         await using var factory = CreateHost();
-        var customer = await CustomerAsync(factory, "bidi", "Ni" + (char)0x202E + "mal" + (char)0x07, (char)0x2066 + "Perera");
+        // Registration now refuses these characters (#189 D1), so the names are written straight into the account,
+        // as a name saved before that rule existed would be. The display name must still come out clean.
+        var customer = await CustomerAsync(factory, "bidi");
+        using (var scope = SqlServer.CreateScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<AppDbContext>().Users
+                .Where(user => user.Id == customer.Id)
+                .ExecuteUpdateAsync(
+                    user => user
+                        .SetProperty(row => row.FirstName, "Ni" + (char)0x202E + "mal" + (char)0x07)
+                        .SetProperty(row => row.LastName, (char)0x2066 + "Perera"),
+                    Token);
+        }
 
         var (status, body) = await CreateReviewAsync(customer.Client, product, new { rating = 5 });
         Assert.Equal(HttpStatusCode.Created, status);
@@ -496,6 +508,7 @@ public sealed class ReviewTesterAttackTests(SqlServerDatabaseFixture sqlServer) 
         Assert.DoesNotContain(displayName, character =>
             char.IsControl(character) || (character >= 0x202A && character <= 0x202E) || (character >= 0x2066 && character <= 0x2069)
             || character == 0x200E || character == 0x200F || character == 0x061C);
+        Assert.Equal("Nimal P.", displayName);
     }
 
     /// <summary>

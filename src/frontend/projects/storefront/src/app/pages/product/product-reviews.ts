@@ -209,7 +209,7 @@ const EMPTY_DRAFT: ReviewDraft = { rating: null, title: '', body: '' };
                       <p class="rv__item-body" data-testid="review-text">{{ review.body }}</p>
                     }
                     <p class="rv__item-meta">
-                      <span>{{ review.displayName }}</span>
+                      <bdi class="rv__name" data-testid="review-name">{{ review.displayName }}</bdi>
                       @if (review.isVerifiedBuyer) {
                         <span class="rv__verified" data-testid="review-verified">Verified buyer</span>
                       }
@@ -271,6 +271,8 @@ const EMPTY_DRAFT: ReviewDraft = { rating: null, title: '', body: '' };
     .rv__item-body { margin: 0; white-space: pre-line; line-height: 1.6; }
     .rv__item-meta { display: flex; flex-wrap: wrap; gap: var(--space-0-5) var(--space-1); font-size: var(--text-small); }
     .rv__verified { padding: 0 var(--space-0-5); border: 1px solid currentColor; font-size: var(--text-label); letter-spacing: var(--tracking-label); text-transform: uppercase; }
+    /* A name is isolated from the badge and date beside it, so no character in it can reorder them (#189 D1). */
+    .rv__name { unicode-bidi: isolate; }
     .rv__muted { color: var(--color-text-muted); }
     .rv__more { justify-self: start; }
   `,

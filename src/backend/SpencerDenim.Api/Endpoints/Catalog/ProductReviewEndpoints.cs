@@ -7,6 +7,7 @@ using SpencerDenim.Application.Abstractions.Messaging;
 using SpencerDenim.Application.Abstractions.Results;
 using SpencerDenim.Application.Catalog.Products;
 using SpencerDenim.Application.Catalog.Reviews;
+using SpencerDenim.Domain.Catalog;
 using SpencerDenim.Infrastructure.Identity.Customers;
 
 namespace SpencerDenim.Api.Endpoints.Catalog;
@@ -76,7 +77,8 @@ internal static class ProductReviewEndpoints
                 + "One review per customer per product: a second answers 409 already_reviewed with the existing "
                 + "review, to be edited with PUT. Verified buyer is set when a Delivered order of this account "
                 + "contains the product. outcome is Pending (Reviews.RequireApproval on, the default) or "
-                + "Published. At most 10 writes an hour per customer (429 with Retry-After).")
+                + "Published. At most 10 writes an hour per customer (429 with Retry-After); a refused (400) body "
+                + "does not count.")
             .Produces<ReviewSubmissionDto>(StatusCodes.Status201Created)
             .ProducesValidationProblem()
             .ProducesProblem(StatusCodes.Status401Unauthorized)
@@ -192,18 +194,6 @@ internal static class ProductReviewEndpoints
             return TypedResults.Unauthorized();
         }
 
-        if (!throttle.TryAcquire(userId))
-        {
-            httpContext.Response.Headers.RetryAfter =
-                ((int)ReviewWriteThrottle.Window.TotalSeconds).ToString(CultureInfo.InvariantCulture);
-
-            return TypedResults.Problem(
-                title: "Too many reviews",
-                detail: "You have written or edited a lot of reviews in the last hour. Please try again later.",
-                statusCode: StatusCodes.Status429TooManyRequests,
-                extensions: new Dictionary<string, object?>(StringComparer.Ordinal) { ["code"] = "rate_limited" });
-        }
-
         var (body, problem) = await AdminWriteRequest.ReadJsonAsync<JsonObject>(httpContext.Request, cancellationToken);
 
         if (problem is not null)
@@ -219,6 +209,28 @@ internal static class ProductReviewEndpoints
         if (errors.Count > 0)
         {
             return ValidationProblem(errors);
+        }
+
+        // The use case validates again; this copy exists only so that the permit below is taken for a review that
+        // could be saved. A refused (400) body costs the customer nothing; anything that reaches the database —
+        // a save, a 409 already-reviewed, a 404 — spends a permit, because each of those is a transaction.
+        var (_, problems) = ReviewRules.Clean(rating, title, text);
+
+        if (problems.Count > 0)
+        {
+            return ValidationProblem(problems.Select(item => new ValidationError(item.Field, item.Message)).ToList());
+        }
+
+        if (!throttle.TryAcquire(userId))
+        {
+            httpContext.Response.Headers.RetryAfter =
+                ((int)ReviewWriteThrottle.Window.TotalSeconds).ToString(CultureInfo.InvariantCulture);
+
+            return TypedResults.Problem(
+                title: "Too many reviews",
+                detail: "You have written or edited a lot of reviews in the last hour. Please try again later.",
+                statusCode: StatusCodes.Status429TooManyRequests,
+                extensions: new Dictionary<string, object?>(StringComparer.Ordinal) { ["code"] = "rate_limited" });
         }
 
         var result = await write(userId, rating, title, text);

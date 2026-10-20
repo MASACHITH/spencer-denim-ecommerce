@@ -117,10 +117,9 @@ public sealed class ReviewRulesTests
     [InlineData("\u0000")]
     [InlineData("\u0007")]
     [InlineData("\u001B[31m")]
-    [InlineData("\u0085")]
-    [InlineData("‮")]
-    [InlineData("⁦")]
-    [InlineData("‏")]
+    [InlineData("\u202E")]
+    [InlineData("\u2066")]
+    [InlineData("\u200F")]
     public void Control_and_direction_override_characters_are_refused(string hidden)
     {
         var (_, bodyProblems) = ReviewRules.Clean(4, null, "Good" + hidden + "fit");
@@ -128,6 +127,36 @@ public sealed class ReviewRulesTests
 
         var (_, titleProblems) = ReviewRules.Clean(4, "Good" + hidden, null);
         Assert.Equal("title", Assert.Single(titleProblems).Field);
+    }
+
+    /// <summary>#189 D2: U+0085, U+2028 and U+2029 are line breaks, refused in a title and kept as \n in a body.</summary>
+    [Theory]
+    [InlineData(0x0085)]
+    [InlineData(0x2028)]
+    [InlineData(0x2029)]
+    public void Unicode_line_breaks_are_refused_in_a_title_and_kept_as_line_breaks_in_a_body(int code)
+    {
+        var separator = ((char)code).ToString();
+
+        var (_, titleProblems) = ReviewRules.Clean(4, "First" + separator + "second", null);
+        Assert.Equal("Write the title on one line.", Assert.Single(titleProblems).Message);
+
+        var (review, bodyProblems) = ReviewRules.Clean(4, null, "First" + separator + "second");
+        Assert.Empty(bodyProblems);
+        Assert.Equal("First\nsecond", review!.Body);
+    }
+
+    /// <summary>#189 D1: names saved before the account rules refused them never carry their hidden characters out.</summary>
+    [Fact]
+    public void The_display_name_drops_control_bidi_and_line_break_characters_from_the_profile()
+    {
+        var first = "Ni" + (char)0x202E + "mal" + (char)0x0007;
+        var last = (char)0x2066 + "Perera" + (char)0x2069;
+
+        Assert.Equal("Nimal P.", ReviewRules.DisplayNameFor(first, last));
+        Assert.Equal("Ann Marie", ReviewRules.DisplayNameFor("Ann" + (char)0x2028 + "Marie", null));
+        Assert.Equal("Customer", ReviewRules.DisplayNameFor(((char)0x202E).ToString() + (char)0x0007, null));
+        Assert.Equal("Nimal", ReviewRules.DisplayNameFor("Nimal", ((char)0xD800).ToString()));
     }
 
     [Fact]

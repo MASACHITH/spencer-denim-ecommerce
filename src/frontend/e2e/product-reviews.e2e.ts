@@ -157,7 +157,7 @@ test.describe('writing a review', () => {
     await page.locator('[data-testid="reviews-write"]').click();
     await page.locator('label[for="rv-rating-3"]').click();
     // A direction override the browser happily types and the server refuses.
-    await page.locator('[data-testid="review-body"]').fill('Nice ‮txet');
+    await page.locator('[data-testid="review-body"]').fill('Nice \u202Etxet');
     await page.locator('[data-testid="review-submit"]').click();
 
     await expect(page.locator('[data-testid="review-error-body"]')).toHaveText(/hidden control character/);

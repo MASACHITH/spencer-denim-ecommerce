@@ -70,6 +70,50 @@ public sealed class ReviewSubmissionEndpointTests(SqlServerDatabaseFixture sqlSe
         Assert.Equal(HttpStatusCode.BadRequest, (await GetJsonAsync(customer.Client, "/api/catalog/products/NOT%20A%20SLUG/reviews")).Status);
     }
 
+    /// <summary>
+    /// #189 D1, at the door: registration and the profile refuse a name carrying a control or bidi character, so a
+    /// new account can never give a review a public name that reorders the text beside it.
+    /// </summary>
+    [Fact]
+    public async Task Registration_and_the_profile_refuse_a_name_with_hidden_characters()
+    {
+        await ReadyAsync();
+        await using var factory = CreateHost();
+        using var client = CreateClient(factory);
+
+        using var register = await client.PostAsJsonAsync(
+            "/api/account/register",
+            new { firstName = "Ni" + (char)0x202E + "mal", lastName = "Perera", email = UniqueEmail("bidi-register"), password = GoodPassword, phone = (string?)null },
+            Token);
+        Assert.Equal(HttpStatusCode.BadRequest, register.StatusCode);
+        Assert.True((await register.Content.ReadFromJsonAsync<JsonElement>(Token)).GetProperty("errors").TryGetProperty("firstName", out _));
+
+        var customer = await CustomerAsync(factory, "bidi-profile");
+        using var profile = await customer.Client.PutAsJsonAsync(
+            "/api/account/profile",
+            new { firstName = "Nimal", lastName = (char)0x2066 + "Perera", phone = (string?)null, defaultDistrictId = (int?)null },
+            Token);
+        Assert.Equal(HttpStatusCode.BadRequest, profile.StatusCode);
+        Assert.True((await profile.Content.ReadFromJsonAsync<JsonElement>(Token)).GetProperty("errors").TryGetProperty("lastName", out _));
+    }
+
+    /// <summary>A 400 body does not spend the hourly budget; anything that reaches the database does.</summary>
+    [Fact]
+    public async Task A_refused_body_does_not_spend_the_hourly_budget()
+    {
+        await ReadyAsync();
+        var product = await ProductAsync();
+        await using var factory = CreateHost();
+        var customer = await CustomerAsync(factory);
+
+        for (var attempt = 0; attempt < 15; attempt++)
+        {
+            Assert.Equal(HttpStatusCode.BadRequest, (await CreateReviewAsync(customer.Client, product, new { rating = 9 })).Status);
+        }
+
+        Assert.Equal(HttpStatusCode.Created, (await CreateReviewAsync(customer.Client, product, new { rating = 4 })).Status);
+    }
+
     // ---- approval switch ------------------------------------------------------------------------------------
 
     /// <summary>The seeded default: the review waits, is not listed, and does not move the rating.</summary>
@@ -352,7 +396,7 @@ public sealed class ReviewSubmissionEndpointTests(SqlServerDatabaseFixture sqlSe
         { """{"rating":4,"body":["x"]}""", "body" },
         { """{"rating":4,"title":"line one\nline two"}""", "title" },
         { """{"rating":4,"body":"bell \u0007"}""", "body" },
-        { """{"rating":4,"body":"flip ‮ txt"}""", "body" },
+        { """{"rating":4,"body":"flip \u202E txt"}""", "body" },
     };
 
     [Theory]

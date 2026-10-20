@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using SpencerDenim.Domain.Common;
 
 namespace SpencerDenim.Domain.Catalog;
 
@@ -62,6 +63,8 @@ public static class ReviewRules
     /// <item><description>Title: optional, one line, up to 120 characters after trimming.</description></item>
     /// <item><description>Body: optional, up to 4,000 characters after trimming; <c>\r\n</c> and <c>\r</c>
     /// become <c>\n</c> and runs of more than two line breaks shrink to two.</description></item>
+    /// <item><description>U+0085, U+2028 and U+2029 are line breaks too: a title refuses them like <c>\n</c>, and a
+    /// body stores them as <c>\n</c> (#189 D2).</description></item>
     /// <item><description>Both refuse control characters (other than the body's line breaks and tabs), the
     /// bidirectional override and isolate characters (text that displays differently from how it reads — the
     /// "Trojan Source" class), and unpaired surrogates (which SQL Server would store as garbage).</description></item>
@@ -143,8 +146,11 @@ public static class ReviewRules
     /// </summary>
     public static string DisplayNameFor(string? firstName, string? lastName)
     {
-        var first = CollapseWhitespace(firstName);
-        var last = CollapseWhitespace(lastName);
+        // Shown to everyone beside the Verified buyer badge. A name saved before the account rules refused them may
+        // hold control or bidi characters (#189 D1), and a U+202E would reverse the badge and date after it, so they
+        // are removed here whatever the profile holds; nothing left falls back to "Customer".
+        var first = CollapseWhitespace(PlainText.StripUnsafeForOneLine(firstName));
+        var last = CollapseWhitespace(PlainText.StripUnsafeForOneLine(lastName));
 
         var name = first.Length == 0 ? "Customer" : first;
 
@@ -201,6 +207,13 @@ public static class ReviewRules
 
         var text = raw.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
 
+        // U+0085, U+2028 and U+2029 are line breaks too (#189 D2): a title refuses them exactly as it refuses \n,
+        // and a body stores them as the one line break it keeps, so both treat every line break the same way.
+        text = text
+            .Replace(PlainText.NextLine, '\n')
+            .Replace(PlainText.LineSeparator, '\n')
+            .Replace(PlainText.ParagraphSeparator, '\n');
+
         for (var index = 0; index < text.Length; index++)
         {
             var character = text[index];
@@ -233,7 +246,7 @@ public static class ReviewRules
                 continue;
             }
 
-            if (char.IsControl(character) || IsBidiControl(character))
+            if (char.IsControl(character) || PlainText.IsBidiControl(character))
             {
                 problems.Add(new(field, "This contains a hidden control character. Please retype it."));
                 return null;
@@ -264,12 +277,6 @@ public static class ReviewRules
 
         return text;
     }
-
-    /// <summary>
-    /// U+202A–U+202E (embeddings and overrides), U+2066–U+2069 (isolates) and U+200E/U+200F/U+061C (marks).
-    /// </summary>
-    private static bool IsBidiControl(char character) =>
-        character is (>= '‪' and <= '‮') or (>= '⁦' and <= '⁩') or '‎' or '‏' or '؜';
 
     private static string LimitLineBreaks(string text)
     {

@@ -124,7 +124,8 @@ function cleanText(raw, field, max, multiline, errors) {
     return null;
   }
 
-  let text = raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  // U+0085, U+2028 and U+2029 are line breaks too (#189 D2): a title refuses them, a body keeps them as \n.
+  let text = raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/[\u0085\u2028\u2029]/g, '\n');
 
   for (const character of text) {
     const code = character.codePointAt(0);
@@ -197,18 +198,6 @@ function mineDto(review) {
 }
 
 function write(request, response, entry, productId, isEdit) {
-  const now = Date.now();
-  entry.writes = entry.writes.filter((at) => now - at < 60 * 60 * 1000);
-  if (entry.writes.length >= WRITES_PER_HOUR) {
-    return send(
-      response,
-      429,
-      { title: 'Too many reviews', status: 429, detail: 'You have written or edited a lot of reviews in the last hour. Please try again later.', code: 'rate_limited' },
-      { 'Retry-After': '3600' },
-    );
-  }
-  entry.writes.push(now);
-
   readJson(request, response, (body) => {
     const errors = {};
     let rating = null;
@@ -243,6 +232,20 @@ function write(request, response, entry, productId, isEdit) {
     if (Object.keys(errors).length > 0) {
       return send(response, 400, { title: 'One or more validation errors occurred.', status: 400, errors });
     }
+
+    // The permit is taken after the body validates, as ProductReviewEndpoints does: a 400 costs nothing; a 409 or
+    // 404 counts, because on the server each is a transaction.
+    const now = Date.now();
+    entry.writes = entry.writes.filter((at) => now - at < 60 * 60 * 1000);
+    if (entry.writes.length >= WRITES_PER_HOUR) {
+      return send(
+        response,
+        429,
+        { title: 'Too many reviews', status: 429, detail: 'You have written or edited a lot of reviews in the last hour. Please try again later.', code: 'rate_limited' },
+        { 'Retry-After': '3600' },
+      );
+    }
+    entry.writes.push(now);
 
     const existing = entry.reviews.get(productId);
 

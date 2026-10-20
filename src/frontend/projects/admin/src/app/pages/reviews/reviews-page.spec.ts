@@ -100,6 +100,8 @@ describe('ReviewsPage (ADM-16)', () => {
     expect(byTestId('reviews-read-only')).not.toBeNull();
     expect(byTestId('reviews-counts')?.textContent).toContain('3 waiting');
     expect(byTestId('review-verified-5')).not.toBeNull();
+    // #189 D1: the name is isolated from the badge and date.
+    expect(byTestId('review-name-5')?.tagName).toBe('BDI');
   });
 
   it('offers approve only with Reviews.Approve and hide only with Reviews.Edit', async () => {

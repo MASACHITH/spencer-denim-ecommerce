@@ -4,6 +4,7 @@ using System.Globalization;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
+using Microsoft.Extensions.Logging;
 using SpencerDenim.Application.Abstractions.Auditing;
 using SpencerDenim.Application.Catalog.Reviews;
 using SpencerDenim.Application.Content.Admin;
@@ -31,7 +32,10 @@ namespace SpencerDenim.Infrastructure.Catalog.Reviews;
 /// with the review as it now is, and nothing is written.
 /// </para>
 /// </summary>
-internal sealed class ProductReviewStore(AppDbContext dbContext, IAuditLogWriter auditLog)
+internal sealed partial class ProductReviewStore(
+    AppDbContext dbContext,
+    IAuditLogWriter auditLog,
+    ILogger<ProductReviewStore> logger)
     : IProductReviewStore, IProductReviewErasure
 {
     /// <summary>The audit row's <c>EntityType</c> for a moderation.</summary>
@@ -113,7 +117,7 @@ internal sealed class ProductReviewStore(AppDbContext dbContext, IAuditLogWriter
                 return (Commit: false, Result: refusal);
             }
 
-            await ExecuteAsync(ProductRatingSql.RecomputeOne, cancellationToken, ("@productId", id));
+            await RecomputeAsync(id, cancellationToken);
 
             // Status only. The note and the review's own text are personal data the PDPA erasure deletes with the
             // review; an audit row is not in doc 08 §3.1 step 2's list, so it must not carry a copy.
@@ -145,29 +149,40 @@ internal sealed class ProductReviewStore(AppDbContext dbContext, IAuditLogWriter
 
     public async Task<int> EraseForCustomerAsync(int customerUserId, CancellationToken cancellationToken)
     {
+        // Lock first, then delete, then recompute what was actually deleted (tester #189 note): the products are
+        // read from the deleted rows themselves (OUTPUT), so a review this account created between any earlier read
+        // and the DELETE cannot be removed without its product being recomputed. The first statement takes the stats
+        // rows of every product the account has reviewed, in one statement, before any review row is touched — the
+        // lock order every other review writer uses. The second lock statement only matters for that gap: a product
+        // first reviewed after the first statement ran, whose writer has committed (the DELETE waited for it).
         const string sql =
             """
-            DECLARE @affected TABLE (ProductId int NOT NULL PRIMARY KEY);
-
-            INSERT INTO @affected (ProductId)
-            SELECT DISTINCT ProductId
-              FROM catalog.ProductReviews WITH (READCOMMITTEDLOCK)
-             WHERE CustomerUserId = @customerUserId;
-
             DECLARE @locked int = (
                 SELECT COUNT(*)
                   FROM catalog.ProductStats WITH (UPDLOCK, ROWLOCK)
+                 WHERE ProductId IN (
+                       SELECT ProductId FROM catalog.ProductReviews WITH (READCOMMITTEDLOCK)
+                        WHERE CustomerUserId = @customerUserId));
+
+            DECLARE @deleted TABLE (ProductId int NOT NULL);
+
+            DELETE FROM catalog.ProductReviews
+            OUTPUT deleted.ProductId INTO @deleted (ProductId)
+             WHERE CustomerUserId = @customerUserId;
+
+            DECLARE @affected TABLE (ProductId int NOT NULL PRIMARY KEY);
+            INSERT INTO @affected (ProductId) SELECT DISTINCT ProductId FROM @deleted;
+
+            SET @locked = (
+                SELECT COUNT(*)
+                  FROM catalog.ProductStats WITH (UPDLOCK, ROWLOCK)
                  WHERE ProductId IN (SELECT ProductId FROM @affected));
-
-            DELETE FROM catalog.ProductReviews WHERE CustomerUserId = @customerUserId;
-
-            DECLARE @deleted int = @@ROWCOUNT;
             """
             + ProductRatingSql.RecomputeWhere
             + """
              stats.ProductId IN (SELECT ProductId FROM @affected);
 
-            SELECT @deleted;
+            SELECT COUNT(*) FROM @deleted;
             """;
 
         if (dbContext.Database.CurrentTransaction is not null)
@@ -296,7 +311,7 @@ internal sealed class ProductReviewStore(AppDbContext dbContext, IAuditLogWriter
                     ("@customerUserId", write.CustomerUserId));
             }
 
-            await ExecuteAsync(ProductRatingSql.RecomputeOne, cancellationToken, ("@productId", write.ProductId));
+            await RecomputeAsync(write.ProductId, cancellationToken);
 
             var saved = await ProductReviewReader.ReadMineAsync(dbContext, write.CustomerUserId, write.ProductId, cancellationToken)
                 ?? throw new InvalidOperationException("A review saved in this transaction could not be read back.");
@@ -346,10 +361,38 @@ internal sealed class ProductReviewStore(AppDbContext dbContext, IAuditLogWriter
         });
     }
 
-    private async Task ExecuteAsync(string sql, CancellationToken cancellationToken, params (string Name, object Value)[] parameters)
+    /// <summary>
+    /// Recomputes one product's rating, under the stats-row lock the caller already holds.
+    /// </summary>
+    /// <remarks>
+    /// <b>A missing <c>ProductStats</c> row is logged, not created.</b> The row is 1:1 with its product and written
+    /// in the product's own save (doc 08 §7.4), and every column but the rating is pricing: an "upsert" here would
+    /// have to invent list and sale prices, and a product whose stats row holds zeros would appear on the
+    /// storefront at Rs. 0 (<c>CatalogVisibility</c> treats the row as the product being listable). A customer
+    /// cannot reach this path for such a product at all — submissions require a visible product, which requires the
+    /// row — so it can only be a moderation of a product whose row went missing by hand, and the honest answer is a
+    /// warning naming it, while the review's own status change still commits.
+    /// </remarks>
+    private async Task RecomputeAsync(int productId, CancellationToken cancellationToken)
+    {
+        if (await ExecuteAsync(ProductRatingSql.RecomputeOne, cancellationToken, ("@productId", productId)) == 0)
+        {
+            LogMissingStats(productId);
+        }
+    }
+
+    [LoggerMessage(
+        EventId = 7301,
+        Level = LogLevel.Warning,
+        Message = "Product {ProductId} has no catalog.ProductStats row, so its rating could not be recomputed after a "
+            + "review change. Re-save the product in the admin panel to rebuild the row; the next review change will "
+            + "then recompute the rating.")]
+    private partial void LogMissingStats(int productId);
+
+    private async Task<int> ExecuteAsync(string sql, CancellationToken cancellationToken, params (string Name, object Value)[] parameters)
     {
         await using var command = Command(sql, parameters);
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        return await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private async Task<T> ScalarAsync<T>(string sql, CancellationToken cancellationToken, params (string Name, object Value)[] parameters)

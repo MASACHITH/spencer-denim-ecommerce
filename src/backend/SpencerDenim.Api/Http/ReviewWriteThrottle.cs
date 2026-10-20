@@ -16,7 +16,8 @@ namespace SpencerDenim.Api.Http;
 /// <b>Ten writes an hour.</b> One review per product means a genuine customer writes a handful in a sitting and edits
 /// each a few times; ten is far above that and far below what makes flooding the moderation queue worth a script.
 /// No queue: a refused write is answered at once with <c>Retry-After</c>, the same shape as the account endpoints.
-/// Taken before the use case runs, so a refused request does no database work.
+/// Taken after the body has passed <c>ReviewRules</c> and before the use case runs: a refused (400) body costs
+/// nothing, a refused (429) request does no database work, and a 409 or 404 counts, because each is a transaction.
 /// </para>
 /// </remarks>
 internal sealed class ReviewWriteThrottle : IDisposable

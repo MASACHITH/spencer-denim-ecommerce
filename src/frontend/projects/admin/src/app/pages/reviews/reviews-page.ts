@@ -149,7 +149,7 @@ const DATE = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', 
                     <p class="rev__body" [attr.data-testid]="'review-body-' + review.id">{{ review.body }}</p>
                   }
                   <p class="adm-muted rev__meta">
-                    {{ review.displayName }}
+                    <bdi class="rev__name" [attr.data-testid]="'review-name-' + review.id">{{ review.displayName }}</bdi>
                     @if (review.isVerifiedBuyer) {
                       <span class="rev__verified" [attr.data-testid]="'review-verified-' + review.id">Verified buyer</span>
                     }
@@ -215,6 +215,8 @@ const DATE = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', 
     .rev__body { margin: 0; white-space: pre-line; }
     .rev__meta { margin: 0; font-size: var(--text-small); }
     .rev__verified { display: inline-block; margin-inline-start: var(--space-0-5); padding: 0 var(--space-0-5); border: 1px solid currentColor; font-size: var(--text-small); }
+    /* Isolated from the badge and date beside it (#189 D1). */
+    .rev__name { unicode-bidi: isolate; }
     .rev__pending { color: var(--color-warning); border-color: var(--color-warning); }
     .rev__decide { display: grid; gap: var(--space-1); }
     .rev__note textarea { resize: vertical; }

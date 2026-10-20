@@ -124,6 +124,8 @@ describe('ProductReviews (PDP-08)', () => {
     expect(query('review-1')?.querySelector('[data-testid="review-verified"]')?.textContent).toContain('Verified buyer');
     expect(query('review-2')?.querySelector('[data-testid="review-verified"]')).toBeNull();
     expect(query('review-1')?.textContent).toContain('Rated 4 out of 5');
+    // #189 D1: the name is isolated, so nothing in it can reorder the badge and date beside it.
+    expect(query('review-1')?.querySelector('bdi[data-testid="review-name"]')?.textContent).toBe('Nimal P.');
   });
 
   it('renders markup in a review as text and never as elements', async () => {
