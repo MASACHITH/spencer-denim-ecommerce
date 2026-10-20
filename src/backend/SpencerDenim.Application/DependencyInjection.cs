@@ -22,6 +22,7 @@ using SpencerDenim.Application.Admin.Users.Contracts;
 using SpencerDenim.Application.Catalog.Contracts;
 using SpencerDenim.Application.Catalog.Departments;
 using SpencerDenim.Application.Catalog.Products;
+using SpencerDenim.Application.Catalog.Reviews;
 using SpencerDenim.Application.Catalog.Search;
 using SpencerDenim.Application.Catalog.Sitemap;
 using SpencerDenim.Application.Content.Abstractions;
@@ -328,6 +329,11 @@ public static class DependencyInjection
         services.AddScoped<
             ICommandHandler<UpdateTrafficSettingsCommand, SettingsWriteResult>,
             UpdateTrafficSettingsCommandHandler>();
+
+        // Issue #189: the review approval switch (Settings.Edit).
+        services.AddScoped<
+            ICommandHandler<UpdateReviewSettingsCommand, SettingsWriteResult>,
+            UpdateReviewSettingsCommandHandler>();
         services.AddKeyedScoped<IQueryHandler<GetSiteSettingsQuery, SiteSettingsDto>, GetSiteSettingsQueryHandler>(
             UncachedSiteSettings);
         services.AddScoped<IQueryHandler<GetSiteSettingsQuery, SiteSettingsDto>>(provider =>
@@ -484,6 +490,21 @@ public static class DependencyInjection
             provider => provider.GetRequiredService<InventoryWriteHandlers>());
         services.AddScoped<ICommandHandler<SetLowStockThresholdCommand, InventoryWriteResult>>(
             provider => provider.GetRequiredService<InventoryWriteHandlers>());
+
+        // Reviews and ratings (PDP-08) and their moderation (ADM-16), issue #189.
+        services.AddScoped<ReviewQueryHandlers>();
+        services.AddScoped<IQueryHandler<GetProductReviewsQuery, ProductReviewPageDto?>>(
+            provider => provider.GetRequiredService<ReviewQueryHandlers>());
+        services.AddScoped<IQueryHandler<GetMyProductReviewQuery, MyProductReviewDto?>>(
+            provider => provider.GetRequiredService<ReviewQueryHandlers>());
+        services.AddScoped<IQueryHandler<GetAdminReviewsQuery, AdminReviewListPage>>(
+            provider => provider.GetRequiredService<ReviewQueryHandlers>());
+        services.AddScoped<ReviewWriteHandlers>();
+        services.AddScoped<ICommandHandler<CreateReviewCommand, ReviewCommandResult>>(
+            provider => provider.GetRequiredService<ReviewWriteHandlers>());
+        services.AddScoped<ICommandHandler<EditReviewCommand, ReviewCommandResult>>(
+            provider => provider.GetRequiredService<ReviewWriteHandlers>());
+        services.AddScoped<ICommandHandler<ModerateReviewCommand, ModerationResult>, ModerateReviewHandler>();
 
         services.AddScoped<IQueryHandler<GetCustomerBuyersQuery, CustomerBuyersDto>, GetCustomerBuyersQueryHandler>();
         services.AddScoped<ICommandHandler<ExportSalesReportCommand, ReportExportFile>, ExportSalesReportCommandHandler>();

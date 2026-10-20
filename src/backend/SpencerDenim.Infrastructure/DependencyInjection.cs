@@ -14,6 +14,7 @@ using SpencerDenim.Application.Catalog.Admin.Abstractions;
 using SpencerDenim.Application.Catalog.Admin.Products.Abstractions;
 using SpencerDenim.Application.Content.Abstractions;
 using SpencerDenim.Application.Content.Admin.Abstractions;
+using SpencerDenim.Application.Catalog.Reviews;
 using SpencerDenim.Application.Inventory.Abstractions;
 using SpencerDenim.Application.Marketing.Newsletter;
 using SpencerDenim.Application.Marketing.Newsletter.Admin;
@@ -29,6 +30,7 @@ using SpencerDenim.Application.Sales.Wishlist.Abstractions;
 using SpencerDenim.Application.Settings.Abstractions;
 using SpencerDenim.Infrastructure.Admin.Auditing;
 using SpencerDenim.Infrastructure.Analytics;
+using SpencerDenim.Infrastructure.Catalog.Reviews;
 using SpencerDenim.Infrastructure.Inventory;
 using SpencerDenim.Infrastructure.Admin.Customers;
 using SpencerDenim.Infrastructure.Admin.Reporting;
@@ -349,6 +351,14 @@ public static class DependencyInjection
         // The inventory screen (ADM-12, W1-05, #190) and its ledger, inventory.InventoryMovements (#108).
         services.AddScoped<IInventoryReader, InventoryReader>();
         services.AddScoped<IInventoryStore, InventoryStore>();
+
+        // Reviews and ratings (PDP-08, ADM-16; #189). One store for both write ports, so the PDPA erasure shares
+        // the moderation path's rating recompute and its lock order.
+        services.AddScoped<IProductReviewReader, ProductReviewReader>();
+        services.AddScoped<ProductReviewStore>();
+        services.AddScoped<IProductReviewStore>(provider => provider.GetRequiredService<ProductReviewStore>());
+        services.AddScoped<IProductReviewErasure>(provider => provider.GetRequiredService<ProductReviewStore>());
+        services.AddScoped<IReviewSettingsReader, ReviewSettingsReader>();
 
         // W3-04b / doc 11 P10 flow A: cancelling an unpaid order, for staff and for the shopper's own
         // order link. Its own store rather than a member of IOrderFulfilmentStore, which touches no stock.

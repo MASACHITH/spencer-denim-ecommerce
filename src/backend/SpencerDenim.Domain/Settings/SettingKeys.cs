@@ -6,9 +6,9 @@ namespace SpencerDenim.Domain.Settings;
 /// <para>
 /// <b>What is deliberately absent, and why that is not an oversight.</b> Doc 08 §3.8's "Groups" table
 /// has fifteen rows — counted from the table; "sixteen" is §3.1's module list, which is a different
-/// thing — and names 59 keys, of which this build seeds 35 (issue #193 added <c>Social.YouTubeUrl</c> and the
-/// two <c>Traffic.*</c> retention periods). <see cref="DeferredSettingKeys"/> is the per-key record of the other
-/// 24 and is machine-checked against the document (<c>SettingKeySpecificationTests</c>); the paragraphs below
+/// thing — and names 59 keys, of which this build seeds 36 (issue #193 added <c>Social.YouTubeUrl</c> and the
+/// two <c>Traffic.*</c> retention periods; issue #189 <c>Reviews.RequireApproval</c>). <see cref="DeferredSettingKeys"/>
+/// is the per-key record of the other 23 and is machine-checked against the document (<c>SettingKeySpecificationTests</c>); the paragraphs below
 /// are the summary.
 /// <c>Bank.*</c> is now here (W3-03, PAY-01): it is the one group doc 11 P7's preconditions make a
 /// prerequisite of taking money at all. <c>Payments.PayPal.*</c> is here since W4-01 (see
@@ -265,6 +265,25 @@ public static partial class SettingKeys
         /// figure, so keeping them longer than people's views has no use.
         /// </summary>
         public const int BotRetentionDaysMax = 90;
+    }
+
+    /// <summary>
+    /// Group <c>Reviews</c> (doc 08 §3.8, doc 11 P12; issue #189): whether a customer's review waits for a
+    /// moderator before it is shown.
+    /// </summary>
+    public static class Reviews
+    {
+        public const string Group = "Reviews";
+
+        /// <summary>
+        /// <c>true</c>: a new or edited review is Pending until staff approve it. <c>false</c>: it is shown at
+        /// once. Seeded <b>true</b>, doc 08 §3.8's default, and read per submission; a missing or unreadable value
+        /// also means <b>true</b>, because the safe failure is a review that waits rather than one that publishes.
+        /// </summary>
+        public const string RequireApproval = "Reviews.RequireApproval";
+
+        /// <summary>Doc 08 §3.8's seed for <see cref="RequireApproval"/>.</summary>
+        public const bool RequireApprovalDefault = true;
     }
 
     /// <summary>
