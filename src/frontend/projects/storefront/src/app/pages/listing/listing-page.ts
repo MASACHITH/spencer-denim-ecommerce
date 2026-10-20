@@ -10,6 +10,7 @@ import {
 } from '@angular/core';
 import { toSignal } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, Params, Router, RouterLink } from '@angular/router';
+import { of } from 'rxjs';
 import { BRAND, Drawer, Icon, brandPageTitle } from '@spencer-denim/shared';
 
 import { LISTING_MODES, ListingMode, readListingMode } from './listing-mode';
@@ -30,6 +31,7 @@ import {
 import { FilterChip, activeChips, removeChip } from '../../core/catalog/listing-chips';
 import { CategoryNodeDto, DepartmentDto } from '../../core/navigation/catalog-departments.model';
 import { NavigationService, findDepartment, trailTo } from '../../core/navigation/navigation.service';
+import { SaleBannerService } from '../../core/content/sale-banner.service';
 import { PageMeta } from '../../core/platform/page-metadata';
 import { Viewport } from '../../core/platform/viewport';
 
@@ -97,9 +99,26 @@ interface Placement {
           }
         </header>
 
-        <!-- PLP-01 promo slot. Admin-managed artwork arrives with ADM-17; until a department or
-             category has one, the slot renders nothing rather than an empty framed box. -->
-        @if (promoImage(); as promo) {
+        <!-- The Sale page's campaign banner (#191): the live sale campaign's picture, in the same
+             full-width slot a department or category uses for its own, and only while that campaign is
+             live. Above the fold, so it is fetched early rather than lazily; width and height reserve
+             its space so the products below do not jump when it arrives. -->
+        @if (saleBanner(); as banner) {
+          <p class="plp__promo" data-testid="sale-banner">
+            <img
+              [src]="banner.imageUrl"
+              [attr.srcset]="banner.imageSrcSet"
+              [attr.sizes]="banner.imageSrcSet ? promoSizes : null"
+              [attr.width]="banner.width"
+              [attr.height]="banner.height"
+              [alt]="banner.altText"
+              fetchpriority="high"
+              decoding="async"
+            />
+          </p>
+        } @else if (promoImage(); as promo) {
+          <!-- PLP-01 promo slot. Admin-managed artwork arrives with ADM-17; until a department or
+               category has one, the slot renders nothing rather than an empty framed box. -->
           <p class="plp__promo">
             <img
               [src]="promo"
@@ -556,6 +575,16 @@ export class ListingPage {
   /** `new-arrivals` or `sale` when the route is one of those, otherwise `null` (DEPT-02, DEPT-03). */
   protected readonly mode = computed<ListingMode | null>(() =>
     readListingMode(this.routeData()['listing']),
+  );
+
+  /**
+   * The live sale campaign's banner, on the Sale page only (#191). Asked for once, when the page is
+   * created in Sale mode; every other listing never makes the request. See {@link SaleBannerService} for
+   * why a failure is simply no banner.
+   */
+  protected readonly saleBanner = toSignal(
+    this.mode() === 'sale' ? inject(SaleBannerService).load() : of(null),
+    { initialValue: null },
   );
 
   /** The filter this listing's address fixes, which the panel does not offer as a choice. */

@@ -54,6 +54,16 @@ export interface AdminSaleCampaignTarget {
   readonly name: string;
 }
 
+/** A campaign's banner as the form previews it (#191). Mirrors `AdminSaleCampaignBannerDto`. */
+export interface AdminSaleCampaignBanner {
+  /** What the form sends back as `bannerPublicId` to keep it. */
+  readonly publicId: string;
+  /** A small rendition for the preview, or null when the library has no file to show. */
+  readonly url: string | null;
+  /** What the Sale page reads aloud. Null when the picture has no description. */
+  readonly altText: string | null;
+}
+
 /** One `marketing.SaleCampaigns` row as the admin screen draws and edits it (ADM-14, doc 11 P3 A). */
 export interface AdminSaleCampaign {
   readonly id: number;
@@ -72,10 +82,12 @@ export interface AdminSaleCampaign {
   readonly endsAt: string;
   readonly isActive: boolean;
   /**
-   * Doc 11 P3 step 1's optional banner. Stored and returned; **nothing renders it yet** and this screen
-   * does not set it — see `SaleCampaignsPage`.
+   * Doc 11 P3 step 1's optional banner, shown at the top of the Sale page while the campaign is live
+   * (#191). Null when there is none, or when the picture it named is no longer a ready image in the
+   * media library, which the Sale page would not show either. Named by `publicId`: the internal asset id
+   * never reaches this screen.
    */
-  readonly bannerAssetId: number | null;
+  readonly banner: AdminSaleCampaignBanner | null;
   readonly targets: readonly AdminSaleCampaignTarget[];
   readonly status: SaleCampaignStatus;
   /** Base64 `rowversion`, round-tripped as an ETag so two staff members cannot overwrite each other. */
@@ -117,7 +129,8 @@ export interface AdminSaleCampaignRequest {
   readonly startsAt: string;
   readonly endsAt: string;
   readonly isActive: boolean;
-  readonly bannerAssetId: number | null;
+  /** The `publicId` the media library answered an upload with, or null for no banner. */
+  readonly bannerPublicId: string | null;
   readonly targets: readonly AdminSaleCampaignTargetRequest[];
 }
 
