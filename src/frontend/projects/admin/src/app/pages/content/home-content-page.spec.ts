@@ -20,6 +20,7 @@ const RULES: Record<HomeSectionType, AdminHomeSectionRules> = {
     requiredItemFields: [],
     maxItems: 1,
     linkMayLeaveSite: false,
+    needsArtwork: false,
   },
   ShopByDepartment: {
     sectionFields: ['title', 'subtitle'],
@@ -27,6 +28,7 @@ const RULES: Record<HomeSectionType, AdminHomeSectionRules> = {
     requiredItemFields: ['department'],
     maxItems: 6,
     linkMayLeaveSite: false,
+    needsArtwork: false,
   },
   NewArrivals: {
     sectionFields: ['title', 'subtitle', 'count', 'listingUrl', 'linkLabel'],
@@ -34,6 +36,7 @@ const RULES: Record<HomeSectionType, AdminHomeSectionRules> = {
     requiredItemFields: [],
     maxItems: 0,
     linkMayLeaveSite: false,
+    needsArtwork: false,
   },
   TrendingItems: {
     sectionFields: ['title', 'subtitle', 'mode', 'count', 'listingUrl', 'linkLabel'],
@@ -41,6 +44,7 @@ const RULES: Record<HomeSectionType, AdminHomeSectionRules> = {
     requiredItemFields: ['title'],
     maxItems: 12,
     linkMayLeaveSite: false,
+    needsArtwork: false,
   },
   CampaignBanner: {
     sectionFields: ['title', 'subtitle', 'overlay'],
@@ -48,6 +52,7 @@ const RULES: Record<HomeSectionType, AdminHomeSectionRules> = {
     requiredItemFields: [],
     maxItems: 1,
     linkMayLeaveSite: false,
+    needsArtwork: false,
   },
   ActivewearFeature: {
     sectionFields: ['title', 'subtitle', 'overlay'],
@@ -55,6 +60,7 @@ const RULES: Record<HomeSectionType, AdminHomeSectionRules> = {
     requiredItemFields: [],
     maxItems: 1,
     linkMayLeaveSite: false,
+    needsArtwork: false,
   },
   SaleSection: {
     sectionFields: ['title', 'subtitle', 'count', 'listingUrl', 'linkLabel'],
@@ -62,6 +68,7 @@ const RULES: Record<HomeSectionType, AdminHomeSectionRules> = {
     requiredItemFields: [],
     maxItems: 0,
     linkMayLeaveSite: false,
+    needsArtwork: false,
   },
   SocialGallery: {
     sectionFields: ['title', 'subtitle'],
@@ -69,6 +76,7 @@ const RULES: Record<HomeSectionType, AdminHomeSectionRules> = {
     requiredItemFields: ['image'],
     maxItems: 12,
     linkMayLeaveSite: true,
+    needsArtwork: false,
   },
   Benefits: {
     sectionFields: ['title', 'subtitle'],
@@ -76,6 +84,7 @@ const RULES: Record<HomeSectionType, AdminHomeSectionRules> = {
     requiredItemFields: ['iconKey'],
     maxItems: 6,
     linkMayLeaveSite: false,
+    needsArtwork: false,
   },
   Newsletter: {
     sectionFields: ['title', 'subtitle'],
@@ -83,6 +92,7 @@ const RULES: Record<HomeSectionType, AdminHomeSectionRules> = {
     requiredItemFields: [],
     maxItems: 0,
     linkMayLeaveSite: false,
+    needsArtwork: false,
   },
 };
 

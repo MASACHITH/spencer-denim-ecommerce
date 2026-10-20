@@ -110,7 +110,7 @@ internal sealed class ContentAdminStores(
         dbContext.AnnouncementMessages.Remove(message);
     }
 
-    async Task IAnnouncementAdminStore.SaveAsync(int? actingUserId, CancellationToken cancellationToken)
+    async Task<ContentSaveOutcome> IAnnouncementAdminStore.SaveAsync(int? actingUserId, CancellationToken cancellationToken)
     {
         auditColumns.CurrentUserId = actingUserId;
 
@@ -118,7 +118,10 @@ internal sealed class ContentAdminStores(
             .Where(entry => entry.State is EntityState.Added or EntityState.Modified)
             .ToList();
 
-        await dbContext.SaveChangesAsync(cancellationToken);
+        if (await SaveOnceAsync(cancellationToken) == ContentSaveOutcome.ConcurrencyConflict)
+        {
+            return ContentSaveOutcome.ConcurrencyConflict;
+        }
 
         // Read back, because the version token is built from UpdatedAtUtc and the column is datetime2(3):
         // the value the interceptor stamped in memory carries ticks the database rounded away, and the
@@ -127,6 +130,8 @@ internal sealed class ContentAdminStores(
         {
             await entry.ReloadAsync(cancellationToken);
         }
+
+        return ContentSaveOutcome.Saved;
     }
 
     // ------------------------------------------------------------------ size guides

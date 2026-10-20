@@ -114,7 +114,12 @@ public interface IAnnouncementAdminStore
     /// <summary>A hard delete: the table has no soft-delete flag (doc 08 §3.7).</summary>
     void Remove(AnnouncementMessage message);
 
-    Task SaveAsync(int? actingUserId, CancellationToken cancellationToken);
+    /// <summary>
+    /// Commits the unit of work. <c>UpdatedAtUtc</c> is the concurrency token, so a message somebody else
+    /// saved first matches no row and the answer is <see cref="ContentSaveOutcome.ConcurrencyConflict"/>,
+    /// with nothing written.
+    /// </summary>
+    Task<ContentSaveOutcome> SaveAsync(int? actingUserId, CancellationToken cancellationToken);
 }
 
 /// <summary>Read port for the announcement editor.</summary>

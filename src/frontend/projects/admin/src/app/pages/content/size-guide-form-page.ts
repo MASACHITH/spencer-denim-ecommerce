@@ -257,6 +257,8 @@ interface SavedState {
   `,
   styles: `
     :host {
+      /* The side gutter every admin page has (dashboard, catalogue, inventory): #192 tester UX. */
+      padding: var(--gutter);
       display: grid;
       /* One track that may shrink below its content, so a wide table scrolls in its own region
          rather than widening the page. */

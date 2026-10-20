@@ -589,6 +589,12 @@ const ITEM_CONTROL_KEYS = [
                 />
                 <span>Show this item</span>
               </label>
+              @if (section().rules.needsArtwork) {
+                <p class="adm-panel__hint adm-field--wide" [attr.data-testid]="t + '-item-needs-artwork'">
+                  This block is its picture: add an image before switching the item on. It can be saved
+                  switched off until the picture arrives.
+                </p>
+              }
             </div>
 
             <div class="block__media">

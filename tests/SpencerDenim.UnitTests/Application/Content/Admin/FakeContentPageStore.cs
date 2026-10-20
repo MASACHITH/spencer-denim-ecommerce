@@ -157,7 +157,9 @@ internal sealed class RecordingHomePageCache : IHomePageCache
 
     public HomePageDto? GetPage() => null;
 
-    public void SetPage(HomePageDto page, DateTime? validUntilUtc)
+    public long Generation => Evictions;
+
+    public void SetPage(HomePageDto page, DateTime? validUntilUtc, long generation)
     {
     }
 

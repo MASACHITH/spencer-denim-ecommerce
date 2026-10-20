@@ -80,6 +80,8 @@ export interface AdminHomeSectionRules {
   readonly maxItems: number;
   /** True only for the social gallery, whose links may go to another site. */
   readonly linkMayLeaveSite: boolean;
+  /** Hero and banners: an item can be switched on only with a picture (the storefront draws nothing without one). */
+  readonly needsArtwork: boolean;
 }
 
 export interface AdminHomeSectionItem {
@@ -231,6 +233,9 @@ export interface AnnouncementSaved {
 }
 
 export const ANNOUNCEMENT_MAX_LENGTH = 200;
+
+/** Beyond this, a message runs to three or more lines on a 320 px phone; the editor hints, never refuses. */
+export const ANNOUNCEMENT_LONG_ON_PHONES = 60;
 
 // ---- size guides ----------------------------------------------------------------------------------
 

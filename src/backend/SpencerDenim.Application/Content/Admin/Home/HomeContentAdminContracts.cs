@@ -67,13 +67,14 @@ public sealed record AdminHomeSectionRulesDto(
     IReadOnlyList<string> ItemFields,
     IReadOnlyList<string> RequiredItemFields,
     int MaxItems,
-    bool LinkMayLeaveSite)
+    bool LinkMayLeaveSite,
+    bool NeedsArtwork)
 {
     public static AdminHomeSectionRulesDto From(HomeBlockRule rule)
     {
         ArgumentNullException.ThrowIfNull(rule);
 
-        return new(rule.SectionFields, rule.ItemFields, rule.RequiredItemFields, rule.MaxItems, rule.LinkMayLeaveSite);
+        return new(rule.SectionFields, rule.ItemFields, rule.RequiredItemFields, rule.MaxItems, rule.LinkMayLeaveSite, rule.NeedsArtwork);
     }
 }
 

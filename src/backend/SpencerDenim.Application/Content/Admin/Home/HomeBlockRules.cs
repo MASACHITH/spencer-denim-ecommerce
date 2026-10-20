@@ -110,7 +110,8 @@ public static class HomeBlockRules
                 ],
                 [],
                 MaxItems: 1,
-                LinkMayLeaveSite: false),
+                LinkMayLeaveSite: false,
+                NeedsArtwork: true),
 
             [HomeSectionType.ShopByDepartment] = new(
                 HeadingFields,
@@ -135,9 +136,9 @@ public static class HomeBlockRules
                 MaxItems: 12,
                 LinkMayLeaveSite: false),
 
-            [HomeSectionType.CampaignBanner] = new(BannerFields, BannerItemFields, [], MaxItems: 1, LinkMayLeaveSite: false),
+            [HomeSectionType.CampaignBanner] = new(BannerFields, BannerItemFields, [], MaxItems: 1, LinkMayLeaveSite: false, NeedsArtwork: true),
 
-            [HomeSectionType.ActivewearFeature] = new(BannerFields, BannerItemFields, [], MaxItems: 1, LinkMayLeaveSite: false),
+            [HomeSectionType.ActivewearFeature] = new(BannerFields, BannerItemFields, [], MaxItems: 1, LinkMayLeaveSite: false, NeedsArtwork: true),
 
             [HomeSectionType.SaleSection] = new(ProductRowFields, [], [], MaxItems: 0, LinkMayLeaveSite: false),
 
@@ -165,6 +166,17 @@ public static class HomeBlockRules
             ? rule
             : throw new ArgumentOutOfRangeException(nameof(type), type, "No block rule for this section type.");
 
+    /// <summary>
+    /// Whether an item of this block is nothing without a picture: the hero and the two banners, which the
+    /// storefront draws only when an item carries artwork. Such an item can be switched on only with one.
+    /// </summary>
+    public static bool NeedsArtworkToShow(HomeBlockRule rule)
+    {
+        ArgumentNullException.ThrowIfNull(rule);
+
+        return rule.NeedsArtwork;
+    }
+
     /// <summary>Whether this block's products come from a listing (HOME-03, HOME-04 auto, HOME-07).</summary>
     public static bool IsProductRow(HomeSectionType type) =>
         type is HomeSectionType.NewArrivals or HomeSectionType.TrendingItems or HomeSectionType.SaleSection;
@@ -176,12 +188,14 @@ public static class HomeBlockRules
 /// <param name="RequiredItemFields">Item fields that must be filled in.</param>
 /// <param name="MaxItems">How many items the block may hold. Zero means it has none.</param>
 /// <param name="LinkMayLeaveSite">Whether an item's link may be a full address on another site.</param>
+/// <param name="NeedsArtwork">Whether an item can be switched on only with a picture (hero and banners).</param>
 public sealed record HomeBlockRule(
     IReadOnlyList<string> SectionFields,
     IReadOnlyList<string> ItemFields,
     IReadOnlyList<string> RequiredItemFields,
     int MaxItems,
-    bool LinkMayLeaveSite)
+    bool LinkMayLeaveSite,
+    bool NeedsArtwork = false)
 {
     public bool UsesSectionField(string field) => SectionFields.Contains(field, StringComparer.Ordinal);
 

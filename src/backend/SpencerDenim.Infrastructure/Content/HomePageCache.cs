@@ -26,6 +26,10 @@ internal sealed class HomePageCache(TimeProvider timeProvider) : IHomePageCache
 
     private HomePageDto? _page;
     private DateTimeOffset _expiresAt;
+    private long _generation;
+
+    /// <inheritdoc />
+    public long Generation => Interlocked.Read(ref _generation);
 
     public HomePageDto? GetPage()
     {
@@ -43,7 +47,7 @@ internal sealed class HomePageCache(TimeProvider timeProvider) : IHomePageCache
         }
     }
 
-    public void SetPage(HomePageDto page, DateTime? validUntilUtc)
+    public void SetPage(HomePageDto page, DateTime? validUntilUtc, long generation)
     {
         ArgumentNullException.ThrowIfNull(page);
 
@@ -61,6 +65,14 @@ internal sealed class HomePageCache(TimeProvider timeProvider) : IHomePageCache
 
         lock (_gate)
         {
+            // Evicted while this page was being assembled: it was built from rows a save has replaced, and
+            // storing it would undo the eviction for up to five minutes (#192 tester D2). Whatever is cached
+            // now was stored after that eviction, so it is left alone.
+            if (generation != Interlocked.Read(ref _generation))
+            {
+                return;
+            }
+
             if (expiresAt <= now)
             {
                 _page = null;
@@ -76,6 +88,7 @@ internal sealed class HomePageCache(TimeProvider timeProvider) : IHomePageCache
     {
         lock (_gate)
         {
+            Interlocked.Increment(ref _generation);
             _page = null;
         }
     }

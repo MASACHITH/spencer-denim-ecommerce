@@ -31,7 +31,7 @@ public sealed class HomePageCacheTests
     {
         var cache = new HomePageCache(new FakeTimeProvider(Now));
 
-        cache.SetPage(Page, null);
+        cache.SetPage(Page, null, cache.Generation);
 
         Assert.Same(Page, cache.GetPage());
     }
@@ -42,7 +42,7 @@ public sealed class HomePageCacheTests
         var time = new FakeTimeProvider(Now);
         var cache = new HomePageCache(time);
 
-        cache.SetPage(Page, null);
+        cache.SetPage(Page, null, cache.Generation);
         time.Advance(HomePageCachePolicy.Lifetime - TimeSpan.FromTicks(1));
 
         Assert.Same(Page, cache.GetPage());
@@ -58,7 +58,7 @@ public sealed class HomePageCacheTests
         var time = new FakeTimeProvider(Now);
         var cache = new HomePageCache(time);
 
-        cache.SetPage(Page, null);
+        cache.SetPage(Page, null, cache.Generation);
         time.Advance(HomePageCachePolicy.Lifetime);
 
         Assert.Null(cache.GetPage());
@@ -69,7 +69,7 @@ public sealed class HomePageCacheTests
     {
         var cache = new HomePageCache(new FakeTimeProvider(Now));
 
-        cache.SetPage(Page, null);
+        cache.SetPage(Page, null, cache.Generation);
         cache.Evict();
 
         Assert.Null(cache.GetPage());
@@ -81,9 +81,9 @@ public sealed class HomePageCacheTests
         var time = new FakeTimeProvider(Now);
         var cache = new HomePageCache(time);
 
-        cache.SetPage(Page, null);
+        cache.SetPage(Page, null, cache.Generation);
         time.Advance(TimeSpan.FromMinutes(4));
-        cache.SetPage(Page, null);
+        cache.SetPage(Page, null, cache.Generation);
         time.Advance(TimeSpan.FromMinutes(4));
 
         Assert.Same(Page, cache.GetPage());
@@ -102,7 +102,7 @@ public sealed class HomePageCacheTests
         var cache = new HomePageCache(time);
         var boundary = Now.UtcDateTime.AddMinutes(2);
 
-        cache.SetPage(Page, boundary);
+        cache.SetPage(Page, boundary, cache.Generation);
 
         time.Advance(TimeSpan.FromMinutes(2) - TimeSpan.FromTicks(1));
         Assert.Same(Page, cache.GetPage());
@@ -119,7 +119,7 @@ public sealed class HomePageCacheTests
         var time = new FakeTimeProvider(Now);
         var cache = new HomePageCache(time);
 
-        cache.SetPage(Page, Now.UtcDateTime.AddMinutes(30));
+        cache.SetPage(Page, Now.UtcDateTime.AddMinutes(30), cache.Generation);
 
         time.Advance(HomePageCachePolicy.Lifetime - TimeSpan.FromTicks(1));
         Assert.Same(Page, cache.GetPage());
@@ -139,7 +139,7 @@ public sealed class HomePageCacheTests
     {
         var cache = new HomePageCache(new FakeTimeProvider(Now));
 
-        cache.SetPage(Page, Now.UtcDateTime.AddSeconds(secondsFromNow));
+        cache.SetPage(Page, Now.UtcDateTime.AddSeconds(secondsFromNow), cache.Generation);
 
         Assert.Null(cache.GetPage());
     }
@@ -149,11 +149,57 @@ public sealed class HomePageCacheTests
     public void Storing_a_page_that_is_already_stale_drops_the_one_before_it()
     {
         var cache = new HomePageCache(new FakeTimeProvider(Now));
-        cache.SetPage(Page, null);
+        cache.SetPage(Page, null, cache.Generation);
 
-        cache.SetPage(new HomePageDto([]), Now.UtcDateTime);
+        cache.SetPage(new HomePageDto([]), Now.UtcDateTime, cache.Generation);
 
         Assert.Null(cache.GetPage());
+    }
+
+    // ---- #192 tester D2: an eviction is not undone by a page assembled across it -------------------
+
+    [Fact]
+    public void A_page_assembled_before_an_eviction_is_not_stored()
+    {
+        var cache = new HomePageCache(new FakeTimeProvider(Now));
+        var before = cache.Generation;
+
+        cache.Evict();
+        cache.SetPage(Page, null, before);
+
+        Assert.Null(cache.GetPage());
+        Assert.Equal(before + 1, cache.Generation);
+    }
+
+    /// <summary>A page stored after the eviction is not dropped by a stale page arriving later.</summary>
+    [Fact]
+    public void A_stale_page_does_not_displace_one_stored_after_the_eviction()
+    {
+        var cache = new HomePageCache(new FakeTimeProvider(Now));
+        var stale = cache.Generation;
+        cache.Evict();
+
+        var fresh = new HomePageDto([]);
+        cache.SetPage(fresh, null, cache.Generation);
+        cache.SetPage(Page, null, stale);
+
+        Assert.Same(fresh, cache.GetPage());
+    }
+
+    [Fact]
+    public async Task Concurrent_evictions_are_all_counted()
+    {
+        var cache = new HomePageCache(new FakeTimeProvider(Now));
+
+        await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => Task.Run(() =>
+        {
+            for (var index = 0; index < 1_000; index++)
+            {
+                cache.Evict();
+            }
+        })));
+
+        Assert.Equal(8_000, cache.Generation);
     }
 
     [Fact]
@@ -315,13 +361,24 @@ public sealed class CachedHomePageQueryHandlerTests
 
         public bool WasSet { get; private set; }
 
-        public void SetPage(HomePageDto page, DateTime? validUntilUtc)
+        public long Generation { get; private set; }
+
+        public void SetPage(HomePageDto page, DateTime? validUntilUtc, long generation)
         {
+            if (generation != Generation)
+            {
+                return;
+            }
+
             _page = page;
             ValidUntil = validUntilUtc;
             WasSet = true;
         }
 
-        public void Evict() => _page = null;
+        public void Evict()
+        {
+            Generation++;
+            _page = null;
+        }
     }
 }

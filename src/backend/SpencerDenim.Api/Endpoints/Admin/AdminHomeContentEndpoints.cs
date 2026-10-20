@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Mvc;
 using SpencerDenim.Api.Authorization;
 using SpencerDenim.Api.Http;
 using SpencerDenim.Application.Abstractions.Messaging;
@@ -38,6 +39,17 @@ namespace SpencerDenim.Api.Endpoints.Admin;
 /// </summary>
 internal static class AdminHomeContentEndpoints
 {
+    /// <summary>
+    /// The largest body a size-guide save may send (#192 tester D4). Without it the whole body was parsed
+    /// into a <c>JsonObject</c> before <c>SizeGuideTableInput</c>'s 128 KiB check could refuse the table.
+    /// 512 KiB: the 128 KiB table, which travels as an escaped JSON <i>string</i> (every quote doubles), plus
+    /// the intro and measuring-tips HTML before sanitising, plus the envelope — well above any real guide and
+    /// far below what costs anything to refuse. Enforced twice: a declared <c>Content-Length</c> over it is a
+    /// 413 before a byte is read, and <see cref="RequestSizeLimitAttribute"/> stops a body that does not
+    /// declare one (chunked) as it streams.
+    /// </summary>
+    public const long MaxSizeGuideBodyBytes = 512 * 1024;
+
     public static IEndpointRouteBuilder MapAdminHomeContentEndpoints(this IEndpointRouteBuilder endpoints)
     {
         MapHome(endpoints);
@@ -427,12 +439,16 @@ internal static class AdminHomeContentEndpoints
                 + "(#70); every row must be as wide as the headings. Both HTML fields are cleaned with the "
                 + "allow-list sanitiser on save and the response says what was removed.")
             .Produces<SizeGuideSavedDto>(StatusCodes.Status201Created)
-            .ProducesValidationProblem();
+            .ProducesValidationProblem()
+            .ProducesProblem(StatusCodes.Status413PayloadTooLarge)
+            .WithMetadata(new RequestSizeLimitAttribute(MaxSizeGuideBodyBytes));
 
         guides.MapPut("/{sizeGuideId:int}", UpdateSizeGuideAsync)
             .RequirePermission(Permissions.Content.Edit)
             .WithName("AdminUpdateSizeGuide")
             .WithSummary("Edit a size guide. Send every field and the row version.")
+            .ProducesProblem(StatusCodes.Status413PayloadTooLarge)
+            .WithMetadata(new RequestSizeLimitAttribute(MaxSizeGuideBodyBytes))
             .Produces<SizeGuideSavedDto>()
             .ProducesValidationProblem()
             .ProducesProblem(StatusCodes.Status404NotFound)
@@ -463,7 +479,9 @@ internal static class AdminHomeContentEndpoints
         IAntiforgery antiforgery,
         ICommandHandler<CreateSizeGuideCommand, ContentWriteResult> handler,
         CancellationToken cancellationToken) =>
-        WriteAsync(httpContext, antiforgery, async body =>
+        TooLarge(httpContext) is { } tooLarge
+            ? Task.FromResult<IResult>(tooLarge)
+            : WriteAsync(httpContext, antiforgery, async body =>
         {
             if (ReadSizeGuideFields(body, out var fields) is { } bad)
             {
@@ -484,7 +502,9 @@ internal static class AdminHomeContentEndpoints
         IAntiforgery antiforgery,
         ICommandHandler<UpdateSizeGuideCommand, ContentWriteResult> handler,
         CancellationToken cancellationToken) =>
-        WriteAsync(httpContext, antiforgery, async body =>
+        TooLarge(httpContext) is { } tooLarge
+            ? Task.FromResult<IResult>(tooLarge)
+            : WriteAsync(httpContext, antiforgery, async body =>
         {
             if (ReadSizeGuideFields(body, out var fields) is { } bad)
             {
@@ -542,6 +562,16 @@ internal static class AdminHomeContentEndpoints
         new(saved.EntityId, saved.RowVersion, saved.RemovedFromBody, saved.RemovedFromSecondary ?? []);
 
     // ================================================================== plumbing
+
+    /// <summary>A size-guide body whose declared length is over the limit, refused before it is read.</summary>
+    private static ProblemHttpResult? TooLarge(HttpContext httpContext) =>
+        httpContext.Request.ContentLength > MaxSizeGuideBodyBytes
+            ? AdminWriteRequest.Problem(
+                StatusCodes.Status413PayloadTooLarge,
+                "Request too large",
+                "A size guide is at most 20 columns, 100 rows and 20,000 characters of notes; this request is far larger.",
+                "too_large")
+            : null;
 
     /// <summary>Antiforgery, then the body as an object, then the route's own work.</summary>
     private static async Task<IResult> WriteAsync(

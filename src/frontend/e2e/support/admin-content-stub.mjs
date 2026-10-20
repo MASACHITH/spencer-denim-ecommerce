@@ -19,6 +19,8 @@
  *   without `Content.*` would.
  */
 
+import { isSitePath, linkProblem, textProblem } from './content-field-rules.mjs';
+
 /** Eight-byte row versions, base64, as the screen round-trips them. */
 function rowVersion(seed) {
   return Buffer.from([0, 0, 0, 0, 0, 1, seed >> 8, seed & 0xff]).toString('base64');
@@ -55,6 +57,7 @@ const RULES = {
     requiredItemFields: [],
     maxItems: 1,
     linkMayLeaveSite: false,
+    needsArtwork: true,
   },
   ShopByDepartment: {
     sectionFields: ['title', 'subtitle'],
@@ -83,6 +86,7 @@ const RULES = {
     requiredItemFields: [],
     maxItems: 1,
     linkMayLeaveSite: false,
+    needsArtwork: true,
   },
   ActivewearFeature: {
     sectionFields: ['title', 'subtitle', 'overlay'],
@@ -90,6 +94,7 @@ const RULES = {
     requiredItemFields: [],
     maxItems: 1,
     linkMayLeaveSite: false,
+    needsArtwork: true,
   },
   SaleSection: {
     sectionFields: ['title', 'subtitle', 'count', 'listingUrl', 'linkLabel'],
@@ -316,7 +321,7 @@ function sectionDto(state, section) {
     linkLabel: section.linkLabel,
     overlay: section.overlay,
     isLiveNow: isLive(section.isEnabled, section.startsAt, section.endsAt),
-    rules: RULES[section.type],
+    rules: { needsArtwork: false, ...RULES[section.type] },
     items: items.map((item) => {
       const image = mediaRef(state, item.imagePublicId);
       const mobile = mediaRef(state, item.mobileImagePublicId);
@@ -420,49 +425,24 @@ function missingKeys(body, keys, errors) {
   }
 }
 
+// #192 tester D3: the text and link rules are the API's own, from content-field-rules.mjs, which is held to
+// ContentFieldRules.cs by one shared table of cases (content-rule-cases.json).
 function checkText(errors, field, value, max, required = false) {
-  if (value === null || value === undefined) {
-    if (required) {
-      errors.add(field, 'Required.');
-    }
-    return;
-  }
-  if (typeof value !== 'string') {
-    errors.add(field, 'Must be text.');
-    return;
-  }
-  if (required && value.trim().length === 0) {
-    errors.add(field, 'Required.');
-  }
-  if (value.length > max) {
-    errors.add(field, `At most ${max} characters.`);
+  const problemText = textProblem(value, max, required);
+  if (problemText !== null) {
+    errors.add(field, problemText);
   }
 }
 
 function sitePath(value) {
-  return typeof value === 'string' && value.startsWith('/') && !value.startsWith('//');
+  return isSitePath(value);
 }
 
 function checkLink(errors, field, value, mayLeaveSite) {
-  if (value === null) {
-    return;
+  const problemText = linkProblem(value, mayLeaveSite);
+  if (problemText !== null) {
+    errors.add(field, problemText);
   }
-  if (typeof value !== 'string' || value.length > 500) {
-    errors.add(field, 'At most 500 characters.');
-    return;
-  }
-  if (sitePath(value)) {
-    return;
-  }
-  if (mayLeaveSite && /^https?:\/\/[^\s/]+\.[^\s]+$/i.test(value)) {
-    return;
-  }
-  errors.add(
-    field,
-    mayLeaveSite
-      ? 'Use a page on this shop starting with /, or a full http(s):// address.'
-      : 'Use a page on this shop, starting with / (for example /women/dresses).',
-  );
 }
 
 function checkInt(errors, field, value, min, max, required = true) {
@@ -730,6 +710,9 @@ export async function handleContentRoute(ctx) {
     }
     if (body.videoPublicId !== null && body.imagePublicId === null && body.mobileImagePublicId === null) {
       errors.add('imagePublicId', 'A video needs a still image too, for phones and people who prefer less motion.');
+    } else if (rules.needsArtwork && body.isEnabled === true && body.imagePublicId === null && body.mobileImagePublicId === null) {
+      // As HomeContentWriteHandlers: a hero or banner item is its picture, and the storefront draws nothing without one.
+      errors.add('imagePublicId', 'Add a picture (or a video with its still) before switching this on. It can be saved switched off until then.');
     }
     if (body.departmentId !== null && !DEPARTMENTS.some((department) => department.id === body.departmentId)) {
       errors.add('departmentId', 'Choose a department that exists.');

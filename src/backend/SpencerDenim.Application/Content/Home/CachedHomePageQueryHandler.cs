@@ -47,6 +47,9 @@ public sealed class CachedHomePageQueryHandler(
             return cached;
         }
 
+        // Read before anything else: a save that lands while this page is assembled moves it, and the stale
+        // page is then not stored (#192 tester D2).
+        var generation = cache.Generation;
         var assembledFrom = clock.UtcNow.UtcDateTime;
         var page = await inner.HandleAsync(query, cancellationToken);
         var validUntil = await content.GetNextScheduleBoundaryAsync(assembledFrom, cancellationToken);
@@ -54,7 +57,7 @@ public sealed class CachedHomePageQueryHandler(
         // Two requests that miss at the same moment both assemble and both store. That is a
         // duplicated read, not a wrong answer, and the alternative — holding a lock across a
         // database round trip — makes one slow query everybody's slow query.
-        cache.SetPage(page, validUntil);
+        cache.SetPage(page, validUntil, generation);
 
         return page;
     }

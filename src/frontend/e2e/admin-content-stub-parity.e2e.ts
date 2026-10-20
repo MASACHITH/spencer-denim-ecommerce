@@ -1,5 +1,8 @@
 import { Page, expect, test } from '@playwright/test';
 
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
 import { adminURL } from '../playwright.config';
 import { ownState, trustOnlyThisWorktree } from './support/admin-content-e2e';
 
@@ -48,11 +51,10 @@ test.describe('the content stub is no more permissive than the API (#192)', () =
   });
 
   /**
-   * DEFECT (tester, #192): the stub accepts each of these and the API refuses each one by name — a line
-   * break or tab in plain text, a reverse solidus or whitespace in a site path, credentials in a full
-   * address. Remove `fixme` once `admin-content-stub.mjs` checks them as `ContentFieldRules` does.
+   * Fixed (tester D3, #192): the stub now takes its text and link rules from `content-field-rules.mjs`, held
+   * to `ContentFieldRules` by the shared case table below.
    */
-  test.fixme('refuses control characters, a reverse solidus, whitespace and credentials as the API does', async ({ page }) => {
+  test('refuses control characters, a reverse solidus, whitespace and credentials as the API does', async ({ page }) => {
     const post = await poster(page);
 
     const cases: readonly [Record<string, unknown>, string][] = [
@@ -68,6 +70,32 @@ test.describe('the content stub is no more permissive than the API (#192)', () =
       const answer = await post('/api/admin/content/announcements', announcement(overrides));
       expect(answer.status, JSON.stringify(overrides)).toBe(400);
       expect(answer.fields, JSON.stringify(overrides)).toContain(field);
+    }
+  });
+
+  /**
+   * The one table both sides answer to: `ContentFieldRulesParityTests` holds the API to it, and this holds the
+   * stub to it, through the announcement route (a link that may leave the site, and plain text).
+   */
+  test('agrees with every case in content-rule-cases.json, as the API does', async ({ page }) => {
+    const post = await poster(page);
+    const cases = JSON.parse(readFileSync(resolve(__dirname, 'support', 'content-rule-cases.json'), 'utf8')) as {
+      sitePath: { value: string; ok: boolean }[];
+      webAddress: { value: string; ok: boolean }[];
+      text: { value: string; max: number; ok: boolean }[];
+    };
+
+    // An announcement link may be a site path or a web address, so it is good when either rule says so.
+    for (const { value, ok } of [...cases.sitePath, ...cases.webAddress]) {
+      const accepted =
+        ok || cases.sitePath.some((other) => other.value === value && other.ok) || cases.webAddress.some((other) => other.value === value && other.ok);
+      const answer = await post('/api/admin/content/announcements', announcement({ linkUrl: value }));
+      expect(answer.fields.includes('linkUrl'), `linkUrl ${JSON.stringify(value)}`).toBe(!accepted);
+    }
+
+    for (const { value, ok } of cases.text.filter((entry) => entry.max >= 200)) {
+      const answer = await post('/api/admin/content/announcements', announcement({ message: value }));
+      expect(answer.fields.includes('message'), `message ${JSON.stringify(value)}`).toBe(!ok);
     }
   });
 });

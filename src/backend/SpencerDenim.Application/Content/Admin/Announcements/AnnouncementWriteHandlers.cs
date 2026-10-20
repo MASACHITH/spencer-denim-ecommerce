@@ -50,9 +50,11 @@ public sealed record DeleteAnnouncementCommand(int MessageId, string? Version, A
 /// <b><c>content.AnnouncementMessages</c> has no <c>rowversion</c> column</b> (doc 08 §3.7 marks it [A],
 /// not [RV]), and adding one is a migration this task does not own. Its audit columns are the next best
 /// thing: <c>UpdatedAtUtc</c> (or <c>CreatedAtUtc</c> for a row never edited) moves on every save, to the
-/// tick, so "the version you read is not the version that is there" is still answerable. What it cannot
-/// close is the narrow race between this handler's read and its write — two saves in the same few
-/// milliseconds — which a real row version would. That gap is recorded on issue #192's journal.
+/// tick, so "the version you read is not the version that is there" is still answerable. The handler checks
+/// the token the screen sent; the race between two saves read from one version is closed in the database,
+/// because <c>UpdatedAtUtc</c> is also an EF concurrency token (#192 tester D1): the second UPDATE or
+/// DELETE matches no row and its save answers 409. A row never edited has a null <c>UpdatedAtUtc</c>, and
+/// EF's predicate is then <c>IS NULL</c>, which the first save changes — so that case is covered too.
 /// </para>
 /// </summary>
 public static class AnnouncementVersion
@@ -128,7 +130,11 @@ public sealed class AnnouncementWriteHandlers(
             command.Actor,
             clock.UtcNow.UtcDateTime));
 
-        await store.SaveAsync(command.Actor.UserId, cancellationToken);
+        if (await store.SaveAsync(command.Actor.UserId, cancellationToken) == ContentSaveOutcome.ConcurrencyConflict)
+        {
+            return Stale("lost-race");
+        }
+
         homePageCache.Evict();
 
         return new ContentWriteResult.Succeeded(
@@ -176,7 +182,11 @@ public sealed class AnnouncementWriteHandlers(
         }
 
         auditLog.Enlist(audit);
-        await store.SaveAsync(command.Actor.UserId, cancellationToken);
+        if (await store.SaveAsync(command.Actor.UserId, cancellationToken) == ContentSaveOutcome.ConcurrencyConflict)
+        {
+            return Stale("lost-race");
+        }
+
         homePageCache.Evict();
 
         return new ContentWriteResult.Succeeded(
@@ -208,7 +218,11 @@ public sealed class AnnouncementWriteHandlers(
             clock.UtcNow.UtcDateTime));
 
         store.Remove(message);
-        await store.SaveAsync(command.Actor.UserId, cancellationToken);
+        if (await store.SaveAsync(command.Actor.UserId, cancellationToken) == ContentSaveOutcome.ConcurrencyConflict)
+        {
+            return Stale("lost-race");
+        }
+
         homePageCache.Evict();
 
         return new ContentWriteResult.Succeeded(message.Id);

@@ -603,6 +603,19 @@ public sealed class HomeContentWriteHandlers(
                 "A hero video needs a still image as well, for phones and for people who turn motion off."));
         }
 
+        // #192 tester (UX): a hero or banner item is its picture. The storefront draws a hero or banner block
+        // only when an item carries artwork (hasContent in home-sections.ts) and silently draws nothing
+        // otherwise, so an item switched on with no picture was a save that "worked" and changed nothing a
+        // shopper could see. It may be saved switched off while the picture is on its way.
+        if (HomeBlockRules.NeedsArtworkToShow(rule) && fields.IsEnabled
+            && fields.ImagePublicId is null && fields.MobileImagePublicId is null
+            && !HasError(errors, "imagePublicId"))
+        {
+            errors.Add(new ValidationError(
+                "imagePublicId",
+                "Add a picture (or a video with its still) before switching this on. It can be saved switched off until then."));
+        }
+
         int? departmentId = null;
         if (rule.UsesItemField(HomeBlockRules.ItemFields.Department))
         {

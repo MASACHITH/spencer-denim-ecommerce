@@ -15,6 +15,7 @@ import {
   toContentFailure,
 } from '../../core/content/admin-site-content-api';
 import {
+  ANNOUNCEMENT_LONG_ON_PHONES,
   ANNOUNCEMENT_MAX_LENGTH,
   AdminAnnouncement,
   liveLabel,
@@ -72,7 +73,7 @@ import { blankToNull, toIntegerOrNull, toLocalInput } from './home-section-edito
                 type="text"
                 autocomplete="off"
                 [attr.maxlength]="max"
-                aria-describedby="ann-count"
+                [attr.aria-describedby]="message().trim().length > longOnPhones ? 'ann-count ann-long' : 'ann-count'"
                 [value]="message()"
                 [attr.aria-invalid]="errorFor('message') ? 'true' : null"
                 data-testid="ann-message"
@@ -81,6 +82,12 @@ import { blankToNull, toIntegerOrNull, toLocalInput } from './home-section-edito
               <span class="adm-panel__hint" id="ann-count" data-testid="ann-count">
                 {{ message().length }} of {{ max }} characters
               </span>
+              @if (message().trim().length > longOnPhones) {
+                <span class="adm-panel__hint" id="ann-long" data-testid="ann-long-hint">
+                  Long messages take up more of the screen on phones, where this one runs to several lines.
+                  Keep it short if you can.
+                </span>
+              }
               @if (errorFor('message'); as text) {
                 <span class="adm-field-error" role="alert" data-testid="ann-error-message">{{ text }}</span>
               }
@@ -241,6 +248,8 @@ import { blankToNull, toIntegerOrNull, toLocalInput } from './home-section-edito
   `,
   styles: `
     :host {
+      /* The side gutter every admin page has (dashboard, catalogue, inventory): #192 tester UX. */
+      padding: var(--gutter);
       display: grid;
       /* One track that may shrink below its content, so a wide table scrolls in its own region
          rather than widening the page. */
@@ -291,6 +300,12 @@ export class AnnouncementsPage {
   private readonly injector = inject(Injector);
 
   protected readonly max = ANNOUNCEMENT_MAX_LENGTH;
+
+  /**
+   * Past this many characters the strip wraps onto three or more lines at 320 px (the delivery line, 37
+   * characters, already takes two), so the editor is told — a hint, not a limit: 200 stays the limit (#192).
+   */
+  protected readonly longOnPhones = ANNOUNCEMENT_LONG_ON_PHONES;
 
   protected readonly announcements = signal<readonly AdminAnnouncement[]>([]);
   protected readonly isLoading = signal(true);

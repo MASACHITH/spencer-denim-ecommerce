@@ -24,6 +24,12 @@ internal sealed class AnnouncementMessageConfiguration : IEntityTypeConfiguratio
 
         builder.ApplyAuditColumns();
 
+        // #192 (tester D1): the table has no rowversion, so the audit timestamp is the concurrency token.
+        // Checked in the handler alone it was a read-then-write, and two saves from one version both won
+        // under RCSI; as an EF concurrency token it is a predicate on the UPDATE and DELETE themselves, so
+        // the second writer matches no row and gets a 409. Model-only: it changes no column, so no migration.
+        builder.Property(message => message.UpdatedAtUtc).IsConcurrencyToken();
+
         // Not one of doc 08 §3.7's listed indexes, but the bar is on every page of the storefront
         // and reads exactly this predicate in exactly this order, so the alternative is a scan on
         // every request.

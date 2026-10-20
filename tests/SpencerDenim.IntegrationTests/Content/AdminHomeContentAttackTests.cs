@@ -254,7 +254,7 @@ public sealed class AdminHomeContentAttackTests(SqlServerDatabaseFixture sqlServ
     /// (<c>IsConcurrencyToken()</c>, a model-only change, no migration) puts the predicate in the UPDATE.
     /// </para>
     /// </summary>
-    [Fact(Skip = "Tester #192 defect: simultaneous announcement saves from one version are both accepted (lost update; 9 of 10 rounds on LocalDB). Remove Skip once fixed.")]
+    [Fact]
     public async Task Two_simultaneous_announcement_saves_from_one_version_have_one_winner()
     {
         await using var host = await StartAsync();
@@ -430,8 +430,19 @@ public sealed class AdminHomeContentAttackTests(SqlServerDatabaseFixture sqlServ
         huge["tableJson"] = "{\"columns\":[\"Size\"],\"rows\":[[\"" + new string('x', 2 * 1024 * 1024) + "\"]]}";
         using (var tooBig = await SendAsync(client, "POST", SizeGuidesUrl, huge))
         {
-            Assert.Equal(HttpStatusCode.BadRequest, tooBig.StatusCode);
-            Assert.Contains("tableJson", await tooBig.Content.ReadAsStringAsync(Token), StringComparison.Ordinal);
+            // Since D4 a 2 MB body is refused by the route's size limit before it is parsed (413), rather than
+            // parsed in full and then refused by the table rule (400).
+            Assert.Equal(HttpStatusCode.RequestEntityTooLarge, tooBig.StatusCode);
+            Assert.Contains("too_large", await tooBig.Content.ReadAsStringAsync(Token), StringComparison.Ordinal);
+        }
+
+        // Under the body limit but over the table's own 128 KiB input cap: still the field error.
+        var overCap = SizeGuideBody("Over cap " + Suffix());
+        overCap["tableJson"] = "{\"columns\":[\"Size\"],\"rows\":[[\"" + new string('x', 130 * 1024) + "\"]]}";
+        using (var tooLong = await SendAsync(client, "POST", SizeGuidesUrl, overCap))
+        {
+            Assert.Equal(HttpStatusCode.BadRequest, tooLong.StatusCode);
+            Assert.Contains("tableJson", await tooLong.Content.ReadAsStringAsync(Token), StringComparison.Ordinal);
         }
 
         using (var request = new HttpRequestMessage(HttpMethod.Post, new Uri(SizeGuidesUrl, UriKind.Relative)))

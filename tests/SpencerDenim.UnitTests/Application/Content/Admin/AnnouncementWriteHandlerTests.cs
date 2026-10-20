@@ -1,4 +1,5 @@
 using SpencerDenim.Application.Content.Admin;
+using SpencerDenim.Application.Content.Admin.Abstractions;
 using SpencerDenim.Application.Content.Admin.Announcements;
 using SpencerDenim.Domain.Auditing;
 using SpencerDenim.Domain.Content;
@@ -122,6 +123,28 @@ public sealed class AnnouncementWriteHandlerTests
         Assert.NotEqual(version, saved.RowVersion);
         Assert.Equal("{\"message\":\"Island-wide delivery\"}", Assert.Single(_audit.Entries).BeforeJson);
         Assert.Equal(1, _cache.Evictions);
+    }
+
+    /// <summary>
+    /// #192 tester D1: the database's own refusal — the second of two saves read from one version matches no
+    /// row on <c>UpdatedAtUtc</c> — is a 409, not a silent success, and nothing is evicted.
+    /// </summary>
+    [Fact]
+    public async Task A_save_the_database_refuses_as_stale_is_a_conflict()
+    {
+        var row = _store.AddExisting("Island-wide delivery", Now.UtcDateTime.AddDays(-1));
+        _store.NextOutcome = ContentSaveOutcome.ConcurrencyConflict;
+
+        var edit = await Handlers().HandleAsync(
+            new UpdateAnnouncementCommand(row.Id, Fields("Changed"), AnnouncementVersion.Of(row.CreatedAtUtc, null), TestActors.Editor),
+            Token);
+        Assert.Equal(ContentConflictCodes.StaleRowVersion, Assert.IsType<ContentWriteResult.Conflict>(edit).Code);
+
+        var delete = await Handlers().HandleAsync(
+            new DeleteAnnouncementCommand(row.Id, AnnouncementVersion.Of(row.CreatedAtUtc, null), TestActors.Editor), Token);
+        Assert.Equal(ContentConflictCodes.StaleRowVersion, Assert.IsType<ContentWriteResult.Conflict>(delete).Code);
+
+        Assert.Equal(0, _cache.Evictions);
     }
 
     [Fact]

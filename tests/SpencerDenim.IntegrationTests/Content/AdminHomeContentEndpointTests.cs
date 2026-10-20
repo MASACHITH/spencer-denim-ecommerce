@@ -472,6 +472,56 @@ public sealed class AdminHomeContentEndpointTests(SqlServerDatabaseFixture sqlSe
         Assert.Equal(HttpStatusCode.NotFound, gone.StatusCode);
     }
 
+    /// <summary>
+    /// #192 tester D4: a size-guide body far over anything a guide can be (~2 MB) is refused with 413 from its
+    /// declared length, before it is read or parsed — the answer carries the route's own <c>too_large</c>
+    /// code, not a validation problem, which is what a parsed body would have produced.
+    /// </summary>
+    [Fact]
+    public async Task A_two_megabyte_size_guide_body_is_refused_before_it_is_parsed()
+    {
+        await using var host = await StartAsync();
+        using var client = await host.SignInAsync(Everything);
+
+        var padding = new string('a', 2 * 1024 * 1024);
+        var json = "{\"name\":\"x\",\"introHtml\":\"" + padding + "\",\"tableJson\":null,\"measuringTipsHtml\":null,\"imagePublicId\":null}";
+
+        foreach (var (method, url) in new[] { ("POST", SizeGuidesUrl), ("PUT", SizeGuidesUrl + "/1") })
+        {
+            using var request = new HttpRequestMessage(new HttpMethod(method), new Uri(url, UriKind.Relative))
+            {
+                Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json"),
+            };
+
+            using var response = await client.SendAsync(request, Token);
+
+            Assert.Equal(HttpStatusCode.RequestEntityTooLarge, response.StatusCode);
+            Assert.Contains("too_large", await response.Content.ReadAsStringAsync(Token), StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>The other half of D4: the largest table the input rule allows still fits under the limit and saves.</summary>
+    [Fact]
+    public async Task The_largest_allowed_size_guide_is_still_accepted()
+    {
+        await using var host = await StartAsync();
+        using var client = await host.SignInAsync(Everything);
+
+        var header = string.Join(',', Enumerable.Range(1, 20).Select(index => $"\"Column {index}\""));
+        var row = "[" + string.Join(',', Enumerable.Repeat("\"" + new string('8', 60) + "\"", 20)) + "]";
+        var body = new Dictionary<string, object?>
+        {
+            ["name"] = "Largest " + Guid.NewGuid().ToString("N")[..6],
+            ["introHtml"] = "<p>" + new string('i', 19_000) + "</p>",
+            ["tableJson"] = "{\"columns\":[" + header + "],\"rows\":[" + string.Join(',', Enumerable.Repeat(row, 50)) + "]}",
+            ["measuringTipsHtml"] = "<p>" + new string('t', 19_000) + "</p>",
+            ["imagePublicId"] = null,
+        };
+
+        using var created = await SendAsync(client, "POST", SizeGuidesUrl, body);
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+    }
+
     // ================================================================== helpers
 
     private async Task<MediaTestHost> StartAsync()

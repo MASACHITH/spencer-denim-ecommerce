@@ -79,6 +79,21 @@ describe('AnnouncementsPage (#192, GLB-03)', () => {
     expect(q(fixture, 'ann-count')?.textContent).toContain('5 of 200');
   });
 
+  it('hints, without refusing, when a message would run to several lines on a phone', () => {
+    const fixture = create();
+    const input = q<HTMLInputElement>(fixture, 'ann-message')!;
+
+    type(input, 'x'.repeat(60));
+    fixture.detectChanges();
+    expect(q(fixture, 'ann-long-hint')).toBeNull();
+
+    type(input, 'x'.repeat(61));
+    fixture.detectChanges();
+    expect(q(fixture, 'ann-long-hint')?.textContent).toContain('phones');
+    expect(input.getAttribute('aria-describedby')).toBe('ann-count ann-long');
+    expect(input.getAttribute('maxlength')).toBe('200');
+  });
+
   it('adds a message with every key and no version', () => {
     const fixture = create([]);
 

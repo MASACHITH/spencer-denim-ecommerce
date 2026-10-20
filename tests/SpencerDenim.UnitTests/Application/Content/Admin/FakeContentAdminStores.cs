@@ -161,9 +161,16 @@ internal sealed class FakeAnnouncementAdminStore(DateTime utcNow) : IAnnouncemen
 
     public void Remove(AnnouncementMessage message) => Messages.Remove(message);
 
-    public Task SaveAsync(int? actingUserId, CancellationToken cancellationToken)
+    public ContentSaveOutcome NextOutcome { get; set; } = ContentSaveOutcome.Saved;
+
+    public Task<ContentSaveOutcome> SaveAsync(int? actingUserId, CancellationToken cancellationToken)
     {
         Saves++;
+
+        if (NextOutcome != ContentSaveOutcome.Saved)
+        {
+            return Task.FromResult(NextOutcome);
+        }
 
         foreach (var message in Messages)
         {
@@ -178,7 +185,7 @@ internal sealed class FakeAnnouncementAdminStore(DateTime utcNow) : IAnnouncemen
             }
         }
 
-        return Task.CompletedTask;
+        return Task.FromResult(ContentSaveOutcome.Saved);
     }
 }
 

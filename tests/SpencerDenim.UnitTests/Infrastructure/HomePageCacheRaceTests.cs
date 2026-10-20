@@ -29,7 +29,7 @@ public sealed class HomePageCacheRaceTests
     /// generation counter read before assembly (and compared in <c>SetPage</c>) closes it.
     /// </para>
     /// </summary>
-    [Fact(Skip = "Tester #192 defect: an eviction during assembly is overwritten by the stale page. Remove Skip once fixed.")]
+    [Fact]
     public async Task A_save_during_assembly_is_not_undone_by_the_page_assembled_before_it()
     {
         var time = new FakeTimeProvider(Now);
@@ -56,12 +56,12 @@ public sealed class HomePageCacheRaceTests
         var cache = new HomePageCache(time);
         var boundary = Now.UtcDateTime.AddSeconds(30);
 
-        cache.SetPage(new HomePageDto([]), boundary);
+        cache.SetPage(new HomePageDto([]), boundary, cache.Generation);
         time.Advance(TimeSpan.FromSeconds(30));
         Assert.Null(cache.GetPage());
 
         var next = new HomePageDto([]);
-        cache.SetPage(next, null);
+        cache.SetPage(next, null, cache.Generation);
         Assert.Same(next, cache.GetPage());
     }
 
@@ -75,7 +75,7 @@ public sealed class HomePageCacheRaceTests
         var time = new FakeTimeProvider(Now);
         var cache = new HomePageCache(time);
 
-        cache.SetPage(new HomePageDto([]), DateTime.SpecifyKind(Now.UtcDateTime.AddMinutes(1), DateTimeKind.Unspecified));
+        cache.SetPage(new HomePageDto([]), DateTime.SpecifyKind(Now.UtcDateTime.AddMinutes(1), DateTimeKind.Unspecified), cache.Generation);
 
         time.Advance(TimeSpan.FromMinutes(1) - TimeSpan.FromTicks(1));
         Assert.NotNull(cache.GetPage());

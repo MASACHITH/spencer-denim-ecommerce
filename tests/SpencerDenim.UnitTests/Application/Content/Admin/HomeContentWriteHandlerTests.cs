@@ -415,6 +415,39 @@ public sealed class HomeContentWriteHandlerTests
         Assert.Contains(message, error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// The hero and both banners are nothing without a picture — the storefront draws them only with
+    /// artwork — so an item there can be switched on only with one, and saved switched off without it.
+    /// </summary>
+    [Theory]
+    [InlineData(HomeSectionType.HeroVideo)]
+    [InlineData(HomeSectionType.CampaignBanner)]
+    [InlineData(HomeSectionType.ActivewearFeature)]
+    public async Task A_hero_or_banner_item_is_switched_on_only_with_a_picture(HomeSectionType type)
+    {
+        var on = await Handlers().HandleAsync(CreateItem(type, Item(title: "Words only")), Token);
+        var error = Assert.Single(Assert.IsType<ContentWriteResult.Invalid>(on).Errors);
+        Assert.Equal("imagePublicId", error.Field);
+
+        var off = await Handlers().HandleAsync(CreateItem(type, Item(title: "Words only") with { IsEnabled = false }), Token);
+        Assert.IsType<ContentWriteResult.Succeeded>(off);
+
+        var item = _store.Section(type).Items.Single();
+        var withPhonePicture = await Handlers().HandleAsync(
+            new UpdateHomeSectionItemCommand(item.Id, Item(title: "Words only") with { MobileImagePublicId = TestMedia.Photo }, _store.RowVersionOf(type), TestActors.Editor),
+            Token);
+        Assert.IsType<ContentWriteResult.Succeeded>(withPhonePicture);
+    }
+
+    [Fact]
+    public async Task Tiles_and_benefits_need_no_picture_to_be_switched_on()
+    {
+        Assert.IsType<ContentWriteResult.Succeeded>(
+            await Handlers().HandleAsync(CreateItem(HomeSectionType.TrendingItems, Item(title: "Linen", linkUrl: "/women")), Token));
+        Assert.IsType<ContentWriteResult.Succeeded>(
+            await Handlers().HandleAsync(CreateItem(HomeSectionType.Benefits, Item(title: "Delivery") with { IconKey = "delivery" }), Token));
+    }
+
     [Fact]
     public async Task A_video_slot_refuses_an_image()
     {
