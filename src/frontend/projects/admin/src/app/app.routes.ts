@@ -123,6 +123,16 @@ export const routes: Routes = [
       import('./pages/newsletter/newsletter-subscribers-page').then((m) => m.NewsletterSubscribersPage),
   },
   {
+    // ADM-12 (W1-05, #190): stock per variant, the bulk update, the low-stock threshold and the movement
+    // history. The guard asks only for a session, as every other admin route does: the API is the security
+    // boundary (Inventory.View to look, Inventory.Edit to change), and the page says so to a role without
+    // Inventory.View rather than bouncing it.
+    path: 'inventory',
+    title: `Inventory — ${BRAND.adminName}`,
+    canActivate: [adminSessionGuard],
+    loadComponent: () => import('./pages/inventory/inventory-page').then((m) => m.InventoryPage),
+  },
+  {
     // ADM-19 (W4-02): the Sales, Inventory and Customers reports and their audited exports. The guard asks
     // only for a session, as every other admin route does: the API is the security boundary (doc 03 §3a),
     // and the page itself says so to a role without Reports.View rather than bouncing it.
@@ -202,6 +212,44 @@ export const routes: Routes = [
     canActivate: [adminSessionGuard],
     loadComponent: () =>
       import('./pages/content/content-page-form-page').then((m) => m.ContentPageFormPage),
+  },
+  {
+    // ADM-17 / HOME-01…10 (#192): the ten homepage blocks and their items. The guard asks only for a
+    // session; the API is the security boundary and the page shows the refusal to a role without
+    // Content.View.
+    path: 'content/home',
+    title: `Homepage — ${BRAND.adminName}`,
+    canActivate: [adminSessionGuard],
+    loadComponent: () => import('./pages/content/home-content-page').then((m) => m.HomeContentPage),
+  },
+  {
+    // GLB-03 (#192): the announcement bar's messages.
+    path: 'content/announcements',
+    title: `Announcement bar — ${BRAND.adminName}`,
+    canActivate: [adminSessionGuard],
+    loadComponent: () =>
+      import('./pages/content/announcements-page').then((m) => m.AnnouncementsPage),
+  },
+  {
+    // PDP-04 (#192): size guides. `new` is declared before `:id` so it is not read as an id.
+    path: 'content/size-guides',
+    title: `Size guides — ${BRAND.adminName}`,
+    canActivate: [adminSessionGuard],
+    loadComponent: () => import('./pages/content/size-guides-page').then((m) => m.SizeGuidesPage),
+  },
+  {
+    path: 'content/size-guides/new',
+    title: `Add a size guide — ${BRAND.adminName}`,
+    canActivate: [adminSessionGuard],
+    loadComponent: () =>
+      import('./pages/content/size-guide-form-page').then((m) => m.SizeGuideFormPage),
+  },
+  {
+    path: 'content/size-guides/:id',
+    title: `Edit size guide — ${BRAND.adminName}`,
+    canActivate: [adminSessionGuard],
+    loadComponent: () =>
+      import('./pages/content/size-guide-form-page').then((m) => m.SizeGuideFormPage),
   },
   {
     // GLB-10 (W2-11). Behind Customers.* on the API, not Content.*: doc 08 §3.7's G-06 resolution puts

@@ -1141,7 +1141,7 @@ Stock is **not** reserved in the cart. The cart row is created on the first Add 
 | SettingsJson | nvarchar(max) | Y | Per type (mode auto/manual, count, listingUrl, overlay, CTA). CK ISJSON |
 | StartsAtUtc / EndsAtUtc | datetime2(3) | Y | |
 - `IX (IsEnabled, SortOrder)`.
-- Homepage output cached 5 min and evicted on save.
+- Homepage output cached 5 min, evicted on save, and expired at the next schedule boundary (§7.4, #37).
 
 #### `content.HomeSectionItems` [A]
 | Column | Type | Null | Notes |
@@ -1721,6 +1721,7 @@ OFFSET @skip ROWS FETCH NEXT 24 ROWS ONLY;
 | `Categories.Path/Depth` | ParentCategoryId | Move use case (one transaction) | None |
 | `PromoCodes.UsageCount` | Held uses on Orders | Conditional updates (§3.6) | None |
 | Order snapshots | Catalog at purchase | Never synced | n/a |
+| Homepage output (`GET /api/content/home`, §3.7) | HomeSections, HomeSectionItems, and the catalogue rows a product row draws | In-process cache. **Evicted by every ADM-17 content write** (homepage blocks and items, announcements, size guides, content pages). An entry expires at the **earlier** of 5 min and the next `StartsAtUtc`/`EndsAtUtc` still ahead among switched-on sections and items (#37), so a block appears and disappears on its schedule | **Schedule: none beyond one request in flight** (the entry is stored only until the boundary; a boundary already due is never cached). Measured end to end within 2 s. **A content edit on another API instance: ≤ 5 min** (eviction reaches only the instance that wrote; the others keep their entry until the cap or the boundary). **Product rows: ≤ 5 min** for a campaign or stock change, as the rows above. The announcement strip is not in this cache; the storefront fetches it once per page load, so a message whose window ends mid-visit stays until the next navigation that reloads the shell |
 - **No blind nightly overwrite (N11):** `NightlyStats` writes only `SoldQty30d/Total`. Pricing and rating columns are maintained transactionally, so the job only **compares** them with a recompute and raises a `ReconciliationDrift` alert on any difference. It never overwrites a concurrent update.
 
 ### 7.5 Facet counts and caching

@@ -26,6 +26,11 @@ export type IconName =
   | 'facebook'
   | 'instagram'
   | 'tiktok'
+  // Issue #193: Social.YouTubeUrl. Drawn here in the set's own outline style (24px grid, 1.5px stroke, round
+  // joins), like the three social glyphs above it — a rounded screen with a play triangle, not the network's logo
+  // artwork, which this project has no licence to copy. The same approach the Facebook, Instagram and TikTok
+  // glyphs took: a simple outline that names the network beside an aria-label that says it in words.
+  | 'youtube'
   // Added for the homepage benefits row (HOME-09): the three seeded benefits are delivery,
   // returns and quality, and only the first had an icon in this set.
   | 'refresh'
@@ -130,6 +135,10 @@ export type IconSize = 'xs' | 'sm' | 'md';
         @case ('tiktok') {
           <path d="M14 3.5v11.1a3.4 3.4 0 1 1-2.8-3.35" />
           <path d="M14 3.5a5 5 0 0 0 5 5" />
+        }
+        @case ('youtube') {
+          <rect x="2.5" y="5.5" width="19" height="13" rx="4" />
+          <path d="M10.2 9.4v5.2l4.5-2.6z" />
         }
         @case ('refresh') {
           <path d="M20 12a8 8 0 1 1-2.6-5.9" />

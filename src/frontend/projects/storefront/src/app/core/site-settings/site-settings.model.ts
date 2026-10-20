@@ -10,7 +10,7 @@ export interface SiteLogoDto {
 
 /** One social profile link, as the API returns it (GLB-07). */
 export interface SiteSocialLinkDto {
-  /** `facebook`, `instagram` or `tiktok`. */
+  /** `facebook`, `instagram`, `tiktok` or `youtube` (issue #193). */
   readonly network: string;
   readonly url: string;
 }
@@ -129,8 +129,8 @@ export const MAP_EMBED_HOSTS: readonly string[] = [
 /**
  * The networks the footer can draw, in display order, with the icon and the wording each one gets.
  *
- * **An allow-list, and the second half of the "no fake links" rule.** The API only sends these three
- * today, but a `network` the front end does not recognise must not become an icon chosen at random or
+ * **An allow-list, and the second half of the "no fake links" rule.** The API only sends these four
+ * (YouTube since issue #193), but a `network` the front end does not recognise must not become an icon chosen at random or
  * an `sd-icon` with an unknown name (which renders nothing and leaves a 44 px hole with a link in it).
  * Anything not in this map is dropped.
  */
@@ -138,4 +138,5 @@ export const SOCIAL_NETWORKS: Readonly<Record<string, { readonly icon: IconName;
   facebook: { icon: 'facebook', name: 'Facebook' },
   instagram: { icon: 'instagram', name: 'Instagram' },
   tiktok: { icon: 'tiktok', name: 'TikTok' },
+  youtube: { icon: 'youtube', name: 'YouTube' },
 };

@@ -39,6 +39,8 @@ public sealed class AdminReportingShapeTests
     [InlineData(typeof(InventoryReportPage), "InventoryReportPage")]
     [InlineData(typeof(CustomerReportRow), "CustomerReportRow")]
     [InlineData(typeof(CustomerReportPage), "CustomerReportPage")]
+    [InlineData(typeof(CustomerBuyersPoint), "CustomerBuyersPoint")]
+    [InlineData(typeof(CustomerBuyersDto), "CustomerBuyers")]
     public void A_payload_has_exactly_the_properties_the_screen_reads(Type dto, string tsInterface) =>
         Assert.Equal(Names(dto), PropertiesOf(Model, tsInterface));
 
@@ -58,6 +60,8 @@ public sealed class AdminReportingShapeTests
     [InlineData(typeof(InventoryReportRow), "function inventoryRow(")]
     [InlineData(typeof(CustomerReportRow), "function customerRow(")]
     [InlineData(typeof(LowStockRow), "function lowStockRow(")]
+    [InlineData(typeof(CustomerBuyersPoint), "function buyersPoint(")]
+    [InlineData(typeof(CustomerBuyersDto), "function buyersBody(")]
     [InlineData(typeof(ComparedFigure), "function figure(")]
     public void The_stub_s_rows_carry_exactly_the_contract_s_fields(Type dto, string builder)
     {

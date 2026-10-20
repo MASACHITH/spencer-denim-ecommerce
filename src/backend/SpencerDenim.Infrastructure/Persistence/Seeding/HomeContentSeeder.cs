@@ -1,6 +1,9 @@
+using System.Globalization;
 using Microsoft.EntityFrameworkCore;
 using SpencerDenim.Application.Abstractions.Time;
 using SpencerDenim.Domain.Content;
+using SpencerDenim.Domain.Identity;
+using SpencerDenim.Domain.Settings;
 
 namespace SpencerDenim.Infrastructure.Persistence.Seeding;
 
@@ -36,7 +39,8 @@ public sealed class HomeContentSeeder(AppDbContext dbContext, IClock clock)
         };
 
         counts.SectionItems = await SeedDepartmentTilesAsync(cancellationToken)
-            + await SeedBenefitsAsync(cancellationToken);
+            + await SeedBenefitsAsync(cancellationToken)
+            + await SeedArtworkItemsAsync(cancellationToken);
         counts.Announcements = await SeedAnnouncementsAsync(cancellationToken);
         counts.ContentPages = await SeedContentPagesAsync(cancellationToken);
 
@@ -294,6 +298,130 @@ public sealed class HomeContentSeeder(AppDbContext dbContext, IClock clock)
 
         await dbContext.SaveChangesAsync(cancellationToken);
         return added;
+    }
+
+    /// <summary>
+    /// Version 2 (#63): the words and links of the artwork blocks, as switched-off rows waiting for a
+    /// picture — see <see cref="HomeContentData.ArtworkItems"/>.
+    /// <para>
+    /// <b>Offered once, by version, which is the #152 rule.</b> Unlike the tiles and benefits above, these
+    /// rows are content a client is expected to delete (a trending tile they do not want, a social network
+    /// they do not use), and "insert what is missing" would put a deleted one back on every deployment. So
+    /// the step runs only while <c>Seed.HomeContentVersion</c> is below <see cref="HomeContentData.SeedVersion"/>,
+    /// and records the new version in the same save: a row introduced in a version above the one a
+    /// database records cannot have been removed by its owner, because it did not exist for them to remove.
+    /// </para>
+    /// <para>
+    /// <b>Never over an existing row.</b> A slot that already holds an item — which is what the client-asset
+    /// importer left on every database it ran against before this change, words included — is left alone,
+    /// with one exception that is not an admin's edit: a field that still holds exactly the words the
+    /// importer itself retracted for HOME-06 (<see cref="HomeContentData.Retractions"/>) takes the seeded
+    /// words instead, so the linen-and-denim photograph stops being labelled "Activewear". Field by field,
+    /// and only on an exact match, so "Activewear" typed into a button label is somebody's choice and stays.
+    /// </para>
+    /// </summary>
+    private async Task<int> SeedArtworkItemsAsync(CancellationToken cancellationToken)
+    {
+        var marker = await dbContext.Settings
+            .FirstOrDefaultAsync(setting => setting.Key == SettingKeys.Seed.HomeContentVersion, cancellationToken);
+
+        var recorded = marker is not null
+            && int.TryParse(marker.Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
+                ? parsed
+                : 1;
+
+        if (recorded >= HomeContentData.SeedVersion)
+        {
+            return 0;
+        }
+
+        var types = HomeContentData.ArtworkItems.Select(seed => seed.SectionType).Distinct().ToList();
+
+        var sections = await dbContext.HomeSections
+            .Include(section => section.Items)
+            .Where(section => types.Contains(section.SectionType))
+            .ToListAsync(cancellationToken);
+
+        var added = 0;
+        foreach (var seed in HomeContentData.ArtworkItems)
+        {
+            var section = sections.FirstOrDefault(candidate => candidate.SectionType == seed.SectionType);
+            if (section is null)
+            {
+                continue;
+            }
+
+            var existing = section.Items.FirstOrDefault(item => item.SortOrder == seed.SortOrder);
+            if (existing is not null)
+            {
+                Retract(existing, seed);
+                continue;
+            }
+
+            dbContext.HomeSectionItems.Add(new HomeSectionItem
+            {
+                HomeSectionId = section.Id,
+                Title = seed.Title,
+                Subtitle = seed.Subtitle,
+                ButtonLabel = seed.ButtonLabel,
+                LinkUrl = seed.LinkUrl,
+                SortOrder = seed.SortOrder,
+
+                // Waiting for its picture. The importer, or a staff member in ADM-17, switches it on with one.
+                IsEnabled = false,
+            });
+            added++;
+        }
+
+        if (marker is null)
+        {
+            dbContext.Settings.Add(new Setting
+            {
+                Key = SettingKeys.Seed.HomeContentVersion,
+                GroupKey = SettingKeys.Seed.Group,
+                ValueType = SettingValueType.Int,
+                Value = HomeContentData.SeedVersion.ToString(CultureInfo.InvariantCulture),
+
+                // As Seed.Version: no screen lists this key, and CK_Settings_RequiredPermission needs a value.
+                RequiredPermission = Permissions.Settings.Security,
+                Description =
+                    "The highest homepage content seed version applied to this database (#63). Written by the "
+                    + "seeder; not editable.",
+            });
+        }
+        else
+        {
+            marker.Value = HomeContentData.SeedVersion.ToString(CultureInfo.InvariantCulture);
+        }
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+        return added;
+    }
+
+    /// <summary>Puts the seeded words back over words the importer itself retracted. See the caller.</summary>
+    private static void Retract(HomeSectionItem item, HomeContentData.ArtworkItemSeed seed)
+    {
+        foreach (var retraction in HomeContentData.Retractions.Where(
+            candidate => candidate.SectionType == seed.SectionType && candidate.SortOrder == seed.SortOrder))
+        {
+            switch (retraction.Field)
+            {
+                case nameof(HomeSectionItem.Title) when item.Title == retraction.Value:
+                    item.Title = seed.Title;
+                    break;
+                case nameof(HomeSectionItem.Subtitle) when item.Subtitle == retraction.Value:
+                    item.Subtitle = seed.Subtitle;
+                    break;
+                case nameof(HomeSectionItem.LinkUrl) when item.LinkUrl == retraction.Value:
+                    item.LinkUrl = seed.LinkUrl;
+                    break;
+                case nameof(HomeSectionItem.ButtonLabel) when item.ButtonLabel == retraction.Value:
+                    item.ButtonLabel = seed.ButtonLabel;
+                    break;
+                default:
+                    break;
+            }
+        }
     }
 
     private async Task<int?> FindSectionAsync(HomeSectionType type, CancellationToken cancellationToken)

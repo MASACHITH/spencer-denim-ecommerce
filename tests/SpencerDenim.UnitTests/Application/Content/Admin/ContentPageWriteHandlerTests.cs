@@ -25,9 +25,10 @@ public sealed class ContentPageWriteHandlerTests
     private readonly FakeContentPageStore _store = new();
     private readonly RecordingAuditLogWriter _audit = new();
     private readonly RecordingLinksCache _cache = new();
+    private readonly RecordingHomePageCache _homePage = new();
 
     private ContentPageWriteHandlers Handlers() =>
-        new(_store, new HtmlSanitiser(), _audit, _cache, new FixedClock(Now));
+        new(_store, new HtmlSanitiser(), _audit, _cache, _homePage, new FixedClock(Now));
 
     private static CancellationToken Token => TestContext.Current.CancellationToken;
 
@@ -465,6 +466,7 @@ public sealed class ContentPageWriteHandlerTests
         // The eviction that is load-bearing: this statement is what puts the page in the footer and in
         // sitemap.xml.
         Assert.Equal(1, _cache.Evictions);
+        Assert.Equal(1, _homePage.Evictions);
     }
 
     /// <summary>

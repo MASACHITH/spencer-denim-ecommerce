@@ -1,0 +1,45 @@
+{
+  "_comment": "Shared by ContentFieldRulesParityTests (C#, the API) and admin-content-stub-parity.e2e.ts (the stub). #192 tester D3.",
+  "sitePath": [
+    { "value": "/", "ok": true },
+    { "value": "/women", "ok": true },
+    { "value": "/women/jeans?fit=wide-leg&colour=navy", "ok": true },
+    { "value": "/kids?sort=newest#top", "ok": true },
+    { "value": "women", "ok": false },
+    { "value": "//evil.example", "ok": false },
+    { "value": "/\\evil.example", "ok": false },
+    { "value": "/women\\..\\x", "ok": false },
+    { "value": "/women\tx", "ok": false },
+    { "value": "/women dresses", "ok": false },
+    { "value": "/women\nx", "ok": false },
+    { "value": "https://shop.example/women", "ok": false },
+    { "value": "javascript:alert(1)", "ok": false }
+  ],
+  "webAddress": [
+    { "value": "https://instagram.com/colombowardrobe", "ok": true },
+    { "value": "http://example.com", "ok": true },
+    { "value": "https://shop.example/women", "ok": true },
+    { "value": "https://example.invalid/PLACEHOLDER/instagram", "ok": true },
+    { "value": "javascript:alert(1)", "ok": false },
+    { "value": "data:text/html,x", "ok": false },
+    { "value": "vbscript:x", "ok": false },
+    { "value": "ftp://example.com", "ok": false },
+    { "value": "mailto:shop@example.com", "ok": false },
+    { "value": "https://user:pass@example.com", "ok": false },
+    { "value": "https://user:pass@evil.example/x", "ok": false },
+    { "value": "https://instagram.com@evil.example", "ok": false },
+    { "value": "https://exa mple.com", "ok": false },
+    { "value": "https://example.com/a\tb", "ok": false },
+    { "value": "/women", "ok": false }
+  ],
+  "text": [
+    { "value": "Free delivery", "max": 200, "ok": true },
+    { "value": "  padded  ", "max": 6, "ok": true },
+    { "value": "Line one\nline two", "max": 200, "ok": false },
+    { "value": "Tab\there", "max": 200, "ok": false },
+    { "value": "Carriage\rreturn", "max": 200, "ok": false },
+    { "value": "Tops <b>& tees</b>", "max": 200, "ok": true },
+    { "value": "ශ්‍රී ලංකා", "max": 200, "ok": true },
+    { "value": "abc", "max": 2, "ok": false }
+  ]
+}
