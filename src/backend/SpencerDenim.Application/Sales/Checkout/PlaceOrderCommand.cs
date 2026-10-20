@@ -118,6 +118,18 @@ public enum PlaceOrderStatus : byte
     /// </para>
     /// </summary>
     PromoRejected = 7,
+
+    /// <summary>
+    /// This visitor address has placed as many orders as it may in the current window (issue #107).
+    /// Nothing was written and nothing was reserved.
+    /// <para>
+    /// <b>Never the answer to a replay.</b> A checkout key that has already placed an order is answered
+    /// with that order (<see cref="AlreadyPlaced"/>) before the limit is consulted, and again if the limit
+    /// refuses a request whose order has since been committed — see
+    /// <see cref="Abstractions.IOrderPlacementThrottle"/>.
+    /// </para>
+    /// </summary>
+    RateLimited = 8,
 }
 
 /// <summary>The outcome of <see cref="PlaceOrderCommand"/>.</summary>
@@ -158,6 +170,10 @@ public sealed record PlaceOrderResult(
 
     public static PlaceOrderResult TotalChanged(CheckoutTotalsDto totals) =>
         new(PlaceOrderStatus.TotalChanged, null, NoErrors, NoBlockers, NoShortLines, totals);
+
+    /// <summary>This address has used its placements for the window (issue #107).</summary>
+    public static PlaceOrderResult RateLimited() =>
+        new(PlaceOrderStatus.RateLimited, null, NoErrors, NoBlockers, NoShortLines, null);
 
     /// <summary>The code was refused, before or inside the transaction (ADM-13).</summary>
     public static PlaceOrderResult PromoRejected(PromoRefusal refusal, decimal? minimumSpend = null) =>

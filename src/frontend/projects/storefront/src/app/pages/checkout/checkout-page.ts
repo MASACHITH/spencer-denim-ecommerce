@@ -206,7 +206,7 @@ const SUMMARY_FIELDS: readonly { readonly field: string; readonly elementId: str
            "role="alert"" on the error and "role="status"" on the quiet updates: a sold-out line is an
            interruption, a recalculated delivery fee is not. -->
       @if (error(); as message) {
-        <p class="checkout__error" role="alert">{{ message }}</p>
+        <p class="checkout__error" id="checkout-error" tabindex="-1" role="alert">{{ message }}</p>
       }
 
       <!-- **WCAG 2.2 4.1.3, and the defect it names.** Pressing Place order with nothing filled in used
@@ -1854,6 +1854,21 @@ export class CheckoutPage {
               this.read();
               break;
             }
+
+            case 'rateLimited':
+              // Issue #107. This connection has placed its share of orders for now. **Nothing is
+              // re-read and nothing is cleared**: the server wrote nothing, so the bag, the quote and
+              // every field the shopper typed are exactly right, and the pinned checkout key is still
+              // unused — pressing Place order again after the wait sends the same order under the same
+              // key, which is safe whether or not the first attempt reached the server. The sentence is
+              // already in `failure`, in the page-level `role="alert"`, with the wait it was told.
+              //
+              // **Focus goes to it, because it is at the top of a long page and the press was at the
+              // bottom.** A sighted shopper whose button simply came back to life would otherwise see
+              // nothing change and press it again, and again, into the same refusal. (The screen-reader
+              // user is already told: that is what `role="alert"` is for.)
+              setTimeout(() => this.document.getElementById('checkout-error')?.focus());
+              break;
 
             default:
               this.read();

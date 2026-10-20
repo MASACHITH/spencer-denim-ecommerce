@@ -44,6 +44,11 @@ namespace SpencerDenim.Application.Sales.Checkout;
 /// order is never placed at a figure the customer has not seen.
 /// </description></item>
 /// <item><description>
+/// <b>Take a permit from the placement throttle (issue #107)</b>, for the visitor's address. Last of the
+/// checks and first of the writes, so only a request that is about to reserve stock is ever counted — a
+/// replay, a typo and a moved total are not, and a refused permit still gets the replay re-check.
+/// </description></item>
+/// <item><description>
 /// <b>Allocate the order number in its own short transaction</b> (doc 08 §3.5), so concurrent checkouts do
 /// not queue on the series row. Gaps are allowed and expected.
 /// </description></item>
@@ -69,7 +74,8 @@ public sealed class PlaceOrderCommandHandler(
     INumberSeriesAllocator numbers,
     IOrderPlacementStore placements,
     IClock clock,
-    IPaymentProviderRegistry paymentProviders)
+    IPaymentProviderRegistry paymentProviders,
+    IOrderPlacementThrottle throttle)
     : ICommandHandler<PlaceOrderCommand, PlaceOrderResult>
 {
 
@@ -202,6 +208,28 @@ public sealed class PlaceOrderCommandHandler(
         if (pricing.GrandTotal != command.ExpectedGrandTotal)
         {
             return PlaceOrderResult.TotalChanged(CheckoutQuote.Totals(lines, zoneRate, promo.Charge)!);
+        }
+
+        // 5a. Issue #107. **The permit, and the reason it is exactly here.** Everything above this line is
+        // either a replay (answered by step 1 or by a re-check, and never charged), a refusal decided from
+        // the request or the shop's state (a missing field, an empty bag, a line that cannot be bought, a
+        // total that moved — none of which reserves anything), or a read. What follows allocates an order
+        // number, asks the provider, and opens the one transaction that **reserves stock**: the only thing
+        // a script looping over this endpoint is after. So the visitor's address pays for that and for
+        // nothing earlier, and a shopper who fixes three typos or retries on a bad connection never meets
+        // the limit at all.
+        //
+        // Refused, the request is first asked the replay question once more. The first submission of this
+        // very key may have committed between step 1 and here (a double tap, a retry that overlapped the
+        // original), in which case the order exists and is the answer — the same re-check every refusal
+        // below makes. With no order behind the key the refusal stands, and nothing has been written: no
+        // number allocated, no provider asked, no stock touched, the bag and the key still good.
+        if (!throttle.TryAcquire(command.PlacedIpAddress))
+        {
+            return await RefuseUnlessAlreadyPlacedAsync(
+                command,
+                PlaceOrderResult.RateLimited(),
+                cancellationToken);
         }
 
         var placedAt = clock.UtcNow;

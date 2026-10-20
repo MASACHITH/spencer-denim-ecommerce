@@ -7,6 +7,7 @@ using SpencerDenim.Application.Abstractions.Messaging;
 using SpencerDenim.Application.Abstractions.Results;
 using SpencerDenim.Application.Sales.Cart;
 using SpencerDenim.Application.Sales.Checkout;
+using SpencerDenim.Application.Sales.Checkout.Abstractions;
 using SpencerDenim.Application.Sales.Checkout.Contracts;
 using SpencerDenim.Application.Sales.Orders.Customer;
 using SpencerDenim.Application.Sales.Payments.Customer;
@@ -54,10 +55,14 @@ internal static class CheckoutEndpoints
                 + "order as PendingPayment. Re-sending the same checkoutKey returns the first order and "
                 + "creates nothing (doc 08 §5.4). 409 when a line has sold out or the total has changed "
                 + "since it was displayed, or the promo code could not take a use (`promoRefusal`); nothing "
-                + "is written in any of the three cases.")
+                + "is written in any of the three cases. 429 with `Retry-After` when this visitor address "
+                + "has already placed its quota of orders in the current window (issue #107): nothing is "
+                + "written, the bag and the checkout key are untouched, and a resubmission of a checkout key "
+                + "that has already placed an order is never refused for it — it is answered with that order.")
             .Produces<OrderConfirmationDto>(StatusCodes.Status201Created)
             .ProducesValidationProblem()
-            .ProducesProblem(StatusCodes.Status409Conflict);
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status429TooManyRequests);
 
         // Outside the /api/checkout group: an order outlives the checkout that made it, and the guest
         // order link in doc 11 P6 step 11 points at the order, not at a checkout.
@@ -139,6 +144,7 @@ internal static class CheckoutEndpoints
         PlaceOrderAsync(
             [FromBody] PlaceOrderRequest? request,
             ICommandHandler<PlaceOrderCommand, PlaceOrderResult> handler,
+            IOrderPlacementThrottle throttle,
             HttpContext httpContext,
             CancellationToken cancellationToken)
     {
@@ -264,6 +270,30 @@ internal static class CheckoutEndpoints
                     {
                         ["promoRefusal"] = result.PromoRefusal!.Value.ToString(),
                         ["promoMinimumSpend"] = result.PromoMinimumSpend,
+                    });
+
+            case PlaceOrderStatus.RateLimited:
+                // Issue #107. 429 and not a 409: the shop's state did not refuse this order, the caller's
+                // own request rate did, and a client that understands the status can wait rather than ask the
+                // shopper to change something. The whole window, because that is what the limiter reports for
+                // a refused permit — the same figure the newsletter, contact and account endpoints send.
+                //
+                // **The sentence says what did not happen before it says what to do**, because a shopper
+                // who reads "too many" at the last step of a checkout needs to know first that nothing was
+                // charged and nothing is lost: the bag is untouched and the same key is still good.
+                httpContext.Response.Headers.RetryAfter =
+                    ((int)throttle.Window.TotalSeconds).ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+                return TypedResults.Problem(
+                    title: "Too many orders",
+                    detail:
+                        "Too many orders have been placed from your connection in a short time, so this one "
+                        + "has not been placed. Nothing has been charged and your bag is unchanged. Please "
+                        + "wait a few minutes and try again.",
+                    statusCode: StatusCodes.Status429TooManyRequests,
+                    extensions: new Dictionary<string, object?>(StringComparer.Ordinal)
+                    {
+                        ["code"] = "rate_limited",
                     });
 
             default:

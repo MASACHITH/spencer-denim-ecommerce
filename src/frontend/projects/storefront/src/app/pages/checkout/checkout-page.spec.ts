@@ -1312,6 +1312,65 @@ describe('CheckoutPage (CHK-01..03)', () => {
       checkoutRequest().flush(session({ totals: totals({ grandTotal: 9_400 }) }));
       await settle();
     });
+
+    /**
+     * Issue #107. The placement limiter answers **429** when one address has placed its share of orders.
+     * The shopper must be told what happened and what to do, not "something went wrong" — and the page
+     * must not do anything clever: nothing was written, so nothing is re-read, nothing is cleared and the
+     * pinned checkout key is still unused. Pressing the button again sends the same order under the same
+     * key, which is what makes the advice safe to follow.
+     */
+    it('tells the shopper to wait, keeps the form, and sends the same key when they press again', async () => {
+      const isPlaceRequest = (candidate: { url: string; method: string }): boolean =>
+        candidate.url === `${CheckoutApi.url}/orders` && candidate.method === 'POST';
+
+      await openWith(session());
+      await fillValidForm();
+      placeButton().click();
+      await settle();
+
+      const refused = http.expectOne(isPlaceRequest);
+      const firstKey = refused.request.body.checkoutKey as string;
+      refused.flush(
+        { title: 'Too many orders', status: 429, code: 'rate_limited' },
+        { status: 429, statusText: 'Too Many Requests', headers: { 'Retry-After': '600' } },
+      );
+      await settle();
+
+      // A human sentence: what happened, that nothing was lost, and how long to wait.
+      expect(text()).toContain('Too many orders have been placed from your connection');
+      expect(text()).toContain('Nothing has been charged');
+      expect(text()).toContain('wait about 10 minutes');
+      expect(text()).not.toContain('could not place your order just now');
+      const alert = element.querySelector('[role="alert"]');
+      expect(alert?.textContent).toContain('Nothing has been charged');
+      expect(navigated).toHaveLength(0);
+
+      // And the message is brought to the shopper rather than left at the top of a page they have
+      // scrolled away from: the press was at the bottom, and a button that merely comes back to life
+      // invites the same press again.
+      await new Promise((resolve) => setTimeout(resolve));
+      expect(document.activeElement).toBe(alert);
+
+      // Nothing was re-read and nothing was cleared: the shopper's details are where they left them.
+      http.expectNone((candidate) => candidate.url === CheckoutApi.url && candidate.method === 'GET');
+      expect(field('co-email').value).toBe('nimali@example.com');
+      expect(field('co-line1').value).toBe('14 Galle Road');
+      expect(placeBlocked()).toBe(false);
+
+      // Pressing again, after the wait, retries the same order under the same key.
+      placeButton().click();
+      await settle();
+
+      const retry = http.expectOne(isPlaceRequest);
+      expect(retry.request.body.checkoutKey).toBe(firstKey);
+
+      retry.flush(confirmation());
+      await settle();
+
+      expect(navigated).toEqual([['/order', '22222222-2222-4222-8222-222222222222']]);
+      drainCartRead();
+    });
   });
 
   describe('accessibility of the form', () => {
