@@ -107,6 +107,64 @@ public sealed class SaleCampaignBannerRaceTests(SqlServerDatabaseFixture sqlServ
     /// Holds the asset row's update lock, starts <paramref name="first"/>, waits until it is blocked, starts
     /// <paramref name="second"/>, waits until both are blocked, then releases and returns both answers.
     /// </summary>
+    /// <summary>
+    /// Tester (#191 round 2): the same race on a <b>create</b>. A new campaign has no id until its insert, so
+    /// its banner re-check runs on the insert path (<c>InsertAsync</c>), not the edit path the two tests above
+    /// drive. The delete gets the row first; the create must be refused and leave no campaign and no usage
+    /// row behind.
+    /// </summary>
+    [Fact]
+    public async Task When_the_delete_gets_the_picture_first_a_new_campaign_is_refused_and_nothing_is_created()
+    {
+        sqlServer.SkipIfUnavailable();
+
+        await using var host = MediaTestHost.Create(sqlServer.ConnectionString);
+        using var admin = await SignInAsync(host);
+
+        // Arranged like the others, then the arranged campaign is removed: only its picture is wanted.
+        var (banner, assetId, arranged, _) = await ArrangeAsync(host, admin, "Race create");
+        await RemoveCampaignAsync(admin, arranged);
+
+        const string Name = "Race create, delete first";
+
+        var (delete, create) = await InterleaveAsync(
+            assetId,
+            () => admin.DeleteAsync(new Uri($"/api/admin/media/{banner}", UriKind.Relative), Token),
+            () => admin.PostAsJsonAsync(new Uri(Url, UriKind.Relative), Body(Name, banner, null, null), Token));
+
+        int? leaked = null;
+
+        try
+        {
+            Assert.Equal(HttpStatusCode.NoContent, delete.StatusCode);
+            Assert.Equal(HttpStatusCode.BadRequest, create.StatusCode);
+
+            var problem = await create.Content.ReadFromJsonAsync<JsonElement>(Token);
+            Assert.True(problem.GetProperty("errors").TryGetProperty("bannerPublicId", out _));
+
+            Assert.True(await AssetDeletedAsync(host, assetId));
+
+            using var scope = host.Factory.Services.CreateScope();
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+            leaked = await dbContext.SaleCampaigns
+                .IgnoreQueryFilters()
+                .Where(campaign => campaign.Name == Name)
+                .Select(campaign => (int?)campaign.Id)
+                .FirstOrDefaultAsync(Token);
+
+            Assert.Null(leaked);
+            Assert.False(await dbContext.MediaUsages.IgnoreQueryFilters().AnyAsync(usage => usage.MediaAssetId == assetId, Token));
+        }
+        finally
+        {
+            if (leaked is { } id)
+            {
+                await RemoveCampaignAsync(admin, id);
+            }
+        }
+    }
+
     private async Task<(HttpResponseMessage First, HttpResponseMessage Second)> InterleaveAsync(
         int assetId,
         Func<Task<HttpResponseMessage>> first,
