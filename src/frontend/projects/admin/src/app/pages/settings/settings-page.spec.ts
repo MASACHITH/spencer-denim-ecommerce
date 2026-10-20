@@ -4,7 +4,7 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 
 import { AdminSettingsApi } from '../../core/settings/admin-settings-api';
 import { AdminSettings, SETTING_KEYS } from '../../core/settings/admin-settings.model';
-import { SettingsPage, formatStamp, toForm, toPayPalForm, toTrafficForm } from './settings-page';
+import { SettingsPage, formatStamp, toForm, toPayPalForm, toRequireApproval, toTrafficForm } from './settings-page';
 
 /**
  * ADM-22 and GLB-02: the settings screen.
@@ -1429,6 +1429,77 @@ describe('SettingsPage (ADM-22)', () => {
 
       expect(element.querySelector('[data-testid="nothing-to-edit"]')).toBeNull();
       expect(element.querySelector('[data-testid="traffic-panel"]')).not.toBeNull();
+    });
+  });
+
+  describe('reviews (issue #189)', () => {
+    function payloadWithReviews(value: string | null): AdminSettings {
+      const base = payload();
+
+      return {
+        ...base,
+        groups: [
+          ...base.groups,
+          {
+            groupKey: 'Reviews',
+            rowVersion: 'reviews-rv-1',
+            settings: [
+              {
+                key: SETTING_KEYS.reviewsRequireApproval,
+                valueType: 'Bool' as const,
+                value,
+                isSecret: false,
+                hasValue: value !== null,
+                requiredPermission: 'Settings.Edit',
+                description: 'Approve reviews before they appear.',
+                updatedAtUtc: null,
+              },
+            ],
+          },
+        ],
+      };
+    }
+
+    it('is absent for a caller who does not receive the Reviews group', async () => {
+      await open(payload());
+
+      expect(element.querySelector('[data-testid="reviews-panel"]')).toBeNull();
+    });
+
+    it('shows the switch as the server sent it, and on unless it reads false', async () => {
+      await open(payloadWithReviews('false'));
+      expect(field('requireApproval').checked).toBe(false);
+
+      expect(toRequireApproval(payloadWithReviews('true'))).toBe(true);
+      expect(toRequireApproval(payloadWithReviews(' FALSE '))).toBe(false);
+      expect(toRequireApproval(payloadWithReviews(null))).toBe(true);
+      expect(toRequireApproval(payloadWithReviews('junk'))).toBe(true);
+      expect(toRequireApproval(payload())).toBe(true);
+    });
+
+    it('sends a JSON boolean with the Reviews token, then re-reads', async () => {
+      await open(payloadWithReviews('true'));
+
+      field('requireApproval').click();
+      fixture.detectChanges();
+      (element.querySelector('[data-testid="save-reviews"]') as HTMLButtonElement).click();
+      fixture.detectChanges();
+      await fixture.whenStable();
+
+      const saved = writeTo(AdminSettingsApi.reviewsUrl);
+      expect(saved.request.url).toBe('/api/admin/settings/reviews');
+      expect(saved.request.method).toBe('PUT');
+      expect(saved.request.body).toEqual({ requireApproval: false, rowVersion: 'reviews-rv-1' });
+
+      saved.flush(null);
+      fixture.detectChanges();
+      await fixture.whenStable();
+
+      controller.expectOne(AdminSettingsApi.settingsUrl).flush(payloadWithReviews('false'));
+      fixture.detectChanges();
+      await fixture.whenStable();
+
+      expect(element.querySelector('[data-testid="announcement"]')!.textContent).toContain('appear as soon as they are written');
     });
   });
 

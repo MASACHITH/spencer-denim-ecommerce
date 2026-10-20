@@ -154,3 +154,9 @@ public sealed record UpdateTrafficSettingsRequest(
     string? RawRetentionDays,
     string? BotRetentionDays,
     string? RowVersion);
+
+/// <summary>
+/// The review approval switch (issue #189): <c>requireApproval</c> as a JSON true or false. Left out means not part of
+/// this save; null is refused, because an unset switch would silently fall back to "wait for approval".
+/// </summary>
+public sealed record UpdateReviewSettingsRequest(bool? RequireApproval, string? RowVersion);

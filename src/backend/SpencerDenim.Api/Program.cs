@@ -41,6 +41,7 @@ builder.Services.AddPayPalEndpointThrottle();
 builder.Services.AddAccountRequestThrottle();
 builder.Services.AddContactEnquiryThrottle();
 builder.Services.AddOrderPlacementThrottle();
+builder.Services.AddReviewWriteThrottle();
 // Output caching, with no base policy: only the sitemap feed opts in (see SitemapOutputCache for the
 // window and why it is a minute rather than matching the storefront's fifteen).
 builder.Services.AddSitemapOutputCache();
@@ -103,6 +104,7 @@ app.MapAdminAlertEndpoints();
 app.MapUserEndpoints();
 app.MapRoleEndpoints();
 app.MapCatalogEndpoints();
+app.MapProductReviewEndpoints();
 app.MapAdminCatalogEndpoints();
 app.MapAdminProductEndpoints();
 app.MapContentEndpoints();
@@ -115,6 +117,7 @@ app.MapAdminCustomerEndpoints();
 app.MapAdminNewsletterEndpoints();
 app.MapAdminReportingEndpoints();
 app.MapAdminInventoryEndpoints();
+app.MapAdminReviewEndpoints();
 app.MapAdminTrafficEndpoints();
 app.MapPaymentSlipEndpoints();
 app.MapAdminContentEndpoints();
